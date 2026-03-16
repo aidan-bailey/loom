@@ -31,6 +31,30 @@ golangci-lint run --timeout=3m --fast
 
 CGO is disabled for builds (`CGO_ENABLED=0`). Go version is 1.23.0.
 
+A Nix flake (`flake.nix`) provides a dev shell with Go, golangci-lint, tmux, git, and gh.
+
+## CLI Usage
+
+```bash
+# Run with default settings
+claude-squad
+
+# Specify agent program
+claude-squad --program "aider --model ollama_chat/gemma3:1b"
+
+# Enable auto-yes mode (experimental)
+claude-squad --autoyes
+
+# Subcommands
+claude-squad reset    # Reset all instances, cleanup tmux sessions and worktrees
+claude-squad debug    # Print config paths and debug info
+claude-squad version  # Print version
+```
+
+## Environment Variables
+
+- `CLAUDE_SQUAD_HOME` — Override config directory (default: `~/.claude-squad`). Must be absolute path; supports `~` expansion.
+
 ## Architecture
 
 ### Core Flow
@@ -42,7 +66,7 @@ The app follows Bubble Tea's Model-View-Update pattern. The single-threaded even
 ### Key Packages
 
 - **`app/`** — Bubble Tea application model. Handles all keyboard input dispatch, instance lifecycle management, and UI composition. This is the "controller" layer.
-- **`session/`** — Core domain. `Instance` represents a running agent session with status lifecycle (Created → Running/Ready → Paused → Killed). `storage.go` handles JSON serialization to `~/.claude-squad/instances.json`.
+- **`session/`** — Core domain. `Instance` represents a running agent session with status lifecycle (Ready → Loading → Running → Paused). `storage.go` handles JSON serialization to `~/.claude-squad/instances.json`.
 - **`session/git/`** — Git worktree operations. Each session gets an isolated worktree in `~/.claude-squad/worktrees/`. Branches are named `{username}/{session_title}`. Handles setup, diff stats, push, and cleanup.
 - **`session/tmux/`** — Tmux session management. Creates/attaches terminal sessions, captures pane content, detects prompts (for auto-yes), sends keystrokes. Platform-specific files: `tmux_unix.go`, `tmux_windows.go`.
 - **`config/`** — Configuration (`config.json`), state (`state.json`), and profiles. Key interfaces: `InstanceStorage`, `AppState`, `StateManager`.
@@ -51,20 +75,23 @@ The app follows Bubble Tea's Model-View-Update pattern. The single-threaded even
 - **`keys/`** — Keybinding definitions. Enum-based `KeyName` with global maps for lookup.
 - **`cmd/`** — `Executor` interface wrapping `os/exec` for testability.
 - **`log/`** — Centralized logging to `$TMPDIR/claudesquad.log` with Info/Warning/Error loggers and rate limiting.
+- **`web/`** — Next.js marketing site, deployed to GitHub Pages via CI.
 
 ### Session Lifecycle
 
-1. **Create**: User presses `n`/`N` → overlay collects title and optional prompt
-2. **Start**: Creates git worktree + tmux session, records base commit
+Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent active), `Paused` (worktree removed, branch preserved).
+
+1. **New**: User presses `n`/`N` → overlay collects title and optional prompt → status: Ready
+2. **Start**: Creates git worktree + tmux session, records base commit → status: Loading → Running
 3. **Running**: Agent works in isolated worktree; UI shows live terminal output + diff stats
-4. **Pause**: Commits changes, kills tmux session, removes worktree (branch preserved)
-5. **Resume**: Recreates worktree from branch, starts new tmux session
-6. **Kill**: Cleans up worktree, tmux session, and branch
+4. **Pause**: Commits changes, kills tmux session, removes worktree (branch preserved) → status: Paused
+5. **Resume**: Recreates worktree from branch, starts new tmux session → status: Running
+6. **Kill**: Cleans up worktree, tmux session, and branch; instance removed from storage
 
 ### Persistent State
 
 All stored in `~/.claude-squad/`:
-- `config.json` — user configuration and profiles
+- `config.json` — user configuration: `DefaultProgram`, `AutoYes`, `DaemonPollInterval` (ms, default 1000), `BranchPrefix` (default: `{username}/`), `Profiles` (named program presets)
 - `state.json` — app state (e.g. help screens seen)
 - `instances.json` — serialized session data
 - `worktrees/` — git worktree directories
