@@ -106,6 +106,36 @@ func SaveState(state *State) error {
 	return os.WriteFile(statePath, data, 0644)
 }
 
+// LoadStateFrom loads state from an explicit directory.
+func LoadStateFrom(dir string) *State {
+	statePath := filepath.Join(dir, StateFileName)
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return DefaultState()
+	}
+
+	var state State
+	if err := json.Unmarshal(data, &state); err != nil {
+		return DefaultState()
+	}
+	return &state
+}
+
+// SaveStateTo saves state to an explicit directory.
+func SaveStateTo(state *State, dir string) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	statePath := filepath.Join(dir, StateFileName)
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal state: %w", err)
+	}
+
+	return os.WriteFile(statePath, data, 0644)
+}
+
 // InstanceStorage interface implementation
 
 // SaveInstances saves the raw instance data
