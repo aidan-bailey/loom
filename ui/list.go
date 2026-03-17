@@ -313,6 +313,9 @@ func (l *List) Kill() {
 }
 
 func (l *List) Attach() (chan struct{}, error) {
+	if len(l.items) == 0 || l.selectedIdx >= len(l.items) {
+		return nil, fmt.Errorf("no instance selected")
+	}
 	targetInstance := l.items[l.selectedIdx]
 	return targetInstance.Attach()
 }
@@ -364,7 +367,7 @@ func (l *List) AddInstance(instance *session.Instance) (finalize func()) {
 
 // GetSelectedInstance returns the currently selected instance
 func (l *List) GetSelectedInstance() *session.Instance {
-	if len(l.items) == 0 {
+	if len(l.items) == 0 || l.selectedIdx >= len(l.items) {
 		return nil
 	}
 	return l.items[l.selectedIdx]

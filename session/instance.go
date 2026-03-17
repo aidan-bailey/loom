@@ -347,7 +347,7 @@ func (i *Instance) CheckAndHandleTrustPrompt() bool {
 }
 
 func (i *Instance) TapEnter() {
-	if !i.started || !i.AutoYes {
+	if !i.started || i.Status == Paused || !i.AutoYes {
 		return
 	}
 	if err := i.tmuxSession.TapEnter(); err != nil {
@@ -406,6 +406,9 @@ func (i *Instance) Paused() bool {
 
 // TmuxAlive returns true if the tmux session is alive. This is a sanity check before attaching.
 func (i *Instance) TmuxAlive() bool {
+	if i.tmuxSession == nil {
+		return false
+	}
 	return i.tmuxSession.DoesSessionExist()
 }
 
