@@ -224,3 +224,16 @@ func saveConfig(config *Config) error {
 func SaveConfig(config *Config) error {
 	return saveConfig(config)
 }
+
+// LoadConfigFrom loads configuration from an explicit directory.
+func LoadConfigFrom(dir string) *Config {
+	data, err := os.ReadFile(filepath.Join(dir, ConfigFileName))
+	if err != nil {
+		return DefaultConfig()
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return DefaultConfig()
+	}
+	return &cfg
+}

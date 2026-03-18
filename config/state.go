@@ -43,6 +43,10 @@ type State struct {
 	HelpScreensSeen uint32 `json:"help_screens_seen"`
 	// Instances stores the serialized instance data as raw JSON
 	InstancesData json.RawMessage `json:"instances"`
+
+	// configDir, when set, directs SaveState to write to this directory
+	// instead of GetConfigDir(). Set by LoadStateFrom for workspace isolation.
+	configDir string
 }
 
 // DefaultState returns the default state
@@ -88,6 +92,10 @@ func LoadState() *State {
 
 // SaveState saves the state to disk
 func SaveState(state *State) error {
+	if state.configDir != "" {
+		return SaveStateTo(state, state.configDir)
+	}
+
 	configDir, err := GetConfigDir()
 	if err != nil {
 		return fmt.Errorf("failed to get config directory: %w", err)
@@ -107,17 +115,23 @@ func SaveState(state *State) error {
 }
 
 // LoadStateFrom loads state from an explicit directory.
+// The returned State remembers dir so that SaveState writes back to it.
 func LoadStateFrom(dir string) *State {
 	statePath := filepath.Join(dir, StateFileName)
 	data, err := os.ReadFile(statePath)
 	if err != nil {
-		return DefaultState()
+		s := DefaultState()
+		s.configDir = dir
+		return s
 	}
 
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return DefaultState()
+		s := DefaultState()
+		s.configDir = dir
+		return s
 	}
+	state.configDir = dir
 	return &state
 }
 
