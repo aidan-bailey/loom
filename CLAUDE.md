@@ -29,7 +29,7 @@ golangci-lint run --timeout=3m --fast
 ./bump-version.sh <version>
 ```
 
-CGO is disabled for builds (`CGO_ENABLED=0`). Go version is 1.23.0.
+CGO is disabled for builds (`CGO_ENABLED=0`). Go version is 1.23.0 (toolchain go1.24.1).
 
 A Nix flake (`flake.nix`) provides a dev shell with Go, golangci-lint, tmux, git, and gh.
 
@@ -49,6 +49,12 @@ claude-squad --autoyes
 claude-squad reset    # Reset all instances, cleanup tmux sessions and worktrees
 claude-squad debug    # Print config paths and debug info
 claude-squad version  # Print version
+
+# Workspace management
+claude-squad workspace add [path]    # Register a git repo as a workspace
+claude-squad workspace list          # List registered workspaces
+claude-squad workspace remove <name> # Unregister a workspace
+claude-squad workspace migrate       # Migrate instances to workspaces
 ```
 
 ## Environment Variables
@@ -61,7 +67,7 @@ claude-squad version  # Print version
 
 `main.go` (Cobra CLI) → `app/app.go` (Bubble Tea Model) → manages `session/instance.go` instances
 
-The app follows Bubble Tea's Model-View-Update pattern. The single-threaded event loop in `app/app.go` (~950 lines) is the central orchestrator that handles all keyboard input, manages instance lifecycle, and coordinates UI updates.
+The app follows Bubble Tea's Model-View-Update pattern. The single-threaded event loop in `app/app.go` (~1075 lines) is the central orchestrator that handles all keyboard input, manages instance lifecycle, and coordinates UI updates. On startup, the app detects the current workspace or prompts the user to select one via the workspace picker overlay.
 
 ### Key Packages
 
@@ -69,9 +75,9 @@ The app follows Bubble Tea's Model-View-Update pattern. The single-threaded even
 - **`session/`** — Core domain. `Instance` represents a running agent session with status lifecycle (Ready → Loading → Running → Paused). `storage.go` handles JSON serialization to `~/.claude-squad/instances.json`.
 - **`session/git/`** — Git worktree operations. Each session gets an isolated worktree in `~/.claude-squad/worktrees/`. Branches are named `{username}/{session_title}`. Handles setup, diff stats, push, and cleanup.
 - **`session/tmux/`** — Tmux session management. Creates/attaches terminal sessions, captures pane content, detects prompts (for auto-yes), sends keystrokes. Platform-specific files: `tmux_unix.go`, `tmux_windows.go`.
-- **`config/`** — Configuration (`config.json`), state (`state.json`), and profiles. Key interfaces: `InstanceStorage`, `AppState`, `StateManager`.
+- **`config/`** — Configuration (`config.json`), state (`state.json`), profiles, and workspace registry (`workspace.go`). Key interfaces: `InstanceStorage`, `AppState`, `StateManager`.
 - **`daemon/`** — Background auto-yes mode. Polls instances, detects prompts, auto-presses Enter. Platform-specific: `daemon_unix.go`, `daemon_windows.go`.
-- **`ui/`** — Bubble Tea view components. Left panel (`list.go`, 30% width), right panel (`tabbed_window.go`, 70% width) with preview/diff/terminal tabs. `ui/overlay/` has modal dialogs (text input, confirmation, branch picker, profile picker).
+- **`ui/`** — Bubble Tea view components. Left panel (`list.go`, 30% width), right panel (`tabbed_window.go`, 70% width) with preview/diff/terminal tabs. `ui/overlay/` has modal dialogs (text input, confirmation, branch picker, profile picker, workspace picker).
 - **`keys/`** — Keybinding definitions. Enum-based `KeyName` with global maps for lookup.
 - **`cmd/`** — `Executor` interface wrapping `os/exec` for testability.
 - **`log/`** — Centralized logging to `$TMPDIR/claudesquad.log` with Info/Warning/Error loggers and rate limiting.
@@ -94,6 +100,7 @@ All stored in `~/.claude-squad/`:
 - `config.json` — user configuration: `DefaultProgram`, `AutoYes`, `DaemonPollInterval` (ms, default 1000), `BranchPrefix` (default: `{username}/`), `Profiles` (named program presets)
 - `state.json` — app state (e.g. help screens seen)
 - `instances.json` — serialized session data
+- `workspace_registry.json` — registered workspaces with name, path, and last-used tracking
 - `worktrees/` — git worktree directories
 
 ## Testing Patterns
