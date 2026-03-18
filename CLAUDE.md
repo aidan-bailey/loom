@@ -61,6 +61,10 @@ claude-squad workspace migrate       # Migrate instances to workspaces
 
 - `CLAUDE_SQUAD_HOME` — Override config directory (default: `~/.claude-squad`). Must be absolute path; supports `~` expansion.
 
+## Detailed Specs
+
+- [Workspaces](docs/specs/workspaces.md) — workspace registration, isolation via `CLAUDE_SQUAD_HOME`, switching, and migration
+
 ## Architecture
 
 ### Core Flow
