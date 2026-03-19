@@ -283,6 +283,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				log.WarningLog.Printf("could not update diff stats: %v", err)
 			}
 		}
+		m.updateTabBarPrompting()
 		return m, tickUpdateMetadataCmd
 	case tea.MouseMsg:
 		// Handle mouse wheel events for scrolling the diff/preview pane
@@ -1163,6 +1164,30 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	return tea.WindowSize()
+}
+
+// updateTabBarPrompting checks each slot for instances awaiting user input
+// and updates the tab bar's prompting indicators.
+func (m *home) updateTabBarPrompting() {
+	if len(m.slots) == 0 {
+		return
+	}
+	prompting := make([]bool, len(m.slots))
+	for i, slot := range m.slots {
+		var instances []*session.Instance
+		if i == m.focusedSlot {
+			instances = m.list.GetInstances()
+		} else {
+			instances = slot.list.GetInstances()
+		}
+		for _, inst := range instances {
+			if inst.Started() && !inst.Paused() && inst.Status == session.Ready {
+				prompting[i] = true
+				break
+			}
+		}
+	}
+	m.tabBar.SetPrompting(prompting)
 }
 
 // slotNames returns the names of all active workspace slots.

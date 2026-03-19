@@ -21,11 +21,14 @@ var (
 				AlignHorizontal(lipgloss.Center)
 )
 
+var wsPromptIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#e5c07b")).Bold(true)
+
 // WorkspaceTabBar renders a row of workspace tabs at the top of the TUI.
 type WorkspaceTabBar struct {
 	names      []string
 	focusedIdx int
 	width      int
+	prompting  []bool // per-tab: true if any instance is awaiting input
 }
 
 // NewWorkspaceTabBar creates a new workspace tab bar.
@@ -37,6 +40,12 @@ func NewWorkspaceTabBar() *WorkspaceTabBar {
 func (b *WorkspaceTabBar) SetWorkspaces(names []string, focused int) {
 	b.names = names
 	b.focusedIdx = focused
+	b.prompting = make([]bool, len(names))
+}
+
+// SetPrompting updates which tabs have instances awaiting user input.
+func (b *WorkspaceTabBar) SetPrompting(prompting []bool) {
+	b.prompting = prompting
 }
 
 // SetWidth sets the available width for the tab bar.
@@ -69,6 +78,11 @@ func (b *WorkspaceTabBar) String() string {
 			width = lastTabWidth
 		}
 
+		label := name
+		if i < len(b.prompting) && b.prompting[i] {
+			label = name + " " + wsPromptIndicator.Render("●")
+		}
+
 		var style lipgloss.Style
 		if i == b.focusedIdx {
 			style = wsActiveTabStyle
@@ -76,7 +90,7 @@ func (b *WorkspaceTabBar) String() string {
 			style = wsInactiveTabStyle
 		}
 		style = style.Width(width - style.GetHorizontalFrameSize())
-		renderedTabs = append(renderedTabs, style.Render(name))
+		renderedTabs = append(renderedTabs, style.Render(label))
 	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
