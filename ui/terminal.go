@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
@@ -197,6 +198,27 @@ func (t *TerminalPane) Attach() (chan struct{}, error) {
 	ts := s.tmuxSession
 	t.mu.Unlock()
 	return ts.Attach()
+}
+
+// SendPrompt sends text followed by Enter to the current terminal session.
+func (t *TerminalPane) SendPrompt(text string) error {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	if !ok || s.tmuxSession == nil {
+		t.mu.Unlock()
+		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	}
+	ts := s.tmuxSession
+	t.mu.Unlock()
+
+	if err := ts.SendKeys(text); err != nil {
+		return fmt.Errorf("error sending keys to terminal: %w", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := ts.TapEnter(); err != nil {
+		return fmt.Errorf("error sending enter to terminal: %w", err)
+	}
+	return nil
 }
 
 // Close kills all cached terminal tmux sessions and cleans up.

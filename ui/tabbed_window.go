@@ -199,6 +199,11 @@ func (w *TabbedWindow) CleanupTerminalForInstance(title string) {
 	w.terminal.CloseForInstance(title)
 }
 
+// SendTerminalPrompt sends text followed by Enter to the terminal pane's tmux session.
+func (w *TabbedWindow) SendTerminalPrompt(text string) error {
+	return w.terminal.SendPrompt(text)
+}
+
 // IsPreviewInScrollMode returns true if the preview pane is in scroll mode
 func (w *TabbedWindow) IsPreviewInScrollMode() bool {
 	return w.preview.isScrolling
