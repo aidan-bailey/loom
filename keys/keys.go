@@ -32,6 +32,8 @@ const (
 	KeyWorkspace      // Key for switching workspaces
 	KeyWorkspaceLeft  // Key for previous workspace tab
 	KeyWorkspaceRight // Key for next workspace tab
+
+	KeyQuickInteract // Key for quick interaction input bar
 )
 
 // GlobalKeyStringsMap is a global, immutable map string to keybinding.
@@ -56,6 +58,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"W":          KeyWorkspace,
 	"[":          KeyWorkspaceLeft,
 	"]":          KeyWorkspaceRight,
+	"i":          KeyQuickInteract,
 }
 
 // GlobalkeyBindings is a global, immutable map of KeyName tot keybinding.
@@ -129,6 +132,11 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyWorkspaceRight: key.NewBinding(
 		key.WithKeys("]"),
 		key.WithHelp("]", "next ws"),
+	),
+
+	KeyQuickInteract: key.NewBinding(
+		key.WithKeys("i"),
+		key.WithHelp("i", "input"),
 	),
 
 	// -- Special keybindings --
