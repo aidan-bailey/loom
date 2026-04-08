@@ -200,6 +200,34 @@ func (r *WorkspaceRegistry) Get(name string) *Workspace {
 	return nil
 }
 
+// Rename changes a workspace's name. Updates LastUsed if it pointed to the old name.
+func (r *WorkspaceRegistry) Rename(oldName, newName string) error {
+	if oldName == newName {
+		return nil
+	}
+	// Check new name doesn't conflict.
+	for _, ws := range r.Workspaces {
+		if ws.Name == newName {
+			return fmt.Errorf("workspace with name %q already exists", newName)
+		}
+	}
+	found := false
+	for i, ws := range r.Workspaces {
+		if ws.Name == oldName {
+			r.Workspaces[i].Name = newName
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("workspace %q not found", oldName)
+	}
+	if r.LastUsed == oldName {
+		r.LastUsed = newName
+	}
+	return SaveWorkspaceRegistry(r)
+}
+
 // UpdateLastUsed sets the last used workspace and saves the registry.
 func (r *WorkspaceRegistry) UpdateLastUsed(name string) error {
 	r.LastUsed = name
