@@ -60,6 +60,10 @@ type Config struct {
 	BranchPrefix string `json:"branch_prefix"`
 	// Profiles is a list of named program profiles.
 	Profiles []Profile `json:"profiles,omitempty"`
+
+	// configDir, when set, directs SaveConfig to write to this directory
+	// instead of GetConfigDir(). Set by LoadConfigFrom for workspace isolation.
+	configDir string
 }
 
 // GetProgram returns the program to run. If Profiles is non-empty and
@@ -202,16 +206,30 @@ func LoadConfig() *Config {
 
 // saveConfig saves the configuration to disk
 func saveConfig(config *Config) error {
+	if config.configDir != "" {
+		return SaveConfigTo(config, config.configDir)
+	}
+
 	configDir, err := GetConfigDir()
 	if err != nil {
 		return fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	return SaveConfigTo(config, configDir)
+}
+
+// SaveConfig exports the saveConfig function for use by other packages
+func SaveConfig(config *Config) error {
+	return saveConfig(config)
+}
+
+// SaveConfigTo saves the configuration to an explicit directory.
+func SaveConfigTo(config *Config, dir string) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	configPath := filepath.Join(configDir, ConfigFileName)
+	configPath := filepath.Join(dir, ConfigFileName)
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
@@ -220,20 +238,21 @@ func saveConfig(config *Config) error {
 	return os.WriteFile(configPath, data, 0644)
 }
 
-// SaveConfig exports the saveConfig function for use by other packages
-func SaveConfig(config *Config) error {
-	return saveConfig(config)
-}
-
 // LoadConfigFrom loads configuration from an explicit directory.
+// The returned Config remembers dir so that SaveConfig writes back to it.
 func LoadConfigFrom(dir string) *Config {
 	data, err := os.ReadFile(filepath.Join(dir, ConfigFileName))
 	if err != nil {
-		return DefaultConfig()
+		cfg := DefaultConfig()
+		cfg.configDir = dir
+		return cfg
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return DefaultConfig()
+		cfg := DefaultConfig()
+		cfg.configDir = dir
+		return cfg
 	}
+	cfg.configDir = dir
 	return &cfg
 }

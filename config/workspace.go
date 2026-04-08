@@ -24,6 +24,47 @@ type WorkspaceRegistry struct {
 
 const workspacesFileName = "workspaces.json"
 
+// WorkspaceContext carries the resolved identity of the active workspace.
+// A nil *WorkspaceContext means "global" (no workspace).
+type WorkspaceContext struct {
+	// Name is the workspace name. Empty string means global.
+	Name string
+	// ConfigDir is the absolute path to the config directory
+	// (e.g., /repo/.claude-squad or ~/.claude-squad).
+	ConfigDir string
+	// RepoPath is the absolute path to the repo root. Empty for global.
+	RepoPath string
+}
+
+// GlobalWorkspaceContext returns a WorkspaceContext pointing at ~/.claude-squad.
+func GlobalWorkspaceContext() (*WorkspaceContext, error) {
+	dir, err := GetGlobalConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	return &WorkspaceContext{ConfigDir: dir}, nil
+}
+
+// WorkspaceContextFor returns a WorkspaceContext for the given workspace.
+func WorkspaceContextFor(ws *Workspace) *WorkspaceContext {
+	return &WorkspaceContext{
+		Name:      ws.Name,
+		ConfigDir: WorkspaceConfigDir(ws),
+		RepoPath:  ws.Path,
+	}
+}
+
+// ResolveWorkspace determines the workspace context for the given working directory.
+// If a registered workspace matches, returns its context. Otherwise returns the global context.
+func ResolveWorkspace(cwd string, registry *WorkspaceRegistry) (*WorkspaceContext, error) {
+	if registry != nil {
+		if ws := registry.FindByPath(cwd); ws != nil {
+			return WorkspaceContextFor(ws), nil
+		}
+	}
+	return GlobalWorkspaceContext()
+}
+
 // GetGlobalConfigDir returns ~/.claude-squad/ regardless of CLAUDE_SQUAD_HOME.
 func GetGlobalConfigDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
