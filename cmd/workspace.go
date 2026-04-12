@@ -108,8 +108,9 @@ var workspaceRemoveCmd = &cobra.Command{
 	},
 }
 
-// migrateInstanceData is a minimal struct for reading instance JSON during migration.
-type migrateInstanceData struct {
+// instanceSummary is a minimal struct for reading instance JSON, shared
+// by the migrate and status commands — only the fields they access are decoded.
+type instanceSummary struct {
 	Title    string `json:"title"`
 	Worktree struct {
 		RepoPath     string `json:"repo_path"`
@@ -141,7 +142,7 @@ var workspaceMigrateCmd = &cobra.Command{
 			return nil
 		}
 
-		var instances []migrateInstanceData
+		var instances []instanceSummary
 		if err := json.Unmarshal(globalState.InstancesData, &instances); err != nil {
 			return fmt.Errorf("failed to parse global instances: %w", err)
 		}
@@ -199,7 +200,7 @@ var workspaceMigrateCmd = &cobra.Command{
 			}
 
 			// Parse existing titles to skip duplicates
-			var existingInstances []migrateInstanceData
+			var existingInstances []instanceSummary
 			_ = json.Unmarshal(wsState.InstancesData, &existingInstances)
 			existingTitles := make(map[string]bool)
 			for _, ei := range existingInstances {
@@ -208,7 +209,7 @@ var workspaceMigrateCmd = &cobra.Command{
 
 			added := 0
 			for _, raw := range rawInsts {
-				var inst migrateInstanceData
+				var inst instanceSummary
 				if err := json.Unmarshal(raw, &inst); err != nil {
 					continue
 				}
@@ -273,16 +274,10 @@ var workspaceUseCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-
-		ws := reg.Get(args[0])
-		if ws == nil {
-			return fmt.Errorf("workspace %q not found", args[0])
-		}
-
-		if err := reg.UpdateLastUsed(ws.Name); err != nil {
+		if err := reg.UpdateLastUsed(args[0]); err != nil {
 			return err
 		}
-		fmt.Printf("Default workspace set to %q\n", ws.Name)
+		fmt.Printf("Default workspace set to %q\n", args[0])
 		return nil
 	},
 }
@@ -340,7 +335,7 @@ var workspaceStatusCmd = &cobra.Command{
 			return nil
 		}
 
-		var instances []migrateInstanceData
+		var instances []instanceSummary
 		if err := json.Unmarshal(state.InstancesData, &instances); err != nil {
 			return fmt.Errorf("failed to parse instances: %w", err)
 		}

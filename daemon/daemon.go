@@ -19,12 +19,7 @@ import (
 // configDir is the workspace config directory; if empty, falls back to GetConfigDir().
 func RunDaemon(cfg *config.Config, configDir string) error {
 	log.InfoLog.Printf("starting daemon")
-	var state *config.State
-	if configDir != "" {
-		state = config.LoadStateFrom(configDir)
-	} else {
-		state = config.LoadState()
-	}
+	state := config.LoadStateFrom(configDir)
 	storage, err := session.NewStorage(state, configDir)
 	if err != nil {
 		return fmt.Errorf("failed to initialize storage: %w", err)

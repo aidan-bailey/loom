@@ -115,8 +115,17 @@ func SaveState(state *State) error {
 }
 
 // LoadStateFrom loads state from an explicit directory.
+// If dir is empty, falls back to GetConfigDir().
 // The returned State remembers dir so that SaveState writes back to it.
 func LoadStateFrom(dir string) *State {
+	if dir == "" {
+		resolved, err := GetConfigDir()
+		if err != nil {
+			log.ErrorLog.Printf("failed to get config directory: %v", err)
+			return DefaultState()
+		}
+		dir = resolved
+	}
 	statePath := filepath.Join(dir, StateFileName)
 	data, err := os.ReadFile(statePath)
 	if err != nil {

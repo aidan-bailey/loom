@@ -172,6 +172,9 @@ func GetClaudeCommand() (string, error) {
 	return "", fmt.Errorf("claude command not found in aliases or PATH")
 }
 
+// LoadConfig loads configuration from the default config directory.
+// It is a convenience wrapper around LoadConfigFrom(""). If the config
+// file does not yet exist, a default config is written to disk.
 func LoadConfig() *Config {
 	configDir, err := GetConfigDir()
 	if err != nil {
@@ -179,29 +182,17 @@ func LoadConfig() *Config {
 		return DefaultConfig()
 	}
 
-	configPath := filepath.Join(configDir, ConfigFileName)
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Create and save default config if file doesn't exist
-			defaultCfg := DefaultConfig()
-			if saveErr := saveConfig(defaultCfg); saveErr != nil {
-				log.WarningLog.Printf("failed to save default config: %v", saveErr)
-			}
-			return defaultCfg
+	// If no config file exists, write defaults so future runs are stable.
+	if _, err := os.Stat(filepath.Join(configDir, ConfigFileName)); os.IsNotExist(err) {
+		defaultCfg := DefaultConfig()
+		defaultCfg.configDir = configDir
+		if saveErr := saveConfig(defaultCfg); saveErr != nil {
+			log.WarningLog.Printf("failed to save default config: %v", saveErr)
 		}
-
-		log.WarningLog.Printf("failed to get config file: %v", err)
-		return DefaultConfig()
+		return defaultCfg
 	}
 
-	var config Config
-	if err := json.Unmarshal(data, &config); err != nil {
-		log.ErrorLog.Printf("failed to parse config file: %v", err)
-		return DefaultConfig()
-	}
-
-	return &config
+	return LoadConfigFrom(configDir)
 }
 
 // saveConfig saves the configuration to disk
@@ -239,8 +230,17 @@ func SaveConfigTo(config *Config, dir string) error {
 }
 
 // LoadConfigFrom loads configuration from an explicit directory.
+// If dir is empty, falls back to GetConfigDir().
 // The returned Config remembers dir so that SaveConfig writes back to it.
 func LoadConfigFrom(dir string) *Config {
+	if dir == "" {
+		resolved, err := GetConfigDir()
+		if err != nil {
+			log.ErrorLog.Printf("failed to get config directory: %v", err)
+			return DefaultConfig()
+		}
+		dir = resolved
+	}
 	data, err := os.ReadFile(filepath.Join(dir, ConfigFileName))
 	if err != nil {
 		cfg := DefaultConfig()

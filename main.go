@@ -24,7 +24,7 @@ var (
 	daemonFlag    bool
 	configDirFlag string
 	workspaceFlag string
-	rootCmd     = &cobra.Command{
+	rootCmd       = &cobra.Command{
 		Use:   "claude-squad",
 		Short: "Claude Squad - Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -33,12 +33,7 @@ var (
 			defer log.Close()
 
 			if daemonFlag {
-				var cfg *config.Config
-				if configDirFlag != "" {
-					cfg = config.LoadConfigFrom(configDirFlag)
-				} else {
-					cfg = config.LoadConfig()
-				}
+				cfg := config.LoadConfigFrom(configDirFlag)
 				err := daemon.RunDaemon(cfg, configDirFlag)
 				log.ErrorLog.Printf("failed to start daemon %v", err)
 				return err
@@ -81,12 +76,7 @@ var (
 			}
 
 			// Load config from resolved workspace context.
-			var cfg *config.Config
-			if wsCtx.ConfigDir != "" {
-				cfg = config.LoadConfigFrom(wsCtx.ConfigDir)
-			} else {
-				cfg = config.LoadConfig()
-			}
+			cfg := config.LoadConfigFrom(wsCtx.ConfigDir)
 
 			// Program flag overrides config
 			program := cfg.GetProgram()
@@ -110,7 +100,7 @@ var (
 				log.ErrorLog.Printf("failed to stop daemon: %v", err)
 			}
 
-			return app.Run(ctx, wsCtx, registry, program, autoYes)
+			return app.Run(ctx, wsCtx, registry, cfg, program, autoYes)
 		},
 	}
 

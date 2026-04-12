@@ -25,9 +25,10 @@ const GlobalInstanceLimit = 10
 // Run is the main entrypoint into the application.
 // wsCtx is the resolved workspace context; nil means global.
 // registry is passed through for the startup workspace picker.
-func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, program string, autoYes bool) error {
+// appConfig is the pre-loaded config from the resolved workspace directory.
+func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool) error {
 	p := tea.NewProgram(
-		newHome(ctx, wsCtx, registry, program, autoYes),
+		newHome(ctx, wsCtx, registry, appConfig, program, autoYes),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(), // Mouse scroll
 	)
@@ -111,8 +112,6 @@ type home struct {
 	confirmationOverlay *overlay.ConfirmationOverlay
 	// workspacePicker displays the workspace selection overlay
 	workspacePicker *overlay.WorkspacePicker
-	// workspaceName is the name of the current workspace (empty = global)
-	workspaceName string
 	// pendingAction stores the action to execute after confirmation
 	pendingAction tea.Cmd
 
@@ -120,6 +119,8 @@ type home struct {
 
 	// activeCtx is the WorkspaceContext for the currently focused workspace.
 	activeCtx *config.WorkspaceContext
+	// registry is the loaded workspace registry, retained for the picker flow.
+	registry *config.WorkspaceRegistry
 	// slots holds per-workspace state for all active workspaces
 	slots []workspaceSlot
 	// focusedSlot is the index into slots for the currently displayed workspace
@@ -131,25 +132,14 @@ type home struct {
 	lastHeight int
 }
 
-func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, program string, autoYes bool) *home {
-	// Determine config directory from workspace context.
+func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool) *home {
 	cfgDir := ""
 	if wsCtx != nil {
 		cfgDir = wsCtx.ConfigDir
 	}
 
-	// Load application config and state from the resolved workspace directory.
-	var appConfig *config.Config
-	var appState *config.State
-	if cfgDir != "" {
-		appConfig = config.LoadConfigFrom(cfgDir)
-		appState = config.LoadStateFrom(cfgDir)
-	} else {
-		appConfig = config.LoadConfig()
-		appState = config.LoadState()
-	}
+	appState := config.LoadStateFrom(cfgDir)
 
-	// Initialize storage
 	storage, err := session.NewStorage(appState, cfgDir)
 	if err != nil {
 		fmt.Printf("Failed to initialize storage: %v\n", err)
@@ -159,6 +149,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	h := &home{
 		ctx:          ctx,
 		activeCtx:    wsCtx,
+		registry:     registry,
 		spinner:      spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		menu:         ui.NewMenu(),
 		tabbedWindow: ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
@@ -171,24 +162,17 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		appState:     appState,
 		tabBar:       ui.NewWorkspaceTabBar(),
 	}
-	if wsCtx != nil {
-		h.workspaceName = wsCtx.Name
-	}
 	h.list = ui.NewList(&h.spinner, autoYes)
-	if h.workspaceName != "" {
-		h.list.SetWorkspaceName(h.workspaceName)
+	if wsCtx != nil && wsCtx.Name != "" {
+		h.list.SetWorkspaceName(wsCtx.Name)
 	}
 
-	// Load saved instances
 	instances, err := storage.LoadInstances()
 	if err != nil {
 		fmt.Printf("Failed to load instances: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Add loaded instances to the list
 	for _, instance := range instances {
-		// Call the finalizer immediately.
 		h.list.AddInstance(instance)()
 		if autoYes {
 			instance.AutoYes = true
@@ -632,8 +616,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 						return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 					}
 					m.loadSlot(0)
-					if reg, err := config.LoadWorkspaceRegistry(); err == nil {
-						_ = reg.UpdateLastUsed(selected.Name)
+					if m.registry != nil {
+						_ = m.registry.UpdateLastUsed(selected.Name)
 					}
 				}
 				// else: Global selected, keep current (global) state.
@@ -1075,9 +1059,14 @@ func (m *home) repoPath() string {
 	return cwd
 }
 
-// configDir returns the config directory for the active workspace context.
-// Returns empty string when no workspace is active (triggers fallback to GetConfigDir).
+// configDir returns the config directory for the focused workspace slot.
+// Mirrors repoPath() so both functions stay consistent if focusedSlot moves
+// out of sync with activeCtx. Returns empty string when no workspace is
+// active (triggers fallback to GetConfigDir).
 func (m *home) configDir() string {
+	if len(m.slots) > 0 && m.focusedSlot >= 0 && m.focusedSlot < len(m.slots) {
+		return m.slots[m.focusedSlot].wsCtx.ConfigDir
+	}
 	if m.activeCtx != nil {
 		return m.activeCtx.ConfigDir
 	}
@@ -1181,10 +1170,6 @@ func (m *home) loadSlot(idx int) {
 	m.storage = slot.storage
 	m.appConfig = slot.appConfig
 	m.appState = slot.appState
-	m.workspaceName = slot.wsCtx.Name
-	// Keep env var in sync for any code still using GetConfigDir() directly.
-	// Phase 2 will remove this once all paths use explicit context.
-	os.Setenv("CLAUDE_SQUAD_HOME", slot.wsCtx.ConfigDir)
 	m.list.SetWorkspaceName(slot.wsCtx.Name)
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 }

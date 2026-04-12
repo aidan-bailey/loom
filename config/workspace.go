@@ -229,7 +229,11 @@ func (r *WorkspaceRegistry) Rename(oldName, newName string) error {
 }
 
 // UpdateLastUsed sets the last used workspace and saves the registry.
+// Returns an error if no workspace with the given name exists.
 func (r *WorkspaceRegistry) UpdateLastUsed(name string) error {
+	if r.Get(name) == nil {
+		return fmt.Errorf("workspace %q not found", name)
+	}
 	r.LastUsed = name
 	return SaveWorkspaceRegistry(r)
 }
