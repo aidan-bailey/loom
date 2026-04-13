@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -25,8 +26,9 @@ var (
 	configDirFlag string
 	workspaceFlag string
 	rootCmd       = &cobra.Command{
-		Use:   "claude-squad",
+		Use:   "claude-squad [directory]",
 		Short: "Claude Squad - Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			log.Initialize(daemonFlag)
@@ -40,28 +42,60 @@ var (
 			}
 
 			// Resolve workspace context.
-			currentDir, err := filepath.Abs(".")
-			if err != nil {
-				return fmt.Errorf("failed to get current directory: %w", err)
-			}
-
 			registry, regErr := config.LoadWorkspaceRegistry()
 			if regErr != nil {
 				log.ErrorLog.Printf("failed to load workspace registry: %v", regErr)
 			}
 
 			var wsCtx *config.WorkspaceContext
-			if workspaceFlag != "" && regErr == nil {
+			var pendingDir string
+			if len(args) > 0 {
+				// Directory argument: open workspace at the given path.
+				dirPath, err := filepath.Abs(args[0])
+				if err != nil {
+					return fmt.Errorf("failed to resolve directory path: %w", err)
+				}
+				info, err := os.Stat(dirPath)
+				if err != nil {
+					return fmt.Errorf("cannot access %q: %w", dirPath, err)
+				}
+				if !info.IsDir() {
+					return fmt.Errorf("%q is not a directory", dirPath)
+				}
+				if !git.IsGitRepo(dirPath) {
+					return fmt.Errorf("%q is not a git repository", dirPath)
+				}
+				if regErr == nil {
+					if ws := registry.FindByPath(dirPath); ws != nil {
+						wsCtx = config.WorkspaceContextFor(ws)
+					} else {
+						// Unregistered directory: defer to TUI confirmation.
+						pendingDir = dirPath
+						wsCtx, err = config.GlobalWorkspaceContext()
+						if err != nil {
+							return fmt.Errorf("failed to get global config dir: %w", err)
+						}
+					}
+				} else {
+					return fmt.Errorf("failed to load workspace registry: %w", regErr)
+				}
+			} else if workspaceFlag != "" {
 				// Explicit workspace selection via --workspace flag.
+				if regErr != nil {
+					return fmt.Errorf("cannot use --workspace: %w", regErr)
+				}
 				ws := registry.Get(workspaceFlag)
 				if ws == nil {
 					return fmt.Errorf("workspace %q not found", workspaceFlag)
 				}
 				wsCtx = config.WorkspaceContextFor(ws)
 			} else {
-				wsCtx, err = config.ResolveWorkspace(currentDir, registry)
+				// No arg, no flag: use global context. The TUI will show the
+				// workspace picker if workspaces are registered.
+				var err error
+				wsCtx, err = config.GlobalWorkspaceContext()
 				if err != nil {
-					return fmt.Errorf("failed to resolve workspace: %w", err)
+					return fmt.Errorf("failed to get global config dir: %w", err)
 				}
 			}
 
@@ -70,8 +104,13 @@ var (
 				_ = registry.UpdateLastUsed(wsCtx.Name)
 			}
 
-			// Enforce git repo requirement only when no workspaces are registered.
-			if wsCtx.Name == "" && (regErr != nil || len(registry.Workspaces) == 0) && !git.IsGitRepo(currentDir) {
+			// Enforce git repo requirement only when no workspaces are registered
+			// and no directory arg was given.
+			currentDir, err := filepath.Abs(".")
+			if err != nil {
+				return fmt.Errorf("failed to get current directory: %w", err)
+			}
+			if pendingDir == "" && wsCtx.Name == "" && (regErr != nil || len(registry.Workspaces) == 0) && !git.IsGitRepo(currentDir) {
 				return fmt.Errorf("error: claude-squad must be run from within a git repository")
 			}
 
@@ -100,7 +139,7 @@ var (
 				log.ErrorLog.Printf("failed to stop daemon: %v", err)
 			}
 
-			return app.Run(ctx, wsCtx, registry, cfg, program, autoYes)
+			return app.Run(ctx, wsCtx, registry, cfg, program, autoYes, pendingDir)
 		},
 	}
 

@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,9 +27,9 @@ const GlobalInstanceLimit = 10
 // wsCtx is the resolved workspace context; nil means global.
 // registry is passed through for the startup workspace picker.
 // appConfig is the pre-loaded config from the resolved workspace directory.
-func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool) error {
+func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string) error {
 	p := tea.NewProgram(
-		newHome(ctx, wsCtx, registry, appConfig, program, autoYes),
+		newHome(ctx, wsCtx, registry, appConfig, program, autoYes, pendingDir),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(), // Mouse scroll
 	)
@@ -114,6 +115,8 @@ type home struct {
 	workspacePicker *overlay.WorkspacePicker
 	// pendingAction stores the action to execute after confirmation
 	pendingAction tea.Cmd
+	// pendingDir is the directory path awaiting workspace registration confirmation
+	pendingDir string
 
 	// -- Workspace slots --
 
@@ -132,7 +135,7 @@ type home struct {
 	lastHeight int
 }
 
-func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool) *home {
+func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string) *home {
 	cfgDir := ""
 	if wsCtx != nil {
 		cfgDir = wsCtx.ConfigDir
@@ -179,8 +182,30 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		}
 	}
 
-	// If we're in global context but workspaces exist, show the startup picker.
-	if wsCtx != nil && wsCtx.Name == "" && registry != nil && len(registry.Workspaces) > 0 {
+	if pendingDir != "" {
+		// Unregistered directory: show confirmation to register as workspace.
+		name := filepath.Base(pendingDir)
+		h.pendingDir = pendingDir
+		h.confirmationOverlay = overlay.NewConfirmationOverlay(
+			fmt.Sprintf("Register '%s' as workspace '%s'?", pendingDir, name))
+		h.confirmationOverlay.SetWidth(60)
+		h.state = stateConfirm
+		h.pendingAction = func() tea.Msg {
+			if err := h.registry.Add(name, pendingDir); err != nil {
+				return fmt.Errorf("failed to register workspace: %w", err)
+			}
+			return workspaceRegisteredMsg{dir: pendingDir}
+		}
+		h.confirmationOverlay.OnCancel = func() {
+			h.pendingAction = nil
+			// Fall back to workspace picker if workspaces exist.
+			if h.registry != nil && len(h.registry.Workspaces) > 0 {
+				h.workspacePicker = overlay.NewStartupWorkspacePicker(h.registry.Workspaces)
+				h.state = stateWorkspace
+			}
+		}
+	} else if wsCtx != nil && wsCtx.Name == "" && registry != nil && len(registry.Workspaces) > 0 {
+		// No directory arg, global context, workspaces exist: show picker.
 		h.workspacePicker = overlay.NewStartupWorkspacePicker(registry.Workspaces)
 		h.state = stateWorkspace
 	}
@@ -335,6 +360,18 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case instanceChangedMsg:
 		// Handle instance changed after confirmation action
 		return m, m.instanceChanged()
+	case workspaceRegisteredMsg:
+		ws := m.registry.FindByPath(msg.dir)
+		if ws == nil {
+			return m, m.handleError(fmt.Errorf("workspace not found after registration"))
+		}
+		if err := m.activateWorkspace(*ws); err != nil {
+			return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
+		}
+		m.activeCtx = config.WorkspaceContextFor(ws)
+		m.loadSlot(0)
+		_ = m.registry.UpdateLastUsed(ws.Name)
+		return m, tea.WindowSize()
 	case instanceStartedMsg:
 		// Select the instance that just started (or failed)
 		m.list.SelectInstance(msg.instance)
@@ -950,6 +987,11 @@ type tickUpdateMetadataMessage struct{}
 
 type instanceChangedMsg struct{}
 
+// workspaceRegisteredMsg is sent after a pending directory is registered as a workspace.
+type workspaceRegisteredMsg struct {
+	dir string
+}
+
 type instanceStartedMsg struct {
 	instance        *session.Instance
 	err             error
@@ -1306,6 +1348,13 @@ func (m *home) View() string {
 			log.ErrorLog.Printf("workspace picker is nil")
 			return mainView
 		}
+		if m.workspacePicker.IsStartup() {
+			// Fullscreen: centered picker on blank background.
+			return lipgloss.Place(m.lastWidth, m.lastHeight,
+				lipgloss.Center, lipgloss.Center,
+				m.workspacePicker.Render())
+		}
+		// Mid-session toggle: overlay on main view.
 		return overlay.PlaceOverlay(0, 0, m.workspacePicker.Render(), mainView, true, true)
 	}
 
