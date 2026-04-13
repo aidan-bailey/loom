@@ -10,7 +10,10 @@ Claude Squad is a terminal UI (TUI) for managing multiple AI coding agents (Clau
 
 ```bash
 # Build
-go build -o claude-squad
+CGO_ENABLED=0 go build -o claude-squad
+
+# Build & run via Nix (no dev shell needed)
+nix run .
 
 # Run tests
 go test -v ./...
@@ -54,16 +57,22 @@ claude-squad version  # Print version
 claude-squad workspace add [path]    # Register a git repo as a workspace
 claude-squad workspace list          # List registered workspaces
 claude-squad workspace remove <name> # Unregister a workspace
+claude-squad workspace use <name>    # Set default workspace
+claude-squad workspace rename <old> <new>  # Rename a workspace
+claude-squad workspace status [name] # Show instance counts
 claude-squad workspace migrate       # Migrate instances to workspaces
+
+# Select workspace explicitly
+claude-squad --workspace <name>
 ```
 
 ## Environment Variables
 
-- `CLAUDE_SQUAD_HOME` — Override config directory (default: `~/.claude-squad`). Must be absolute path; supports `~` expansion.
+- `CLAUDE_SQUAD_HOME` — Override config directory (default: `~/.claude-squad`). Must be absolute path; supports `~` expansion. Used as a backward-compatible fallback; internal code uses explicit `WorkspaceContext` threading.
 
 ## Detailed Specs
 
-- [Workspaces](docs/specs/workspaces.md) — workspace registration, isolation via `CLAUDE_SQUAD_HOME`, switching, and migration
+- [Workspaces](docs/specs/workspaces.md) — workspace registration, isolation via `WorkspaceContext`, switching, and migration
 
 ## Architecture
 
@@ -71,7 +80,7 @@ claude-squad workspace migrate       # Migrate instances to workspaces
 
 `main.go` (Cobra CLI) → `app/app.go` (Bubble Tea Model) → manages `session/instance.go` instances
 
-The app follows Bubble Tea's Model-View-Update pattern. The single-threaded event loop in `app/app.go` (~1075 lines) is the central orchestrator that handles all keyboard input, manages instance lifecycle, and coordinates UI updates. On startup, the app detects the current workspace or prompts the user to select one via the workspace picker overlay.
+The app follows Bubble Tea's Model-View-Update pattern. The single-threaded event loop in `app/app.go` (~1300 lines) is the central orchestrator that handles all keyboard input, manages instance lifecycle, and coordinates UI updates. On startup, the app detects the current workspace or prompts the user to select one via the workspace picker overlay.
 
 ### Key Packages
 
@@ -79,7 +88,7 @@ The app follows Bubble Tea's Model-View-Update pattern. The single-threaded even
 - **`session/`** — Core domain. `Instance` represents a running agent session with status lifecycle (Ready → Loading → Running → Paused). `storage.go` handles JSON serialization to `~/.claude-squad/instances.json`.
 - **`session/git/`** — Git worktree operations. Each session gets an isolated worktree in `~/.claude-squad/worktrees/`. Branches are named `{username}/{session_title}`. Handles setup, diff stats, push, and cleanup.
 - **`session/tmux/`** — Tmux session management. Creates/attaches terminal sessions, captures pane content, detects prompts (for auto-yes), sends keystrokes. Platform-specific files: `tmux_unix.go`, `tmux_windows.go`.
-- **`config/`** — Configuration (`config.json`), state (`state.json`), profiles, and workspace registry (`workspace.go`). Key interfaces: `InstanceStorage`, `AppState`, `StateManager`.
+- **`config/`** — Configuration (`config.json`), state (`state.json`), profiles, and workspace registry (`workspace.go`). Key types: `WorkspaceContext` (carries resolved config dir through the app), `InstanceStorage`, `AppState`, `StateManager`. `LoadConfigFrom("")`/`LoadStateFrom("")` accept empty string as "use default directory".
 - **`daemon/`** — Background auto-yes mode. Polls instances, detects prompts, auto-presses Enter. Platform-specific: `daemon_unix.go`, `daemon_windows.go`.
 - **`ui/`** — Bubble Tea view components. Left panel (`list.go`, 30% width), right panel (`tabbed_window.go`, 70% width) with preview/diff/terminal tabs. `ui/overlay/` has modal dialogs (text input, confirmation, branch picker, profile picker, workspace picker).
 - **`keys/`** — Keybinding definitions. Enum-based `KeyName` with global maps for lookup.
@@ -104,7 +113,7 @@ All stored in `~/.claude-squad/`:
 - `config.json` — user configuration: `DefaultProgram`, `AutoYes`, `DaemonPollInterval` (ms, default 1000), `BranchPrefix` (default: `{username}/`), `Profiles` (named program presets)
 - `state.json` — app state (e.g. help screens seen)
 - `instances.json` — serialized session data
-- `workspace_registry.json` — registered workspaces with name, path, and last-used tracking
+- `workspaces.json` — registered workspaces with name, path, and last-used tracking
 - `worktrees/` — git worktree directories
 
 ## Testing Patterns
