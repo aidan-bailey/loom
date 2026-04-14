@@ -71,6 +71,18 @@ var keyTypeSequences = map[tea.KeyType]string{
 	tea.KeyPgUp:   "\x1b[5~",
 	tea.KeyPgDown: "\x1b[6~",
 	tea.KeyDelete: "\x1b[3~",
+	tea.KeyInsert: "\x1b[2~",
+
+	// Modifier+arrow (xterm standard sequences)
+	tea.KeyShiftTab:   "\x1b[Z",
+	tea.KeyShiftUp:    "\x1b[1;2A",
+	tea.KeyShiftDown:  "\x1b[1;2B",
+	tea.KeyShiftRight: "\x1b[1;2C",
+	tea.KeyShiftLeft:  "\x1b[1;2D",
+	tea.KeyCtrlUp:     "\x1b[1;5A",
+	tea.KeyCtrlDown:   "\x1b[1;5B",
+	tea.KeyCtrlRight:  "\x1b[1;5C",
+	tea.KeyCtrlLeft:   "\x1b[1;5D",
 
 	// Function keys (standard xterm sequences)
 	tea.KeyF1:  "\x1bOP",

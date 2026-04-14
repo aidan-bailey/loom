@@ -116,6 +116,10 @@ func TestKeyMsgToBytes_AltKey(t *testing.T) {
 	// Alt+a should produce ESC followed by 'a'
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}, Alt: true}
 	assert.Equal(t, []byte{0x1B, 'a'}, keyMsgToBytes(msg))
+
+	// Alt+arrow should produce ESC + arrow sequence
+	msg = tea.KeyMsg{Type: tea.KeyUp, Alt: true}
+	assert.Equal(t, []byte("\x1b\x1b[A"), keyMsgToBytes(msg))
 }
 
 func TestKeyMsgToBytes_MultiByteRune(t *testing.T) {
@@ -124,8 +128,29 @@ func TestKeyMsgToBytes_MultiByteRune(t *testing.T) {
 	assert.Equal(t, []byte("日"), keyMsgToBytes(msg))
 }
 
-func TestKeyMsgToBytes_Unknown(t *testing.T) {
-	// KeyInsert is not in our mapping table, should return nil
+func TestKeyMsgToBytes_Insert(t *testing.T) {
 	msg := tea.KeyMsg{Type: tea.KeyInsert}
+	assert.Equal(t, []byte("\x1b[2~"), keyMsgToBytes(msg))
+}
+
+func TestKeyMsgToBytes_ShiftTab(t *testing.T) {
+	msg := tea.KeyMsg{Type: tea.KeyShiftTab}
+	assert.Equal(t, []byte("\x1b[Z"), keyMsgToBytes(msg))
+}
+
+func TestKeyMsgToBytes_ModifierArrows(t *testing.T) {
+	assert.Equal(t, []byte("\x1b[1;2A"), keyMsgToBytes(tea.KeyMsg{Type: tea.KeyShiftUp}))
+	assert.Equal(t, []byte("\x1b[1;5C"), keyMsgToBytes(tea.KeyMsg{Type: tea.KeyCtrlRight}))
+}
+
+func TestKeyMsgToBytes_SpaceNoRunes(t *testing.T) {
+	// KeySpace with empty Runes should still produce 0x20
+	msg := tea.KeyMsg{Type: tea.KeySpace}
+	assert.Equal(t, []byte{0x20}, keyMsgToBytes(msg))
+}
+
+func TestKeyMsgToBytes_Unknown(t *testing.T) {
+	// A truly unmapped key type should return nil
+	msg := tea.KeyMsg{Type: tea.KeyType(9999)}
 	assert.Nil(t, keyMsgToBytes(msg))
 }
