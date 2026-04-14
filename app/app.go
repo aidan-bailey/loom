@@ -327,7 +327,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Use faster tick during inline attach for responsive feedback
 		tickDuration := 100 * time.Millisecond
 		if m.state == stateInlineAttach {
-			tickDuration = 50 * time.Millisecond
+			tickDuration = 33 * time.Millisecond
 		}
 
 		cmds := []tea.Cmd{
