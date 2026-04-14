@@ -13,11 +13,15 @@ import (
 )
 
 const readyIcon = "● "
+const promptingIcon = "● "
 const pausedIcon = "⏸ "
 const workspaceTerminalIcon = "◆ "
 
 var readyStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
+
+var promptingStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.AdaptiveColor{Light: "#e5c07b", Dark: "#e5c07b"})
 
 var addedLinesStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
@@ -174,6 +178,8 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		// Workspace terminal always shows its distinct icon, plus spinner if running
 		if i.Status == session.Running || i.Status == session.Loading {
 			join = fmt.Sprintf("%s%s ", workspaceTerminalStyle.Render(workspaceTerminalIcon), r.spinner.View())
+		} else if i.Status == session.Prompting {
+			join = fmt.Sprintf("%s%s", workspaceTerminalStyle.Render(workspaceTerminalIcon), promptingStyle.Render(promptingIcon))
 		} else {
 			join = workspaceTerminalStyle.Render(workspaceTerminalIcon)
 		}
@@ -181,6 +187,8 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		switch i.Status {
 		case session.Running, session.Loading:
 			join = fmt.Sprintf("%s ", r.spinner.View())
+		case session.Prompting:
+			join = promptingStyle.Render(promptingIcon)
 		case session.Ready:
 			join = readyStyle.Render(readyIcon)
 		case session.Paused:
