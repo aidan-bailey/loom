@@ -353,6 +353,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				if prompt {
 					instance.TapEnter()
+					instance.SetStatus(session.Prompting)
 				} else {
 					instance.SetStatus(session.Ready)
 				}
@@ -1423,7 +1424,8 @@ func (m *home) updateTabBarPrompting() {
 			instances = slot.list.GetInstances()
 		}
 		for _, inst := range instances {
-			if inst.Started() && !inst.Paused() && inst.Status == session.Ready {
+			if inst.Started() && !inst.Paused() &&
+				(inst.Status == session.Prompting || inst.Status == session.Ready) {
 				prompting[i] = true
 				break
 			}

@@ -25,6 +25,8 @@ const (
 	Loading
 	// Paused is if the instance is paused (worktree removed but branch preserved).
 	Paused
+	// Prompting is when the agent is asking for user permission.
+	Prompting
 )
 
 // Instance is a running instance of claude code.
@@ -192,17 +194,17 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 	}
 
 	return &Instance{
-		Title:          opts.Title,
-		Status:         Ready,
-		Path:           absPath,
-		Program:        opts.Program,
-		Height:         0,
-		Width:          0,
-		CreatedAt:      t,
-		UpdatedAt:      t,
-		AutoYes:        false,
-		selectedBranch: opts.Branch,
-		ConfigDir:      opts.ConfigDir,
+		Title:               opts.Title,
+		Status:              Ready,
+		Path:                absPath,
+		Program:             opts.Program,
+		Height:              0,
+		Width:               0,
+		CreatedAt:           t,
+		UpdatedAt:           t,
+		AutoYes:             false,
+		selectedBranch:      opts.Branch,
+		ConfigDir:           opts.ConfigDir,
 		IsWorkspaceTerminal: opts.IsWorkspaceTerminal,
 	}, nil
 }
