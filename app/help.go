@@ -44,7 +44,8 @@ func (h helpTypeGeneral) toContent() string {
 		keyStyle.Render("N")+descStyle.Render("         - Create a new session with a prompt"),
 		keyStyle.Render("D")+descStyle.Render("         - Kill (delete) the selected session"),
 		keyStyle.Render("↑/j, ↓/k")+descStyle.Render("  - Navigate between sessions"),
-		keyStyle.Render("↵/o")+descStyle.Render("       - Attach to the selected session"),
+		keyStyle.Render("↵/o")+descStyle.Render("       - Inline attach: interact without leaving UI"),
+		keyStyle.Render("O")+descStyle.Render("         - Full-screen attach to session"),
 		keyStyle.Render("i")+descStyle.Render("         - Quick input: type and send to session"),
 		keyStyle.Render("ctrl-q")+descStyle.Render("    - Detach from session"),
 		"",
@@ -73,7 +74,8 @@ func (h helpTypeInstanceStart) toContent() string {
 			lipgloss.NewStyle().Bold(true).Render(h.instance.Program))),
 		"",
 		headerStyle.Render("Managing:"),
-		keyStyle.Render("↵/o")+descStyle.Render("   - Attach to the session to interact with it directly"),
+		keyStyle.Render("↵/o")+descStyle.Render("   - Inline attach: interact without leaving UI"),
+		keyStyle.Render("O")+descStyle.Render("     - Full-screen attach to session"),
 		keyStyle.Render("tab")+descStyle.Render("   - Switch preview panes to view session diff"),
 		keyStyle.Render("D")+descStyle.Render("     - Kill (delete) the selected session"),
 		"",
@@ -86,9 +88,9 @@ func (h helpTypeInstanceStart) toContent() string {
 
 func (h helpTypeInstanceAttach) toContent() string {
 	content := lipgloss.JoinVertical(lipgloss.Left,
-		titleStyle.Render("Attaching to Instance"),
+		titleStyle.Render("Full-Screen Attach"),
 		"",
-		descStyle.Render("To detach from a session, press ")+keyStyle.Render("ctrl-q"),
+		descStyle.Render("You are entering full-screen mode. Press ")+keyStyle.Render("ctrl-q")+descStyle.Render(" to detach."),
 	)
 	return content
 }

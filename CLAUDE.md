@@ -79,7 +79,8 @@ claude-squad --workspace <name>
 |-----|--------|
 | `n` | New instance |
 | `N` | New instance with prompt |
-| `enter`/`o` | Open/attach instance |
+| `enter`/`o` | Inline attach (interactive preview) |
+| `O` | Full-screen attach |
 | `r` | Resume paused instance |
 | `D` | Kill instance |
 | `p` | Push branch |
