@@ -31,6 +31,26 @@ var pausedStyle = lipgloss.NewStyle().
 var workspaceTerminalStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#6c71c4", Dark: "#6c71c4"})
 
+var wtTitleStyle = lipgloss.NewStyle().
+	Padding(1, 1, 0, 1).
+	Background(lipgloss.AdaptiveColor{Light: "#e8e0f0", Dark: "#2d2640"}).
+	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#c4b5d9"})
+
+var wtDescStyle = lipgloss.NewStyle().
+	Padding(0, 1, 1, 1).
+	Background(lipgloss.AdaptiveColor{Light: "#e8e0f0", Dark: "#2d2640"}).
+	Foreground(lipgloss.AdaptiveColor{Light: "#6c71c4", Dark: "#8a80b0"})
+
+var wtSelectedTitleStyle = lipgloss.NewStyle().
+	Padding(1, 1, 0, 1).
+	Background(lipgloss.AdaptiveColor{Light: "#d0c4e8", Dark: "#3d3260"}).
+	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#e0d4f0"})
+
+var wtSelectedDescStyle = lipgloss.NewStyle().
+	Padding(0, 1, 1, 1).
+	Background(lipgloss.AdaptiveColor{Light: "#d0c4e8", Dark: "#3d3260"}).
+	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#c4b5d9"})
+
 var titleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
 	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#dddddd"})
@@ -131,9 +151,19 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	if idx >= 10 {
 		prefix = prefix[:len(prefix)-1]
 	}
-	titleS := selectedTitleStyle
-	descS := selectedDescStyle
-	if !selected {
+	var titleS, descS lipgloss.Style
+	if i.IsWorkspaceTerminal {
+		if selected {
+			titleS = wtSelectedTitleStyle
+			descS = wtSelectedDescStyle
+		} else {
+			titleS = wtTitleStyle
+			descS = wtDescStyle
+		}
+	} else if selected {
+		titleS = selectedTitleStyle
+		descS = selectedDescStyle
+	} else {
 		titleS = titleStyle
 		descS = listDescStyle
 	}
