@@ -225,8 +225,10 @@ func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
 		contentWithFooter := lipgloss.JoinVertical(lipgloss.Left, content, footer)
 		p.viewport.SetContent(contentWithFooter)
 
-		// Position the viewport at the bottom initially
+		// Position the viewport at the bottom and scroll up so the user
+		// sees history and AtBottom() returns false (preventing auto-exit).
 		p.viewport.GotoBottom()
+		p.viewport.LineUp(1)
 
 		p.isScrolling = true
 		return nil

@@ -350,7 +350,10 @@ func (t *TerminalPane) enterScrollMode() error {
 	footer := terminalFooterStyle.Render("ESC to exit scroll mode")
 	contentWithFooter := lipgloss.JoinVertical(lipgloss.Left, content, footer)
 	t.viewport.SetContent(contentWithFooter)
+	// Position at the bottom and scroll up so the user sees history
+	// and AtBottom() returns false (preventing auto-exit).
 	t.viewport.GotoBottom()
+	t.viewport.LineUp(1)
 	t.isScrolling = true
 	return nil
 }
