@@ -30,6 +30,13 @@ golangci-lint run --timeout=3m --fast
 
 # Version bump (updates main.go)
 ./bump-version.sh <version>
+
+# Cleanup scripts
+./clean.sh        # Kill tmux server, remove worktrees and ~/.claude-squad/
+./clean_hard.sh   # Same as clean.sh + git worktree prune
+
+# Install (adds ~/.local/bin to PATH)
+./install.sh
 ```
 
 CGO is disabled for builds (`CGO_ENABLED=0`). Go version is 1.23.0 (toolchain go1.24.1).
@@ -66,13 +73,35 @@ claude-squad workspace migrate       # Migrate instances to workspaces
 claude-squad --workspace <name>
 ```
 
+## TUI Keybindings
+
+| Key | Action |
+|-----|--------|
+| `n` | New instance |
+| `N` | New instance with prompt |
+| `enter`/`o` | Open/attach instance |
+| `r` | Resume paused instance |
+| `D` | Kill instance |
+| `p` | Push branch |
+| `c` | Checkout branch |
+| `i` | Quick input bar (send text to agent's tmux session) |
+| `tab` | Switch tab (preview/diff/terminal) |
+| `up`/`k`, `down`/`j` | Navigate list |
+| `shift+up`/`shift+down` | Scroll diff/preview |
+| `W` | Workspace picker |
+| `[`/`]` | Previous/next workspace tab |
+| `?` | Help |
+| `q` | Quit |
+
 ## Environment Variables
 
 - `CLAUDE_SQUAD_HOME` — Override config directory (default: `~/.claude-squad`). Must be absolute path; supports `~` expansion. Used as a backward-compatible fallback; internal code uses explicit `WorkspaceContext` threading.
 
-## Detailed Specs
+## Documentation
 
-- [Workspaces](docs/specs/workspaces.md) — workspace registration, isolation via `WorkspaceContext`, switching, and migration
+- [USAGE.md](USAGE.md) — comprehensive TUI guide and CLI reference
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution guidelines
+- [docs/specs/workspaces.md](docs/specs/workspaces.md) — workspace registration, isolation via `WorkspaceContext`, switching, and migration
 
 ## Architecture
 
@@ -80,7 +109,7 @@ claude-squad --workspace <name>
 
 `main.go` (Cobra CLI) → `app/app.go` (Bubble Tea Model) → manages `session/instance.go` instances
 
-The app follows Bubble Tea's Model-View-Update pattern. The single-threaded event loop in `app/app.go` (~1300 lines) is the central orchestrator that handles all keyboard input, manages instance lifecycle, and coordinates UI updates. On startup, the app detects the current workspace or prompts the user to select one via the workspace picker overlay.
+The app follows Bubble Tea's Model-View-Update pattern. The single-threaded event loop in `app/app.go` (~1500 lines) is the central orchestrator that handles all keyboard input, manages instance lifecycle, and coordinates UI updates. On startup, the app detects the current workspace or prompts the user to select one via the workspace picker overlay.
 
 ### Key Packages
 
@@ -90,7 +119,7 @@ The app follows Bubble Tea's Model-View-Update pattern. The single-threaded even
 - **`session/tmux/`** — Tmux session management. Creates/attaches terminal sessions, captures pane content, detects prompts (for auto-yes), sends keystrokes. Platform-specific files: `tmux_unix.go`, `tmux_windows.go`.
 - **`config/`** — Configuration (`config.json`), state (`state.json`), profiles, and workspace registry (`workspace.go`). Key types: `WorkspaceContext` (carries resolved config dir through the app), `InstanceStorage`, `AppState`, `StateManager`. `LoadConfigFrom("")`/`LoadStateFrom("")` accept empty string as "use default directory".
 - **`daemon/`** — Background auto-yes mode. Polls instances, detects prompts, auto-presses Enter. Platform-specific: `daemon_unix.go`, `daemon_windows.go`.
-- **`ui/`** — Bubble Tea view components. Left panel (`list.go`, 30% width), right panel (`tabbed_window.go`, 70% width) with preview/diff/terminal tabs. `ui/overlay/` has modal dialogs (text input, confirmation, branch picker, profile picker, workspace picker).
+- **`ui/`** — Bubble Tea view components. Left panel (`list.go`, 30% width), right panel (`tabbed_window.go`, 70% width) with preview/diff/terminal tabs. `quick_input.go` provides an inline input bar for sending text to tmux. `workspace_tab_bar.go` renders workspace tabs. `ui/overlay/` has modal dialogs (text input, confirmation, branch picker, profile picker, workspace picker).
 - **`keys/`** — Keybinding definitions. Enum-based `KeyName` with global maps for lookup.
 - **`cmd/`** — `Executor` interface wrapping `os/exec` for testability.
 - **`log/`** — Centralized logging to `$TMPDIR/claudesquad.log` with Info/Warning/Error loggers and rate limiting.
@@ -106,6 +135,8 @@ Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent act
 4. **Pause**: Commits changes, kills tmux session, removes worktree (branch preserved) → status: Paused
 5. **Resume**: Recreates worktree from branch, starts new tmux session → status: Running
 6. **Kill**: Cleans up worktree, tmux session, and branch; instance removed from storage
+
+**Workspace Terminals**: A special instance type (`IsWorkspaceTerminal: true`) that runs directly in the root repo without a worktree. Cannot be paused/resumed. Diff tracking shows uncommitted changes in the root repo.
 
 ### Persistent State
 
@@ -131,3 +162,12 @@ All stored in `~/.claude-squad/`:
 - Platform-specific code in `_unix.go` / `_windows.go` suffixed files
 - Private struct fields, public methods (PascalCase)
 - Minimal goroutine usage; concurrency mainly in tmux monitoring and daemon polling
+
+## CI/CD
+
+GitHub Actions workflows in `.github/workflows/`:
+- **build.yml** — Build and test on push/PR to main (triggered by Go file changes)
+- **lint.yml** — golangci-lint on Go code changes
+- **release.yml** — Build and publish artifacts on version tags (`v*`)
+- **deploy-pages.yml** — Deploy Next.js marketing site when `web/` changes
+- **cla.yml** — CLA enforcement for pull requests
