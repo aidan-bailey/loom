@@ -132,14 +132,22 @@ func (m *Menu) addInstanceOptions() {
 	}
 
 	// Instance management group
-	options := []keys.KeyName{keys.KeyNew, keys.KeyKill}
+	options := []keys.KeyName{keys.KeyNew}
+	if !m.instance.IsWorkspaceTerminal {
+		options = append(options, keys.KeyKill)
+	}
 
 	// Action group
-	actionGroup := []keys.KeyName{keys.KeyEnter, keys.KeyQuickInteract, keys.KeySubmit}
-	if m.instance.Status == session.Paused {
-		actionGroup = append(actionGroup, keys.KeyResume)
-	} else {
-		actionGroup = append(actionGroup, keys.KeyCheckout)
+	actionGroup := []keys.KeyName{keys.KeyEnter, keys.KeyQuickInteract}
+	if !m.instance.IsWorkspaceTerminal {
+		actionGroup = append(actionGroup, keys.KeySubmit)
+	}
+	if !m.instance.IsWorkspaceTerminal {
+		if m.instance.Status == session.Paused {
+			actionGroup = append(actionGroup, keys.KeyResume)
+		} else {
+			actionGroup = append(actionGroup, keys.KeyCheckout)
+		}
 	}
 
 	// Navigation group (when in diff tab)

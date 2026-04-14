@@ -14,6 +14,7 @@ import (
 
 const readyIcon = "● "
 const pausedIcon = "⏸ "
+const workspaceTerminalIcon = "◆ "
 
 var readyStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
@@ -26,6 +27,9 @@ var removedLinesStyle = lipgloss.NewStyle().
 
 var pausedStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#888888"})
+
+var workspaceTerminalStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.AdaptiveColor{Light: "#6c71c4", Dark: "#6c71c4"})
 
 var titleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
@@ -136,14 +140,23 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 
 	// add spinner next to title if it's running
 	var join string
-	switch i.Status {
-	case session.Running, session.Loading:
-		join = fmt.Sprintf("%s ", r.spinner.View())
-	case session.Ready:
-		join = readyStyle.Render(readyIcon)
-	case session.Paused:
-		join = pausedStyle.Render(pausedIcon)
-	default:
+	if i.IsWorkspaceTerminal {
+		// Workspace terminal always shows its distinct icon, plus spinner if running
+		if i.Status == session.Running || i.Status == session.Loading {
+			join = fmt.Sprintf("%s%s ", workspaceTerminalStyle.Render(workspaceTerminalIcon), r.spinner.View())
+		} else {
+			join = workspaceTerminalStyle.Render(workspaceTerminalIcon)
+		}
+	} else {
+		switch i.Status {
+		case session.Running, session.Loading:
+			join = fmt.Sprintf("%s ", r.spinner.View())
+		case session.Ready:
+			join = readyStyle.Render(readyIcon)
+		case session.Paused:
+			join = pausedStyle.Render(pausedIcon)
+		default:
+		}
 	}
 
 	// Cut the title if it's too long
@@ -263,9 +276,15 @@ func (l *List) String() string {
 	b.WriteString("\n")
 	b.WriteString("\n")
 
-	// Render the list.
+	// Render the list. Workspace terminal at index 0 gets number 0,
+	// regular instances are numbered starting from 1.
+	wsOffset := 0
+	if len(l.items) > 0 && l.items[0].IsWorkspaceTerminal {
+		wsOffset = 1
+	}
 	for i, item := range l.items {
-		b.WriteString(l.renderer.Render(item, i+1, i == l.selectedIdx, len(l.repos) > 1))
+		num := i + 1 - wsOffset
+		b.WriteString(l.renderer.Render(item, num, i == l.selectedIdx, len(l.repos) > 1))
 		if i != len(l.items)-1 {
 			b.WriteString("\n\n")
 		}
@@ -283,12 +302,15 @@ func (l *List) Down() {
 	}
 }
 
-// Kill selects the next item in the list.
+// Kill removes the selected instance from the list.
 func (l *List) Kill() {
 	if len(l.items) == 0 {
 		return
 	}
 	targetInstance := l.items[l.selectedIdx]
+	if targetInstance.IsWorkspaceTerminal {
+		return
+	}
 
 	// Kill the tmux session
 	if err := targetInstance.Kill(); err != nil {
@@ -352,7 +374,12 @@ func (l *List) rmRepo(repo string) {
 // is started. If the instance was restored from storage or is paused, you can call the finalizer immediately.
 // When creating a new one and entering the name, you want to call the finalizer once the name is done.
 func (l *List) AddInstance(instance *session.Instance) (finalize func()) {
-	l.items = append(l.items, instance)
+	// Workspace terminals are always pinned at index 0
+	if instance.IsWorkspaceTerminal {
+		l.items = append([]*session.Instance{instance}, l.items...)
+	} else {
+		l.items = append(l.items, instance)
+	}
 	// The finalizer registers the repo name once the instance is started.
 	return func() {
 		repoName, err := instance.RepoName()

@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -20,6 +21,49 @@ type DiffStats struct {
 
 func (d *DiffStats) IsEmpty() bool {
 	return d.Added == 0 && d.Removed == 0 && d.Content == ""
+}
+
+// CurrentBranch returns the current branch name for the given repo directory.
+func CurrentBranch(repoPath string) (string, error) {
+	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse failed: %s (%w)", output, err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// DiffUncommitted returns the diff of uncommitted changes in the given repo directory.
+// Used for workspace terminals that operate on the root repo without a worktree.
+func DiffUncommitted(repoPath string) *DiffStats {
+	stats := &DiffStats{}
+
+	// Stage untracked files (intent to add) so they appear in the diff
+	cmd := exec.Command("git", "-C", repoPath, "add", "-N", ".")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		stats.Error = fmt.Errorf("git add -N failed: %s (%w)", output, err)
+		return stats
+	}
+
+	cmd = exec.Command("git", "-C", repoPath, "--no-pager", "diff", "HEAD")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		stats.Error = fmt.Errorf("git diff failed: %s (%w)", output, err)
+		return stats
+	}
+
+	content := string(output)
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			stats.Added++
+		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			stats.Removed++
+		}
+	}
+	stats.Content = content
+
+	return stats
 }
 
 // Diff returns the git diff between the worktree and the base branch along with statistics

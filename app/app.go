@@ -179,10 +179,35 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		fmt.Printf("Failed to load instances: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Check if a workspace terminal already exists in loaded instances
+	hasWorkspaceTerminal := false
 	for _, instance := range instances {
+		if instance.IsWorkspaceTerminal {
+			hasWorkspaceTerminal = true
+		}
 		h.list.AddInstance(instance)()
 		if autoYes {
 			instance.AutoYes = true
+		}
+	}
+
+	// Auto-create workspace terminal if in a workspace context and none exists
+	if !hasWorkspaceTerminal && wsCtx != nil && wsCtx.RepoPath != "" {
+		wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
+			Title:               "Workspace Terminal",
+			Path:                wsCtx.RepoPath,
+			Program:             program,
+			IsWorkspaceTerminal: true,
+			ConfigDir:           cfgDir,
+		})
+		if wtErr != nil {
+			log.ErrorLog.Printf("failed to create workspace terminal: %v", wtErr)
+		} else {
+			h.list.AddInstance(wtInstance)()
+			if err := wtInstance.Start(true); err != nil {
+				log.ErrorLog.Printf("failed to start workspace terminal: %v", err)
+			}
 		}
 	}
 
@@ -847,7 +872,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.instanceChanged()
 	case keys.KeyKill:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading {
+		if selected == nil || selected.Status == session.Loading || selected.IsWorkspaceTerminal {
 			return m, nil
 		}
 
@@ -886,7 +911,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.confirmAction(message, killAction)
 	case keys.KeySubmit:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading {
+		if selected == nil || selected.Status == session.Loading || selected.IsWorkspaceTerminal {
 			return m, nil
 		}
 
@@ -909,7 +934,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.confirmAction(message, pushAction)
 	case keys.KeyCheckout:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading {
+		if selected == nil || selected.Status == session.Loading || selected.IsWorkspaceTerminal {
 			return m, nil
 		}
 
@@ -924,7 +949,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, nil
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading {
+		if selected == nil || selected.Status == session.Loading || selected.IsWorkspaceTerminal {
 			return m, nil
 		}
 		if err := selected.Resume(); err != nil {

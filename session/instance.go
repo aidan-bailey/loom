@@ -53,6 +53,8 @@ type Instance struct {
 	Prompt string
 	// ConfigDir is the workspace config directory for worktree resolution.
 	ConfigDir string
+	// IsWorkspaceTerminal is true if this instance operates in the root repo without a worktree.
+	IsWorkspaceTerminal bool
 
 	// DiffStats stores the current git diff statistics
 	diffStats *git.DiffStats
@@ -72,16 +74,17 @@ type Instance struct {
 // ToInstanceData converts an Instance to its serializable form
 func (i *Instance) ToInstanceData() InstanceData {
 	data := InstanceData{
-		Title:     i.Title,
-		Path:      i.Path,
-		Branch:    i.Branch,
-		Status:    i.Status,
-		Height:    i.Height,
-		Width:     i.Width,
-		CreatedAt: i.CreatedAt,
-		UpdatedAt: time.Now(),
-		Program:   i.Program,
-		AutoYes:   i.AutoYes,
+		Title:               i.Title,
+		Path:                i.Path,
+		Branch:              i.Branch,
+		Status:              i.Status,
+		Height:              i.Height,
+		Width:               i.Width,
+		CreatedAt:           i.CreatedAt,
+		UpdatedAt:           time.Now(),
+		Program:             i.Program,
+		AutoYes:             i.AutoYes,
+		IsWorkspaceTerminal: i.IsWorkspaceTerminal,
 	}
 
 	// Only include worktree data if gitWorktree is initialized
@@ -112,18 +115,23 @@ func (i *Instance) ToInstanceData() InstanceData {
 // configDir is injected into the instance for workspace-scoped worktree resolution.
 func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 	instance := &Instance{
-		Title:     data.Title,
-		Path:      data.Path,
-		Branch:    data.Branch,
-		Status:    data.Status,
-		Height:    data.Height,
-		Width:     data.Width,
-		CreatedAt: data.CreatedAt,
-		UpdatedAt: data.UpdatedAt,
-		Program:   data.Program,
-		AutoYes:   data.AutoYes,
-		ConfigDir: configDir,
-		gitWorktree: git.NewGitWorktreeFromStorage(
+		Title:               data.Title,
+		Path:                data.Path,
+		Branch:              data.Branch,
+		Status:              data.Status,
+		Height:              data.Height,
+		Width:               data.Width,
+		CreatedAt:           data.CreatedAt,
+		UpdatedAt:           data.UpdatedAt,
+		Program:             data.Program,
+		AutoYes:             data.AutoYes,
+		ConfigDir:           configDir,
+		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
+	}
+
+	// Workspace terminals don't use git worktrees
+	if !data.IsWorkspaceTerminal {
+		instance.gitWorktree = git.NewGitWorktreeFromStorage(
 			data.Worktree.RepoPath,
 			data.Worktree.WorktreePath,
 			data.Worktree.SessionName,
@@ -131,7 +139,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 			data.Worktree.BaseCommitSHA,
 			data.Worktree.IsExistingBranch,
 			configDir,
-		),
+		)
 	}
 
 	// Only restore DiffStats if any field is non-zero, preserving nil for
@@ -170,6 +178,8 @@ type InstanceOptions struct {
 	Branch string
 	// ConfigDir is the workspace config directory for worktree resolution.
 	ConfigDir string
+	// IsWorkspaceTerminal creates a workspace terminal instance (no worktree).
+	IsWorkspaceTerminal bool
 }
 
 func NewInstance(opts InstanceOptions) (*Instance, error) {
@@ -190,13 +200,17 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		Width:          0,
 		CreatedAt:      t,
 		UpdatedAt:      t,
-		AutoYes:        false,
-		selectedBranch: opts.Branch,
-		ConfigDir:      opts.ConfigDir,
+		AutoYes:             false,
+		selectedBranch:      opts.Branch,
+		ConfigDir:           opts.ConfigDir,
+		IsWorkspaceTerminal: opts.IsWorkspaceTerminal,
 	}, nil
 }
 
 func (i *Instance) RepoName() (string, error) {
+	if i.IsWorkspaceTerminal {
+		return filepath.Base(i.Path), nil
+	}
 	if !i.started {
 		return "", fmt.Errorf("cannot get repo name for instance that has not been started")
 	}
@@ -228,7 +242,8 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	}
 	i.tmuxSession = tmuxSession
 
-	if firstTimeSetup {
+	// Workspace terminals skip worktree creation entirely
+	if firstTimeSetup && !i.IsWorkspaceTerminal {
 		if i.selectedBranch != "" {
 			gitWorktree, err := git.NewGitWorktreeFromBranch(i.Path, i.selectedBranch, i.Title, i.ConfigDir)
 			if err != nil {
@@ -262,6 +277,12 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		// Reuse existing session
 		if err := tmuxSession.Restore(); err != nil {
 			setupErr = fmt.Errorf("failed to restore existing session: %w", err)
+			return setupErr
+		}
+	} else if i.IsWorkspaceTerminal {
+		// Workspace terminal: start tmux directly in root repo, no worktree
+		if err := i.tmuxSession.Start(i.Path); err != nil {
+			setupErr = fmt.Errorf("failed to start workspace terminal session: %w", err)
 			return setupErr
 		}
 	} else {
@@ -304,8 +325,8 @@ func (i *Instance) Kill() error {
 		}
 	}
 
-	// Then clean up git worktree
-	if i.gitWorktree != nil {
+	// Then clean up git worktree (workspace terminals don't have one)
+	if i.gitWorktree != nil && !i.IsWorkspaceTerminal {
 		if err := i.gitWorktree.Cleanup(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup git worktree: %w", err))
 		}
@@ -394,8 +415,12 @@ func (i *Instance) GetGitWorktree() (*git.GitWorktree, error) {
 	return i.gitWorktree, nil
 }
 
-// GetWorktreePath returns the worktree path for the instance, or empty string if unavailable
+// GetWorktreePath returns the worktree path for the instance, or empty string if unavailable.
+// For workspace terminals, returns the root repo path.
 func (i *Instance) GetWorktreePath() string {
+	if i.IsWorkspaceTerminal {
+		return i.Path
+	}
 	if i.gitWorktree == nil {
 		return ""
 	}
@@ -430,6 +455,9 @@ func (i *Instance) TmuxAlive() bool {
 
 // Pause stops the tmux session and removes the worktree, preserving the branch
 func (i *Instance) Pause() error {
+	if i.IsWorkspaceTerminal {
+		return fmt.Errorf("cannot pause workspace terminal")
+	}
 	if !i.started {
 		return fmt.Errorf("cannot pause instance that has not been started")
 	}
@@ -489,6 +517,9 @@ func (i *Instance) Pause() error {
 
 // Resume recreates the worktree and restarts the tmux session
 func (i *Instance) Resume() error {
+	if i.IsWorkspaceTerminal {
+		return fmt.Errorf("cannot resume workspace terminal")
+	}
 	if !i.started {
 		return fmt.Errorf("cannot resume instance that has not been started")
 	}
@@ -560,7 +591,16 @@ func (i *Instance) UpdateDiffStats() error {
 		return nil
 	}
 
-	stats := i.gitWorktree.Diff()
+	var stats *git.DiffStats
+	if i.IsWorkspaceTerminal {
+		// Refresh the current branch name for the root repo
+		if branch, err := git.CurrentBranch(i.Path); err == nil {
+			i.Branch = branch
+		}
+		stats = git.DiffUncommitted(i.Path)
+	} else {
+		stats = i.gitWorktree.Diff()
+	}
 	if stats.Error != nil {
 		if strings.Contains(stats.Error.Error(), "base commit SHA not set") {
 			// Worktree is not fully set up yet, not an error
