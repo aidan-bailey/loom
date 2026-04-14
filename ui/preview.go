@@ -16,9 +16,10 @@ type PreviewPane struct {
 	width  int
 	height int
 
-	previewState previewState
-	isScrolling  bool
-	viewport     viewport.Model
+	previewState      previewState
+	isScrolling       bool
+	viewport          viewport.Model
+	lastInstanceTitle string // tracks the current instance to reset scroll on change
 }
 
 type previewState struct {
@@ -51,6 +52,27 @@ func (p *PreviewPane) setFallbackState(message string) {
 
 // Updates the preview pane content with the tmux pane content
 func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
+	// Reset scroll mode when the selected instance changes.
+	newTitle := ""
+	if instance != nil {
+		newTitle = instance.Title
+	}
+	if newTitle != p.lastInstanceTitle {
+		p.lastInstanceTitle = newTitle
+		if p.isScrolling {
+			p.isScrolling = false
+			p.viewport.SetContent("")
+			p.viewport.GotoTop()
+		}
+	}
+
+	// Auto-exit scroll mode when viewport is at the bottom (back to live output).
+	if p.isScrolling && p.viewport.AtBottom() {
+		p.isScrolling = false
+		p.viewport.SetContent("")
+		p.viewport.GotoTop()
+	}
+
 	switch {
 	case instance == nil:
 		p.setFallbackState("No agents running yet. Spin up a new instance with 'n' to get started!")
@@ -72,9 +94,6 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 					instance.Branch,
 				)),
 		))
-		return nil
-	case instance.Status == session.Loading:
-		p.setFallbackState("Setting up workspace...")
 		return nil
 	}
 
@@ -206,8 +225,10 @@ func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
 		contentWithFooter := lipgloss.JoinVertical(lipgloss.Left, content, footer)
 		p.viewport.SetContent(contentWithFooter)
 
-		// Position the viewport at the bottom initially
+		// Position the viewport at the bottom and scroll up so the user
+		// sees history and AtBottom() returns false (preventing auto-exit).
 		p.viewport.GotoBottom()
+		p.viewport.LineUp(1)
 
 		p.isScrolling = true
 		return nil
@@ -225,28 +246,11 @@ func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
 	}
 
 	if !p.isScrolling {
-		// Entering scroll mode - capture entire pane content including scrollback history
-		content, err := instance.PreviewFullHistory()
-		if err != nil {
-			return err
-		}
-
-		// Set content in the viewport
-		footer := lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"}).
-			Render("ESC to exit scroll mode")
-
-		contentWithFooter := lipgloss.JoinVertical(lipgloss.Left, content, footer)
-		p.viewport.SetContent(contentWithFooter)
-
-		// Position the viewport at the bottom initially
-		p.viewport.GotoBottom()
-
-		p.isScrolling = true
+		// Already showing latest content, nothing to scroll down to.
 		return nil
 	}
 
-	// Already in copy mode, just scroll the viewport
+	// Already in scroll mode, just scroll the viewport
 	p.viewport.LineDown(1)
 	return nil
 }
