@@ -88,6 +88,13 @@ func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 		return nil
 	}
 
+	// Reset scroll mode when the selected instance changes.
+	if instance.Title != t.currentTitle && t.isScrolling {
+		t.isScrolling = false
+		t.viewport.SetContent("")
+		t.viewport.GotoTop()
+	}
+
 	// Skip content updates while in scroll mode
 	if t.isScrolling {
 		return nil
