@@ -660,3 +660,11 @@ func (i *Instance) SendKeys(keys string) error {
 	}
 	return i.tmuxSession.SendKeys(keys)
 }
+
+// SendKeysRaw writes raw bytes to the tmux PTY. Used by inline attach mode.
+func (i *Instance) SendKeysRaw(b []byte) error {
+	if !i.started || i.tmuxSession == nil {
+		return fmt.Errorf("instance not started or tmux session not initialized")
+	}
+	return i.tmuxSession.SendKeysRaw(b)
+}

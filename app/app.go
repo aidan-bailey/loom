@@ -23,6 +23,10 @@ import (
 
 const GlobalInstanceLimit = 10
 
+var inlineAttachHintStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}).
+	Bold(true)
+
 // Run is the main entrypoint into the application.
 // wsCtx is the resolved workspace context; nil means global.
 // registry is passed through for the startup workspace picker.
@@ -269,6 +273,8 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
 		quickInputHeight = m.quickInputBar.Height()
 		m.quickInputBar.SetWidth(ui.AdjustPreviewWidth(tabsWidth))
+	} else if m.state == stateInlineAttach {
+		quickInputHeight = 1 // hint takes 1 line
 	}
 	m.tabbedWindow.SetSize(tabsWidth, contentHeight-quickInputHeight)
 	m.list.SetSize(listWidth, contentHeight)
@@ -305,11 +311,27 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hideErrMsg:
 		m.errBox.Clear()
 	case previewTickMsg:
+		// Check if inline-attached instance is still alive
+		if m.state == stateInlineAttach {
+			selected := m.list.GetSelectedInstance()
+			if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+				m.state = stateDefault
+				m.menu.SetState(ui.StateDefault)
+			}
+		}
+
 		cmd := m.instanceChanged()
+
+		// Use faster tick during inline attach for responsive feedback
+		tickDuration := 100 * time.Millisecond
+		if m.state == stateInlineAttach {
+			tickDuration = 50 * time.Millisecond
+		}
+
 		return m, tea.Batch(
 			cmd,
 			func() tea.Msg {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(tickDuration)
 				return previewTickMsg{}
 			},
 		)
@@ -690,6 +712,31 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, m.scheduleBranchSearch(filter, version)
 		}
 
+		return m, nil
+	}
+
+	if m.state == stateInlineAttach {
+		selected := m.list.GetSelectedInstance()
+		if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+			m.state = stateDefault
+			m.menu.SetState(ui.StateDefault)
+			return m, tea.WindowSize()
+		}
+
+		// Ctrl+Q exits inline attach
+		if msg.Type == tea.KeyCtrlQ {
+			m.state = stateDefault
+			m.menu.SetState(ui.StateDefault)
+			return m, tea.WindowSize()
+		}
+
+		// Convert key to bytes and forward to tmux
+		b := keyMsgToBytes(msg)
+		if b != nil {
+			if err := selected.SendKeysRaw(b); err != nil {
+				log.ErrorLog.Printf("inline attach send error: %v", err)
+			}
+		}
 		return m, nil
 	}
 
@@ -1460,6 +1507,9 @@ func (m *home) View() string {
 	rightContent := m.tabbedWindow.String()
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
 		rightContent = lipgloss.JoinVertical(lipgloss.Left, rightContent, m.quickInputBar.View())
+	} else if m.state == stateInlineAttach {
+		hint := inlineAttachHintStyle.Render("Ctrl+Q to detach · O for fullscreen")
+		rightContent = lipgloss.JoinVertical(lipgloss.Left, rightContent, hint)
 	}
 	previewWithPadding := lipgloss.NewStyle().PaddingTop(1).Render(rightContent)
 	listAndPreview := lipgloss.JoinHorizontal(lipgloss.Top, listWithPadding, previewWithPadding)

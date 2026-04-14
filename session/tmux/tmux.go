@@ -233,6 +233,12 @@ func (t *TmuxSession) SendKeys(keys string) error {
 	return err
 }
 
+// SendKeysRaw writes raw bytes directly to the tmux PTY.
+func (t *TmuxSession) SendKeysRaw(b []byte) error {
+	_, err := t.ptmx.Write(b)
+	return err
+}
+
 // HasUpdated checks if the tmux pane content has changed since the last tick. It also returns true if
 // the tmux pane has a prompt for aider or claude code.
 func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
