@@ -49,6 +49,26 @@ func TestSanitizeName(t *testing.T) {
 	require.Equal(t, TmuxPrefix+"asdf__asdf", session.sanitizedName)
 }
 
+func TestCaptureAndProcessCapturesOnce(t *testing.T) {
+	captureCount := 0
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			if strings.Contains(c.String(), "capture-pane") {
+				captureCount++
+				return []byte("some output"), nil
+			}
+			return []byte{}, nil
+		},
+	}
+
+	ts := newTmuxSession("test-session", ProgramClaude, &MockPtyFactory{t: t}, cmdExec)
+	ts.monitor = newStatusMonitor()
+
+	_, _, _, _ = ts.CaptureAndProcess()
+	require.Equal(t, 1, captureCount, "CaptureAndProcess should call capture-pane exactly once")
+}
+
 func TestStartTmuxSession(t *testing.T) {
 	ptyFactory := NewMockPtyFactory(t)
 
