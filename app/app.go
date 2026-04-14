@@ -312,11 +312,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errBox.Clear()
 	case previewTickMsg:
 		// Check if inline-attached instance is still alive
+		inlineAttachExited := false
 		if m.state == stateInlineAttach {
 			selected := m.list.GetSelectedInstance()
 			if selected == nil || selected.Paused() || !selected.TmuxAlive() {
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
+				inlineAttachExited = true
 			}
 		}
 
@@ -328,13 +330,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tickDuration = 50 * time.Millisecond
 		}
 
-		return m, tea.Batch(
+		cmds := []tea.Cmd{
 			cmd,
 			func() tea.Msg {
 				time.Sleep(tickDuration)
 				return previewTickMsg{}
 			},
-		)
+		}
+		if inlineAttachExited {
+			cmds = append(cmds, tea.WindowSize())
+		}
+		return m, tea.Batch(cmds...)
 	case keyupMsg:
 		m.menu.ClearKeydown()
 		return m, nil

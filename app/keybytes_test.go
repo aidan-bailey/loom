@@ -34,7 +34,7 @@ func TestKeyMsgToBytes_Tab(t *testing.T) {
 }
 
 func TestKeyMsgToBytes_Escape(t *testing.T) {
-	msg := tea.KeyMsg{Type: tea.KeyEscape}
+	msg := tea.KeyMsg{Type: tea.KeyEsc}
 	assert.Equal(t, []byte{0x1B}, keyMsgToBytes(msg))
 }
 
