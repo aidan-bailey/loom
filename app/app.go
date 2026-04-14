@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"claude-squad/config"
 	"claude-squad/keys"
 	"claude-squad/log"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -35,6 +37,16 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 	)
 	_, err := p.Run()
 	return err
+}
+
+// metadataResult holds I/O results for one instance from the parallel
+// metadata tick. Written by goroutine; status updates applied on main thread.
+type metadataResult struct {
+	instance  *session.Instance
+	tmuxAlive bool
+	updated   bool
+	hasPrompt bool
+	diffErr   error
 }
 
 type state int
@@ -137,6 +149,12 @@ type home struct {
 	// lastWidth and lastHeight cache the terminal size for sizing new slots
 	lastWidth  int
 	lastHeight int
+
+	// lastPreviewHash caches the content hash of the selected instance
+	// to skip preview ticks when nothing has changed.
+	lastPreviewHash []byte
+	// lastPreviewTitle tracks which instance the hash belongs to.
+	lastPreviewTitle string
 }
 
 func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string) *home {
@@ -302,14 +320,30 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hideErrMsg:
 		m.errBox.Clear()
 	case previewTickMsg:
+		nextTick := func() tea.Msg {
+			time.Sleep(100 * time.Millisecond)
+			return previewTickMsg{}
+		}
+
+		selected := m.list.GetSelectedInstance()
+		var currentHash []byte
+		var currentTitle string
+		if selected != nil {
+			currentHash = selected.GetContentHash()
+			currentTitle = selected.Title
+		}
+
+		// Skip update if same instance and content hash unchanged.
+		if currentTitle == m.lastPreviewTitle &&
+			currentHash != nil &&
+			bytes.Equal(currentHash, m.lastPreviewHash) {
+			return m, nextTick
+		}
+
+		m.lastPreviewHash = currentHash
+		m.lastPreviewTitle = currentTitle
 		cmd := m.instanceChanged()
-		return m, tea.Batch(
-			cmd,
-			func() tea.Msg {
-				time.Sleep(100 * time.Millisecond)
-				return previewTickMsg{}
-			},
-		)
+		return m, tea.Batch(cmd, nextTick)
 	case keyupMsg:
 		m.menu.ClearKeydown()
 		return m, nil
@@ -327,38 +361,67 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			allInstances = m.list.GetInstances()
 		}
-		for _, instance := range allInstances {
-			if !instance.Started() || instance.Paused() {
-				continue
+
+		// Filter to active instances.
+		selected := m.list.GetSelectedInstance()
+		var active []*session.Instance
+		for _, inst := range allInstances {
+			if inst.Started() && !inst.Paused() {
+				active = append(active, inst)
 			}
-			// If the tmux session died (e.g. worktree deleted externally),
-			// mark the instance as paused rather than spamming capture errors.
-			// Workspace terminals auto-restart instead of pausing.
-			if !instance.TmuxAlive() {
-				if instance.IsWorkspaceTerminal {
-					log.WarningLog.Printf("workspace terminal %q tmux died, restarting", instance.Title)
-					if err := instance.Start(true); err != nil {
+		}
+
+		// Fan out I/O to goroutines.
+		results := make([]metadataResult, len(active))
+		var wg sync.WaitGroup
+		for i, inst := range active {
+			wg.Add(1)
+			go func(idx int, instance *session.Instance) {
+				defer wg.Done()
+				r := &results[idx]
+				r.instance = instance
+
+				r.tmuxAlive = instance.TmuxAlive()
+				if !r.tmuxAlive {
+					return
+				}
+
+				r.updated, r.hasPrompt = instance.CaptureAndProcessStatus()
+
+				if instance == selected {
+					r.diffErr = instance.UpdateDiffStats()
+				} else {
+					r.diffErr = instance.UpdateDiffStatsShort()
+				}
+			}(i, inst)
+		}
+		wg.Wait()
+
+		// Apply results on main thread.
+		for _, r := range results {
+			if !r.tmuxAlive {
+				if r.instance.IsWorkspaceTerminal {
+					log.WarningLog.Printf("workspace terminal %q tmux died, restarting", r.instance.Title)
+					if err := r.instance.Start(true); err != nil {
 						log.ErrorLog.Printf("failed to restart workspace terminal: %v", err)
 					}
 					continue
 				}
-				log.WarningLog.Printf("tmux session for %q is gone, marking as paused", instance.Title)
-				instance.SetStatus(session.Paused)
+				log.WarningLog.Printf("tmux session for %q is gone, marking as paused", r.instance.Title)
+				r.instance.SetStatus(session.Paused)
 				continue
 			}
-			instance.CheckAndHandleTrustPrompt()
-			updated, prompt := instance.HasUpdated()
-			if updated {
-				instance.SetStatus(session.Running)
+			if r.updated {
+				r.instance.SetStatus(session.Running)
 			} else {
-				if prompt {
-					instance.TapEnter()
+				if r.hasPrompt {
+					r.instance.TapEnter()
 				} else {
-					instance.SetStatus(session.Ready)
+					r.instance.SetStatus(session.Ready)
 				}
 			}
-			if err := instance.UpdateDiffStats(); err != nil {
-				log.WarningLog.Printf("could not update diff stats: %v", err)
+			if r.diffErr != nil {
+				log.WarningLog.Printf("could not update diff stats: %v", r.diffErr)
 			}
 		}
 		m.updateTabBarPrompting()
@@ -874,10 +937,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.instanceChanged()
 	case keys.KeyShiftUp:
 		m.tabbedWindow.ScrollUp()
-		return m, m.instanceChanged()
+		return m, nil
 	case keys.KeyShiftDown:
 		m.tabbedWindow.ScrollDown()
-		return m, m.instanceChanged()
+		return m, nil
 	case keys.KeyTab:
 		m.tabbedWindow.Toggle()
 		m.menu.SetActiveTab(m.tabbedWindow.GetActiveTab())

@@ -258,6 +258,60 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 	return false, hasPrompt
 }
 
+// CaptureAndProcess captures pane content once and runs both trust prompt
+// and update detection checks, avoiding duplicate CapturePaneContent calls.
+func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasPrompt bool, trustHandled bool) {
+	var err error
+	content, err = t.CapturePaneContent()
+	if err != nil {
+		log.ErrorLog.Printf("error capturing pane content: %v", err)
+		return "", false, false, false
+	}
+
+	// Trust prompt detection (from CheckAndHandleTrustPrompt).
+	if strings.HasSuffix(t.program, ProgramClaude) {
+		if strings.Contains(content, "Do you trust the files in this folder?") ||
+			strings.Contains(content, "new MCP server") {
+			if err := t.TapEnter(); err != nil {
+				log.ErrorLog.Printf("could not tap enter on trust/MCP screen: %v", err)
+			}
+			trustHandled = true
+		}
+	} else {
+		if strings.Contains(content, "Open documentation url for more info") {
+			if err := t.TapDAndEnter(); err != nil {
+				log.ErrorLog.Printf("could not tap enter on trust screen: %v", err)
+			}
+			trustHandled = true
+		}
+	}
+
+	// Update detection (from HasUpdated).
+	if t.program == ProgramClaude {
+		hasPrompt = strings.Contains(content, "No, and tell Claude what to do differently")
+	} else if strings.HasPrefix(t.program, ProgramAider) {
+		hasPrompt = strings.Contains(content, "(Y)es/(N)o/(D)on't ask again")
+	} else if strings.HasPrefix(t.program, ProgramGemini) {
+		hasPrompt = strings.Contains(content, "Yes, allow once")
+	}
+
+	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {
+		t.monitor.prevOutputHash = t.monitor.hash(content)
+		updated = true
+	}
+
+	return content, updated, hasPrompt, trustHandled
+}
+
+// GetContentHash returns the last computed content hash from HasUpdated
+// or CaptureAndProcess. Returns nil if no hash has been computed yet.
+func (t *TmuxSession) GetContentHash() []byte {
+	if t.monitor == nil {
+		return nil
+	}
+	return t.monitor.prevOutputHash
+}
+
 func (t *TmuxSession) Attach() (chan struct{}, error) {
 	t.attachCh = make(chan struct{})
 	t.detachOnce = &sync.Once{}

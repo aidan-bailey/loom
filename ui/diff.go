@@ -16,11 +16,12 @@ var (
 )
 
 type DiffPane struct {
-	viewport viewport.Model
-	diff     string
-	stats    string
-	width    int
-	height   int
+	viewport        viewport.Model
+	diff            string
+	stats           string
+	lastDiffContent string // cache key to avoid re-colorizing unchanged diffs
+	width           int
+	height          int
 }
 
 func NewDiffPane() *DiffPane {
@@ -32,6 +33,7 @@ func NewDiffPane() *DiffPane {
 func (d *DiffPane) SetSize(width, height int) {
 	d.width = width
 	d.height = height
+	d.lastDiffContent = "" // invalidate cache on resize
 	d.viewport.Width = width
 	d.viewport.Height = height
 	// Update viewport content if diff exists
@@ -86,6 +88,10 @@ func (d *DiffPane) SetDiff(instance *session.Instance) {
 		d.diff = ""
 		d.viewport.SetContent(centeredFallbackMessage)
 	} else {
+		if stats.Content == d.lastDiffContent {
+			return
+		}
+		d.lastDiffContent = stats.Content
 		additions := AdditionStyle.Render(fmt.Sprintf("%d additions(+)", stats.Added))
 		deletions := DeletionStyle.Render(fmt.Sprintf("%d deletions(-)", stats.Removed))
 		d.stats = lipgloss.JoinHorizontal(lipgloss.Center, additions, " ", deletions)
@@ -110,6 +116,7 @@ func (d *DiffPane) ScrollDown() {
 
 func colorizeDiff(diff string) string {
 	var coloredOutput strings.Builder
+	coloredOutput.Grow(len(diff) * 2)
 
 	lines := strings.Split(diff, "\n")
 	for _, line := range lines {

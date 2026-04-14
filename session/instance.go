@@ -383,6 +383,27 @@ func (i *Instance) CheckAndHandleTrustPrompt() bool {
 	return i.tmuxSession.CheckAndHandleTrustPrompt()
 }
 
+// CaptureAndProcessStatus captures tmux pane content once and checks for
+// trust prompts and content updates. Avoids duplicate CapturePaneContent calls.
+func (i *Instance) CaptureAndProcessStatus() (updated bool, hasPrompt bool) {
+	if !i.started || i.tmuxSession == nil {
+		return false, false
+	}
+
+	program := i.Program
+	isSupportedProgram := strings.HasSuffix(program, tmux.ProgramClaude) ||
+		strings.HasSuffix(program, tmux.ProgramAider) ||
+		strings.HasSuffix(program, tmux.ProgramGemini)
+
+	if !isSupportedProgram {
+		// For unsupported programs, just check for updates.
+		return i.tmuxSession.HasUpdated()
+	}
+
+	_, updated, hasPrompt, _ = i.tmuxSession.CaptureAndProcess()
+	return updated, hasPrompt
+}
+
 func (i *Instance) TapEnter() {
 	if !i.started || i.Status == Paused || !i.AutoYes {
 		return
@@ -614,6 +635,37 @@ func (i *Instance) UpdateDiffStats() error {
 	return nil
 }
 
+// UpdateDiffStatsShort updates only the line counts (Added/Removed) without
+// fetching full diff content. Cheaper for non-selected instances that only
+// display counts in the list view.
+func (i *Instance) UpdateDiffStatsShort() error {
+	if !i.started {
+		i.diffStats = nil
+		return nil
+	}
+	if i.Status == Paused {
+		return nil
+	}
+	var stats *git.DiffStats
+	if i.IsWorkspaceTerminal {
+		if branch, err := git.CurrentBranch(i.Path); err == nil {
+			i.Branch = branch
+		}
+		stats = git.DiffUncommittedShortStat(i.Path)
+	} else {
+		stats = i.gitWorktree.DiffShortStat()
+	}
+	if stats.Error != nil {
+		if strings.Contains(stats.Error.Error(), "base commit SHA not set") {
+			i.diffStats = nil
+			return nil
+		}
+		return fmt.Errorf("failed to get diff stats: %w", stats.Error)
+	}
+	i.diffStats = stats
+	return nil
+}
+
 // GetDiffStats returns the current git diff statistics
 func (i *Instance) GetDiffStats() *git.DiffStats {
 	return i.diffStats
@@ -646,6 +698,14 @@ func (i *Instance) PreviewFullHistory() (string, error) {
 		return "", nil
 	}
 	return i.tmuxSession.CapturePaneContentWithOptions("-", "-")
+}
+
+// GetContentHash returns the content hash of the last captured tmux pane.
+func (i *Instance) GetContentHash() []byte {
+	if !i.started || i.tmuxSession == nil {
+		return nil
+	}
+	return i.tmuxSession.GetContentHash()
 }
 
 // SetTmuxSession sets the tmux session for testing purposes
