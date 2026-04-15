@@ -27,6 +27,9 @@ const (
 	Paused
 	// Prompting is when the agent is asking for user permission.
 	Prompting
+	// Deleting is a transient status set immediately when the user confirms
+	// deletion. Cleanup runs asynchronously; on failure the status reverts.
+	Deleting
 )
 
 // Instance is a running instance of claude code.
