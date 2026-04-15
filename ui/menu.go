@@ -98,9 +98,9 @@ func (m *Menu) SetInstance(instance *session.Instance) {
 	m.updateOptions()
 }
 
-// SetActiveTab updates the currently active tab
-func (m *Menu) SetActiveTab(tab int) {
-	m.activeTab = tab
+// SetFocusedPane updates the currently focused pane
+func (m *Menu) SetFocusedPane(pane int) {
+	m.activeTab = pane
 	m.updateOptions()
 }
 
@@ -152,13 +152,11 @@ func (m *Menu) addInstanceOptions() {
 		}
 	}
 
-	// Navigation group (when in diff tab)
-	if m.activeTab == DiffTab || m.activeTab == TerminalTab {
-		actionGroup = append(actionGroup, keys.KeyShiftUp)
-	}
+	// Scroll hint is always relevant now (both panes visible)
+	actionGroup = append(actionGroup, keys.KeyShiftUp)
 
 	// System group
-	systemGroup := []keys.KeyName{keys.KeyTab, keys.KeyHelp, keys.KeyQuit}
+	systemGroup := []keys.KeyName{keys.KeyTab, keys.KeyDiff, keys.KeyHelp, keys.KeyQuit}
 
 	// Combine all groups
 	options = append(options, actionGroup...)
