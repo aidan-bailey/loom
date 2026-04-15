@@ -795,8 +795,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, tea.WindowSize()
 		}
 
-		// Ctrl+Q exits inline attach
-		if msg.Type == tea.KeyCtrlQ {
+		// Esc exits inline attach
+		if msg.Type == tea.KeyEscape {
 			m.state = stateDefault
 			m.menu.SetState(ui.StateDefault)
 			return m, tea.WindowSize()
@@ -1581,7 +1581,7 @@ func (m *home) View() string {
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
 		rightContent = lipgloss.JoinVertical(lipgloss.Left, rightContent, m.quickInputBar.View())
 	} else if m.state == stateInlineAttach {
-		hint := inlineAttachHintStyle.Render("Ctrl+Q to detach · O for fullscreen")
+		hint := inlineAttachHintStyle.Render("▶ CAPTURING INPUT  ·  Esc to detach  ·  O for fullscreen")
 		rightContent = lipgloss.JoinVertical(lipgloss.Left, rightContent, hint)
 	}
 	previewWithPadding := lipgloss.NewStyle().PaddingTop(1).Render(rightContent)
