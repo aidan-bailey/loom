@@ -43,7 +43,7 @@ func (h helpTypeGeneral) toContent() string {
 		keyStyle.Render("n")+descStyle.Render("         - Create a new session"),
 		keyStyle.Render("N")+descStyle.Render("         - Create a new session with a prompt"),
 		keyStyle.Render("D")+descStyle.Render("         - Kill (delete) the selected session"),
-		keyStyle.Render("↑/j, ↓/k")+descStyle.Render("  - Navigate between sessions"),
+		keyStyle.Render("↑/l, ↓/k")+descStyle.Render("  - Navigate between sessions"),
 		keyStyle.Render("↵/o")+descStyle.Render("       - Inline attach: interact without leaving UI"),
 		keyStyle.Render("O")+descStyle.Render("         - Full-screen attach to session"),
 		keyStyle.Render("i")+descStyle.Render("         - Quick input: type and send to session"),

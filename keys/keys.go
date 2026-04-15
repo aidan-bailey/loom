@@ -40,9 +40,9 @@ const (
 // GlobalKeyStringsMap is a global, immutable map string to keybinding.
 var GlobalKeyStringsMap = map[string]KeyName{
 	"up":         KeyUp,
-	"k":          KeyUp,
+	"l":          KeyUp,
 	"down":       KeyDown,
-	"j":          KeyDown,
+	"k":          KeyDown,
 	"shift+up":   KeyShiftUp,
 	"shift+down": KeyShiftDown,
 	"N":          KeyPrompt,
@@ -58,9 +58,9 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"?":          KeyHelp,
 	"W":          KeyWorkspace,
 	"[":          KeyWorkspaceLeft,
-	"h":          KeyWorkspaceLeft,
+	"j":          KeyWorkspaceLeft,
 	"]":          KeyWorkspaceRight,
-	"l":          KeyWorkspaceRight,
+	";":          KeyWorkspaceRight,
 	"i":          KeyQuickInteract,
 	"O":          KeyFullScreenAttach,
 }
@@ -68,12 +68,12 @@ var GlobalKeyStringsMap = map[string]KeyName{
 // GlobalkeyBindings is a global, immutable map of KeyName tot keybinding.
 var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyUp: key.NewBinding(
-		key.WithKeys("up", "k"),
-		key.WithHelp("↑/k", "up"),
+		key.WithKeys("up", "l"),
+		key.WithHelp("↑/l", "up"),
 	),
 	KeyDown: key.NewBinding(
-		key.WithKeys("down", "j"),
-		key.WithHelp("↓/j", "down"),
+		key.WithKeys("down", "k"),
+		key.WithHelp("↓/k", "down"),
 	),
 	KeyShiftUp: key.NewBinding(
 		key.WithKeys("shift+up"),
@@ -130,12 +130,12 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	),
 
 	KeyWorkspaceLeft: key.NewBinding(
-		key.WithKeys("[", "h"),
-		key.WithHelp("[/h", "prev ws"),
+		key.WithKeys("[", "j"),
+		key.WithHelp("[/j", "prev ws"),
 	),
 	KeyWorkspaceRight: key.NewBinding(
-		key.WithKeys("]", "l"),
-		key.WithHelp("]/l", "next ws"),
+		key.WithKeys("]", ";"),
+		key.WithHelp("]/;", "next ws"),
 	),
 
 	KeyQuickInteract: key.NewBinding(

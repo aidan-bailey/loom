@@ -22,27 +22,27 @@ func TestWorkspacePickerNavigation(t *testing.T) {
 
 	t.Run("moves down", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 		assert.Equal(t, 1, p.cursor)
 	})
 
 	t.Run("does not go below last item", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 		assert.Equal(t, 1, p.cursor)
 	})
 
 	t.Run("moves up", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 		assert.Equal(t, 0, p.cursor)
 	})
 
 	t.Run("does not go above first item", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 		assert.Equal(t, 0, p.cursor)
 	})
 }
@@ -66,7 +66,7 @@ func TestWorkspacePickerToggle(t *testing.T) {
 	t.Run("enter toggles active state", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active)
 		// Move to beta and toggle it on
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 		committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
 		assert.False(t, committed)
 		result := p.GetActiveWorkspaces()

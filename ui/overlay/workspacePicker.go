@@ -54,11 +54,11 @@ func NewStartupWorkspacePicker(workspaces []config.Workspace) *WorkspacePicker {
 // Returns (committed, _). committed=true means the overlay should close and apply state.
 func (w *WorkspacePicker) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 	switch msg.String() {
-	case "up", "k":
+	case "up", "l":
 		if w.cursor > 0 {
 			w.cursor--
 		}
-	case "down", "j":
+	case "down", "k":
 		if w.cursor < w.totalItems-1 {
 			w.cursor++
 		}
