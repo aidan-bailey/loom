@@ -118,6 +118,7 @@ func TestConfirmationModalKeyHandling(t *testing.T) {
 		appConfig:           config.DefaultConfig(),
 		list:                list,
 		menu:                ui.NewMenu(),
+		splitPane:           ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		confirmationOverlay: overlay.NewConfirmationOverlay("Kill session?"),
 	}
 
