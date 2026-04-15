@@ -44,7 +44,8 @@ func (h helpTypeGeneral) toContent() string {
 		keyStyle.Render("N")+descStyle.Render("         - Create a new session with a prompt"),
 		keyStyle.Render("D")+descStyle.Render("         - Kill (delete) the selected session"),
 		keyStyle.Render("↑/k, ↓/j")+descStyle.Render("  - Navigate between sessions"),
-		keyStyle.Render("O")+descStyle.Render("         - Full-screen attach to agent session"),
+		keyStyle.Render("alt+a")+descStyle.Render("     - Full-screen attach to agent pane"),
+		keyStyle.Render("alt+t")+descStyle.Render("     - Full-screen attach to terminal pane"),
 		keyStyle.Render("a")+descStyle.Render("         - Quick input: type and send to agent"),
 		keyStyle.Render("t")+descStyle.Render("         - Quick input: type and send to terminal"),
 		keyStyle.Render("ctrl+a")+descStyle.Render("    - Inline attach to agent pane"),
@@ -75,9 +76,10 @@ func (h helpTypeInstanceStart) toContent() string {
 			lipgloss.NewStyle().Bold(true).Render(h.instance.Program))),
 		"",
 		headerStyle.Render("Managing:"),
+		keyStyle.Render("alt+a")+descStyle.Render("  - Full-screen attach to agent pane"),
+		keyStyle.Render("alt+t")+descStyle.Render("  - Full-screen attach to terminal pane"),
 		keyStyle.Render("ctrl+a")+descStyle.Render(" - Inline attach to agent pane"),
 		keyStyle.Render("ctrl+t")+descStyle.Render(" - Inline attach to terminal pane"),
-		keyStyle.Render("O")+descStyle.Render("      - Full-screen attach to agent session"),
 		keyStyle.Render("d")+descStyle.Render("      - Toggle diff overlay"),
 		keyStyle.Render("D")+descStyle.Render("      - Kill (delete) the selected session"),
 		"",
@@ -92,7 +94,7 @@ func (h helpTypeInstanceAttach) toContent() string {
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleStyle.Render("Full-Screen Attach"),
 		"",
-		descStyle.Render("You are entering full-screen mode. Press ")+keyStyle.Render("ctrl-q")+descStyle.Render(" to detach."),
+		descStyle.Render("You are entering full-screen mode. Press ")+keyStyle.Render("ctrl+q")+descStyle.Render(" to detach."),
 	)
 	return content
 }

@@ -1222,16 +1222,34 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		m.quickInputBar = ui.NewQuickInputBar(ui.QuickInputTargetTerminal)
 		m.menu.SetState(ui.StateQuickInteract)
 		return m, tea.WindowSize()
-	case keys.KeyFullScreenAttach:
+	case keys.KeyFullScreenAttachAgent:
 		if m.list.NumInstances() == 0 {
 			return m, nil
 		}
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
+		if selected == nil || selected.IsWorkspaceTerminal || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
 			return m, nil
 		}
 		m.showHelpScreen(helpTypeInstanceAttach{}, func() {
 			ch, err := m.list.Attach()
+			if err != nil {
+				m.handleError(err)
+				return
+			}
+			<-ch
+			m.state = stateDefault
+		})
+		return m, nil
+	case keys.KeyFullScreenAttachTerminal:
+		if m.list.NumInstances() == 0 {
+			return m, nil
+		}
+		selected := m.list.GetSelectedInstance()
+		if selected == nil || selected.IsWorkspaceTerminal || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
+			return m, nil
+		}
+		m.showHelpScreen(helpTypeInstanceAttach{}, func() {
+			ch, err := m.splitPane.AttachTerminal()
 			if err != nil {
 				m.handleError(err)
 				return
@@ -1699,7 +1717,7 @@ func (m *home) View() string {
 		// Quick input is 2 lines, replaces both status line and error box so panes don't shift.
 		sections = append(sections, listAndPreview, m.quickInputBar.View())
 	} else if m.state == stateInlineAttach {
-		hint := inlineAttachHintStyle.Render("▶ CAPTURING INPUT  ·  ctrl+q to detach  ·  O for fullscreen")
+		hint := inlineAttachHintStyle.Render("▶ CAPTURING INPUT  ·  ctrl+q to detach, then alt+a/alt+t for fullscreen")
 		sections = append(sections, listAndPreview, hint, m.errBox.String())
 	} else {
 		statusLine := statusLineStyle.Render("? help · q quit")

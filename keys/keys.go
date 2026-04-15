@@ -27,8 +27,9 @@ const (
 	KeyWorkspaceLeft  // Key for previous workspace tab
 	KeyWorkspaceRight // Key for next workspace tab
 
-	KeyFullScreenAttach // Key for full-screen attach (existing attach behavior)
-	KeyDiff             // Key for toggling diff overlay
+	KeyFullScreenAttachAgent    // Key for full-screen attach to agent pane
+	KeyFullScreenAttachTerminal // Key for full-screen attach to terminal pane
+	KeyDiff                     // Key for toggling diff overlay
 
 	KeyQuickInputAgent    // Key for quick input targeting agent pane
 	KeyQuickInputTerminal // Key for quick input targeting terminal pane
@@ -57,7 +58,8 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"h":          KeyWorkspaceLeft,
 	"]":          KeyWorkspaceRight,
 	"l":          KeyWorkspaceRight,
-	"O":          KeyFullScreenAttach,
+	"alt+a":      KeyFullScreenAttachAgent,
+	"alt+t":      KeyFullScreenAttachTerminal,
 	"d":          KeyDiff,
 	"a":          KeyQuickInputAgent,
 	"t":          KeyQuickInputTerminal,
@@ -122,9 +124,13 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 		key.WithHelp("]/l", "next ws"),
 	),
 
-	KeyFullScreenAttach: key.NewBinding(
-		key.WithKeys("O"),
-		key.WithHelp("O", "fullscreen"),
+	KeyFullScreenAttachAgent: key.NewBinding(
+		key.WithKeys("alt+a"),
+		key.WithHelp("alt+a", "fullscreen agent"),
+	),
+	KeyFullScreenAttachTerminal: key.NewBinding(
+		key.WithKeys("alt+t"),
+		key.WithHelp("alt+t", "fullscreen terminal"),
 	),
 
 	KeyDiff: key.NewBinding(

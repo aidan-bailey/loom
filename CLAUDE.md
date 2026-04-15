@@ -79,7 +79,8 @@ claude-squad --workspace <name>
 |-----|--------|
 | `n` | New instance |
 | `N` | New instance with prompt |
-| `O` | Full-screen attach (agent) |
+| `alt+a` | Full-screen attach (agent pane) |
+| `alt+t` | Full-screen attach (terminal pane) |
 | `ctrl+a` | Inline attach to agent pane |
 | `ctrl+t` | Inline attach to terminal pane |
 | `ctrl+q` | Detach from inline/full-screen attach |
