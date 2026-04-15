@@ -77,10 +77,10 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	case instance == nil:
 		p.setFallbackState("No agents running yet. Spin up a new instance with 'n' to get started!")
 		return nil
-	case instance.Status == session.Loading:
+	case instance.GetStatus() == session.Loading:
 		p.setFallbackState("Setting up workspace...")
 		return nil
-	case instance.Status == session.Paused:
+	case instance.GetStatus() == session.Paused:
 		p.setFallbackState(lipgloss.JoinVertical(lipgloss.Center,
 			"Session is paused. Press 'r' to resume.",
 			"",
@@ -206,7 +206,7 @@ func (p *PreviewPane) String() string {
 
 // ScrollUp scrolls up in the viewport
 func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
-	if instance == nil || instance.Status == session.Paused {
+	if instance == nil || instance.GetStatus() == session.Paused {
 		return nil
 	}
 
@@ -241,7 +241,7 @@ func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
 
 // ScrollDown scrolls down in the viewport
 func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
-	if instance == nil || instance.Status == session.Paused {
+	if instance == nil || instance.GetStatus() == session.Paused {
 		return nil
 	}
 
@@ -257,7 +257,7 @@ func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
 
 // ResetToNormalMode exits scroll mode and returns to normal mode
 func (p *PreviewPane) ResetToNormalMode(instance *session.Instance) error {
-	if instance == nil || instance.Status == session.Paused {
+	if instance == nil || instance.GetStatus() == session.Paused {
 		return nil
 	}
 

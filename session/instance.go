@@ -83,12 +83,14 @@ type Instance struct {
 	//
 	// Migration status (being rolled in across Phase 2 of the
 	// race-condition plan):
-	//   - Locked accessors: SetStatus, GetStatus.
-	//   - Still unlocked (direct field access): Paused(), Started(),
-	//     diffStats/Branch reads in UpdateDiffStats*, and every
-	//     external .Status reader in app/, ui/, daemon/, storage.go.
-	// Callers reading these fields must not assume safety until Task
-	// 2.4 migrates them.
+	//   - Status: locked via SetStatus/GetStatus everywhere
+	//     (including Paused(), Pause(), Resume(), and the UI/app
+	//     callers). ToInstanceData still reads the raw field; it
+	//     is replaced by Snapshot() in Task 2.7.
+	//   - Still unlocked (direct field access): Started(),
+	//     diffStats/Branch writes in UpdateDiffStats*, and the
+	//     tmuxSession/gitWorktree/started fields. These are
+	//     migrated in Tasks 2.5 and 2.6.
 	mu sync.RWMutex
 }
 
@@ -382,7 +384,7 @@ func (i *Instance) combineErrors(errs []error) error {
 }
 
 func (i *Instance) Preview() (string, error) {
-	if !i.started || i.Status == Paused {
+	if !i.started || i.GetStatus() == Paused {
 		return "", nil
 	}
 	if !i.TmuxAlive() {
@@ -435,7 +437,7 @@ func (i *Instance) CaptureAndProcessStatus() (updated bool, hasPrompt bool) {
 }
 
 func (i *Instance) TapEnter() {
-	if !i.started || i.Status == Paused || !i.AutoYes {
+	if !i.started || i.GetStatus() == Paused || !i.AutoYes {
 		return
 	}
 	if err := i.tmuxSession.TapEnter(); err != nil {
@@ -451,7 +453,7 @@ func (i *Instance) Attach() (chan struct{}, error) {
 }
 
 func (i *Instance) SetPreviewSize(width, height int) error {
-	if !i.started || i.Status == Paused {
+	if !i.started || i.GetStatus() == Paused {
 		return fmt.Errorf("cannot set preview size for instance that has not been started or " +
 			"is paused")
 	}
@@ -493,7 +495,7 @@ func (i *Instance) SetTitle(title string) error {
 }
 
 func (i *Instance) Paused() bool {
-	return i.Status == Paused
+	return i.GetStatus() == Paused
 }
 
 // TmuxAlive returns true if the tmux session is alive. This is a sanity check before attaching.
@@ -512,7 +514,7 @@ func (i *Instance) Pause() error {
 	if !i.started {
 		return fmt.Errorf("cannot pause instance that has not been started")
 	}
-	if i.Status == Paused {
+	if i.GetStatus() == Paused {
 		return fmt.Errorf("instance is already paused")
 	}
 
@@ -569,7 +571,7 @@ func (i *Instance) Resume() error {
 	if !i.started {
 		return fmt.Errorf("cannot resume instance that has not been started")
 	}
-	if i.Status != Paused {
+	if i.GetStatus() != Paused {
 		return fmt.Errorf("can only resume paused instances")
 	}
 
@@ -625,7 +627,7 @@ func (i *Instance) UpdateDiffStats() error {
 		return nil
 	}
 
-	if i.Status == Paused {
+	if i.GetStatus() == Paused {
 		// Keep the previous diff stats if the instance is paused
 		return nil
 	}
@@ -661,7 +663,7 @@ func (i *Instance) UpdateDiffStatsShort() error {
 		i.diffStats = nil
 		return nil
 	}
-	if i.Status == Paused {
+	if i.GetStatus() == Paused {
 		return nil
 	}
 	var stats *git.DiffStats
@@ -712,7 +714,7 @@ func (i *Instance) SendPrompt(prompt string) error {
 
 // PreviewFullHistory captures the entire tmux pane output including full scrollback history
 func (i *Instance) PreviewFullHistory() (string, error) {
-	if !i.started || i.Status == Paused {
+	if !i.started || i.GetStatus() == Paused {
 		return "", nil
 	}
 	return i.tmuxSession.CapturePaneContentWithOptions("-", "-")
@@ -733,7 +735,7 @@ func (i *Instance) SetTmuxSession(session *tmux.TmuxSession) {
 
 // SendKeys sends keys to the tmux session
 func (i *Instance) SendKeys(keys string) error {
-	if !i.started || i.Status == Paused {
+	if !i.started || i.GetStatus() == Paused {
 		return fmt.Errorf("cannot send keys to instance that has not been started or is paused")
 	}
 	return i.tmuxSession.SendKeys(keys)

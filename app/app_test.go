@@ -577,7 +577,7 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	_, _ = h.handleKeyPress(keyMsg)
 
 	// preAction should have run — status should be Deleting
-	assert.Equal(t, session.Deleting, instance.Status)
+	assert.Equal(t, session.Deleting, instance.GetStatus())
 }
 
 // TestKillFailedMsgRevertsStatus verifies that a killFailedMsg reverts the
@@ -613,7 +613,7 @@ func TestKillFailedMsgRevertsStatus(t *testing.T) {
 	}
 	h.Update(msg)
 
-	assert.Equal(t, session.Running, instance.Status)
+	assert.Equal(t, session.Running, instance.GetStatus())
 }
 
 // TestPersistableInstancesFiltersDeleting verifies that persistableInstances
