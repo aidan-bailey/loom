@@ -84,6 +84,7 @@ var autoYesStyle = lipgloss.NewStyle().
 type List struct {
 	items         []*session.Instance
 	selectedIdx   int
+	scrollOffset  int // index of the first visible item in the viewport
 	height, width int
 	renderer      *InstanceRenderer
 	autoyes       bool
@@ -131,6 +132,50 @@ func (l *List) SetSessionPreviewSize(width, height int) (err error) {
 // SetWorkspaceName sets the workspace name displayed in the title.
 func (l *List) SetWorkspaceName(name string) {
 	l.workspaceName = name
+}
+
+// maxVisibleItems returns the maximum number of items that fit in the
+// list's current height. The layout is:
+//
+//	header: 4 lines (2 blank + title + 1 blank)
+//	each item: 4 lines (top-pad + title + branch + bottom-pad)
+//	separator between items: 1 line
+//
+// So N items occupy 4 + 4N + (N-1) = 3 + 5N lines.
+func (l *List) maxVisibleItems() int {
+	n := (l.height - 3) / 5
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+// ensureSelectedVisible adjusts scrollOffset so that selectedIdx is within
+// the visible window.
+func (l *List) ensureSelectedVisible() {
+	if len(l.items) == 0 {
+		l.scrollOffset = 0
+		return
+	}
+
+	maxVisible := l.maxVisibleItems()
+
+	// Clamp scrollOffset to valid range.
+	maxOffset := len(l.items) - maxVisible
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if l.scrollOffset > maxOffset {
+		l.scrollOffset = maxOffset
+	}
+
+	// Scroll to keep selectedIdx visible.
+	if l.selectedIdx < l.scrollOffset {
+		l.scrollOffset = l.selectedIdx
+	}
+	if l.selectedIdx >= l.scrollOffset+maxVisible {
+		l.scrollOffset = l.selectedIdx - maxVisible + 1
+	}
 }
 
 func (l *List) NumInstances() int {
@@ -285,10 +330,33 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 }
 
 func (l *List) String() string {
+	l.ensureSelectedVisible()
+
+	maxVisible := l.maxVisibleItems()
+	startIdx := l.scrollOffset
+	endIdx := startIdx + maxVisible
+	if endIdx > len(l.items) {
+		endIdx = len(l.items)
+	}
+
 	titleText := " Instances "
 	if l.workspaceName != "" {
 		titleText = fmt.Sprintf(" %s ", l.workspaceName)
 	}
+
+	// Show scroll indicators in title when the list is truncated.
+	hasAbove := startIdx > 0
+	hasBelow := endIdx < len(l.items)
+	if hasAbove || hasBelow {
+		arrow := " ↓"
+		if hasAbove && hasBelow {
+			arrow = " ↕"
+		} else if hasAbove {
+			arrow = " ↑"
+		}
+		titleText = fmt.Sprintf("%s%s ", strings.TrimRight(titleText, " "), arrow)
+	}
+
 	const autoYesText = " auto-yes "
 
 	// Write the title.
@@ -314,16 +382,17 @@ func (l *List) String() string {
 	b.WriteString("\n")
 	b.WriteString("\n")
 
-	// Render the list. Workspace terminal at index 0 gets number 0,
-	// regular instances are numbered starting from 1.
+	// Render only the visible window of items. Workspace terminal at index 0
+	// gets number 0, regular instances are numbered starting from 1.
 	wsOffset := 0
 	if len(l.items) > 0 && l.items[0].IsWorkspaceTerminal {
 		wsOffset = 1
 	}
-	for i, item := range l.items {
+	for i := startIdx; i < endIdx; i++ {
+		item := l.items[i]
 		num := i + 1 - wsOffset
 		b.WriteString(l.renderer.Render(item, num, i == l.selectedIdx, len(l.repos) > 1))
-		if i != len(l.items)-1 {
+		if i != endIdx-1 {
 			b.WriteString("\n\n")
 		}
 	}
@@ -338,6 +407,7 @@ func (l *List) Down() {
 	if l.selectedIdx < len(l.items)-1 {
 		l.selectedIdx++
 	}
+	l.ensureSelectedVisible()
 }
 
 // Kill removes the selected instance from the list.
@@ -388,6 +458,7 @@ func (l *List) Up() {
 	if l.selectedIdx > 0 {
 		l.selectedIdx--
 	}
+	l.ensureSelectedVisible()
 }
 
 func (l *List) addRepo(repo string) {
@@ -444,13 +515,15 @@ func (l *List) SetSelectedInstance(idx int) {
 		return
 	}
 	l.selectedIdx = idx
+	l.ensureSelectedVisible()
 }
 
 // SelectInstance finds and selects the given instance in the list.
 func (l *List) SelectInstance(target *session.Instance) {
 	for i, inst := range l.items {
 		if inst == target {
-			l.SetSelectedInstance(i)
+			l.selectedIdx = i
+			l.ensureSelectedVisible()
 			return
 		}
 	}
