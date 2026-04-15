@@ -87,10 +87,12 @@ type Instance struct {
 	//     (including Paused(), Pause(), Resume(), and the UI/app
 	//     callers). ToInstanceData still reads the raw field; it
 	//     is replaced by Snapshot() in Task 2.7.
-	//   - Still unlocked (direct field access): Started(),
-	//     diffStats/Branch writes in UpdateDiffStats*, and the
-	//     tmuxSession/gitWorktree/started fields. These are
-	//     migrated in Tasks 2.5 and 2.6.
+	//   - diffStats/Branch: writes in UpdateDiffStats* and reads
+	//     via GetDiffStats are locked. ToInstanceData still reads
+	//     raw; replaced by Snapshot() in Task 2.7.
+	//   - Still unlocked (direct field access): Started() and the
+	//     tmuxSession/gitWorktree/started fields. Migrated in
+	//     Task 2.6.
 	mu sync.RWMutex
 }
 
@@ -623,7 +625,9 @@ func (i *Instance) Resume() error {
 // UpdateDiffStats updates the git diff statistics for this instance
 func (i *Instance) UpdateDiffStats() error {
 	if !i.started {
+		i.mu.Lock()
 		i.diffStats = nil
+		i.mu.Unlock()
 		return nil
 	}
 
@@ -636,7 +640,9 @@ func (i *Instance) UpdateDiffStats() error {
 	if i.IsWorkspaceTerminal {
 		// Refresh the current branch name for the root repo
 		if branch, err := git.CurrentBranch(i.Path); err == nil {
+			i.mu.Lock()
 			i.Branch = branch
+			i.mu.Unlock()
 		}
 		stats = git.DiffUncommitted(i.Path)
 	} else {
@@ -645,13 +651,17 @@ func (i *Instance) UpdateDiffStats() error {
 	if stats.Error != nil {
 		if strings.Contains(stats.Error.Error(), "base commit SHA not set") {
 			// Worktree is not fully set up yet, not an error
+			i.mu.Lock()
 			i.diffStats = nil
+			i.mu.Unlock()
 			return nil
 		}
 		return fmt.Errorf("failed to get diff stats: %w", stats.Error)
 	}
 
+	i.mu.Lock()
 	i.diffStats = stats
+	i.mu.Unlock()
 	return nil
 }
 
@@ -660,7 +670,9 @@ func (i *Instance) UpdateDiffStats() error {
 // display counts in the list view.
 func (i *Instance) UpdateDiffStatsShort() error {
 	if !i.started {
+		i.mu.Lock()
 		i.diffStats = nil
+		i.mu.Unlock()
 		return nil
 	}
 	if i.GetStatus() == Paused {
@@ -669,7 +681,9 @@ func (i *Instance) UpdateDiffStatsShort() error {
 	var stats *git.DiffStats
 	if i.IsWorkspaceTerminal {
 		if branch, err := git.CurrentBranch(i.Path); err == nil {
+			i.mu.Lock()
 			i.Branch = branch
+			i.mu.Unlock()
 		}
 		stats = git.DiffUncommittedShortStat(i.Path)
 	} else {
@@ -677,18 +691,32 @@ func (i *Instance) UpdateDiffStatsShort() error {
 	}
 	if stats.Error != nil {
 		if strings.Contains(stats.Error.Error(), "base commit SHA not set") {
+			i.mu.Lock()
 			i.diffStats = nil
+			i.mu.Unlock()
 			return nil
 		}
 		return fmt.Errorf("failed to get diff stats: %w", stats.Error)
 	}
+	i.mu.Lock()
 	i.diffStats = stats
+	i.mu.Unlock()
 	return nil
 }
 
 // GetDiffStats returns the current git diff statistics
 func (i *Instance) GetDiffStats() *git.DiffStats {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
 	return i.diffStats
+}
+
+// setDiffStatsForTest is a package-private test helper that assigns diffStats
+// under the instance mutex. Not exported.
+func (i *Instance) setDiffStatsForTest(s *git.DiffStats) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.diffStats = s
 }
 
 // SendPrompt sends a prompt to the tmux session

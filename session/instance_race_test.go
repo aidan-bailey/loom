@@ -1,6 +1,7 @@
 package session
 
 import (
+	"claude-squad/session/git"
 	"sync"
 	"testing"
 )
@@ -26,6 +27,28 @@ func TestInstance_ConcurrentStatusReadWrite(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
 			_ = inst.GetStatus()
+		}
+	}()
+	wg.Wait()
+}
+
+// TestInstance_ConcurrentDiffStats reproduces INST-22: worker goroutines
+// writing i.diffStats while the render path reads it.
+func TestInstance_ConcurrentDiffStats(t *testing.T) {
+	inst := &Instance{Title: "race"}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			inst.setDiffStatsForTest(&git.DiffStats{Added: i, Removed: i})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			_ = inst.GetDiffStats()
 		}
 	}()
 	wg.Wait()
