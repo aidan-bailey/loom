@@ -505,6 +505,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case instanceChangedMsg:
 		// Handle instance changed after confirmation action
 		return m, m.instanceChanged()
+	case killInstanceMsg:
+		// State mutations run here in the main goroutine, not in the Cmd goroutine.
+		m.splitPane.CleanupTerminalForInstance(msg.title)
+		m.list.RemoveInstanceByTitle(msg.title)
+		return m, m.instanceChanged()
+	case pauseInstanceMsg:
+		// Terminal cleanup runs here in the main goroutine, not in the Cmd goroutine.
+		m.splitPane.CleanupTerminalForInstance(msg.title)
+		return m, m.instanceChanged()
 	case workspaceRegisteredMsg:
 		ws := m.registry.FindByPath(msg.dir)
 		if ws == nil {
@@ -1024,7 +1033,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 
-		// Create the kill action as a tea.Cmd
+		// Create the kill action as a tea.Cmd. This runs in a goroutine,
+		// so it must only perform I/O — state mutations happen when the
+		// returned message is processed in the main event loop.
+		title := selected.Title
 		killAction := func() tea.Msg {
 			// Get worktree and check if branch is checked out
 			worktree, err := selected.GetGitWorktree()
@@ -1041,17 +1053,18 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return fmt.Errorf("instance %s is currently checked out", selected.Title)
 			}
 
-			// Clean up terminal session for this instance
-			m.splitPane.CleanupTerminalForInstance(selected.Title)
+			// Kill the instance (tmux + worktree cleanup)
+			if err := selected.Kill(); err != nil {
+				log.ErrorLog.Printf("could not kill instance: %v", err)
+			}
 
-			// Delete from storage first
+			// Delete from persistent storage
 			if err := m.storage.DeleteInstance(selected.Title); err != nil {
 				return err
 			}
 
-			// Then kill the instance
-			m.list.Kill()
-			return instanceChangedMsg{}
+			// Signal the main loop to remove from the list
+			return killInstanceMsg{title: title}
 		}
 
 		// Show confirmation modal
@@ -1086,12 +1099,12 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 
+		pauseTitle := selected.Title
 		pauseAction := func() tea.Msg {
 			if err := selected.Pause(); err != nil {
 				return err
 			}
-			m.splitPane.CleanupTerminalForInstance(selected.Title)
-			return instanceChangedMsg{}
+			return pauseInstanceMsg{title: pauseTitle}
 		}
 
 		// Show help screen before confirming pause
@@ -1243,6 +1256,19 @@ type previewTickMsg struct{}
 type tickUpdateMetadataMessage struct{}
 
 type instanceChangedMsg struct{}
+
+// killInstanceMsg is returned by the killAction goroutine after I/O cleanup
+// (git checks, instance kill, storage deletion) is complete. The main event loop
+// handles the list removal so it doesn't race with rendering.
+type killInstanceMsg struct {
+	title string
+}
+
+// pauseInstanceMsg is returned by the pauseAction goroutine after the instance
+// has been paused. Terminal cleanup happens in the main event loop.
+type pauseInstanceMsg struct {
+	title string
+}
 
 // workspaceRegisteredMsg is sent after a pending directory is registered as a workspace.
 type workspaceRegisteredMsg struct {

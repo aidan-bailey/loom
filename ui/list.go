@@ -442,6 +442,39 @@ func (l *List) Kill() {
 	l.items = append(l.items[:l.selectedIdx], l.items[l.selectedIdx+1:]...)
 }
 
+// RemoveInstanceByTitle removes an instance from the list by title.
+// Unlike Kill(), this does not perform I/O (no tmux/worktree cleanup) —
+// the caller is responsible for that. This is safe to call from the main
+// event loop after a Cmd goroutine has already performed I/O cleanup.
+func (l *List) RemoveInstanceByTitle(title string) {
+	idx := -1
+	for i, inst := range l.items {
+		if inst.Title == title {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+
+	// Unregister the repo name.
+	repoName, err := l.items[idx].RepoName()
+	if err != nil {
+		log.ErrorLog.Printf("could not get repo name: %v", err)
+	} else {
+		l.rmRepo(repoName)
+	}
+
+	l.items = append(l.items[:idx], l.items[idx+1:]...)
+
+	// Adjust selectedIdx if it pointed at or past the removed item.
+	if l.selectedIdx >= len(l.items) && l.selectedIdx > 0 {
+		l.selectedIdx--
+	}
+	l.ensureSelectedVisible()
+}
+
 func (l *List) Attach() (chan struct{}, error) {
 	if len(l.items) == 0 || l.selectedIdx >= len(l.items) {
 		return nil, fmt.Errorf("no instance selected")
