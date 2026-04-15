@@ -513,6 +513,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.activeCtx = config.WorkspaceContextFor(ws)
 		m.loadSlot(0)
+		m.updateTabBarPrompting()
 		_ = m.registry.UpdateLastUsed(ws.Name)
 		return m, tea.WindowSize()
 	case instanceStartedMsg:
@@ -874,6 +875,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 						return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 					}
 					m.loadSlot(0)
+					m.updateTabBarPrompting()
 					if m.registry != nil {
 						_ = m.registry.UpdateLastUsed(selected.Name)
 					}
@@ -1120,6 +1122,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		m.saveCurrentSlot()
 		newIdx := (m.focusedSlot - 1 + len(m.slots)) % len(m.slots)
 		m.loadSlot(newIdx)
+		m.updateTabBarPrompting()
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case keys.KeyWorkspaceRight:
 		if len(m.slots) <= 1 {
@@ -1128,6 +1131,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		m.saveCurrentSlot()
 		newIdx := (m.focusedSlot + 1) % len(m.slots)
 		m.loadSlot(newIdx)
+		m.updateTabBarPrompting()
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case keys.KeyQuickInteract:
 		selected := m.list.GetSelectedInstance()
