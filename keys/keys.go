@@ -35,6 +35,7 @@ const (
 
 	KeyQuickInteract    // Key for quick interaction input bar
 	KeyFullScreenAttach // Key for full-screen attach (existing attach behavior)
+	KeyDiff             // Key for toggling diff overlay
 )
 
 // GlobalKeyStringsMap is a global, immutable map string to keybinding.
@@ -63,6 +64,7 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	";":          KeyWorkspaceRight,
 	"i":          KeyQuickInteract,
 	"O":          KeyFullScreenAttach,
+	"d":          KeyDiff,
 }
 
 // GlobalkeyBindings is a global, immutable map of KeyName tot keybinding.
@@ -145,6 +147,11 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyFullScreenAttach: key.NewBinding(
 		key.WithKeys("O"),
 		key.WithHelp("O", "fullscreen"),
+	),
+
+	KeyDiff: key.NewBinding(
+		key.WithKeys("d"),
+		key.WithHelp("d", "diff"),
 	),
 
 	// -- Special keybindings --
