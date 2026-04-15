@@ -8,7 +8,7 @@ import (
 )
 
 func TestQuickInputBar_HandleKeyPress_Enter(t *testing.T) {
-	bar := NewQuickInputBar(QuickInputTargetFocused)
+	bar := NewQuickInputBar(QuickInputTargetAgent)
 	// Type some text first
 	bar.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("yes")})
 	action := bar.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
@@ -17,28 +17,28 @@ func TestQuickInputBar_HandleKeyPress_Enter(t *testing.T) {
 }
 
 func TestQuickInputBar_HandleKeyPress_Escape(t *testing.T) {
-	bar := NewQuickInputBar(QuickInputTargetFocused)
+	bar := NewQuickInputBar(QuickInputTargetAgent)
 	bar.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("partial")})
 	action := bar.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEsc})
 	assert.Equal(t, QuickInputCancel, action)
 }
 
 func TestQuickInputBar_HandleKeyPress_Typing(t *testing.T) {
-	bar := NewQuickInputBar(QuickInputTargetFocused)
+	bar := NewQuickInputBar(QuickInputTargetAgent)
 	action := bar.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
 	assert.Equal(t, QuickInputContinue, action)
 	assert.Equal(t, "h", bar.Value())
 }
 
 func TestQuickInputBar_EmptyEnter(t *testing.T) {
-	bar := NewQuickInputBar(QuickInputTargetFocused)
+	bar := NewQuickInputBar(QuickInputTargetAgent)
 	action := bar.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, QuickInputSubmit, action)
 	assert.Equal(t, "", bar.Value())
 }
 
 func TestQuickInputBar_Height(t *testing.T) {
-	bar := NewQuickInputBar(QuickInputTargetFocused)
+	bar := NewQuickInputBar(QuickInputTargetAgent)
 	assert.Equal(t, 2, bar.Height())
 }
 
@@ -47,7 +47,6 @@ func TestQuickInputBar_ViewHintByTarget(t *testing.T) {
 		target   QuickInputTarget
 		contains string
 	}{
-		{QuickInputTargetFocused, "Enter to send"},
 		{QuickInputTargetAgent, "send to agent"},
 		{QuickInputTargetTerminal, "send to terminal"},
 	}

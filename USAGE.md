@@ -52,9 +52,9 @@ nix run .
 1. Launch `claude-squad` from a git repository
 2. Press `n` to create a new session
 3. Type a name and press `Enter`
-4. The agent starts in an isolated worktree — watch its output in the **Preview** tab
-5. Press `Tab` to switch to **Diff** to see what the agent has changed
-6. Press `Enter` to attach to the terminal and interact directly
+4. The agent starts in an isolated worktree — watch its output in the **Agent** pane
+5. Press `d` to toggle the **Diff** overlay to see what the agent has changed
+6. Press `Ctrl+A` to attach to the agent pane and interact directly
 7. Press `Ctrl+Q` to detach back to the TUI
 8. Press `c` to checkout (pause) the session when done
 
@@ -66,17 +66,17 @@ nix run .
 ┌─────────────────────────────────────────────────────────────────────┐
 │  [ Global ]  [ my-project ]  [ other-repo ]    ← Workspace Tabs    │
 ├────────────────────┬────────────────────────────────────────────────┤
-│                    │  Preview  │  Diff  │  Terminal   ← Tab Bar     │
+│                    │  Agent  │  Terminal              ← Pane Bar      │
 │   INSTANCE LIST    ├────────────────────────────────────────────────┤
 │    (30% width)     │                                                │
 │                    │                                                │
 │  ⟳ fix-auth       │         CONTENT AREA                           │
 │    user/fix-auth   │          (70% width)                           │
 │    +42 / -15       │                                                │
-│                    │  Shows the selected tab's content:             │
-│  ⏸ add-tests      │   • Preview — live tmux output                 │
-│    user/add-tests  │   • Diff — git changes from base commit       │
-│    +120 / -8       │   • Terminal — interactive tmux attach         │
+│                    │  Agent and Terminal panes stacked:              │
+│  ⏸ add-tests      │   • Agent — live agent output (ctrl+a attach)  │
+│    user/add-tests  │   • Terminal — terminal session (ctrl+t)       │
+│    +120 / -8       │   • Diff overlay toggled with d                │
 │                    │                                                │
 │  ● refactor-api   │                                                │
 │    user/refactor   │                                                │
@@ -104,11 +104,9 @@ The selected instance is highlighted. Navigate with `↑`/`↓` or `k`/`j`.
 
 ### Right Panel — Tabbed Content
 
-Cycle between tabs with `Tab`. Scroll content with `Shift+↑` / `Shift+↓`.
-
-- **Preview** — Live read-only view of the agent's tmux output
-- **Diff** — Git diff of all changes the agent has made since the session started
-- **Terminal** — Press `Enter` to attach directly to the tmux session; `Ctrl+Q` to detach
+- **Agent** — Live read-only view of the agent's tmux output. Press `Ctrl+A` to attach and interact directly; `Ctrl+Q` to detach.
+- **Terminal** — Terminal pane for the session. Press `Ctrl+T` to attach; `Ctrl+Q` to detach.
+- **Diff** — Toggle with `d` to see git changes since the session started.
 
 ### Bottom Menu
 
@@ -192,15 +190,16 @@ A session moves through these states:
 | `↓` / `j` | Move selection down |
 | `n` | Create new session (name only) |
 | `N` | Create new session with prompt, profile, and branch picker |
-| `Enter` / `o` | Attach to selected session |
+| `Ctrl+A` | Inline attach to agent pane |
+| `Ctrl+T` | Inline attach to terminal pane |
+| `O` | Full-screen attach (agent) |
+| `a` | Quick input to agent |
+| `t` | Quick input to terminal |
 | `c` | Checkout — commit changes and pause session |
 | `r` | Resume a paused session |
 | `p` | Push branch to remote (with confirmation) |
 | `D` | Kill selected session (with confirmation) |
-| `Tab` | Switch right-panel tab (Preview → Diff → Terminal) |
-| `Shift+↑` | Scroll content up |
-| `Shift+↓` | Scroll content down |
-| `Esc` | Exit scroll mode |
+| `d` | Toggle diff overlay |
 | `W` | Open workspace picker |
 | `[` | Switch to previous workspace tab |
 | `]` | Switch to next workspace tab |
@@ -231,7 +230,7 @@ The overlay has four focus areas. Press `Tab` to cycle between them:
 | `Enter` | Submit prompt and start session |
 | `Ctrl+C` | Cancel |
 
-### Attached Terminal (after pressing `Enter` on a session)
+### Inline Attach (after pressing `Ctrl+A` or `Ctrl+T`)
 
 | Key | Action |
 |-----|--------|
@@ -290,14 +289,13 @@ The agent starts with your prompt pre-loaded. If you selected an existing branch
 ### Watch an Agent Work
 
 1. Select the session with `↑`/`↓`
-2. **Preview** tab shows live terminal output (default view)
-3. Press `Tab` to switch to **Diff** — see what files changed and how many lines were added/removed
-4. Press `Shift+↑`/`Shift+↓` to scroll through long diffs
+2. The **Agent** pane shows live terminal output (default view)
+3. Press `d` to toggle the **Diff** overlay — see what files changed and how many lines were added/removed
 
 ### Interact with an Agent
 
 ```
-Select session → Enter (or o)
+Select session → Ctrl+A (agent) or Ctrl+T (terminal)
 ```
 
 You're now inside the tmux session. Type naturally to communicate with the agent. Press `Ctrl+Q` to return to the TUI without stopping the agent.

@@ -79,22 +79,18 @@ claude-squad --workspace <name>
 |-----|--------|
 | `n` | New instance |
 | `N` | New instance with prompt |
-| `enter`/`o` | Inline attach (interactive preview) |
-| `O` | Full-screen attach |
-| `ctrl+a` | Focus agent pane and capture input |
-| `ctrl+t` | Focus terminal pane and capture input |
+| `O` | Full-screen attach (agent) |
+| `ctrl+a` | Inline attach to agent pane |
+| `ctrl+t` | Inline attach to terminal pane |
 | `ctrl+q` | Detach from inline/full-screen attach |
 | `r` | Resume paused instance |
 | `D` | Kill instance |
 | `p` | Push branch |
 | `c` | Checkout branch |
-| `i` | Quick input bar (send to focused pane) |
 | `a` | Quick input bar (send to agent) |
 | `t` | Quick input bar (send to terminal) |
-| `tab` | Switch focus (agent/terminal) |
 | `d` | Toggle diff overlay |
 | `up`/`k`, `down`/`j` | Navigate sessions |
-| `shift+up`/`shift+down` | Scroll focused pane |
 | `W` | Workspace picker |
 | `h`/`[`, `l`/`]` | Previous/next workspace tab |
 | `?` | Help |

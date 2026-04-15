@@ -571,6 +571,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Auto-focus agent pane and capture input
 			m.splitPane.SetFocusedPane(ui.FocusAgent)
+			m.splitPane.SetInlineAttach(true)
 			m.state = stateInlineAttach
 			m.menu.SetState(ui.StateInlineAttach)
 		}
@@ -627,18 +628,6 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		return nil, false
 	}
 
-	if m.list.GetSelectedInstance() != nil && m.list.GetSelectedInstance().Paused() && name == keys.KeyEnter {
-		return nil, false
-	}
-	if name == keys.KeyShiftDown || name == keys.KeyShiftUp {
-		return nil, false
-	}
-
-	// Skip the menu highlighting if the key is not in the map or we are using the shift up and down keys.
-	// TODO: cleanup: when you press enter on stateNew, we use keys.KeySubmitName. We should unify the keymap.
-	if name == keys.KeyEnter && m.state == stateNew {
-		name = keys.KeySubmitName
-	}
 	m.keySent = true
 	return tea.Batch(
 		func() tea.Msg { return msg },
@@ -828,6 +817,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	if m.state == stateInlineAttach {
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+			m.splitPane.SetInlineAttach(false)
+			m.splitPane.SetFocusedPane(ui.FocusAgent)
 			m.state = stateDefault
 			m.menu.SetState(ui.StateDefault)
 			return m, tea.WindowSize()
@@ -835,6 +826,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		// ctrl+q exits inline attach
 		if msg.Type == tea.KeyCtrlQ {
+			m.splitPane.SetInlineAttach(false)
+			m.splitPane.SetFocusedPane(ui.FocusAgent)
 			m.state = stateDefault
 			m.menu.SetState(ui.StateDefault)
 			return m, tea.WindowSize()
@@ -880,12 +873,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				err = m.splitPane.SendTerminalPrompt(text)
 			case ui.QuickInputTargetAgent:
 				err = selected.SendPrompt(text)
-			default: // QuickInputTargetFocused
-				if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
-					err = m.splitPane.SendTerminalPrompt(text)
-				} else {
-					err = selected.SendPrompt(text)
-				}
 			}
 			m.quickInputBar = nil
 			m.state = stateDefault
@@ -1045,16 +1032,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	case keys.KeyDown:
 		m.list.Down()
 		return m, m.instanceChanged()
-	case keys.KeyShiftUp:
-		m.splitPane.ScrollUp()
-		return m, nil
-	case keys.KeyShiftDown:
-		m.splitPane.ScrollDown()
-		return m, nil
-	case keys.KeyTab:
-		m.splitPane.ToggleFocus()
-		m.menu.SetFocusedPane(m.splitPane.GetFocusedPane())
-		return m, m.instanceChanged()
 	case keys.KeyDiff:
 		m.splitPane.ToggleDiff()
 		return m, m.instanceChanged()
@@ -1162,17 +1139,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, m.handleError(err)
 		}
 		return m, tea.WindowSize()
-	case keys.KeyEnter:
-		if m.list.NumInstances() == 0 {
-			return m, nil
-		}
-		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
-			return m, nil
-		}
-		m.state = stateInlineAttach
-		m.menu.SetState(ui.StateInlineAttach)
-		return m, tea.WindowSize()
 	case keys.KeyDirectAttachAgent:
 		if m.list.NumInstances() == 0 {
 			return m, nil
@@ -1182,6 +1148,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		m.splitPane.SetFocusedPane(ui.FocusAgent)
+		m.splitPane.SetInlineAttach(true)
 		m.state = stateInlineAttach
 		m.menu.SetState(ui.StateInlineAttach)
 		return m, tea.WindowSize()
@@ -1194,6 +1161,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		m.splitPane.SetFocusedPane(ui.FocusTerminal)
+		m.splitPane.SetInlineAttach(true)
 		m.state = stateInlineAttach
 		m.menu.SetState(ui.StateInlineAttach)
 		return m, tea.WindowSize()
@@ -1230,18 +1198,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		m.loadSlot(newIdx)
 		m.updateTabBarStatuses()
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
-	case keys.KeyQuickInteract:
-		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading || selected.Status == session.Deleting {
-			return m, nil
-		}
-		if m.splitPane.IsDiffVisible() {
-			return m, nil
-		}
-		m.state = stateQuickInteract
-		m.quickInputBar = ui.NewQuickInputBar(ui.QuickInputTargetFocused)
-		m.menu.SetState(ui.StateQuickInteract)
-		return m, tea.WindowSize()
 	case keys.KeyQuickInputAgent:
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading || selected.Status == session.Deleting {
@@ -1274,20 +1230,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
 			return m, nil
 		}
-		// Terminal pane focused: attach to terminal session
-		if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
-			m.showHelpScreen(helpTypeInstanceAttach{}, func() {
-				ch, err := m.splitPane.AttachTerminal()
-				if err != nil {
-					m.handleError(err)
-					return
-				}
-				<-ch
-				m.state = stateDefault
-			})
-			return m, nil
-		}
-		// Agent pane focused: attach to main instance
 		m.showHelpScreen(helpTypeInstanceAttach{}, func() {
 			ch, err := m.list.Attach()
 			if err != nil {

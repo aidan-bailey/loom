@@ -19,8 +19,7 @@ const (
 type QuickInputTarget int
 
 const (
-	QuickInputTargetFocused  QuickInputTarget = iota // send to whichever pane is focused
-	QuickInputTargetAgent                            // always send to agent
+	QuickInputTargetAgent    QuickInputTarget = iota // always send to agent
 	QuickInputTargetTerminal                         // always send to terminal
 )
 
@@ -85,8 +84,6 @@ func (q *QuickInputBar) View() string {
 		hintText = "Enter to send to agent · Esc to cancel"
 	case QuickInputTargetTerminal:
 		hintText = "Enter to send to terminal · Esc to cancel"
-	default:
-		hintText = "Enter to send · Esc to cancel"
 	}
 	hint := quickInputHintStyle.Render(hintText)
 	return lipgloss.JoinVertical(lipgloss.Left, input, hint)

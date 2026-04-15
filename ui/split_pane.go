@@ -47,8 +47,9 @@ type SplitPane struct {
 	terminal *TerminalPane
 	diff     *DiffPane
 
-	focusedPane int
-	diffVisible bool
+	focusedPane  int
+	inlineAttach bool
+	diffVisible  bool
 
 	height int
 	width  int
@@ -98,13 +99,10 @@ func (s *SplitPane) GetAgentSize() (width, height int) {
 	return s.agent.width, s.agent.height
 }
 
-// ToggleFocus swaps focus between agent and terminal panes.
-func (s *SplitPane) ToggleFocus() {
-	if s.focusedPane == FocusAgent {
-		s.focusedPane = FocusTerminal
-	} else {
-		s.focusedPane = FocusAgent
-	}
+// SetInlineAttach toggles whether inline-attach mode is active,
+// controlling whether the focused-pane highlight is rendered.
+func (s *SplitPane) SetInlineAttach(attached bool) {
+	s.inlineAttach = attached
 }
 
 // ToggleDiff shows or hides the diff overlay.
@@ -242,8 +240,9 @@ func (s *SplitPane) String() string {
 		return lipgloss.JoinVertical(lipgloss.Left, topLine, body)
 	}
 
-	agentBox := s.renderPane(" Agent ", s.agent.String(), s.agent.height, s.focusedPane == FocusAgent)
-	terminalBox := s.renderPane(" Terminal ", s.terminal.String(), s.terminal.height, s.focusedPane == FocusTerminal)
+	showFocus := s.inlineAttach
+	agentBox := s.renderPane(" Agent ", s.agent.String(), s.agent.height, showFocus && s.focusedPane == FocusAgent)
+	terminalBox := s.renderPane(" Terminal ", s.terminal.String(), s.terminal.height, showFocus && s.focusedPane == FocusTerminal)
 
 	return lipgloss.JoinVertical(lipgloss.Left, agentBox, terminalBox)
 }

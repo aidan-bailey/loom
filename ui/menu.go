@@ -49,7 +49,6 @@ type Menu struct {
 	height, width int
 	state         MenuState
 	instance      *session.Instance
-	focusedPane   int
 
 	// keyDown is the key which is pressed. The default is -1.
 	keyDown keys.KeyName
@@ -63,10 +62,9 @@ var inlineAttachMenuOptions = []keys.KeyName{}
 
 func NewMenu() *Menu {
 	return &Menu{
-		options:     defaultMenuOptions,
-		state:       StateEmpty,
-		focusedPane: 0,
-		keyDown:     -1,
+		options: defaultMenuOptions,
+		state:   StateEmpty,
+		keyDown: -1,
 	}
 }
 
@@ -95,12 +93,6 @@ func (m *Menu) SetInstance(instance *session.Instance) {
 			m.state = StateEmpty
 		}
 	}
-	m.updateOptions()
-}
-
-// SetFocusedPane updates the currently focused pane
-func (m *Menu) SetFocusedPane(pane int) {
-	m.focusedPane = pane
 	m.updateOptions()
 }
 
@@ -141,8 +133,8 @@ func (m *Menu) addInstanceOptions() {
 		options = append(options, keys.KeyKill)
 	}
 
-	// Action group
-	actionGroup := []keys.KeyName{keys.KeyEnter, keys.KeyQuickInteract}
+	// Action group — direct pane targeting keys
+	actionGroup := []keys.KeyName{}
 	if !m.instance.IsWorkspaceTerminal {
 		actionGroup = append(actionGroup, keys.KeySubmit)
 		if m.instance.Status == session.Paused {
@@ -152,11 +144,8 @@ func (m *Menu) addInstanceOptions() {
 		}
 	}
 
-	// Scroll hint is always relevant now (both panes visible)
-	actionGroup = append(actionGroup, keys.KeyShiftUp)
-
 	// System group
-	systemGroup := []keys.KeyName{keys.KeyTab, keys.KeyDiff, keys.KeyHelp, keys.KeyQuit}
+	systemGroup := []keys.KeyName{keys.KeyDiff, keys.KeyHelp, keys.KeyQuit}
 
 	// Combine all groups
 	options = append(options, actionGroup...)
@@ -179,9 +168,9 @@ func (m *Menu) String() string {
 		start int
 		end   int
 	}{
-		{0, 2}, // Instance management group (n, d)
-		{2, 5}, // Action group (enter, submit, pause/resume)
-		{6, 8}, // System group (tab, help, q)
+		{0, 2}, // Instance management group (n, D)
+		{2, 4}, // Action group (submit, checkout/resume)
+		{4, 7}, // System group (diff, help, q)
 	}
 
 	for i, k := range m.options {

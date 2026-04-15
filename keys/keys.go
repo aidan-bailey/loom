@@ -9,7 +9,6 @@ type KeyName int
 const (
 	KeyUp KeyName = iota
 	KeyDown
-	KeyEnter
 	KeyNew
 	KeyKill
 	KeyQuit
@@ -17,7 +16,6 @@ const (
 	KeyPush
 	KeySubmit
 
-	KeyTab        // Tab is a special keybinding for switching between panes.
 	KeySubmitName // SubmitName is a special keybinding for submitting the name of a new instance.
 
 	KeyCheckout
@@ -25,15 +23,10 @@ const (
 	KeyPrompt // New key for entering a prompt
 	KeyHelp   // Key for showing help screen
 
-	// Diff keybindings
-	KeyShiftUp
-	KeyShiftDown
-
 	KeyWorkspace      // Key for switching workspaces
 	KeyWorkspaceLeft  // Key for previous workspace tab
 	KeyWorkspaceRight // Key for next workspace tab
 
-	KeyQuickInteract    // Key for quick interaction input bar
 	KeyFullScreenAttach // Key for full-screen attach (existing attach behavior)
 	KeyDiff             // Key for toggling diff overlay
 
@@ -51,15 +44,10 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"k":          KeyUp,
 	"down":       KeyDown,
 	"j":          KeyDown,
-	"shift+up":   KeyShiftUp,
-	"shift+down": KeyShiftDown,
 	"N":          KeyPrompt,
-	"enter":      KeyEnter,
-	"o":          KeyEnter,
 	"n":          KeyNew,
 	"D":          KeyKill,
 	"q":          KeyQuit,
-	"tab":        KeyTab,
 	"c":          KeyCheckout,
 	"r":          KeyResume,
 	"p":          KeySubmit,
@@ -69,7 +57,6 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"h":          KeyWorkspaceLeft,
 	"]":          KeyWorkspaceRight,
 	"l":          KeyWorkspaceRight,
-	"i":          KeyQuickInteract,
 	"O":          KeyFullScreenAttach,
 	"d":          KeyDiff,
 	"a":          KeyQuickInputAgent,
@@ -87,18 +74,6 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyDown: key.NewBinding(
 		key.WithKeys("down", "j"),
 		key.WithHelp("↓/j", "down"),
-	),
-	KeyShiftUp: key.NewBinding(
-		key.WithKeys("shift+up"),
-		key.WithHelp("shift+↑", "scroll"),
-	),
-	KeyShiftDown: key.NewBinding(
-		key.WithKeys("shift+down"),
-		key.WithHelp("shift+↓", "scroll"),
-	),
-	KeyEnter: key.NewBinding(
-		key.WithKeys("enter", "o"),
-		key.WithHelp("↵/o", "open"),
 	),
 	KeyNew: key.NewBinding(
 		key.WithKeys("n"),
@@ -128,10 +103,6 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 		key.WithKeys("c"),
 		key.WithHelp("c", "checkout"),
 	),
-	KeyTab: key.NewBinding(
-		key.WithKeys("tab"),
-		key.WithHelp("tab", "focus"),
-	),
 	KeyResume: key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "resume"),
@@ -151,10 +122,6 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 		key.WithHelp("]/l", "next ws"),
 	),
 
-	KeyQuickInteract: key.NewBinding(
-		key.WithKeys("i"),
-		key.WithHelp("i", "input"),
-	),
 	KeyFullScreenAttach: key.NewBinding(
 		key.WithKeys("O"),
 		key.WithHelp("O", "fullscreen"),
