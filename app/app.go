@@ -361,6 +361,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if currentTitle == m.lastPreviewTitle &&
 				currentHash != nil &&
 				bytes.Equal(currentHash, m.lastPreviewHash) {
+				// Agent content unchanged, but the terminal pane has its
+				// own independent tmux session whose content may have changed.
+				if selected != nil {
+					_ = m.splitPane.UpdateTerminal(selected)
+				}
 				return m, nextTick
 			}
 
