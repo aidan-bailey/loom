@@ -285,6 +285,15 @@ func (i *Instance) setStarted(v bool) {
 	i.started = v
 }
 
+// GetBranch returns the branch name under a read lock. Safe to call
+// concurrently with UpdateDiffStats* for workspace terminals, which
+// refresh Branch on every tick.
+func (i *Instance) GetBranch() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.Branch
+}
+
 // SetSelectedBranch sets the branch to use when starting the instance.
 func (i *Instance) SetSelectedBranch(branch string) {
 	i.selectedBranch = branch
@@ -311,21 +320,21 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 			if err != nil {
 				return fmt.Errorf("failed to create git worktree from branch: %w", err)
 			}
-			i.setGitWorktree(gitWorktree)
-			gw = gitWorktree
 			i.mu.Lock()
+			i.gitWorktree = gitWorktree
 			i.Branch = i.selectedBranch
 			i.mu.Unlock()
+			gw = gitWorktree
 		} else {
 			gitWorktree, branchName, err := git.NewGitWorktree(i.Path, i.Title, i.ConfigDir)
 			if err != nil {
 				return fmt.Errorf("failed to create git worktree: %w", err)
 			}
-			i.setGitWorktree(gitWorktree)
-			gw = gitWorktree
 			i.mu.Lock()
+			i.gitWorktree = gitWorktree
 			i.Branch = branchName
 			i.mu.Unlock()
+			gw = gitWorktree
 		}
 	} else {
 		gw = i.getGitWorktree()

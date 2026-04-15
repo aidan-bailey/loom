@@ -91,7 +91,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 				}).
 				Render(fmt.Sprintf(
 					"The instance can be checked out at '%s' (copied to your clipboard)",
-					instance.Branch,
+					instance.GetBranch(),
 				)),
 		))
 		return nil
