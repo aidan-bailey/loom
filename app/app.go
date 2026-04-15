@@ -1078,13 +1078,18 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 
-		// Show help screen before pausing
-		m.showHelpScreen(helpTypeInstanceCheckout{}, func() {
+		pauseAction := func() tea.Msg {
 			if err := selected.Pause(); err != nil {
-				m.handleError(err)
+				return err
 			}
 			m.splitPane.CleanupTerminalForInstance(selected.Title)
-			m.instanceChanged()
+			return instanceChangedMsg{}
+		}
+
+		// Show help screen before confirming pause
+		m.showHelpScreen(helpTypeInstanceCheckout{}, func() {
+			message := fmt.Sprintf("[!] Pause session '%s'?", selected.Title)
+			m.confirmAction(message, pauseAction)
 		})
 		return m, nil
 	case keys.KeyResume:
