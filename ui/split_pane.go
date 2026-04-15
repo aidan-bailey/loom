@@ -23,7 +23,7 @@ const (
 var (
 	splitPaneBorder = lipgloss.NewStyle().
 			BorderForeground(highlightColor).
-			Border(lipgloss.NormalBorder(), false, true, true, true)
+			Border(lipgloss.NormalBorder())
 	separatorStyle = lipgloss.NewStyle().
 			Foreground(highlightColor)
 	focusedSeparatorStyle = lipgloss.NewStyle().
