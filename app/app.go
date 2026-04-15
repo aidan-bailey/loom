@@ -77,12 +77,12 @@ const (
 // workspaceSlot bundles per-workspace state so multiple workspaces can be
 // loaded in memory simultaneously.
 type workspaceSlot struct {
-	wsCtx        *config.WorkspaceContext
-	storage      *session.Storage
-	appConfig    *config.Config
-	appState     config.AppState
-	list         *ui.List
-	tabbedWindow *ui.TabbedWindow
+	wsCtx     *config.WorkspaceContext
+	storage   *session.Storage
+	appConfig *config.Config
+	appState  config.AppState
+	list      *ui.List
+	splitPane *ui.SplitPane
 }
 
 type home struct {
@@ -120,8 +120,8 @@ type home struct {
 	list *ui.List
 	// menu displays the bottom menu
 	menu *ui.Menu
-	// tabbedWindow displays the tabbed window with preview and diff panes
-	tabbedWindow *ui.TabbedWindow
+	// splitPane displays the agent and terminal panes with diff overlay
+	splitPane *ui.SplitPane
 	// quickInputBar displays the inline input bar for quick interactions
 	quickInputBar *ui.QuickInputBar
 	// errBox displays error messages
@@ -184,8 +184,8 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		registry:     registry,
 		spinner:      spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		menu:         ui.NewMenu(),
-		tabbedWindow: ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		errBox:       ui.NewErrBox(),
+		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		errBox:    ui.NewErrBox(),
 		storage:      storage,
 		appConfig:    appConfig,
 		program:      program,
@@ -278,9 +278,9 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.lastHeight = msg.Height
 	m.tabBar.SetWidth(msg.Width)
 
-	// List takes 30% of width, preview takes 70%
-	listWidth := int(float32(msg.Width) * 0.3)
-	tabsWidth := msg.Width - listWidth
+	// List takes 20% of width, split pane takes 80%
+	listWidth := int(float32(msg.Width) * 0.2)
+	paneWidth := msg.Width - listWidth
 
 	// Menu takes 10% of height, list and window take 90%
 	contentHeight := int(float32(msg.Height)*0.9) - m.tabBar.Height()
@@ -290,11 +290,11 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	quickInputHeight := 0
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
 		quickInputHeight = m.quickInputBar.Height()
-		m.quickInputBar.SetWidth(ui.AdjustPreviewWidth(tabsWidth))
+		m.quickInputBar.SetWidth(ui.AdjustPreviewWidth(paneWidth))
 	} else if m.state == stateInlineAttach {
 		quickInputHeight = 1 // hint takes 1 line
 	}
-	m.tabbedWindow.SetSize(tabsWidth, contentHeight-quickInputHeight)
+	m.splitPane.SetSize(paneWidth, contentHeight-quickInputHeight)
 	m.list.SetSize(listWidth, contentHeight)
 
 	if m.textInputOverlay != nil {
@@ -304,8 +304,8 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 		m.textOverlay.SetWidth(int(float32(msg.Width) * 0.6))
 	}
 
-	previewWidth, previewHeight := m.tabbedWindow.GetPreviewSize()
-	if err := m.list.SetSessionPreviewSize(previewWidth, previewHeight); err != nil {
+	agentWidth, agentHeight := m.splitPane.GetAgentSize()
+	if err := m.list.SetSessionPreviewSize(agentWidth, agentHeight); err != nil {
 		log.ErrorLog.Print(err)
 	}
 	m.menu.SetSize(msg.Width, menuHeight)
@@ -471,9 +471,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				switch msg.Button {
 				case tea.MouseButtonWheelUp:
-					m.tabbedWindow.ScrollUp()
+					m.splitPane.ScrollUp()
 				case tea.MouseButtonWheelDown:
-					m.tabbedWindow.ScrollDown()
+					m.splitPane.ScrollDown()
 				}
 			}
 		}
@@ -831,8 +831,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		switch action {
 		case ui.QuickInputSubmit:
 			text := m.quickInputBar.Value()
-			if m.tabbedWindow.IsInTerminalTab() {
-				if err := m.tabbedWindow.SendTerminalPrompt(text); err != nil {
+			if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
+				if err := m.splitPane.SendTerminalPrompt(text); err != nil {
 					m.quickInputBar = nil
 					m.state = stateDefault
 					m.menu.SetState(ui.StateDefault)
@@ -905,23 +905,24 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, nil
 	}
 
-	// Exit scrolling mode when ESC is pressed and preview pane is in scrolling mode
-	// Check if Escape key was pressed and we're not in the diff tab (meaning we're in preview tab)
-	// Always check for escape key first to ensure it doesn't get intercepted elsewhere
 	if msg.Type == tea.KeyEsc {
-		// If in preview tab and in scroll mode, exit scroll mode
-		if m.tabbedWindow.IsInPreviewTab() && m.tabbedWindow.IsPreviewInScrollMode() {
-			// Use the selected instance from the list
+		// Dismiss diff overlay first
+		if m.splitPane.IsDiffVisible() {
+			m.splitPane.ToggleDiff()
+			return m, m.instanceChanged()
+		}
+		// Exit agent scroll mode
+		if m.splitPane.IsAgentInScrollMode() {
 			selected := m.list.GetSelectedInstance()
-			err := m.tabbedWindow.ResetPreviewToNormalMode(selected)
+			err := m.splitPane.ResetAgentToNormalMode(selected)
 			if err != nil {
 				return m, m.handleError(err)
 			}
 			return m, m.instanceChanged()
 		}
-		// If in terminal tab and in scroll mode, exit scroll mode
-		if m.tabbedWindow.IsInTerminalTab() && m.tabbedWindow.IsTerminalInScrollMode() {
-			m.tabbedWindow.ResetTerminalToNormalMode()
+		// Exit terminal scroll mode
+		if m.splitPane.IsTerminalInScrollMode() {
+			m.splitPane.ResetTerminalToNormalMode()
 			return m, m.instanceChanged()
 		}
 	}
@@ -997,14 +998,17 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		m.list.Down()
 		return m, m.instanceChanged()
 	case keys.KeyShiftUp:
-		m.tabbedWindow.ScrollUp()
+		m.splitPane.ScrollUp()
 		return m, nil
 	case keys.KeyShiftDown:
-		m.tabbedWindow.ScrollDown()
+		m.splitPane.ScrollDown()
 		return m, nil
 	case keys.KeyTab:
-		m.tabbedWindow.Toggle()
-		m.menu.SetActiveTab(m.tabbedWindow.GetActiveTab())
+		m.splitPane.ToggleFocus()
+		m.menu.SetFocusedPane(m.splitPane.GetFocusedPane())
+		return m, m.instanceChanged()
+	case keys.KeyDiff:
+		m.splitPane.ToggleDiff()
 		return m, m.instanceChanged()
 	case keys.KeyKill:
 		selected := m.list.GetSelectedInstance()
@@ -1030,7 +1034,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			}
 
 			// Clean up terminal session for this instance
-			m.tabbedWindow.CleanupTerminalForInstance(selected.Title)
+			m.splitPane.CleanupTerminalForInstance(selected.Title)
 
 			// Delete from storage first
 			if err := m.storage.DeleteInstance(selected.Title); err != nil {
@@ -1079,7 +1083,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			if err := selected.Pause(); err != nil {
 				m.handleError(err)
 			}
-			m.tabbedWindow.CleanupTerminalForInstance(selected.Title)
+			m.splitPane.CleanupTerminalForInstance(selected.Title)
 			m.instanceChanged()
 		})
 		return m, nil
@@ -1138,7 +1142,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading {
 			return m, nil
 		}
-		if m.tabbedWindow.IsInDiffTab() {
+		if m.splitPane.IsDiffVisible() {
 			return m, nil
 		}
 		m.state = stateQuickInteract
@@ -1153,10 +1157,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil || selected.Paused() || selected.Status == session.Loading || !selected.TmuxAlive() {
 			return m, nil
 		}
-		// Terminal tab: attach to terminal session
-		if m.tabbedWindow.IsInTerminalTab() {
+		// Terminal pane focused: attach to terminal session
+		if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
 			m.showHelpScreen(helpTypeInstanceAttach{}, func() {
-				ch, err := m.tabbedWindow.AttachTerminal()
+				ch, err := m.splitPane.AttachTerminal()
 				if err != nil {
 					m.handleError(err)
 					return
@@ -1166,7 +1170,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			})
 			return m, nil
 		}
-		// Preview/diff tab: attach to main instance
+		// Agent pane focused: attach to main instance
 		m.showHelpScreen(helpTypeInstanceAttach{}, func() {
 			ch, err := m.list.Attach()
 			if err != nil {
@@ -1188,16 +1192,15 @@ func (m *home) instanceChanged() tea.Cmd {
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
 
-	m.tabbedWindow.UpdateDiff(selected)
-	m.tabbedWindow.SetInstance(selected)
+	m.splitPane.UpdateDiff(selected)
+	m.splitPane.SetInstance(selected)
 	// Update menu with current instance
 	m.menu.SetInstance(selected)
 
-	// If there's no selected instance, we don't need to update the preview.
-	if err := m.tabbedWindow.UpdatePreview(selected); err != nil {
+	if err := m.splitPane.UpdateAgent(selected); err != nil {
 		return m.handleError(err)
 	}
-	if err := m.tabbedWindow.UpdateTerminal(selected); err != nil {
+	if err := m.splitPane.UpdateTerminal(selected); err != nil {
 		return m.handleError(err)
 	}
 	return nil
@@ -1415,24 +1418,24 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 
 	list.SetWorkspaceName(ws.Name)
 
-	tabbedWindow := ui.NewTabbedWindow(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 
 	// Pre-size components if terminal dimensions are known.
 	if m.lastWidth > 0 && m.lastHeight > 0 {
-		listWidth := int(float32(m.lastWidth) * 0.3)
-		tabsWidth := m.lastWidth - listWidth
+		listWidth := int(float32(m.lastWidth) * 0.2)
+		paneWidth := m.lastWidth - listWidth
 		contentHeight := int(float32(m.lastHeight)*0.9) - m.tabBar.Height()
 		list.SetSize(listWidth, contentHeight)
-		tabbedWindow.SetSize(tabsWidth, contentHeight)
+		splitPane.SetSize(paneWidth, contentHeight)
 	}
 
 	m.slots = append(m.slots, workspaceSlot{
-		wsCtx:        wsCtx,
-		storage:      storage,
-		appConfig:    appConfig,
-		appState:     state,
-		list:         list,
-		tabbedWindow: tabbedWindow,
+		wsCtx:     wsCtx,
+		storage:   storage,
+		appConfig: appConfig,
+		appState:  state,
+		list:      list,
+		splitPane: splitPane,
 	})
 	return nil
 }
@@ -1469,7 +1472,7 @@ func (m *home) saveCurrentSlot() {
 	}
 	s := &m.slots[m.focusedSlot]
 	s.list = m.list
-	s.tabbedWindow = m.tabbedWindow
+	s.splitPane = m.splitPane
 	s.storage = m.storage
 	s.appConfig = m.appConfig
 	s.appState = m.appState
@@ -1484,7 +1487,7 @@ func (m *home) loadSlot(idx int) {
 	m.focusedSlot = idx
 	m.activeCtx = slot.wsCtx
 	m.list = slot.list
-	m.tabbedWindow = slot.tabbedWindow
+	m.splitPane = slot.splitPane
 	m.storage = slot.storage
 	m.appConfig = slot.appConfig
 	m.appState = slot.appState
@@ -1581,7 +1584,7 @@ func (m *home) slotNames() []string {
 
 func (m *home) View() string {
 	listWithPadding := lipgloss.NewStyle().PaddingTop(1).Render(m.list.String())
-	rightContent := m.tabbedWindow.String()
+	rightContent := m.splitPane.String()
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
 		rightContent = lipgloss.JoinVertical(lipgloss.Left, rightContent, m.quickInputBar.View())
 	} else if m.state == stateInlineAttach {
