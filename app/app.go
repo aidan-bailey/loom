@@ -458,7 +458,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				log.WarningLog.Printf("could not update diff stats: %v", r.diffErr)
 			}
 		}
-		m.updateTabBarPrompting()
+		m.updateTabBarStatuses()
 		return m, tickUpdateMetadataCmd
 	case tea.MouseMsg:
 		// Handle mouse wheel events for scrolling the diff/preview pane
@@ -513,7 +513,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.activeCtx = config.WorkspaceContextFor(ws)
 		m.loadSlot(0)
-		m.updateTabBarPrompting()
+		m.updateTabBarStatuses()
 		_ = m.registry.UpdateLastUsed(ws.Name)
 		return m, tea.WindowSize()
 	case instanceStartedMsg:
@@ -875,7 +875,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 						return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 					}
 					m.loadSlot(0)
-					m.updateTabBarPrompting()
+					m.updateTabBarStatuses()
 					if m.registry != nil {
 						_ = m.registry.UpdateLastUsed(selected.Name)
 					}
@@ -1122,7 +1122,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		m.saveCurrentSlot()
 		newIdx := (m.focusedSlot - 1 + len(m.slots)) % len(m.slots)
 		m.loadSlot(newIdx)
-		m.updateTabBarPrompting()
+		m.updateTabBarStatuses()
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case keys.KeyWorkspaceRight:
 		if len(m.slots) <= 1 {
@@ -1131,7 +1131,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		m.saveCurrentSlot()
 		newIdx := (m.focusedSlot + 1) % len(m.slots)
 		m.loadSlot(newIdx)
-		m.updateTabBarPrompting()
+		m.updateTabBarStatuses()
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case keys.KeyQuickInteract:
 		selected := m.list.GetSelectedInstance()
@@ -1545,13 +1545,32 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	return tea.WindowSize()
 }
 
-// updateTabBarPrompting checks each slot for instances awaiting user input
-// and updates the tab bar's prompting indicators.
-func (m *home) updateTabBarPrompting() {
+// sessionToTabStatus maps a session.Status to the corresponding ui.TabStatus.
+func sessionToTabStatus(s session.Status) ui.TabStatus {
+	switch s {
+	case session.Prompting:
+		return ui.TabStatusPrompting
+	case session.Running:
+		return ui.TabStatusRunning
+	case session.Ready:
+		return ui.TabStatusReady
+	case session.Loading:
+		return ui.TabStatusLoading
+	case session.Paused:
+		return ui.TabStatusPaused
+	default:
+		return ui.TabStatusNone
+	}
+}
+
+// updateTabBarStatuses checks each slot for instances and updates the tab bar's
+// status indicators. The highest-priority status across all instances in a slot wins.
+// Precedence (high→low): Prompting > Running > Ready > Loading > Paused > None.
+func (m *home) updateTabBarStatuses() {
 	if len(m.slots) == 0 {
 		return
 	}
-	prompting := make([]bool, len(m.slots))
+	statuses := make([]ui.TabStatus, len(m.slots))
 	for i, slot := range m.slots {
 		var instances []*session.Instance
 		if i == m.focusedSlot {
@@ -1560,14 +1579,16 @@ func (m *home) updateTabBarPrompting() {
 			instances = slot.list.GetInstances()
 		}
 		for _, inst := range instances {
-			if inst.Started() && !inst.Paused() &&
-				(inst.Status == session.Prompting || inst.Status == session.Ready) {
-				prompting[i] = true
-				break
+			if !inst.Started() {
+				continue
+			}
+			ts := sessionToTabStatus(inst.Status)
+			if ts > statuses[i] {
+				statuses[i] = ts
 			}
 		}
 	}
-	m.tabBar.SetPrompting(prompting)
+	m.tabBar.SetStatuses(statuses)
 }
 
 // slotNames returns the names of all active workspace slots.

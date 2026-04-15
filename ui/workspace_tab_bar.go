@@ -22,13 +22,30 @@ var (
 )
 
 var wsPromptIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#e5c07b")).Bold(true)
+var wsRunningIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#61afef")).Bold(true)
+var wsReadyIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#51bd73")).Bold(true)
+var wsLoadingIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#c678dd")).Bold(true)
+var wsPausedIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+
+// TabStatus represents the highest-priority instance status within a workspace tab.
+// Precedence (high→low): Prompting > Running > Ready > Loading > Paused > None.
+type TabStatus int
+
+const (
+	TabStatusNone TabStatus = iota
+	TabStatusPaused
+	TabStatusLoading
+	TabStatusReady
+	TabStatusRunning
+	TabStatusPrompting
+)
 
 // WorkspaceTabBar renders a row of workspace tabs at the top of the TUI.
 type WorkspaceTabBar struct {
 	names      []string
 	focusedIdx int
 	width      int
-	prompting  []bool // per-tab: true if any instance is awaiting input
+	statuses   []TabStatus // per-tab highest-priority status
 }
 
 // NewWorkspaceTabBar creates a new workspace tab bar.
@@ -40,12 +57,12 @@ func NewWorkspaceTabBar() *WorkspaceTabBar {
 func (b *WorkspaceTabBar) SetWorkspaces(names []string, focused int) {
 	b.names = names
 	b.focusedIdx = focused
-	b.prompting = make([]bool, len(names))
+	b.statuses = make([]TabStatus, len(names))
 }
 
-// SetPrompting updates which tabs have instances awaiting user input.
-func (b *WorkspaceTabBar) SetPrompting(prompting []bool) {
-	b.prompting = prompting
+// SetStatuses updates the per-tab status indicators.
+func (b *WorkspaceTabBar) SetStatuses(statuses []TabStatus) {
+	b.statuses = statuses
 }
 
 // SetWidth sets the available width for the tab bar.
@@ -79,8 +96,19 @@ func (b *WorkspaceTabBar) String() string {
 		}
 
 		label := name
-		if i < len(b.prompting) && b.prompting[i] {
-			label = name + " " + wsPromptIndicator.Render("●")
+		if i < len(b.statuses) {
+			switch b.statuses[i] {
+			case TabStatusPrompting:
+				label = name + " " + wsPromptIndicator.Render("●")
+			case TabStatusRunning:
+				label = name + " " + wsRunningIndicator.Render("●")
+			case TabStatusReady:
+				label = name + " " + wsReadyIndicator.Render("●")
+			case TabStatusLoading:
+				label = name + " " + wsLoadingIndicator.Render("●")
+			case TabStatusPaused:
+				label = name + " " + wsPausedIndicator.Render("●")
+			}
 		}
 
 		var style lipgloss.Style
