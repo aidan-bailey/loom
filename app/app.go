@@ -404,7 +404,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		selected := m.list.GetSelectedInstance()
 		var active []*session.Instance
 		for _, inst := range allInstances {
-			if inst.Started() && !inst.Paused() {
+			if inst.Started() && !inst.Paused() && inst.Status != session.Deleting {
 				active = append(active, inst)
 			}
 		}
@@ -1099,7 +1099,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.confirmAction(message, killAction)
 	case keys.KeySubmit:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading || selected.IsWorkspaceTerminal {
+		if selected == nil || selected.Status == session.Loading || selected.Status == session.Deleting || selected.IsWorkspaceTerminal {
 			return m, nil
 		}
 
@@ -1122,7 +1122,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.confirmAction(message, pushAction)
 	case keys.KeyCheckout:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading || selected.IsWorkspaceTerminal {
+		if selected == nil || selected.Status == session.Loading || selected.Status == session.Deleting || selected.IsWorkspaceTerminal {
 			return m, nil
 		}
 
@@ -1142,7 +1142,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, nil
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading || selected.IsWorkspaceTerminal {
+		if selected == nil || selected.Status == session.Loading || selected.Status == session.Deleting || selected.IsWorkspaceTerminal {
 			return m, nil
 		}
 		if err := selected.Resume(); err != nil {
@@ -1154,7 +1154,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || selected.Status == session.Loading || !selected.TmuxAlive() {
+		if selected == nil || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
 			return m, nil
 		}
 		m.state = stateInlineAttach
@@ -1165,7 +1165,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || selected.Status == session.Loading || !selected.TmuxAlive() {
+		if selected == nil || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
 			return m, nil
 		}
 		m.splitPane.SetFocusedPane(ui.FocusAgent)
@@ -1177,7 +1177,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || selected.Status == session.Loading || !selected.TmuxAlive() {
+		if selected == nil || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
 			return m, nil
 		}
 		m.splitPane.SetFocusedPane(ui.FocusTerminal)
@@ -1216,7 +1216,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case keys.KeyQuickInteract:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading {
+		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading || selected.Status == session.Deleting {
 			return m, nil
 		}
 		if m.splitPane.IsDiffVisible() {
@@ -1228,7 +1228,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, tea.WindowSize()
 	case keys.KeyQuickInputAgent:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading {
+		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading || selected.Status == session.Deleting {
 			return m, nil
 		}
 		if m.splitPane.IsDiffVisible() {
@@ -1240,7 +1240,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, tea.WindowSize()
 	case keys.KeyQuickInputTerminal:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading {
+		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading || selected.Status == session.Deleting {
 			return m, nil
 		}
 		if m.splitPane.IsDiffVisible() {
@@ -1255,7 +1255,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || selected.Status == session.Loading || !selected.TmuxAlive() {
+		if selected == nil || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
 			return m, nil
 		}
 		// Terminal pane focused: attach to terminal session
