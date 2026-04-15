@@ -205,6 +205,11 @@ func (s *SplitPane) SendTerminalPrompt(text string) error {
 	return s.terminal.SendPrompt(text)
 }
 
+// SendTerminalKeysRaw writes raw bytes to the terminal pane's tmux PTY.
+func (s *SplitPane) SendTerminalKeysRaw(b []byte) error {
+	return s.terminal.SendKeysRaw(b)
+}
+
 func (s *SplitPane) String() string {
 	if s.width == 0 || s.height == 0 {
 		return ""
@@ -249,7 +254,7 @@ func (s *SplitPane) String() string {
 			lipgloss.Left, lipgloss.Top,
 			stacked))
 
-	return lipgloss.JoinVertical(lipgloss.Left, "\n", window)
+	return window
 }
 
 // buildSeparator creates the horizontal separator between panes with a focus label.

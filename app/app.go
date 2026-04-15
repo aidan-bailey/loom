@@ -803,10 +803,16 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, tea.WindowSize()
 		}
 
-		// Convert key to bytes and forward to tmux
+		// Convert key to bytes and forward to the focused pane's tmux session
 		b := keyMsgToBytes(msg)
 		if b != nil {
-			if err := selected.SendKeysRaw(b); err != nil {
+			var err error
+			if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
+				err = m.splitPane.SendTerminalKeysRaw(b)
+			} else {
+				err = selected.SendKeysRaw(b)
+			}
+			if err != nil {
 				log.ErrorLog.Printf("inline attach send error: %v", err)
 			}
 		}
@@ -1609,7 +1615,7 @@ func (m *home) slotNames() []string {
 }
 
 func (m *home) View() string {
-	listWithPadding := lipgloss.NewStyle().PaddingTop(1).Render(m.list.String())
+	listView := m.list.String()
 	rightContent := m.splitPane.String()
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
 		rightContent = lipgloss.JoinVertical(lipgloss.Left, rightContent, m.quickInputBar.View())
@@ -1617,8 +1623,7 @@ func (m *home) View() string {
 		hint := inlineAttachHintStyle.Render("▶ CAPTURING INPUT  ·  Esc to detach  ·  O for fullscreen")
 		rightContent = lipgloss.JoinVertical(lipgloss.Left, rightContent, hint)
 	}
-	previewWithPadding := lipgloss.NewStyle().PaddingTop(1).Render(rightContent)
-	listAndPreview := lipgloss.JoinHorizontal(lipgloss.Top, listWithPadding, previewWithPadding)
+	listAndPreview := lipgloss.JoinHorizontal(lipgloss.Top, listView, rightContent)
 
 	sections := []string{}
 	if tabBarStr := m.tabBar.String(); tabBarStr != "" {

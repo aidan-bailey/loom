@@ -234,6 +234,24 @@ func (t *TerminalPane) SendPrompt(text string) error {
 	return nil
 }
 
+// SendKeysRaw writes raw bytes to the current terminal tmux PTY.
+func (t *TerminalPane) SendKeysRaw(b []byte) error {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	if !ok || s.tmuxSession == nil {
+		t.mu.Unlock()
+		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	}
+	if !s.tmuxSession.DoesSessionExist() {
+		t.mu.Unlock()
+		return fmt.Errorf("terminal session for %s no longer exists", t.currentTitle)
+	}
+	ts := s.tmuxSession
+	t.mu.Unlock()
+
+	return ts.SendKeysRaw(b)
+}
+
 // Close kills all cached terminal tmux sessions and cleans up.
 func (t *TerminalPane) Close() {
 	t.mu.Lock()
