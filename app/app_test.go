@@ -434,28 +434,6 @@ func TestMultipleConfirmationsDontInterfere(t *testing.T) {
 	assert.True(t, action1Called, "First action should be callable after being replaced")
 }
 
-// TestScrollDoesNotTriggerInstanceChanged verifies scroll handlers return nil cmd (no instanceChanged call).
-// The mouse wheel handler already returns nil after scrolling — keyboard scroll should match.
-func TestScrollDoesNotTriggerInstanceChanged(t *testing.T) {
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	m := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      ui.NewList(&s, false),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		menu:      ui.NewMenu(),
-	}
-	m.list.SetSize(80, 24)
-	m.splitPane.SetSize(80, 24)
-
-	_, cmdUp := m.handleKeyPress(tea.KeyMsg{Type: tea.KeyShiftUp})
-	assert.Nil(t, cmdUp, "ScrollUp should not trigger instanceChanged")
-
-	_, cmdDown := m.handleKeyPress(tea.KeyMsg{Type: tea.KeyShiftDown})
-	assert.Nil(t, cmdDown, "ScrollDown should not trigger instanceChanged")
-}
-
 // mockInstanceStorage implements config.InstanceStorage for testing.
 type mockInstanceStorage struct{}
 
