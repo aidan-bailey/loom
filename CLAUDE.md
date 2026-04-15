@@ -88,10 +88,10 @@ claude-squad --workspace <name>
 | `i` | Quick input bar (send text to agent's tmux session) |
 | `tab` | Switch focus (agent/terminal) |
 | `d` | Toggle diff overlay |
-| `up`/`k`, `down`/`j` | Navigate list |
+| `up`/`k`, `down`/`j` | Navigate sessions |
 | `shift+up`/`shift+down` | Scroll focused pane |
 | `W` | Workspace picker |
-| `[`/`]` | Previous/next workspace tab |
+| `h`/`[`, `l`/`]` | Previous/next workspace tab |
 | `?` | Help |
 | `q` | Quit |
 
