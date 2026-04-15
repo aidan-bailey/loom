@@ -582,16 +582,27 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// persistableInstances filters out instances with transient Deleting status.
+func persistableInstances(instances []*session.Instance) []*session.Instance {
+	var result []*session.Instance
+	for _, inst := range instances {
+		if inst.Status != session.Deleting {
+			result = append(result, inst)
+		}
+	}
+	return result
+}
+
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	if len(m.slots) > 0 {
 		m.saveCurrentSlot()
 		for _, slot := range m.slots {
-			if err := slot.storage.SaveInstances(slot.list.GetInstances()); err != nil {
+			if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
 				log.ErrorLog.Printf("failed to save workspace %s: %v", slot.wsCtx.Name, err)
 			}
 		}
 	} else {
-		if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
+		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
 			return m, m.handleError(err)
 		}
 	}
