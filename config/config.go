@@ -226,7 +226,7 @@ func SaveConfigTo(config *Config, dir string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	return os.WriteFile(configPath, data, 0644)
+	return AtomicWriteFile(configPath, data, 0644)
 }
 
 // LoadConfigFrom loads configuration from an explicit directory.

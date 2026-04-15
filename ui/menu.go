@@ -122,7 +122,7 @@ func (m *Menu) updateOptions() {
 
 func (m *Menu) addInstanceOptions() {
 	// Loading instances only get minimal options
-	if m.instance != nil && m.instance.Status == session.Loading {
+	if m.instance != nil && m.instance.GetStatus() == session.Loading {
 		m.options = []keys.KeyName{keys.KeyNew, keys.KeyHelp, keys.KeyQuit}
 		return
 	}
@@ -137,7 +137,7 @@ func (m *Menu) addInstanceOptions() {
 	actionGroup := []keys.KeyName{}
 	if !m.instance.IsWorkspaceTerminal {
 		actionGroup = append(actionGroup, keys.KeySubmit)
-		if m.instance.Status == session.Paused {
+		if m.instance.GetStatus() == session.Paused {
 			actionGroup = append(actionGroup, keys.KeyResume)
 		} else {
 			actionGroup = append(actionGroup, keys.KeyCheckout)

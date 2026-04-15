@@ -222,20 +222,21 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	}
 
 	// add spinner next to title if it's running
+	status := i.GetStatus()
 	var join string
 	if i.IsWorkspaceTerminal {
 		// Workspace terminal always shows its distinct icon, plus spinner if running
-		if i.Status == session.Running || i.Status == session.Loading {
+		if status == session.Running || status == session.Loading {
 			join = fmt.Sprintf("%s%s ", workspaceTerminalStyle.Render(workspaceTerminalIcon), r.spinner.View())
-		} else if i.Status == session.Prompting {
+		} else if status == session.Prompting {
 			join = fmt.Sprintf("%s%s", workspaceTerminalStyle.Render(workspaceTerminalIcon), promptingStyle.Render(promptingIcon))
-		} else if i.Status == session.Deleting {
+		} else if status == session.Deleting {
 			join = deletingStyle.Render(deletingIcon)
 		} else {
 			join = workspaceTerminalStyle.Render(workspaceTerminalIcon)
 		}
 	} else {
-		switch i.Status {
+		switch status {
 		case session.Running, session.Loading:
 			join = fmt.Sprintf("%s ", r.spinner.View())
 		case session.Prompting:
@@ -296,7 +297,7 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	// Use fixed width for diff stats to avoid layout issues
 	remainingWidth -= diffWidth
 
-	branch := i.Branch
+	branch := i.GetBranch()
 	if i.Started() && hasMultipleRepos {
 		repoName, err := i.RepoName()
 		if err != nil {

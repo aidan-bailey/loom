@@ -111,7 +111,7 @@ func SaveState(state *State) error {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	return os.WriteFile(statePath, data, 0644)
+	return AtomicWriteFile(statePath, data, 0644)
 }
 
 // LoadStateFrom loads state from an explicit directory.
@@ -157,7 +157,7 @@ func SaveStateTo(state *State, dir string) error {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	return os.WriteFile(statePath, data, 0644)
+	return AtomicWriteFile(statePath, data, 0644)
 }
 
 // InstanceStorage interface implementation

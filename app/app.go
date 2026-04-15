@@ -404,7 +404,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		selected := m.list.GetSelectedInstance()
 		var active []*session.Instance
 		for _, inst := range allInstances {
-			if inst.Started() && !inst.Paused() && inst.Status != session.Deleting {
+			if inst.Started() && !inst.Paused() && inst.GetStatus() != session.Deleting {
 				active = append(active, inst)
 			}
 		}
@@ -470,7 +470,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action == tea.MouseActionPress {
 			if msg.Button == tea.MouseButtonWheelDown || msg.Button == tea.MouseButtonWheelUp {
 				selected := m.list.GetSelectedInstance()
-				if selected == nil || selected.Status == session.Paused {
+				if selected == nil || selected.GetStatus() == session.Paused {
 					return m, nil
 				}
 
@@ -589,7 +589,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func persistableInstances(instances []*session.Instance) []*session.Instance {
 	var result []*session.Instance
 	for _, inst := range instances {
-		if inst.Status != session.Deleting {
+		if inst.GetStatus() != session.Deleting {
 			result = append(result, inst)
 		}
 	}
@@ -1037,12 +1037,15 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.instanceChanged()
 	case keys.KeyKill:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading || selected.Status == session.Deleting || selected.IsWorkspaceTerminal {
+		if selected == nil || selected.IsWorkspaceTerminal {
+			return m, nil
+		}
+		previousStatus := selected.GetStatus()
+		if previousStatus == session.Loading || previousStatus == session.Deleting {
 			return m, nil
 		}
 
 		title := selected.Title
-		previousStatus := selected.Status
 
 		// preAction runs synchronously in the main goroutine when the user
 		// confirms. It marks the instance as Deleting immediately.
@@ -1089,7 +1092,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.confirmAction(message, killAction)
 	case keys.KeySubmit:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading || selected.Status == session.Deleting || selected.IsWorkspaceTerminal {
+		if selected == nil || selected.IsWorkspaceTerminal {
+			return m, nil
+		}
+		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
 
@@ -1112,7 +1118,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, m.confirmAction(message, pushAction)
 	case keys.KeyCheckout:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading || selected.Status == session.Deleting || selected.IsWorkspaceTerminal {
+		if selected == nil || selected.IsWorkspaceTerminal {
+			return m, nil
+		}
+		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
 
@@ -1132,7 +1141,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, nil
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Status == session.Loading || selected.Status == session.Deleting || selected.IsWorkspaceTerminal {
+		if selected == nil || selected.IsWorkspaceTerminal {
+			return m, nil
+		}
+		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
 		if err := selected.Resume(); err != nil {
@@ -1144,7 +1156,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
+		if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+			return m, nil
+		}
+		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
 		m.splitPane.SetFocusedPane(ui.FocusAgent)
@@ -1157,7 +1172,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
+		if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+			return m, nil
+		}
+		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
 		m.splitPane.SetFocusedPane(ui.FocusTerminal)
@@ -1200,7 +1218,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case keys.KeyQuickInputAgent:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading || selected.Status == session.Deleting {
+		if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+			return m, nil
+		}
+		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
 		if m.splitPane.IsDiffVisible() {
@@ -1212,7 +1233,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, tea.WindowSize()
 	case keys.KeyQuickInputTerminal:
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || !selected.TmuxAlive() || selected.Status == session.Loading || selected.Status == session.Deleting {
+		if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+			return m, nil
+		}
+		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
 		if m.splitPane.IsDiffVisible() {
@@ -1227,7 +1251,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.IsWorkspaceTerminal || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
+		if selected == nil || selected.IsWorkspaceTerminal || selected.Paused() || !selected.TmuxAlive() {
+			return m, nil
+		}
+		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
 		m.showHelpScreen(helpTypeInstanceAttach{}, func() {
@@ -1245,7 +1272,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, nil
 		}
 		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.IsWorkspaceTerminal || selected.Paused() || selected.Status == session.Loading || selected.Status == session.Deleting || !selected.TmuxAlive() {
+		if selected == nil || selected.IsWorkspaceTerminal || selected.Paused() || !selected.TmuxAlive() {
+			return m, nil
+		}
+		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
 		m.showHelpScreen(helpTypeInstanceAttach{}, func() {
@@ -1684,7 +1714,7 @@ func (m *home) updateTabBarStatuses() {
 			if !inst.Started() {
 				continue
 			}
-			ts := sessionToTabStatus(inst.Status)
+			ts := sessionToTabStatus(inst.GetStatus())
 			if ts > statuses[i] {
 				statuses[i] = ts
 			}

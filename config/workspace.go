@@ -115,7 +115,7 @@ func SaveWorkspaceRegistry(reg *WorkspaceRegistry) error {
 	}
 
 	regPath := filepath.Join(globalDir, workspacesFileName)
-	return os.WriteFile(regPath, data, 0644)
+	return AtomicWriteFile(regPath, data, 0644)
 }
 
 // Add registers a new workspace. Validates uniqueness of name and that the path

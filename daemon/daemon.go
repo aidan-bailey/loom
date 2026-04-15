@@ -14,24 +14,29 @@ import (
 	"time"
 )
 
+// reloadInstances reads state.json and returns the fresh instance set.
+// Called every tick so the daemon observes instances added or removed
+// by the main app (DAEMON-03). configDir is the workspace config
+// directory; if empty, falls back to GetConfigDir().
+func reloadInstances(configDir string) ([]*session.Instance, error) {
+	state := config.LoadStateFrom(configDir)
+	storage, err := session.NewStorage(state, configDir)
+	if err != nil {
+		return nil, fmt.Errorf("open storage: %w", err)
+	}
+	return storage.LoadInstances()
+}
+
 // RunDaemon runs the daemon process which iterates over all sessions and runs AutoYes mode on them.
 // It's expected that the main process kills the daemon when the main process starts.
 // configDir is the workspace config directory; if empty, falls back to GetConfigDir().
 func RunDaemon(cfg *config.Config, configDir string) error {
 	log.InfoLog.Printf("starting daemon")
-	state := config.LoadStateFrom(configDir)
-	storage, err := session.NewStorage(state, configDir)
-	if err != nil {
-		return fmt.Errorf("failed to initialize storage: %w", err)
-	}
 
-	instances, err := storage.LoadInstances()
+	// Initial load so that startup errors fail fast (e.g. corrupt state.json).
+	instances, err := reloadInstances(configDir)
 	if err != nil {
-		return fmt.Errorf("failed to load instacnes: %w", err)
-	}
-	for _, instance := range instances {
-		// Assume AutoYes is true if the daemon is running.
-		instance.AutoYes = true
+		return fmt.Errorf("failed to load instances: %w", err)
 	}
 
 	pollInterval := time.Duration(cfg.DaemonPollInterval) * time.Millisecond
@@ -46,7 +51,29 @@ func RunDaemon(cfg *config.Config, configDir string) error {
 		defer wg.Done()
 		ticker := time.NewTimer(pollInterval)
 		for {
+			// Reload from disk every tick so the daemon picks up
+			// instances created or deleted by the main app since the
+			// last poll (DAEMON-03). On error keep using the previous
+			// list to stay resilient to transient I/O.
+			//
+			// NOTE: FromInstanceData calls Start(false) on non-paused
+			// instances which spawns a fresh tmux attach PTY each tick.
+			// That is the DAEMON-05 followup; addressing it here is
+			// out of scope for Phase 4.
+			if fresh, err := reloadInstances(configDir); err != nil {
+				if everyN.ShouldLog() {
+					log.WarningLog.Printf("daemon reload failed: %v", err)
+				}
+			} else {
+				instances = fresh
+			}
+
 			for _, instance := range instances {
+				// Respect per-instance AutoYes (DAEMON-13). The user may
+				// have opted individual instances out via the main app.
+				if !instance.AutoYes {
+					continue
+				}
 				// We only store started instances, but check anyway.
 				if instance.Started() && !instance.Paused() {
 					if _, hasPrompt := instance.HasUpdated(); hasPrompt {
@@ -72,7 +99,8 @@ func RunDaemon(cfg *config.Config, configDir string) error {
 		}
 	}()
 
-	// Notify on SIGINT (Ctrl+C) and SIGTERM. Save instances before
+	// Notify on SIGINT (Ctrl+C) and SIGTERM so we can drain the poll
+	// goroutine before exiting.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigChan
@@ -82,9 +110,10 @@ func RunDaemon(cfg *config.Config, configDir string) error {
 	close(stopCh)
 	wg.Wait()
 
-	if err := storage.SaveInstances(instances); err != nil {
-		log.ErrorLog.Printf("failed to save instances when terminating daemon: %v", err)
-	}
+	// NOTE: we do NOT call storage.SaveInstances here. The daemon is
+	// strictly a read-only client of state.json; the main app is the
+	// sole writer. Writing from here would clobber any concurrent
+	// writes by the main app (DAEMON-04).
 	return nil
 }
 
@@ -127,7 +156,7 @@ func LaunchDaemon(configDir string) error {
 	}
 
 	pidFile := filepath.Join(pidDir, "daemon.pid")
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
+	if err := config.AtomicWriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 
