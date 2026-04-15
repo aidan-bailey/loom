@@ -81,17 +81,26 @@ type Instance struct {
 	// lifecycle Cmd goroutines (tmuxSession, gitWorktree, started).
 	// Held for writes; RLock for reads. Do not hold across I/O.
 	//
-	// Every accessor on Instance goes through SetStatus/GetStatus
-	// or the unexported get*/set* helpers below. Do not read or
-	// write these fields directly from outside the locked accessors.
-	// ToInstanceData still reads Status/Branch/Path-level fields
-	// unlocked; Task 2.7 replaces it with Snapshot() that takes a
-	// single RLock across the whole copy.
+	// Every accessor on Instance goes through SetStatus/GetStatus,
+	// GetBranch, GetDiffStats, Snapshot, or the unexported get*/set*
+	// helpers below. Do not read or write these fields directly from
+	// outside the locked accessors.
 	mu sync.RWMutex
 }
 
-// ToInstanceData converts an Instance to its serializable form
-func (i *Instance) ToInstanceData() InstanceData {
+// Snapshot returns a serialization-safe copy of every Instance field
+// under a single RLock. This is the only safe way to read every field
+// at once from outside the main goroutine. Callers that previously
+// invoked ToInstanceData from background Cmd goroutines (e.g.
+// storage.DeleteInstance) must use this to avoid racing with the main
+// loop's writes (INST-11, STORE-16).
+//
+// GitWorktree's Get* accessors are pure field reads, so it is safe to
+// call them while holding i.mu — no I/O happens under the lock.
+func (i *Instance) Snapshot() InstanceData {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+
 	data := InstanceData{
 		Title:               i.Title,
 		Path:                i.Path,
@@ -106,28 +115,33 @@ func (i *Instance) ToInstanceData() InstanceData {
 		IsWorkspaceTerminal: i.IsWorkspaceTerminal,
 	}
 
-	// Only include worktree data if gitWorktree is initialized
-	if gw := i.getGitWorktree(); gw != nil {
+	if i.gitWorktree != nil {
 		data.Worktree = GitWorktreeData{
-			RepoPath:         gw.GetRepoPath(),
-			WorktreePath:     gw.GetWorktreePath(),
+			RepoPath:         i.gitWorktree.GetRepoPath(),
+			WorktreePath:     i.gitWorktree.GetWorktreePath(),
 			SessionName:      i.Title,
-			BranchName:       gw.GetBranchName(),
-			BaseCommitSHA:    gw.GetBaseCommitSHA(),
-			IsExistingBranch: gw.IsExistingBranch(),
+			BranchName:       i.gitWorktree.GetBranchName(),
+			BaseCommitSHA:    i.gitWorktree.GetBaseCommitSHA(),
+			IsExistingBranch: i.gitWorktree.IsExistingBranch(),
 		}
 	}
 
-	// Only include diff stats if they exist
-	if ds := i.GetDiffStats(); ds != nil {
+	if i.diffStats != nil {
 		data.DiffStats = DiffStatsData{
-			Added:   ds.Added,
-			Removed: ds.Removed,
-			Content: ds.Content,
+			Added:   i.diffStats.Added,
+			Removed: i.diffStats.Removed,
+			Content: i.diffStats.Content,
 		}
 	}
 
 	return data
+}
+
+// ToInstanceData converts an Instance to its serializable form. Kept
+// as a thin wrapper around Snapshot for backwards compatibility with
+// existing callers; new code should prefer Snapshot.
+func (i *Instance) ToInstanceData() InstanceData {
+	return i.Snapshot()
 }
 
 // FromInstanceData creates a new Instance from serialized data.
