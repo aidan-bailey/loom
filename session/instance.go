@@ -423,6 +423,7 @@ func (i *Instance) Kill() error {
 	}
 	tmuxSess := i.tmuxSession
 	gitWT := i.gitWorktree
+	isWorkspaceTerm := i.IsWorkspaceTerminal
 	i.started = false
 	i.tmuxSession = nil
 	i.gitWorktree = nil
@@ -439,7 +440,7 @@ func (i *Instance) Kill() error {
 	}
 
 	// Then clean up git worktree (workspace terminals don't have one)
-	if gitWT != nil && !i.IsWorkspaceTerminal {
+	if gitWT != nil && !isWorkspaceTerm {
 		if err := gitWT.Cleanup(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup git worktree: %w", err))
 		}
