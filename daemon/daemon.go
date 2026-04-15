@@ -82,9 +82,10 @@ func RunDaemon(cfg *config.Config, configDir string) error {
 	close(stopCh)
 	wg.Wait()
 
-	if err := storage.SaveInstances(instances); err != nil {
-		log.ErrorLog.Printf("failed to save instances when terminating daemon: %v", err)
-	}
+	// NOTE: we do NOT call storage.SaveInstances here. The daemon is
+	// strictly a read-only client of state.json; the main app is the
+	// sole writer. Writing from here would clobber any concurrent
+	// writes by the main app (DAEMON-04).
 	return nil
 }
 
