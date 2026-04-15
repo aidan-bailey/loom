@@ -45,6 +45,14 @@ type TmuxSession struct {
 	// monitor monitors the tmux pane content and sends signals to the UI when it's status changes
 	monitor *statusMonitor
 
+	// Output pump — continuously drains PTY output to prevent buffer deadlock.
+	// When nothing reads from ptmx, the tmux client blocks on stdout and stops
+	// processing stdin, which breaks SendKeysRaw (inline attach).
+	// pumpDest is io.Discard normally; Attach() switches it to os.Stdout.
+	pumpMu   sync.Mutex
+	pumpDest io.Writer
+	pumpDone chan struct{} // closed when the pump goroutine exits
+
 	// Initialized by Attach
 	// Deinitilaized by Detach
 	//
@@ -182,7 +190,10 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 	return false
 }
 
-// Restore attaches to an existing session and restores the window size
+// Restore attaches to an existing session and restores the window size.
+// It starts a background pump goroutine that drains PTY output to prevent
+// buffer deadlock (the tmux client blocks on stdout when the buffer fills,
+// which also blocks stdin processing).
 func (t *TmuxSession) Restore() error {
 	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
 	if err != nil {
@@ -190,7 +201,42 @@ func (t *TmuxSession) Restore() error {
 	}
 	t.ptmx = ptmx
 	t.monitor = newStatusMonitor()
+	t.startOutputPump(ptmx)
 	return nil
+}
+
+// startOutputPump launches a goroutine that continuously reads from the PTY
+// and writes to pumpDest. This prevents the PTY output buffer from filling up,
+// which would cause the tmux client to block and stop processing input.
+func (t *TmuxSession) startOutputPump(ptmx *os.File) {
+	t.pumpMu.Lock()
+	t.pumpDest = io.Discard
+	t.pumpMu.Unlock()
+	t.pumpDone = make(chan struct{})
+
+	go func() {
+		defer close(t.pumpDone)
+		buf := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(buf)
+			if n > 0 {
+				t.pumpMu.Lock()
+				dest := t.pumpDest
+				t.pumpMu.Unlock()
+				_, _ = dest.Write(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+}
+
+// setPumpDest changes where the output pump writes to (io.Discard or os.Stdout).
+func (t *TmuxSession) setPumpDest(w io.Writer) {
+	t.pumpMu.Lock()
+	t.pumpDest = w
+	t.pumpMu.Unlock()
 }
 
 type statusMonitor struct {
@@ -326,17 +372,18 @@ func (t *TmuxSession) Attach() (chan struct{}, error) {
 	t.wg.Add(1)
 	t.ctx, t.cancel = context.WithCancel(context.Background())
 
-	// The first goroutine should terminate when the ptmx is closed. We use the
-	// waitgroup to wait for it to finish.
-	// The 2nd one returns when you press escape to Detach. It doesn't need to be
-	// in the waitgroup because is the goroutine doing the Detaching; it waits for
-	// all the other ones.
+	// Redirect the output pump to stdout for fullscreen display.
+	// The pump goroutine (started in Restore) continuously reads from ptmx;
+	// switching pumpDest from io.Discard to os.Stdout makes the output visible.
+	t.setPumpDest(os.Stdout)
+
+	// Monitor the pump goroutine for abnormal exit (session death).
+	// This replaces the previous io.Copy goroutine.
 	go func() {
 		defer t.wg.Done()
-		_, _ = io.Copy(os.Stdout, t.ptmx)
-		// When io.Copy returns, it means the connection was closed
-		// This could be due to normal detach or Ctrl-D
-		// Check if the context is done to determine if it was a normal detach
+		<-t.pumpDone
+		// When the pump exits, the PTY was closed.
+		// Check if the context is done to determine if it was a normal detach.
 		select {
 		case <-t.ctx.Done():
 			// Normal detach, do nothing
@@ -418,12 +465,20 @@ func (t *TmuxSession) DetachSafely() error {
 
 	var errs []error
 
+	// Switch pump back to discard.
+	t.setPumpDest(io.Discard)
+
 	// Close the attached pty session.
 	if t.ptmx != nil {
 		if err := t.ptmx.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("error closing attach pty session: %w", err))
 		}
 		t.ptmx = nil
+	}
+
+	// Wait for pump goroutine to exit.
+	if t.pumpDone != nil {
+		<-t.pumpDone
 	}
 
 	// Clean up attach state
@@ -467,7 +522,10 @@ func (t *TmuxSession) Detach() {
 		t.wg = nil
 	}()
 
-	// Close the attached pty session.
+	// Switch pump back to discard before closing the PTY.
+	t.setPumpDest(io.Discard)
+
+	// Close the attached pty session. This causes the pump goroutine to exit.
 	if t.ptmx != nil {
 		err := t.ptmx.Close()
 		if err != nil {
@@ -479,9 +537,14 @@ func (t *TmuxSession) Detach() {
 		}
 	}
 
-	// Attach goroutines should die on EOF due to the ptmx closing. Call
-	// t.Restore to set a new t.ptmx — but only if the session still exists.
-	// If the session died (e.g., program exited, Ctrl-D), skip restore.
+	// Wait for the pump goroutine to exit before restoring.
+	if t.pumpDone != nil {
+		<-t.pumpDone
+	}
+
+	// Restore creates a new ptmx and starts a new pump (draining to discard).
+	// Only restore if the session still exists. If the session died (e.g.,
+	// program exited, Ctrl-D), skip restore.
 	if t.DoesSessionExist() {
 		if err := t.Restore(); err != nil {
 			// This is a fatal error. Our invariant that a started TmuxSession always has a valid ptmx is violated.
@@ -509,6 +572,11 @@ func (t *TmuxSession) Close() error {
 			errs = append(errs, fmt.Errorf("error closing PTY: %w", err))
 		}
 		t.ptmx = nil
+	}
+
+	// Wait for pump goroutine to exit after PTY close.
+	if t.pumpDone != nil {
+		<-t.pumpDone
 	}
 
 	cmd := exec.Command("tmux", "kill-session", "-t", t.sanitizedName)
