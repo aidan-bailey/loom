@@ -77,9 +77,18 @@ type Instance struct {
 	gitWorktree *git.GitWorktree
 
 	// mu guards concurrent access to fields that can be read from
-	// tick-fanout goroutines (status, diffStats, Branch) and from
+	// tick-fanout goroutines (Status, diffStats, Branch) and from
 	// lifecycle Cmd goroutines (tmuxSession, gitWorktree, started).
 	// Held for writes; RLock for reads. Do not hold across I/O.
+	//
+	// Migration status (being rolled in across Phase 2 of the
+	// race-condition plan):
+	//   - Locked accessors: SetStatus, GetStatus.
+	//   - Still unlocked (direct field access): Paused(), Started(),
+	//     diffStats/Branch reads in UpdateDiffStats*, and every
+	//     external .Status reader in app/, ui/, daemon/, storage.go.
+	// Callers reading these fields must not assume safety until Task
+	// 2.4 migrates them.
 	mu sync.RWMutex
 }
 
