@@ -171,7 +171,11 @@ func (m *home) handleHelpState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Any key press will close the help overlay
 	shouldClose := m.textOverlay.HandleKeyPress(msg)
 	if shouldClose {
-		m.state = stateDefault
+		// Only reset to default if the OnDismiss callback didn't transition to
+		// another state (e.g. checkout's callback sets stateConfirm).
+		if m.state == stateHelp {
+			m.state = stateDefault
+		}
 		return m, tea.Sequence(
 			tea.WindowSize(),
 			func() tea.Msg {
