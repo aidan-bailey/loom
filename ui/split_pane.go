@@ -7,6 +7,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+var highlightColor = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}
+
+// AdjustPreviewWidth adjusts the width of the preview pane to be 90% of the provided width.
+func AdjustPreviewWidth(width int) int {
+	return int(float64(width) * 0.9)
+}
+
 const (
 	FocusAgent    int = iota // top pane
 	FocusTerminal            // bottom pane
