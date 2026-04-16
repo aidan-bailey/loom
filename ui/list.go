@@ -251,15 +251,26 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		}
 	}
 
+	// Compute the width of the join suffix (status icon / spinner) so the
+	// Place block can shrink to keep the total within the padded width.
+	// Without this, workspace-terminal items (wider icon) overflow l.width,
+	// causing lipgloss.JoinHorizontal to widen every list line past the
+	// terminal width and scroll the alt-screen.
+	joinWidth := lipgloss.Width(join)
+	placeWidth := r.width - 1 - joinWidth // 1 for the " " separator
+	if placeWidth < 1 {
+		placeWidth = 1
+	}
+
 	// Cut the title if it's too long
 	titleText := i.Title
-	widthAvail := r.width - 3 - runewidth.StringWidth(prefix) - 1
+	widthAvail := placeWidth - runewidth.StringWidth(prefix) - 1
 	if widthAvail > 0 && runewidth.StringWidth(titleText) > widthAvail {
 		titleText = runewidth.Truncate(titleText, widthAvail-3, "...")
 	}
 	title := titleS.Render(lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		lipgloss.Place(r.width-3, 1, lipgloss.Left, lipgloss.Center, fmt.Sprintf("%s %s", prefix, titleText)),
+		lipgloss.Place(placeWidth, 1, lipgloss.Left, lipgloss.Center, fmt.Sprintf("%s %s", prefix, titleText)),
 		" ",
 		join,
 	))
