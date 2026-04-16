@@ -1155,7 +1155,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		pauseTitle := selected.Title
 		pauseAction := func() tea.Msg {
-			if err := selected.Pause(); err != nil {
+			saveFunc := func() error {
+				return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
+			}
+			if err := selected.Pause(saveFunc); err != nil {
 				return err
 			}
 			return pauseInstanceMsg{title: pauseTitle}
@@ -1175,7 +1178,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
 			return m, nil
 		}
-		if err := selected.Resume(); err != nil {
+		saveFunc := func() error {
+			return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
+		}
+		if err := selected.Resume(saveFunc); err != nil {
 			return m, m.handleError(err)
 		}
 		return m, tea.WindowSize()

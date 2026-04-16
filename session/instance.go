@@ -610,8 +610,10 @@ func (i *Instance) TmuxAlive() bool {
 	return ts.DoesSessionExist()
 }
 
-// Pause stops the tmux session and removes the worktree, preserving the branch
-func (i *Instance) Pause() error {
+// Pause stops the tmux session and removes the worktree, preserving the branch.
+// If saveState is non-nil, it is called after committing changes and marking the
+// instance as Paused, providing a checkpoint that reduces the crash inconsistency window.
+func (i *Instance) Pause(saveState func() error) error {
 	if i.IsWorkspaceTerminal {
 		return fmt.Errorf("cannot pause workspace terminal")
 	}
@@ -664,13 +666,22 @@ func (i *Instance) Pause() error {
 		return err
 	}
 
+	// Checkpoint: mark as Paused immediately after cleanup succeeds.
+	// If we crash after this point, the instance is safely Paused.
 	i.SetStatus(Paused)
+	if saveState != nil {
+		if err := saveState(); err != nil {
+			log.WarningLog.Printf("checkpoint save during pause: %v", err)
+		}
+	}
 	_ = clipboard.WriteAll(gw.GetBranchName())
 	return nil
 }
 
-// Resume recreates the worktree and restarts the tmux session
-func (i *Instance) Resume() error {
+// Resume recreates the worktree and restarts the tmux session.
+// If saveState is non-nil, it is called after the instance is Running,
+// providing a checkpoint that reduces the crash inconsistency window.
+func (i *Instance) Resume(saveState func() error) error {
 	if i.IsWorkspaceTerminal {
 		return fmt.Errorf("cannot resume workspace terminal")
 	}
@@ -726,6 +737,11 @@ func (i *Instance) Resume() error {
 	}
 
 	i.SetStatus(Running)
+	if saveState != nil {
+		if err := saveState(); err != nil {
+			log.WarningLog.Printf("checkpoint save during resume: %v", err)
+		}
+	}
 	return nil
 }
 
