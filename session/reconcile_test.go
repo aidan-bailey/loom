@@ -92,6 +92,43 @@ func TestReconcileInstance_WsTerminal_DeadTmux(t *testing.T) {
 	assert.True(t, instance.CrashRecovered)
 }
 
+func TestCleanupOrphanedSessions(t *testing.T) {
+	killedSessions := []string{}
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			// Track kill-session calls
+			for i, arg := range c.Args {
+				if arg == "kill-session" && i+2 < len(c.Args) {
+					killedSessions = append(killedSessions, c.Args[i+2])
+				}
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			// Simulate tmux ls output: two cs sessions, one claimed, one orphaned
+			return []byte("claudesquad_claimed: 1 windows\nclaudesquad_orphan: 1 windows\nother_session: 1 windows\n"), nil
+		},
+	}
+
+	claimedTitles := map[string]bool{"claimed": true}
+	err := CleanupOrphanedSessions(claimedTitles, cmdExec)
+	assert.NoError(t, err)
+	assert.Contains(t, killedSessions, "claudesquad_orphan")
+	assert.NotContains(t, killedSessions, "claudesquad_claimed")
+	assert.NotContains(t, killedSessions, "other_session")
+}
+
+func TestCleanupOrphanedSessions_NoTmux(t *testing.T) {
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			return nil, &exec.ExitError{} // no tmux server
+		},
+	}
+	err := CleanupOrphanedSessions(nil, cmdExec)
+	assert.NoError(t, err)
+}
+
 func TestDetermineRecoveryAction(t *testing.T) {
 	tests := []struct {
 		name      string

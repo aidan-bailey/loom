@@ -230,6 +230,15 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		}
 	}
 
+	// Clean up orphaned tmux sessions from previous crashes
+	claimedTitles := make(map[string]bool)
+	for _, inst := range h.list.GetInstances() {
+		claimedTitles[inst.Title] = true
+	}
+	if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
+		log.ErrorLog.Printf("orphan cleanup failed: %v", err)
+	}
+
 	// Auto-create workspace terminal if in a workspace context and none exists
 	if !hasWorkspaceTerminal && wsCtx != nil && wsCtx.RepoPath != "" {
 		wtTitle := "Workspace Terminal"

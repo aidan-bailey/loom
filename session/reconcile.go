@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // RecoveryAction describes what to do with an instance during startup reconciliation.
@@ -157,6 +158,47 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 	instance.setStarted(true)
 	instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program))
 	return instance, nil
+}
+
+// CleanupOrphanedSessions kills any tmux sessions with the claude-squad prefix
+// that are not claimed by a loaded instance.
+func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec cmd.Executor) error {
+	listCmd := exec.Command("tmux", "ls")
+	output, err := cmdExec.Output(listCmd)
+	if err != nil {
+		// No tmux server running — nothing to clean up
+		return nil
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if !strings.HasPrefix(line, tmux.TmuxPrefix) {
+			continue
+		}
+		colonIdx := strings.Index(line, ":")
+		if colonIdx < 0 {
+			continue
+		}
+		sessionName := line[:colonIdx]
+
+		// Check if any claimed instance owns this session
+		claimed := false
+		for title := range claimedTitles {
+			if tmux.ToClaudeSquadTmuxName(title) == sessionName {
+				claimed = true
+				break
+			}
+		}
+
+		if !claimed {
+			log.InfoLog.Printf("killing orphaned tmux session: %s", sessionName)
+			killCmd := exec.Command("tmux", "kill-session", "-t", sessionName)
+			if err := cmdExec.Run(killCmd); err != nil {
+				log.ErrorLog.Printf("failed to kill orphaned session %s: %v", sessionName, err)
+			}
+		}
+	}
+	return nil
 }
 
 // logRecoveryAction logs the recovery action taken for an instance.

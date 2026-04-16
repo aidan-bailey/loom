@@ -1,0 +1,13 @@
+package session
+
+import (
+	"claude-squad/log"
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	log.Initialize("", false)
+	defer log.Close()
+	os.Exit(m.Run())
+}
