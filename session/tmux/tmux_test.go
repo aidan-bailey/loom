@@ -94,6 +94,33 @@ func TestRestoreClosesPriorPty(t *testing.T) {
 	require.NoError(t, err, "new PTY should remain open")
 }
 
+// TestStartTmuxSession_MultiWordProgram ensures the full program string
+// (e.g. "claude --continue" produced by BuildRecoveryCommand) reaches tmux as
+// a single shell-command argument. tmux's shell then splits on whitespace, so
+// --continue is delivered to claude as a separate argv. Regression guard for
+// the crash-recovery path.
+func TestStartTmuxSession_MultiWordProgram(t *testing.T) {
+	ptyFactory := NewMockPtyFactory(t)
+	created := false
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error {
+			if strings.Contains(cmd.String(), "has-session") && !created {
+				created = true
+				return fmt.Errorf("session already exists")
+			}
+			return nil
+		},
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) { return []byte("output"), nil },
+	}
+
+	session := newTmuxSession("resume-test", "claude --continue", ptyFactory, cmdExec)
+	require.NoError(t, session.Start(t.TempDir()))
+
+	args := ptyFactory.cmds[0].Args
+	require.Equal(t, "claude --continue", args[len(args)-1],
+		"tmux must receive the full program string as its final argv; tmux's shell splits on whitespace")
+}
+
 func TestStartTmuxSession(t *testing.T) {
 	ptyFactory := NewMockPtyFactory(t)
 
