@@ -538,6 +538,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Nothing to do; the instance was already popped and the cleanup
 		// result was logged inside backgroundKillCmd.
 		return m, nil
+	case resumeDoneMsg:
+		if msg.err != nil {
+			// Resume failed — revert to the prior status (typically Paused)
+			// so the user can retry.
+			msg.instance.SetStatus(msg.previousStatus)
+			return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
+		}
+		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case workspaceRegisteredMsg:
 		ws := m.registry.FindByPath(msg.dir)
 		if ws == nil {
@@ -1179,16 +1187,24 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil || selected.IsWorkspaceTerminal {
 			return m, nil
 		}
-		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
+		previousStatus := selected.GetStatus()
+		if previousStatus == session.Loading || previousStatus == session.Deleting {
 			return m, nil
 		}
+		// Flip to Loading immediately so the list shows the spinner while
+		// Resume's blocking worktree/tmux setup runs in a Cmd goroutine.
+		selected.SetStatus(session.Loading)
 		saveFunc := func() error {
 			return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
 		}
-		if err := selected.Resume(saveFunc); err != nil {
-			return m, m.handleError(err)
+		resumeCmd := func() tea.Msg {
+			return resumeDoneMsg{
+				instance:       selected,
+				previousStatus: previousStatus,
+				err:            selected.Resume(saveFunc),
+			}
 		}
-		return m, tea.WindowSize()
+		return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), resumeCmd)
 	case keys.KeyDirectAttachAgent:
 		if m.list.NumInstances() == 0 {
 			return m, nil
@@ -1407,6 +1423,15 @@ type pauseInstanceMsg struct {
 // instance has been fully cleaned up. It carries no state — failures are
 // already logged inside the Cmd and there's nothing for the main loop to do.
 type backgroundCleanupDoneMsg struct{}
+
+// resumeDoneMsg is returned by the Resume Cmd after the blocking worktree
+// and tmux setup finishes. On failure the handler reverts the instance to
+// Paused so the user can retry.
+type resumeDoneMsg struct {
+	instance       *session.Instance
+	previousStatus session.Status
+	err            error
+}
 
 // backgroundKillCmd runs the blocking Kill() of a popped instance in a tea.Cmd
 // goroutine so the Bubble Tea update loop stays responsive. Used by the
