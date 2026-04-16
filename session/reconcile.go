@@ -2,7 +2,10 @@ package session
 
 import (
 	"claude-squad/cmd"
+	"claude-squad/log"
+	"claude-squad/session/git"
 	"claude-squad/session/tmux"
+	"fmt"
 	"os"
 	"os/exec"
 )
@@ -64,5 +67,110 @@ func DetermineRecoveryAction(status Status, tmuxAlive, worktreeExists, isWorkspa
 		return ActionRestart
 	default: // !tmuxAlive && !worktreeExists
 		return ActionMarkPaused
+	}
+}
+
+// ReconcileAndRestore loads an instance from serialized data, checks the health
+// of its tmux session and worktree, and takes the appropriate recovery action.
+func ReconcileAndRestore(data InstanceData, configDir string, cmdExec cmd.Executor) (*Instance, error) {
+	tmuxAlive := CheckTmuxAlive(data.Title, cmdExec)
+	wtExists := CheckWorktreeExists(data.Worktree.WorktreePath)
+	action := DetermineRecoveryAction(data.Status, tmuxAlive, wtExists, data.IsWorkspaceTerminal)
+
+	switch action {
+	case ActionNoChange:
+		return fromInstanceDataPaused(data, configDir)
+
+	case ActionRestore:
+		return FromInstanceData(data, configDir)
+
+	case ActionRestart:
+		instance, err := fromInstanceDataPaused(data, configDir)
+		if err != nil {
+			return nil, err
+		}
+		instance.CrashRecovered = true
+		return instance, nil
+
+	case ActionMarkPaused:
+		data.Status = Paused
+		return fromInstanceDataPaused(data, configDir)
+
+	case ActionKillAndPause:
+		sanitized := tmux.ToClaudeSquadTmuxName(data.Title)
+		killCmd := exec.Command("tmux", "kill-session", "-t="+sanitized)
+		_ = cmdExec.Run(killCmd) // best-effort
+		data.Status = Paused
+		return fromInstanceDataPaused(data, configDir)
+
+	case ActionRestartWsTerminal:
+		instance, err := fromInstanceDataPaused(data, configDir)
+		if err != nil {
+			return nil, err
+		}
+		instance.CrashRecovered = true
+		return instance, nil
+
+	default:
+		return nil, fmt.Errorf("unknown recovery action: %d", action)
+	}
+}
+
+// fromInstanceDataPaused creates an Instance from serialized data in a paused/stopped
+// state. It sets started=true and creates a TmuxSession object but does not connect.
+func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, error) {
+	instance := &Instance{
+		Title:               data.Title,
+		Path:                data.Path,
+		Branch:              data.Branch,
+		Status:              data.Status,
+		Height:              data.Height,
+		Width:               data.Width,
+		CreatedAt:           data.CreatedAt,
+		UpdatedAt:           data.UpdatedAt,
+		Program:             data.Program,
+		AutoYes:             data.AutoYes,
+		ConfigDir:           configDir,
+		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
+	}
+
+	if !data.IsWorkspaceTerminal {
+		instance.setGitWorktree(git.NewGitWorktreeFromStorage(
+			data.Worktree.RepoPath,
+			data.Worktree.WorktreePath,
+			data.Worktree.SessionName,
+			data.Worktree.BranchName,
+			data.Worktree.BaseCommitSHA,
+			data.Worktree.IsExistingBranch,
+			configDir,
+		))
+	}
+
+	if data.DiffStats.Added != 0 || data.DiffStats.Removed != 0 || data.DiffStats.Content != "" {
+		instance.setDiffStats(&git.DiffStats{
+			Added:   data.DiffStats.Added,
+			Removed: data.DiffStats.Removed,
+			Content: data.DiffStats.Content,
+		})
+	}
+
+	instance.setStarted(true)
+	instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program))
+	return instance, nil
+}
+
+// logRecoveryAction logs the recovery action taken for an instance.
+func logRecoveryAction(title string, action RecoveryAction) {
+	switch action {
+	case ActionRestore:
+		log.InfoLog.Printf("instance %q: tmux+worktree healthy, restoring", title)
+	case ActionRestart:
+		log.InfoLog.Printf("instance %q: tmux dead but worktree exists, will restart", title)
+	case ActionMarkPaused:
+		log.InfoLog.Printf("instance %q: tmux+worktree gone, marking paused", title)
+	case ActionKillAndPause:
+		log.InfoLog.Printf("instance %q: tmux alive but worktree gone, killing tmux and pausing", title)
+	case ActionRestartWsTerminal:
+		log.InfoLog.Printf("instance %q: workspace terminal tmux dead, will restart", title)
 	}
 }

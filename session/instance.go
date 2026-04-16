@@ -61,6 +61,9 @@ type Instance struct {
 	ConfigDir string
 	// IsWorkspaceTerminal is true if this instance operates in the root repo without a worktree.
 	IsWorkspaceTerminal bool
+	// CrashRecovered is a runtime-only flag set when this instance was restored
+	// after a crash. Used to trigger agent-aware restart (e.g. --continue).
+	CrashRecovered bool
 
 	// DiffStats stores the current git diff statistics
 	diffStats *git.DiffStats

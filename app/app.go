@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	cmd2 "claude-squad/cmd"
 	"claude-squad/config"
 	"claude-squad/keys"
 	"claude-squad/log"
@@ -205,17 +206,23 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		h.list.SetWorkspaceName(wsCtx.Name)
 	}
 
-	instances, err := storage.LoadInstances()
+	cmdExec := cmd2.MakeExecutor()
+	instancesData, err := storage.LoadInstanceData()
 	if err != nil {
 		fmt.Printf("Failed to load instances: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Check if a workspace terminal already exists in loaded instances
+	// Reconcile each instance against tmux/worktree reality
 	hasWorkspaceTerminal := false
-	for _, instance := range instances {
-		if instance.IsWorkspaceTerminal {
+	for _, data := range instancesData {
+		if data.IsWorkspaceTerminal {
 			hasWorkspaceTerminal = true
+		}
+		instance, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
+		if err != nil {
+			log.ErrorLog.Printf("failed to reconcile instance %q: %v (skipping)", data.Title, err)
+			continue
 		}
 		h.list.AddInstance(instance)()
 		if autoYes {

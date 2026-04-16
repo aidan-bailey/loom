@@ -147,6 +147,17 @@ func (s *Storage) UpdateInstance(instance *Instance) error {
 	return s.SaveInstances(instances)
 }
 
+// LoadInstanceData loads raw serialized instance data without constructing Instance objects.
+// Used by reconciliation to inspect state before deciding how to restore.
+func (s *Storage) LoadInstanceData() ([]InstanceData, error) {
+	jsonData := s.state.GetInstances()
+	var data []InstanceData
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
+	}
+	return data, nil
+}
+
 // DeleteAllInstances removes all stored instances
 func (s *Storage) DeleteAllInstances() error {
 	return s.state.DeleteAllInstances()

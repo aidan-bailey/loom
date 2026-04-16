@@ -34,6 +34,64 @@ func TestCheckWorktreeExists_Missing(t *testing.T) {
 	assert.False(t, CheckWorktreeExists("/nonexistent/path/worktree"))
 }
 
+func TestReconcileInstance_DeadTmux_MarkedPaused(t *testing.T) {
+	// Simulate: instance was Running, tmux is dead, no worktree
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return &exec.ExitError{} }, // tmux dead
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+
+	data := InstanceData{
+		Title:   "dead-session",
+		Path:    t.TempDir(),
+		Branch:  "test-branch",
+		Status:  Running,
+		Program: "claude",
+	}
+
+	instance, err := ReconcileAndRestore(data, "", cmdExec)
+	assert.NoError(t, err)
+	assert.Equal(t, Paused, instance.GetStatus())
+}
+
+func TestReconcileInstance_Paused_NoChange(t *testing.T) {
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+
+	data := InstanceData{
+		Title:   "paused-session",
+		Path:    t.TempDir(),
+		Branch:  "test-branch",
+		Status:  Paused,
+		Program: "claude",
+	}
+
+	instance, err := ReconcileAndRestore(data, "", cmdExec)
+	assert.NoError(t, err)
+	assert.Equal(t, Paused, instance.GetStatus())
+}
+
+func TestReconcileInstance_WsTerminal_DeadTmux(t *testing.T) {
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return &exec.ExitError{} },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+
+	data := InstanceData{
+		Title:               "ws-terminal",
+		Path:                t.TempDir(),
+		Status:              Running,
+		Program:             "claude",
+		IsWorkspaceTerminal: true,
+	}
+
+	instance, err := ReconcileAndRestore(data, "", cmdExec)
+	assert.NoError(t, err)
+	assert.True(t, instance.CrashRecovered)
+}
+
 func TestDetermineRecoveryAction(t *testing.T) {
 	tests := []struct {
 		name      string
