@@ -201,8 +201,8 @@ A session moves through these states:
 | `D` | Kill selected session (with confirmation) |
 | `d` | Toggle diff overlay |
 | `W` | Open workspace picker |
-| `[` | Switch to previous workspace tab |
-| `]` | Switch to next workspace tab |
+| `l` / `[` | Previous workspace tab |
+| `;` / `]` | Next workspace tab |
 | `?` | Show help screen |
 | `q` | Quit |
 
@@ -221,7 +221,7 @@ The overlay has four focus areas. Press `Tab` to cycle between them:
 
 1. **Profile Picker** — `←` / `→` to select a profile (if configured)
 2. **Prompt Text Area** — Type your instructions for the agent
-3. **Branch Picker** — Type to filter branches, `↑` / `↓` to select
+3. **Branch Picker** — Type to filter branches, `↑` / `↓` (or `k` / `j`) to select
 4. **Submit** — `Enter` to start
 
 | Key | Action |

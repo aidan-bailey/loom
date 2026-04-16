@@ -93,7 +93,7 @@ claude-squad --workspace <name>
 | `d` | Toggle diff overlay |
 | `up`/`k`, `down`/`j` | Navigate sessions |
 | `W` | Workspace picker |
-| `h`/`[`, `l`/`]` | Previous/next workspace tab |
+| `l`/`[`, `;`/`]` | Previous/next workspace tab |
 | `?` | Help |
 | `q` | Quit |
 

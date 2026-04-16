@@ -55,9 +55,9 @@ var GlobalKeyStringsMap = map[string]KeyName{
 	"?":          KeyHelp,
 	"W":          KeyWorkspace,
 	"[":          KeyWorkspaceLeft,
-	"h":          KeyWorkspaceLeft,
+	"l":          KeyWorkspaceLeft,
 	"]":          KeyWorkspaceRight,
-	"l":          KeyWorkspaceRight,
+	";":          KeyWorkspaceRight,
 	"alt+a":      KeyFullScreenAttachAgent,
 	"alt+t":      KeyFullScreenAttachTerminal,
 	"d":          KeyDiff,
@@ -116,12 +116,12 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	),
 
 	KeyWorkspaceLeft: key.NewBinding(
-		key.WithKeys("[", "h"),
-		key.WithHelp("[/h", "prev ws"),
+		key.WithKeys("[", "l"),
+		key.WithHelp("[/l", "prev ws"),
 	),
 	KeyWorkspaceRight: key.NewBinding(
-		key.WithKeys("]", "l"),
-		key.WithHelp("]/l", "next ws"),
+		key.WithKeys("]", ";"),
+		key.WithHelp("]/;", "next ws"),
 	),
 
 	KeyFullScreenAttachAgent: key.NewBinding(
