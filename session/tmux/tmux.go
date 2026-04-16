@@ -195,6 +195,17 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 // buffer deadlock (the tmux client blocks on stdout when the buffer fills,
 // which also blocks stdin processing).
 func (t *TmuxSession) Restore() error {
+	// Close any prior PTY and wait for its pump to exit before creating a new
+	// one, otherwise the old pump goroutine leaks and keeps a stale FD alive.
+	if t.ptmx != nil {
+		_ = t.ptmx.Close()
+		t.ptmx = nil
+	}
+	if t.pumpDone != nil {
+		<-t.pumpDone
+		t.pumpDone = nil
+	}
+
 	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
 	if err != nil {
 		return fmt.Errorf("error opening PTY: %w", err)

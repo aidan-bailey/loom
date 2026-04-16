@@ -69,6 +69,31 @@ func TestCaptureAndProcessCapturesOnce(t *testing.T) {
 	require.Equal(t, 1, captureCount, "CaptureAndProcess should call capture-pane exactly once")
 }
 
+// TestRestoreClosesPriorPty ensures that calling Restore twice does not leak
+// the first PTY handle. Before the fix, each Pause→Resume cycle leaked one FD
+// and one pump goroutine because Restore overwrote t.ptmx without closing.
+func TestRestoreClosesPriorPty(t *testing.T) {
+	ptyFactory := NewMockPtyFactory(t)
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(cmd *exec.Cmd) error { return nil },
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	session := newTmuxSession("test-session", "claude", ptyFactory, cmdExec)
+
+	require.NoError(t, session.Restore())
+	require.Len(t, ptyFactory.files, 1)
+	firstPty := ptyFactory.files[0]
+
+	require.NoError(t, session.Restore())
+	require.Len(t, ptyFactory.files, 2)
+
+	// First PTY must be closed now; second must still be open.
+	_, err := firstPty.Stat()
+	require.Error(t, err, "prior PTY should be closed after second Restore")
+	_, err = ptyFactory.files[1].Stat()
+	require.NoError(t, err, "new PTY should remain open")
+}
+
 func TestStartTmuxSession(t *testing.T) {
 	ptyFactory := NewMockPtyFactory(t)
 
