@@ -1540,7 +1540,8 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		return fmt.Errorf("failed to create storage for workspace %s: %w", ws.Name, err)
 	}
 
-	instances, err := storage.LoadInstances()
+	cmdExec := cmd2.MakeExecutor()
+	instances, err := storage.LoadAndReconcile(cmdExec)
 	if err != nil {
 		log.ErrorLog.Printf("failed to load instances for workspace %s: %v", ws.Name, err)
 	}
@@ -1554,6 +1555,18 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		if m.autoYes {
 			inst.AutoYes = true
 		}
+	}
+
+	// Restart crash-recovered instances.
+	for _, inst := range instances {
+		if !inst.CrashRecovered {
+			continue
+		}
+		if err := inst.CrashRestart(); err != nil {
+			log.ErrorLog.Printf("crash-recovery restart for %q failed: %v", inst.Title, err)
+			inst.SetStatus(session.Paused)
+		}
+		inst.CrashRecovered = false
 	}
 
 	// Auto-create workspace terminal if none exists

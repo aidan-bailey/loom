@@ -1,7 +1,9 @@
 package session
 
 import (
+	"claude-squad/cmd"
 	"claude-squad/config"
+	"claude-squad/log"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -94,6 +96,28 @@ func (s *Storage) LoadInstances() ([]*Instance, error) {
 		instances[i] = instance
 	}
 
+	return instances, nil
+}
+
+// LoadAndReconcile loads instance data from disk and reconciles each instance
+// against the live tmux/worktree state. Unlike LoadInstances, a single failing
+// instance is logged and skipped rather than aborting the whole load. This is
+// the correct entry point for any caller that can tolerate reconciliation side
+// effects (killing orphan tmux sessions, marking instances paused).
+func (s *Storage) LoadAndReconcile(cmdExec cmd.Executor) ([]*Instance, error) {
+	data, err := s.LoadInstanceData()
+	if err != nil {
+		return nil, err
+	}
+	instances := make([]*Instance, 0, len(data))
+	for _, d := range data {
+		inst, err := ReconcileAndRestore(d, s.configDir, cmdExec)
+		if err != nil {
+			log.ErrorLog.Printf("failed to reconcile instance %q: %v (skipping)", d.Title, err)
+			continue
+		}
+		instances = append(instances, inst)
+	}
 	return instances, nil
 }
 
