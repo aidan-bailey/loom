@@ -1622,6 +1622,17 @@ func (m *home) loadSlot(idx int) {
 	m.appState = slot.appState
 	m.list.SetWorkspaceName(slot.wsCtx.Name)
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
+	// Resize immediately using the now-correct tab bar height. Without this,
+	// the first View() after a workspace switch uses components pre-sized when
+	// the tab bar had 0 names (height=0 instead of 3), producing 3 extra lines
+	// that Bubble Tea clips from the top, cutting off the workspace tab bar.
+	if m.lastWidth > 0 && m.lastHeight > 0 {
+		listWidth := int(float32(m.lastWidth) * 0.2)
+		paneWidth := m.lastWidth - listWidth
+		contentHeight := m.lastHeight - m.tabBar.Height() - 2
+		m.list.SetSize(listWidth, contentHeight)
+		m.splitPane.SetSize(paneWidth, contentHeight)
+	}
 }
 
 // applyWorkspaceToggle diffs the current slots against the desired list,
