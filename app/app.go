@@ -437,34 +437,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Fan out I/O to goroutines.
-		results := make([]metadataResult, len(active))
-		var wg sync.WaitGroup
-		for i, inst := range active {
-			wg.Add(1)
-			go func(idx int, instance *session.Instance) {
-				defer wg.Done()
-				r := &results[idx]
-				r.instance = instance
-
-				r.tmuxAlive = instance.TmuxAlive()
-				if !r.tmuxAlive {
-					return
-				}
-
-				r.updated, r.hasPrompt = instance.CaptureAndProcessStatus()
-
-				if instance == selected {
-					r.diffErr = instance.UpdateDiffStats()
-				} else {
-					r.diffErr = instance.UpdateDiffStatsShort()
-				}
-			}(i, inst)
-		}
-		wg.Wait()
-
+		// Fan out I/O off the update goroutine. A stalled tmux or git process
+		// must not block the UI loop — gatherMetadataCmd runs wg.Wait() inside
+		// a background Cmd and returns the results via metadataReadyMsg.
+		return m, gatherMetadataCmd(active, selected)
+	case metadataReadyMsg:
 		// Apply results on main thread.
-		for _, r := range results {
+		for _, r := range msg.results {
 			if !r.tmuxAlive {
 				if r.instance.IsWorkspaceTerminal {
 					log.WarningLog.Printf("workspace terminal %q tmux died, restarting", r.instance.Title)
@@ -1370,6 +1349,12 @@ type previewTickMsg struct{}
 
 type tickUpdateMetadataMessage struct{}
 
+// metadataReadyMsg carries the results of a parallel metadata gather back to
+// the main update goroutine for application.
+type metadataReadyMsg struct {
+	results []metadataResult
+}
+
 type instanceChangedMsg struct{}
 
 // killInstanceMsg is returned by the killAction goroutine after I/O cleanup
@@ -1445,6 +1430,40 @@ func (m *home) runBranchSearch(filter string, version uint64) tea.Cmd {
 var tickUpdateMetadataCmd = func() tea.Msg {
 	time.Sleep(500 * time.Millisecond)
 	return tickUpdateMetadataMessage{}
+}
+
+// gatherMetadataCmd fans out I/O (tmux checks, status captures, git diffs) across
+// goroutines and waits for all of them before returning. Running inside a tea.Cmd
+// keeps the wg.Wait off the update goroutine — a stalled tmux/git subprocess
+// delays the next tick instead of freezing the UI.
+func gatherMetadataCmd(active []*session.Instance, selected *session.Instance) tea.Cmd {
+	return func() tea.Msg {
+		results := make([]metadataResult, len(active))
+		var wg sync.WaitGroup
+		for i, inst := range active {
+			wg.Add(1)
+			go func(idx int, instance *session.Instance) {
+				defer wg.Done()
+				r := &results[idx]
+				r.instance = instance
+
+				r.tmuxAlive = instance.TmuxAlive()
+				if !r.tmuxAlive {
+					return
+				}
+
+				r.updated, r.hasPrompt = instance.CaptureAndProcessStatus()
+
+				if instance == selected {
+					r.diffErr = instance.UpdateDiffStats()
+				} else {
+					r.diffErr = instance.UpdateDiffStatsShort()
+				}
+			}(i, inst)
+		}
+		wg.Wait()
+		return metadataReadyMsg{results: results}
+	}
 }
 
 // handleError handles all errors which get bubbled up to the app. sets the error message. We return a callback tea.Cmd that returns a hideErrMsg message
