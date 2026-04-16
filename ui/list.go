@@ -430,19 +430,20 @@ func (l *List) Down() {
 	l.ensureSelectedVisible()
 }
 
-// Kill removes the selected instance from the list.
-func (l *List) Kill() {
+// PopSelectedForKill removes the currently selected instance from the list
+// and returns it so the caller can run the blocking Kill() (tmux + worktree
+// cleanup) off the Bubble Tea update goroutine. Returns nil when the list is
+// empty or the selected item is a workspace terminal (which cannot be killed).
+//
+// Only in-memory bookkeeping happens here: repo-name unregister, slice pop,
+// selectedIdx adjustment. No subprocesses are spawned.
+func (l *List) PopSelectedForKill() *session.Instance {
 	if len(l.items) == 0 {
-		return
+		return nil
 	}
 	targetInstance := l.items[l.selectedIdx]
 	if targetInstance.IsWorkspaceTerminal {
-		return
-	}
-
-	// Kill the tmux session
-	if err := targetInstance.Kill(); err != nil {
-		log.ErrorLog.Printf("could not kill instance: %v", err)
+		return nil
 	}
 
 	// If you delete the last one in the list, select the previous one.
@@ -460,6 +461,7 @@ func (l *List) Kill() {
 
 	// Since there's items after this, the selectedIdx can stay the same.
 	l.items = append(l.items[:l.selectedIdx], l.items[l.selectedIdx+1:]...)
+	return targetInstance
 }
 
 // RemoveInstanceByTitle removes an instance from the list by title.

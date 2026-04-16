@@ -534,6 +534,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Terminal session was already closed inside pauseAction off the update
 		// goroutine. Nothing I/O-blocking to do here.
 		return m, m.instanceChanged()
+	case backgroundCleanupDoneMsg:
+		// Nothing to do; the instance was already popped and the cleanup
+		// result was logged inside backgroundKillCmd.
+		return m, nil
 	case workspaceRegisteredMsg:
 		ws := m.registry.FindByPath(msg.dir)
 		if ws == nil {
@@ -552,8 +556,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SelectInstance(msg.instance)
 
 		if msg.err != nil {
-			m.list.Kill()
-			return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
+			popped := m.list.PopSelectedForKill()
+			return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), backgroundKillCmd(popped))
 		}
 
 		// Save after successful start
@@ -656,13 +660,16 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			m.state = stateDefault
 			m.promptAfterName = false
-			m.list.Kill()
-			return m, tea.Sequence(
-				tea.WindowSize(),
-				func() tea.Msg {
-					m.menu.SetState(ui.StateDefault)
-					return nil
-				},
+			popped := m.list.PopSelectedForKill()
+			return m, tea.Batch(
+				tea.Sequence(
+					tea.WindowSize(),
+					func() tea.Msg {
+						m.menu.SetState(ui.StateDefault)
+						return nil
+					},
+				),
+				backgroundKillCmd(popped),
 			)
 		}
 
@@ -723,16 +730,19 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return m, m.handleError(err)
 			}
 		case tea.KeyEsc:
-			m.list.Kill()
+			popped := m.list.PopSelectedForKill()
 			m.state = stateDefault
 			m.instanceChanged()
 
-			return m, tea.Sequence(
-				tea.WindowSize(),
-				func() tea.Msg {
-					m.menu.SetState(ui.StateDefault)
-					return nil
-				},
+			return m, tea.Batch(
+				tea.Sequence(
+					tea.WindowSize(),
+					func() tea.Msg {
+						m.menu.SetState(ui.StateDefault)
+						return nil
+					},
+				),
+				backgroundKillCmd(popped),
 			)
 		default:
 		}
@@ -1393,6 +1403,28 @@ type pauseInstanceMsg struct {
 	title string
 }
 
+// backgroundCleanupDoneMsg is returned by backgroundKillCmd after a popped
+// instance has been fully cleaned up. It carries no state — failures are
+// already logged inside the Cmd and there's nothing for the main loop to do.
+type backgroundCleanupDoneMsg struct{}
+
+// backgroundKillCmd runs the blocking Kill() of a popped instance in a tea.Cmd
+// goroutine so the Bubble Tea update loop stays responsive. Used by the
+// "abort unstarted instance" paths (ctrl-c / Esc during new-instance entry,
+// Esc during prompt entry, failed instanceStartedMsg). The instance has
+// already been removed from the list, so any failure here is silently logged.
+func backgroundKillCmd(inst *session.Instance) tea.Cmd {
+	if inst == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		if err := inst.Kill(); err != nil {
+			log.ErrorLog.Printf("background instance kill failed: %v", err)
+		}
+		return backgroundCleanupDoneMsg{}
+	}
+}
+
 // workspaceRegisteredMsg is sent after a pending directory is registered as a workspace.
 type workspaceRegisteredMsg struct {
 	dir string
@@ -1503,17 +1535,21 @@ func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
 // cancelPromptOverlay cancels the prompt overlay, cleaning up unstarted instances.
 func (m *home) cancelPromptOverlay() tea.Cmd {
 	selected := m.list.GetSelectedInstance()
+	var killCmd tea.Cmd
 	if selected != nil && !selected.Started() {
-		m.list.Kill()
+		killCmd = backgroundKillCmd(m.list.PopSelectedForKill())
 	}
 	m.textInputOverlay = nil
 	m.state = stateDefault
-	return tea.Sequence(
-		tea.WindowSize(),
-		func() tea.Msg {
-			m.menu.SetState(ui.StateDefault)
-			return nil
-		},
+	return tea.Batch(
+		tea.Sequence(
+			tea.WindowSize(),
+			func() tea.Msg {
+				m.menu.SetState(ui.StateDefault)
+				return nil
+			},
+		),
+		killCmd,
 	)
 }
 
