@@ -516,8 +516,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle instance changed after confirmation action
 		return m, m.instanceChanged()
 	case killInstanceMsg:
-		// State mutations run here in the main goroutine, not in the Cmd goroutine.
-		m.splitPane.CleanupTerminalForInstance(msg.title)
+		// Terminal session was already closed inside killAction off the update
+		// goroutine. Here we only do in-memory list bookkeeping.
 		m.list.RemoveInstanceByTitle(msg.title)
 		return m, m.instanceChanged()
 	case killFailedMsg:
@@ -531,8 +531,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.ErrorLog.Printf("failed to delete session %q: %v", msg.title, msg.err)
 		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
 	case pauseInstanceMsg:
-		// Terminal cleanup runs here in the main goroutine, not in the Cmd goroutine.
-		m.splitPane.CleanupTerminalForInstance(msg.title)
+		// Terminal session was already closed inside pauseAction off the update
+		// goroutine. Nothing I/O-blocking to do here.
 		return m, m.instanceChanged()
 	case workspaceRegisteredMsg:
 		ws := m.registry.FindByPath(msg.dir)
@@ -1081,6 +1081,14 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				}
 			}
 
+			// Close the cached terminal-pane tmux session. DetachTerminalForInstance
+			// is pure state; the blocking Close() runs here, off the update goroutine.
+			if ts := m.splitPane.DetachTerminalForInstance(title); ts != nil {
+				if err := ts.Close(); err != nil {
+					log.ErrorLog.Printf("terminal pane: failed to close session for %s: %v", title, err)
+				}
+			}
+
 			// Kill the instance (tmux + worktree cleanup)
 			if err := selected.Kill(); err != nil {
 				log.ErrorLog.Printf("could not kill instance: %v", err)
@@ -1134,6 +1142,13 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		pauseTitle := selected.Title
 		pauseAction := func() tea.Msg {
+			// Close the cached terminal-pane tmux session off the update goroutine
+			// so subprocess I/O can't stall the UI.
+			if ts := m.splitPane.DetachTerminalForInstance(pauseTitle); ts != nil {
+				if err := ts.Close(); err != nil {
+					log.ErrorLog.Printf("terminal pane: failed to close session for %s: %v", pauseTitle, err)
+				}
+			}
 			saveFunc := func() error {
 				return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
 			}

@@ -276,16 +276,17 @@ func (t *TerminalPane) Close() {
 	t.fallbackText = ""
 }
 
-// CloseForInstance kills the cached terminal session for a specific instance.
-func (t *TerminalPane) CloseForInstance(title string) {
+// DetachSessionForInstance removes the cached terminal entry for the given title
+// and returns the extracted tmux session so the caller can Close() it off the
+// update goroutine. Returns nil if no session was cached. This is pure state
+// bookkeeping — no blocking I/O — so it is safe to call from Update.
+func (t *TerminalPane) DetachSessionForInstance(title string) *tmux.TmuxSession {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	var ts *tmux.TmuxSession
 	if s, ok := t.sessions[title]; ok {
-		if s.tmuxSession != nil {
-			if err := s.tmuxSession.Close(); err != nil {
-				log.InfoLog.Printf("terminal pane: failed to close session for %s: %v", title, err)
-			}
-		}
+		ts = s.tmuxSession
 		delete(t.sessions, title)
 	}
 	if t.currentTitle == title {
@@ -294,6 +295,7 @@ func (t *TerminalPane) CloseForInstance(title string) {
 		t.fallback = false
 		t.fallbackText = ""
 	}
+	return ts
 }
 
 func (t *TerminalPane) String() string {

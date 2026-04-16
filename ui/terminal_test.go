@@ -322,7 +322,7 @@ func TestTerminalScrolling(t *testing.T) {
 	tp.mu.Unlock()
 }
 
-func TestTerminalCloseForInstance(t *testing.T) {
+func TestTerminalDetachSessionForInstance(t *testing.T) {
 	log.Initialize("", false)
 	defer log.Close()
 
@@ -353,23 +353,26 @@ func TestTerminalCloseForInstance(t *testing.T) {
 	require.Len(t, tp.sessions, 2)
 	tp.mu.Unlock()
 
-	// Close instance1's session
-	tp.CloseForInstance(instance1.Title)
+	// Detach instance1's session
+	popped := tp.DetachSessionForInstance(instance1.Title)
+	require.NotNil(t, popped, "should return the popped session")
+	require.Same(t, ts1, popped, "should return the session previously cached for instance1")
 
 	// Only instance2 should remain
 	tp.mu.Lock()
-	require.Len(t, tp.sessions, 1, "should have only 1 session after closing instance1")
+	require.Len(t, tp.sessions, 1, "should have only 1 session after detaching instance1")
 	_, exists := tp.sessions[instance1.Title]
-	require.False(t, exists, "instance1 session should be removed")
+	require.False(t, exists, "instance1 session should be removed from cache")
 	_, exists = tp.sessions[instance2.Title]
 	require.True(t, exists, "instance2 session should still exist")
-	require.Empty(t, tp.currentTitle, "currentTitle should be cleared when closing current instance")
+	require.Empty(t, tp.currentTitle, "currentTitle should be cleared when detaching current instance")
 	tp.mu.Unlock()
 
-	// Closing a non-existent instance should not panic
-	tp.CloseForInstance("non-existent")
+	// Detaching a non-existent instance should return nil and not panic
+	popped = tp.DetachSessionForInstance("non-existent")
+	require.Nil(t, popped, "non-existent detach should return nil")
 
 	tp.mu.Lock()
-	require.Len(t, tp.sessions, 1, "non-existent close should not affect existing sessions")
+	require.Len(t, tp.sessions, 1, "non-existent detach should not affect existing sessions")
 	tp.mu.Unlock()
 }

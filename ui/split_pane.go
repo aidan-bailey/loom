@@ -3,6 +3,7 @@ package ui
 import (
 	"claude-squad/log"
 	"claude-squad/session"
+	"claude-squad/session/tmux"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -207,9 +208,11 @@ func (s *SplitPane) CleanupTerminal() {
 	s.terminal.Close()
 }
 
-// CleanupTerminalForInstance closes the cached terminal session for the given instance title.
-func (s *SplitPane) CleanupTerminalForInstance(title string) {
-	s.terminal.CloseForInstance(title)
+// DetachTerminalForInstance removes the cached terminal entry for the given
+// instance title and returns the popped tmux session, so the caller can Close
+// it off the update goroutine. Returns nil if nothing was cached.
+func (s *SplitPane) DetachTerminalForInstance(title string) *tmux.TmuxSession {
+	return s.terminal.DetachSessionForInstance(title)
 }
 
 // SendTerminalPrompt sends text followed by Enter to the terminal pane's tmux session.
