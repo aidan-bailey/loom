@@ -230,6 +230,88 @@ func TestWorkspaceRegistryUpdateLastUsed(t *testing.T) {
 	assert.Equal(t, "ws1", loaded.LastUsed)
 }
 
+func TestSetOpenWorkspaces(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	reg := &WorkspaceRegistry{
+		Workspaces: []Workspace{
+			{Name: "alpha", Path: "/a"},
+			{Name: "beta", Path: "/b"},
+		},
+	}
+	require.NoError(t, SaveWorkspaceRegistry(reg))
+
+	t.Run("persists ordered list and drops unknown names", func(t *testing.T) {
+		require.NoError(t, reg.SetOpenWorkspaces([]string{"beta", "ghost", "alpha"}))
+		assert.Equal(t, []string{"beta", "alpha"}, reg.OpenWorkspaces)
+
+		loaded, err := LoadWorkspaceRegistry()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"beta", "alpha"}, loaded.OpenWorkspaces)
+	})
+
+	t.Run("empty list clears the field", func(t *testing.T) {
+		require.NoError(t, reg.SetOpenWorkspaces(nil))
+		assert.Empty(t, reg.OpenWorkspaces)
+	})
+}
+
+func TestGetOpenWorkspaces(t *testing.T) {
+	reg := &WorkspaceRegistry{
+		Workspaces: []Workspace{
+			{Name: "alpha", Path: "/a"},
+			{Name: "beta", Path: "/b"},
+		},
+		OpenWorkspaces: []string{"beta", "ghost", "alpha"},
+	}
+
+	open := reg.GetOpenWorkspaces()
+	require.Len(t, open, 2)
+	assert.Equal(t, "beta", open[0].Name)
+	assert.Equal(t, "alpha", open[1].Name)
+}
+
+func TestRemovePropagatesToOpenWorkspaces(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	repo1 := t.TempDir()
+	repo2 := t.TempDir()
+	reg := &WorkspaceRegistry{}
+	require.NoError(t, reg.Add("alpha", repo1))
+	require.NoError(t, reg.Add("beta", repo2))
+	reg.OpenWorkspaces = []string{"alpha", "beta"}
+	require.NoError(t, SaveWorkspaceRegistry(reg))
+
+	require.NoError(t, reg.Remove("alpha"))
+	assert.Equal(t, []string{"beta"}, reg.OpenWorkspaces)
+
+	loaded, err := LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"beta"}, loaded.OpenWorkspaces)
+}
+
+func TestRenamePropagatesToOpenWorkspaces(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	repo1 := t.TempDir()
+	reg := &WorkspaceRegistry{}
+	require.NoError(t, reg.Add("alpha", repo1))
+	reg.OpenWorkspaces = []string{"alpha"}
+	require.NoError(t, SaveWorkspaceRegistry(reg))
+
+	require.NoError(t, reg.Rename("alpha", "alpha-renamed"))
+	assert.Equal(t, []string{"alpha-renamed"}, reg.OpenWorkspaces)
+}
+
 func TestWorkspaceConfigDir(t *testing.T) {
 	ws := &Workspace{Name: "test", Path: "/home/user/myrepo"}
 	assert.Equal(t, "/home/user/myrepo/.claude-squad", WorkspaceConfigDir(ws))

@@ -210,70 +210,81 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		h.list.SetWorkspaceName(wsCtx.Name)
 	}
 
+	// Determine whether we'll restore a saved multi-tab set. If so, skip the
+	// classic-mode load below: activateWorkspace() will load each slot fresh,
+	// and doing both would re-attach tmux ptmx handles for the same sessions.
+	var savedOpen []config.Workspace
+	if registry != nil {
+		savedOpen = registry.GetOpenWorkspaces()
+	}
+	willRestoreSlots := len(savedOpen) > 0 && pendingDir == ""
+
 	cmdExec := cmd2.MakeExecutor()
-	instancesData, err := storage.LoadInstanceData()
-	if err != nil {
-		fmt.Printf("Failed to load instances: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Reconcile each instance against tmux/worktree reality
-	hasWorkspaceTerminal := false
-	for _, data := range instancesData {
-		if data.IsWorkspaceTerminal {
-			hasWorkspaceTerminal = true
-		}
-		instance, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
+	if !willRestoreSlots {
+		instancesData, err := storage.LoadInstanceData()
 		if err != nil {
-			log.ErrorLog.Printf("failed to reconcile instance %q: %v (skipping)", data.Title, err)
-			continue
+			fmt.Printf("Failed to load instances: %v\n", err)
+			os.Exit(1)
 		}
-		h.list.AddInstance(instance)()
-		if autoYes {
-			instance.AutoYes = true
-		}
-	}
 
-	// Restart crash-recovered instances
-	for _, inst := range h.list.GetInstances() {
-		if !inst.CrashRecovered {
-			continue
+		// Reconcile each instance against tmux/worktree reality
+		hasWorkspaceTerminal := false
+		for _, data := range instancesData {
+			if data.IsWorkspaceTerminal {
+				hasWorkspaceTerminal = true
+			}
+			instance, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
+			if err != nil {
+				log.ErrorLog.Printf("failed to reconcile instance %q: %v (skipping)", data.Title, err)
+				continue
+			}
+			h.list.AddInstance(instance)()
+			if autoYes {
+				instance.AutoYes = true
+			}
 		}
-		if err := inst.CrashRestart(); err != nil {
-			log.ErrorLog.Printf("crash-recovery restart for %q failed: %v", inst.Title, err)
-			inst.SetStatus(session.Paused)
-		}
-		inst.CrashRecovered = false
-	}
 
-	// Clean up orphaned tmux sessions from previous crashes
-	claimedTitles := make(map[string]bool)
-	for _, inst := range h.list.GetInstances() {
-		claimedTitles[inst.Title] = true
-	}
-	if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
-		log.ErrorLog.Printf("orphan cleanup failed: %v", err)
-	}
-
-	// Auto-create workspace terminal if in a workspace context and none exists
-	if !hasWorkspaceTerminal && wsCtx != nil && wsCtx.RepoPath != "" {
-		wtTitle := "Workspace Terminal"
-		if wsCtx.Name != "" {
-			wtTitle = wsCtx.Name
+		// Restart crash-recovered instances
+		for _, inst := range h.list.GetInstances() {
+			if !inst.CrashRecovered {
+				continue
+			}
+			if err := inst.CrashRestart(); err != nil {
+				log.ErrorLog.Printf("crash-recovery restart for %q failed: %v", inst.Title, err)
+				inst.SetStatus(session.Paused)
+			}
+			inst.CrashRecovered = false
 		}
-		wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
-			Title:               wtTitle,
-			Path:                wsCtx.RepoPath,
-			Program:             program,
-			IsWorkspaceTerminal: true,
-			ConfigDir:           cfgDir,
-		})
-		if wtErr != nil {
-			log.ErrorLog.Printf("failed to create workspace terminal: %v", wtErr)
-		} else {
-			h.list.AddInstance(wtInstance)()
-			if err := wtInstance.Start(true); err != nil {
-				log.ErrorLog.Printf("failed to start workspace terminal: %v", err)
+
+		// Clean up orphaned tmux sessions from previous crashes
+		claimedTitles := make(map[string]bool)
+		for _, inst := range h.list.GetInstances() {
+			claimedTitles[inst.Title] = true
+		}
+		if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
+			log.ErrorLog.Printf("orphan cleanup failed: %v", err)
+		}
+
+		// Auto-create workspace terminal if in a workspace context and none exists
+		if !hasWorkspaceTerminal && wsCtx != nil && wsCtx.RepoPath != "" {
+			wtTitle := "Workspace Terminal"
+			if wsCtx.Name != "" {
+				wtTitle = wsCtx.Name
+			}
+			wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
+				Title:               wtTitle,
+				Path:                wsCtx.RepoPath,
+				Program:             program,
+				IsWorkspaceTerminal: true,
+				ConfigDir:           cfgDir,
+			})
+			if wtErr != nil {
+				log.ErrorLog.Printf("failed to create workspace terminal: %v", wtErr)
+			} else {
+				h.list.AddInstance(wtInstance)()
+				if err := wtInstance.Start(true); err != nil {
+					log.ErrorLog.Printf("failed to start workspace terminal: %v", err)
+				}
 			}
 		}
 	}
@@ -300,13 +311,76 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 				h.state = stateWorkspace
 			}
 		}
+	} else if willRestoreSlots {
+		h.restoreSavedWorkspaces(savedOpen)
 	} else if wsCtx != nil && wsCtx.Name == "" && registry != nil && len(registry.Workspaces) > 0 {
-		// No directory arg, global context, workspaces exist: show picker.
+		// No directory arg, global context, workspaces exist, nothing to
+		// restore: show picker.
 		h.workspacePicker = overlay.NewStartupWorkspacePicker(registry.Workspaces)
 		h.state = stateWorkspace
 	}
 
 	return h
+}
+
+// restoreSavedWorkspaces activates all workspaces in `saved` as slots, merging
+// the explicit startup target (if any) into the set, then focuses the
+// appropriate slot. Missing/failed workspaces are dropped silently. The
+// registry's OpenWorkspaces list is rewritten to match what actually activated.
+func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
+	explicit := ""
+	if m.activeCtx != nil {
+		explicit = m.activeCtx.Name
+	}
+
+	desired := saved
+	if explicit != "" && m.registry != nil {
+		found := false
+		for _, w := range desired {
+			if w.Name == explicit {
+				found = true
+				break
+			}
+		}
+		if !found {
+			if ws := m.registry.Get(explicit); ws != nil {
+				desired = append(desired, *ws)
+			}
+		}
+	}
+
+	for _, ws := range desired {
+		if err := m.activateWorkspace(ws); err != nil {
+			log.ErrorLog.Printf("failed to restore workspace %q: %v", ws.Name, err)
+		}
+	}
+
+	if len(m.slots) == 0 {
+		return
+	}
+
+	focused := 0
+	focusName := explicit
+	if focusName == "" && m.registry != nil {
+		focusName = m.registry.LastUsed
+	}
+	if focusName != "" {
+		for i, s := range m.slots {
+			if s.wsCtx.Name == focusName {
+				focused = i
+				break
+			}
+		}
+	}
+	m.loadSlot(focused)
+	m.updateTabBarStatuses()
+
+	if m.registry != nil {
+		_ = m.registry.SetOpenWorkspaces(m.slotNames())
+		if name := m.slots[focused].wsCtx.Name; name != "" {
+			_ = m.registry.UpdateLastUsed(name)
+		}
+	}
 }
 
 // updateHandleWindowSizeEvent sets the sizes of the components.
@@ -678,9 +752,13 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 				log.ErrorLog.Printf("failed to save workspace %s: %v", slot.wsCtx.Name, err)
 			}
 		}
+		m.saveOpenWorkspaces()
 	} else {
 		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
 			return m, m.handleError(err)
+		}
+		if m.registry != nil && len(m.registry.OpenWorkspaces) > 0 {
+			_ = m.registry.SetOpenWorkspaces(nil)
 		}
 	}
 	return m, tea.Quit
@@ -990,6 +1068,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 					if m.registry != nil {
 						_ = m.registry.UpdateLastUsed(selected.Name)
 					}
+					m.saveOpenWorkspaces()
 				}
 				// else: Global selected, keep current (global) state.
 				return m, tea.WindowSize()
@@ -1319,6 +1398,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		newIdx := (m.focusedSlot - 1 + len(m.slots)) % len(m.slots)
 		m.loadSlot(newIdx)
 		m.updateTabBarStatuses()
+		m.persistFocusedWorkspace()
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case keys.KeyWorkspaceRight:
 		if len(m.slots) <= 1 {
@@ -1328,6 +1408,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		newIdx := (m.focusedSlot + 1) % len(m.slots)
 		m.loadSlot(newIdx)
 		m.updateTabBarStatuses()
+		m.persistFocusedWorkspace()
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case keys.KeyQuickInputAgent:
 		selected := m.list.GetSelectedInstance()
@@ -1910,6 +1991,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	}
 
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
+	m.saveOpenWorkspaces()
 
 	// 4. Surface activation errors to the user.
 	if len(activationErrors) > 0 {
@@ -1964,6 +2046,32 @@ func (m *home) updateTabBarStatuses() {
 		}
 	}
 	m.tabBar.SetStatuses(statuses)
+}
+
+// saveOpenWorkspaces persists the current ordered list of open workspace tabs
+// to the registry so they can be restored on next launch.
+func (m *home) saveOpenWorkspaces() {
+	if m.registry == nil {
+		return
+	}
+	if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
+		log.ErrorLog.Printf("failed to persist open workspaces: %v", err)
+	}
+}
+
+// persistFocusedWorkspace writes the currently focused slot's name to
+// LastUsed so the next launch focuses the same tab.
+func (m *home) persistFocusedWorkspace() {
+	if m.registry == nil || m.focusedSlot < 0 || m.focusedSlot >= len(m.slots) {
+		return
+	}
+	name := m.slots[m.focusedSlot].wsCtx.Name
+	if name == "" {
+		return
+	}
+	if err := m.registry.UpdateLastUsed(name); err != nil {
+		log.ErrorLog.Printf("failed to persist focused workspace: %v", err)
+	}
 }
 
 // slotNames returns the names of all active workspace slots.
