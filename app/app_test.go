@@ -542,25 +542,27 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 	}
 
-	// Set up a preAction like the kill handler does
-	h.pendingPreAction = func() {
-		instance.SetStatus(session.Deleting)
-	}
-	h.confirmAction("[!] Kill session 'test-delete'?", func() tea.Msg {
-		return killInstanceMsg{title: "test-delete"}
+	// Set up a task like the kill handler does
+	h.confirmTask("[!] Kill session 'test-delete'?", overlay.ConfirmationTask{
+		Sync: func() {
+			instance.SetStatus(session.Deleting)
+		},
+		Async: func() tea.Msg {
+			return killInstanceMsg{title: "test-delete"}
+		},
 	})
 
 	// Simulate confirming (pressing 'y')
 	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}
 	_, _ = h.handleKeyPress(keyMsg)
 
-	// preAction should have run — status should be Deleting
+	// Sync step should have run — status should be Deleting
 	assert.Equal(t, session.Deleting, instance.GetStatus())
 }
 
-// TestKillFailedMsgRevertsStatus verifies that a killFailedMsg reverts the
-// instance status to its previous value.
-func TestKillFailedMsgRevertsStatus(t *testing.T) {
+// TestTransitionFailedMsgRevertsStatus verifies that a transitionFailedMsg
+// reverts the instance status to its previous value.
+func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	list := ui.NewList(&s, false)
 
@@ -583,9 +585,9 @@ func TestKillFailedMsgRevertsStatus(t *testing.T) {
 		errBox:    ui.NewErrBox(),
 	}
 
-	// Process killFailedMsg
-	msg := killFailedMsg{
+	msg := transitionFailedMsg{
 		title:          "test-revert",
+		op:             "delete",
 		previousStatus: session.Running,
 		err:            fmt.Errorf("branch is checked out"),
 	}
@@ -618,9 +620,10 @@ func TestPersistableInstancesFiltersDeleting(t *testing.T) {
 	assert.Equal(t, "paused", result[1].Title)
 }
 
-// TestPreActionClearedOnCancel verifies that cancelling a confirmation
-// clears the pendingPreAction so it doesn't leak to the next confirmation.
-func TestPreActionClearedOnCancel(t *testing.T) {
+// TestPendingConfirmationClearedOnCancel verifies that cancelling a
+// confirmation clears the bundled task so a stale Sync/Async pair
+// can't leak into the next confirmation.
+func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	list := ui.NewList(&s, false)
 
@@ -633,14 +636,17 @@ func TestPreActionClearedOnCancel(t *testing.T) {
 		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 	}
 
-	called := false
-	h.pendingPreAction = func() { called = true }
-	h.confirmAction("Test?", func() tea.Msg { return nil })
+	syncCalled := false
+	h.confirmTask("Test?", overlay.ConfirmationTask{
+		Sync:  func() { syncCalled = true },
+		Async: func() tea.Msg { return nil },
+	})
 
 	// Cancel with 'n'
 	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
 	_, _ = h.handleKeyPress(keyMsg)
 
-	assert.False(t, called, "preAction should not have been called on cancel")
-	assert.Nil(t, h.pendingPreAction, "pendingPreAction should be nil after cancel")
+	assert.False(t, syncCalled, "Sync should not have been called on cancel")
+	assert.Nil(t, h.pendingConfirmation.Sync, "pendingConfirmation.Sync should be nil after cancel")
+	assert.Nil(t, h.pendingConfirmation.Async, "pendingConfirmation.Async should be nil after cancel")
 }

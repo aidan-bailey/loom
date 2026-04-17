@@ -28,11 +28,11 @@ import (
 const GlobalInstanceLimit = 10
 
 var inlineAttachHintStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}).
+	Foreground(ui.BorderActive).
 	Bold(true)
 
 var statusLineStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#999999", Dark: "#555555"})
+	Foreground(ui.BorderMuted)
 
 // Run is the main entrypoint into the application.
 // wsCtx is the resolved workspace context; nil means global.
@@ -107,6 +107,11 @@ type home struct {
 
 	// -- State --
 
+	// actions is the keypress dispatch registry. Populated once at
+	// home construction. Keys absent from the registry fall through
+	// to the legacy switch in handleKeyPress; see app/actions.go.
+	actions ActionRegistry
+
 	// state is the current discrete state of the application
 	state state
 	// newInstanceFinalizer is called when the state is stateNew and then you press enter.
@@ -141,11 +146,11 @@ type home struct {
 	confirmationOverlay *overlay.ConfirmationOverlay
 	// workspacePicker displays the workspace selection overlay
 	workspacePicker *overlay.WorkspacePicker
-	// pendingAction stores the action to execute after confirmation
-	pendingAction tea.Cmd
-	// pendingPreAction runs synchronously in the main goroutine before the
-	// pendingAction Cmd is dispatched. Used to set Deleting status immediately.
-	pendingPreAction func()
+	// pendingConfirmation bundles the work to run when the user
+	// confirms the active modal. Sync flips in-process state (e.g.,
+	// transitioning to Deleting) before the Async tea.Cmd fires, so
+	// the spinner is visible by the next render.
+	pendingConfirmation overlay.ConfirmationTask
 	// pendingDir is the directory path awaiting workspace registration confirmation
 	pendingDir string
 	// pendingAttachTarget is the instance whose tmux session should be
@@ -191,6 +196,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 
 	h := &home{
 		ctx:       ctx,
+		actions:   defaultActions(),
 		activeCtx: wsCtx,
 		registry:  registry,
 		spinner:   spinner.New(spinner.WithSpinner(spinner.MiniDot)),
@@ -286,14 +292,16 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			fmt.Sprintf("Register '%s' as workspace '%s'?", pendingDir, name))
 		h.confirmationOverlay.SetWidth(60)
 		h.state = stateConfirm
-		h.pendingAction = func() tea.Msg {
-			if err := h.registry.Add(name, pendingDir); err != nil {
-				return fmt.Errorf("failed to register workspace: %w", err)
-			}
-			return workspaceRegisteredMsg{dir: pendingDir}
+		h.pendingConfirmation = overlay.ConfirmationTask{
+			Async: func() tea.Msg {
+				if err := h.registry.Add(name, pendingDir); err != nil {
+					return fmt.Errorf("failed to register workspace: %w", err)
+				}
+				return workspaceRegisteredMsg{dir: pendingDir}
+			},
 		}
 		h.confirmationOverlay.OnCancel = func() {
-			h.pendingAction = nil
+			h.pendingConfirmation = overlay.ConfirmationTask{}
 			// Fall back to workspace picker if workspaces exist.
 			if h.registry != nil && len(h.registry.Workspaces) > 0 {
 				h.workspacePicker = overlay.NewStartupWorkspacePicker(h.registry.Workspaces)
@@ -316,13 +324,12 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.lastHeight = msg.Height
 	m.tabBar.SetWidth(msg.Width)
 
-	// List takes 20% of width, split pane takes 80%
-	listWidth := int(float32(msg.Width) * 0.2)
+	listWidth := int(float32(msg.Width) * ui.ListWidthPercent)
 	paneWidth := msg.Width - listWidth
 
 	// Content gets all height minus tab bar, status line (1), and error box (1).
 	contentHeight := msg.Height - m.tabBar.Height() - 2
-	m.errBox.SetSize(int(float32(msg.Width)*0.9), 1)
+	m.errBox.SetSize(int(float32(msg.Width)*ui.PreviewWidthPercent), 1)
 
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
 		m.quickInputBar.SetWidth(int(float32(msg.Width) * 0.5))
@@ -331,10 +338,10 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.list.SetSize(listWidth, contentHeight)
 
 	if m.textInputOverlay != nil {
-		m.textInputOverlay.SetSize(int(float32(msg.Width)*0.6), int(float32(msg.Height)*0.4))
+		m.textInputOverlay.SetSize(int(float32(msg.Width)*ui.OverlayWidthPercent), int(float32(msg.Height)*ui.OverlayHeightPercent))
 	}
 	if m.textOverlay != nil {
-		m.textOverlay.SetWidth(int(float32(msg.Width) * 0.6))
+		m.textOverlay.SetWidth(int(float32(msg.Width) * ui.OverlayWidthPercent))
 	}
 
 	agentWidth, agentHeight := m.splitPane.GetAgentSize()
@@ -524,41 +531,31 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// goroutine. Here we only do in-memory list bookkeeping.
 		m.list.RemoveInstanceByTitle(msg.title)
 		return m, m.instanceChanged()
-	case killFailedMsg:
-		// Revert instance status on failed deletion.
+	case transitionFailedMsg:
+		// Revert instance status on failed background op (kill/pause/resume).
 		for _, inst := range m.list.GetInstances() {
 			if inst.Title == msg.title {
-				inst.SetStatus(msg.previousStatus)
+				if terr := inst.TransitionTo(msg.previousStatus); terr != nil {
+					// previousStatus came from this same instance, so a reject
+					// here means the state machine drifted under us — log and
+					// fall back to the shim to preserve legacy behavior.
+					log.WarningLog.Printf("revert transition: %v", terr)
+					inst.SetStatus(msg.previousStatus)
+				}
 				break
 			}
 		}
-		log.ErrorLog.Printf("failed to delete session %q: %v", msg.title, msg.err)
+		log.ErrorLog.Printf("%s failed for %q: %v", msg.op, msg.title, msg.err)
 		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
 	case pauseInstanceMsg:
 		// Terminal session was already closed inside pauseAction off the update
 		// goroutine. Nothing I/O-blocking to do here.
 		return m, m.instanceChanged()
-	case pauseFailedMsg:
-		// Revert instance status on failed pause so the user can retry.
-		for _, inst := range m.list.GetInstances() {
-			if inst.Title == msg.title {
-				inst.SetStatus(msg.previousStatus)
-				break
-			}
-		}
-		log.ErrorLog.Printf("failed to pause session %q: %v", msg.title, msg.err)
-		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
 	case backgroundCleanupDoneMsg:
 		// Nothing to do; the instance was already popped and the cleanup
 		// result was logged inside backgroundKillCmd.
 		return m, nil
 	case resumeDoneMsg:
-		if msg.err != nil {
-			// Resume failed — revert to the prior status (typically Paused)
-			// so the user can retry.
-			msg.instance.SetStatus(msg.previousStatus)
-			return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
-		}
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
 	case startFullScreenAttachMsg:
 		// Resolve the tmux session for the requested pane.
@@ -1007,12 +1004,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 	if m.state == stateConfirm {
 		shouldClose := m.confirmationOverlay.HandleKeyPress(msg)
 		if shouldClose {
-			if m.pendingPreAction != nil {
-				m.pendingPreAction()
-				m.pendingPreAction = nil
-			}
-			cmd := m.pendingAction
-			m.pendingAction = nil
+			cmd := m.pendingConfirmation.Run()
+			m.pendingConfirmation = overlay.ConfirmationTask{}
 			m.confirmationOverlay = nil
 			m.state = stateDefault
 			return m, tea.Batch(cmd, m.instanceChanged())
@@ -1052,6 +1045,13 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		return m, nil
 	}
 
+	// Route through the action registry first. Unregistered keys fall
+	// through to the legacy switch — the switch is the source of
+	// truth until every keybinding is ported.
+	if model, cmd, handled := m.actions.Dispatch(name, m); handled {
+		return model, cmd
+	}
+
 	switch name {
 	case keys.KeyHelp:
 		return m.showHelpScreen(helpTypeGeneral{}, nil)
@@ -1064,7 +1064,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// Start a background fetch so branches are up to date by the time the picker opens
 		repoDir := m.repoPath()
 		fetchCmd := func() tea.Msg {
-			git.FetchBranches(repoDir)
+			git.FetchBranches(repoDir, nil)
 			return nil
 		}
 
@@ -1106,15 +1106,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		m.menu.SetState(ui.StateNewInstance)
 
 		return m, nil
-	case keys.KeyUp:
-		m.list.Up()
-		return m, m.instanceChanged()
-	case keys.KeyDown:
-		m.list.Down()
-		return m, m.instanceChanged()
-	case keys.KeyDiff:
-		m.splitPane.ToggleDiff()
-		return m, m.instanceChanged()
 	case keys.KeyKill:
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.IsWorkspaceTerminal {
@@ -1130,7 +1121,9 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// preAction runs synchronously in the main goroutine when the user
 		// confirms. It marks the instance as Deleting immediately.
 		preAction := func() {
-			selected.SetStatus(session.Deleting)
+			if err := selected.TransitionTo(session.Deleting); err != nil {
+				log.WarningLog.Printf("kill preAction transition: %v", err)
+			}
 		}
 
 		// killAction runs in a goroutine — only I/O, no state mutations.
@@ -1138,17 +1131,18 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			// Get worktree and check if branch is checked out
 			worktree, err := selected.GetGitWorktree()
 			if err != nil {
-				return killFailedMsg{title: title, previousStatus: previousStatus, err: err}
+				return transitionFailedMsg{title: title, op: "delete", previousStatus: previousStatus, err: err}
 			}
 
 			checkedOut, err := worktree.IsBranchCheckedOut()
 			if err != nil {
-				return killFailedMsg{title: title, previousStatus: previousStatus, err: err}
+				return transitionFailedMsg{title: title, op: "delete", previousStatus: previousStatus, err: err}
 			}
 
 			if checkedOut {
-				return killFailedMsg{
+				return transitionFailedMsg{
 					title:          title,
+					op:             "delete",
 					previousStatus: previousStatus,
 					err:            fmt.Errorf("instance %s is currently checked out", selected.Title),
 				}
@@ -1169,15 +1163,17 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 			// Delete from persistent storage
 			if err := m.storage.DeleteInstance(selected.Title); err != nil {
-				return killFailedMsg{title: title, previousStatus: previousStatus, err: err}
+				return transitionFailedMsg{title: title, op: "delete", previousStatus: previousStatus, err: err}
 			}
 
 			return killInstanceMsg{title: title}
 		}
 
 		message := fmt.Sprintf("[!] Kill session '%s'?", selected.Title)
-		m.pendingPreAction = preAction
-		return m, m.confirmAction(message, killAction)
+		return m, m.confirmTask(message, overlay.ConfirmationTask{
+			Sync:  preAction,
+			Async: killAction,
+		})
 	case keys.KeySubmit:
 		selected := m.list.GetSelectedInstance()
 		if selected == nil || selected.IsWorkspaceTerminal {
@@ -1227,7 +1223,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
 			}
 			if err := selected.Pause(saveFunc); err != nil {
-				return pauseFailedMsg{title: pauseTitle, previousStatus: previousStatus, err: err}
+				return transitionFailedMsg{title: pauseTitle, op: "pause", previousStatus: previousStatus, err: err}
 			}
 			return pauseInstanceMsg{title: pauseTitle}
 		}
@@ -1237,10 +1233,14 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		// while the blocking commit/tmux/worktree work runs in pauseAction.
 		return m.showHelpScreen(helpTypeInstanceCheckout{}, func() tea.Cmd {
 			message := fmt.Sprintf("[!] Pause session '%s'?", selected.Title)
-			m.pendingPreAction = func() {
-				selected.SetStatus(session.Loading)
-			}
-			return m.confirmAction(message, pauseAction)
+			return m.confirmTask(message, overlay.ConfirmationTask{
+				Sync: func() {
+					if err := selected.TransitionTo(session.Loading); err != nil {
+						log.WarningLog.Printf("pause preAction transition: %v", err)
+					}
+				},
+				Async: pauseAction,
+			})
 		})
 	case keys.KeyResume:
 		selected := m.list.GetSelectedInstance()
@@ -1252,16 +1252,22 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		}
 		// Flip to Loading immediately so the list shows the spinner while
 		// Resume's blocking worktree/tmux setup runs in a Cmd goroutine.
-		selected.SetStatus(session.Loading)
+		// TransitionTo enforces Paused→Loading atomically, so a concurrent
+		// reconcile flip between the guard above and this write can't
+		// leave us starting Resume on a non-Paused instance.
+		if err := selected.TransitionTo(session.Loading); err != nil {
+			log.WarningLog.Printf("skip resume: %v", err)
+			return m, nil
+		}
 		saveFunc := func() error {
 			return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
 		}
+		resumeTitle := selected.Title
 		resumeCmd := func() tea.Msg {
-			return resumeDoneMsg{
-				instance:       selected,
-				previousStatus: session.Paused,
-				err:            selected.Resume(saveFunc),
+			if err := selected.Resume(saveFunc); err != nil {
+				return transitionFailedMsg{title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
 			}
+			return resumeDoneMsg{}
 		}
 		return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), resumeCmd)
 	case keys.KeyDirectAttachAgent:
@@ -1453,10 +1459,13 @@ type killInstanceMsg struct {
 	title string
 }
 
-// killFailedMsg is returned when background cleanup fails. The main event
-// loop reverts the instance status so the user can retry.
-type killFailedMsg struct {
+// transitionFailedMsg is returned when a background status-transitioning
+// operation (kill, pause, resume) fails. The main event loop reverts the
+// instance to previousStatus so the user can retry. `op` identifies the
+// operation for the error log.
+type transitionFailedMsg struct {
 	title          string
+	op             string
 	previousStatus session.Status
 	err            error
 }
@@ -1467,27 +1476,14 @@ type pauseInstanceMsg struct {
 	title string
 }
 
-// pauseFailedMsg is returned when background pause cleanup fails. The main
-// event loop reverts the instance status so the user can retry.
-type pauseFailedMsg struct {
-	title          string
-	previousStatus session.Status
-	err            error
-}
-
 // backgroundCleanupDoneMsg is returned by backgroundKillCmd after a popped
 // instance has been fully cleaned up. It carries no state — failures are
 // already logged inside the Cmd and there's nothing for the main loop to do.
 type backgroundCleanupDoneMsg struct{}
 
-// resumeDoneMsg is returned by the Resume Cmd after the blocking worktree
-// and tmux setup finishes. On failure the handler reverts the instance to
-// Paused so the user can retry.
-type resumeDoneMsg struct {
-	instance       *session.Instance
-	previousStatus session.Status
-	err            error
-}
+// resumeDoneMsg is returned by the Resume Cmd on success. Failures come
+// through transitionFailedMsg.
+type resumeDoneMsg struct{}
 
 // fullScreenAttachTarget picks which tmux session (agent vs terminal) a
 // full-screen attach should target for the selected instance.
@@ -1578,7 +1574,7 @@ func (m *home) scheduleBranchSearch(filter string, version uint64) tea.Cmd {
 func (m *home) runBranchSearch(filter string, version uint64) tea.Cmd {
 	repoDir := m.repoPath()
 	return func() tea.Msg {
-		branches, err := git.SearchBranches(repoDir, filter)
+		branches, err := git.SearchBranches(repoDir, filter, nil)
 		if err != nil {
 			log.WarningLog.Printf("branch search failed: %v", err)
 			return nil
@@ -1668,23 +1664,28 @@ func (m *home) cancelPromptOverlay() tea.Cmd {
 	)
 }
 
-// confirmAction shows a confirmation modal and stores the action to execute on confirm
-func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
+// confirmTask shows a confirmation modal with the supplied task
+// queued for execution on confirm. Sync fires before Async so
+// state transitions (e.g., flipping to Deleting) take effect before
+// the async worker even starts.
+func (m *home) confirmTask(message string, task overlay.ConfirmationTask) tea.Cmd {
 	m.state = stateConfirm
-	m.pendingAction = action
+	m.pendingConfirmation = task
 
-	// Create and show the confirmation overlay using ConfirmationOverlay
 	m.confirmationOverlay = overlay.NewConfirmationOverlay(message)
-	// Set a fixed width for consistent appearance
 	m.confirmationOverlay.SetWidth(50)
 
-	// Set callbacks for confirmation and cancellation
 	m.confirmationOverlay.OnCancel = func() {
-		m.pendingAction = nil
-		m.pendingPreAction = nil
+		m.pendingConfirmation = overlay.ConfirmationTask{}
 	}
 
 	return nil
+}
+
+// confirmAction is a thin wrapper around confirmTask for callers
+// that only need an async body (no sync pre-step).
+func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
+	return m.confirmTask(message, overlay.ConfirmationTask{Async: action})
 }
 
 // repoPath returns the git repository path for the current context.
@@ -1783,7 +1784,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 
 	// Pre-size components if terminal dimensions are known.
 	if m.lastWidth > 0 && m.lastHeight > 0 {
-		listWidth := int(float32(m.lastWidth) * 0.2)
+		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
 		paneWidth := m.lastWidth - listWidth
 		contentHeight := m.lastHeight - m.tabBar.Height() - 2
 		list.SetSize(listWidth, contentHeight)
@@ -1859,7 +1860,7 @@ func (m *home) loadSlot(idx int) {
 	// the tab bar had 0 names (height=0 instead of 3), producing 3 extra lines
 	// that Bubble Tea clips from the top, cutting off the workspace tab bar.
 	if m.lastWidth > 0 && m.lastHeight > 0 {
-		listWidth := int(float32(m.lastWidth) * 0.2)
+		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
 		paneWidth := m.lastWidth - listWidth
 		contentHeight := m.lastHeight - m.tabBar.Height() - 2
 		m.list.SetSize(listWidth, contentHeight)
