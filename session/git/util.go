@@ -33,8 +33,8 @@ func sanitizeBranchName(s string) string {
 	return s
 }
 
-// checkGHCLI checks if GitHub CLI is installed and configured
-func checkGHCLI() error {
+// checkGHCLI checks if GitHub CLI is installed and configured.
+func (g *GitWorktree) checkGHCLI() error {
 	// Check if gh is installed
 	if _, err := exec.LookPath("gh"); err != nil {
 		return fmt.Errorf("GitHub CLI (gh) is not installed. Please install it first")
@@ -43,27 +43,30 @@ func checkGHCLI() error {
 	// Check if gh is authenticated
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "auth", "status")
-	if err := cmd.Run(); err != nil {
+	c := exec.CommandContext(ctx, "gh", "auth", "status")
+	if err := g.runner.Run(c); err != nil {
 		return fmt.Errorf("GitHub CLI is not configured. Please run 'gh auth login' first")
 	}
 
 	return nil
 }
 
-// IsGitRepo checks if the given path is within a git repository
-func IsGitRepo(path string) bool {
+// IsGitRepo checks if the given path is within a git repository.
+// Pass nil for runner to use the default subprocess runner.
+func IsGitRepo(path string, runner CommandRunner) bool {
+	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
-	return cmd.Run() == nil
+	c := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+	return r.Run(c) == nil
 }
 
-func findGitRepoRoot(path string) (string, error) {
+func findGitRepoRoot(path string, runner CommandRunner) (string, error) {
+	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
+	c := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+	out, err := r.Output(c)
 	if err != nil {
 		return "", fmt.Errorf("failed to find Git repository root from path: %s", path)
 	}

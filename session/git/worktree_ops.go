@@ -164,7 +164,9 @@ func (g *GitWorktree) Prune() error {
 
 // CleanupWorktrees removes all worktrees and their associated branches.
 // configDir is the workspace config directory; if empty, falls back to GetConfigDir().
-func CleanupWorktrees(configDir string) error {
+// Pass nil for runner to use the default subprocess runner.
+func CleanupWorktrees(configDir string, runner CommandRunner) error {
+	r := defaultRunner(runner)
 	worktreesDir, err := getWorktreeDirectory(configDir)
 	if err != nil {
 		return fmt.Errorf("failed to get worktree directory: %w", err)
@@ -184,7 +186,7 @@ func CleanupWorktrees(configDir string) error {
 		}
 		worktreePath := filepath.Join(worktreesDir, entry.Name())
 
-		repoRoot, err := findGitRepoRoot(worktreePath)
+		repoRoot, err := findGitRepoRoot(worktreePath, r)
 		if err != nil {
 			// Can't determine repo (e.g. .git file missing) — just remove the directory
 			os.RemoveAll(worktreePath)
@@ -197,8 +199,8 @@ func CleanupWorktrees(configDir string) error {
 	for repoRoot, worktreePaths := range repoWorktrees {
 		// Get worktree→branch mappings for this repo
 		listCtx, listCancel := context.WithTimeout(context.Background(), gitTimeout)
-		cmd := exec.CommandContext(listCtx, "git", "-C", repoRoot, "worktree", "list", "--porcelain")
-		output, _ := cmd.Output()
+		listCmd := exec.CommandContext(listCtx, "git", "-C", repoRoot, "worktree", "list", "--porcelain")
+		output, _ := r.Output(listCmd)
 		listCancel()
 
 		worktreeBranches := make(map[string]string)
@@ -220,7 +222,7 @@ func CleanupWorktrees(configDir string) error {
 			if branch, ok := worktreeBranches[wtPath]; ok {
 				delCtx, delCancel := context.WithTimeout(context.Background(), gitTimeout)
 				deleteCmd := exec.CommandContext(delCtx, "git", "-C", repoRoot, "branch", "-D", branch)
-				if err := deleteCmd.Run(); err != nil {
+				if err := r.Run(deleteCmd); err != nil {
 					log.ErrorLog.Printf("failed to delete branch %s: %v", branch, err)
 				}
 				delCancel()
@@ -233,7 +235,7 @@ func CleanupWorktrees(configDir string) error {
 		// Prune stale worktree references for this repo
 		pruneCtx, pruneCancel := context.WithTimeout(context.Background(), gitTimeout)
 		pruneCmd := exec.CommandContext(pruneCtx, "git", "-C", repoRoot, "worktree", "prune")
-		if err := pruneCmd.Run(); err != nil {
+		if err := r.Run(pruneCmd); err != nil {
 			log.ErrorLog.Printf("failed to prune worktrees for %s: %v", repoRoot, err)
 		}
 		pruneCancel()

@@ -4,9 +4,31 @@ import (
 	"claude-squad/config"
 	"claude-squad/log"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"time"
 )
+
+// CommandRunner abstracts subprocess execution so tests can mock git
+// invocations. Satisfied by cmd.Executor via structural typing — defining it
+// here avoids an import cycle (cmd/workspace.go already imports session/git).
+type CommandRunner interface {
+	Run(c *exec.Cmd) error
+	Output(c *exec.Cmd) ([]byte, error)
+	CombinedOutput(c *exec.Cmd) ([]byte, error)
+}
+
+// realRunner is the default subprocess runner. Mirrors cmd.Exec but kept local
+// so callers that don't already depend on claude-squad/cmd (like main.go's
+// cleanup path) don't have to import it just to satisfy CommandRunner.
+type realRunner struct{}
+
+func (realRunner) Run(c *exec.Cmd) error                      { return c.Run() }
+func (realRunner) Output(c *exec.Cmd) ([]byte, error)         { return c.Output() }
+func (realRunner) CombinedOutput(c *exec.Cmd) ([]byte, error) { return c.CombinedOutput() }
+
+// DefaultRunner returns the production subprocess runner.
+func DefaultRunner() CommandRunner { return realRunner{} }
 
 func getWorktreeDirectory(configDir string) (string, error) {
 	if configDir == "" {
@@ -37,9 +59,22 @@ type GitWorktree struct {
 	isExistingBranch bool
 	// configDir is the resolved config directory for workspace-scoped worktrees.
 	configDir string
+	// runner executes git/gh subprocesses; injected so tests can mock them.
+	runner CommandRunner
+}
+
+func defaultRunner(r CommandRunner) CommandRunner {
+	if r == nil {
+		return realRunner{}
+	}
+	return r
 }
 
 func NewGitWorktreeFromStorage(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string, isExistingBranch bool, configDir string) *GitWorktree {
+	return NewGitWorktreeFromStorageWithRunner(repoPath, worktreePath, sessionName, branchName, baseCommitSHA, isExistingBranch, configDir, nil)
+}
+
+func NewGitWorktreeFromStorageWithRunner(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string, isExistingBranch bool, configDir string, runner CommandRunner) *GitWorktree {
 	return &GitWorktree{
 		repoPath:         repoPath,
 		worktreePath:     worktreePath,
@@ -48,18 +83,19 @@ func NewGitWorktreeFromStorage(repoPath string, worktreePath string, sessionName
 		baseCommitSHA:    baseCommitSHA,
 		isExistingBranch: isExistingBranch,
 		configDir:        configDir,
+		runner:           defaultRunner(runner),
 	}
 }
 
 // resolveWorktreePaths resolves the repo root and generates a unique worktree path for the given branch name.
-func resolveWorktreePaths(repoPath string, branchName string, configDir string) (resolvedRepo string, worktreePath string, err error) {
+func resolveWorktreePaths(repoPath string, branchName string, configDir string, runner CommandRunner) (resolvedRepo string, worktreePath string, err error) {
 	absPath, err := filepath.Abs(repoPath)
 	if err != nil {
 		log.ErrorLog.Printf("git worktree path abs error, falling back to repoPath %s: %s", repoPath, err)
 		absPath = repoPath
 	}
 
-	resolvedRepo, err = findGitRepoRoot(absPath)
+	resolvedRepo, err = findGitRepoRoot(absPath, runner)
 	if err != nil {
 		return "", "", err
 	}
@@ -78,6 +114,12 @@ func resolveWorktreePaths(repoPath string, branchName string, configDir string) 
 // NewGitWorktree creates a new GitWorktree instance.
 // configDir is the workspace config directory; if empty, falls back to GetConfigDir().
 func NewGitWorktree(repoPath string, sessionName string, configDir string) (tree *GitWorktree, branchname string, err error) {
+	return NewGitWorktreeWithRunner(repoPath, sessionName, configDir, nil)
+}
+
+// NewGitWorktreeWithRunner is NewGitWorktree with an injected CommandRunner
+// (used by tests). Passing nil falls back to the default runner.
+func NewGitWorktreeWithRunner(repoPath string, sessionName string, configDir string, runner CommandRunner) (tree *GitWorktree, branchname string, err error) {
 	var cfg *config.Config
 	if configDir != "" {
 		cfg = config.LoadConfigFrom(configDir)
@@ -89,7 +131,8 @@ func NewGitWorktree(repoPath string, sessionName string, configDir string) (tree
 	// (e.g., backslashes from Windows domain usernames like DOMAIN\user)
 	branchName = sanitizeBranchName(branchName)
 
-	repoPath, worktreePath, err := resolveWorktreePaths(repoPath, branchName, configDir)
+	r := defaultRunner(runner)
+	repoPath, worktreePath, err := resolveWorktreePaths(repoPath, branchName, configDir, r)
 	if err != nil {
 		return nil, "", err
 	}
@@ -100,6 +143,7 @@ func NewGitWorktree(repoPath string, sessionName string, configDir string) (tree
 		branchName:   branchName,
 		worktreePath: worktreePath,
 		configDir:    configDir,
+		runner:       r,
 	}, branchName, nil
 }
 
@@ -107,7 +151,12 @@ func NewGitWorktree(repoPath string, sessionName string, configDir string) (tree
 // The branch will not be deleted on cleanup.
 // configDir is the workspace config directory; if empty, falls back to GetConfigDir().
 func NewGitWorktreeFromBranch(repoPath string, branchName string, sessionName string, configDir string) (*GitWorktree, error) {
-	repoPath, worktreePath, err := resolveWorktreePaths(repoPath, branchName, configDir)
+	return NewGitWorktreeFromBranchWithRunner(repoPath, branchName, sessionName, configDir, nil)
+}
+
+func NewGitWorktreeFromBranchWithRunner(repoPath string, branchName string, sessionName string, configDir string, runner CommandRunner) (*GitWorktree, error) {
+	r := defaultRunner(runner)
+	repoPath, worktreePath, err := resolveWorktreePaths(repoPath, branchName, configDir, r)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +168,7 @@ func NewGitWorktreeFromBranch(repoPath string, branchName string, sessionName st
 		worktreePath:     worktreePath,
 		isExistingBranch: true,
 		configDir:        configDir,
+		runner:           r,
 	}, nil
 }
 

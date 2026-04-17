@@ -36,7 +36,7 @@ var workspaceAddCmd = &cobra.Command{
 			return fmt.Errorf("failed to resolve path: %w", err)
 		}
 
-		if !git.IsGitRepo(absPath) {
+		if !git.IsGitRepo(absPath, Exec{}) {
 			return fmt.Errorf("%s is not a git repository", absPath)
 		}
 

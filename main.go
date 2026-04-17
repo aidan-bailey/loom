@@ -68,7 +68,7 @@ var (
 				if !info.IsDir() {
 					return fmt.Errorf("%q is not a directory", dirPath)
 				}
-				if !git.IsGitRepo(dirPath) {
+				if !git.IsGitRepo(dirPath, nil) {
 					return fmt.Errorf("%q is not a git repository", dirPath)
 				}
 				if regErr == nil {
@@ -116,7 +116,7 @@ var (
 			if err != nil {
 				return fmt.Errorf("failed to get current directory: %w", err)
 			}
-			if pendingDir == "" && wsCtx.Name == "" && (regErr != nil || len(registry.Workspaces) == 0) && !git.IsGitRepo(currentDir) {
+			if pendingDir == "" && wsCtx.Name == "" && (regErr != nil || len(registry.Workspaces) == 0) && !git.IsGitRepo(currentDir, nil) {
 				return fmt.Errorf("error: claude-squad must be run from within a git repository")
 			}
 
@@ -175,7 +175,7 @@ var (
 			}
 			fmt.Println("Tmux sessions have been cleaned up")
 
-			if err := git.CleanupWorktrees(""); err != nil {
+			if err := git.CleanupWorktrees("", nil); err != nil {
 				return fmt.Errorf("failed to cleanup worktrees: %w", err)
 			}
 			fmt.Println("Worktrees have been cleaned up")

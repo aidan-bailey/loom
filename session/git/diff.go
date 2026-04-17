@@ -25,11 +25,13 @@ func (d *DiffStats) IsEmpty() bool {
 }
 
 // CurrentBranch returns the current branch name for the given repo directory.
-func CurrentBranch(repoPath string) (string, error) {
+// Pass nil for runner to use the default subprocess runner.
+func CurrentBranch(repoPath string, runner CommandRunner) (string, error) {
+	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD")
-	output, err := cmd.CombinedOutput()
+	output, err := r.CombinedOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse failed: %s (%w)", output, err)
 	}
@@ -39,13 +41,15 @@ func CurrentBranch(repoPath string) (string, error) {
 // DiffUncommitted returns the diff of uncommitted changes in the given repo directory.
 // Used for workspace terminals that operate on the root repo without a worktree.
 // Only shows tracked file changes to avoid mutating the user's git index.
-func DiffUncommitted(repoPath string) *DiffStats {
+// Pass nil for runner to use the default subprocess runner.
+func DiffUncommitted(repoPath string, runner CommandRunner) *DiffStats {
+	r := defaultRunner(runner)
 	stats := &DiffStats{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "--no-pager", "diff", "HEAD")
-	output, err := cmd.CombinedOutput()
+	output, err := r.CombinedOutput(cmd)
 	if err != nil {
 		stats.Error = fmt.Errorf("git diff failed: %s (%w)", output, err)
 		return stats
@@ -121,12 +125,14 @@ func (g *GitWorktree) DiffShortStat() *DiffStats {
 }
 
 // DiffUncommittedShortStat returns only line counts for uncommitted changes.
-func DiffUncommittedShortStat(repoPath string) *DiffStats {
+// Pass nil for runner to use the default subprocess runner.
+func DiffUncommittedShortStat(repoPath string, runner CommandRunner) *DiffStats {
+	r := defaultRunner(runner)
 	stats := &DiffStats{}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "--no-pager", "diff", "--shortstat", "HEAD")
-	output, err := cmd.CombinedOutput()
+	output, err := r.CombinedOutput(cmd)
 	if err != nil {
 		stats.Error = fmt.Errorf("git diff --shortstat failed: %s (%w)", output, err)
 		return stats
