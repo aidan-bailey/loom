@@ -74,6 +74,11 @@ type Instance struct {
 	// The below fields are initialized upon calling Start().
 
 	started bool
+	// starting is true while a Start() call is in progress. Combined with
+	// started, it makes the Start() idempotency guard atomic: without it,
+	// two concurrent callers could both observe started=false, both unlock,
+	// and both proceed to allocate a tmux session and worktree.
+	starting bool
 	// tmuxSession is the tmux session for the instance.
 	tmuxSession *tmux.TmuxSession
 	// gitWorktree is the git worktree for the instance.
@@ -300,6 +305,32 @@ func (i *Instance) setStarted(v bool) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.started = v
+	if v {
+		i.starting = false
+	}
+}
+
+// reserveStart atomically reserves the right to run Start() setup. Returns
+// true if the caller acquired the reservation and must proceed; false if the
+// instance is already started or a concurrent Start is in progress. Pairs
+// with releaseStart (on failure) or setStarted(true) (on success).
+func (i *Instance) reserveStart() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.started || i.starting {
+		return false
+	}
+	i.starting = true
+	return true
+}
+
+// releaseStart clears the starting flag after a failed Start attempt so a
+// subsequent caller can retry. Not needed on success — setStarted(true)
+// clears starting for us.
+func (i *Instance) releaseStart() {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.starting = false
 }
 
 // GetBranch returns the branch name under a read lock. Safe to call
@@ -324,12 +355,11 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 
 	// Idempotency guard: a second Start on an already-started instance is
 	// a no-op so we don't orphan the existing tmux session (INST-04).
-	i.mu.Lock()
-	if i.started {
-		i.mu.Unlock()
+	// reserveStart atomically rejects both "already started" and "another
+	// Start is in flight", closing the TOCTOU hole the prior check had.
+	if !i.reserveStart() {
 		return nil
 	}
-	i.mu.Unlock()
 
 	ts := i.getTmuxSession()
 	if ts == nil {
@@ -370,6 +400,10 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	var setupErr error
 	defer func() {
 		if setupErr != nil {
+			// Clear the starting reservation first so a retry isn't blocked
+			// by this failed attempt. Kill() below releases any resources
+			// that did get allocated.
+			i.releaseStart()
 			if cleanupErr := i.Kill(); cleanupErr != nil {
 				setupErr = fmt.Errorf("%v (cleanup error: %v)", setupErr, cleanupErr)
 			}
