@@ -339,17 +339,10 @@ func TestGetProfiles(t *testing.T) {
 	})
 }
 
-func TestSaveConfig(t *testing.T) {
+func TestSaveConfigTo(t *testing.T) {
 	t.Run("saves config to file", func(t *testing.T) {
-		// Create a temporary config directory
-		tempHome := t.TempDir()
+		configDir := t.TempDir()
 
-		// Override HOME environment
-		originalHome := os.Getenv("HOME")
-		os.Setenv("HOME", tempHome)
-		defer os.Setenv("HOME", originalHome)
-
-		// Create a test config
 		testConfig := &Config{
 			DefaultProgram:     "test-program",
 			AutoYes:            true,
@@ -357,17 +350,13 @@ func TestSaveConfig(t *testing.T) {
 			BranchPrefix:       "test-branch/",
 		}
 
-		err := SaveConfig(testConfig)
+		err := SaveConfigTo(testConfig, configDir)
 		assert.NoError(t, err)
 
-		// Verify the file was created
-		configDir := filepath.Join(tempHome, ".claude-squad")
 		configPath := filepath.Join(configDir, ConfigFileName)
-
 		assert.FileExists(t, configPath)
 
-		// Load and verify the content
-		loadedConfig := LoadConfig()
+		loadedConfig := LoadConfigFrom(configDir)
 		assert.Equal(t, testConfig.DefaultProgram, loadedConfig.DefaultProgram)
 		assert.Equal(t, testConfig.AutoYes, loadedConfig.AutoYes)
 		assert.Equal(t, testConfig.DaemonPollInterval, loadedConfig.DaemonPollInterval)

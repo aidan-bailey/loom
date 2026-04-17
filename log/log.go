@@ -2,17 +2,30 @@ package log
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 )
 
+// EnvLogFormat selects the output format for the structured logger.
+// "json" → JSON lines; anything else → plain text. Legacy *log.Logger
+// vars (InfoLog/WarningLog/ErrorLog) always emit plain text for
+// source-compatibility with the ~117 existing .Printf call sites.
+const EnvLogFormat = "CLAUDE_SQUAD_LOG_FORMAT"
+
 var (
 	WarningLog *log.Logger
 	InfoLog    *log.Logger
 	ErrorLog   *log.Logger
+
+	// Structured is the slog-based logger preferred for new call sites
+	// (see InfoKV/WarnKV/ErrorKV). It shares the log file with the
+	// legacy loggers. Nil until Initialize has been called.
+	Structured *slog.Logger
 )
 
 const (
@@ -35,7 +48,6 @@ func Initialize(logDir string, daemon bool) {
 		logDir = os.TempDir()
 	} else {
 		if err := os.MkdirAll(logDir, 0755); err != nil {
-			// Fall back to temp dir if we can't create the log directory.
 			logDir = os.TempDir()
 		}
 	}
@@ -48,15 +60,34 @@ func Initialize(logDir string, daemon bool) {
 		panic(fmt.Sprintf("could not open log file: %s", err))
 	}
 
-	fmtS := "%s"
+	prefix := ""
 	if daemon {
-		fmtS = "[DAEMON] %s"
+		prefix = "[DAEMON] "
 	}
-	InfoLog = log.New(f, fmt.Sprintf(fmtS, "INFO:"), log.Ldate|log.Ltime|log.Lshortfile)
-	WarningLog = log.New(f, fmt.Sprintf(fmtS, "WARNING:"), log.Ldate|log.Ltime|log.Lshortfile)
-	ErrorLog = log.New(f, fmt.Sprintf(fmtS, "ERROR:"), log.Ldate|log.Ltime|log.Lshortfile)
+	InfoLog = log.New(f, prefix+"INFO:", log.Ldate|log.Ltime|log.Lshortfile)
+	WarningLog = log.New(f, prefix+"WARNING:", log.Ldate|log.Ltime|log.Lshortfile)
+	ErrorLog = log.New(f, prefix+"ERROR:", log.Ldate|log.Ltime|log.Lshortfile)
 
+	Structured = newStructured(f, daemon)
 	globalLogFile = f
+}
+
+// newStructured returns a slog.Logger writing to w. Output format is
+// JSON when CLAUDE_SQUAD_LOG_FORMAT=json is set (machine-readable for
+// log-shipping pipelines), and human-readable text otherwise so that
+// ad-hoc `grep` workflows keep working.
+func newStructured(w io.Writer, daemon bool) *slog.Logger {
+	var handler slog.Handler
+	if os.Getenv(EnvLogFormat) == "json" {
+		handler = slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})
+	} else {
+		handler = slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})
+	}
+	logger := slog.New(handler)
+	if daemon {
+		logger = logger.With("component", "daemon")
+	}
+	return logger
 }
 
 // Close closes the log file.
@@ -84,6 +115,28 @@ func Warnf(format string, v ...any) {
 func Errorf(format string, v ...any) {
 	if ErrorLog != nil {
 		ErrorLog.Printf(format, v...)
+	}
+}
+
+// InfoKV emits a structured INFO record. Prefer this over Infof for
+// new call sites — kv pairs survive log-shipping.
+func InfoKV(msg string, kv ...any) {
+	if Structured != nil {
+		Structured.Info(msg, kv...)
+	}
+}
+
+// WarnKV emits a structured WARNING record.
+func WarnKV(msg string, kv ...any) {
+	if Structured != nil {
+		Structured.Warn(msg, kv...)
+	}
+}
+
+// ErrorKV emits a structured ERROR record.
+func ErrorKV(msg string, kv ...any) {
+	if Structured != nil {
+		Structured.Error(msg, kv...)
 	}
 }
 

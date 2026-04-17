@@ -60,10 +60,6 @@ type Config struct {
 	BranchPrefix string `json:"branch_prefix"`
 	// Profiles is a list of named program profiles.
 	Profiles []Profile `json:"profiles,omitempty"`
-
-	// configDir, when set, directs SaveConfig to write to this directory
-	// instead of GetConfigDir(). Set by LoadConfigFrom for workspace isolation.
-	configDir string
 }
 
 // GetProgram returns the program to run. If Profiles is non-empty and
@@ -185,33 +181,13 @@ func LoadConfig() *Config {
 	// If no config file exists, write defaults so future runs are stable.
 	if _, err := os.Stat(filepath.Join(configDir, ConfigFileName)); os.IsNotExist(err) {
 		defaultCfg := DefaultConfig()
-		defaultCfg.configDir = configDir
-		if saveErr := saveConfig(defaultCfg); saveErr != nil {
+		if saveErr := SaveConfigTo(defaultCfg, configDir); saveErr != nil {
 			log.WarningLog.Printf("failed to save default config: %v", saveErr)
 		}
 		return defaultCfg
 	}
 
 	return LoadConfigFrom(configDir)
-}
-
-// saveConfig saves the configuration to disk
-func saveConfig(config *Config) error {
-	if config.configDir != "" {
-		return SaveConfigTo(config, config.configDir)
-	}
-
-	configDir, err := GetConfigDir()
-	if err != nil {
-		return fmt.Errorf("failed to get config directory: %w", err)
-	}
-
-	return SaveConfigTo(config, configDir)
-}
-
-// SaveConfig exports the saveConfig function for use by other packages
-func SaveConfig(config *Config) error {
-	return saveConfig(config)
 }
 
 // SaveConfigTo saves the configuration to an explicit directory.
@@ -246,7 +222,6 @@ func LoadConfigFromGlobal() *Config {
 // Empty `dir` is a soft shim: a warning is logged and the global config
 // directory is used. Per docs/specs/workspaces.md §3 internal callers
 // must pass a resolved WorkspaceContext.ConfigDir.
-// The returned Config remembers dir so that SaveConfig writes back to it.
 func LoadConfigFrom(dir string) *Config {
 	if dir == "" {
 		log.WarningLog.Printf("LoadConfigFrom called with empty dir; falling back to global — call LoadConfigFromGlobal() explicitly to silence this warning")
@@ -259,17 +234,12 @@ func LoadConfigFrom(dir string) *Config {
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ConfigFileName))
 	if err != nil {
-		cfg := DefaultConfig()
-		cfg.configDir = dir
-		return cfg
+		return DefaultConfig()
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		log.Warnf("corrupt config file, using defaults: %v", err)
-		cfg := DefaultConfig()
-		cfg.configDir = dir
-		return cfg
+		return DefaultConfig()
 	}
-	cfg.configDir = dir
 	return &cfg
 }
