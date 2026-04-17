@@ -14,16 +14,66 @@ import (
 	"time"
 )
 
-// reloadInstances reads state.json and returns the fresh instance set.
-// Called every tick so the daemon observes instances added or removed
-// by the main app (DAEMON-03).
-func reloadInstances(configDir string) ([]*session.Instance, error) {
+// syncTracked reconciles the daemon's in-memory map of live Instance
+// objects with the fresh on-disk data. Instances newly present on disk
+// are constructed and, if not paused, have their PTY spawned. Instances
+// that have disappeared from disk are dropped (we rely on the main app
+// to have torn down their tmux session). EnsureRunning is only called
+// once per instance over the daemon's lifetime, fixing DAEMON-05.
+//
+// syncTracked is a function (not a method) so that tests can drive it
+// directly against a stub filesystem.
+func syncTracked(
+	tracked map[string]*session.Instance,
+	fresh []session.InstanceData,
+	configDir string,
+	everyN *log.Every,
+) {
+	present := make(map[string]bool, len(fresh))
+	for _, d := range fresh {
+		present[d.Title] = true
+	}
+	for title := range tracked {
+		if !present[title] {
+			delete(tracked, title)
+		}
+	}
+	for _, d := range fresh {
+		if _, ok := tracked[d.Title]; ok {
+			continue
+		}
+		inst, err := session.FromInstanceData(d, configDir)
+		if err != nil {
+			if everyN.ShouldLog() {
+				log.WarningLog.Printf("daemon construct %q failed: %v", d.Title, err)
+			}
+			continue
+		}
+		// EnsureRunning is a no-op for Paused instances and a one-shot
+		// PTY attach otherwise. Paused instances remain inert (no PTY)
+		// — a bare AutoYes tick reads Started+!Paused and skips them.
+		if err := inst.EnsureRunning(); err != nil {
+			if everyN.ShouldLog() {
+				log.WarningLog.Printf("daemon ensure-running %q failed: %v", d.Title, err)
+			}
+			continue
+		}
+		tracked[d.Title] = inst
+	}
+}
+
+// reloadInstanceData reads state.json and returns the fresh raw instance
+// records. Called every tick so the daemon observes instances added or
+// removed by the main app (DAEMON-03). Returns raw data (not live Instance
+// objects) so that each tick does not re-spawn a fresh PTY attachment for
+// every non-paused instance (DAEMON-05).
+func reloadInstanceData(configDir string) ([]session.InstanceData, error) {
 	state := config.LoadStateFrom(configDir)
 	storage, err := session.NewStorage(state, configDir)
 	if err != nil {
 		return nil, fmt.Errorf("open storage: %w", err)
 	}
-	return storage.LoadInstances()
+	return storage.LoadInstanceData()
 }
 
 // RunDaemon runs the daemon process which iterates over all sessions and runs AutoYes mode on them.
@@ -37,8 +87,7 @@ func RunDaemon(cfg *config.Config, wsCtx *config.WorkspaceContext) error {
 	log.InfoLog.Printf("starting daemon")
 
 	// Initial load so that startup errors fail fast (e.g. corrupt state.json).
-	instances, err := reloadInstances(configDir)
-	if err != nil {
+	if _, err := reloadInstanceData(configDir); err != nil {
 		return fmt.Errorf("failed to load instances: %w", err)
 	}
 
@@ -47,6 +96,10 @@ func RunDaemon(cfg *config.Config, wsCtx *config.WorkspaceContext) error {
 	// If we get an error for a session, it's likely that we'll keep getting the error. Log every 30 seconds.
 	everyN := log.NewEvery(60 * time.Second)
 
+	// tracked is keyed by instance Title and caches live Instance objects
+	// across ticks so we do not re-spawn a PTY every poll (DAEMON-05).
+	tracked := map[string]*session.Instance{}
+
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	stopCh := make(chan struct{})
@@ -54,24 +107,16 @@ func RunDaemon(cfg *config.Config, wsCtx *config.WorkspaceContext) error {
 		defer wg.Done()
 		ticker := time.NewTimer(pollInterval)
 		for {
-			// Reload from disk every tick so the daemon picks up
-			// instances created or deleted by the main app since the
-			// last poll (DAEMON-03). On error keep using the previous
-			// list to stay resilient to transient I/O.
-			//
-			// NOTE: FromInstanceData calls Start(false) on non-paused
-			// instances which spawns a fresh tmux attach PTY each tick.
-			// That is the DAEMON-05 followup; addressing it here is
-			// out of scope for Phase 4.
-			if fresh, err := reloadInstances(configDir); err != nil {
+			fresh, err := reloadInstanceData(configDir)
+			if err != nil {
 				if everyN.ShouldLog() {
 					log.WarningLog.Printf("daemon reload failed: %v", err)
 				}
 			} else {
-				instances = fresh
+				syncTracked(tracked, fresh, configDir, everyN)
 			}
 
-			for _, instance := range instances {
+			for _, instance := range tracked {
 				// Respect per-instance AutoYes (DAEMON-13). The user may
 				// have opted individual instances out via the main app.
 				if !instance.AutoYes {

@@ -90,7 +90,14 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec cmd.Execut
 		return fromInstanceDataPaused(data, configDir)
 
 	case ActionRestore:
-		return FromInstanceData(data, configDir)
+		instance, err := FromInstanceData(data, configDir)
+		if err != nil {
+			return nil, err
+		}
+		if err := instance.EnsureRunning(); err != nil {
+			return nil, err
+		}
+		return instance, nil
 
 	case ActionRestart:
 		instance, err := fromInstanceDataPaused(data, configDir)

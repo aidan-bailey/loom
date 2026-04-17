@@ -199,8 +199,12 @@ func (i *Instance) ToInstanceData() InstanceData {
 	return i.Snapshot()
 }
 
-// FromInstanceData creates a new Instance from serialized data.
-// configDir is injected into the instance for workspace-scoped worktree resolution.
+// FromInstanceData creates a new Instance from serialized data without
+// spawning a tmux PTY attachment. Paused instances are constructed fully
+// (started=true, TmuxSession object present, no PTY — matches their on-disk
+// shape). Non-paused instances are returned with started=false; the caller
+// must invoke EnsureRunning to attach the PTY. configDir is injected for
+// workspace-scoped worktree resolution.
 func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 	instance := &Instance{
 		Title:               data.Title,
@@ -243,13 +247,23 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 	if instance.Paused() {
 		instance.setStarted(true)
 		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program))
-	} else {
-		if err := instance.Start(false); err != nil {
-			return nil, err
-		}
 	}
 
 	return instance, nil
+}
+
+// EnsureRunning attaches a PTY to the instance's tmux session, restoring
+// any previously-persisted session state. A no-op for paused instances
+// (they deliberately have no PTY) and for already-started instances.
+// Idempotent: the underlying Start guards against double-attaches.
+func (i *Instance) EnsureRunning() error {
+	if i.Paused() {
+		return nil
+	}
+	if i.isStarted() {
+		return nil
+	}
+	return i.Start(false)
 }
 
 // Options for creating a new instance

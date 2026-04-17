@@ -11,22 +11,22 @@ import (
 )
 
 // TestReloadInstances_SeesFreshInstancesOnDisk verifies that
-// reloadInstances picks up new entries written to state.json after
+// reloadInstanceData picks up new entries written to state.json after
 // startup (addresses DAEMON-03).
 func TestReloadInstances_SeesFreshInstancesOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	writeStateJSON(t, dir, []string{"alpha"})
 
-	insts, err := reloadInstances(dir)
+	data, err := reloadInstanceData(dir)
 	assert.NoError(t, err)
-	assert.Len(t, insts, 1)
-	assert.Equal(t, "alpha", insts[0].Title)
+	assert.Len(t, data, 1)
+	assert.Equal(t, "alpha", data[0].Title)
 
 	writeStateJSON(t, dir, []string{"alpha", "beta"})
 
-	insts, err = reloadInstances(dir)
+	data, err = reloadInstanceData(dir)
 	assert.NoError(t, err)
-	assert.Len(t, insts, 2)
+	assert.Len(t, data, 2)
 }
 
 // writeStateJSON writes a state.json containing instances with the given
