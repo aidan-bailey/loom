@@ -60,6 +60,33 @@ func TestSanitizeBranchName(t *testing.T) {
 			input:    "USER/Feature Branch!@#$%^&*()/v1.0",
 			expected: "user/feature-branch/v1.0",
 		},
+		{
+			// Path traversal: `..` must not survive sanitization. Left
+			// untouched, it lets a title like "../escape" traverse out of
+			// the worktrees directory once filepath.Join is applied.
+			name:     "parent directory traversal collapsed",
+			input:    "../escape",
+			expected: "escape",
+		},
+		{
+			// Git itself rejects refs containing two consecutive dots.
+			// Collapsing `..` to `.` keeps the name well-formed.
+			name:     "internal double dot collapsed",
+			input:    "a..b",
+			expected: "a.b",
+		},
+		{
+			// A single dot between segments is fine (e.g. v1.0 tag names).
+			name:     "single dot preserved",
+			input:    "release.v1.0",
+			expected: "release.v1.0",
+		},
+		{
+			// Leading dot would create a hidden-file-style directory.
+			name:     "leading single dot trimmed",
+			input:    ".hidden",
+			expected: "hidden",
+		},
 	}
 
 	for _, tt := range tests {

@@ -27,8 +27,16 @@ func sanitizeBranchName(s string) string {
 	reDash := regexp.MustCompile(`-+`)
 	s = reDash.ReplaceAllString(s, "-")
 
-	// Trim leading and trailing dashes or slashes to avoid issues
-	s = strings.Trim(s, "-/")
+	// Collapse runs of dots to a single dot. Git itself rejects refs
+	// containing `..`, and leaving the pattern intact would let a title like
+	// "../escape" traverse out of the worktrees directory when combined with
+	// filepath.Join.
+	reDot := regexp.MustCompile(`\.+`)
+	s = reDot.ReplaceAllString(s, ".")
+
+	// Trim leading and trailing dashes, slashes, or dots to avoid issues
+	// (leading dot = hidden-file style, trailing dot = invalid on Windows).
+	s = strings.Trim(s, "-/.")
 
 	return s
 }
