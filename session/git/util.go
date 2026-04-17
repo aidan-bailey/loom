@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -76,4 +77,21 @@ func findGitRepoRoot(path string) (string, error) {
 		return "", fmt.Errorf("failed to find Git repository root from path: %s", path)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// findMainRepoRoot returns the main repository's working tree for any path
+// inside a git checkout — including a linked worktree. Unlike findGitRepoRoot
+// (which returns the local worktree's own top level), this survives after the
+// caller removes the linked worktree directory, because the main repo's path
+// is elsewhere on disk.
+func findMainRepoRoot(path string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to find main Git repository root from path: %s", path)
+	}
+	commonDir := strings.TrimSpace(string(out))
+	return filepath.Dir(commonDir), nil
 }

@@ -1,7 +1,6 @@
 package git
 
 import (
-	"claude-squad/log"
 	"context"
 	"fmt"
 	"os"
@@ -184,22 +183,31 @@ func CleanupWorktrees(configDir string) error {
 		}
 		worktreePath := filepath.Join(worktreesDir, entry.Name())
 
-		repoRoot, err := findGitRepoRoot(worktreePath)
+		repoRoot, err := findMainRepoRoot(worktreePath)
 		if err != nil {
 			// Can't determine repo (e.g. .git file missing) — just remove the directory
-			os.RemoveAll(worktreePath)
+			_ = os.RemoveAll(worktreePath)
 			continue
 		}
 		repoWorktrees[repoRoot] = append(repoWorktrees[repoRoot], worktreePath)
 	}
 
-	// For each repo, resolve branches via worktree list, then clean up
+	// For each repo, resolve branches via worktree list, then clean up.
+	// Ordering is important: `git branch -D` fails while a branch's worktree
+	// is still registered, so we must remove the worktree directory and prune
+	// the registration *before* deleting the branch.
+	var errs []error
 	for repoRoot, worktreePaths := range repoWorktrees {
-		// Get worktree→branch mappings for this repo
 		listCtx, listCancel := context.WithTimeout(context.Background(), gitTimeout)
 		cmd := exec.CommandContext(listCtx, "git", "-C", repoRoot, "worktree", "list", "--porcelain")
-		output, _ := cmd.Output()
+		output, listErr := cmd.Output()
 		listCancel()
+		if listErr != nil {
+			// Can't resolve branches for this repo. Record the error so the
+			// caller knows branches may have leaked, but still remove the
+			// worktree directories so the cleanup is at least partially done.
+			errs = append(errs, fmt.Errorf("failed to list worktrees for %s: %w", repoRoot, listErr))
+		}
 
 		worktreeBranches := make(map[string]string)
 		var currentWorktree string
@@ -216,28 +224,38 @@ func CleanupWorktrees(configDir string) error {
 		}
 
 		for _, wtPath := range worktreePaths {
-			// Delete the branch associated with this worktree if found
-			if branch, ok := worktreeBranches[wtPath]; ok {
-				delCtx, delCancel := context.WithTimeout(context.Background(), gitTimeout)
-				deleteCmd := exec.CommandContext(delCtx, "git", "-C", repoRoot, "branch", "-D", branch)
-				if err := deleteCmd.Run(); err != nil {
-					log.ErrorLog.Printf("failed to delete branch %s: %v", branch, err)
-				}
-				delCancel()
+			if err := os.RemoveAll(wtPath); err != nil {
+				errs = append(errs, fmt.Errorf("failed to remove worktree %s: %w", wtPath, err))
 			}
-
-			// Remove the worktree directory
-			os.RemoveAll(wtPath)
 		}
 
-		// Prune stale worktree references for this repo
 		pruneCtx, pruneCancel := context.WithTimeout(context.Background(), gitTimeout)
 		pruneCmd := exec.CommandContext(pruneCtx, "git", "-C", repoRoot, "worktree", "prune")
 		if err := pruneCmd.Run(); err != nil {
-			log.ErrorLog.Printf("failed to prune worktrees for %s: %v", repoRoot, err)
+			errs = append(errs, fmt.Errorf("failed to prune worktrees for %s: %w", repoRoot, err))
 		}
 		pruneCancel()
+
+		for _, wtPath := range worktreePaths {
+			branch, ok := worktreeBranches[wtPath]
+			if !ok {
+				continue
+			}
+			delCtx, delCancel := context.WithTimeout(context.Background(), gitTimeout)
+			deleteCmd := exec.CommandContext(delCtx, "git", "-C", repoRoot, "branch", "-D", branch)
+			if err := deleteCmd.Run(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to delete branch %s: %w", branch, err))
+			}
+			delCancel()
+		}
 	}
 
+	if len(errs) > 0 {
+		msgs := make([]string, 0, len(errs))
+		for _, e := range errs {
+			msgs = append(msgs, e.Error())
+		}
+		return fmt.Errorf("cleanup errors: %s", strings.Join(msgs, "; "))
+	}
 	return nil
 }
