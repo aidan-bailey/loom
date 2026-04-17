@@ -538,6 +538,16 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Terminal session was already closed inside pauseAction off the update
 		// goroutine. Nothing I/O-blocking to do here.
 		return m, m.instanceChanged()
+	case pauseFailedMsg:
+		// Revert instance status on failed pause so the user can retry.
+		for _, inst := range m.list.GetInstances() {
+			if inst.Title == msg.title {
+				inst.SetStatus(msg.previousStatus)
+				break
+			}
+		}
+		log.ErrorLog.Printf("failed to pause session %q: %v", msg.title, msg.err)
+		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
 	case backgroundCleanupDoneMsg:
 		// Nothing to do; the instance was already popped and the cleanup
 		// result was logged inside backgroundKillCmd.
@@ -1199,7 +1209,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 		if selected == nil || selected.IsWorkspaceTerminal {
 			return m, nil
 		}
-		if s := selected.GetStatus(); s == session.Loading || s == session.Deleting {
+		previousStatus := selected.GetStatus()
+		if previousStatus == session.Loading || previousStatus == session.Deleting {
 			return m, nil
 		}
 
@@ -1216,14 +1227,19 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
 			}
 			if err := selected.Pause(saveFunc); err != nil {
-				return err
+				return pauseFailedMsg{title: pauseTitle, previousStatus: previousStatus, err: err}
 			}
 			return pauseInstanceMsg{title: pauseTitle}
 		}
 
-		// Show help screen before confirming pause
+		// Show help screen before confirming pause. Once the user confirms,
+		// flip to Loading synchronously so the spinner renders immediately
+		// while the blocking commit/tmux/worktree work runs in pauseAction.
 		return m.showHelpScreen(helpTypeInstanceCheckout{}, func() tea.Cmd {
 			message := fmt.Sprintf("[!] Pause session '%s'?", selected.Title)
+			m.pendingPreAction = func() {
+				selected.SetStatus(session.Loading)
+			}
 			return m.confirmAction(message, pauseAction)
 		})
 	case keys.KeyResume:
@@ -1449,6 +1465,14 @@ type killFailedMsg struct {
 // has been paused. Terminal cleanup happens in the main event loop.
 type pauseInstanceMsg struct {
 	title string
+}
+
+// pauseFailedMsg is returned when background pause cleanup fails. The main
+// event loop reverts the instance status so the user can retry.
+type pauseFailedMsg struct {
+	title          string
+	previousStatus session.Status
+	err            error
 }
 
 // backgroundCleanupDoneMsg is returned by backgroundKillCmd after a popped
