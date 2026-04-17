@@ -114,11 +114,26 @@ func SaveState(state *State) error {
 	return AtomicWriteFile(statePath, data, 0644)
 }
 
+// LoadStateFromGlobal loads state from the global config directory.
+// Prefer this over LoadStateFrom("") for call sites that truly want
+// the global state file.
+func LoadStateFromGlobal() *State {
+	dir, err := GetConfigDir()
+	if err != nil {
+		log.ErrorLog.Printf("failed to get global config directory: %v", err)
+		return DefaultState()
+	}
+	return LoadStateFrom(dir)
+}
+
 // LoadStateFrom loads state from an explicit directory.
-// If dir is empty, falls back to GetConfigDir().
+// Empty `dir` is a soft shim: a warning is logged and the global config
+// directory is used. Internal callers must pass a resolved
+// WorkspaceContext.ConfigDir per docs/specs/workspaces.md §3.
 // The returned State remembers dir so that SaveState writes back to it.
 func LoadStateFrom(dir string) *State {
 	if dir == "" {
+		log.WarningLog.Printf("LoadStateFrom called with empty dir; falling back to global — call LoadStateFromGlobal() explicitly to silence this warning")
 		resolved, err := GetConfigDir()
 		if err != nil {
 			log.ErrorLog.Printf("failed to get config directory: %v", err)

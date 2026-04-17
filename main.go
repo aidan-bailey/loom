@@ -19,13 +19,14 @@ import (
 )
 
 var (
-	version       = "1.0.17"
-	programFlag   string
-	autoYesFlag   bool
-	daemonFlag    bool
-	configDirFlag string
-	workspaceFlag string
-	rootCmd       = &cobra.Command{
+	version            = "1.0.17"
+	programFlag        string
+	autoYesFlag        bool
+	daemonFlag         bool
+	configDirFlag      string
+	workspaceFlag      string
+	resetWorkspaceFlag string
+	rootCmd            = &cobra.Command{
 		Use:   "claude-squad [directory]",
 		Short: "Claude Squad - Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
 		Args:  cobra.MaximumNArgs(1),
@@ -39,8 +40,23 @@ var (
 			defer log.Close()
 
 			if daemonFlag {
-				cfg := config.LoadConfigFrom(configDirFlag)
-				err := daemon.RunDaemon(cfg, configDirFlag)
+				// Daemon child inherits --config-dir from the parent (see
+				// daemon.LaunchDaemon). When absent, fall back to the
+				// global config dir explicitly so state files go to a
+				// concrete location — never an empty-string shim.
+				daemonDir := configDirFlag
+				var cfg *config.Config
+				if daemonDir == "" {
+					cfg = config.LoadConfigFromGlobal()
+					globalDir, gErr := config.GetConfigDir()
+					if gErr != nil {
+						return fmt.Errorf("failed to get global config directory: %w", gErr)
+					}
+					daemonDir = globalDir
+				} else {
+					cfg = config.LoadConfigFrom(daemonDir)
+				}
+				err := daemon.RunDaemon(cfg, daemonDir)
 				if err != nil {
 					log.ErrorLog.Printf("failed to start daemon: %v", err)
 				}
@@ -153,15 +169,19 @@ var (
 		Use:   "reset",
 		Short: "Reset all stored instances",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			configDir, err := config.GetConfigDir()
+			// Resolve target workspace explicitly — per
+			// docs/specs/workspaces.md §3, empty-string fallbacks are
+			// disallowed so each subsystem gets a concrete ConfigDir.
+			wsCtx, err := resolveResetWorkspace()
 			if err != nil {
-				configDir = os.TempDir()
+				return err
 			}
-			log.Initialize(filepath.Join(configDir, "logs"), false)
+
+			log.Initialize(filepath.Join(wsCtx.ConfigDir, "logs"), false)
 			defer log.Close()
 
-			state := config.LoadState()
-			storage, err := session.NewStorage(state, "")
+			state := config.LoadStateFrom(wsCtx.ConfigDir)
+			storage, err := session.NewStorage(state, wsCtx.ConfigDir)
 			if err != nil {
 				return fmt.Errorf("failed to initialize storage: %w", err)
 			}
@@ -175,13 +195,12 @@ var (
 			}
 			fmt.Println("Tmux sessions have been cleaned up")
 
-			if err := git.CleanupWorktrees("", nil); err != nil {
+			if err := git.CleanupWorktrees(wsCtx.ConfigDir, nil); err != nil {
 				return fmt.Errorf("failed to cleanup worktrees: %w", err)
 			}
 			fmt.Println("Worktrees have been cleaned up")
 
-			// Kill any daemon that's running.
-			if err := daemon.StopDaemon(""); err != nil {
+			if err := daemon.StopDaemon(wsCtx.ConfigDir); err != nil {
 				return err
 			}
 			fmt.Println("daemon has been stopped")
@@ -220,6 +239,26 @@ var (
 	}
 )
 
+// resolveResetWorkspace resolves the workspace context for the reset
+// subcommand. When --workspace is supplied, the named workspace is
+// used; otherwise the global context is returned. Per
+// docs/specs/workspaces.md §3, every subsystem needs a concrete
+// ConfigDir.
+func resolveResetWorkspace() (*config.WorkspaceContext, error) {
+	if resetWorkspaceFlag != "" {
+		registry, err := config.LoadWorkspaceRegistry()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load workspace registry: %w", err)
+		}
+		ws := registry.Get(resetWorkspaceFlag)
+		if ws == nil {
+			return nil, fmt.Errorf("workspace %q not found", resetWorkspaceFlag)
+		}
+		return config.WorkspaceContextFor(ws), nil
+	}
+	return config.GlobalWorkspaceContext()
+}
+
 func init() {
 	rootCmd.Flags().StringVarP(&programFlag, "program", "p", "",
 		"Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')")
@@ -237,6 +276,9 @@ func init() {
 			panic(err)
 		}
 	}
+
+	resetCmd.Flags().StringVarP(&resetWorkspaceFlag, "workspace", "w", "",
+		"Reset a specific workspace by name (default: global)")
 
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(versionCmd)

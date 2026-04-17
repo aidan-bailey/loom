@@ -229,11 +229,27 @@ func SaveConfigTo(config *Config, dir string) error {
 	return AtomicWriteFile(configPath, data, 0644)
 }
 
+// LoadConfigFromGlobal loads configuration from the global
+// (CLAUDE_SQUAD_HOME or ~/.claude-squad) directory. Prefer this over
+// LoadConfigFrom("") at call sites that truly want the global config —
+// the explicit name prevents workspace-context leaks.
+func LoadConfigFromGlobal() *Config {
+	dir, err := GetConfigDir()
+	if err != nil {
+		log.ErrorLog.Printf("failed to get global config directory: %v", err)
+		return DefaultConfig()
+	}
+	return LoadConfigFrom(dir)
+}
+
 // LoadConfigFrom loads configuration from an explicit directory.
-// If dir is empty, falls back to GetConfigDir().
+// Empty `dir` is a soft shim: a warning is logged and the global config
+// directory is used. Per docs/specs/workspaces.md §3 internal callers
+// must pass a resolved WorkspaceContext.ConfigDir.
 // The returned Config remembers dir so that SaveConfig writes back to it.
 func LoadConfigFrom(dir string) *Config {
 	if dir == "" {
+		log.WarningLog.Printf("LoadConfigFrom called with empty dir; falling back to global — call LoadConfigFromGlobal() explicitly to silence this warning")
 		resolved, err := GetConfigDir()
 		if err != nil {
 			log.ErrorLog.Printf("failed to get config directory: %v", err)
