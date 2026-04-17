@@ -118,6 +118,48 @@ type instanceSummary struct {
 	} `json:"worktree"`
 }
 
+// mergeWorkspaceInstances merges newInstances into a workspace's existing
+// instance data. Duplicates (by Title) are skipped. Returns the merged JSON,
+// the count of entries appended, and an error if existingData is present but
+// cannot be parsed as a JSON array.
+func mergeWorkspaceInstances(existingData json.RawMessage, newInstances []json.RawMessage) ([]byte, int, error) {
+	var existingRaw []json.RawMessage
+	if existingData != nil && string(existingData) != "[]" {
+		if err := json.Unmarshal(existingData, &existingRaw); err != nil {
+			return nil, 0, fmt.Errorf("failed to parse existing workspace instances: %w", err)
+		}
+	}
+
+	existingTitles := make(map[string]bool)
+	for _, raw := range existingRaw {
+		var inst instanceSummary
+		if err := json.Unmarshal(raw, &inst); err != nil {
+			continue
+		}
+		existingTitles[inst.Title] = true
+	}
+
+	added := 0
+	for _, raw := range newInstances {
+		var inst instanceSummary
+		if err := json.Unmarshal(raw, &inst); err != nil {
+			continue
+		}
+		if existingTitles[inst.Title] {
+			continue
+		}
+		existingRaw = append(existingRaw, raw)
+		existingTitles[inst.Title] = true
+		added++
+	}
+
+	merged, err := json.Marshal(existingRaw)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to marshal merged instances: %w", err)
+	}
+	return merged, added, nil
+}
+
 var workspaceMigrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Move global instances to their matching workspace directories",
@@ -193,55 +235,36 @@ var workspaceMigrateCmd = &cobra.Command{
 			// Load existing workspace state (or create new)
 			wsState := config.LoadStateFrom(wsDir)
 
-			// Parse existing workspace instances
-			var existingRaw []json.RawMessage
-			if wsState.InstancesData != nil && string(wsState.InstancesData) != "[]" {
-				_ = json.Unmarshal(wsState.InstancesData, &existingRaw)
-			}
-
-			// Parse existing titles to skip duplicates
-			var existingInstances []instanceSummary
-			_ = json.Unmarshal(wsState.InstancesData, &existingInstances)
-			existingTitles := make(map[string]bool)
-			for _, ei := range existingInstances {
-				existingTitles[ei.Title] = true
-			}
-
-			added := 0
+			// Rewrite worktree paths for any raw instance whose path is under
+			// the global dir, and physically relocate the worktree directory.
+			rewritten := make([]json.RawMessage, 0, len(rawInsts))
 			for _, raw := range rawInsts {
-				var inst instanceSummary
-				if err := json.Unmarshal(raw, &inst); err != nil {
-					continue
-				}
-				if !existingTitles[inst.Title] {
-					// Update worktree path if it's under the global dir
-					var instMap map[string]interface{}
-					if err := json.Unmarshal(raw, &instMap); err == nil {
-						if wt, ok := instMap["worktree"].(map[string]interface{}); ok {
-							if wtPath, ok := wt["worktree_path"].(string); ok && strings.HasPrefix(wtPath, globalDir) {
-								newWtDir := filepath.Join(wsDir, "worktrees")
-								_ = os.MkdirAll(newWtDir, 0755)
-								newPath := filepath.Join(newWtDir, filepath.Base(wtPath))
-								// Move the worktree directory if it exists
-								if _, err := os.Stat(wtPath); err == nil {
-									_ = os.Rename(wtPath, newPath)
-								}
-								wt["worktree_path"] = newPath
-								updated, _ := json.Marshal(instMap)
+				var instMap map[string]interface{}
+				if err := json.Unmarshal(raw, &instMap); err == nil {
+					if wt, ok := instMap["worktree"].(map[string]interface{}); ok {
+						if wtPath, ok := wt["worktree_path"].(string); ok && strings.HasPrefix(wtPath, globalDir) {
+							newWtDir := filepath.Join(wsDir, "worktrees")
+							_ = os.MkdirAll(newWtDir, 0755)
+							newPath := filepath.Join(newWtDir, filepath.Base(wtPath))
+							if _, err := os.Stat(wtPath); err == nil {
+								_ = os.Rename(wtPath, newPath)
+							}
+							wt["worktree_path"] = newPath
+							if updated, err := json.Marshal(instMap); err == nil {
 								raw = updated
 							}
 						}
 					}
-					existingRaw = append(existingRaw, raw)
-					added++
 				}
+				rewritten = append(rewritten, raw)
+			}
+
+			mergedData, added, err := mergeWorkspaceInstances(wsState.InstancesData, rewritten)
+			if err != nil {
+				return fmt.Errorf("workspace %s: %w", wsName, err)
 			}
 
 			if added > 0 {
-				mergedData, err := json.Marshal(existingRaw)
-				if err != nil {
-					return fmt.Errorf("failed to marshal instances for workspace %s: %w", wsName, err)
-				}
 				wsState.InstancesData = mergedData
 				if err := config.SaveStateTo(wsState, wsDir); err != nil {
 					return fmt.Errorf("failed to save state for workspace %s: %w", wsName, err)
