@@ -36,6 +36,14 @@ var pausedStyle = lipgloss.NewStyle().
 var deletingStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#cc6666", Dark: "#cc6666"})
 
+var deletingTitleStyle = lipgloss.NewStyle().
+	Padding(1, 1, 0, 1).
+	Foreground(lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"})
+
+var deletingDescStyle = lipgloss.NewStyle().
+	Padding(0, 1, 1, 1).
+	Foreground(lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"})
+
 var workspaceTerminalStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#6c71c4", Dark: "#6c71c4"})
 
@@ -205,18 +213,20 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		prefix = prefix[:len(prefix)-1]
 	}
 	var titleS, descS lipgloss.Style
-	if i.IsWorkspaceTerminal {
-		if selected {
-			titleS = wtSelectedTitleStyle
-			descS = wtSelectedDescStyle
-		} else {
-			titleS = wtTitleStyle
-			descS = wtDescStyle
-		}
-	} else if selected {
+	switch {
+	case i.GetStatus() == session.Deleting:
+		titleS = deletingTitleStyle
+		descS = deletingDescStyle
+	case i.IsWorkspaceTerminal && selected:
+		titleS = wtSelectedTitleStyle
+		descS = wtSelectedDescStyle
+	case i.IsWorkspaceTerminal:
+		titleS = wtTitleStyle
+		descS = wtDescStyle
+	case selected:
 		titleS = selectedTitleStyle
 		descS = selectedDescStyle
-	} else {
+	default:
 		titleS = titleStyle
 		descS = listDescStyle
 	}
@@ -419,13 +429,18 @@ func (l *List) String() string {
 	return lipgloss.Place(l.width, l.height, lipgloss.Left, lipgloss.Top, b.String())
 }
 
-// Down selects the next item in the list.
+// Down selects the next non-Deleting item in the list. If every item
+// below the cursor is Deleting (or the cursor is already on the last
+// selectable item), selectedIdx stays put.
 func (l *List) Down() {
 	if len(l.items) == 0 {
 		return
 	}
-	if l.selectedIdx < len(l.items)-1 {
-		l.selectedIdx++
+	for i := l.selectedIdx + 1; i < len(l.items); i++ {
+		if l.items[i].GetStatus() != session.Deleting {
+			l.selectedIdx = i
+			break
+		}
 	}
 	l.ensureSelectedVisible()
 }
@@ -497,13 +512,17 @@ func (l *List) RemoveInstanceByTitle(title string) {
 	l.ensureSelectedVisible()
 }
 
-// Up selects the prev item in the list.
+// Up selects the prev non-Deleting item in the list. If every item
+// above the cursor is Deleting, selectedIdx stays put.
 func (l *List) Up() {
 	if len(l.items) == 0 {
 		return
 	}
-	if l.selectedIdx > 0 {
-		l.selectedIdx--
+	for i := l.selectedIdx - 1; i >= 0; i-- {
+		if l.items[i].GetStatus() != session.Deleting {
+			l.selectedIdx = i
+			break
+		}
 	}
 	l.ensureSelectedVisible()
 }
