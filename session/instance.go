@@ -2,6 +2,7 @@ package session
 
 import (
 	"claude-squad/log"
+	"claude-squad/session/agent"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
 	"path/filepath"
@@ -585,10 +586,10 @@ func (i *Instance) CheckAndHandleTrustPrompt() bool {
 	if ts == nil {
 		return false
 	}
-	program := i.Program
-	if !strings.HasSuffix(program, tmux.ProgramClaude) &&
-		!strings.HasSuffix(program, tmux.ProgramAider) &&
-		!strings.HasSuffix(program, tmux.ProgramGemini) {
+	// The adapter registry tells us whether this program has a trust
+	// prompt to dismiss; the default fallback returns TrustPromptNone,
+	// which short-circuits here so unknown programs get no handling.
+	if defaultRegistry.Lookup(i.Program).TrustPromptResponse() == agent.TrustPromptNone {
 		return false
 	}
 	return ts.CheckAndHandleTrustPrompt()
@@ -605,13 +606,13 @@ func (i *Instance) CaptureAndProcessStatus() (updated bool, hasPrompt bool) {
 		return false, false
 	}
 
-	program := i.Program
-	isSupportedProgram := strings.HasSuffix(program, tmux.ProgramClaude) ||
-		strings.HasSuffix(program, tmux.ProgramAider) ||
-		strings.HasSuffix(program, tmux.ProgramGemini)
-
-	if !isSupportedProgram {
-		// For unsupported programs, just check for updates.
+	// Unknown programs (no adapter match beyond fallback) don't have
+	// trust/prompt patterns — skip the combined scan and just check for
+	// pane updates. Supported agents flow through CaptureAndProcess,
+	// which handles both trust dismissal and prompt detection in one
+	// CapturePaneContent call.
+	ad := defaultRegistry.Lookup(i.Program)
+	if ad.Name() == "default" {
 		return ts.HasUpdated()
 	}
 
