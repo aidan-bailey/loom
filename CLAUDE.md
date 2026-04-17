@@ -100,6 +100,7 @@ claude-squad --workspace <name>
 ## Environment Variables
 
 - `CLAUDE_SQUAD_HOME` — Override config directory (default: `~/.claude-squad`). Must be absolute path; supports `~` expansion. Used as a backward-compatible fallback; internal code uses explicit `WorkspaceContext` threading.
+- `CLAUDE_SQUAD_LOG_FORMAT` — Set to `json` to emit structured log records from `log.InfoKV/WarnKV/ErrorKV` as JSON lines; otherwise plain text. Legacy `log.Infof`/`Warnf`/`Errorf` callers are unaffected.
 
 ## Documentation
 
@@ -113,12 +114,13 @@ claude-squad --workspace <name>
 
 `main.go` (Cobra CLI) → `app/app.go` (Bubble Tea Model) → manages `session/instance.go` instances
 
-The app follows Bubble Tea's Model-View-Update pattern. The single-threaded event loop in `app/app.go` (~1500 lines) is the central orchestrator that handles all keyboard input, manages instance lifecycle, and coordinates UI updates. On startup, the app detects the current workspace or prompts the user to select one via the workspace picker overlay.
+The app follows Bubble Tea's Model-View-Update pattern. `app/app.go` owns the `home` model and its `Update`/`View`. Keyboard input is routed in two stages: `handleKeyPress` (`app.go`) dispatches by `m.state` to a per-state handler in `app/state_*.go`; within the default state, keys flow through `ActionRegistry.Dispatch` (`app/actions.go`, with entries grouped in `actions_*.go`). On startup, the app detects the current workspace or prompts the user to select one via the workspace picker overlay.
 
 ### Key Packages
 
 - **`app/`** — Bubble Tea application model. Handles all keyboard input dispatch, instance lifecycle management, and UI composition. This is the "controller" layer.
 - **`session/`** — Core domain. `Instance` represents a running agent session with status lifecycle (Ready → Loading → Running → Paused). `storage.go` handles JSON serialization to `~/.claude-squad/instances.json`.
+- **`session/agent/`** — `Adapter` interface and per-program implementations (claude, aider, gemini, default fallback). Centralizes trust-prompt keys, recovery flags, and `Supports(program)` checks. Look here when adding a new agent program rather than touching `tmux.go` or `agent_restart.go` directly.
 - **`session/git/`** — Git worktree operations. Each session gets an isolated worktree in `~/.claude-squad/worktrees/`. Branches are named `{username}/{session_title}`. Handles setup, diff stats, push, and cleanup.
 - **`session/tmux/`** — Tmux session management. Creates/attaches terminal sessions, captures pane content, detects prompts (for auto-yes), sends keystrokes. Platform-specific files: `tmux_unix.go`, `tmux_windows.go`.
 - **`config/`** — Configuration (`config.json`), state (`state.json`), profiles, and workspace registry (`workspace.go`). Key types: `WorkspaceContext` (carries resolved config dir through the app), `InstanceStorage`, `AppState`, `StateManager`. `LoadConfigFrom("")`/`LoadStateFrom("")` accept empty string as "use default directory".
@@ -141,6 +143,11 @@ Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent act
 6. **Kill**: Cleans up worktree, tmux session, and branch; instance removed from storage
 
 **Workspace Terminals**: A special instance type (`IsWorkspaceTerminal: true`) that runs directly in the root repo without a worktree. Cannot be paused/resumed. Diff tracking shows uncommitted changes in the root repo.
+
+### Gotchas
+
+- **Instance data schema changes.** `session.InstanceData` has a `SchemaVersion` field and `session.CurrentSchemaVersion` constant. When adding/removing/renaming fields: bump `CurrentSchemaVersion`, add an upgrade step to the switch in `session/storage_migrate.go:Migrate`, and update the JSON fixture in `cmd/workspace_migrate_shape_test.go` (drift guard for the `workspace migrate` CLI's typed mirror struct).
+- **Daemon decoupled from PTY attach.** `session.FromInstanceData` is a pure constructor — it does not spawn a tmux session. Callers that need a live PTY must call `inst.EnsureRunning()` explicitly. The daemon's `syncTracked` caches live `*Instance` objects across ticks so PTYs are spawned at most once per instance (DAEMON-05).
 
 ### Persistent State
 
