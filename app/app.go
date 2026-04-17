@@ -22,7 +22,6 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 )
 
 const GlobalInstanceLimit = 10
@@ -786,369 +785,36 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keydownCallback(name)), true
 }
 
-func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
+// handleKeyPress dispatches key events to the per-state handler that
+// matches m.state. The menu-highlighting protocol fires first: its
+// first pass unconditionally swallows the event (keySent=true) and
+// the second pass replays it, which tests rely on. State handlers
+// live in state_*.go files; this function is deliberately a thin
+// router so the wiring stays obvious.
+func (m *home) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	cmd, returnEarly := m.handleMenuHighlighting(msg)
 	if returnEarly {
 		return m, cmd
 	}
 
-	if m.state == stateHelp {
+	switch m.state {
+	case stateHelp:
 		return m.handleHelpState(msg)
+	case stateNew:
+		return handleStateNewKey(m, msg)
+	case statePrompt:
+		return handleStatePromptKey(m, msg)
+	case stateInlineAttach:
+		return handleStateInlineAttachKey(m, msg)
+	case stateQuickInteract:
+		return handleStateQuickInteractKey(m, msg)
+	case stateWorkspace:
+		return handleStateWorkspaceKey(m, msg)
+	case stateConfirm:
+		return handleStateConfirmKey(m, msg)
+	default:
+		return handleStateDefaultKey(m, msg)
 	}
-
-	if m.state == stateNew {
-		// Handle quit commands first. Don't handle q because the user might want to type that.
-		if msg.String() == "ctrl+c" {
-			m.state = stateDefault
-			m.promptAfterName = false
-			popped := m.list.PopSelectedForKill()
-			return m, tea.Batch(
-				tea.Sequence(
-					tea.WindowSize(),
-					func() tea.Msg {
-						m.menu.SetState(ui.StateDefault)
-						return nil
-					},
-				),
-				backgroundKillCmd(popped),
-			)
-		}
-
-		instance := m.list.GetInstances()[m.list.NumInstances()-1]
-		switch msg.Type {
-		// Start the instance (enable previews etc) and go back to the main menu state.
-		case tea.KeyEnter:
-			if len(instance.Title) == 0 {
-				return m, m.handleError(fmt.Errorf("title cannot be empty"))
-			}
-
-			// If promptAfterName, show prompt+branch overlay before starting
-			if m.promptAfterName {
-				m.promptAfterName = false
-				m.state = statePrompt
-				m.menu.SetState(ui.StatePrompt)
-				ti := m.newPromptOverlay()
-				m.setOverlay(ti, overlayTextInput)
-				// Trigger initial branch search (no debounce, version 0)
-				initialSearch := m.runBranchSearch("", ti.BranchFilterVersion())
-				return m, tea.Batch(tea.WindowSize(), initialSearch)
-			}
-
-			// Set Loading status and finalize into the list immediately
-			_ = instance.TransitionTo(session.Loading)
-			m.newInstanceFinalizer()
-			m.promptAfterName = false
-			m.state = stateDefault
-			m.menu.SetState(ui.StateDefault)
-
-			// Return a tea.Cmd that runs instance.Start in the background
-			startCmd := func() tea.Msg {
-				err := instance.Start(true)
-				return instanceStartedMsg{
-					instance:        instance,
-					err:             err,
-					promptAfterName: false,
-				}
-			}
-
-			return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), startCmd)
-		case tea.KeyRunes:
-			if runewidth.StringWidth(instance.Title) >= 32 {
-				return m, m.handleError(fmt.Errorf("title cannot be longer than 32 characters"))
-			}
-			if err := instance.SetTitle(instance.Title + string(msg.Runes)); err != nil {
-				return m, m.handleError(err)
-			}
-		case tea.KeyBackspace:
-			runes := []rune(instance.Title)
-			if len(runes) == 0 {
-				return m, nil
-			}
-			if err := instance.SetTitle(string(runes[:len(runes)-1])); err != nil {
-				return m, m.handleError(err)
-			}
-		case tea.KeySpace:
-			if err := instance.SetTitle(instance.Title + " "); err != nil {
-				return m, m.handleError(err)
-			}
-		case tea.KeyEsc:
-			popped := m.list.PopSelectedForKill()
-			m.state = stateDefault
-			m.instanceChanged()
-
-			return m, tea.Batch(
-				tea.Sequence(
-					tea.WindowSize(),
-					func() tea.Msg {
-						m.menu.SetState(ui.StateDefault)
-						return nil
-					},
-				),
-				backgroundKillCmd(popped),
-			)
-		default:
-		}
-		return m, nil
-	} else if m.state == statePrompt {
-		// Handle cancel via ctrl+c before delegating to the overlay
-		if msg.String() == "ctrl+c" {
-			return m, m.cancelPromptOverlay()
-		}
-
-		ti := m.textInput()
-		if ti == nil {
-			return m, nil
-		}
-
-		// Use the new TextInputOverlay component to handle all key events
-		shouldClose, branchFilterChanged := ti.HandleKeyPress(msg)
-
-		// Check if the form was submitted or canceled
-		if shouldClose {
-			selected := m.list.GetSelectedInstance()
-			if selected == nil {
-				return m, nil
-			}
-
-			if ti.IsCanceled() {
-				return m, m.cancelPromptOverlay()
-			}
-
-			if ti.IsSubmitted() {
-				prompt := ti.GetValue()
-				selectedBranch := ti.GetSelectedBranch()
-				selectedProgram := ti.GetSelectedProgram()
-
-				if !selected.Started() {
-					// Shift+N flow: instance not started yet — set branch, start, then send prompt
-					if selectedBranch != "" {
-						selected.SetSelectedBranch(selectedBranch)
-					}
-					if selectedProgram != "" {
-						selected.Program = selectedProgram
-					}
-					selected.Prompt = prompt
-
-					// Finalize into list and start
-					_ = selected.TransitionTo(session.Loading)
-					m.newInstanceFinalizer()
-					m.dismissOverlay()
-					m.state = stateDefault
-					m.menu.SetState(ui.StateDefault)
-
-					startCmd := func() tea.Msg {
-						err := selected.Start(true)
-						return instanceStartedMsg{
-							instance:        selected,
-							err:             err,
-							promptAfterName: false,
-							selectedBranch:  selectedBranch,
-						}
-					}
-
-					return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), startCmd)
-				}
-
-				// Regular flow: instance already running, just send prompt
-				if err := selected.SendPrompt(prompt); err != nil {
-					return m, m.handleError(err)
-				}
-			}
-
-			// Close the overlay and reset state
-			m.dismissOverlay()
-			m.state = stateDefault
-			return m, tea.Sequence(
-				tea.WindowSize(),
-				func() tea.Msg {
-					m.menu.SetState(ui.StateDefault)
-					m.showHelpScreen(helpStart(selected), nil)
-					return nil
-				},
-			)
-		}
-
-		// Schedule a debounced branch search if the filter changed
-		if branchFilterChanged {
-			filter := ti.BranchFilter()
-			version := ti.BranchFilterVersion()
-			return m, m.scheduleBranchSearch(filter, version)
-		}
-
-		return m, nil
-	}
-
-	if m.state == stateInlineAttach {
-		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || !selected.TmuxAlive() {
-			m.splitPane.SetInlineAttach(false)
-			m.splitPane.SetFocusedPane(ui.FocusAgent)
-			m.state = stateDefault
-			m.menu.SetState(ui.StateDefault)
-			return m, tea.WindowSize()
-		}
-
-		// ctrl+q exits inline attach
-		if msg.Type == tea.KeyCtrlQ {
-			m.splitPane.SetInlineAttach(false)
-			m.splitPane.SetFocusedPane(ui.FocusAgent)
-			m.state = stateDefault
-			m.menu.SetState(ui.StateDefault)
-			return m, tea.WindowSize()
-		}
-
-		// Convert key to bytes and forward to the focused pane's tmux session
-		b := keyMsgToBytes(msg)
-		if b != nil {
-			var err error
-			if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
-				err = m.splitPane.SendTerminalKeysRaw(b)
-			} else {
-				err = selected.SendKeysRaw(b)
-			}
-			if err != nil {
-				log.ErrorLog.Printf("inline attach send error: %v", err)
-			}
-		}
-		return m, nil
-	}
-
-	if m.state == stateQuickInteract {
-		if m.quickInputBar == nil {
-			m.state = stateDefault
-			return m, nil
-		}
-
-		selected := m.list.GetSelectedInstance()
-		if selected == nil || selected.Paused() || !selected.TmuxAlive() {
-			m.quickInputBar = nil
-			m.state = stateDefault
-			m.menu.SetState(ui.StateDefault)
-			return m, tea.WindowSize()
-		}
-
-		action := m.quickInputBar.HandleKeyPress(msg)
-		switch action {
-		case ui.QuickInputSubmit:
-			text := m.quickInputBar.Value()
-			var err error
-			switch m.quickInputBar.Target {
-			case ui.QuickInputTargetTerminal:
-				err = m.splitPane.SendTerminalPrompt(text)
-			case ui.QuickInputTargetAgent:
-				err = selected.SendPrompt(text)
-			}
-			m.quickInputBar = nil
-			m.state = stateDefault
-			m.menu.SetState(ui.StateDefault)
-			if err != nil {
-				return m, tea.Batch(tea.WindowSize(), m.handleError(err))
-			}
-			return m, tea.WindowSize()
-		case ui.QuickInputCancel:
-			m.quickInputBar = nil
-			m.state = stateDefault
-			m.menu.SetState(ui.StateDefault)
-			return m, tea.WindowSize()
-		}
-		return m, nil
-	}
-
-	// Handle workspace picker state
-	if m.state == stateWorkspace {
-		wp := m.workspacePicker()
-		if wp == nil {
-			return m, nil
-		}
-		committed, _ := wp.HandleKeyPress(msg)
-		if committed {
-			if wp.IsStartup() {
-				// Startup single-select: activate the chosen workspace.
-				selected := wp.GetSelectedWorkspace()
-				m.dismissOverlay()
-				m.state = stateDefault
-				if selected != nil {
-					wsCtx := config.WorkspaceContextFor(selected)
-					m.activeCtx = wsCtx
-					if err := m.activateWorkspace(*selected); err != nil {
-						return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
-					}
-					m.loadSlot(0)
-					m.updateTabBarStatuses()
-					if m.registry != nil {
-						_ = m.registry.UpdateLastUsed(selected.Name)
-					}
-					m.saveOpenWorkspaces()
-				}
-				// else: Global selected, keep current (global) state.
-				return m, tea.WindowSize()
-			}
-			// Mid-session toggle: diff active workspaces.
-			desired := wp.GetActiveWorkspaces()
-			m.dismissOverlay()
-			m.state = stateDefault
-			return m, m.applyWorkspaceToggle(desired)
-		}
-		return m, nil
-	}
-
-	// Handle confirmation state
-	if m.state == stateConfirm {
-		cf := m.confirmation()
-		if cf == nil {
-			return m, nil
-		}
-		shouldClose := cf.HandleKeyPress(msg)
-		if shouldClose {
-			cmd := m.pendingConfirmation.Run()
-			m.pendingConfirmation = overlay.ConfirmationTask{}
-			m.dismissOverlay()
-			m.state = stateDefault
-			return m, tea.Batch(cmd, m.instanceChanged())
-		}
-		return m, nil
-	}
-
-	if msg.Type == tea.KeyEsc {
-		// Dismiss diff overlay first
-		if m.splitPane.IsDiffVisible() {
-			m.splitPane.ToggleDiff()
-			return m, m.instanceChanged()
-		}
-		// Exit agent scroll mode
-		if m.splitPane.IsAgentInScrollMode() {
-			selected := m.list.GetSelectedInstance()
-			err := m.splitPane.ResetAgentToNormalMode(selected)
-			if err != nil {
-				return m, m.handleError(err)
-			}
-			return m, m.instanceChanged()
-		}
-		// Exit terminal scroll mode
-		if m.splitPane.IsTerminalInScrollMode() {
-			m.splitPane.ResetTerminalToNormalMode()
-			return m, m.instanceChanged()
-		}
-	}
-
-	// Handle quit commands first
-	if msg.String() == "ctrl+c" || msg.String() == "q" {
-		return m.handleQuit()
-	}
-
-	name, ok := keys.GlobalKeyStringsMap[msg.String()]
-	if !ok {
-		return m, nil
-	}
-
-	// Route through the action registry. Every TUI keybinding lives in
-	// one of the sub-registries merged into defaultActions; an
-	// unhandled key here means the press was truly unbound (e.g., an
-	// ignored modifier combo).
-	if model, cmd, handled := m.actions.Dispatch(name, m); handled {
-		return model, cmd
-	}
-	return m, nil
 }
 
 // instanceChanged updates the preview pane, menu, and diff pane based on the selected instance. It returns an error
