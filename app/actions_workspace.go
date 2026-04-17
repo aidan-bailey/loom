@@ -33,7 +33,7 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 	for _, slot := range m.slots {
 		activeNames[slot.wsCtx.Name] = true
 	}
-	m.workspacePicker = overlay.NewWorkspacePicker(registry.Workspaces, activeNames)
+	m.setOverlay(overlay.NewWorkspacePicker(registry.Workspaces, activeNames), overlayWorkspacePicker)
 	m.state = stateWorkspace
 	return m, nil
 }

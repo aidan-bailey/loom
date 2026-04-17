@@ -138,14 +138,16 @@ type home struct {
 	errBox *ui.ErrBox
 	// global spinner instance. we plumb this down to where it's needed
 	spinner spinner.Model
-	// textInputOverlay handles text input with state
-	textInputOverlay *overlay.TextInputOverlay
-	// textOverlay displays text information
-	textOverlay *overlay.TextOverlay
-	// confirmationOverlay displays confirmation modals
-	confirmationOverlay *overlay.ConfirmationOverlay
-	// workspacePicker displays the workspace selection overlay
-	workspacePicker *overlay.WorkspacePicker
+	// activeOverlay is the currently displayed modal (nil when no overlay
+	// is open). The concrete type is inspected through the typed
+	// helpers below (textInput(), confirmation(), etc.) rather than by
+	// holding one pointer field per overlay variety.
+	activeOverlay overlay.Overlay
+	// activeOverlayKind carries the rendering hint the interface alone
+	// can't supply — the workspace picker, for example, needs
+	// fullscreen placement on startup and overlay placement
+	// mid-session.
+	activeOverlayKind overlayKind
 	// pendingConfirmation bundles the work to run when the user
 	// confirms the active modal. Sync flips in-process state (e.g.,
 	// transitioning to Deleting) before the Async tea.Cmd fires, so
@@ -299,9 +301,9 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		// Unregistered directory: show confirmation to register as workspace.
 		name := filepath.Base(pendingDir)
 		h.pendingDir = pendingDir
-		h.confirmationOverlay = overlay.NewConfirmationOverlay(
+		confirm := overlay.NewConfirmationOverlay(
 			fmt.Sprintf("Register '%s' as workspace '%s'?", pendingDir, name))
-		h.confirmationOverlay.SetWidth(60)
+		confirm.SetWidth(60)
 		h.state = stateConfirm
 		h.pendingConfirmation = overlay.ConfirmationTask{
 			Async: func() tea.Msg {
@@ -311,20 +313,21 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 				return workspaceRegisteredMsg{dir: pendingDir}
 			},
 		}
-		h.confirmationOverlay.OnCancel = func() {
+		confirm.OnCancel = func() {
 			h.pendingConfirmation = overlay.ConfirmationTask{}
 			// Fall back to workspace picker if workspaces exist.
 			if h.registry != nil && len(h.registry.Workspaces) > 0 {
-				h.workspacePicker = overlay.NewStartupWorkspacePicker(h.registry.Workspaces)
+				h.setOverlay(overlay.NewStartupWorkspacePicker(h.registry.Workspaces), overlayWorkspacePickerStartup)
 				h.state = stateWorkspace
 			}
 		}
+		h.setOverlay(confirm, overlayConfirmation)
 	} else if willRestoreSlots {
 		h.restoreSavedWorkspaces(savedOpen)
 	} else if wsCtx != nil && wsCtx.Name == "" && registry != nil && len(registry.Workspaces) > 0 {
 		// No directory arg, global context, workspaces exist, nothing to
 		// restore: show picker.
-		h.workspacePicker = overlay.NewStartupWorkspacePicker(registry.Workspaces)
+		h.setOverlay(overlay.NewStartupWorkspacePicker(registry.Workspaces), overlayWorkspacePickerStartup)
 		h.state = stateWorkspace
 	}
 
@@ -411,11 +414,11 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.splitPane.SetSize(paneWidth, contentHeight)
 	m.list.SetSize(listWidth, contentHeight)
 
-	if m.textInputOverlay != nil {
-		m.textInputOverlay.SetSize(int(float32(msg.Width)*ui.OverlayWidthPercent), int(float32(msg.Height)*ui.OverlayHeightPercent))
-	}
-	if m.textOverlay != nil {
-		m.textOverlay.SetWidth(int(float32(msg.Width) * ui.OverlayWidthPercent))
+	if m.activeOverlay != nil {
+		m.activeOverlay.SetSize(
+			int(float32(msg.Width)*ui.OverlayWidthPercent),
+			int(float32(msg.Height)*ui.OverlayHeightPercent),
+		)
 	}
 
 	agentWidth, agentHeight := m.splitPane.GetAgentSize()
@@ -577,16 +580,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case branchSearchDebounceMsg:
 		// Debounce timer fired — check if this is still the current filter version
-		if m.textInputOverlay == nil {
+		ti := m.textInput()
+		if ti == nil {
 			return m, nil
 		}
-		if msg.version != m.textInputOverlay.BranchFilterVersion() {
+		if msg.version != ti.BranchFilterVersion() {
 			return m, nil // stale, a newer debounce is pending
 		}
 		return m, m.runBranchSearch(msg.filter, msg.version)
 	case branchSearchResultMsg:
-		if m.textInputOverlay != nil {
-			m.textInputOverlay.SetBranchResults(msg.branches, msg.version)
+		if ti := m.textInput(); ti != nil {
+			ti.SetBranchResults(msg.branches, msg.version)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -704,7 +708,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.promptAfterName {
 			m.state = statePrompt
 			m.menu.SetState(ui.StatePrompt)
-			m.textInputOverlay = m.newPromptOverlay()
+			m.setOverlay(m.newPromptOverlay(), overlayTextInput)
 		} else {
 			// If instance has a prompt (set from Shift+N flow), send it now
 			if msg.instance.Prompt != "" {
@@ -823,9 +827,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				m.promptAfterName = false
 				m.state = statePrompt
 				m.menu.SetState(ui.StatePrompt)
-				m.textInputOverlay = m.newPromptOverlay()
+				ti := m.newPromptOverlay()
+				m.setOverlay(ti, overlayTextInput)
 				// Trigger initial branch search (no debounce, version 0)
-				initialSearch := m.runBranchSearch("", m.textInputOverlay.BranchFilterVersion())
+				initialSearch := m.runBranchSearch("", ti.BranchFilterVersion())
 				return m, tea.Batch(tea.WindowSize(), initialSearch)
 			}
 
@@ -890,8 +895,13 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			return m, m.cancelPromptOverlay()
 		}
 
+		ti := m.textInput()
+		if ti == nil {
+			return m, nil
+		}
+
 		// Use the new TextInputOverlay component to handle all key events
-		shouldClose, branchFilterChanged := m.textInputOverlay.HandleKeyPress(msg)
+		shouldClose, branchFilterChanged := ti.HandleKeyPress(msg)
 
 		// Check if the form was submitted or canceled
 		if shouldClose {
@@ -900,14 +910,14 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return m, nil
 			}
 
-			if m.textInputOverlay.IsCanceled() {
+			if ti.IsCanceled() {
 				return m, m.cancelPromptOverlay()
 			}
 
-			if m.textInputOverlay.IsSubmitted() {
-				prompt := m.textInputOverlay.GetValue()
-				selectedBranch := m.textInputOverlay.GetSelectedBranch()
-				selectedProgram := m.textInputOverlay.GetSelectedProgram()
+			if ti.IsSubmitted() {
+				prompt := ti.GetValue()
+				selectedBranch := ti.GetSelectedBranch()
+				selectedProgram := ti.GetSelectedProgram()
 
 				if !selected.Started() {
 					// Shift+N flow: instance not started yet — set branch, start, then send prompt
@@ -922,7 +932,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 					// Finalize into list and start
 					_ = selected.TransitionTo(session.Loading)
 					m.newInstanceFinalizer()
-					m.textInputOverlay = nil
+					m.dismissOverlay()
 					m.state = stateDefault
 					m.menu.SetState(ui.StateDefault)
 
@@ -946,7 +956,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			}
 
 			// Close the overlay and reset state
-			m.textInputOverlay = nil
+			m.dismissOverlay()
 			m.state = stateDefault
 			return m, tea.Sequence(
 				tea.WindowSize(),
@@ -960,8 +970,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 		// Schedule a debounced branch search if the filter changed
 		if branchFilterChanged {
-			filter := m.textInputOverlay.BranchFilter()
-			version := m.textInputOverlay.BranchFilterVersion()
+			filter := ti.BranchFilter()
+			version := ti.BranchFilterVersion()
 			return m, m.scheduleBranchSearch(filter, version)
 		}
 
@@ -1046,12 +1056,16 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 	// Handle workspace picker state
 	if m.state == stateWorkspace {
-		committed, _ := m.workspacePicker.HandleKeyPress(msg)
+		wp := m.workspacePicker()
+		if wp == nil {
+			return m, nil
+		}
+		committed, _ := wp.HandleKeyPress(msg)
 		if committed {
-			if m.workspacePicker.IsStartup() {
+			if wp.IsStartup() {
 				// Startup single-select: activate the chosen workspace.
-				selected := m.workspacePicker.GetSelectedWorkspace()
-				m.workspacePicker = nil
+				selected := wp.GetSelectedWorkspace()
+				m.dismissOverlay()
 				m.state = stateDefault
 				if selected != nil {
 					wsCtx := config.WorkspaceContextFor(selected)
@@ -1070,8 +1084,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 				return m, tea.WindowSize()
 			}
 			// Mid-session toggle: diff active workspaces.
-			desired := m.workspacePicker.GetActiveWorkspaces()
-			m.workspacePicker = nil
+			desired := wp.GetActiveWorkspaces()
+			m.dismissOverlay()
 			m.state = stateDefault
 			return m, m.applyWorkspaceToggle(desired)
 		}
@@ -1080,11 +1094,15 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 
 	// Handle confirmation state
 	if m.state == stateConfirm {
-		shouldClose := m.confirmationOverlay.HandleKeyPress(msg)
+		cf := m.confirmation()
+		if cf == nil {
+			return m, nil
+		}
+		shouldClose := cf.HandleKeyPress(msg)
 		if shouldClose {
 			cmd := m.pendingConfirmation.Run()
 			m.pendingConfirmation = overlay.ConfirmationTask{}
-			m.confirmationOverlay = nil
+			m.dismissOverlay()
 			m.state = stateDefault
 			return m, tea.Batch(cmd, m.instanceChanged())
 		}
@@ -1382,7 +1400,7 @@ func (m *home) cancelPromptOverlay() tea.Cmd {
 	if selected != nil && !selected.Started() {
 		killCmd = backgroundKillCmd(m.list.PopSelectedForKill())
 	}
-	m.textInputOverlay = nil
+	m.dismissOverlay()
 	m.state = stateDefault
 	return tea.Batch(
 		tea.Sequence(
@@ -1404,12 +1422,12 @@ func (m *home) confirmTask(message string, task overlay.ConfirmationTask) tea.Cm
 	m.state = stateConfirm
 	m.pendingConfirmation = task
 
-	m.confirmationOverlay = overlay.NewConfirmationOverlay(message)
-	m.confirmationOverlay.SetWidth(50)
-
-	m.confirmationOverlay.OnCancel = func() {
+	co := overlay.NewConfirmationOverlay(message)
+	co.SetWidth(50)
+	co.OnCancel = func() {
 		m.pendingConfirmation = overlay.ConfirmationTask{}
 	}
+	m.setOverlay(co, overlayConfirmation)
 
 	return nil
 }
@@ -1762,37 +1780,20 @@ func (m *home) View() string {
 		sections...,
 	)
 
-	if m.state == statePrompt {
-		if m.textInputOverlay == nil {
-			log.ErrorLog.Printf("text input overlay is nil")
-			return mainView
-		}
-		return overlay.PlaceOverlay(0, 0, m.textInputOverlay.Render(), mainView, true, true)
-	} else if m.state == stateHelp {
-		if m.textOverlay == nil {
-			log.ErrorLog.Printf("text overlay is nil")
-			return mainView
-		}
-		return overlay.PlaceOverlay(0, 0, m.textOverlay.Render(), mainView, true, true)
-	} else if m.state == stateConfirm {
-		if m.confirmationOverlay == nil {
-			log.ErrorLog.Printf("confirmation overlay is nil")
-			return mainView
-		}
-		return overlay.PlaceOverlay(0, 0, m.confirmationOverlay.Render(), mainView, true, true)
-	} else if m.state == stateWorkspace {
-		if m.workspacePicker == nil {
-			log.ErrorLog.Printf("workspace picker is nil")
-			return mainView
-		}
-		if m.workspacePicker.IsStartup() {
-			// Fullscreen: centered picker on blank background.
+	// Overlay render dispatch: all overlay states share the unified
+	// activeOverlay pointer. The activeOverlayKind tag distinguishes
+	// the one case that needs a different placement (startup workspace
+	// picker renders fullscreen rather than composited on mainView).
+	if m.activeOverlay != nil && m.state != stateDefault {
+		if m.activeOverlayKind == overlayWorkspacePickerStartup {
 			return lipgloss.Place(m.lastWidth, m.lastHeight,
 				lipgloss.Center, lipgloss.Center,
-				m.workspacePicker.Render())
+				m.activeOverlay.View())
 		}
-		// Mid-session toggle: overlay on main view.
-		return overlay.PlaceOverlay(0, 0, m.workspacePicker.Render(), mainView, true, true)
+		switch m.state {
+		case statePrompt, stateHelp, stateConfirm, stateWorkspace:
+			return overlay.PlaceOverlay(0, 0, m.activeOverlay.View(), mainView, true, true)
+		}
 	}
 
 	return mainView
