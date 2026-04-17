@@ -32,9 +32,12 @@ func newTestHome(t *testing.T) *home {
 
 func TestDispatchReturnsFalseForUnregisteredKey(t *testing.T) {
 	h := newTestHome(t)
-	_, _, handled := h.actions.Dispatch(keys.KeyHelp, h)
-	assert.False(t, handled,
-		"KeyHelp is not yet migrated — the legacy switch should see it")
+	// KeyQuit is handled outside the ActionRegistry (the Update loop
+	// short-circuits it before dispatch). Its absence here verifies
+	// that Dispatch signals "not mine" rather than silently swallowing
+	// unknown keys.
+	_, _, handled := h.actions.Dispatch(keys.KeyQuit, h)
+	assert.False(t, handled, "unregistered keys should return handled=false")
 }
 
 func TestDispatchPreconditionBlocksRunWhenFalse(t *testing.T) {
@@ -81,7 +84,20 @@ func TestSelectedNotBusyRejectsLoadingAndDeleting(t *testing.T) {
 
 func TestDefaultActionsCoversExpectedKeys(t *testing.T) {
 	reg := defaultActions()
-	for _, k := range []keys.KeyName{keys.KeyUp, keys.KeyDown, keys.KeyDiff} {
+	// Every key routed through the default TUI state must be in the
+	// registry. This guards against a sub-registry being forgotten in
+	// the defaultActions merge.
+	expected := []keys.KeyName{
+		keys.KeyUp, keys.KeyDown, keys.KeyDiff,
+		keys.KeyPrompt, keys.KeyNew, keys.KeyKill,
+		keys.KeySubmit, keys.KeyCheckout, keys.KeyResume,
+		keys.KeyDirectAttachAgent, keys.KeyDirectAttachTerminal,
+		keys.KeyFullScreenAttachAgent, keys.KeyFullScreenAttachTerminal,
+		keys.KeyWorkspace, keys.KeyWorkspaceLeft, keys.KeyWorkspaceRight,
+		keys.KeyQuickInputAgent, keys.KeyQuickInputTerminal,
+		keys.KeyHelp,
+	}
+	for _, k := range expected {
 		_, ok := reg[k]
 		assert.True(t, ok, "expected key %v to be in the registry", k)
 	}
