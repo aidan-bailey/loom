@@ -162,3 +162,26 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 		key.WithHelp("enter", "submit name"),
 	),
 }
+
+// HelpPanelDescriptions carries long-form descriptions for the help panel.
+// key.Binding.Help().Desc already holds the shorter menu-bar descriptions;
+// this map is the single source of truth for the longer strings shown in
+// the help overlay. Per-section overrides live alongside the ordered entry
+// lists in app/help.go.
+var HelpPanelDescriptions = map[KeyName]string{
+	KeyNew:                      "Create a new session",
+	KeyPrompt:                   "Create a new session with a prompt",
+	KeyKill:                     "Kill (delete) the selected session",
+	KeyFullScreenAttachAgent:    "Full-screen attach to agent pane",
+	KeyFullScreenAttachTerminal: "Full-screen attach to terminal pane",
+	KeyQuickInputAgent:          "Quick input: type and send to agent",
+	KeyQuickInputTerminal:       "Quick input: type and send to terminal",
+	KeyDirectAttachAgent:        "Inline attach to agent pane",
+	KeyDirectAttachTerminal:     "Inline attach to terminal pane",
+	KeySubmit:                   "Commit and push branch to github",
+	KeyCheckout:                 "Checkout: commit changes and pause session",
+	KeyResume:                   "Resume a paused session",
+	KeyWorkspace:                "Switch workspace",
+	KeyDiff:                     "Toggle diff overlay",
+	KeyQuit:                     "Quit the application",
+}

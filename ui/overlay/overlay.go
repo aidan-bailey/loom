@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"bytes"
+	"claude-squad/ui"
 	"regexp"
 	"strings"
 
@@ -102,7 +103,7 @@ func PlaceOverlay(
 	// Handle shadow if enabled
 	if shadow {
 		// Define shadow style and character
-		shadowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
+		shadowStyle := lipgloss.NewStyle().Foreground(ui.ShadowFg)
 		shadowChar := shadowStyle.Render("░")
 
 		// Create shadow string with same dimensions as foreground

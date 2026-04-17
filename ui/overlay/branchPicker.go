@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"claude-squad/ui"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -149,18 +150,18 @@ func (bp *BranchPicker) GetSelectedBranch() string {
 
 var (
 	bpLabelStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("62")).
+			Foreground(ui.OverlayBorder).
 			Bold(true)
 
 	bpFilterStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("7"))
+			Foreground(ui.OverlayItemFg)
 
 	bpSelectedStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("62")).
-			Foreground(lipgloss.Color("0"))
+			Background(ui.OverlayBorder).
+			Foreground(ui.OverlaySelectedFg)
 
 	bpDimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
+			Foreground(ui.OverlayHintFg)
 )
 
 // Render renders the branch picker.

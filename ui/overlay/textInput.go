@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"claude-squad/config"
+	"claude-squad/ui"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -12,23 +13,23 @@ import (
 var (
 	tiStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
+		BorderForeground(ui.OverlayBorder).
 		Padding(1, 2)
 
 	tiTitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("62")).
+			Foreground(ui.OverlayBorder).
 			Bold(true).
 			MarginBottom(1)
 
 	tiButtonStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("7"))
+			Foreground(ui.OverlayItemFg)
 
 	tiFocusedButtonStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("62")).
-				Foreground(lipgloss.Color("0"))
+				Background(ui.OverlayBorder).
+				Foreground(ui.OverlaySelectedFg)
 
 	tiDividerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
+			Foreground(ui.OverlayHintFg)
 )
 
 // TextInputOverlay represents a text input overlay with state management.

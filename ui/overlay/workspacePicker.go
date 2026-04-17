@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"claude-squad/config"
+	"claude-squad/ui"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -127,10 +128,10 @@ func (w *WorkspacePicker) SetSize(width, _ int) {
 
 // Render renders the workspace picker overlay.
 func (w *WorkspacePicker) Render() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4"))
-	selectedStyle := lipgloss.NewStyle().Background(lipgloss.Color("#dde4f0")).Foreground(lipgloss.Color("#1a1a1a"))
-	normalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
-	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#777777"))
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.TitleAccent)
+	selectedStyle := lipgloss.NewStyle().Background(ui.SelectionBg).Foreground(ui.SelectionFg)
+	normalStyle := lipgloss.NewStyle().Foreground(ui.TextPrimary)
+	pathStyle := lipgloss.NewStyle().Foreground(ui.TextHint)
 
 	var content string
 	if w.isStartup {
@@ -187,7 +188,7 @@ func (w *WorkspacePicker) Render() string {
 		}
 	}
 
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#777777"))
+	helpStyle := lipgloss.NewStyle().Foreground(ui.TextHint)
 	if w.isStartup {
 		content += "\n" + helpStyle.Render("enter select • esc global")
 	} else {
@@ -196,7 +197,7 @@ func (w *WorkspacePicker) Render() string {
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#7D56F4")).
+		BorderForeground(ui.TitleAccent).
 		Padding(1, 2).
 		Width(w.width)
 

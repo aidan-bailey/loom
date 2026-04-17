@@ -1,6 +1,8 @@
 package overlay
 
 import (
+	"claude-squad/ui"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -33,7 +35,7 @@ func NewConfirmationOverlay(message string) *ConfirmationOverlay {
 		width:       50, // Default width
 		ConfirmKey:  "y",
 		CancelKey:   "n",
-		borderColor: lipgloss.Color("#de613e"), // Red color for confirmations
+		borderColor: ui.DangerAccent,
 	}
 }
 

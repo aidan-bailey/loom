@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"claude-squad/config"
+	"claude-squad/ui"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -75,15 +76,15 @@ func (pp *ProfilePicker) HasMultiple() bool {
 
 var (
 	ppLabelStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("62")).
+			Foreground(ui.OverlayBorder).
 			Bold(true)
 
 	ppSelectedStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("62")).
-			Foreground(lipgloss.Color("0"))
+			Background(ui.OverlayBorder).
+			Foreground(ui.OverlaySelectedFg)
 
 	ppDimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
+			Foreground(ui.OverlayHintFg)
 )
 
 // Render renders the profile picker.

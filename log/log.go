@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -97,9 +98,11 @@ func rotateIfNeeded(path string) {
 	_ = os.Rename(path, backup)
 }
 
-// Every is used to log at most once every timeout duration.
+// Every is used to log at most once every timeout duration. Safe for concurrent
+// use; ShouldLog takes a mutex before touching the internal timer.
 type Every struct {
 	timeout time.Duration
+	mu      sync.Mutex
 	timer   *time.Timer
 }
 
@@ -109,6 +112,9 @@ func NewEvery(timeout time.Duration) *Every {
 
 // ShouldLog returns true if the timeout has passed since the last log.
 func (e *Every) ShouldLog() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if e.timer == nil {
 		e.timer = time.NewTimer(e.timeout)
 		e.timer.Reset(e.timeout)
