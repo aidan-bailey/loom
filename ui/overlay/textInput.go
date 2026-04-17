@@ -230,6 +230,16 @@ func (t *TextInputOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 	}
 }
 
+// HandleKey satisfies the Overlay interface. The branch-filter-change
+// signal surfaced by HandleKeyPress is not lifted into a tea.Cmd
+// here; the host polls BranchFilterVersion() to detect edits and
+// kick off the async search. Callers that care about the filter
+// edge should use HandleKeyPress directly.
+func (t *TextInputOverlay) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	closed, _ := t.HandleKeyPress(msg)
+	return closed, nil
+}
+
 // GetValue returns the current value of the text input.
 func (t *TextInputOverlay) GetValue() string {
 	return t.textarea.Value()

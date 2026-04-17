@@ -106,6 +106,25 @@ func (w *WorkspacePicker) GetActiveWorkspaces() []config.Workspace {
 	return result
 }
 
+// HandleKey satisfies the Overlay interface. The second bool from
+// HandleKeyPress is reserved for future use and currently always
+// false; HandleKey collapses to (closed, nil).
+func (w *WorkspacePicker) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	closed, _ := w.HandleKeyPress(msg)
+	return closed, nil
+}
+
+// View satisfies the Overlay interface.
+func (w *WorkspacePicker) View() string {
+	return w.Render()
+}
+
+// SetSize satisfies the Overlay interface. WorkspacePicker uses only
+// width; height is accepted but ignored.
+func (w *WorkspacePicker) SetSize(width, _ int) {
+	w.width = width
+}
+
 // Render renders the workspace picker overlay.
 func (w *WorkspacePicker) Render() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4"))

@@ -40,6 +40,23 @@ func (t *TextOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, tea.Cmd) {
 	return true, cmd
 }
 
+// HandleKey satisfies the Overlay interface. Delegates to
+// HandleKeyPress, which already returns (closed, cmd).
+func (t *TextOverlay) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	return t.HandleKeyPress(msg)
+}
+
+// View satisfies the Overlay interface.
+func (t *TextOverlay) View() string {
+	return t.Render()
+}
+
+// SetSize satisfies the Overlay interface. TextOverlay uses only
+// width; height is accepted but ignored.
+func (t *TextOverlay) SetSize(width, _ int) {
+	t.SetWidth(width)
+}
+
 // Render renders the text overlay
 func (t *TextOverlay) Render(opts ...WhitespaceOption) string {
 	// Create styles

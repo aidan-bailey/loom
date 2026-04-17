@@ -59,6 +59,24 @@ func (c *ConfirmationOverlay) HandleKeyPress(msg tea.KeyMsg) bool {
 	}
 }
 
+// HandleKey satisfies the Overlay interface. It delegates to
+// HandleKeyPress and emits no tea.Cmd — callbacks are invoked
+// synchronously inside HandleKeyPress.
+func (c *ConfirmationOverlay) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	return c.HandleKeyPress(msg), nil
+}
+
+// View satisfies the Overlay interface.
+func (c *ConfirmationOverlay) View() string {
+	return c.Render()
+}
+
+// SetSize satisfies the Overlay interface. ConfirmationOverlay uses
+// only width; height is accepted but ignored.
+func (c *ConfirmationOverlay) SetSize(width, _ int) {
+	c.SetWidth(width)
+}
+
 // Render renders the confirmation overlay
 func (c *ConfirmationOverlay) Render(opts ...WhitespaceOption) string {
 	style := lipgloss.NewStyle().
