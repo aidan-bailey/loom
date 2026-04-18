@@ -56,4 +56,16 @@ type Host interface {
 	// requested operation cannot be performed synchronously on the
 	// dispatch goroutine (e.g. anything that opens an overlay).
 	Enqueue(intent Intent) IntentID
+
+	// Sync primitives — safe to call on the dispatch goroutine because
+	// they only mutate state that isn't also read by Update at the same
+	// time (list cursor, diff-overlay flag, focused workspace slot).
+	// Anything that needs to produce a tea.Cmd or open an overlay must
+	// instead be handled through Enqueue + a matching Intent.
+
+	CursorUp()
+	CursorDown()
+	ToggleDiff()
+	WorkspacePrev()
+	WorkspaceNext()
 }

@@ -97,6 +97,7 @@ func NewEngine(reserved map[string]bool) *Engine {
 	registerWorktreeType(L)
 	registerCtxType(L)
 	installAPI(L, e)
+	installActions(L, e)
 	return e
 }
 

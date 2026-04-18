@@ -106,6 +106,48 @@ func (s *scriptHost) Enqueue(intent script.Intent) script.IntentID {
 	return id
 }
 
+// CursorUp / CursorDown / ToggleDiff / WorkspacePrev / WorkspaceNext
+// mirror the legacy runXYZ bodies in actions_nav.go and
+// actions_workspace.go. They mutate list/splitPane/slot state directly
+// because the engine holds its mutex during dispatch and we're still
+// on the dispatch goroutine when these fire — Update hasn't had a
+// chance to race with us. Anything that would produce a tea.Cmd is
+// handled as a deferred Intent instead (Task 7+).
+
+func (s *scriptHost) CursorUp() {
+	s.m.list.Up()
+}
+
+func (s *scriptHost) CursorDown() {
+	s.m.list.Down()
+}
+
+func (s *scriptHost) ToggleDiff() {
+	s.m.splitPane.ToggleDiff()
+}
+
+func (s *scriptHost) WorkspacePrev() {
+	if len(s.m.slots) <= 1 {
+		return
+	}
+	s.m.saveCurrentSlot()
+	newIdx := (s.m.focusedSlot - 1 + len(s.m.slots)) % len(s.m.slots)
+	s.m.loadSlot(newIdx)
+	s.m.updateTabBarStatuses()
+	s.m.persistFocusedWorkspace()
+}
+
+func (s *scriptHost) WorkspaceNext() {
+	if len(s.m.slots) <= 1 {
+		return
+	}
+	s.m.saveCurrentSlot()
+	newIdx := (s.m.focusedSlot + 1) % len(s.m.slots)
+	s.m.loadSlot(newIdx)
+	s.m.updateTabBarStatuses()
+	s.m.persistFocusedWorkspace()
+}
+
 // pendingIntent ties a caller-provided intent to the id the script
 // awaits on. Task 10 drains this into scriptDoneMsg.
 type pendingIntent struct {

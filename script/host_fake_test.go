@@ -46,3 +46,11 @@ func (f *fakeHost) Enqueue(intent Intent) IntentID {
 	f.enqueuedIDs = append(f.enqueuedIDs, id)
 	return id
 }
+
+// Sync primitives — fakeHost's defaults are no-ops. recordingHost in
+// api_actions_test.go overrides these to capture call ordering.
+func (f *fakeHost) CursorUp()      {}
+func (f *fakeHost) CursorDown()    {}
+func (f *fakeHost) ToggleDiff()    {}
+func (f *fakeHost) WorkspacePrev() {}
+func (f *fakeHost) WorkspaceNext() {}
