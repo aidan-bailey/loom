@@ -457,6 +457,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errBox.Clear()
 	case scriptDoneMsg:
 		return m, m.handleScriptDone(msg)
+	case scriptResumeMsg:
+		return m, m.handleScriptResume(msg)
 	case previewTickMsg:
 		// Check if inline-attached instance is still alive
 		inlineAttachExited := false

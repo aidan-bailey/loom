@@ -16,11 +16,24 @@ import (
 // scriptDoneMsg is dispatched when a script action finishes (success
 // or failure). pendingInstances carries any instances the script
 // created via ctx:new_instance{} so Update can finalize them into
-// h.list on the main goroutine.
+// h.list on the main goroutine. pendingIntents carries the Intents a
+// handler enqueued (via cs.await(cs.actions.foo())) before yielding
+// — handleScriptDone dispatches each one and the matching runXYZ
+// schedules a scriptResumeMsg when done.
 type scriptDoneMsg struct {
 	err              error
 	pendingInstances []*session.Instance
 	notices          []string
+	pendingIntents   []pendingIntent
+}
+
+// scriptResumeMsg feeds a value back into a suspended handler
+// coroutine keyed by id. Carries no Lua-specific state so the app
+// layer stays independent of gopher-lua; the engine resumes with nil
+// internally. Task 11 will emit these from handleScriptIntent after
+// the matching runXYZ completes.
+type scriptResumeMsg struct {
+	id script.IntentID
 }
 
 // scriptHost adapts *home to the script.Host interface. A fresh
@@ -155,16 +168,20 @@ type pendingIntent struct {
 	intent script.Intent
 }
 
-// drain returns and clears the pending instances and notices.
-// Called from dispatchScript after the Lua call returns.
-func (s *scriptHost) drain() ([]*session.Instance, []string) {
+// drain returns and clears the pending instances, notices, and
+// intents. Called from dispatchScript after the Lua call returns and
+// from scriptResumeMsg handling after each Resume — any call that
+// wakes a coroutine may leave fresh Intents in the host buffer.
+func (s *scriptHost) drain() ([]*session.Instance, []string, []pendingIntent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.pending
 	n := s.notices
+	in := s.intents
 	s.pending = nil
 	s.notices = nil
-	return p, n
+	s.intents = nil
+	return p, n, in
 }
 
 // initScripts wires a fresh engine onto h and loads the global
@@ -226,13 +243,37 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 
 	return func() tea.Msg {
 		_, err := m.scripts.Dispatch(key, host)
-		pending, notices := host.drain()
+		pending, notices, intents := host.drain()
 		return scriptDoneMsg{
 			err:              err,
 			pendingInstances: pending,
 			notices:          notices,
+			pendingIntents:   intents,
 		}
 	}, true
+}
+
+// handleScriptResume wakes the suspended handler coroutine keyed by
+// msg.id. A fresh scriptHost is allocated per resume so any intents
+// the resumed coroutine enqueues on its way to the next yield are
+// drained into a follow-up scriptDoneMsg. The engine resumes with
+// nil internally (callers don't pass Lua values across the app
+// boundary). Errors flow through handleError on the next tick.
+func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
+	if m.scripts == nil {
+		return nil
+	}
+	host := &scriptHost{m: m}
+	return func() tea.Msg {
+		err := m.scripts.ResumeWithHost(msg.id, host)
+		pending, notices, intents := host.drain()
+		return scriptDoneMsg{
+			err:              err,
+			pendingInstances: pending,
+			notices:          notices,
+			pendingIntents:   intents,
+		}
+	}
 }
 
 // handleScriptDone processes a scriptDoneMsg: finalizes any pending

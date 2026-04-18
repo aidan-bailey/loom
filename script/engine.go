@@ -176,6 +176,27 @@ func (e *Engine) track(id IntentID, co *lua.LState) {
 	e.coroutines[id] = coroutineSlot{co: co}
 }
 
+// ResumeWithHost is the host-facing entry point for continuing a
+// suspended handler coroutine. It sets curHost for the duration of
+// the resume so any deferred cs.actions the coroutine calls next can
+// still reach a live Host. The engine always resumes with lua.LNil —
+// handlers that need a typed value should keep their state in
+// closures rather than in await's return. Errors propagate from the
+// underlying Resume.
+func (e *Engine) ResumeWithHost(id IntentID, h Host) error {
+	e.mu.Lock()
+	prevHost := e.curHost
+	e.curHost = h
+	e.mu.Unlock()
+
+	_, err := e.Resume(id, lua.LNil)
+
+	e.mu.Lock()
+	e.curHost = prevHost
+	e.mu.Unlock()
+	return err
+}
+
 // Resume wakes the coroutine registered under id with value. If the
 // coroutine completes, the first return value flows back. If it
 // yields again (e.g. because the script chained another cs.await),
