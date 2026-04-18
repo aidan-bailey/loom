@@ -29,6 +29,7 @@ func installAPI(L *lua.LState, e *Engine) {
 	cs.RawSetString("notify", L.NewClosure(apiNotify(e), L.NewUserData()))
 	cs.RawSetString("now", L.NewFunction(apiNow))
 	cs.RawSetString("sprintf", L.NewFunction(apiSprintf))
+	cs.RawSetString("await", L.NewFunction(apiAwait))
 
 	L.SetGlobal("cs", cs)
 }
@@ -113,6 +114,23 @@ func apiNotify(e *Engine) lua.LGFunction {
 func apiNow(L *lua.LState) int {
 	L.Push(lua.LNumber(time.Now().Unix()))
 	return 1
+}
+
+// apiAwait suspends the current coroutine until Engine.Resume delivers
+// a value for the paired IntentID. The caller can pass either an
+// explicit id (returned by a cs.actions.* primitive) or no argument
+// at all — the latter is sugar for "await the most recently enqueued
+// intent on this dispatch".
+//
+// cs.await must be called from inside a coroutine. The engine arranges
+// for every bound handler to run inside one (see Task 4's runAction
+// wrapping), so in practice scripts can always use cs.await freely.
+func apiAwait(L *lua.LState) int {
+	var id lua.LNumber
+	if L.GetTop() >= 1 {
+		id = L.CheckNumber(1)
+	}
+	return L.Yield(id)
 }
 
 // apiSprintf is a convenience alias for string.format so scripts
