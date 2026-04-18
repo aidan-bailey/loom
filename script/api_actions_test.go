@@ -136,6 +136,56 @@ func TestCsActionsResumeSelectedEnqueues(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestCsActionsNewInstanceDefaults(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("n", function() cs.actions.new_instance() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "n")
+	intent := h.enqueued[0].(NewInstanceIntent)
+	assert.False(t, intent.Prompt)
+	assert.Equal(t, "", intent.Title)
+}
+
+func TestCsActionsNewInstanceParsesPromptAndTitle(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("N", function() cs.actions.new_instance{prompt=true, title="hello"} end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "N")
+	intent := h.enqueued[0].(NewInstanceIntent)
+	assert.True(t, intent.Prompt)
+	assert.Equal(t, "hello", intent.Title)
+}
+
+func TestCsActionsShowHelpEnqueues(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("?", function() cs.actions.show_help() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "?")
+	_, ok := h.enqueued[0].(ShowHelpIntent)
+	assert.True(t, ok)
+}
+
+func TestCsActionsOpenWorkspacePickerEnqueues(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("W", function() cs.actions.open_workspace_picker() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "W")
+	_, ok := h.enqueued[0].(WorkspacePickerIntent)
+	assert.True(t, ok)
+}
+
 func TestCsActionsSyncPrimitivesCallHost(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()

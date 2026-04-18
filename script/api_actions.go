@@ -108,6 +108,21 @@ func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 	actions.RawSetString("resume_selected", L.NewFunction(func(L *lua.LState) int {
 		return enqueue(L, ResumeIntent{})
 	}))
+
+	actions.RawSetString("new_instance", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, NewInstanceIntent{
+			Prompt: optBool(L, "prompt", false),
+			Title:  optString(L, "title", ""),
+		})
+	}))
+
+	actions.RawSetString("show_help", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, ShowHelpIntent{})
+	}))
+
+	actions.RawSetString("open_workspace_picker", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, WorkspacePickerIntent{})
+	}))
 }
 
 // optBool reads a boolean field from the single table argument at
@@ -127,4 +142,23 @@ func optBool(L *lua.LState, field string, def bool) bool {
 		return def
 	}
 	return lua.LVAsBool(v)
+}
+
+// optString mirrors optBool for string fields. Non-string values
+// (e.g. numbers) fall back to def rather than coercing, so a script
+// that accidentally passes `title=123` gets predictable behavior.
+func optString(L *lua.LState, field string, def string) string {
+	if L.GetTop() < 1 {
+		return def
+	}
+	t, ok := L.Get(1).(*lua.LTable)
+	if !ok {
+		return def
+	}
+	v := t.RawGetString(field)
+	s, ok := v.(lua.LString)
+	if !ok {
+		return def
+	}
+	return string(s)
 }
