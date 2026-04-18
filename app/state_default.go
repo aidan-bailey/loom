@@ -40,6 +40,12 @@ func handleStateDefaultKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	name, ok := keys.GlobalKeyStringsMap[msg.String()]
 	if !ok {
+		// Built-in keymap miss: give the script engine a chance to
+		// claim the key. Scripts dispatch on the raw key string and
+		// bypass ActionRegistry entirely — see app/app_scripts.go.
+		if cmd, handled := m.dispatchScript(msg.String()); handled {
+			return m, cmd
+		}
 		return m, nil
 	}
 

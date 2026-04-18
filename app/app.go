@@ -6,6 +6,7 @@ import (
 	"claude-squad/config"
 	"claude-squad/keys"
 	"claude-squad/log"
+	"claude-squad/script"
 	"claude-squad/session"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
@@ -179,6 +180,12 @@ type home struct {
 	lastPreviewHash []byte
 	// lastPreviewTitle tracks which instance the hash belongs to.
 	lastPreviewTitle string
+
+	// scripts owns the Lua script engine for user-bound keybindings.
+	// Lazily populated by initScripts() on first construction; never
+	// nil in normal operation (a failed load still produces an empty
+	// engine so Dispatch returns matched=false instead of panicking).
+	scripts *script.Engine
 }
 
 func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string) *home {
@@ -216,6 +223,11 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	if wsCtx != nil && wsCtx.Name != "" {
 		h.list.SetWorkspaceName(wsCtx.Name)
 	}
+
+	// Initialize the script engine and load user scripts. Errors are
+	// logged but never propagated — a broken script must not block
+	// startup of the TUI.
+	initScripts(h)
 
 	// Determine whether we'll restore a saved multi-tab set. If so, skip the
 	// classic-mode load below: activateWorkspace() will load each slot fresh,
@@ -443,6 +455,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case hideErrMsg:
 		m.errBox.Clear()
+	case scriptDoneMsg:
+		return m, m.handleScriptDone(msg)
 	case previewTickMsg:
 		// Check if inline-attached instance is still alive
 		inlineAttachExited := false

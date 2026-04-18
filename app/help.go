@@ -135,7 +135,7 @@ var (
 )
 
 func (h helpTypeGeneral) toContent() string {
-	return lipgloss.JoinVertical(lipgloss.Left,
+	sections := []string{
 		titleStyle.Render("Claude Squad"),
 		"",
 		"A terminal UI that manages multiple Claude Code (and other local agents) in separate workspaces.",
@@ -148,7 +148,41 @@ func (h helpTypeGeneral) toContent() string {
 		"",
 		headerStyle.Render("Other:"),
 		renderHelpSection(generalOtherEntries, 10),
-	)
+	}
+	if scriptEntries := scriptHelpEntries(currentHomeForHelp); len(scriptEntries) > 0 {
+		sections = append(sections,
+			"",
+			headerStyle.Render("Scripts:"),
+			renderHelpSection(scriptEntries, 10),
+		)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+// currentHomeForHelp holds the home pointer referenced by
+// toContent. help.helpTypeGeneral.toContent() has no parameter for
+// the model, so we stash a pointer here right before rendering — see
+// showHelpScreen. A package-level variable is acceptable because the
+// TUI runs as a single goroutine (Bubble Tea's model update loop).
+var currentHomeForHelp *home
+
+// scriptHelpEntries reads the registered actions from h.scripts and
+// returns them as helpEntry values for renderHelpSection. Returns
+// nil when the engine isn't initialized or has no registrations —
+// toContent omits the Scripts section in that case.
+func scriptHelpEntries(m *home) []helpEntry {
+	if m == nil || m.scripts == nil {
+		return nil
+	}
+	regs := m.scripts.Registrations()
+	if len(regs) == 0 {
+		return nil
+	}
+	out := make([]helpEntry, 0, len(regs))
+	for _, r := range regs {
+		out = append(out, helpEntry{rawKey: r.Key, desc: r.Help})
+	}
+	return out
 }
 
 func (h helpTypeInstanceStart) toContent() string {
@@ -216,6 +250,12 @@ var (
 // It may mutate model state (e.g. to open a follow-up modal) and return a tea.Cmd
 // to be dispatched once the help state has been cleared.
 func (m *home) showHelpScreen(helpType helpText, onDismiss func() tea.Cmd) (tea.Model, tea.Cmd) {
+	// The general help panel wants to render the live list of
+	// registered scripts, so hand the current model off for the
+	// duration of toContent. See currentHomeForHelp docs above.
+	currentHomeForHelp = m
+	defer func() { currentHomeForHelp = nil }()
+
 	// Get the flag for this help type
 	var alwaysShow bool
 	switch helpType.(type) {
