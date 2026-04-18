@@ -12,8 +12,6 @@ const (
 	KeyNew
 	KeyKill
 	KeyQuit
-	KeyReview
-	KeyPush
 	KeySubmit
 
 	KeySubmitName // SubmitName is a special keybinding for submitting the name of a new instance.
@@ -39,32 +37,26 @@ const (
 	KeyDirectAttachTerminal // Key for direct attach to terminal pane
 )
 
-// GlobalKeyStringsMap is a global, immutable map string to keybinding.
-var GlobalKeyStringsMap = map[string]KeyName{
-	"up":     KeyUp,
-	"k":      KeyUp,
-	"down":   KeyDown,
-	"j":      KeyDown,
-	"N":      KeyPrompt,
-	"n":      KeyNew,
-	"D":      KeyKill,
-	"q":      KeyQuit,
-	"c":      KeyCheckout,
-	"r":      KeyResume,
-	"p":      KeySubmit,
-	"?":      KeyHelp,
-	"W":      KeyWorkspace,
-	"[":      KeyWorkspaceLeft,
-	"l":      KeyWorkspaceLeft,
-	"]":      KeyWorkspaceRight,
-	";":      KeyWorkspaceRight,
-	"alt+a":  KeyFullScreenAttachAgent,
-	"alt+t":  KeyFullScreenAttachTerminal,
-	"d":      KeyDiff,
-	"a":      KeyQuickInputAgent,
-	"t":      KeyQuickInputTerminal,
-	"ctrl+a": KeyDirectAttachAgent,
-	"ctrl+t": KeyDirectAttachTerminal,
+// keyStringToName is the reverse lookup derived from GlobalkeyBindings. It
+// exists solely to drive menu-bar highlighting when a built-in key is
+// pressed; dispatch itself has moved to the Lua engine.
+var keyStringToName = buildKeyStringToName()
+
+func buildKeyStringToName() map[string]KeyName {
+	out := make(map[string]KeyName)
+	for name, binding := range GlobalkeyBindings {
+		for _, k := range binding.Keys() {
+			out[k] = name
+		}
+	}
+	return out
+}
+
+// KeyForString returns the KeyName bound to s via GlobalkeyBindings, or
+// (0, false) when the string is not a built-in binding.
+func KeyForString(s string) (KeyName, bool) {
+	n, ok := keyStringToName[s]
+	return n, ok
 }
 
 // GlobalkeyBindings is a global, immutable map of KeyName tot keybinding.
@@ -161,27 +153,4 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "submit name"),
 	),
-}
-
-// HelpPanelDescriptions carries long-form descriptions for the help panel.
-// key.Binding.Help().Desc already holds the shorter menu-bar descriptions;
-// this map is the single source of truth for the longer strings shown in
-// the help overlay. Per-section overrides live alongside the ordered entry
-// lists in app/help.go.
-var HelpPanelDescriptions = map[KeyName]string{
-	KeyNew:                      "Create a new session",
-	KeyPrompt:                   "Create a new session with a prompt",
-	KeyKill:                     "Kill (delete) the selected session",
-	KeyFullScreenAttachAgent:    "Full-screen attach to agent pane",
-	KeyFullScreenAttachTerminal: "Full-screen attach to terminal pane",
-	KeyQuickInputAgent:          "Quick input: type and send to agent",
-	KeyQuickInputTerminal:       "Quick input: type and send to terminal",
-	KeyDirectAttachAgent:        "Inline attach to agent pane",
-	KeyDirectAttachTerminal:     "Inline attach to terminal pane",
-	KeySubmit:                   "Commit and push branch to github",
-	KeyCheckout:                 "Checkout: commit changes and pause session",
-	KeyResume:                   "Resume a paused session",
-	KeyWorkspace:                "Switch workspace",
-	KeyDiff:                     "Toggle diff overlay",
-	KeyQuit:                     "Quit the application",
 }

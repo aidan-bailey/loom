@@ -1,16 +1,35 @@
 package app
 
 import (
+	"os"
+	"os/exec"
 	"testing"
 
+	"claude-squad/cmd/cmd_test"
 	"claude-squad/config"
 	"claude-squad/script"
 	"claude-squad/session"
+	"claude-squad/session/tmux"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fakePtyFactory is a no-op PtyFactory: Start returns a /dev/null
+// handle so callers can Close it safely; Close is a no-op. Attached
+// to the mock tmux session so nothing touches a real pseudo-terminal.
+type fakePtyFactory struct{ t *testing.T }
+
+func (f fakePtyFactory) Start(*exec.Cmd) (*os.File, error) {
+	h, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		f.t.Fatalf("fakePtyFactory: /dev/null: %v", err)
+	}
+	return h, nil
+}
+
+func (f fakePtyFactory) Close() {}
 
 // homeWithAppState augments newTestHome with the appState dependency
 // needed by intents that funnel through showHelpScreen (checkout,
@@ -25,7 +44,9 @@ func homeWithAppState(t *testing.T) *home {
 
 // addReadyInstance attaches a Running instance so preconditions-gated
 // intents (push/kill/checkout/attach/quick_input) have a valid
-// selection.
+// selection. A mock TmuxSession is installed with a cmdExec that
+// reports tmux `has-session` success, so TmuxAlive() returns true
+// without touching a real tmux server.
 func addReadyInstance(t *testing.T, h *home) *session.Instance {
 	t.Helper()
 	inst, err := session.NewInstance(session.InstanceOptions{
@@ -36,6 +57,13 @@ func addReadyInstance(t *testing.T, h *home) *session.Instance {
 	require.NoError(t, err)
 	_ = h.list.AddInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
+
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	ts := tmux.NewTmuxSessionWithDeps("a", "true", fakePtyFactory{t: t}, cmdExec)
+	inst.SetTmuxSession(ts)
 	return inst
 }
 

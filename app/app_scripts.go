@@ -272,31 +272,51 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 
 // handleScriptIntent routes a yielded Intent to its legacy runXYZ
 // handler and batches a scriptResumeMsg so the awaiting Lua coroutine
-// unblocks. The resume fires as soon as the intent dispatches rather
-// than after any confirmation overlay closes — scripts that need to
-// observe user confirmation must arrange their own signal path. Quit
-// is exempt because tea.Quit ends the program before resume could
-// matter.
+// unblocks. Preconditions that used to live on ActionRegistry entries
+// now run here — a blocked intent still resumes the coroutine (so
+// scripts don't hang) but produces no side-effect Cmd. The resume
+// fires as soon as the intent dispatches rather than after any
+// confirmation overlay closes; scripts that need to observe user
+// confirmation must arrange their own signal path. Quit routes
+// through handleQuit to preserve the save-on-exit path the legacy
+// "q" key used.
 func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 	var cmd tea.Cmd
 	switch i := p.intent.(type) {
 	case script.QuitIntent:
-		return tea.Quit
+		// Quit short-circuits: handleQuit saves and returns tea.Quit,
+		// which ends the program before any resume could matter — no
+		// point batching a scriptResumeMsg the main loop will never
+		// process.
+		_, cmd = m.handleQuit()
+		return cmd
 	case script.PushSelectedIntent:
+		if !selectedNotBusyNotWorkspace(m) {
+			break
+		}
 		if i.Confirm {
 			_, cmd = runSubmitSelected(m)
 		} else {
 			_, cmd = runSubmitSelectedNoConfirm(m)
 		}
 	case script.KillSelectedIntent:
+		if !selectedNotBusyNotWorkspace(m) {
+			break
+		}
 		if i.Confirm {
 			_, cmd = runKillSelected(m)
 		} else {
 			_, cmd = runKillSelectedNoConfirm(m)
 		}
 	case script.CheckoutIntent:
+		if !selectedNotBusyNotWorkspace(m) {
+			break
+		}
 		_, cmd = runCheckoutSelectedOpts(m, i.Confirm, i.Help)
 	case script.ResumeIntent:
+		if !selectedPausedNotWorkspace(m) {
+			break
+		}
 		_, cmd = runResumeSelected(m)
 	case script.NewInstanceIntent:
 		// Title pre-fill is not yet wired through the overlay; for now
@@ -312,18 +332,27 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 	case script.WorkspacePickerIntent:
 		_, cmd = runOpenWorkspacePicker(m)
 	case script.InlineAttachIntent:
+		if !selectedReadyForInput(m) {
+			break
+		}
 		if i.Pane == script.AttachPaneTerminal {
 			_, cmd = runInlineAttachTerminal(m)
 		} else {
 			_, cmd = runInlineAttachAgent(m)
 		}
 	case script.FullscreenAttachIntent:
+		if !selectedReadyForInputNotWorkspace(m) {
+			break
+		}
 		if i.Pane == script.AttachPaneTerminal {
 			_, cmd = runFullScreenAttachTerminal(m)
 		} else {
 			_, cmd = runFullScreenAttachAgent(m)
 		}
 	case script.QuickInputIntent:
+		if !selectedReadyForQuickInput(m) {
+			break
+		}
 		if i.Pane == script.AttachPaneTerminal {
 			_, cmd = runQuickInputTerminal(m)
 		} else {
@@ -365,7 +394,9 @@ func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 // surfaces script notices via errBox so users see them inline. The
 // ordering keeps instance adoption prior to error display so that,
 // e.g., a script that creates an instance and then errors still
-// leaves the new session visible.
+// leaves the new session visible. instanceChanged fires unconditionally
+// on dispatch so sync primitives (CursorUp/Down/ToggleDiff) that used
+// to trigger a refresh in the legacy runXYZ now still do.
 func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	for _, inst := range msg.pendingInstances {
 		finalizer := m.list.AddInstance(inst)
@@ -381,9 +412,7 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	if msg.err != nil {
 		cmds = append(cmds, m.handleError(msg.err))
 	}
-	if len(msg.pendingInstances) > 0 {
-		cmds = append(cmds, m.instanceChanged())
-	}
+	cmds = append(cmds, m.instanceChanged())
 	// Dispatch any yielded intents. handleScriptIntent mutates state
 	// synchronously (opens overlays, flips m.state, etc.) and returns a
 	// Cmd that batches the intent's side-effect Cmd with a resume

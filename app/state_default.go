@@ -1,15 +1,15 @@
 package app
 
 import (
-	"claude-squad/keys"
-
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 // handleStateDefaultKey processes keys while the list is in its normal
-// (no-overlay) state. Esc gets first chance to dismiss the diff or exit
-// scroll mode before falling through to ActionRegistry dispatch; quit
-// and unknown keys are handled inline.
+// (no-overlay) state. ctrl+c is a hard-reserved panic exit. Esc gets
+// first crack at dismissing the diff or exiting scroll mode. Every
+// remaining key is routed through the Lua engine via dispatchScript
+// — ActionRegistry and the GlobalKeyStringsMap lookup have been
+// retired in favor of defaults.lua.
 func handleStateDefaultKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ctrl+c is a panic-exit backstop. Evaluated BEFORE any engine
 	// dispatch or handler so a broken or malicious user script that
@@ -42,31 +42,8 @@ func handleStateDefaultKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// q routes through handleQuit for the save-then-exit path. ctrl+c
-	// was already handled at the top of this function as a panic-exit
-	// backstop; Task 15 will migrate q into defaults.lua so this
-	// short-circuit can disappear entirely.
-	if msg.String() == "q" {
-		return m.handleQuit()
-	}
-
-	name, ok := keys.GlobalKeyStringsMap[msg.String()]
-	if !ok {
-		// Built-in keymap miss: give the script engine a chance to
-		// claim the key. Scripts dispatch on the raw key string and
-		// bypass ActionRegistry entirely — see app/app_scripts.go.
-		if cmd, handled := m.dispatchScript(msg.String()); handled {
-			return m, cmd
-		}
-		return m, nil
-	}
-
-	// Route through the action registry. Every TUI keybinding lives in
-	// one of the sub-registries merged into defaultActions; an
-	// unhandled key here means the press was truly unbound (e.g., an
-	// ignored modifier combo).
-	if model, cmd, handled := m.actions.Dispatch(name, m); handled {
-		return model, cmd
+	if cmd, handled := m.dispatchScript(msg.String()); handled {
+		return m, cmd
 	}
 	return m, nil
 }

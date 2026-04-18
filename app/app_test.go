@@ -124,7 +124,6 @@ func TestConfirmationModalKeyHandling(t *testing.T) {
 		list:      list,
 		menu:      ui.NewMenu(),
 		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		actions:   defaultActions(),
 	}
 	h.setOverlay(overlay.NewConfirmationOverlay("Kill session?"), overlayConfirmation)
 
@@ -553,7 +552,6 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 		list:      list,
 		menu:      ui.NewMenu(),
 		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		actions:   defaultActions(),
 	}
 
 	// Set up a task like the kill handler does
@@ -648,7 +646,6 @@ func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 		list:      list,
 		menu:      ui.NewMenu(),
 		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		actions:   defaultActions(),
 	}
 
 	syncCalled := false

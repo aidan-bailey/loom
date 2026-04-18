@@ -109,11 +109,6 @@ type home struct {
 
 	// -- State --
 
-	// actions is the keypress dispatch registry. Populated once at
-	// home construction. Keys absent from the registry fall through
-	// to the legacy switch in handleKeyPress; see app/actions.go.
-	actions ActionRegistry
-
 	// state is the current discrete state of the application
 	state state
 	// newInstanceFinalizer is called when the state is stateNew and then you press enter.
@@ -211,7 +206,6 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 
 	h := &home{
 		ctx:         ctx,
-		actions:     defaultActions(),
 		activeCtx:   wsCtx,
 		registry:    registry,
 		spinner:     spinner.New(spinner.WithSpinner(spinner.MiniDot)),
@@ -797,8 +791,10 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach {
 		return nil, false
 	}
-	// If it's in the global keymap, we should try to highlight it.
-	name, ok := keys.GlobalKeyStringsMap[msg.String()]
+	// If it maps to a built-in binding, highlight the corresponding menu
+	// option. Script-bound keys don't get menu highlighting — the menu
+	// bar only shows built-in entries.
+	name, ok := keys.KeyForString(msg.String())
 	if !ok {
 		return nil, false
 	}

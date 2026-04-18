@@ -37,9 +37,8 @@ func helpStart(instance *session.Instance) helpText {
 
 // helpEntry describes one line in a help panel. The rendered label is the
 // concatenation of each binding's Help().Key (joined with ", "), or rawKey
-// when the action has no binding (e.g. "ctrl+q" detach). The description
-// falls back to keys.HelpPanelDescriptions for the first binding when desc
-// is empty, allowing per-panel overrides for context-specific wording.
+// when the action has no binding (e.g. "ctrl+q" detach). desc must be
+// supplied — the help overlay is the canonical long-form description.
 type helpEntry struct {
 	bindings []keys.KeyName
 	rawKey   string
@@ -58,13 +57,7 @@ func (e helpEntry) label() string {
 }
 
 func (e helpEntry) description() string {
-	if e.desc != "" {
-		return e.desc
-	}
-	if len(e.bindings) > 0 {
-		return keys.HelpPanelDescriptions[e.bindings[0]]
-	}
-	return ""
+	return e.desc
 }
 
 // renderHelpSection returns a block of "<label><pad>- <desc>" lines with
@@ -89,38 +82,38 @@ func renderHelpSection(entries []helpEntry, dashCol int) string {
 
 var (
 	generalManagingEntries = []helpEntry{
-		{bindings: []keys.KeyName{keys.KeyNew}},
-		{bindings: []keys.KeyName{keys.KeyPrompt}},
-		{bindings: []keys.KeyName{keys.KeyKill}},
+		{bindings: []keys.KeyName{keys.KeyNew}, desc: "Create a new session"},
+		{bindings: []keys.KeyName{keys.KeyPrompt}, desc: "Create a new session with a prompt"},
+		{bindings: []keys.KeyName{keys.KeyKill}, desc: "Kill (delete) the selected session"},
 		{bindings: []keys.KeyName{keys.KeyUp, keys.KeyDown}, desc: "Navigate between sessions"},
-		{bindings: []keys.KeyName{keys.KeyFullScreenAttachAgent}},
-		{bindings: []keys.KeyName{keys.KeyFullScreenAttachTerminal}},
-		{bindings: []keys.KeyName{keys.KeyQuickInputAgent}},
-		{bindings: []keys.KeyName{keys.KeyQuickInputTerminal}},
-		{bindings: []keys.KeyName{keys.KeyDirectAttachAgent}},
-		{bindings: []keys.KeyName{keys.KeyDirectAttachTerminal}},
+		{bindings: []keys.KeyName{keys.KeyFullScreenAttachAgent}, desc: "Full-screen attach to agent pane"},
+		{bindings: []keys.KeyName{keys.KeyFullScreenAttachTerminal}, desc: "Full-screen attach to terminal pane"},
+		{bindings: []keys.KeyName{keys.KeyQuickInputAgent}, desc: "Quick input: type and send to agent"},
+		{bindings: []keys.KeyName{keys.KeyQuickInputTerminal}, desc: "Quick input: type and send to terminal"},
+		{bindings: []keys.KeyName{keys.KeyDirectAttachAgent}, desc: "Inline attach to agent pane"},
+		{bindings: []keys.KeyName{keys.KeyDirectAttachTerminal}, desc: "Inline attach to terminal pane"},
 		{rawKey: "ctrl+q", desc: "Detach from session"},
 	}
 
 	generalHandoffEntries = []helpEntry{
-		{bindings: []keys.KeyName{keys.KeySubmit}},
-		{bindings: []keys.KeyName{keys.KeyCheckout}},
-		{bindings: []keys.KeyName{keys.KeyResume}},
+		{bindings: []keys.KeyName{keys.KeySubmit}, desc: "Commit and push branch to github"},
+		{bindings: []keys.KeyName{keys.KeyCheckout}, desc: "Checkout: commit changes and pause session"},
+		{bindings: []keys.KeyName{keys.KeyResume}, desc: "Resume a paused session"},
 	}
 
 	generalOtherEntries = []helpEntry{
-		{bindings: []keys.KeyName{keys.KeyWorkspace}},
-		{bindings: []keys.KeyName{keys.KeyDiff}},
-		{bindings: []keys.KeyName{keys.KeyQuit}},
+		{bindings: []keys.KeyName{keys.KeyWorkspace}, desc: "Switch workspace"},
+		{bindings: []keys.KeyName{keys.KeyDiff}, desc: "Toggle diff overlay"},
+		{bindings: []keys.KeyName{keys.KeyQuit}, desc: "Quit the application"},
 	}
 
 	instanceStartManagingEntries = []helpEntry{
-		{bindings: []keys.KeyName{keys.KeyFullScreenAttachAgent}},
-		{bindings: []keys.KeyName{keys.KeyFullScreenAttachTerminal}},
-		{bindings: []keys.KeyName{keys.KeyDirectAttachAgent}},
-		{bindings: []keys.KeyName{keys.KeyDirectAttachTerminal}},
-		{bindings: []keys.KeyName{keys.KeyDiff}},
-		{bindings: []keys.KeyName{keys.KeyKill}},
+		{bindings: []keys.KeyName{keys.KeyFullScreenAttachAgent}, desc: "Full-screen attach to agent pane"},
+		{bindings: []keys.KeyName{keys.KeyFullScreenAttachTerminal}, desc: "Full-screen attach to terminal pane"},
+		{bindings: []keys.KeyName{keys.KeyDirectAttachAgent}, desc: "Inline attach to agent pane"},
+		{bindings: []keys.KeyName{keys.KeyDirectAttachTerminal}, desc: "Inline attach to terminal pane"},
+		{bindings: []keys.KeyName{keys.KeyDiff}, desc: "Toggle diff overlay"},
+		{bindings: []keys.KeyName{keys.KeyKill}, desc: "Kill (delete) the selected session"},
 	}
 
 	instanceStartHandoffEntries = []helpEntry{

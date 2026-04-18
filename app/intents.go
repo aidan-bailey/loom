@@ -1,7 +1,7 @@
 package app
 
 import (
-	"claude-squad/keys"
+	"claude-squad/config"
 	"claude-squad/log"
 	"claude-squad/session"
 	"claude-squad/session/git"
@@ -13,21 +13,69 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// lifecycleActions registers keys that mutate an instance's state
-// machine: new, prompt, kill, submit (push), checkout (pause), resume.
-// Preconditions gate the targets that must exist in a usable status;
-// the error-returning capacity check for KeyNew/KeyPrompt stays in
-// Run since it produces a user-visible error message.
-func lifecycleActions() ActionRegistry {
-	return ActionRegistry{
-		keys.KeyPrompt:   {Run: runPromptNewInstance},
-		keys.KeyNew:      {Run: runNewInstance},
-		keys.KeyKill:     {Precondition: selectedNotBusyNotWorkspace, Run: runKillSelected},
-		keys.KeySubmit:   {Precondition: selectedNotBusyNotWorkspace, Run: runSubmitSelected},
-		keys.KeyCheckout: {Precondition: selectedNotBusyNotWorkspace, Run: runCheckoutSelected},
-		keys.KeyResume:   {Precondition: selectedPausedNotWorkspace, Run: runResumeSelected},
+// intents.go owns the app-side handlers that back each script
+// Intent. Every function here is called from handleScriptIntent in
+// app_scripts.go after the matching cs.actions.* primitive enqueues
+// its intent and the coroutine yields. The ActionRegistry-era
+// precondition predicates live alongside the runXYZ helpers they
+// guard — centralizing them here makes it obvious which guard goes
+// with which handler.
+
+// selectedNotBusyNotWorkspace gates lifecycle mutations (kill,
+// submit, checkout): the selected instance must exist, must not be a
+// workspace-terminal (no branch/worktree to act on), and must not be
+// mid-transition.
+func selectedNotBusyNotWorkspace(m *home) bool {
+	selected := m.list.GetSelectedInstance()
+	if selected == nil || selected.IsWorkspaceTerminal {
+		return false
 	}
+	s := selected.GetStatus()
+	return s != session.Loading && s != session.Deleting
 }
+
+// selectedPausedNotWorkspace gates resume: only a paused,
+// non-workspace instance has a branch waiting to be checked back out.
+func selectedPausedNotWorkspace(m *home) bool {
+	selected := m.list.GetSelectedInstance()
+	if selected == nil || selected.IsWorkspaceTerminal {
+		return false
+	}
+	return selected.GetStatus() == session.Paused
+}
+
+// selectedReadyForInput gates attach/quick-input: the instance must
+// exist, have a live tmux pane, and not be mid-lifecycle.
+func selectedReadyForInput(m *home) bool {
+	selected := m.list.GetSelectedInstance()
+	if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+		return false
+	}
+	s := selected.GetStatus()
+	return s != session.Loading && s != session.Deleting
+}
+
+// selectedReadyForInputNotWorkspace adds the "not a workspace
+// terminal" constraint required by full-screen attach, which would
+// otherwise take over the main repo shell.
+func selectedReadyForInputNotWorkspace(m *home) bool {
+	selected := m.list.GetSelectedInstance()
+	if selected == nil || selected.IsWorkspaceTerminal {
+		return false
+	}
+	return selectedReadyForInput(m)
+}
+
+// selectedReadyForQuickInput adds the "diff overlay not open" guard:
+// the quick-input bar shares screen real estate with the diff view.
+func selectedReadyForQuickInput(m *home) bool {
+	if !selectedReadyForInput(m) {
+		return false
+	}
+	return !m.splitPane.IsDiffVisible()
+}
+
+// -- Lifecycle --
 
 func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 	if m.list.NumInstances() >= GlobalInstanceLimit {
@@ -187,16 +235,12 @@ func pushActionFor(selected *session.Instance) tea.Cmd {
 	}
 }
 
-func runCheckoutSelected(m *home) (tea.Model, tea.Cmd) {
-	return runCheckoutSelectedOpts(m, true, true)
-}
-
 // runCheckoutSelectedOpts is the parameterized pause path. confirm
 // gates the confirmation overlay; help gates the prerequisite help
 // screen. Script callers use cs.actions.checkout_selected{confirm=,
-// help=} to tune either; the legacy keymap always passes both true.
-// Combinations that skip the confirm still trigger the Loading
-// transition synchronously so the spinner renders immediately.
+// help=} to tune either. Combinations that skip the confirm still
+// trigger the Loading transition synchronously so the spinner
+// renders immediately.
 func runCheckoutSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
 	pauseAction := pauseActionFor(m, selected)
@@ -267,4 +311,75 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 		return resumeDoneMsg{}
 	}
 	return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), resumeCmd)
+}
+
+// -- Attach --
+
+func runInlineAttachAgent(m *home) (tea.Model, tea.Cmd) {
+	m.splitPane.SetFocusedPane(ui.FocusAgent)
+	m.splitPane.SetInlineAttach(true)
+	m.state = stateInlineAttach
+	m.menu.SetState(ui.StateInlineAttach)
+	return m, tea.WindowSize()
+}
+
+func runInlineAttachTerminal(m *home) (tea.Model, tea.Cmd) {
+	m.splitPane.SetFocusedPane(ui.FocusTerminal)
+	m.splitPane.SetInlineAttach(true)
+	m.state = stateInlineAttach
+	m.menu.SetState(ui.StateInlineAttach)
+	return m, tea.WindowSize()
+}
+
+func runFullScreenAttachAgent(m *home) (tea.Model, tea.Cmd) {
+	selected := m.list.GetSelectedInstance()
+	return m.showHelpScreen(helpTypeInstanceAttach{}, func() tea.Cmd {
+		return startAttachCmd(selected, attachTargetAgent)
+	})
+}
+
+func runFullScreenAttachTerminal(m *home) (tea.Model, tea.Cmd) {
+	selected := m.list.GetSelectedInstance()
+	return m.showHelpScreen(helpTypeInstanceAttach{}, func() tea.Cmd {
+		return startAttachCmd(selected, attachTargetTerminal)
+	})
+}
+
+// -- Quick input --
+
+func runQuickInputAgent(m *home) (tea.Model, tea.Cmd) {
+	m.state = stateQuickInteract
+	m.quickInputBar = ui.NewQuickInputBar(ui.QuickInputTargetAgent)
+	m.menu.SetState(ui.StateQuickInteract)
+	return m, tea.WindowSize()
+}
+
+func runQuickInputTerminal(m *home) (tea.Model, tea.Cmd) {
+	m.state = stateQuickInteract
+	m.quickInputBar = ui.NewQuickInputBar(ui.QuickInputTargetTerminal)
+	m.menu.SetState(ui.StateQuickInteract)
+	return m, tea.WindowSize()
+}
+
+// -- Help & workspace --
+
+func runShowHelp(m *home) (tea.Model, tea.Cmd) {
+	return m.showHelpScreen(helpTypeGeneral{}, nil)
+}
+
+func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
+	registry, err := config.LoadWorkspaceRegistry()
+	if err != nil {
+		return m, m.handleError(fmt.Errorf("failed to load workspace registry: %w", err))
+	}
+	if len(registry.Workspaces) == 0 {
+		return m, m.handleError(fmt.Errorf("no workspaces registered"))
+	}
+	activeNames := make(map[string]bool, len(m.slots))
+	for _, slot := range m.slots {
+		activeNames[slot.wsCtx.Name] = true
+	}
+	m.setOverlay(overlay.NewWorkspacePicker(registry.Workspaces, activeNames), overlayWorkspacePicker)
+	m.state = stateWorkspace
+	return m, nil
 }
