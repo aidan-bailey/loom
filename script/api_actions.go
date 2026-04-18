@@ -21,6 +21,7 @@ func installActions(L *lua.LState, e *Engine) {
 	actions := L.NewTable()
 
 	installSyncActions(L, e, actions)
+	installDeferredActions(L, e, actions)
 
 	cs, ok := L.GetGlobal("cs").(*lua.LTable)
 	if !ok {
@@ -65,4 +66,65 @@ func installSyncActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 		}
 		return 0
 	}))
+}
+
+// installDeferredActions attaches primitives that can't complete on
+// the dispatch goroutine — they open overlays, emit tea.Cmds, or
+// otherwise need the main loop. Each enqueues an Intent on the Host,
+// records the returned IntentID on e.lastEnqueued so bare cs.await()
+// can consume it, and yields the running coroutine with the id so
+// runAction can re-track it under that id. Even if a handler forgets
+// cs.await, the yield leaves the coroutine parked cleanly rather than
+// racing ahead into host-owned state.
+func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
+	enqueue := func(L *lua.LState, intent Intent) int {
+		if e.curHost == nil {
+			return 0
+		}
+		id := e.curHost.Enqueue(intent)
+		e.lastEnqueued = id
+		return L.Yield(lua.LNumber(id))
+	}
+
+	actions.RawSetString("quit", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, QuitIntent{})
+	}))
+
+	actions.RawSetString("push_selected", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, PushSelectedIntent{Confirm: optBool(L, "confirm", true)})
+	}))
+
+	actions.RawSetString("kill_selected", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, KillSelectedIntent{Confirm: optBool(L, "confirm", true)})
+	}))
+
+	actions.RawSetString("checkout_selected", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, CheckoutIntent{
+			Confirm: optBool(L, "confirm", true),
+			Help:    optBool(L, "help", true),
+		})
+	}))
+
+	actions.RawSetString("resume_selected", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, ResumeIntent{})
+	}))
+}
+
+// optBool reads a boolean field from the single table argument at
+// index 1. Missing table or missing field returns def. The opt-table
+// lets callers write cs.actions.push_selected{confirm=false} without a
+// positional-argument ordering contract.
+func optBool(L *lua.LState, field string, def bool) bool {
+	if L.GetTop() < 1 {
+		return def
+	}
+	t, ok := L.Get(1).(*lua.LTable)
+	if !ok {
+		return def
+	}
+	v := t.RawGetString(field)
+	if v == lua.LNil {
+		return def
+	}
+	return lua.LVAsBool(v)
 }

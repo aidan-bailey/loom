@@ -21,6 +21,121 @@ func (h *recordingHost) ToggleDiff()    { h.calls = append(h.calls, "ToggleDiff"
 func (h *recordingHost) WorkspacePrev() { h.calls = append(h.calls, "WorkspacePrev") }
 func (h *recordingHost) WorkspaceNext() { h.calls = append(h.calls, "WorkspaceNext") }
 
+// dispatchExpectYield runs a handler bound to key and asserts it
+// yielded (deferred primitives always yield). Returns the fakeHost so
+// tests can inspect the enqueued intent.
+func dispatchExpectYield(t *testing.T, e *Engine, key string) *fakeHost {
+	t.Helper()
+	h := &fakeHost{}
+	_, err := e.Dispatch(key, h)
+	if err != nil {
+		t.Fatalf("dispatch %q: %v", key, err)
+	}
+	if len(h.enqueued) == 0 {
+		t.Fatalf("dispatch %q: no intent enqueued", key)
+	}
+	return h
+}
+
+func TestCsActionsQuitEnqueuesIntent(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("q", function() cs.actions.quit() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "q")
+	require.Len(t, h.enqueued, 1)
+	_, ok := h.enqueued[0].(QuitIntent)
+	assert.True(t, ok)
+}
+
+func TestCsActionsPushSelectedDefaultsConfirmTrue(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("p", function() cs.actions.push_selected() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "p")
+	intent := h.enqueued[0].(PushSelectedIntent)
+	assert.True(t, intent.Confirm)
+}
+
+func TestCsActionsPushSelectedRespectsConfirmFalse(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("p", function() cs.actions.push_selected{confirm=false} end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "p")
+	intent := h.enqueued[0].(PushSelectedIntent)
+	assert.False(t, intent.Confirm)
+}
+
+func TestCsActionsKillSelectedDefaultsConfirmTrue(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("k", function() cs.actions.kill_selected() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "k")
+	intent := h.enqueued[0].(KillSelectedIntent)
+	assert.True(t, intent.Confirm)
+}
+
+func TestCsActionsKillSelectedRespectsConfirmFalse(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("k", function() cs.actions.kill_selected{confirm=false} end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "k")
+	intent := h.enqueued[0].(KillSelectedIntent)
+	assert.False(t, intent.Confirm)
+}
+
+func TestCsActionsCheckoutSelectedDefaults(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("c", function() cs.actions.checkout_selected() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "c")
+	intent := h.enqueued[0].(CheckoutIntent)
+	assert.True(t, intent.Confirm)
+	assert.True(t, intent.Help)
+}
+
+func TestCsActionsCheckoutSelectedAllowsOverrides(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("c", function() cs.actions.checkout_selected{confirm=false, help=false} end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "c")
+	intent := h.enqueued[0].(CheckoutIntent)
+	assert.False(t, intent.Confirm)
+	assert.False(t, intent.Help)
+}
+
+func TestCsActionsResumeSelectedEnqueues(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("r", function() cs.actions.resume_selected() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "r")
+	_, ok := h.enqueued[0].(ResumeIntent)
+	assert.True(t, ok)
+}
+
 func TestCsActionsSyncPrimitivesCallHost(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()
