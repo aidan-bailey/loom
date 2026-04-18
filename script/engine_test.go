@@ -117,9 +117,11 @@ func TestEngineRejectsReservedKey(t *testing.T) {
 	assert.Empty(t, e.actionKeys(), "reserved key must not be bound")
 }
 
-// TestEngineFirstScriptWinsForDuplicateKey verifies the first-wins
-// policy for two scripts that both try to bind the same key.
-func TestEngineFirstScriptWinsForDuplicateKey(t *testing.T) {
+// TestEngineLaterBindOverwritesForDuplicateKey verifies the new
+// last-wins policy: a second cs.register_action (or cs.bind) on the
+// same key replaces the earlier binding. Scripts compose the stock
+// keymap by cs.unbind + cs.bind, so overrides are first-class.
+func TestEngineLaterBindOverwritesForDuplicateKey(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()
 
@@ -145,11 +147,11 @@ func TestEngineFirstScriptWinsForDuplicateKey(t *testing.T) {
 	matched, err := e.Dispatch("ctrl+x", h)
 	require.NoError(t, err)
 	assert.True(t, matched)
-	assert.Equal(t, []string{"first"}, h.notices)
+	assert.Equal(t, []string{"second"}, h.notices)
 
 	regs := e.Registrations()
 	require.Len(t, regs, 1)
-	assert.Equal(t, "first", regs[0].Help)
+	assert.Equal(t, "second", regs[0].Help)
 }
 
 // TestEngineRejectsRuntimeRegister ensures cs.register_action only

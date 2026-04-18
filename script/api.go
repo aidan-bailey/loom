@@ -36,10 +36,12 @@ func installAPI(L *lua.LState, e *Engine) {
 	L.SetGlobal("cs", cs)
 }
 
-// apiRegisterAction validates the options table and appends a new
-// scriptAction to the engine. Every required field raises a Lua
-// error on mismatch so script authors learn about typos at load
-// time, not at dispatch.
+// apiRegisterAction is the table-form alias for cs.bind. It accepts
+// the same precondition/run pair as before but forwards to the
+// bind() path, so its behavior lines up with cs.bind (overwrite on
+// collision, runs inside a coroutine). The precondition is retained on
+// scriptAction so runAction's existing gating continues to work —
+// wrapping it into a Lua function would add an unnecessary frame.
 func apiRegisterAction(e *Engine) lua.LGFunction {
 	return func(L *lua.LState) int {
 		opts := L.CheckTable(1)
@@ -76,7 +78,7 @@ func apiRegisterAction(e *Engine) lua.LGFunction {
 			precondition: pre,
 			run:          run,
 		}
-		if err := e.register(act); err != nil {
+		if err := e.bind(act); err != nil {
 			L.RaiseError("%s", err.Error())
 		}
 		return 0

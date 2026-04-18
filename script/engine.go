@@ -315,26 +315,6 @@ func (e *Engine) unbind(key string) {
 	}
 }
 
-// register is the legacy first-wins path used by older cs.register_action
-// semantics. Kept only so existing tests and the shim in api.go can
-// continue to call it until Task 5 swaps the alias over to bind().
-func (e *Engine) register(act *scriptAction) error {
-	if !e.loading {
-		return fmt.Errorf("cs.register_action can only be called at load time")
-	}
-	if e.reserved[act.key] {
-		log.WarningLog.Printf("script %s: key %q is reserved by built-in; skipping", act.file, act.key)
-		return nil
-	}
-	if prior, ok := e.actions[act.key]; ok {
-		log.WarningLog.Printf("script %s: key %q already bound by %s; skipping", act.file, act.key, prior.file)
-		return nil
-	}
-	e.actions[act.key] = act
-	e.order = append(e.order, act.key)
-	return nil
-}
-
 // Registrations returns a stable, insertion-ordered slice of the
 // currently bound script actions for use by the help panel.
 func (e *Engine) Registrations() []Registration {
