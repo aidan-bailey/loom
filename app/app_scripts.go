@@ -32,6 +32,7 @@ type scriptHost struct {
 	mu      sync.Mutex
 	pending []*session.Instance
 	notices []string
+	intents []pendingIntent
 }
 
 // SelectedInstance: see script.Host.
@@ -92,6 +93,24 @@ func (s *scriptHost) Notify(msg string) {
 	s.mu.Lock()
 	s.notices = append(s.notices, msg)
 	s.mu.Unlock()
+}
+
+// Enqueue stages an intent for main-loop processing. The actual
+// handoff (and resume plumbing) is wired in Task 10 — for now this
+// just appends so scriptHost still satisfies script.Host.
+func (s *scriptHost) Enqueue(intent script.Intent) script.IntentID {
+	id := script.NewIntentID()
+	s.mu.Lock()
+	s.intents = append(s.intents, pendingIntent{id: id, intent: intent})
+	s.mu.Unlock()
+	return id
+}
+
+// pendingIntent ties a caller-provided intent to the id the script
+// awaits on. Task 10 drains this into scriptDoneMsg.
+type pendingIntent struct {
+	id     script.IntentID
+	intent script.Intent
 }
 
 // drain returns and clears the pending instances and notices.

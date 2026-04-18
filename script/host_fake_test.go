@@ -18,6 +18,8 @@ type fakeHost struct {
 	branchPrefix    string
 	queuedInstances []*session.Instance
 	notices         []string
+	enqueued        []Intent
+	enqueuedIDs     []IntentID
 }
 
 func (f *fakeHost) SelectedInstance() *session.Instance   { return f.selected }
@@ -34,4 +36,13 @@ func (f *fakeHost) QueueInstance(inst *session.Instance) {
 
 func (f *fakeHost) Notify(msg string) {
 	f.notices = append(f.notices, msg)
+}
+
+// Enqueue stashes the intent and returns a fresh id so tests can assert
+// against h.enqueued / h.enqueuedIDs without wiring up a real app.
+func (f *fakeHost) Enqueue(intent Intent) IntentID {
+	id := newIntentID()
+	f.enqueued = append(f.enqueued, intent)
+	f.enqueuedIDs = append(f.enqueuedIDs, id)
+	return id
 }

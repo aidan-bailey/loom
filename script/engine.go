@@ -29,12 +29,31 @@ type Engine struct {
 	// reference. Always accessed under mu, same as the rest of Engine.
 	curHost Host
 
+	// coroutines tracks suspended handler coroutines awaiting a host
+	// Resume. Each slot is keyed by the IntentID the coroutine last
+	// yielded; resuming re-keys under the next yielded id when the
+	// coroutine awaits again. Access always under e.mu.
+	coroutines map[IntentID]coroutineSlot
+
+	// lastEnqueued records the most recent IntentID the active Lua
+	// callback enqueued via the host. cs.await consumes it so scripts
+	// can write `cs.await(cs.actions.quit())` without a separate id
+	// return value plumbing step. Valid only during a Lua callback.
+	lastEnqueued IntentID
+
 	// logs buffers structured log entries emitted via ctx:log() so the
 	// app can drain them on its own schedule. Using the app's log
 	// package directly from script land would bypass the TUI's
 	// error-bar surfacing, which is why ctx:notify() exists as a
 	// separate channel.
 	logs []LogEntry
+}
+
+// coroutineSlot holds a suspended handler thread. Stored as a struct
+// rather than a bare *lua.LState so later fields (e.g. deadline) can
+// be added without touching every callsite.
+type coroutineSlot struct {
+	co *lua.LState
 }
 
 // LogEntry is a single script-emitted log record.
@@ -68,9 +87,10 @@ func NewEngine(reserved map[string]bool) *Engine {
 	openSandbox(L)
 
 	e := &Engine{
-		L:        L,
-		actions:  map[string]*scriptAction{},
-		reserved: reserved,
+		L:          L,
+		actions:    map[string]*scriptAction{},
+		reserved:   reserved,
+		coroutines: map[IntentID]coroutineSlot{},
 	}
 
 	registerInstanceType(L)
@@ -125,6 +145,56 @@ func (e *Engine) Dispatch(key string, h Host) (matched bool, err error) {
 		return false, nil
 	}
 	return true, e.runAction(act, h)
+}
+
+// track registers co under id as a suspended coroutine awaiting a
+// host Resume. Caller holds e.mu.
+func (e *Engine) track(id IntentID, co *lua.LState) {
+	e.coroutines[id] = coroutineSlot{co: co}
+}
+
+// Resume wakes the coroutine registered under id with value. If the
+// coroutine completes, the first return value flows back. If it
+// yields again (e.g. because the script chained another cs.await),
+// the slot is re-tracked under the newly-yielded IntentID and Resume
+// returns nil — the host should expect another incoming Enqueue call
+// to have already produced that id.
+func (e *Engine) Resume(id IntentID, value lua.LValue) (lua.LValue, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	slot, ok := e.coroutines[id]
+	if !ok {
+		return lua.LNil, fmt.Errorf("script: no coroutine awaiting intent %d", id)
+	}
+	delete(e.coroutines, id)
+
+	// Clear lastEnqueued so a coroutine body that enqueues during this
+	// resume leaves a fresh value behind for cs.await to consume.
+	e.lastEnqueued = 0
+
+	st, rerr, vals := e.L.Resume(slot.co, nil, value)
+	switch st {
+	case lua.ResumeOK:
+		if len(vals) > 0 {
+			return vals[0], nil
+		}
+		return lua.LNil, nil
+	case lua.ResumeYield:
+		// The coroutine awaited another intent. The yielded value is
+		// the id to re-track under.
+		if len(vals) == 0 {
+			return lua.LNil, fmt.Errorf("script: coroutine yielded without an intent id")
+		}
+		next, ok := vals[0].(lua.LNumber)
+		if !ok {
+			return lua.LNil, fmt.Errorf("script: coroutine yielded non-numeric intent id %v", vals[0])
+		}
+		e.coroutines[IntentID(next)] = slot
+		return lua.LNil, nil
+	default:
+		return lua.LNil, rerr
+	}
 }
 
 // runAction executes a scriptAction under the already-held engine

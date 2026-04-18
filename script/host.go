@@ -50,4 +50,10 @@ type Host interface {
 	// Notify posts a transient message to the TUI's error/info bar.
 	// Called from script userdata through ctx:notify().
 	Notify(msg string)
+	// Enqueue hands an Intent to the main goroutine for processing and
+	// returns the IntentID scripts will match against a later
+	// Engine.Resume call. Called from cs.actions.* primitives when the
+	// requested operation cannot be performed synchronously on the
+	// dispatch goroutine (e.g. anything that opens an overlay).
+	Enqueue(intent Intent) IntentID
 }
