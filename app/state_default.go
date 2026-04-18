@@ -11,6 +11,15 @@ import (
 // scroll mode before falling through to ActionRegistry dispatch; quit
 // and unknown keys are handled inline.
 func handleStateDefaultKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c is a panic-exit backstop. Evaluated BEFORE any engine
+	// dispatch or handler so a broken or malicious user script that
+	// unbinds or shadows ctrl+c still can't trap the user in the
+	// TUI. Skips handleQuit's save path intentionally: ctrl+c is for
+	// the case where something's gone wrong and the user wants out
+	// now, not a clean shutdown.
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
 	if msg.Type == tea.KeyEsc {
 		// Dismiss diff overlay first
 		if m.splitPane.IsDiffVisible() {
@@ -33,8 +42,11 @@ func handleStateDefaultKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Handle quit commands first
-	if msg.String() == "ctrl+c" || msg.String() == "q" {
+	// q routes through handleQuit for the save-then-exit path. ctrl+c
+	// was already handled at the top of this function as a panic-exit
+	// backstop; Task 15 will migrate q into defaults.lua so this
+	// short-circuit can disappear entirely.
+	if msg.String() == "q" {
 		return m.handleQuit()
 	}
 
