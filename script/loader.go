@@ -1,13 +1,34 @@
 package script
 
 import (
-	"claude-squad/log"
+	_ "embed"
 	"fmt"
+
+	"claude-squad/log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 )
+
+// defaultsLua is the stock keymap baked into the binary. Loaded
+// before user scripts so users can freely override via cs.unbind +
+// cs.bind (or just cs.bind, which overwrites).
+//
+//go:embed defaults.lua
+var defaultsLua []byte
+
+// LoadDefaults compiles the embedded defaults. A parse or registration
+// error here is a build-time bug — defaults.lua is shipped with the
+// binary — so we panic rather than let broken defaults silently hide
+// behind a log warning.
+func (e *Engine) LoadDefaults() {
+	e.BeginLoad("<defaults>")
+	defer e.EndLoad()
+	if err := e.L.DoString(string(defaultsLua)); err != nil {
+		panic(fmt.Errorf("defaults.lua: %w", err))
+	}
+}
 
 // loadScripts walks dir looking for *.lua files and runs each one
 // under the engine's LState. Called under e.mu — the engine sets

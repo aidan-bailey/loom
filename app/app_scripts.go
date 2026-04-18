@@ -202,6 +202,12 @@ func initScripts(h *home) {
 	reserved["ctrl+q"] = true
 	h.scripts = script.NewEngine(reserved)
 
+	// Defaults ship embedded in the binary, so they always load —
+	// even when the user has no scripts directory. User scripts run
+	// afterwards and can override any default via cs.unbind + cs.bind
+	// (or just cs.bind, which overwrites).
+	h.scripts.LoadDefaults()
+
 	dir := scriptsDir()
 	if dir == "" {
 		return
