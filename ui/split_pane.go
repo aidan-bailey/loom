@@ -182,6 +182,132 @@ func (s *SplitPane) ScrollDown() {
 	}
 }
 
+// PageUp scrolls the active pane (diff if visible, else focused) up by half a view.
+func (s *SplitPane) PageUp() {
+	if s.diffVisible {
+		s.diff.PageUp()
+		return
+	}
+	switch s.focusedPane {
+	case FocusAgent:
+		if err := s.agent.PageUp(s.instance); err != nil {
+			log.InfoLog.Printf("split pane failed to page agent up: %v", err)
+		}
+	case FocusTerminal:
+		if err := s.terminal.PageUp(); err != nil {
+			log.InfoLog.Printf("split pane failed to page terminal up: %v", err)
+		}
+	}
+}
+
+// PageDown scrolls the active pane down by half a view.
+func (s *SplitPane) PageDown() {
+	if s.diffVisible {
+		s.diff.PageDown()
+		return
+	}
+	switch s.focusedPane {
+	case FocusAgent:
+		if err := s.agent.PageDown(s.instance); err != nil {
+			log.InfoLog.Printf("split pane failed to page agent down: %v", err)
+		}
+	case FocusTerminal:
+		if err := s.terminal.PageDown(); err != nil {
+			log.InfoLog.Printf("split pane failed to page terminal down: %v", err)
+		}
+	}
+}
+
+// GotoTop jumps the active pane to the start of its scrollback.
+func (s *SplitPane) GotoTop() {
+	if s.diffVisible {
+		s.diff.GotoTop()
+		return
+	}
+	switch s.focusedPane {
+	case FocusAgent:
+		if err := s.agent.GotoTop(s.instance); err != nil {
+			log.InfoLog.Printf("split pane failed to goto agent top: %v", err)
+		}
+	case FocusTerminal:
+		if err := s.terminal.GotoTop(); err != nil {
+			log.InfoLog.Printf("split pane failed to goto terminal top: %v", err)
+		}
+	}
+}
+
+// GotoBottom jumps the active pane to the live tail, exiting scroll mode.
+func (s *SplitPane) GotoBottom() {
+	if s.diffVisible {
+		s.diff.GotoBottom()
+		return
+	}
+	switch s.focusedPane {
+	case FocusAgent:
+		if err := s.agent.GotoBottom(s.instance); err != nil {
+			log.InfoLog.Printf("split pane failed to goto agent bottom: %v", err)
+		}
+	case FocusTerminal:
+		s.terminal.GotoBottom()
+	}
+}
+
+// ScrollAgentUp scrolls the agent pane explicitly, ignoring focus/diff.
+func (s *SplitPane) ScrollAgentUp() {
+	if err := s.agent.ScrollUp(s.instance); err != nil {
+		log.InfoLog.Printf("split pane failed to scroll agent up: %v", err)
+	}
+}
+
+// ScrollAgentDown scrolls the agent pane explicitly.
+func (s *SplitPane) ScrollAgentDown() {
+	if err := s.agent.ScrollDown(s.instance); err != nil {
+		log.InfoLog.Printf("split pane failed to scroll agent down: %v", err)
+	}
+}
+
+// ScrollTerminalUp scrolls the terminal pane explicitly.
+func (s *SplitPane) ScrollTerminalUp() {
+	if err := s.terminal.ScrollUp(); err != nil {
+		log.InfoLog.Printf("split pane failed to scroll terminal up: %v", err)
+	}
+}
+
+// ScrollTerminalDown scrolls the terminal pane explicitly.
+func (s *SplitPane) ScrollTerminalDown() {
+	if err := s.terminal.ScrollDown(); err != nil {
+		log.InfoLog.Printf("split pane failed to scroll terminal down: %v", err)
+	}
+}
+
+// PageTerminalUp pages the terminal pane explicitly.
+func (s *SplitPane) PageTerminalUp() {
+	if err := s.terminal.PageUp(); err != nil {
+		log.InfoLog.Printf("split pane failed to page terminal up: %v", err)
+	}
+}
+
+// PageTerminalDown pages the terminal pane explicitly.
+func (s *SplitPane) PageTerminalDown() {
+	if err := s.terminal.PageDown(); err != nil {
+		log.InfoLog.Printf("split pane failed to page terminal down: %v", err)
+	}
+}
+
+// ScrollDiffUp scrolls the diff overlay explicitly (no-op if not visible).
+func (s *SplitPane) ScrollDiffUp() {
+	if s.diffVisible {
+		s.diff.ScrollUp()
+	}
+}
+
+// ScrollDiffDown scrolls the diff overlay explicitly (no-op if not visible).
+func (s *SplitPane) ScrollDiffDown() {
+	if s.diffVisible {
+		s.diff.ScrollDown()
+	}
+}
+
 // IsAgentInScrollMode returns true if the agent pane is in scroll mode.
 func (s *SplitPane) IsAgentInScrollMode() bool {
 	return s.agent.isScrolling
