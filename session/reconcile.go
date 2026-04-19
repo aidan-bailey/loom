@@ -1,7 +1,7 @@
 package session
 
 import (
-	"claude-squad/cmd"
+	internalexec "claude-squad/internal/exec"
 	"claude-squad/log"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
@@ -34,7 +34,7 @@ const (
 )
 
 // CheckTmuxAlive checks if a tmux session exists by its sanitized name.
-func CheckTmuxAlive(sessionTitle string, cmdExec cmd.Executor) bool {
+func CheckTmuxAlive(sessionTitle string, cmdExec internalexec.Executor) bool {
 	sanitized := tmux.ToClaudeSquadTmuxName(sessionTitle)
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer cancel()
@@ -79,7 +79,7 @@ func DetermineRecoveryAction(status Status, tmuxAlive, worktreeExists, isWorkspa
 
 // ReconcileAndRestore loads an instance from serialized data, checks the health
 // of its tmux session and worktree, and takes the appropriate recovery action.
-func ReconcileAndRestore(data InstanceData, configDir string, cmdExec cmd.Executor) (*Instance, error) {
+func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalexec.Executor) (*Instance, error) {
 	tmuxAlive := CheckTmuxAlive(data.Title, cmdExec)
 	wtExists := CheckWorktreeExists(data.Worktree.WorktreePath)
 	action := DetermineRecoveryAction(data.Status, tmuxAlive, wtExists, data.IsWorkspaceTerminal)
@@ -178,7 +178,7 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 
 // CleanupOrphanedSessions kills any tmux sessions with the claude-squad prefix
 // that are not claimed by a loaded instance.
-func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec cmd.Executor) error {
+func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec.Executor) error {
 	listCtx, listCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer listCancel()
 	listCmd := exec.CommandContext(listCtx, "tmux", "ls")
