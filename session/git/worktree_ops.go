@@ -22,13 +22,13 @@ var ErrBranchGone = errors.New("branch not found locally or on remote")
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() (err error) {
 	t0 := time.Now()
-	log.DebugKV("worktree.setup.begin", "branch", g.branchName, "path", g.worktreePath, "existing_branch", g.isExistingBranch)
+	log.For("git").Debug("worktree.setup.begin", "branch", g.branchName, "path", g.worktreePath, "existing_branch", g.isExistingBranch)
 	defer func() {
 		args := []any{"branch", g.branchName, "duration_ms", time.Since(t0).Milliseconds()}
 		if err != nil {
 			args = append(args, "err", err.Error())
 		}
-		log.DebugKV("worktree.setup.end", args...)
+		log.For("git").Debug("worktree.setup.end", args...)
 	}()
 
 	// Ensure worktrees directory exists early (can be done in parallel with branch check)
@@ -129,13 +129,13 @@ func (g *GitWorktree) setupNewWorktree() error {
 // Cleanup removes the worktree and associated branch
 func (g *GitWorktree) Cleanup() (err error) {
 	t0 := time.Now()
-	log.DebugKV("worktree.cleanup.begin", "branch", g.branchName, "path", g.worktreePath)
+	log.For("git").Debug("worktree.cleanup.begin", "branch", g.branchName, "path", g.worktreePath)
 	defer func() {
 		args := []any{"branch", g.branchName, "duration_ms", time.Since(t0).Milliseconds()}
 		if err != nil {
 			args = append(args, "err", err.Error())
 		}
-		log.DebugKV("worktree.cleanup.end", args...)
+		log.For("git").Debug("worktree.cleanup.end", args...)
 	}()
 
 	var errs []error

@@ -13,9 +13,9 @@ import (
 )
 
 // TestMain initializes the package-level loggers before tests run.
-// The engine logs collision / parse errors through log.WarningLog,
-// which is nil until log.Initialize populates it. Mirrors the
-// pattern used in config_test.go.
+// The engine logs collision / parse errors through log.For("script"),
+// which returns a no-op until log.Initialize populates log.Structured.
+// Mirrors the pattern used in config_test.go.
 func TestMain(m *testing.M) {
 	log.Initialize("", false)
 	exit := m.Run()
@@ -45,7 +45,7 @@ func TestEngineRegistersAndDispatches(t *testing.T) {
 	assert.ElementsMatch(t, []string{"ctrl+h"}, e.actionKeys())
 
 	h := &fakeHost{}
-	matched, err := e.Dispatch(context.Background(),"ctrl+h", h)
+	matched, err := e.Dispatch(context.Background(), "ctrl+h", h)
 	require.NoError(t, err)
 	assert.True(t, matched)
 	assert.Equal(t, []string{"hi from script"}, h.notices)
@@ -67,7 +67,7 @@ func TestEngineNotifyStandaloneRoutesToHost(t *testing.T) {
 	`))
 
 	h := &fakeHost{}
-	_, err := e.Dispatch(context.Background(),"ctrl+y", h)
+	_, err := e.Dispatch(context.Background(), "ctrl+y", h)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"bare-notify"}, h.notices)
 }
@@ -96,7 +96,7 @@ func TestEngineDispatchReturnsFalseForUnboundKey(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()
 
-	matched, err := e.Dispatch(context.Background(),"ctrl+z", &fakeHost{})
+	matched, err := e.Dispatch(context.Background(), "ctrl+z", &fakeHost{})
 	require.NoError(t, err)
 	assert.False(t, matched)
 }
@@ -145,7 +145,7 @@ func TestEngineLaterBindOverwritesForDuplicateKey(t *testing.T) {
 	require.NoError(t, err)
 
 	h := &fakeHost{}
-	matched, err := e.Dispatch(context.Background(),"ctrl+x", h)
+	matched, err := e.Dispatch(context.Background(), "ctrl+x", h)
 	require.NoError(t, err)
 	assert.True(t, matched)
 	assert.Equal(t, []string{"second"}, h.notices)
@@ -172,7 +172,7 @@ func TestEngineRejectsRuntimeRegister(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	_, dispatchErr := e.Dispatch(context.Background(),"ctrl+r", &fakeHost{})
+	_, dispatchErr := e.Dispatch(context.Background(), "ctrl+r", &fakeHost{})
 	require.Error(t, dispatchErr)
 	assert.Contains(t, dispatchErr.Error(), "load time")
 }
@@ -193,7 +193,7 @@ func TestEnginePrecondition(t *testing.T) {
 	require.NoError(t, err)
 
 	h := &fakeHost{}
-	matched, err := e.Dispatch(context.Background(),"ctrl+g", h)
+	matched, err := e.Dispatch(context.Background(), "ctrl+g", h)
 	require.NoError(t, err)
 	assert.True(t, matched)
 	assert.Empty(t, h.notices, "run body skipped by precondition")
@@ -213,7 +213,7 @@ func TestEngineRuntimeLuaError(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	matched, runErr := e.Dispatch(context.Background(),"ctrl+b", &fakeHost{})
+	matched, runErr := e.Dispatch(context.Background(), "ctrl+b", &fakeHost{})
 	assert.True(t, matched)
 	require.Error(t, runErr)
 	assert.Contains(t, runErr.Error(), "boom")
@@ -227,7 +227,7 @@ func TestEngineRuntimeLuaError(t *testing.T) {
 	`)
 	require.NoError(t, err)
 	h := &fakeHost{}
-	_, err = e.Dispatch(context.Background(),"ctrl+o", h)
+	_, err = e.Dispatch(context.Background(), "ctrl+o", h)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ok"}, h.notices)
 }
@@ -266,7 +266,7 @@ func TestEngineLogBuffer(t *testing.T) {
 		}
 	`))
 
-	_, err := e.Dispatch(context.Background(),"ctrl+l", &fakeHost{})
+	_, err := e.Dispatch(context.Background(), "ctrl+l", &fakeHost{})
 	require.NoError(t, err)
 	logs := e.DrainLogs()
 	require.Len(t, logs, 2)

@@ -101,7 +101,7 @@ func (c *Config) GetProfiles() []Profile {
 func DefaultConfig() *Config {
 	program, err := GetClaudeCommand()
 	if err != nil {
-		log.Errorf("failed to get claude command: %v", err)
+		log.For("config").Error("get_claude_command_failed", "err", err)
 		program = defaultProgram
 	}
 
@@ -112,7 +112,7 @@ func DefaultConfig() *Config {
 		BranchPrefix: func() string {
 			user, err := user.Current()
 			if err != nil || user == nil || user.Username == "" {
-				log.Errorf("failed to get current user: %v", err)
+				log.For("config").Error("get_current_user_failed", "err", err)
 				return "session/"
 			}
 			return fmt.Sprintf("%s/", strings.ToLower(user.Username))
@@ -174,7 +174,7 @@ func GetClaudeCommand() (string, error) {
 func LoadConfig() *Config {
 	configDir, err := GetConfigDir()
 	if err != nil {
-		log.ErrorLog.Printf("failed to get config directory: %v", err)
+		log.For("config").Error("get_config_dir_failed", "err", err)
 		return DefaultConfig()
 	}
 
@@ -182,7 +182,7 @@ func LoadConfig() *Config {
 	if _, err := os.Stat(filepath.Join(configDir, ConfigFileName)); os.IsNotExist(err) {
 		defaultCfg := DefaultConfig()
 		if saveErr := SaveConfigTo(defaultCfg, configDir); saveErr != nil {
-			log.WarningLog.Printf("failed to save default config: %v", saveErr)
+			log.For("config").Warn("save_default_config_failed", "err", saveErr)
 		}
 		return defaultCfg
 	}
@@ -212,7 +212,7 @@ func SaveConfigTo(config *Config, dir string) error {
 func LoadConfigFromGlobal() *Config {
 	dir, err := GetConfigDir()
 	if err != nil {
-		log.ErrorLog.Printf("failed to get global config directory: %v", err)
+		log.For("config").Error("get_global_config_dir_failed", "err", err)
 		return DefaultConfig()
 	}
 	return LoadConfigFrom(dir)
@@ -224,10 +224,10 @@ func LoadConfigFromGlobal() *Config {
 // must pass a resolved WorkspaceContext.ConfigDir.
 func LoadConfigFrom(dir string) *Config {
 	if dir == "" {
-		log.WarningLog.Printf("LoadConfigFrom called with empty dir; falling back to global — call LoadConfigFromGlobal() explicitly to silence this warning")
+		log.For("config").Warn("load_config_empty_dir", "action", "fallback_to_global", "fix", "call LoadConfigFromGlobal() explicitly")
 		resolved, err := GetConfigDir()
 		if err != nil {
-			log.ErrorLog.Printf("failed to get config directory: %v", err)
+			log.For("config").Error("get_config_dir_failed", "err", err)
 			return DefaultConfig()
 		}
 		dir = resolved
@@ -241,9 +241,9 @@ func LoadConfigFrom(dir string) *Config {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		quarantined := quarantineCorruptFile(configPath)
 		if quarantined != "" {
-			log.ErrorLog.Printf("corrupt config file %s (quarantined to %s); starting with defaults — inspect the quarantined file for forensic context", configPath, quarantined)
+			log.For("config").Error("config_file_corrupt", "path", configPath, "quarantine_path", quarantined, "action", "starting_with_defaults")
 		} else {
-			log.ErrorLog.Printf("corrupt config file %s; starting with defaults: %v", configPath, err)
+			log.For("config").Error("config_file_corrupt", "path", configPath, "err", err, "action", "starting_with_defaults")
 		}
 		return DefaultConfig()
 	}

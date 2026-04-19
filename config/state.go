@@ -71,7 +71,7 @@ func DefaultState() *State {
 func LoadState() *State {
 	configDir, err := GetConfigDir()
 	if err != nil {
-		log.ErrorLog.Printf("failed to get config directory: %v", err)
+		log.For("config").Error("get_config_dir_failed", "err", err)
 		return DefaultState()
 	}
 
@@ -82,18 +82,18 @@ func LoadState() *State {
 			// Create and save default state if file doesn't exist
 			defaultState := DefaultState()
 			if saveErr := SaveState(defaultState); saveErr != nil {
-				log.WarningLog.Printf("failed to save default state: %v", saveErr)
+				log.For("config").Warn("save_default_state_failed", "err", saveErr)
 			}
 			return defaultState
 		}
 
-		log.WarningLog.Printf("failed to get state file: %v", err)
+		log.For("config").Warn("state_read_failed", "err", err)
 		return DefaultState()
 	}
 
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
-		log.ErrorLog.Printf("failed to parse state file: %v", err)
+		log.For("config").Error("state_parse_failed", "err", err)
 		return DefaultState()
 	}
 
@@ -137,7 +137,7 @@ func SaveState(state *State) error {
 func LoadStateFromGlobal() *State {
 	dir, err := GetConfigDir()
 	if err != nil {
-		log.ErrorLog.Printf("failed to get global config directory: %v", err)
+		log.For("config").Error("get_global_config_dir_failed", "err", err)
 		return DefaultState()
 	}
 	return LoadStateFrom(dir)
@@ -150,10 +150,10 @@ func LoadStateFromGlobal() *State {
 // The returned State remembers dir so that SaveState writes back to it.
 func LoadStateFrom(dir string) *State {
 	if dir == "" {
-		log.WarningLog.Printf("LoadStateFrom called with empty dir; falling back to global — call LoadStateFromGlobal() explicitly to silence this warning")
+		log.For("config").Warn("load_state_empty_dir", "action", "fallback_to_global", "fix", "call LoadStateFromGlobal() explicitly")
 		resolved, err := GetConfigDir()
 		if err != nil {
-			log.ErrorLog.Printf("failed to get config directory: %v", err)
+			log.For("config").Error("get_config_dir_failed", "err", err)
 			return DefaultState()
 		}
 		dir = resolved
@@ -170,9 +170,9 @@ func LoadStateFrom(dir string) *State {
 	if err := json.Unmarshal(data, &state); err != nil {
 		quarantined := quarantineCorruptFile(statePath)
 		if quarantined != "" {
-			log.ErrorLog.Printf("corrupt state file %s (quarantined to %s); starting with defaults — inspect the quarantined file for forensic context", statePath, quarantined)
+			log.For("config").Error("state_file_corrupt", "path", statePath, "quarantine_path", quarantined, "action", "starting_with_defaults")
 		} else {
-			log.ErrorLog.Printf("corrupt state file %s; starting with defaults: %v", statePath, err)
+			log.For("config").Error("state_file_corrupt", "path", statePath, "err", err, "action", "starting_with_defaults")
 		}
 		s := DefaultState()
 		s.configDir = dir

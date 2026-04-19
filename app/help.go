@@ -264,7 +264,7 @@ func (m *home) showHelpScreen(helpType helpText, onDismiss func() tea.Cmd) (tea.
 	if alwaysShow || (m.appState.GetHelpScreensSeen()&flag) == 0 {
 		// Mark this help screen as seen and save state
 		if err := m.appState.SetHelpScreensSeen(m.appState.GetHelpScreensSeen() | flag); err != nil {
-			log.WarningLog.Printf("Failed to save help screen state: %v", err)
+			log.For("app").Warn("help.save_screen_state_failed", "err", err)
 		}
 
 		content := helpType.toContent()

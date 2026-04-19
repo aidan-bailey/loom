@@ -322,7 +322,7 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 	if i.Started() && hasMultipleRepos {
 		repoName, err := i.RepoName()
 		if err != nil {
-			log.ErrorLog.Printf("could not get repo name in instance renderer: %v", err)
+			log.For("ui").Error("list.repo_name_failed", "context", "instance_renderer", "err", err)
 		} else {
 			branch += fmt.Sprintf(" (%s)", repoName)
 		}
@@ -469,7 +469,7 @@ func (l *List) PopSelectedForKill() *session.Instance {
 	// Unregister the reponame.
 	repoName, err := targetInstance.RepoName()
 	if err != nil {
-		log.ErrorLog.Printf("could not get repo name: %v", err)
+		log.For("ui").Error("list.repo_name_failed", "context", "kill_instance", "err", err)
 	} else {
 		l.rmRepo(repoName)
 	}
@@ -498,7 +498,7 @@ func (l *List) RemoveInstanceByTitle(title string) {
 	// Unregister the repo name.
 	repoName, err := l.items[idx].RepoName()
 	if err != nil {
-		log.ErrorLog.Printf("could not get repo name: %v", err)
+		log.For("ui").Error("list.repo_name_failed", "context", "remove_at_idx", "err", err)
 	} else {
 		l.rmRepo(repoName)
 	}
@@ -536,7 +536,7 @@ func (l *List) addRepo(repo string) {
 
 func (l *List) rmRepo(repo string) {
 	if _, ok := l.repos[repo]; !ok {
-		log.ErrorLog.Printf("repo %s not found", repo)
+		log.For("ui").Error("list.repo_not_found", "repo", repo)
 		return
 	}
 	l.repos[repo]--
@@ -559,7 +559,7 @@ func (l *List) AddInstance(instance *session.Instance) (finalize func()) {
 	return func() {
 		repoName, err := instance.RepoName()
 		if err != nil {
-			log.ErrorLog.Printf("could not get repo name: %v", err)
+			log.For("ui").Error("list.repo_name_failed", "context", "add_finalizer", "err", err)
 			return
 		}
 

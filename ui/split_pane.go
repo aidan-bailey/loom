@@ -156,11 +156,11 @@ func (s *SplitPane) ScrollUp() {
 	switch s.focusedPane {
 	case FocusAgent:
 		if err := s.agent.ScrollUp(s.instance); err != nil {
-			log.InfoLog.Printf("split pane failed to scroll agent up: %v", err)
+			log.For("ui").Info("split_pane.scroll_agent_up_failed", "err", err)
 		}
 	case FocusTerminal:
 		if err := s.terminal.ScrollUp(); err != nil {
-			log.InfoLog.Printf("split pane failed to scroll terminal up: %v", err)
+			log.For("ui").Info("split_pane.scroll_terminal_up_failed", "err", err)
 		}
 	}
 }
@@ -173,11 +173,11 @@ func (s *SplitPane) ScrollDown() {
 	switch s.focusedPane {
 	case FocusAgent:
 		if err := s.agent.ScrollDown(s.instance); err != nil {
-			log.InfoLog.Printf("split pane failed to scroll agent down: %v", err)
+			log.For("ui").Info("split_pane.scroll_agent_down_failed", "err", err)
 		}
 	case FocusTerminal:
 		if err := s.terminal.ScrollDown(); err != nil {
-			log.InfoLog.Printf("split pane failed to scroll terminal down: %v", err)
+			log.For("ui").Info("split_pane.scroll_terminal_down_failed", "err", err)
 		}
 	}
 }

@@ -112,13 +112,13 @@ func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec 
 // the session (ex. claude). workdir is the git worktree directory.
 func (t *TmuxSession) Start(workDir string) (err error) {
 	t0 := time.Now()
-	log.DebugKV("tmux.start.begin", "session", t.sanitizedName, "program", t.program, "workdir", workDir)
+	log.For("tmux").Debug("start.begin", "session", t.sanitizedName, "program", t.program, "workdir", workDir)
 	defer func() {
 		args := []any{"session", t.sanitizedName, "duration_ms", time.Since(t0).Milliseconds()}
 		if err != nil {
 			args = append(args, "err", err.Error())
 		}
-		log.DebugKV("tmux.start.end", args...)
+		log.For("tmux").Debug("start.end", args...)
 	}()
 
 	// Check if the session already exists
@@ -171,7 +171,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	histCtx, histCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	historyCmd := exec.CommandContext(histCtx, "tmux", "set-option", "-t", t.sanitizedName, "history-limit", "10000")
 	if err := t.cmdExec.Run(historyCmd); err != nil {
-		log.WarningLog.Printf("failed to set history-limit for session %s: %v", t.sanitizedName, err)
+		log.For("tmux").Warn("history_limit_failed", "session", t.sanitizedName, "err", err)
 	}
 	histCancel()
 
@@ -179,7 +179,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	mouseCtx, mouseCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	mouseCmd := exec.CommandContext(mouseCtx, "tmux", "set-option", "-t", t.sanitizedName, "mouse", "on")
 	if err := t.cmdExec.Run(mouseCmd); err != nil {
-		log.WarningLog.Printf("failed to enable mouse scrolling for session %s: %v", t.sanitizedName, err)
+		log.For("tmux").Warn("mouse_scroll_failed", "session", t.sanitizedName, "err", err)
 	}
 	mouseCancel()
 
@@ -190,7 +190,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	bindCtx, bindCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	bindCmd := exec.CommandContext(bindCtx, "tmux", "bind-key", "-n", "C-q", "detach-client")
 	if err := t.cmdExec.Run(bindCmd); err != nil {
-		log.WarningLog.Printf("failed to bind C-q to detach-client: %v", err)
+		log.For("tmux").Warn("bind_cq_failed", "err", err)
 	}
 	bindCancel()
 
@@ -217,14 +217,14 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 		if strings.Contains(content, "Do you trust the files in this folder?") ||
 			strings.Contains(content, "new MCP server") {
 			if err := t.TapEnter(); err != nil {
-				log.ErrorLog.Printf("could not tap enter on trust/MCP screen: %v", err)
+				log.For("tmux").Error("trust_prompt.tap_enter_failed", "prompt", "claude_trust_or_mcp", "err", err)
 			}
 			return true
 		}
 	} else {
 		if strings.Contains(content, "Open documentation url for more info") {
 			if err := t.TapDAndEnter(); err != nil {
-				log.ErrorLog.Printf("could not tap enter on trust screen: %v", err)
+				log.For("tmux").Error("trust_prompt.tap_enter_failed", "prompt", "other_trust", "err", err)
 			}
 			return true
 		}
@@ -237,7 +237,7 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 // buffer deadlock (the tmux client blocks on stdout when the buffer fills,
 // which also blocks stdin processing).
 func (t *TmuxSession) Restore() error {
-	log.DebugKV("tmux.restore", "session", t.sanitizedName)
+	log.For("tmux").Debug("restore", "session", t.sanitizedName)
 	// Close any prior PTY and wait for its pump to exit before creating a new
 	// one, otherwise the old pump goroutine leaks and keeps a stale FD alive.
 	if t.ptmx != nil {
@@ -315,7 +315,7 @@ func (t *TmuxSession) waitPumpExit() {
 	select {
 	case <-t.pumpDone:
 	case <-time.After(pumpWaitTimeout):
-		log.WarningLog.Printf("tmux pump for session %s did not exit within %s; abandoning wait", t.sanitizedName, pumpWaitTimeout)
+		log.For("tmux").Warn("pump.wait_timeout", "session", t.sanitizedName, "timeout", pumpWaitTimeout.String())
 	}
 	t.pumpDone = nil
 }
@@ -389,7 +389,7 @@ func (t *TmuxSession) SendKeysRaw(b []byte) error {
 func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 	content, err := t.CapturePaneContent()
 	if err != nil {
-		log.ErrorLog.Printf("error capturing pane content in status monitor: %v", err)
+		log.For("tmux").Error("capture_pane_failed", "context", "status_monitor", "session", t.sanitizedName, "err", err)
 		return false, false
 	}
 
@@ -416,7 +416,7 @@ func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasProm
 	var err error
 	content, err = t.CapturePaneContent()
 	if err != nil {
-		log.ErrorLog.Printf("error capturing pane content: %v", err)
+		log.For("tmux").Error("capture_pane_failed", "session", t.sanitizedName, "err", err)
 		return "", false, false, false
 	}
 
@@ -425,14 +425,14 @@ func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasProm
 		if strings.Contains(content, "Do you trust the files in this folder?") ||
 			strings.Contains(content, "new MCP server") {
 			if err := t.TapEnter(); err != nil {
-				log.ErrorLog.Printf("could not tap enter on trust/MCP screen: %v", err)
+				log.For("tmux").Error("trust_prompt.tap_enter_failed", "prompt", "claude_trust_or_mcp", "err", err)
 			}
 			trustHandled = true
 		}
 	} else {
 		if strings.Contains(content, "Open documentation url for more info") {
 			if err := t.TapDAndEnter(); err != nil {
-				log.ErrorLog.Printf("could not tap enter on trust screen: %v", err)
+				log.For("tmux").Error("trust_prompt.tap_enter_failed", "prompt", "other_trust", "err", err)
 			}
 			trustHandled = true
 		}
@@ -498,7 +498,7 @@ func (t *TmuxSession) ResumePreview() error {
 
 // Close terminates the tmux session and cleans up resources
 func (t *TmuxSession) Close() error {
-	log.DebugKV("tmux.close", "session", t.sanitizedName)
+	log.For("tmux").Debug("close", "session", t.sanitizedName)
 	var errs []error
 
 	if t.ptmx != nil {
@@ -614,7 +614,7 @@ func CleanupSessions(cmdExec internalexec.Executor) error {
 	}
 
 	for _, match := range matches {
-		log.InfoLog.Printf("cleaning up session: %s", match)
+		log.For("tmux").Info("orphan_cleanup", "session", match)
 		killCtx, killCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 		if err := cmdExec.Run(exec.CommandContext(killCtx, "tmux", "kill-session", "-t", match)); err != nil {
 			killCancel()

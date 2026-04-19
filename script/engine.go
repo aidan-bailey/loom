@@ -130,10 +130,10 @@ func (e *Engine) CleanupAllCoroutines() {
 		delete(e.coroutines, id)
 		st, rerr, _ := e.L.Resume(slot.co, nil, lua.LNil)
 		if rerr != nil {
-			log.WarningLog.Printf("script: cleanup resume of intent %d: %v", id, rerr)
+			log.For("script").Warn("cleanup_resume_failed", "intent_id", int(id), "err", rerr)
 		}
 		if st == lua.ResumeYield {
-			log.WarningLog.Printf("script: cleanup resume of intent %d yielded again; dropping", id)
+			log.For("script").Warn("cleanup_resume_yielded_again", "intent_id", int(id))
 		}
 	}
 }
@@ -200,9 +200,9 @@ func (e *Engine) Dispatch(ctx context.Context, key string, h Host) (matched bool
 	}
 	trace := log.TraceID(ctx)
 	start := time.Now()
-	log.DebugKV("script.handler.begin", "trace", trace, "key", key, "file", act.file)
+	log.For("script").Debug("handler.begin", "trace", trace, "key", key, "file", act.file)
 	err = e.runAction(act, h)
-	log.DebugKV("script.handler.end", "trace", trace, "key", key, "duration_ms", time.Since(start).Milliseconds(), "err", errString(err))
+	log.For("script").Debug("handler.end", "trace", trace, "key", key, "duration_ms", time.Since(start).Milliseconds(), "err", errString(err))
 	return true, err
 }
 
@@ -234,10 +234,10 @@ func (e *Engine) ResumeWithHost(ctx context.Context, id IntentID, h Host) error 
 	defer func() { e.curHost = prevHost }()
 
 	trace := log.TraceID(ctx)
-	log.DebugKV("script.handler.resume", "trace", trace, "intent_id", int(id))
+	log.For("script").Debug("handler.resume", "trace", trace, "intent_id", int(id))
 	_, err := e.resumeLocked(id, lua.LNil)
 	if err != nil {
-		log.DebugKV("script.handler.resume_err", "trace", trace, "intent_id", int(id), "err", err.Error())
+		log.For("script").Debug("handler.resume_err", "trace", trace, "intent_id", int(id), "err", err.Error())
 	}
 	return err
 }
@@ -367,7 +367,7 @@ func (e *Engine) bind(act *scriptAction) error {
 		return fmt.Errorf("cs.bind can only be called at load time")
 	}
 	if e.reserved[act.key] {
-		log.WarningLog.Printf("script %s: key %q is reserved by built-in; skipping", act.file, act.key)
+		log.For("script").Warn("reserved_key_bind_skipped", "file", act.file, "key", act.key)
 		return nil
 	}
 	if _, ok := e.actions[act.key]; !ok {
@@ -383,7 +383,7 @@ func (e *Engine) bind(act *scriptAction) error {
 // `cs.unbind("ctrl+c")` never breaks script loading.
 func (e *Engine) unbind(key string) {
 	if e.reserved[key] {
-		log.WarningLog.Printf("script: cs.unbind(%q) is reserved; ignoring", key)
+		log.For("script").Warn("reserved_key_unbind_skipped", "key", key)
 		return
 	}
 	if _, ok := e.actions[key]; !ok {

@@ -163,7 +163,7 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 
 	preAction := func() {
 		if err := selected.TransitionTo(session.Deleting); err != nil {
-			log.WarningLog.Printf("kill preAction transition: %v", err)
+			log.For("app").Warn("kill.preaction_transition_failed", "err", err)
 		}
 	}
 
@@ -189,12 +189,12 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 
 		if ts := m.splitPane.DetachTerminalForInstance(title); ts != nil {
 			if err := ts.Close(); err != nil {
-				log.ErrorLog.Printf("terminal pane: failed to close session for %s: %v", title, err)
+				log.For("app").Error("kill.terminal_close_failed", "title", title, "err", err)
 			}
 		}
 
 		if err := selected.Kill(); err != nil {
-			log.ErrorLog.Printf("could not kill instance: %v", err)
+			log.For("app").Error("kill.instance_kill_failed", "title", title, "err", err)
 		}
 
 		if err := m.storage.DeleteInstance(selected.Title); err != nil {
@@ -248,7 +248,7 @@ func runCheckoutSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	startPause := func() tea.Cmd {
 		if !confirm {
 			if err := selected.TransitionTo(session.Loading); err != nil {
-				log.WarningLog.Printf("pause preAction transition: %v", err)
+				log.For("app").Warn("pause.preaction_transition_failed", "err", err)
 			}
 			return pauseAction
 		}
@@ -256,7 +256,7 @@ func runCheckoutSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 		return m.confirmTask(message, overlay.ConfirmationTask{
 			Sync: func() {
 				if err := selected.TransitionTo(session.Loading); err != nil {
-					log.WarningLog.Printf("pause preAction transition: %v", err)
+					log.For("app").Warn("pause.preaction_transition_failed", "err", err)
 				}
 			},
 			Async: pauseAction,
@@ -275,7 +275,7 @@ func pauseActionFor(m *home, selected *session.Instance) tea.Cmd {
 	return func() tea.Msg {
 		if ts := m.splitPane.DetachTerminalForInstance(pauseTitle); ts != nil {
 			if err := ts.Close(); err != nil {
-				log.ErrorLog.Printf("terminal pane: failed to close session for %s: %v", pauseTitle, err)
+				log.For("app").Error("pause.terminal_close_failed", "title", pauseTitle, "err", err)
 			}
 		}
 		saveFunc := func() error {
@@ -297,7 +297,7 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	// reconcile flip between the precondition check and this write can't
 	// leave us starting Resume on a non-Paused instance.
 	if err := selected.TransitionTo(session.Loading); err != nil {
-		log.WarningLog.Printf("skip resume: %v", err)
+		log.For("app").Warn("resume.skipped", "err", err)
 		return m, nil
 	}
 	saveFunc := func() error {

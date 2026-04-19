@@ -71,7 +71,7 @@ var (
 				daemonCtx := &config.WorkspaceContext{ConfigDir: daemonDir}
 				err := daemon.RunDaemon(cfg, daemonCtx)
 				if err != nil {
-					log.ErrorLog.Printf("failed to start daemon: %v", err)
+					log.For("main").Error("daemon_start_failed", "err", err)
 				}
 				return err
 			}
@@ -79,7 +79,7 @@ var (
 			// Resolve workspace context.
 			registry, regErr := config.LoadWorkspaceRegistry()
 			if regErr != nil {
-				log.ErrorLog.Printf("failed to load workspace registry: %v", regErr)
+				log.For("main").Error("workspace_registry_load_failed", "err", regErr)
 			}
 
 			var wsCtx *config.WorkspaceContext
@@ -165,13 +165,13 @@ var (
 			if autoYes {
 				defer func() {
 					if err := daemon.LaunchDaemon(wsCtx); err != nil {
-						log.ErrorLog.Printf("failed to launch daemon: %v", err)
+						log.For("main").Error("daemon_launch_failed", "err", err)
 					}
 				}()
 			}
 			// Kill any daemon that's running.
 			if err := daemon.StopDaemon(wsCtx); err != nil {
-				log.ErrorLog.Printf("failed to stop daemon: %v", err)
+				log.For("main").Error("daemon_stop_failed", "err", err)
 			}
 
 			return app.Run(ctx, wsCtx, registry, cfg, program, autoYes, pendingDir, noScriptsFlag)

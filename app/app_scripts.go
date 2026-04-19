@@ -253,7 +253,7 @@ func buildReservedKeys() map[string]bool {
 func scriptsDir() string {
 	dir, err := config.GetConfigDir()
 	if err != nil {
-		log.WarningLog.Printf("scripts: cannot resolve config dir: %v", err)
+		log.For("app").Warn("scripts_dir_resolve_failed", "err", err)
 		return ""
 	}
 	return filepath.Join(dir, "scripts")
@@ -279,7 +279,7 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 	}
 
 	ctx, trace := log.WithTrace(context.Background())
-	log.DebugKV("script.dispatch", "trace", trace, "key", key)
+	log.For("script").Debug("dispatch", "trace", trace, "key", key)
 
 	return func() tea.Msg {
 		_, err := m.scripts.Dispatch(ctx, key, host)
@@ -313,7 +313,7 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 // through handleQuit to preserve the save-on-exit path the legacy
 // "q" key used.
 func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
-	log.DebugKV("script.intent", "trace", p.trace, "intent_id", int(p.id), "kind", fmt.Sprintf("%T", p.intent))
+	log.For("script").Debug("intent", "trace", p.trace, "intent_id", int(p.id), "kind", fmt.Sprintf("%T", p.intent))
 	var cmd tea.Cmd
 	switch i := p.intent.(type) {
 	case script.QuitIntent:
@@ -466,7 +466,7 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 		// the user didn't happen to be watching vanished without
 		// trace. The KV form lets a post-mortem grep by trace ID
 		// to rebuild the full dispatch chain.
-		log.ErrorKV("script.error", "trace", msg.trace, "key", msg.key, "err", msg.err.Error())
+		log.For("script").Error("error", "trace", msg.trace, "key", msg.key, "err", msg.err)
 		cmds = append(cmds, m.handleError(msg.err))
 	}
 	cmds = append(cmds, m.instanceChanged())

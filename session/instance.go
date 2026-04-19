@@ -688,7 +688,7 @@ func (i *Instance) TapEnter() {
 		return
 	}
 	if err := ts.TapEnter(); err != nil {
-		log.ErrorLog.Printf("error tapping enter: %v", err)
+		log.For("session").Error("tap_enter_failed", "err", err)
 	}
 }
 
@@ -799,7 +799,7 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// so --continue (or equivalent) restores the conversation for agents
 	// that support it.
 	if err := ts.Close(); err != nil {
-		log.WarningLog.Printf("close tmux session during pause: %v", err)
+		log.For("session").Warn("pause_close_tmux_failed", "err", err)
 		// Continue with pause process; the tmux session may already be dead.
 	}
 
@@ -881,7 +881,7 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 			// Kill the broken session before creating a new one,
 			// because Start() rejects sessions that already exist.
 			if closeErr := ts.Close(); closeErr != nil {
-				log.ErrorLog.Printf("failed to close broken session: %v", closeErr)
+				log.For("session").Error("broken_session_close_failed", "err", closeErr)
 			}
 			if err := i.startFreshWithRecovery(gw); err != nil {
 				return err

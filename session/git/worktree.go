@@ -96,7 +96,7 @@ func NewGitWorktreeFromStorageWithRunner(repoPath string, worktreePath string, s
 func resolveWorktreePaths(repoPath string, branchName string, configDir string, runner CommandRunner) (resolvedRepo string, worktreePath string, err error) {
 	absPath, err := filepath.Abs(repoPath)
 	if err != nil {
-		log.ErrorLog.Printf("git worktree path abs error, falling back to repoPath %s: %s", repoPath, err)
+		log.For("git").Error("worktree_path_abs_failed", "fallback_repo_path", repoPath, "err", err)
 		absPath = repoPath
 	}
 
@@ -129,7 +129,7 @@ func NewGitWorktree(repoPath string, sessionName string, configDir string) (tree
 // the global directory and logs a warning.
 func NewGitWorktreeWithRunner(repoPath string, sessionName string, configDir string, runner CommandRunner) (tree *GitWorktree, branchname string, err error) {
 	if configDir == "" {
-		log.WarningLog.Printf("NewGitWorktreeWithRunner called without a configDir; falling back to global config")
+		log.For("git").Warn("new_worktree_missing_config_dir", "action", "falling_back_to_global")
 		resolved, resolveErr := config.GetConfigDir()
 		if resolveErr != nil {
 			return nil, "", fmt.Errorf("resolve config dir: %w", resolveErr)

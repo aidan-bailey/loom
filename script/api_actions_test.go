@@ -28,7 +28,7 @@ func (h *recordingHost) WorkspaceNext() { h.calls = append(h.calls, "WorkspaceNe
 func dispatchExpectYield(t *testing.T, e *Engine, key string) *fakeHost {
 	t.Helper()
 	h := &fakeHost{}
-	_, err := e.Dispatch(context.Background(),key, h)
+	_, err := e.Dispatch(context.Background(), key, h)
 	if err != nil {
 		t.Fatalf("dispatch %q: %v", key, err)
 	}
@@ -259,7 +259,7 @@ func TestCsActionsSyncPrimitivesCallHost(t *testing.T) {
 	e.EndLoad()
 
 	for _, k := range []string{"a", "b", "c", "d", "e"} {
-		_, err := e.Dispatch(context.Background(),k, h)
+		_, err := e.Dispatch(context.Background(), k, h)
 		require.NoError(t, err)
 	}
 	assert.Equal(t, []string{"CursorUp", "CursorDown", "ToggleDiff", "WorkspacePrev", "WorkspaceNext"}, h.calls)

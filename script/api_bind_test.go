@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"claude-squad/log"
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,10 +60,14 @@ func TestCsUnbindRemovesBinding(t *testing.T) {
 // If a future refactor drops the reserved check in Engine.bind, this
 // test catches it silently regressing the ctrl+c safety net.
 func TestCsBindReservedIsDroppedWithWarning(t *testing.T) {
+	// The warning is emitted through the Structured logger (log.For("script")),
+	// so we swap log.Structured with a text-handler writing to our buffer for the
+	// duration of the test. The legacy log.WarningLog writer path no longer
+	// carries this record after the subsystem migration.
 	var buf bytes.Buffer
-	prevOut := log.WarningLog.Writer()
-	log.WarningLog.SetOutput(&buf)
-	t.Cleanup(func() { log.WarningLog.SetOutput(prevOut) })
+	prev := log.Structured
+	log.Structured = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(func() { log.Structured = prev })
 
 	e := NewEngine(map[string]bool{"ctrl+c": true})
 	defer e.Close()
@@ -77,8 +82,10 @@ func TestCsBindReservedIsDroppedWithWarning(t *testing.T) {
 	for _, reg := range e.Registrations() {
 		assert.NotEqual(t, "ctrl+c", reg.Key, "reserved key must not appear in Registrations()")
 	}
-	assert.Contains(t, buf.String(), `key "ctrl+c" is reserved`, "expected warning for reserved-key bind attempt")
-	assert.Contains(t, buf.String(), "reserved.lua", "warning must identify the offending script")
+	out := buf.String()
+	assert.Contains(t, out, "reserved_key_bind_skipped", "expected warning event for reserved-key bind attempt")
+	assert.Contains(t, out, "key=ctrl+c", "warning must identify the reserved key")
+	assert.Contains(t, out, "reserved.lua", "warning must identify the offending script")
 }
 
 func TestCsUnbindReservedIsNoop(t *testing.T) {

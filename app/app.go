@@ -268,7 +268,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			}
 			instance, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
 			if err != nil {
-				log.ErrorLog.Printf("failed to reconcile instance %q: %v (skipping)", data.Title, err)
+				log.For("app").Error("reconcile_failed", "title", data.Title, "err", err, "action", "skipping")
 				continue
 			}
 			h.list.AddInstance(instance)()
@@ -283,9 +283,9 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 				continue
 			}
 			if err := inst.CrashRestart(); err != nil {
-				log.ErrorLog.Printf("crash-recovery restart for %q failed: %v", inst.Title, err)
+				log.For("app").Error("crash_recovery.restart_failed", "title", inst.Title, "err", err)
 				if tErr := inst.TransitionTo(session.Paused); tErr != nil {
-					log.WarnKV("app.crash_recovery.transition_failed", "instance", inst.Title, "err", tErr.Error())
+					log.For("app").Warn("crash_recovery.transition_failed", "instance", inst.Title, "err", tErr.Error())
 				}
 			}
 			inst.CrashRecovered = false
@@ -297,7 +297,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			claimedTitles[inst.Title] = true
 		}
 		if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
-			log.ErrorLog.Printf("orphan cleanup failed: %v", err)
+			log.For("app").Error("orphan_cleanup_failed", "err", err)
 		}
 
 		// Auto-create workspace terminal if in a workspace context and none exists
@@ -314,11 +314,11 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 				ConfigDir:           cfgDir,
 			})
 			if wtErr != nil {
-				log.ErrorLog.Printf("failed to create workspace terminal: %v", wtErr)
+				log.For("app").Error("workspace_terminal.create_failed", "err", wtErr)
 			} else {
 				h.list.AddInstance(wtInstance)()
 				if err := wtInstance.Start(true); err != nil {
-					log.ErrorLog.Printf("failed to start workspace terminal: %v", err)
+					log.For("app").Error("workspace_terminal.start_failed", "err", err)
 				}
 			}
 		}
@@ -389,7 +389,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 
 	for _, ws := range desired {
 		if err := m.activateWorkspace(ws); err != nil {
-			log.ErrorLog.Printf("failed to restore workspace %q: %v", ws.Name, err)
+			log.For("app").Error("workspace.restore_failed", "name", ws.Name, "err", err)
 		}
 	}
 
@@ -415,11 +415,11 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 
 	if m.registry != nil {
 		if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
-			log.DebugKV("app.registry.set_open_failed", "err", err.Error())
+			log.For("app").Debug("registry.set_open_failed", "err", err)
 		}
 		if name := m.slots[focused].wsCtx.Name; name != "" {
 			if err := m.registry.UpdateLastUsed(name); err != nil {
-				log.DebugKV("app.registry.update_last_used_failed", "workspace", name, "err", err.Error())
+				log.For("app").Debug("registry.update_last_used_failed", "workspace", name, "err", err)
 			}
 		}
 	}
@@ -454,7 +454,7 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 
 	agentWidth, agentHeight := m.splitPane.GetAgentSize()
 	if err := m.list.SetSessionPreviewSize(agentWidth, agentHeight); err != nil {
-		log.ErrorLog.Print(err)
+		log.For("app").Error("session_preview_size_failed", "err", err)
 	}
 }
 
@@ -569,36 +569,36 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, r := range msg.results {
 			if !r.tmuxAlive {
 				if r.instance.IsWorkspaceTerminal {
-					log.WarningLog.Printf("workspace terminal %q tmux died, restarting", r.instance.Title)
+					log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", r.instance.Title)
 					if err := r.instance.Start(true); err != nil {
-						log.ErrorLog.Printf("failed to restart workspace terminal: %v", err)
+						log.For("app").Error("workspace_terminal.restart_failed", "title", r.instance.Title, "err", err)
 					}
 					continue
 				}
-				log.WarningLog.Printf("tmux session for %q is gone, marking as paused", r.instance.Title)
+				log.For("app").Warn("tick.tmux_gone_marking_paused", "title", r.instance.Title)
 				if err := r.instance.TransitionTo(session.Paused); err != nil {
-					log.WarnKV("app.tick.transition_failed", "instance", r.instance.Title, "to", "Paused", "err", err.Error())
+					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Paused", "err", err.Error())
 				}
 				continue
 			}
 			if r.updated {
 				if err := r.instance.TransitionTo(session.Running); err != nil {
-					log.WarnKV("app.tick.transition_failed", "instance", r.instance.Title, "to", "Running", "err", err.Error())
+					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Running", "err", err.Error())
 				}
 			} else {
 				if r.hasPrompt {
 					r.instance.TapEnter()
 					if err := r.instance.TransitionTo(session.Prompting); err != nil {
-						log.WarnKV("app.tick.transition_failed", "instance", r.instance.Title, "to", "Prompting", "err", err.Error())
+						log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Prompting", "err", err.Error())
 					}
 				} else {
 					if err := r.instance.TransitionTo(session.Ready); err != nil {
-						log.WarnKV("app.tick.transition_failed", "instance", r.instance.Title, "to", "Ready", "err", err.Error())
+						log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Ready", "err", err.Error())
 					}
 				}
 			}
 			if r.diffErr != nil {
-				log.WarningLog.Printf("could not update diff stats: %v", r.diffErr)
+				log.For("app").Warn("diff_stats_update_failed", "err", r.diffErr)
 			}
 		}
 		m.updateTabBarStatuses()
@@ -660,12 +660,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, inst := range m.list.GetInstances() {
 			if inst.Title == msg.title {
 				if terr := inst.TransitionTo(msg.previousStatus); terr != nil {
-					log.WarningLog.Printf("revert transition: %v", terr)
+					log.For("app").Warn("revert_transition_failed", "err", terr)
 				}
 				break
 			}
 		}
-		log.ErrorLog.Printf("%s failed for %q: %v", msg.op, msg.title, msg.err)
+		log.For("app").Error("op_failed", "op", msg.op, "title", msg.title, "err", msg.err)
 		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
 	case pauseInstanceMsg:
 		// Terminal session was already closed inside pauseAction off the update
@@ -703,12 +703,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tick will notice a dead session and mark the instance paused.
 		if ts := msg.instance.TmuxSession(); ts != nil {
 			if err := ts.ResumePreview(); err != nil {
-				log.ErrorLog.Printf("failed to resume preview for %q: %v", msg.instance.Title, err)
+				log.For("app").Error("preview.resume_failed", "title", msg.instance.Title, "err", err)
 			}
 		}
 		if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
 			if err := ts.ResumePreview(); err != nil {
-				log.ErrorLog.Printf("failed to resume terminal preview for %q: %v", msg.instance.Title, err)
+				log.For("app").Error("terminal_preview.resume_failed", "title", msg.instance.Title, "err", err)
 			}
 		}
 		m.state = stateDefault
@@ -730,7 +730,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadSlot(0)
 		m.updateTabBarStatuses()
 		if err := m.registry.UpdateLastUsed(ws.Name); err != nil {
-			log.DebugKV("app.registry.update_last_used_failed", "workspace", ws.Name, "err", err.Error())
+			log.For("app").Debug("registry.update_last_used_failed", "workspace", ws.Name, "err", err)
 		}
 		return m, tea.WindowSize()
 	case instanceStartedMsg:
@@ -758,7 +758,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// If instance has a prompt (set from Shift+N flow), send it now
 			if msg.instance.Prompt != "" {
 				if err := msg.instance.SendPrompt(msg.instance.Prompt); err != nil {
-					log.ErrorLog.Printf("failed to send prompt: %v", err)
+					log.For("app").Error("send_prompt_failed", "err", err)
 				}
 				msg.instance.Prompt = ""
 			}
@@ -803,7 +803,7 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 		var firstErr error
 		for _, slot := range m.slots {
 			if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
-				log.ErrorLog.Printf("failed to save workspace %s: %v", slot.wsCtx.Name, err)
+				log.For("app").Error("workspace.save_failed", "name", slot.wsCtx.Name, "err", err)
 				if firstErr == nil {
 					firstErr = fmt.Errorf("failed to save workspace %s: %w", slot.wsCtx.Name, err)
 				}
@@ -819,7 +819,7 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 		}
 		if m.registry != nil && len(m.registry.OpenWorkspaces) > 0 {
 			if err := m.registry.SetOpenWorkspaces(nil); err != nil {
-				log.DebugKV("app.registry.clear_open_failed", "err", err.Error())
+				log.For("app").Debug("registry.clear_open_failed", "err", err)
 			}
 		}
 	}
@@ -1002,7 +1002,7 @@ func backgroundKillCmd(inst *session.Instance) tea.Cmd {
 	}
 	return func() tea.Msg {
 		if err := inst.Kill(); err != nil {
-			log.ErrorLog.Printf("background instance kill failed: %v", err)
+			log.For("app").Error("background_instance_kill_failed", "err", err)
 		}
 		return backgroundCleanupDoneMsg{}
 	}
@@ -1057,7 +1057,7 @@ func (m *home) runBranchSearch(filter string, version uint64) tea.Cmd {
 	return func() tea.Msg {
 		branches, err := git.SearchBranches(repoDir, filter, nil)
 		if err != nil {
-			log.WarningLog.Printf("branch search failed: %v", err)
+			log.For("app").Warn("branch_search_failed", "err", err)
 			return nil
 		}
 		return branchSearchResultMsg{branches: branches, version: version}
@@ -1117,7 +1117,7 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance) t
 // handleError handles all errors which get bubbled up to the app. sets the error message. We return a callback tea.Cmd that returns a hideErrMsg message
 // which clears the error message after 3 seconds.
 func (m *home) handleError(err error) tea.Cmd {
-	log.ErrorLog.Printf("%v", err)
+	log.For("app").Error("handle_error", "err", err)
 	m.errBox.SetError(err)
 	return func() tea.Msg {
 		select {
@@ -1219,7 +1219,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	cmdExec := cmd2.MakeExecutor()
 	instances, err := storage.LoadAndReconcile(cmdExec)
 	if err != nil {
-		log.ErrorLog.Printf("failed to load instances for workspace %s: %v", ws.Name, err)
+		log.For("app").Error("workspace_load_instances_failed", "workspace", ws.Name, "err", err)
 	}
 	list := ui.NewList(&m.spinner, m.autoYes)
 	hasWorkspaceTerminal := false
@@ -1239,9 +1239,9 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 			continue
 		}
 		if err := inst.CrashRestart(); err != nil {
-			log.ErrorLog.Printf("crash-recovery restart for %q failed: %v", inst.Title, err)
+			log.For("app").Error("crash_recovery.restart_failed", "instance", inst.Title, "err", err)
 			if tErr := inst.TransitionTo(session.Paused); tErr != nil {
-				log.WarnKV("app.crash_recovery.transition_failed", "instance", inst.Title, "err", tErr.Error())
+				log.For("app").Warn("crash_recovery.transition_failed", "instance", inst.Title, "err", tErr)
 			}
 		}
 		inst.CrashRecovered = false
@@ -1261,11 +1261,11 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 			ConfigDir:           wsCtx.ConfigDir,
 		})
 		if wtErr != nil {
-			log.ErrorLog.Printf("failed to create workspace terminal for %s: %v", ws.Name, wtErr)
+			log.For("app").Error("workspace_terminal.create_failed", "workspace", ws.Name, "err", wtErr)
 		} else {
 			list.AddInstance(wtInstance)()
 			if startErr := wtInstance.Start(true); startErr != nil {
-				log.ErrorLog.Printf("failed to start workspace terminal for %s: %v", ws.Name, startErr)
+				log.For("app").Error("workspace_terminal.start_failed", "workspace", ws.Name, "err", startErr)
 			}
 		}
 	}
@@ -1467,7 +1467,7 @@ func (m *home) saveOpenWorkspaces() {
 		return
 	}
 	if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
-		log.ErrorLog.Printf("failed to persist open workspaces: %v", err)
+		log.For("app").Error("persist_open_workspaces_failed", "err", err)
 	}
 }
 
@@ -1482,7 +1482,7 @@ func (m *home) persistFocusedWorkspace() {
 		return
 	}
 	if err := m.registry.UpdateLastUsed(name); err != nil {
-		log.ErrorLog.Printf("failed to persist focused workspace: %v", err)
+		log.For("app").Error("persist_focused_workspace_failed", "err", err)
 	}
 }
 

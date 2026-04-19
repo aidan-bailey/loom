@@ -119,7 +119,7 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 		// have just killed it, or the worktree-gone state may be stale. Log
 		// at Debug since this fires often during normal reconciliation.
 		if err := cmdExec.Run(killCmd); err != nil {
-			log.DebugKV("reconcile.tmux_kill_failed", "title", data.Title, "session", sanitized, "err", err.Error())
+			log.For("reconcile").Debug("tmux_kill_failed", "title", data.Title, "session", sanitized, "err", err.Error())
 		}
 		killCancel()
 		data.Status = Paused
@@ -214,11 +214,11 @@ func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec
 		}
 
 		if !claimed {
-			log.InfoLog.Printf("killing orphaned tmux session: %s", sessionName)
+			log.For("reconcile").Info("orphan_tmux.kill_begin", "session", sessionName)
 			killCtx, killCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 			killCmd := exec.CommandContext(killCtx, "tmux", "kill-session", "-t", sessionName)
 			if err := cmdExec.Run(killCmd); err != nil {
-				log.ErrorLog.Printf("failed to kill orphaned session %s: %v", sessionName, err)
+				log.For("reconcile").Error("orphan_tmux.kill_failed", "session", sessionName, "err", err)
 			}
 			killCancel()
 		}
@@ -230,14 +230,14 @@ func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec
 func logRecoveryAction(title string, action RecoveryAction) {
 	switch action {
 	case ActionRestore:
-		log.InfoLog.Printf("instance %q: tmux+worktree healthy, restoring", title)
+		log.For("reconcile").Info("recovery", "title", title, "action", "restore", "reason", "tmux+worktree healthy")
 	case ActionRestart:
-		log.InfoLog.Printf("instance %q: tmux dead but worktree exists, will restart", title)
+		log.For("reconcile").Info("recovery", "title", title, "action", "restart", "reason", "tmux dead but worktree exists")
 	case ActionMarkPaused:
-		log.InfoLog.Printf("instance %q: tmux+worktree gone, marking paused", title)
+		log.For("reconcile").Info("recovery", "title", title, "action", "mark_paused", "reason", "tmux+worktree gone")
 	case ActionKillAndPause:
-		log.InfoLog.Printf("instance %q: tmux alive but worktree gone, killing tmux and pausing", title)
+		log.For("reconcile").Info("recovery", "title", title, "action", "kill_and_pause", "reason", "tmux alive but worktree gone")
 	case ActionRestartWsTerminal:
-		log.InfoLog.Printf("instance %q: workspace terminal tmux dead, will restart", title)
+		log.For("reconcile").Info("recovery", "title", title, "action", "restart_ws_terminal", "reason", "workspace terminal tmux dead")
 	}
 }

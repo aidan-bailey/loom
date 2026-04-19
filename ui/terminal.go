@@ -63,7 +63,7 @@ func (t *TerminalPane) SetSize(width, height int) {
 			continue
 		}
 		if err := s.tmuxSession.SetDetachedSize(width, height); err != nil {
-			log.InfoLog.Printf("terminal pane: failed to set detached size for %s: %v", title, err)
+			log.For("ui").Info("terminal.set_detached_size_failed", "title", title, "err", err)
 		}
 	}
 }
@@ -191,7 +191,7 @@ func (t *TerminalPane) ensureSessionLocked(instance *session.Instance) error {
 	// Set the size
 	if t.width > 0 && t.height > 0 {
 		if err := ts.SetDetachedSize(t.width, t.height); err != nil {
-			log.InfoLog.Printf("terminal pane: failed to set size: %v", err)
+			log.For("ui").Info("terminal.set_size_failed", "err", err)
 		}
 	}
 
@@ -264,7 +264,7 @@ func (t *TerminalPane) Close() {
 	for title, s := range t.sessions {
 		if s.tmuxSession != nil {
 			if err := s.tmuxSession.Close(); err != nil {
-				log.InfoLog.Printf("terminal pane: failed to close session for %s: %v", title, err)
+				log.For("ui").Info("terminal.close_session_failed", "title", title, "err", err)
 			}
 		}
 	}

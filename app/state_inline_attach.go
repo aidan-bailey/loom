@@ -39,7 +39,7 @@ func handleStateInlineAttachKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			err = selected.SendKeysRaw(b)
 		}
 		if err != nil {
-			log.ErrorLog.Printf("inline attach send error: %v", err)
+			log.For("app").Error("inline_attach.send_failed", "err", err)
 		}
 	}
 	return m, nil

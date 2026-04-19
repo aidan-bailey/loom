@@ -40,7 +40,7 @@ func runWithTimeout(title string, work func(), everyN *log.Every) {
 	case <-done:
 	case <-time.After(tickInstanceTimeout):
 		if everyN.ShouldLog() {
-			log.WarningLog.Printf("daemon tick for %s exceeded %s; skipping", title, tickInstanceTimeout)
+			log.For("daemon").Warn("tick_exceeded_timeout", "title", title, "timeout", tickInstanceTimeout)
 		}
 	}
 }
@@ -76,7 +76,7 @@ func syncTracked(
 		inst, err := session.FromInstanceData(d, configDir)
 		if err != nil {
 			if everyN.ShouldLog() {
-				log.WarnKV("daemon.construct_failed", "component", "daemon", "instance", d.Title, "err", err.Error())
+				log.For("daemon").Warn("construct_failed", "instance", d.Title, "err", err)
 			}
 			continue
 		}
@@ -85,7 +85,7 @@ func syncTracked(
 		// — a bare AutoYes tick reads Started+!Paused and skips them.
 		if err := inst.EnsureRunning(); err != nil {
 			if everyN.ShouldLog() {
-				log.WarnKV("daemon.ensure_running_failed", "component", "daemon", "instance", d.Title, "err", err.Error())
+				log.For("daemon").Warn("ensure_running_failed", "instance", d.Title, "err", err)
 			}
 			continue
 		}
@@ -279,7 +279,7 @@ func LaunchDaemon(wsCtx *config.WorkspaceContext) error {
 		return fmt.Errorf("failed to start child process: %w", err)
 	}
 
-	log.InfoKV("daemon.launched", "component", "daemon", "pid", cmd.Process.Pid)
+	log.For("daemon").Info("launched", "pid", cmd.Process.Pid)
 
 	pidFile := filepath.Join(configDir, "daemon.pid")
 	if err := config.AtomicWriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644); err != nil {
@@ -325,6 +325,6 @@ func StopDaemon(wsCtx *config.WorkspaceContext) error {
 		return fmt.Errorf("failed to remove PID file: %w", err)
 	}
 
-	log.InfoKV("daemon.stopped", "component", "daemon", "pid", pid)
+	log.For("daemon").Info("stopped", "pid", pid)
 	return nil
 }

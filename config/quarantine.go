@@ -18,7 +18,7 @@ func quarantineCorruptFile(path string) string {
 	ts := time.Now().UTC().Format("20060102-150405")
 	quarantine := fmt.Sprintf("%s.corrupted-%s", path, ts)
 	if err := os.Rename(path, quarantine); err != nil {
-		log.ErrorLog.Printf("failed to quarantine corrupt file %s: %v", path, err)
+		log.For("config").Error("quarantine_failed", "path", path, "err", err)
 		return ""
 	}
 	return quarantine

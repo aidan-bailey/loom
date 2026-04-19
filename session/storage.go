@@ -122,7 +122,7 @@ func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, 
 	for _, d := range data {
 		inst, err := ReconcileAndRestore(d, s.configDir, cmdExec)
 		if err != nil {
-			log.ErrorLog.Printf("failed to reconcile instance %q: %v (skipping)", d.Title, err)
+			log.For("session").Error("reconcile_failed", "title", d.Title, "err", err, "action", "skipping")
 			continue
 		}
 		instances = append(instances, inst)

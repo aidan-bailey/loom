@@ -47,7 +47,7 @@ func loadScripts(e *Engine, dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.WarningLog.Printf("script loader: cannot read %s: %v", dir, err)
+			log.For("script").Warn("loader.read_failed", "dir", dir, "err", err)
 		}
 		return
 	}
@@ -71,13 +71,13 @@ func loadScripts(e *Engine, dir string) {
 		path := filepath.Join(dir, name)
 		e.curFile = name
 		if err := e.L.DoFile(path); err != nil {
-			log.WarningLog.Printf("script loader: %s: %v", name, err)
+			log.For("script").Warn("loader.parse_failed", "file", name, "err", err)
 			// DoFile may have left the stack in a partially-bad
 			// state; clear it so the next file starts clean.
 			e.L.SetTop(0)
 			continue
 		}
-		log.InfoLog.Printf("script loader: loaded %s", name)
+		log.For("script").Info("loader.loaded", "file", name)
 	}
 	e.curFile = ""
 }
