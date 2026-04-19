@@ -1,8 +1,7 @@
 .idea
 .aider*
-claude-squad
+loom
 **.DS_Store
-cs
-.claude-squad/
+.loom/
 result
 .serena

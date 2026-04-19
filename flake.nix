@@ -1,5 +1,5 @@
 {
-  description = "Claude Squad - Manage multiple AI coding agents in parallel";
+  description = "Loom - Manage multiple AI coding agents in parallel";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -16,7 +16,7 @@
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       nixpkgsFor = forAllSystems (system: import nixpkgs { inherit system; });
-      version = "1.0.17";
+      version = "0.1.0";
     in
     {
       packages = forAllSystems (
@@ -25,8 +25,8 @@
           pkgs = nixpkgsFor.${system};
         in
         {
-          claude-squad = pkgs.buildGoModule {
-            pname = "claude-squad";
+          loom = pkgs.buildGoModule {
+            pname = "loom";
             inherit version;
             src = ./.;
 
@@ -53,7 +53,7 @@
             '';
 
             postInstall = ''
-              wrapProgram $out/bin/claude-squad \
+              wrapProgram $out/bin/loom \
                 --prefix PATH : ${
                   pkgs.lib.makeBinPath [
                     pkgs.tmux
@@ -65,14 +65,14 @@
 
             meta = {
               description = "Manage multiple AI coding agents in parallel";
-              homepage = "https://github.com/smtg-ai/claude-squad";
+              homepage = "https://github.com/aidan-bailey/loom";
               license = pkgs.lib.licenses.agpl3Only;
-              mainProgram = "claude-squad";
+              mainProgram = "loom";
               platforms = pkgs.lib.platforms.unix;
             };
           };
 
-          default = self.packages.${system}.claude-squad;
+          default = self.packages.${system}.loom;
         }
       );
 
