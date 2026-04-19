@@ -54,3 +54,18 @@ func (f *fakeHost) CursorDown()    {}
 func (f *fakeHost) ToggleDiff()    {}
 func (f *fakeHost) WorkspacePrev() {}
 func (f *fakeHost) WorkspaceNext() {}
+
+func (f *fakeHost) ScrollLineUp()           {}
+func (f *fakeHost) ScrollLineDown()         {}
+func (f *fakeHost) ScrollPageUp()           {}
+func (f *fakeHost) ScrollPageDown()         {}
+func (f *fakeHost) ScrollTop()              {}
+func (f *fakeHost) ScrollBottom()           {}
+func (f *fakeHost) ScrollTerminalLineUp()   {}
+func (f *fakeHost) ScrollTerminalLineDown() {}
+func (f *fakeHost) ScrollTerminalPageUp()   {}
+func (f *fakeHost) ScrollTerminalPageDown() {}
+func (f *fakeHost) ListPageUp()             {}
+func (f *fakeHost) ListPageDown()           {}
+func (f *fakeHost) ListTop()                {}
+func (f *fakeHost) ListBottom()             {}

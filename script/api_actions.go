@@ -66,6 +66,96 @@ func installSyncActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 		}
 		return 0
 	}))
+
+	// Scroll actions — route through the active pane (diff > focused).
+	actions.RawSetString("scroll_line_up", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollLineUp()
+		}
+		return 0
+	}))
+	actions.RawSetString("scroll_line_down", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollLineDown()
+		}
+		return 0
+	}))
+	actions.RawSetString("scroll_page_up", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollPageUp()
+		}
+		return 0
+	}))
+	actions.RawSetString("scroll_page_down", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollPageDown()
+		}
+		return 0
+	}))
+	actions.RawSetString("scroll_top", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollTop()
+		}
+		return 0
+	}))
+	actions.RawSetString("scroll_bottom", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollBottom()
+		}
+		return 0
+	}))
+
+	// Explicit terminal scroll — ignores diff-visible and focused-pane state.
+	actions.RawSetString("scroll_terminal_line_up", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollTerminalLineUp()
+		}
+		return 0
+	}))
+	actions.RawSetString("scroll_terminal_line_down", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollTerminalLineDown()
+		}
+		return 0
+	}))
+	actions.RawSetString("scroll_terminal_page_up", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollTerminalPageUp()
+		}
+		return 0
+	}))
+	actions.RawSetString("scroll_terminal_page_down", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ScrollTerminalPageDown()
+		}
+		return 0
+	}))
+
+	// List jump actions.
+	actions.RawSetString("list_page_up", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ListPageUp()
+		}
+		return 0
+	}))
+	actions.RawSetString("list_page_down", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ListPageDown()
+		}
+		return 0
+	}))
+	actions.RawSetString("list_top", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ListTop()
+		}
+		return 0
+	}))
+	actions.RawSetString("list_bottom", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ListBottom()
+		}
+		return 0
+	}))
 }
 
 // installDeferredActions attaches primitives that can't complete on

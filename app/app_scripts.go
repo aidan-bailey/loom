@@ -170,6 +170,28 @@ func (s *scriptHost) WorkspaceNext() {
 	s.m.persistFocusedWorkspace()
 }
 
+// Scroll primitives — diff-visible > focused-pane routing is handled
+// inside SplitPane itself, so these are thin pass-throughs. Each
+// operates on whichever pane the user last attached to (or the agent
+// by default), matching the mouse-wheel behavior.
+
+func (s *scriptHost) ScrollLineUp()   { s.m.splitPane.ScrollUp() }
+func (s *scriptHost) ScrollLineDown() { s.m.splitPane.ScrollDown() }
+func (s *scriptHost) ScrollPageUp()   { s.m.splitPane.PageUp() }
+func (s *scriptHost) ScrollPageDown() { s.m.splitPane.PageDown() }
+func (s *scriptHost) ScrollTop()      { s.m.splitPane.GotoTop() }
+func (s *scriptHost) ScrollBottom()   { s.m.splitPane.GotoBottom() }
+
+func (s *scriptHost) ScrollTerminalLineUp()   { s.m.splitPane.ScrollTerminalUp() }
+func (s *scriptHost) ScrollTerminalLineDown() { s.m.splitPane.ScrollTerminalDown() }
+func (s *scriptHost) ScrollTerminalPageUp()   { s.m.splitPane.PageTerminalUp() }
+func (s *scriptHost) ScrollTerminalPageDown() { s.m.splitPane.PageTerminalDown() }
+
+func (s *scriptHost) ListPageUp()   { s.m.list.PageUp() }
+func (s *scriptHost) ListPageDown() { s.m.list.PageDown() }
+func (s *scriptHost) ListTop()      { s.m.list.Top() }
+func (s *scriptHost) ListBottom()   { s.m.list.Bottom() }
+
 // pendingIntent ties a caller-provided intent to the id the script
 // awaits on. Task 10 drains this into scriptDoneMsg. trace records the
 // dispatch that produced this intent so handleScriptIntent can log

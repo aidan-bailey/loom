@@ -68,4 +68,27 @@ type Host interface {
 	ToggleDiff()
 	WorkspacePrev()
 	WorkspaceNext()
+
+	// Scroll primitives — mutate UI viewport state synchronously. The
+	// active-pane variants follow the same diff-visible > focused-pane
+	// routing rule as mouse wheel scrolling.
+	ScrollLineUp()
+	ScrollLineDown()
+	ScrollPageUp()
+	ScrollPageDown()
+	ScrollTop()
+	ScrollBottom()
+
+	// Explicit-target terminal scroll primitives — always scroll the
+	// terminal pane regardless of focus or diff visibility.
+	ScrollTerminalLineUp()
+	ScrollTerminalLineDown()
+	ScrollTerminalPageUp()
+	ScrollTerminalPageDown()
+
+	// List navigation primitives — selection jumps.
+	ListPageUp()
+	ListPageDown()
+	ListTop()
+	ListBottom()
 }
