@@ -1,12 +1,14 @@
 package log
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -17,6 +19,12 @@ import (
 // source-compatibility with the ~117 existing .Printf call sites.
 const EnvLogFormat = "CLAUDE_SQUAD_LOG_FORMAT"
 
+// EnvLogLevel gates the Structured logger's minimum level. Values:
+// "debug", "info" (default), "warn", "error". Legacy *log.Logger vars
+// are unaffected — they always write. `SetLevel` lets tests and
+// future runtime toggles update the gate after Initialize.
+const EnvLogLevel = "CLAUDE_SQUAD_LOG_LEVEL"
+
 var (
 	WarningLog *log.Logger
 	InfoLog    *log.Logger
@@ -26,6 +34,11 @@ var (
 	// (see InfoKV/WarnKV/ErrorKV). It shares the log file with the
 	// legacy loggers. Nil until Initialize has been called.
 	Structured *slog.Logger
+
+	// levelVar is the mutable level gate shared by every slog handler
+	// created via newStructured. Using a single LevelVar keeps the
+	// handler zero-alloc when the level filters out a record.
+	levelVar = new(slog.LevelVar)
 )
 
 const (
@@ -68,9 +81,31 @@ func Initialize(logDir string, daemon bool) {
 	WarningLog = log.New(f, prefix+"WARNING:", log.Ldate|log.Ltime|log.Lshortfile)
 	ErrorLog = log.New(f, prefix+"ERROR:", log.Ldate|log.Ltime|log.Lshortfile)
 
+	levelVar.Set(parseLevel(os.Getenv(EnvLogLevel)))
 	Structured = newStructured(f, daemon)
 	globalLogFile = f
 }
+
+// parseLevel maps a case-insensitive env value to slog.Level. An
+// unknown or empty value yields LevelInfo — the pre-debug-tier
+// default, so unset-env runs behave exactly like before.
+func parseLevel(v string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+// SetLevel updates the Structured logger's minimum level at runtime.
+// Safe to call before Initialize; the value is applied whenever the
+// handler is first created.
+func SetLevel(l slog.Level) { levelVar.Set(l) }
 
 // newStructured returns a slog.Logger writing to w. Output format is
 // JSON when CLAUDE_SQUAD_LOG_FORMAT=json is set (machine-readable for
@@ -78,10 +113,11 @@ func Initialize(logDir string, daemon bool) {
 // ad-hoc `grep` workflows keep working.
 func newStructured(w io.Writer, daemon bool) *slog.Logger {
 	var handler slog.Handler
+	opts := &slog.HandlerOptions{Level: levelVar}
 	if os.Getenv(EnvLogFormat) == "json" {
-		handler = slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})
+		handler = slog.NewJSONHandler(w, opts)
 	} else {
-		handler = slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo})
+		handler = slog.NewTextHandler(w, opts)
 	}
 	logger := slog.New(handler)
 	if daemon {
@@ -139,6 +175,44 @@ func ErrorKV(msg string, kv ...any) {
 		Structured.Error(msg, kv...)
 	}
 }
+
+// Debugf emits a printf-style DEBUG record via the Structured
+// logger. Gated by CLAUDE_SQUAD_LOG_LEVEL=debug (slog short-circuits
+// before formatting when the level is below the handler's gate, so
+// the `fmt.Sprintf` is paid only when debug is enabled).
+func Debugf(format string, v ...any) {
+	if Structured != nil && Structured.Enabled(context.Background(), slog.LevelDebug) {
+		Structured.Debug(fmt.Sprintf(format, v...))
+	}
+}
+
+// DebugKV emits a structured DEBUG record. Preferred for new call
+// sites — the KV pairs survive log-shipping and stay grep-friendly.
+func DebugKV(msg string, kv ...any) {
+	if Structured != nil {
+		Structured.Debug(msg, kv...)
+	}
+}
+
+// For returns a Structured child logger tagged with subsystem=... plus
+// any additional KV pairs. Designed to be cached on a long-lived owner
+// (e.g. *session.Instance) so every log from that owner carries the
+// same identifying attributes without each call site repeating them.
+// Returns a no-op logger if Initialize has not run yet, so callers at
+// package init time are safe.
+func For(subsystem string, kv ...any) *slog.Logger {
+	base := Structured
+	if base == nil {
+		base = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: levelVar}))
+	}
+	attrs := append([]any{"subsystem", subsystem}, kv...)
+	return base.With(attrs...)
+}
+
+// LogFilePath returns the absolute path of the log file opened by
+// Initialize. Empty string before Initialize runs. Exposed so the
+// `debug` subcommand can tell users where to `tail` their logs.
+func LogFilePath() string { return logFilePath }
 
 // rotateIfNeeded renames the log file to .log.1 if it exceeds maxLogSize.
 func rotateIfNeeded(path string) {

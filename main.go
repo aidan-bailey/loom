@@ -27,10 +27,21 @@ var (
 	configDirFlag      string
 	workspaceFlag      string
 	resetWorkspaceFlag string
+	logLevelFlag       string
 	rootCmd            = &cobra.Command{
 		Use:   "claude-squad [directory]",
 		Short: "Claude Squad - Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
 		Args:  cobra.MaximumNArgs(1),
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Promote --log-level to the env var before any subcommand
+			// calls log.Initialize. Using os.Setenv (rather than
+			// log.SetLevel) also propagates to the daemon child, which
+			// is spawned via os/exec and inherits the env.
+			if logLevelFlag != "" {
+				_ = os.Setenv(log.EnvLogLevel, logLevelFlag)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			configDir, err := config.GetConfigDir()
@@ -226,6 +237,17 @@ var (
 			configJson, _ := json.MarshalIndent(cfg, "", "  ")
 
 			fmt.Printf("Config: %s\n%s\n", filepath.Join(wsCtx.ConfigDir, config.ConfigFileName), configJson)
+			fmt.Printf("Log file: %s\n", log.LogFilePath())
+			level := os.Getenv(log.EnvLogLevel)
+			if level == "" {
+				level = "info (default)"
+			}
+			fmt.Printf("Log level: %s (env %s)\n", level, log.EnvLogLevel)
+			format := os.Getenv(log.EnvLogFormat)
+			if format == "" {
+				format = "text (default)"
+			}
+			fmt.Printf("Log format: %s (env %s)\n", format, log.EnvLogFormat)
 
 			return nil
 		},
@@ -273,11 +295,17 @@ func init() {
 	rootCmd.Flags().BoolVar(&daemonFlag, "daemon", false, "Run a program that loads all sessions"+
 		" and runs autoyes mode on them.")
 	rootCmd.Flags().StringVar(&configDirFlag, "config-dir", "", "Config directory (internal use by daemon)")
+	rootCmd.PersistentFlags().StringVar(&logLevelFlag, "log-level", "",
+		"Override log level for the Structured logger (debug|info|warn|error). "+
+			"Takes precedence over CLAUDE_SQUAD_LOG_LEVEL.")
 
-	// Hide internal flags
+	// Hide internal flags. A MarkHidden failure means the flag name is
+	// wrong — a programmer error that the panic would have obscured
+	// with a stack trace instead of naming the offending flag.
 	for _, name := range []string{"daemon", "config-dir"} {
 		if err := rootCmd.Flags().MarkHidden(name); err != nil {
-			panic(err)
+			fmt.Fprintf(os.Stderr, "mark hidden %q: %v\n", name, err)
+			os.Exit(2)
 		}
 	}
 

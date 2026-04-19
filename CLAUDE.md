@@ -101,6 +101,13 @@ claude-squad --workspace <name>
 
 - `CLAUDE_SQUAD_HOME` — Override config directory (default: `~/.claude-squad`). Must be absolute path; supports `~` expansion. Used as a backward-compatible fallback; internal code uses explicit `WorkspaceContext` threading.
 - `CLAUDE_SQUAD_LOG_FORMAT` — Set to `json` to emit structured log records from `log.InfoKV/WarnKV/ErrorKV` as JSON lines; otherwise plain text. Legacy `log.Infof`/`Warnf`/`Errorf` callers are unaffected.
+- `CLAUDE_SQUAD_LOG_LEVEL` — `debug|info|warn|error` (default `info`). Gates the Structured logger only — legacy `Infof/Warnf/Errorf` always write. The `--log-level` CLI flag (persistent on all subcommands) takes precedence over the env var and is also inherited by the daemon child process.
+
+## Debugging
+
+- Log file: `{configDir}/logs/claudesquad.log` (rotated once to `.log.1` at startup when >5 MB). Run `claude-squad debug` to print the exact path plus the effective log level and format.
+- To enable verbose output, set `CLAUDE_SQUAD_LOG_LEVEL=debug` or pass `--log-level=debug`. Debug logs are routed exclusively through the Structured logger (`log.Debugf` / `log.DebugKV`); they never appear via the legacy `*log.Logger` vars.
+- New code should prefer `log.For("subsystem", ...)` to get a pre-tagged `*slog.Logger`, or call `log.InfoKV/WarnKV/ErrorKV/DebugKV` directly. The resulting records carry `subsystem=...` (plus `component=daemon` when running as the daemon child) so a single `grep subsystem=tmux claudesquad.log` scopes output to one component.
 
 ## Documentation
 
