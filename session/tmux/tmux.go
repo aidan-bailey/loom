@@ -33,6 +33,16 @@ const tmuxTimeout = 5 * time.Second
 // process and may be slower than other tmux commands.
 const tmuxStartTimeout = 10 * time.Second
 
+// pumpWaitTimeout bounds how long lifecycle methods (Close, Restore,
+// PausePreview) will wait for the output-pump goroutine to drain after
+// ptmx.Close. The pump exits on any Read error, so in the common case
+// this receives immediately; a stuck tmux client or platform Read
+// pathology could otherwise hang the caller — which through Instance.
+// Pause and the daemon's UpdateDiffStats would wedge every other
+// tracked instance. On timeout we log and move on: the leaked goroutine
+// is isolated to the dying session rather than the whole app.
+const pumpWaitTimeout = 2 * time.Second
+
 // TmuxSession represents a managed tmux session
 type TmuxSession struct {
 	// Initialized by NewTmuxSession
@@ -218,10 +228,7 @@ func (t *TmuxSession) Restore() error {
 		_ = t.ptmx.Close()
 		t.ptmx = nil
 	}
-	if t.pumpDone != nil {
-		<-t.pumpDone
-		t.pumpDone = nil
-	}
+	t.waitPumpExit()
 
 	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
 	if err != nil {
@@ -265,6 +272,36 @@ func (t *TmuxSession) setPumpDest(w io.Writer) {
 	t.pumpMu.Lock()
 	t.pumpDest = w
 	t.pumpMu.Unlock()
+}
+
+// SimulateStuckPumpForTest replaces any live pump state with a live
+// channel nobody closes, modeling a pathological case where the pump
+// goroutine has wedged (stuck ptmx.Read, platform-specific Close that
+// doesn't interrupt a blocked Read, etc.). Lifecycle methods that
+// previously bare-waited on pumpDone would have hung indefinitely;
+// with waitPumpExit in place they now return within pumpWaitTimeout.
+// Test-only: the name and doc comment are guardrails, nothing about
+// the method enforces test-only use.
+func (t *TmuxSession) SimulateStuckPumpForTest() {
+	t.pumpDone = make(chan struct{})
+	t.ptmx = nil
+}
+
+// waitPumpExit blocks until the current pump goroutine signals exit or
+// pumpWaitTimeout elapses, whichever comes first. Only the pump
+// goroutine ever closes pumpDone, so callers must not close it
+// themselves. After this returns, t.pumpDone is cleared so a later
+// Restore reuses the field safely.
+func (t *TmuxSession) waitPumpExit() {
+	if t.pumpDone == nil {
+		return
+	}
+	select {
+	case <-t.pumpDone:
+	case <-time.After(pumpWaitTimeout):
+		log.WarningLog.Printf("tmux pump for session %s did not exit within %s; abandoning wait", t.sanitizedName, pumpWaitTimeout)
+	}
+	t.pumpDone = nil
 }
 
 type statusMonitor struct {
@@ -424,10 +461,7 @@ func (t *TmuxSession) PausePreview() error {
 		}
 		t.ptmx = nil
 	}
-	if t.pumpDone != nil {
-		<-t.pumpDone
-		t.pumpDone = nil
-	}
+	t.waitPumpExit()
 	return nil
 }
 
@@ -450,9 +484,7 @@ func (t *TmuxSession) Close() error {
 	}
 
 	// Wait for pump goroutine to exit after PTY close.
-	if t.pumpDone != nil {
-		<-t.pumpDone
-	}
+	t.waitPumpExit()
 
 	killCtx, killCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer killCancel()

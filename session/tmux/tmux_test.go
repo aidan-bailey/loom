@@ -2,6 +2,7 @@ package tmux
 
 import (
 	cmd2 "claude-squad/cmd"
+	"claude-squad/log"
 	"fmt"
 	"math/rand"
 	"os"
@@ -9,11 +10,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"claude-squad/cmd/cmd_test"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	log.Initialize("", false)
+	defer log.Close()
+	os.Exit(m.Run())
+}
 
 type MockPtyFactory struct {
 	t *testing.T
@@ -130,6 +138,81 @@ func TestStartTmuxSession_MultiWordProgram(t *testing.T) {
 	args := ptyFactory.cmds[0].Args
 	require.Equal(t, "claude --continue", args[len(args)-1],
 		"tmux must receive the full program string as its final argv; tmux's shell splits on whitespace")
+}
+
+// TestPumpWaitBoundedOnPausePreview verifies that PausePreview does not
+// block forever when the pump goroutine fails to exit. In normal
+// operation ptmx.Close unblocks the pump's Read loop, but a stuck
+// tmux client (or platform-specific Read pathology) can leave the
+// pump goroutine live. Without a bounded wait, PausePreview wedges
+// any flow that calls it — including the full-screen attach path.
+func TestPumpWaitBoundedOnPausePreview(t *testing.T) {
+	session := newTmuxSession("stuck-pause", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{
+		RunFunc:    func(cmd *exec.Cmd) error { return nil },
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) { return nil, nil },
+	})
+
+	// Simulate a stuck pump: live channel that nobody closes.
+	session.pumpDone = make(chan struct{})
+	session.ptmx = nil
+
+	done := make(chan error, 1)
+	go func() { done <- session.PausePreview() }()
+
+	select {
+	case <-done:
+		// Method returned within the bound — correct behavior.
+	case <-time.After(5 * time.Second):
+		t.Fatal("PausePreview blocked on pumpDone with no timeout")
+	}
+}
+
+// TestPumpWaitBoundedOnClose verifies that Close does not block forever
+// on a stuck pump. Close is called from Instance.Pause and Kill, so a
+// hung pump here propagates into hung lifecycle ops and — via the
+// daemon's per-instance UpdateDiffStats — wedges the whole tick loop
+// for every other instance.
+func TestPumpWaitBoundedOnClose(t *testing.T) {
+	session := newTmuxSession("stuck-close", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{
+		RunFunc:    func(cmd *exec.Cmd) error { return nil },
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) { return nil, nil },
+	})
+
+	session.pumpDone = make(chan struct{})
+	session.ptmx = nil
+
+	done := make(chan error, 1)
+	go func() { done <- session.Close() }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close blocked on pumpDone with no timeout")
+	}
+}
+
+// TestPumpWaitBoundedOnRestore verifies that Restore does not block
+// forever if the prior pump has not exited. Restore closes the old
+// ptmx and waits before starting a new PTY; a stuck old pump would
+// otherwise block Resume flows indefinitely.
+func TestPumpWaitBoundedOnRestore(t *testing.T) {
+	ptyFactory := NewMockPtyFactory(t)
+	session := newTmuxSession("stuck-restore", "claude", ptyFactory, cmd_test.MockCmdExec{
+		RunFunc:    func(cmd *exec.Cmd) error { return nil },
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) { return nil, nil },
+	})
+
+	session.pumpDone = make(chan struct{})
+	session.ptmx = nil
+
+	done := make(chan error, 1)
+	go func() { done <- session.Restore() }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Restore blocked on pumpDone with no timeout")
+	}
 }
 
 func TestStartTmuxSession(t *testing.T) {
