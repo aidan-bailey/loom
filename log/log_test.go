@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -334,3 +335,118 @@ func TestRotationConcurrentWrites(t *testing.T) {
 	assert.Equal(t, markCount, endCount, "every record's MARK must be paired with END — a mismatch indicates a torn write across the rotation boundary")
 }
 
+// TestRotateIfNeeded_RotatesOversizedFileAtStartup simulates the case
+// where a prior process crashed leaving an oversized log on disk. The
+// startup hook must rename it to .log.1 before the fresh file is opened
+// so the steady-state rotator starts from a clean baseline.
+func TestRotateIfNeeded_RotatesOversizedFileAtStartup(t *testing.T) {
+	dir := t.TempDir()
+	origMax := maxLogSize
+	t.Cleanup(func() { maxLogSize = origMax })
+
+	maxLogSize = 100
+	path := filepath.Join(dir, logFileName)
+
+	// Pre-seed a log that exceeds the threshold — the kind of file a
+	// crashed prior run would leave behind.
+	stale := bytes.Repeat([]byte("A"), 250)
+	require.NoError(t, os.WriteFile(path, stale, 0644))
+
+	rotateIfNeeded(path)
+
+	backup, err := os.ReadFile(path + ".1")
+	require.NoError(t, err, "oversized log must be renamed to .log.1")
+	assert.Equal(t, stale, backup, "backup must contain the pre-rotation bytes verbatim")
+
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf(".log must not exist post-rotation (gets created fresh by OpenFile later); stat returned nil err")
+	}
+}
+
+// TestRotateIfNeeded_SkipsSmallFile guards against spurious rotation
+// of a healthy log. A file under the threshold must be left alone.
+func TestRotateIfNeeded_SkipsSmallFile(t *testing.T) {
+	dir := t.TempDir()
+	origMax := maxLogSize
+	t.Cleanup(func() { maxLogSize = origMax })
+
+	maxLogSize = 1000
+	path := filepath.Join(dir, logFileName)
+	content := []byte("small log")
+	require.NoError(t, os.WriteFile(path, content, 0644))
+
+	rotateIfNeeded(path)
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, content, got, "small log must be left untouched")
+	_, err = os.Stat(path + ".1")
+	assert.True(t, os.IsNotExist(err), ".log.1 must not be created when below threshold")
+}
+
+// TestRotateIfNeeded_NoOpWhenMissing ensures the startup hook is a
+// no-op when no log exists yet (first run). It must not create empty
+// files or panic.
+func TestRotateIfNeeded_NoOpWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, logFileName)
+
+	assert.NotPanics(t, func() { rotateIfNeeded(path) })
+
+	_, err := os.Stat(path)
+	assert.True(t, os.IsNotExist(err), "startup rotate on a missing file must not create one")
+}
+
+// TestEvery_ShouldLog_RateLimits verifies Every lets exactly one call
+// through within a timeout window. Subsequent calls must return false
+// until the timer fires, then true once. Covers the rate-limiting path
+// used by the `git.cmd.ok` debug stream.
+func TestEvery_ShouldLog_RateLimits(t *testing.T) {
+	e := NewEvery(50 * time.Millisecond)
+
+	// First call initializes the timer and must pass.
+	assert.True(t, e.ShouldLog(), "first call must log — primes the rate limiter")
+
+	// A flurry of immediate follow-ups must all drop.
+	for i := 0; i < 5; i++ {
+		assert.False(t, e.ShouldLog(), "follow-up call %d within window must be rate-limited", i)
+	}
+
+	// Wait past the timeout and the next call must pass again.
+	time.Sleep(75 * time.Millisecond)
+	assert.True(t, e.ShouldLog(), "call after timeout must log")
+	assert.False(t, e.ShouldLog(), "immediate follow-up after post-timeout log must drop")
+}
+
+// TestEvery_ShouldLog_ConcurrentSafe hammers ShouldLog from many
+// goroutines. Under a small timeout exactly one goroutine per window
+// should win the race; the total permitted count must be bounded and
+// the mutex must prevent any data races (run with -race).
+func TestEvery_ShouldLog_ConcurrentSafe(t *testing.T) {
+	e := NewEvery(20 * time.Millisecond)
+
+	var allowed int64
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	const goroutines = 50
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			if e.ShouldLog() {
+				mu.Lock()
+				allowed++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Under the tight 20ms window and the first-call-primes semantics,
+	// at most a handful of goroutines will have won the drain — but at
+	// least one must (the primer). Assert sanity bounds rather than an
+	// exact count because scheduler jitter can let a second call
+	// through if the goroutines straddle the first timer fire.
+	assert.GreaterOrEqual(t, allowed, int64(1), "at least one concurrent call must win the rate limit")
+	assert.Less(t, allowed, int64(goroutines), "rate limiter must drop most concurrent calls within the window")
+}
