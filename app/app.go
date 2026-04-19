@@ -272,7 +272,9 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			}
 			if err := inst.CrashRestart(); err != nil {
 				log.ErrorLog.Printf("crash-recovery restart for %q failed: %v", inst.Title, err)
-				_ = inst.TransitionTo(session.Paused)
+				if tErr := inst.TransitionTo(session.Paused); tErr != nil {
+					log.WarnKV("app.crash_recovery.transition_failed", "instance", inst.Title, "err", tErr.Error())
+				}
 			}
 			inst.CrashRecovered = false
 		}
@@ -400,9 +402,13 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	m.updateTabBarStatuses()
 
 	if m.registry != nil {
-		_ = m.registry.SetOpenWorkspaces(m.slotNames())
+		if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
+			log.DebugKV("app.registry.set_open_failed", "err", err.Error())
+		}
 		if name := m.slots[focused].wsCtx.Name; name != "" {
-			_ = m.registry.UpdateLastUsed(name)
+			if err := m.registry.UpdateLastUsed(name); err != nil {
+				log.DebugKV("app.registry.update_last_used_failed", "workspace", name, "err", err.Error())
+			}
 		}
 	}
 }
@@ -558,17 +564,25 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					continue
 				}
 				log.WarningLog.Printf("tmux session for %q is gone, marking as paused", r.instance.Title)
-				_ = r.instance.TransitionTo(session.Paused)
+				if err := r.instance.TransitionTo(session.Paused); err != nil {
+					log.WarnKV("app.tick.transition_failed", "instance", r.instance.Title, "to", "Paused", "err", err.Error())
+				}
 				continue
 			}
 			if r.updated {
-				_ = r.instance.TransitionTo(session.Running)
+				if err := r.instance.TransitionTo(session.Running); err != nil {
+					log.WarnKV("app.tick.transition_failed", "instance", r.instance.Title, "to", "Running", "err", err.Error())
+				}
 			} else {
 				if r.hasPrompt {
 					r.instance.TapEnter()
-					_ = r.instance.TransitionTo(session.Prompting)
+					if err := r.instance.TransitionTo(session.Prompting); err != nil {
+						log.WarnKV("app.tick.transition_failed", "instance", r.instance.Title, "to", "Prompting", "err", err.Error())
+					}
 				} else {
-					_ = r.instance.TransitionTo(session.Ready)
+					if err := r.instance.TransitionTo(session.Ready); err != nil {
+						log.WarnKV("app.tick.transition_failed", "instance", r.instance.Title, "to", "Ready", "err", err.Error())
+					}
 				}
 			}
 			if r.diffErr != nil {
@@ -703,7 +717,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeCtx = config.WorkspaceContextFor(ws)
 		m.loadSlot(0)
 		m.updateTabBarStatuses()
-		_ = m.registry.UpdateLastUsed(ws.Name)
+		if err := m.registry.UpdateLastUsed(ws.Name); err != nil {
+			log.DebugKV("app.registry.update_last_used_failed", "workspace", ws.Name, "err", err.Error())
+		}
 		return m, tea.WindowSize()
 	case instanceStartedMsg:
 		// Select the instance that just started (or failed)
@@ -775,7 +791,9 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 			return m, m.handleError(err)
 		}
 		if m.registry != nil && len(m.registry.OpenWorkspaces) > 0 {
-			_ = m.registry.SetOpenWorkspaces(nil)
+			if err := m.registry.SetOpenWorkspaces(nil); err != nil {
+				log.DebugKV("app.registry.clear_open_failed", "err", err.Error())
+			}
 		}
 	}
 	return m, tea.Quit
@@ -1186,7 +1204,9 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		}
 		if err := inst.CrashRestart(); err != nil {
 			log.ErrorLog.Printf("crash-recovery restart for %q failed: %v", inst.Title, err)
-			_ = inst.TransitionTo(session.Paused)
+			if tErr := inst.TransitionTo(session.Paused); tErr != nil {
+				log.WarnKV("app.crash_recovery.transition_failed", "instance", inst.Title, "err", tErr.Error())
+			}
 		}
 		inst.CrashRecovered = false
 	}
