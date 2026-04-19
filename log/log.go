@@ -56,7 +56,13 @@ var (
 //
 // logDir specifies the directory for the log file. If empty, os.TempDir() is used.
 // When non-empty, the directory is created if it does not exist.
-func Initialize(logDir string, daemon bool) {
+//
+// Returns a non-nil error when the log file could not be opened. Callers
+// may still use the package-level loggers after an error — Initialize
+// falls back to stderr (or io.Discard in the daemon child, whose parent
+// has nil'd stdio), so the app stays functional in a degraded mode
+// instead of crashing via panic like the previous implementation.
+func Initialize(logDir string, daemon bool) error {
 	if logDir == "" {
 		logDir = os.TempDir()
 	} else {
@@ -68,22 +74,35 @@ func Initialize(logDir string, daemon bool) {
 	logFilePath = filepath.Join(logDir, logFileName)
 	rotateIfNeeded(logFilePath)
 
-	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		panic(fmt.Sprintf("could not open log file: %s", err))
-	}
-
 	prefix := ""
 	if daemon {
 		prefix = "[DAEMON] "
 	}
+	levelVar.Set(parseLevel(os.Getenv(EnvLogLevel)))
+
+	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		// Degraded path: pick a sink the process can actually write to.
+		// Daemon's stdio is nil'd by the parent (see daemon.LaunchDaemon),
+		// so stderr would write to a closed fd — discard instead.
+		var sink io.Writer = os.Stderr
+		if daemon {
+			sink = io.Discard
+		}
+		InfoLog = log.New(sink, prefix+"INFO:", log.Ldate|log.Ltime|log.Lshortfile)
+		WarningLog = log.New(sink, prefix+"WARNING:", log.Ldate|log.Ltime|log.Lshortfile)
+		ErrorLog = log.New(sink, prefix+"ERROR:", log.Ldate|log.Ltime|log.Lshortfile)
+		Structured = newStructured(sink, daemon)
+		globalLogFile = nil
+		return fmt.Errorf("could not open log file %q: %w", logFilePath, err)
+	}
+
 	InfoLog = log.New(f, prefix+"INFO:", log.Ldate|log.Ltime|log.Lshortfile)
 	WarningLog = log.New(f, prefix+"WARNING:", log.Ldate|log.Ltime|log.Lshortfile)
 	ErrorLog = log.New(f, prefix+"ERROR:", log.Ldate|log.Ltime|log.Lshortfile)
-
-	levelVar.Set(parseLevel(os.Getenv(EnvLogLevel)))
 	Structured = newStructured(f, daemon)
 	globalLogFile = f
+	return nil
 }
 
 // parseLevel maps a case-insensitive env value to slog.Level. An
@@ -215,44 +234,49 @@ func For(subsystem string, kv ...any) *slog.Logger {
 func LogFilePath() string { return logFilePath }
 
 // rotateIfNeeded renames the log file to .log.1 if it exceeds maxLogSize.
+// Rotation happens before the structured logger is wired up, so failures
+// go to stderr — the alternative (silent swallow) let the log grow past
+// its cap without any operator signal.
 func rotateIfNeeded(path string) {
 	info, err := os.Stat(path)
 	if err != nil || info.Size() < maxLogSize {
 		return
 	}
 	backup := path + ".1"
-	_ = os.Remove(backup)
-	_ = os.Rename(path, backup)
+	// Remove is best-effort: "not exist" on first rotation is expected.
+	// Only a non-ENOENT failure is worth surfacing, since Rename will
+	// then fail too and we want the operator to see the root cause.
+	if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "claude-squad: log rotation could not remove %s: %v\n", backup, err)
+	}
+	if err := os.Rename(path, backup); err != nil {
+		fmt.Fprintf(os.Stderr, "claude-squad: log rotation failed (%s → %s): %v\n", path, backup, err)
+	}
 }
 
 // Every is used to log at most once every timeout duration. Safe for concurrent
-// use; ShouldLog takes a mutex before touching the internal timer.
+// use; ShouldLog takes a mutex before touching the internal timestamp.
 type Every struct {
 	timeout time.Duration
 	mu      sync.Mutex
-	timer   *time.Timer
+	lastAt  time.Time
 }
 
 func NewEvery(timeout time.Duration) *Every {
 	return &Every{timeout: timeout}
 }
 
-// ShouldLog returns true if the timeout has passed since the last log.
+// ShouldLog returns true if the timeout has passed since the last log. The
+// first call always returns true (zero lastAt predates any real time, so
+// Sub >= timeout holds trivially).
 func (e *Every) ShouldLog() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.timer == nil {
-		e.timer = time.NewTimer(e.timeout)
-		e.timer.Reset(e.timeout)
-		return true
-	}
-
-	select {
-	case <-e.timer.C:
-		e.timer.Reset(e.timeout)
-		return true
-	default:
+	now := time.Now()
+	if now.Sub(e.lastAt) < e.timeout {
 		return false
 	}
+	e.lastAt = now
+	return true
 }

@@ -29,7 +29,7 @@ func setupTestEnvironment(t *testing.T, cmdExec cmd_test.MockCmdExec) *testSetup
 	t.Helper()
 
 	// Initialize logging
-	log.Initialize("", false)
+	_ = log.Initialize("", false)
 
 	// Set up a temp working directory
 	workdir := t.TempDir()

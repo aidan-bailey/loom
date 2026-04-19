@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewStructured_JSONFormat(t *testing.T) {
@@ -143,7 +146,7 @@ func TestFor_SafeBeforeInitialize(t *testing.T) {
 func TestInitialize_PopulatesLogFilePath(t *testing.T) {
 	dir := t.TempDir()
 
-	Initialize(dir, false)
+	require.NoError(t, Initialize(dir, false))
 	t.Cleanup(Close)
 
 	assert.Equal(t, filepath.Join(dir, logFileName), LogFilePath())
@@ -154,10 +157,77 @@ func TestInitialize_HonorsEnvLogLevel(t *testing.T) {
 	origLevel := levelVar.Level()
 	t.Cleanup(func() { levelVar.Set(origLevel) })
 
-	Initialize(t.TempDir(), false)
+	require.NoError(t, Initialize(t.TempDir(), false))
 	t.Cleanup(Close)
 
 	assert.Equal(t, slog.LevelDebug, levelVar.Level())
+}
+
+// TestInitialize_ReturnsErrorWhenLogFileUnopenable guards the
+// degraded-but-functional path: if the log file can't be opened
+// (here: path is an existing directory, not a file), Initialize
+// must return a non-nil error AND still wire up working loggers on
+// stderr so the caller can run degraded. The prior implementation
+// panicked, killing the app before any UI rendered.
+func TestInitialize_ReturnsErrorWhenLogFileUnopenable(t *testing.T) {
+	dir := t.TempDir()
+	// Put a directory where the log file should be — OpenFile(O_WRONLY)
+	// will fail with EISDIR, which is the failure mode we care about.
+	blocker := filepath.Join(dir, logFileName)
+	require.NoError(t, os.Mkdir(blocker, 0755))
+
+	err := Initialize(dir, false)
+	t.Cleanup(Close)
+
+	require.Error(t, err, "Initialize must report the open failure instead of panicking")
+	assert.Contains(t, err.Error(), logFileName, "error should name the unopenable path")
+
+	// Degraded loggers must still be usable.
+	assert.NotNil(t, InfoLog, "InfoLog must be wired to fallback sink")
+	assert.NotNil(t, WarningLog)
+	assert.NotNil(t, ErrorLog)
+	assert.NotNil(t, Structured, "Structured logger must be wired to fallback sink")
+
+	assert.NotPanics(t, func() { InfoLog.Printf("degraded info") })
+	assert.NotPanics(t, func() { Structured.Info("degraded structured") })
+}
+
+// TestInitialize_DaemonFallbackUsesDiscard guards that the daemon
+// child never tries to write to stderr on log-open failure — its
+// stdio is nil'd by the parent (daemon.LaunchDaemon), so stderr
+// would be a closed fd. io.Discard is the safe sink.
+func TestInitialize_DaemonFallbackUsesDiscard(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, logFileName)
+	require.NoError(t, os.Mkdir(blocker, 0755))
+
+	err := Initialize(dir, true)
+	t.Cleanup(Close)
+
+	require.Error(t, err)
+	// Writes must not panic even though the daemon parent may have
+	// closed stdio.
+	assert.NotPanics(t, func() { InfoLog.Printf("daemon degraded info") })
+	assert.NotPanics(t, func() { Structured.Info("daemon degraded structured") })
+}
+
+// TestEvery_RateLimits exercises the ShouldLog rate limiter: the first
+// call must return true, every follow-up call within the window must
+// return false, and the next call after the window must return true
+// again. Prior implementation used time.NewTimer + Reset which is
+// racy per the Go docs on non-stopped timers.
+func TestEvery_RateLimits(t *testing.T) {
+	e := NewEvery(50 * time.Millisecond)
+
+	assert.True(t, e.ShouldLog(), "first call must always emit")
+	// Ten rapid calls inside the window — none should emit.
+	for i := 0; i < 10; i++ {
+		assert.False(t, e.ShouldLog(), "call %d inside window must be suppressed", i)
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	assert.True(t, e.ShouldLog(), "first call after window must emit again")
+	assert.False(t, e.ShouldLog(), "subsequent call inside new window must be suppressed")
 }
 
 func TestDebugKV_EmitsWhenEnabled(t *testing.T) {

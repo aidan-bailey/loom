@@ -118,7 +118,7 @@ func injectSession(tp *TerminalPane, title string, ts *tmux.TmuxSession, worktre
 }
 
 func TestTerminalUpdateContent(t *testing.T) {
-	log.Initialize("", false)
+	_ = log.Initialize("", false)
 	defer log.Close()
 
 	expectedContent := "$ whoami\nuser\n$ ls\nfile1.txt  file2.txt"
@@ -151,7 +151,7 @@ func TestTerminalUpdateContent(t *testing.T) {
 }
 
 func TestTerminalFallbackStates(t *testing.T) {
-	log.Initialize("", false)
+	_ = log.Initialize("", false)
 	defer log.Close()
 
 	tp := NewTerminalPane()
@@ -208,7 +208,7 @@ func TestTerminalFallbackStates(t *testing.T) {
 }
 
 func TestTerminalSessionCaching(t *testing.T) {
-	log.Initialize("", false)
+	_ = log.Initialize("", false)
 	defer log.Close()
 
 	tp := NewTerminalPane()
@@ -274,7 +274,7 @@ func TestTerminalSessionCaching(t *testing.T) {
 }
 
 func TestTerminalScrolling(t *testing.T) {
-	log.Initialize("", false)
+	_ = log.Initialize("", false)
 	defer log.Close()
 
 	// Create content with many lines for scrolling
@@ -323,7 +323,7 @@ func TestTerminalScrolling(t *testing.T) {
 }
 
 func TestTerminalDetachSessionForInstance(t *testing.T) {
-	log.Initialize("", false)
+	_ = log.Initialize("", false)
 	defer log.Close()
 
 	tp := NewTerminalPane()

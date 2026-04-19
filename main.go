@@ -48,7 +48,12 @@ var (
 			if err != nil {
 				configDir = os.TempDir()
 			}
-			log.Initialize(filepath.Join(configDir, "logs"), daemonFlag)
+			if logErr := log.Initialize(filepath.Join(configDir, "logs"), daemonFlag); logErr != nil {
+				// Non-fatal: loggers fall back to stderr (or Discard for
+				// the daemon child) so the app still runs; we only lose
+				// the on-disk log file. Surface once so operators notice.
+				fmt.Fprintf(os.Stderr, "claude-squad: %v\n", logErr)
+			}
 			defer log.Close()
 
 			if daemonFlag {
@@ -190,7 +195,9 @@ var (
 				return err
 			}
 
-			log.Initialize(filepath.Join(wsCtx.ConfigDir, "logs"), false)
+			if logErr := log.Initialize(filepath.Join(wsCtx.ConfigDir, "logs"), false); logErr != nil {
+				fmt.Fprintf(os.Stderr, "claude-squad: %v\n", logErr)
+			}
 			defer log.Close()
 
 			state := config.LoadStateFrom(wsCtx.ConfigDir)
@@ -230,7 +237,9 @@ var (
 			if err != nil {
 				return fmt.Errorf("failed to resolve workspace context: %w", err)
 			}
-			log.Initialize(filepath.Join(wsCtx.ConfigDir, "logs"), false)
+			if logErr := log.Initialize(filepath.Join(wsCtx.ConfigDir, "logs"), false); logErr != nil {
+				fmt.Fprintf(os.Stderr, "claude-squad: %v\n", logErr)
+			}
 			defer log.Close()
 
 			cfg := config.LoadConfigFrom(wsCtx.ConfigDir)

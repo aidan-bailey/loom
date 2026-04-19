@@ -18,7 +18,7 @@ import (
 // dimension causes the Bubble Tea alt-screen to scroll, cutting off
 // the top of the TUI.
 func TestListRenderDimensions(t *testing.T) {
-	log.Initialize("", false)
+	_ = log.Initialize("", false)
 
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 

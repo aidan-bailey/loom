@@ -7,7 +7,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	log.Initialize("", false)
+	_ = log.Initialize("", false)
 	defer log.Close()
 	os.Exit(m.Run())
 }
