@@ -291,11 +291,13 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 	var cmd tea.Cmd
 	switch i := p.intent.(type) {
 	case script.QuitIntent:
-		// handleQuit normally returns tea.Quit and the main loop exits
-		// before the resume matters. But on SaveInstances failure it
-		// returns a non-terminal error Cmd, and short-circuiting here
-		// would leak the awaiting coroutine. Fall through to the
-		// tea.Batch below so the resume fires either way.
+		// handleQuit returns tea.Quit on success. On SaveInstances
+		// failure (any slot in multi-slot mode, or the root storage in
+		// single-slot mode) it returns a non-terminal error Cmd so the
+		// user can fix the underlying issue (disk full, read-only
+		// mount) and retry rather than losing state silently. Falling
+		// through to the tea.Batch below ensures the awaiting Lua
+		// coroutine resumes in both outcomes.
 		_, cmd = m.handleQuit()
 	case script.PushSelectedIntent:
 		if !selectedNotBusyNotWorkspace(m) {
