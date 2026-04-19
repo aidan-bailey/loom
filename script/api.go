@@ -31,7 +31,7 @@ func installAPI(L *lua.LState, e *Engine) {
 	cs.RawSetString("notify", L.NewClosure(apiNotify(e), L.NewUserData()))
 	cs.RawSetString("now", L.NewFunction(apiNow))
 	cs.RawSetString("sprintf", L.NewFunction(apiSprintf))
-	cs.RawSetString("await", L.NewFunction(apiAwait))
+	cs.RawSetString("await", L.NewClosure(apiAwait(e), L.NewUserData()))
 
 	L.SetGlobal("cs", cs)
 }
@@ -167,12 +167,16 @@ func apiNow(L *lua.LState) int {
 // cs.await must be called from inside a coroutine. The engine arranges
 // for every bound handler to run inside one (see Task 4's runAction
 // wrapping), so in practice scripts can always use cs.await freely.
-func apiAwait(L *lua.LState) int {
-	var id lua.LNumber
-	if L.GetTop() >= 1 {
-		id = L.CheckNumber(1)
+func apiAwait(e *Engine) lua.LGFunction {
+	return func(L *lua.LState) int {
+		var id lua.LNumber
+		if L.GetTop() >= 1 {
+			id = L.CheckNumber(1)
+		} else {
+			id = lua.LNumber(e.lastEnqueued)
+		}
+		return L.Yield(id)
 	}
-	return L.Yield(id)
 }
 
 // apiSprintf is a convenience alias for string.format so scripts
