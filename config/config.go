@@ -232,13 +232,19 @@ func LoadConfigFrom(dir string) *Config {
 		}
 		dir = resolved
 	}
-	data, err := os.ReadFile(filepath.Join(dir, ConfigFileName))
+	configPath := filepath.Join(dir, ConfigFileName)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return DefaultConfig()
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		log.Warnf("corrupt config file, using defaults: %v", err)
+		quarantined := quarantineCorruptFile(configPath)
+		if quarantined != "" {
+			log.ErrorLog.Printf("corrupt config file %s (quarantined to %s); starting with defaults — inspect the quarantined file for forensic context", configPath, quarantined)
+		} else {
+			log.ErrorLog.Printf("corrupt config file %s; starting with defaults: %v", configPath, err)
+		}
 		return DefaultConfig()
 	}
 	return &cfg

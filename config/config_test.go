@@ -273,6 +273,39 @@ func TestLoadConfig(t *testing.T) {
 	})
 }
 
+// TestLoadConfigFrom_CorruptFileQuarantined drives F8 for config.json.
+// Mirrors the state.json policy: rename corrupt input to
+// config.json.corrupted-<timestamp> so the next save cannot silently
+// clobber the evidence with defaults.
+func TestLoadConfigFrom_CorruptFileQuarantined(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, ConfigFileName)
+	require.NoError(t, os.WriteFile(configPath, []byte("{not-json"), 0644))
+
+	cfg := LoadConfigFrom(dir)
+	assert.NotNil(t, cfg)
+	assert.NotEmpty(t, cfg.DefaultProgram, "defaults must still be returned")
+
+	_, err := os.Stat(configPath)
+	assert.True(t, os.IsNotExist(err), "corrupt config.json must be moved aside")
+
+	entries, err := os.ReadDir(dir)
+	assert.NoError(t, err)
+	var quarantined string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ConfigFileName+".corrupted-") {
+			quarantined = filepath.Join(dir, e.Name())
+			break
+		}
+	}
+	assert.NotEmpty(t, quarantined, "quarantined corrupt config must exist with .corrupted-<ts> suffix")
+	if quarantined != "" {
+		body, err := os.ReadFile(quarantined)
+		assert.NoError(t, err)
+		assert.Equal(t, "{not-json", string(body))
+	}
+}
+
 func TestGetProgram(t *testing.T) {
 	t.Run("no profiles returns default_program as-is", func(t *testing.T) {
 		cfg := &Config{DefaultProgram: "/usr/local/bin/claude"}

@@ -44,6 +44,46 @@ func TestLoadStateFrom_CorruptFileReturnsDefault(t *testing.T) {
 	assert.Equal(t, json.RawMessage("[]"), state.InstancesData)
 }
 
+// TestLoadStateFrom_CorruptFileQuarantined drives the F8 policy:
+// a corrupt state.json is renamed to state.json.corrupted-<timestamp>
+// so it is preserved for post-mortem and cannot silently round-trip
+// as defaults-overwriting-real-state on the next save. Before this
+// fix the corrupt file sat in place and the user saw an empty
+// instance list — masking the real issue while potentially orphaning
+// on-disk tmux sessions and worktrees.
+func TestLoadStateFrom_CorruptFileQuarantined(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, StateFileName)
+	assert.NoError(t, os.WriteFile(statePath, []byte("not-json"), 0644))
+
+	state := LoadStateFrom(dir)
+	assert.NotNil(t, state, "defaults must still be returned on corrupt file")
+
+	// The original path must no longer hold the corrupt bytes — either
+	// it was removed, or the helper moved it aside.
+	_, err := os.Stat(statePath)
+	assert.True(t, os.IsNotExist(err), "corrupt state.json must be moved aside")
+
+	// A sibling file named state.json.corrupted-* must now exist and
+	// hold the corrupt bytes so an operator can debug.
+	entries, err := os.ReadDir(dir)
+	assert.NoError(t, err)
+	var quarantined string
+	for _, e := range entries {
+		if len(e.Name()) > len(StateFileName) &&
+			e.Name()[:len(StateFileName)+len(".corrupted-")] == StateFileName+".corrupted-" {
+			quarantined = filepath.Join(dir, e.Name())
+			break
+		}
+	}
+	assert.NotEmpty(t, quarantined, "quarantined corrupt file must exist with .corrupted-<ts> suffix")
+	if quarantined != "" {
+		body, err := os.ReadFile(quarantined)
+		assert.NoError(t, err)
+		assert.Equal(t, "not-json", string(body), "quarantined file must preserve original bytes")
+	}
+}
+
 func TestSaveStateTo_CreatesMissingDirectory(t *testing.T) {
 	parent := t.TempDir()
 	nested := filepath.Join(parent, "a", "b")

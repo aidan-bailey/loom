@@ -151,7 +151,12 @@ func LoadStateFrom(dir string) *State {
 
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
-		log.Warnf("corrupt state file, using defaults: %v", err)
+		quarantined := quarantineCorruptFile(statePath)
+		if quarantined != "" {
+			log.ErrorLog.Printf("corrupt state file %s (quarantined to %s); starting with defaults — inspect the quarantined file for forensic context", statePath, quarantined)
+		} else {
+			log.ErrorLog.Printf("corrupt state file %s; starting with defaults: %v", statePath, err)
+		}
 		s := DefaultState()
 		s.configDir = dir
 		return s
