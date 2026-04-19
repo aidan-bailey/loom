@@ -359,7 +359,9 @@ func (t *TerminalPane) String() string {
 	return terminalPaneStyle.Width(width).Render(contentStr)
 }
 
-// enterScrollMode captures the full terminal history and enters scroll mode.
+// enterScrollMode captures the full terminal history and seeds the viewport.
+// Callers must apply a motion (LineUp, HalfViewUp, etc.) after to keep
+// AtBottom() false — otherwise the next UpdateContent auto-exits.
 // Caller must hold t.mu.
 func (t *TerminalPane) enterScrollMode() error {
 	s, ok := t.sessions[t.currentTitle]
@@ -373,12 +375,8 @@ func (t *TerminalPane) enterScrollMode() error {
 	}
 
 	footer := terminalFooterStyle.Render("ESC to exit scroll mode")
-	contentWithFooter := lipgloss.JoinVertical(lipgloss.Left, content, footer)
-	t.viewport.SetContent(contentWithFooter)
-	// Position at the bottom and scroll up so the user sees history
-	// and AtBottom() returns false (preventing auto-exit).
+	t.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, content, footer))
 	t.viewport.GotoBottom()
-	t.viewport.LineUp(1)
 	t.isScrolling = true
 	return nil
 }
@@ -388,7 +386,9 @@ func (t *TerminalPane) ScrollUp() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.isScrolling {
-		return t.enterScrollMode()
+		if err := t.enterScrollMode(); err != nil {
+			return err
+		}
 	}
 	t.viewport.LineUp(1)
 	return nil
@@ -399,11 +399,70 @@ func (t *TerminalPane) ScrollDown() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.isScrolling {
-		// Already showing latest content, nothing to scroll down to.
 		return nil
 	}
 	t.viewport.LineDown(1)
 	return nil
+}
+
+// PageUp scrolls up by half a viewport height.
+func (t *TerminalPane) PageUp() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.isScrolling {
+		if err := t.enterScrollMode(); err != nil {
+			return err
+		}
+	}
+	t.viewport.HalfViewUp()
+	return nil
+}
+
+// PageDown scrolls down by half a viewport height.
+func (t *TerminalPane) PageDown() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.isScrolling {
+		return nil
+	}
+	t.viewport.HalfViewDown()
+	return nil
+}
+
+// GotoTop jumps the viewport to the start of captured history.
+func (t *TerminalPane) GotoTop() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.isScrolling {
+		if err := t.enterScrollMode(); err != nil {
+			return err
+		}
+	}
+	t.viewport.GotoTop()
+	return nil
+}
+
+// GotoBottom exits scroll mode and returns to live tail.
+func (t *TerminalPane) GotoBottom() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.isScrolling {
+		return
+	}
+	t.isScrolling = false
+	t.viewport.SetContent("")
+	t.viewport.GotoTop()
+}
+
+// ScrollPercent returns the viewport position as a fraction [0, 1].
+// Returns 1.0 when not in scroll mode (live tail is "at the bottom").
+func (t *TerminalPane) ScrollPercent() float64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.isScrolling {
+		return 1.0
+	}
+	return t.viewport.ScrollPercent()
 }
 
 // ResetToNormalMode exits scroll mode and restores normal content display.

@@ -114,6 +114,31 @@ func (d *DiffPane) ScrollDown() {
 	d.viewport.LineDown(1)
 }
 
+// PageUp scrolls the viewport up by half a view.
+func (d *DiffPane) PageUp() {
+	d.viewport.HalfViewUp()
+}
+
+// PageDown scrolls the viewport down by half a view.
+func (d *DiffPane) PageDown() {
+	d.viewport.HalfViewDown()
+}
+
+// GotoTop jumps the viewport to the start.
+func (d *DiffPane) GotoTop() {
+	d.viewport.GotoTop()
+}
+
+// GotoBottom jumps the viewport to the end.
+func (d *DiffPane) GotoBottom() {
+	d.viewport.GotoBottom()
+}
+
+// ScrollPercent returns the viewport position as a fraction [0, 1].
+func (d *DiffPane) ScrollPercent() float64 {
+	return d.viewport.ScrollPercent()
+}
+
 func colorizeDiff(diff string) string {
 	var coloredOutput strings.Builder
 	coloredOutput.Grow(len(diff) * 2)

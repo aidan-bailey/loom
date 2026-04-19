@@ -204,37 +204,35 @@ func (p *PreviewPane) String() string {
 	return rendered
 }
 
+// enterScrollMode captures the full pane history and seeds the viewport.
+// Callers must apply a motion (LineUp, HalfViewUp, etc.) after to keep
+// AtBottom() false — otherwise the next UpdateContent auto-exits.
+func (p *PreviewPane) enterScrollMode(instance *session.Instance) error {
+	content, err := instance.PreviewFullHistory()
+	if err != nil {
+		return err
+	}
+
+	footer := lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"}).
+		Render("ESC to exit scroll mode")
+
+	p.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, content, footer))
+	p.viewport.GotoBottom()
+	p.isScrolling = true
+	return nil
+}
+
 // ScrollUp scrolls up in the viewport
 func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
 	if instance == nil || instance.GetStatus() == session.Paused {
 		return nil
 	}
-
 	if !p.isScrolling {
-		// Entering scroll mode - capture entire pane content including scrollback history
-		content, err := instance.PreviewFullHistory()
-		if err != nil {
+		if err := p.enterScrollMode(instance); err != nil {
 			return err
 		}
-
-		// Set content in the viewport
-		footer := lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"}).
-			Render("ESC to exit scroll mode")
-
-		contentWithFooter := lipgloss.JoinVertical(lipgloss.Left, content, footer)
-		p.viewport.SetContent(contentWithFooter)
-
-		// Position the viewport at the bottom and scroll up so the user
-		// sees history and AtBottom() returns false (preventing auto-exit).
-		p.viewport.GotoBottom()
-		p.viewport.LineUp(1)
-
-		p.isScrolling = true
-		return nil
 	}
-
-	// Already in scroll mode, just scroll the viewport
 	p.viewport.LineUp(1)
 	return nil
 }
@@ -244,15 +242,70 @@ func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
 	if instance == nil || instance.GetStatus() == session.Paused {
 		return nil
 	}
-
 	if !p.isScrolling {
-		// Already showing latest content, nothing to scroll down to.
 		return nil
 	}
-
-	// Already in scroll mode, just scroll the viewport
 	p.viewport.LineDown(1)
 	return nil
+}
+
+// PageUp scrolls up by half a viewport height.
+func (p *PreviewPane) PageUp(instance *session.Instance) error {
+	if instance == nil || instance.GetStatus() == session.Paused {
+		return nil
+	}
+	if !p.isScrolling {
+		if err := p.enterScrollMode(instance); err != nil {
+			return err
+		}
+	}
+	p.viewport.HalfViewUp()
+	return nil
+}
+
+// PageDown scrolls down by half a viewport height.
+func (p *PreviewPane) PageDown(instance *session.Instance) error {
+	if instance == nil || instance.GetStatus() == session.Paused {
+		return nil
+	}
+	if !p.isScrolling {
+		return nil
+	}
+	p.viewport.HalfViewDown()
+	return nil
+}
+
+// GotoTop jumps the viewport to the start of captured history.
+func (p *PreviewPane) GotoTop(instance *session.Instance) error {
+	if instance == nil || instance.GetStatus() == session.Paused {
+		return nil
+	}
+	if !p.isScrolling {
+		if err := p.enterScrollMode(instance); err != nil {
+			return err
+		}
+	}
+	p.viewport.GotoTop()
+	return nil
+}
+
+// GotoBottom exits scroll mode and returns to live tail.
+func (p *PreviewPane) GotoBottom(instance *session.Instance) error {
+	return p.ResetToNormalMode(instance)
+}
+
+// ScrollPercent returns the viewport position as a fraction [0, 1].
+// Returns 1.0 when not in scroll mode (live tail is "at the bottom").
+func (p *PreviewPane) ScrollPercent() float64 {
+	if !p.isScrolling {
+		return 1.0
+	}
+	return p.viewport.ScrollPercent()
+}
+
+// IsScrolling returns whether the preview pane is in scroll mode.
+func (p *PreviewPane) IsScrolling() bool {
+	return p.isScrolling
 }
 
 // ResetToNormalMode exits scroll mode and returns to normal mode
