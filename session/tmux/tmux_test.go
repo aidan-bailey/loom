@@ -80,6 +80,57 @@ func TestCaptureAndProcessCapturesOnce(t *testing.T) {
 	require.Equal(t, 1, captureCount, "CaptureAndProcess should call capture-pane exactly once")
 }
 
+// TestCaptureAndProcessHashesOnce guards against reintroducing the
+// double-hash pattern that previously computed SHA-256 over the full
+// pane content twice per call (once to compare, once to store).
+func TestCaptureAndProcessHashesOnce(t *testing.T) {
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			if strings.Contains(c.String(), "capture-pane") {
+				return []byte("some output"), nil
+			}
+			return []byte{}, nil
+		},
+	}
+
+	ts := newTmuxSession("test-session", ProgramClaude, &MockPtyFactory{t: t}, cmdExec)
+	ts.monitor = newStatusMonitor()
+
+	_, _, _, _ = ts.CaptureAndProcess()
+	require.Equal(t, 1, ts.monitor.hashCalls,
+		"CaptureAndProcess should hash pane content exactly once")
+
+	_, _, _, _ = ts.CaptureAndProcess()
+	require.Equal(t, 2, ts.monitor.hashCalls,
+		"second CaptureAndProcess should add exactly one hash call")
+}
+
+// TestHasUpdatedHashesOnce mirrors TestCaptureAndProcessHashesOnce for the
+// daemon's HasUpdated path.
+func TestHasUpdatedHashesOnce(t *testing.T) {
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			if strings.Contains(c.String(), "capture-pane") {
+				return []byte("some output"), nil
+			}
+			return []byte{}, nil
+		},
+	}
+
+	ts := newTmuxSession("test-session", ProgramClaude, &MockPtyFactory{t: t}, cmdExec)
+	ts.monitor = newStatusMonitor()
+
+	updated, _ := ts.HasUpdated()
+	require.True(t, updated, "first HasUpdated on fresh content should report updated")
+	require.Equal(t, 1, ts.monitor.hashCalls, "HasUpdated should hash exactly once on new content")
+
+	updated, _ = ts.HasUpdated()
+	require.False(t, updated, "HasUpdated on unchanged content should not report updated")
+	require.Equal(t, 2, ts.monitor.hashCalls, "HasUpdated should still hash exactly once per call")
+}
+
 // TestRestoreClosesPriorPty ensures that calling Restore twice does not leak
 // the first PTY handle. Before the fix, each Pause→Resume cycle leaked one FD
 // and one pump goroutine because Restore overwrote t.ptmx without closing.

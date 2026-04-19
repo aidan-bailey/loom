@@ -270,17 +270,23 @@ func (t *TmuxSession) setPumpDest(w io.Writer) {
 type statusMonitor struct {
 	// Store hashes to save memory.
 	prevOutputHash []byte
+	// hashCalls counts hash invocations so tests can assert the dedup
+	// guarantee (one hash per HasUpdated / CaptureAndProcess call).
+	hashCalls int
 }
 
 func newStatusMonitor() *statusMonitor {
 	return &statusMonitor{}
 }
 
-// hash hashes the string.
+// hash hashes the string. io.WriteString is used so any future
+// StringWriter-aware hasher can feed the string without a []byte copy;
+// against stdlib sha256 it still converts, but the single caller site
+// now allocates once per update instead of twice.
 func (m *statusMonitor) hash(s string) []byte {
+	m.hashCalls++
 	h := sha256.New()
-	// TODO: this allocation sucks since the string is probably large. Ideally, we hash the string directly.
-	h.Write([]byte(s))
+	_, _ = io.WriteString(h, s)
 	return h.Sum(nil)
 }
 
@@ -343,8 +349,9 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 		hasPrompt = strings.Contains(content, "Yes, allow once")
 	}
 
-	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {
-		t.monitor.prevOutputHash = t.monitor.hash(content)
+	newHash := t.monitor.hash(content)
+	if !bytes.Equal(newHash, t.monitor.prevOutputHash) {
+		t.monitor.prevOutputHash = newHash
 		return true, hasPrompt
 	}
 	return false, hasPrompt
@@ -387,8 +394,9 @@ func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasProm
 		hasPrompt = strings.Contains(content, "Yes, allow once")
 	}
 
-	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {
-		t.monitor.prevOutputHash = t.monitor.hash(content)
+	newHash := t.monitor.hash(content)
+	if !bytes.Equal(newHash, t.monitor.prevOutputHash) {
+		t.monitor.prevOutputHash = newHash
 		updated = true
 	}
 
