@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/aidan-bailey/loom/log"
 )
 
 // legacyHomeDirName is the pre-rename directory name we migrate from.
@@ -47,12 +45,12 @@ func MigrateLegacyHome() error {
 
 	if _, err := os.Stat(newDir); err == nil {
 		if _, legacyErr := os.Stat(legacyDir); legacyErr == nil {
-			log.For("config").Warn(
-				"both_loom_and_legacy_home_present",
-				"new", newDir,
-				"legacy", legacyDir,
-				"action", "using_loom",
-			)
+			// Emitted to stderr rather than the structured logger because
+			// migration runs before log.Initialize — log.For() would resolve
+			// to io.Discard and the operator would never see the warning.
+			fmt.Fprintf(os.Stderr,
+				"loom: both %s and %s exist; using %s (remove %s once you have confirmed its contents are obsolete)\n",
+				newDir, legacyDir, newDir, legacyDir)
 		}
 		return nil
 	} else if !os.IsNotExist(err) {
