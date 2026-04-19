@@ -4,18 +4,9 @@ import (
 	"errors"
 )
 
-// combineErrors combines multiple errors into a single error
+// combineErrors combines multiple errors into a single error. Uses
+// errors.Join so errors.Is/errors.As still work against any
+// underlying cause — the prior errors.New(msg) broke that chain.
 func (g *GitWorktree) combineErrors(errs []error) error {
-	if len(errs) == 0 {
-		return nil
-	}
-	if len(errs) == 1 {
-		return errs[0]
-	}
-
-	errMsg := "multiple errors occurred:"
-	for _, err := range errs {
-		errMsg += "\n  - " + err.Error()
-	}
-	return errors.New(errMsg)
+	return errors.Join(errs...)
 }

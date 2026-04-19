@@ -597,20 +597,11 @@ func (i *Instance) Kill() (err error) {
 	return i.combineErrors(errs)
 }
 
-// combineErrors combines multiple errors into a single error
+// combineErrors combines multiple errors into a single error. Uses
+// errors.Join so callers can still use errors.Is/errors.As against
+// any underlying cause — stringifying would have broken that chain.
 func (i *Instance) combineErrors(errs []error) error {
-	if len(errs) == 0 {
-		return nil
-	}
-	if len(errs) == 1 {
-		return errs[0]
-	}
-
-	errMsg := "multiple cleanup errors occurred:"
-	for _, err := range errs {
-		errMsg += "\n  - " + err.Error()
-	}
-	return fmt.Errorf("%s", errMsg)
+	return errors.Join(errs...)
 }
 
 func (i *Instance) Preview() (string, error) {
@@ -656,13 +647,17 @@ func (i *Instance) CheckAndHandleTrustPrompt() bool {
 
 // CaptureAndProcessStatus captures tmux pane content once and checks for
 // trust prompts and content updates. Avoids duplicate CapturePaneContent calls.
-func (i *Instance) CaptureAndProcessStatus() (updated bool, hasPrompt bool) {
+// Returns a non-nil err when the underlying capture failed — previously
+// the error was swallowed inside tmux.CaptureAndProcess and surfaced only
+// in the log file, so callers saw "no updates" instead of a genuine
+// capture failure.
+func (i *Instance) CaptureAndProcessStatus() (updated bool, hasPrompt bool, err error) {
 	if !i.isStarted() {
-		return false, false
+		return false, false, nil
 	}
 	ts := i.getTmuxSession()
 	if ts == nil {
-		return false, false
+		return false, false, nil
 	}
 
 	// Unknown programs (no adapter match beyond fallback) don't have
@@ -672,11 +667,12 @@ func (i *Instance) CaptureAndProcessStatus() (updated bool, hasPrompt bool) {
 	// CapturePaneContent call.
 	ad := defaultRegistry.Lookup(i.Program)
 	if ad.Name() == "default" {
-		return ts.HasUpdated()
+		updated, hasPrompt = ts.HasUpdated()
+		return updated, hasPrompt, nil
 	}
 
-	_, updated, hasPrompt, _ = ts.CaptureAndProcess()
-	return updated, hasPrompt
+	_, updated, hasPrompt, _, err = ts.CaptureAndProcess()
+	return updated, hasPrompt, err
 }
 
 func (i *Instance) TapEnter() {

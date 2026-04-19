@@ -68,11 +68,12 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 // metadataResult holds I/O results for one instance from the parallel
 // metadata tick. Written by goroutine; status updates applied on main thread.
 type metadataResult struct {
-	instance  *session.Instance
-	tmuxAlive bool
-	updated   bool
-	hasPrompt bool
-	diffErr   error
+	instance   *session.Instance
+	tmuxAlive  bool
+	updated    bool
+	hasPrompt  bool
+	captureErr error
+	diffErr    error
 }
 
 type state int
@@ -598,6 +599,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+			if r.captureErr != nil {
+				log.WarnKV("app.tick.capture_failed", "instance", r.instance.Title, "err", r.captureErr.Error())
+			}
 			if r.diffErr != nil {
 				log.WarningLog.Printf("could not update diff stats: %v", r.diffErr)
 			}
@@ -1097,7 +1101,7 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance) t
 					return
 				}
 
-				r.updated, r.hasPrompt = instance.CaptureAndProcessStatus()
+				r.updated, r.hasPrompt, r.captureErr = instance.CaptureAndProcessStatus()
 
 				wantFull := instance == selected
 				if !instance.ShouldRefreshDiff(r.updated, wantFull) {

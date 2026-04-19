@@ -48,6 +48,6 @@ func TestCaptureAndProcess_NoPanicWithoutRestore(t *testing.T) {
 	updated, _ = ts.HasUpdated()
 	assert.False(t, updated, "second HasUpdated on identical content must report no change")
 
-	_, updated, _, _ = ts.CaptureAndProcess()
+	_, updated, _, _, _ = ts.CaptureAndProcess()
 	assert.False(t, updated, "CaptureAndProcess on identical content must report no change")
 }

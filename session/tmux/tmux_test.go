@@ -84,7 +84,7 @@ func TestCaptureAndProcessCapturesOnce(t *testing.T) {
 	ts := newTmuxSession("test-session", ProgramClaude, &MockPtyFactory{t: t}, cmdExec)
 	ts.monitor = newStatusMonitor()
 
-	_, _, _, _ = ts.CaptureAndProcess()
+	_, _, _, _, _ = ts.CaptureAndProcess()
 	require.Equal(t, 1, captureCount, "CaptureAndProcess should call capture-pane exactly once")
 }
 
@@ -105,11 +105,11 @@ func TestCaptureAndProcessHashesOnce(t *testing.T) {
 	ts := newTmuxSession("test-session", ProgramClaude, &MockPtyFactory{t: t}, cmdExec)
 	ts.monitor = newStatusMonitor()
 
-	_, _, _, _ = ts.CaptureAndProcess()
+	_, _, _, _, _ = ts.CaptureAndProcess()
 	require.Equal(t, 1, ts.monitor.hashCalls,
 		"CaptureAndProcess should hash pane content exactly once")
 
-	_, _, _, _ = ts.CaptureAndProcess()
+	_, _, _, _, _ = ts.CaptureAndProcess()
 	require.Equal(t, 2, ts.monitor.hashCalls,
 		"second CaptureAndProcess should add exactly one hash call")
 }

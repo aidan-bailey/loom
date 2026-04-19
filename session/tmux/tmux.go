@@ -412,12 +412,13 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 
 // CaptureAndProcess captures pane content once and runs both trust prompt
 // and update detection checks, avoiding duplicate CapturePaneContent calls.
-func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasPrompt bool, trustHandled bool) {
-	var err error
+// Returns a non-nil err when the pane capture itself failed — callers must
+// surface this instead of treating zero values as "no change", which used
+// to hide tmux failures as a frozen UI.
+func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasPrompt bool, trustHandled bool, err error) {
 	content, err = t.CapturePaneContent()
 	if err != nil {
-		log.ErrorLog.Printf("error capturing pane content: %v", err)
-		return "", false, false, false
+		return "", false, false, false, fmt.Errorf("capture pane content: %w", err)
 	}
 
 	// Trust prompt detection (from CheckAndHandleTrustPrompt).
@@ -453,7 +454,7 @@ func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasProm
 		updated = true
 	}
 
-	return content, updated, hasPrompt, trustHandled
+	return content, updated, hasPrompt, trustHandled, nil
 }
 
 // GetContentHash returns the last computed content hash from HasUpdated

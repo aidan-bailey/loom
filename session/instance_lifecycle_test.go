@@ -5,6 +5,7 @@ import (
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -215,4 +216,32 @@ func TestInstance_StartIsIdempotent(t *testing.T) {
 	assert.NoError(t, inst.Start(true))
 	assert.Same(t, firstSession, inst.getTmuxSession(),
 		"Start should not replace the tmux session if already started")
+}
+
+// TestCombineErrorsIsUnwrapable guards that combineErrors uses errors.Join
+// so every underlying cause remains discoverable via errors.Is. The prior
+// fmt.Errorf("%s", ...) implementation stringified the causes and broke
+// the unwrap chain — a silent failure mode for any caller that classifies
+// errors (e.g. git.ErrBranchGone → UI recovery hint).
+func TestCombineErrorsIsUnwrapable(t *testing.T) {
+	sentinelA := errors.New("first cause")
+	sentinelB := errors.New("second cause")
+	inst := &Instance{}
+
+	// Zero and single-error inputs behave naturally.
+	assert.NoError(t, inst.combineErrors(nil))
+	single := inst.combineErrors([]error{sentinelA})
+	assert.ErrorIs(t, single, sentinelA)
+
+	// Multi-error join must expose each cause to errors.Is.
+	joined := inst.combineErrors([]error{sentinelA, sentinelB})
+	require.Error(t, joined)
+	assert.ErrorIs(t, joined, sentinelA, "first cause must survive Join")
+	assert.ErrorIs(t, joined, sentinelB, "second cause must survive Join")
+
+	// Wrapped causes must also survive.
+	wrapped := fmt.Errorf("step failed: %w", sentinelA)
+	joined2 := inst.combineErrors([]error{wrapped, sentinelB})
+	assert.ErrorIs(t, joined2, sentinelA, "errors.Is must traverse both Join and Wrap")
+	assert.ErrorIs(t, joined2, sentinelB)
 }
