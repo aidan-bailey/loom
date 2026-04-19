@@ -527,6 +527,74 @@ func (l *List) Up() {
 	l.ensureSelectedVisible()
 }
 
+// PageUp jumps the selection up by one visible page, skipping Deleting items.
+// If every candidate in the target window is Deleting, the cursor stays put.
+func (l *List) PageUp() {
+	if len(l.items) == 0 {
+		return
+	}
+	step := l.maxVisibleItems()
+	target := l.selectedIdx - step
+	if target < 0 {
+		target = 0
+	}
+	// Prefer the target, then walk upward to find a non-Deleting item.
+	for i := target; i >= 0; i-- {
+		if l.items[i].GetStatus() != session.Deleting {
+			l.selectedIdx = i
+			break
+		}
+	}
+	l.ensureSelectedVisible()
+}
+
+// PageDown jumps the selection down by one visible page, skipping Deleting items.
+func (l *List) PageDown() {
+	if len(l.items) == 0 {
+		return
+	}
+	step := l.maxVisibleItems()
+	target := l.selectedIdx + step
+	if target > len(l.items)-1 {
+		target = len(l.items) - 1
+	}
+	for i := target; i < len(l.items); i++ {
+		if l.items[i].GetStatus() != session.Deleting {
+			l.selectedIdx = i
+			break
+		}
+	}
+	l.ensureSelectedVisible()
+}
+
+// Top selects the first non-Deleting item.
+func (l *List) Top() {
+	if len(l.items) == 0 {
+		return
+	}
+	for i := 0; i < len(l.items); i++ {
+		if l.items[i].GetStatus() != session.Deleting {
+			l.selectedIdx = i
+			break
+		}
+	}
+	l.ensureSelectedVisible()
+}
+
+// Bottom selects the last non-Deleting item.
+func (l *List) Bottom() {
+	if len(l.items) == 0 {
+		return
+	}
+	for i := len(l.items) - 1; i >= 0; i-- {
+		if l.items[i].GetStatus() != session.Deleting {
+			l.selectedIdx = i
+			break
+		}
+	}
+	l.ensureSelectedVisible()
+}
+
 func (l *List) addRepo(repo string) {
 	if _, ok := l.repos[repo]; !ok {
 		l.repos[repo] = 0
