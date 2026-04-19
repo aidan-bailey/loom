@@ -62,6 +62,56 @@ func syncTracked(
 	}
 }
 
+// autoYesMaxConcurrent caps how many instance probes run in parallel per
+// tick. Sized for real workloads: users with 3-5 AutoYes sessions see full
+// parallelism, while pathological cases (20+ instances) stay bounded so a
+// tick cannot spawn a goroutine storm. Not a const so tests can tighten it.
+var autoYesMaxConcurrent = 4
+
+// eligibleForAutoYes filters tracked instances down to those the daemon
+// should probe this tick: per-instance AutoYes must be on, and the
+// instance must be Started + !Paused. Separated out so the parallel
+// fan-out in RunDaemon focuses on I/O, not gating.
+func eligibleForAutoYes(tracked map[string]*session.Instance) []*session.Instance {
+	out := make([]*session.Instance, 0, len(tracked))
+	for _, instance := range tracked {
+		if !instance.AutoYes {
+			continue
+		}
+		if !instance.Started() || instance.Paused() {
+			continue
+		}
+		out = append(out, instance)
+	}
+	return out
+}
+
+// runBoundedParallel invokes fn(0)..fn(n-1) with at most max concurrent
+// invocations, waiting for all to finish before returning. A slow fn(i)
+// no longer starves the rest — that's the whole point for the daemon,
+// where one stalled git diff previously blocked prompt detection on every
+// other AutoYes instance.
+func runBoundedParallel(n, max int, fn func(i int)) {
+	if n == 0 {
+		return
+	}
+	if max <= 0 {
+		max = 1
+	}
+	sem := make(chan struct{}, max)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(i)
+		}(i)
+	}
+	wg.Wait()
+}
+
 // reloadInstanceData reads state.json and returns the fresh raw instance
 // records. Called every tick so the daemon observes instances added or
 // removed by the main app (DAEMON-03). Returns raw data (not live Instance
@@ -116,24 +166,21 @@ func RunDaemon(cfg *config.Config, wsCtx *config.WorkspaceContext) error {
 				syncTracked(tracked, fresh, configDir, everyN)
 			}
 
-			for _, instance := range tracked {
-				// Respect per-instance AutoYes (DAEMON-13). The user may
-				// have opted individual instances out via the main app.
-				if !instance.AutoYes {
-					continue
-				}
-				// We only store started instances, but check anyway.
-				if instance.Started() && !instance.Paused() {
-					if _, hasPrompt := instance.HasUpdated(); hasPrompt {
-						instance.TapEnter()
-						if err := instance.UpdateDiffStats(); err != nil {
-							if everyN.ShouldLog() {
-								log.WarningLog.Printf("could not update diff stats for %s: %v", instance.Title, err)
-							}
+			// Filter eligible instances outside the parallel fan-out so
+			// the worker body is focused on I/O. Preserves the prior
+			// gating: per-instance AutoYes opt-out + Started/!Paused.
+			eligible := eligibleForAutoYes(tracked)
+			runBoundedParallel(len(eligible), autoYesMaxConcurrent, func(i int) {
+				instance := eligible[i]
+				if _, hasPrompt := instance.HasUpdated(); hasPrompt {
+					instance.TapEnter()
+					if err := instance.UpdateDiffStats(); err != nil {
+						if everyN.ShouldLog() {
+							log.WarningLog.Printf("could not update diff stats for %s: %v", instance.Title, err)
 						}
 					}
 				}
-			}
+			})
 
 			// Handle stop before ticker.
 			select {
