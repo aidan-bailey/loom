@@ -149,7 +149,7 @@ The app follows Bubble Tea's Model-View-Update pattern. `app/app.go` owns the `h
 - **`cmd/`** — `Executor` interface wrapping `os/exec` for testability.
 - **`log/`** — Centralized logging to `{configDir}/logs/loom.log` with Info/Warning/Error loggers and rate limiting.
 - **`script/`** — Lua scripting engine (`github.com/yuin/gopher-lua`). The full built-in keymap lives in `script/defaults.lua`, embedded via `go:embed` and loaded at engine init before any user script. Users extend or override bindings from `~/.loom/scripts/*.lua` (global, not per-workspace). Dispatch is driven from `state_default.go` through `app/app_scripts.go`'s `scriptHost` adapter. Hard-sandboxed: only `base`/`string`/`table`/`math`/`coroutine`; `dofile`/`loadfile`/`load`/`loadstring`/`require`/`string.dump` stripped. Exposed API: `cs.bind`/`cs.unbind`/`cs.register_action`, `cs.actions.*` (sync primitives + deferred intent factories), `cs.await`, `cs.log`, `cs.notify`, `cs.now`, `cs.sprintf`, plus userdata wrappers for `session.Instance`, `git.GitWorktree`, and a per-dispatch `ctx`.
-- **`web/`** — Next.js marketing site, deployed to GitHub Pages via CI.
+- **`web/`** — Next.js marketing site (no CI deployment; build locally with `cd web && npm run build`).
 
 ### Session Lifecycle
 
@@ -204,4 +204,3 @@ GitHub Actions workflows in `.github/workflows/`:
 - **build.yml** — Build and test on push/PR to main (triggered by Go file changes)
 - **lint.yml** — golangci-lint on Go code changes
 - **release.yml** — Build and publish artifacts on version tags (`v*`)
-- **deploy-pages.yml** — Deploy Next.js marketing site when `web/` changes
