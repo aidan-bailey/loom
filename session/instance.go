@@ -770,12 +770,12 @@ func (i *Instance) Pause(saveState func() error) error {
 	// Checkpoint: mark as Paused immediately after cleanup succeeds.
 	// If we crash after this point, the instance is safely Paused.
 	_ = i.TransitionTo(Paused)
+	_ = clipboard.WriteAll(gw.GetBranchName())
 	if saveState != nil {
 		if err := saveState(); err != nil {
-			log.WarningLog.Printf("checkpoint save during pause: %v", err)
+			return fmt.Errorf("pause checkpoint save: %w", err)
 		}
 	}
-	_ = clipboard.WriteAll(gw.GetBranchName())
 	return nil
 }
 
@@ -827,7 +827,7 @@ func (i *Instance) Resume(saveState func() error) error {
 	_ = i.TransitionTo(Running)
 	if saveState != nil {
 		if err := saveState(); err != nil {
-			log.WarningLog.Printf("checkpoint save during resume: %v", err)
+			return fmt.Errorf("resume checkpoint save: %w", err)
 		}
 	}
 	return nil

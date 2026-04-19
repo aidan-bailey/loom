@@ -2,13 +2,17 @@ package session
 
 import (
 	"claude-squad/cmd/cmd_test"
+	"claude-squad/session/git"
 	"claude-squad/session/tmux"
+	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakePtyFactory is a minimal PtyFactory that does not actually start a
@@ -87,6 +91,90 @@ func TestInstance_KillBoundedWithStuckPump(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Kill blocked on stuck pump — F3 bounded wait regressed")
 	}
+}
+
+// newTestPausableInstance builds an Instance backed by a real git repo
+// and worktree plus a mock-backed TmuxSession. Used by F9 tests to
+// exercise Pause/Resume end-to-end with a controllable saveState hook.
+func newTestPausableInstance(t *testing.T) *Instance {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "config")
+	repoDir := filepath.Join(tmpDir, "repo")
+	require.NoError(t, os.MkdirAll(repoDir, 0755))
+
+	runInRepo := func(args ...string) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%v failed: %s", args, string(out))
+	}
+	runInRepo("git", "init", "-b", "main")
+	runInRepo("git", "config", "user.email", "test@example.com")
+	runInRepo("git", "config", "user.name", "Test")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("hi"), 0644))
+	runInRepo("git", "add", ".")
+	runInRepo("git", "commit", "-m", "init")
+
+	branchName := "pause-test-branch"
+	worktreePath := filepath.Join(configDir, "worktrees", branchName+"_fixture")
+	require.NoError(t, os.MkdirAll(filepath.Dir(worktreePath), 0755))
+	runInRepo("git", "worktree", "add", "-b", branchName, worktreePath)
+
+	gw := git.NewGitWorktreeFromStorage(repoDir, worktreePath, "pause-test", branchName, "", true, configDir)
+
+	ptyFactory := fakePtyFactory{t: t}
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	ts := tmux.NewTmuxSessionWithDeps("pause-test", "true", ptyFactory, cmdExec)
+
+	inst := &Instance{
+		Title:  "pause-test",
+		Status: Running,
+	}
+	inst.setGitWorktree(gw)
+	inst.setTmuxSession(ts)
+	inst.setStarted(true)
+	return inst
+}
+
+// TestInstance_PausePropagatesSaveStateError is the F9 regression guard
+// on the pause side. Before the fix a saveState callback returning an
+// error during Pause was logged at Warning and Pause returned nil, so
+// callers (and the daemon) believed state was durably persisted when it
+// wasn't — a silent divergence between in-memory and on-disk state.
+func TestInstance_PausePropagatesSaveStateError(t *testing.T) {
+	inst := newTestPausableInstance(t)
+
+	wantErr := errors.New("disk full")
+	err := inst.Pause(func() error { return wantErr })
+
+	assert.ErrorIs(t, err, wantErr, "Pause must propagate saveState error")
+}
+
+// TestInstance_PauseHappyPathStillReturnsNil keeps the success path
+// honest: a saveState that returns nil must not leak spurious errors.
+func TestInstance_PauseHappyPathStillReturnsNil(t *testing.T) {
+	inst := newTestPausableInstance(t)
+	assert.NoError(t, inst.Pause(func() error { return nil }))
+	assert.Equal(t, Paused, inst.GetStatus())
+}
+
+// TestInstance_ResumePropagatesSaveStateError is the F9 regression
+// guard on the resume side. Same failure mode as Pause: the saveState
+// error was previously swallowed with a Warning log, masking
+// persistence problems behind a successful Resume.
+func TestInstance_ResumePropagatesSaveStateError(t *testing.T) {
+	inst := newTestPausableInstance(t)
+	require.NoError(t, inst.Pause(nil), "precondition: pause succeeds")
+
+	wantErr := errors.New("disk full")
+	err := inst.Resume(func() error { return wantErr })
+
+	assert.ErrorIs(t, err, wantErr, "Resume must propagate saveState error")
 }
 
 // TestInstance_StartIsIdempotent verifies Start is a no-op on an
