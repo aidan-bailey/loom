@@ -41,7 +41,10 @@ var statusLineStyle = lipgloss.NewStyle().
 // noScripts disables loading of ~/.claude-squad/scripts (embedded
 // defaults still load).
 func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string, noScripts bool) error {
-	h := newHome(ctx, wsCtx, registry, appConfig, program, autoYes, pendingDir, noScripts)
+	h, err := newHome(ctx, wsCtx, registry, appConfig, program, autoYes, pendingDir, noScripts)
+	if err != nil {
+		return err
+	}
 	// Shutdown hook: drain any suspended script coroutines then close
 	// the Lua state. The engine's "every coroutine gets resumed" contract
 	// would otherwise be violated on process exit — including on the
@@ -58,7 +61,7 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(), // Mouse scroll
 	)
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 
@@ -202,7 +205,7 @@ type home struct {
 	skipScripts bool
 }
 
-func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string, noScripts bool) *home {
+func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string, noScripts bool) (*home, error) {
 	cfgDir := ""
 	if wsCtx != nil {
 		cfgDir = wsCtx.ConfigDir
@@ -212,8 +215,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 
 	storage, err := session.NewStorage(appState, cfgDir)
 	if err != nil {
-		fmt.Printf("Failed to initialize storage: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("initialize storage: %w", err)
 	}
 
 	h := &home{
@@ -256,8 +258,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	if !willRestoreSlots {
 		instancesData, err := storage.LoadInstanceData()
 		if err != nil {
-			fmt.Printf("Failed to load instances: %v\n", err)
-			os.Exit(1)
+			return nil, fmt.Errorf("load instances: %w", err)
 		}
 
 		// Reconcile each instance against tmux/worktree reality
@@ -358,7 +359,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		h.state = stateWorkspace
 	}
 
-	return h
+	return h, nil
 }
 
 // restoreSavedWorkspaces activates all workspaces in `saved` as slots, merging
