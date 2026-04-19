@@ -2,12 +2,19 @@ package daemon
 
 import (
 	"claude-squad/config"
+	"claude-squad/log"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestMain(m *testing.M) {
+	log.Initialize("", false)
+	defer log.Close()
+	os.Exit(m.Run())
+}
 
 func TestStopDaemon_RequiresResolvedContext(t *testing.T) {
 	assert.Error(t, StopDaemon(nil))

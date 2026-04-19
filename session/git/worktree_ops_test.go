@@ -74,6 +74,29 @@ func TestCleanupWorktrees_DeletesBranch(t *testing.T) {
 		"branch %q should be deleted after cleanup", branchName)
 }
 
+// TestSetup_BranchDeletedExternallyReturnsErrBranchGone is the F10
+// regression guard. When a paused instance's branch is deleted via
+// `git branch -D` from outside the app AND no origin tracking branch
+// exists, Setup must return a typed sentinel so Resume can surface a
+// recovery hint instead of a generic "failed to setup git worktree".
+// Before this fix the error was a plain `fmt.Errorf` string, not an
+// errors.Is-compatible signal, so callers could only string-match.
+func TestSetup_BranchDeletedExternallyReturnsErrBranchGone(t *testing.T) {
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+
+	// Simulate the post-pause pathological state: worktree removed
+	// AND the branch deleted out-of-band (no origin remote).
+	runGit(t, repoDir, "worktree", "remove", "-f", worktreePath)
+	runGit(t, repoDir, "branch", "-D", branchName)
+	require.False(t, branchExists(t, repoDir, branchName), "precondition: branch must be gone")
+
+	gw := NewGitWorktreeFromStorage(repoDir, worktreePath, "lost-session", branchName, "", true, configDir)
+	err := gw.Setup()
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBranchGone, "Setup must return ErrBranchGone sentinel when branch vanished")
+}
+
 // TestCleanupWorktrees_EmptyDirectoryNoError confirms cleanup is a safe no-op
 // when the worktrees directory is empty.
 func TestCleanupWorktrees_EmptyDirectoryNoError(t *testing.T) {

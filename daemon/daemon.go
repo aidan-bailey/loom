@@ -15,6 +15,36 @@ import (
 	"time"
 )
 
+// tickInstanceTimeout bounds the wall-clock budget for one instance's
+// per-tick work (HasUpdated + TapEnter + UpdateDiffStats). Beyond this
+// we abandon the goroutine and move on, so a single wedged tmux
+// capture or git diff cannot stall auto-yes for every other tracked
+// instance. Declared as var (not const) so tests can shorten it.
+var tickInstanceTimeout = 5 * time.Second
+
+// runWithTimeout runs work in a goroutine and returns when either the
+// work completes or tickInstanceTimeout elapses. On timeout the
+// goroutine is intentionally leaked — the thing wedging it (a hung
+// ptmx capture, a git lockfile) will likely keep it hung regardless
+// of how we cancel, but isolating the wedge to one goroutine lets
+// the daemon continue serving every other instance. Logging is rate-
+// limited via everyN so a persistently stuck session does not spam
+// the log.
+func runWithTimeout(title string, work func(), everyN *log.Every) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		work()
+	}()
+	select {
+	case <-done:
+	case <-time.After(tickInstanceTimeout):
+		if everyN.ShouldLog() {
+			log.WarningLog.Printf("daemon tick for %s exceeded %s; skipping", title, tickInstanceTimeout)
+		}
+	}
+}
+
 // syncTracked reconciles the daemon's in-memory map of live Instance
 // objects with the fresh on-disk data. Instances newly present on disk
 // are constructed and, if not paused, have their PTY spawned. Instances
@@ -175,16 +205,18 @@ func RunDaemon(cfg *config.Config, wsCtx *config.WorkspaceContext) error {
 			var fired atomic.Int32
 			runBoundedParallel(len(eligible), autoYesMaxConcurrent, func(i int) {
 				instance := eligible[i]
-				if _, hasPrompt := instance.HasUpdated(); hasPrompt {
-					dlog.Debug("daemon.autoyes.fire", "instance", instance.Title)
-					instance.TapEnter()
-					fired.Add(1)
-					if err := instance.UpdateDiffStats(); err != nil {
-						if everyN.ShouldLog() {
-							dlog.Warn("daemon.diff_stats_failed", "instance", instance.Title, "err", err.Error())
+				runWithTimeout(instance.Title, func() {
+					if _, hasPrompt := instance.HasUpdated(); hasPrompt {
+						dlog.Debug("daemon.autoyes.fire", "instance", instance.Title)
+						instance.TapEnter()
+						fired.Add(1)
+						if err := instance.UpdateDiffStats(); err != nil {
+							if everyN.ShouldLog() {
+								dlog.Warn("daemon.diff_stats_failed", "instance", instance.Title, "err", err.Error())
+							}
 						}
 					}
-				}
+				}, everyN)
 			})
 			dlog.Debug("daemon.tick", "tracked", len(tracked), "eligible", len(eligible), "fired", fired.Load())
 

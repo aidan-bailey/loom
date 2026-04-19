@@ -3,6 +3,7 @@ package git
 import (
 	"claude-squad/log"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,13 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrBranchGone is returned by Setup when the branch a paused instance
+// was pointing at has disappeared both locally and on origin — typically
+// because an operator ran `git branch -D <name>` from outside the app.
+// Callers use errors.Is to classify the failure and surface a recovery
+// hint (kill-to-clean-up) instead of a generic setup error.
+var ErrBranchGone = errors.New("branch not found locally or on remote")
 
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() (err error) {
@@ -60,7 +68,7 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 		// Local branch doesn't exist — check if remote tracking branch exists
 		_, remoteErr := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/remotes/origin/%s", g.branchName))
 		if remoteErr != nil {
-			return fmt.Errorf("branch %s not found locally or on remote", g.branchName)
+			return fmt.Errorf("%w: %s", ErrBranchGone, g.branchName)
 		}
 		// Create a local tracking branch via worktree add -b
 		if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, fmt.Sprintf("origin/%s", g.branchName)); err != nil {

@@ -1,6 +1,8 @@
 package script
 
 import (
+	"bytes"
+	"claude-squad/log"
 	"context"
 	"testing"
 
@@ -48,6 +50,35 @@ func TestCsUnbindRemovesBinding(t *testing.T) {
 	require.NoError(t, e.L.DoString(`cs.unbind("x")`))
 	e.EndLoad()
 	assert.False(t, e.HasAction("x"))
+}
+
+// TestCsBindReservedIsDroppedWithWarning is the regression guard for
+// the hard-reservation contract: cs.bind on a reserved key must NOT
+// install the binding, must NOT propagate an error to the script, and
+// MUST log a warning so the situation is discoverable in the log file.
+// If a future refactor drops the reserved check in Engine.bind, this
+// test catches it silently regressing the ctrl+c safety net.
+func TestCsBindReservedIsDroppedWithWarning(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut := log.WarningLog.Writer()
+	log.WarningLog.SetOutput(&buf)
+	t.Cleanup(func() { log.WarningLog.SetOutput(prevOut) })
+
+	e := NewEngine(map[string]bool{"ctrl+c": true})
+	defer e.Close()
+	e.BeginLoad("reserved.lua")
+	// Binding to a reserved key must not error — it is silently
+	// dropped so scripts that defensively attempt the bind continue
+	// to load.
+	require.NoError(t, e.L.DoString(`cs.bind("ctrl+c", function() _G.stole = true end)`))
+	e.EndLoad()
+
+	assert.False(t, e.HasAction("ctrl+c"), "reserved key must not be bound via cs.bind")
+	for _, reg := range e.Registrations() {
+		assert.NotEqual(t, "ctrl+c", reg.Key, "reserved key must not appear in Registrations()")
+	}
+	assert.Contains(t, buf.String(), `key "ctrl+c" is reserved`, "expected warning for reserved-key bind attempt")
+	assert.Contains(t, buf.String(), "reserved.lua", "warning must identify the offending script")
 }
 
 func TestCsUnbindReservedIsNoop(t *testing.T) {

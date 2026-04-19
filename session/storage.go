@@ -1,8 +1,8 @@
 package session
 
 import (
-	"claude-squad/cmd"
 	"claude-squad/config"
+	internalexec "claude-squad/internal/exec"
 	"claude-squad/log"
 	"encoding/json"
 	"fmt"
@@ -113,7 +113,7 @@ func (s *Storage) LoadInstances() ([]*Instance, error) {
 // instance is logged and skipped rather than aborting the whole load. This is
 // the correct entry point for any caller that can tolerate reconciliation side
 // effects (killing orphan tmux sessions, marking instances paused).
-func (s *Storage) LoadAndReconcile(cmdExec cmd.Executor) ([]*Instance, error) {
+func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, error) {
 	data, err := s.LoadInstanceData()
 	if err != nil {
 		return nil, err

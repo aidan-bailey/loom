@@ -41,8 +41,20 @@ var statusLineStyle = lipgloss.NewStyle().
 // noScripts disables loading of ~/.claude-squad/scripts (embedded
 // defaults still load).
 func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string, noScripts bool) error {
+	h := newHome(ctx, wsCtx, registry, appConfig, program, autoYes, pendingDir, noScripts)
+	// Shutdown hook: drain any suspended script coroutines then close
+	// the Lua state. The engine's "every coroutine gets resumed" contract
+	// would otherwise be violated on process exit — including on the
+	// QuitIntent path where tea.Batch does not sequence scriptResumeMsg
+	// before tea.QuitMsg, so the awaiting coroutine can be stranded.
+	defer func() {
+		if h.scripts != nil {
+			h.scripts.CleanupAllCoroutines()
+			h.scripts.Close()
+		}
+	}()
 	p := tea.NewProgram(
-		newHome(ctx, wsCtx, registry, appConfig, program, autoYes, pendingDir, noScripts),
+		h,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(), // Mouse scroll
 	)
@@ -777,13 +789,28 @@ func persistableInstances(instances []*session.Instance) []*session.Instance {
 	return result
 }
 
+// handleQuit persists session state and terminates the TUI. Policy:
+// if SaveInstances fails for ANY slot (or for the storage in the
+// single-slot path), we refuse to quit and surface the error via
+// handleError. The user stays in the TUI so they can fix the underlying
+// issue (disk full, read-only mount, etc.) and retry — silent data
+// loss on exit is worse than a sticky quit. Both branches share this
+// policy; the multi-slot branch used to log-and-quit, which is the
+// bug this function comment now documents has been fixed.
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	if len(m.slots) > 0 {
 		m.saveCurrentSlot()
+		var firstErr error
 		for _, slot := range m.slots {
 			if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
 				log.ErrorLog.Printf("failed to save workspace %s: %v", slot.wsCtx.Name, err)
+				if firstErr == nil {
+					firstErr = fmt.Errorf("failed to save workspace %s: %w", slot.wsCtx.Name, err)
+				}
 			}
+		}
+		if firstErr != nil {
+			return m, m.handleError(firstErr)
 		}
 		m.saveOpenWorkspaces()
 	} else {

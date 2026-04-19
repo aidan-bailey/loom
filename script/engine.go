@@ -113,6 +113,31 @@ func (e *Engine) Close() {
 	}
 }
 
+// CleanupAllCoroutines resumes every tracked coroutine with lua.LNil
+// so any deferred work (defers, finalizers, logging) runs before the
+// LState closes. Call this from the app's shutdown hook after Bubble
+// Tea's main loop returns but before Close(). A coroutine that yields
+// again mid-drain is dropped — cleanup is best-effort, not a full
+// dispatch cycle, since the TUI is already gone and there is no host
+// left to service further intents. Ignored errors are logged.
+func (e *Engine) CleanupAllCoroutines() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.L == nil {
+		return
+	}
+	for id, slot := range e.coroutines {
+		delete(e.coroutines, id)
+		st, rerr, _ := e.L.Resume(slot.co, nil, lua.LNil)
+		if rerr != nil {
+			log.WarningLog.Printf("script: cleanup resume of intent %d: %v", id, rerr)
+		}
+		if st == lua.ResumeYield {
+			log.WarningLog.Printf("script: cleanup resume of intent %d yielded again; dropping", id)
+		}
+	}
+}
+
 // Load walks dir and compiles every .lua file it finds. One bad file
 // never fails the whole load — errors go to the app log. Actions
 // registered by prior files are preserved; a partial load is better

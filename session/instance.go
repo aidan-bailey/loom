@@ -5,6 +5,7 @@ import (
 	"claude-squad/session/agent"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
+	"errors"
 	"path/filepath"
 
 	"fmt"
@@ -824,12 +825,12 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// Checkpoint: mark as Paused immediately after cleanup succeeds.
 	// If we crash after this point, the instance is safely Paused.
 	_ = i.TransitionTo(Paused)
+	_ = clipboard.WriteAll(gw.GetBranchName())
 	if saveState != nil {
 		if err := saveState(); err != nil {
-			log.WarningLog.Printf("checkpoint save during pause: %v", err)
+			return fmt.Errorf("pause checkpoint save: %w", err)
 		}
 	}
-	_ = clipboard.WriteAll(gw.GetBranchName())
 	return nil
 }
 
@@ -867,6 +868,9 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 
 	// Setup git worktree
 	if err := gw.Setup(); err != nil {
+		if errors.Is(err, git.ErrBranchGone) {
+			return fmt.Errorf("branch %q was deleted externally — kill this instance (D) to clean up: %w", gw.GetBranchName(), err)
+		}
 		return fmt.Errorf("failed to setup git worktree: %w", err)
 	}
 
@@ -892,7 +896,7 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	_ = i.TransitionTo(Running)
 	if saveState != nil {
 		if err := saveState(); err != nil {
-			log.WarningLog.Printf("checkpoint save during resume: %v", err)
+			return fmt.Errorf("resume checkpoint save: %w", err)
 		}
 	}
 	return nil

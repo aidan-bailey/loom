@@ -662,3 +662,101 @@ func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 	assert.Nil(t, h.pendingConfirmation.Sync, "pendingConfirmation.Sync should be nil after cancel")
 	assert.Nil(t, h.pendingConfirmation.Async, "pendingConfirmation.Async should be nil after cancel")
 }
+
+// TestHandleQuitStaysInTUIOnSaveError verifies that when SaveInstances
+// fails in the single-slot path, handleQuit refuses to quit and surfaces
+// the error instead. This branch was already correct before the F2 fix;
+// this test is a regression guard.
+func TestHandleQuitStaysInTUIOnSaveError(t *testing.T) {
+	cfgDir := t.TempDir()
+	state := config.LoadStateFrom(cfgDir)
+	storage, err := session.NewStorage(state, cfgDir)
+	require.NoError(t, err)
+
+	inst, err := session.NewInstance(session.InstanceOptions{
+		Title: "a", Path: t.TempDir(), Program: "claude",
+	})
+	require.NoError(t, err)
+
+	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	list := ui.NewList(&s, false)
+	_ = list.AddInstance(inst)
+
+	h := &home{
+		ctx:       context.Background(),
+		state:     stateDefault,
+		appConfig: config.DefaultConfig(),
+		list:      list,
+		menu:      ui.NewMenu(),
+		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		storage:   storage,
+		appState:  state,
+		errBox:    ui.NewErrBox(),
+	}
+
+	// Make the config dir read-only so the next SaveInstances fails.
+	require.NoError(t, os.Chmod(cfgDir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(cfgDir, 0o700) })
+
+	_, cmd := h.handleQuit()
+	require.NotNil(t, cmd, "handleQuit must return a Cmd even on save failure")
+	msg := cmd()
+	_, isQuit := msg.(tea.QuitMsg)
+	assert.False(t, isQuit, "handleQuit must not quit when SaveInstances fails")
+}
+
+// TestHandleQuitStaysInTUIOnSaveErrorMultiSlot drives the F2 fix. Before
+// the fix, the multi-slot branch logged SaveInstances errors and still
+// returned tea.Quit — silent data loss. After the fix, both branches
+// share the same policy: surface the error and keep the user in the TUI
+// so they can fix the underlying issue (e.g. disk full) without losing
+// unsaved state.
+func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
+	cfgDir := t.TempDir()
+	state := config.LoadStateFrom(cfgDir)
+	storage, err := session.NewStorage(state, cfgDir)
+	require.NoError(t, err)
+
+	inst, err := session.NewInstance(session.InstanceOptions{
+		Title: "a", Path: t.TempDir(), Program: "claude",
+	})
+	require.NoError(t, err)
+
+	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	list := ui.NewList(&s, false)
+	_ = list.AddInstance(inst)
+
+	wsCtx := &config.WorkspaceContext{Name: "test-ws", ConfigDir: cfgDir}
+	slot := workspaceSlot{
+		wsCtx:     wsCtx,
+		storage:   storage,
+		appConfig: config.DefaultConfig(),
+		appState:  state,
+		list:      list,
+		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+	}
+
+	h := &home{
+		ctx:         context.Background(),
+		state:       stateDefault,
+		appConfig:   config.DefaultConfig(),
+		list:        list,
+		menu:        ui.NewMenu(),
+		splitPane:   ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		storage:     storage,
+		appState:    state,
+		errBox:      ui.NewErrBox(),
+		slots:       []workspaceSlot{slot},
+		focusedSlot: 0,
+		activeCtx:   wsCtx,
+	}
+
+	require.NoError(t, os.Chmod(cfgDir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(cfgDir, 0o700) })
+
+	_, cmd := h.handleQuit()
+	require.NotNil(t, cmd, "handleQuit must return a Cmd even on save failure")
+	msg := cmd()
+	_, isQuit := msg.(tea.QuitMsg)
+	assert.False(t, isQuit, "handleQuit must not quit when SaveInstances fails in multi-slot path")
+}
