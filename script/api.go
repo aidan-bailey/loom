@@ -162,17 +162,27 @@ func apiNow(L *lua.LState) int {
 // a value for the paired IntentID. The caller can pass either an
 // explicit id (returned by a cs.actions.* primitive) or no argument
 // at all — the latter is sugar for "await the most recently enqueued
-// intent on this dispatch".
+// intent on this dispatch" (see e.lastEnqueued, populated in
+// installDeferredActions and cleared at dispatch/resume boundaries).
 //
 // cs.await must be called from inside a coroutine. The engine arranges
-// for every bound handler to run inside one (see Task 4's runAction
-// wrapping), so in practice scripts can always use cs.await freely.
+// for every bound handler to run inside one (see runAction), so in
+// practice scripts can always use cs.await freely. A bare cs.await()
+// with no pending enqueue is a scripting bug — raise rather than park
+// a phantom coroutine under id 0, which would leak and surface later
+// as a confusing "no coroutine awaiting intent 0" error.
+//
+// Safe to read e.lastEnqueued without extra locking: apiAwait runs
+// inside runAction/resumeLocked, both of which hold e.mu.
 func apiAwait(e *Engine) lua.LGFunction {
 	return func(L *lua.LState) int {
 		var id lua.LNumber
 		if L.GetTop() >= 1 {
 			id = L.CheckNumber(1)
 		} else {
+			if e.lastEnqueued == 0 {
+				L.RaiseError("cs.await: no intent has been enqueued on this dispatch")
+			}
 			id = lua.LNumber(e.lastEnqueued)
 		}
 		return L.Yield(id)

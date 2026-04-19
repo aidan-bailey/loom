@@ -100,6 +100,11 @@ func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec 
 		program:       program,
 		ptyFactory:    ptyFactory,
 		cmdExec:       cmdExec,
+		// monitor is always non-nil for the session's lifetime so HasUpdated
+		// and CaptureAndProcess can read it without a guard. Restore reassigns
+		// a fresh instance on every PTY attach, so the initial value is only
+		// load-bearing for paused sessions (constructed without Restore).
+		monitor: newStatusMonitor(),
 	}
 }
 

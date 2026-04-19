@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -51,37 +52,65 @@ func TestAwaitYieldsAndResumes(t *testing.T) {
 	assert.Equal(t, lua.LNumber(7), out)
 }
 
-// TestAwaitNoArgsConsumesLastEnqueued verifies the documented sugar
-// for cs.await(): calling it with no argument awaits the most recently
-// enqueued intent on the current dispatch. The yielded id must match
-// e.lastEnqueued so Engine.Resume can route the host's reply back.
-// Before the fix, bare cs.await() yielded 0 and orphaned the coroutine.
-func TestAwaitNoArgsConsumesLastEnqueued(t *testing.T) {
+// TestAwait_NoArg_UsesLastEnqueued drives the bare cs.await() sugar:
+// a handler enqueues via a non-yielding primitive (which sets
+// e.lastEnqueued), then calls cs.await() without arguments. The
+// coroutine must park under the enqueued id so the host's Resume
+// routes correctly.
+func TestAwait_NoArg_UsesLastEnqueued(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()
-	h := &fakeHost{}
 
-	e.L.SetGlobal("test_intent", e.L.NewFunction(func(L *lua.LState) int {
+	var h *fakeHost
+
+	e.BeginLoad("t.lua")
+	// _test_enqueue_no_yield stands in for a primitive that enqueues
+	// and returns an id without yielding. The production cs.actions.*
+	// always yield, but bare cs.await() is designed for primitives
+	// that let control return to Lua before the await point.
+	e.L.SetGlobal("_test_enqueue_no_yield", e.L.NewFunction(func(L *lua.LState) int {
 		id := h.Enqueue(QuitIntent{})
 		e.lastEnqueued = id
-		L.Push(lua.LNumber(id))
-		return 1
+		return 0
 	}))
+	require.NoError(t, e.L.DoString(`
+		cs.bind("x", function()
+			_test_enqueue_no_yield()
+			local v = cs.await()
+			_G.after = v
+		end)
+	`))
+	e.EndLoad()
 
-	err := e.L.DoString(`
-		handler = function()
-			test_intent()
-			local r = cs.await()
-			return r
-		end
-	`)
-	assert.NoError(t, err)
+	h = &fakeHost{}
+	_, err := e.Dispatch("x", h)
+	require.NoError(t, err)
+	require.Len(t, h.enqueuedIDs, 1)
 
-	co, _ := e.L.NewThread()
-	fn := e.L.GetGlobal("handler").(*lua.LFunction)
-	st, _, vals := e.L.Resume(co, fn)
-	assert.Equal(t, lua.ResumeYield, st)
-	assert.Len(t, vals, 1)
-	assert.Equal(t, lua.LNumber(h.enqueuedIDs[0]), vals[0],
-		"cs.await() with no args must yield e.lastEnqueued, not 0")
+	// Coroutine must be tracked under the enqueued id, not under 0.
+	_, err = e.Resume(h.enqueuedIDs[0], lua.LString("done"))
+	require.NoError(t, err)
+	assert.Equal(t, "done", e.L.GetGlobal("after").String())
+}
+
+// TestAwait_NoArg_NoEnqueuePending_RaisesError asserts that calling
+// cs.await() with no argument and no prior enqueue raises a Lua
+// error. The alternative — silently parking a coroutine under id 0 —
+// leaks the coroutine and surfaces later as a confusing "no coroutine
+// awaiting intent 0" error at the next Resume.
+func TestAwait_NoArg_NoEnqueuePending_RaisesError(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`
+		cs.bind("x", function()
+			cs.await()
+		end)
+	`))
+	e.EndLoad()
+
+	_, err := e.Dispatch("x", &fakeHost{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no intent has been enqueued")
 }

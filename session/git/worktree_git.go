@@ -119,8 +119,12 @@ func (g *GitWorktree) PushChanges(commitMessage string, open bool) error {
 	pushCmd := exec.CommandContext(ctx, "gh", "repo", "sync", "--source", "-b", g.branchName)
 	pushCmd.Dir = g.worktreePath
 	if err := g.runner.Run(pushCmd); err != nil {
-		// If sync fails, try creating the branch on remote first
-		gitPushCmd := exec.CommandContext(ctx, "git", "push", "-u", "origin", g.branchName)
+		// Fallback needs its own deadline: a slow `gh repo sync` above can
+		// burn through most or all of ctx's budget before failing, which would
+		// cancel the push before it even dials.
+		fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), gitNetworkTimeout)
+		defer fallbackCancel()
+		gitPushCmd := exec.CommandContext(fallbackCtx, "git", "push", "-u", "origin", g.branchName)
 		gitPushCmd.Dir = g.worktreePath
 		if pushOutput, pushErr := g.runner.CombinedOutput(gitPushCmd); pushErr != nil {
 			return fmt.Errorf("failed to push branch: %s (%w)", pushOutput, pushErr)
