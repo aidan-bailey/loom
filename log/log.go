@@ -19,10 +19,13 @@ import (
 // source-compatibility with the ~117 existing .Printf call sites.
 const EnvLogFormat = "CLAUDE_SQUAD_LOG_FORMAT"
 
-// EnvLogLevel gates the Structured logger's minimum level. Values:
-// "debug", "info" (default), "warn", "error". Legacy *log.Logger vars
-// are unaffected — they always write. `SetLevel` lets tests and
-// future runtime toggles update the gate after Initialize.
+// EnvLogLevel gates the minimum log level for both the Structured
+// logger and the legacy *log.Logger vars (InfoLog / WarningLog /
+// ErrorLog). Values: "debug", "info" (default), "warn", "error".
+// Legacy records below the gate are silently dropped at the writer
+// layer so no change to the ~90 *.Printf call sites is required.
+// `SetLevel` lets tests and future runtime toggles update the gate
+// after Initialize.
 const EnvLogLevel = "CLAUDE_SQUAD_LOG_LEVEL"
 
 var (
@@ -41,14 +44,16 @@ var (
 	levelVar = new(slog.LevelVar)
 )
 
-const (
-	logFileName = "claudesquad.log"
-	maxLogSize  = 5 * 1024 * 1024 // 5 MB
-)
+const logFileName = "claudesquad.log"
+
+// maxLogSize is the rotation threshold in bytes. Declared as var (not
+// const) so tests can shrink it to trigger rotation without writing
+// megabytes of fixture data.
+var maxLogSize int64 = 5 * 1024 * 1024 // 5 MB
 
 var (
 	logFilePath   string
-	globalLogFile *os.File
+	globalRotator *rotatingWriter
 )
 
 // Initialize should be called once at the beginning of the program to set up logging.
@@ -73,17 +78,29 @@ func Initialize(logDir string, daemon bool) {
 		panic(fmt.Sprintf("could not open log file: %s", err))
 	}
 
+	// Track bytes already in the file so mid-run rotation fires at the
+	// right threshold even when we appended to a pre-existing log.
+	var initialSize int64
+	if info, statErr := f.Stat(); statErr == nil {
+		initialSize = info.Size()
+	}
+	rw := newRotatingWriter(logFilePath, f, initialSize, maxLogSize)
+
 	prefix := ""
 	if daemon {
 		prefix = "[DAEMON] "
 	}
-	InfoLog = log.New(f, prefix+"INFO:", log.Ldate|log.Ltime|log.Lshortfile)
-	WarningLog = log.New(f, prefix+"WARNING:", log.Ldate|log.Ltime|log.Lshortfile)
-	ErrorLog = log.New(f, prefix+"ERROR:", log.Ldate|log.Ltime|log.Lshortfile)
+	// Wrap the rotator in a per-level filter so legacy *log.Logger
+	// writes drop below the level gate, matching slog's behaviour.
+	InfoLog = log.New(&levelWriter{w: rw, level: slog.LevelInfo}, prefix+"INFO:", log.Ldate|log.Ltime|log.Lshortfile)
+	WarningLog = log.New(&levelWriter{w: rw, level: slog.LevelWarn}, prefix+"WARNING:", log.Ldate|log.Ltime|log.Lshortfile)
+	ErrorLog = log.New(&levelWriter{w: rw, level: slog.LevelError}, prefix+"ERROR:", log.Ldate|log.Ltime|log.Lshortfile)
 
 	levelVar.Set(parseLevel(os.Getenv(EnvLogLevel)))
-	Structured = newStructured(f, daemon)
-	globalLogFile = f
+	// Structured logs flow through the rotator too — slog's handler
+	// already respects levelVar, so no extra level wrapper is needed.
+	Structured = newStructured(rw, daemon)
+	globalRotator = rw
 }
 
 // parseLevel maps a case-insensitive env value to slog.Level. An
@@ -128,8 +145,8 @@ func newStructured(w io.Writer, daemon bool) *slog.Logger {
 
 // Close closes the log file.
 func Close() {
-	if globalLogFile != nil {
-		_ = globalLogFile.Close()
+	if globalRotator != nil {
+		_ = globalRotator.Close()
 	}
 }
 
@@ -215,6 +232,8 @@ func For(subsystem string, kv ...any) *slog.Logger {
 func LogFilePath() string { return logFilePath }
 
 // rotateIfNeeded renames the log file to .log.1 if it exceeds maxLogSize.
+// Called once at startup to catch log files left oversized by a prior
+// crash. Runtime rotation (rotatingWriter) handles the steady-state case.
 func rotateIfNeeded(path string) {
 	info, err := os.Stat(path)
 	if err != nil || info.Size() < maxLogSize {
@@ -223,6 +242,82 @@ func rotateIfNeeded(path string) {
 	backup := path + ".1"
 	_ = os.Remove(backup)
 	_ = os.Rename(path, backup)
+}
+
+// rotatingWriter is an io.Writer that keeps a bounded single-file log
+// with one `.1` backup. When a write would push the file past `max`,
+// the current file is closed, renamed to path+".1", and a fresh file
+// is opened for subsequent writes. All operations are serialized by
+// `mu`, so concurrent legacy-logger and slog writes observe a
+// consistent file-size counter and never race on the rename.
+type rotatingWriter struct {
+	mu   sync.Mutex
+	path string
+	file *os.File
+	size int64
+	max  int64
+}
+
+func newRotatingWriter(path string, file *os.File, initial int64, max int64) *rotatingWriter {
+	return &rotatingWriter{path: path, file: file, size: initial, max: max}
+}
+
+func (rw *rotatingWriter) Write(p []byte) (int, error) {
+	rw.mu.Lock()
+	defer rw.mu.Unlock()
+	if rw.file != nil && rw.size+int64(len(p)) > rw.max {
+		rw.rotateLocked()
+	}
+	if rw.file == nil {
+		// Rotation reopen failed; discard silently to keep long-lived
+		// daemons running. Disk-full errors surface elsewhere.
+		return len(p), nil
+	}
+	n, err := rw.file.Write(p)
+	rw.size += int64(n)
+	return n, err
+}
+
+func (rw *rotatingWriter) rotateLocked() {
+	_ = rw.file.Close()
+	backup := rw.path + ".1"
+	_ = os.Remove(backup)
+	_ = os.Rename(rw.path, backup)
+	f, err := os.OpenFile(rw.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		rw.file = nil
+		return
+	}
+	rw.file = f
+	rw.size = 0
+}
+
+func (rw *rotatingWriter) Close() error {
+	rw.mu.Lock()
+	defer rw.mu.Unlock()
+	if rw.file == nil {
+		return nil
+	}
+	err := rw.file.Close()
+	rw.file = nil
+	return err
+}
+
+// levelWriter drops writes whose fixed tier sits below the package
+// `levelVar` gate. Wrapping the legacy *log.Logger writers in this
+// shim makes CLAUDE_SQUAD_LOG_LEVEL apply uniformly without touching
+// the ~90 .Printf call sites. Returning len(p) on a dropped write
+// keeps *log.Logger from treating the drop as a short-write error.
+type levelWriter struct {
+	w     io.Writer
+	level slog.Level
+}
+
+func (lw *levelWriter) Write(p []byte) (int, error) {
+	if lw.level < levelVar.Level() {
+		return len(p), nil
+	}
+	return lw.w.Write(p)
 }
 
 // Every is used to log at most once every timeout duration. Safe for concurrent

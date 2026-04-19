@@ -101,7 +101,7 @@ claude-squad --workspace <name>
 
 - `CLAUDE_SQUAD_HOME` — Override config directory (default: `~/.claude-squad`). Must be absolute path; supports `~` expansion. Used as a backward-compatible fallback; internal code uses explicit `WorkspaceContext` threading.
 - `CLAUDE_SQUAD_LOG_FORMAT` — Set to `json` to emit structured log records from `log.InfoKV/WarnKV/ErrorKV` as JSON lines; otherwise plain text. Legacy `log.Infof`/`Warnf`/`Errorf` callers are unaffected.
-- `CLAUDE_SQUAD_LOG_LEVEL` — `debug|info|warn|error` (default `info`). Gates the Structured logger only — legacy `Infof/Warnf/Errorf` always write. The `--log-level` CLI flag (persistent on all subcommands) takes precedence over the env var and is also inherited by the daemon child process.
+- `CLAUDE_SQUAD_LOG_LEVEL` — `debug|info|warn|error` (default `info`). Gates both the Structured logger and the legacy `InfoLog`/`WarningLog`/`ErrorLog` writers (legacy records below the gate are dropped at the writer layer). The `--log-level` CLI flag (persistent on all subcommands) takes precedence over the env var and is also inherited by the daemon child process.
 
 ## Debugging
 

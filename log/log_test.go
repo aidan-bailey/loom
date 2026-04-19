@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewStructured_JSONFormat(t *testing.T) {
@@ -178,3 +181,156 @@ func TestDebugKV_EmitsWhenEnabled(t *testing.T) {
 	assert.Contains(t, out, "marker")
 	assert.Contains(t, out, "k=42")
 }
+
+// TestLevelGateSilencesLegacyLoggers guards the core contract of this
+// change: CLAUDE_SQUAD_LOG_LEVEL=error must drop INFO and WARNING
+// records coming through the legacy *log.Logger vars, while ERROR
+// still writes. Regression catches a dropped level check in
+// levelWriter.Write.
+func TestLevelGateSilencesLegacyLoggers(t *testing.T) {
+	dir := t.TempDir()
+	origLevel := levelVar.Level()
+	t.Cleanup(func() { levelVar.Set(origLevel) })
+
+	Initialize(dir, false)
+	t.Cleanup(Close)
+
+	SetLevel(slog.LevelError)
+	InfoLog.Print("info-line-should-be-dropped")
+	WarningLog.Print("warn-line-should-be-dropped")
+	ErrorLog.Print("error-line-should-appear")
+
+	// Close so buffered writes hit disk before we read the file.
+	Close()
+	// Re-set globalRotator to nil manually since the subsequent
+	// t.Cleanup(Close) expects it non-nil. Re-opening for read only
+	// is fine because we never touch the rotator again in this test.
+	globalRotator = nil
+
+	contents, err := os.ReadFile(filepath.Join(dir, logFileName))
+	require.NoError(t, err)
+	text := string(contents)
+
+	assert.NotContains(t, text, "info-line-should-be-dropped", "INFO records must be filtered at LevelError")
+	assert.NotContains(t, text, "warn-line-should-be-dropped", "WARNING records must be filtered at LevelError")
+	assert.Contains(t, text, "error-line-should-appear", "ERROR records must still write at LevelError")
+}
+
+// TestRotationHappensMidRun shrinks maxLogSize so a small number of
+// writes crosses the threshold, then verifies the rename-in-place
+// produced a .log.1 with the old bytes and a fresh .log with the
+// subsequent writes. Without runtime rotation this test would find
+// everything concatenated in a single .log.
+func TestRotationHappensMidRun(t *testing.T) {
+	dir := t.TempDir()
+	origMax := maxLogSize
+	origLevel := levelVar.Level()
+	t.Cleanup(func() {
+		maxLogSize = origMax
+		levelVar.Set(origLevel)
+	})
+
+	// Threshold sized for exactly one rotation: ~70-byte prefixed
+	// lines × 4 pre-rotation records ≈ 280 bytes > 200. Single
+	// post-rotation record lands in the fresh file.
+	maxLogSize = 200
+
+	Initialize(dir, false)
+	t.Cleanup(Close)
+
+	SetLevel(slog.LevelInfo)
+	// Use distinct markers per line so we can reason about where each
+	// record landed without guessing prefix byte counts. With ~62-byte
+	// prefixed lines and max=200: markers A, B, C fill .log (~186 B),
+	// marker D overflows → rotation → D lands in fresh .log along with
+	// POST. A, B, C survive in .log.1.
+	InfoLog.Print("MARK-A")
+	InfoLog.Print("MARK-B")
+	InfoLog.Print("MARK-C")
+	InfoLog.Print("MARK-D")
+	InfoLog.Print("MARK-POST")
+
+	// Flush + cleanly release handles so readers see the final bytes.
+	Close()
+	globalRotator = nil
+
+	logPath := filepath.Join(dir, logFileName)
+	backupPath := logPath + ".1"
+
+	backup, err := os.ReadFile(backupPath)
+	require.NoError(t, err, ".log.1 must exist after mid-run rotation")
+	current, err := os.ReadFile(logPath)
+	require.NoError(t, err, ".log must exist after mid-run rotation")
+
+	// The pre-rotation writes (A, B, C) must all be in .log.1 and
+	// absent from .log. The post-rotation write must be in .log.
+	// Marker D straddles the boundary: deliberately unasserted so a
+	// later prefix-width change (e.g. extended filename) doesn't
+	// break the test for a benign reason.
+	assert.Contains(t, string(backup), "MARK-A", "MARK-A must be in .log.1 (pre-rotation)")
+	assert.Contains(t, string(backup), "MARK-B", "MARK-B must be in .log.1 (pre-rotation)")
+	assert.Contains(t, string(backup), "MARK-C", "MARK-C must be in .log.1 (pre-rotation)")
+	assert.NotContains(t, string(backup), "MARK-POST", ".log.1 must not contain post-rotation data")
+	assert.Contains(t, string(current), "MARK-POST", "MARK-POST must be in .log (post-rotation)")
+	assert.NotContains(t, string(current), "MARK-A", ".log must not contain MARK-A (written before rotation)")
+}
+
+// TestRotationConcurrentWrites hammers the rotator from many
+// goroutines and verifies that (a) all writes complete without error
+// and (b) no individual line is torn across a rotation boundary. We
+// size max so exactly one rotation fires over the total volume,
+// which keeps all records recoverable in .log + .log.1 (single-
+// backup rotation overwrites .log.1 on each subsequent rotation, so
+// multi-rotation scenarios would legitimately lose records).
+func TestRotationConcurrentWrites(t *testing.T) {
+	dir := t.TempDir()
+	origMax := maxLogSize
+	origLevel := levelVar.Level()
+	t.Cleanup(func() {
+		maxLogSize = origMax
+		levelVar.Set(origLevel)
+	})
+
+	const goroutines = 10
+	const perGoroutine = 50
+	// ~70 bytes per line × 500 lines ≈ 35 KB total. max=20 KB → exactly
+	// one rotation: the first ~20 KB land in .log.1, the remainder in
+	// the fresh .log. Both files are inspected so no records are lost
+	// to single-backup overwrite.
+	maxLogSize = 20000
+
+	Initialize(dir, false)
+	t.Cleanup(Close)
+
+	SetLevel(slog.LevelInfo)
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < perGoroutine; i++ {
+				InfoLog.Printf("MARK g=%02d i=%03d END", g, i)
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	Close()
+	globalRotator = nil
+
+	current, err := os.ReadFile(filepath.Join(dir, logFileName))
+	require.NoError(t, err)
+	var combined strings.Builder
+	combined.Write(current)
+	if backup, rerr := os.ReadFile(filepath.Join(dir, logFileName+".1")); rerr == nil {
+		combined.Write(backup)
+	}
+	text := combined.String()
+
+	markCount := strings.Count(text, "MARK g=")
+	endCount := strings.Count(text, " END")
+	assert.Equal(t, goroutines*perGoroutine, markCount, "every record must appear exactly once across .log + .log.1")
+	assert.Equal(t, markCount, endCount, "every record's MARK must be paired with END — a mismatch indicates a torn write across the rotation boundary")
+}
+
