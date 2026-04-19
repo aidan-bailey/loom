@@ -2,7 +2,7 @@ package overlay
 
 import (
 	"bytes"
-	"claude-squad/ui"
+	"github.com/aidan-bailey/loom/ui"
 	"regexp"
 	"strings"
 

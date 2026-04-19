@@ -3,7 +3,7 @@ package cmd
 import (
 	"os/exec"
 
-	internalexec "claude-squad/internal/exec"
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 )
 
 // Executor is re-exported from internal/exec so session/git and cmd share

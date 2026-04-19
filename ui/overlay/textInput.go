@@ -1,8 +1,8 @@
 package overlay
 
 import (
-	"claude-squad/config"
-	"claude-squad/ui"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/ui"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"

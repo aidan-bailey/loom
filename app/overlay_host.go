@@ -1,7 +1,7 @@
 package app
 
 import (
-	"claude-squad/ui/overlay"
+	"github.com/aidan-bailey/loom/ui/overlay"
 )
 
 // overlayKind distinguishes overlays that share the Overlay interface

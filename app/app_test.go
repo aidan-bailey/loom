@@ -1,14 +1,14 @@
 package app
 
 import (
-	"claude-squad/config"
-	"claude-squad/log"
-	"claude-squad/session"
-	"claude-squad/ui"
-	"claude-squad/ui/overlay"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/ui"
+	"github.com/aidan-bailey/loom/ui/overlay"
 	"os"
 	"testing"
 

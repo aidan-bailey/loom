@@ -1,4 +1,4 @@
-module claude-squad
+module github.com/aidan-bailey/loom
 
 go 1.23.0
 

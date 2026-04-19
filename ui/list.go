@@ -1,10 +1,10 @@
 package ui
 
 import (
-	"claude-squad/log"
-	"claude-squad/session"
 	"errors"
 	"fmt"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"

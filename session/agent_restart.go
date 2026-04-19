@@ -1,7 +1,7 @@
 package session
 
 import (
-	"claude-squad/session/agent"
+	"github.com/aidan-bailey/loom/session/agent"
 )
 
 // defaultRegistry is the package-level adapter registry used by

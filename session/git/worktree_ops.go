@@ -1,10 +1,10 @@
 package git
 
 import (
-	"claude-squad/log"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aidan-bailey/loom/log"
 	"os"
 	"os/exec"
 	"path/filepath"

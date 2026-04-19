@@ -1,11 +1,11 @@
 package session
 
 import (
-	"claude-squad/cmd/cmd_test"
-	"claude-squad/session/git"
-	"claude-squad/session/tmux"
 	"errors"
 	"fmt"
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
 	"os/exec"
 	"path/filepath"

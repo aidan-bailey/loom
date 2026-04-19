@@ -1,9 +1,9 @@
 package daemon
 
 import (
-	"claude-squad/config"
-	"claude-squad/session"
 	"encoding/json"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session"
 	"path/filepath"
 	"testing"
 

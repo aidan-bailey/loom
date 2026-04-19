@@ -1,9 +1,9 @@
 package script
 
 import (
-	"claude-squad/log"
 	"context"
 	"fmt"
+	"github.com/aidan-bailey/loom/log"
 	"sort"
 	"sync"
 	"time"

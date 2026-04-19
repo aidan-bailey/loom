@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"bytes"
-	"claude-squad/config"
 	"encoding/json"
+	"github.com/aidan-bailey/loom/config"
 	"os"
 	"path/filepath"
 	"strings"

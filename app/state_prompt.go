@@ -1,8 +1,8 @@
 package app
 
 import (
-	"claude-squad/session"
-	"claude-squad/ui"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

@@ -1,8 +1,8 @@
 package config
 
 import (
-	"claude-squad/log"
 	"fmt"
+	"github.com/aidan-bailey/loom/log"
 	"os"
 	"time"
 )

@@ -1,8 +1,8 @@
 package session
 
 import (
-	"claude-squad/session/git"
 	"fmt"
+	"github.com/aidan-bailey/loom/session/git"
 	"path/filepath"
 )
 

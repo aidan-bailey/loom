@@ -2,9 +2,9 @@ package config
 
 import (
 	"bytes"
-	"claude-squad/log"
 	"encoding/json"
 	"fmt"
+	"github.com/aidan-bailey/loom/log"
 	"os"
 	"path/filepath"
 )

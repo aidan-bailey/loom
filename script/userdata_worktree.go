@@ -1,7 +1,7 @@
 package script
 
 import (
-	"claude-squad/session/git"
+	"github.com/aidan-bailey/loom/session/git"
 
 	lua "github.com/yuin/gopher-lua"
 )

@@ -1,8 +1,8 @@
 package daemon
 
 import (
-	"claude-squad/config"
-	"claude-squad/log"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/log"
 	"os"
 	"path/filepath"
 	"testing"

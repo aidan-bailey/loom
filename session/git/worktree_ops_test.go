@@ -1,8 +1,8 @@
 package git
 
 import (
-	"claude-squad/log"
 	"errors"
+	"github.com/aidan-bailey/loom/log"
 	"os"
 	"os/exec"
 	"path/filepath"

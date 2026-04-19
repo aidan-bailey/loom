@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"claude-squad/config"
 	"encoding/json"
 	"fmt"
+	"github.com/aidan-bailey/loom/config"
 	"io"
 	"os"
 	"path/filepath"

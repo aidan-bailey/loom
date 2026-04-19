@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"claude-squad/session/git"
 	"fmt"
+	"github.com/aidan-bailey/loom/session/git"
 	"strings"
 	"testing"
 

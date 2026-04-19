@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"claude-squad/script"
+	"github.com/aidan-bailey/loom/script"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"

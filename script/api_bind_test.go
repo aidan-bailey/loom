@@ -2,8 +2,8 @@ package script
 
 import (
 	"bytes"
-	"claude-squad/log"
 	"context"
+	"github.com/aidan-bailey/loom/log"
 	"log/slog"
 	"testing"
 

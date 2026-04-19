@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"claude-squad/script"
+	"github.com/aidan-bailey/loom/script"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

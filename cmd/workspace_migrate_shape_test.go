@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"claude-squad/session"
 	"encoding/json"
+	"github.com/aidan-bailey/loom/session"
 	"reflect"
 	"strings"
 	"testing"

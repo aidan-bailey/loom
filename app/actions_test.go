@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"claude-squad/config"
-	"claude-squad/script"
-	"claude-squad/session"
-	"claude-squad/ui"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/script"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/ui"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/stretchr/testify/assert"

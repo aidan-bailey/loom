@@ -1,13 +1,13 @@
 package app
 
 import (
-	"claude-squad/config"
-	"claude-squad/log"
-	"claude-squad/script"
-	"claude-squad/session"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/script"
+	"github.com/aidan-bailey/loom/session"
 	"path/filepath"
 	"sync"
 

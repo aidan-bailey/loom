@@ -1,7 +1,7 @@
 package overlay
 
 import (
-	"claude-squad/ui"
+	"github.com/aidan-bailey/loom/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

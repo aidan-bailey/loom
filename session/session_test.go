@@ -1,7 +1,7 @@
 package session
 
 import (
-	"claude-squad/log"
+	"github.com/aidan-bailey/loom/log"
 	"os"
 	"testing"
 )

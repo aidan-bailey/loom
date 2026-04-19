@@ -1,10 +1,10 @@
 package ui
 
 import (
-	"claude-squad/log"
-	"claude-squad/session"
-	"claude-squad/session/tmux"
 	"fmt"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
 	"strings"
 	"sync"

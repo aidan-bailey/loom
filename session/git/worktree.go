@@ -1,10 +1,10 @@
 package git
 
 import (
-	"claude-squad/config"
-	internalexec "claude-squad/internal/exec"
-	"claude-squad/log"
 	"fmt"
+	"github.com/aidan-bailey/loom/config"
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/log"
 	"path/filepath"
 	"sync"
 	"time"

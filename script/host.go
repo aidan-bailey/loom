@@ -10,8 +10,8 @@
 package script
 
 import (
-	"claude-squad/config"
-	"claude-squad/session"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session"
 )
 
 // Host is the facade script userdata uses to touch live TUI state.

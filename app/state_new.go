@@ -1,9 +1,9 @@
 package app
 
 import (
-	"claude-squad/session"
-	"claude-squad/ui"
 	"fmt"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	runewidth "github.com/mattn/go-runewidth"

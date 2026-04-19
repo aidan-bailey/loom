@@ -1,7 +1,7 @@
 package app
 
 import (
-	"claude-squad/ui/overlay"
+	"github.com/aidan-bailey/loom/ui/overlay"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

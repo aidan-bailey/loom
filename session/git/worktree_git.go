@@ -1,9 +1,9 @@
 package git
 
 import (
-	"claude-squad/log"
 	"context"
 	"fmt"
+	"github.com/aidan-bailey/loom/log"
 	"os/exec"
 	"strings"
 	"time"

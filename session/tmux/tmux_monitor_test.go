@@ -1,7 +1,7 @@
 package tmux
 
 import (
-	"claude-squad/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"os/exec"
 	"strings"
 	"testing"

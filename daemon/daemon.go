@@ -1,10 +1,10 @@
 package daemon
 
 import (
-	"claude-squad/config"
-	"claude-squad/log"
-	"claude-squad/session"
 	"fmt"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"os"
 	"os/exec"
 	"os/signal"

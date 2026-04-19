@@ -5,11 +5,11 @@ import (
 	"os/exec"
 	"testing"
 
-	"claude-squad/cmd/cmd_test"
-	"claude-squad/config"
-	"claude-squad/script"
-	"claude-squad/session"
-	"claude-squad/session/tmux"
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/script"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"

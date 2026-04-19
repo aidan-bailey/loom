@@ -1,9 +1,9 @@
 package overlay
 
 import (
-	"claude-squad/config"
-	"claude-squad/ui"
 	"fmt"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/ui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

@@ -1,8 +1,8 @@
 package daemon
 
 import (
-	"claude-squad/log"
-	"claude-squad/session"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"testing"
 	"time"
 

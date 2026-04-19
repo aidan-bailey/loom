@@ -1,7 +1,7 @@
 package session
 
 import (
-	"claude-squad/session/git"
+	"github.com/aidan-bailey/loom/session/git"
 	"testing"
 
 	"github.com/stretchr/testify/assert"

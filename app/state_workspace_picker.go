@@ -1,8 +1,8 @@
 package app
 
 import (
-	"claude-squad/config"
 	"fmt"
+	"github.com/aidan-bailey/loom/config"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

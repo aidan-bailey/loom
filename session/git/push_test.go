@@ -1,9 +1,9 @@
 package git
 
 import (
-	cmd_test "claude-squad/cmd/cmd_test"
 	"context"
 	"errors"
+	cmd_test "github.com/aidan-bailey/loom/cmd/cmd_test"
 	"os/exec"
 	"reflect"
 	"strings"

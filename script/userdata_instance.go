@@ -1,8 +1,8 @@
 package script
 
 import (
-	"claude-squad/session"
 	"fmt"
+	"github.com/aidan-bailey/loom/session"
 
 	lua "github.com/yuin/gopher-lua"
 )
