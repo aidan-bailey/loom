@@ -1,7 +1,6 @@
 package config
 
 import (
-	"claude-squad/log"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/aidan-bailey/loom/log"
 )
 
 const (
@@ -17,20 +18,31 @@ const (
 	defaultProgram = "claude"
 )
 
+// EnvHome names the override env var for the application's config
+// directory. Legacy CLAUDE_SQUAD_HOME is honored as a deprecated
+// fallback with a one-time warning so shell configs continue working
+// across the rename from claude-squad to loom.
+const (
+	EnvHome       = "LOOM_HOME"
+	legacyEnvHome = "CLAUDE_SQUAD_HOME"
+)
+
 // GetConfigDir returns the path to the application's configuration directory.
-// If CLAUDE_SQUAD_HOME is set, that value is used directly as the config directory.
-// The value must be an absolute path (after ~ expansion). Falls back to ~/.claude-squad.
+// If LOOM_HOME is set, that value is used directly as the config directory.
+// CLAUDE_SQUAD_HOME is honored as a deprecated fallback with a one-time
+// warning. The value must be an absolute path (after ~ expansion). Falls
+// back to ~/.loom otherwise.
 func GetConfigDir() (string, error) {
-	if envDir := os.Getenv("CLAUDE_SQUAD_HOME"); envDir != "" {
+	if envDir := log.GetEnvWithLegacy(EnvHome, legacyEnvHome); envDir != "" {
 		if envDir == "~" || strings.HasPrefix(envDir, "~/") {
 			homeDir, err := os.UserHomeDir()
 			if err != nil {
-				return "", fmt.Errorf("failed to expand ~ in CLAUDE_SQUAD_HOME: %w", err)
+				return "", fmt.Errorf("failed to expand ~ in %s: %w", EnvHome, err)
 			}
 			envDir = filepath.Join(homeDir, envDir[1:])
 		}
 		if !filepath.IsAbs(envDir) {
-			return "", fmt.Errorf("CLAUDE_SQUAD_HOME must be an absolute path, got: %s", envDir)
+			return "", fmt.Errorf("%s must be an absolute path, got: %s", EnvHome, envDir)
 		}
 		return envDir, nil
 	}
@@ -39,7 +51,7 @@ func GetConfigDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get config home directory: %w", err)
 	}
-	return filepath.Join(homeDir, ".claude-squad"), nil
+	return filepath.Join(homeDir, ".loom"), nil
 }
 
 // Profile represents a named program configuration
@@ -206,7 +218,7 @@ func SaveConfigTo(config *Config, dir string) error {
 }
 
 // LoadConfigFromGlobal loads configuration from the global
-// (CLAUDE_SQUAD_HOME or ~/.claude-squad) directory. Prefer this over
+// (LOOM_HOME or ~/.loom) directory. Prefer this over
 // LoadConfigFrom("") at call sites that truly want the global config —
 // the explicit name prevents workspace-context leaks.
 func LoadConfigFromGlobal() *Config {

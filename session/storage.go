@@ -1,11 +1,12 @@
 package session
 
 import (
-	"claude-squad/config"
-	internalexec "claude-squad/internal/exec"
-	"claude-squad/log"
 	"encoding/json"
 	"fmt"
+	"github.com/aidan-bailey/loom/config"
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"time"
 )
 
@@ -118,6 +119,11 @@ func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, 
 	if err != nil {
 		return nil, err
 	}
+	titles := make([]string, 0, len(data))
+	for _, d := range data {
+		titles = append(titles, d.Title)
+	}
+	tmux.RenameLegacySessions(titles, cmdExec)
 	instances := make([]*Instance, 0, len(data))
 	for _, d := range data {
 		inst, err := ReconcileAndRestore(d, s.configDir, cmdExec)

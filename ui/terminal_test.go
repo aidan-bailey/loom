@@ -1,11 +1,11 @@
 package ui
 
 import (
-	"claude-squad/cmd/cmd_test"
-	"claude-squad/log"
-	"claude-squad/session"
-	"claude-squad/session/tmux"
 	"fmt"
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"os/exec"
 	"strings"
 	"testing"

@@ -1,8 +1,8 @@
 package script
 
 import (
-	"claude-squad/log"
 	"context"
+	"github.com/aidan-bailey/loom/log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -299,7 +299,7 @@ func TestLoaderWalksDirectory(t *testing.T) {
 }
 
 // TestLoaderMissingDirectoryIsNoop confirms the "no scripts" path is
-// silent. Users who never create ~/.claude-squad/scripts must not
+// silent. Users who never create ~/.loom/scripts must not
 // see warnings.
 func TestLoaderMissingDirectoryIsNoop(t *testing.T) {
 	e := NewEngine(nil)

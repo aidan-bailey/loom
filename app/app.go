@@ -2,18 +2,18 @@ package app
 
 import (
 	"bytes"
-	cmd2 "claude-squad/cmd"
-	"claude-squad/config"
-	"claude-squad/keys"
-	"claude-squad/log"
-	"claude-squad/script"
-	"claude-squad/session"
-	"claude-squad/session/git"
-	"claude-squad/session/tmux"
-	"claude-squad/ui"
-	"claude-squad/ui/overlay"
 	"context"
 	"fmt"
+	cmd2 "github.com/aidan-bailey/loom/cmd"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/keys"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/script"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/aidan-bailey/loom/ui"
+	"github.com/aidan-bailey/loom/ui/overlay"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +38,7 @@ var statusLineStyle = lipgloss.NewStyle().
 // wsCtx is the resolved workspace context; nil means global.
 // registry is passed through for the startup workspace picker.
 // appConfig is the pre-loaded config from the resolved workspace directory.
-// noScripts disables loading of ~/.claude-squad/scripts (embedded
+// noScripts disables loading of ~/.loom/scripts (embedded
 // defaults still load).
 func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string, noScripts bool) error {
 	h, err := newHome(ctx, wsCtx, registry, appConfig, program, autoYes, pendingDir, noScripts)
@@ -211,8 +211,8 @@ type home struct {
 	// engine so Dispatch returns matched=false instead of panicking).
 	scripts *script.Engine
 	// skipScripts mirrors the --no-scripts CLI flag: when true, the
-	// engine still boots with embedded defaults, but ~/.claude-squad/
-	// scripts is skipped. Provides an escape hatch when a user script
+	// engine still boots with embedded defaults, but ~/.loom/scripts
+	// is skipped. Provides an escape hatch when a user script
 	// broke the keymap.
 	skipScripts bool
 }
@@ -272,6 +272,15 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		if err != nil {
 			return nil, fmt.Errorf("load instances: %w", err)
 		}
+
+		// Rename any pre-rename (claudesquad_*) tmux sessions to their
+		// loom_* equivalents so reconcile finds live sessions after the
+		// v0.1.0 prefix flip. Idempotent no-op after first launch.
+		legacyTitles := make([]string, 0, len(instancesData))
+		for _, d := range instancesData {
+			legacyTitles = append(legacyTitles, d.Title)
+		}
+		tmux.RenameLegacySessions(legacyTitles, cmdExec)
 
 		// Reconcile each instance against tmux/worktree reality
 		hasWorkspaceTerminal := false

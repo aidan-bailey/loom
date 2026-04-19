@@ -12,16 +12,16 @@ import (
 )
 
 func TestGetGlobalConfigDir(t *testing.T) {
-	t.Run("returns ~/.claude-squad regardless of CLAUDE_SQUAD_HOME", func(t *testing.T) {
+	t.Run("returns ~/.loom regardless of LOOM_HOME", func(t *testing.T) {
 		customDir := t.TempDir()
-		os.Setenv("CLAUDE_SQUAD_HOME", customDir)
-		defer os.Unsetenv("CLAUDE_SQUAD_HOME")
+		os.Setenv("LOOM_HOME", customDir)
+		defer os.Unsetenv("LOOM_HOME")
 
 		globalDir, err := GetGlobalConfigDir()
 		assert.NoError(t, err)
 		assert.NotEqual(t, customDir, globalDir)
 		assert.True(t, filepath.IsAbs(globalDir))
-		assert.Contains(t, globalDir, ".claude-squad")
+		assert.Contains(t, globalDir, ".loom")
 	})
 }
 
@@ -41,7 +41,7 @@ func TestLoadWorkspaceRegistry(t *testing.T) {
 
 	t.Run("loads valid registry file", func(t *testing.T) {
 		tempHome := t.TempDir()
-		globalDir := filepath.Join(tempHome, ".claude-squad")
+		globalDir := filepath.Join(tempHome, ".loom")
 		require.NoError(t, os.MkdirAll(globalDir, 0755))
 
 		content := `{"workspaces":[{"name":"test","path":"/tmp/repo","added_at":"2025-01-01T00:00:00Z"}],"last_used":"test"}`
@@ -316,7 +316,7 @@ func TestRenamePropagatesToOpenWorkspaces(t *testing.T) {
 
 func TestWorkspaceConfigDir(t *testing.T) {
 	ws := &Workspace{Name: "test", Path: "/home/user/myrepo"}
-	assert.Equal(t, "/home/user/myrepo/.claude-squad", WorkspaceConfigDir(ws))
+	assert.Equal(t, "/home/user/myrepo/.loom", WorkspaceConfigDir(ws))
 }
 
 func TestEnsureGitignore(t *testing.T) {
@@ -327,8 +327,8 @@ func TestEnsureGitignore(t *testing.T) {
 
 		data, err := os.ReadFile(filepath.Join(repoDir, ".gitignore"))
 		require.NoError(t, err)
-		assert.Contains(t, string(data), ".claude-squad/")
-		assert.Contains(t, string(data), "# claude-squad local data")
+		assert.Contains(t, string(data), ".loom/")
+		assert.Contains(t, string(data), "# loom local data")
 	})
 
 	t.Run("appends to existing .gitignore", func(t *testing.T) {
@@ -343,7 +343,7 @@ func TestEnsureGitignore(t *testing.T) {
 		require.NoError(t, err)
 		content := string(data)
 		assert.Contains(t, content, "node_modules/")
-		assert.Contains(t, content, ".claude-squad/")
+		assert.Contains(t, content, ".loom/")
 	})
 
 	t.Run("idempotent - does not duplicate entry", func(t *testing.T) {
@@ -358,7 +358,7 @@ func TestEnsureGitignore(t *testing.T) {
 		// Count occurrences — should appear exactly once.
 		count := 0
 		for _, line := range splitLines(content) {
-			if line == ".claude-squad/" {
+			if line == ".loom/" {
 				count++
 			}
 		}
@@ -377,7 +377,7 @@ func TestEnsureGitignore(t *testing.T) {
 		require.NoError(t, err)
 		content := string(data)
 		// The comment should start on its own line.
-		assert.Contains(t, content, "\n# claude-squad local data")
+		assert.Contains(t, content, "\n# loom local data")
 	})
 
 	// Concurrent callers must not multiply the entry. The pre-fix code did
@@ -429,8 +429,8 @@ func TestEnsureGitignore(t *testing.T) {
 		require.NoError(t, err)
 		content := string(data)
 
-		entryCount := strings.Count(content, ".claude-squad/")
-		commentCount := strings.Count(content, "# claude-squad local data")
+		entryCount := strings.Count(content, ".loom/")
+		commentCount := strings.Count(content, "# loom local data")
 		assert.Equal(t, 1, entryCount, "entry should appear exactly once under concurrency; got: %q", content)
 		assert.Equal(t, 1, commentCount, "comment should appear exactly once under concurrency; got: %q", content)
 	})

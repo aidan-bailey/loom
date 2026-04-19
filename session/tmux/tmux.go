@@ -2,12 +2,12 @@ package tmux
 
 import (
 	"bytes"
-	internalexec "claude-squad/internal/exec"
-	"claude-squad/log"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/log"
 	"io"
 	"os"
 	"os/exec"
@@ -75,14 +75,56 @@ type TmuxSession struct {
 	pumpCancel context.CancelFunc // nil outside an active pump; cancels the pump's ctx
 }
 
-const TmuxPrefix = "claudesquad_"
+const TmuxPrefix = "loom_"
+
+// LegacyTmuxPrefix is the tmux session prefix used before the rename
+// from claude-squad to loom. Still recognized by orphan-sweep logic
+// and by the startup rename pass so in-flight sessions survive the
+// upgrade transparently.
+const LegacyTmuxPrefix = "claudesquad_"
 
 var whiteSpaceRegex = regexp.MustCompile(`\s+`)
 
-func ToClaudeSquadTmuxName(str string) string {
+// ToLoomTmuxName returns the canonical tmux session name for a given
+// instance title under the current prefix.
+func ToLoomTmuxName(str string) string {
 	str = whiteSpaceRegex.ReplaceAllString(str, "")
 	str = strings.ReplaceAll(str, ".", "_") // tmux replaces all . with _
 	return fmt.Sprintf("%s%s", TmuxPrefix, str)
+}
+
+// ToLegacyTmuxName returns the pre-rename tmux session name for a
+// given instance title. Used only by RenameLegacySessions at startup;
+// no production code path should depend on this name otherwise.
+func ToLegacyTmuxName(str string) string {
+	str = whiteSpaceRegex.ReplaceAllString(str, "")
+	str = strings.ReplaceAll(str, ".", "_")
+	return fmt.Sprintf("%s%s", LegacyTmuxPrefix, str)
+}
+
+// RenameLegacySessions renames any tmux sessions matching the legacy
+// claudesquad_* prefix to their loom_* equivalent so that in-flight
+// sessions from a pre-rename binary continue to be found by reconcile
+// on the next startup. Silent on failure — a missing session or an
+// unreachable tmux server is expected and harmless.
+//
+// Called once from main.go before the reconcile pass. Idempotent: on
+// later launches the legacy sessions are gone and the loop is a no-op.
+func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
+	if len(titles) == 0 {
+		return
+	}
+	for _, t := range titles {
+		legacy := ToLegacyTmuxName(t)
+		target := ToLoomTmuxName(t)
+		if legacy == target {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+		cmd := exec.CommandContext(ctx, "tmux", "rename-session", "-t", legacy, target)
+		_ = cmdExec.Run(cmd)
+		cancel()
+	}
 }
 
 // NewTmuxSession creates a new TmuxSession with the given name and program.
@@ -97,7 +139,7 @@ func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, 
 
 func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor) *TmuxSession {
 	return &TmuxSession{
-		sanitizedName: ToClaudeSquadTmuxName(name),
+		sanitizedName: ToLoomTmuxName(name),
 		program:       program,
 		ptyFactory:    ptyFactory,
 		cmdExec:       cmdExec,

@@ -1,11 +1,11 @@
 package session
 
 import (
-	"claude-squad/log"
-	"claude-squad/session/agent"
-	"claude-squad/session/git"
-	"claude-squad/session/tmux"
 	"errors"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/agent"
+	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"path/filepath"
 
 	"fmt"
@@ -781,7 +781,7 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 		errs = append(errs, fmt.Errorf("failed to check if worktree is dirty: %w", err))
 	} else if dirty {
 		// Commit changes locally (without pushing to GitHub)
-		commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s (paused)", i.Title, time.Now().Format(time.RFC822))
+		commitMsg := fmt.Sprintf("[loom] update from '%s' on %s (paused)", i.Title, time.Now().Format(time.RFC822))
 		if err := gw.CommitChanges(commitMsg); err != nil {
 			errs = append(errs, fmt.Errorf("failed to commit changes: %w", err))
 			// Return early if we can't commit changes to avoid corrupted state

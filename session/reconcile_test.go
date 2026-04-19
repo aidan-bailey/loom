@@ -4,7 +4,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"claude-squad/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -36,7 +36,7 @@ func TestKillTmuxSessionByTitle_SendsSanitizedTarget(t *testing.T) {
 	err := KillTmuxSessionByTitle("prader-rs", cmdExec)
 	assert.NoError(t, err)
 	assert.Contains(t, got, "kill-session")
-	assert.Contains(t, got, "-t=claudesquad_prader-rs")
+	assert.Contains(t, got, "-t=loom_prader-rs")
 }
 
 func TestKillTmuxSessionByTitle_PropagatesExecError(t *testing.T) {
@@ -127,16 +127,16 @@ func TestCleanupOrphanedSessions(t *testing.T) {
 			return nil
 		},
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
-			// Simulate tmux ls output: two cs sessions, one claimed, one orphaned
-			return []byte("claudesquad_claimed: 1 windows\nclaudesquad_orphan: 1 windows\nother_session: 1 windows\n"), nil
+			// Simulate tmux ls output: two loom sessions, one claimed, one orphaned
+			return []byte("loom_claimed: 1 windows\nloom_orphan: 1 windows\nother_session: 1 windows\n"), nil
 		},
 	}
 
 	claimedTitles := map[string]bool{"claimed": true}
 	err := CleanupOrphanedSessions(claimedTitles, cmdExec)
 	assert.NoError(t, err)
-	assert.Contains(t, killedSessions, "claudesquad_orphan")
-	assert.NotContains(t, killedSessions, "claudesquad_claimed")
+	assert.Contains(t, killedSessions, "loom_orphan")
+	assert.NotContains(t, killedSessions, "loom_claimed")
 	assert.NotContains(t, killedSessions, "other_session")
 }
 

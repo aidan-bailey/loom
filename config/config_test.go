@@ -1,7 +1,7 @@
 package config
 
 import (
-	"claude-squad/log"
+	"github.com/aidan-bailey/loom/log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,7 +17,8 @@ func TestMain(m *testing.M) {
 	// Initialize the logger before any tests run
 	_ = log.Initialize("", false)
 
-	// Prevent CLAUDE_SQUAD_HOME from polluting tests
+	// Prevent LOOM_HOME / CLAUDE_SQUAD_HOME from polluting tests
+	os.Unsetenv("LOOM_HOME")
 	os.Unsetenv("CLAUDE_SQUAD_HOME")
 
 	exitCode := m.Run()
@@ -117,22 +118,22 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestGetConfigDir(t *testing.T) {
 	t.Run("returns default config directory when env var not set", func(t *testing.T) {
-		originalEnv := os.Getenv("CLAUDE_SQUAD_HOME")
-		os.Unsetenv("CLAUDE_SQUAD_HOME")
-		defer os.Setenv("CLAUDE_SQUAD_HOME", originalEnv)
+		originalEnv := os.Getenv("LOOM_HOME")
+		os.Unsetenv("LOOM_HOME")
+		defer os.Setenv("LOOM_HOME", originalEnv)
 
 		configDir, err := GetConfigDir()
 
 		assert.NoError(t, err)
 		assert.NotEmpty(t, configDir)
-		assert.True(t, strings.HasSuffix(configDir, ".claude-squad"))
+		assert.True(t, strings.HasSuffix(configDir, ".loom"))
 		assert.True(t, filepath.IsAbs(configDir))
 	})
 
-	t.Run("uses CLAUDE_SQUAD_HOME when set", func(t *testing.T) {
+	t.Run("uses LOOM_HOME when set", func(t *testing.T) {
 		customDir := t.TempDir()
-		os.Setenv("CLAUDE_SQUAD_HOME", customDir)
-		defer os.Unsetenv("CLAUDE_SQUAD_HOME")
+		os.Setenv("LOOM_HOME", customDir)
+		defer os.Unsetenv("LOOM_HOME")
 
 		configDir, err := GetConfigDir()
 
@@ -140,10 +141,10 @@ func TestGetConfigDir(t *testing.T) {
 		assert.Equal(t, customDir, configDir)
 	})
 
-	t.Run("CLAUDE_SQUAD_HOME takes precedence over HOME", func(t *testing.T) {
+	t.Run("LOOM_HOME takes precedence over HOME", func(t *testing.T) {
 		customDir := t.TempDir()
-		os.Setenv("CLAUDE_SQUAD_HOME", customDir)
-		defer os.Unsetenv("CLAUDE_SQUAD_HOME")
+		os.Setenv("LOOM_HOME", customDir)
+		defer os.Unsetenv("LOOM_HOME")
 
 		originalHome := os.Getenv("HOME")
 		os.Setenv("HOME", t.TempDir())
@@ -155,29 +156,29 @@ func TestGetConfigDir(t *testing.T) {
 		assert.Equal(t, customDir, configDir)
 	})
 
-	t.Run("expands tilde in CLAUDE_SQUAD_HOME", func(t *testing.T) {
+	t.Run("expands tilde in LOOM_HOME", func(t *testing.T) {
 		originalHome := os.Getenv("HOME")
 		tempHome := t.TempDir()
 		os.Setenv("HOME", tempHome)
 		defer os.Setenv("HOME", originalHome)
 
-		os.Setenv("CLAUDE_SQUAD_HOME", "~/.my-claude-squad")
-		defer os.Unsetenv("CLAUDE_SQUAD_HOME")
+		os.Setenv("LOOM_HOME", "~/.my-loom")
+		defer os.Unsetenv("LOOM_HOME")
 
 		configDir, err := GetConfigDir()
 
 		assert.NoError(t, err)
-		assert.Equal(t, filepath.Join(tempHome, ".my-claude-squad"), configDir)
+		assert.Equal(t, filepath.Join(tempHome, ".my-loom"), configDir)
 	})
 
-	t.Run("expands bare tilde in CLAUDE_SQUAD_HOME", func(t *testing.T) {
+	t.Run("expands bare tilde in LOOM_HOME", func(t *testing.T) {
 		originalHome := os.Getenv("HOME")
 		tempHome := t.TempDir()
 		os.Setenv("HOME", tempHome)
 		defer os.Setenv("HOME", originalHome)
 
-		os.Setenv("CLAUDE_SQUAD_HOME", "~")
-		defer os.Unsetenv("CLAUDE_SQUAD_HOME")
+		os.Setenv("LOOM_HOME", "~")
+		defer os.Unsetenv("LOOM_HOME")
 
 		configDir, err := GetConfigDir()
 
@@ -185,14 +186,26 @@ func TestGetConfigDir(t *testing.T) {
 		assert.Equal(t, tempHome, configDir)
 	})
 
-	t.Run("rejects relative path in CLAUDE_SQUAD_HOME", func(t *testing.T) {
-		os.Setenv("CLAUDE_SQUAD_HOME", "relative/path")
-		defer os.Unsetenv("CLAUDE_SQUAD_HOME")
+	t.Run("rejects relative path in LOOM_HOME", func(t *testing.T) {
+		os.Setenv("LOOM_HOME", "relative/path")
+		defer os.Unsetenv("LOOM_HOME")
 
 		_, err := GetConfigDir()
 
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "CLAUDE_SQUAD_HOME must be an absolute path")
+		assert.Contains(t, err.Error(), "LOOM_HOME must be an absolute path")
+	})
+
+	t.Run("legacy CLAUDE_SQUAD_HOME still honored when LOOM_HOME unset", func(t *testing.T) {
+		os.Unsetenv("LOOM_HOME")
+		customDir := t.TempDir()
+		os.Setenv("CLAUDE_SQUAD_HOME", customDir)
+		defer os.Unsetenv("CLAUDE_SQUAD_HOME")
+
+		configDir, err := GetConfigDir()
+
+		assert.NoError(t, err)
+		assert.Equal(t, customDir, configDir)
 	})
 }
 
@@ -216,7 +229,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("loads valid config file", func(t *testing.T) {
 		// Create a temporary config directory
 		tempHome := t.TempDir()
-		configDir := filepath.Join(tempHome, ".claude-squad")
+		configDir := filepath.Join(tempHome, ".loom")
 		err := os.MkdirAll(configDir, 0755)
 		require.NoError(t, err)
 
@@ -248,7 +261,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("returns default config on invalid JSON", func(t *testing.T) {
 		// Create a temporary config directory
 		tempHome := t.TempDir()
-		configDir := filepath.Join(tempHome, ".claude-squad")
+		configDir := filepath.Join(tempHome, ".loom")
 		err := os.MkdirAll(configDir, 0755)
 		require.NoError(t, err)
 

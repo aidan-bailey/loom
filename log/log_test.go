@@ -251,7 +251,7 @@ func TestDebugKV_EmitsWhenEnabled(t *testing.T) {
 }
 
 // TestLevelGateSilencesLegacyLoggers guards the core contract of this
-// change: CLAUDE_SQUAD_LOG_LEVEL=error must drop INFO and WARNING
+// change: LOOM_LOG_LEVEL=error must drop INFO and WARNING
 // records coming through the legacy *log.Logger vars, while ERROR
 // still writes. Regression catches a dropped level check in
 // levelWriter.Write.

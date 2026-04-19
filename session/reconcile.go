@@ -1,12 +1,12 @@
 package session
 
 import (
-	internalexec "claude-squad/internal/exec"
-	"claude-squad/log"
-	"claude-squad/session/git"
-	"claude-squad/session/tmux"
 	"context"
 	"fmt"
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
 	"os/exec"
 	"strings"
@@ -35,7 +35,7 @@ const (
 
 // CheckTmuxAlive checks if a tmux session exists by its sanitized name.
 func CheckTmuxAlive(sessionTitle string, cmdExec internalexec.Executor) bool {
-	sanitized := tmux.ToClaudeSquadTmuxName(sessionTitle)
+	sanitized := tmux.ToLoomTmuxName(sessionTitle)
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer cancel()
 	existsCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t="+sanitized)
@@ -47,7 +47,7 @@ func CheckTmuxAlive(sessionTitle string, cmdExec internalexec.Executor) bool {
 // "session not found"), which most callers can ignore. Used to clear
 // orphan sessions left over from a prior crash before reusing the title.
 func KillTmuxSessionByTitle(title string, cmdExec internalexec.Executor) error {
-	sanitized := tmux.ToClaudeSquadTmuxName(title)
+	sanitized := tmux.ToLoomTmuxName(title)
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer cancel()
 	killCmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t="+sanitized)
@@ -189,8 +189,10 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 	return instance, nil
 }
 
-// CleanupOrphanedSessions kills any tmux sessions with the claude-squad prefix
-// that are not claimed by a loaded instance.
+// CleanupOrphanedSessions kills any tmux sessions with the loom or
+// legacy claude-squad prefix that are not claimed by a loaded instance.
+// Legacy-prefixed sessions are swept too so upgrades from claude-squad
+// don't leave zombie panes behind.
 func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec.Executor) error {
 	listCtx, listCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer listCancel()
@@ -203,7 +205,7 @@ func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec
 
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
-		if !strings.HasPrefix(line, tmux.TmuxPrefix) {
+		if !(strings.HasPrefix(line, tmux.TmuxPrefix) || strings.HasPrefix(line, tmux.LegacyTmuxPrefix)) {
 			continue
 		}
 		colonIdx := strings.Index(line, ":")
@@ -212,10 +214,10 @@ func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec
 		}
 		sessionName := line[:colonIdx]
 
-		// Check if any claimed instance owns this session
+		// Check if any claimed instance owns this session under either prefix
 		claimed := false
 		for title := range claimedTitles {
-			if tmux.ToClaudeSquadTmuxName(title) == sessionName {
+			if tmux.ToLoomTmuxName(title) == sessionName || tmux.ToLegacyTmuxName(title) == sessionName {
 				claimed = true
 				break
 			}

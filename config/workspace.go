@@ -32,13 +32,13 @@ type WorkspaceContext struct {
 	// Name is the workspace name. Empty string means global.
 	Name string
 	// ConfigDir is the absolute path to the config directory
-	// (e.g., /repo/.claude-squad or ~/.claude-squad).
+	// (e.g., /repo/.loom or ~/.loom).
 	ConfigDir string
 	// RepoPath is the absolute path to the repo root. Empty for global.
 	RepoPath string
 }
 
-// GlobalWorkspaceContext returns a WorkspaceContext pointing at ~/.claude-squad.
+// GlobalWorkspaceContext returns a WorkspaceContext pointing at ~/.loom.
 func GlobalWorkspaceContext() (*WorkspaceContext, error) {
 	dir, err := GetGlobalConfigDir()
 	if err != nil {
@@ -67,13 +67,13 @@ func ResolveWorkspace(cwd string, registry *WorkspaceRegistry) (*WorkspaceContex
 	return GlobalWorkspaceContext()
 }
 
-// GetGlobalConfigDir returns ~/.claude-squad/ regardless of CLAUDE_SQUAD_HOME.
+// GetGlobalConfigDir returns ~/.loom/ regardless of LOOM_HOME.
 func GetGlobalConfigDir() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
-	return filepath.Join(homeDir, ".claude-squad"), nil
+	return filepath.Join(homeDir, ".loom"), nil
 }
 
 // LoadWorkspaceRegistry reads the workspace registry from the global config dir.
@@ -155,7 +155,7 @@ func (r *WorkspaceRegistry) Add(name, repoPath string) error {
 	return SaveWorkspaceRegistry(r)
 }
 
-// Remove removes a workspace by name. Does NOT delete the .claude-squad/ directory.
+// Remove removes a workspace by name. Does NOT delete the .loom/ directory.
 func (r *WorkspaceRegistry) Remove(name string) error {
 	idx := -1
 	for i, ws := range r.Workspaces {
@@ -257,9 +257,9 @@ func (r *WorkspaceRegistry) UpdateLastUsed(name string) error {
 	return SaveWorkspaceRegistry(r)
 }
 
-// WorkspaceConfigDir returns the .claude-squad directory inside the workspace repo.
+// WorkspaceConfigDir returns the .loom directory inside the workspace repo.
 func WorkspaceConfigDir(ws *Workspace) string {
-	return filepath.Join(ws.Path, ".claude-squad")
+	return filepath.Join(ws.Path, ".loom")
 }
 
 // SetOpenWorkspaces replaces the ordered list of open workspace names and
@@ -288,7 +288,7 @@ func (r *WorkspaceRegistry) GetOpenWorkspaces() []Workspace {
 	return out
 }
 
-// EnsureGitignore ensures .claude-squad/ is listed in the repo's .gitignore.
+// EnsureGitignore ensures .loom/ is listed in the repo's .gitignore.
 // Writes atomically via AtomicWriteFile so a crash or a concurrent call can't
 // leave a half-written entry behind. An O_APPEND-based write would issue two
 // syscalls (newline fixup, then entry), and racing callers each saw an absent
@@ -296,8 +296,8 @@ func (r *WorkspaceRegistry) GetOpenWorkspaces() []Workspace {
 func EnsureGitignore(repoPath string) error {
 	gitignorePath := filepath.Join(repoPath, ".gitignore")
 
-	const entry = ".claude-squad/"
-	const comment = "# claude-squad local data"
+	const entry = ".loom/"
+	const comment = "# loom local data"
 
 	data, err := os.ReadFile(gitignorePath)
 	if err != nil && !os.IsNotExist(err) {

@@ -17,7 +17,7 @@ import (
 // "json" → JSON lines; anything else → plain text. Legacy *log.Logger
 // vars (InfoLog/WarningLog/ErrorLog) always emit plain text for
 // source-compatibility with the ~117 existing .Printf call sites.
-const EnvLogFormat = "CLAUDE_SQUAD_LOG_FORMAT"
+const EnvLogFormat = "LOOM_LOG_FORMAT"
 
 // EnvLogLevel gates the minimum log level for both the Structured
 // logger and the legacy *log.Logger vars (InfoLog / WarningLog /
@@ -26,7 +26,46 @@ const EnvLogFormat = "CLAUDE_SQUAD_LOG_FORMAT"
 // layer so no change to the ~90 *.Printf call sites is required.
 // `SetLevel` lets tests and future runtime toggles update the gate
 // after Initialize.
-const EnvLogLevel = "CLAUDE_SQUAD_LOG_LEVEL"
+const EnvLogLevel = "LOOM_LOG_LEVEL"
+
+// Legacy env var names from the claude-squad era. Still honored as
+// fallbacks with a one-time deprecation warning so in-flight shell
+// configs keep working across the rename.
+const (
+	legacyEnvLogFormat = "CLAUDE_SQUAD_LOG_FORMAT"
+	legacyEnvLogLevel  = "CLAUDE_SQUAD_LOG_LEVEL"
+)
+
+// legacyWarnOnce tracks whether we've already emitted the deprecation
+// notice for a given legacy env name, keyed by new-name to avoid
+// spamming stderr when the same value is read from multiple places.
+var (
+	legacyWarnOnceMu sync.Mutex
+	legacyWarnedFor  = map[string]bool{}
+)
+
+// GetEnvWithLegacy returns os.Getenv(current); if empty it falls back
+// to os.Getenv(legacy) and prints a one-time deprecation notice to
+// stderr naming the new var to set.
+func GetEnvWithLegacy(current, legacy string) string {
+	if v := os.Getenv(current); v != "" {
+		return v
+	}
+	v := os.Getenv(legacy)
+	if v == "" {
+		return ""
+	}
+	legacyWarnOnceMu.Lock()
+	warned := legacyWarnedFor[current]
+	if !warned {
+		legacyWarnedFor[current] = true
+	}
+	legacyWarnOnceMu.Unlock()
+	if !warned {
+		fmt.Fprintf(os.Stderr, "loom: %s is deprecated; please use %s instead.\n", legacy, current)
+	}
+	return v
+}
 
 var (
 	WarningLog *log.Logger
@@ -44,7 +83,7 @@ var (
 	levelVar = new(slog.LevelVar)
 )
 
-const logFileName = "claudesquad.log"
+const logFileName = "loom.log"
 
 // maxLogSize is the rotation threshold in bytes. Declared as var (not
 // const) so tests can shrink it to trigger rotation without writing
@@ -83,7 +122,7 @@ func Initialize(logDir string, daemon bool) error {
 	if daemon {
 		prefix = "[DAEMON] "
 	}
-	levelVar.Set(parseLevel(os.Getenv(EnvLogLevel)))
+	levelVar.Set(parseLevel(GetEnvWithLegacy(EnvLogLevel, legacyEnvLogLevel)))
 
 	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
@@ -145,13 +184,13 @@ func parseLevel(v string) slog.Level {
 func SetLevel(l slog.Level) { levelVar.Set(l) }
 
 // newStructured returns a slog.Logger writing to w. Output format is
-// JSON when CLAUDE_SQUAD_LOG_FORMAT=json is set (machine-readable for
+// JSON when LOOM_LOG_FORMAT=json is set (machine-readable for
 // log-shipping pipelines), and human-readable text otherwise so that
 // ad-hoc `grep` workflows keep working.
 func newStructured(w io.Writer, daemon bool) *slog.Logger {
 	var handler slog.Handler
 	opts := &slog.HandlerOptions{Level: levelVar}
-	if os.Getenv(EnvLogFormat) == "json" {
+	if GetEnvWithLegacy(EnvLogFormat, legacyEnvLogFormat) == "json" {
 		handler = slog.NewJSONHandler(w, opts)
 	} else {
 		handler = slog.NewTextHandler(w, opts)
@@ -214,7 +253,7 @@ func ErrorKV(msg string, kv ...any) {
 }
 
 // Debugf emits a printf-style DEBUG record via the Structured
-// logger. Gated by CLAUDE_SQUAD_LOG_LEVEL=debug (slog short-circuits
+// logger. Gated by LOOM_LOG_LEVEL=debug (slog short-circuits
 // before formatting when the level is below the handler's gate, so
 // the `fmt.Sprintf` is paid only when debug is enabled).
 func Debugf(format string, v ...any) {
@@ -267,10 +306,10 @@ func rotateIfNeeded(path string) {
 	// Only a non-ENOENT failure is worth surfacing, since Rename will
 	// then fail too and we want the operator to see the root cause.
 	if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "claude-squad: log rotation could not remove %s: %v\n", backup, err)
+		fmt.Fprintf(os.Stderr, "loom: log rotation could not remove %s: %v\n", backup, err)
 	}
 	if err := os.Rename(path, backup); err != nil {
-		fmt.Fprintf(os.Stderr, "claude-squad: log rotation failed (%s → %s): %v\n", path, backup, err)
+		fmt.Fprintf(os.Stderr, "loom: log rotation failed (%s → %s): %v\n", path, backup, err)
 	}
 }
 
@@ -335,7 +374,7 @@ func (rw *rotatingWriter) Close() error {
 
 // levelWriter drops writes whose fixed tier sits below the package
 // `levelVar` gate. Wrapping the legacy *log.Logger writers in this
-// shim makes CLAUDE_SQUAD_LOG_LEVEL apply uniformly without touching
+// shim makes LOOM_LOG_LEVEL apply uniformly without touching
 // the ~90 .Printf call sites. Returning len(p) on a dropped write
 // keeps *log.Logger from treating the drop as a short-write error.
 type levelWriter struct {

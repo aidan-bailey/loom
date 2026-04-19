@@ -1,17 +1,17 @@
 package main
 
 import (
-	"claude-squad/app"
-	cmd2 "claude-squad/cmd"
-	"claude-squad/config"
-	"claude-squad/daemon"
-	"claude-squad/log"
-	"claude-squad/session"
-	"claude-squad/session/git"
-	"claude-squad/session/tmux"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/aidan-bailey/loom/app"
+	cmd2 "github.com/aidan-bailey/loom/cmd"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/daemon"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
 	"path/filepath"
 
@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	version            = "1.0.17"
+	version            = "0.1.0"
 	programFlag        string
 	autoYesFlag        bool
 	noScriptsFlag      bool
@@ -29,8 +29,8 @@ var (
 	resetWorkspaceFlag string
 	logLevelFlag       string
 	rootCmd            = &cobra.Command{
-		Use:   "claude-squad [directory]",
-		Short: "Claude Squad - Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
+		Use:   "loom [directory]",
+		Short: "Loom — Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
 		Args:  cobra.MaximumNArgs(1),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Promote --log-level to the env var before any subcommand
@@ -52,7 +52,7 @@ var (
 				// Non-fatal: loggers fall back to stderr (or Discard for
 				// the daemon child) so the app still runs; we only lose
 				// the on-disk log file. Surface once so operators notice.
-				fmt.Fprintf(os.Stderr, "claude-squad: %v\n", logErr)
+				fmt.Fprintf(os.Stderr, "loom: %v\n", logErr)
 			}
 			defer log.Close()
 
@@ -151,7 +151,7 @@ var (
 				return fmt.Errorf("failed to get current directory: %w", err)
 			}
 			if pendingDir == "" && wsCtx.Name == "" && (regErr != nil || len(registry.Workspaces) == 0) && !git.IsGitRepo(currentDir, nil) {
-				return fmt.Errorf("error: claude-squad must be run from within a git repository")
+				return fmt.Errorf("error: loom must be run from within a git repository")
 			}
 
 			// Load config from resolved workspace context.
@@ -196,7 +196,7 @@ var (
 			}
 
 			if logErr := log.Initialize(filepath.Join(wsCtx.ConfigDir, "logs"), false); logErr != nil {
-				fmt.Fprintf(os.Stderr, "claude-squad: %v\n", logErr)
+				fmt.Fprintf(os.Stderr, "loom: %v\n", logErr)
 			}
 			defer log.Close()
 
@@ -238,7 +238,7 @@ var (
 				return fmt.Errorf("failed to resolve workspace context: %w", err)
 			}
 			if logErr := log.Initialize(filepath.Join(wsCtx.ConfigDir, "logs"), false); logErr != nil {
-				fmt.Fprintf(os.Stderr, "claude-squad: %v\n", logErr)
+				fmt.Fprintf(os.Stderr, "loom: %v\n", logErr)
 			}
 			defer log.Close()
 
@@ -264,10 +264,10 @@ var (
 
 	versionCmd = &cobra.Command{
 		Use:   "version",
-		Short: "Print the version number of claude-squad",
+		Short: "Print the version number of loom",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("claude-squad version %s\n", version)
-			fmt.Printf("https://github.com/smtg-ai/claude-squad/releases/tag/v%s\n", version)
+			fmt.Printf("loom version %s\n", version)
+			fmt.Printf("https://github.com/aidan-bailey/loom/releases/tag/v%s\n", version)
 		},
 	}
 )
@@ -298,7 +298,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&autoYesFlag, "autoyes", "y", false,
 		"[experimental] If enabled, all instances will automatically accept prompts")
 	rootCmd.Flags().BoolVar(&noScriptsFlag, "no-scripts", false,
-		"Skip loading ~/.claude-squad/scripts (embedded defaults still load). Use to recover from a broken user script.")
+		"Skip loading ~/.loom/scripts (embedded defaults still load). Use to recover from a broken user script.")
 	rootCmd.Flags().StringVarP(&workspaceFlag, "workspace", "w", "",
 		"Select workspace by name (bypasses auto-detection)")
 	rootCmd.Flags().BoolVar(&daemonFlag, "daemon", false, "Run a program that loads all sessions"+
@@ -306,7 +306,7 @@ func init() {
 	rootCmd.Flags().StringVar(&configDirFlag, "config-dir", "", "Config directory (internal use by daemon)")
 	rootCmd.PersistentFlags().StringVar(&logLevelFlag, "log-level", "",
 		"Override log level for the Structured logger (debug|info|warn|error). "+
-			"Takes precedence over CLAUDE_SQUAD_LOG_LEVEL.")
+			"Takes precedence over LOOM_LOG_LEVEL.")
 
 	// Hide internal flags. A MarkHidden failure means the flag name is
 	// wrong — a programmer error that the panic would have obscured
@@ -328,6 +328,16 @@ func init() {
 }
 
 func main() {
+	// Legacy-home migration runs before any command so the daemon
+	// child (which inherits --config-dir from its parent) and the
+	// debug/reset subcommands both observe the new directory.
+	// Failure is non-fatal: the migration emits its own diagnostic and
+	// subsequent GetConfigDir calls still resolve either ~/.loom or
+	// CLAUDE_SQUAD_HOME as a deprecated fallback.
+	if err := config.MigrateLegacyHome(); err != nil {
+		fmt.Fprintf(os.Stderr, "loom: legacy-home migration failed: %v\n", err)
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 	}

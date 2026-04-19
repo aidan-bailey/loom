@@ -1,9 +1,9 @@
 package ui
 
 import (
-	"claude-squad/log"
-	"claude-squad/session"
 	"fmt"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"strings"
 	"testing"
 
