@@ -39,10 +39,11 @@ jobs:
 
       - name: Check formatting
         run: |
-          if [ -n "$(gofmt -l .)" ]; then
+          UNFORMATTED=$(gofmt -l . | grep -v '^vendor/' || true)
+          if [ -n "$UNFORMATTED" ]; then
             echo "The following files are not formatted correctly:"
-            gofmt -l .
+            echo "$UNFORMATTED"
             echo "Fix these issues"
-            gofmt -d .
+            echo "$UNFORMATTED" | xargs gofmt -d
             exit 1
           fi
