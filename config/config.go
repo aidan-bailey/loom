@@ -54,9 +54,16 @@ func GetConfigDir() (string, error) {
 	return filepath.Join(homeDir, ".loom"), nil
 }
 
-// Profile represents a named program configuration
+// Profile is a named shortcut for a program invocation. Profiles let
+// users store multiple agent configurations (e.g. "aider-gpt4",
+// "claude-fast") and pick between them at session creation or by
+// setting DefaultProgram to a profile's Name.
 type Profile struct {
-	Name    string `json:"name"`
+	// Name is the short identifier shown in the profile picker. Must be
+	// unique within a Config's Profiles list.
+	Name string `json:"name"`
+	// Program is the literal command string run when this profile is
+	// selected (e.g. "aider --model gpt-4"). No templating is applied.
 	Program string `json:"program"`
 }
 
