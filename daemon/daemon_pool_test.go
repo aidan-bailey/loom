@@ -18,9 +18,8 @@ import (
 // goroutine — with a 1-second poll and a persistent wedge that was
 // ~3600 leaked goroutines per hour.
 func TestDaemonPool_Saturates(t *testing.T) {
-	original := tickInstanceTimeout
-	tickInstanceTimeout = 20 * time.Millisecond
-	defer func() { tickInstanceTimeout = original }()
+	original := tickInstanceTimeout.Swap(int64(20 * time.Millisecond))
+	defer tickInstanceTimeout.Store(original)
 
 	everyN := log.NewEvery(time.Millisecond) // allow warn log to fire immediately for test
 	pool := newDaemonPool(2)
@@ -54,9 +53,8 @@ func TestDaemonPool_Saturates(t *testing.T) {
 // wedged instance leaked a goroutine; with the semaphore cap, the
 // count tops out at the pool capacity and stays there.
 func TestDaemonPool_GoroutineCountStable(t *testing.T) {
-	original := tickInstanceTimeout
-	tickInstanceTimeout = 10 * time.Millisecond
-	defer func() { tickInstanceTimeout = original }()
+	original := tickInstanceTimeout.Swap(int64(10 * time.Millisecond))
+	defer tickInstanceTimeout.Store(original)
 
 	everyN := log.NewEvery(time.Second)
 	const cap = 3
@@ -110,18 +108,20 @@ func TestDaemonPool_GoroutineCountStable(t *testing.T) {
 // does not return, drain must still bound its wait by the caller's
 // budget so daemon shutdown stays prompt.
 func TestDaemonPool_Drain_TimesOut(t *testing.T) {
-	original := tickInstanceTimeout
-	tickInstanceTimeout = time.Second
-	defer func() { tickInstanceTimeout = original }()
+	original := tickInstanceTimeout.Swap(int64(time.Second))
+	defer tickInstanceTimeout.Store(original)
 
 	everyN := log.NewEvery(time.Second)
 	pool := newDaemonPool(1)
 	release := make(chan struct{})
+	started := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 
-	go pool.runWithTimeout("wedge", func() { <-release }, everyN)
-	require.Eventually(t, func() bool { return len(pool.sem) == 1 },
-		time.Second, 5*time.Millisecond, "wedged goroutine should occupy the slot")
+	// Use a started channel rather than len(pool.sem)==1: closing started
+	// from inside work() establishes happens-before from the outer
+	// goroutine's wg.Add(1) to our subsequent drain()/wg.Wait() call.
+	go pool.runWithTimeout("wedge", func() { close(started); <-release }, everyN)
+	<-started
 
 	start := time.Now()
 	pool.drain(30 * time.Millisecond)

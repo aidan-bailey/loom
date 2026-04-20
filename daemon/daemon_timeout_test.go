@@ -29,9 +29,8 @@ func TestRunWithTimeoutFastWorkReturns(t *testing.T) {
 // the tick for THAT instance to be abandoned while the rest continue
 // to be serviced.
 func TestRunWithTimeoutHangingWorkIsBounded(t *testing.T) {
-	original := tickInstanceTimeout
-	tickInstanceTimeout = 50 * time.Millisecond
-	defer func() { tickInstanceTimeout = original }()
+	original := tickInstanceTimeout.Swap(int64(50 * time.Millisecond))
+	defer tickInstanceTimeout.Store(original)
 
 	everyN := log.NewEvery(time.Second)
 	pool := newDaemonPool(4)

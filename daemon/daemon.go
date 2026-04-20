@@ -19,8 +19,13 @@ import (
 // per-tick work (HasUpdated + TapEnter + UpdateDiffStats). Beyond this
 // we abandon the goroutine and move on, so a single wedged tmux
 // capture or git diff cannot stall auto-yes for every other tracked
-// instance. Declared as var (not const) so tests can shorten it.
-var tickInstanceTimeout = 5 * time.Second
+// instance. Stored as atomic.Int64 nanoseconds so tests can mutate it
+// without racing goroutines that read it in runWithTimeout.
+var tickInstanceTimeout atomic.Int64
+
+func init() {
+	tickInstanceTimeout.Store(int64(5 * time.Second))
+}
 
 // daemonPool bounds the total number of in-flight per-tick goroutines
 // across the daemon's lifetime. Wedged goroutines (hung tmux captures,
@@ -63,11 +68,12 @@ func (p *daemonPool) runWithTimeout(title string, work func(), everyN *log.Every
 		defer close(done)
 		work()
 	}()
+	timeout := time.Duration(tickInstanceTimeout.Load())
 	select {
 	case <-done:
-	case <-time.After(tickInstanceTimeout):
+	case <-time.After(timeout):
 		if everyN.ShouldLog() {
-			log.For("daemon").Warn("tick_exceeded_timeout", "title", title, "timeout", tickInstanceTimeout)
+			log.For("daemon").Warn("tick_exceeded_timeout", "title", title, "timeout", timeout)
 		}
 	}
 }
@@ -297,7 +303,7 @@ func RunDaemon(cfg *config.Config, wsCtx *config.WorkspaceContext) error {
 	// Drain in-flight pool work so shutdown stays prompt under a
 	// persistent wedge. After the drain budget, any still-running
 	// goroutine is abandoned (process exit reclaims them anyway).
-	pool.drain(2 * tickInstanceTimeout)
+	pool.drain(2 * time.Duration(tickInstanceTimeout.Load()))
 
 	// NOTE: we do NOT call storage.SaveInstances here. The daemon is
 	// strictly a read-only client of state.json; the main app is the
