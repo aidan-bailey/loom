@@ -510,9 +510,10 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	}
 }
 
+// Init implements tea.Model. It starts the spinner and kicks off the
+// preview and metadata tick loops — those loops re-arm themselves by
+// returning the same tick message, so Init fires exactly once per Run.
 func (m *home) Init() tea.Cmd {
-	// Upon starting, we want to start the spinner. Whenever we get a spinner.TickMsg, we
-	// update the spinner, which sends a new spinner.TickMsg. I think this lasts forever lol.
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
@@ -523,6 +524,7 @@ func (m *home) Init() tea.Cmd {
 	)
 }
 
+// Update implements tea.Model.
 func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case hideErrMsg:
@@ -1600,6 +1602,7 @@ func (m *home) slotNames() []string {
 	return names
 }
 
+// View implements tea.Model.
 func (m *home) View() string {
 	listView := m.list.String()
 	rightContent := m.splitPane.String()
