@@ -40,6 +40,7 @@ type worktreeBackend struct {
 	inst *Instance
 }
 
+// RepoName implements SessionBackend.
 func (b *worktreeBackend) RepoName() (string, error) {
 	if !b.inst.isStarted() {
 		return "", fmt.Errorf("cannot get repo name for instance that has not been started")
@@ -47,6 +48,7 @@ func (b *worktreeBackend) RepoName() (string, error) {
 	return b.inst.getGitWorktree().GetRepoName(), nil
 }
 
+// WorkTreePath implements SessionBackend.
 func (b *worktreeBackend) WorkTreePath() string {
 	gw := b.inst.getGitWorktree()
 	if gw == nil {
@@ -55,6 +57,7 @@ func (b *worktreeBackend) WorkTreePath() string {
 	return gw.GetWorktreePath()
 }
 
+// Diff implements SessionBackend.
 func (b *worktreeBackend) Diff() *git.DiffStats {
 	gw := b.inst.getGitWorktree()
 	if gw == nil {
@@ -63,6 +66,7 @@ func (b *worktreeBackend) Diff() *git.DiffStats {
 	return gw.Diff()
 }
 
+// DiffShort implements SessionBackend.
 func (b *worktreeBackend) DiffShort() *git.DiffStats {
 	gw := b.inst.getGitWorktree()
 	if gw == nil {
@@ -71,6 +75,8 @@ func (b *worktreeBackend) DiffShort() *git.DiffStats {
 	return gw.DiffShortStat()
 }
 
+// RefreshBranch implements SessionBackend. Always returns empty because
+// worktree branches are fixed at creation and don't drift.
 func (b *worktreeBackend) RefreshBranch() string {
 	return ""
 }
@@ -81,22 +87,28 @@ type workspaceTerminalBackend struct {
 	inst *Instance
 }
 
+// RepoName implements SessionBackend.
 func (b *workspaceTerminalBackend) RepoName() (string, error) {
 	return filepath.Base(b.inst.Path), nil
 }
 
+// WorkTreePath implements SessionBackend.
 func (b *workspaceTerminalBackend) WorkTreePath() string {
 	return b.inst.Path
 }
 
+// Diff implements SessionBackend.
 func (b *workspaceTerminalBackend) Diff() *git.DiffStats {
 	return git.DiffUncommitted(b.inst.Path, nil)
 }
 
+// DiffShort implements SessionBackend.
 func (b *workspaceTerminalBackend) DiffShort() *git.DiffStats {
 	return git.DiffUncommittedShortStat(b.inst.Path, nil)
 }
 
+// RefreshBranch implements SessionBackend. Reads HEAD directly so the
+// UI reflects branch switches performed in the root repo.
 func (b *workspaceTerminalBackend) RefreshBranch() string {
 	branch, err := git.CurrentBranch(b.inst.Path, nil)
 	if err != nil {

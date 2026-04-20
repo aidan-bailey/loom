@@ -9,6 +9,10 @@ import (
 	"path/filepath"
 )
 
+// StateFileName is the on-disk filename for ephemeral app state
+// (help-screen-seen flags, etc.). InstancesFileName stores the
+// serialized session list. Both are resolved relative to the config
+// directory.
 const (
 	StateFileName     = "state.json"
 	InstancesFileName = "instances.json"

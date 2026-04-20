@@ -13,6 +13,8 @@ import (
 	"github.com/aidan-bailey/loom/log"
 )
 
+// ConfigFileName is the on-disk filename of the Loom user config,
+// resolved relative to the config directory (LOOM_HOME or ~/.loom).
 const (
 	ConfigFileName = "config.json"
 	defaultProgram = "claude"

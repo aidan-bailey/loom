@@ -67,13 +67,13 @@ func GetEnvWithLegacy(current, legacy string) string {
 	return v
 }
 
+// WarningLog, InfoLog, and ErrorLog are the legacy *log.Logger
+// package-level vars used by pre-Structured call sites (about 90
+// Printf invocations). They share the log file with Structured and
+// are gated by LOOM_LOG_LEVEL via the levelWriter shim so a legacy
+// Printf at INFO tier is silently dropped under LOOM_LOG_LEVEL=warn.
+// Nil until Initialize has been called.
 var (
-	// WarningLog, InfoLog, and ErrorLog are the legacy *log.Logger
-	// package-level vars used by pre-Structured call sites (about 90
-	// Printf invocations). They share the log file with Structured and
-	// are gated by LOOM_LOG_LEVEL via the levelWriter shim so a legacy
-	// Printf at INFO tier is silently dropped under LOOM_LOG_LEVEL=warn.
-	// Nil until Initialize has been called.
 	WarningLog *log.Logger
 	InfoLog    *log.Logger
 	ErrorLog   *log.Logger
@@ -367,6 +367,8 @@ func (rw *rotatingWriter) rotateLocked() {
 	rw.size = 0
 }
 
+// Close closes the underlying log file, if any. Safe to call multiple
+// times; subsequent calls are no-ops.
 func (rw *rotatingWriter) Close() error {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()

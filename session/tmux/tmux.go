@@ -24,10 +24,11 @@ import (
 // They match the literal command names (no path or flags); per-program
 // behavior is keyed off these constants in CheckAndHandleTrustPrompt
 // and the session/agent registry.
-const ProgramClaude = "claude"
-
-const ProgramAider = "aider"
-const ProgramGemini = "gemini"
+const (
+	ProgramClaude = "claude"
+	ProgramAider  = "aider"
+	ProgramGemini = "gemini"
+)
 
 // tmuxTimeout bounds the wall time of a single tmux subprocess invocation.
 // These calls run in the metadata tick (capture-pane, has-session), so a
@@ -85,6 +86,10 @@ type TmuxSession struct {
 	pumpCancel context.CancelFunc // nil outside an active pump; cancels the pump's ctx
 }
 
+// TmuxPrefix is the tmux session-name prefix applied to every Loom
+// session. Orphan sweeps and session lookup rely on this prefix to
+// distinguish Loom-owned sessions from sessions owned by other tools
+// sharing the user's tmux server.
 const TmuxPrefix = "loom_"
 
 // LegacyTmuxPrefix is the tmux session prefix used before the rename
@@ -452,6 +457,9 @@ func (t *TmuxSession) TapDAndEnter() error {
 	return nil
 }
 
+// SendKeys writes the given string to the tmux PTY as raw bytes. Unlike
+// SendKeysRaw, callers pass a Go string rather than a byte slice; no
+// escaping or translation is performed.
 func (t *TmuxSession) SendKeys(keys string) error {
 	if t.ptmx == nil {
 		return fmt.Errorf("PTY is not available")
@@ -639,6 +647,9 @@ func (t *TmuxSession) updateWindowSize(cols, rows int) error {
 	})
 }
 
+// DoesSessionExist reports whether the backing tmux session is still
+// alive on the tmux server. Used as a sanity check before attach and
+// for orphan detection during reconcile.
 func (t *TmuxSession) DoesSessionExist() bool {
 	// Using "-t name" does a prefix match, which is wrong. `-t=` does an exact match.
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
