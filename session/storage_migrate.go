@@ -13,6 +13,13 @@ import (
 // pre-versioning. The v0→v1 step is a pure field-default upgrade today
 // and exists to establish the migration plumbing; future schema changes
 // extend this switch.
+//
+// Contributor protocol: when adding/renaming/removing an InstanceData
+// field, bump CurrentSchemaVersion and append a new case to the switch
+// that upgrades from the previous version. The JSON fixture in
+// cmd/workspace_migrate_shape_test.go is a drift guard for the
+// `workspace migrate` CLI's typed mirror struct and must be updated in
+// the same commit.
 func Migrate(raw []byte) (InstanceData, error) {
 	var data InstanceData
 	if err := json.Unmarshal(raw, &data); err != nil {

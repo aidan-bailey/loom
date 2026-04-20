@@ -57,37 +57,37 @@ type scriptHost struct {
 	intents []pendingIntent
 }
 
-// SelectedInstance: see script.Host.
+// SelectedInstance implements script.Host.
 func (s *scriptHost) SelectedInstance() *session.Instance {
 	return s.m.list.GetSelectedInstance()
 }
 
-// Instances: see script.Host.
+// Instances implements script.Host.
 func (s *scriptHost) Instances() []*session.Instance {
 	return s.m.list.GetInstances()
 }
 
-// Workspaces: see script.Host.
+// Workspaces implements script.Host.
 func (s *scriptHost) Workspaces() *config.WorkspaceRegistry {
 	return s.m.registry
 }
 
-// ConfigDir: see script.Host.
+// ConfigDir implements script.Host.
 func (s *scriptHost) ConfigDir() string {
 	return s.m.configDir()
 }
 
-// RepoPath: see script.Host.
+// RepoPath implements script.Host.
 func (s *scriptHost) RepoPath() string {
 	return s.m.repoPath()
 }
 
-// DefaultProgram: see script.Host.
+// DefaultProgram implements script.Host.
 func (s *scriptHost) DefaultProgram() string {
 	return s.m.program
 }
 
-// BranchPrefix: see script.Host.
+// BranchPrefix implements script.Host.
 func (s *scriptHost) BranchPrefix() string {
 	if s.m.appConfig != nil {
 		return s.m.appConfig.BranchPrefix
@@ -128,26 +128,30 @@ func (s *scriptHost) Enqueue(intent script.Intent) script.IntentID {
 	return id
 }
 
-// CursorUp / CursorDown / ToggleDiff / WorkspacePrev / WorkspaceNext
+// CursorUp, CursorDown, ToggleDiff, WorkspacePrev, and WorkspaceNext
 // mirror the legacy runXYZ bodies in actions_nav.go and
 // actions_workspace.go. They mutate list/splitPane/slot state directly
-// because the engine holds its mutex during dispatch and we're still
-// on the dispatch goroutine when these fire — Update hasn't had a
+// because the engine holds its mutex during dispatch and we are still
+// on the dispatch goroutine when these fire — Update has not had a
 // chance to race with us. Anything that would produce a tea.Cmd is
-// handled as a deferred Intent instead (Task 7+).
+// handled as a deferred Intent instead.
 
+// CursorUp implements script.Host.
 func (s *scriptHost) CursorUp() {
 	s.m.list.Up()
 }
 
+// CursorDown implements script.Host.
 func (s *scriptHost) CursorDown() {
 	s.m.list.Down()
 }
 
+// ToggleDiff implements script.Host.
 func (s *scriptHost) ToggleDiff() {
 	s.m.splitPane.ToggleDiff()
 }
 
+// WorkspacePrev implements script.Host.
 func (s *scriptHost) WorkspacePrev() {
 	if len(s.m.slots) <= 1 {
 		return
@@ -159,6 +163,7 @@ func (s *scriptHost) WorkspacePrev() {
 	s.m.persistFocusedWorkspace()
 }
 
+// WorkspaceNext implements script.Host.
 func (s *scriptHost) WorkspaceNext() {
 	if len(s.m.slots) <= 1 {
 		return
@@ -170,27 +175,53 @@ func (s *scriptHost) WorkspaceNext() {
 	s.m.persistFocusedWorkspace()
 }
 
-// Scroll primitives — diff-visible > focused-pane routing is handled
-// inside SplitPane itself, so these are thin pass-throughs. Each
-// operates on whichever pane the user last attached to (or the agent
-// by default), matching the mouse-wheel behavior.
+// ScrollLineUp through ScrollBottom and ScrollTerminalLineUp through
+// ScrollTerminalPageDown are thin pass-throughs to SplitPane. The
+// diff-visible > focused-pane routing is handled inside SplitPane
+// itself; the agent-vs-terminal split exists so scripts can address
+// each pane explicitly rather than relying on focus state.
 
-func (s *scriptHost) ScrollLineUp()   { s.m.splitPane.ScrollUp() }
+// ScrollLineUp implements script.Host.
+func (s *scriptHost) ScrollLineUp() { s.m.splitPane.ScrollUp() }
+
+// ScrollLineDown implements script.Host.
 func (s *scriptHost) ScrollLineDown() { s.m.splitPane.ScrollDown() }
-func (s *scriptHost) ScrollPageUp()   { s.m.splitPane.PageUp() }
-func (s *scriptHost) ScrollPageDown() { s.m.splitPane.PageDown() }
-func (s *scriptHost) ScrollTop()      { s.m.splitPane.GotoTop() }
-func (s *scriptHost) ScrollBottom()   { s.m.splitPane.GotoBottom() }
 
-func (s *scriptHost) ScrollTerminalLineUp()   { s.m.splitPane.ScrollTerminalUp() }
+// ScrollPageUp implements script.Host.
+func (s *scriptHost) ScrollPageUp() { s.m.splitPane.PageUp() }
+
+// ScrollPageDown implements script.Host.
+func (s *scriptHost) ScrollPageDown() { s.m.splitPane.PageDown() }
+
+// ScrollTop implements script.Host.
+func (s *scriptHost) ScrollTop() { s.m.splitPane.GotoTop() }
+
+// ScrollBottom implements script.Host.
+func (s *scriptHost) ScrollBottom() { s.m.splitPane.GotoBottom() }
+
+// ScrollTerminalLineUp implements script.Host.
+func (s *scriptHost) ScrollTerminalLineUp() { s.m.splitPane.ScrollTerminalUp() }
+
+// ScrollTerminalLineDown implements script.Host.
 func (s *scriptHost) ScrollTerminalLineDown() { s.m.splitPane.ScrollTerminalDown() }
-func (s *scriptHost) ScrollTerminalPageUp()   { s.m.splitPane.PageTerminalUp() }
+
+// ScrollTerminalPageUp implements script.Host.
+func (s *scriptHost) ScrollTerminalPageUp() { s.m.splitPane.PageTerminalUp() }
+
+// ScrollTerminalPageDown implements script.Host.
 func (s *scriptHost) ScrollTerminalPageDown() { s.m.splitPane.PageTerminalDown() }
 
-func (s *scriptHost) ListPageUp()   { s.m.list.PageUp() }
+// ListPageUp implements script.Host.
+func (s *scriptHost) ListPageUp() { s.m.list.PageUp() }
+
+// ListPageDown implements script.Host.
 func (s *scriptHost) ListPageDown() { s.m.list.PageDown() }
-func (s *scriptHost) ListTop()      { s.m.list.Top() }
-func (s *scriptHost) ListBottom()   { s.m.list.Bottom() }
+
+// ListTop implements script.Host.
+func (s *scriptHost) ListTop() { s.m.list.Top() }
+
+// ListBottom implements script.Host.
+func (s *scriptHost) ListBottom() { s.m.list.Bottom() }
 
 // pendingIntent ties a caller-provided intent to the id the script
 // awaits on. Task 10 drains this into scriptDoneMsg. trace records the

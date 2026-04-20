@@ -41,6 +41,9 @@ type TerminalPane struct {
 	viewport    viewport.Model
 }
 
+// NewTerminalPane constructs a TerminalPane with an empty session
+// cache and zero-sized viewport. The caller must SetSize before the
+// first render and feed instances via UpdateContent.
 func NewTerminalPane() *TerminalPane {
 	return &TerminalPane{
 		sessions: make(map[string]*terminalSession),
@@ -48,6 +51,9 @@ func NewTerminalPane() *TerminalPane {
 	}
 }
 
+// SetSize resizes the pane under the internal mutex. The internal tmux
+// session owned by TerminalPane is resized lazily on the next tick so
+// this call remains cheap.
 func (t *TerminalPane) SetSize(width, height int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

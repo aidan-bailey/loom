@@ -93,6 +93,11 @@ var autoYesStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("#dde4f0")).
 	Foreground(lipgloss.Color("#1a1a1a"))
 
+// List is the left-panel instance list. It owns the selection cursor
+// and viewport scroll offset, and delegates per-row rendering to
+// [InstanceRenderer]. The list does not spawn goroutines or mutate
+// Instance state beyond reordering; all status is read via the
+// Instance accessors.
 type List struct {
 	items         []*session.Instance
 	selectedIdx   int
@@ -109,6 +114,9 @@ type List struct {
 	workspaceName string
 }
 
+// NewList constructs an empty List bound to the given spinner and
+// auto-yes indicator. Items are added later via AddInstance; the list
+// is ready to render immediately.
 func NewList(spinner *spinner.Model, autoYes bool) *List {
 	return &List{
 		items:    []*session.Instance{},
@@ -190,6 +198,9 @@ func (l *List) ensureSelectedVisible() {
 	}
 }
 
+// NumInstances returns the number of instances currently held by the
+// list. Used by GlobalInstanceLimit checks in the app layer before
+// admitting a new instance.
 func (l *List) NumInstances() int {
 	return len(l.items)
 }
@@ -207,6 +218,10 @@ func (r *InstanceRenderer) setWidth(width int) {
 // ɹ and ɻ are other options.
 const branchIcon = "Ꮧ"
 
+// Render produces the single-line representation of instance i at the
+// given index, applying the style preset matching the instance's
+// status and selection flag. hasMultipleRepos controls whether a repo
+// badge is appended to disambiguate cross-workspace lists.
 func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, hasMultipleRepos bool) string {
 	prefix := fmt.Sprintf(" %d. ", idx)
 	if idx >= 10 {

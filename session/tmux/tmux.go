@@ -19,10 +19,16 @@ import (
 	"github.com/creack/pty"
 )
 
-const ProgramClaude = "claude"
-
-const ProgramAider = "aider"
-const ProgramGemini = "gemini"
+// ProgramClaude, ProgramAider, and ProgramGemini are the canonical
+// program identifiers used by trust-prompt detection and adapter lookup.
+// They match the literal command names (no path or flags); per-program
+// behavior is keyed off these constants in CheckAndHandleTrustPrompt
+// and the session/agent registry.
+const (
+	ProgramClaude = "claude"
+	ProgramAider  = "aider"
+	ProgramGemini = "gemini"
+)
 
 // tmuxTimeout bounds the wall time of a single tmux subprocess invocation.
 // These calls run in the metadata tick (capture-pane, has-session), so a
@@ -43,7 +49,12 @@ const tmuxStartTimeout = 10 * time.Second
 // is isolated to the dying session rather than the whole app.
 const pumpWaitTimeout = 2 * time.Second
 
-// TmuxSession represents a managed tmux session
+// TmuxSession is a managed tmux session bound to a single instance.
+// The zero value is not usable — construct via [NewTmuxSession] (or
+// [NewTmuxSessionWithDeps] in tests) so the PTY factory and executor
+// are wired up. One [TmuxSession] owns exactly one tmux session and one
+// detached-mode PTY; do not share instances across goroutines except
+// through the documented accessors, which take the internal mutex.
 type TmuxSession struct {
 	// Initialized by NewTmuxSession
 	//
@@ -75,6 +86,10 @@ type TmuxSession struct {
 	pumpCancel context.CancelFunc // nil outside an active pump; cancels the pump's ctx
 }
 
+// TmuxPrefix is the tmux session-name prefix applied to every Loom
+// session. Orphan sweeps and session lookup rely on this prefix to
+// distinguish Loom-owned sessions from sessions owned by other tools
+// sharing the user's tmux server.
 const TmuxPrefix = "loom_"
 
 // LegacyTmuxPrefix is the tmux session prefix used before the rename
@@ -127,12 +142,17 @@ func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
 	}
 }
 
-// NewTmuxSession creates a new TmuxSession with the given name and program.
+// NewTmuxSession constructs a TmuxSession wired to the production PTY
+// factory and subprocess executor. The tmux session is NOT created at
+// this point — call Start (for a fresh session) or Restore (to attach
+// to one that already exists on disk).
 func NewTmuxSession(name string, program string) *TmuxSession {
 	return newTmuxSession(name, program, MakePtyFactory(), internalexec.Default{})
 }
 
-// NewTmuxSessionWithDeps creates a new TmuxSession with provided dependencies for testing.
+// NewTmuxSessionWithDeps is [NewTmuxSession] with injected dependencies
+// for tests. Pass a fake [PtyFactory] and [internalexec.Executor] to
+// avoid spawning real subprocesses or allocating real PTYs.
 func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor) *TmuxSession {
 	return newTmuxSession(name, program, ptyFactory, cmdExec)
 }
@@ -437,6 +457,9 @@ func (t *TmuxSession) TapDAndEnter() error {
 	return nil
 }
 
+// SendKeys writes the given string to the tmux PTY as raw bytes. Unlike
+// SendKeysRaw, callers pass a Go string rather than a byte slice; no
+// escaping or translation is performed.
 func (t *TmuxSession) SendKeys(keys string) error {
 	if t.ptmx == nil {
 		return fmt.Errorf("PTY is not available")
@@ -624,6 +647,9 @@ func (t *TmuxSession) updateWindowSize(cols, rows int) error {
 	})
 }
 
+// DoesSessionExist reports whether the backing tmux session is still
+// alive on the tmux server. Used as a sanity check before attach and
+// for orphan detection during reconcile.
 func (t *TmuxSession) DoesSessionExist() bool {
 	// Using "-t name" does a prefix match, which is wrong. `-t=` does an exact match.
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)

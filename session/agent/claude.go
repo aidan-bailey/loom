@@ -7,12 +7,15 @@ type claudeAdapter struct{}
 // Claude returns the adapter for the Claude Code agent.
 func Claude() Adapter { return claudeAdapter{} }
 
+// Name implements Adapter.
 func (claudeAdapter) Name() string { return "claude" }
 
+// Matches implements Adapter.
 func (claudeAdapter) Matches(program string) bool {
 	return basenameMatch(program, "claude")
 }
 
+// TrustPromptPatterns implements Adapter.
 func (claudeAdapter) TrustPromptPatterns() []string {
 	return []string{
 		"Do you trust the files in this folder?",
@@ -20,10 +23,12 @@ func (claudeAdapter) TrustPromptPatterns() []string {
 	}
 }
 
+// TrustPromptResponse implements Adapter.
 func (claudeAdapter) TrustPromptResponse() TrustPromptAction {
 	return TrustPromptTapEnter
 }
 
+// PendingPromptPattern implements Adapter.
 func (claudeAdapter) PendingPromptPattern() string {
 	return "No, and tell Claude what to do differently"
 }

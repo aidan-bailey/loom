@@ -9,6 +9,9 @@ import (
 // QuickInputAction represents the result of handling a key press in the input bar.
 type QuickInputAction int
 
+// QuickInputContinue, QuickInputSubmit, and QuickInputCancel are the
+// terminal states HandleKey returns so the parent model knows whether
+// to keep the bar open, dispatch the contents, or dismiss the bar.
 const (
 	QuickInputContinue QuickInputAction = iota
 	QuickInputSubmit
@@ -18,9 +21,12 @@ const (
 // QuickInputTarget specifies where submitted text should be routed.
 type QuickInputTarget int
 
+// QuickInputTargetAgent sends submitted text to the agent pane; the
+// terminal variant routes to the bottom pane. The target is chosen at
+// construction time and is immutable for the life of the bar.
 const (
-	QuickInputTargetAgent    QuickInputTarget = iota // always send to agent
-	QuickInputTargetTerminal                         // always send to terminal
+	QuickInputTargetAgent QuickInputTarget = iota
+	QuickInputTargetTerminal
 )
 
 var (

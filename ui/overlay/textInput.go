@@ -96,6 +96,8 @@ func newTextarea(initialValue string) textarea.Model {
 	return ti
 }
 
+// SetSize resizes the overlay and propagates the inner width to the
+// branch and profile pickers when those pickers are active.
 func (t *TextInputOverlay) SetSize(width, height int) {
 	t.textarea.SetHeight(height)
 	t.width = width

@@ -18,6 +18,9 @@ import (
 	"github.com/atotto/clipboard"
 )
 
+// Status is the Instance lifecycle state. Transitions are gated by
+// allowedTransitions in instance.go; use Instance.TransitionTo for
+// every write so invariants hold across the app and tests.
 type Status int
 
 const (
@@ -82,7 +85,22 @@ func IsAllowedTransition(from, to Status) bool {
 	return targets[to]
 }
 
-// Instance is a running instance of claude code.
+// Instance is a single agent session managed by Loom. Each Instance owns
+// a git worktree (or, for workspace terminals, targets the root repo) and a
+// tmux session where the agent command runs. Instances move through the
+// Status state machine — Ready → Loading → Running → Paused → Deleting —
+// governed by allowedTransitions; use TransitionTo for every status write.
+//
+// Field access rules: mu guards Status, diffStats, Branch, tmuxSession,
+// gitWorktree, and the started/starting flags. External callers must go
+// through the exported accessors (GetStatus, GetBranch, GetDiffStats,
+// Snapshot, TmuxSession) or the unexported get*/set* helpers — never read
+// or write those fields directly. Holding mu across I/O is forbidden.
+//
+// Lifecycle entry points: NewInstance creates a blank instance (call
+// Start(true) to materialize worktree + tmux). FromInstanceData rehydrates
+// persisted state and does not spawn a PTY — callers must invoke
+// EnsureRunning to bring a non-paused instance back online.
 type Instance struct {
 	// Title is the title of the instance.
 	Title string
@@ -276,7 +294,9 @@ func (i *Instance) EnsureRunning() error {
 	return i.Start(false)
 }
 
-// Options for creating a new instance
+// InstanceOptions collects the arguments for NewInstance. All fields
+// except AutoYes, IsWorkspaceTerminal, WsCtx, and ExecutorOverride are
+// required.
 type InstanceOptions struct {
 	// Title is the title of the instance.
 	Title string
@@ -294,6 +314,11 @@ type InstanceOptions struct {
 	IsWorkspaceTerminal bool
 }
 
+// NewInstance constructs a blank Instance in the Ready state. No git
+// worktree or tmux session is allocated until Start(true) runs — this
+// constructor only captures the caller's intent. The workspace path is
+// resolved to an absolute path so worktree setup is not affected by later
+// chdir calls.
 func NewInstance(opts InstanceOptions) (*Instance, error) {
 	t := time.Now()
 
@@ -320,6 +345,9 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 	}, nil
 }
 
+// RepoName returns the human-visible repo/workspace name, delegating
+// to the instance's backend. Errors if called before the instance has
+// been started.
 func (i *Instance) RepoName() (string, error) {
 	return i.backend().RepoName()
 }
@@ -436,7 +464,12 @@ func (i *Instance) SetSelectedBranch(branch string) {
 	i.selectedBranch = branch
 }
 
-// firstTimeSetup is true if this is a new instance. Otherwise, it's one loaded from storage.
+// Start brings the instance online: sets up the worktree, spawns the
+// tmux session, and transitions Ready → Loading → Running. Pass
+// firstTimeSetup=true when the instance is newly created (initial
+// commit, copy user-supplied prompt) and false when loaded from
+// storage. Returns an error if setup fails, leaving the instance in
+// its prior status.
 func (i *Instance) Start(firstTimeSetup bool) (err error) {
 	lg := i.getLogger()
 	t0 := time.Now()
@@ -604,6 +637,9 @@ func (i *Instance) combineErrors(errs []error) error {
 	return errors.Join(errs...)
 }
 
+// Preview returns the current visible tmux pane content. Returns empty
+// string (not an error) when the instance is not started or paused —
+// the live tail is only meaningful for running sessions.
 func (i *Instance) Preview() (string, error) {
 	if !i.isStarted() || i.GetStatus() == Paused {
 		return "", nil
@@ -615,6 +651,9 @@ func (i *Instance) Preview() (string, error) {
 	return ts.CapturePaneContent()
 }
 
+// HasUpdated reports whether the tmux pane content has changed since
+// the last call and whether an auto-yes-eligible prompt is currently
+// visible. Returns (false, false) for non-started instances.
 func (i *Instance) HasUpdated() (updated bool, hasPrompt bool) {
 	if !i.isStarted() {
 		return false, false
@@ -626,8 +665,10 @@ func (i *Instance) HasUpdated() (updated bool, hasPrompt bool) {
 	return ts.HasUpdated()
 }
 
-// TapEnter sends an enter key press to the tmux session if AutoYes is enabled.
-// CheckAndHandleTrustPrompt checks for and dismisses the trust prompt for supported programs.
+// CheckAndHandleTrustPrompt detects and dismisses an agent-specific
+// trust prompt (e.g., Claude's folder-trust dialog) when the agent
+// adapter declares a TrustPromptResponse. Returns true when a prompt
+// was detected and dismissed. No-op for unknown programs.
 func (i *Instance) CheckAndHandleTrustPrompt() bool {
 	if !i.isStarted() {
 		return false
@@ -675,6 +716,10 @@ func (i *Instance) CaptureAndProcessStatus() (updated bool, hasPrompt bool, err 
 	return updated, hasPrompt, err
 }
 
+// TapEnter sends a single Enter keystroke to the tmux session when the
+// instance is running and AutoYes is enabled. No-op otherwise. Used by
+// the daemon to auto-dismiss agent prompts without requiring the user
+// to focus the pane.
 func (i *Instance) TapEnter() {
 	if !i.isStarted() || i.GetStatus() == Paused || !i.AutoYes {
 		return
@@ -698,6 +743,9 @@ func (i *Instance) TmuxSession() *tmux.TmuxSession {
 	return i.getTmuxSession()
 }
 
+// SetPreviewSize resizes the detached tmux pane so capture output
+// matches the preview viewport. Returns an error if the instance is
+// not running; paused instances have no live pane to resize.
 func (i *Instance) SetPreviewSize(width, height int) error {
 	if !i.isStarted() || i.GetStatus() == Paused {
 		return fmt.Errorf("cannot set preview size for instance that has not been started or " +
@@ -720,6 +768,8 @@ func (i *Instance) GetWorktreePath() string {
 	return i.backend().WorkTreePath()
 }
 
+// Started reports whether Start or Resume has completed setup, so the
+// instance has a live tmux session and worktree (or root-repo terminal).
 func (i *Instance) Started() bool {
 	return i.isStarted()
 }
@@ -734,6 +784,8 @@ func (i *Instance) SetTitle(title string) error {
 	return nil
 }
 
+// Paused reports whether the instance is currently in the Paused state
+// (worktree removed, branch preserved; can be resumed with Resume).
 func (i *Instance) Paused() bool {
 	return i.GetStatus() == Paused
 }

@@ -12,6 +12,10 @@ import (
 var previewPaneStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#dddddd"})
 
+// PreviewPane renders the agent tmux pane's content in the top half of
+// the split view. It owns a bubbles/viewport for scrollback navigation
+// and tracks which instance it last rendered so scroll position is
+// reset on selection change rather than persisting stale offsets.
 type PreviewPane struct {
 	width  int
 	height int
@@ -29,12 +33,17 @@ type previewState struct {
 	text string
 }
 
+// NewPreviewPane constructs a PreviewPane with a zero-sized viewport;
+// the caller must SetSize before the first render.
 func NewPreviewPane() *PreviewPane {
 	return &PreviewPane{
 		viewport: viewport.New(0, 0),
 	}
 }
 
+// SetSize resizes the pane and the embedded viewport. maxHeight caps
+// the visible height — content exceeding it is truncated with an
+// ellipsis in normal mode or becomes scrollable in scroll mode.
 func (p *PreviewPane) SetSize(width, maxHeight int) {
 	p.width = width
 	p.height = maxHeight
@@ -50,7 +59,10 @@ func (p *PreviewPane) setFallbackState(message string) {
 	}
 }
 
-// Updates the preview pane content with the tmux pane content
+// UpdateContent refreshes the pane from the given instance. It resets
+// scroll mode when the selected instance changes, auto-exits scroll
+// mode when the viewport has returned to the bottom, and falls back to
+// splash text for nil / loading / paused instances.
 func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	// Reset scroll mode when the selected instance changes.
 	newTitle := ""

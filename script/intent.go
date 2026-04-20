@@ -33,23 +33,58 @@ type Intent interface{ intent() }
 type AttachPane int
 
 const (
+	// AttachPaneAgent targets the agent pane (top of the split-pane).
 	AttachPaneAgent AttachPane = iota
+	// AttachPaneTerminal targets the auxiliary terminal pane (bottom).
 	AttachPaneTerminal
 )
 
+// QuitIntent requests app shutdown. Fulfilled by the app layer's
+// top-level tea.Quit return.
 type QuitIntent struct{}
+
+// PushSelectedIntent asks the app to push the selected instance's
+// branch to origin. Confirm=true prompts via a confirmation overlay
+// before running the push.
 type PushSelectedIntent struct{ Confirm bool }
+
+// KillSelectedIntent asks the app to kill and clean up the selected
+// instance. Confirm=true gates the destructive action behind an overlay.
 type KillSelectedIntent struct{ Confirm bool }
+
+// CheckoutIntent asks the app to check the selected instance's branch
+// out into the root repo. Confirm gates the operation; Help opens the
+// explanatory overlay instead of performing the checkout.
 type CheckoutIntent struct{ Confirm, Help bool }
+
+// ResumeIntent asks the app to resume the selected paused instance.
 type ResumeIntent struct{}
+
+// NewInstanceIntent asks the app to open the new-instance overlay.
+// Prompt=true collects a starter prompt after the title. Title
+// pre-fills the title field when non-empty.
 type NewInstanceIntent struct {
 	Prompt bool
 	Title  string
 }
+
+// ShowHelpIntent opens the help overlay.
 type ShowHelpIntent struct{}
+
+// WorkspacePickerIntent opens the workspace-picker overlay for
+// switching between registered workspaces.
 type WorkspacePickerIntent struct{}
+
+// InlineAttachIntent asks the app to inline-attach to the named pane
+// (keystrokes route to tmux until the user detaches with ctrl+q).
 type InlineAttachIntent struct{ Pane AttachPane }
+
+// FullscreenAttachIntent asks the app to full-screen attach to the
+// named pane via tea.ExecProcess.
 type FullscreenAttachIntent struct{ Pane AttachPane }
+
+// QuickInputIntent opens the quick-input bar targeting the named pane.
+// Text typed there is sent to the backing tmux session on Enter.
 type QuickInputIntent struct{ Pane AttachPane }
 
 func (QuitIntent) intent()             {}

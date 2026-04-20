@@ -57,6 +57,9 @@ type DiffStats struct {
 	Error error
 }
 
+// IsEmpty reports whether the diff contains no added lines, no
+// removed lines, and no body content — the state presented when a
+// session has not yet diverged from its base commit.
 func (d *DiffStats) IsEmpty() bool {
 	return d.Added == 0 && d.Removed == 0 && d.Content == ""
 }

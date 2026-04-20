@@ -75,10 +75,18 @@ func defaultRunner(r CommandRunner) CommandRunner {
 	return r
 }
 
+// NewGitWorktreeFromStorage rehydrates a GitWorktree from its persisted
+// [session.GitWorktreeData] fields. Unlike [NewGitWorktree], this
+// constructor does no git work — it simply reattaches the in-memory
+// wrapper to an on-disk worktree that already exists (or that needs to
+// be rebuilt by a caller via Setup on resume).
 func NewGitWorktreeFromStorage(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string, isExistingBranch bool, configDir string) *GitWorktree {
 	return NewGitWorktreeFromStorageWithRunner(repoPath, worktreePath, sessionName, branchName, baseCommitSHA, isExistingBranch, configDir, nil)
 }
 
+// NewGitWorktreeFromStorageWithRunner is [NewGitWorktreeFromStorage]
+// with an injected [CommandRunner] for tests. Passing nil falls back to
+// the default subprocess runner.
 func NewGitWorktreeFromStorageWithRunner(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string, isExistingBranch bool, configDir string, runner CommandRunner) *GitWorktree {
 	return &GitWorktree{
 		repoPath:         repoPath,
@@ -165,6 +173,9 @@ func NewGitWorktreeFromBranch(repoPath string, branchName string, sessionName st
 	return NewGitWorktreeFromBranchWithRunner(repoPath, branchName, sessionName, configDir, nil)
 }
 
+// NewGitWorktreeFromBranchWithRunner is [NewGitWorktreeFromBranch]
+// with an injected [CommandRunner] for tests. Passing nil falls back
+// to the default subprocess runner.
 func NewGitWorktreeFromBranchWithRunner(repoPath string, branchName string, sessionName string, configDir string, runner CommandRunner) (*GitWorktree, error) {
 	r := defaultRunner(runner)
 	repoPath, worktreePath, err := resolveWorktreePaths(repoPath, branchName, configDir, r)

@@ -8,11 +8,23 @@ type defaultAdapter struct{}
 // string unchanged.
 func Default() Adapter { return defaultAdapter{} }
 
-func (defaultAdapter) Name() string                            { return "default" }
-func (defaultAdapter) Matches(_ string) bool                   { return true }
-func (defaultAdapter) TrustPromptPatterns() []string           { return nil }
-func (defaultAdapter) TrustPromptResponse() TrustPromptAction  { return TrustPromptNone }
-func (defaultAdapter) PendingPromptPattern() string            { return "" }
+// Name implements Adapter.
+func (defaultAdapter) Name() string { return "default" }
+
+// Matches implements Adapter. The default adapter matches every
+// program name, making it the catch-all fallback.
+func (defaultAdapter) Matches(_ string) bool { return true }
+
+// TrustPromptPatterns implements Adapter.
+func (defaultAdapter) TrustPromptPatterns() []string { return nil }
+
+// TrustPromptResponse implements Adapter.
+func (defaultAdapter) TrustPromptResponse() TrustPromptAction { return TrustPromptNone }
+
+// PendingPromptPattern implements Adapter.
+func (defaultAdapter) PendingPromptPattern() string { return "" }
+
+// ApplyRecoveryFlag implements Adapter.
 func (defaultAdapter) ApplyRecoveryFlag(program string) string { return program }
 
 // DefaultRegistry returns the registry pre-populated with all built-in

@@ -17,9 +17,12 @@ func AdjustPreviewWidth(width int) int {
 	return int(float64(width) * PreviewWidthPercent)
 }
 
+// FocusAgent and FocusTerminal are the SplitPane focus values: the top
+// (agent) or bottom (terminal) pane. Focus determines which pane
+// receives scroll and attach keypresses.
 const (
-	FocusAgent    int = iota // top pane
-	FocusTerminal            // bottom pane
+	FocusAgent int = iota
+	FocusTerminal
 )
 
 var dimBorderColor = BorderMuted
@@ -42,8 +45,11 @@ var (
 				Bold(true)
 )
 
-// SplitPane displays agent (preview) and terminal panes stacked vertically,
-// with an optional diff overlay triggered by hotkey.
+// SplitPane composes the right-hand side of the TUI: an agent preview
+// on top (70%), a terminal pane below (30%), and a hotkey-toggled diff
+// overlay that replaces both. SplitPane holds the currently-focused
+// pane index and inline-attach flag but does not own scroll state —
+// each child pane manages its own viewport.
 type SplitPane struct {
 	agent    *PreviewPane
 	terminal *TerminalPane
@@ -59,6 +65,9 @@ type SplitPane struct {
 	instance *session.Instance
 }
 
+// NewSplitPane wires the three child panes into a SplitPane with the
+// agent pane focused by default. The caller retains ownership of the
+// child panes; SplitPane borrows them for routing.
 func NewSplitPane(agent *PreviewPane, diff *DiffPane, terminal *TerminalPane) *SplitPane {
 	return &SplitPane{
 		agent:       agent,
@@ -68,10 +77,18 @@ func NewSplitPane(agent *PreviewPane, diff *DiffPane, terminal *TerminalPane) *S
 	}
 }
 
+// SetInstance sets the instance whose state the child panes will
+// render on the next UpdateAgent/UpdateDiff/UpdateTerminal call. The
+// child panes read their content from the instance, so switching here
+// without calling the Update* methods leaves the previously-rendered
+// content in place until the next tick.
 func (s *SplitPane) SetInstance(instance *session.Instance) {
 	s.instance = instance
 }
 
+// SetSize recomputes the 70/30 agent/terminal split for the given
+// container dimensions and propagates widths to every child pane,
+// including the diff overlay which uses the full inner height.
 func (s *SplitPane) SetSize(width, height int) {
 	s.width = width
 	s.height = height
@@ -96,6 +113,9 @@ func (s *SplitPane) SetSize(width, height int) {
 	s.diff.SetSize(contentWidth, height-1-bodyBorderV) // 1 top line + bottom border
 }
 
+// GetAgentSize returns the current width and height of the agent pane,
+// primarily used by the attach flow to size the PTY before handing it
+// to the user.
 func (s *SplitPane) GetAgentSize() (width, height int) {
 	return s.agent.width, s.agent.height
 }
@@ -149,6 +169,10 @@ func (s *SplitPane) ResetAgentToNormalMode(instance *session.Instance) error {
 	return s.agent.ResetToNormalMode(instance)
 }
 
+// ScrollUp scrolls the active pane up by one line. Routing order:
+// diff overlay (when visible) beats the focused pane. Scroll errors
+// are logged rather than propagated because scroll is a view-only
+// operation and should not abort the caller's update cycle.
 func (s *SplitPane) ScrollUp() {
 	if s.diffVisible {
 		s.diff.ScrollUp()
@@ -166,6 +190,8 @@ func (s *SplitPane) ScrollUp() {
 	}
 }
 
+// ScrollDown is the counterpart of ScrollUp; see ScrollUp for routing
+// and error-handling rules.
 func (s *SplitPane) ScrollDown() {
 	if s.diffVisible {
 		s.diff.ScrollDown()

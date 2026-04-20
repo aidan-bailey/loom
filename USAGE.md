@@ -178,6 +178,17 @@ A session moves through these states:
 3. Branch deleted (unless it was a pre-existing branch you selected at creation)
 4. Instance removed from storage
 
+### Workspace Terminals
+
+When you launch Loom inside a registered workspace, a special instance is pinned at the top of the instance list — the **Workspace Terminal**. Unlike regular sessions, it runs directly in the root of the repository without creating a git worktree:
+
+- **No worktree** — the agent operates on your main checkout, so changes are immediately visible to other tools working in that directory.
+- **Cannot be paused or killed** — the workspace terminal is a permanent fixture while the workspace exists. `c` and `D` are no-ops when it is selected.
+- **Diff stats** reflect the workspace's uncommitted changes against HEAD, not a cumulative diff against a base commit.
+- **Auto-recreated** — if its tmux session is missing at startup (e.g. after a reboot), Loom recreates it in place.
+
+Use the workspace terminal for work that needs unrestricted access to the root checkout (ad-hoc shell commands, editors, or an agent you want full repo visibility for). Create standard sessions with `n` / `N` for anything that should stay isolated in a worktree.
+
 ---
 
 ## Keyboard Reference
@@ -436,7 +447,20 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 }
 ```
 
-When `default_program` matches a profile name, that profile's `program` command is used. Profiles also appear in the prompt overlay's profile picker when creating sessions with `N`.
+### Profiles
+
+A profile is a named shortcut for a program invocation. Profiles serve two purposes:
+
+1. **As the default program.** If `default_program` matches a profile name, Loom resolves it to the profile's `program` string when starting new sessions. This keeps the default readable (`"claude-fast"` instead of `"claude --fast --experimental"`).
+2. **As a picker in the prompt overlay.** When you press `N` to create a session with a prompt, the overlay exposes a profile picker (`←` / `→`). Pick a profile and the session launches with that profile's program.
+
+Profiles are defined in the `profiles` array; each entry needs a unique `name` and a `program` string. There is no inheritance or templating — each profile is a flat, literal command.
+
+### Branch Prefix
+
+`branch_prefix` is prepended to every auto-generated branch name. The value shown as the default — `{username}/` — is a placeholder for the rendered text: when Loom creates its config, it resolves your OS username and writes the literal value (e.g. `aidanb/`) into `config.json`. There is no runtime token expansion, so editing `branch_prefix` to anything you like (e.g. `"loom/"`, `"wip-"`) works as expected.
+
+The resulting branch for a session titled `fix-auth` with the default prefix would be `aidanb/fix-auth`.
 
 ### Environment Variables
 
@@ -534,3 +558,11 @@ Trust prompts (e.g. "Do you trust the files in this folder?") are handled separa
 - **Runs** in the background as a separate process (PID stored in `{configDir}/daemon.pid`)
 - **Stops** when the TUI exits, or manually via `loom reset`
 - Any running daemon is killed and restarted on each TUI launch to ensure a clean state
+
+### Troubleshooting
+
+- **Log location** — The daemon writes to the same file as the TUI (`{configDir}/logs/loom.log`). Daemon-emitted records carry `component=daemon`, so `grep component=daemon ~/.loom/logs/loom.log` narrows output to the daemon.
+- **Enable debug logging** — Set `LOOM_LOG_LEVEL=debug` or pass `--log-level=debug` when launching Loom; the level is inherited by the daemon child process, so both TUI and daemon become verbose.
+- **Healthy output** — Each poll tick logs its tracked instance count; when the daemon detects and dismisses a prompt, it logs the matched agent and pattern.
+- **Manual stop** — `kill "$(cat ~/.loom/daemon.pid)"` stops the current daemon. Because the TUI restarts the daemon on each launch, relaunching Loom will start a fresh one automatically.
+- **Force full reset** — `loom reset` removes the PID file, worktrees, and instance state. Use this if the daemon appears wedged and a simple relaunch does not recover.

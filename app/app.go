@@ -25,6 +25,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// GlobalInstanceLimit caps the number of simultaneously-tracked
+// instances per workspace slot. Once reached, New/Prompt flows short-
+// circuit with an error-bar message instead of allocating another
+// worktree. The cap is a soft guardrail — tmux server memory and git
+// worktree overhead are the real upper bound; raise deliberately.
 const GlobalInstanceLimit = 10
 
 var inlineAttachHintStyle = lipgloss.NewStyle().
@@ -34,12 +39,23 @@ var inlineAttachHintStyle = lipgloss.NewStyle().
 var statusLineStyle = lipgloss.NewStyle().
 	Foreground(ui.BorderMuted)
 
-// Run is the main entrypoint into the application.
-// wsCtx is the resolved workspace context; nil means global.
-// registry is passed through for the startup workspace picker.
-// appConfig is the pre-loaded config from the resolved workspace directory.
-// noScripts disables loading of ~/.loom/scripts (embedded
-// defaults still load).
+// Run starts the Bubble Tea program and blocks until the user quits or
+// ctx is cancelled. It wires the home model, installs a shutdown hook
+// that drains suspended Lua coroutines, and swallows no errors — a
+// non-nil return means tea.Program.Run failed.
+//
+// Parameters:
+//   - wsCtx is the resolved workspace context; nil falls back to the
+//     global config directory.
+//   - registry is the workspace registry for the startup workspace picker.
+//   - appConfig is the pre-loaded config from the resolved workspace dir.
+//   - program overrides the default agent command for new instances
+//     (empty string uses appConfig.GetProgram()).
+//   - autoYes enables the daemon-driven auto-confirm flow.
+//   - pendingDir is an optional directory to seed the new-instance
+//     overlay with (used by `loom` invoked from a non-workspace dir).
+//   - noScripts disables loading user scripts from ~/.loom/scripts;
+//     embedded defaults still load so core keybindings work.
 func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string, noScripts bool) error {
 	h, err := newHome(ctx, wsCtx, registry, appConfig, program, autoYes, pendingDir, noScripts)
 	if err != nil {
@@ -494,9 +510,10 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	}
 }
 
+// Init implements tea.Model. It starts the spinner and kicks off the
+// preview and metadata tick loops — those loops re-arm themselves by
+// returning the same tick message, so Init fires exactly once per Run.
 func (m *home) Init() tea.Cmd {
-	// Upon starting, we want to start the spinner. Whenever we get a spinner.TickMsg, we
-	// update the spinner, which sends a new spinner.TickMsg. I think this lasts forever lol.
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
@@ -507,6 +524,7 @@ func (m *home) Init() tea.Cmd {
 	)
 }
 
+// Update implements tea.Model.
 func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case hideErrMsg:
@@ -1584,6 +1602,7 @@ func (m *home) slotNames() []string {
 	return names
 }
 
+// View implements tea.Model.
 func (m *home) View() string {
 	listView := m.list.String()
 	rightContent := m.splitPane.String()

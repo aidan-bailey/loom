@@ -35,6 +35,9 @@ var menuStyle = lipgloss.NewStyle().
 // MenuState represents different states the menu can be in
 type MenuState int
 
+// StateDefault through StateInlineAttach enumerate the menu's display
+// modes. The active state selects which subset of keybindings the
+// menu-bar shows and how they are grouped visually.
 const (
 	StateDefault MenuState = iota
 	StateEmpty
@@ -44,6 +47,9 @@ const (
 	StateInlineAttach
 )
 
+// Menu is the bottom-row keybinding hint strip. It reads GlobalkeyBindings
+// to render labels and tracks the most recent keypress so the UI can
+// momentarily underline the matching entry for visual feedback.
 type Menu struct {
 	options       []keys.KeyName
 	height, width int
@@ -60,6 +66,8 @@ var promptMenuOptions = []keys.KeyName{keys.KeySubmitName}
 var quickInteractMenuOptions = []keys.KeyName{keys.KeySubmitName}
 var inlineAttachMenuOptions = []keys.KeyName{}
 
+// NewMenu constructs a Menu in StateEmpty with no active keypress. The
+// caller must SetSize before the first render.
 func NewMenu() *Menu {
 	return &Menu{
 		options: defaultMenuOptions,
@@ -68,10 +76,13 @@ func NewMenu() *Menu {
 	}
 }
 
+// Keydown marks name as the most recently pressed key so the next render
+// underlines its menu entry. ClearKeydown resets this.
 func (m *Menu) Keydown(name keys.KeyName) {
 	m.keyDown = name
 }
 
+// ClearKeydown removes any active key-press highlight.
 func (m *Menu) ClearKeydown() {
 	m.keyDown = -1
 }
