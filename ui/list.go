@@ -498,29 +498,51 @@ func (l *List) PopSelectedForKill() *session.Instance {
 // Unlike Kill(), this does not perform I/O (no tmux/worktree cleanup) —
 // the caller is responsible for that. This is safe to call from the main
 // event loop after a Cmd goroutine has already performed I/O cleanup.
+//
+// This variant reads the repo name from the instance itself, which only
+// works while the instance is still started. Callers that run this after
+// Instance.Kill() has zeroed out the backend should use
+// RemoveInstanceByTitleAndRepo with a pre-captured name instead.
 func (l *List) RemoveInstanceByTitle(title string) {
-	idx := -1
-	for i, inst := range l.items {
-		if inst.Title == title {
-			idx = i
-			break
-		}
-	}
+	idx := l.findByTitle(title)
 	if idx < 0 {
 		return
 	}
-
-	// Unregister the repo name.
 	repoName, err := l.items[idx].RepoName()
 	if err != nil {
 		log.For("ui").Error("list.repo_name_failed", "context", "remove_at_idx", "err", err)
-	} else {
+		repoName = ""
+	}
+	l.removeAtWithRepo(idx, repoName)
+}
+
+// RemoveInstanceByTitleAndRepo is RemoveInstanceByTitle with a
+// pre-captured repo name, used by the kill path: Instance.Kill() clears
+// the git worktree before this runs, so a post-hoc RepoName() lookup
+// would fail and the repo counter would leak. An empty repoName skips
+// rmRepo (used when the pre-capture itself errored).
+func (l *List) RemoveInstanceByTitleAndRepo(title, repoName string) {
+	idx := l.findByTitle(title)
+	if idx < 0 {
+		return
+	}
+	l.removeAtWithRepo(idx, repoName)
+}
+
+func (l *List) findByTitle(title string) int {
+	for i, inst := range l.items {
+		if inst.Title == title {
+			return i
+		}
+	}
+	return -1
+}
+
+func (l *List) removeAtWithRepo(idx int, repoName string) {
+	if repoName != "" {
 		l.rmRepo(repoName)
 	}
-
 	l.items = append(l.items[:idx], l.items[idx+1:]...)
-
-	// Adjust selectedIdx if it pointed at or past the removed item.
 	if l.selectedIdx >= len(l.items) && l.selectedIdx > 0 {
 		l.selectedIdx--
 	}

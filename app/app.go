@@ -746,7 +746,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case killInstanceMsg:
 		// Terminal session was already closed inside killAction off the update
 		// goroutine. Here we only do in-memory list bookkeeping.
-		m.list.RemoveInstanceByTitle(msg.title)
+		m.list.RemoveInstanceByTitleAndRepo(msg.title, msg.repoName)
 		return m, m.instanceChanged()
 	case transitionFailedMsg:
 		// Revert instance status on failed background op (kill/pause/resume).
@@ -1032,8 +1032,15 @@ type instanceChangedMsg struct{}
 // killInstanceMsg is returned by the killAction goroutine after I/O cleanup
 // (git checks, instance kill, storage deletion) is complete. The main event loop
 // handles the list removal so it doesn't race with rendering.
+//
+// repoName is captured before Instance.Kill() zeroes out the git worktree —
+// Instance.RepoName() refuses to answer once started=false, so post-hoc lookup
+// from the list handler would log "cannot get repo name" and leak the repo
+// counter. Empty string means the caller couldn't determine it (not started
+// yet, or the pre-capture itself errored); in that case rmRepo is skipped.
 type killInstanceMsg struct {
-	title string
+	title    string
+	repoName string
 }
 
 // transitionFailedMsg is returned when a background status-transitioning
