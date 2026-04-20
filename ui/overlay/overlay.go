@@ -33,13 +33,13 @@ func getLines(s string) (lines []string, widest int) {
 	return lines, widest
 }
 
+// CalculateCenterCoordinates returns the (x, y) origin needed to center a
+// foreground block of the given width and line count inside a background
+// of the given width and line count. Callers pass the result straight to
+// PlaceOverlay when center=false.
 func CalculateCenterCoordinates(foregroundLines []string, backgroundLines []string, foregroundWidth, backgroundWidth int) (int, int) {
-	// Calculate the x-coordinate to horizontally center the foreground text.
 	x := (backgroundWidth - foregroundWidth) / 2
-
-	// Calculate the y-coordinate to vertically center the foreground text.
 	y := (len(backgroundLines) - len(foregroundLines)) / 2
-
 	return x, y
 }
 

@@ -9,6 +9,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// AdditionStyle, DeletionStyle, and HunkStyle are the lipgloss styles
+// applied line-by-line by colorizeDiff to render a colorized git diff.
+// They are exported so tests and callers composing their own diff
+// renderers can reuse the same palette.
 var (
 	AdditionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
 	DeletionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
@@ -36,18 +40,23 @@ func NewDiffPane() *DiffPane {
 	}
 }
 
+// SetSize resizes the embedded viewport and invalidates the cached
+// colorized diff so the next SetDiff re-renders even when the
+// underlying content is unchanged.
 func (d *DiffPane) SetSize(width, height int) {
 	d.width = width
 	d.height = height
-	d.lastDiffContent = "" // invalidate cache on resize
+	d.lastDiffContent = ""
 	d.viewport.Width = width
 	d.viewport.Height = height
-	// Update viewport content if diff exists
 	if d.diff != "" || d.stats != "" {
 		d.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, d.stats, d.diff))
 	}
 }
 
+// SetDiff replaces the rendered diff from instance's current diff
+// stats. No-ops when the content has not changed since the last call,
+// and shows fallback text for nil / unstarted / errored instances.
 func (d *DiffPane) SetDiff(instance *session.Instance) {
 	centeredFallbackMessage := lipgloss.Place(
 		d.width,

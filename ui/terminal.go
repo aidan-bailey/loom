@@ -51,6 +51,9 @@ func NewTerminalPane() *TerminalPane {
 	}
 }
 
+// SetSize resizes the pane under the internal mutex. The internal tmux
+// session owned by TerminalPane is resized lazily on the next tick so
+// this call remains cheap.
 func (t *TerminalPane) SetSize(width, height int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

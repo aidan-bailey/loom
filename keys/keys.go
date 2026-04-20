@@ -11,6 +11,12 @@ import (
 // values in GlobalkeyBindings may change.
 type KeyName int
 
+// KeyUp through KeyDirectAttachTerminal enumerate the built-in keybindings
+// surfaced in GlobalkeyBindings. They drive the help panel and menu-bar
+// highlighter; dispatch itself is owned by script/defaults.lua, which may
+// rebind any key. KeyDirectAttachAgent and KeyDirectAttachTerminal are
+// reserved to stateDefault so they do not collide with textinput's ctrl+a
+// (LineStart) binding in stateQuickInteract.
 const (
 	KeyUp KeyName = iota
 	KeyDown
@@ -18,28 +24,21 @@ const (
 	KeyKill
 	KeyQuit
 	KeySubmit
-
-	KeySubmitName // SubmitName is a special keybinding for submitting the name of a new instance.
-
+	KeySubmitName
 	KeyCheckout
 	KeyResume
-	KeyPrompt // New key for entering a prompt
-	KeyHelp   // Key for showing help screen
-
-	KeyWorkspace      // Key for switching workspaces
-	KeyWorkspaceLeft  // Key for previous workspace tab
-	KeyWorkspaceRight // Key for next workspace tab
-
-	KeyFullScreenAttachAgent    // Key for full-screen attach to agent pane
-	KeyFullScreenAttachTerminal // Key for full-screen attach to terminal pane
-	KeyDiff                     // Key for toggling diff overlay
-
-	KeyQuickInputAgent    // Key for quick input targeting agent pane
-	KeyQuickInputTerminal // Key for quick input targeting terminal pane
-	// ctrl+a/ctrl+t are only dispatched in stateDefault, so they don't conflict
-	// with the textinput widget's ctrl+a (LineStart) binding in stateQuickInteract.
-	KeyDirectAttachAgent    // Key for direct attach to agent pane
-	KeyDirectAttachTerminal // Key for direct attach to terminal pane
+	KeyPrompt
+	KeyHelp
+	KeyWorkspace
+	KeyWorkspaceLeft
+	KeyWorkspaceRight
+	KeyFullScreenAttachAgent
+	KeyFullScreenAttachTerminal
+	KeyDiff
+	KeyQuickInputAgent
+	KeyQuickInputTerminal
+	KeyDirectAttachAgent
+	KeyDirectAttachTerminal
 )
 
 // keyStringToName is the reverse lookup derived from GlobalkeyBindings. It

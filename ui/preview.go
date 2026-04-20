@@ -41,6 +41,9 @@ func NewPreviewPane() *PreviewPane {
 	}
 }
 
+// SetSize resizes the pane and the embedded viewport. maxHeight caps
+// the visible height — content exceeding it is truncated with an
+// ellipsis in normal mode or becomes scrollable in scroll mode.
 func (p *PreviewPane) SetSize(width, maxHeight int) {
 	p.width = width
 	p.height = maxHeight
@@ -56,7 +59,10 @@ func (p *PreviewPane) setFallbackState(message string) {
 	}
 }
 
-// Updates the preview pane content with the tmux pane content
+// UpdateContent refreshes the pane from the given instance. It resets
+// scroll mode when the selected instance changes, auto-exits scroll
+// mode when the viewport has returned to the bottom, and falls back to
+// splash text for nil / loading / paused instances.
 func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	// Reset scroll mode when the selected instance changes.
 	newTitle := ""

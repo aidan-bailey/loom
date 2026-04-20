@@ -17,9 +17,12 @@ func AdjustPreviewWidth(width int) int {
 	return int(float64(width) * PreviewWidthPercent)
 }
 
+// FocusAgent and FocusTerminal are the SplitPane focus values: the top
+// (agent) or bottom (terminal) pane. Focus determines which pane
+// receives scroll and attach keypresses.
 const (
-	FocusAgent    int = iota // top pane
-	FocusTerminal            // bottom pane
+	FocusAgent int = iota
+	FocusTerminal
 )
 
 var dimBorderColor = BorderMuted
@@ -110,6 +113,9 @@ func (s *SplitPane) SetSize(width, height int) {
 	s.diff.SetSize(contentWidth, height-1-bodyBorderV) // 1 top line + bottom border
 }
 
+// GetAgentSize returns the current width and height of the agent pane,
+// primarily used by the attach flow to size the PTY before handing it
+// to the user.
 func (s *SplitPane) GetAgentSize() (width, height int) {
 	return s.agent.width, s.agent.height
 }
@@ -163,6 +169,10 @@ func (s *SplitPane) ResetAgentToNormalMode(instance *session.Instance) error {
 	return s.agent.ResetToNormalMode(instance)
 }
 
+// ScrollUp scrolls the active pane up by one line. Routing order:
+// diff overlay (when visible) beats the focused pane. Scroll errors
+// are logged rather than propagated because scroll is a view-only
+// operation and should not abort the caller's update cycle.
 func (s *SplitPane) ScrollUp() {
 	if s.diffVisible {
 		s.diff.ScrollUp()
@@ -180,6 +190,8 @@ func (s *SplitPane) ScrollUp() {
 	}
 }
 
+// ScrollDown is the counterpart of ScrollUp; see ScrollUp for routing
+// and error-handling rules.
 func (s *SplitPane) ScrollDown() {
 	if s.diffVisible {
 		s.diff.ScrollDown()

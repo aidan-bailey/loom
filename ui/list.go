@@ -198,6 +198,9 @@ func (l *List) ensureSelectedVisible() {
 	}
 }
 
+// NumInstances returns the number of instances currently held by the
+// list. Used by GlobalInstanceLimit checks in the app layer before
+// admitting a new instance.
 func (l *List) NumInstances() int {
 	return len(l.items)
 }
@@ -215,6 +218,10 @@ func (r *InstanceRenderer) setWidth(width int) {
 // ɹ and ɻ are other options.
 const branchIcon = "Ꮧ"
 
+// Render produces the single-line representation of instance i at the
+// given index, applying the style preset matching the instance's
+// status and selection flag. hasMultipleRepos controls whether a repo
+// badge is appended to disambiguate cross-workspace lists.
 func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, hasMultipleRepos bool) string {
 	prefix := fmt.Sprintf(" %d. ", idx)
 	if idx >= 10 {

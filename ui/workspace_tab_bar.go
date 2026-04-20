@@ -28,6 +28,9 @@ var wsPausedIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")
 // Precedence (high→low): Prompting > Running > Ready > Loading > Paused > None.
 type TabStatus int
 
+// TabStatusNone through TabStatusPrompting rank an instance status by
+// display priority. A tab aggregates statuses by taking the max across
+// its instances so the most urgent one shows through in the tab dot.
 const (
 	TabStatusNone TabStatus = iota
 	TabStatusPaused

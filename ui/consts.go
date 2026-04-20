@@ -22,6 +22,8 @@ const (
 	PreviewWidthPercent = 0.9
 )
 
+// FallBackText is the ASCII splash rendered in empty-state panes when no
+// instance is selected or a newly created instance has not yet started.
 var FallBackText = lipgloss.JoinVertical(lipgloss.Center, `
 ░█████╗░██╗░░░░░░█████╗░██╗░░░██╗██████╗░███████╗
 ██╔══██╗██║░░░░░██╔══██╗██║░░░██║██╔══██╗██╔════╝

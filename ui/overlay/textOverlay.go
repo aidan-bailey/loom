@@ -72,6 +72,8 @@ func (t *TextOverlay) Render(opts ...WhitespaceOption) string {
 	return style.Render(t.content)
 }
 
+// SetWidth overrides the auto-computed overlay width. Pass 0 to return to
+// content-driven sizing.
 func (t *TextOverlay) SetWidth(width int) {
 	t.width = width
 }
