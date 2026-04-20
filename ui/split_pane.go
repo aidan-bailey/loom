@@ -42,8 +42,11 @@ var (
 				Bold(true)
 )
 
-// SplitPane displays agent (preview) and terminal panes stacked vertically,
-// with an optional diff overlay triggered by hotkey.
+// SplitPane composes the right-hand side of the TUI: an agent preview
+// on top (70%), a terminal pane below (30%), and a hotkey-toggled diff
+// overlay that replaces both. SplitPane holds the currently-focused
+// pane index and inline-attach flag but does not own scroll state —
+// each child pane manages its own viewport.
 type SplitPane struct {
 	agent    *PreviewPane
 	terminal *TerminalPane
@@ -59,6 +62,9 @@ type SplitPane struct {
 	instance *session.Instance
 }
 
+// NewSplitPane wires the three child panes into a SplitPane with the
+// agent pane focused by default. The caller retains ownership of the
+// child panes; SplitPane borrows them for routing.
 func NewSplitPane(agent *PreviewPane, diff *DiffPane, terminal *TerminalPane) *SplitPane {
 	return &SplitPane{
 		agent:       agent,
@@ -68,10 +74,18 @@ func NewSplitPane(agent *PreviewPane, diff *DiffPane, terminal *TerminalPane) *S
 	}
 }
 
+// SetInstance sets the instance whose state the child panes will
+// render on the next UpdateAgent/UpdateDiff/UpdateTerminal call. The
+// child panes read their content from the instance, so switching here
+// without calling the Update* methods leaves the previously-rendered
+// content in place until the next tick.
 func (s *SplitPane) SetInstance(instance *session.Instance) {
 	s.instance = instance
 }
 
+// SetSize recomputes the 70/30 agent/terminal split for the given
+// container dimensions and propagates widths to every child pane,
+// including the diff overlay which uses the full inner height.
 func (s *SplitPane) SetSize(width, height int) {
 	s.width = width
 	s.height = height

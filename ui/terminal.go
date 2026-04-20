@@ -41,6 +41,9 @@ type TerminalPane struct {
 	viewport    viewport.Model
 }
 
+// NewTerminalPane constructs a TerminalPane with an empty session
+// cache and zero-sized viewport. The caller must SetSize before the
+// first render and feed instances via UpdateContent.
 func NewTerminalPane() *TerminalPane {
 	return &TerminalPane{
 		sessions: make(map[string]*terminalSession),

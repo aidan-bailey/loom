@@ -15,6 +15,10 @@ var (
 	HunkStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#0ea5e9"))
 )
 
+// DiffPane renders the colorized git diff overlay shown when the user
+// toggles it on with `d`. It caches the last rendered diff content so
+// tick-driven redraws skip re-colorization when the underlying diff
+// has not changed — cheap on every render, noticeable at large diffs.
 type DiffPane struct {
 	viewport        viewport.Model
 	diff            string
@@ -24,6 +28,8 @@ type DiffPane struct {
 	height          int
 }
 
+// NewDiffPane constructs a DiffPane with a zero-sized viewport; the
+// caller must SetSize before the first render.
 func NewDiffPane() *DiffPane {
 	return &DiffPane{
 		viewport: viewport.New(0, 0),

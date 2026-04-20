@@ -93,6 +93,11 @@ var autoYesStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("#dde4f0")).
 	Foreground(lipgloss.Color("#1a1a1a"))
 
+// List is the left-panel instance list. It owns the selection cursor
+// and viewport scroll offset, and delegates per-row rendering to
+// [InstanceRenderer]. The list does not spawn goroutines or mutate
+// Instance state beyond reordering; all status is read via the
+// Instance accessors.
 type List struct {
 	items         []*session.Instance
 	selectedIdx   int
@@ -109,6 +114,9 @@ type List struct {
 	workspaceName string
 }
 
+// NewList constructs an empty List bound to the given spinner and
+// auto-yes indicator. Items are added later via AddInstance; the list
+// is ready to render immediately.
 func NewList(spinner *spinner.Model, autoYes bool) *List {
 	return &List{
 		items:    []*session.Instance{},
