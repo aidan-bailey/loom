@@ -82,7 +82,22 @@ func IsAllowedTransition(from, to Status) bool {
 	return targets[to]
 }
 
-// Instance is a running instance of claude code.
+// Instance is a single agent session managed by Loom. Each Instance owns
+// a git worktree (or, for workspace terminals, targets the root repo) and a
+// tmux session where the agent command runs. Instances move through the
+// Status state machine — Ready → Loading → Running → Paused → Deleting —
+// governed by allowedTransitions; use TransitionTo for every status write.
+//
+// Field access rules: mu guards Status, diffStats, Branch, tmuxSession,
+// gitWorktree, and the started/starting flags. External callers must go
+// through the exported accessors (GetStatus, GetBranch, GetDiffStats,
+// Snapshot, TmuxSession) or the unexported get*/set* helpers — never read
+// or write those fields directly. Holding mu across I/O is forbidden.
+//
+// Lifecycle entry points: NewInstance creates a blank instance (call
+// Start(true) to materialize worktree + tmux). FromInstanceData rehydrates
+// persisted state and does not spawn a PTY — callers must invoke
+// EnsureRunning to bring a non-paused instance back online.
 type Instance struct {
 	// Title is the title of the instance.
 	Title string
@@ -294,6 +309,11 @@ type InstanceOptions struct {
 	IsWorkspaceTerminal bool
 }
 
+// NewInstance constructs a blank Instance in the Ready state. No git
+// worktree or tmux session is allocated until Start(true) runs — this
+// constructor only captures the caller's intent. The workspace path is
+// resolved to an absolute path so worktree setup is not affected by later
+// chdir calls.
 func NewInstance(opts InstanceOptions) (*Instance, error) {
 	t := time.Now()
 
