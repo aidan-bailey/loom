@@ -19,6 +19,11 @@ import (
 	"github.com/creack/pty"
 )
 
+// ProgramClaude, ProgramAider, and ProgramGemini are the canonical
+// program identifiers used by trust-prompt detection and adapter lookup.
+// They match the literal command names (no path or flags); per-program
+// behavior is keyed off these constants in CheckAndHandleTrustPrompt
+// and the session/agent registry.
 const ProgramClaude = "claude"
 
 const ProgramAider = "aider"
@@ -43,7 +48,12 @@ const tmuxStartTimeout = 10 * time.Second
 // is isolated to the dying session rather than the whole app.
 const pumpWaitTimeout = 2 * time.Second
 
-// TmuxSession represents a managed tmux session
+// TmuxSession is a managed tmux session bound to a single instance.
+// The zero value is not usable — construct via [NewTmuxSession] (or
+// [NewTmuxSessionWithDeps] in tests) so the PTY factory and executor
+// are wired up. One [TmuxSession] owns exactly one tmux session and one
+// detached-mode PTY; do not share instances across goroutines except
+// through the documented accessors, which take the internal mutex.
 type TmuxSession struct {
 	// Initialized by NewTmuxSession
 	//
@@ -127,12 +137,17 @@ func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
 	}
 }
 
-// NewTmuxSession creates a new TmuxSession with the given name and program.
+// NewTmuxSession constructs a TmuxSession wired to the production PTY
+// factory and subprocess executor. The tmux session is NOT created at
+// this point — call Start (for a fresh session) or Restore (to attach
+// to one that already exists on disk).
 func NewTmuxSession(name string, program string) *TmuxSession {
 	return newTmuxSession(name, program, MakePtyFactory(), internalexec.Default{})
 }
 
-// NewTmuxSessionWithDeps creates a new TmuxSession with provided dependencies for testing.
+// NewTmuxSessionWithDeps is [NewTmuxSession] with injected dependencies
+// for tests. Pass a fake [PtyFactory] and [internalexec.Executor] to
+// avoid spawning real subprocesses or allocating real PTYs.
 func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor) *TmuxSession {
 	return newTmuxSession(name, program, ptyFactory, cmdExec)
 }
