@@ -38,6 +38,9 @@ cs.bind("ctrl+t", function() cs.actions.inline_attach_terminal() end,     { help
 cs.bind("a", function() cs.actions.quick_input_agent() end,    { help = "input to agent" })
 cs.bind("t", function() cs.actions.quick_input_terminal() end, { help = "input to terminal" })
 
+-- File explorer
+cs.bind("f", function() cs.actions.toggle_file_explorer() end, { help = "files" })
+
 -- Scroll (active content pane: diff if visible, else agent or the
 -- inline-attached terminal). Half-page bindings favor keyboard-centric
 -- workflows that never reach for the mouse wheel.

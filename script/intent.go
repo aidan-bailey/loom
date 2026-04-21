@@ -87,14 +87,21 @@ type FullscreenAttachIntent struct{ Pane AttachPane }
 // Text typed there is sent to the backing tmux session on Enter.
 type QuickInputIntent struct{ Pane AttachPane }
 
-func (QuitIntent) intent()             {}
-func (PushSelectedIntent) intent()     {}
-func (KillSelectedIntent) intent()     {}
-func (CheckoutIntent) intent()         {}
-func (ResumeIntent) intent()           {}
-func (NewInstanceIntent) intent()      {}
-func (ShowHelpIntent) intent()         {}
-func (WorkspacePickerIntent) intent()  {}
-func (InlineAttachIntent) intent()     {}
-func (FullscreenAttachIntent) intent() {}
-func (QuickInputIntent) intent()       {}
+// ToggleFileExplorerIntent opens the file explorer overlay scoped to
+// the currently-selected instance's worktree (or workspace repo, for
+// workspace terminals). The overlay lists files via session/files
+// and invokes $EDITOR on Enter.
+type ToggleFileExplorerIntent struct{}
+
+func (QuitIntent) intent()               {}
+func (PushSelectedIntent) intent()       {}
+func (KillSelectedIntent) intent()       {}
+func (CheckoutIntent) intent()           {}
+func (ResumeIntent) intent()             {}
+func (NewInstanceIntent) intent()        {}
+func (ShowHelpIntent) intent()           {}
+func (WorkspacePickerIntent) intent()    {}
+func (InlineAttachIntent) intent()       {}
+func (FullscreenAttachIntent) intent()   {}
+func (QuickInputIntent) intent()         {}
+func (ToggleFileExplorerIntent) intent() {}

@@ -232,6 +232,10 @@ func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 	actions.RawSetString("quick_input_terminal", L.NewFunction(func(L *lua.LState) int {
 		return enqueue(L, QuickInputIntent{Pane: AttachPaneTerminal})
 	}))
+
+	actions.RawSetString("toggle_file_explorer", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, ToggleFileExplorerIntent{})
+	}))
 }
 
 // optBool reads a boolean field from the single table argument at
