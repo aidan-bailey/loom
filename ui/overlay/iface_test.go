@@ -16,6 +16,7 @@ var (
 	_ Overlay = (*TextOverlay)(nil)
 	_ Overlay = (*TextInputOverlay)(nil)
 	_ Overlay = (*WorkspacePicker)(nil)
+	_ Overlay = (*FileExplorerOverlay)(nil)
 )
 
 func TestConfirmationTaskRunSyncBeforeAsync(t *testing.T) {
