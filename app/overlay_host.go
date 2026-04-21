@@ -20,6 +20,7 @@ const (
 	overlayConfirmation
 	overlayWorkspacePicker
 	overlayWorkspacePickerStartup
+	overlayFileExplorer
 )
 
 // setOverlay installs o as the active overlay and records its kind.
@@ -74,6 +75,15 @@ func (m *home) confirmation() *overlay.ConfirmationOverlay {
 // startup variants.
 func (m *home) workspacePicker() *overlay.WorkspacePicker {
 	if o, ok := m.activeOverlay.(*overlay.WorkspacePicker); ok {
+		return o
+	}
+	return nil
+}
+
+// fileExplorer returns the active FileExplorerOverlay, or nil when a
+// different overlay is active.
+func (m *home) fileExplorer() *overlay.FileExplorerOverlay {
+	if o, ok := m.activeOverlay.(*overlay.FileExplorerOverlay); ok {
 		return o
 	}
 	return nil

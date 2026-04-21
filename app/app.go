@@ -111,6 +111,11 @@ const (
 	// stateInlineAttach is the state when keystrokes are forwarded to the tmux session
 	// while the UI remains visible.
 	stateInlineAttach
+	// stateFileExplorer is the state when the file explorer overlay
+	// replaces the right pane. Keys route to the overlay until it
+	// closes (Esc) or the user picks a file (Enter -> $EDITOR via
+	// tea.ExecProcess).
+	stateFileExplorer
 )
 
 // workspaceSlot bundles per-workspace state so multiple workspaces can be
@@ -498,10 +503,17 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.agentBottomY = m.tabBar.Height() + 1 + agentContentHeight
 
 	if m.activeOverlay != nil {
-		m.activeOverlay.SetSize(
-			int(float32(msg.Width)*ui.OverlayWidthPercent),
-			int(float32(msg.Height)*ui.OverlayHeightPercent),
-		)
+		if m.activeOverlayKind == overlayFileExplorer {
+			// File explorer replaces the right pane wholesale, so it
+			// wants pane-width/content-height rather than the centered
+			// overlay percentages used by the other modals.
+			m.activeOverlay.SetSize(paneWidth, contentHeight)
+		} else {
+			m.activeOverlay.SetSize(
+				int(float32(msg.Width)*ui.OverlayWidthPercent),
+				int(float32(msg.Height)*ui.OverlayHeightPercent),
+			)
+		}
 	}
 
 	agentWidth, agentHeight := m.splitPane.GetAgentSize()
@@ -793,6 +805,16 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.ExecProcess(ts.FullScreenAttachCmd(), func(err error) tea.Msg {
 			return attachDoneMsg{instance: inst, err: err}
 		})
+	case editorDoneMsg:
+		// tea.ExecProcess has returned from $EDITOR. The overlay already
+		// closed at key-dispatch time; force a window-size refresh so the
+		// panes repaint cleanly after the editor released the tty.
+		var cmds []tea.Cmd
+		if msg.err != nil {
+			cmds = append(cmds, m.handleError(msg.err))
+		}
+		cmds = append(cmds, tea.WindowSize(), m.instanceChanged())
+		return m, tea.Batch(cmds...)
 	case attachDoneMsg:
 		// tea.ExecProcess has restored the terminal. Rebuild the preview PTYs
 		// so live capture resumes. Errors here are logged — the next metadata
@@ -929,7 +951,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer {
 		return nil, false
 	}
 	// If it maps to a built-in binding, highlight the corresponding menu
@@ -973,6 +995,8 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return handleStateWorkspaceKey(m, msg)
 	case stateConfirm:
 		return handleStateConfirmKey(m, msg)
+	case stateFileExplorer:
+		return handleStateFileExplorerKey(m, msg)
 	default:
 		return handleStateDefaultKey(m, msg)
 	}
@@ -1612,7 +1636,16 @@ func (m *home) slotNames() []string {
 // View implements tea.Model.
 func (m *home) View() string {
 	listView := m.list.String()
-	rightContent := m.splitPane.String()
+	// The file explorer is the only overlay that wholly replaces the
+	// right pane rather than floating on top of it. Keeping the list
+	// visible is the whole point of this state, so it renders
+	// inline via JoinHorizontal instead of via PlaceOverlay below.
+	var rightContent string
+	if m.state == stateFileExplorer && m.activeOverlay != nil {
+		rightContent = m.activeOverlay.View()
+	} else {
+		rightContent = m.splitPane.String()
+	}
 	listAndPreview := lipgloss.JoinHorizontal(lipgloss.Top, listView, rightContent)
 
 	sections := []string{}

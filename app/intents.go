@@ -6,13 +6,24 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/files"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
+	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// editorDoneMsg is fired after tea.ExecProcess returns from the
+// $EDITOR invocation launched by the file-explorer Enter path. The
+// error, if any, routes to handleError so the user sees a spawn
+// failure (missing binary, non-zero exit) rather than silent loss.
+type editorDoneMsg struct{ err error }
 
 // intents.go owns the app-side handlers that back each script
 // Intent. Every function here is called from handleScriptIntent in
@@ -401,4 +412,80 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 	m.setOverlay(overlay.NewWorkspacePicker(registry.Workspaces, activeNames), overlayWorkspacePicker)
 	m.state = stateWorkspace
 	return m, nil
+}
+
+// -- File explorer --
+
+// runToggleFileExplorer opens the file-explorer overlay scoped to the
+// selected instance's worktree (or the workspace repo path when the
+// selection is a workspace terminal or missing). The overlay replaces
+// the right pane inline so the sessions list stays visible.
+func runToggleFileExplorer(m *home) (tea.Model, tea.Cmd) {
+	selected := m.list.GetSelectedInstance()
+
+	var root string
+	switch {
+	case selected == nil:
+		root = m.repoPath()
+	case selected.IsWorkspaceTerminal:
+		root = selected.GetWorktreePath()
+		if root == "" {
+			root = m.repoPath()
+		}
+	default:
+		root = selected.GetWorktreePath()
+		if root == "" {
+			return m, m.handleError(fmt.Errorf("instance not ready"))
+		}
+	}
+	if root == "" {
+		return m, m.handleError(fmt.Errorf("no repository to explore"))
+	}
+
+	result, err := files.List(root)
+	if err != nil {
+		return m, m.handleError(fmt.Errorf("list files: %w", err))
+	}
+
+	ov := overlay.NewFileExplorerOverlay(root, result.Paths, openInEditorCmd)
+	m.setOverlay(ov, overlayFileExplorer)
+	m.state = stateFileExplorer
+	return m, tea.WindowSize()
+}
+
+// openInEditorCmd launches $EDITOR on absPath via tea.ExecProcess so
+// the editor owns the terminal for the duration of the edit.
+// Whitespace in the EDITOR value splits flag arguments (e.g.
+// "code --wait"); paths with embedded spaces aren't supported — the
+// workaround is a symlink. Errors return through editorDoneMsg.
+func openInEditorCmd(absPath string) tea.Cmd {
+	parts := strings.Fields(resolveEditor())
+	if len(parts) == 0 {
+		return func() tea.Msg {
+			return editorDoneMsg{err: fmt.Errorf("no editor configured")}
+		}
+	}
+	args := append(parts[1:], absPath)
+	c := exec.Command(parts[0], args...)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return editorDoneMsg{err: err}
+	})
+}
+
+// resolveEditor picks the editor binary from the usual env vars.
+// VISUAL wins over EDITOR because by tradition VISUAL names a
+// full-screen editor while EDITOR can be a line editor (ed, ex);
+// when Loom suspends the TUI it always has a full-screen terminal to
+// hand over. Falls back to notepad on Windows and vi elsewhere.
+func resolveEditor() string {
+	if v := os.Getenv("VISUAL"); v != "" {
+		return v
+	}
+	if v := os.Getenv("EDITOR"); v != "" {
+		return v
+	}
+	if runtime.GOOS == "windows" {
+		return "notepad"
+	}
+	return "vi"
 }

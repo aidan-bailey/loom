@@ -446,6 +446,8 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 		} else {
 			_, cmd = runQuickInputAgent(m)
 		}
+	case script.ToggleFileExplorerIntent:
+		_, cmd = runToggleFileExplorer(m)
 	}
 	resumeCmd := func() tea.Msg { return scriptResumeMsg{id: p.id, trace: p.trace} }
 	if cmd == nil {
