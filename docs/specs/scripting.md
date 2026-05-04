@@ -447,11 +447,12 @@ Script log output via `cs.log` / `ctx:log` is buffered and drained asynchronousl
 
 ## Example Scripts
 
-Three reference scripts ship in `script/testdata/`. Copy to `~/.loom/scripts/` to activate.
+Reference scripts ship in `script/testdata/`. Copy to `~/.loom/scripts/` to activate.
 
 - `push_message.lua` — push the selected branch with a timestamped commit.
 - `resume_all.lua` — resume every paused session.
 - `spawn_instance.lua` — create a new session with a prefilled prompt.
+- `open_emacs.lua` — bind `e` to launch emacs on the selected session's worktree as a detached process.
 
 ## Key Source Files
 
