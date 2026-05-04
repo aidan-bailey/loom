@@ -97,4 +97,13 @@ type Host interface {
 	ListPageDown()
 	ListTop()
 	ListBottom()
+
+	// SendTerminalKeys writes text followed by Enter to the named
+	// instance's cached terminal-pane tmux session. The terminal pane
+	// caches sessions per instance title, so this addresses the
+	// instance-specific session even if a different instance is
+	// currently displayed. Returns an error if no session is cached
+	// (e.g. the user has not yet visited that instance's terminal pane,
+	// or the instance is paused).
+	SendTerminalKeys(inst *session.Instance, text string) error
 }

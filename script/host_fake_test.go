@@ -20,6 +20,7 @@ type fakeHost struct {
 	notices         []string
 	enqueued        []Intent
 	enqueuedIDs     []IntentID
+	terminalKeys    []terminalKeysCall
 }
 
 func (f *fakeHost) SelectedInstance() *session.Instance   { return f.selected }
@@ -71,3 +72,16 @@ func (f *fakeHost) ListPageUp()             {}
 func (f *fakeHost) ListPageDown()           {}
 func (f *fakeHost) ListTop()                {}
 func (f *fakeHost) ListBottom()             {}
+
+// terminalKeysCall records a SendTerminalKeys invocation so tests can
+// assert the right instance and text reached the host without standing
+// up a real terminal pane.
+type terminalKeysCall struct {
+	inst *session.Instance
+	text string
+}
+
+func (f *fakeHost) SendTerminalKeys(inst *session.Instance, text string) error {
+	f.terminalKeys = append(f.terminalKeys, terminalKeysCall{inst: inst, text: text})
+	return nil
+}

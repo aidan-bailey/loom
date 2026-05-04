@@ -11,10 +11,27 @@ const instanceTypeName = "cs.instance"
 
 // registerInstanceType creates the metatable exposed as the type for
 // *session.Instance userdata values. Scripts access it through the
-// methods defined below — no direct field access.
-func registerInstanceType(L *lua.LState) {
+// methods defined below — no direct field access. Methods that need
+// the active Host (e.g. send_terminal_keys, which targets the
+// UI-owned terminal pane rather than the instance's own tmux session)
+// are added as closures over e so they can read e.curHost at dispatch
+// time.
+func registerInstanceType(L *lua.LState, e *Engine) {
 	mt := L.NewTypeMetatable(instanceTypeName)
-	L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), instanceMethods))
+	idx := L.SetFuncs(L.NewTable(), instanceMethods)
+	idx.RawSetString("send_terminal_keys", L.NewFunction(func(L *lua.LState) int {
+		inst := checkInstance(L, 1)
+		text := L.CheckString(2)
+		if e.curHost == nil {
+			L.RaiseError("send_terminal_keys: no host context")
+			return 0
+		}
+		if err := e.curHost.SendTerminalKeys(inst, text); err != nil {
+			L.RaiseError("send_terminal_keys: %s", err.Error())
+		}
+		return 0
+	}))
+	L.SetField(mt, "__index", idx)
 	L.SetField(mt, "__tostring", L.NewFunction(instanceToString))
 }
 

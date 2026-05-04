@@ -237,6 +237,14 @@ func (s *scriptHost) ListTop() { s.m.list.Top() }
 // ListBottom implements script.Host.
 func (s *scriptHost) ListBottom() { s.m.list.Bottom() }
 
+// SendTerminalKeys implements script.Host.
+func (s *scriptHost) SendTerminalKeys(inst *session.Instance, text string) error {
+	if inst == nil {
+		return fmt.Errorf("send_terminal_keys: nil instance")
+	}
+	return s.m.splitPane.SendTerminalKeysToInstance(inst.Title, text)
+}
+
 // pendingIntent ties a caller-provided intent to the id the script
 // awaits on. Task 10 drains this into scriptDoneMsg. trace records the
 // dispatch that produced this intent so handleScriptIntent can log

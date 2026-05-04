@@ -245,6 +245,35 @@ func (t *TerminalPane) SendPrompt(text string) error {
 	return nil
 }
 
+// SendKeysToInstance sends text followed by Enter to the cached terminal
+// session for the named instance, regardless of which instance is currently
+// displayed. Returns an error if no session is cached for that title or the
+// session has died — callers (typically scripts) should surface the error
+// rather than silently no-op'ing so the user knows the keystroke didn't land.
+func (t *TerminalPane) SendKeysToInstance(title, text string) error {
+	t.mu.Lock()
+	s, ok := t.sessions[title]
+	if !ok || s.tmuxSession == nil {
+		t.mu.Unlock()
+		return fmt.Errorf("no terminal session for %s", title)
+	}
+	if !s.tmuxSession.DoesSessionExist() {
+		t.mu.Unlock()
+		return fmt.Errorf("terminal session for %s no longer exists", title)
+	}
+	ts := s.tmuxSession
+	t.mu.Unlock()
+
+	if err := ts.SendKeys(text); err != nil {
+		return fmt.Errorf("error sending keys to terminal: %w", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := ts.TapEnter(); err != nil {
+		return fmt.Errorf("error sending enter to terminal: %w", err)
+	}
+	return nil
+}
+
 // SendKeysRaw writes raw bytes to the current terminal tmux PTY.
 func (t *TerminalPane) SendKeysRaw(b []byte) error {
 	t.mu.Lock()

@@ -374,6 +374,13 @@ func (s *SplitPane) SendTerminalPrompt(text string) error {
 	return s.terminal.SendPrompt(text)
 }
 
+// SendTerminalKeysToInstance sends text followed by Enter to the named
+// instance's cached terminal session. Unlike SendTerminalPrompt, this does
+// not require the instance to be currently displayed.
+func (s *SplitPane) SendTerminalKeysToInstance(title, text string) error {
+	return s.terminal.SendKeysToInstance(title, text)
+}
+
 // SendTerminalKeysRaw writes raw bytes to the terminal pane's tmux PTY.
 func (s *SplitPane) SendTerminalKeysRaw(b []byte) error {
 	return s.terminal.SendKeysRaw(b)

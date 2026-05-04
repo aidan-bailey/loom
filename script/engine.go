@@ -95,7 +95,7 @@ func NewEngine(reserved map[string]bool) *Engine {
 		coroutines: map[IntentID]coroutineSlot{},
 	}
 
-	registerInstanceType(L)
+	registerInstanceType(L, e)
 	registerWorktreeType(L)
 	registerCtxType(L)
 	installAPI(L, e)
