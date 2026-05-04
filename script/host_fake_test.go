@@ -65,6 +65,8 @@ func (f *fakeHost) ScrollTerminalLineUp()   {}
 func (f *fakeHost) ScrollTerminalLineDown() {}
 func (f *fakeHost) ScrollTerminalPageUp()   {}
 func (f *fakeHost) ScrollTerminalPageDown() {}
+func (f *fakeHost) ResetAgentScroll()       {}
+func (f *fakeHost) ResetTerminalScroll()    {}
 func (f *fakeHost) ListPageUp()             {}
 func (f *fakeHost) ListPageDown()           {}
 func (f *fakeHost) ListTop()                {}

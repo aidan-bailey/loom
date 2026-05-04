@@ -131,6 +131,23 @@ func installSyncActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 		return 0
 	}))
 
+	// Pane-explicit scroll-mode reset — drops the named pane back to the
+	// live tail. No-op when the pane isn't scrolled. Used by the default
+	// `a`/`t` bindings to wake a scrolled-back pane before opening the
+	// quick-input bar.
+	actions.RawSetString("reset_agent_scroll", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ResetAgentScroll()
+		}
+		return 0
+	}))
+	actions.RawSetString("reset_terminal_scroll", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ResetTerminalScroll()
+		}
+		return 0
+	}))
+
 	// List jump actions.
 	actions.RawSetString("list_page_up", L.NewFunction(func(L *lua.LState) int {
 		if e.curHost != nil {

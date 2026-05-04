@@ -86,6 +86,12 @@ type Host interface {
 	ScrollTerminalPageUp()
 	ScrollTerminalPageDown()
 
+	// Pane-explicit scroll-mode reset — drops the named pane back to
+	// the live tail. No-op when the pane isn't scrolled. Used to wake
+	// a scrolled-back pane before opening the quick-input bar.
+	ResetAgentScroll()
+	ResetTerminalScroll()
+
 	// List navigation primitives — selection jumps.
 	ListPageUp()
 	ListPageDown()

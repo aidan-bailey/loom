@@ -211,6 +211,20 @@ func (s *scriptHost) ScrollTerminalPageUp() { s.m.splitPane.PageTerminalUp() }
 // ScrollTerminalPageDown implements script.Host.
 func (s *scriptHost) ScrollTerminalPageDown() { s.m.splitPane.PageTerminalDown() }
 
+// ResetAgentScroll implements script.Host. ResetAgentToNormalMode is
+// nil/Paused-instance safe (preview.go:325) and idempotent — no-op when
+// the pane is not scrolled. Errors are surfaced through the same
+// info-log path as the Esc handler in state_default.go.
+func (s *scriptHost) ResetAgentScroll() {
+	selected := s.m.list.GetSelectedInstance()
+	if err := s.m.splitPane.ResetAgentToNormalMode(selected); err != nil {
+		log.For("ui").Info("scripthost.reset_agent_scroll_failed", "err", err)
+	}
+}
+
+// ResetTerminalScroll implements script.Host.
+func (s *scriptHost) ResetTerminalScroll() { s.m.splitPane.ResetTerminalToNormalMode() }
+
 // ListPageUp implements script.Host.
 func (s *scriptHost) ListPageUp() { s.m.list.PageUp() }
 
