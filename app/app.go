@@ -1439,7 +1439,11 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 }
 
 // deactivateWorkspace saves and removes a workspace slot by name.
-func (m *home) deactivateWorkspace(name string) {
+// Returns an error if SaveInstances fails; in that case the slot is
+// kept in memory so the user can retry rather than losing access to
+// unpersisted session state. This matches handleQuit's policy that
+// silent data loss on slot teardown is worse than a sticky tab.
+func (m *home) deactivateWorkspace(name string) error {
 	idx := -1
 	for i, slot := range m.slots {
 		if slot.wsCtx.Name == name {
@@ -1448,11 +1452,14 @@ func (m *home) deactivateWorkspace(name string) {
 		}
 	}
 	if idx == -1 {
-		return
+		return nil
 	}
 
 	slot := m.slots[idx]
-	_ = slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances()))
+	if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
+		log.For("app").Error("workspace.save_failed", "name", name, "err", err)
+		return fmt.Errorf("failed to save workspace %s: %w", name, err)
+	}
 
 	m.slots = append(m.slots[:idx], m.slots[idx+1:]...)
 
@@ -1461,6 +1468,7 @@ func (m *home) deactivateWorkspace(name string) {
 	} else if m.focusedSlot > idx {
 		m.focusedSlot--
 	}
+	return nil
 }
 
 // saveCurrentSlot writes the home's active UI fields back into the focused slot.
@@ -1532,9 +1540,14 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	}
 
 	// 2. Deactivate slots not in desired (reverse order to keep indices stable).
+	// Slots whose save fails stay in m.slots; the user is told via handleError below.
+	var deactivationErrors []string
 	for i := len(m.slots) - 1; i >= 0; i-- {
 		if !desiredNames[m.slots[i].wsCtx.Name] {
-			m.deactivateWorkspace(m.slots[i].wsCtx.Name)
+			if err := m.deactivateWorkspace(m.slots[i].wsCtx.Name); err != nil {
+				deactivationErrors = append(deactivationErrors,
+					fmt.Sprintf("%s: %v", m.slots[i].wsCtx.Name, err))
+			}
 		}
 	}
 
@@ -1549,11 +1562,19 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	m.saveOpenWorkspaces()
 
-	// 4. Surface activation errors to the user.
+	// 4. Surface activation/deactivation errors to the user.
+	var msgs []string
 	if len(activationErrors) > 0 {
+		msgs = append(msgs, fmt.Sprintf("failed to activate: %s",
+			strings.Join(activationErrors, "; ")))
+	}
+	if len(deactivationErrors) > 0 {
+		msgs = append(msgs, fmt.Sprintf("failed to deactivate: %s",
+			strings.Join(deactivationErrors, "; ")))
+	}
+	if len(msgs) > 0 {
 		return tea.Batch(tea.WindowSize(),
-			m.handleError(fmt.Errorf("failed to activate: %s",
-				strings.Join(activationErrors, "; "))))
+			m.handleError(fmt.Errorf("%s", strings.Join(msgs, "; "))))
 	}
 	return tea.WindowSize()
 }

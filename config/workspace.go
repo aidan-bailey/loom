@@ -249,12 +249,28 @@ func (r *WorkspaceRegistry) Rename(oldName, newName string) error {
 
 // UpdateLastUsed sets the last used workspace and saves the registry.
 // Returns an error if no workspace with the given name exists.
+//
+// The on-disk registry is reloaded before save so concurrent writers
+// (a `loom workspace add` invocation in another shell, or a second
+// running TUI) are not clobbered by this process's stale snapshot of
+// Workspaces. The receiver's in-memory state is refreshed to match
+// the merged result.
 func (r *WorkspaceRegistry) UpdateLastUsed(name string) error {
-	if r.Get(name) == nil {
+	fresh, err := LoadWorkspaceRegistry()
+	if err != nil {
+		return err
+	}
+	if fresh.Get(name) == nil {
 		return fmt.Errorf("workspace %q not found", name)
 	}
-	r.LastUsed = name
-	return SaveWorkspaceRegistry(r)
+	fresh.LastUsed = name
+	if err := SaveWorkspaceRegistry(fresh); err != nil {
+		return err
+	}
+	r.Workspaces = fresh.Workspaces
+	r.LastUsed = fresh.LastUsed
+	r.OpenWorkspaces = fresh.OpenWorkspaces
+	return nil
 }
 
 // WorkspaceConfigDir returns the .loom directory inside the workspace repo.
@@ -265,15 +281,31 @@ func WorkspaceConfigDir(ws *Workspace) string {
 // SetOpenWorkspaces replaces the ordered list of open workspace names and
 // persists the registry. Unknown names are silently dropped so the stored list
 // always references workspaces that still exist.
+//
+// The on-disk registry is reloaded before save so concurrent writers
+// (a `loom workspace add` invocation in another shell, or a second
+// running TUI) are not clobbered by this process's stale snapshot of
+// Workspaces. The receiver's in-memory state is refreshed to match
+// the merged result.
 func (r *WorkspaceRegistry) SetOpenWorkspaces(names []string) error {
+	fresh, err := LoadWorkspaceRegistry()
+	if err != nil {
+		return err
+	}
 	filtered := make([]string, 0, len(names))
 	for _, n := range names {
-		if r.Get(n) != nil {
+		if fresh.Get(n) != nil {
 			filtered = append(filtered, n)
 		}
 	}
-	r.OpenWorkspaces = filtered
-	return SaveWorkspaceRegistry(r)
+	fresh.OpenWorkspaces = filtered
+	if err := SaveWorkspaceRegistry(fresh); err != nil {
+		return err
+	}
+	r.Workspaces = fresh.Workspaces
+	r.LastUsed = fresh.LastUsed
+	r.OpenWorkspaces = fresh.OpenWorkspaces
+	return nil
 }
 
 // GetOpenWorkspaces returns the workspaces named in OpenWorkspaces, in order.

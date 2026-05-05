@@ -276,6 +276,78 @@ func TestGetOpenWorkspaces(t *testing.T) {
 	assert.Equal(t, "alpha", open[1].Name)
 }
 
+// TestSetOpenWorkspacesPreservesExternalChanges guards against the
+// stale-write bug where the running TUI's cached *WorkspaceRegistry
+// (loaded once at startup) would overwrite Workspaces additions made
+// by another process (e.g. a `loom workspace add` invocation in
+// another shell, or a second TUI). SetOpenWorkspaces is owned by the
+// running TUI, but it must not clobber the shared Workspaces list.
+func TestSetOpenWorkspacesPreservesExternalChanges(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	stale := &WorkspaceRegistry{
+		Workspaces: []Workspace{
+			{Name: "alpha", Path: "/a"},
+			{Name: "beta", Path: "/b"},
+		},
+	}
+	require.NoError(t, SaveWorkspaceRegistry(stale))
+
+	external := &WorkspaceRegistry{
+		Workspaces: []Workspace{
+			{Name: "alpha", Path: "/a"},
+			{Name: "beta", Path: "/b"},
+			{Name: "gamma", Path: "/g"},
+		},
+	}
+	require.NoError(t, SaveWorkspaceRegistry(external))
+
+	require.NoError(t, stale.SetOpenWorkspaces([]string{"alpha", "gamma"}))
+
+	loaded, err := LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Len(t, loaded.Workspaces, 3, "external workspace addition must survive SetOpenWorkspaces")
+	names := make([]string, len(loaded.Workspaces))
+	for i, ws := range loaded.Workspaces {
+		names[i] = ws.Name
+	}
+	assert.Contains(t, names, "gamma", "externally-added workspace must not be clobbered")
+	assert.Equal(t, []string{"alpha", "gamma"}, loaded.OpenWorkspaces)
+	assert.Equal(t, []string{"alpha", "gamma"}, stale.OpenWorkspaces, "in-memory OpenWorkspaces must reflect what was saved")
+}
+
+// TestUpdateLastUsedPreservesExternalChanges guards the same stale-write
+// hazard for UpdateLastUsed.
+func TestUpdateLastUsedPreservesExternalChanges(t *testing.T) {
+	tempHome := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tempHome)
+	defer os.Setenv("HOME", originalHome)
+
+	stale := &WorkspaceRegistry{
+		Workspaces: []Workspace{{Name: "alpha", Path: "/a"}},
+	}
+	require.NoError(t, SaveWorkspaceRegistry(stale))
+
+	external := &WorkspaceRegistry{
+		Workspaces: []Workspace{
+			{Name: "alpha", Path: "/a"},
+			{Name: "gamma", Path: "/g"},
+		},
+	}
+	require.NoError(t, SaveWorkspaceRegistry(external))
+
+	require.NoError(t, stale.UpdateLastUsed("gamma"))
+
+	loaded, err := LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Len(t, loaded.Workspaces, 2, "external workspace must survive UpdateLastUsed")
+	assert.Equal(t, "gamma", loaded.LastUsed)
+}
+
 func TestRemovePropagatesToOpenWorkspaces(t *testing.T) {
 	tempHome := t.TempDir()
 	originalHome := os.Getenv("HOME")
