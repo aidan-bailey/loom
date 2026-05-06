@@ -21,6 +21,7 @@ const (
 	overlayWorkspacePicker
 	overlayWorkspacePickerStartup
 	overlayFileExplorer
+	overlayOrphanRecovery
 )
 
 // setOverlay installs o as the active overlay and records its kind.
@@ -84,6 +85,16 @@ func (m *home) workspacePicker() *overlay.WorkspacePicker {
 // different overlay is active.
 func (m *home) fileExplorer() *overlay.FileExplorerOverlay {
 	if o, ok := m.activeOverlay.(*overlay.FileExplorerOverlay); ok {
+		return o
+	}
+	return nil
+}
+
+// orphanRecovery returns the active OrphanRecoveryPicker, or nil when
+// a different overlay is active. The startup orphan-recovery flow uses
+// this to read the user's selection at commit time.
+func (m *home) orphanRecovery() *overlay.OrphanRecoveryPicker {
+	if o, ok := m.activeOverlay.(*overlay.OrphanRecoveryPicker); ok {
 		return o
 	}
 	return nil
