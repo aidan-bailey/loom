@@ -914,11 +914,41 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 		}
 		m.activeCtx = config.WorkspaceContextFor(ws)
-		m.loadSlot(0)
-		m.updateTabBarStatuses()
+
+		// Newly-registered workspaces commonly arrive with on-disk
+		// worktrees but no state.json entries — that's the whole
+		// reason the user is registering: a previous loom session
+		// lost its state. Run orphan discovery for the just-added
+		// slot so the recovery overlay gets one shot at surfacing
+		// them. Skipping this here would force the user to quit,
+		// add the workspace to open_workspaces manually, and
+		// relaunch — defeating the point of the register-on-startup
+		// flow.
+		cmdExec := cmd2.MakeExecutor()
+		if len(m.slots) > 0 {
+			newSlot := m.slots[len(m.slots)-1]
+			m.recordOrphans(newSlot.wsCtx.ConfigDir, newSlot.list.GetInstances(), cmdExec)
+		}
+
 		if err := m.registry.UpdateLastUsed(ws.Name); err != nil {
 			log.For("app").Debug("registry.update_last_used_failed", "workspace", ws.Name, "err", err)
 		}
+
+		// Focus the just-registered slot so the user sees its
+		// instances immediately. activateWorkspace appends to the
+		// end, so the new slot is at len-1 (not 0 — the prior
+		// loadSlot(0) would have surfaced an unrelated tab).
+		m.focusedSlot = len(m.slots) - 1
+		m.loadSlot(m.focusedSlot)
+		m.updateTabBarStatuses()
+
+		// If discovery turned up anything, preempt the rest of the
+		// startup chain with the recovery overlay.
+		if len(m.pendingOrphans) > 0 {
+			m.setOverlay(overlay.NewOrphanRecoveryPicker(m.pendingOrphans), overlayOrphanRecovery)
+			m.state = stateOrphanRecovery
+		}
+
 		return m, tea.WindowSize()
 	case instanceStartedMsg:
 		// Select the instance that just started (or failed)
