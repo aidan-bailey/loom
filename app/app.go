@@ -1502,8 +1502,29 @@ func (m *home) loadSlot(idx int) {
 // activating and deactivating workspaces as needed.
 // Activates new workspaces first so that if activation fails, the old
 // workspace is still available.
+//
+// Global-mode persistence: when entering this function with len(m.slots)
+// == 0, m.list and m.storage are pointing at the global ~/.loom state.
+// loadSlot would otherwise overwrite both without saving, dropping any
+// in-flight changes the user hadn't quit-flushed yet. Persist before the
+// transition so the reverse direction (enterGlobalMode) reads back what
+// the user was just looking at.
 func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
-	m.saveCurrentSlot()
+	if len(m.slots) == 0 {
+		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
+			return m.handleError(fmt.Errorf("failed to save global state before workspace transition: %w", err))
+		}
+	} else {
+		m.saveCurrentSlot()
+	}
+
+	// Empty desired = explicit return to global mode (e.g. user picked
+	// the Global row in the mid-session picker). Handled by a dedicated
+	// helper because the inverse transition needs to reconstruct global
+	// storage and clear OpenWorkspaces from the registry.
+	if len(desired) == 0 {
+		return m.enterGlobalMode()
+	}
 
 	desiredNames := make(map[string]bool, len(desired))
 	for _, ws := range desired {
@@ -1549,6 +1570,73 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 			m.handleError(fmt.Errorf("failed to activate: %s",
 				strings.Join(activationErrors, "; "))))
 	}
+	return tea.WindowSize()
+}
+
+// enterGlobalMode transitions from workspace-tab mode back to global
+// (no-workspace) mode. Reconstructs the global storage/state/list from
+// scratch via the same path as newHome — caching the originals would
+// require shadow fields on home for every value loadSlot reassigns.
+//
+// Tmux note: deactivateWorkspace doesn't kill workspace-tab tmux
+// sessions, and global instances live in a tmux-name namespace disjoint
+// from any tab's, so calling LoadAndReconcile here cannot double-attach
+// PTYs that are already attached elsewhere — the safety constraint
+// documented at the classic-mode-load comment higher up doesn't apply.
+func (m *home) enterGlobalMode() tea.Cmd {
+	// Deactivate every workspace tab. Each slot persists its own
+	// instances via deactivateWorkspace before being dropped.
+	for i := len(m.slots) - 1; i >= 0; i-- {
+		m.deactivateWorkspace(m.slots[i].wsCtx.Name)
+	}
+
+	// Reconstruct global storage. cfgDir="" is interpreted as ~/.loom
+	// by config.LoadStateFrom / session.NewStorage — same as newHome.
+	appState := config.LoadStateFrom("")
+	appConfig := config.LoadConfigFrom("")
+	storage, err := session.NewStorage(appState, "")
+	if err != nil {
+		return m.handleError(fmt.Errorf("failed to construct global storage: %w", err))
+	}
+
+	cmdExec := cmd2.MakeExecutor()
+	instances, err := storage.LoadAndReconcile(cmdExec)
+	if err != nil {
+		log.For("app").Error("global_load_reconcile_failed", "err", err)
+	}
+
+	m.storage = storage
+	m.appState = appState
+	m.appConfig = appConfig
+	m.activeCtx = nil
+
+	m.list = ui.NewList(&m.spinner, m.autoYes)
+	for _, inst := range instances {
+		m.list.AddInstance(inst)()
+		if m.autoYes {
+			inst.AutoYes = true
+		}
+	}
+
+	// Clear registry's open-tab list so the next launch lands in
+	// global mode rather than auto-restoring tabs the user just closed.
+	if m.registry != nil {
+		if err := m.registry.SetOpenWorkspaces(nil); err != nil {
+			log.For("app").Warn("clear_open_workspaces_failed", "err", err)
+		}
+	}
+
+	m.tabBar.SetWorkspaces(nil, 0)
+
+	// Resize components for the now-zero-height tab bar.
+	if m.lastWidth > 0 && m.lastHeight > 0 {
+		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
+		paneWidth := m.lastWidth - listWidth
+		contentHeight := m.lastHeight - m.tabBar.Height() - 2
+		m.list.SetSize(listWidth, contentHeight)
+		m.splitPane.SetSize(paneWidth, contentHeight)
+	}
+
 	return tea.WindowSize()
 }
 

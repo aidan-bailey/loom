@@ -409,7 +409,10 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 	for _, slot := range m.slots {
 		activeNames[slot.wsCtx.Name] = true
 	}
-	m.setOverlay(overlay.NewWorkspacePicker(registry.Workspaces, activeNames), overlayWorkspacePicker)
+	// allowGlobal=true gives the user a single-keystroke return to global
+	// mode without quitting. Required to round-trip the global ↔
+	// workspace transition that applyWorkspaceToggle now handles.
+	m.setOverlay(overlay.NewWorkspacePicker(registry.Workspaces, activeNames, true), overlayWorkspacePicker)
 	m.state = stateWorkspace
 	return m, nil
 }

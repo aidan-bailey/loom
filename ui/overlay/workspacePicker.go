@@ -11,6 +11,9 @@ import (
 
 // WorkspacePicker is an overlay that lets the user toggle active workspaces.
 // In startup mode, it acts as a single-select picker with a "Global" option.
+// In mid-session mode, it can optionally surface a "Global" row that
+// commits an empty active set, signaling a return to global (no-workspace)
+// mode.
 type WorkspacePicker struct {
 	workspaces []config.Workspace
 	cursor     int
@@ -18,23 +21,37 @@ type WorkspacePicker struct {
 	active     map[string]bool
 	// isStartup controls single-select behavior and adds a "Global" option.
 	isStartup bool
-	// totalItems is len(workspaces) or len(workspaces)+1 in startup mode (for Global).
+	// allowGlobal toggles the synthetic "Global" row in mid-session mode.
+	// In startup mode it's implied true (the row always renders) — this
+	// flag is consulted only when isStartup is false.
+	allowGlobal bool
+	// totalItems is len(workspaces) plus an optional trailing slot for
+	// the Global row (always present in startup mode, gated by
+	// allowGlobal in mid-session mode).
 	totalItems int
 }
 
 // NewWorkspacePicker creates a workspace picker overlay for toggling active workspaces.
 // activeNames is a set of workspace names that are currently active.
-func NewWorkspacePicker(workspaces []config.Workspace, activeNames map[string]bool) *WorkspacePicker {
+// When allowGlobal is true, a synthetic "Global (no workspace)" row is
+// appended; selecting it commits an empty active set so the caller can
+// transition the home model back to global mode.
+func NewWorkspacePicker(workspaces []config.Workspace, activeNames map[string]bool, allowGlobal bool) *WorkspacePicker {
 	active := make(map[string]bool, len(activeNames))
 	for k, v := range activeNames {
 		active[k] = v
 	}
+	totalItems := len(workspaces)
+	if allowGlobal {
+		totalItems++
+	}
 	return &WorkspacePicker{
-		workspaces: workspaces,
-		cursor:     0,
-		width:      50,
-		active:     active,
-		totalItems: len(workspaces),
+		workspaces:  workspaces,
+		cursor:      0,
+		width:       50,
+		active:      active,
+		allowGlobal: allowGlobal,
+		totalItems:  totalItems,
 	}
 }
 
@@ -49,6 +66,13 @@ func NewStartupWorkspacePicker(workspaces []config.Workspace) *WorkspacePicker {
 		isStartup:  true,
 		totalItems: len(workspaces) + 1, // +1 for Global
 	}
+}
+
+// hasGlobalRow reports whether the picker renders a Global row at index
+// len(workspaces). True for startup mode (always) and mid-session mode
+// when allowGlobal was passed at construction.
+func (w *WorkspacePicker) hasGlobalRow() bool {
+	return w.isStartup || w.allowGlobal
 }
 
 // HandleKeyPress processes navigation and toggle/select keys.
@@ -71,6 +95,19 @@ func (w *WorkspacePicker) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 		if w.cursor < len(w.workspaces) {
 			name := w.workspaces[w.cursor].Name
 			w.active[name] = !w.active[name]
+			return false, false
+		}
+		// Cursor is on the synthetic Global row (mid-session +
+		// allowGlobal). Selecting it always means "switch to global
+		// mode" — clear all toggles and commit. Toggling individual
+		// rows off first to leave a single workspace active and then
+		// committing via Esc would also work, but that takes N+1
+		// keystrokes; this branch makes Global a single-action choice.
+		if w.allowGlobal {
+			for k := range w.active {
+				w.active[k] = false
+			}
+			return true, false
 		}
 	case "esc", "q":
 		return true, false
@@ -173,14 +210,20 @@ func (w *WorkspacePicker) Render() string {
 		}
 	}
 
-	// Render "Global" option in startup mode.
-	if w.isStartup {
+	// Render "Global" option in startup mode (always) and in mid-session
+	// mode when allowGlobal was passed at construction.
+	if w.hasGlobalRow() {
 		globalIdx := len(w.workspaces)
 		cursor := "  "
 		if w.cursor == globalIdx {
 			cursor = "> "
 		}
-		line := fmt.Sprintf("%s  Global (default)", cursor)
+		var line string
+		if w.isStartup {
+			line = fmt.Sprintf("%s  Global (default)", cursor)
+		} else {
+			line = fmt.Sprintf("%s  Global (no workspace)", cursor)
+		}
 		if w.cursor == globalIdx {
 			content += selectedStyle.Render(line) + "\n"
 		} else {
