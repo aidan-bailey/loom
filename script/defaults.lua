@@ -34,9 +34,18 @@ cs.bind("alt+t",  function() cs.actions.fullscreen_attach_terminal() end, { help
 cs.bind("ctrl+a", function() cs.actions.inline_attach_agent() end,        { help = "attach agent" })
 cs.bind("ctrl+t", function() cs.actions.inline_attach_terminal() end,     { help = "attach terminal" })
 
--- Quick input
-cs.bind("a", function() cs.actions.quick_input_agent() end,    { help = "input to agent" })
-cs.bind("t", function() cs.actions.quick_input_terminal() end, { help = "input to terminal" })
+-- Quick input. The reset_*_scroll call is a no-op when the pane isn't
+-- scrolled; when it is, it drops the pane back to live tail before the
+-- deferred quick_input_* intent opens the bar — without it, the user
+-- would type into a bar overlaying scrolled-back history.
+cs.bind("a", function()
+  cs.actions.reset_agent_scroll()
+  cs.actions.quick_input_agent()
+end, { help = "input to agent" })
+cs.bind("t", function()
+  cs.actions.reset_terminal_scroll()
+  cs.actions.quick_input_terminal()
+end, { help = "input to terminal" })
 
 -- File explorer
 cs.bind("f", function() cs.actions.toggle_file_explorer() end, { help = "files" })

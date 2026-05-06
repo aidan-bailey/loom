@@ -211,6 +211,20 @@ func (s *scriptHost) ScrollTerminalPageUp() { s.m.splitPane.PageTerminalUp() }
 // ScrollTerminalPageDown implements script.Host.
 func (s *scriptHost) ScrollTerminalPageDown() { s.m.splitPane.PageTerminalDown() }
 
+// ResetAgentScroll implements script.Host. ResetAgentToNormalMode is
+// nil/Paused-instance safe (preview.go:325) and idempotent — no-op when
+// the pane is not scrolled. Errors are surfaced through the same
+// info-log path as the Esc handler in state_default.go.
+func (s *scriptHost) ResetAgentScroll() {
+	selected := s.m.list.GetSelectedInstance()
+	if err := s.m.splitPane.ResetAgentToNormalMode(selected); err != nil {
+		log.For("ui").Info("scripthost.reset_agent_scroll_failed", "err", err)
+	}
+}
+
+// ResetTerminalScroll implements script.Host.
+func (s *scriptHost) ResetTerminalScroll() { s.m.splitPane.ResetTerminalToNormalMode() }
+
 // ListPageUp implements script.Host.
 func (s *scriptHost) ListPageUp() { s.m.list.PageUp() }
 
@@ -222,6 +236,14 @@ func (s *scriptHost) ListTop() { s.m.list.Top() }
 
 // ListBottom implements script.Host.
 func (s *scriptHost) ListBottom() { s.m.list.Bottom() }
+
+// SendTerminalKeys implements script.Host.
+func (s *scriptHost) SendTerminalKeys(inst *session.Instance, text string) error {
+	if inst == nil {
+		return fmt.Errorf("send_terminal_keys: nil instance")
+	}
+	return s.m.splitPane.SendTerminalKeysToInstance(inst.Title, text)
+}
 
 // pendingIntent ties a caller-provided intent to the id the script
 // awaits on. Task 10 drains this into scriptDoneMsg. trace records the

@@ -79,17 +79,19 @@ func NewStorage(state config.InstanceStorage, configDir string) (*Storage, error
 	}, nil
 }
 
-// SaveInstances saves the list of instances to disk
+// SaveInstances saves the list of instances to disk.
+// Callers are responsible for filtering out instances that should not be
+// persisted (e.g. Ready-but-not-yet-configured, Deleting) via
+// persistableInstances at the call site. Filtering here on Instance.Started()
+// is unsafe because Kill() flips started=false early (before tmux/worktree
+// teardown), so a save during the kill window would silently drop the
+// instance from disk and cause DeleteInstance to fail with ErrInstanceNotFound.
 func (s *Storage) SaveInstances(instances []*Instance) error {
-	// Convert instances to InstanceData
-	data := make([]InstanceData, 0)
+	data := make([]InstanceData, 0, len(instances))
 	for _, instance := range instances {
-		if instance.Started() {
-			data = append(data, instance.ToInstanceData())
-		}
+		data = append(data, instance.ToInstanceData())
 	}
 
-	// Marshal to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal instances: %w", err)

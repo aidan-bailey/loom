@@ -269,8 +269,9 @@ Wraps `*session.Instance`. Obtained from `ctx:selected()`, `ctx:instances()`, `c
 | `inst:paused()` | bool | True while the worktree is torn down. |
 | `inst:diff_stats()` | {added, removed, content} \| nil | Diff stats. Nil if not yet computed. |
 | `inst:preview()` | string, err? | Tmux pane contents. Returns `(nil, errmsg)` on failure. |
-| `inst:send_keys(keys)` | void | Raw tmux `send-keys`. Raises on error. |
-| `inst:send_prompt(text)` | void | Send text followed by Enter. Raises on error. |
+| `inst:send_keys(keys)` | void | Raw tmux `send-keys` to the **agent** pane. Raises on error. |
+| `inst:send_terminal_keys(text)` | void | Send text followed by Enter to the instance's **terminal** pane (the bottom pane). Useful for launching out-of-TUI tools like `inst:send_terminal_keys("emacs " .. wt:path() .. " &")`. Raises if the terminal session is not cached (e.g. the instance was never visible) or has died. |
+| `inst:send_prompt(text)` | void | Send text followed by Enter to the agent pane. Raises on error. |
 | `inst:tap_enter()` | void | Send a single Enter keystroke. |
 | `inst:pause()` | void | Pause the session. Raises on error. |
 | `inst:resume()` | void | Resume a paused session. Raises on error. |
@@ -446,11 +447,12 @@ Script log output via `cs.log` / `ctx:log` is buffered and drained asynchronousl
 
 ## Example Scripts
 
-Three reference scripts ship in `script/testdata/`. Copy to `~/.loom/scripts/` to activate.
+Reference scripts ship in `script/testdata/`. Copy to `~/.loom/scripts/` to activate.
 
 - `push_message.lua` — push the selected branch with a timestamped commit.
 - `resume_all.lua` — resume every paused session.
 - `spawn_instance.lua` — create a new session with a prefilled prompt.
+- `open_emacs.lua` — bind `e` to launch emacs on the selected session's worktree as a detached process.
 
 ## Key Source Files
 

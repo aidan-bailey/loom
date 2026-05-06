@@ -346,6 +346,13 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 // -- Attach --
 
 func runInlineAttachAgent(m *home) (tea.Model, tea.Cmd) {
+	// If the pane is scrolled back, drop to live tail first — otherwise
+	// the user's keystrokes go to live tmux while they're still looking
+	// at scrolled-back history. ResetAgentToNormalMode is nil/Paused-safe
+	// (preview.go:325) and a no-op when not scrolling.
+	if err := m.splitPane.ResetAgentToNormalMode(m.list.GetSelectedInstance()); err != nil {
+		log.For("app").Info("inline_attach.reset_agent_failed", "err", err)
+	}
 	m.splitPane.SetFocusedPane(ui.FocusAgent)
 	m.splitPane.SetInlineAttach(true)
 	m.state = stateInlineAttach
@@ -354,6 +361,7 @@ func runInlineAttachAgent(m *home) (tea.Model, tea.Cmd) {
 }
 
 func runInlineAttachTerminal(m *home) (tea.Model, tea.Cmd) {
+	m.splitPane.ResetTerminalToNormalMode()
 	m.splitPane.SetFocusedPane(ui.FocusTerminal)
 	m.splitPane.SetInlineAttach(true)
 	m.state = stateInlineAttach

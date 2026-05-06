@@ -1,3 +1,18 @@
+## [0.1.2] - 2026-05-04
+
+### 🚀 Features
+
+- *(script,ui)* Add inst:send_terminal_keys lua method
+- *(script,app)* Wake panes from scroll mode on input/attach
+
+### 🐛 Bug Fixes
+
+- *(session,app)* Persist instances during kill window
+
+### 📚 Documentation
+
+- *(script)* Add open_emacs sample script
+
 ## [0.1.1] - 2026-04-22
 
 ### 🚀 Features

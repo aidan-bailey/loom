@@ -86,9 +86,24 @@ type Host interface {
 	ScrollTerminalPageUp()
 	ScrollTerminalPageDown()
 
+	// Pane-explicit scroll-mode reset — drops the named pane back to
+	// the live tail. No-op when the pane isn't scrolled. Used to wake
+	// a scrolled-back pane before opening the quick-input bar.
+	ResetAgentScroll()
+	ResetTerminalScroll()
+
 	// List navigation primitives — selection jumps.
 	ListPageUp()
 	ListPageDown()
 	ListTop()
 	ListBottom()
+
+	// SendTerminalKeys writes text followed by Enter to the named
+	// instance's cached terminal-pane tmux session. The terminal pane
+	// caches sessions per instance title, so this addresses the
+	// instance-specific session even if a different instance is
+	// currently displayed. Returns an error if no session is cached
+	// (e.g. the user has not yet visited that instance's terminal pane,
+	// or the instance is paused).
+	SendTerminalKeys(inst *session.Instance, text string) error
 }

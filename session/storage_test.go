@@ -69,6 +69,44 @@ func TestDeleteInstance_NotFound(t *testing.T) {
 	assert.Empty(t, mock.saved)
 }
 
+// TestSaveInstances_PersistsWhileKilling is the regression for the
+// op_failed op=delete race. Kill() flips Instance.started = false early,
+// before tmux/worktree teardown completes. A concurrent SaveInstances during
+// that window would previously drop the killing instance from disk (because
+// the old filter excluded !Started()), so DeleteInstance would then fail
+// with ErrInstanceNotFound. The fix is that SaveInstances must trust the
+// caller's list — the lifecycle filter belongs at the call site
+// (persistableInstances in app/app.go), which already excludes Deleting.
+func TestSaveInstances_PersistsWhileKilling(t *testing.T) {
+	mock := &trackingMockStorage{}
+	s, err := NewStorage(mock, "")
+	assert.NoError(t, err)
+
+	// Simulate the kill window: status=Deleting was set by preAction, then
+	// Kill() flipped started=false while tmux teardown is still running.
+	killing := &Instance{Title: "Killing", Status: Deleting, Program: "claude"}
+	killing.setStarted(false)
+
+	// Another instance is in normal Running state alongside it.
+	running := &Instance{Title: "Running", Status: Running, Program: "claude"}
+	running.setStarted(true)
+
+	err = s.SaveInstances([]*Instance{killing, running})
+	assert.NoError(t, err)
+
+	assert.Len(t, mock.saved, 1)
+	var persisted []InstanceData
+	assert.NoError(t, json.Unmarshal(mock.saved[0], &persisted))
+	assert.Len(t, persisted, 2, "both instances must reach disk; SaveInstances must not filter by started flag")
+
+	titles := map[string]bool{}
+	for _, d := range persisted {
+		titles[d.Title] = true
+	}
+	assert.True(t, titles["Killing"], "killing instance must still be on disk so DeleteInstance can find it")
+	assert.True(t, titles["Running"], "running instance must still be on disk")
+}
+
 // TestUpdateInstance_DoesNotConstructLiveInstances mirrors the DeleteInstance
 // test for the Update path, which has the same problem.
 func TestUpdateInstance_DoesNotConstructLiveInstances(t *testing.T) {

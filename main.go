@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	version            = "0.1.1"
+	version            = "0.1.2"
 	programFlag        string
 	autoYesFlag        bool
 	noScriptsFlag      bool

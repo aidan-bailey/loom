@@ -930,7 +930,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Save after successful start
-		if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
+		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
 			return m, m.handleError(err)
 		}
 		if m.autoYes {
@@ -965,13 +965,19 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// persistableInstances filters out instances with transient Deleting status.
+// persistableInstances filters out instances whose state should not reach disk:
+// Ready (mid-creation, no live resources yet) and Deleting (kill in progress,
+// about to be removed via DeleteInstance). All other statuses — Loading,
+// Running, Paused — are persisted so that a crash or quit during the kill
+// window cannot orphan a live worktree from its JSON record.
 func persistableInstances(instances []*session.Instance) []*session.Instance {
 	var result []*session.Instance
 	for _, inst := range instances {
-		if inst.GetStatus() != session.Deleting {
-			result = append(result, inst)
+		status := inst.GetStatus()
+		if status == session.Ready || status == session.Deleting {
+			continue
 		}
+		result = append(result, inst)
 	}
 	return result
 }
@@ -1525,7 +1531,7 @@ func (m *home) deactivateWorkspace(name string) {
 	}
 
 	slot := m.slots[idx]
-	_ = slot.storage.SaveInstances(slot.list.GetInstances())
+	_ = slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances()))
 
 	m.slots = append(m.slots[:idx], m.slots[idx+1:]...)
 

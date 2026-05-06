@@ -16,11 +16,13 @@ type recordingHost struct {
 	calls []string
 }
 
-func (h *recordingHost) CursorUp()      { h.calls = append(h.calls, "CursorUp") }
-func (h *recordingHost) CursorDown()    { h.calls = append(h.calls, "CursorDown") }
-func (h *recordingHost) ToggleDiff()    { h.calls = append(h.calls, "ToggleDiff") }
-func (h *recordingHost) WorkspacePrev() { h.calls = append(h.calls, "WorkspacePrev") }
-func (h *recordingHost) WorkspaceNext() { h.calls = append(h.calls, "WorkspaceNext") }
+func (h *recordingHost) CursorUp()            { h.calls = append(h.calls, "CursorUp") }
+func (h *recordingHost) CursorDown()          { h.calls = append(h.calls, "CursorDown") }
+func (h *recordingHost) ToggleDiff()          { h.calls = append(h.calls, "ToggleDiff") }
+func (h *recordingHost) WorkspacePrev()       { h.calls = append(h.calls, "WorkspacePrev") }
+func (h *recordingHost) WorkspaceNext()       { h.calls = append(h.calls, "WorkspaceNext") }
+func (h *recordingHost) ResetAgentScroll()    { h.calls = append(h.calls, "ResetAgentScroll") }
+func (h *recordingHost) ResetTerminalScroll() { h.calls = append(h.calls, "ResetTerminalScroll") }
 
 // dispatchExpectYield runs a handler bound to key and asserts it
 // yielded (deferred primitives always yield). Returns the fakeHost so
@@ -255,12 +257,17 @@ func TestCsActionsSyncPrimitivesCallHost(t *testing.T) {
 		cs.bind("c", function() cs.actions.toggle_diff() end)
 		cs.bind("d", function() cs.actions.workspace_prev() end)
 		cs.bind("e", function() cs.actions.workspace_next() end)
+		cs.bind("f", function() cs.actions.reset_agent_scroll() end)
+		cs.bind("g", function() cs.actions.reset_terminal_scroll() end)
 	`))
 	e.EndLoad()
 
-	for _, k := range []string{"a", "b", "c", "d", "e"} {
+	for _, k := range []string{"a", "b", "c", "d", "e", "f", "g"} {
 		_, err := e.Dispatch(context.Background(), k, h)
 		require.NoError(t, err)
 	}
-	assert.Equal(t, []string{"CursorUp", "CursorDown", "ToggleDiff", "WorkspacePrev", "WorkspaceNext"}, h.calls)
+	assert.Equal(t, []string{
+		"CursorUp", "CursorDown", "ToggleDiff", "WorkspacePrev", "WorkspaceNext",
+		"ResetAgentScroll", "ResetTerminalScroll",
+	}, h.calls)
 }
