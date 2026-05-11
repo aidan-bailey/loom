@@ -68,6 +68,16 @@ type DiffStatsData struct {
 type Storage struct {
 	state     config.InstanceStorage
 	configDir string
+
+	// unrecovered holds raw InstanceData for records that failed
+	// ReconcileAndRestore during the most recent LoadAndReconcile pass.
+	// SaveInstances merges these back into the persisted payload so a
+	// transient reconcile failure (tmux flake, bad data) does not
+	// permanently delete the record from state.json — the next launch
+	// gets another chance to reconcile. DeleteInstance and
+	// DeleteAllInstances clear matching entries so a user-initiated
+	// delete is not silently undone by the merge.
+	unrecovered []InstanceData
 }
 
 // NewStorage creates a new storage instance.
@@ -86,10 +96,23 @@ func NewStorage(state config.InstanceStorage, configDir string) (*Storage, error
 // is unsafe because Kill() flips started=false early (before tmux/worktree
 // teardown), so a save during the kill window would silently drop the
 // instance from disk and cause DeleteInstance to fail with ErrInstanceNotFound.
+//
+// Unrecovered records from the most recent LoadAndReconcile pass are
+// appended to the payload (deduped by title — a live record always wins)
+// so reconcile failures do not silently delete persisted state.
 func (s *Storage) SaveInstances(instances []*Instance) error {
-	data := make([]InstanceData, 0, len(instances))
+	data := make([]InstanceData, 0, len(instances)+len(s.unrecovered))
+	liveTitles := make(map[string]struct{}, len(instances))
 	for _, instance := range instances {
-		data = append(data, instance.ToInstanceData())
+		snap := instance.ToInstanceData()
+		liveTitles[snap.Title] = struct{}{}
+		data = append(data, snap)
+	}
+	for _, d := range s.unrecovered {
+		if _, collision := liveTitles[d.Title]; collision {
+			continue
+		}
+		data = append(data, d)
 	}
 
 	jsonData, err := json.Marshal(data)
@@ -124,6 +147,11 @@ func (s *Storage) LoadInstances() ([]*Instance, error) {
 // instance is logged and skipped rather than aborting the whole load. This is
 // the correct entry point for any caller that can tolerate reconciliation side
 // effects (killing orphan tmux sessions, marking instances paused).
+//
+// Records that fail ReconcileAndRestore are stashed in s.unrecovered so the
+// next SaveInstances preserves them on disk. Previously such failures led
+// to permanent data loss: the failed record was silently omitted from the
+// live list, and the next save overwrote state.json with only the survivors.
 func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, error) {
 	data, err := s.LoadInstanceData()
 	if err != nil {
@@ -135,10 +163,12 @@ func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, 
 	}
 	tmux.RenameLegacySessions(titles, cmdExec)
 	instances := make([]*Instance, 0, len(data))
+	s.unrecovered = s.unrecovered[:0]
 	for _, d := range data {
 		inst, err := ReconcileAndRestore(d, s.configDir, cmdExec)
 		if err != nil {
-			log.For("session").Error("reconcile_failed", "title", d.Title, "err", err, "action", "skipping")
+			log.For("session").Error("reconcile_failed", "title", d.Title, "err", err, "action", "preserved_for_retry")
+			s.unrecovered = append(s.unrecovered, d)
 			continue
 		}
 		instances = append(instances, inst)
@@ -168,6 +198,10 @@ func (s *Storage) DeleteInstance(title string) error {
 	if !found {
 		return fmt.Errorf("%w: %s", ErrInstanceNotFound, title)
 	}
+
+	// Also drop any matching entry from the in-memory unrecovered cache so
+	// a follow-up SaveInstances does not resurrect the just-deleted record.
+	s.dropUnrecovered(title)
 
 	return s.saveInstanceData(filtered)
 }
@@ -221,5 +255,23 @@ func (s *Storage) LoadInstanceData() ([]InstanceData, error) {
 
 // DeleteAllInstances removes all stored instances
 func (s *Storage) DeleteAllInstances() error {
+	s.unrecovered = nil
 	return s.state.DeleteAllInstances()
+}
+
+// dropUnrecovered removes any entry from the unrecovered cache whose
+// Title matches the given title. Used by DeleteInstance so a
+// user-initiated delete is not silently undone on the next save.
+func (s *Storage) dropUnrecovered(title string) {
+	if len(s.unrecovered) == 0 {
+		return
+	}
+	filtered := s.unrecovered[:0]
+	for _, d := range s.unrecovered {
+		if d.Title == title {
+			continue
+		}
+		filtered = append(filtered, d)
+	}
+	s.unrecovered = filtered
 }

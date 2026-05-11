@@ -2,9 +2,13 @@ package session
 
 import (
 	"encoding/json"
+	"os/exec"
 	"testing"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // trackingMockStorage records every SaveInstances payload, so tests can
@@ -105,6 +109,84 @@ func TestSaveInstances_PersistsWhileKilling(t *testing.T) {
 	}
 	assert.True(t, titles["Killing"], "killing instance must still be on disk so DeleteInstance can find it")
 	assert.True(t, titles["Running"], "running instance must still be on disk")
+}
+
+// TestStorage_LoadAndReconcile_PreservesFailedRecords is the regression
+// guard for the "sessions disappear after exit/reopen" bug. When
+// ReconcileAndRestore fails for an instance (transient tmux flake, bad
+// data, etc.), LoadAndReconcile used to silently drop it; the next
+// SaveInstances then overwrote state.json with only the survivors,
+// permanently deleting the failed record from disk. The fix retains
+// the raw InstanceData of failed records and merges them back into
+// every SaveInstances payload so a future launch can retry reconcile.
+func TestStorage_LoadAndReconcile_PreservesFailedRecords(t *testing.T) {
+	wt := t.TempDir()
+	// Two instances on disk: one with an empty Title (forces Start to
+	// reject with "title cannot be empty", which propagates as a
+	// reconcile failure) and one Paused (reconcile no-ops successfully).
+	initial := `[
+		{"title":"","status":0,"program":"claude","is_workspace_terminal":false,"worktree":{"repo_path":"/tmp/r","worktree_path":"` + wt + `","branch_name":"orphan"}},
+		{"title":"alive","status":3,"program":"claude","is_workspace_terminal":false,"worktree":{"repo_path":"/tmp/r","worktree_path":"` + wt + `","branch_name":"alive-branch"}}
+	]`
+	mock := &trackingMockStorage{data: json.RawMessage(initial)}
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil }, // has-session reports tmux alive
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+
+	instances, err := s.LoadAndReconcile(cmdExec)
+	require.NoError(t, err)
+	require.Len(t, instances, 1, "empty-title record fails reconcile and is dropped from the live list")
+	assert.Equal(t, "alive", instances[0].Title)
+
+	// Save the surviving live instances. Before the fix this wrote
+	// only [alive]; the failed record was permanently deleted from disk.
+	require.NoError(t, s.SaveInstances(instances))
+	require.NotEmpty(t, mock.saved)
+
+	var persisted []InstanceData
+	require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &persisted))
+	titles := make([]string, 0, len(persisted))
+	for _, d := range persisted {
+		titles = append(titles, d.Title)
+	}
+	assert.ElementsMatch(t, []string{"", "alive"}, titles,
+		"the failed record must remain on disk so a future launch can retry reconcile")
+}
+
+// TestStorage_SaveInstances_LiveWinsOverUnrecoveredOnTitleCollision keeps
+// SaveInstances from emitting duplicate records when a live instance
+// shares its title with an unrecovered one (rare in practice — only
+// possible if a user creates a new instance whose title matches an
+// orphan — but a defensive guard since duplicate titles confuse the
+// next load pass).
+func TestStorage_SaveInstances_LiveWinsOverUnrecoveredOnTitleCollision(t *testing.T) {
+	wt := t.TempDir()
+	initial := `[
+		{"title":"shared","status":0,"program":"claude","is_workspace_terminal":false,"worktree":{"repo_path":"/tmp/r","worktree_path":"` + wt + `","branch_name":"orphan"}}
+	]`
+	mock := &trackingMockStorage{data: json.RawMessage(initial)}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+
+	// Seed unrecovered directly. A live LoadAndReconcile setup with a
+	// non-empty title would actually reconcile OK against the mock, so
+	// this is a white-box test of the dedup rule.
+	s.unrecovered = []InstanceData{
+		{Title: "shared", Path: wt, Program: "claude", Status: Running},
+	}
+
+	live := &Instance{Title: "shared", Status: Paused, Program: "claude"}
+	live.setStarted(true)
+
+	require.NoError(t, s.SaveInstances([]*Instance{live}))
+	var persisted []InstanceData
+	require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &persisted))
+	require.Len(t, persisted, 1, "live record must win; unrecovered duplicate must be dropped")
+	assert.Equal(t, Paused, persisted[0].Status, "live data (Paused) wins, not unrecovered (Running)")
 }
 
 // TestUpdateInstance_DoesNotConstructLiveInstances mirrors the DeleteInstance
