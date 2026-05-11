@@ -189,6 +189,39 @@ func TestStorage_SaveInstances_LiveWinsOverUnrecoveredOnTitleCollision(t *testin
 	assert.Equal(t, Paused, persisted[0].Status, "live data (Paused) wins, not unrecovered (Running)")
 }
 
+// TestStorage_UnrecoveredWorktreePaths_ReturnsCachedPaths verifies the
+// orphan-recovery cooperation hook: callers that build a "claimed
+// worktree paths" set (to avoid double-surfacing a worktree as both a
+// preserved-but-failed record AND an orphan candidate) can ask Storage
+// which paths are tracked in unrecovered. Without this, a reconcile
+// failure would mean the user sees both a preserved record (via my
+// non-destructive reconcile fix) and an orphan-recovery prompt for the
+// same worktree, and accepting the prompt would duplicate state.
+func TestStorage_UnrecoveredWorktreePaths_ReturnsCachedPaths(t *testing.T) {
+	wt := t.TempDir()
+	initial := `[
+		{"title":"","status":0,"program":"claude","is_workspace_terminal":false,"worktree":{"repo_path":"/tmp/r","worktree_path":"` + wt + `","branch_name":"orphan"}},
+		{"title":"alive","status":3,"program":"claude","is_workspace_terminal":false,"worktree":{"repo_path":"/tmp/r","worktree_path":"` + wt + `/alive","branch_name":"alive-branch"}}
+	]`
+	mock := &trackingMockStorage{data: json.RawMessage(initial)}
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+
+	// Before LoadAndReconcile, nothing is unrecovered yet.
+	require.Empty(t, s.UnrecoveredWorktreePaths())
+
+	_, err = s.LoadAndReconcile(cmdExec)
+	require.NoError(t, err)
+
+	got := s.UnrecoveredWorktreePaths()
+	assert.True(t, got[wt], "the failed record's worktree path must be exposed so orphan discovery can treat it as claimed")
+	assert.False(t, got[wt+"/alive"], "the successfully reconciled record must not appear in unrecovered")
+}
+
 // TestUpdateInstance_DoesNotConstructLiveInstances mirrors the DeleteInstance
 // test for the Update path, which has the same problem.
 func TestUpdateInstance_DoesNotConstructLiveInstances(t *testing.T) {

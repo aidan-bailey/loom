@@ -312,30 +312,19 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 
 	cmdExec := cmd2.MakeExecutor()
 	if !willRestoreSlots {
-		instancesData, err := storage.LoadInstanceData()
+		// LoadAndReconcile centralizes RenameLegacySessions + per-record
+		// reconcile, and on a per-record failure stashes the raw data in
+		// storage.unrecovered so the next SaveInstances preserves it.
+		// The inline loop this replaced silently dropped failures.
+		instances, err := storage.LoadAndReconcile(cmdExec)
 		if err != nil {
 			return nil, fmt.Errorf("load instances: %w", err)
 		}
 
-		// Rename any pre-rename (claudesquad_*) tmux sessions to their
-		// loom_* equivalents so reconcile finds live sessions after the
-		// v0.1.0 prefix flip. Idempotent no-op after first launch.
-		legacyTitles := make([]string, 0, len(instancesData))
-		for _, d := range instancesData {
-			legacyTitles = append(legacyTitles, d.Title)
-		}
-		tmux.RenameLegacySessions(legacyTitles, cmdExec)
-
-		// Reconcile each instance against tmux/worktree reality
 		hasWorkspaceTerminal := false
-		for _, data := range instancesData {
-			if data.IsWorkspaceTerminal {
+		for _, instance := range instances {
+			if instance.IsWorkspaceTerminal {
 				hasWorkspaceTerminal = true
-			}
-			instance, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
-			if err != nil {
-				log.For("app").Error("reconcile_failed", "title", data.Title, "err", err, "action", "skipping")
-				continue
 			}
 			h.list.AddInstance(instance)()
 			if autoYes {
@@ -362,7 +351,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		// claims its tmux session, so the orphan-tmux sweep below
 		// must not kill it. The user is prompted via the startup
 		// overlay (set up below in the picker-dispatch block).
-		h.recordOrphans(cfgDir, h.list.GetInstances(), cmdExec)
+		h.recordOrphans(cfgDir, h.list.GetInstances(), storage, cmdExec)
 
 		// Clean up orphaned tmux sessions from previous crashes
 		claimedTitles := make(map[string]bool)
@@ -502,7 +491,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		if slot.wsCtx == nil {
 			continue
 		}
-		m.recordOrphans(slot.wsCtx.ConfigDir, slot.list.GetInstances(), cmdExec)
+		m.recordOrphans(slot.wsCtx.ConfigDir, slot.list.GetInstances(), slot.storage, cmdExec)
 	}
 
 	if len(m.slots) == 0 {
@@ -927,7 +916,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmdExec := cmd2.MakeExecutor()
 		if len(m.slots) > 0 {
 			newSlot := m.slots[len(m.slots)-1]
-			m.recordOrphans(newSlot.wsCtx.ConfigDir, newSlot.list.GetInstances(), cmdExec)
+			m.recordOrphans(newSlot.wsCtx.ConfigDir, newSlot.list.GetInstances(), newSlot.storage, cmdExec)
 		}
 
 		if err := m.registry.UpdateLastUsed(ws.Name); err != nil {
@@ -1627,10 +1616,16 @@ func (m *home) loadSlot(idx int) {
 // is recorded too so applyOrphanRecovery knows which storage to write
 // each recovered entry into.
 //
+// Worktree paths held in storage.unrecovered are also treated as
+// claimed: those records failed reconcile this launch but remain
+// tracked in state.json (preserved by the non-destructive reconcile
+// fix), so surfacing them as orphans would let the user adopt a
+// duplicate under a different title.
+//
 // Failures during scan are logged but do not abort startup — orphan
 // recovery is best-effort and the user can still launch loom into a
 // degraded state if filesystem access is broken.
-func (m *home) recordOrphans(cfgDir string, claimed []*session.Instance, cmdExec cmd2.Executor) {
+func (m *home) recordOrphans(cfgDir string, claimed []*session.Instance, storage *session.Storage, cmdExec cmd2.Executor) {
 	claimedPaths := make(map[string]bool, len(claimed))
 	for _, inst := range claimed {
 		wt, err := inst.GetGitWorktree()
@@ -1638,6 +1633,11 @@ func (m *home) recordOrphans(cfgDir string, claimed []*session.Instance, cmdExec
 			continue
 		}
 		if p := wt.GetWorktreePath(); p != "" {
+			claimedPaths[p] = true
+		}
+	}
+	if storage != nil {
+		for p := range storage.UnrecoveredWorktreePaths() {
 			claimedPaths[p] = true
 		}
 	}

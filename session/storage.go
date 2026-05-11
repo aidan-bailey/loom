@@ -259,6 +259,24 @@ func (s *Storage) DeleteAllInstances() error {
 	return s.state.DeleteAllInstances()
 }
 
+// UnrecoveredWorktreePaths returns the set of worktree paths currently
+// held in the unrecovered cache. Orphan discovery uses this so a
+// preserved-but-failed record's worktree is not also surfaced as an
+// orphan candidate, which would let the user re-recover it under a
+// different title and produce a duplicate state.json entry.
+func (s *Storage) UnrecoveredWorktreePaths() map[string]bool {
+	if len(s.unrecovered) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(s.unrecovered))
+	for _, d := range s.unrecovered {
+		if p := d.Worktree.WorktreePath; p != "" {
+			out[p] = true
+		}
+	}
+	return out
+}
+
 // dropUnrecovered removes any entry from the unrecovered cache whose
 // Title matches the given title. Used by DeleteInstance so a
 // user-initiated delete is not silently undone on the next save.
