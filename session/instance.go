@@ -280,6 +280,22 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 	return instance, nil
 }
 
+// Restart brings an instance back online after its tmux session died
+// out-of-band (e.g. a workspace terminal whose shell the user exited,
+// or the tmux server was killed). Start(true) alone is a silent no-op
+// on an already-started instance because reserveStart sees started=true
+// and bails — that is the correct INST-04 behavior for a concurrent
+// Start race, but the wrong behavior when the caller knows the tmux
+// session is gone and wants to recreate it. Restart clears the flags
+// first so Start can run its real path.
+func (i *Instance) Restart() error {
+	i.mu.Lock()
+	i.started = false
+	i.starting = false
+	i.mu.Unlock()
+	return i.Start(true)
+}
+
 // EnsureRunning attaches a PTY to the instance's tmux session, restoring
 // any previously-persisted session state. A no-op for paused instances
 // (they deliberately have no PTY) and for already-started instances.

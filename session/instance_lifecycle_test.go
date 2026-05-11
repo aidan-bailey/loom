@@ -218,6 +218,57 @@ func TestInstance_StartIsIdempotent(t *testing.T) {
 		"Start should not replace the tmux session if already started")
 }
 
+// TestInstance_RestartProceedsPastIdempotencyGuard is the regression
+// guard for the workspace-terminal restart loop. When a workspace
+// terminal's tmux session died externally, the tick handler called
+// Start(true), which silently returned nil because reserveStart sees
+// i.started=true and bails. Result: thousands of "tmux_died_restarting"
+// warnings per minute with no actual restart. Restart() must clear the
+// started flag so Start's actual code path runs.
+func TestInstance_RestartProceedsPastIdempotencyGuard(t *testing.T) {
+	var hasSessionCalls int
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			if len(c.Args) >= 2 && c.Args[1] == "has-session" {
+				hasSessionCalls++
+				if hasSessionCalls == 1 {
+					// First check inside tmux.Start: report no session so
+					// Start does not bail with "already exists".
+					return fmt.Errorf("no such session")
+				}
+				// Polling loop after new-session: session is now alive.
+				return nil
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	ptyFactory := fakePtyFactory{t: t}
+	ts := tmux.NewTmuxSessionWithDeps("restart-test", "true", ptyFactory, cmdExec)
+
+	inst := &Instance{
+		Title:               "restart-test",
+		Path:                t.TempDir(),
+		Program:             "true",
+		Status:              Running,
+		IsWorkspaceTerminal: true,
+	}
+	inst.setTmuxSession(ts)
+	inst.setStarted(true)
+
+	// Baseline: Start(true) on an already-started instance is a no-op
+	// (the bug being fixed). No tmux commands fire.
+	require.NoError(t, inst.Start(true))
+	require.Equal(t, 0, hasSessionCalls, "Start(true) must silently no-op when started=true")
+
+	// Restart() must reset the guard and actually invoke Start's tmux flow.
+	require.NoError(t, inst.Restart())
+	assert.Greater(t, hasSessionCalls, 0,
+		"Restart must execute Start's tmux flow, not silently no-op")
+	assert.True(t, inst.isStarted(),
+		"Restart should leave the instance in a started state on success")
+}
+
 // TestCombineErrorsIsUnwrapable guards that combineErrors uses errors.Join
 // so every underlying cause remains discoverable via errors.Is. The prior
 // fmt.Errorf("%s", ...) implementation stringified the causes and broke

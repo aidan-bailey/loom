@@ -636,7 +636,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !r.tmuxAlive {
 				if r.instance.IsWorkspaceTerminal {
 					log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", r.instance.Title)
-					if err := r.instance.Start(true); err != nil {
+					if err := r.instance.Restart(); err != nil {
 						log.For("app").Error("workspace_terminal.restart_failed", "title", r.instance.Title, "err", err)
 					}
 					continue
