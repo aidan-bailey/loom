@@ -29,9 +29,10 @@ var (
 	resetWorkspaceFlag string
 	logLevelFlag       string
 	rootCmd            = &cobra.Command{
-		Use:   "loom [directory]",
-		Short: "Loom — Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
-		Args:  cobra.MaximumNArgs(1),
+		Use:     "loom [directory]",
+		Short:   "Loom — Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
+		Version: version,
+		Args:    cobra.MaximumNArgs(1),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Promote --log-level to the env var before any subcommand
 			// calls log.Initialize. Using os.Setenv (rather than
@@ -293,6 +294,13 @@ func resolveResetWorkspace() (*config.WorkspaceContext, error) {
 }
 
 func init() {
+	// Match the `loom version` subcommand format so `--version` and the
+	// subcommand emit identical output. The default Cobra template is a
+	// single "Name version X" line; we add the releases URL to match.
+	rootCmd.SetVersionTemplate(
+		"loom version {{.Version}}\nhttps://github.com/aidan-bailey/loom/releases/tag/v{{.Version}}\n",
+	)
+
 	rootCmd.Flags().StringVarP(&programFlag, "program", "p", "",
 		"Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')")
 	rootCmd.Flags().BoolVarP(&autoYesFlag, "autoyes", "y", false,

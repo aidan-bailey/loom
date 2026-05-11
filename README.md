@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/aidan-bailey/loom/main/install.sh |
 
 ```
 Usage:
-  loom [flags]
+  loom [directory] [flags]
   loom [command]
 
 Available Commands:
@@ -47,12 +47,16 @@ Available Commands:
   help        Help about any command
   reset       Reset all stored instances
   version     Print the version number of loom
-  workspace   Manage registered workspaces
+  workspace   Manage workspaces
 
 Flags:
-  -y, --autoyes          [experimental] If enabled, all instances will automatically accept prompts for claude code & aider
-  -h, --help             help for loom
-  -p, --program string   Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')
+  -y, --autoyes            [experimental] If enabled, all instances will automatically accept prompts
+  -h, --help               help for loom
+      --log-level string   Override log level for the Structured logger (debug|info|warn|error). Takes precedence over LOOM_LOG_LEVEL.
+      --no-scripts         Skip loading ~/.loom/scripts (embedded defaults still load). Use to recover from a broken user script.
+  -p, --program string     Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')
+  -v, --version            version for loom
+  -w, --workspace string   Select workspace by name (bypasses auto-detection)
 ```
 
 Run the application with:
