@@ -32,8 +32,6 @@ func handleStateOrphanRecoveryKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	selected := op.Selected()
 	skipped := op.Skipped()
 	m.dismissOverlay()
-	m.pendingOrphans = nil
-	m.orphanCfgDirs = nil
 	m.state = stateDefault
 
 	// Sweep skipped-but-tmux-alive sessions. The startup orphan-tmux
@@ -52,7 +50,15 @@ func handleStateOrphanRecoveryKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		}
 	}
 
+	// Apply recovery BEFORE clearing pendingOrphans / orphanCfgDirs.
+	// applyOrphanRecovery looks up each candidate's cfgDir in
+	// orphanCfgDirs to route the recovered Instance to the right
+	// workspace slot; clearing the map first would force every cfgDir
+	// lookup to return "" → listForCfgDir falls through to m.list (the
+	// focused slot), and all orphans land in the wrong workspace.
 	cmd := m.applyOrphanRecovery(selected)
+	m.pendingOrphans = nil
+	m.orphanCfgDirs = nil
 
 	// Run the deferred next-overlay closure (pendingDir confirm or
 	// startup workspace picker) that newHome captured before showing
