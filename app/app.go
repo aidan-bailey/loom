@@ -487,6 +487,25 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		}
 	}
 
+	// Sweep orphan tmux sessions left by prior crashes. The classic
+	// startup path does this inline in activateWorkspace's caller; the
+	// multi-tab restore path historically did not, so stale
+	// loom_*/claudesquad_* sessions accumulated across restarts. Each
+	// slot's activateWorkspace call above already ran reconcileOrphans,
+	// which adds recovered-but-undecided orphans as Recoverable rows
+	// directly into slot.list — so the claimed set here (built from every
+	// slot's live instances, Recoverable included) is complete without a
+	// separate pending-orphans accumulator.
+	claimedTitles := make(map[string]bool)
+	for _, slot := range m.slots {
+		for _, inst := range slot.list.GetInstances() {
+			claimedTitles[inst.Title] = true
+		}
+	}
+	if err := session.CleanupOrphanedSessions(claimedTitles, cmd2.MakeExecutor()); err != nil {
+		log.For("app").Error("orphan_cleanup_failed", "err", err)
+	}
+
 	if len(m.slots) == 0 {
 		return
 	}
@@ -1613,7 +1632,14 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	cmdExec := cmd2.MakeExecutor()
 	instances, err := storage.LoadAndReconcile(cmdExec)
 	if err != nil {
-		log.For("app").Error("workspace_load_instances_failed", "workspace", ws.Name, "err", err)
+		// Fail closed: do NOT proceed to build an empty slot. Continuing
+		// here would append a slot with zero instances, and the next
+		// SaveInstances for it would overwrite a possibly-recoverable
+		// (e.g. transiently unreadable or corrupt) state.json with only
+		// the survivors — silent per-workspace data loss. The classic
+		// startup path already fails closed this way; mirror it. The slot
+		// is simply not opened, leaving state.json on disk untouched.
+		return fmt.Errorf("load instances for workspace %s: %w", ws.Name, err)
 	}
 	// Orphan discovery runs here so every workspace-load path (startup
 	// picker, mid-session toggle, restore, registration) surfaces
@@ -1650,11 +1676,13 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		}
 
 		// A prior non-clean exit may have left a tmux session named
-		// claudesquad_<wtTitle> alive without persisting the instance.
-		// Startup's CleanupOrphanedSessions is skipped in multi-tab
-		// restore mode, so the orphan survives here and Start below
-		// would fail with "session already exists", leaving an unusable
-		// entry in the list with no branch and no agent.
+		// loom_<wtTitle> alive without persisting the instance. The
+		// multi-tab restore sweep (CleanupOrphanedSessions in
+		// restoreSavedWorkspaces) only runs AFTER every slot has
+		// activated — but the workspace-terminal Start below happens now,
+		// during activation, and would fail with "session already exists"
+		// against that orphan. Kill it here first so Start gets a clean
+		// name; the later sweep handles any other stragglers.
 		if err := session.KillTmuxSessionByTitle(wtTitle, cmdExec); err != nil {
 			log.For("app").Debug("workspace_terminal.orphan_kill", "workspace", ws.Name, "err", err.Error())
 		}

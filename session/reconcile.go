@@ -77,6 +77,20 @@ func DetermineRecoveryAction(status Status, tmuxAlive, worktreeExists, isWorkspa
 		return ActionRestartWsTerminal
 	}
 
+	// Loading means setup was interrupted mid-flight: the worktree may be
+	// partially created and the base commit may never have been recorded.
+	// We must NOT Restore (attaching would treat a half-built session as
+	// healthy and emit bogus diffs against an empty base) or Restart with
+	// --continue (the agent never started a conversation). Kill any live
+	// session so a later Resume rebuilds from scratch; otherwise mark
+	// paused. The branch and worktree are preserved on disk regardless.
+	if status == Loading {
+		if tmuxAlive {
+			return ActionKillAndPause
+		}
+		return ActionMarkPaused
+	}
+
 	switch {
 	case tmuxAlive && worktreeExists:
 		return ActionRestore
@@ -107,6 +121,16 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 			return nil, err
 		}
 		if err := instance.EnsureRunning(); err != nil {
+			// On a genuine Start-level failure (e.g. PTY exhaustion, bad
+			// data) we deliberately return the error rather than masking
+			// it with a crash-restart: LoadAndReconcile stashes the raw
+			// record in the unrecovered cache (storage.go) so it survives
+			// in state.json and is retried on the next launch. Note that a
+			// session that merely died after the liveness probe does NOT
+			// land here — tmux.Restore's pty.Start returns once the attach
+			// process spawns, before tmux validates the session — so this
+			// path fires only on real local failures, which the cache is
+			// the right home for.
 			return nil, err
 		}
 		return instance, nil
@@ -146,8 +170,12 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 	}
 }
 
-// fromInstanceDataPaused creates an Instance from serialized data in a paused/stopped
-// state. It sets started=true and creates a TmuxSession object but does not connect.
+// fromInstanceDataPaused creates an Instance from serialized data in a
+// detached (no live PTY) state: it sets started=true and creates a
+// TmuxSession object but does not connect. Despite the name it backs
+// several non-paused actions too (ActionRestart, ActionRestartWsTerminal)
+// — in those cases the caller sets CrashRecovered=true and a later
+// CrashRestart spawns the real session.
 func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, error) {
 	instance := &Instance{
 		Title:               data.Title,
@@ -248,5 +276,9 @@ func logRecoveryAction(title string, action RecoveryAction) {
 		log.For("reconcile").Info("recovery", "title", title, "action", "kill_and_pause", "reason", "tmux alive but worktree gone")
 	case ActionRestartWsTerminal:
 		log.For("reconcile").Info("recovery", "title", title, "action", "restart_ws_terminal", "reason", "workspace terminal tmux dead")
+	case ActionNoChange:
+		log.For("reconcile").Debug("recovery", "title", title, "action", "no_change", "reason", "already consistent (paused)")
+	default:
+		log.For("reconcile").Warn("recovery", "title", title, "action", "unknown", "value", int(action))
 	}
 }

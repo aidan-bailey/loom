@@ -77,6 +77,22 @@ func TestStripTimestampSuffix(t *testing.T) {
 			wantLeaf: "_18acb35cb8ad6e5a",
 			wantOK:   false,
 		},
+		{
+			// Short hex token (an issue number) is NOT a generated
+			// timestamp — the branch leaf must be preserved intact.
+			name:     "branch leaf ends in short hex issue number",
+			in:       "issue_1234",
+			wantLeaf: "issue_1234",
+			wantOK:   false,
+		},
+		{
+			// 8-char hex word ("deadbeef") is far too small to be a
+			// nanosecond timestamp; preserve it.
+			name:     "branch leaf ends in hex word",
+			in:       "bugfix_deadbeef",
+			wantLeaf: "bugfix_deadbeef",
+			wantOK:   false,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -95,6 +111,27 @@ func TestIsHexString(t *testing.T) {
 	assert.False(t, isHexString("xyz"))
 	assert.False(t, isHexString("18acg"))
 	assert.False(t, isHexString("123-456"))
+}
+
+// TestIsGitWorktreeRoot guards the M7 fix: a directory under worktrees/
+// is only a real orphan if it is an actual git worktree root (has a
+// `.git` entry), not just any directory that happens to sit inside an
+// enclosing repo.
+func TestIsGitWorktreeRoot(t *testing.T) {
+	// Plain directory, no .git → not a worktree root.
+	plain := t.TempDir()
+	assert.False(t, isGitWorktreeRoot(plain), "a bare directory is not a worktree root")
+
+	// Linked worktree: .git is a FILE containing a gitdir pointer.
+	linked := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(linked, ".git"),
+		[]byte("gitdir: /repo/.git/worktrees/feat\n"), 0o644))
+	assert.True(t, isGitWorktreeRoot(linked), "a linked worktree (.git file) is a worktree root")
+
+	// Main repo: .git is a DIRECTORY.
+	mainRepo := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(mainRepo, ".git"), 0o755))
+	assert.True(t, isGitWorktreeRoot(mainRepo), "a main repo (.git dir) is also accepted")
 }
 
 // withStubProbe swaps the package-level probeWorktreeRepo for a test
@@ -156,8 +193,8 @@ func TestDiscoverOrphans_MultipleUsers(t *testing.T) {
 
 	require.NoError(t, os.MkdirAll(filepath.Join(wt, "alice"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(wt, "bob"), 0o755))
-	require.NoError(t, os.Mkdir(filepath.Join(wt, "alice", "feat-a_dead0001"), 0o755))
-	require.NoError(t, os.Mkdir(filepath.Join(wt, "bob", "feat-b_dead0002"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(wt, "alice", "feat-a_18acb35cb8ad6e5a"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(wt, "bob", "feat-b_18acb35cb8ad6e5b"), 0o755))
 
 	got, err := DiscoverOrphans(cfgDir, nil, internalexec.Default{})
 	require.NoError(t, err)
@@ -212,7 +249,7 @@ func TestDiscoverOrphans_SkipsNonDirectoryEntries(t *testing.T) {
 	cfgDir := t.TempDir()
 	userDir := filepath.Join(cfgDir, "worktrees", "aidanb")
 	require.NoError(t, os.MkdirAll(userDir, 0o755))
-	require.NoError(t, os.Mkdir(filepath.Join(userDir, "valid_dead0001"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(userDir, "valid_18acb35cb8ad6e5a"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(userDir, ".DS_Store"), []byte("junk"), 0o644))
 
 	got, err := DiscoverOrphans(cfgDir, nil, internalexec.Default{})
@@ -253,7 +290,7 @@ func TestDiscoverOrphans_DropsUnrecoverable(t *testing.T) {
 	cfgDir := t.TempDir()
 	userDir := filepath.Join(cfgDir, "worktrees", "aidanb")
 	require.NoError(t, os.MkdirAll(userDir, 0o755))
-	require.NoError(t, os.Mkdir(filepath.Join(userDir, "ghost-branch_dead0001"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(userDir, "ghost-branch_18acb35cb8ad6e5a"), 0o755))
 
 	got, err := DiscoverOrphans(cfgDir, nil, internalexec.Default{})
 	require.NoError(t, err)
@@ -273,7 +310,7 @@ func TestDiscoverOrphans_PopulatesBaseCommitSHA(t *testing.T) {
 	cfgDir := t.TempDir()
 	userDir := filepath.Join(cfgDir, "worktrees", "aidanb")
 	require.NoError(t, os.MkdirAll(userDir, 0o755))
-	require.NoError(t, os.Mkdir(filepath.Join(userDir, "feat-x_dead0001"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(userDir, "feat-x_18acb35cb8ad6e5a"), 0o755))
 
 	got, err := DiscoverOrphans(cfgDir, nil, internalexec.Default{})
 	require.NoError(t, err)

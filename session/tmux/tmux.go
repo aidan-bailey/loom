@@ -143,11 +143,19 @@ func ToLegacyTmuxName(str string) string {
 // RenameLegacySessions renames any tmux sessions matching the legacy
 // claudesquad_* prefix to their loom_* equivalent so that in-flight
 // sessions from a pre-rename binary continue to be found by reconcile
-// on the next startup. Silent on failure — a missing session or an
-// unreachable tmux server is expected and harmless.
+// on the next startup.
 //
-// Called once from main.go before the reconcile pass. Idempotent: on
-// later launches the legacy sessions are gone and the loop is a no-op.
+// Called from Storage.LoadAndReconcile immediately before that storage's
+// per-record reconcile pass — once per storage, so in multi-tab restore
+// it runs once per slot over that slot's titles. Idempotent: on later
+// launches the legacy sessions are gone and the loop is a no-op.
+//
+// Rename failures are logged at debug rather than swallowed. The common
+// causes (no such legacy session, unreachable tmux server) are harmless,
+// but a genuine collision — both claudesquad_<t> and loom_<t> exist, so
+// tmux refuses the rename — would otherwise leave the legacy session
+// alive and unrenamed, which the orphan sweep (CleanupOrphanedSessions)
+// then kills. The log makes that diagnosable.
 func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
 	if len(titles) == 0 {
 		return
@@ -160,7 +168,9 @@ func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 		cmd := exec.CommandContext(ctx, "tmux", "rename-session", "-t", legacy, target)
-		_ = cmdExec.Run(cmd)
+		if err := cmdExec.Run(cmd); err != nil {
+			log.For("tmux").Debug("rename_legacy_session_failed", "legacy", legacy, "target", target, "err", err.Error())
+		}
 		cancel()
 	}
 }

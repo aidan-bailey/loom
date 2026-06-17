@@ -78,6 +78,14 @@ type Storage struct {
 	state     config.InstanceStorage
 	configDir string
 
+	// mu guards the unrecovered cache and serializes the marshal-and-write
+	// in the methods that touch it. Save paths run from tea.Cmd goroutines
+	// (pause/resume) while LoadAndReconcile runs on workspace activation,
+	// so concurrent access to the same *Storage is real. Only methods that
+	// read or mutate `unrecovered` take this lock; they never call one
+	// another while holding it, so it stays non-reentrant.
+	mu sync.Mutex
+
 	// unrecovered holds raw InstanceData for records that failed
 	// ReconcileAndRestore during the most recent LoadAndReconcile pass.
 	// SaveInstances merges these back into the persisted payload so a
@@ -178,6 +186,8 @@ func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, 
 	}
 	tmux.RenameLegacySessions(titles, cmdExec)
 	instances := make([]*Instance, 0, len(data))
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.unrecovered = s.unrecovered[:0]
 	for _, d := range data {
 		inst, err := ReconcileAndRestore(d, s.configDir, cmdExec)
@@ -312,6 +322,7 @@ func (s *Storage) UnrecoveredWorktreePaths() map[string]bool {
 // dropUnrecovered removes any entry from the unrecovered cache whose
 // Title matches the given title. Used by DeleteInstance so a
 // user-initiated delete is not silently undone on the next save.
+// The caller must hold s.mu (DeleteInstance does).
 func (s *Storage) dropUnrecovered(title string) {
 	if len(s.unrecovered) == 0 {
 		return

@@ -168,6 +168,20 @@ func TestDetermineRecoveryAction(t *testing.T) {
 		{"ws_terminal_tmux_dead", Running, false, false, true, ActionRestartWsTerminal},
 		{"ready_tmux_dead", Ready, false, true, false, ActionRestart},
 		{"prompting_tmux_dead", Prompting, false, false, false, ActionMarkPaused},
+		// Loading = setup crashed mid-flight: the worktree may be
+		// half-built and the base commit unrecorded, so we never trust
+		// it enough to Restore (would attach to a half-set-up session and
+		// emit bogus diffs) or Restart with --continue (would resume an
+		// agent that never started a conversation). A live session is
+		// killed so a later Resume rebuilds cleanly; otherwise just mark
+		// paused. The branch/worktree are preserved on disk either way.
+		{"loading_tmux_alive_wt_exists", Loading, true, true, false, ActionKillAndPause},
+		{"loading_tmux_alive_wt_gone", Loading, true, false, false, ActionKillAndPause},
+		{"loading_tmux_dead_wt_exists", Loading, false, true, false, ActionMarkPaused},
+		{"loading_tmux_dead_wt_gone", Loading, false, false, false, ActionMarkPaused},
+		// A Loading workspace terminal keeps its dedicated restart path —
+		// it has no worktree to half-build.
+		{"loading_ws_terminal_tmux_dead", Loading, false, false, true, ActionRestartWsTerminal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -3,7 +3,9 @@ package session
 import (
 	"encoding/json"
 	"os/exec"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 
@@ -109,6 +111,45 @@ func TestSaveInstances_PersistsWhileKilling(t *testing.T) {
 	}
 	assert.True(t, titles["Killing"], "killing instance must still be on disk so DeleteInstance can find it")
 	assert.True(t, titles["Running"], "running instance must still be on disk")
+}
+
+// TestStorage_ConcurrentAccessDoesNotDeadlock exercises the mutex added
+// to guard the unrecovered cache. The real target is the data race
+// between a pause/resume SaveInstances (which runs in a tea.Cmd
+// goroutine) and a workspace-activation LoadAndReconcile (which resets
+// the cache); that race can only be *detected* under `go test -race`,
+// which needs CGO. What this test CAN verify in a CGO-less build is that
+// the locking is reentrancy-free — i.e. hammering the locked methods
+// concurrently completes rather than deadlocking.
+func TestStorage_ConcurrentAccessDoesNotDeadlock(t *testing.T) {
+	mock := &trackingMockStorage{data: json.RawMessage(`[
+		{"title":"a","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/wt-a","branch_name":"a"}}
+	]`)}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+
+	done := make(chan struct{})
+	go func() {
+		var wg sync.WaitGroup
+		for i := 0; i < 50; i++ {
+			wg.Add(3)
+			go func() { defer wg.Done(); _, _ = s.LoadAndReconcile(cmdExec) }()
+			go func() { defer wg.Done(); _ = s.SaveInstances(nil) }()
+			go func() { defer wg.Done(); _ = s.UnrecoveredWorktreePaths() }()
+		}
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("storage locking deadlocked under concurrent access")
+	}
 }
 
 // TestStorage_LoadAndReconcile_PreservesFailedRecords is the regression

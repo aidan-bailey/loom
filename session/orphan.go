@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +86,15 @@ const orphanProbeTimeout = 3 * time.Second
 // claimed-paths filtering, tmux liveness via the injected Executor)
 // is exercisable without a git binary on disk.
 var probeWorktreeRepo = func(worktreePath string) (repoPath, headSHA string, err error) {
+	// Reject directories that are not themselves a worktree root. The
+	// git probes below succeed for ANY directory that resolves into a
+	// repo — including a plain subdirectory of an enclosing repo (e.g.
+	// <repo>/.loom/worktrees/<user>/stray when the workspace itself is a
+	// git repo) — which would surface a bogus orphan pointing at the main
+	// repo's working tree. A real worktree always has a `.git` entry.
+	if !isGitWorktreeRoot(worktreePath) {
+		return "", "", fmt.Errorf("%s is not a git worktree root", worktreePath)
+	}
 	repo, err := findMainRepoForWorktree(worktreePath)
 	if err != nil {
 		return "", "", err
@@ -210,10 +220,24 @@ func buildOrphanCandidate(worktreePath, userPrefix, leafDirName string, cmdExec 
 	}, true
 }
 
-// stripTimestampSuffix removes the trailing `_<hex>` segment that
-// resolveWorktreePaths appends. Returns ok=false when the input has no
-// underscore — those directories aren't loom-managed and the caller
-// should fall back to using the raw name.
+// minTimestampNanos / maxTimestampNanos bound the values accepted as a
+// generated worktree suffix. resolveWorktreePaths appends
+// fmt.Sprintf("%x", time.Now().UnixNano()), which for any realistic
+// launch date is a ~15-16 hex-digit value in this window. Requiring the
+// trailing token to parse as a plausible nanosecond timestamp — not just
+// "is hex" — prevents human branch leaves that happen to end in a hex
+// token (issue_1234, pr_42, bugfix_deadbeef) from being mistaken for the
+// suffix and silently mangled.
+const (
+	minTimestampNanos = 1_420_000_000_000_000_000 // ~2015-01-01
+	maxTimestampNanos = 4_200_000_000_000_000_000 // ~2103-01-01
+)
+
+// stripTimestampSuffix removes the trailing `_<hex-timestamp>` segment
+// that resolveWorktreePaths appends. Returns ok=false when the input has
+// no underscore, or when the trailing token is not a plausible generated
+// timestamp — those directories aren't loom-managed (or the underscore is
+// part of the branch name), so the caller should use the raw name.
 //
 // Splits from the right so branch names containing underscores
 // (e.g. "feature_x") still recover correctly.
@@ -223,12 +247,24 @@ func stripTimestampSuffix(name string) (string, bool) {
 		return name, false
 	}
 	suffix := name[idx+1:]
-	if !isHexString(suffix) {
-		// The trailing token isn't hex — the underscore is part of
-		// the branch name, not a timestamp delimiter.
+	if !looksLikeTimestampSuffix(suffix) {
 		return name, false
 	}
 	return name[:idx], true
+}
+
+// looksLikeTimestampSuffix reports whether s is hex AND parses as a
+// nanosecond timestamp within the plausible window. A token too short
+// (small magnitude) or too long (overflows uint64) is rejected.
+func looksLikeTimestampSuffix(s string) bool {
+	if !isHexString(s) {
+		return false
+	}
+	n, err := strconv.ParseUint(s, 16, 64)
+	if err != nil {
+		return false // more than 16 hex digits — not a UnixNano value
+	}
+	return n >= minTimestampNanos && n <= maxTimestampNanos
 }
 
 func isHexString(s string) bool {
@@ -257,6 +293,17 @@ func HumanizeBranchLeaf(branch string) string {
 	parts := strings.Split(branch, "/")
 	leaf := parts[len(parts)-1]
 	return strings.ReplaceAll(leaf, "-", " ")
+}
+
+// isGitWorktreeRoot reports whether dir is the root of a git worktree
+// (linked or main) rather than an arbitrary subdirectory that merely
+// resolves into a repo. A linked worktree has a `.git` FILE
+// (containing "gitdir: ..."); the main repo has a `.git` DIRECTORY. A
+// plain subdir of a repo has neither, so this distinguishes a genuine
+// orphaned worktree from a stray directory under worktrees/.
+func isGitWorktreeRoot(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
 }
 
 // findMainRepoForWorktree returns the working tree of the main
