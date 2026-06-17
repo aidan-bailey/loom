@@ -62,6 +62,49 @@ func branchExists(t *testing.T, repoDir, branchName string) bool {
 // The pre-fix code tried `git branch -D` before removing the worktree
 // registration, so deletion failed (worktree was still checked out) and the
 // error was only logged — the branch leaked.
+// TestWorktreeTitleSidecarPath verifies the sidecar lives next to the
+// worktree directory (a sibling file), NOT inside it — putting it inside
+// the work tree would pollute git status/diffs.
+func TestWorktreeTitleSidecarPath(t *testing.T) {
+	wt := "/cfg/worktrees/u/my-feature_18acb35cb8ad6e5a"
+	got := WorktreeTitleSidecarPath(wt)
+	assert.Equal(t, wt+".loom-title", got)
+	assert.Equal(t, filepath.Dir(wt), filepath.Dir(got),
+		"sidecar must sit beside the worktree dir, not inside it")
+}
+
+// TestSetup_WritesTitleSidecar is the M2a fix: Setup records the original
+// instance title in a sidecar so orphan discovery can reconstruct the
+// exact display title (and thus the exact tmux session name), which the
+// lossy branch-name sanitization otherwise destroys.
+func TestSetup_WritesTitleSidecar(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "config")
+	repoDir := filepath.Join(tmpDir, "repo")
+	require.NoError(t, os.MkdirAll(repoDir, 0755))
+	runGit(t, repoDir, "init", "-b", "main")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+	runGit(t, repoDir, "config", "user.name", "Test")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("hi"), 0644))
+	runGit(t, repoDir, "add", ".")
+	runGit(t, repoDir, "commit", "-m", "init")
+
+	const title = "My Mixed-Case Title"
+	tree, _, err := NewGitWorktree(repoDir, title, configDir)
+	require.NoError(t, err)
+	require.NoError(t, tree.Setup())
+
+	sidecar := WorktreeTitleSidecarPath(tree.GetWorktreePath())
+	got, readErr := os.ReadFile(sidecar)
+	require.NoError(t, readErr, "Setup must write the title sidecar")
+	assert.Equal(t, title, string(got))
+
+	// Cleanup must remove the sidecar so it doesn't leak.
+	require.NoError(t, tree.Cleanup())
+	_, statErr := os.Stat(sidecar)
+	assert.True(t, os.IsNotExist(statErr), "Cleanup must remove the title sidecar")
+}
+
 func TestCleanupWorktrees_DeletesBranch(t *testing.T) {
 	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
 

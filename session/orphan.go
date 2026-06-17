@@ -12,6 +12,7 @@ import (
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
 )
 
@@ -208,7 +209,15 @@ func buildOrphanCandidate(worktreePath, userPrefix, leafDirName string, cmdExec 
 		return OrphanCandidate{}, false
 	}
 
+	// Prefer the exact title recorded at creation (sidecar) over the
+	// lossy humanized branch leaf. The exact title also makes the tmux
+	// liveness probe reliable: the live session is named
+	// ToLoomTmuxName(originalTitle), which the humanized title cannot
+	// reproduce once the branch name has been lowercased/dash-collapsed.
 	title := HumanizeBranchLeaf(branchName)
+	if exact, ok := readTitleSidecar(worktreePath); ok {
+		title = exact
+	}
 	return OrphanCandidate{
 		WorktreePath:          worktreePath,
 		BranchName:            branchName,
@@ -218,6 +227,22 @@ func buildOrphanCandidate(worktreePath, userPrefix, leafDirName string, cmdExec 
 		HasLiveTmux:           CheckTmuxAlive(title, cmdExec),
 		HasUncommittedChanges: probeWorktreeDirty(worktreePath),
 	}, true
+}
+
+// readTitleSidecar reads the original instance title recorded beside a
+// worktree at creation time. Returns ok=false when the sidecar is absent
+// (worktrees created before this existed) or empty, so the caller falls
+// back to the humanized branch leaf.
+func readTitleSidecar(worktreePath string) (string, bool) {
+	data, err := os.ReadFile(git.WorktreeTitleSidecarPath(worktreePath))
+	if err != nil {
+		return "", false
+	}
+	title := strings.TrimSpace(string(data))
+	if title == "" {
+		return "", false
+	}
+	return title, true
 }
 
 // minTimestampNanos / maxTimestampNanos bound the values accepted as a

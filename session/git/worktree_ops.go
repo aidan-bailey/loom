@@ -41,6 +41,42 @@ func isBranchAbsentErr(err error) bool {
 	return strings.Contains(err.Error(), "not found")
 }
 
+// worktreeTitleSidecarSuffix is appended to a worktree path to form the
+// sidecar file that records its original instance title.
+const worktreeTitleSidecarSuffix = ".loom-title"
+
+// WorktreeTitleSidecarPath returns the path of the sidecar file that
+// records a worktree's original instance title. It lives next to the
+// worktree directory (a sibling file), NOT inside it — keeping it out of
+// the work tree avoids polluting git status/diffs. Orphan discovery reads
+// it to reconstruct the exact display title — and therefore the exact
+// tmux session name — which the lossy branch-name sanitization
+// (lowercasing, dash-collapsing) otherwise destroys.
+func WorktreeTitleSidecarPath(worktreePath string) string {
+	return worktreePath + worktreeTitleSidecarSuffix
+}
+
+// writeTitleSidecar records the worktree's original title beside its
+// directory. Best-effort: a failure only degrades orphan recovery back to
+// the humanized-branch-leaf title, so it must never fail worktree setup.
+func writeTitleSidecar(worktreePath, title string) {
+	if title == "" {
+		return
+	}
+	path := WorktreeTitleSidecarPath(worktreePath)
+	if err := os.WriteFile(path, []byte(title), 0o644); err != nil {
+		log.For("git").Debug("worktree.title_sidecar_write_failed", "path", path, "err", err.Error())
+	}
+}
+
+// removeTitleSidecar deletes the title sidecar if present. Best-effort.
+func removeTitleSidecar(worktreePath string) {
+	path := WorktreeTitleSidecarPath(worktreePath)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		log.For("git").Debug("worktree.title_sidecar_remove_failed", "path", path, "err", err.Error())
+	}
+}
+
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() (err error) {
 	t0 := time.Now()
@@ -65,16 +101,24 @@ func (g *GitWorktree) Setup() (err error) {
 
 	// If this worktree uses a pre-existing branch, always set up from that branch
 	// (it may exist locally or only on the remote).
-	if g.isExistingBranch {
-		return g.setupFromExistingBranch()
+	switch {
+	case g.isExistingBranch:
+		err = g.setupFromExistingBranch()
+	default:
+		// Check if branch exists using git CLI (much faster than go-git PlainOpen)
+		if _, refErr := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName)); refErr == nil {
+			err = g.setupFromExistingBranch()
+		} else {
+			err = g.setupNewWorktree()
+		}
 	}
-
-	// Check if branch exists using git CLI (much faster than go-git PlainOpen)
-	_, err = g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName))
 	if err == nil {
-		return g.setupFromExistingBranch()
+		// Record the original title so a future orphan scan can recover
+		// the exact display title (and tmux session name) for this
+		// worktree, which the branch name alone cannot reconstruct.
+		writeTitleSidecar(g.worktreePath, g.sessionName)
 	}
-	return g.setupNewWorktree()
+	return err
 }
 
 // setupFromExistingBranch creates a worktree from an existing branch
@@ -201,6 +245,10 @@ func (g *GitWorktree) Cleanup() (err error) {
 	if err := g.Prune(); err != nil {
 		errs = append(errs, err)
 	}
+
+	// Drop the title sidecar so it doesn't linger beside a now-removed
+	// worktree (best-effort; never blocks cleanup).
+	removeTitleSidecar(g.worktreePath)
 
 	if len(errs) > 0 {
 		return g.combineErrors(errs)

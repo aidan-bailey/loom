@@ -174,6 +174,45 @@ func TestDiscoverOrphans_FiltersClaimed(t *testing.T) {
 	assert.Equal(t, "example jupyter notebook", cand.Title)
 }
 
+// TestDiscoverOrphans_PrefersSidecarTitle is the M2a fix: when a worktree
+// has a `.loom-title` sidecar (written at creation), discovery uses the
+// exact recorded title instead of the lossy humanized branch leaf, so the
+// recovered instance keeps its original display title and tmux session
+// name.
+func TestDiscoverOrphans_PrefersSidecarTitle(t *testing.T) {
+	withStubProbe(t)
+	cfgDir := t.TempDir()
+	userDir := filepath.Join(cfgDir, "worktrees", "aidanb")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+	wtPath := filepath.Join(userDir, "my-mixed-case-title_18acb35cb8ad6e5a")
+	require.NoError(t, os.Mkdir(wtPath, 0o755))
+	require.NoError(t, os.WriteFile(wtPath+".loom-title", []byte("My Mixed-Case Title"), 0o644))
+
+	got, err := DiscoverOrphans(cfgDir, nil, internalexec.Default{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "My Mixed-Case Title", got[0].Title,
+		"the exact sidecar title must win over the humanized branch leaf")
+	// Branch is still derived from the directory (it IS the branch).
+	assert.Equal(t, "aidanb/my-mixed-case-title", got[0].BranchName)
+}
+
+// TestDiscoverOrphans_FallsBackToHumanizedTitle covers worktrees created
+// before the sidecar existed: discovery degrades to the humanized branch
+// leaf rather than failing.
+func TestDiscoverOrphans_FallsBackToHumanizedTitle(t *testing.T) {
+	withStubProbe(t)
+	cfgDir := t.TempDir()
+	userDir := filepath.Join(cfgDir, "worktrees", "aidanb")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(userDir, "legacy-feature_18acb35cb8ad6e5a"), 0o755))
+
+	got, err := DiscoverOrphans(cfgDir, nil, internalexec.Default{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "legacy feature", got[0].Title)
+}
+
 // TestDiscoverOrphans_NoWorktreesDir is the happy path for a fresh
 // configDir: returns an empty slice, no error. The app calls this on
 // every startup including first launch, so absent-dir must be benign.
