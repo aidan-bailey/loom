@@ -803,6 +803,30 @@ func (t *TmuxSession) RenderEmulator() (string, bool) {
 	return emu.Render(), true
 }
 
+// ScrollbackLen returns the emulator's scrollback line count, or (0,false) if
+// no emulator is wired.
+func (t *TmuxSession) ScrollbackLen() (int, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return 0, false
+	}
+	return emu.ScrollbackLen(), true
+}
+
+// RenderWindow renders `rows` combined lines `fromBottom` lines above the
+// buffer bottom, or ("",false) if no emulator is wired.
+func (t *TmuxSession) RenderWindow(fromBottom, rows int) (string, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return "", false
+	}
+	return emu.RenderWindow(fromBottom, rows), true
+}
+
 // CapturePaneContent captures the content of the tmux pane
 func (t *TmuxSession) CapturePaneContent() (string, error) {
 	// Add -e flag to preserve escape sequences (ANSI color codes).

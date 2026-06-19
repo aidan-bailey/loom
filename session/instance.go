@@ -673,6 +673,32 @@ func (i *Instance) Preview() (string, error) {
 	return ts.CapturePaneContent()
 }
 
+// ScrollbackLen returns the agent pane emulator's scrollback length, or
+// (0,false) if unavailable (no session / snapshot mode / paused).
+func (i *Instance) ScrollbackLen() (int, bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return 0, false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return 0, false
+	}
+	return ts.ScrollbackLen()
+}
+
+// RenderWindow renders a scrolled window of the agent pane, or ("",false) if
+// unavailable.
+func (i *Instance) RenderWindow(fromBottom, rows int) (string, bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return "", false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return "", false
+	}
+	return ts.RenderWindow(fromBottom, rows)
+}
+
 // HasUpdated reports whether the tmux pane content has changed since
 // the last call and whether an auto-yes-eligible prompt is currently
 // visible. Returns (false, false) for non-started instances.
