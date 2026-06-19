@@ -451,7 +451,14 @@ func (t *TerminalPane) String() string {
 			Render(strings.Join(lines, ""))
 	}
 
-	// Show captured content (live tail or scrolled window).
+	// Scrolled: render the windowed history with a jump-to-bottom footer.
+	if t.scrollOffset > 0 {
+		footer := terminalFooterStyle.Render(scrollFooter(t.newLinesBelow))
+		body := lipgloss.JoinVertical(lipgloss.Left, content, footer)
+		return terminalPaneStyle.Width(width).Render(body)
+	}
+
+	// Live tail: show captured content.
 	lines := strings.Split(content, "\n")
 
 	if height > 0 {

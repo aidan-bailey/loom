@@ -12,6 +12,18 @@ import (
 var previewPaneStyle = lipgloss.NewStyle().
 	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
 
+var previewScrollFooterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700"))
+
+// scrollFooter renders the jump-to-bottom affordance shown while a pane is
+// scrolled away from the live tail. newLines is the count of live-output lines
+// accrued below the window since scrolling started. Shared by both panes.
+func scrollFooter(newLines int) string {
+	if newLines > 0 {
+		return fmt.Sprintf("▼ %d new line(s) — Esc/End to jump to bottom", newLines)
+	}
+	return "▲ scrolled — Esc/End to jump to bottom"
+}
+
 // PreviewPane renders the agent tmux pane's content in the top half of the
 // split view. It tails the emulator's live screen at scrollOffset 0 and paints
 // a window into the emulator scrollback when scrolled up, while live output
@@ -186,9 +198,11 @@ func (p *PreviewPane) String() string {
 			Render(strings.Join(lines, ""))
 	}
 
-	// Scrolled: render the windowed history (already sized to height-1 rows).
+	// Scrolled: render the windowed history with a jump-to-bottom footer.
 	if p.scrollOffset > 0 {
-		return previewPaneStyle.Width(p.width).Render(p.previewState.text)
+		footer := previewScrollFooterStyle.Render(scrollFooter(p.newLinesBelow))
+		body := lipgloss.JoinVertical(lipgloss.Left, p.previewState.text, footer)
+		return previewPaneStyle.Width(p.width).Render(body)
 	}
 
 	// Live-tail display

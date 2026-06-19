@@ -235,6 +235,18 @@ func TestPreviewPane_ScrollOffsetClamps(t *testing.T) {
 	}
 }
 
+func TestPreviewPane_ScrolledFooterShowsNewLines(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(80, 10)
+	p.scrollOffset = 3
+	p.newLinesBelow = 5
+	p.previewState = previewState{fallback: false, text: "some\ncontent"}
+	out := p.String()
+	if !strings.Contains(out, "5") || !strings.Contains(out, "jump to bottom") {
+		t.Fatalf("scrolled footer should mention new lines + jump to bottom; got %q", out)
+	}
+}
+
 func TestPreviewPane_GotoBottomResetsOffset(t *testing.T) {
 	p := NewPreviewPane()
 	p.scrollOffset = 7
