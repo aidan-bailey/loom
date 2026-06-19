@@ -17,6 +17,28 @@ on:
       - '.github/workflows/build.yml'
 
 jobs:
+  race:
+    name: Race Detector
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+        cache: true
+
+    # The production binary builds CGO_ENABLED=0, which disables the race
+    # detector. This job re-enables CGO solely to run `go test -race` so the
+    # concurrency invariants (Storage/State/TmuxSession mutexes, script-effect
+    # routing through handleScriptDone) stay guarded. ubuntu-latest ships gcc,
+    # so the default CC works.
+    - name: Run tests under the race detector
+      env:
+        CGO_ENABLED: 1
+      run: go test -race ./...
+
   build:
     name: Build Binary and Test
     runs-on: ubuntu-latest
