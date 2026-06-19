@@ -335,9 +335,10 @@ func (s *SplitPane) ScrollDiffDown() {
 	}
 }
 
-// IsAgentInScrollMode returns true if the agent pane is in scroll mode.
+// IsAgentInScrollMode returns true if the agent pane is scrolled away from
+// the live tail.
 func (s *SplitPane) IsAgentInScrollMode() bool {
-	return s.agent.isScrolling
+	return s.agent.IsScrolling()
 }
 
 // IsTerminalInScrollMode returns true if the terminal pane is in scroll mode.

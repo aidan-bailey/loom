@@ -5,7 +5,6 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"strings"
 
-	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 )
@@ -13,18 +12,29 @@ import (
 var previewPaneStyle = lipgloss.NewStyle().
 	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
 
-// PreviewPane renders the agent tmux pane's content in the top half of
-// the split view. It owns a bubbles/viewport for scrollback navigation
-// and tracks which instance it last rendered so scroll position is
-// reset on selection change rather than persisting stale offsets.
+// PreviewPane renders the agent tmux pane's content in the top half of the
+// split view. It tails the emulator's live screen at scrollOffset 0 and paints
+// a window into the emulator scrollback when scrolled up, while live output
+// keeps flowing. lastInstanceTitle resets the scroll position on selection
+// change rather than persisting a stale offset.
 type PreviewPane struct {
 	width  int
 	height int
 
 	previewState      previewState
-	isScrolling       bool
-	viewport          viewport.Model
 	lastInstanceTitle string // tracks the current instance to reset scroll on change
+
+	// scrollOffset is lines-from-bottom; 0 = live tail. Increasing scrolls up
+	// into the emulator scrollback. Clamped to [0, ScrollbackLen()].
+	scrollOffset int
+	// scrollbackAtScrollStart is ScrollbackLen() captured when the offset left
+	// 0, used to count "new lines below" without scanning the buffer.
+	scrollbackAtScrollStart int
+	// lastScrollbackLen caches ScrollbackLen() from the last UpdateContent so
+	// ScrollPercent is lock-free and consistent with the last render.
+	lastScrollbackLen int
+	// newLinesBelow is the live-output line count accrued since scrolling up.
+	newLinesBelow int
 }
 
 type previewState struct {
@@ -34,22 +44,18 @@ type previewState struct {
 	text string
 }
 
-// NewPreviewPane constructs a PreviewPane with a zero-sized viewport;
-// the caller must SetSize before the first render.
+// NewPreviewPane constructs a PreviewPane at live tail; the caller must SetSize
+// before the first render.
 func NewPreviewPane() *PreviewPane {
-	return &PreviewPane{
-		viewport: viewport.New(),
-	}
+	return &PreviewPane{}
 }
 
-// SetSize resizes the pane and the embedded viewport. maxHeight caps
-// the visible height — content exceeding it is truncated with an
-// ellipsis in normal mode or becomes scrollable in scroll mode.
+// SetSize records the pane dimensions. maxHeight caps the visible height —
+// content exceeding it is truncated with an ellipsis at live tail or windowed
+// when scrolled.
 func (p *PreviewPane) SetSize(width, maxHeight int) {
 	p.width = width
 	p.height = maxHeight
-	p.viewport.SetWidth(width)
-	p.viewport.SetHeight(maxHeight)
 }
 
 // setFallbackState sets the preview state with fallback text and a message
@@ -60,30 +66,21 @@ func (p *PreviewPane) setFallbackState(message string) {
 	}
 }
 
-// UpdateContent refreshes the pane from the given instance. It resets
-// scroll mode when the selected instance changes, auto-exits scroll
-// mode when the viewport has returned to the bottom, and falls back to
-// splash text for nil / loading / paused instances.
+// UpdateContent refreshes the pane from the given instance. At scrollOffset 0 it
+// tails the live emulator screen; when scrolled it paints a window of the
+// emulator scrollback at the current offset (live output keeps accruing below).
+// Falls back to splash text for nil / loading / paused instances and resets the
+// offset when the selected instance changes.
 func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
-	// Reset scroll mode when the selected instance changes.
+	// Reset to live tail when the selected instance changes.
 	newTitle := ""
 	if instance != nil {
 		newTitle = instance.Title
 	}
 	if newTitle != p.lastInstanceTitle {
 		p.lastInstanceTitle = newTitle
-		if p.isScrolling {
-			p.isScrolling = false
-			p.viewport.SetContent("")
-			p.viewport.GotoTop()
-		}
-	}
-
-	// Auto-exit scroll mode when viewport is at the bottom (back to live output).
-	if p.isScrolling && p.viewport.AtBottom() {
-		p.isScrolling = false
-		p.viewport.SetContent("")
-		p.viewport.GotoTop()
+		p.scrollOffset = 0
+		p.newLinesBelow = 0
 	}
 
 	switch {
@@ -107,43 +104,46 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 		return nil
 	}
 
-	var content string
-	var err error
-
-	// If in scroll mode but haven't captured content yet, do it now
-	if p.isScrolling && p.viewport.Height() > 0 && len(p.viewport.View()) == 0 {
-		// Capture full pane content including scrollback history using capture-pane -p -S -
-		content, err = instance.PreviewFullHistory()
+	if p.scrollOffset == 0 {
+		// Live tail: emulator visible screen (or capture-pane fallback).
+		content, err := instance.Preview()
 		if err != nil {
 			return err
 		}
-
-		// Set content in the viewport
-		footer := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#808080")).
-			Render("ESC to exit scroll mode")
-
-		p.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, content, footer))
-	} else if !p.isScrolling {
-		// In normal mode, use the usual preview
-		content, err = instance.Preview()
-		if err != nil {
-			return err
-		}
-
-		// Always update the preview state with content, even if empty
-		// This ensures that newly created instances will display their content immediately
 		if len(content) == 0 && !instance.Started() {
 			p.setFallbackState("Please enter a name for the instance.")
 		} else {
-			// Update the preview state with the current content
-			p.previewState = previewState{
-				fallback: false,
-				text:     content,
-			}
+			p.previewState = previewState{fallback: false, text: content}
 		}
+		p.newLinesBelow = 0
+		return nil
 	}
 
+	// Scrolled: render a height-1 window at the offset (last row is reserved
+	// for the jump-to-bottom footer).
+	total, ok := instance.ScrollbackLen()
+	if !ok {
+		// No emulator (snapshot/Windows): scrolling unsupported -> live tail.
+		p.scrollOffset = 0
+		content, _ := instance.Preview()
+		p.previewState = previewState{fallback: false, text: content}
+		return nil
+	}
+	p.lastScrollbackLen = total
+	if p.scrollOffset > total {
+		p.scrollOffset = total
+	}
+	rows := p.height - 1
+	if rows < 1 {
+		rows = 1
+	}
+	window, _ := instance.RenderWindow(p.scrollOffset, rows)
+	p.previewState = previewState{fallback: false, text: window}
+	newBelow := total - p.scrollbackAtScrollStart
+	if newBelow < 0 {
+		newBelow = 0
+	}
+	p.newLinesBelow = newBelow
 	return nil
 }
 
@@ -186,12 +186,12 @@ func (p *PreviewPane) String() string {
 			Render(strings.Join(lines, ""))
 	}
 
-	// If in copy mode, use the viewport to display scrollable content
-	if p.isScrolling {
-		return p.viewport.View()
+	// Scrolled: render the windowed history (already sized to height-1 rows).
+	if p.scrollOffset > 0 {
+		return previewPaneStyle.Width(p.width).Render(p.previewState.text)
 	}
 
-	// Normal mode display
+	// Live-tail display
 	// Calculate available height accounting for border and margin
 	availableHeight := p.height - 1 //  1 for ellipsis
 
@@ -214,129 +214,87 @@ func (p *PreviewPane) String() string {
 	return rendered
 }
 
-// enterScrollMode captures the full pane history and seeds the viewport.
-// Callers must apply a motion (LineUp, HalfViewUp, etc.) after to keep
-// AtBottom() false — otherwise the next UpdateContent auto-exits.
-func (p *PreviewPane) enterScrollMode(instance *session.Instance) error {
-	content, err := instance.PreviewFullHistory()
-	if err != nil {
-		return err
-	}
+// ScrollUp scrolls one line up into scrollback.
+func (p *PreviewPane) ScrollUp(instance *session.Instance) error { return p.scrollBy(instance, +1) }
 
-	footer := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#808080")).
-		Render("ESC to exit scroll mode")
+// ScrollDown scrolls one line down toward the live tail.
+func (p *PreviewPane) ScrollDown(instance *session.Instance) error { return p.scrollBy(instance, -1) }
 
-	p.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, content, footer))
-	p.viewport.GotoBottom()
-	p.isScrolling = true
-	return nil
-}
-
-// ScrollUp scrolls up in the viewport
-func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
-	if instance == nil || instance.GetStatus() == session.Paused {
-		return nil
-	}
-	if !p.isScrolling {
-		if err := p.enterScrollMode(instance); err != nil {
-			return err
-		}
-	}
-	p.viewport.ScrollUp(1)
-	return nil
-}
-
-// ScrollDown scrolls down in the viewport
-func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
-	if instance == nil || instance.GetStatus() == session.Paused {
-		return nil
-	}
-	if !p.isScrolling {
-		return nil
-	}
-	p.viewport.ScrollDown(1)
-	return nil
-}
-
-// PageUp scrolls up by half a viewport height.
+// PageUp scrolls up by half a pane height.
 func (p *PreviewPane) PageUp(instance *session.Instance) error {
-	if instance == nil || instance.GetStatus() == session.Paused {
-		return nil
-	}
-	if !p.isScrolling {
-		if err := p.enterScrollMode(instance); err != nil {
-			return err
-		}
-	}
-	p.viewport.HalfPageUp()
-	return nil
+	return p.scrollBy(instance, +(p.height / 2))
 }
 
-// PageDown scrolls down by half a viewport height.
+// PageDown scrolls down by half a pane height.
 func (p *PreviewPane) PageDown(instance *session.Instance) error {
-	if instance == nil || instance.GetStatus() == session.Paused {
-		return nil
-	}
-	if !p.isScrolling {
-		return nil
-	}
-	p.viewport.HalfPageDown()
-	return nil
+	return p.scrollBy(instance, -(p.height / 2))
 }
 
-// GotoTop jumps the viewport to the start of captured history.
+// GotoTop jumps to the oldest scrollback line.
 func (p *PreviewPane) GotoTop(instance *session.Instance) error {
-	if instance == nil || instance.GetStatus() == session.Paused {
-		return nil
-	}
-	if !p.isScrolling {
-		if err := p.enterScrollMode(instance); err != nil {
-			return err
+	maxOff := 0
+	if instance != nil {
+		if m, ok := instance.ScrollbackLen(); ok {
+			maxOff = m
 		}
 	}
-	p.viewport.GotoTop()
-	return nil
+	return p.setOffset(instance, maxOff)
 }
 
-// GotoBottom exits scroll mode and returns to live tail.
+// GotoBottom returns to the live tail.
 func (p *PreviewPane) GotoBottom(instance *session.Instance) error {
-	return p.ResetToNormalMode(instance)
+	return p.setOffset(instance, 0)
 }
 
-// ScrollPercent returns the viewport position as a fraction [0, 1].
-// Returns 1.0 when not in scroll mode (live tail is "at the bottom").
+// ScrollPercent returns the scroll position as a fraction [0, 1]; 1.0 == live
+// tail (bottom).
 func (p *PreviewPane) ScrollPercent() float64 {
-	if !p.isScrolling {
+	if p.scrollOffset <= 0 || p.lastScrollbackLen <= 0 {
 		return 1.0
 	}
-	return p.viewport.ScrollPercent()
+	return 1.0 - float64(p.scrollOffset)/float64(p.lastScrollbackLen)
 }
 
-// IsScrolling returns whether the preview pane is in scroll mode.
+// IsScrolling reports whether the pane is scrolled away from the live tail.
 func (p *PreviewPane) IsScrolling() bool {
-	return p.isScrolling
+	return p.scrollOffset > 0
 }
 
-// ResetToNormalMode exits scroll mode and returns to normal mode
+// ResetToNormalMode returns the pane to the live tail.
 func (p *PreviewPane) ResetToNormalMode(instance *session.Instance) error {
-	if instance == nil || instance.GetStatus() == session.Paused {
+	return p.setOffset(instance, 0)
+}
+
+func (p *PreviewPane) scrollBy(instance *session.Instance, delta int) error {
+	return p.setOffset(instance, p.scrollOffset+delta)
+}
+
+// setOffset clamps and applies a new lines-from-bottom offset. Marks the
+// scrollback length on the transition away from the live tail so the
+// "new lines below" counter has a baseline.
+func (p *PreviewPane) setOffset(instance *session.Instance, off int) error {
+	if instance != nil && instance.GetStatus() == session.Paused {
 		return nil
 	}
-
-	if p.isScrolling {
-		p.isScrolling = false
-		// Reset viewport
-		p.viewport.SetContent("")
-		p.viewport.GotoTop()
-
-		// Immediately update content instead of waiting for next UpdateContent call
-		content, err := instance.Preview()
-		if err != nil {
-			return err
+	maxOff := 0
+	if instance != nil {
+		if m, ok := instance.ScrollbackLen(); ok {
+			maxOff = m
 		}
-		p.previewState.text = content
 	}
-
+	if off < 0 {
+		off = 0
+	}
+	if off > maxOff {
+		off = maxOff
+	}
+	wasBottom := p.scrollOffset == 0
+	p.scrollOffset = off
+	if wasBottom && off > 0 {
+		p.scrollbackAtScrollStart = maxOff // baseline for the new-lines counter
+	}
+	if off == 0 {
+		p.newLinesBelow = 0
+	}
 	return nil
 }
