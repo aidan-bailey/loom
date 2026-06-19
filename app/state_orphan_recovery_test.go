@@ -95,7 +95,7 @@ func TestHandleStateOrphanRecoveryKey_AttributesOrphansToCorrectWorkspace(t *tes
 	// `esc` commits the picker — HandleKeyPress returns closed=true and
 	// Selected() reads the current recover[] (default-selected via
 	// HasLiveTmux), so the candidate flows through applyOrphanRecovery.
-	_, _ = handleStateOrphanRecoveryKey(h, tea.KeyMsg{Type: tea.KeyEsc})
+	_, _ = handleStateOrphanRecoveryKey(h, tea.KeyPressMsg{Code: tea.KeyEsc})
 
 	assert.Equal(t, 0, len(list1.GetInstances()),
 		"focused workspace must NOT receive an orphan that belongs to a different cfgDir")

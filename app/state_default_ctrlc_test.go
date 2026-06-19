@@ -29,7 +29,7 @@ func TestCtrlCQuitsEvenAfterUnbind(t *testing.T) {
 	require.NoError(t, m.scripts.L.DoString(`cs.unbind("ctrl+c")`))
 	m.scripts.EndLoad()
 
-	_, cmd := handleStateDefaultKey(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := handleStateDefaultKey(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	require.NotNil(t, cmd)
 	assert.Equal(t, "tea.QuitMsg", fmt.Sprintf("%T", cmd()))
 }

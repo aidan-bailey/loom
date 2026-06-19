@@ -62,7 +62,7 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 		co := h.confirmation()
 
 		// Simulate pressing 'y' using HandleKeyPress
-		keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}
+		keyMsg := tea.KeyPressMsg{Code: 'y', Text: "y"}
 		shouldClose := co.HandleKeyPress(keyMsg)
 		if shouldClose {
 			h.state = stateDefault
@@ -80,7 +80,7 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 		co := h.confirmation()
 
 		// Simulate pressing 'n' using HandleKeyPress
-		keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+		keyMsg := tea.KeyPressMsg{Code: 'n', Text: "n"}
 		shouldClose := co.HandleKeyPress(keyMsg)
 		if shouldClose {
 			h.state = stateDefault
@@ -98,7 +98,7 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 		co := h.confirmation()
 
 		// Simulate pressing ESC using HandleKeyPress
-		keyMsg := tea.KeyMsg{Type: tea.KeyEscape}
+		keyMsg := tea.KeyPressMsg{Code: tea.KeyEsc}
 		shouldClose := co.HandleKeyPress(keyMsg)
 		if shouldClose {
 			h.state = stateDefault
@@ -171,11 +171,11 @@ func TestConfirmationModalKeyHandling(t *testing.T) {
 			h.setOverlay(overlay.NewConfirmationOverlay("Kill session?"), overlayConfirmation)
 
 			// Create key message
-			var keyMsg tea.KeyMsg
+			var keyMsg tea.KeyPressMsg
 			if tc.key == "esc" {
-				keyMsg = tea.KeyMsg{Type: tea.KeyEscape}
+				keyMsg = tea.KeyPressMsg{Code: tea.KeyEsc}
 			} else {
-				keyMsg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)}
+				keyMsg = tea.KeyPressMsg{Code: rune(tc.key[0]), Text: tc.key}
 			}
 
 			// Call handleKeyPress
@@ -402,7 +402,7 @@ func TestMultipleConfirmationsDontInterfere(t *testing.T) {
 	assert.NotNil(t, co.OnConfirm)
 
 	// Cancel first confirmation (simulate pressing 'n')
-	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	keyMsg := tea.KeyPressMsg{Code: 'n', Text: "n"}
 	shouldClose := co.HandleKeyPress(keyMsg)
 	if shouldClose {
 		h.state = stateDefault
@@ -565,7 +565,7 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	})
 
 	// Simulate confirming (pressing 'y')
-	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}
+	keyMsg := tea.KeyPressMsg{Code: 'y', Text: "y"}
 	_, _ = h.handleKeyPress(keyMsg)
 
 	// Sync step should have run — status should be Deleting
@@ -655,7 +655,7 @@ func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 	})
 
 	// Cancel with 'n'
-	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
+	keyMsg := tea.KeyPressMsg{Code: 'n', Text: "n"}
 	_, _ = h.handleKeyPress(keyMsg)
 
 	assert.False(t, syncCalled, "Sync should not have been called on cancel")

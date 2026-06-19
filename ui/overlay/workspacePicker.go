@@ -87,7 +87,7 @@ func (w *WorkspacePicker) HandleKeyPress(msg tea.KeyPressMsg) (bool, bool) {
 		if w.cursor < w.totalItems-1 {
 			w.cursor++
 		}
-	case " ", "enter":
+	case " ", "space", "enter":
 		if w.isStartup {
 			// In startup mode, enter commits the selection immediately.
 			return true, false

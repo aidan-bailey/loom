@@ -20,7 +20,7 @@ func TestDefaultStateRoutesKeysThroughScripts(t *testing.T) {
 	m.scripts = script.NewEngine(buildReservedKeys())
 	m.scripts.LoadDefaults()
 
-	_, cmd := handleStateDefaultKey(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	_, cmd := handleStateDefaultKey(m, tea.KeyPressMsg{Code: 'n', Text: "n"})
 	require.NotNil(t, cmd)
 
 	msg, ok := cmd().(scriptDoneMsg)

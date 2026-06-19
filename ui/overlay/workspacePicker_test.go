@@ -22,27 +22,27 @@ func TestWorkspacePickerNavigation(t *testing.T) {
 
 	t.Run("moves down", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, false)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 		assert.Equal(t, 1, p.cursor)
 	})
 
 	t.Run("does not go below last item", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, false)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 		assert.Equal(t, 1, p.cursor)
 	})
 
 	t.Run("moves up", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, false)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'k', Text: "k"})
 		assert.Equal(t, 0, p.cursor)
 	})
 
 	t.Run("does not go above first item", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, false)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'k', Text: "k"})
 		assert.Equal(t, 0, p.cursor)
 	})
 }
@@ -57,7 +57,7 @@ func TestWorkspacePickerToggle(t *testing.T) {
 	t.Run("space toggles active state", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, false)
 		// Alpha is active, toggle it off
-		committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+		committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 		assert.False(t, committed)
 		result := p.GetActiveWorkspaces()
 		assert.Empty(t, result)
@@ -66,8 +66,8 @@ func TestWorkspacePickerToggle(t *testing.T) {
 	t.Run("enter toggles active state", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, false)
 		// Move to beta and toggle it on
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 		assert.False(t, committed)
 		result := p.GetActiveWorkspaces()
 		assert.Len(t, result, 2)
@@ -75,20 +75,20 @@ func TestWorkspacePickerToggle(t *testing.T) {
 
 	t.Run("esc commits", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, false)
-		committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEsc})
+		committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
 		assert.True(t, committed)
 	})
 
 	t.Run("q commits", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, false)
-		committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+		committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: 'q', Text: "q"})
 		assert.True(t, committed)
 	})
 
 	t.Run("does not mutate input map", func(t *testing.T) {
 		inputActive := map[string]bool{"alpha": true}
 		p := NewWorkspacePicker(workspaces, inputActive, false)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 		assert.True(t, inputActive["alpha"])
 		result := p.GetActiveWorkspaces()
 		assert.Empty(t, result)
@@ -140,28 +140,28 @@ func TestWorkspacePickerMidSessionGlobalRow(t *testing.T) {
 	t.Run("can navigate to global row", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, true)
 		// Navigate down past beta to global (cursor=2).
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 		assert.Equal(t, 2, p.cursor)
 		// Cursor cannot move past the global row.
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 		assert.Equal(t, 2, p.cursor)
 	})
 
 	t.Run("space on global commits with empty active set", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, true)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 		assert.True(t, committed)
 		assert.Empty(t, p.GetActiveWorkspaces())
 	})
 
 	t.Run("enter on global commits with empty active set", func(t *testing.T) {
 		p := NewWorkspacePicker(workspaces, active, true)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 		assert.True(t, committed)
 		assert.Empty(t, p.GetActiveWorkspaces())
 	})
@@ -172,9 +172,9 @@ func TestWorkspacePickerMidSessionGlobalRow(t *testing.T) {
 		// can transition to global mode.
 		bothActive := map[string]bool{"alpha": true, "beta": true}
 		p := NewWorkspacePicker(workspaces, bothActive, true)
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+		committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 		assert.True(t, committed)
 		assert.Empty(t, p.GetActiveWorkspaces())
 	})

@@ -57,7 +57,7 @@ func (p *OrphanRecoveryPicker) HandleKeyPress(msg tea.KeyPressMsg) (bool, bool) 
 		if p.cursor < len(p.candidates)-1 {
 			p.cursor++
 		}
-	case " ", "enter":
+	case " ", "space", "enter":
 		if p.cursor >= 0 && p.cursor < len(p.recover) {
 			p.recover[p.cursor] = !p.recover[p.cursor]
 		}
