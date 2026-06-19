@@ -8,6 +8,7 @@ import (
 	"fmt"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/vt"
 	"io"
 	"os"
 	"os/exec"
@@ -86,6 +87,18 @@ type TmuxSession struct {
 	ptmx *os.File
 	// monitor monitors the tmux pane content and sends signals to the UI when it's status changes
 	monitor *statusMonitor
+
+	// emu is the in-process terminal emulator for pane DISPLAY (Phase 1). The
+	// output pump writes raw ptmx bytes into it; Render reads the visible
+	// screen for Preview/terminal content. nil selects the legacy capture-pane
+	// path (Windows / LOOM_PANE_RENDERER=snapshot). Guarded by stateMu like
+	// ptmx: Restore/Close/PausePreview swap or drop it while the preview path
+	// reads it. The emulator's own RWMutex makes concurrent Write vs Render safe.
+	emu vt.Emulator
+	// lastCols/lastRows track the most recent pane geometry from SetDetachedSize
+	// so a freshly built emulator in Restore starts at the correct size.
+	lastCols int
+	lastRows int
 
 	// Output pump — continuously drains PTY output to prevent buffer deadlock.
 	// When nothing reads from ptmx, the tmux client blocks on stdout and stops
@@ -178,6 +191,10 @@ func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec 
 		// a fresh instance on every PTY attach, so the initial value is only
 		// load-bearing for paused sessions (constructed without Restore).
 		monitor: newStatusMonitor(),
+		// Default geometry until the first SetDetachedSize; a fresh emulator in
+		// Restore starts here so it is never zero-sized.
+		lastCols: 80,
+		lastRows: 24,
 	}
 }
 
@@ -713,6 +730,19 @@ func (t *TmuxSession) DoesSessionExist() bool {
 	defer cancel()
 	existsCmd := exec.CommandContext(ctx, "tmux", "has-session", fmt.Sprintf("-t=%s", t.sanitizedName))
 	return t.cmdExec.Run(existsCmd) == nil
+}
+
+// RenderEmulator returns the current visible screen from the in-process
+// emulator as an ANSI-styled string, or ("", false) if no emulator is wired
+// (callers then fall back to CapturePaneContent).
+func (t *TmuxSession) RenderEmulator() (string, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return "", false
+	}
+	return emu.Render(), true
 }
 
 // CapturePaneContent captures the content of the tmux pane
