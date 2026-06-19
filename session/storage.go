@@ -8,6 +8,7 @@ import (
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"sync"
 	"time"
 )
 
@@ -66,6 +67,15 @@ type DiffStatsData struct {
 
 // Storage handles saving and loading instances using the state interface
 type Storage struct {
+	// mu serializes every Storage operation. Persistence runs from
+	// tea.Cmd goroutines (pause/resume save, kill delete), which Bubble
+	// Tea executes concurrently with each other and with Update — so two
+	// saves, or a save racing a delete, can otherwise interleave their
+	// read-modify-write of the backing store and corrupt s.unrecovered.
+	// Held across the underlying state I/O; that I/O is fast (in-memory
+	// state plus one AtomicWriteFile) and never re-enters Storage.
+	mu sync.Mutex
+
 	state     config.InstanceStorage
 	configDir string
 
@@ -101,6 +111,8 @@ func NewStorage(state config.InstanceStorage, configDir string) (*Storage, error
 // appended to the payload (deduped by title — a live record always wins)
 // so reconcile failures do not silently delete persisted state.
 func (s *Storage) SaveInstances(instances []*Instance) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data := make([]InstanceData, 0, len(instances)+len(s.unrecovered))
 	liveTitles := make(map[string]struct{}, len(instances))
 	for _, instance := range instances {
@@ -125,6 +137,8 @@ func (s *Storage) SaveInstances(instances []*Instance) error {
 
 // LoadInstances loads the list of instances from disk
 func (s *Storage) LoadInstances() ([]*Instance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	instancesData, err := MigrateAll(s.state.GetInstances())
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
@@ -153,7 +167,9 @@ func (s *Storage) LoadInstances() ([]*Instance, error) {
 // to permanent data loss: the failed record was silently omitted from the
 // live list, and the next save overwrote state.json with only the survivors.
 func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, error) {
-	data, err := s.LoadInstanceData()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.loadInstanceDataLocked()
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +196,9 @@ func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, 
 // Operates on raw InstanceData so it does not construct live Instance objects
 // (which would open tmux attach PTYs for every remaining running instance).
 func (s *Storage) DeleteInstance(title string) error {
-	data, err := s.LoadInstanceData()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.loadInstanceDataLocked()
 	if err != nil {
 		return fmt.Errorf("failed to load instances: %w", err)
 	}
@@ -210,7 +228,9 @@ func (s *Storage) DeleteInstance(title string) error {
 // Uses the in-memory snapshot of the provided instance and the raw-data
 // load path so the other stored entries are never reconstructed.
 func (s *Storage) UpdateInstance(instance *Instance) error {
-	data, err := s.LoadInstanceData()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := s.loadInstanceDataLocked()
 	if err != nil {
 		return fmt.Errorf("failed to load instances: %w", err)
 	}
@@ -246,6 +266,15 @@ func (s *Storage) saveInstanceData(data []InstanceData) error {
 // Used by reconciliation to inspect state before deciding how to restore.
 // All records pass through Migrate so callers receive CurrentSchemaVersion data.
 func (s *Storage) LoadInstanceData() ([]InstanceData, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadInstanceDataLocked()
+}
+
+// loadInstanceDataLocked is the unlocked core of LoadInstanceData. Callers
+// that already hold s.mu (DeleteInstance, UpdateInstance, LoadAndReconcile)
+// use this to avoid re-entering the non-reentrant mutex.
+func (s *Storage) loadInstanceDataLocked() ([]InstanceData, error) {
 	data, err := MigrateAll(s.state.GetInstances())
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
@@ -255,6 +284,8 @@ func (s *Storage) LoadInstanceData() ([]InstanceData, error) {
 
 // DeleteAllInstances removes all stored instances
 func (s *Storage) DeleteAllInstances() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.unrecovered = nil
 	return s.state.DeleteAllInstances()
 }
@@ -265,6 +296,8 @@ func (s *Storage) DeleteAllInstances() error {
 // orphan candidate, which would let the user re-recover it under a
 // different title and produce a duplicate state.json entry.
 func (s *Storage) UnrecoveredWorktreePaths() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(s.unrecovered) == 0 {
 		return nil
 	}
