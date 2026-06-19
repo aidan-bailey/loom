@@ -150,4 +150,8 @@ func runDispatch(t *testing.T, m *home, key string) {
 	msg, ok := cmd().(scriptDoneMsg)
 	require.True(t, ok)
 	require.NoError(t, msg.err)
+
+	// Apply the deferred sync-primitive mutations the way the main loop
+	// does — they no longer run on the dispatch goroutine.
+	m.handleScriptDone(msg)
 }

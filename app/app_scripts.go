@@ -29,6 +29,7 @@ import (
 type scriptDoneMsg struct {
 	err              error
 	pendingInstances []*session.Instance
+	pendingActions   []func(*home)
 	notices          []string
 	pendingIntents   []pendingIntent
 	trace            string
@@ -55,6 +56,11 @@ type scriptHost struct {
 	pending []*session.Instance
 	notices []string
 	intents []pendingIntent
+	// actions holds model mutations recorded by the "sync" primitives
+	// (cursor/scroll/diff/workspace navigation). They are applied on the
+	// main goroutine in handleScriptDone rather than executed during
+	// dispatch — see deferModelMutation.
+	actions []func(*home)
 }
 
 // SelectedInstance implements script.Host.
@@ -128,114 +134,159 @@ func (s *scriptHost) Enqueue(intent script.Intent) script.IntentID {
 	return id
 }
 
-// CursorUp, CursorDown, ToggleDiff, WorkspacePrev, and WorkspaceNext
-// mirror the legacy runXYZ bodies in actions_nav.go and
-// actions_workspace.go. They mutate list/splitPane/slot state directly
-// because the engine holds its mutex during dispatch and we are still
-// on the dispatch goroutine when these fire — Update has not had a
-// chance to race with us. Anything that would produce a tea.Cmd is
-// handled as a deferred Intent instead.
+// deferModelMutation records a model mutation to run on the main
+// goroutine in handleScriptDone. The "sync" primitives below (cursor /
+// scroll / diff / workspace navigation) MUST use this rather than touch
+// m.list / m.splitPane / m.slots directly: Engine.Dispatch runs inside a
+// tea.Cmd goroutine that Bubble Tea executes concurrently with Update and
+// View, and ui.List / ui.SplitPane have no internal locking — mutating
+// them here is a data race against the preview/metadata ticks and the
+// render path. Recording the mutation and applying it on the main loop
+// (the same pattern QueueInstance uses for AddInstance) removes the race.
+// A consequence is that a read primitive (selected_instance) observes
+// pre-dispatch state within the same handler; this matches how Intents
+// already defer their effects.
+func (s *scriptHost) deferModelMutation(fn func(*home)) {
+	s.mu.Lock()
+	s.actions = append(s.actions, fn)
+	s.mu.Unlock()
+}
 
 // CursorUp implements script.Host.
 func (s *scriptHost) CursorUp() {
-	s.m.list.Up()
+	s.deferModelMutation(func(m *home) { m.list.Up() })
 }
 
 // CursorDown implements script.Host.
 func (s *scriptHost) CursorDown() {
-	s.m.list.Down()
+	s.deferModelMutation(func(m *home) { m.list.Down() })
 }
 
 // ToggleDiff implements script.Host.
 func (s *scriptHost) ToggleDiff() {
-	s.m.splitPane.ToggleDiff()
+	s.deferModelMutation(func(m *home) { m.splitPane.ToggleDiff() })
 }
 
 // WorkspacePrev implements script.Host.
 func (s *scriptHost) WorkspacePrev() {
-	if len(s.m.slots) <= 1 {
-		return
-	}
-	s.m.saveCurrentSlot()
-	newIdx := (s.m.focusedSlot - 1 + len(s.m.slots)) % len(s.m.slots)
-	s.m.loadSlot(newIdx)
-	s.m.updateTabBarStatuses()
-	s.m.persistFocusedWorkspace()
+	s.deferModelMutation(func(m *home) { m.switchWorkspaceSlot(-1) })
 }
 
 // WorkspaceNext implements script.Host.
 func (s *scriptHost) WorkspaceNext() {
-	if len(s.m.slots) <= 1 {
+	s.deferModelMutation(func(m *home) { m.switchWorkspaceSlot(1) })
+}
+
+// switchWorkspaceSlot rotates the focused workspace slot by delta (-1 prev,
+// +1 next), saving the current slot and loading the new one. No-op with one
+// slot. Runs on the main goroutine via deferModelMutation, so the whole-slot
+// pointer swap (m.list/m.splitPane/m.storage/m.focusedSlot) does not race the
+// render loop.
+func (m *home) switchWorkspaceSlot(delta int) {
+	if len(m.slots) <= 1 {
 		return
 	}
-	s.m.saveCurrentSlot()
-	newIdx := (s.m.focusedSlot + 1) % len(s.m.slots)
-	s.m.loadSlot(newIdx)
-	s.m.updateTabBarStatuses()
-	s.m.persistFocusedWorkspace()
+	m.saveCurrentSlot()
+	newIdx := (m.focusedSlot + delta + len(m.slots)) % len(m.slots)
+	m.loadSlot(newIdx)
+	m.updateTabBarStatuses()
+	m.persistFocusedWorkspace()
 }
 
 // ScrollLineUp through ScrollBottom and ScrollTerminalLineUp through
-// ScrollTerminalPageDown are thin pass-throughs to SplitPane. The
-// diff-visible > focused-pane routing is handled inside SplitPane
-// itself; the agent-vs-terminal split exists so scripts can address
-// each pane explicitly rather than relying on focus state.
+// ScrollTerminalPageDown are thin pass-throughs to SplitPane, recorded as
+// deferred mutations (see deferModelMutation). The diff-visible >
+// focused-pane routing is handled inside SplitPane itself; the
+// agent-vs-terminal split exists so scripts can address each pane
+// explicitly rather than relying on focus state.
 
 // ScrollLineUp implements script.Host.
-func (s *scriptHost) ScrollLineUp() { s.m.splitPane.ScrollUp() }
+func (s *scriptHost) ScrollLineUp() {
+	s.deferModelMutation(func(m *home) { m.splitPane.ScrollUp() })
+}
 
 // ScrollLineDown implements script.Host.
-func (s *scriptHost) ScrollLineDown() { s.m.splitPane.ScrollDown() }
+func (s *scriptHost) ScrollLineDown() {
+	s.deferModelMutation(func(m *home) { m.splitPane.ScrollDown() })
+}
 
 // ScrollPageUp implements script.Host.
-func (s *scriptHost) ScrollPageUp() { s.m.splitPane.PageUp() }
+func (s *scriptHost) ScrollPageUp() {
+	s.deferModelMutation(func(m *home) { m.splitPane.PageUp() })
+}
 
 // ScrollPageDown implements script.Host.
-func (s *scriptHost) ScrollPageDown() { s.m.splitPane.PageDown() }
+func (s *scriptHost) ScrollPageDown() {
+	s.deferModelMutation(func(m *home) { m.splitPane.PageDown() })
+}
 
 // ScrollTop implements script.Host.
-func (s *scriptHost) ScrollTop() { s.m.splitPane.GotoTop() }
+func (s *scriptHost) ScrollTop() {
+	s.deferModelMutation(func(m *home) { m.splitPane.GotoTop() })
+}
 
 // ScrollBottom implements script.Host.
-func (s *scriptHost) ScrollBottom() { s.m.splitPane.GotoBottom() }
+func (s *scriptHost) ScrollBottom() {
+	s.deferModelMutation(func(m *home) { m.splitPane.GotoBottom() })
+}
 
 // ScrollTerminalLineUp implements script.Host.
-func (s *scriptHost) ScrollTerminalLineUp() { s.m.splitPane.ScrollTerminalUp() }
+func (s *scriptHost) ScrollTerminalLineUp() {
+	s.deferModelMutation(func(m *home) { m.splitPane.ScrollTerminalUp() })
+}
 
 // ScrollTerminalLineDown implements script.Host.
-func (s *scriptHost) ScrollTerminalLineDown() { s.m.splitPane.ScrollTerminalDown() }
+func (s *scriptHost) ScrollTerminalLineDown() {
+	s.deferModelMutation(func(m *home) { m.splitPane.ScrollTerminalDown() })
+}
 
 // ScrollTerminalPageUp implements script.Host.
-func (s *scriptHost) ScrollTerminalPageUp() { s.m.splitPane.PageTerminalUp() }
+func (s *scriptHost) ScrollTerminalPageUp() {
+	s.deferModelMutation(func(m *home) { m.splitPane.PageTerminalUp() })
+}
 
 // ScrollTerminalPageDown implements script.Host.
-func (s *scriptHost) ScrollTerminalPageDown() { s.m.splitPane.PageTerminalDown() }
+func (s *scriptHost) ScrollTerminalPageDown() {
+	s.deferModelMutation(func(m *home) { m.splitPane.PageTerminalDown() })
+}
 
 // ResetAgentScroll implements script.Host. ResetAgentToNormalMode is
 // nil/Paused-instance safe (preview.go:325) and idempotent — no-op when
 // the pane is not scrolled. Errors are surfaced through the same
 // info-log path as the Esc handler in state_default.go.
 func (s *scriptHost) ResetAgentScroll() {
-	selected := s.m.list.GetSelectedInstance()
-	if err := s.m.splitPane.ResetAgentToNormalMode(selected); err != nil {
-		log.For("ui").Info("scripthost.reset_agent_scroll_failed", "err", err)
-	}
+	s.deferModelMutation(func(m *home) {
+		selected := m.list.GetSelectedInstance()
+		if err := m.splitPane.ResetAgentToNormalMode(selected); err != nil {
+			log.For("ui").Info("scripthost.reset_agent_scroll_failed", "err", err)
+		}
+	})
 }
 
 // ResetTerminalScroll implements script.Host.
-func (s *scriptHost) ResetTerminalScroll() { s.m.splitPane.ResetTerminalToNormalMode() }
+func (s *scriptHost) ResetTerminalScroll() {
+	s.deferModelMutation(func(m *home) { m.splitPane.ResetTerminalToNormalMode() })
+}
 
 // ListPageUp implements script.Host.
-func (s *scriptHost) ListPageUp() { s.m.list.PageUp() }
+func (s *scriptHost) ListPageUp() {
+	s.deferModelMutation(func(m *home) { m.list.PageUp() })
+}
 
 // ListPageDown implements script.Host.
-func (s *scriptHost) ListPageDown() { s.m.list.PageDown() }
+func (s *scriptHost) ListPageDown() {
+	s.deferModelMutation(func(m *home) { m.list.PageDown() })
+}
 
 // ListTop implements script.Host.
-func (s *scriptHost) ListTop() { s.m.list.Top() }
+func (s *scriptHost) ListTop() {
+	s.deferModelMutation(func(m *home) { m.list.Top() })
+}
 
 // ListBottom implements script.Host.
-func (s *scriptHost) ListBottom() { s.m.list.Bottom() }
+func (s *scriptHost) ListBottom() {
+	s.deferModelMutation(func(m *home) { m.list.Bottom() })
+}
 
 // SendTerminalKeys implements script.Host.
 func (s *scriptHost) SendTerminalKeys(inst *session.Instance, text string) error {
@@ -255,20 +306,23 @@ type pendingIntent struct {
 	trace  string
 }
 
-// drain returns and clears the pending instances, notices, and
-// intents. Called from dispatchScript after the Lua call returns and
-// from scriptResumeMsg handling after each Resume — any call that
-// wakes a coroutine may leave fresh Intents in the host buffer.
-func (s *scriptHost) drain() ([]*session.Instance, []string, []pendingIntent) {
+// drain returns and clears the pending instances, notices, intents, and
+// deferred model actions. Called from dispatchScript after the Lua call
+// returns and from scriptResumeMsg handling after each Resume — any call
+// that wakes a coroutine may leave fresh Intents or actions in the host
+// buffer.
+func (s *scriptHost) drain() ([]*session.Instance, []string, []pendingIntent, []func(*home)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.pending
 	n := s.notices
 	in := s.intents
+	ac := s.actions
 	s.pending = nil
 	s.notices = nil
 	s.intents = nil
-	return p, n, in
+	s.actions = nil
+	return p, n, in, ac
 }
 
 // initScripts wires a fresh engine onto h and loads the global
@@ -358,7 +412,7 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 
 	return func() tea.Msg {
 		_, err := m.scripts.Dispatch(ctx, key, host)
-		pending, notices, intents := host.drain()
+		pending, notices, intents, actions := host.drain()
 		// Stamp trace on every intent so handleScriptIntent can
 		// log under the same ID. Engine.Dispatch already produced
 		// traced handler.begin/end records; this carries the trace
@@ -369,6 +423,7 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 		return scriptDoneMsg{
 			err:              err,
 			pendingInstances: pending,
+			pendingActions:   actions,
 			notices:          notices,
 			pendingIntents:   intents,
 			trace:            trace,
@@ -502,13 +557,14 @@ func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 	}
 	return func() tea.Msg {
 		err := m.scripts.ResumeWithHost(ctx, msg.id, host)
-		pending, notices, intents := host.drain()
+		pending, notices, intents, actions := host.drain()
 		for i := range intents {
 			intents[i].trace = msg.trace
 		}
 		return scriptDoneMsg{
 			err:              err,
 			pendingInstances: pending,
+			pendingActions:   actions,
 			notices:          notices,
 			pendingIntents:   intents,
 			trace:            msg.trace,
@@ -525,6 +581,13 @@ func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 // on dispatch so sync primitives (CursorUp/Down/ToggleDiff) that used
 // to trigger a refresh in the legacy runXYZ now still do.
 func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
+	// Apply deferred model mutations from the script "sync" primitives
+	// (cursor/scroll/diff/workspace navigation) first, on the main
+	// goroutine. They were recorded — not executed — during dispatch to
+	// avoid racing Update/View; see scriptHost.deferModelMutation.
+	for _, act := range msg.pendingActions {
+		act(m)
+	}
 	for _, inst := range msg.pendingInstances {
 		finalizer := m.list.AddInstance(inst)
 		finalizer()

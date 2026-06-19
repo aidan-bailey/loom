@@ -57,11 +57,12 @@ type Host interface {
 	// dispatch goroutine (e.g. anything that opens an overlay).
 	Enqueue(intent Intent) IntentID
 
-	// Sync primitives — safe to call on the dispatch goroutine because
-	// they only mutate state that isn't also read by Update at the same
-	// time (list cursor, diff-overlay flag, focused workspace slot).
-	// Anything that needs to produce a tea.Cmd or open an overlay must
-	// instead be handled through Enqueue + a matching Intent.
+	// Navigation primitives — list cursor, diff-overlay flag, and focused
+	// workspace slot. The implementation (app.scriptHost) runs inside the
+	// dispatch tea.Cmd goroutine, which races Update/View, so these only
+	// *record* the mutation; the host applies it on the main goroutine in
+	// handleScriptDone. Anything that needs to produce a tea.Cmd or open an
+	// overlay is handled through Enqueue + a matching Intent instead.
 
 	CursorUp()
 	CursorDown()
@@ -69,9 +70,10 @@ type Host interface {
 	WorkspacePrev()
 	WorkspaceNext()
 
-	// Scroll primitives — mutate UI viewport state synchronously. The
-	// active-pane variants follow the same diff-visible > focused-pane
-	// routing rule as mouse wheel scrolling.
+	// Scroll primitives — record UI viewport mutations (applied on the main
+	// goroutine, like the navigation primitives above). The active-pane
+	// variants follow the same diff-visible > focused-pane routing rule as
+	// mouse wheel scrolling.
 	ScrollLineUp()
 	ScrollLineDown()
 	ScrollPageUp()
