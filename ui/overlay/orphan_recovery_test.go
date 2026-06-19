@@ -5,7 +5,7 @@ import (
 
 	"github.com/aidan-bailey/loom/session"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 )
 

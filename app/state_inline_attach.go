@@ -4,29 +4,29 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/ui"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // handleStateInlineAttachKey forwards raw key bytes to the focused tmux
 // pane while the inline attach is active. ctrl+q exits; a dead pane or
 // paused instance drops attach and returns to the default state.
-func handleStateInlineAttachKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func handleStateInlineAttachKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
 	if selected == nil || selected.Paused() || !selected.TmuxAlive() {
 		m.splitPane.SetInlineAttach(false)
 		m.splitPane.SetFocusedPane(ui.FocusAgent)
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
-		return m, tea.WindowSize()
+		return m, tea.RequestWindowSize
 	}
 
 	// ctrl+q exits inline attach
-	if msg.Type == tea.KeyCtrlQ {
+	if msg.String() == "ctrl+q" {
 		m.splitPane.SetInlineAttach(false)
 		m.splitPane.SetFocusedPane(ui.FocusAgent)
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
-		return m, tea.WindowSize()
+		return m, tea.RequestWindowSize
 	}
 
 	// Convert key to bytes and forward to the focused pane's tmux session

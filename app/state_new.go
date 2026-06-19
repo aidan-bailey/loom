@@ -5,14 +5,14 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	runewidth "github.com/mattn/go-runewidth"
 )
 
 // handleStateNewKey runs while the title-entry overlay is active. The
 // instance is already appended to the list (in a pre-started form);
 // Enter finalizes it and kicks off Start, Esc/ctrl+c pops it back out.
-func handleStateNewKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle quit commands first. Don't handle q because the user might want to type that.
 	if msg.String() == "ctrl+c" {
 		m.state = stateDefault
@@ -20,7 +20,7 @@ func handleStateNewKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		popped := m.list.PopSelectedForKill()
 		return m, tea.Batch(
 			tea.Sequence(
-				tea.WindowSize(),
+				tea.RequestWindowSize,
 				func() tea.Msg {
 					m.menu.SetState(ui.StateDefault)
 					return nil
@@ -31,7 +31,7 @@ func handleStateNewKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	instance := m.list.GetInstances()[m.list.NumInstances()-1]
-	switch msg.Type {
+	switch msg.Code {
 	// Start the instance (enable previews etc) and go back to the main menu state.
 	case tea.KeyEnter:
 		if len(instance.Title) == 0 {
@@ -47,7 +47,7 @@ func handleStateNewKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setOverlay(ti, overlayTextInput)
 			// Trigger initial branch search (no debounce, version 0)
 			initialSearch := m.runBranchSearch("", ti.BranchFilterVersion())
-			return m, tea.Batch(tea.WindowSize(), initialSearch)
+			return m, tea.Batch(tea.RequestWindowSize, initialSearch)
 		}
 
 		// Set Loading status and finalize into the list immediately
@@ -67,14 +67,7 @@ func handleStateNewKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), startCmd)
-	case tea.KeyRunes:
-		if runewidth.StringWidth(instance.Title) >= 32 {
-			return m, m.handleError(fmt.Errorf("title cannot be longer than 32 characters"))
-		}
-		if err := instance.SetTitle(instance.Title + string(msg.Runes)); err != nil {
-			return m, m.handleError(err)
-		}
+		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), startCmd)
 	case tea.KeyBackspace:
 		runes := []rune(instance.Title)
 		if len(runes) == 0 {
@@ -94,7 +87,7 @@ func handleStateNewKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(
 			tea.Sequence(
-				tea.WindowSize(),
+				tea.RequestWindowSize,
 				func() tea.Msg {
 					m.menu.SetState(ui.StateDefault)
 					return nil
@@ -103,6 +96,16 @@ func handleStateNewKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			backgroundKillCmd(popped),
 		)
 	default:
+		// Printable text (was tea.KeyRunes in v1).
+		if msg.Text == "" {
+			break
+		}
+		if runewidth.StringWidth(instance.Title) >= 32 {
+			return m, m.handleError(fmt.Errorf("title cannot be longer than 32 characters"))
+		}
+		if err := instance.SetTitle(instance.Title + msg.Text); err != nil {
+			return m, m.handleError(err)
+		}
 	}
 	return m, nil
 }

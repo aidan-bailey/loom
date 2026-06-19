@@ -7,7 +7,7 @@ import (
 	"github.com/aidan-bailey/loom/session/tmux"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 var highlightColor = BorderActive

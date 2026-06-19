@@ -5,9 +5,9 @@ import (
 	"github.com/aidan-bailey/loom/ui"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 var (
@@ -90,7 +90,9 @@ func newTextarea(initialValue string) textarea.Model {
 	ti.Focus()
 	ti.ShowLineNumbers = false
 	ti.Prompt = ""
-	ti.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	styles := ti.Styles()
+	styles.Focused.CursorLine = lipgloss.NewStyle() // blank the focused cursor-line highlight
+	ti.SetStyles(styles)
 	ti.CharLimit = 0
 	ti.MaxHeight = 0
 	return ti
@@ -180,14 +182,16 @@ func (t *TextInputOverlay) updateFocusState() {
 
 // HandleKeyPress processes a key press and updates the state accordingly.
 // Returns (shouldClose, branchFilterChanged).
-func (t *TextInputOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
-	switch msg.Type {
-	case tea.KeyTab:
+func (t *TextInputOverlay) HandleKeyPress(msg tea.KeyPressMsg) (bool, bool) {
+	switch msg.String() {
+	case "tab":
 		t.setFocusIndex((t.FocusIndex + 1) % t.numStops)
 		return false, false
-	case tea.KeyShiftTab:
+	case "shift+tab":
 		t.setFocusIndex((t.FocusIndex - 1 + t.numStops) % t.numStops)
 		return false, false
+	}
+	switch msg.Code {
 	case tea.KeyEsc:
 		t.Canceled = true
 		return true, false
@@ -220,7 +224,7 @@ func (t *TextInputOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 			return false, false
 		}
 		if t.isProfilePicker() {
-			if msg.Type == tea.KeyLeft || msg.Type == tea.KeyRight {
+			if msg.Code == tea.KeyLeft || msg.Code == tea.KeyRight {
 				t.profilePicker.HandleKeyPress(msg)
 			}
 			return false, false
@@ -238,7 +242,7 @@ func (t *TextInputOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 // here; the host polls BranchFilterVersion() to detect edits and
 // kick off the async search. Callers that care about the filter
 // edge should use HandleKeyPress directly.
-func (t *TextInputOverlay) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (t *TextInputOverlay) HandleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	closed, _ := t.HandleKeyPress(msg)
 	return closed, nil
 }

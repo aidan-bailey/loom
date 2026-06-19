@@ -3,14 +3,14 @@ package app
 import (
 	"github.com/aidan-bailey/loom/ui"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // handleStateQuickInteractKey processes keys for the one-shot input
 // bar. On Submit the text is sent to the agent or terminal pane (per
 // the configured target); Cancel or a dead/paused instance drops the
 // bar.
-func handleStateQuickInteractKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func handleStateQuickInteractKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.quickInputBar == nil {
 		m.state = stateDefault
 		return m, nil
@@ -21,7 +21,7 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quickInputBar = nil
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
-		return m, tea.WindowSize()
+		return m, tea.RequestWindowSize
 	}
 
 	action := m.quickInputBar.HandleKeyPress(msg)
@@ -39,14 +39,14 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
 		if err != nil {
-			return m, tea.Batch(tea.WindowSize(), m.handleError(err))
+			return m, tea.Batch(tea.RequestWindowSize, m.handleError(err))
 		}
-		return m, tea.WindowSize()
+		return m, tea.RequestWindowSize
 	case ui.QuickInputCancel:
 		m.quickInputBar = nil
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
-		return m, tea.WindowSize()
+		return m, tea.RequestWindowSize
 	}
 	return m, nil
 }

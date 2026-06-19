@@ -1,7 +1,7 @@
 package app
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // handleStateFileExplorerKey forwards keys to the active
@@ -9,7 +9,7 @@ import (
 // successful Enter), state reverts to stateDefault and the returned
 // cmd (typically the $EDITOR tea.ExecProcess) is batched with a
 // preview refresh so the UI paints cleanly while the editor runs.
-func handleStateFileExplorerKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func handleStateFileExplorerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	fe := m.fileExplorer()
 	if fe == nil {
 		return m, nil

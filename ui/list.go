@@ -7,8 +7,9 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -19,22 +20,22 @@ const deletingIcon = "✕ "
 const workspaceTerminalIcon = "◆ "
 
 var readyStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
+	Foreground(lipgloss.Color("#51bd73"))
 
 var promptingStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#e5c07b", Dark: "#e5c07b"})
+	Foreground(lipgloss.Color("#e5c07b"))
 
 var addedLinesStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#51bd73", Dark: "#51bd73"})
+	Foreground(lipgloss.Color("#51bd73"))
 
 var removedLinesStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("#de613e"))
 
 var pausedStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#888888", Dark: "#888888"})
+	Foreground(lipgloss.Color("#888888"))
 
 var deletingStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#cc6666", Dark: "#cc6666"})
+	Foreground(lipgloss.Color("#cc6666"))
 
 var deletingTitleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
@@ -45,45 +46,45 @@ var deletingDescStyle = lipgloss.NewStyle().
 	Foreground(TextDim)
 
 var workspaceTerminalStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#6c71c4", Dark: "#6c71c4"})
+	Foreground(lipgloss.Color("#6c71c4"))
 
 var wtTitleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
-	Background(lipgloss.AdaptiveColor{Light: "#e8e0f0", Dark: "#2d2640"}).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#c4b5d9"})
+	Background(compat.AdaptiveColor{Light: lipgloss.Color("#e8e0f0"), Dark: lipgloss.Color("#2d2640")}).
+	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#c4b5d9")})
 
 var wtDescStyle = lipgloss.NewStyle().
 	Padding(0, 1, 1, 1).
-	Background(lipgloss.AdaptiveColor{Light: "#e8e0f0", Dark: "#2d2640"}).
-	Foreground(lipgloss.AdaptiveColor{Light: "#6c71c4", Dark: "#8a80b0"})
+	Background(compat.AdaptiveColor{Light: lipgloss.Color("#e8e0f0"), Dark: lipgloss.Color("#2d2640")}).
+	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#6c71c4"), Dark: lipgloss.Color("#8a80b0")})
 
 var wtSelectedTitleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
-	Background(lipgloss.AdaptiveColor{Light: "#d0c4e8", Dark: "#3d3260"}).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#e0d4f0"})
+	Background(compat.AdaptiveColor{Light: lipgloss.Color("#d0c4e8"), Dark: lipgloss.Color("#3d3260")}).
+	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#e0d4f0")})
 
 var wtSelectedDescStyle = lipgloss.NewStyle().
 	Padding(0, 1, 1, 1).
-	Background(lipgloss.AdaptiveColor{Light: "#d0c4e8", Dark: "#3d3260"}).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#c4b5d9"})
+	Background(compat.AdaptiveColor{Light: lipgloss.Color("#d0c4e8"), Dark: lipgloss.Color("#3d3260")}).
+	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#c4b5d9")})
 
 var titleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#dddddd"})
+	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
 
 var listDescStyle = lipgloss.NewStyle().
 	Padding(0, 1, 1, 1).
-	Foreground(lipgloss.AdaptiveColor{Light: "#A49FA5", Dark: "#777777"})
+	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#A49FA5"), Dark: lipgloss.Color("#777777")})
 
 var selectedTitleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
 	Background(lipgloss.Color("#dde4f0")).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#1a1a1a"})
+	Foreground(lipgloss.Color("#1a1a1a"))
 
 var selectedDescStyle = lipgloss.NewStyle().
 	Padding(0, 1, 1, 1).
 	Background(lipgloss.Color("#dde4f0")).
-	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#1a1a1a"})
+	Foreground(lipgloss.Color("#1a1a1a"))
 
 var mainTitle = lipgloss.NewStyle().
 	Background(lipgloss.Color("62")).

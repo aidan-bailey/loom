@@ -4,7 +4,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 )
 

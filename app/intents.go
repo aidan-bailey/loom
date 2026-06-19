@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // editorDoneMsg is fired after tea.ExecProcess returns from the
@@ -340,7 +340,7 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 		}
 		return resumeDoneMsg{}
 	}
-	return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), resumeCmd)
+	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), resumeCmd)
 }
 
 // -- Attach --
@@ -357,7 +357,7 @@ func runInlineAttachAgent(m *home) (tea.Model, tea.Cmd) {
 	m.splitPane.SetInlineAttach(true)
 	m.state = stateInlineAttach
 	m.menu.SetState(ui.StateInlineAttach)
-	return m, tea.WindowSize()
+	return m, tea.RequestWindowSize
 }
 
 func runInlineAttachTerminal(m *home) (tea.Model, tea.Cmd) {
@@ -366,7 +366,7 @@ func runInlineAttachTerminal(m *home) (tea.Model, tea.Cmd) {
 	m.splitPane.SetInlineAttach(true)
 	m.state = stateInlineAttach
 	m.menu.SetState(ui.StateInlineAttach)
-	return m, tea.WindowSize()
+	return m, tea.RequestWindowSize
 }
 
 func runFullScreenAttachAgent(m *home) (tea.Model, tea.Cmd) {
@@ -389,14 +389,14 @@ func runQuickInputAgent(m *home) (tea.Model, tea.Cmd) {
 	m.state = stateQuickInteract
 	m.quickInputBar = ui.NewQuickInputBar(ui.QuickInputTargetAgent)
 	m.menu.SetState(ui.StateQuickInteract)
-	return m, tea.WindowSize()
+	return m, tea.RequestWindowSize
 }
 
 func runQuickInputTerminal(m *home) (tea.Model, tea.Cmd) {
 	m.state = stateQuickInteract
 	m.quickInputBar = ui.NewQuickInputBar(ui.QuickInputTargetTerminal)
 	m.menu.SetState(ui.StateQuickInteract)
-	return m, tea.WindowSize()
+	return m, tea.RequestWindowSize
 }
 
 // -- Help & workspace --
@@ -461,7 +461,7 @@ func runToggleFileExplorer(m *home) (tea.Model, tea.Cmd) {
 	ov := overlay.NewFileExplorerOverlay(root, result.Paths, openInEditorCmd)
 	m.setOverlay(ov, overlayFileExplorer)
 	m.state = stateFileExplorer
-	return m, tea.WindowSize()
+	return m, tea.RequestWindowSize
 }
 
 // openInEditorCmd launches $EDITOR on absPath via tea.ExecProcess so

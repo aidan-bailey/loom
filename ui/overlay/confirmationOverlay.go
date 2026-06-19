@@ -1,10 +1,12 @@
 package overlay
 
 import (
+	"image/color"
+
 	"github.com/aidan-bailey/loom/ui"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // ConfirmationOverlay represents a confirmation dialog overlay
@@ -24,7 +26,7 @@ type ConfirmationOverlay struct {
 	// Custom cancel key (defaults to 'n')
 	CancelKey string
 	// Custom styling options
-	borderColor lipgloss.Color
+	borderColor color.Color
 }
 
 // NewConfirmationOverlay creates a new confirmation dialog overlay with the given message
@@ -41,7 +43,7 @@ func NewConfirmationOverlay(message string) *ConfirmationOverlay {
 
 // HandleKeyPress processes a key press and updates the state
 // Returns true if the overlay should be closed
-func (c *ConfirmationOverlay) HandleKeyPress(msg tea.KeyMsg) bool {
+func (c *ConfirmationOverlay) HandleKeyPress(msg tea.KeyPressMsg) bool {
 	switch msg.String() {
 	case c.ConfirmKey:
 		c.Dismissed = true
@@ -64,7 +66,7 @@ func (c *ConfirmationOverlay) HandleKeyPress(msg tea.KeyMsg) bool {
 // HandleKey satisfies the Overlay interface. It delegates to
 // HandleKeyPress and emits no tea.Cmd — callbacks are invoked
 // synchronously inside HandleKeyPress.
-func (c *ConfirmationOverlay) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (c *ConfirmationOverlay) HandleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	return c.HandleKeyPress(msg), nil
 }
 
@@ -103,8 +105,8 @@ func (c *ConfirmationOverlay) SetWidth(width int) {
 }
 
 // SetBorderColor sets the border color of the confirmation overlay
-func (c *ConfirmationOverlay) SetBorderColor(color lipgloss.Color) {
-	c.borderColor = color
+func (c *ConfirmationOverlay) SetBorderColor(col color.Color) {
+	c.borderColor = col
 }
 
 // SetConfirmKey sets the key used to confirm the action

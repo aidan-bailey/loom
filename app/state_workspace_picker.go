@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"github.com/aidan-bailey/loom/config"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // handleStateWorkspaceKey drives the workspace picker overlay. In
 // startup mode the committed selection activates exactly one workspace
 // slot; in mid-session mode the committed set is diffed against the
 // current slots and applied via applyWorkspaceToggle.
-func handleStateWorkspaceKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func handleStateWorkspaceKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	wp := m.workspacePicker()
 	if wp == nil {
 		return m, nil
@@ -39,7 +39,7 @@ func handleStateWorkspaceKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.saveOpenWorkspaces()
 		}
 		// else: Global selected, keep current (global) state.
-		return m, tea.WindowSize()
+		return m, tea.RequestWindowSize
 	}
 	// Mid-session toggle: diff active workspaces.
 	desired := wp.GetActiveWorkspaces()

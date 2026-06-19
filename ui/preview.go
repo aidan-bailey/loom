@@ -5,12 +5,13 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 )
 
 var previewPaneStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#dddddd"})
+	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
 
 // PreviewPane renders the agent tmux pane's content in the top half of
 // the split view. It owns a bubbles/viewport for scrollback navigation
@@ -37,7 +38,7 @@ type previewState struct {
 // the caller must SetSize before the first render.
 func NewPreviewPane() *PreviewPane {
 	return &PreviewPane{
-		viewport: viewport.New(0, 0),
+		viewport: viewport.New(),
 	}
 }
 
@@ -47,8 +48,8 @@ func NewPreviewPane() *PreviewPane {
 func (p *PreviewPane) SetSize(width, maxHeight int) {
 	p.width = width
 	p.height = maxHeight
-	p.viewport.Width = width
-	p.viewport.Height = maxHeight
+	p.viewport.SetWidth(width)
+	p.viewport.SetHeight(maxHeight)
 }
 
 // setFallbackState sets the preview state with fallback text and a message
@@ -97,10 +98,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 			"Session is paused. Press 'r' to resume.",
 			"",
 			lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{
-					Light: "#FFD700",
-					Dark:  "#FFD700",
-				}).
+				Foreground(lipgloss.Color("#FFD700")).
 				Render(fmt.Sprintf(
 					"The instance can be checked out at '%s' (copied to your clipboard)",
 					instance.GetBranch(),
@@ -113,7 +111,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	var err error
 
 	// If in scroll mode but haven't captured content yet, do it now
-	if p.isScrolling && p.viewport.Height > 0 && len(p.viewport.View()) == 0 {
+	if p.isScrolling && p.viewport.Height() > 0 && len(p.viewport.View()) == 0 {
 		// Capture full pane content including scrollback history using capture-pane -p -S -
 		content, err = instance.PreviewFullHistory()
 		if err != nil {
@@ -122,7 +120,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 
 		// Set content in the viewport
 		footer := lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"}).
+			Foreground(lipgloss.Color("#808080")).
 			Render("ESC to exit scroll mode")
 
 		p.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, content, footer))
@@ -226,7 +224,7 @@ func (p *PreviewPane) enterScrollMode(instance *session.Instance) error {
 	}
 
 	footer := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"}).
+		Foreground(lipgloss.Color("#808080")).
 		Render("ESC to exit scroll mode")
 
 	p.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, content, footer))
@@ -245,7 +243,7 @@ func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
 			return err
 		}
 	}
-	p.viewport.LineUp(1)
+	p.viewport.ScrollUp(1)
 	return nil
 }
 
@@ -257,7 +255,7 @@ func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
 	if !p.isScrolling {
 		return nil
 	}
-	p.viewport.LineDown(1)
+	p.viewport.ScrollDown(1)
 	return nil
 }
 
@@ -271,7 +269,7 @@ func (p *PreviewPane) PageUp(instance *session.Instance) error {
 			return err
 		}
 	}
-	p.viewport.HalfViewUp()
+	p.viewport.HalfPageUp()
 	return nil
 }
 
@@ -283,7 +281,7 @@ func (p *PreviewPane) PageDown(instance *session.Instance) error {
 	if !p.isScrolling {
 		return nil
 	}
-	p.viewport.HalfViewDown()
+	p.viewport.HalfPageDown()
 	return nil
 }
 

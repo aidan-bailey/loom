@@ -4,7 +4,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // handleStatePromptKey runs while the prompt+branch-picker overlay is
@@ -12,7 +12,7 @@ import (
 // off Start for a not-yet-started instance or SendPrompt for a running
 // one; cancel routes through cancelPromptOverlay to clean up unstarted
 // instances.
-func handleStatePromptKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle cancel via ctrl+c before delegating to the overlay
 	if msg.String() == "ctrl+c" {
 		return m, m.cancelPromptOverlay()
@@ -66,7 +66,7 @@ func handleStatePromptKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 
-				return m, tea.Batch(tea.WindowSize(), m.instanceChanged(), startCmd)
+				return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), startCmd)
 			}
 
 			// Regular flow: instance already running, just send prompt
@@ -78,7 +78,7 @@ func handleStatePromptKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dismissOverlay()
 		m.state = stateDefault
 		return m, tea.Sequence(
-			tea.WindowSize(),
+			tea.RequestWindowSize,
 			func() tea.Msg {
 				m.menu.SetState(ui.StateDefault)
 				m.showHelpScreen(helpStart(selected), nil)

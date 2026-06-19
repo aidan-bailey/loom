@@ -9,8 +9,8 @@ import (
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 type helpText interface {
@@ -285,7 +285,7 @@ func (m *home) showHelpScreen(helpType helpText, onDismiss func() tea.Cmd) (tea.
 }
 
 // handleHelpState handles key events when in help state
-func (m *home) handleHelpState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *home) handleHelpState(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	to := m.textOverlay()
 	if to == nil {
 		return m, nil
@@ -302,7 +302,7 @@ func (m *home) handleHelpState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			dismissCmd,
 			tea.Sequence(
-				tea.WindowSize(),
+				tea.RequestWindowSize,
 				func() tea.Msg {
 					m.menu.SetState(ui.StateDefault)
 					return nil

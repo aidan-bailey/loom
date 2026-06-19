@@ -1,7 +1,7 @@
 package keys
 
 import (
-	"github.com/charmbracelet/bubbles/key"
+	"charm.land/bubbles/v2/key"
 )
 
 // KeyName is the enum identifier used by the help panel and menu-bar

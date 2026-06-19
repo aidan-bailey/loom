@@ -10,15 +10,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 )
 
 var terminalPaneStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#dddddd"})
+	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
 
 var terminalFooterStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"})
+	Foreground(lipgloss.Color("#808080"))
 
 // terminalSession holds a cached tmux session for a specific instance.
 type terminalSession struct {
@@ -47,7 +48,7 @@ type TerminalPane struct {
 func NewTerminalPane() *TerminalPane {
 	return &TerminalPane{
 		sessions: make(map[string]*terminalSession),
-		viewport: viewport.New(0, 0),
+		viewport: viewport.New(),
 	}
 }
 
@@ -59,8 +60,8 @@ func (t *TerminalPane) SetSize(width, height int) {
 	defer t.mu.Unlock()
 	t.width = width
 	t.height = height
-	t.viewport.Width = width
-	t.viewport.Height = height
+	t.viewport.SetWidth(width)
+	t.viewport.SetHeight(height)
 	// Resize all cached sessions so that no session has a stale width. A stale
 	// width causes captured lines to be wider than width, which re-wraps when
 	// rendered and overflows the pane's height constraint.
@@ -425,7 +426,7 @@ func (t *TerminalPane) ScrollUp() error {
 			return err
 		}
 	}
-	t.viewport.LineUp(1)
+	t.viewport.ScrollUp(1)
 	return nil
 }
 
@@ -436,7 +437,7 @@ func (t *TerminalPane) ScrollDown() error {
 	if !t.isScrolling {
 		return nil
 	}
-	t.viewport.LineDown(1)
+	t.viewport.ScrollDown(1)
 	return nil
 }
 
@@ -449,7 +450,7 @@ func (t *TerminalPane) PageUp() error {
 			return err
 		}
 	}
-	t.viewport.HalfViewUp()
+	t.viewport.HalfPageUp()
 	return nil
 }
 
@@ -460,7 +461,7 @@ func (t *TerminalPane) PageDown() error {
 	if !t.isScrolling {
 		return nil
 	}
-	t.viewport.HalfViewDown()
+	t.viewport.HalfPageDown()
 	return nil
 }
 

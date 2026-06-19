@@ -6,22 +6,23 @@ import (
 
 	"github.com/aidan-bailey/loom/session"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 )
 
-var keyStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
-	Light: "#655F5F",
-	Dark:  "#7F7A7A",
+var keyStyle = lipgloss.NewStyle().Foreground(compat.AdaptiveColor{
+	Light: lipgloss.Color("#655F5F"),
+	Dark:  lipgloss.Color("#7F7A7A"),
 })
 
-var descStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
-	Light: "#7A7474",
-	Dark:  "#9C9494",
+var descStyle = lipgloss.NewStyle().Foreground(compat.AdaptiveColor{
+	Light: lipgloss.Color("#7A7474"),
+	Dark:  lipgloss.Color("#9C9494"),
 })
 
-var sepStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
-	Light: "#DDDADA",
-	Dark:  "#3C3C3C",
+var sepStyle = lipgloss.NewStyle().Foreground(compat.AdaptiveColor{
+	Light: lipgloss.Color("#DDDADA"),
+	Dark:  lipgloss.Color("#3C3C3C"),
 })
 
 var actionGroupStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
