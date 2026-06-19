@@ -126,9 +126,15 @@ func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 		return nil
 	}
 
-	content, err := s.tmuxSession.CapturePaneContent()
-	if err != nil {
-		return fmt.Errorf("terminal pane: failed to capture content: %w", err)
+	// Phase 1: source from the in-process emulator; fall back to capture-pane
+	// when no emulator is wired (Windows / LOOM_PANE_RENDERER=snapshot).
+	content, rok := s.tmuxSession.RenderEmulator()
+	if !rok {
+		var err error
+		content, err = s.tmuxSession.CapturePaneContent()
+		if err != nil {
+			return fmt.Errorf("terminal pane: failed to capture content: %w", err)
+		}
 	}
 
 	t.fallback = false

@@ -28,6 +28,12 @@ type testSetup struct {
 func setupTestEnvironment(t *testing.T, cmdExec cmd_test.MockCmdExec) *testSetup {
 	t.Helper()
 
+	// These tests drive pane content through the mocked capture-pane, not the
+	// live PTY stream, so run the pane in snapshot (capture-pane) mode. Must be
+	// set before instance.Start, which builds the emulator in Restore. The
+	// emulator render path is covered by session/vt and session/tmux tests.
+	t.Setenv("LOOM_PANE_RENDERER", "snapshot")
+
 	// Initialize logging
 	_ = log.Initialize("", false)
 
