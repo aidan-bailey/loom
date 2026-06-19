@@ -803,30 +803,6 @@ func (t *TmuxSession) RenderEmulator() (string, bool) {
 	return emu.Render(), true
 }
 
-// ScrollbackLen returns the emulator's scrollback line count, or (0,false) if
-// no emulator is wired.
-func (t *TmuxSession) ScrollbackLen() (int, bool) {
-	t.stateMu.Lock()
-	emu := t.emu
-	t.stateMu.Unlock()
-	if emu == nil {
-		return 0, false
-	}
-	return emu.ScrollbackLen(), true
-}
-
-// RenderWindow renders `rows` combined lines `fromBottom` lines above the
-// buffer bottom, or ("",false) if no emulator is wired.
-func (t *TmuxSession) RenderWindow(fromBottom, rows int) (string, bool) {
-	t.stateMu.Lock()
-	emu := t.emu
-	t.stateMu.Unlock()
-	if emu == nil {
-		return "", false
-	}
-	return emu.RenderWindow(fromBottom, rows), true
-}
-
 // CapturePaneContent captures the content of the tmux pane
 func (t *TmuxSession) CapturePaneContent() (string, error) {
 	// Add -e flag to preserve escape sequences (ANSI color codes).
@@ -842,6 +818,23 @@ func (t *TmuxSession) CapturePaneContent() (string, error) {
 		return "", fmt.Errorf("error capturing pane content: %v", err)
 	}
 	return string(output), nil
+}
+
+// CaptureHistory returns the full pane buffer — scrollback history plus the
+// visible screen — as physical rows with ANSI escapes, via capture-pane -S -.
+// Returns ("", false) on error. This is tmux's AUTHORITATIVE scrollback: the
+// in-process emulator only ever sees the visible screen from the tmux client
+// stream (tmux paints clients with redraws, not scroll-through history), so the
+// windowed scroll-back must be sourced here rather than from emu.Scrollback().
+func (t *TmuxSession) CaptureHistory() (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", t.sanitizedName)
+	output, err := t.cmdExec.Output(cmd)
+	if err != nil {
+		return "", false
+	}
+	return string(output), true
 }
 
 // CleanupSessions kills all tmux sessions that start with "session-"

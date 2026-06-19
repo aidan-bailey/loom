@@ -37,13 +37,13 @@ type TerminalPane struct {
 	fallback      bool
 	fallbackText  string
 
-	// scrollOffset is lines-from-bottom; 0 = live tail. Increasing scrolls up
-	// into the current session's emulator scrollback. All scroll state is
-	// guarded by t.mu.
-	scrollOffset            int
-	scrollbackAtScrollStart int
-	lastScrollbackLen       int
-	newLinesBelow           int
+	// scrollOffset is lines-from-bottom into the captured history buffer; 0 =
+	// live tail. All scroll state is guarded by t.mu.
+	scrollOffset       int
+	scrollStarting     bool
+	totalAtScrollStart int
+	lastTotal          int
+	newLinesBelow      int
 }
 
 // NewTerminalPane constructs a TerminalPane with an empty session cache at the
@@ -94,37 +94,21 @@ func (t *TerminalPane) currentSessionLocked() *tmux.TmuxSession {
 	return s.tmuxSession
 }
 
-// scrollbackLenLocked returns the current session's scrollback length (0 if no
-// session or no emulator). Caller must hold t.mu.
-func (t *TerminalPane) scrollbackLenLocked() int {
-	s := t.currentSessionLocked()
-	if s == nil {
-		return 0
-	}
-	if n, ok := s.ScrollbackLen(); ok {
-		return n
-	}
-	return 0
-}
-
-// setOffsetLocked clamps and applies a new lines-from-bottom offset, marking the
-// scrollback length on the transition away from the live tail so the new-lines
-// counter has a baseline. Caller must hold t.mu.
+// setOffsetLocked floors a new lines-from-bottom offset at 0 and marks the start
+// of a scroll gesture. The real top-of-buffer clamp happens in UpdateContent,
+// which has the captured line count. Caller must hold t.mu.
 func (t *TerminalPane) setOffsetLocked(off int) {
-	maxOff := t.scrollbackLenLocked()
 	if off < 0 {
 		off = 0
-	}
-	if off > maxOff {
-		off = maxOff
 	}
 	wasBottom := t.scrollOffset == 0
 	t.scrollOffset = off
 	if wasBottom && off > 0 {
-		t.scrollbackAtScrollStart = maxOff
+		t.scrollStarting = true
 	}
 	if off == 0 {
 		t.newLinesBelow = 0
+		t.lastTotal = 0
 	}
 }
 
@@ -183,32 +167,60 @@ func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 		return nil
 	}
 
-	// Scrolled: render a height-1 window at the offset (last row is the footer).
-	total, sok := s.ScrollbackLen()
-	if !sok {
-		// No emulator: scrolling unsupported -> live tail.
+	// Scrolled: window into tmux's authoritative history (capture-pane -S -),
+	// anchoring the view to its content as live output accrues below.
+	hist, hok := s.CaptureHistory()
+	if !hok {
 		t.scrollOffset = 0
 		content, _ := s.CapturePaneContent()
 		t.fallback = false
 		t.content = content
+		t.newLinesBelow = 0
 		return nil
 	}
-	t.lastScrollbackLen = total
-	if t.scrollOffset > total {
-		t.scrollOffset = total
-	}
+	lines := strings.Split(strings.TrimRight(hist, "\n"), "\n")
+	total := len(lines)
 	rows := t.height - 1
 	if rows < 1 {
 		rows = 1
 	}
-	window, _ := s.RenderWindow(t.scrollOffset, rows)
-	t.fallback = false
-	t.content = window
-	newBelow := total - t.scrollbackAtScrollStart
-	if newBelow < 0 {
-		newBelow = 0
+
+	switch {
+	case t.scrollStarting:
+		t.totalAtScrollStart = total
+		t.lastTotal = total
+		t.scrollStarting = false
+	case t.lastTotal > 0 && total > t.lastTotal:
+		t.scrollOffset += total - t.lastTotal
 	}
-	t.newLinesBelow = newBelow
+	t.lastTotal = total
+
+	maxOff := total - rows
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if t.scrollOffset > maxOff {
+		t.scrollOffset = maxOff
+	}
+	if t.scrollOffset <= 0 {
+		t.scrollOffset = 0
+		content, rok := s.RenderEmulator()
+		if !rok {
+			content, _ = s.CapturePaneContent()
+		}
+		t.fallback = false
+		t.content = content
+		t.newLinesBelow = 0
+		return nil
+	}
+
+	t.fallback = false
+	t.content = strings.Join(windowLines(lines, t.scrollOffset, rows), "\n")
+	if newBelow := total - t.totalAtScrollStart; newBelow > 0 {
+		t.newLinesBelow = newBelow
+	} else {
+		t.newLinesBelow = 0
+	}
 	return nil
 }
 
@@ -510,7 +522,7 @@ func (t *TerminalPane) PageDown() error {
 func (t *TerminalPane) GotoTop() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.setOffsetLocked(t.scrollbackLenLocked())
+	t.setOffsetLocked(scrollToTopOffset)
 	return nil
 }
 
@@ -526,10 +538,10 @@ func (t *TerminalPane) GotoBottom() {
 func (t *TerminalPane) ScrollPercent() float64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.scrollOffset <= 0 || t.lastScrollbackLen <= 0 {
+	if t.scrollOffset <= 0 || t.lastTotal <= 0 {
 		return 1.0
 	}
-	return 1.0 - float64(t.scrollOffset)/float64(t.lastScrollbackLen)
+	return 1.0 - float64(t.scrollOffset)/float64(t.lastTotal)
 }
 
 // ResetToNormalMode returns the pane to the live tail.

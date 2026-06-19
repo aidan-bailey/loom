@@ -4,7 +4,6 @@ import (
 	"io"
 	"sync"
 
-	uv "github.com/charmbracelet/ultraviolet"
 	xvt "github.com/charmbracelet/x/vt"
 )
 
@@ -72,56 +71,6 @@ func (e *xvtEmulator) Cursor() Cursor {
 	defer e.mu.RUnlock()
 	p := e.term.CursorPosition()
 	return Cursor{X: p.X, Y: p.Y, Visible: true}
-}
-
-func (e *xvtEmulator) ScrollbackLen() int {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.term.ScrollbackLen()
-}
-
-// RenderWindow renders `rows` combined (scrollback+visible) lines whose bottom
-// is `fromBottom` lines above the bottom of the buffer. Holds the read lock so
-// it is concurrent-safe against the output pump's Write (like Render/Cursor).
-func (e *xvtEmulator) RenderWindow(fromBottom, rows int) string {
-	if rows < 1 {
-		return ""
-	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	sb := e.term.Scrollback()
-	sbLen := 0
-	if sb != nil {
-		sbLen = sb.Len()
-	}
-	w := e.term.Width()
-	h := e.term.Height()
-	total := sbLen + h
-	top := total - fromBottom - rows // combined index of the window's first row
-
-	out := make(uv.Lines, 0, rows)
-	for i := 0; i < rows; i++ {
-		idx := top + i
-		switch {
-		case idx < 0 || idx >= total:
-			out = append(out, nil) // blank row
-		case idx < sbLen:
-			out = append(out, sb.Line(idx)) // straight from scrollback (oldest=0)
-		default:
-			y := idx - sbLen // visible screen row
-			line := make(uv.Line, 0, w)
-			for x := 0; x < w; x++ {
-				if c := e.term.CellAt(x, y); c != nil {
-					line = append(line, *c)
-				} else {
-					line = append(line, uv.EmptyCell)
-				}
-			}
-			out = append(out, line)
-		}
-	}
-	return out.Render() // SGR-coalesced, trailing blanks trimmed, newline-joined
 }
 
 func (e *xvtEmulator) Close() error {

@@ -222,16 +222,42 @@ func TestPreviewContentWithoutScrolling(t *testing.T) {
 	require.Contains(t, renderedString, "test", "Rendered preview should contain the test content")
 }
 
-func TestPreviewPane_ScrollOffsetClamps(t *testing.T) {
+func TestPreviewPane_ScrollOffsetFloorsAtZero(t *testing.T) {
 	p := NewPreviewPane()
 	p.SetSize(80, 10)
-	// With no instance the offset stays 0 and methods are no-ops (nil-safe).
-	_ = p.ScrollUp(nil)
+	// ScrollDown from the live tail floors at 0 — never a negative offset. (The
+	// top-of-buffer clamp lives in UpdateContent, which needs a captured
+	// buffer; setOffset only floors at the bottom.)
+	_ = p.ScrollDown(nil)
+	if p.scrollOffset != 0 {
+		t.Fatalf("ScrollDown from live tail must stay at 0; got %d", p.scrollOffset)
+	}
 	if p.IsScrolling() {
-		t.Fatal("scroll on a nil instance must not enter scrolled state")
+		t.Fatal("live tail is not a scrolled state")
 	}
 	if p.ScrollPercent() != 1.0 {
 		t.Fatalf("live tail must report ScrollPercent 1.0; got %v", p.ScrollPercent())
+	}
+}
+
+// TestPreviewPane_windowLines covers the pure windowing helper that both panes
+// use to slice a captured history buffer.
+func TestPreviewPane_windowLines(t *testing.T) {
+	lines := []string{"a", "b", "c", "d", "e"} // 5 lines
+	// fromBottom=0, rows=2 -> the last 2 lines.
+	got := windowLines(lines, 0, 2)
+	if len(got) != 2 || got[0] != "d" || got[1] != "e" {
+		t.Fatalf("window at bottom = %v, want [d e]", got)
+	}
+	// fromBottom=2, rows=2 -> two lines, two up from the bottom.
+	got = windowLines(lines, 2, 2)
+	if got[0] != "b" || got[1] != "c" {
+		t.Fatalf("window 2-from-bottom = %v, want [b c]", got)
+	}
+	// Past the top -> leading blank padding (3 blanks), then a..e.
+	got = windowLines(lines, 0, 8)
+	if len(got) != 8 || got[0] != "" || got[2] != "" || got[3] != "a" || got[7] != "e" {
+		t.Fatalf("over-tall window = %v, want [\"\" \"\" \"\" a b c d e]", got)
 	}
 }
 

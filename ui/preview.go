@@ -9,6 +9,10 @@ import (
 	"charm.land/lipgloss/v2/compat"
 )
 
+// scrollToTopOffset is a sentinel passed to setOffset for "go to top"; the next
+// UpdateContent clamps it to the real top of the captured buffer.
+const scrollToTopOffset = 1 << 30
+
 var previewPaneStyle = lipgloss.NewStyle().
 	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
 
@@ -24,11 +28,31 @@ func scrollFooter(newLines int) string {
 	return "▲ scrolled — Esc/End to jump to bottom"
 }
 
+// windowLines returns `rows` lines from `lines` whose bottom sits `fromBottom`
+// lines above the end of the slice, padding out-of-range positions with blanks.
+// Shared by both panes to window a captured history buffer.
+func windowLines(lines []string, fromBottom, rows int) []string {
+	if rows < 1 {
+		return nil
+	}
+	out := make([]string, rows)
+	total := len(lines)
+	bottom := total - fromBottom
+	top := bottom - rows
+	for i := 0; i < rows; i++ {
+		idx := top + i
+		if idx >= 0 && idx < total {
+			out[i] = lines[idx]
+		}
+	}
+	return out
+}
+
 // PreviewPane renders the agent tmux pane's content in the top half of the
-// split view. It tails the emulator's live screen at scrollOffset 0 and paints
-// a window into the emulator scrollback when scrolled up, while live output
-// keeps flowing. lastInstanceTitle resets the scroll position on selection
-// change rather than persisting a stale offset.
+// split view. It tails the emulator's live screen at scrollOffset 0, and when
+// scrolled paints a window into tmux's authoritative history (capture-pane -S -)
+// while live output keeps flowing. lastInstanceTitle resets the scroll position
+// on selection change rather than persisting a stale offset.
 type PreviewPane struct {
 	width  int
 	height int
@@ -36,15 +60,19 @@ type PreviewPane struct {
 	previewState      previewState
 	lastInstanceTitle string // tracks the current instance to reset scroll on change
 
-	// scrollOffset is lines-from-bottom; 0 = live tail. Increasing scrolls up
-	// into the emulator scrollback. Clamped to [0, ScrollbackLen()].
+	// scrollOffset is lines-from-bottom into the captured history buffer; 0 =
+	// live tail. setOffset only floors it at 0; UpdateContent clamps to the
+	// real top once it has captured the buffer.
 	scrollOffset int
-	// scrollbackAtScrollStart is ScrollbackLen() captured when the offset left
-	// 0, used to count "new lines below" without scanning the buffer.
-	scrollbackAtScrollStart int
-	// lastScrollbackLen caches ScrollbackLen() from the last UpdateContent so
-	// ScrollPercent is lock-free and consistent with the last render.
-	lastScrollbackLen int
+	// scrollStarting marks the first UpdateContent after leaving the live tail,
+	// so the new-lines baseline is set from the freshly captured buffer.
+	scrollStarting bool
+	// totalAtScrollStart is the buffer line count when scrolling began; the
+	// "new lines below" count is total-now minus this.
+	totalAtScrollStart int
+	// lastTotal is the buffer line count from the previous scrolled tick, used
+	// to anchor the view to content as new output appends below.
+	lastTotal int
 	// newLinesBelow is the live-output line count accrued since scrolling up.
 	newLinesBelow int
 }
@@ -78,11 +106,26 @@ func (p *PreviewPane) setFallbackState(message string) {
 	}
 }
 
+// liveTail sets the pane content to the live (offset 0) emulator screen.
+func (p *PreviewPane) liveTail(instance *session.Instance) error {
+	content, err := instance.Preview()
+	if err != nil {
+		return err
+	}
+	if len(content) == 0 && !instance.Started() {
+		p.setFallbackState("Please enter a name for the instance.")
+	} else {
+		p.previewState = previewState{fallback: false, text: content}
+	}
+	p.newLinesBelow = 0
+	return nil
+}
+
 // UpdateContent refreshes the pane from the given instance. At scrollOffset 0 it
-// tails the live emulator screen; when scrolled it paints a window of the
-// emulator scrollback at the current offset (live output keeps accruing below).
-// Falls back to splash text for nil / loading / paused instances and resets the
-// offset when the selected instance changes.
+// tails the live emulator screen; when scrolled it windows tmux's authoritative
+// history (capture-pane -S -) at the current offset, anchoring the view to its
+// content as live output accrues below. Falls back to splash text for
+// nil/loading/paused instances and resets the offset on instance change.
 func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	// Reset to live tail when the selected instance changes.
 	newTitle := ""
@@ -93,6 +136,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 		p.lastInstanceTitle = newTitle
 		p.scrollOffset = 0
 		p.newLinesBelow = 0
+		p.lastTotal = 0
 	}
 
 	switch {
@@ -117,45 +161,57 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	}
 
 	if p.scrollOffset == 0 {
-		// Live tail: emulator visible screen (or capture-pane fallback).
-		content, err := instance.Preview()
-		if err != nil {
-			return err
-		}
-		if len(content) == 0 && !instance.Started() {
-			p.setFallbackState("Please enter a name for the instance.")
-		} else {
-			p.previewState = previewState{fallback: false, text: content}
-		}
-		p.newLinesBelow = 0
-		return nil
+		return p.liveTail(instance)
 	}
 
-	// Scrolled: render a height-1 window at the offset (last row is reserved
-	// for the jump-to-bottom footer).
-	total, ok := instance.ScrollbackLen()
+	// Scrolled: window into tmux's authoritative buffer (scrollback + visible).
+	// The in-process emulator only mirrors the visible screen, so windowed
+	// history must come from tmux, not emu.Scrollback().
+	hist, ok := instance.CaptureHistory()
 	if !ok {
-		// No emulator (snapshot/Windows): scrolling unsupported -> live tail.
 		p.scrollOffset = 0
-		content, _ := instance.Preview()
-		p.previewState = previewState{fallback: false, text: content}
-		return nil
+		return p.liveTail(instance)
 	}
-	p.lastScrollbackLen = total
-	if p.scrollOffset > total {
-		p.scrollOffset = total
-	}
+	lines := strings.Split(strings.TrimRight(hist, "\n"), "\n")
+	total := len(lines)
 	rows := p.height - 1
 	if rows < 1 {
 		rows = 1
 	}
-	window, _ := instance.RenderWindow(p.scrollOffset, rows)
-	p.previewState = previewState{fallback: false, text: window}
-	newBelow := total - p.scrollbackAtScrollStart
-	if newBelow < 0 {
-		newBelow = 0
+
+	switch {
+	case p.scrollStarting:
+		// First tick of this scroll gesture: baseline the new-lines counter.
+		p.totalAtScrollStart = total
+		p.lastTotal = total
+		p.scrollStarting = false
+	case p.lastTotal > 0 && total > p.lastTotal:
+		// New output appended below while scrolled: bump the offset by the same
+		// amount so the content under the cursor stays put.
+		p.scrollOffset += total - p.lastTotal
 	}
-	p.newLinesBelow = newBelow
+	p.lastTotal = total
+
+	maxOff := total - rows
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if p.scrollOffset > maxOff {
+		p.scrollOffset = maxOff
+	}
+	if p.scrollOffset <= 0 {
+		// Anchored back to the bottom -> live tail.
+		p.scrollOffset = 0
+		return p.liveTail(instance)
+	}
+
+	window := windowLines(lines, p.scrollOffset, rows)
+	p.previewState = previewState{fallback: false, text: strings.Join(window, "\n")}
+	if newBelow := total - p.totalAtScrollStart; newBelow > 0 {
+		p.newLinesBelow = newBelow
+	} else {
+		p.newLinesBelow = 0
+	}
 	return nil
 }
 
@@ -228,7 +284,7 @@ func (p *PreviewPane) String() string {
 	return rendered
 }
 
-// ScrollUp scrolls one line up into scrollback.
+// ScrollUp scrolls one line up into history.
 func (p *PreviewPane) ScrollUp(instance *session.Instance) error { return p.scrollBy(instance, +1) }
 
 // ScrollDown scrolls one line down toward the live tail.
@@ -244,15 +300,9 @@ func (p *PreviewPane) PageDown(instance *session.Instance) error {
 	return p.scrollBy(instance, -(p.height / 2))
 }
 
-// GotoTop jumps to the oldest scrollback line.
+// GotoTop jumps to the oldest line of captured history.
 func (p *PreviewPane) GotoTop(instance *session.Instance) error {
-	maxOff := 0
-	if instance != nil {
-		if m, ok := instance.ScrollbackLen(); ok {
-			maxOff = m
-		}
-	}
-	return p.setOffset(instance, maxOff)
+	return p.setOffset(instance, scrollToTopOffset)
 }
 
 // GotoBottom returns to the live tail.
@@ -263,10 +313,10 @@ func (p *PreviewPane) GotoBottom(instance *session.Instance) error {
 // ScrollPercent returns the scroll position as a fraction [0, 1]; 1.0 == live
 // tail (bottom).
 func (p *PreviewPane) ScrollPercent() float64 {
-	if p.scrollOffset <= 0 || p.lastScrollbackLen <= 0 {
+	if p.scrollOffset <= 0 || p.lastTotal <= 0 {
 		return 1.0
 	}
-	return 1.0 - float64(p.scrollOffset)/float64(p.lastScrollbackLen)
+	return 1.0 - float64(p.scrollOffset)/float64(p.lastTotal)
 }
 
 // IsScrolling reports whether the pane is scrolled away from the live tail.
@@ -283,32 +333,24 @@ func (p *PreviewPane) scrollBy(instance *session.Instance, delta int) error {
 	return p.setOffset(instance, p.scrollOffset+delta)
 }
 
-// setOffset clamps and applies a new lines-from-bottom offset. Marks the
-// scrollback length on the transition away from the live tail so the
-// "new lines below" counter has a baseline.
+// setOffset floors a new lines-from-bottom offset at 0 and marks the start of a
+// scroll gesture. The real top-of-buffer clamp happens in UpdateContent, which
+// has the captured line count.
 func (p *PreviewPane) setOffset(instance *session.Instance, off int) error {
 	if instance != nil && instance.GetStatus() == session.Paused {
 		return nil
 	}
-	maxOff := 0
-	if instance != nil {
-		if m, ok := instance.ScrollbackLen(); ok {
-			maxOff = m
-		}
-	}
 	if off < 0 {
 		off = 0
-	}
-	if off > maxOff {
-		off = maxOff
 	}
 	wasBottom := p.scrollOffset == 0
 	p.scrollOffset = off
 	if wasBottom && off > 0 {
-		p.scrollbackAtScrollStart = maxOff // baseline for the new-lines counter
+		p.scrollStarting = true
 	}
 	if off == 0 {
 		p.newLinesBelow = 0
+		p.lastTotal = 0
 	}
 	return nil
 }
