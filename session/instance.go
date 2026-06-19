@@ -1156,18 +1156,6 @@ func (i *Instance) SendPrompt(prompt string) error {
 	return nil
 }
 
-// PreviewFullHistory captures the entire tmux pane output including full scrollback history
-func (i *Instance) PreviewFullHistory() (string, error) {
-	if !i.isStarted() || i.GetStatus() == Paused {
-		return "", nil
-	}
-	ts := i.getTmuxSession()
-	if ts == nil {
-		return "", nil
-	}
-	return ts.CapturePaneContentWithOptions("-", "-")
-}
-
 // GetContentHash returns the content hash of the last captured tmux pane.
 func (i *Instance) GetContentHash() []byte {
 	if !i.isStarted() {

@@ -844,20 +844,6 @@ func (t *TmuxSession) CapturePaneContent() (string, error) {
 	return string(output), nil
 }
 
-// CapturePaneContentWithOptions captures the pane content with additional options
-// start and end specify the starting and ending line numbers (use "-" for the start/end of history)
-func (t *TmuxSession) CapturePaneContentWithOptions(start, end string) (string, error) {
-	// Add -e flag to preserve escape sequences (ANSI color codes)
-	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-e", "-J", "-S", start, "-E", end, "-t", t.sanitizedName)
-	output, err := t.cmdExec.Output(cmd)
-	if err != nil {
-		return "", fmt.Errorf("failed to capture tmux pane content with options: %v", err)
-	}
-	return string(output), nil
-}
-
 // CleanupSessions kills all tmux sessions that start with "session-"
 func CleanupSessions(cmdExec internalexec.Executor) error {
 	// First try to list sessions
