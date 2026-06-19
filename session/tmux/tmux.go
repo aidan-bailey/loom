@@ -334,22 +334,38 @@ func (t *TmuxSession) Restore() error {
 	t.stateMu.Lock()
 	old := t.ptmx
 	t.ptmx = nil
+	oldEmu := t.emu
+	t.emu = nil
+	cols, rows := t.lastCols, t.lastRows
 	t.stateMu.Unlock()
 	if old != nil {
 		t.signalPumpStop(old)
 		_ = old.Close()
 	}
 	t.waitPumpExit()
+	// Close the old emulator only after the pump has fully exited, so a
+	// still-draining pump can't write into a freed emulator.
+	if oldEmu != nil {
+		_ = oldEmu.Close()
+	}
 
 	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
 	if err != nil {
 		return fmt.Errorf("error opening PTY: %w", err)
 	}
+	if cols < 1 {
+		cols = 80
+	}
+	if rows < 1 {
+		rows = 24
+	}
+	emu := newEmulator(cols, rows)
 	t.stateMu.Lock()
 	t.ptmx = ptmx
+	t.emu = emu
 	t.monitor = newStatusMonitor()
 	t.stateMu.Unlock()
-	t.startOutputPump(ptmx)
+	t.startOutputPump(ptmx) // defaults pumpDest = emu (Task 6)
 	return nil
 }
 
@@ -652,15 +668,21 @@ func (t *TmuxSession) PausePreview() error {
 	t.stateMu.Lock()
 	ptmx := t.ptmx
 	t.ptmx = nil
+	emu := t.emu
+	t.emu = nil
 	t.stateMu.Unlock()
+	var closeErr error
 	if ptmx != nil {
 		t.signalPumpStop(ptmx)
 		if err := ptmx.Close(); err != nil {
-			return fmt.Errorf("error closing preview PTY: %w", err)
+			closeErr = fmt.Errorf("error closing preview PTY: %w", err)
 		}
 	}
 	t.waitPumpExit()
-	return nil
+	if emu != nil {
+		_ = emu.Close()
+	}
+	return closeErr
 }
 
 // ResumePreview reopens the detached preview PTY after a full-screen attach
@@ -678,6 +700,8 @@ func (t *TmuxSession) Close() error {
 	t.stateMu.Lock()
 	ptmx := t.ptmx
 	t.ptmx = nil
+	emu := t.emu
+	t.emu = nil
 	t.stateMu.Unlock()
 	if ptmx != nil {
 		t.signalPumpStop(ptmx)
@@ -688,6 +712,10 @@ func (t *TmuxSession) Close() error {
 
 	// Wait for pump goroutine to exit after PTY close.
 	t.waitPumpExit()
+	// Close the emulator after the pump has exited (no write-after-close).
+	if emu != nil {
+		_ = emu.Close()
+	}
 
 	killCtx, killCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer killCancel()

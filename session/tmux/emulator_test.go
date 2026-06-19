@@ -2,10 +2,12 @@ package tmux
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session/vt"
 	"github.com/stretchr/testify/require"
 )
@@ -61,6 +63,24 @@ func TestOutputPump_FeedsEmulator(t *testing.T) {
 		s, ok := ts.RenderEmulator()
 		return ok && containsText(s, "pumped-text")
 	}, time.Second, 10*time.Millisecond, "pump should write ptmx bytes into the emulator")
+}
+
+// TestRestore_BuildsEmulator_CloseTearsDown verifies the attach-lifecycle:
+// Restore wires a fresh emulator on the new ptmx; Close tears it down.
+func TestRestore_BuildsEmulator_CloseTearsDown(t *testing.T) {
+	t.Setenv("LOOM_PANE_RENDERER", "")
+	noop := cmd_test.MockCmdExec{RunFunc: func(*exec.Cmd) error { return nil }}
+	ts := newTmuxSession("emu-restore", "prog", NewMockPtyFactory(t), noop)
+
+	require.NoError(t, ts.Restore())
+	if _, ok := ts.RenderEmulator(); !ok {
+		t.Fatal("Restore should wire an emulator on unix")
+	}
+
+	require.NoError(t, ts.Close())
+	if _, ok := ts.RenderEmulator(); ok {
+		t.Fatal("Close should tear down the emulator")
+	}
 }
 
 // containsText checks visible text presence; rendered output may carry SGR,
