@@ -741,6 +741,16 @@ func (t *TmuxSession) Close() error {
 // SetDetachedSize set the width and height of the session while detached. This makes the
 // tmux output conform to the specified shape.
 func (t *TmuxSession) SetDetachedSize(width, height int) error {
+	// Record geometry and resize the emulator first so its grid matches the
+	// new pane before tmux repaints into the resized PTY. In-memory, cheap.
+	t.stateMu.Lock()
+	t.lastCols = width
+	t.lastRows = height
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu != nil {
+		emu.Resize(width, height)
+	}
 	return t.updateWindowSize(width, height)
 }
 

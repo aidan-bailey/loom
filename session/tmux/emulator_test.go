@@ -83,6 +83,31 @@ func TestRestore_BuildsEmulator_CloseTearsDown(t *testing.T) {
 	}
 }
 
+func TestSetDetachedSize_ResizesEmulatorAndRecordsGeometry(t *testing.T) {
+	ts := NewTmuxSession("emu-resize", "prog")
+	ts.stateMu.Lock()
+	ts.emu = vt.NewXVT(80, 24)
+	ts.stateMu.Unlock()
+	for i := 0; i < 20; i++ {
+		_, _ = ts.emu.Write([]byte("line\r\n"))
+	}
+	// No ptmx wired, so updateWindowSize returns an error we ignore — the
+	// emulator resize and geometry recording happen first regardless.
+	_ = ts.SetDetachedSize(80, 10)
+
+	ts.stateMu.Lock()
+	gotCols, gotRows := ts.lastCols, ts.lastRows
+	ts.stateMu.Unlock()
+	if gotCols != 80 || gotRows != 10 {
+		t.Fatalf("geometry not recorded: got %dx%d", gotCols, gotRows)
+	}
+	s, _ := ts.RenderEmulator()
+	rows := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(rows) > 10 {
+		t.Fatalf("emulator should be 10 rows after resize, got %d", len(rows))
+	}
+}
+
 // containsText checks visible text presence; rendered output may carry SGR,
 // but a substring check on plain ASCII is sufficient for these assertions.
 func containsText(rendered, want string) bool {
