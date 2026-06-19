@@ -639,6 +639,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// own independent tmux session whose content may have changed.
 				if selected != nil {
 					_ = m.splitPane.UpdateTerminal(selected)
+					// When the agent pane is scrolled back, re-render it too:
+					// scrolling changes the window (and the new-lines counter)
+					// without changing the live content hash, so this
+					// short-circuit would otherwise freeze the scroll.
+					if m.splitPane.IsAgentInScrollMode() {
+						_ = m.splitPane.UpdateAgent(selected)
+					}
 				}
 				return m, nextTick
 			}

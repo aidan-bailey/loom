@@ -222,6 +222,74 @@ func TestPreviewContentWithoutScrolling(t *testing.T) {
 	require.Contains(t, renderedString, "test", "Rendered preview should contain the test content")
 }
 
+// TestPreviewPane_ScrollsIntoHistory is the end-to-end regression guard for
+// "scrolling does nothing": with a buffer larger than the screen, scrolling up
+// must move the window into older history (capture-pane -S -), away from the
+// live tail. The mock returns 200 history lines for the -S capture and the
+// bottom 24 for the plain (visible) capture, mirroring real tmux.
+func TestPreviewPane_ScrollsIntoHistory(t *testing.T) {
+	sessionCreated := false
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error {
+			s := cmd.String()
+			if strings.Contains(s, "has-session") {
+				if sessionCreated {
+					return nil
+				}
+				return fmt.Errorf("session does not exist")
+			}
+			if strings.Contains(s, "new-session") {
+				sessionCreated = true
+			}
+			return nil
+		},
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
+			s := cmd.String()
+			if strings.Contains(s, "capture-pane") {
+				// CaptureHistory uses `-S` (full scrollback); the plain visible
+				// capture does not. Return 200 lines vs the bottom 24.
+				if strings.Contains(s, "-S") {
+					var b strings.Builder
+					for i := 1; i <= 200; i++ {
+						fmt.Fprintf(&b, "histline%d\n", i)
+					}
+					return []byte(strings.TrimRight(b.String(), "\n")), nil
+				}
+				var b strings.Builder
+				for i := 177; i <= 200; i++ {
+					fmt.Fprintf(&b, "histline%d\n", i)
+				}
+				return []byte(strings.TrimRight(b.String(), "\n")), nil
+			}
+			return []byte(""), nil
+		},
+	}
+
+	setup := setupTestEnvironment(t, cmdExec)
+	defer setup.cleanupFn()
+
+	p := NewPreviewPane()
+	p.SetSize(80, 24)
+
+	// Live tail: shows the newest lines.
+	require.NoError(t, p.UpdateContent(setup.instance))
+	liveText := p.previewState.text
+	require.Contains(t, liveText, "histline200", "live tail should show the newest line")
+	require.False(t, p.IsScrolling(), "fresh pane is at the live tail")
+
+	// Scroll well up into history, then refresh.
+	for i := 0; i < 60; i++ {
+		require.NoError(t, p.ScrollUp(setup.instance))
+	}
+	require.NoError(t, p.UpdateContent(setup.instance))
+	scrolledText := p.previewState.text
+
+	require.True(t, p.IsScrolling(), "pane should be scrolled after scrolling up")
+	require.NotEqual(t, liveText, scrolledText, "scrolled content must differ from the live tail")
+	require.NotContains(t, scrolledText, "histline200", "scrolled-up view must not show the newest line")
+	require.Contains(t, scrolledText, "histline130", "scrolled-up view should show older history")
+}
+
 func TestPreviewPane_ScrollOffsetFloorsAtZero(t *testing.T) {
 	p := NewPreviewPane()
 	p.SetSize(80, 10)
