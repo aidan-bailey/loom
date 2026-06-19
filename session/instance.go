@@ -664,6 +664,12 @@ func (i *Instance) Preview() (string, error) {
 	if ts == nil || !ts.DoesSessionExist() {
 		return "", nil
 	}
+	// Phase 1: source the live screen from the in-process emulator (in-memory,
+	// no subprocess). Fall back to capture-pane when no emulator is wired
+	// (Windows / LOOM_PANE_RENDERER=snapshot).
+	if s, ok := ts.RenderEmulator(); ok {
+		return s, nil
+	}
 	return ts.CapturePaneContent()
 }
 
