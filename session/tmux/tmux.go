@@ -386,8 +386,17 @@ func (t *TmuxSession) processContentHash(content string) bool {
 // which would cause the tmux client to block and stop processing input.
 func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 	ctx, cancel := context.WithCancel(context.Background())
+	// Default the pump into the emulator so the visible screen stays current.
+	// nil emu (Windows / snapshot kill-switch) keeps the legacy io.Discard drain.
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	var dest io.Writer = io.Discard
+	if emu != nil {
+		dest = emu
+	}
 	t.pumpMu.Lock()
-	t.pumpDest = io.Discard
+	t.pumpDest = dest
 	t.pumpCancel = cancel
 	t.pumpMu.Unlock()
 	t.pumpDone = make(chan struct{})
