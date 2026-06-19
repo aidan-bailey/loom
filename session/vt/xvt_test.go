@@ -1,11 +1,58 @@
 package vt
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func writeLines(e Emulator, n int) {
+	for i := 1; i <= n; i++ {
+		_, _ = e.Write([]byte(fmt.Sprintf("line%d\r\n", i)))
+	}
+}
+
+func TestXVT_ScrollbackGrows(t *testing.T) {
+	e := NewXVT(20, 5)
+	defer e.Close()
+	writeLines(e, 30) // > height, forces lines into scrollback
+	if e.ScrollbackLen() == 0 {
+		t.Fatal("scrollback should accrue after writing more lines than the screen height")
+	}
+}
+
+func TestXVT_RenderWindow_Content(t *testing.T) {
+	e := NewXVT(20, 5)
+	defer e.Close()
+	writeLines(e, 30)
+	// fromBottom=0 -> the bottom `rows` lines (live tail region).
+	bottom := stripSGR(e.RenderWindow(0, 3))
+	if !strings.Contains(bottom, "line30") {
+		t.Fatalf("window at bottom should include the newest line; got %q", bottom)
+	}
+	// Scroll up into history: a window further from the bottom shows older lines.
+	up := stripSGR(e.RenderWindow(10, 3))
+	if strings.Contains(up, "line30") {
+		t.Fatalf("a scrolled-up window should not show the newest line; got %q", up)
+	}
+}
+
+func TestXVT_RenderWindow_BlankPadding(t *testing.T) {
+	e := NewXVT(20, 5)
+	defer e.Close()
+	writeLines(e, 3) // tiny buffer
+	// Far past the top -> leading blanks, never panics.
+	got := e.RenderWindow(1000, 4)
+	if strings.Count(got, "\n") > 4 {
+		t.Fatalf("window must be at most `rows` lines; got %q", got)
+	}
+	// rows < 1 -> empty.
+	if e.RenderWindow(0, 0) != "" {
+		t.Fatal("RenderWindow(_,0) must return empty string")
+	}
+}
 
 func TestXVT_QueryReplyDoesNotBlock(t *testing.T) {
 	e := NewXVT(80, 24)

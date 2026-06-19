@@ -30,4 +30,15 @@ type Emulator interface {
 
 	// Close releases emulator resources. Safe to call multiple times.
 	Close() error
+
+	// ScrollbackLen returns the number of lines in the emulator's scrollback
+	// (history above the visible screen). Grows as output scrolls; capped at
+	// the configured max (x/vt default 10000).
+	ScrollbackLen() int
+
+	// RenderWindow renders `rows` lines as an ANSI-styled string. The window's
+	// bottom sits `fromBottom` lines above the bottom of the combined
+	// [scrollback | visible-screen] buffer: fromBottom 0 = the bottom `rows`
+	// lines (live tail). Indices outside the buffer render as blank lines.
+	RenderWindow(fromBottom, rows int) string
 }

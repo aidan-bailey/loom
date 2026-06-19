@@ -6,11 +6,13 @@ import "testing"
 // and a stand-in for tests that don't need real emulation.
 type nopEmulator struct{}
 
-func (nopEmulator) Write(p []byte) (int, error) { return len(p), nil }
-func (nopEmulator) Resize(cols, rows int)       {}
-func (nopEmulator) Render() string              { return "" }
-func (nopEmulator) Cursor() Cursor              { return Cursor{} }
-func (nopEmulator) Close() error                { return nil }
+func (nopEmulator) Write(p []byte) (int, error)              { return len(p), nil }
+func (nopEmulator) Resize(cols, rows int)                    {}
+func (nopEmulator) Render() string                           { return "" }
+func (nopEmulator) Cursor() Cursor                           { return Cursor{} }
+func (nopEmulator) Close() error                             { return nil }
+func (nopEmulator) ScrollbackLen() int                       { return 0 }
+func (nopEmulator) RenderWindow(fromBottom, rows int) string { return "" }
 
 var _ Emulator = nopEmulator{}
 
