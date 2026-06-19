@@ -273,6 +273,17 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	}
 	mouseCancel()
 
+	// Disable the tmux status bar. The detached attach stream the emulator
+	// consumes includes the status line, but the pane preview must not — it
+	// would consume a render row and shift content. tmux still owns the
+	// session; only its chrome is hidden.
+	statusCtx, statusCancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	statusCmd := exec.CommandContext(statusCtx, "tmux", "set-option", "-t", t.sanitizedName, "status", "off")
+	if err := t.cmdExec.Run(statusCmd); err != nil {
+		log.For("tmux").Warn("status_off_failed", "session", t.sanitizedName, "err", err)
+	}
+	statusCancel()
+
 	// Rebind Ctrl-Q to detach-client for full-screen attach. The default tmux
 	// prefix is Ctrl-B + d; our users expect Ctrl-Q because inline attach has
 	// always used it. This binding is server-wide, but claude-squad has always
