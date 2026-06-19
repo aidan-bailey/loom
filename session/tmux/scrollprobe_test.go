@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,12 @@ import (
 // rather than the emulator's own (empty) scrollback. This is exactly the case
 // the original Phase 2 model got wrong ("scrolling does nothing").
 func TestCaptureHistoryRealTmux(t *testing.T) {
+	// Needs a real tmux binary; skip where it is unavailable (e.g. the Nix
+	// build sandbox), like any test that shells out to an external tool.
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not found in PATH; skipping real-tmux scroll-history test")
+	}
+
 	ts := NewTmuxSession("caphist", "sh")
 	if err := ts.Start(t.TempDir()); err != nil {
 		t.Fatalf("start: %v", err)
