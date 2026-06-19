@@ -1,6 +1,7 @@
 package vt
 
 import (
+	"io"
 	"sync"
 
 	xvt "github.com/charmbracelet/x/vt"
@@ -11,8 +12,9 @@ import (
 // take the write lock; Render/Cursor take the read lock. The tmux output pump
 // is the sole writer; the Bubble Tea Update goroutine is the reader.
 type xvtEmulator struct {
-	mu   sync.RWMutex
-	term *xvt.Emulator
+	mu        sync.RWMutex
+	term      *xvt.Emulator
+	drainDone chan struct{}
 }
 
 // NewXVT constructs a real terminal emulator sized to cols x rows.
@@ -23,7 +25,24 @@ func NewXVT(cols, rows int) Emulator {
 	if rows < 1 {
 		rows = 1
 	}
-	return &xvtEmulator{term: xvt.NewEmulator(cols, rows)}
+	e := &xvtEmulator{
+		term:      xvt.NewEmulator(cols, rows),
+		drainDone: make(chan struct{}),
+	}
+	// x/vt answers terminal queries (Device Attributes, Device Status / cursor
+	// position, foreground/background/cursor color, mode reports) by writing the
+	// reply to an UNBUFFERED io.Pipe. A write to that pipe blocks until the reply
+	// is Read. Loom only mirrors tmux's already-emulated client stream for
+	// DISPLAY and never needs these replies — but tmux sends such queries when a
+	// client attaches, so without a reader the first query blocks emu.Write
+	// forever, wedging the output pump (which holds our write lock) and freezing
+	// the UI. Drain and discard the replies; the copy ends when Close() closes
+	// the pipe and Read returns EOF.
+	go func() {
+		defer close(e.drainDone)
+		_, _ = io.Copy(io.Discard, e.term)
+	}()
+	return e
 }
 
 func (e *xvtEmulator) Write(p []byte) (int, error) {
@@ -55,7 +74,19 @@ func (e *xvtEmulator) Cursor() Cursor {
 }
 
 func (e *xvtEmulator) Close() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.term.Close()
+	// Stop the drain goroutine by closing the emulator's reply pipe directly,
+	// via the *io.PipeWriter that InputPipe() returns. We deliberately do NOT
+	// call e.term.Close(): it writes an unsynchronized `closed` flag that the
+	// race detector flags against the drain goroutine's Read of the same flag
+	// (an x/vt-internal data race). Closing the pipe's write end makes that
+	// Read return EOF so the drain exits, and `closed` is never written — so
+	// nothing races on it. The pump that feeds Write has already stopped before
+	// callers invoke Close, so no concurrent Write remains.
+	if c, ok := e.term.InputPipe().(io.Closer); ok {
+		_ = c.Close()
+	}
+	// Wait for the drain goroutine to observe the closed pipe and exit, so a
+	// Close never leaks the goroutine.
+	<-e.drainDone
+	return nil
 }

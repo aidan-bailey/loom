@@ -4,7 +4,27 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+func TestXVT_QueryReplyDoesNotBlock(t *testing.T) {
+	e := NewXVT(80, 24)
+	defer e.Close()
+	done := make(chan struct{})
+	go func() {
+		// A DSR cursor-position query (\x1b[6n) makes x/vt generate a reply on
+		// its internal unbuffered io.Pipe; without a reader draining that pipe,
+		// this Write blocks forever — exactly what wedges the tmux output pump
+		// (holding the emulator write-lock) and freezes the UI on startup.
+		_, _ = e.Write([]byte("\x1b[6n"))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("xvtEmulator.Write blocked on a query reply (reply pipe not drained)")
+	}
+}
 
 func TestXVT_PlainText(t *testing.T) {
 	e := NewXVT(20, 3)
