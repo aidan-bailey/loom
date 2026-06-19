@@ -53,8 +53,10 @@ const pumpWaitTimeout = 2 * time.Second
 // The zero value is not usable — construct via [NewTmuxSession] (or
 // [NewTmuxSessionWithDeps] in tests) so the PTY factory and executor
 // are wired up. One [TmuxSession] owns exactly one tmux session and one
-// detached-mode PTY; do not share instances across goroutines except
-// through the documented accessors, which take the internal mutex.
+// detached-mode PTY. The ptmx and monitor fields are touched from two
+// goroutines — the metadata fan-out (CaptureAndProcess/HasUpdated/keystroke
+// injection) and the Update loop's attach lifecycle (Restore/PausePreview/
+// Close) — so both are guarded by stateMu (see its doc).
 type TmuxSession struct {
 	// Initialized by NewTmuxSession
 	//
@@ -68,6 +70,14 @@ type TmuxSession struct {
 
 	// Initialized by Start or Restore
 	//
+	// stateMu guards ptmx and monitor (both pointer and the monitor's
+	// fields). The metadata fan-out reads ptmx and updates monitor while
+	// the Update goroutine's attach lifecycle reassigns or closes them, so
+	// every access goes through stateMu. To avoid stalling the UI, callers
+	// snapshot ptmx under the lock and run PTY I/O on the local copy; the
+	// lock is never held across ptmx I/O, ptyFactory.Start, or a tmux
+	// subprocess. The monitor hash update is CPU-only and does run under it.
+	stateMu sync.Mutex
 	// ptmx is the detached-mode PTY attached to the tmux session. The UI drives
 	// preview rendering, resizing, and keystroke injection through it. Full-screen
 	// attach bypasses this PTY entirely via tea.ExecProcess, so ptmx is temporarily
@@ -303,10 +313,14 @@ func (t *TmuxSession) Restore() error {
 	log.For("tmux").Debug("restore", "session", t.sanitizedName)
 	// Close any prior PTY and wait for its pump to exit before creating a new
 	// one, otherwise the old pump goroutine leaks and keeps a stale FD alive.
-	if t.ptmx != nil {
-		t.signalPumpStop(t.ptmx)
-		_ = t.ptmx.Close()
-		t.ptmx = nil
+	// Snapshot-and-clear under stateMu, then do the (blocking) close outside it.
+	t.stateMu.Lock()
+	old := t.ptmx
+	t.ptmx = nil
+	t.stateMu.Unlock()
+	if old != nil {
+		t.signalPumpStop(old)
+		_ = old.Close()
 	}
 	t.waitPumpExit()
 
@@ -314,10 +328,40 @@ func (t *TmuxSession) Restore() error {
 	if err != nil {
 		return fmt.Errorf("error opening PTY: %w", err)
 	}
+	t.stateMu.Lock()
 	t.ptmx = ptmx
 	t.monitor = newStatusMonitor()
+	t.stateMu.Unlock()
 	t.startOutputPump(ptmx)
 	return nil
+}
+
+// currentPtmx returns the active PTY under stateMu. Callers perform any I/O
+// on the returned handle outside the lock; a concurrent lifecycle method may
+// close it, in which case that I/O fails with a benign error rather than
+// racing on the pointer.
+func (t *TmuxSession) currentPtmx() *os.File {
+	t.stateMu.Lock()
+	defer t.stateMu.Unlock()
+	return t.ptmx
+}
+
+// processContentHash feeds the latest pane content to the monitor and reports
+// whether it changed since the previous tick. Runs under stateMu so it is safe
+// against Restore swapping the monitor pointer and against a concurrent
+// capture; the hash is CPU-only, so holding the lock adds no I/O latency.
+func (t *TmuxSession) processContentHash(content string) bool {
+	t.stateMu.Lock()
+	defer t.stateMu.Unlock()
+	if t.monitor == nil {
+		return false
+	}
+	newHash := t.monitor.hash(content)
+	if !bytes.Equal(newHash, t.monitor.prevOutputHash) {
+		t.monitor.prevOutputHash = newHash
+		return true
+	}
+	return false
 }
 
 // startOutputPump launches a goroutine that continuously reads from the PTY
@@ -390,7 +434,9 @@ func (t *TmuxSession) setPumpDest(w io.Writer) {
 // the method enforces test-only use.
 func (t *TmuxSession) SimulateStuckPumpForTest() {
 	t.pumpDone = make(chan struct{})
+	t.stateMu.Lock()
 	t.ptmx = nil
+	t.stateMu.Unlock()
 }
 
 // waitPumpExit blocks until the current pump goroutine signals exit or
@@ -435,10 +481,11 @@ func (m *statusMonitor) hash(s string) []byte {
 
 // TapEnter sends an enter keystroke to the tmux pane.
 func (t *TmuxSession) TapEnter() error {
-	if t.ptmx == nil {
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
 		return fmt.Errorf("PTY is not available")
 	}
-	_, err := t.ptmx.Write([]byte{0x0D})
+	_, err := ptmx.Write([]byte{0x0D})
 	if err != nil {
 		return fmt.Errorf("error sending enter keystroke to PTY: %w", err)
 	}
@@ -447,10 +494,11 @@ func (t *TmuxSession) TapEnter() error {
 
 // TapDAndEnter sends 'D' followed by an enter keystroke to the tmux pane.
 func (t *TmuxSession) TapDAndEnter() error {
-	if t.ptmx == nil {
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
 		return fmt.Errorf("PTY is not available")
 	}
-	_, err := t.ptmx.Write([]byte{0x44, 0x0D})
+	_, err := ptmx.Write([]byte{0x44, 0x0D})
 	if err != nil {
 		return fmt.Errorf("error sending enter keystroke to PTY: %w", err)
 	}
@@ -461,19 +509,21 @@ func (t *TmuxSession) TapDAndEnter() error {
 // SendKeysRaw, callers pass a Go string rather than a byte slice; no
 // escaping or translation is performed.
 func (t *TmuxSession) SendKeys(keys string) error {
-	if t.ptmx == nil {
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
 		return fmt.Errorf("PTY is not available")
 	}
-	_, err := t.ptmx.Write([]byte(keys))
+	_, err := ptmx.Write([]byte(keys))
 	return err
 }
 
 // SendKeysRaw writes raw bytes directly to the tmux PTY.
 func (t *TmuxSession) SendKeysRaw(b []byte) error {
-	if t.ptmx == nil {
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
 		return fmt.Errorf("PTY is not available")
 	}
-	_, err := t.ptmx.Write(b)
+	_, err := ptmx.Write(b)
 	return err
 }
 
@@ -495,9 +545,7 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 		hasPrompt = strings.Contains(content, "Yes, allow once")
 	}
 
-	newHash := t.monitor.hash(content)
-	if !bytes.Equal(newHash, t.monitor.prevOutputHash) {
-		t.monitor.prevOutputHash = newHash
+	if t.processContentHash(content) {
 		return true, hasPrompt
 	}
 	return false, hasPrompt
@@ -541,11 +589,7 @@ func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasProm
 		hasPrompt = strings.Contains(content, "Yes, allow once")
 	}
 
-	newHash := t.monitor.hash(content)
-	if !bytes.Equal(newHash, t.monitor.prevOutputHash) {
-		t.monitor.prevOutputHash = newHash
-		updated = true
-	}
+	updated = t.processContentHash(content)
 
 	return content, updated, hasPrompt, trustHandled, nil
 }
@@ -553,6 +597,8 @@ func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasProm
 // GetContentHash returns the last computed content hash from HasUpdated
 // or CaptureAndProcess. Returns nil if no hash has been computed yet.
 func (t *TmuxSession) GetContentHash() []byte {
+	t.stateMu.Lock()
+	defer t.stateMu.Unlock()
 	if t.monitor == nil {
 		return nil
 	}
@@ -573,12 +619,19 @@ func (t *TmuxSession) FullScreenAttachCmd() *exec.Cmd {
 // foreground `tmux attach-session`, so there are no stray readers on the
 // session during the attach. ResumePreview re-opens the PTY afterwards.
 func (t *TmuxSession) PausePreview() error {
-	if t.ptmx != nil {
-		t.signalPumpStop(t.ptmx)
-		if err := t.ptmx.Close(); err != nil {
+	// Snapshot-and-clear in a single critical section (as Close does) so a
+	// concurrent Restore can never have its freshly-installed ptmx clobbered
+	// by a second nil-write here. On a Close error the handle stays cleared;
+	// ResumePreview/Restore reopens a fresh PTY regardless.
+	t.stateMu.Lock()
+	ptmx := t.ptmx
+	t.ptmx = nil
+	t.stateMu.Unlock()
+	if ptmx != nil {
+		t.signalPumpStop(ptmx)
+		if err := ptmx.Close(); err != nil {
 			return fmt.Errorf("error closing preview PTY: %w", err)
 		}
-		t.ptmx = nil
 	}
 	t.waitPumpExit()
 	return nil
@@ -596,12 +649,15 @@ func (t *TmuxSession) Close() error {
 	log.For("tmux").Debug("close", "session", t.sanitizedName)
 	var errs []error
 
-	if t.ptmx != nil {
-		t.signalPumpStop(t.ptmx)
-		if err := t.ptmx.Close(); err != nil {
+	t.stateMu.Lock()
+	ptmx := t.ptmx
+	t.ptmx = nil
+	t.stateMu.Unlock()
+	if ptmx != nil {
+		t.signalPumpStop(ptmx)
+		if err := ptmx.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("error closing PTY: %w", err))
 		}
-		t.ptmx = nil
 	}
 
 	// Wait for pump goroutine to exit after PTY close.
@@ -636,10 +692,11 @@ func (t *TmuxSession) SetDetachedSize(width, height int) error {
 
 // updateWindowSize updates the window size of the PTY.
 func (t *TmuxSession) updateWindowSize(cols, rows int) error {
-	if t.ptmx == nil {
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
 		return fmt.Errorf("PTY is not available")
 	}
-	return pty.Setsize(t.ptmx, &pty.Winsize{
+	return pty.Setsize(ptmx, &pty.Winsize{
 		Rows: uint16(rows),
 		Cols: uint16(cols),
 		X:    0,
