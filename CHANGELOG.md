@@ -1,3 +1,24 @@
+## [0.1.4] - 2026-06-19
+
+### 🚀 Features
+
+- *(cli)* Add -v/--version flag
+
+### 🐛 Bug Fixes
+
+- *(session)* Guard Storage mutable state with a mutex
+- *(config)* Guard State saves with a mutex
+- *(tmux)* Guard ptmx and monitor with a mutex
+- *(app,script)* Apply script nav effects on the main goroutine
+
+### 📚 Documentation
+
+- Add multi-agent codebase audit report
+
+### ⚙️ Miscellaneous Tasks
+
+- *(nix)* Derive flake version from main.go at eval time
+- Run the test suite under the race detector
 ## [0.1.3] - 2026-05-11
 
 ### 🚀 Features
