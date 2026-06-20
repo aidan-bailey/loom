@@ -190,6 +190,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	// history must come from tmux, not emu.Scrollback().
 	hist, ok := instance.CaptureHistory()
 	if !ok {
+		log.For("panescroll").Info("preview.capture_failed", "offset", p.scrollOffset, "histBytes", len(hist))
 		p.scrollOffset = 0
 		return p.liveTail(instance)
 	}
@@ -199,6 +200,8 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	if rows < 1 {
 		rows = 1
 	}
+	log.For("panescroll").Info("preview.window_calc",
+		"offset", p.scrollOffset, "total", total, "rows", rows, "histBytes", len(hist))
 
 	switch {
 	case p.scrollStarting:
