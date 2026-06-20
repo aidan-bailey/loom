@@ -2,12 +2,33 @@ package ui
 
 import (
 	"fmt"
-	"github.com/aidan-bailey/loom/session"
+	"regexp"
 	"strings"
+
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 )
+
+// ansiRE strips SGR/CSI escapes so logged samples are human-readable.
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
+
+// sampleLine returns the first non-blank line (ANSI-stripped, truncated) from a
+// windowed slice, for diagnostic logging of what a scroll window is showing.
+func sampleLine(lines []string) string {
+	for _, l := range lines {
+		clean := strings.TrimSpace(ansiRE.ReplaceAllString(l, ""))
+		if clean != "" {
+			if len(clean) > 60 {
+				return clean[:60]
+			}
+			return clean
+		}
+	}
+	return "(all-blank)"
+}
 
 // scrollToTopOffset is a sentinel passed to setOffset for "go to top"; the next
 // UpdateContent clamps it to the real top of the captured buffer.
@@ -206,6 +227,9 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	}
 
 	window := windowLines(lines, p.scrollOffset, rows)
+	log.For("panescroll").Info("preview.update.scrolled",
+		"offset", p.scrollOffset, "total", total, "rows", rows, "maxOff", maxOff,
+		"histBytes", len(hist), "sample", sampleLine(window))
 	p.previewState = previewState{fallback: false, text: strings.Join(window, "\n")}
 	if newBelow := total - p.totalAtScrollStart; newBelow > 0 {
 		p.newLinesBelow = newBelow
@@ -343,8 +367,12 @@ func (p *PreviewPane) setOffset(instance *session.Instance, off int) error {
 	if off < 0 {
 		off = 0
 	}
+	prev := p.scrollOffset
 	wasBottom := p.scrollOffset == 0
 	p.scrollOffset = off
+	if prev != off {
+		log.For("panescroll").Info("preview.setOffset", "from", prev, "to", off, "height", p.height)
+	}
 	if wasBottom && off > 0 {
 		p.scrollStarting = true
 	}
