@@ -799,27 +799,19 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Left-click in a content pane: focus it (click-to-focus) and anchor a
 		// drag-selection. Any prior selection is cleared. Active while the split
 		// panes are the main view (default nav or inline-attach).
-		mouse := msg.Mouse()
-		log.For("mouseselect").Info("click.recv", "state", int(m.state), "button", int(mouse.Button), "x", mouse.X, "y", mouse.Y)
 		if m.state != stateDefault && m.state != stateInlineAttach {
 			return m, nil
 		}
+		mouse := msg.Mouse()
 		if mouse.Button != tea.MouseLeft {
-			log.For("mouseselect").Info("click.ignored_button", "button", int(mouse.Button), "x", mouse.X, "y", mouse.Y)
 			return m, nil
 		}
 		m.splitPane.ClearSelections()
 		m.dragging = false
 		if m.listWidth > 0 && mouse.X < m.listWidth {
-			log.For("mouseselect").Info("click.list_area", "x", mouse.X, "listWidth", m.listWidth)
 			return m, nil // left list panel — not a content selection
 		}
-		pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height())
-		log.For("mouseselect").Info("click", "x", mouse.X, "y", mouse.Y,
-			"listWidth", m.listWidth, "tabH", m.tabBar.Height(),
-			"localX", mouse.X-m.listWidth, "localY", mouse.Y-m.tabBar.Height(),
-			"pane", pane, "row", row, "col", col, "ok", ok)
-		if ok {
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok {
 			m.splitPane.SetFocusedPane(pane)
 			m.splitPane.BeginSelection(pane, row, col)
 			m.dragging = true
@@ -828,15 +820,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.MouseMotionMsg:
 		// Extend the active drag-selection, clamped to its originating pane.
-		mouse := msg.Mouse()
 		if !m.dragging {
-			log.For("mouseselect").Info("motion.not_dragging", "x", mouse.X, "y", mouse.Y, "button", int(mouse.Button))
 			return m, nil
 		}
-		pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height())
-		log.For("mouseselect").Info("motion", "x", mouse.X, "y", mouse.Y,
-			"pane", pane, "row", row, "col", col, "ok", ok, "dragPane", m.dragPane)
-		if ok && pane == m.dragPane {
+		mouse := msg.Mouse()
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok && pane == m.dragPane {
 			m.splitPane.ExtendSelection(m.dragPane, row, col)
 		}
 		return m, nil
@@ -844,12 +832,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// End the drag: copy a non-empty selection; a plain click (no drag) just
 		// cleared+focused, so drop the empty selection.
 		if !m.dragging {
-			log.For("mouseselect").Info("release.not_dragging")
 			return m, nil
 		}
 		m.dragging = false
 		text := m.splitPane.SelectedText(m.dragPane)
-		log.For("mouseselect").Info("release", "dragPane", m.dragPane, "textLen", len(text))
 		if text == "" {
 			m.splitPane.ClearSelections()
 			return m, nil
