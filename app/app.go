@@ -810,7 +810,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.listWidth > 0 && mouse.X < m.listWidth {
 			return m, nil // left list panel — not a content selection
 		}
-		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y); ok {
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok {
 			m.splitPane.SetFocusedPane(pane)
 			m.splitPane.BeginSelection(pane, row, col)
 			m.dragging = true
@@ -823,7 +823,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		mouse := msg.Mouse()
-		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y); ok && pane == m.dragPane {
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok && pane == m.dragPane {
 			m.splitPane.ExtendSelection(m.dragPane, row, col)
 		}
 		return m, nil
