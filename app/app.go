@@ -797,11 +797,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.MouseClickMsg:
 		// Left-click in a content pane: focus it (click-to-focus) and anchor a
-		// drag-selection. Any prior selection is cleared. Only in nav state.
-		if m.state != stateDefault {
+		// drag-selection. Any prior selection is cleared. Active while the split
+		// panes are the main view (default nav or inline-attach).
+		mouse := msg.Mouse()
+		log.For("mouseselect").Info("click.recv", "state", int(m.state), "button", int(mouse.Button), "x", mouse.X, "y", mouse.Y)
+		if m.state != stateDefault && m.state != stateInlineAttach {
 			return m, nil
 		}
-		mouse := msg.Mouse()
 		if mouse.Button != tea.MouseLeft {
 			log.For("mouseselect").Info("click.ignored_button", "button", int(mouse.Button), "x", mouse.X, "y", mouse.Y)
 			return m, nil
