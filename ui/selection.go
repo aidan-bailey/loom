@@ -1,6 +1,10 @@
 package ui
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+)
 
 // selection is a text range over a pane's displayed (plain) lines, in content
 // coordinates: row indexes the displayed lines, col is a rune index into a line.
@@ -65,6 +69,38 @@ func extractSelection(plainLines []string, sel selection) string {
 		}
 	}
 	return b.String()
+}
+
+// renderWithSelection takes the final on-screen lines of a pane and a selection,
+// and returns (display, plain): `plain` is each line ANSI-stripped (for text
+// extraction and hit math), and `display` is the lines to render — identical to
+// the input except selected rows are reverse-highlighted on their stripped text.
+// When sel is empty, display is the input unchanged.
+func renderWithSelection(lines []string, sel selection) (display, plain []string) {
+	plain = make([]string, len(lines))
+	for i, l := range lines {
+		plain[i] = ansi.Strip(l)
+	}
+	if sel.empty() {
+		return lines, plain
+	}
+	r0, c0, r1, c1 := sel.normalized()
+	display = make([]string, len(lines))
+	copy(display, lines)
+	for r := r0; r <= r1; r++ {
+		if r < 0 || r >= len(lines) {
+			continue
+		}
+		from, to := 0, len([]rune(plain[r]))
+		if r == r0 {
+			from = c0
+		}
+		if r == r1 {
+			to = c1
+		}
+		display[r] = highlightLine(plain[r], from, to)
+	}
+	return display, plain
 }
 
 // highlightLine wraps the rune range [fromCol, toCol) of plain in reverse-video

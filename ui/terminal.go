@@ -44,6 +44,11 @@ type TerminalPane struct {
 	totalAtScrollStart int
 	lastTotal          int
 	newLinesBelow      int
+
+	// sel is the current mouse selection; displayedPlain holds the plain lines
+	// most recently rendered by String(). Both guarded by t.mu.
+	sel            selection
+	displayedPlain []string
 }
 
 // NewTerminalPane constructs a TerminalPane with an empty session cache at the
@@ -465,8 +470,11 @@ func (t *TerminalPane) String() string {
 
 	// Scrolled: render the windowed history with a jump-to-bottom footer.
 	if t.scrollOffset > 0 {
+		wlines := strings.Split(content, "\n")
+		display, plain := renderWithSelection(wlines, t.sel)
+		t.displayedPlain = plain
 		footer := terminalFooterStyle.Render(scrollFooter(t.newLinesBelow))
-		body := lipgloss.JoinVertical(lipgloss.Left, content, footer)
+		body := lipgloss.JoinVertical(lipgloss.Left, strings.Join(display, "\n"), footer)
 		return terminalPaneStyle.Width(width).Render(body)
 	}
 
@@ -482,8 +490,42 @@ func (t *TerminalPane) String() string {
 		}
 	}
 
-	contentStr := strings.Join(lines, "\n")
+	display, plain := renderWithSelection(lines, t.sel)
+	t.displayedPlain = plain
+	contentStr := strings.Join(display, "\n")
 	return terminalPaneStyle.Width(width).Render(contentStr)
+}
+
+// BeginSelection starts a selection anchored at content (row, col).
+func (t *TerminalPane) BeginSelection(row, col int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sel = selection{active: true, anchorRow: row, anchorCol: col, curRow: row, curCol: col}
+}
+
+// ExtendSelection moves the active selection's cursor to content (row, col).
+func (t *TerminalPane) ExtendSelection(row, col int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.sel.active {
+		return
+	}
+	t.sel.curRow = row
+	t.sel.curCol = col
+}
+
+// ClearSelection clears any active selection.
+func (t *TerminalPane) ClearSelection() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sel = selection{}
+}
+
+// SelectedText returns the currently selected text (plain), or "" if none.
+func (t *TerminalPane) SelectedText() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return extractSelection(t.displayedPlain, t.sel)
 }
 
 // ScrollUp scrolls one line up into scrollback.

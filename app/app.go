@@ -221,6 +221,12 @@ type home struct {
 	// sync with SplitPane.SetSize.
 	agentBottomY int
 
+	// dragging is true between a left MouseClickMsg and its MouseReleaseMsg while
+	// a text selection is being drawn; dragPane is the FocusAgent/FocusTerminal
+	// target captured at drag start so motion stays within the originating pane.
+	dragging bool
+	dragPane int
+
 	// lastPreviewHash caches the content hash of the selected instance
 	// to skip preview ticks when nothing has changed.
 	lastPreviewHash []byte
@@ -787,6 +793,58 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.splitPane.ScrollTerminalDown()
 				}
 			}
+		}
+		return m, nil
+	case tea.MouseClickMsg:
+		// Left-click in a content pane: focus it (click-to-focus) and anchor a
+		// drag-selection. Any prior selection is cleared. Only in nav state.
+		if m.state != stateDefault {
+			return m, nil
+		}
+		mouse := msg.Mouse()
+		if mouse.Button != tea.MouseLeft {
+			return m, nil
+		}
+		m.splitPane.ClearSelections()
+		m.dragging = false
+		if m.listWidth > 0 && mouse.X < m.listWidth {
+			return m, nil // left list panel — not a content selection
+		}
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y); ok {
+			m.splitPane.SetFocusedPane(pane)
+			m.splitPane.BeginSelection(pane, row, col)
+			m.dragging = true
+			m.dragPane = pane
+		}
+		return m, nil
+	case tea.MouseMotionMsg:
+		// Extend the active drag-selection, clamped to its originating pane.
+		if !m.dragging {
+			return m, nil
+		}
+		mouse := msg.Mouse()
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y); ok && pane == m.dragPane {
+			m.splitPane.ExtendSelection(m.dragPane, row, col)
+		}
+		return m, nil
+	case tea.MouseReleaseMsg:
+		// End the drag: copy a non-empty selection; a plain click (no drag) just
+		// cleared+focused, so drop the empty selection.
+		if !m.dragging {
+			return m, nil
+		}
+		m.dragging = false
+		text := m.splitPane.SelectedText(m.dragPane)
+		if text == "" {
+			m.splitPane.ClearSelections()
+			return m, nil
+		}
+		return m, copyToClipboard(text)
+	case clipboardCopiedMsg:
+		if msg.err != nil {
+			log.For("clipboard").Info("clipboard.fallback_failed", "err", msg.err)
+		} else {
+			log.For("clipboard").Debug("clipboard.copied", "runes", msg.n)
 		}
 		return m, nil
 	case branchSearchDebounceMsg:

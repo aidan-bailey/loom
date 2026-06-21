@@ -99,6 +99,12 @@ type PreviewPane struct {
 	// wheelAccum dampens forwarded wheel speed (see wheelEventsPerNotch); signed:
 	// positive accrues toward an up notch, negative toward a down notch.
 	wheelAccum int
+
+	// sel is the current mouse selection over the displayed content.
+	// displayedPlain holds the plain (ANSI-stripped) lines most recently rendered
+	// by String(), so selection extraction matches exactly what's on screen.
+	sel            selection
+	displayedPlain []string
 }
 
 type previewState struct {
@@ -280,8 +286,11 @@ func (p *PreviewPane) String() string {
 
 	// Scrolled: render the windowed history with a jump-to-bottom footer.
 	if p.scrollOffset > 0 {
+		wlines := strings.Split(p.previewState.text, "\n")
+		display, plain := renderWithSelection(wlines, p.sel)
+		p.displayedPlain = plain
 		footer := previewScrollFooterStyle.Render(scrollFooter(p.newLinesBelow))
-		body := lipgloss.JoinVertical(lipgloss.Left, p.previewState.text, footer)
+		body := lipgloss.JoinVertical(lipgloss.Left, strings.Join(display, "\n"), footer)
 		return previewPaneStyle.Width(p.width).Render(body)
 	}
 
@@ -303,10 +312,32 @@ func (p *PreviewPane) String() string {
 		}
 	}
 
-	content := strings.Join(lines, "\n")
+	display, plain := renderWithSelection(lines, p.sel)
+	p.displayedPlain = plain
+	content := strings.Join(display, "\n")
 	rendered := previewPaneStyle.Width(p.width).Render(content)
 	return rendered
 }
+
+// BeginSelection starts a selection anchored at content (row, col).
+func (p *PreviewPane) BeginSelection(row, col int) {
+	p.sel = selection{active: true, anchorRow: row, anchorCol: col, curRow: row, curCol: col}
+}
+
+// ExtendSelection moves the active selection's cursor to content (row, col).
+func (p *PreviewPane) ExtendSelection(row, col int) {
+	if !p.sel.active {
+		return
+	}
+	p.sel.curRow = row
+	p.sel.curCol = col
+}
+
+// ClearSelection clears any active selection.
+func (p *PreviewPane) ClearSelection() { p.sel = selection{} }
+
+// SelectedText returns the currently selected text (plain), or "" if none.
+func (p *PreviewPane) SelectedText() string { return extractSelection(p.displayedPlain, p.sel) }
 
 // isAgentTUI reports whether the agent is a full-screen TUI (alt-screen, no tmux
 // scrollback), caching the tmux probe for agentScrollTTL so rapid wheel events
