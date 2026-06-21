@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -292,12 +291,11 @@ func TestPreviewPane_ScrollsIntoHistory(t *testing.T) {
 }
 
 // TestPreviewPane_TUIAgentForwardsWheel verifies the agent-pane scroll fork:
-// when the agent is a full-screen TUI (alternate_on=1), scrolling forwards
-// wheel events into the agent (so it scrolls its own view) and Loom stays at
-// the live tail rather than engaging its (useless) offset window.
+// when the agent is a full-screen TUI (alternate_on=1), scrolling takes the
+// forward path (detects alt-screen, leaves Loom at the live tail) rather than
+// engaging its useless offset window. The wheel bytes themselves are covered by
+// the tmux-layer ForwardWheel test.
 func TestPreviewPane_TUIAgentForwardsWheel(t *testing.T) {
-	var mu sync.Mutex
-	var wheelSeqs []string
 	sessionCreated := false
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(cmd *exec.Cmd) error {
@@ -310,11 +308,6 @@ func TestPreviewPane_TUIAgentForwardsWheel(t *testing.T) {
 			}
 			if strings.Contains(s, "new-session") {
 				sessionCreated = true
-			}
-			if strings.Contains(s, "send-keys") { // ForwardWheel is the only send-keys via cmdExec
-				mu.Lock()
-				wheelSeqs = append(wheelSeqs, cmd.Args[len(cmd.Args)-1])
-				mu.Unlock()
 			}
 			return nil
 		},
@@ -340,11 +333,9 @@ func TestPreviewPane_TUIAgentForwardsWheel(t *testing.T) {
 	require.NoError(t, p.ScrollUp(setup.instance))
 	require.NoError(t, p.PageUp(setup.instance))
 
+	require.True(t, p.altScreen, "alt-screen TUI agent must be detected")
 	require.False(t, p.IsScrolling(), "TUI agent: Loom stays at the live tail, no offset window")
-	mu.Lock()
-	defer mu.Unlock()
-	require.NotEmpty(t, wheelSeqs, "scrolling a TUI agent must forward wheel events")
-	require.Equal(t, "\x1b[<64;1;1M", wheelSeqs[0], "ScrollUp forwards exactly one wheel-up notch")
+	require.Equal(t, 0, p.scrollOffset, "offset model must not be engaged for a TUI agent")
 }
 
 func TestPreviewPane_ScrollOffsetFloorsAtZero(t *testing.T) {

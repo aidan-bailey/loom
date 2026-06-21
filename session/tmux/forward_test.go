@@ -1,7 +1,9 @@
 package tmux
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,26 +12,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestForwardWheel_InjectsSGRWheelSequences verifies ForwardWheel injects the
-// expected SGR mouse-wheel bytes via `tmux send-keys -l` so a TUI agent scrolls
-// its own view.
-func TestForwardWheel_InjectsSGRWheelSequences(t *testing.T) {
-	var last *exec.Cmd
-	cmdExec := cmd_test.MockCmdExec{
-		RunFunc:    func(cmd *exec.Cmd) error { last = cmd; return nil },
+// TestForwardWheel_WritesSGRToPTY verifies ForwardWheel writes the expected SGR
+// mouse-wheel bytes to the attach PTY (in-process, no subprocess) so a TUI agent
+// scrolls its own view.
+func TestForwardWheel_WritesSGRToPTY(t *testing.T) {
+	noop := cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return nil },
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
-	ts := newTmuxSession("wheel", "prog", NewMockPtyFactory(t), cmdExec)
+	ts := newTmuxSession("wheel", "prog", NewMockPtyFactory(t), noop)
+
+	// Wire a temp file as the PTY so we can read back what ForwardWheel writes.
+	path := filepath.Join(t.TempDir(), "ptmx")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	require.NoError(t, err)
+	defer f.Close()
+	ts.ptmx = f
 
 	require.NoError(t, ts.ForwardWheel(true, 3))
-	require.NotNil(t, last)
-	assert.Contains(t, last.Args, "send-keys")
-	assert.Contains(t, last.Args, "-l")
-	assert.Equal(t, strings.Repeat("\x1b[<64;1;1M", 3), last.Args[len(last.Args)-1],
-		"three wheel-up notches as repeated SGR press sequences")
-
 	require.NoError(t, ts.ForwardWheel(false, 1))
-	assert.Equal(t, "\x1b[<65;1;1M", last.Args[len(last.Args)-1], "one wheel-down notch")
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("\x1b[<64;1;1M", 3)+"\x1b[<65;1;1M", string(data),
+		"three wheel-up notches then one wheel-down, as SGR press sequences")
+}
+
+// TestForwardWheel_NoPTY returns an error rather than panicking when unattached.
+func TestForwardWheel_NoPTY(t *testing.T) {
+	noop := cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	ts := newTmuxSession("nopty", "prog", NewMockPtyFactory(t), noop)
+	assert.Error(t, ts.ForwardWheel(true, 1))
 }
 
 // TestIsAlternateScreen maps tmux's #{alternate_on} output to the boolean.
