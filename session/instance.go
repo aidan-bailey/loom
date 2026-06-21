@@ -686,6 +686,33 @@ func (i *Instance) CaptureHistory() (string, bool) {
 	return ts.CaptureHistory()
 }
 
+// IsAlternateScreen reports whether the agent is a full-screen TUI on the
+// alternate screen (no tmux scrollback). Scroll-back for such agents must be
+// forwarded into the app via ForwardWheel rather than windowed from history.
+func (i *Instance) IsAlternateScreen() bool {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return false
+	}
+	return ts.IsAlternateScreen()
+}
+
+// ForwardWheel forwards n mouse-wheel events (up or down) to the agent's pane so
+// a TUI agent scrolls its own view. No-op for non-started/paused instances.
+func (i *Instance) ForwardWheel(up bool, n int) error {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return nil
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return nil
+	}
+	return ts.ForwardWheel(up, n)
+}
+
 // HasUpdated reports whether the tmux pane content has changed since
 // the last call and whether an auto-yes-eligible prompt is currently
 // visible. Returns (false, false) for non-started instances.

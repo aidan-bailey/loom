@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -288,6 +289,62 @@ func TestPreviewPane_ScrollsIntoHistory(t *testing.T) {
 	require.NotEqual(t, liveText, scrolledText, "scrolled content must differ from the live tail")
 	require.NotContains(t, scrolledText, "histline200", "scrolled-up view must not show the newest line")
 	require.Contains(t, scrolledText, "histline130", "scrolled-up view should show older history")
+}
+
+// TestPreviewPane_TUIAgentForwardsWheel verifies the agent-pane scroll fork:
+// when the agent is a full-screen TUI (alternate_on=1), scrolling forwards
+// wheel events into the agent (so it scrolls its own view) and Loom stays at
+// the live tail rather than engaging its (useless) offset window.
+func TestPreviewPane_TUIAgentForwardsWheel(t *testing.T) {
+	var mu sync.Mutex
+	var wheelSeqs []string
+	sessionCreated := false
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error {
+			s := cmd.String()
+			if strings.Contains(s, "has-session") {
+				if sessionCreated {
+					return nil
+				}
+				return fmt.Errorf("session does not exist")
+			}
+			if strings.Contains(s, "new-session") {
+				sessionCreated = true
+			}
+			if strings.Contains(s, "send-keys") { // ForwardWheel is the only send-keys via cmdExec
+				mu.Lock()
+				wheelSeqs = append(wheelSeqs, cmd.Args[len(cmd.Args)-1])
+				mu.Unlock()
+			}
+			return nil
+		},
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
+			s := cmd.String()
+			if strings.Contains(s, "alternate_on") {
+				return []byte("1\n"), nil // agent is a full-screen TUI
+			}
+			if strings.Contains(s, "capture-pane") {
+				return []byte("live screen"), nil
+			}
+			return []byte(""), nil
+		},
+	}
+
+	setup := setupTestEnvironment(t, cmdExec)
+	defer setup.cleanupFn()
+
+	p := NewPreviewPane()
+	p.SetSize(80, 24)
+	require.NoError(t, p.UpdateContent(setup.instance)) // live tail
+
+	require.NoError(t, p.ScrollUp(setup.instance))
+	require.NoError(t, p.PageUp(setup.instance))
+
+	require.False(t, p.IsScrolling(), "TUI agent: Loom stays at the live tail, no offset window")
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, wheelSeqs, "scrolling a TUI agent must forward wheel events")
+	require.Equal(t, "\x1b[<64;1;1M", wheelSeqs[0], "ScrollUp forwards exactly one wheel-up notch")
 }
 
 func TestPreviewPane_ScrollOffsetFloorsAtZero(t *testing.T) {

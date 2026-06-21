@@ -4,12 +4,21 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
+)
+
+// agentScrollTTL bounds how often the alt-screen state is probed (a tmux
+// subprocess) on the scroll hot path. agentPageNotches is how many wheel notches
+// a PageUp/Down forwards to a TUI agent.
+const (
+	agentScrollTTL   = 750 * time.Millisecond
+	agentPageNotches = 5
 )
 
 // ansiRE strips SGR/CSI escapes so logged samples are human-readable.
@@ -96,6 +105,12 @@ type PreviewPane struct {
 	lastTotal int
 	// newLinesBelow is the live-output line count accrued since scrolling up.
 	newLinesBelow int
+
+	// altScreen caches whether the agent is a full-screen TUI (no tmux
+	// scrollback); when true, scrolling is forwarded into the agent rather than
+	// windowed. Refreshed at most once per agentScrollTTL on the scroll path.
+	altScreen        bool
+	altScreenChecked time.Time
 }
 
 type previewState struct {
@@ -311,29 +326,74 @@ func (p *PreviewPane) String() string {
 	return rendered
 }
 
-// ScrollUp scrolls one line up into history.
-func (p *PreviewPane) ScrollUp(instance *session.Instance) error { return p.scrollBy(instance, +1) }
+// isAgentTUI reports whether the agent is a full-screen TUI (alt-screen, no tmux
+// scrollback), caching the tmux probe for agentScrollTTL so rapid wheel events
+// don't spawn a subprocess each.
+func (p *PreviewPane) isAgentTUI(instance *session.Instance) bool {
+	if instance == nil {
+		return false
+	}
+	now := time.Now()
+	if !p.altScreenChecked.IsZero() && now.Sub(p.altScreenChecked) < agentScrollTTL {
+		return p.altScreen
+	}
+	p.altScreen = instance.IsAlternateScreen()
+	p.altScreenChecked = now
+	return p.altScreen
+}
 
-// ScrollDown scrolls one line down toward the live tail.
-func (p *PreviewPane) ScrollDown(instance *session.Instance) error { return p.scrollBy(instance, -1) }
+// forwardWheel forwards n wheel notches to a TUI agent so it scrolls its own
+// view; Loom stays at the live tail and shows the redraw.
+func (p *PreviewPane) forwardWheel(instance *session.Instance, up bool, n int) error {
+	log.For("panescroll").Info("preview.forward_wheel", "up", up, "notches", n)
+	return instance.ForwardWheel(up, n)
+}
 
-// PageUp scrolls up by half a pane height.
+// ScrollUp scrolls one line up into history (or forwards a wheel-up to a TUI agent).
+func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
+	if p.isAgentTUI(instance) {
+		return p.forwardWheel(instance, true, 1)
+	}
+	return p.scrollBy(instance, +1)
+}
+
+// ScrollDown scrolls one line down toward the live tail (or forwards a wheel-down).
+func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
+	if p.isAgentTUI(instance) {
+		return p.forwardWheel(instance, false, 1)
+	}
+	return p.scrollBy(instance, -1)
+}
+
+// PageUp scrolls up by half a pane height (or forwards a burst of wheel-ups).
 func (p *PreviewPane) PageUp(instance *session.Instance) error {
+	if p.isAgentTUI(instance) {
+		return p.forwardWheel(instance, true, agentPageNotches)
+	}
 	return p.scrollBy(instance, +(p.height / 2))
 }
 
-// PageDown scrolls down by half a pane height.
+// PageDown scrolls down by half a pane height (or forwards a burst of wheel-downs).
 func (p *PreviewPane) PageDown(instance *session.Instance) error {
+	if p.isAgentTUI(instance) {
+		return p.forwardWheel(instance, false, agentPageNotches)
+	}
 	return p.scrollBy(instance, -(p.height / 2))
 }
 
-// GotoTop jumps to the oldest line of captured history.
+// GotoTop jumps to the oldest line of captured history (TUI: a large wheel-up burst).
 func (p *PreviewPane) GotoTop(instance *session.Instance) error {
+	if p.isAgentTUI(instance) {
+		return p.forwardWheel(instance, true, 30)
+	}
 	return p.setOffset(instance, scrollToTopOffset)
 }
 
-// GotoBottom returns to the live tail.
+// GotoBottom returns to the live tail (TUI: a large wheel-down burst).
 func (p *PreviewPane) GotoBottom(instance *session.Instance) error {
+	if p.isAgentTUI(instance) {
+		return p.forwardWheel(instance, false, 30)
+	}
 	return p.setOffset(instance, 0)
 }
 

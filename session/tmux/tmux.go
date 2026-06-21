@@ -837,6 +837,44 @@ func (t *TmuxSession) CaptureHistory() (string, bool) {
 	return string(output), true
 }
 
+// IsAlternateScreen reports whether the pane's foreground app is on the
+// alternate screen (a full-screen TUI like Claude), which keeps NO tmux
+// scrollback. Callers use this to decide whether scroll-back can be windowed
+// from CaptureHistory or must instead be forwarded into the app itself.
+func (t *TmuxSession) IsAlternateScreen() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-p", "-t", t.sanitizedName, "#{alternate_on}")
+	out, err := t.cmdExec.Output(cmd)
+	if err != nil {
+		return false
+	}
+	return len(out) > 0 && out[0] == '1'
+}
+
+// ForwardWheel injects n mouse-wheel events (up or down) into the pane's
+// foreground app via `tmux send-keys -l`, so a full-screen TUI agent scrolls its
+// OWN view — the alternate screen has no tmux scrollback to window. The bytes go
+// straight to the app (bypassing tmux's own mouse handling) using SGR mouse
+// encoding at the pane's top-left; mouse-aware apps decode them as wheel input.
+func (t *TmuxSession) ForwardWheel(up bool, n int) error {
+	if n < 1 {
+		n = 1
+	}
+	button := 65 // SGR wheel down
+	if up {
+		button = 64 // SGR wheel up
+	}
+	seq := strings.Repeat(fmt.Sprintf("\x1b[<%d;1;1M", button), n)
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", t.sanitizedName, "-l", seq)
+	if err := t.cmdExec.Run(cmd); err != nil {
+		return fmt.Errorf("forward wheel: %w", err)
+	}
+	return nil
+}
+
 // CleanupSessions kills all tmux sessions that start with "session-"
 func CleanupSessions(cmdExec internalexec.Executor) error {
 	// First try to list sessions
