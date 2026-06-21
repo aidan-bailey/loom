@@ -18,7 +18,12 @@ import (
 // a PageUp/Down forwards to a TUI agent.
 const (
 	agentScrollTTL   = 750 * time.Millisecond
-	agentPageNotches = 5
+	agentPageNotches = 3
+	// wheelEventsPerNotch dampens forwarded wheel speed: one notch is forwarded
+	// to the agent per this many same-direction wheel events (1 = native 1:1).
+	// Most terminals emit several wheel events per physical notch, so 1:1 feels
+	// too fast.
+	wheelEventsPerNotch = 2
 )
 
 // ansiRE strips SGR/CSI escapes so logged samples are human-readable.
@@ -111,6 +116,9 @@ type PreviewPane struct {
 	// windowed. Refreshed at most once per agentScrollTTL on the scroll path.
 	altScreen        bool
 	altScreenChecked time.Time
+	// wheelAccum dampens forwarded wheel speed (see wheelEventsPerNotch); signed:
+	// positive accrues toward an up notch, negative toward a down notch.
+	wheelAccum int
 }
 
 type previewState struct {
@@ -349,18 +357,41 @@ func (p *PreviewPane) forwardWheel(instance *session.Instance, up bool, n int) e
 	return instance.ForwardWheel(up, n)
 }
 
-// ScrollUp scrolls one line up into history (or forwards a wheel-up to a TUI agent).
+// forwardWheelDamped forwards one notch per wheelEventsPerNotch same-direction
+// wheel events, so wheel scrolling on a TUI agent isn't oversensitive. The
+// accumulator resets when the scroll direction flips.
+func (p *PreviewPane) forwardWheelDamped(instance *session.Instance, up bool) error {
+	if p.wheelAccum != 0 && (p.wheelAccum > 0) != up {
+		p.wheelAccum = 0 // direction change
+	}
+	if up {
+		p.wheelAccum++
+		if p.wheelAccum >= wheelEventsPerNotch {
+			p.wheelAccum = 0
+			return p.forwardWheel(instance, true, 1)
+		}
+		return nil
+	}
+	p.wheelAccum--
+	if p.wheelAccum <= -wheelEventsPerNotch {
+		p.wheelAccum = 0
+		return p.forwardWheel(instance, false, 1)
+	}
+	return nil
+}
+
+// ScrollUp scrolls one line up into history (or forwards a damped wheel-up to a TUI agent).
 func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
 	if p.isAgentTUI(instance) {
-		return p.forwardWheel(instance, true, 1)
+		return p.forwardWheelDamped(instance, true)
 	}
 	return p.scrollBy(instance, +1)
 }
 
-// ScrollDown scrolls one line down toward the live tail (or forwards a wheel-down).
+// ScrollDown scrolls one line down toward the live tail (or forwards a damped wheel-down).
 func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
 	if p.isAgentTUI(instance) {
-		return p.forwardWheel(instance, false, 1)
+		return p.forwardWheelDamped(instance, false)
 	}
 	return p.scrollBy(instance, -1)
 }
