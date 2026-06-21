@@ -101,12 +101,8 @@ func (t *TerminalPane) setOffsetLocked(off int) {
 	if off < 0 {
 		off = 0
 	}
-	prev := t.scrollOffset
 	wasBottom := t.scrollOffset == 0
 	t.scrollOffset = off
-	if prev != off {
-		log.For("panescroll").Info("terminal.setOffset", "from", prev, "to", off, "height", t.height)
-	}
 	if wasBottom && off > 0 {
 		t.scrollStarting = true
 	}
@@ -219,11 +215,7 @@ func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 	}
 
 	t.fallback = false
-	win := windowLines(lines, t.scrollOffset, rows)
-	log.For("panescroll").Info("terminal.update.scrolled",
-		"offset", t.scrollOffset, "total", total, "rows", rows, "maxOff", maxOff,
-		"histBytes", len(hist), "sample", sampleLine(win))
-	t.content = strings.Join(win, "\n")
+	t.content = strings.Join(windowLines(lines, t.scrollOffset, rows), "\n")
 	if newBelow := total - t.totalAtScrollStart; newBelow > 0 {
 		t.newLinesBelow = newBelow
 	} else {
