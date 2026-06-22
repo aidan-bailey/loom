@@ -231,6 +231,12 @@ type home struct {
 	// double-Esc exits while a single Esc still forwards to the agent.
 	lastEscAt time.Time
 
+	// interactLeftDown tracks a left-button press in interact mode whose intent
+	// (drag-select vs. click-into-agent) isn't yet known; interactAnchorRow/Col
+	// is the pane-local cell where it started.
+	interactLeftDown                     bool
+	interactAnchorRow, interactAnchorCol int
+
 	// lastPreviewHash caches the content hash of the selected instance
 	// to skip preview ticks when nothing has changed.
 	lastPreviewHash []byte
@@ -804,9 +810,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.MouseClickMsg:
 		mouse := msg.Mouse()
-		// Interact mode: forward the click into the focused pane's agent/terminal.
+		// Interact mode: defer the left button — a drag becomes a Loom selection,
+		// a plain click is forwarded into the agent.
 		if m.state == stateInlineAttach {
-			m.forwardMouseToFocused(mouse, mousePress)
+			m.interactMouseClick(mouse)
 			return m, nil
 		}
 		// Nav: left-click focuses the pane and anchors a drag-selection.
@@ -827,9 +834,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.MouseMotionMsg:
 		mouse := msg.Mouse()
-		// Interact mode: forward the drag into the focused pane.
+		// Interact mode: a left-drag becomes a Loom selection (never forwarded,
+		// so it can't trigger tmux's copy-mode).
 		if m.state == stateInlineAttach {
-			m.forwardMouseToFocused(mouse, mouseDrag)
+			m.interactMouseMotion(mouse)
 			return m, nil
 		}
 		// Nav: extend the active drag-selection, clamped to its originating pane.
@@ -841,11 +849,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseReleaseMsg:
-		mouse := msg.Mouse()
-		// Interact mode: forward the release into the focused pane.
+		// Interact mode: finalize a drag-selection (copy) or forward a plain click.
 		if m.state == stateInlineAttach {
-			m.forwardMouseToFocused(mouse, mouseRelease)
-			return m, nil
+			return m, m.interactMouseRelease()
 		}
 		// Nav: end the drag — copy a non-empty selection; a plain click clears.
 		if !m.dragging {

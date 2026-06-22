@@ -6,56 +6,76 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// Mouse event kinds for SGR forwarding in interact mode.
-const (
-	mousePress   = 0
-	mouseRelease = 1
-	mouseDrag    = 2
-)
-
-// sgrButton maps a tea mouse button to its SGR button code, or -1 if unsupported.
-func sgrButton(b tea.MouseButton) int {
-	switch b {
-	case tea.MouseLeft:
-		return 0
-	case tea.MouseMiddle:
-		return 1
-	case tea.MouseRight:
-		return 2
-	default:
-		return -1
+// interactMouseClick handles a left-button press while interacting. The left
+// button is deferred: it becomes a Loom drag-selection if the mouse moves, or a
+// forwarded click into the agent if it doesn't. Non-left buttons are ignored.
+func (m *home) interactMouseClick(mouse tea.Mouse) {
+	if mouse.Button != tea.MouseLeft {
+		return
+	}
+	m.splitPane.ClearSelections()
+	m.dragging = false
+	m.interactLeftDown = false
+	if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok && pane == m.splitPane.GetFocusedPane() {
+		m.dragPane = pane
+		m.interactAnchorRow, m.interactAnchorCol = row, col
+		m.interactLeftDown = true
 	}
 }
 
-// forwardMouseToFocused encodes a mouse event as SGR and forwards it into the
-// focused pane's agent/terminal (interact mode). kind is mousePress/Release/Drag.
-// Only events over the focused pane are forwarded; the agent decodes them as
-// real mouse input (so the user can click the agent's own UI).
-func (m *home) forwardMouseToFocused(mouse tea.Mouse, kind int) {
+// interactMouseMotion turns a left-drag into a Loom selection (so it never
+// reaches tmux's copy-mode); other motion is ignored.
+func (m *home) interactMouseMotion(mouse tea.Mouse) {
+	if !m.interactLeftDown {
+		return
+	}
+	if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok && pane == m.dragPane {
+		if !m.dragging {
+			m.splitPane.BeginSelection(m.dragPane, m.interactAnchorRow, m.interactAnchorCol)
+			m.dragging = true
+		}
+		m.splitPane.ExtendSelection(m.dragPane, row, col)
+	}
+}
+
+// interactMouseRelease finalizes a left drag-selection (copy to clipboard) or,
+// for a plain click (no drag), forwards a click into the agent.
+func (m *home) interactMouseRelease() tea.Cmd {
+	if !m.interactLeftDown {
+		return nil
+	}
+	m.interactLeftDown = false
+	if m.dragging {
+		m.dragging = false
+		text := m.splitPane.SelectedText(m.dragPane)
+		if text == "" {
+			m.splitPane.ClearSelections()
+			return nil
+		}
+		return copyToClipboard(text)
+	}
+	// Plain click — forward a press+release into the agent at the anchor cell.
+	m.forwardClickToFocused(m.dragPane, m.interactAnchorRow, m.interactAnchorCol)
+	return nil
+}
+
+// forwardClickToFocused sends a left press+release at (row,col) to the focused
+// pane's agent (SGR is 1-indexed; HitTest returns 0-indexed pane-local), so a
+// TUI agent registers a click on its own UI.
+func (m *home) forwardClickToFocused(pane, row, col int) {
 	selected := m.list.GetSelectedInstance()
 	if selected == nil || selected.Paused() || !selected.TmuxAlive() {
 		return
 	}
-	pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height())
-	if !ok || pane != m.splitPane.GetFocusedPane() {
+	if pane != m.splitPane.GetFocusedPane() {
 		return
 	}
-	cb := sgrButton(mouse.Button)
-	if cb < 0 {
-		if kind != mouseRelease {
-			return
-		}
-		cb = 0 // some terminals report no button on release; assume left
-	}
-	if kind == mouseDrag {
-		cb += 32 // SGR motion flag
-	}
-	press := kind != mouseRelease
-	// SGR is 1-indexed; HitTest returns 0-indexed pane-local (row, col).
 	if pane == ui.FocusTerminal {
-		_ = m.splitPane.ForwardTerminalMouse(cb, col+1, row+1, press)
+		_ = m.splitPane.ForwardTerminalMouse(0, col+1, row+1, true)
+		_ = m.splitPane.ForwardTerminalMouse(0, col+1, row+1, false)
 	} else {
-		_ = selected.ForwardMouse(cb, col+1, row+1, press)
+		_ = selected.ForwardMouse(0, col+1, row+1, true)
+		_ = selected.ForwardMouse(0, col+1, row+1, false)
 	}
 }
 
