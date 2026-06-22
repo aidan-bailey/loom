@@ -2134,6 +2134,8 @@ func (m *home) slotNames() []string {
 }
 
 // View implements tea.Model.
+var lastViewLog time.Time
+
 func (m *home) View() tea.View {
 	// asView funnels every render path through one tea.View so alt-screen
 	// and mouse cell-motion (previously tea.NewProgram options) are set
@@ -2178,6 +2180,16 @@ func (m *home) View() tea.View {
 		lipgloss.Center,
 		sections...,
 	)
+
+	// TEMP panesize diagnostic: actual rendered widths of each composed piece vs
+	// the reported terminal width, to find where the right-side gap comes from.
+	if time.Since(lastViewLog) > time.Second {
+		lastViewLog = time.Now()
+		log.For("panesize").Info("view.compose",
+			"listW", lipgloss.Width(listView), "rightW", lipgloss.Width(rightContent),
+			"combinedW", lipgloss.Width(listAndPreview), "mainW", lipgloss.Width(mainView),
+			"tabW", lipgloss.Width(m.tabBar.String()), "termW", m.lastWidth)
+	}
 
 	// Overlay render dispatch: all overlay states share the unified
 	// activeOverlay pointer. The activeOverlayKind tag distinguishes
