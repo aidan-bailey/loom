@@ -302,6 +302,7 @@ func (p *PreviewPane) String() string {
 	availableHeight := p.height
 
 	lines := strings.Split(p.previewState.text, "\n")
+	rawLines := len(lines) // emulator output rows, before truncation to the pane
 
 	if availableHeight > 0 {
 		if len(lines) > availableHeight {
@@ -328,7 +329,8 @@ func (p *PreviewPane) String() string {
 	}
 	if time.Since(lastPaneSizeLog) > time.Second {
 		lastPaneSizeLog = time.Now()
-		log.For("panesize").Info("preview.render", "paneWidth", p.width, "maxLineWidth", maxW, "lineCount", len(plain))
+		log.For("panesize").Info("preview.render", "paneWidth", p.width, "paneHeight", p.height,
+			"maxLineWidth", maxW, "displayLines", len(plain), "rawEmulatorLines", rawLines)
 	}
 
 	rendered := previewPaneStyle.Width(p.width).Render(content)
