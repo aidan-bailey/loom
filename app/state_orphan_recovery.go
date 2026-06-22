@@ -4,8 +4,8 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 
+	tea "charm.land/bubbletea/v2"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // handleStateOrphanRecoveryKey routes keys to the active orphan-
@@ -20,7 +20,7 @@ import (
 // PTY would survive the recovery decision; once they've explicitly
 // declined to recover, the exemption no longer applies and a leftover
 // loom_<title> tmux pane is just dead-state to be cleaned up.
-func handleStateOrphanRecoveryKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func handleStateOrphanRecoveryKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	op := m.orphanRecovery()
 	if op == nil {
 		return m, nil
@@ -69,5 +69,5 @@ func handleStateOrphanRecoveryKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		next()
 	}
 
-	return m, tea.Batch(cmd, tea.WindowSize(), m.instanceChanged())
+	return m, tea.Batch(cmd, tea.RequestWindowSize, m.instanceChanged())
 }

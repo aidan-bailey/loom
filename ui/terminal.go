@@ -10,15 +10,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 )
 
 var terminalPaneStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#dddddd"})
+	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
 
 var terminalFooterStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"})
+	Foreground(lipgloss.Color("#FFD700"))
 
 // terminalSession holds a cached tmux session for a specific instance.
 type terminalSession struct {
@@ -37,17 +37,26 @@ type TerminalPane struct {
 	fallback      bool
 	fallbackText  string
 
-	isScrolling bool
-	viewport    viewport.Model
+	// scrollOffset is lines-from-bottom into the captured history buffer; 0 =
+	// live tail. All scroll state is guarded by t.mu.
+	scrollOffset       int
+	scrollStarting     bool
+	totalAtScrollStart int
+	lastTotal          int
+	newLinesBelow      int
+
+	// sel is the current mouse selection; displayedPlain holds the plain lines
+	// most recently rendered by String(). Both guarded by t.mu.
+	sel            selection
+	displayedPlain []string
 }
 
-// NewTerminalPane constructs a TerminalPane with an empty session
-// cache and zero-sized viewport. The caller must SetSize before the
-// first render and feed instances via UpdateContent.
+// NewTerminalPane constructs a TerminalPane with an empty session cache at the
+// live tail. The caller must SetSize before the first render and feed instances
+// via UpdateContent.
 func NewTerminalPane() *TerminalPane {
 	return &TerminalPane{
 		sessions: make(map[string]*terminalSession),
-		viewport: viewport.New(0, 0),
 	}
 }
 
@@ -59,8 +68,6 @@ func (t *TerminalPane) SetSize(width, height int) {
 	defer t.mu.Unlock()
 	t.width = width
 	t.height = height
-	t.viewport.Width = width
-	t.viewport.Height = height
 	// Resize all cached sessions so that no session has a stale width. A stale
 	// width causes captured lines to be wider than width, which re-wraps when
 	// rendered and overflows the pane's height constraint.
@@ -82,7 +89,37 @@ func (t *TerminalPane) setFallbackState(message string) {
 	t.content = ""
 }
 
-// UpdateContent captures the tmux pane output for the terminal session.
+// currentSessionLocked returns the live cached session for the current
+// instance, or nil. Caller must hold t.mu.
+func (t *TerminalPane) currentSessionLocked() *tmux.TmuxSession {
+	s, ok := t.sessions[t.currentTitle]
+	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
+		return nil
+	}
+	return s.tmuxSession
+}
+
+// setOffsetLocked floors a new lines-from-bottom offset at 0 and marks the start
+// of a scroll gesture. The real top-of-buffer clamp happens in UpdateContent,
+// which has the captured line count. Caller must hold t.mu.
+func (t *TerminalPane) setOffsetLocked(off int) {
+	if off < 0 {
+		off = 0
+	}
+	wasBottom := t.scrollOffset == 0
+	t.scrollOffset = off
+	if wasBottom && off > 0 {
+		t.scrollStarting = true
+	}
+	if off == 0 {
+		t.newLinesBelow = 0
+		t.lastTotal = 0
+	}
+}
+
+// UpdateContent captures the terminal pane output. At scrollOffset 0 it tails
+// the live emulator screen (capture-pane fallback when no emulator); when
+// scrolled it paints a window of the session's scrollback at the offset.
 func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -100,38 +137,95 @@ func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 		return nil
 	}
 
-	// Reset scroll mode when the instance changes or viewport is at the bottom.
-	if t.isScrolling {
-		if instance.Title != t.currentTitle || t.viewport.AtBottom() {
-			t.isScrolling = false
-			t.viewport.SetContent("")
-			t.viewport.GotoTop()
-		}
+	// Reset to live tail when the instance changes (currentTitle is still the
+	// previous instance until ensureSessionLocked updates it below).
+	if instance.Title != t.currentTitle {
+		t.scrollOffset = 0
+		t.newLinesBelow = 0
 	}
 
-	// Skip content updates while in scroll mode
-	if t.isScrolling {
-		return nil
-	}
-
-	// Ensure we have a terminal session for this instance
+	// Ensure we have a terminal session for this instance.
 	if err := t.ensureSessionLocked(instance); err != nil {
 		return err
 	}
 
-	s, ok := t.sessions[t.currentTitle]
-	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
+	s := t.currentSessionLocked()
+	if s == nil {
 		t.setFallbackState("Terminal session not available.")
 		return nil
 	}
 
-	content, err := s.tmuxSession.CapturePaneContent()
-	if err != nil {
-		return fmt.Errorf("terminal pane: failed to capture content: %w", err)
+	if t.scrollOffset == 0 {
+		// Live tail: emulator visible screen; fall back to capture-pane when no
+		// emulator is wired (Windows / LOOM_PANE_RENDERER=snapshot).
+		content, rok := s.RenderEmulator()
+		if !rok {
+			var err error
+			content, err = s.CapturePaneContent()
+			if err != nil {
+				return fmt.Errorf("terminal pane: failed to capture content: %w", err)
+			}
+		}
+		t.fallback = false
+		t.content = content
+		t.newLinesBelow = 0
+		return nil
+	}
+
+	// Scrolled: window into tmux's authoritative history (capture-pane -S -),
+	// anchoring the view to its content as live output accrues below.
+	hist, hok := s.CaptureHistory()
+	if !hok {
+		t.scrollOffset = 0
+		content, _ := s.CapturePaneContent()
+		t.fallback = false
+		t.content = content
+		t.newLinesBelow = 0
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(hist, "\n"), "\n")
+	total := len(lines)
+	rows := t.height - 1
+	if rows < 1 {
+		rows = 1
+	}
+
+	switch {
+	case t.scrollStarting:
+		t.totalAtScrollStart = total
+		t.lastTotal = total
+		t.scrollStarting = false
+	case t.lastTotal > 0 && total > t.lastTotal:
+		t.scrollOffset += total - t.lastTotal
+	}
+	t.lastTotal = total
+
+	maxOff := total - rows
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	if t.scrollOffset > maxOff {
+		t.scrollOffset = maxOff
+	}
+	if t.scrollOffset <= 0 {
+		t.scrollOffset = 0
+		content, rok := s.RenderEmulator()
+		if !rok {
+			content, _ = s.CapturePaneContent()
+		}
+		t.fallback = false
+		t.content = content
+		t.newLinesBelow = 0
+		return nil
 	}
 
 	t.fallback = false
-	t.content = content
+	t.content = strings.Join(windowLines(lines, t.scrollOffset, rows), "\n")
+	if newBelow := total - t.totalAtScrollStart; newBelow > 0 {
+		t.newLinesBelow = newBelow
+	} else {
+		t.newLinesBelow = 0
+	}
 	return nil
 }
 
@@ -292,6 +386,32 @@ func (t *TerminalPane) SendKeysRaw(b []byte) error {
 	return ts.SendKeysRaw(b)
 }
 
+// ForwardMouse forwards one SGR mouse event to the current terminal session.
+func (t *TerminalPane) ForwardMouse(cb, col, row int, press bool) error {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
+		t.mu.Unlock()
+		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	}
+	ts := s.tmuxSession
+	t.mu.Unlock()
+	return ts.ForwardMouse(cb, col, row, press)
+}
+
+// Paste sends text to the current terminal session as a bracketed paste.
+func (t *TerminalPane) Paste(text string) error {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
+		t.mu.Unlock()
+		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	}
+	ts := s.tmuxSession
+	t.mu.Unlock()
+	return ts.Paste(text)
+}
+
 // Close kills all cached terminal tmux sessions and cleans up.
 func (t *TerminalPane) Close() {
 	t.mu.Lock()
@@ -343,10 +463,6 @@ func (t *TerminalPane) String() string {
 		return strings.Repeat("\n", height)
 	}
 
-	if t.isScrolling {
-		return t.viewport.View()
-	}
-
 	fallback := t.fallback
 	fallbackText := t.fallbackText
 	content := t.content
@@ -378,7 +494,17 @@ func (t *TerminalPane) String() string {
 			Render(strings.Join(lines, ""))
 	}
 
-	// Normal mode: show captured content
+	// Scrolled: render the windowed history with a jump-to-bottom footer.
+	if t.scrollOffset > 0 {
+		wlines := strings.Split(content, "\n")
+		display, plain := renderWithSelection(wlines, t.sel)
+		t.displayedPlain = plain
+		footer := terminalFooterStyle.Render(scrollFooter(t.newLinesBelow))
+		body := lipgloss.JoinVertical(lipgloss.Left, strings.Join(display, "\n"), footer)
+		return terminalPaneStyle.Width(width).Render(body)
+	}
+
+	// Live tail: show captured content.
 	lines := strings.Split(content, "\n")
 
 	if height > 0 {
@@ -390,131 +516,112 @@ func (t *TerminalPane) String() string {
 		}
 	}
 
-	contentStr := strings.Join(lines, "\n")
+	display, plain := renderWithSelection(lines, t.sel)
+	t.displayedPlain = plain
+	contentStr := strings.Join(display, "\n")
 	return terminalPaneStyle.Width(width).Render(contentStr)
 }
 
-// enterScrollMode captures the full terminal history and seeds the viewport.
-// Callers must apply a motion (LineUp, HalfViewUp, etc.) after to keep
-// AtBottom() false — otherwise the next UpdateContent auto-exits.
-// Caller must hold t.mu.
-func (t *TerminalPane) enterScrollMode() error {
-	s, ok := t.sessions[t.currentTitle]
-	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
-		return nil
-	}
-
-	content, err := s.tmuxSession.CapturePaneContentWithOptions("-", "-")
-	if err != nil {
-		return fmt.Errorf("terminal pane: failed to capture full history: %w", err)
-	}
-
-	footer := terminalFooterStyle.Render("ESC to exit scroll mode")
-	t.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, content, footer))
-	t.viewport.GotoBottom()
-	t.isScrolling = true
-	return nil
+// BeginSelection starts a selection anchored at content (row, col).
+func (t *TerminalPane) BeginSelection(row, col int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sel = selection{active: true, anchorRow: row, anchorCol: col, curRow: row, curCol: col}
 }
 
-// ScrollUp enters scroll mode (if not already) and scrolls up.
+// ExtendSelection moves the active selection's cursor to content (row, col).
+func (t *TerminalPane) ExtendSelection(row, col int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.sel.active {
+		return
+	}
+	t.sel.curRow = row
+	t.sel.curCol = col
+}
+
+// ClearSelection clears any active selection.
+func (t *TerminalPane) ClearSelection() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sel = selection{}
+}
+
+// SelectedText returns the currently selected text (plain), or "" if none.
+func (t *TerminalPane) SelectedText() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return extractSelection(t.displayedPlain, t.sel)
+}
+
+// ScrollUp scrolls one line up into scrollback.
 func (t *TerminalPane) ScrollUp() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.isScrolling {
-		if err := t.enterScrollMode(); err != nil {
-			return err
-		}
-	}
-	t.viewport.LineUp(1)
+	t.setOffsetLocked(t.scrollOffset + 1)
 	return nil
 }
 
-// ScrollDown scrolls down in the viewport. Does not enter scroll mode from normal mode.
+// ScrollDown scrolls one line down toward the live tail.
 func (t *TerminalPane) ScrollDown() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.isScrolling {
-		return nil
-	}
-	t.viewport.LineDown(1)
+	t.setOffsetLocked(t.scrollOffset - 1)
 	return nil
 }
 
-// PageUp scrolls up by half a viewport height.
+// PageUp scrolls up by half a pane height.
 func (t *TerminalPane) PageUp() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.isScrolling {
-		if err := t.enterScrollMode(); err != nil {
-			return err
-		}
-	}
-	t.viewport.HalfViewUp()
+	t.setOffsetLocked(t.scrollOffset + t.height/2)
 	return nil
 }
 
-// PageDown scrolls down by half a viewport height.
+// PageDown scrolls down by half a pane height.
 func (t *TerminalPane) PageDown() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.isScrolling {
-		return nil
-	}
-	t.viewport.HalfViewDown()
+	t.setOffsetLocked(t.scrollOffset - t.height/2)
 	return nil
 }
 
-// GotoTop jumps the viewport to the start of captured history.
+// GotoTop jumps to the oldest scrollback line.
 func (t *TerminalPane) GotoTop() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.isScrolling {
-		if err := t.enterScrollMode(); err != nil {
-			return err
-		}
-	}
-	t.viewport.GotoTop()
+	t.setOffsetLocked(scrollToTopOffset)
 	return nil
 }
 
-// GotoBottom exits scroll mode and returns to live tail.
+// GotoBottom returns to the live tail.
 func (t *TerminalPane) GotoBottom() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.isScrolling {
-		return
-	}
-	t.isScrolling = false
-	t.viewport.SetContent("")
-	t.viewport.GotoTop()
+	t.setOffsetLocked(0)
 }
 
-// ScrollPercent returns the viewport position as a fraction [0, 1].
-// Returns 1.0 when not in scroll mode (live tail is "at the bottom").
+// ScrollPercent returns the scroll position as a fraction [0, 1]; 1.0 == live
+// tail (bottom).
 func (t *TerminalPane) ScrollPercent() float64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.isScrolling {
+	if t.scrollOffset <= 0 || t.lastTotal <= 0 {
 		return 1.0
 	}
-	return t.viewport.ScrollPercent()
+	return 1.0 - float64(t.scrollOffset)/float64(t.lastTotal)
 }
 
-// ResetToNormalMode exits scroll mode and restores normal content display.
+// ResetToNormalMode returns the pane to the live tail.
 func (t *TerminalPane) ResetToNormalMode() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.isScrolling {
-		return
-	}
-	t.isScrolling = false
-	t.viewport.SetContent("")
-	t.viewport.GotoTop()
+	t.setOffsetLocked(0)
 }
 
-// IsScrolling returns whether the terminal pane is in scroll mode.
+// IsScrolling reports whether the pane is scrolled away from the live tail.
 func (t *TerminalPane) IsScrolling() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.isScrolling
+	return t.scrollOffset > 0
 }

@@ -1,9 +1,9 @@
 package ui
 
 import (
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // QuickInputAction represents the result of handling a key press in the input bar.
@@ -30,7 +30,7 @@ const (
 )
 
 var (
-	quickInputHintStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"})
+	quickInputHintStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#808080"))
 )
 
 // QuickInputBar is a single-line input bar for quick interactions with tmux sessions.
@@ -53,8 +53,8 @@ func NewQuickInputBar(target QuickInputTarget) *QuickInputBar {
 }
 
 // HandleKeyPress processes a key event and returns the resulting action.
-func (q *QuickInputBar) HandleKeyPress(msg tea.KeyMsg) QuickInputAction {
-	switch msg.Type {
+func (q *QuickInputBar) HandleKeyPress(msg tea.KeyPressMsg) QuickInputAction {
+	switch msg.Code {
 	case tea.KeyEnter:
 		return QuickInputSubmit
 	case tea.KeyEsc:
@@ -73,7 +73,7 @@ func (q *QuickInputBar) Value() string {
 // SetWidth sets the rendering width of the input bar.
 func (q *QuickInputBar) SetWidth(w int) {
 	q.width = w
-	q.textInput.Width = w - 4 // account for prompt and padding
+	q.textInput.SetWidth(w - 4) // account for prompt and padding
 }
 
 // Height returns the number of lines the input bar occupies.

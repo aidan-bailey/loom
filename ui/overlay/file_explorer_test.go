@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,7 +27,7 @@ func TestFileExplorerTypingFilters(t *testing.T) {
 
 	// Type 'm' then 'a'; all paths containing "ma" should remain.
 	for _, r := range "ma" {
-		_, _ = o.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		_, _ = o.HandleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 	assert.Greater(t, o.ResultCount(), 0)
 	assert.Less(t, o.ResultCount(), 4, "typing should narrow the list")
@@ -42,7 +42,7 @@ func TestFileExplorerCursorClampsToResults(t *testing.T) {
 
 	// Press Down repeatedly past the end.
 	for range 5 {
-		_, _ = o.HandleKey(tea.KeyMsg{Type: tea.KeyDown})
+		_, _ = o.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	// Selection is the last result, "b.go" after alphabetical sort
 	// (empty query preserves input order, so still "b.go").
@@ -52,7 +52,7 @@ func TestFileExplorerCursorClampsToResults(t *testing.T) {
 func TestFileExplorerCursorCannotGoNegative(t *testing.T) {
 	o := newTestFileExplorer("/tmp/repo", []string{"a.go", "b.go"})
 	for range 3 {
-		_, _ = o.HandleKey(tea.KeyMsg{Type: tea.KeyUp})
+		_, _ = o.HandleKey(tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	assert.Equal(t, filepath.Join("/tmp/repo", "a.go"), o.SelectedPath())
 }
@@ -65,7 +65,7 @@ func TestFileExplorerEnterReturnsOpenCmd(t *testing.T) {
 	})
 	o.SetSize(60, 20)
 
-	closed, cmd := o.HandleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	closed, cmd := o.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, closed, "Enter should close the overlay")
 	assert.NotNil(t, cmd, "Enter should return a command")
 	assert.Equal(t, "/tmp/repo/main.go", opened)
@@ -81,9 +81,9 @@ func TestFileExplorerEnterWithNoResultsDoesNotClose(t *testing.T) {
 
 	// Type a query that matches nothing.
 	for _, r := range "zzz" {
-		_, _ = o.HandleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		_, _ = o.HandleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	closed, cmd := o.HandleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	closed, cmd := o.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.False(t, closed)
 	assert.Nil(t, cmd)
 	assert.False(t, opened)
@@ -91,7 +91,7 @@ func TestFileExplorerEnterWithNoResultsDoesNotClose(t *testing.T) {
 
 func TestFileExplorerEscClosesWithoutCmd(t *testing.T) {
 	o := newTestFileExplorer("/tmp/repo", []string{"a.go"})
-	closed, cmd := o.HandleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	closed, cmd := o.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.True(t, closed)
 	assert.Nil(t, cmd)
 }
@@ -111,7 +111,7 @@ func TestFileExplorerViewportScrollsWhenCursorOffscreen(t *testing.T) {
 
 	// Move cursor past the initial viewport window.
 	for range 30 {
-		_, _ = o.HandleKey(tea.KeyMsg{Type: tea.KeyDown})
+		_, _ = o.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	view := o.View()
 	// The selected line should appear in the rendered view (i.e. the

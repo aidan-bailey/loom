@@ -3,13 +3,13 @@ package app
 import (
 	"github.com/aidan-bailey/loom/ui/overlay"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // handleStateConfirmKey dispatches key events to the active
 // ConfirmationOverlay. When the overlay closes (y/n/esc), the queued
 // ConfirmationTask runs and state returns to default.
-func handleStateConfirmKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func handleStateConfirmKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	cf := m.confirmation()
 	if cf == nil {
 		return m, nil

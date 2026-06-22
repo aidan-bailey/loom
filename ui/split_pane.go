@@ -7,7 +7,7 @@ import (
 	"github.com/aidan-bailey/loom/session/tmux"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 var highlightColor = BorderActive
@@ -144,6 +144,72 @@ func (s *SplitPane) GetFocusedPane() int {
 // SetFocusedPane sets focus to the specified pane.
 func (s *SplitPane) SetFocusedPane(pane int) {
 	s.focusedPane = pane
+}
+
+// HitTest maps split-pane-local coordinates (x relative to the split's left edge,
+// y from the top of the split) to a content pane and (row, col) within it.
+// Returns ok=false for the diff overlay, borders, the title/bottom-border rows,
+// or coordinates outside any content area. The returned pane is FocusAgent or
+// FocusTerminal. Geometry mirrors renderPane: each box is a title row, a body
+// bordered left/right/bottom (no top), stacked agent-over-terminal.
+func (s *SplitPane) HitTest(localX, y int) (pane, row, col int, ok bool) {
+	if s.diffVisible {
+		return 0, 0, 0, false // selection over the diff overlay is unsupported in v1
+	}
+	col = localX - 1 // left body border
+	if col < 0 || col >= s.agent.width {
+		return 0, 0, 0, false
+	}
+	// Agent content occupies rows [1, 1+agentHeight); row 0 is the title border.
+	if y >= 1 && y < 1+s.agent.height {
+		return FocusAgent, y - 1, col, true
+	}
+	// Terminal content starts after agent title + agent body + agent bottom
+	// border + terminal title = agent.height + 3.
+	tTop := s.agent.height + 3
+	if y >= tTop && y < tTop+s.terminal.height {
+		return FocusTerminal, y - tTop, col, true
+	}
+	return 0, 0, 0, false
+}
+
+// BeginSelection starts a selection on the given content pane (clearing any
+// selection on the other pane first).
+func (s *SplitPane) BeginSelection(pane, row, col int) {
+	s.ClearSelections()
+	switch pane {
+	case FocusAgent:
+		s.agent.BeginSelection(row, col)
+	case FocusTerminal:
+		s.terminal.BeginSelection(row, col)
+	}
+}
+
+// ExtendSelection moves the active selection's cursor on the given content pane.
+func (s *SplitPane) ExtendSelection(pane, row, col int) {
+	switch pane {
+	case FocusAgent:
+		s.agent.ExtendSelection(row, col)
+	case FocusTerminal:
+		s.terminal.ExtendSelection(row, col)
+	}
+}
+
+// ClearSelections clears the selection on both content panes.
+func (s *SplitPane) ClearSelections() {
+	s.agent.ClearSelection()
+	s.terminal.ClearSelection()
+}
+
+// SelectedText returns the selected text of the given content pane.
+func (s *SplitPane) SelectedText(pane int) string {
+	switch pane {
+	case FocusAgent:
+		return s.agent.SelectedText()
+	case FocusTerminal:
+		return s.terminal.SelectedText()
+	}
+	return ""
 }
 
 // UpdateAgent updates the agent (preview) pane content. Always updates since it's always visible.
@@ -335,9 +401,10 @@ func (s *SplitPane) ScrollDiffDown() {
 	}
 }
 
-// IsAgentInScrollMode returns true if the agent pane is in scroll mode.
+// IsAgentInScrollMode returns true if the agent pane is scrolled away from
+// the live tail.
 func (s *SplitPane) IsAgentInScrollMode() bool {
-	return s.agent.isScrolling
+	return s.agent.IsScrolling()
 }
 
 // IsTerminalInScrollMode returns true if the terminal pane is in scroll mode.
@@ -384,6 +451,16 @@ func (s *SplitPane) SendTerminalKeysToInstance(title, text string) error {
 // SendTerminalKeysRaw writes raw bytes to the terminal pane's tmux PTY.
 func (s *SplitPane) SendTerminalKeysRaw(b []byte) error {
 	return s.terminal.SendKeysRaw(b)
+}
+
+// ForwardTerminalMouse forwards one SGR mouse event to the terminal pane's session.
+func (s *SplitPane) ForwardTerminalMouse(cb, col, row int, press bool) error {
+	return s.terminal.ForwardMouse(cb, col, row, press)
+}
+
+// PasteTerminal sends text to the terminal pane's session as a bracketed paste.
+func (s *SplitPane) PasteTerminal(text string) error {
+	return s.terminal.Paste(text)
 }
 
 func (s *SplitPane) String() string {

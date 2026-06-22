@@ -1,7 +1,7 @@
 package app
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // handleStateDefaultKey processes keys while the list is in its normal
@@ -10,7 +10,7 @@ import (
 // remaining key is routed through the Lua engine via dispatchScript
 // — ActionRegistry and the GlobalKeyStringsMap lookup have been
 // retired in favor of defaults.lua.
-func handleStateDefaultKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// ctrl+c is a panic-exit backstop. Evaluated BEFORE any engine
 	// dispatch or handler so a broken or malicious user script that
 	// unbinds or shadows ctrl+c still can't trap the user in the
@@ -20,7 +20,7 @@ func handleStateDefaultKey(m *home, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
-	if msg.Type == tea.KeyEsc {
+	if msg.Code == tea.KeyEsc {
 		// Dismiss diff overlay first
 		if m.splitPane.IsDiffVisible() {
 			m.splitPane.ToggleDiff()

@@ -28,6 +28,12 @@ type testSetup struct {
 func setupTestEnvironment(t *testing.T, cmdExec cmd_test.MockCmdExec) *testSetup {
 	t.Helper()
 
+	// These tests drive pane content through the mocked capture-pane, not the
+	// live PTY stream, so run the pane in snapshot (capture-pane) mode. Must be
+	// set before instance.Start, which builds the emulator in Restore. The
+	// emulator render path is covered by session/vt and session/tmux tests.
+	t.Setenv("LOOM_PANE_RENDERER", "snapshot")
+
 	// Initialize logging
 	_ = log.Initialize("", false)
 
@@ -121,170 +127,6 @@ func setupGitRepo(t *testing.T, workdir string) {
 	require.NoError(t, err)
 }
 
-// TestPreviewScrolling tests the scrolling functionality in the preview pane
-func TestPreviewScrolling(t *testing.T) {
-	// Track what commands were executed and their order
-	var executedCommands []string
-	inCopyMode := false
-	scrollPosition := 0 // 0 = bottom, positive = scrolled up
-	sessionCreated := false
-
-	// Create test content with line numbers for scrolling
-	const numLines = 100
-	lines := make([]string, numLines+1)
-	lines[0] = "$ seq 100" // Command that was run
-	for i := 1; i <= numLines; i++ {
-		lines[i] = fmt.Sprintf("%d", i)
-	}
-	fullContent := strings.Join(lines, "\n")
-
-	// Mock command execution
-	cmdExec := cmd_test.MockCmdExec{
-		RunFunc: func(cmd *exec.Cmd) error {
-			cmdStr := cmd.String()
-			executedCommands = append(executedCommands, cmdStr)
-
-			// Handle tmux session creation and existence checking
-			if strings.Contains(cmdStr, "has-session") {
-				if sessionCreated {
-					return nil // Session exists
-				} else {
-					return fmt.Errorf("session does not exist")
-				}
-			}
-
-			// Handle session creation
-			if strings.Contains(cmdStr, "new-session") {
-				sessionCreated = true
-				return nil
-			}
-
-			// Handle attach-session
-			if strings.Contains(cmdStr, "attach-session") {
-				return nil
-			}
-
-			// Handle copy mode commands
-			if strings.Contains(cmdStr, "copy-mode") {
-				inCopyMode = true
-			}
-			if strings.Contains(cmdStr, "send-keys") && strings.Contains(cmdStr, "q") {
-				inCopyMode = false
-				scrollPosition = 0 // Reset position when exiting copy mode
-			}
-			if strings.Contains(cmdStr, "send-keys") && strings.Contains(cmdStr, "Up") {
-				if inCopyMode {
-					scrollPosition++
-				}
-			}
-			if strings.Contains(cmdStr, "send-keys") && strings.Contains(cmdStr, "Down") {
-				if inCopyMode && scrollPosition > 0 {
-					scrollPosition--
-				}
-			}
-
-			return nil
-		},
-		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
-			cmdStr := cmd.String()
-
-			// Handle capture-pane commands
-			if strings.Contains(cmdStr, "capture-pane") {
-				// Check if this is a request for cursor position
-				if strings.Contains(cmdStr, "display-message") && strings.Contains(cmdStr, "copy_cursor_y") {
-					var buf []byte
-					buf = fmt.Appendf(buf, "%d", scrollPosition)
-					return buf, nil
-				}
-
-				// Check if this is a copy mode capture with full history (-S -)
-				if strings.Contains(cmdStr, "-S -") {
-					// Always return the full content for PreviewFullHistory
-					return []byte(fullContent), nil
-				}
-
-				// Regular capture for normal preview mode - show the last 20 lines
-				const visibleLines = 20
-				startLine := max(0, numLines+1-visibleLines)
-				visibleContent := strings.Join(lines[startLine:], "\n")
-				return []byte(visibleContent), nil
-			}
-
-			return []byte(""), nil
-		},
-	}
-
-	// Setup test environment
-	setup := setupTestEnvironment(t, cmdExec)
-	defer setup.cleanupFn()
-
-	// Simulate running a command that produces lots of output
-	err := setup.instance.SendKeys("seq 100")
-	require.NoError(t, err)
-	err = setup.instance.SendKeys("") // Simulate pressing Enter
-	require.NoError(t, err)
-
-	// Create the preview pane
-	previewPane := NewPreviewPane()
-	previewPane.SetSize(80, 30) // Set reasonable size for testing
-
-	// Step 1: Check initial content - should show normal preview mode
-	err = previewPane.UpdateContent(setup.instance)
-	require.NoError(t, err)
-
-	// Verify we're not in scrolling mode initially
-	require.False(t, previewPane.isScrolling, "Should not be in scrolling mode initially")
-
-	// Step 2: Check that PreviewFullHistory returns all content
-	fullHistory, err := setup.instance.PreviewFullHistory()
-	require.NoError(t, err)
-
-	// Verify that the full history contains both the command and early output
-	require.Contains(t, fullHistory, "$ seq 100", "Full history should contain the command")
-	require.Contains(t, fullHistory, "1", "Full history should contain earliest output")
-
-	// Step 3: Enter scroll mode
-	err = previewPane.ScrollUp(setup.instance)
-	require.NoError(t, err)
-
-	// Verify we entered scrolling mode
-	require.True(t, previewPane.isScrolling, "Should be in scrolling mode after ScrollUp")
-
-	// Step 4: Get the content directly from the viewport
-	viewportContent := previewPane.viewport.View()
-	t.Logf("Viewport content: %q", viewportContent)
-
-	// With proper implementation, the viewport should have the full history content
-	// Note: The viewport will be positioned at the bottom initially, so we need to scroll up
-
-	// Step 5: Scroll up multiple times to get to the top
-	for range 50 {
-		err = previewPane.ScrollUp(setup.instance)
-		require.NoError(t, err)
-	}
-
-	// Now get the viewport content after scrolling up
-	viewportAfterScrollUp := previewPane.viewport.View()
-	t.Logf("Viewport after scrolling up: %q", viewportAfterScrollUp)
-
-	// Step 6: Scroll down multiple times
-	for range 25 {
-		err = previewPane.ScrollDown(setup.instance)
-		require.NoError(t, err)
-	}
-
-	// Get updated viewport content after scrolling down
-	viewportAfterScrollDown := previewPane.viewport.View()
-	t.Logf("Viewport after scrolling down: %q", viewportAfterScrollDown)
-
-	// Step 7: Reset to normal mode
-	err = previewPane.ResetToNormalMode(setup.instance)
-	require.NoError(t, err)
-
-	// Verify we exited scrolling mode
-	require.False(t, previewPane.isScrolling, "Should not be in scrolling mode after reset")
-}
-
 // MockPtyFactory for testing tmux sessions
 type MockPtyFactory struct {
 	t       *testing.T
@@ -367,7 +209,7 @@ func TestPreviewContentWithoutScrolling(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify we're not in scrolling mode
-	require.False(t, previewPane.isScrolling, "Should not be in scrolling mode")
+	require.False(t, previewPane.IsScrolling(), "Should not be in scrolling mode")
 
 	// Verify that the preview state is not in fallback mode
 	require.False(t, previewPane.previewState.fallback, "Preview should not be in fallback mode")
@@ -380,111 +222,178 @@ func TestPreviewContentWithoutScrolling(t *testing.T) {
 	require.Contains(t, renderedString, "test", "Rendered preview should contain the test content")
 }
 
-// Helper function for max
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// setupPreviewScrollTest builds a PreviewPane + live instance whose
-// PreviewFullHistory() resolves to a 100-line buffer. Each of the
-// pane-level scroll tests below asserts the isScrolling transition
-// for one method; the scroll-mode-entry path (capture history, seed
-// viewport, set isScrolling) is the same helper under all of them,
-// so covering one motion per direction is sufficient.
-func setupPreviewScrollTest(t *testing.T) (*PreviewPane, *session.Instance, func()) {
-	t.Helper()
-
-	const numLines = 100
-	lines := make([]string, numLines+1)
-	lines[0] = "$ seq 100"
-	for i := 1; i <= numLines; i++ {
-		lines[i] = fmt.Sprintf("%d", i)
-	}
-	fullContent := strings.Join(lines, "\n")
-
+// TestPreviewPane_ScrollsIntoHistory is the end-to-end regression guard for
+// "scrolling does nothing": with a buffer larger than the screen, scrolling up
+// must move the window into older history (capture-pane -S -), away from the
+// live tail. The mock returns 200 history lines for the -S capture and the
+// bottom 24 for the plain (visible) capture, mirroring real tmux.
+func TestPreviewPane_ScrollsIntoHistory(t *testing.T) {
 	sessionCreated := false
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(cmd *exec.Cmd) error {
-			cmdStr := cmd.String()
-			if strings.Contains(cmdStr, "has-session") {
+			s := cmd.String()
+			if strings.Contains(s, "has-session") {
 				if sessionCreated {
 					return nil
 				}
 				return fmt.Errorf("session does not exist")
 			}
-			if strings.Contains(cmdStr, "new-session") {
+			if strings.Contains(s, "new-session") {
 				sessionCreated = true
-				return nil
 			}
 			return nil
 		},
 		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
-			cmdStr := cmd.String()
-			if strings.Contains(cmdStr, "capture-pane") {
-				// -S - signals a full-history capture (PreviewFullHistory).
-				if strings.Contains(cmdStr, "-S -") {
-					return []byte(fullContent), nil
+			s := cmd.String()
+			if strings.Contains(s, "capture-pane") {
+				// CaptureHistory uses `-S` (full scrollback); the plain visible
+				// capture does not. Return 200 lines vs the bottom 24.
+				if strings.Contains(s, "-S") {
+					var b strings.Builder
+					for i := 1; i <= 200; i++ {
+						fmt.Fprintf(&b, "histline%d\n", i)
+					}
+					return []byte(strings.TrimRight(b.String(), "\n")), nil
 				}
-				return []byte(strings.Join(lines[numLines-20:], "\n")), nil
+				var b strings.Builder
+				for i := 177; i <= 200; i++ {
+					fmt.Fprintf(&b, "histline%d\n", i)
+				}
+				return []byte(strings.TrimRight(b.String(), "\n")), nil
 			}
 			return []byte(""), nil
 		},
 	}
 
 	setup := setupTestEnvironment(t, cmdExec)
-	pane := NewPreviewPane()
-	pane.SetSize(80, 30)
-	return pane, setup.instance, setup.cleanupFn
+	defer setup.cleanupFn()
+
+	p := NewPreviewPane()
+	p.SetSize(80, 24)
+
+	// Live tail: shows the newest lines.
+	require.NoError(t, p.UpdateContent(setup.instance))
+	liveText := p.previewState.text
+	require.Contains(t, liveText, "histline200", "live tail should show the newest line")
+	require.False(t, p.IsScrolling(), "fresh pane is at the live tail")
+
+	// Scroll well up into history, then refresh.
+	for i := 0; i < 60; i++ {
+		require.NoError(t, p.ScrollUp(setup.instance))
+	}
+	require.NoError(t, p.UpdateContent(setup.instance))
+	scrolledText := p.previewState.text
+
+	require.True(t, p.IsScrolling(), "pane should be scrolled after scrolling up")
+	require.NotEqual(t, liveText, scrolledText, "scrolled content must differ from the live tail")
+	require.NotContains(t, scrolledText, "histline200", "scrolled-up view must not show the newest line")
+	require.Contains(t, scrolledText, "histline130", "scrolled-up view should show older history")
 }
 
-func TestPreviewPageUpEntersScrollMode(t *testing.T) {
-	pane, inst, cleanup := setupPreviewScrollTest(t)
-	defer cleanup()
+// TestPreviewPane_TUIAgentForwardsWheel verifies the agent-pane scroll fork:
+// when the agent is a full-screen TUI (alternate_on=1), scrolling takes the
+// forward path (detects alt-screen, leaves Loom at the live tail) rather than
+// engaging its useless offset window. The wheel bytes themselves are covered by
+// the tmux-layer ForwardWheel test.
+func TestPreviewPane_TUIAgentForwardsWheel(t *testing.T) {
+	sessionCreated := false
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error {
+			s := cmd.String()
+			if strings.Contains(s, "has-session") {
+				if sessionCreated {
+					return nil
+				}
+				return fmt.Errorf("session does not exist")
+			}
+			if strings.Contains(s, "new-session") {
+				sessionCreated = true
+			}
+			return nil
+		},
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
+			s := cmd.String()
+			if strings.Contains(s, "alternate_on") {
+				return []byte("1\n"), nil // agent is a full-screen TUI
+			}
+			if strings.Contains(s, "capture-pane") {
+				return []byte("live screen"), nil
+			}
+			return []byte(""), nil
+		},
+	}
 
-	require.False(t, pane.isScrolling, "pane starts in live-tail mode")
-	require.NoError(t, pane.PageUp(inst))
-	require.True(t, pane.isScrolling, "PageUp must seed viewport and enter scroll mode")
+	setup := setupTestEnvironment(t, cmdExec)
+	defer setup.cleanupFn()
+
+	p := NewPreviewPane()
+	p.SetSize(80, 24)
+	require.NoError(t, p.UpdateContent(setup.instance)) // live tail
+
+	require.NoError(t, p.ScrollUp(setup.instance))
+	require.NoError(t, p.PageUp(setup.instance))
+
+	require.True(t, p.altScreen, "alt-screen TUI agent must be detected")
+	require.False(t, p.IsScrolling(), "TUI agent: Loom stays at the live tail, no offset window")
+	require.Equal(t, 0, p.scrollOffset, "offset model must not be engaged for a TUI agent")
 }
 
-func TestPreviewGotoTopEntersScrollMode(t *testing.T) {
-	pane, inst, cleanup := setupPreviewScrollTest(t)
-	defer cleanup()
-
-	require.False(t, pane.isScrolling)
-	require.NoError(t, pane.GotoTop(inst))
-	require.True(t, pane.isScrolling, "GotoTop must enter scroll mode to expose history")
+func TestPreviewPane_ScrollOffsetFloorsAtZero(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(80, 10)
+	// ScrollDown from the live tail floors at 0 — never a negative offset. (The
+	// top-of-buffer clamp lives in UpdateContent, which needs a captured
+	// buffer; setOffset only floors at the bottom.)
+	_ = p.ScrollDown(nil)
+	if p.scrollOffset != 0 {
+		t.Fatalf("ScrollDown from live tail must stay at 0; got %d", p.scrollOffset)
+	}
+	if p.IsScrolling() {
+		t.Fatal("live tail is not a scrolled state")
+	}
+	if p.ScrollPercent() != 1.0 {
+		t.Fatalf("live tail must report ScrollPercent 1.0; got %v", p.ScrollPercent())
+	}
 }
 
-func TestPreviewGotoBottomExitsScrollMode(t *testing.T) {
-	pane, inst, cleanup := setupPreviewScrollTest(t)
-	defer cleanup()
-
-	require.NoError(t, pane.PageUp(inst))
-	require.True(t, pane.isScrolling)
-
-	require.NoError(t, pane.GotoBottom(inst))
-	require.False(t, pane.isScrolling,
-		"GotoBottom is the live-tail shortcut; it must exit scroll mode, not scroll within it")
+// TestPreviewPane_windowLines covers the pure windowing helper that both panes
+// use to slice a captured history buffer.
+func TestPreviewPane_windowLines(t *testing.T) {
+	lines := []string{"a", "b", "c", "d", "e"} // 5 lines
+	// fromBottom=0, rows=2 -> the last 2 lines.
+	got := windowLines(lines, 0, 2)
+	if len(got) != 2 || got[0] != "d" || got[1] != "e" {
+		t.Fatalf("window at bottom = %v, want [d e]", got)
+	}
+	// fromBottom=2, rows=2 -> two lines, two up from the bottom.
+	got = windowLines(lines, 2, 2)
+	if got[0] != "b" || got[1] != "c" {
+		t.Fatalf("window 2-from-bottom = %v, want [b c]", got)
+	}
+	// Past the top -> leading blank padding (3 blanks), then a..e.
+	got = windowLines(lines, 0, 8)
+	if len(got) != 8 || got[0] != "" || got[2] != "" || got[3] != "a" || got[7] != "e" {
+		t.Fatalf("over-tall window = %v, want [\"\" \"\" \"\" a b c d e]", got)
+	}
 }
 
-func TestPreviewPageDownNoOpFromNormalMode(t *testing.T) {
-	pane, inst, cleanup := setupPreviewScrollTest(t)
-	defer cleanup()
-
-	require.False(t, pane.isScrolling)
-	require.NoError(t, pane.PageDown(inst))
-	require.False(t, pane.isScrolling,
-		"PageDown from live tail must stay in live tail — scrolling down from bottom is meaningless")
+func TestPreviewPane_ScrolledFooterShowsNewLines(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(80, 10)
+	p.scrollOffset = 3
+	p.newLinesBelow = 5
+	p.previewState = previewState{fallback: false, text: "some\ncontent"}
+	out := p.String()
+	if !strings.Contains(out, "5") || !strings.Contains(out, "jump to bottom") {
+		t.Fatalf("scrolled footer should mention new lines + jump to bottom; got %q", out)
+	}
 }
 
-func TestPreviewScrollPercentIs1WhenNotScrolling(t *testing.T) {
-	pane, _, cleanup := setupPreviewScrollTest(t)
-	defer cleanup()
-
-	require.False(t, pane.isScrolling)
-	require.InDelta(t, 1.0, pane.ScrollPercent(), 0.0,
-		"live tail reports 100%% so the title indicator stays clean")
+func TestPreviewPane_GotoBottomResetsOffset(t *testing.T) {
+	p := NewPreviewPane()
+	p.scrollOffset = 7
+	_ = p.GotoBottom(nil) // nil instance still resets to live tail
+	if p.scrollOffset != 0 || p.IsScrolling() {
+		t.Fatalf("GotoBottom must reset to live tail; offset=%d", p.scrollOffset)
+	}
 }

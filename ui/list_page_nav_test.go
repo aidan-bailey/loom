@@ -6,7 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/spinner"
+	"charm.land/bubbles/v2/spinner"
 	"github.com/stretchr/testify/assert"
 )
 

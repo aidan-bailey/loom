@@ -3,8 +3,8 @@ package overlay
 import (
 	"github.com/aidan-bailey/loom/ui"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // TextOverlay represents a text screen overlay
@@ -31,7 +31,7 @@ func NewTextOverlay(content string) *TextOverlay {
 // HandleKeyPress processes a key press and updates the state.
 // Returns (shouldClose, dismissCmd). dismissCmd is whatever the OnDismiss
 // callback returned (possibly nil) and should be dispatched by the caller.
-func (t *TextOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (t *TextOverlay) HandleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// Close on any key
 	t.Dismissed = true
 	// Call the OnDismiss callback if it exists
@@ -44,7 +44,7 @@ func (t *TextOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 // HandleKey satisfies the Overlay interface. Delegates to
 // HandleKeyPress, which already returns (closed, cmd).
-func (t *TextOverlay) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (t *TextOverlay) HandleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	return t.HandleKeyPress(msg)
 }
 

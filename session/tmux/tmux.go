@@ -8,6 +8,7 @@ import (
 	"fmt"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/vt"
 	"io"
 	"os"
 	"os/exec"
@@ -86,6 +87,18 @@ type TmuxSession struct {
 	ptmx *os.File
 	// monitor monitors the tmux pane content and sends signals to the UI when it's status changes
 	monitor *statusMonitor
+
+	// emu is the in-process terminal emulator for pane DISPLAY (Phase 1). The
+	// output pump writes raw ptmx bytes into it; Render reads the visible
+	// screen for Preview/terminal content. nil selects the legacy capture-pane
+	// path (Windows / LOOM_PANE_RENDERER=snapshot). Guarded by stateMu like
+	// ptmx: Restore/Close/PausePreview swap or drop it while the preview path
+	// reads it. The emulator's own RWMutex makes concurrent Write vs Render safe.
+	emu vt.Emulator
+	// lastCols/lastRows track the most recent pane geometry from SetDetachedSize
+	// so a freshly built emulator in Restore starts at the correct size.
+	lastCols int
+	lastRows int
 
 	// Output pump — continuously drains PTY output to prevent buffer deadlock.
 	// When nothing reads from ptmx, the tmux client blocks on stdout and stops
@@ -178,6 +191,10 @@ func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec 
 		// a fresh instance on every PTY attach, so the initial value is only
 		// load-bearing for paused sessions (constructed without Restore).
 		monitor: newStatusMonitor(),
+		// Default geometry until the first SetDetachedSize; a fresh emulator in
+		// Restore starts here so it is never zero-sized.
+		lastCols: 80,
+		lastRows: 24,
 	}
 }
 
@@ -256,6 +273,17 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	}
 	mouseCancel()
 
+	// Disable the tmux status bar. The detached attach stream the emulator
+	// consumes includes the status line, but the pane preview must not — it
+	// would consume a render row and shift content. tmux still owns the
+	// session; only its chrome is hidden.
+	statusCtx, statusCancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	statusCmd := exec.CommandContext(statusCtx, "tmux", "set-option", "-t", t.sanitizedName, "status", "off")
+	if err := t.cmdExec.Run(statusCmd); err != nil {
+		log.For("tmux").Warn("status_off_failed", "session", t.sanitizedName, "err", err)
+	}
+	statusCancel()
+
 	// Rebind Ctrl-Q to detach-client for full-screen attach. The default tmux
 	// prefix is Ctrl-B + d; our users expect Ctrl-Q because inline attach has
 	// always used it. This binding is server-wide, but claude-squad has always
@@ -317,22 +345,38 @@ func (t *TmuxSession) Restore() error {
 	t.stateMu.Lock()
 	old := t.ptmx
 	t.ptmx = nil
+	oldEmu := t.emu
+	t.emu = nil
+	cols, rows := t.lastCols, t.lastRows
 	t.stateMu.Unlock()
 	if old != nil {
 		t.signalPumpStop(old)
 		_ = old.Close()
 	}
 	t.waitPumpExit()
+	// Close the old emulator only after the pump has fully exited, so a
+	// still-draining pump can't write into a freed emulator.
+	if oldEmu != nil {
+		_ = oldEmu.Close()
+	}
 
 	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
 	if err != nil {
 		return fmt.Errorf("error opening PTY: %w", err)
 	}
+	if cols < 1 {
+		cols = 80
+	}
+	if rows < 1 {
+		rows = 24
+	}
+	emu := newEmulator(cols, rows)
 	t.stateMu.Lock()
 	t.ptmx = ptmx
+	t.emu = emu
 	t.monitor = newStatusMonitor()
 	t.stateMu.Unlock()
-	t.startOutputPump(ptmx)
+	t.startOutputPump(ptmx) // defaults pumpDest = emu (Task 6)
 	return nil
 }
 
@@ -369,8 +413,17 @@ func (t *TmuxSession) processContentHash(content string) bool {
 // which would cause the tmux client to block and stop processing input.
 func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 	ctx, cancel := context.WithCancel(context.Background())
+	// Default the pump into the emulator so the visible screen stays current.
+	// nil emu (Windows / snapshot kill-switch) keeps the legacy io.Discard drain.
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	var dest io.Writer = io.Discard
+	if emu != nil {
+		dest = emu
+	}
 	t.pumpMu.Lock()
-	t.pumpDest = io.Discard
+	t.pumpDest = dest
 	t.pumpCancel = cancel
 	t.pumpMu.Unlock()
 	t.pumpDone = make(chan struct{})
@@ -626,15 +679,21 @@ func (t *TmuxSession) PausePreview() error {
 	t.stateMu.Lock()
 	ptmx := t.ptmx
 	t.ptmx = nil
+	emu := t.emu
+	t.emu = nil
 	t.stateMu.Unlock()
+	var closeErr error
 	if ptmx != nil {
 		t.signalPumpStop(ptmx)
 		if err := ptmx.Close(); err != nil {
-			return fmt.Errorf("error closing preview PTY: %w", err)
+			closeErr = fmt.Errorf("error closing preview PTY: %w", err)
 		}
 	}
 	t.waitPumpExit()
-	return nil
+	if emu != nil {
+		_ = emu.Close()
+	}
+	return closeErr
 }
 
 // ResumePreview reopens the detached preview PTY after a full-screen attach
@@ -652,6 +711,8 @@ func (t *TmuxSession) Close() error {
 	t.stateMu.Lock()
 	ptmx := t.ptmx
 	t.ptmx = nil
+	emu := t.emu
+	t.emu = nil
 	t.stateMu.Unlock()
 	if ptmx != nil {
 		t.signalPumpStop(ptmx)
@@ -662,6 +723,10 @@ func (t *TmuxSession) Close() error {
 
 	// Wait for pump goroutine to exit after PTY close.
 	t.waitPumpExit()
+	// Close the emulator after the pump has exited (no write-after-close).
+	if emu != nil {
+		_ = emu.Close()
+	}
 
 	killCtx, killCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer killCancel()
@@ -687,6 +752,16 @@ func (t *TmuxSession) Close() error {
 // SetDetachedSize set the width and height of the session while detached. This makes the
 // tmux output conform to the specified shape.
 func (t *TmuxSession) SetDetachedSize(width, height int) error {
+	// Record geometry and resize the emulator first so its grid matches the
+	// new pane before tmux repaints into the resized PTY. In-memory, cheap.
+	t.stateMu.Lock()
+	t.lastCols = width
+	t.lastRows = height
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu != nil {
+		emu.Resize(width, height)
+	}
 	return t.updateWindowSize(width, height)
 }
 
@@ -715,6 +790,19 @@ func (t *TmuxSession) DoesSessionExist() bool {
 	return t.cmdExec.Run(existsCmd) == nil
 }
 
+// RenderEmulator returns the current visible screen from the in-process
+// emulator as an ANSI-styled string, or ("", false) if no emulator is wired
+// (callers then fall back to CapturePaneContent).
+func (t *TmuxSession) RenderEmulator() (string, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return "", false
+	}
+	return emu.Render(), true
+}
+
 // CapturePaneContent captures the content of the tmux pane
 func (t *TmuxSession) CapturePaneContent() (string, error) {
 	// Add -e flag to preserve escape sequences (ANSI color codes).
@@ -732,18 +820,105 @@ func (t *TmuxSession) CapturePaneContent() (string, error) {
 	return string(output), nil
 }
 
-// CapturePaneContentWithOptions captures the pane content with additional options
-// start and end specify the starting and ending line numbers (use "-" for the start/end of history)
-func (t *TmuxSession) CapturePaneContentWithOptions(start, end string) (string, error) {
-	// Add -e flag to preserve escape sequences (ANSI color codes)
+// CaptureHistory returns the full pane buffer — scrollback history plus the
+// visible screen — as physical rows with ANSI escapes, via capture-pane -S -.
+// Returns ("", false) on error. This is tmux's AUTHORITATIVE scrollback: the
+// in-process emulator only ever sees the visible screen from the tmux client
+// stream (tmux paints clients with redraws, not scroll-through history), so the
+// windowed scroll-back must be sourced here rather than from emu.Scrollback().
+func (t *TmuxSession) CaptureHistory() (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-e", "-J", "-S", start, "-E", end, "-t", t.sanitizedName)
+	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", t.sanitizedName)
 	output, err := t.cmdExec.Output(cmd)
 	if err != nil {
-		return "", fmt.Errorf("failed to capture tmux pane content with options: %v", err)
+		return "", false
 	}
-	return string(output), nil
+	return string(output), true
+}
+
+// IsAlternateScreen reports whether the pane's foreground app is on the
+// alternate screen (a full-screen TUI like Claude), which keeps NO tmux
+// scrollback. Callers use this to decide whether scroll-back can be windowed
+// from CaptureHistory or must instead be forwarded into the app itself.
+func (t *TmuxSession) IsAlternateScreen() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-p", "-t", t.sanitizedName, "#{alternate_on}")
+	out, err := t.cmdExec.Output(cmd)
+	if err != nil {
+		return false
+	}
+	return len(out) > 0 && out[0] == '1'
+}
+
+// ForwardWheel writes n mouse-wheel events (up or down) into the attach PTY, so
+// a full-screen TUI agent scrolls its OWN view — the alternate screen has no
+// tmux scrollback to window. This is the same path full-screen attach uses to
+// deliver real mouse input to the app: tmux forwards the client's mouse bytes to
+// the mouse-aware foreground app. Writing in-process (no `tmux send-keys`
+// subprocess per notch) keeps rapid wheel scrolling smooth. All n notches go in
+// one write, using SGR mouse encoding at the pane's top-left.
+func (t *TmuxSession) ForwardWheel(up bool, n int) error {
+	if n < 1 {
+		n = 1
+	}
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
+		return fmt.Errorf("PTY is not available")
+	}
+	button := 65 // SGR wheel down
+	if up {
+		button = 64 // SGR wheel up
+	}
+	seq := strings.Repeat(fmt.Sprintf("\x1b[<%d;1;1M", button), n)
+	if _, err := ptmx.Write([]byte(seq)); err != nil {
+		return fmt.Errorf("forward wheel: %w", err)
+	}
+	return nil
+}
+
+// ForwardMouse writes one SGR mouse event into the attach PTY so a focused TUI
+// agent receives a click/drag/release at (col,row), 1-indexed. cb is the SGR
+// button code (0=left, +32 = motion/drag, 64/65 = wheel up/down); press=true
+// emits the 'M' (press) final byte, false emits 'm' (release).
+func (t *TmuxSession) ForwardMouse(cb, col, row int, press bool) error {
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
+		return fmt.Errorf("PTY is not available")
+	}
+	if col < 1 {
+		col = 1
+	}
+	if row < 1 {
+		row = 1
+	}
+	final := byte('M')
+	if !press {
+		final = 'm'
+	}
+	seq := fmt.Sprintf("\x1b[<%d;%d;%d%c", cb, col, row, final)
+	if _, err := ptmx.Write([]byte(seq)); err != nil {
+		return fmt.Errorf("forward mouse: %w", err)
+	}
+	return nil
+}
+
+// Paste writes text to the attach PTY wrapped in bracketed-paste markers
+// (ESC[200~ … ESC[201~), so the focused agent treats it as a paste rather than
+// typed input. No-op for empty text.
+func (t *TmuxSession) Paste(text string) error {
+	if text == "" {
+		return nil
+	}
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
+		return fmt.Errorf("PTY is not available")
+	}
+	if _, err := ptmx.Write([]byte("\x1b[200~" + text + "\x1b[201~")); err != nil {
+		return fmt.Errorf("paste: %w", err)
+	}
+	return nil
 }
 
 // CleanupSessions kills all tmux sessions that start with "session-"

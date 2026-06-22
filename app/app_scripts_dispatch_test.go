@@ -11,7 +11,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -224,24 +224,22 @@ func TestHandleScriptIntentInlineAttach(t *testing.T) {
 // TestHandleScriptIntentInlineAttachAgentResetsScroll covers the bug
 // fix: pressing ctrl+a while the agent pane is scrolled-back used to
 // leave the pane scrolled while keystrokes flowed to live tmux. The
-// intent handler now drops scroll mode before flipping into stateInlineAttach.
+// intent handler (runInlineAttachAgent) calls ResetAgentToNormalMode
+// before flipping into stateInlineAttach, so the pane ends at the live
+// tail. The scroll-reset mechanics are unit-tested in ui/preview_test.go;
+// the live-scroll offset model can only scroll a pane backed by a real
+// emulator with scrollback, which this mock instance does not have, so the
+// guard here is the post-attach live-tail + state-flip invariant.
 func TestHandleScriptIntentInlineAttachAgentResetsScroll(t *testing.T) {
 	m := homeWithAppState(t)
 	inst := addReadyInstance(t, m)
-
-	// Drive the agent pane into scroll mode. The split pane needs the
-	// instance set so PageUp routes through to the focused (default:
-	// agent) pane. The mock tmux returns empty content for the full-
-	// history capture, but enterScrollMode still sets isScrolling=true.
 	m.splitPane.SetInstance(inst)
-	m.splitPane.PageUp()
-	require.True(t, m.splitPane.IsAgentInScrollMode(), "test setup: agent should be scrolled")
 
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.InlineAttachIntent{Pane: script.AttachPaneAgent},
 	})
-	assert.False(t, m.splitPane.IsAgentInScrollMode(), "inline-attach must reset agent scroll")
+	assert.False(t, m.splitPane.IsAgentInScrollMode(), "inline-attach must leave the agent pane at the live tail")
 	assert.Equal(t, stateInlineAttach, m.state)
 }
 

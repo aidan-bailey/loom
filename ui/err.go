@@ -3,7 +3,7 @@ package ui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -15,10 +15,7 @@ type ErrBox struct {
 	err           error
 }
 
-var errStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
-	Light: "#FF0000",
-	Dark:  "#FF0000",
-})
+var errStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000"))
 
 // NewErrBox constructs an empty ErrBox; the caller must SetSize before
 // the first render.

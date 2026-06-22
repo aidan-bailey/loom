@@ -5,8 +5,8 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/ui"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // WorkspacePicker is an overlay that lets the user toggle active workspaces.
@@ -77,7 +77,7 @@ func (w *WorkspacePicker) hasGlobalRow() bool {
 
 // HandleKeyPress processes navigation and toggle/select keys.
 // Returns (committed, _). committed=true means the overlay should close and apply state.
-func (w *WorkspacePicker) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
+func (w *WorkspacePicker) HandleKeyPress(msg tea.KeyPressMsg) (bool, bool) {
 	switch msg.String() {
 	case "up", "k":
 		if w.cursor > 0 {
@@ -87,7 +87,7 @@ func (w *WorkspacePicker) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 		if w.cursor < w.totalItems-1 {
 			w.cursor++
 		}
-	case " ", "enter":
+	case " ", "space", "enter":
 		if w.isStartup {
 			// In startup mode, enter commits the selection immediately.
 			return true, false
@@ -147,7 +147,7 @@ func (w *WorkspacePicker) GetActiveWorkspaces() []config.Workspace {
 // HandleKey satisfies the Overlay interface. The second bool from
 // HandleKeyPress is reserved for future use and currently always
 // false; HandleKey collapses to (closed, nil).
-func (w *WorkspacePicker) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (w *WorkspacePicker) HandleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	closed, _ := w.HandleKeyPress(msg)
 	return closed, nil
 }

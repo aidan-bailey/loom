@@ -664,7 +664,79 @@ func (i *Instance) Preview() (string, error) {
 	if ts == nil || !ts.DoesSessionExist() {
 		return "", nil
 	}
+	// Phase 1: source the live screen from the in-process emulator (in-memory,
+	// no subprocess). Fall back to capture-pane when no emulator is wired
+	// (Windows / LOOM_PANE_RENDERER=snapshot).
+	if s, ok := ts.RenderEmulator(); ok {
+		return s, nil
+	}
 	return ts.CapturePaneContent()
+}
+
+// CaptureHistory returns the agent pane's full tmux buffer (scrollback +
+// visible screen) for windowed scroll-back, or ("",false) if unavailable.
+func (i *Instance) CaptureHistory() (string, bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return "", false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return "", false
+	}
+	return ts.CaptureHistory()
+}
+
+// IsAlternateScreen reports whether the agent is a full-screen TUI on the
+// alternate screen (no tmux scrollback). Scroll-back for such agents must be
+// forwarded into the app via ForwardWheel rather than windowed from history.
+func (i *Instance) IsAlternateScreen() bool {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return false
+	}
+	return ts.IsAlternateScreen()
+}
+
+// ForwardWheel forwards n mouse-wheel events (up or down) to the agent's pane so
+// a TUI agent scrolls its own view. No-op for non-started/paused instances.
+func (i *Instance) ForwardWheel(up bool, n int) error {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return nil
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return nil
+	}
+	return ts.ForwardWheel(up, n)
+}
+
+// ForwardMouse forwards one SGR mouse event (click/drag/release) to the agent's
+// pane at (col,row). No-op for non-started/paused instances.
+func (i *Instance) ForwardMouse(cb, col, row int, press bool) error {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return nil
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return nil
+	}
+	return ts.ForwardMouse(cb, col, row, press)
+}
+
+// Paste sends text to the agent's pane as a bracketed paste. No-op for
+// non-started/paused instances.
+func (i *Instance) Paste(text string) error {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return nil
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return nil
+	}
+	return ts.Paste(text)
 }
 
 // HasUpdated reports whether the tmux pane content has changed since
@@ -1122,18 +1194,6 @@ func (i *Instance) SendPrompt(prompt string) error {
 	}
 
 	return nil
-}
-
-// PreviewFullHistory captures the entire tmux pane output including full scrollback history
-func (i *Instance) PreviewFullHistory() (string, error) {
-	if !i.isStarted() || i.GetStatus() == Paused {
-		return "", nil
-	}
-	ts := i.getTmuxSession()
-	if ts == nil {
-		return "", nil
-	}
-	return ts.CapturePaneContentWithOptions("-", "-")
 }
 
 // GetContentHash returns the content hash of the last captured tmux pane.

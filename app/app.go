@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // GlobalInstanceLimit caps the number of simultaneously-tracked
@@ -72,11 +72,7 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 			h.scripts.Close()
 		}
 	}()
-	p := tea.NewProgram(
-		h,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(), // Mouse scroll
-	)
+	p := tea.NewProgram(h) // alt-screen + mouse mode are set on the tea.View (see View())
 	_, err = p.Run()
 	return err
 }
@@ -224,6 +220,22 @@ type home struct {
 	// pane. Recomputed on every WindowSizeMsg so the formula stays in
 	// sync with SplitPane.SetSize.
 	agentBottomY int
+
+	// dragging is true between a left MouseClickMsg and its MouseReleaseMsg while
+	// a text selection is being drawn; dragPane is the FocusAgent/FocusTerminal
+	// target captured at drag start so motion stays within the originating pane.
+	dragging bool
+	dragPane int
+
+	// lastEscAt timestamps the last Esc press in interact mode, so a quick
+	// double-Esc exits while a single Esc still forwards to the agent.
+	lastEscAt time.Time
+
+	// interactLeftDown tracks a left-button press in interact mode whose intent
+	// (drag-select vs. click-into-agent) isn't yet known; interactAnchorRow/Col
+	// is the pane-local cell where it started.
+	interactLeftDown                     bool
+	interactAnchorRow, interactAnchorCol int
 
 	// lastPreviewHash caches the content hash of the selected instance
 	// to skip preview ticks when nothing has changed.
@@ -615,10 +627,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Use faster tick during inline attach for responsive feedback
+		// Use a faster tick while interacting (keys/mouse forwarded to the agent)
+		// so typed echo and the agent's redraw feel responsive. The per-tick work
+		// is render-only (emulator Render, no subprocess), so ~60fps is cheap;
+		// background panes stay at 100ms to save CPU.
 		tickDuration := 100 * time.Millisecond
 		if m.state == stateInlineAttach {
-			tickDuration = 33 * time.Millisecond
+			tickDuration = 16 * time.Millisecond
 		}
 		nextTick := func() tea.Msg {
 			time.Sleep(tickDuration)
@@ -643,6 +658,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// own independent tmux session whose content may have changed.
 				if selected != nil {
 					_ = m.splitPane.UpdateTerminal(selected)
+					// When the agent pane is scrolled back, re-render it too:
+					// scrolling changes the window (and the new-lines counter)
+					// without changing the live content hash, so this
+					// short-circuit would otherwise freeze the scroll.
+					if m.splitPane.IsAgentInScrollMode() {
+						_ = m.splitPane.UpdateAgent(selected)
+					}
 				}
 				return m, nextTick
 			}
@@ -654,7 +676,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.instanceChanged()
 		cmds := []tea.Cmd{cmd, nextTick}
 		if inlineAttachExited {
-			cmds = append(cmds, tea.WindowSize())
+			cmds = append(cmds, tea.RequestWindowSize)
 		}
 		return m, tea.Batch(cmds...)
 	case keyupMsg:
@@ -730,7 +752,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.updateTabBarStatuses()
 		return m, tickUpdateMetadataCmd
-	case tea.MouseMsg:
+	case tea.MouseWheelMsg:
 		// Route mouse-wheel events by cursor position. One wheel tick
 		// moves one line (terminal-emulator convention, not half-page).
 		//
@@ -743,48 +765,117 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The list case also applies while the user is paused because
 		// it only moves the cursor. The content-pane cases bail early
 		// for paused/missing instances just like the old behavior.
-		if msg.Action == tea.MouseActionPress {
-			if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
-				// List cursor — works regardless of session state.
-				if m.listWidth > 0 && msg.X < m.listWidth {
-					switch msg.Button {
-					case tea.MouseButtonWheelUp:
-						m.list.Up()
-					case tea.MouseButtonWheelDown:
-						m.list.Down()
-					}
-					return m, m.instanceChanged()
+		mouse := msg.Mouse()
+		if mouse.Button == tea.MouseWheelUp || mouse.Button == tea.MouseWheelDown {
+			// List cursor — works regardless of session state.
+			if m.listWidth > 0 && mouse.X < m.listWidth {
+				switch mouse.Button {
+				case tea.MouseWheelUp:
+					m.list.Up()
+				case tea.MouseWheelDown:
+					m.list.Down()
 				}
+				return m, m.instanceChanged()
+			}
 
-				selected := m.list.GetSelectedInstance()
-				if selected == nil || selected.GetStatus() == session.Paused {
-					return m, nil
+			selected := m.list.GetSelectedInstance()
+			if selected == nil || selected.GetStatus() == session.Paused {
+				return m, nil
+			}
+
+			switch {
+			case m.splitPane.IsDiffVisible():
+				switch mouse.Button {
+				case tea.MouseWheelUp:
+					m.splitPane.ScrollDiffUp()
+				case tea.MouseWheelDown:
+					m.splitPane.ScrollDiffDown()
 				}
-
-				switch {
-				case m.splitPane.IsDiffVisible():
-					switch msg.Button {
-					case tea.MouseButtonWheelUp:
-						m.splitPane.ScrollDiffUp()
-					case tea.MouseButtonWheelDown:
-						m.splitPane.ScrollDiffDown()
-					}
-				case msg.Y <= m.agentBottomY:
-					switch msg.Button {
-					case tea.MouseButtonWheelUp:
-						m.splitPane.ScrollAgentUp()
-					case tea.MouseButtonWheelDown:
-						m.splitPane.ScrollAgentDown()
-					}
-				default:
-					switch msg.Button {
-					case tea.MouseButtonWheelUp:
-						m.splitPane.ScrollTerminalUp()
-					case tea.MouseButtonWheelDown:
-						m.splitPane.ScrollTerminalDown()
-					}
+			case mouse.Y <= m.agentBottomY:
+				switch mouse.Button {
+				case tea.MouseWheelUp:
+					m.splitPane.ScrollAgentUp()
+				case tea.MouseWheelDown:
+					m.splitPane.ScrollAgentDown()
+				}
+			default:
+				switch mouse.Button {
+				case tea.MouseWheelUp:
+					m.splitPane.ScrollTerminalUp()
+				case tea.MouseWheelDown:
+					m.splitPane.ScrollTerminalDown()
 				}
 			}
+		}
+		return m, nil
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		// Interact mode: defer the left button — a drag becomes a Loom selection,
+		// a plain click is forwarded into the agent.
+		if m.state == stateInlineAttach {
+			m.interactMouseClick(mouse)
+			return m, nil
+		}
+		// Nav: left-click focuses the pane and anchors a drag-selection.
+		if m.state != stateDefault || mouse.Button != tea.MouseLeft {
+			return m, nil
+		}
+		m.splitPane.ClearSelections()
+		m.dragging = false
+		if m.listWidth > 0 && mouse.X < m.listWidth {
+			return m, nil // left list panel — not a content selection
+		}
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok {
+			m.splitPane.SetFocusedPane(pane)
+			m.splitPane.BeginSelection(pane, row, col)
+			m.dragging = true
+			m.dragPane = pane
+		}
+		return m, nil
+	case tea.MouseMotionMsg:
+		mouse := msg.Mouse()
+		// Interact mode: a left-drag becomes a Loom selection (never forwarded,
+		// so it can't trigger tmux's copy-mode).
+		if m.state == stateInlineAttach {
+			m.interactMouseMotion(mouse)
+			return m, nil
+		}
+		// Nav: extend the active drag-selection, clamped to its originating pane.
+		if !m.dragging {
+			return m, nil
+		}
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok && pane == m.dragPane {
+			m.splitPane.ExtendSelection(m.dragPane, row, col)
+		}
+		return m, nil
+	case tea.MouseReleaseMsg:
+		// Interact mode: finalize a drag-selection (copy) or forward a plain click.
+		if m.state == stateInlineAttach {
+			return m, m.interactMouseRelease()
+		}
+		// Nav: end the drag — copy a non-empty selection; a plain click clears.
+		if !m.dragging {
+			return m, nil
+		}
+		m.dragging = false
+		text := m.splitPane.SelectedText(m.dragPane)
+		if text == "" {
+			m.splitPane.ClearSelections()
+			return m, nil
+		}
+		return m, copyToClipboard(text)
+	case tea.PasteMsg:
+		// Interact mode: bracketed-paste into the focused pane's agent/terminal.
+		// In other states, textinput overlays consume their own paste.
+		if m.state == stateInlineAttach {
+			m.pasteToFocused(msg.Content)
+		}
+		return m, nil
+	case clipboardCopiedMsg:
+		if msg.err != nil {
+			log.For("clipboard").Info("clipboard.fallback_failed", "err", msg.err)
+		} else {
+			log.For("clipboard").Debug("clipboard.copied", "runes", msg.n)
 		}
 		return m, nil
 	case branchSearchDebounceMsg:
@@ -802,7 +893,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ti.SetBranchResults(msg.branches, msg.version)
 		}
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 	case tea.WindowSizeMsg:
 		m.updateHandleWindowSizeEvent(msg)
@@ -842,7 +933,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// result was logged inside backgroundKillCmd.
 		return m, nil
 	case resumeDoneMsg:
-		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
+		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
 	case startFullScreenAttachMsg:
 		// Resolve the tmux session for the requested pane.
 		var ts *tmux.TmuxSession
@@ -871,7 +962,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			cmds = append(cmds, m.handleError(msg.err))
 		}
-		cmds = append(cmds, tea.WindowSize(), m.instanceChanged())
+		cmds = append(cmds, tea.RequestWindowSize, m.instanceChanged())
 		return m, tea.Batch(cmds...)
 	case attachDoneMsg:
 		// tea.ExecProcess has restored the terminal. Rebuild the preview PTYs
@@ -892,7 +983,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			cmds = append(cmds, m.handleError(msg.err))
 		}
-		cmds = append(cmds, tea.WindowSize(), m.instanceChanged())
+		cmds = append(cmds, tea.RequestWindowSize, m.instanceChanged())
 		return m, tea.Batch(cmds...)
 	case workspaceRegisteredMsg:
 		ws := m.registry.FindByPath(msg.dir)
@@ -938,7 +1029,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateOrphanRecovery
 		}
 
-		return m, tea.WindowSize()
+		return m, tea.RequestWindowSize
 	case instanceStartedMsg:
 		// Select the instance that just started (or failed)
 		m.list.SelectInstance(msg.instance)
@@ -975,7 +1066,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.menu.SetState(ui.StateInlineAttach)
 		}
 
-		return m, tea.Batch(tea.WindowSize(), m.instanceChanged())
+		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -1038,7 +1129,7 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly bool) {
+func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnEarly bool) {
 	// Handle menu highlighting when you press a button. We intercept it here and immediately return to
 	// update the ui while re-sending the keypress. Then, on the next call to this, we actually handle the keypress.
 	if m.keySent {
@@ -1068,7 +1159,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyMsg) (cmd tea.Cmd, returnEarly 
 // the second pass replays it, which tests rely on. State handlers
 // live in state_*.go files; this function is deliberately a thin
 // router so the wiring stays obvious.
-func (m *home) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *home) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	cmd, returnEarly := m.handleMenuHighlighting(msg)
 	if returnEarly {
 		return m, cmd
@@ -1367,7 +1458,7 @@ func (m *home) cancelPromptOverlay() tea.Cmd {
 	m.state = stateDefault
 	return tea.Batch(
 		tea.Sequence(
-			tea.WindowSize(),
+			tea.RequestWindowSize,
 			func() tea.Msg {
 				m.menu.SetState(ui.StateDefault)
 				return nil
@@ -1884,10 +1975,10 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 			strings.Join(deactivationErrors, "; ")))
 	}
 	if len(msgs) > 0 {
-		return tea.Batch(tea.WindowSize(),
+		return tea.Batch(tea.RequestWindowSize,
 			m.handleError(fmt.Errorf("%s", strings.Join(msgs, "; "))))
 	}
-	return tea.WindowSize()
+	return tea.RequestWindowSize
 }
 
 // enterGlobalMode transitions from workspace-tab mode back to global
@@ -1954,7 +2045,7 @@ func (m *home) enterGlobalMode() tea.Cmd {
 		m.splitPane.SetSize(paneWidth, contentHeight)
 	}
 
-	return tea.WindowSize()
+	return tea.RequestWindowSize
 }
 
 // sessionToTabStatus maps a session.Status to the corresponding ui.TabStatus.
@@ -2039,7 +2130,16 @@ func (m *home) slotNames() []string {
 }
 
 // View implements tea.Model.
-func (m *home) View() string {
+func (m *home) View() tea.View {
+	// asView funnels every render path through one tea.View so alt-screen
+	// and mouse cell-motion (previously tea.NewProgram options) are set
+	// consistently on every frame.
+	asView := func(content string) tea.View {
+		v := tea.NewView(content)
+		v.AltScreen = true
+		v.MouseMode = tea.MouseModeCellMotion
+		return v
+	}
 	listView := m.list.String()
 	// The file explorer is the only overlay that wholly replaces the
 	// right pane rather than floating on top of it. Keeping the list
@@ -2083,15 +2183,15 @@ func (m *home) View() string {
 	if m.activeOverlay != nil && m.state != stateDefault {
 		if m.activeOverlayKind == overlayWorkspacePickerStartup ||
 			m.activeOverlayKind == overlayOrphanRecovery {
-			return lipgloss.Place(m.lastWidth, m.lastHeight,
+			return asView(lipgloss.Place(m.lastWidth, m.lastHeight,
 				lipgloss.Center, lipgloss.Center,
-				m.activeOverlay.View())
+				m.activeOverlay.View()))
 		}
 		switch m.state {
 		case statePrompt, stateHelp, stateConfirm, stateWorkspace:
-			return overlay.PlaceOverlay(0, 0, m.activeOverlay.View(), mainView, true, true)
+			return asView(overlay.PlaceOverlay(0, 0, m.activeOverlay.View(), mainView, true, true))
 		}
 	}
 
-	return mainView
+	return asView(mainView)
 }

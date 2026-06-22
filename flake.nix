@@ -68,7 +68,13 @@
             ];
 
             nativeBuildInputs = [ pkgs.makeWrapper ];
-            nativeCheckInputs = [ pkgs.git ];
+            # tmux is needed by the real-tmux scroll-history test in
+            # session/tmux (TestCaptureHistoryRealTmux); without it that test
+            # skips. git is needed by the worktree-backed tests.
+            nativeCheckInputs = [
+              pkgs.git
+              pkgs.tmux
+            ];
 
             preCheck = ''
               export HOME="$TMPDIR"

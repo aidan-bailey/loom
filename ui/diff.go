@@ -5,8 +5,8 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	"charm.land/lipgloss/v2"
 )
 
 // AdditionStyle, DeletionStyle, and HunkStyle are the lipgloss styles
@@ -36,7 +36,7 @@ type DiffPane struct {
 // caller must SetSize before the first render.
 func NewDiffPane() *DiffPane {
 	return &DiffPane{
-		viewport: viewport.New(0, 0),
+		viewport: viewport.New(),
 	}
 }
 
@@ -47,8 +47,8 @@ func (d *DiffPane) SetSize(width, height int) {
 	d.width = width
 	d.height = height
 	d.lastDiffContent = ""
-	d.viewport.Width = width
-	d.viewport.Height = height
+	d.viewport.SetWidth(width)
+	d.viewport.SetHeight(height)
 	if d.diff != "" || d.stats != "" {
 		d.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, d.stats, d.diff))
 	}
@@ -121,22 +121,22 @@ func (d *DiffPane) String() string {
 
 // ScrollUp scrolls the viewport up
 func (d *DiffPane) ScrollUp() {
-	d.viewport.LineUp(1)
+	d.viewport.ScrollUp(1)
 }
 
 // ScrollDown scrolls the viewport down
 func (d *DiffPane) ScrollDown() {
-	d.viewport.LineDown(1)
+	d.viewport.ScrollDown(1)
 }
 
 // PageUp scrolls the viewport up by half a view.
 func (d *DiffPane) PageUp() {
-	d.viewport.HalfViewUp()
+	d.viewport.HalfPageUp()
 }
 
 // PageDown scrolls the viewport down by half a view.
 func (d *DiffPane) PageDown() {
-	d.viewport.HalfViewDown()
+	d.viewport.HalfPageDown()
 }
 
 // GotoTop jumps the viewport to the start.

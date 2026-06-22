@@ -7,8 +7,8 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // OrphanRecoveryPicker is the startup overlay that lets the user pick
@@ -47,7 +47,7 @@ func NewOrphanRecoveryPicker(candidates []session.OrphanCandidate) *OrphanRecove
 // HandleKeyPress processes navigation and toggle keys. Returns
 // (committed, _). committed=true means the overlay should close and
 // the caller should consume Selected().
-func (p *OrphanRecoveryPicker) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
+func (p *OrphanRecoveryPicker) HandleKeyPress(msg tea.KeyPressMsg) (bool, bool) {
 	switch msg.String() {
 	case "up", "k":
 		if p.cursor > 0 {
@@ -57,7 +57,7 @@ func (p *OrphanRecoveryPicker) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 		if p.cursor < len(p.candidates)-1 {
 			p.cursor++
 		}
-	case " ", "enter":
+	case " ", "space", "enter":
 		if p.cursor >= 0 && p.cursor < len(p.recover) {
 			p.recover[p.cursor] = !p.recover[p.cursor]
 		}
@@ -80,7 +80,7 @@ func (p *OrphanRecoveryPicker) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 }
 
 // HandleKey satisfies the Overlay interface.
-func (p *OrphanRecoveryPicker) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (p *OrphanRecoveryPicker) HandleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	closed, _ := p.HandleKeyPress(msg)
 	return closed, nil
 }

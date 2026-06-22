@@ -1,100 +1,142 @@
 package app
 
 import (
-	"unicode/utf8"
-
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
-// keyMsgToBytes converts a Bubble Tea KeyMsg back into raw terminal bytes
-// suitable for writing to a tmux PTY. Returns nil for unmappable keys.
-func keyMsgToBytes(msg tea.KeyMsg) []byte {
-	// Handle Alt modifier: prefix with ESC, then the key's own bytes.
-	if msg.Alt {
-		inner := keyMsgToBytes(tea.KeyMsg{Type: msg.Type, Runes: msg.Runes})
+// keyMsgToBytes converts a Bubble Tea key press back into raw terminal
+// bytes suitable for writing to a tmux PTY. Returns nil for unmappable
+// keys. The output is byte-for-byte identical to the v1 implementation;
+// app/keybytes_test.go pins that contract.
+func keyMsgToBytes(msg tea.KeyPressMsg) []byte {
+	// Alt modifier: prefix ESC, then the key's own bytes (Alt stripped).
+	if msg.Mod.Contains(tea.ModAlt) {
+		inner := keyMsgToBytes(tea.KeyPressMsg{
+			Code: msg.Code,
+			Text: msg.Text,
+			Mod:  msg.Mod &^ tea.ModAlt,
+		})
 		if inner == nil {
 			return nil
 		}
 		return append([]byte{0x1b}, inner...)
 	}
 
-	// Control keys whose KeyType value IS the byte value (0x00-0x1F, 0x7F).
-	// This covers Ctrl+A (0x01) through Ctrl+Z (0x1A), Enter (0x0D),
-	// Tab (0x09), Escape (0x1B), and Backspace (0x7F).
-	if int(msg.Type) >= 0 && int(msg.Type) <= 31 {
-		return []byte{byte(msg.Type)}
-	}
-	if msg.Type == tea.KeyBackspace { // 127
-		return []byte{0x7F}
+	// Ctrl + letter → control byte (Ctrl+A=0x01 .. Ctrl+Z=0x1A).
+	if msg.Mod.Contains(tea.ModCtrl) && msg.Code >= 'a' && msg.Code <= 'z' {
+		return []byte{byte(msg.Code - 'a' + 1)}
 	}
 
-	// Special keys that map to escape sequences.
-	if seq, ok := keyTypeSequences[msg.Type]; ok {
+	// Special keys (with any modifiers) that map to escape sequences.
+	if seq := keySequence(msg); seq != "" {
 		return []byte(seq)
 	}
 
-	// Regular runes (including Space, which Bubble Tea reports as KeySpace
-	// but still carries the rune).
-	if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
-		if len(msg.Runes) == 0 {
-			if msg.Type == tea.KeySpace {
-				return []byte{0x20}
-			}
-			return nil
-		}
-		buf := make([]byte, 0, len(msg.Runes)*utf8.UTFMax)
-		for _, r := range msg.Runes {
-			var encoded [utf8.UTFMax]byte
-			n := utf8.EncodeRune(encoded[:], r)
-			buf = append(buf, encoded[:n]...)
-		}
-		return buf
+	// Named control keys whose code is a single control byte.
+	switch msg.Code {
+	case tea.KeyEnter:
+		return []byte{0x0D}
+	case tea.KeyTab:
+		return []byte{0x09}
+	case tea.KeyEsc:
+		return []byte{0x1B}
+	case tea.KeyBackspace:
+		return []byte{0x7F}
+	case tea.KeySpace:
+		return []byte{0x20}
 	}
 
-	// Unknown / unmappable key.
+	// Printable text (runes), including multi-byte UTF-8.
+	if msg.Text != "" {
+		return []byte(msg.Text)
+	}
 	return nil
 }
 
-// keyTypeSequences maps Bubble Tea KeyTypes to their standard xterm escape
-// sequences. Only keys that produce multi-byte escape sequences are listed
-// here; control characters and runes are handled separately above.
-var keyTypeSequences = map[tea.KeyType]string{
-	// Arrow keys
-	tea.KeyUp:    "\x1b[A",
-	tea.KeyDown:  "\x1b[B",
-	tea.KeyRight: "\x1b[C",
-	tea.KeyLeft:  "\x1b[D",
-
-	// Navigation
-	tea.KeyHome:   "\x1b[H",
-	tea.KeyEnd:    "\x1b[F",
-	tea.KeyPgUp:   "\x1b[5~",
-	tea.KeyPgDown: "\x1b[6~",
-	tea.KeyDelete: "\x1b[3~",
-	tea.KeyInsert: "\x1b[2~",
-
-	// Modifier+arrow (xterm standard sequences)
-	tea.KeyShiftTab:   "\x1b[Z",
-	tea.KeyShiftUp:    "\x1b[1;2A",
-	tea.KeyShiftDown:  "\x1b[1;2B",
-	tea.KeyShiftRight: "\x1b[1;2C",
-	tea.KeyShiftLeft:  "\x1b[1;2D",
-	tea.KeyCtrlUp:     "\x1b[1;5A",
-	tea.KeyCtrlDown:   "\x1b[1;5B",
-	tea.KeyCtrlRight:  "\x1b[1;5C",
-	tea.KeyCtrlLeft:   "\x1b[1;5D",
-
-	// Function keys (standard xterm sequences)
-	tea.KeyF1:  "\x1bOP",
-	tea.KeyF2:  "\x1bOQ",
-	tea.KeyF3:  "\x1bOR",
-	tea.KeyF4:  "\x1bOS",
-	tea.KeyF5:  "\x1b[15~",
-	tea.KeyF6:  "\x1b[17~",
-	tea.KeyF7:  "\x1b[18~",
-	tea.KeyF8:  "\x1b[19~",
-	tea.KeyF9:  "\x1b[20~",
-	tea.KeyF10: "\x1b[21~",
-	tea.KeyF11: "\x1b[23~",
-	tea.KeyF12: "\x1b[24~",
+// keySequence maps navigation / function / modifier-arrow keys to their
+// standard xterm escape sequences, honoring Shift/Ctrl modifiers that v2
+// now carries on msg.Mod rather than as distinct key types.
+func keySequence(msg tea.KeyPressMsg) string {
+	shift := msg.Mod.Contains(tea.ModShift)
+	ctrl := msg.Mod.Contains(tea.ModCtrl)
+	switch msg.Code {
+	case tea.KeyUp:
+		switch {
+		case shift:
+			return "\x1b[1;2A"
+		case ctrl:
+			return "\x1b[1;5A"
+		default:
+			return "\x1b[A"
+		}
+	case tea.KeyDown:
+		switch {
+		case shift:
+			return "\x1b[1;2B"
+		case ctrl:
+			return "\x1b[1;5B"
+		default:
+			return "\x1b[B"
+		}
+	case tea.KeyRight:
+		switch {
+		case shift:
+			return "\x1b[1;2C"
+		case ctrl:
+			return "\x1b[1;5C"
+		default:
+			return "\x1b[C"
+		}
+	case tea.KeyLeft:
+		switch {
+		case shift:
+			return "\x1b[1;2D"
+		case ctrl:
+			return "\x1b[1;5D"
+		default:
+			return "\x1b[D"
+		}
+	case tea.KeyTab:
+		if shift {
+			return "\x1b[Z" // shift+tab; plain tab → 0x09 in keyMsgToBytes
+		}
+		return ""
+	case tea.KeyHome:
+		return "\x1b[H"
+	case tea.KeyEnd:
+		return "\x1b[F"
+	case tea.KeyPgUp:
+		return "\x1b[5~"
+	case tea.KeyPgDown:
+		return "\x1b[6~"
+	case tea.KeyDelete:
+		return "\x1b[3~"
+	case tea.KeyInsert:
+		return "\x1b[2~"
+	case tea.KeyF1:
+		return "\x1bOP"
+	case tea.KeyF2:
+		return "\x1bOQ"
+	case tea.KeyF3:
+		return "\x1bOR"
+	case tea.KeyF4:
+		return "\x1bOS"
+	case tea.KeyF5:
+		return "\x1b[15~"
+	case tea.KeyF6:
+		return "\x1b[17~"
+	case tea.KeyF7:
+		return "\x1b[18~"
+	case tea.KeyF8:
+		return "\x1b[19~"
+	case tea.KeyF9:
+		return "\x1b[20~"
+	case tea.KeyF10:
+		return "\x1b[21~"
+	case tea.KeyF11:
+		return "\x1b[23~"
+	case tea.KeyF12:
+		return "\x1b[24~"
+	}
+	return ""
 }

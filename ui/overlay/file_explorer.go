@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // feHeaderRows reserves rows for the title, the search prompt, the
@@ -27,7 +27,7 @@ var (
 			Bold(true)
 
 	feHintStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#808080", Dark: "#808080"})
+			Foreground(lipgloss.Color("#808080"))
 
 	feSelectedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#ffffff")).
@@ -73,7 +73,7 @@ func NewFileExplorerOverlay(root string, files []string, open func(absPath strin
 
 	f := &FileExplorerOverlay{
 		input:        ti,
-		viewport:     viewport.New(0, 0),
+		viewport:     viewport.New(),
 		root:         root,
 		files:        files,
 		openCallback: open,
@@ -100,9 +100,9 @@ func (f *FileExplorerOverlay) SetSize(width, height int) {
 		viewportHeight = 1
 	}
 
-	f.input.Width = innerWidth - 2
-	f.viewport.Width = innerWidth
-	f.viewport.Height = viewportHeight
+	f.input.SetWidth(innerWidth - 2)
+	f.viewport.SetWidth(innerWidth)
+	f.viewport.SetHeight(viewportHeight)
 
 	f.refreshViewport()
 }
@@ -111,8 +111,17 @@ func (f *FileExplorerOverlay) SetSize(width, height int) {
 // (Enter also returns the open command). Arrow-style keys move the
 // cursor within the filtered results; anything else is forwarded to
 // the search input.
-func (f *FileExplorerOverlay) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch msg.Type {
+func (f *FileExplorerOverlay) HandleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	// ctrl+p / ctrl+n emacs-style movement (v2 removed the KeyCtrl* consts).
+	switch msg.String() {
+	case "ctrl+p":
+		f.moveCursor(-1)
+		return false, nil
+	case "ctrl+n":
+		f.moveCursor(1)
+		return false, nil
+	}
+	switch msg.Code {
 	case tea.KeyEsc:
 		return true, nil
 	case tea.KeyEnter:
@@ -126,17 +135,17 @@ func (f *FileExplorerOverlay) HandleKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			cmd = f.openCallback(abs)
 		}
 		return true, cmd
-	case tea.KeyUp, tea.KeyCtrlP:
+	case tea.KeyUp:
 		f.moveCursor(-1)
 		return false, nil
-	case tea.KeyDown, tea.KeyCtrlN:
+	case tea.KeyDown:
 		f.moveCursor(1)
 		return false, nil
 	case tea.KeyPgUp:
-		f.moveCursor(-f.viewport.Height)
+		f.moveCursor(-f.viewport.Height())
 		return false, nil
 	case tea.KeyPgDown:
-		f.moveCursor(f.viewport.Height)
+		f.moveCursor(f.viewport.Height())
 		return false, nil
 	}
 
@@ -199,7 +208,7 @@ func (f *FileExplorerOverlay) filter() {
 // refreshViewport re-renders the match list into the viewport and
 // keeps the cursor in view.
 func (f *FileExplorerOverlay) refreshViewport() {
-	if f.viewport.Width == 0 {
+	if f.viewport.Width() == 0 {
 		return
 	}
 	lines := make([]string, 0, len(f.results))
@@ -211,7 +220,7 @@ func (f *FileExplorerOverlay) refreshViewport() {
 			style = feSelectedStyle
 		}
 		line := prefix + r.Path
-		line = truncateRight(line, f.viewport.Width)
+		line = truncateRight(line, f.viewport.Width())
 		lines = append(lines, style.Render(line))
 	}
 	f.viewport.SetContent(strings.Join(lines, "\n"))
@@ -219,12 +228,12 @@ func (f *FileExplorerOverlay) refreshViewport() {
 	// Keep the cursor inside the visible window. viewport.Model has no
 	// direct "scroll to line" helper, so we recompute YOffset to put
 	// the cursor comfortably mid-page when it falls out of view.
-	if f.viewport.Height > 0 && len(f.results) > 0 {
+	if f.viewport.Height() > 0 && len(f.results) > 0 {
 		cursorLine := f.cursor
-		if cursorLine < f.viewport.YOffset {
+		if cursorLine < f.viewport.YOffset() {
 			f.viewport.SetYOffset(cursorLine)
-		} else if cursorLine >= f.viewport.YOffset+f.viewport.Height {
-			f.viewport.SetYOffset(cursorLine - f.viewport.Height + 1)
+		} else if cursorLine >= f.viewport.YOffset()+f.viewport.Height() {
+			f.viewport.SetYOffset(cursorLine - f.viewport.Height() + 1)
 		}
 	}
 }

@@ -1,7 +1,7 @@
 package overlay
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // Overlay is the shared contract for app-level overlays rendered above
@@ -23,7 +23,7 @@ type Overlay interface {
 	// the overlay should be dismissed; cmd is an optional command the
 	// host must dispatch (e.g., the dismiss callback for TextOverlay
 	// or a branch-filter search kicked off by TextInputOverlay).
-	HandleKey(msg tea.KeyMsg) (closed bool, cmd tea.Cmd)
+	HandleKey(msg tea.KeyPressMsg) (closed bool, cmd tea.Cmd)
 	// SetSize reports the available rendering area. Overlays are free
 	// to ignore dimensions they don't use.
 	SetSize(width, height int)

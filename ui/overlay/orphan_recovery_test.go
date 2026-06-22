@@ -5,7 +5,7 @@ import (
 
 	"github.com/aidan-bailey/loom/session"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -37,18 +37,18 @@ func TestOrphanRecoveryPickerNavigation(t *testing.T) {
 	p := NewOrphanRecoveryPicker(newTestCandidates())
 	assert.Equal(t, 0, p.cursor)
 
-	p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	assert.Equal(t, 1, p.cursor)
 
 	// Past end is clamped.
-	p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	p.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	assert.Equal(t, 1, p.cursor)
 
-	p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	p.HandleKeyPress(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	assert.Equal(t, 0, p.cursor)
 
 	// Above start is clamped.
-	p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	p.HandleKeyPress(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	assert.Equal(t, 0, p.cursor)
 }
 
@@ -57,11 +57,11 @@ func TestOrphanRecoveryPickerToggle(t *testing.T) {
 	// Cursor at index 0 starts as recover=true.
 	assert.True(t, p.recover[0])
 
-	committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 	assert.False(t, committed, "space toggles, does not commit")
 	assert.False(t, p.recover[0], "space flips the cursor's recover bit")
 
-	committed, _ = p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
+	committed, _ = p.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.False(t, committed, "enter behaves like space")
 	assert.True(t, p.recover[0], "enter flips it back")
 }
@@ -69,7 +69,7 @@ func TestOrphanRecoveryPickerToggle(t *testing.T) {
 func TestOrphanRecoveryPickerSelectAll(t *testing.T) {
 	p := NewOrphanRecoveryPicker(newTestCandidates())
 	// Mixed initial state: index 0 = true, index 1 = false.
-	committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	assert.False(t, committed)
 	for _, v := range p.recover {
 		assert.True(t, v)
@@ -78,7 +78,7 @@ func TestOrphanRecoveryPickerSelectAll(t *testing.T) {
 
 func TestOrphanRecoveryPickerSkipAll(t *testing.T) {
 	p := NewOrphanRecoveryPicker(newTestCandidates())
-	committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	assert.False(t, committed)
 	for _, v := range p.recover {
 		assert.False(t, v)
@@ -88,11 +88,11 @@ func TestOrphanRecoveryPickerSkipAll(t *testing.T) {
 func TestOrphanRecoveryPickerCommit(t *testing.T) {
 	p := NewOrphanRecoveryPicker(newTestCandidates())
 
-	committed, _ := p.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEsc})
+	committed, _ := p.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.True(t, committed)
 
 	p2 := NewOrphanRecoveryPicker(newTestCandidates())
-	committed2, _ := p2.HandleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	committed2, _ := p2.HandleKeyPress(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	assert.True(t, committed2)
 }
 

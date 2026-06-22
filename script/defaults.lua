@@ -28,11 +28,15 @@ cs.bind("l", function() cs.actions.workspace_prev() end)
 cs.bind("]", function() cs.actions.workspace_next() end,        { help = "next ws" })
 cs.bind(";", function() cs.actions.workspace_next() end)
 
--- Attach
+-- Interact (focus a pane: keys + mouse route into the agent; single esc reaches
+-- the agent, double-esc or ctrl+q returns to nav). i/ctrl+a target the agent.
+cs.bind("i",      function() cs.actions.inline_attach_agent() end,        { help = "interact (agent)" })
+cs.bind("ctrl+a", function() cs.actions.inline_attach_agent() end,        { help = "interact agent" })
+cs.bind("ctrl+t", function() cs.actions.inline_attach_terminal() end,     { help = "interact terminal" })
+
+-- Full-screen attach (hands the tty to tmux; ctrl+q detaches)
 cs.bind("alt+a",  function() cs.actions.fullscreen_attach_agent() end,    { help = "fullscreen agent" })
 cs.bind("alt+t",  function() cs.actions.fullscreen_attach_terminal() end, { help = "fullscreen terminal" })
-cs.bind("ctrl+a", function() cs.actions.inline_attach_agent() end,        { help = "attach agent" })
-cs.bind("ctrl+t", function() cs.actions.inline_attach_terminal() end,     { help = "attach terminal" })
 
 -- Quick input. The reset_*_scroll call is a no-op when the pane isn't
 -- scrolled; when it is, it drops the pane back to live tail before the

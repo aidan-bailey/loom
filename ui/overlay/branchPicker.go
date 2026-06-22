@@ -4,8 +4,8 @@ import (
 	"github.com/aidan-bailey/loom/ui"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 const newBranchOption = "New branch (from HEAD)"
@@ -61,8 +61,8 @@ func (bp *BranchPicker) GetFilterVersion() uint64 {
 }
 
 // HandleKeyPress processes a key event. Returns (consumed, filterChanged).
-func (bp *BranchPicker) HandleKeyPress(msg tea.KeyMsg) (consumed bool, filterChanged bool) {
-	switch msg.Type {
+func (bp *BranchPicker) HandleKeyPress(msg tea.KeyPressMsg) (consumed bool, filterChanged bool) {
+	switch msg.Code {
 	case tea.KeyUp:
 		if bp.cursor > 0 {
 			bp.cursor--
@@ -82,14 +82,13 @@ func (bp *BranchPicker) HandleKeyPress(msg tea.KeyMsg) (consumed bool, filterCha
 			return true, true
 		}
 		return true, false
-	case tea.KeyRunes:
-		bp.filter += string(msg.Runes)
-		bp.filterVersion++
-		return true, true
-	case tea.KeySpace:
-		bp.filter += " "
-		bp.filterVersion++
-		return true, true
+	default:
+		// Printable text (was tea.KeyRunes / tea.KeySpace in v1).
+		if msg.Text != "" {
+			bp.filter += msg.Text
+			bp.filterVersion++
+			return true, true
+		}
 	}
 	return false, false
 }

@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // scriptDoneMsg is dispatched when a script action finishes (success
