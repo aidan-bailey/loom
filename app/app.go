@@ -227,6 +227,10 @@ type home struct {
 	dragging bool
 	dragPane int
 
+	// lastEscAt timestamps the last Esc press in interact mode, so a quick
+	// double-Esc exits while a single Esc still forwards to the agent.
+	lastEscAt time.Time
+
 	// lastPreviewHash caches the content hash of the selected instance
 	// to skip preview ticks when nothing has changed.
 	lastPreviewHash []byte
