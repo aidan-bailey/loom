@@ -1,22 +1,37 @@
-## [0.1.4] - 2026-06-19
+## [0.2.0] - 2026-06-22
 
 ### 🚀 Features
 
+- *(ui)* Embedded VT terminal emulator powering pane display, with windowed scrollback rendering
+- *(ui)* Live-scroll offset model for the agent and terminal panes, with a jump-to-bottom footer and live new-line count
+- *(ui)* Forward the scroll wheel into TUI agents instead of windowing history
+- *(ui)* Mouse drag-select, copy, and click-to-focus across panes
+- *(app)* Interact mode (`i`): route mouse input and bracketed paste into the focused pane, double-esc to exit (relabels attach → interact)
+- *(tmux)* Pane renderer backed by the emulator with a `LOOM_PANE_RENDERER` kill-switch and capture-pane fallback
 - *(cli)* Add -v/--version flag
 
 ### 🐛 Bug Fixes
 
+- *(ui)* Agent pane now shows its full height (drop the ellipsis row)
+- *(vt)* Drain the x/vt reply pipe to prevent a startup deadlock
+- *(app)* Re-render the scrolled agent pane on the preview tick
 - *(session)* Guard Storage mutable state with a mutex
 - *(config)* Guard State saves with a mutex
 - *(tmux)* Guard ptmx and monitor with a mutex
 - *(app,script)* Apply script nav effects on the main goroutine
 
-### 📚 Documentation
+### 🚜 Refactor
 
-- Add multi-agent codebase audit report
+- Retire the capture-pane history path now that scrollback lives in the emulator
+
+### ⚡ Performance
+
+- *(app)* Run the interact tick at ~60fps for snappier echo
+- *(ui)* Forward agent scroll via a PTY write instead of a send-keys subprocess
 
 ### ⚙️ Miscellaneous Tasks
 
+- *(deps)* Migrate to Bubble Tea v2 / Lip Gloss v2 / Bubbles v2
 - *(nix)* Derive flake version from main.go at eval time
 - Run the test suite under the race detector
 ## [0.1.3] - 2026-05-11

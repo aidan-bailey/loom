@@ -82,11 +82,12 @@ loom --workspace <name>
 |-----|--------|
 | `n` | New instance |
 | `N` | New instance with prompt |
+| `i` | Interact with the focused pane (inline attach to agent) |
+| `ctrl+a` | Interact with agent pane (inline attach) |
+| `ctrl+t` | Interact with terminal pane (inline attach) |
 | `alt+a` | Full-screen attach (agent pane) |
 | `alt+t` | Full-screen attach (terminal pane) |
-| `ctrl+a` | Inline attach to agent pane |
-| `ctrl+t` | Inline attach to terminal pane |
-| `ctrl+q` | Detach from inline/full-screen attach |
+| `ctrl+q` / double-`esc` | Detach/exit interact (inline attach) |
 | `r` | Resume paused instance |
 | `D` | Kill instance |
 | `p` | Push branch |
@@ -105,6 +106,7 @@ loom --workspace <name>
 - `LOOM_HOME` — Override config directory (default: `~/.loom`). Must be absolute path; supports `~` expansion. Used as a backward-compatible fallback; internal code uses explicit `WorkspaceContext` threading.
 - `LOOM_LOG_FORMAT` — Set to `json` to emit structured log records from `log.InfoKV/WarnKV/ErrorKV` as JSON lines; otherwise plain text. Legacy `log.Infof`/`Warnf`/`Errorf` callers are unaffected.
 - `LOOM_LOG_LEVEL` — `debug|info|warn|error` (default `info`). Gates both the Structured logger and the legacy `InfoLog`/`WarningLog`/`ErrorLog` writers (legacy records below the gate are dropped at the writer layer). The `--log-level` CLI flag (persistent on all subcommands) takes precedence over the env var and is also inherited by the daemon child process.
+- `LOOM_PANE_RENDERER` — Set to `snapshot` to disable the embedded VT emulator and fall back to the legacy `tmux capture-pane` snapshot path for pane rendering (also the implicit path on Windows). Unset (default) renders panes from the emulator, enabling live-scroll and mouse forwarding.
 
 Legacy fallbacks (`CLAUDE_SQUAD_HOME`, `CLAUDE_SQUAD_LOG_FORMAT`, `CLAUDE_SQUAD_LOG_LEVEL`) are still honored with a one-time deprecation warning to stderr; remove them from your shell init once you've migrated.
 
@@ -142,11 +144,12 @@ The app follows Bubble Tea's Model-View-Update pattern. `app/app.go` owns the `h
 - **`session/`** — Core domain. `Instance` represents a running agent session with status lifecycle (Ready → Loading → Running → Paused). `storage.go` handles JSON serialization to `~/.loom/instances.json` and retains raw `InstanceData` for records that fail `ReconcileAndRestore` (the unrecovered cache) so a transient failure does not silently drop the entry on the next save. `orphan.go` discovers worktree directories on disk not referenced in state.json so they can be re-adopted via the orphan-recovery picker.
 - **`session/agent/`** — `Adapter` interface and per-program implementations (claude, aider, gemini, default fallback). Centralizes trust-prompt keys, recovery flags, and `Supports(program)` checks. Look here when adding a new agent program rather than touching `tmux.go` or `agent_restart.go` directly.
 - **`session/git/`** — Git worktree operations. Each session gets an isolated worktree in `~/.loom/worktrees/`. Branches are named `{username}/{session_title}`. Handles setup, diff stats, push, and cleanup.
-- **`session/tmux/`** — Tmux session management. Creates/attaches terminal sessions, captures pane content, detects prompts (for auto-yes), sends keystrokes. `TmuxSession.stateMu` guards the `ptmx`/`monitor` fields against the metadata-fan-out vs attach-lifecycle race. Prefix is `loom_`; `LegacyTmuxPrefix` (`claudesquad_`) is still recognized by the orphan sweep and the startup rename pass.
+- **`session/tmux/`** — Tmux session management. Creates/attaches terminal sessions, captures pane content, detects prompts (for auto-yes), sends keystrokes. Also pumps `ptmx` output into an embedded VT emulator (`emulator_unix.go`/`emulator_windows.go`, gated by `LOOM_PANE_RENDERER`) so panes render from the emulator with a capture-pane fallback; `RenderWindow`/`ScrollbackLen` back live-scroll, and `ForwardMouse`/bracketed paste back interact mode. `TmuxSession.stateMu` guards the `ptmx`/`monitor`/emulator fields against the metadata-fan-out vs attach-lifecycle race. Prefix is `loom_`; `LegacyTmuxPrefix` (`claudesquad_`) is still recognized by the orphan sweep and the startup rename pass.
+- **`session/vt/`** — Embedded terminal emulator backing pane display. `vt.go` defines the `Emulator` interface; `xvt.go` is the `charm.land/x/vt`-backed implementation. Decouples on-screen rendering and scrollback from `tmux capture-pane` so panes can live-scroll and forward mouse/paste input.
 - **`session/files/`** — Stateless filesystem enumeration helpers backing the file-explorer overlay. Separate from `session/git/` because callers may operate on non-git roots (workspace terminals pointed at bare directories).
 - **`config/`** — Configuration (`config.json`), state (`state.json`), profiles, and workspace registry (`workspace.go`). Key types: `WorkspaceContext` (carries resolved config dir through the app), `InstanceStorage`, `AppState`, `StateManager`. `LoadConfigFrom("")`/`LoadStateFrom("")` accept empty string as "use default directory". `config/migration.go:MigrateLegacyHome` handles the one-time `~/.claude-squad` → `~/.loom` rename.
 - **`daemon/`** — Background auto-yes mode. Polls instances, detects prompts, auto-presses Enter. Platform-specific: `daemon_unix.go`, `daemon_windows.go`.
-- **`ui/`** — Bubble Tea view components. Left panel (`list.go`, 20% width), right panel (`split_pane.go`, 80% width) with agent and terminal panes stacked vertically (70/30 split) and a hotkey-toggled diff overlay. `quick_input.go` provides an inline input bar for sending text to tmux. `workspace_tab_bar.go` renders workspace tabs. `ui/overlay/` has modal dialogs (text input, confirmation, branch picker, profile picker, workspace picker, file explorer, orphan recovery picker).
+- **`ui/`** — Bubble Tea view components. Left panel (`list.go`, 20% width), right panel (`split_pane.go`, 80% width) with agent and terminal panes stacked vertically (70/30 split) and a hotkey-toggled diff overlay. `terminal.go` renders a pane from the embedded VT emulator (with live-scroll offset, jump-to-bottom footer, and mouse drag-select/copy). `quick_input.go` provides an inline input bar for sending text to tmux. `workspace_tab_bar.go` renders workspace tabs. `ui/overlay/` has modal dialogs (text input, confirmation, branch picker, profile picker, workspace picker, file explorer, orphan recovery picker).
 - **`keys/`** — Keybinding definitions. Enum-based `KeyName` with global maps for lookup.
 - **`cmd/`** — `Executor` interface wrapping `os/exec` for testability.
 - **`log/`** — Centralized logging to `{configDir}/logs/loom.log` with Info/Warning/Error loggers and rate limiting.
