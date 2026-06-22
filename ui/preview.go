@@ -294,17 +294,17 @@ func (p *PreviewPane) String() string {
 		return previewPaneStyle.Width(p.width).Render(body)
 	}
 
-	// Live-tail display
-	// Calculate available height accounting for border and margin
-	availableHeight := p.height - 1 //  1 for ellipsis
+	// Live-tail display. The emulator (and the snapshot capture) is sized to the
+	// pane, so show every row — no ellipsis reservation. Reserving a row here cut
+	// the agent's bottom row (e.g. Claude's input box, replaced by "...") and was
+	// inconsistent with the terminal pane, which fills its full height.
+	availableHeight := p.height
 
 	lines := strings.Split(p.previewState.text, "\n")
 
-	// Truncate if we have more lines than available height
 	if availableHeight > 0 {
 		if len(lines) > availableHeight {
 			lines = lines[:availableHeight]
-			lines = append(lines, "...")
 		} else {
 			// Pad with empty lines to fill available height
 			padding := availableHeight - len(lines)
