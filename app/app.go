@@ -621,10 +621,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Use faster tick during inline attach for responsive feedback
+		// Use a faster tick while interacting (keys/mouse forwarded to the agent)
+		// so typed echo and the agent's redraw feel responsive. The per-tick work
+		// is render-only (emulator Render, no subprocess), so ~60fps is cheap;
+		// background panes stay at 100ms to save CPU.
 		tickDuration := 100 * time.Millisecond
 		if m.state == stateInlineAttach {
-			tickDuration = 33 * time.Millisecond
+			tickDuration = 16 * time.Millisecond
 		}
 		nextTick := func() tea.Msg {
 			time.Sleep(tickDuration)
