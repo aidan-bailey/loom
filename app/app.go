@@ -796,14 +796,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseClickMsg:
-		// Left-click in a content pane: focus it (click-to-focus) and anchor a
-		// drag-selection. Any prior selection is cleared. Active while the split
-		// panes are the main view (default nav or inline-attach).
-		if m.state != stateDefault && m.state != stateInlineAttach {
+		mouse := msg.Mouse()
+		// Interact mode: forward the click into the focused pane's agent/terminal.
+		if m.state == stateInlineAttach {
+			m.forwardMouseToFocused(mouse, mousePress)
 			return m, nil
 		}
-		mouse := msg.Mouse()
-		if mouse.Button != tea.MouseLeft {
+		// Nav: left-click focuses the pane and anchors a drag-selection.
+		if m.state != stateDefault || mouse.Button != tea.MouseLeft {
 			return m, nil
 		}
 		m.splitPane.ClearSelections()
@@ -819,18 +819,28 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMotionMsg:
-		// Extend the active drag-selection, clamped to its originating pane.
+		mouse := msg.Mouse()
+		// Interact mode: forward the drag into the focused pane.
+		if m.state == stateInlineAttach {
+			m.forwardMouseToFocused(mouse, mouseDrag)
+			return m, nil
+		}
+		// Nav: extend the active drag-selection, clamped to its originating pane.
 		if !m.dragging {
 			return m, nil
 		}
-		mouse := msg.Mouse()
 		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok && pane == m.dragPane {
 			m.splitPane.ExtendSelection(m.dragPane, row, col)
 		}
 		return m, nil
 	case tea.MouseReleaseMsg:
-		// End the drag: copy a non-empty selection; a plain click (no drag) just
-		// cleared+focused, so drop the empty selection.
+		mouse := msg.Mouse()
+		// Interact mode: forward the release into the focused pane.
+		if m.state == stateInlineAttach {
+			m.forwardMouseToFocused(mouse, mouseRelease)
+			return m, nil
+		}
+		// Nav: end the drag — copy a non-empty selection; a plain click clears.
 		if !m.dragging {
 			return m, nil
 		}
@@ -841,6 +851,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, copyToClipboard(text)
+	case tea.PasteMsg:
+		// Interact mode: bracketed-paste into the focused pane's agent/terminal.
+		// In other states, textinput overlays consume their own paste.
+		if m.state == stateInlineAttach {
+			m.pasteToFocused(msg.Content)
+		}
+		return m, nil
 	case clipboardCopiedMsg:
 		if msg.err != nil {
 			log.For("clipboard").Info("clipboard.fallback_failed", "err", msg.err)
