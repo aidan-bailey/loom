@@ -386,6 +386,32 @@ func (t *TerminalPane) SendKeysRaw(b []byte) error {
 	return ts.SendKeysRaw(b)
 }
 
+// ForwardMouse forwards one SGR mouse event to the current terminal session.
+func (t *TerminalPane) ForwardMouse(cb, col, row int, press bool) error {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
+		t.mu.Unlock()
+		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	}
+	ts := s.tmuxSession
+	t.mu.Unlock()
+	return ts.ForwardMouse(cb, col, row, press)
+}
+
+// Paste sends text to the current terminal session as a bracketed paste.
+func (t *TerminalPane) Paste(text string) error {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
+		t.mu.Unlock()
+		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	}
+	ts := s.tmuxSession
+	t.mu.Unlock()
+	return ts.Paste(text)
+}
+
 // Close kills all cached terminal tmux sessions and cleans up.
 func (t *TerminalPane) Close() {
 	t.mu.Lock()

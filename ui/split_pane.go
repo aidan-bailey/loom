@@ -453,6 +453,16 @@ func (s *SplitPane) SendTerminalKeysRaw(b []byte) error {
 	return s.terminal.SendKeysRaw(b)
 }
 
+// ForwardTerminalMouse forwards one SGR mouse event to the terminal pane's session.
+func (s *SplitPane) ForwardTerminalMouse(cb, col, row int, press bool) error {
+	return s.terminal.ForwardMouse(cb, col, row, press)
+}
+
+// PasteTerminal sends text to the terminal pane's session as a bracketed paste.
+func (s *SplitPane) PasteTerminal(text string) error {
+	return s.terminal.Paste(text)
+}
+
 func (s *SplitPane) String() string {
 	if s.width == 0 || s.height == 0 {
 		return ""

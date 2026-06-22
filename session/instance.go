@@ -713,6 +713,32 @@ func (i *Instance) ForwardWheel(up bool, n int) error {
 	return ts.ForwardWheel(up, n)
 }
 
+// ForwardMouse forwards one SGR mouse event (click/drag/release) to the agent's
+// pane at (col,row). No-op for non-started/paused instances.
+func (i *Instance) ForwardMouse(cb, col, row int, press bool) error {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return nil
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return nil
+	}
+	return ts.ForwardMouse(cb, col, row, press)
+}
+
+// Paste sends text to the agent's pane as a bracketed paste. No-op for
+// non-started/paused instances.
+func (i *Instance) Paste(text string) error {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return nil
+	}
+	ts := i.getTmuxSession()
+	if ts == nil || !ts.DoesSessionExist() {
+		return nil
+	}
+	return ts.Paste(text)
+}
+
 // HasUpdated reports whether the tmux pane content has changed since
 // the last call and whether an auto-yes-eligible prompt is currently
 // visible. Returns (false, false) for non-started instances.

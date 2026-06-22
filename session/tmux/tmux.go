@@ -878,6 +878,49 @@ func (t *TmuxSession) ForwardWheel(up bool, n int) error {
 	return nil
 }
 
+// ForwardMouse writes one SGR mouse event into the attach PTY so a focused TUI
+// agent receives a click/drag/release at (col,row), 1-indexed. cb is the SGR
+// button code (0=left, +32 = motion/drag, 64/65 = wheel up/down); press=true
+// emits the 'M' (press) final byte, false emits 'm' (release).
+func (t *TmuxSession) ForwardMouse(cb, col, row int, press bool) error {
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
+		return fmt.Errorf("PTY is not available")
+	}
+	if col < 1 {
+		col = 1
+	}
+	if row < 1 {
+		row = 1
+	}
+	final := byte('M')
+	if !press {
+		final = 'm'
+	}
+	seq := fmt.Sprintf("\x1b[<%d;%d;%d%c", cb, col, row, final)
+	if _, err := ptmx.Write([]byte(seq)); err != nil {
+		return fmt.Errorf("forward mouse: %w", err)
+	}
+	return nil
+}
+
+// Paste writes text to the attach PTY wrapped in bracketed-paste markers
+// (ESC[200~ … ESC[201~), so the focused agent treats it as a paste rather than
+// typed input. No-op for empty text.
+func (t *TmuxSession) Paste(text string) error {
+	if text == "" {
+		return nil
+	}
+	ptmx := t.currentPtmx()
+	if ptmx == nil {
+		return fmt.Errorf("PTY is not available")
+	}
+	if _, err := ptmx.Write([]byte("\x1b[200~" + text + "\x1b[201~")); err != nil {
+		return fmt.Errorf("paste: %w", err)
+	}
+	return nil
+}
+
 // CleanupSessions kills all tmux sessions that start with "session-"
 func CleanupSessions(cmdExec internalexec.Executor) error {
 	// First try to list sessions

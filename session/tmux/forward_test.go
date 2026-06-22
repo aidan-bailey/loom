@@ -38,6 +38,50 @@ func TestForwardWheel_WritesSGRToPTY(t *testing.T) {
 		"three wheel-up notches then one wheel-down, as SGR press sequences")
 }
 
+// TestForwardMouse_WritesSGR verifies click/drag/release encode to the expected
+// SGR mouse bytes at the given cell.
+func TestForwardMouse_WritesSGR(t *testing.T) {
+	noop := cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	ts := newTmuxSession("mouse", "prog", NewMockPtyFactory(t), noop)
+	path := filepath.Join(t.TempDir(), "ptmx")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	require.NoError(t, err)
+	defer f.Close()
+	ts.ptmx = f
+
+	require.NoError(t, ts.ForwardMouse(0, 5, 3, true))  // left press at col5,row3
+	require.NoError(t, ts.ForwardMouse(32, 7, 3, true)) // left drag (motion)
+	require.NoError(t, ts.ForwardMouse(0, 7, 3, false)) // left release
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "\x1b[<0;5;3M\x1b[<32;7;3M\x1b[<0;7;3m", string(data))
+}
+
+// TestPaste_WrapsBracketed verifies Paste wraps text in bracketed-paste markers.
+func TestPaste_WrapsBracketed(t *testing.T) {
+	noop := cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	ts := newTmuxSession("paste", "prog", NewMockPtyFactory(t), noop)
+	path := filepath.Join(t.TempDir(), "ptmx")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	require.NoError(t, err)
+	defer f.Close()
+	ts.ptmx = f
+
+	require.NoError(t, ts.Paste("")) // empty is a no-op
+	require.NoError(t, ts.Paste("a\nb"))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "\x1b[200~a\nb\x1b[201~", string(data))
+}
+
 // TestForwardWheel_NoPTY returns an error rather than panicking when unattached.
 func TestForwardWheel_NoPTY(t *testing.T) {
 	noop := cmd_test.MockCmdExec{
