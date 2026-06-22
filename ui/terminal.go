@@ -506,6 +506,7 @@ func (t *TerminalPane) String() string {
 
 	// Live tail: show captured content.
 	lines := strings.Split(content, "\n")
+	rawLines := len(lines)
 
 	if height > 0 {
 		if len(lines) > height {
@@ -516,11 +517,18 @@ func (t *TerminalPane) String() string {
 		}
 	}
 
+	if time.Since(lastTermSizeLog) > time.Second {
+		lastTermSizeLog = time.Now()
+		log.For("panesize").Info("terminal.render", "paneWidth", width, "paneHeight", height, "rawLines", rawLines)
+	}
+
 	display, plain := renderWithSelection(lines, t.sel)
 	t.displayedPlain = plain
 	contentStr := strings.Join(display, "\n")
 	return terminalPaneStyle.Width(width).Render(contentStr)
 }
+
+var lastTermSizeLog time.Time
 
 // BeginSelection starts a selection anchored at content (row, col).
 func (t *TerminalPane) BeginSelection(row, col int) {
