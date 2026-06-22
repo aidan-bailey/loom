@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 
 	"charm.land/lipgloss/v2"
@@ -294,17 +295,17 @@ func (p *PreviewPane) String() string {
 		return previewPaneStyle.Width(p.width).Render(body)
 	}
 
-	// Live-tail display
-	// Calculate available height accounting for border and margin
-	availableHeight := p.height - 1 //  1 for ellipsis
+	// Live-tail display. The emulator (and the snapshot capture) is sized to the
+	// pane, so show every row — no ellipsis reservation. Reserving a row here cut
+	// the agent's bottom row (e.g. Claude's input box, replaced by "...") and was
+	// inconsistent with the terminal pane, which fills its full height.
+	availableHeight := p.height
 
 	lines := strings.Split(p.previewState.text, "\n")
 
-	// Truncate if we have more lines than available height
 	if availableHeight > 0 {
 		if len(lines) > availableHeight {
 			lines = lines[:availableHeight]
-			lines = append(lines, "...")
 		} else {
 			// Pad with empty lines to fill available height
 			padding := availableHeight - len(lines)
@@ -315,9 +316,26 @@ func (p *PreviewPane) String() string {
 	display, plain := renderWithSelection(lines, p.sel)
 	p.displayedPlain = plain
 	content := strings.Join(display, "\n")
+
+	// TEMP panesize diagnostic: compare the displayed content width to the pane
+	// width (throttled). maxW > p.width => lipgloss will re-wrap (squash);
+	// maxW << p.width on full screens => emulator/PTY sized narrower than the pane.
+	maxW := 0
+	for _, ln := range plain {
+		if w := lipgloss.Width(ln); w > maxW {
+			maxW = w
+		}
+	}
+	if time.Since(lastPaneSizeLog) > time.Second {
+		lastPaneSizeLog = time.Now()
+		log.For("panesize").Info("preview.render", "paneWidth", p.width, "maxLineWidth", maxW, "lineCount", len(plain))
+	}
+
 	rendered := previewPaneStyle.Width(p.width).Render(content)
 	return rendered
 }
+
+var lastPaneSizeLog time.Time
 
 // BeginSelection starts a selection anchored at content (row, col).
 func (p *PreviewPane) BeginSelection(row, col int) {
