@@ -550,6 +550,10 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 
 	// Content gets all height minus tab bar, status line (1), and error box (1).
 	contentHeight := msg.Height - m.tabBar.Height() - 2
+
+	// TEMP panesize diagnostic: terminal size v2 reports vs derived dims.
+	log.For("panesize").Info("windowsize", "termW", msg.Width, "termH", msg.Height,
+		"listWidth", listWidth, "paneWidth", paneWidth, "contentHeight", contentHeight, "tabH", m.tabBar.Height())
 	m.errBox.SetSize(int(float32(msg.Width)*ui.PreviewWidthPercent), 1)
 
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
