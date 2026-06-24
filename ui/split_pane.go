@@ -7,8 +7,6 @@ import (
 	"github.com/aidan-bailey/loom/session/tmux"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
-
 	"charm.land/lipgloss/v2"
 )
 
@@ -548,21 +546,10 @@ func (s *SplitPane) renderPane(title, content string, innerHeight int, focused b
 		border = focusedPaneBodyBorder
 	}
 
-	// Cap the line count and truncate over-wide lines so lipgloss can't wrap them
-	// into extra rows — otherwise the box would render taller than innerHeight and
-	// the whole view would overflow the terminal.
-	srcLines := strings.Split(content, "\n")
-	if len(srcLines) > innerHeight {
-		srcLines = srcLines[:innerHeight]
-	}
-	for i, ln := range srcLines {
-		srcLines[i] = ansi.Truncate(ln, contentWidth, "")
-	}
-
 	body := border.
 		Width(contentWidth).
 		Height(innerHeight).
-		Render(strings.Join(srcLines, "\n"))
+		Render(content)
 
 	return lipgloss.JoinVertical(lipgloss.Left, topLine, body)
 }
