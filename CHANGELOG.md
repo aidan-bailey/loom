@@ -1,3 +1,10 @@
+## [0.2.1] - 2026-06-26
+
+### 🐛 Bug Fixes
+
+- *(ui)* Size the pane body to full width so the right and bottom borders reach the edge
+- *(ui)* Cap pane content by rows so the bottom/right border isn't clipped
+- *(ui)* Clamp the split pane to its height
 ## [0.2.0] - 2026-06-22
 
 ### 🚀 Features
