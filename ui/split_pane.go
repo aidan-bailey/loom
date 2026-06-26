@@ -470,12 +470,12 @@ func (s *SplitPane) String() string {
 
 	if s.diffVisible {
 		bodyBorderV := focusedPaneBodyBorder.GetVerticalFrameSize()
-		borderH := focusedPaneBodyBorder.GetHorizontalFrameSize()
-		contentWidth := s.width - borderH
 		diffContent := s.diff.String()
 		topLine := s.buildTopBorder(diffTitle(s.diff.ScrollPercent()), true)
+		// .Width is the total box width (border included), so pass the full pane
+		// width — matching renderPane and the manual top border's right corner.
 		body := focusedPaneBodyBorder.
-			Width(contentWidth).
+			Width(s.width).
 			Height(s.height - 1 - bodyBorderV). // -1 for top line
 			Render(diffContent)
 		return clampHeight(lipgloss.JoinVertical(lipgloss.Left, topLine, body), s.height)
@@ -536,9 +536,6 @@ func diffTitle(percent float64) string {
 
 // renderPane wraps content in a bordered box with the title embedded in the top border line.
 func (s *SplitPane) renderPane(title, content string, innerHeight int, focused bool) string {
-	borderH := paneBodyBorder.GetHorizontalFrameSize()
-	contentWidth := s.width - borderH
-
 	topLine := s.buildTopBorder(title, focused)
 
 	border := paneBodyBorder
@@ -556,8 +553,14 @@ func (s *SplitPane) renderPane(title, content string, innerHeight int, focused b
 		content = strings.Join(lines[:innerHeight], "\n")
 	}
 
+	// lipgloss .Width/.Height set the TOTAL box size (border included), so pass
+	// the full pane width — the left/right border consume 2 columns inside it,
+	// leaving an s.width-2 content area that matches what the child panes render
+	// to. Subtracting the frame here (as if the border were added outside) made
+	// the body 2 columns short, so JoinVertical right-padded it with spaces and
+	// the bottom/right border fell short of the manual top border's corner.
 	body := border.
-		Width(contentWidth).
+		Width(s.width).
 		Height(innerHeight).
 		Render(content)
 
