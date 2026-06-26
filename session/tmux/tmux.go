@@ -762,7 +762,6 @@ func (t *TmuxSession) SetDetachedSize(width, height int) error {
 	if emu != nil {
 		emu.Resize(width, height)
 	}
-	log.For("panesize").Info("tmux.setsize", "session", t.sanitizedName, "cols", width, "rows", height)
 	return t.updateWindowSize(width, height)
 }
 
