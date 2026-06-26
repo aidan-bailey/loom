@@ -546,6 +546,16 @@ func (s *SplitPane) renderPane(title, content string, innerHeight int, focused b
 		border = focusedPaneBodyBorder
 	}
 
+	// Cap the content to innerHeight ROWS (not columns). If an over-wide line
+	// wrapped into extra rows, the box would otherwise render taller than its
+	// allocation, and the split-pane clamp would then clip its bottom border off.
+	// Truncating rows here keeps the box (and its full border) exactly the right
+	// size; truncating columns instead would shift the body and break the right
+	// border's corner alignment.
+	if lines := strings.Split(content, "\n"); len(lines) > innerHeight {
+		content = strings.Join(lines[:innerHeight], "\n")
+	}
+
 	body := border.
 		Width(contentWidth).
 		Height(innerHeight).
