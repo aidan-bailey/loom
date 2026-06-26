@@ -551,9 +551,6 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	// Content gets all height minus tab bar, status line (1), and error box (1).
 	contentHeight := msg.Height - m.tabBar.Height() - 2
 
-	// TEMP panesize diagnostic: terminal size v2 reports vs derived dims.
-	log.For("panesize").Info("windowsize", "termW", msg.Width, "termH", msg.Height,
-		"listWidth", listWidth, "paneWidth", paneWidth, "contentHeight", contentHeight, "tabH", m.tabBar.Height())
 	m.errBox.SetSize(int(float32(msg.Width)*ui.PreviewWidthPercent), 1)
 
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
@@ -2134,8 +2131,6 @@ func (m *home) slotNames() []string {
 }
 
 // View implements tea.Model.
-var lastViewLog time.Time
-
 func (m *home) View() tea.View {
 	// asView funnels every render path through one tea.View so alt-screen
 	// and mouse cell-motion (previously tea.NewProgram options) are set
@@ -2180,16 +2175,6 @@ func (m *home) View() tea.View {
 		lipgloss.Center,
 		sections...,
 	)
-
-	// TEMP panesize diagnostic: actual rendered widths of each composed piece vs
-	// the reported terminal width, to find where the right-side gap comes from.
-	if time.Since(lastViewLog) > time.Second {
-		lastViewLog = time.Now()
-		log.For("panesize").Info("view.compose",
-			"listW", lipgloss.Width(listView), "rightW", lipgloss.Width(rightContent),
-			"combinedW", lipgloss.Width(listAndPreview), "mainW", lipgloss.Width(mainView),
-			"tabW", lipgloss.Width(m.tabBar.String()), "termW", m.lastWidth)
-	}
 
 	// Overlay render dispatch: all overlay states share the unified
 	// activeOverlay pointer. The activeOverlayKind tag distinguishes

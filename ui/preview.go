@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 
 	"charm.land/lipgloss/v2"
@@ -302,7 +301,6 @@ func (p *PreviewPane) String() string {
 	availableHeight := p.height
 
 	lines := strings.Split(p.previewState.text, "\n")
-	rawLines := len(lines) // emulator output rows, before truncation to the pane
 
 	if availableHeight > 0 {
 		if len(lines) > availableHeight {
@@ -318,26 +316,9 @@ func (p *PreviewPane) String() string {
 	p.displayedPlain = plain
 	content := strings.Join(display, "\n")
 
-	// TEMP panesize diagnostic: compare the displayed content width to the pane
-	// width (throttled). maxW > p.width => lipgloss will re-wrap (squash);
-	// maxW << p.width on full screens => emulator/PTY sized narrower than the pane.
-	maxW := 0
-	for _, ln := range plain {
-		if w := lipgloss.Width(ln); w > maxW {
-			maxW = w
-		}
-	}
-	if time.Since(lastPaneSizeLog) > time.Second {
-		lastPaneSizeLog = time.Now()
-		log.For("panesize").Info("preview.render", "paneWidth", p.width, "paneHeight", p.height,
-			"maxLineWidth", maxW, "displayLines", len(plain), "rawEmulatorLines", rawLines)
-	}
-
 	rendered := previewPaneStyle.Width(p.width).Render(content)
 	return rendered
 }
-
-var lastPaneSizeLog time.Time
 
 // BeginSelection starts a selection anchored at content (row, col).
 func (p *PreviewPane) BeginSelection(row, col int) {
