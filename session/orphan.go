@@ -45,6 +45,11 @@ type OrphanCandidate struct {
 	// loom_<sanitized-title> is currently running. When true, recovery
 	// can adopt the live PTY rather than spawning a new one.
 	HasLiveTmux bool
+	// HasUncommittedChanges reports whether the worktree has uncommitted
+	// edits (git status --porcelain). True (conservatively, on probe
+	// error) keeps an orphan in the needs-review bucket so auto-clean
+	// never discards unsaved work.
+	HasUncommittedChanges bool
 }
 
 // orphanProbeTimeout caps each git/tmux subprocess invocation during
@@ -68,6 +73,21 @@ var probeWorktreeRepo = func(worktreePath string) (repoPath, headSHA string, err
 		return "", "", err
 	}
 	return repo, head, nil
+}
+
+// probeWorktreeDirty reports whether the worktree has uncommitted changes.
+// Package-level var so tests stub it without a git fixture (mirrors
+// probeWorktreeRepo). On any git error it returns true — the safe default
+// that routes an unverifiable worktree to needs-review instead of auto-clean.
+var probeWorktreeDirty = func(worktreePath string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), orphanProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "status", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return true
+	}
+	return len(strings.TrimSpace(string(out))) > 0
 }
 
 // DiscoverOrphans scans configDir's worktrees directory and returns
@@ -159,12 +179,13 @@ func buildOrphanCandidate(worktreePath, userPrefix, leafDirName string, cmdExec 
 
 	title := HumanizeBranchLeaf(branchName)
 	return OrphanCandidate{
-		WorktreePath:  worktreePath,
-		BranchName:    branchName,
-		RepoPath:      repoPath,
-		BaseCommitSHA: headSHA,
-		Title:         title,
-		HasLiveTmux:   CheckTmuxAlive(title, cmdExec),
+		WorktreePath:          worktreePath,
+		BranchName:            branchName,
+		RepoPath:              repoPath,
+		BaseCommitSHA:         headSHA,
+		Title:                 title,
+		HasLiveTmux:           CheckTmuxAlive(title, cmdExec),
+		HasUncommittedChanges: probeWorktreeDirty(worktreePath),
 	}, true
 }
 

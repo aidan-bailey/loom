@@ -168,6 +168,17 @@ func TestDiscoverOrphans_MultipleUsers(t *testing.T) {
 	assert.Equal(t, []string{"alice/feat-a", "bob/feat-b"}, branches)
 }
 
+func TestBuildOrphanCandidate_PopulatesDirtyFlag(t *testing.T) {
+	withStubProbe(t)
+	prevDirty := probeWorktreeDirty
+	probeWorktreeDirty = func(string) bool { return true }
+	t.Cleanup(func() { probeWorktreeDirty = prevDirty })
+
+	cand, ok := buildOrphanCandidate("/repo/worktrees/u/feature_abc123", "u", "feature_abc123", internalexec.Default{})
+	assert.True(t, ok)
+	assert.True(t, cand.HasUncommittedChanges)
+}
+
 // TestDiscoverOrphans_SkipsNonDirectoryEntries makes sure stray files
 // next to worktree subdirs (e.g. a .DS_Store, a stray log file)
 // don't get classified as orphans.
