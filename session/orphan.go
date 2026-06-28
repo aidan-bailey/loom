@@ -316,6 +316,31 @@ func RemoveOrphanWorktree(repoPath, worktreePath string) error {
 	return nil
 }
 
+// InstanceDataFromOrphan reconstructs InstanceData for an orphan candidate.
+// IsExistingBranch is always true so a later Kill (discard) removes only the
+// worktree, never the branch. Status is left zero (Running); callers override
+// it (Recoverable for the inline placeholder, Running for recovery).
+func InstanceDataFromOrphan(cand OrphanCandidate, program string) InstanceData {
+	now := time.Now()
+	return InstanceData{
+		SchemaVersion: CurrentSchemaVersion,
+		Title:         cand.Title,
+		Path:          cand.RepoPath,
+		Branch:        cand.BranchName,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Program:       program,
+		Worktree: GitWorktreeData{
+			RepoPath:         cand.RepoPath,
+			WorktreePath:     cand.WorktreePath,
+			SessionName:      cand.Title,
+			BranchName:       cand.BranchName,
+			BaseCommitSHA:    cand.BaseCommitSHA,
+			IsExistingBranch: true,
+		},
+	}
+}
+
 // SanitizedToTmuxName mirrors tmux.ToLoomTmuxName. Re-exporting the
 // computation here keeps orphan discovery self-contained — callers
 // don't have to reach into the tmux package directly.

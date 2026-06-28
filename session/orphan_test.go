@@ -185,6 +185,25 @@ func TestOrphanCandidate_Disposition(t *testing.T) {
 	assert.Equal(t, DisposeReview, OrphanCandidate{HasLiveTmux: true}.Disposition())
 }
 
+func TestInstanceDataFromOrphan_BuildsExistingBranchWorktree(t *testing.T) {
+	cand := OrphanCandidate{
+		WorktreePath:  "/cfg/worktrees/u/feature_abc",
+		BranchName:    "u/feature",
+		RepoPath:      "/repo",
+		BaseCommitSHA: "deadbeef",
+		Title:         "feature",
+	}
+	data := InstanceDataFromOrphan(cand, "claude")
+	assert.Equal(t, "feature", data.Title)
+	assert.Equal(t, "/repo", data.Path)
+	assert.Equal(t, "u/feature", data.Branch)
+	assert.Equal(t, "claude", data.Program)
+	assert.Equal(t, CurrentSchemaVersion, data.SchemaVersion)
+	assert.True(t, data.Worktree.IsExistingBranch)
+	assert.Equal(t, "/cfg/worktrees/u/feature_abc", data.Worktree.WorktreePath)
+	assert.Equal(t, "deadbeef", data.Worktree.BaseCommitSHA)
+}
+
 // TestDiscoverOrphans_SkipsNonDirectoryEntries makes sure stray files
 // next to worktree subdirs (e.g. a .DS_Store, a stray log file)
 // don't get classified as orphans.

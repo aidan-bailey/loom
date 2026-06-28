@@ -309,6 +309,11 @@ func (i *Instance) Restart() error {
 // (they deliberately have no PTY) and for already-started instances.
 // Idempotent: the underlying Start guards against double-attaches.
 func (i *Instance) EnsureRunning() error {
+	if i.GetStatus() == Recoverable {
+		// An orphan surfaced inline; never auto-spawn its PTY. It goes
+		// live only via the explicit recover action (ReconcileAndRestore).
+		return nil
+	}
 	if i.Paused() {
 		return nil
 	}
