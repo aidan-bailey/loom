@@ -128,6 +128,9 @@ type workspaceSlot struct {
 	appState  config.AppState
 	list      *ui.List
 	splitPane *ui.SplitPane
+	// recovery holds the orphan-reconcile summary from this slot's last
+	// activation, surfaced once the slot becomes focused.
+	recovery recoverySummary
 }
 
 type home struct {
@@ -1076,6 +1079,39 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// recoverySummary tallies what a reconcileOrphans pass did, for the
+// non-blocking one-line summary shown to the user.
+type recoverySummary struct {
+	cleaned int // stale worktrees auto-removed
+	review  int // Recoverable entries added to the list
+}
+
+func (s recoverySummary) empty() bool { return s.cleaned == 0 && s.review == 0 }
+
+func (s recoverySummary) String() string {
+	plural := func(n int, one, many string) string {
+		if n == 1 {
+			return fmt.Sprintf("%d %s", n, one)
+		}
+		return fmt.Sprintf("%d %s", n, many)
+	}
+	var parts []string
+	if s.cleaned > 0 {
+		parts = append(parts, "cleaned "+plural(s.cleaned, "stale worktree", "stale worktrees"))
+	}
+	if s.review > 0 {
+		verb := "need"
+		if s.review == 1 {
+			verb = "needs"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s review (in list)", plural(s.review, "session", "sessions"), verb))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Recovery: " + strings.Join(parts, " · ")
+}
+
 // persistableInstances filters out instances whose state should not reach disk:
 // Ready (mid-creation), Deleting (kill in progress, about to be removed via
 // DeleteInstance), and Recoverable (an orphan surfaced inline; it is re-derived
@@ -1093,6 +1129,71 @@ func persistableInstances(instances []*session.Instance) []*session.Instance {
 		result = append(result, inst)
 	}
 	return result
+}
+
+// claimedWorktreePaths returns the set of worktree paths already accounted
+// for: live instances plus storage's unrecovered cache (records that failed
+// reconcile but remain tracked in state.json). Orphan discovery skips these.
+func claimedWorktreePaths(claimed []*session.Instance, storage *session.Storage) map[string]bool {
+	paths := make(map[string]bool, len(claimed))
+	for _, inst := range claimed {
+		wt, err := inst.GetGitWorktree()
+		if err != nil || wt == nil {
+			continue
+		}
+		if p := wt.GetWorktreePath(); p != "" {
+			paths[p] = true
+		}
+	}
+	if storage != nil {
+		for p := range storage.UnrecoveredWorktreePaths() {
+			paths[p] = true
+		}
+	}
+	return paths
+}
+
+// reconcileOrphans discovers orphaned worktrees for one workspace, auto-cleans
+// stale leftovers, and adds inline Recoverable entries for orphans that need a
+// human decision. It mutates list (adds Recoverable instances) and returns a
+// summary for the caller to surface. Safe to run on any workspace-load path.
+func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *session.Storage, cmdExec cmd2.Executor) recoverySummary {
+	var summary recoverySummary
+	orphans, err := session.DiscoverOrphans(cfgDir, claimedWorktreePaths(list.GetInstances(), storage), cmdExec)
+	if err != nil {
+		log.For("app").Warn("orphan_discovery_failed", "cfg_dir", cfgDir, "err", err)
+		return summary
+	}
+	for _, cand := range orphans {
+		switch cand.Disposition() {
+		case session.DisposeClean:
+			if err := session.RemoveOrphanWorktree(cand.RepoPath, cand.WorktreePath); err != nil {
+				log.For("app").Warn("orphan_autoclean_failed", "worktree", cand.WorktreePath, "err", err)
+				continue
+			}
+			summary.cleaned++
+		case session.DisposeReview:
+			data := session.InstanceDataFromOrphan(cand, program)
+			data.Status = session.Recoverable
+			inst, err := session.FromInstanceData(data, cfgDir)
+			if err != nil {
+				log.For("app").Warn("orphan_placeholder_failed", "title", cand.Title, "err", err)
+				continue
+			}
+			list.AddInstance(inst)()
+			summary.review++
+		}
+	}
+	return summary
+}
+
+// showRecoverySummary surfaces a reconcile summary on the error bar as a
+// non-alarming info line. No-op when nothing happened.
+func (m *home) showRecoverySummary(s recoverySummary) {
+	if s.empty() {
+		return
+	}
+	m.errBox.SetInfo(s.String())
 }
 
 // handleQuit persists session state and terminates the TUI. Policy:

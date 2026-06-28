@@ -50,6 +50,14 @@ func TestPersistableInstances_ExcludesRecoverable(t *testing.T) {
 	assert.Empty(t, persistableInstances([]*session.Instance{inst}))
 }
 
+func TestRecoverySummary_String(t *testing.T) {
+	assert.True(t, recoverySummary{}.empty())
+	assert.Equal(t, "Recovery: cleaned 1 stale worktree", recoverySummary{cleaned: 1}.String())
+	assert.Equal(t, "Recovery: cleaned 2 stale worktrees · 3 sessions need review (in list)",
+		recoverySummary{cleaned: 2, review: 3}.String())
+	assert.Equal(t, "Recovery: 1 session needs review (in list)", recoverySummary{review: 1}.String())
+}
+
 // TestConfirmationModalStateTransitions tests state transitions without full instance setup
 func TestConfirmationModalStateTransitions(t *testing.T) {
 	// Create a minimal home struct for testing state transitions
