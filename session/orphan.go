@@ -56,11 +56,11 @@ type OrphanCandidate struct {
 type OrphanDisposition int
 
 const (
-	// DisposeClean: dead tmux and no uncommitted changes — a stale
+	// DisposeClean means dead tmux and no uncommitted changes — a stale
 	// leftover. Auto-remove the worktree (branch preserved).
 	DisposeClean OrphanDisposition = iota
-	// DisposeReview: live tmux or uncommitted changes — surface inline
-	// as a Recoverable entry for the user to recover or discard.
+	// DisposeReview means live tmux or uncommitted changes — surface
+	// inline as a Recoverable entry for the user to recover or discard.
 	DisposeReview
 )
 

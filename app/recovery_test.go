@@ -74,3 +74,31 @@ func TestReconcileOrphans_CleanAutoRemoved_DirtyBecomesRecoverable(t *testing.T)
 	out, _ := exec.Command("git", "-C", repo, "branch", "--list", "u/clean").Output()
 	assert.Contains(t, string(out), "u/clean")
 }
+
+// TestSelectedResumableNotWorkspace_AllowsRecoverable confirms the 'r' key
+// gate admits a Recoverable orphan (the entry point to the recover action).
+func TestSelectedResumableNotWorkspace_AllowsRecoverable(t *testing.T) {
+	data := session.InstanceData{
+		SchemaVersion: session.CurrentSchemaVersion,
+		Title:         "orphan",
+		Path:          t.TempDir(),
+		Branch:        "u/orphan",
+		Status:        session.Recoverable,
+		Worktree: session.GitWorktreeData{
+			RepoPath:         t.TempDir(),
+			WorktreePath:     t.TempDir(),
+			BranchName:       "u/orphan",
+			IsExistingBranch: true,
+		},
+	}
+	inst, err := session.FromInstanceData(data, t.TempDir())
+	require.NoError(t, err)
+
+	sp := spinner.New()
+	list := ui.NewList(&sp, false)
+	list.AddInstance(inst)()
+	list.SelectInstance(inst)
+
+	h := &home{list: list}
+	assert.True(t, selectedResumableNotWorkspace(h), "'r' must be enabled for a Recoverable orphan")
+}
