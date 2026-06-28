@@ -31,6 +31,25 @@ func TestMain(m *testing.M) {
 	os.Exit(exitCode)
 }
 
+func TestPersistableInstances_ExcludesRecoverable(t *testing.T) {
+	data := session.InstanceData{
+		SchemaVersion: session.CurrentSchemaVersion,
+		Title:         "orphan",
+		Path:          t.TempDir(),
+		Branch:        "u/orphan",
+		Status:        session.Recoverable,
+		Worktree: session.GitWorktreeData{
+			RepoPath:         t.TempDir(),
+			WorktreePath:     t.TempDir(),
+			BranchName:       "u/orphan",
+			IsExistingBranch: true,
+		},
+	}
+	inst, err := session.FromInstanceData(data, t.TempDir())
+	require.NoError(t, err)
+	assert.Empty(t, persistableInstances([]*session.Instance{inst}))
+}
+
 // TestConfirmationModalStateTransitions tests state transitions without full instance setup
 func TestConfirmationModalStateTransitions(t *testing.T) {
 	// Create a minimal home struct for testing state transitions

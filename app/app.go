@@ -1077,15 +1077,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // persistableInstances filters out instances whose state should not reach disk:
-// Ready (mid-creation, no live resources yet) and Deleting (kill in progress,
-// about to be removed via DeleteInstance). All other statuses — Loading,
+// Ready (mid-creation), Deleting (kill in progress, about to be removed via
+// DeleteInstance), and Recoverable (an orphan surfaced inline; it is re-derived
+// from disk each load and adopted only on explicit recovery, so persisting it
+// would resurrect a never-confirmed entry). All other statuses — Loading,
 // Running, Paused — are persisted so that a crash or quit during the kill
 // window cannot orphan a live worktree from its JSON record.
 func persistableInstances(instances []*session.Instance) []*session.Instance {
 	var result []*session.Instance
 	for _, inst := range instances {
 		status := inst.GetStatus()
-		if status == session.Ready || status == session.Deleting {
+		if status == session.Ready || status == session.Deleting || status == session.Recoverable {
 			continue
 		}
 		result = append(result, inst)
