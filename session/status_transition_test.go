@@ -49,6 +49,18 @@ func TestIsAllowedTransition_DeletingCanRevert(t *testing.T) {
 	}
 }
 
+func TestRecoverable_StringAndTransitions(t *testing.T) {
+	assert.Equal(t, "Recoverable", Recoverable.String())
+	// Recover path: Recoverable -> Loading -> Running.
+	assert.True(t, IsAllowedTransition(Recoverable, Loading))
+	assert.True(t, IsAllowedTransition(Recoverable, Running))
+	// Discard path: kill preAction does Recoverable -> Deleting.
+	assert.True(t, IsAllowedTransition(Recoverable, Deleting))
+	// Nothing transitions INTO Recoverable (set only at construction).
+	assert.False(t, IsAllowedTransition(Paused, Recoverable))
+	assert.False(t, IsAllowedTransition(Recoverable, Prompting))
+}
+
 func TestTransitionTo_UpdatesStatusOnSuccess(t *testing.T) {
 	inst := &Instance{Title: "t", Status: Ready}
 	assert.NoError(t, inst.TransitionTo(Loading))

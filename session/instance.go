@@ -37,6 +37,11 @@ const (
 	// Deleting is a transient status set immediately when the user confirms
 	// deletion. Cleanup runs asynchronously; on failure the status reverts.
 	Deleting
+	// Recoverable is an orphaned worktree found on disk and surfaced inline
+	// for the user to recover or discard. It has a worktree but no live tmux
+	// and is never persisted to state.json (re-derived from disk each load).
+	// Appended last so existing serialized Status ints are unchanged.
+	Recoverable
 )
 
 // String implements fmt.Stringer for debugging and transition-error messages.
@@ -54,6 +59,8 @@ func (s Status) String() string {
 		return "Prompting"
 	case Deleting:
 		return "Deleting"
+	case Recoverable:
+		return "Recoverable"
 	default:
 		return fmt.Sprintf("Status(%d)", int(s))
 	}
@@ -64,12 +71,13 @@ func (s Status) String() string {
 // going through Loading/Running would produce an inconsistent UI state —
 // that's the main invariant this table enforces.
 var allowedTransitions = map[Status]map[Status]bool{
-	Ready:     {Loading: true, Running: true, Prompting: true, Paused: true, Deleting: true},
-	Loading:   {Ready: true, Running: true, Prompting: true, Paused: true, Deleting: true},
-	Running:   {Ready: true, Loading: true, Prompting: true, Paused: true, Deleting: true},
-	Prompting: {Ready: true, Loading: true, Running: true, Paused: true, Deleting: true},
-	Paused:    {Loading: true, Running: true, Deleting: true},
-	Deleting:  {Ready: true, Loading: true, Running: true, Prompting: true, Paused: true},
+	Ready:       {Loading: true, Running: true, Prompting: true, Paused: true, Deleting: true},
+	Loading:     {Ready: true, Running: true, Prompting: true, Paused: true, Deleting: true},
+	Running:     {Ready: true, Loading: true, Prompting: true, Paused: true, Deleting: true},
+	Prompting:   {Ready: true, Loading: true, Running: true, Paused: true, Deleting: true},
+	Paused:      {Loading: true, Running: true, Deleting: true},
+	Deleting:    {Ready: true, Loading: true, Running: true, Prompting: true, Paused: true},
+	Recoverable: {Loading: true, Running: true, Deleting: true},
 }
 
 // IsAllowedTransition reports whether from → to is permitted by the
