@@ -62,6 +62,14 @@ func TestReconcileOrphans_CleanAutoRemoved_DirtyBecomesRecoverable(t *testing.T)
 	assert.Equal(t, session.Recoverable, insts[0].GetStatus())
 	assert.Equal(t, "dirty", insts[0].Title)
 
+	// The placeholder must round-trip to InstanceData that preserves the
+	// worktree + IsExistingBranch — the contract that lets recover adopt the
+	// existing worktree in place and discard keep the branch.
+	rt := insts[0].ToInstanceData()
+	assert.Equal(t, dirtyWT, rt.Worktree.WorktreePath)
+	assert.True(t, rt.Worktree.IsExistingBranch)
+	assert.Equal(t, "u/dirty", rt.Branch)
+
 	// Branch of the auto-cleaned worktree must survive.
 	out, _ := exec.Command("git", "-C", repo, "branch", "--list", "u/clean").Output()
 	assert.Contains(t, string(out), "u/clean")

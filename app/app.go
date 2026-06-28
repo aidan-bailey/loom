@@ -923,6 +923,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case resumeDoneMsg:
 		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
+	case recoverDoneMsg:
+		if msg.err != nil {
+			return m, m.handleError(fmt.Errorf("recover %s: %w", msg.oldTitle, msg.err))
+		}
+		m.list.RemoveInstanceByTitle(msg.oldTitle)
+		m.list.AddInstance(msg.recovered)()
+		m.list.SelectInstance(msg.recovered)
+		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
+			log.For("app").Error("recover.save_failed", "title", msg.recovered.Title, "err", err)
+		}
+		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
 	case startFullScreenAttachMsg:
 		// Resolve the tmux session for the requested pane.
 		var ts *tmux.TmuxSession
@@ -1354,6 +1365,15 @@ type backgroundCleanupDoneMsg struct{}
 // resumeDoneMsg is returned by the Resume Cmd on success. Failures come
 // through transitionFailedMsg.
 type resumeDoneMsg struct{}
+
+// recoverDoneMsg is returned after a Recoverable orphan is adopted into a
+// live instance off the UI goroutine. The handler swaps the inline
+// placeholder for the recovered instance and persists.
+type recoverDoneMsg struct {
+	oldTitle  string
+	recovered *session.Instance
+	err       error
+}
 
 // fullScreenAttachTarget picks which tmux session (agent vs terminal) a
 // full-screen attach should target for the selected instance.
