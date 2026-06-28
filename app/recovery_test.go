@@ -1,0 +1,68 @@
+package app
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"charm.land/bubbles/v2/spinner"
+	cmd2 "github.com/aidan-bailey/loom/cmd"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/ui"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	out, err := c.CombinedOutput()
+	require.NoError(t, err, "git %v: %s", args, out)
+}
+
+// TestReconcileOrphans_CleanAutoRemoved_DirtyBecomesRecoverable exercises the
+// full reconcile path against real git worktrees: a clean orphan is auto-removed
+// (branch preserved), a dirty orphan surfaces as an inline Recoverable entry.
+func TestReconcileOrphans_CleanAutoRemoved_DirtyBecomesRecoverable(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "f"), []byte("x"), 0o644))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-qm", "init")
+
+	cfgDir := t.TempDir()
+	userDir := filepath.Join(cfgDir, "worktrees", "u")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+
+	cleanWT := filepath.Join(userDir, "clean_dead0001")
+	dirtyWT := filepath.Join(userDir, "dirty_dead0002")
+	runGit(t, repo, "worktree", "add", "-b", "u/clean", cleanWT)
+	runGit(t, repo, "worktree", "add", "-b", "u/dirty", dirtyWT)
+	// Make the dirty one dirty (uncommitted change).
+	require.NoError(t, os.WriteFile(filepath.Join(dirtyWT, "UNSAVED.txt"), []byte("wip"), 0o644))
+
+	sp := spinner.New()
+	list := ui.NewList(&sp, false)
+	h := &home{}
+
+	summary := h.reconcileOrphans(cfgDir, "true", list, nil, cmd2.MakeExecutor())
+
+	assert.Equal(t, 1, summary.cleaned, "clean orphan should be auto-removed")
+	assert.Equal(t, 1, summary.review, "dirty orphan should surface for review")
+	assert.NoDirExists(t, cleanWT, "clean worktree dir should be removed")
+	assert.DirExists(t, dirtyWT, "dirty worktree dir must be preserved")
+
+	insts := list.GetInstances()
+	require.Len(t, insts, 1, "exactly the dirty orphan is added inline")
+	assert.Equal(t, session.Recoverable, insts[0].GetStatus())
+	assert.Equal(t, "dirty", insts[0].Title)
+
+	// Branch of the auto-cleaned worktree must survive.
+	out, _ := exec.Command("git", "-C", repo, "branch", "--list", "u/clean").Output()
+	assert.Contains(t, string(out), "u/clean")
+}

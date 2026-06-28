@@ -326,6 +326,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	willRestoreSlots := len(savedOpen) > 0 && pendingDir == ""
 
 	cmdExec := cmd2.MakeExecutor()
+	var startupRecovery recoverySummary
 	if !willRestoreSlots {
 		// LoadAndReconcile centralizes RenameLegacySessions + per-record
 		// reconcile, and on a per-record failure stashes the raw data in
@@ -361,22 +362,17 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			inst.CrashRecovered = false
 		}
 
-		// Discover orphan worktrees (on disk but not in state.json)
-		// before CleanupOrphanedSessions runs — a recovered orphan
-		// claims its tmux session, so the orphan-tmux sweep below
-		// must not kill it. The user is prompted via the startup
-		// overlay (set up below in the picker-dispatch block).
-		h.recordOrphans(cfgDir, h.list.GetInstances(), storage, cmdExec)
+		// Discover orphan worktrees (on disk but not in state.json),
+		// auto-clean stale leftovers, and add inline Recoverable entries
+		// for any with unsaved work or a live agent. Runs before
+		// CleanupOrphanedSessions so a live recoverable's tmux (now a
+		// list instance) is exempted by the claimedTitles loop below.
+		startupRecovery = h.reconcileOrphans(cfgDir, program, h.list, storage, cmdExec)
 
 		// Clean up orphaned tmux sessions from previous crashes
 		claimedTitles := make(map[string]bool)
 		for _, inst := range h.list.GetInstances() {
 			claimedTitles[inst.Title] = true
-		}
-		// Also exempt orphan candidates: the user hasn't decided yet,
-		// and pre-emptively killing their tmux would lose the live PTY.
-		for _, cand := range h.pendingOrphans {
-			claimedTitles[cand.Title] = true
 		}
 		if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
 			log.For("app").Error("orphan_cleanup_failed", "err", err)
@@ -461,6 +457,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		registerNextOverlay()
 	}
 
+	h.showRecoverySummary(startupRecovery)
 	return h, nil
 }
 
@@ -496,19 +493,6 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		}
 	}
 
-	// Per-workspace orphan discovery, deferred until each slot has
-	// been appended to m.slots. This keeps activateWorkspace itself
-	// free of startup-only side effects (so mid-session callers like
-	// workspaceRegisteredMsg don't queue orphans the user can't act
-	// on — the overlay only opens from newHome's startup chain).
-	cmdExec := cmd2.MakeExecutor()
-	for _, slot := range m.slots {
-		if slot.wsCtx == nil {
-			continue
-		}
-		m.recordOrphans(slot.wsCtx.ConfigDir, slot.list.GetInstances(), slot.storage, cmdExec)
-	}
-
 	if len(m.slots) == 0 {
 		return
 	}
@@ -528,6 +512,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	}
 	m.loadSlot(focused)
 	m.updateTabBarStatuses()
+	m.showRecoverySummary(m.slots[focused].recovery)
 
 	if m.registry != nil {
 		if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
@@ -999,21 +984,6 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.activeCtx = config.WorkspaceContextFor(ws)
 
-		// Newly-registered workspaces commonly arrive with on-disk
-		// worktrees but no state.json entries — that's the whole
-		// reason the user is registering: a previous loom session
-		// lost its state. Run orphan discovery for the just-added
-		// slot so the recovery overlay gets one shot at surfacing
-		// them. Skipping this here would force the user to quit,
-		// add the workspace to open_workspaces manually, and
-		// relaunch — defeating the point of the register-on-startup
-		// flow.
-		cmdExec := cmd2.MakeExecutor()
-		if len(m.slots) > 0 {
-			newSlot := m.slots[len(m.slots)-1]
-			m.recordOrphans(newSlot.wsCtx.ConfigDir, newSlot.list.GetInstances(), newSlot.storage, cmdExec)
-		}
-
 		if err := m.registry.UpdateLastUsed(ws.Name); err != nil {
 			log.For("app").Debug("registry.update_last_used_failed", "workspace", ws.Name, "err", err)
 		}
@@ -1025,6 +995,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.focusedSlot = len(m.slots) - 1
 		m.loadSlot(m.focusedSlot)
 		m.updateTabBarStatuses()
+		m.showRecoverySummary(m.slots[m.focusedSlot].recovery)
 
 		// If discovery turned up anything, preempt the rest of the
 		// startup chain with the recovery overlay.
@@ -1639,13 +1610,9 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	if err != nil {
 		log.For("app").Error("workspace_load_instances_failed", "workspace", ws.Name, "err", err)
 	}
-	// Note: orphan discovery is intentionally NOT done here. It only
-	// runs during the startup paths (newHome's classic-mode load and
-	// restoreSavedWorkspaces) so the recovery overlay has a single
-	// fire-once trigger. Mid-session activations
-	// (applyWorkspaceToggle, workspaceRegisteredMsg) would otherwise
-	// queue orphans the user would never see — the overlay only opens
-	// from newHome.
+	// Orphan discovery runs here so every workspace-load path (startup
+	// picker, mid-session toggle, restore, registration) surfaces
+	// recovered sessions identically — no restart required.
 
 	list := ui.NewList(&m.spinner, m.autoYes)
 	hasWorkspaceTerminal := false
@@ -1720,6 +1687,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		splitPane.SetSize(paneWidth, contentHeight)
 	}
 
+	recovery := m.reconcileOrphans(wsCtx.ConfigDir, appConfig.GetProgram(), list, storage, cmdExec)
 	m.slots = append(m.slots, workspaceSlot{
 		wsCtx:     wsCtx,
 		storage:   storage,
@@ -1727,6 +1695,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		appState:  state,
 		list:      list,
 		splitPane: splitPane,
+		recovery:  recovery,
 	})
 	return nil
 }
@@ -2067,6 +2036,9 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	m.saveOpenWorkspaces()
+	if len(m.slots) > 0 {
+		m.showRecoverySummary(m.slots[m.focusedSlot].recovery)
+	}
 
 	// 4. Surface activation/deactivation errors to the user.
 	var msgs []string
