@@ -13,9 +13,11 @@ import (
 type ErrBox struct {
 	height, width int
 	err           error
+	info          string
 }
 
 var errStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000"))
+var infoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7AA2F7"))
 
 // NewErrBox constructs an empty ErrBox; the caller must SetSize before
 // the first render.
@@ -29,9 +31,16 @@ func (e *ErrBox) SetError(err error) {
 	e.err = err
 }
 
-// Clear removes the currently displayed error.
+// SetInfo sets a non-error status line (e.g. the recovery summary). An active
+// error takes precedence over info in String().
+func (e *ErrBox) SetInfo(msg string) {
+	e.info = msg
+}
+
+// Clear removes the currently displayed error and info line.
 func (e *ErrBox) Clear() {
 	e.err = nil
+	e.info = ""
 }
 
 // SetSize updates the rendering bounds.
@@ -41,14 +50,21 @@ func (e *ErrBox) SetSize(width, height int) {
 }
 
 func (e *ErrBox) String() string {
-	var err string
-	if e.err != nil {
-		err = e.err.Error()
-		lines := strings.Split(err, "\n")
-		err = strings.Join(lines, "//")
-		if runewidth.StringWidth(err) > e.width-3 && e.width-3 >= 0 {
-			err = runewidth.Truncate(err, e.width-3, "...")
+	var msg string
+	style := errStyle
+	switch {
+	case e.err != nil:
+		msg = e.err.Error()
+	case e.info != "":
+		msg = e.info
+		style = infoStyle
+	}
+	if msg != "" {
+		lines := strings.Split(msg, "\n")
+		msg = strings.Join(lines, "//")
+		if runewidth.StringWidth(msg) > e.width-3 && e.width-3 >= 0 {
+			msg = runewidth.Truncate(msg, e.width-3, "...")
 		}
 	}
-	return lipgloss.Place(e.width, e.height, lipgloss.Center, lipgloss.Center, errStyle.Render(err))
+	return lipgloss.Place(e.width, e.height, lipgloss.Center, lipgloss.Center, style.Render(msg))
 }
