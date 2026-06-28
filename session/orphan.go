@@ -301,6 +301,21 @@ func readWorktreeHEAD(worktreePath string) (string, error) {
 	return sha, nil
 }
 
+// RemoveOrphanWorktree removes an orphaned worktree directory while
+// preserving its branch (git worktree remove -f deletes the working tree
+// but never the branch). Used to auto-clean stale leftovers during
+// reconciliation. -f is required because the worktree may hold tracked
+// edits we have already decided to discard, or git may consider it dirty.
+func RemoveOrphanWorktree(repoPath, worktreePath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), orphanProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "remove", "-f", worktreePath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("remove worktree %s: %w (%s)", worktreePath, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // SanitizedToTmuxName mirrors tmux.ToLoomTmuxName. Re-exporting the
 // computation here keeps orphan discovery self-contained — callers
 // don't have to reach into the tmux package directly.
