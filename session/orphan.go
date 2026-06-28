@@ -52,6 +52,27 @@ type OrphanCandidate struct {
 	HasUncommittedChanges bool
 }
 
+// OrphanDisposition tells reconcileOrphans how to handle a candidate.
+type OrphanDisposition int
+
+const (
+	// DisposeClean: dead tmux and no uncommitted changes — a stale
+	// leftover. Auto-remove the worktree (branch preserved).
+	DisposeClean OrphanDisposition = iota
+	// DisposeReview: live tmux or uncommitted changes — surface inline
+	// as a Recoverable entry for the user to recover or discard.
+	DisposeReview
+)
+
+// Disposition buckets a candidate. Any signal of life (a running agent or
+// unsaved edits) routes to review; everything else is safe to auto-clean.
+func (c OrphanCandidate) Disposition() OrphanDisposition {
+	if c.HasLiveTmux || c.HasUncommittedChanges {
+		return DisposeReview
+	}
+	return DisposeClean
+}
+
 // orphanProbeTimeout caps each git/tmux subprocess invocation during
 // discovery. Discovery runs once at startup and shouldn't add
 // noticeable latency even with many worktrees.

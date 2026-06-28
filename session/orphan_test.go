@@ -179,6 +179,12 @@ func TestBuildOrphanCandidate_PopulatesDirtyFlag(t *testing.T) {
 	assert.True(t, cand.HasUncommittedChanges)
 }
 
+func TestOrphanCandidate_Disposition(t *testing.T) {
+	assert.Equal(t, DisposeClean, OrphanCandidate{}.Disposition())
+	assert.Equal(t, DisposeReview, OrphanCandidate{HasUncommittedChanges: true}.Disposition())
+	assert.Equal(t, DisposeReview, OrphanCandidate{HasLiveTmux: true}.Disposition())
+}
+
 // TestDiscoverOrphans_SkipsNonDirectoryEntries makes sure stray files
 // next to worktree subdirs (e.g. a .DS_Store, a stray log file)
 // don't get classified as orphans.
