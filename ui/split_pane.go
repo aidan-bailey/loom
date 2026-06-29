@@ -96,12 +96,18 @@ func (s *SplitPane) SetSize(width, height int) {
 	borderH := paneBodyBorder.GetHorizontalFrameSize()
 	bodyBorderV := paneBodyBorder.GetVerticalFrameSize() // bottom border only = 1
 
-	contentWidth := s.width - borderH
+	// Clamp every derived dimension to >= 0. A small terminal drives the content
+	// width to 0 (width-borderH) and the available height negative
+	// (height-paneChrome); feeding a negative size to a child pane panics its
+	// render path (strings.Repeat with a negative count, or a negative slice
+	// bound in renderPane). Clamping here is the single chokepoint that sizes all
+	// three children, so the whole view degrades to empty panes instead.
+	contentWidth := max(s.width-borderH, 0)
 
 	// Each pane = 1 (top border w/ title) + content + bodyBorderV (bottom border)
 	// Two panes: 2 top lines + 2× bodyBorderV + agentContent + terminalContent = height
 	paneChrome := 2 * (1 + bodyBorderV) // 2 panes × (top line + bottom border)
-	availableHeight := height - paneChrome
+	availableHeight := max(height-paneChrome, 0)
 
 	agentHeight := int(float64(availableHeight) * SplitAgentPercent)
 	terminalHeight := availableHeight - agentHeight
@@ -110,7 +116,7 @@ func (s *SplitPane) SetSize(width, height int) {
 	s.terminal.SetSize(contentWidth, terminalHeight)
 
 	// Diff overlay uses a single pane
-	s.diff.SetSize(contentWidth, height-1-bodyBorderV) // 1 top line + bottom border
+	s.diff.SetSize(contentWidth, max(height-1-bodyBorderV, 0)) // 1 top line + bottom border
 }
 
 // GetAgentSize returns the current width and height of the agent pane,
@@ -536,6 +542,9 @@ func diffTitle(percent float64) string {
 
 // renderPane wraps content in a bordered box with the title embedded in the top border line.
 func (s *SplitPane) renderPane(title, content string, innerHeight int, focused bool) string {
+	if innerHeight < 0 {
+		innerHeight = 0 // never slice/size with a negative bound (tiny terminal)
+	}
 	topLine := s.buildTopBorder(title, focused)
 
 	border := paneBodyBorder

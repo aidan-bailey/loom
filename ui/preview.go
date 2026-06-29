@@ -248,7 +248,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 // Returns the preview pane content as a string.
 func (p *PreviewPane) String() string {
 	if p.width == 0 || p.height == 0 {
-		return strings.Repeat("\n", p.height)
+		return strings.Repeat("\n", max(p.height, 0)) // height may be negative on a tiny terminal
 	}
 
 	if p.previewState.fallback {

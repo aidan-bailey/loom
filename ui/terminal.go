@@ -460,7 +460,7 @@ func (t *TerminalPane) String() string {
 	height := t.height
 
 	if width == 0 || height == 0 {
-		return strings.Repeat("\n", height)
+		return strings.Repeat("\n", max(height, 0)) // height may be negative on a tiny terminal
 	}
 
 	fallback := t.fallback
