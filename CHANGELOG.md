@@ -1,3 +1,9 @@
+## [0.2.2] - 2026-06-29
+
+### 🐛 Bug Fixes
+
+- *(ui)* Clamp pane dimensions on launch so a small terminal can't crash
+
 ## [0.2.1] - 2026-06-26
 
 ### 🐛 Bug Fixes
