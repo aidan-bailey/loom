@@ -15,7 +15,7 @@ Sessions in loom work in isolated git worktrees on independent branches. Bringin
 
 ## Non-goals
 
-- No support for merging into a session that is a workspace terminal, not yet started (`Ready`), or an ephemeral `Recoverable` entry — none of these have a stable branch/worktree to act on.
+- No support for merging into or from a session that is a workspace terminal (`IsWorkspaceTerminal`) — it runs in the root repo without an isolated branch/worktree to act on.
 - No custom merge-commit message, no rebase option, no squash option — plain `git merge <branch>`, matching git's own defaults.
 - No automatic conflict resolution or `merge --abort` on failure — a conflicted merge is left in place for the user (or the agent) to resolve, matching existing "don't paper over failures" conventions in this codebase.
 - No fetch/remote sync before merging — source and target worktrees share one local repository, so the source branch's commits are already reachable locally.
@@ -30,13 +30,13 @@ User presses `m` in stateDefault (not attached to a pane)
   → script dispatch (defaults.lua "m" binding) → cs.actions.merge_selected()
   → MergeSessionsIntent enqueued, coroutine yields
   → handleScriptIntent (app_scripts.go) → runMergeSelected(m)
-      → selectedMergeableTarget gate fails?
+      → selectedNotBusyNotWorkspace gate fails?
           → cs.notify() explains why (not eligible), resume coroutine, done
       → target.Worktree().IsDirty() == true?
           → cs.notify("commit or stash first"), resume coroutine, done
-      → build eligible source list: Running/Paused sessions in the current
-        workspace, excluding workspace terminals, Recoverable entries, and
-        the target itself
+      → build eligible source list: instances in the current workspace
+        passing the same not-Loading/not-Deleting/not-workspace-terminal
+        filter, excluding the target itself
       → list empty?
           → cs.notify("no other sessions to merge"), resume coroutine, done
       → open mergePicker overlay, m.state = stateMergePicker
@@ -62,15 +62,11 @@ New `ui/overlay/mergePicker.go`, modeled on the existing `WorkspacePicker`:
 
 ### Eligibility rules
 
-**Target (the currently-focused/selected session)** — gated by a new `selectedMergeableTarget(m *home) bool` predicate (`app/intents.go`), modeled on `selectedNotBusyNotWorkspace`:
-- Selected instance exists.
-- Not a workspace terminal (`IsWorkspaceTerminal`).
-- Not `Recoverable`.
-- Status is `Running` or `Paused` (has an actual branch to merge into).
+**Target (the currently-focused/selected session)** — gated by the existing `selectedNotBusyNotWorkspace(m *home) bool` predicate (`app/intents.go:41`), the same gate `push_selected`/`kill_selected`/`checkout_selected` already use: selected instance exists, is not a workspace terminal, and is not `Loading`/`Deleting`. This correctly includes `Running`, `Ready`, `Prompting`, `Paused`, and `Recoverable` — all of these carry a resolvable `GetGitWorktree()` (verified: `Ready`/`Prompting` are always post-`Start()` states in every reachable selection context, and `Recoverable` placeholders are reconstructed with real worktree/branch paths in `session/orphan.go`'s `InstanceDataFromOrphan`). No new predicate is introduced — reusing the established gate keeps merge's eligibility consistent with its siblings rather than inventing bespoke rules.
 
 The worktree-dirty check is *not* part of this static gate — it requires a live `git status` call, so it happens inside `runMergeSelected` right before the picker would open, not as a synchronous precondition used for menu/help-text enabling.
 
-**Sources (rows in the picker)** — same status filter (`Running` or `Paused`), same workspace as the target, excluding workspace terminals, `Recoverable` entries, and the target itself.
+**Sources (rows in the picker)** — same filter as the target (not `Loading`/`Deleting`, not a workspace terminal), same workspace as the target, excluding the target itself.
 
 ### Git operation
 
@@ -95,7 +91,7 @@ Runs `git merge <sourceBranch>` in the target worktree's directory via the exist
 
 | Situation | Behavior |
 |---|---|
-| Target fails `selectedMergeableTarget` | `cs.notify()` explaining why; no overlay opens. |
+| Target fails `selectedNotBusyNotWorkspace` (no selection, workspace terminal, or mid-transition) | `cs.notify()` explaining why; no overlay opens. |
 | Target worktree is dirty | `cs.notify("commit or stash first")`; no overlay opens; no git command runs. |
 | No eligible source sessions | `cs.notify("no other sessions to merge")`; no overlay opens. |
 | User cancels the picker (`esc`) | No git command runs; back to `stateDefault`. |
@@ -106,7 +102,7 @@ Runs `git merge <sourceBranch>` in the target worktree's directory via the exist
 ## Testing
 
 - `session/git`: table-driven tests for `Merge()` covering a clean fast-forward, a merge producing a merge commit, and a conflicting merge (assert `MERGE_HEAD` exists afterward, error surfaces the conflict, and no `merge --abort` is triggered).
-- `app/intents_test.go`-style tests for `selectedMergeableTarget` and `runMergeSelected`'s short-circuit paths (dirty target, empty source list, ineligible target), using the existing mock `cmd.Executor` pattern.
+- `app/intents_test.go`-style tests for `runMergeSelected`'s short-circuit paths (dirty target, empty source list, ineligible target via `selectedNotBusyNotWorkspace`), using the existing mock `cmd.Executor` pattern.
 - `ui/overlay`: unit tests for `mergePicker`'s cursor navigation, digit-jump, and selection commit, mirroring `workspacePicker_test.go`.
 - `script` package: a test asserting `m` is bound by default and dispatches `MergeSessionsIntent`, mirroring how `checkout_selected` is tested.
 - Since `runMergeSelected` mutates `m.state` and opens an overlay, it must run on the main goroutine inside `handleScriptIntent` (already guaranteed by the existing intent-handling flow) — no new goroutine-safety concerns are introduced, but a `-race` run is worth including given the new state + overlay field (per `CLAUDE.md`'s concurrency gotchas).
