@@ -30,6 +30,7 @@ func TestMigrationParity(t *testing.T) {
 		{"kill_selected", "D", script.KillSelectedIntent{Confirm: true}},
 		{"push_selected", "p", script.PushSelectedIntent{Confirm: true}},
 		{"checkout_selected", "c", script.CheckoutIntent{Confirm: true, Help: true}},
+		{"merge_selected", "m", script.MergeSessionsIntent{}},
 		{"resume_selected", "r", script.ResumeIntent{}},
 		{"show_help", "?", script.ShowHelpIntent{}},
 		{"workspace_picker", "W", script.WorkspacePickerIntent{}},
