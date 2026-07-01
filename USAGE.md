@@ -461,6 +461,12 @@ Profiles are defined in the `profiles` array; each entry needs a unique `name` a
 
 When `claude_remote_control` is enabled (the default), every Claude session Loom starts is launched with Claude's `--remote-control` flag, so you can drive it from a remote-control client. The remote session is named after the Loom session title (sanitized to a shell-safe token — e.g. `fix login bug` → `fix-login-bug`), making parallel sessions easy to tell apart. The flag is only added for the `claude` program; other agents are unaffected. To turn it off globally, set `"claude_remote_control": false`. If your `default_program` already includes `--remote-control`, Loom leaves it as-is rather than adding a second flag.
 
+**Authentication requirement.** Remote control requires a claude.ai OAuth login (Pro/Max/Team/Enterprise). API keys, Console accounts, and inference-scoped `setup-token`s cannot use it — nor can a login that's overridden by an `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` environment variable. Loom probes `claude auth status` once at startup:
+
+- **Logged in via claude.ai** → sessions launch with `--remote-control`.
+- **Incompatible auth detected** → when you create a session (`n`/`N`), Loom shows a modal explaining the problem (e.g. "not logged in — run `claude auth login`") and lets you **start the session without remote control** (`y`) or **cancel** (`n`/`esc`). Auto-created workspace terminals skip the flag silently and show a brief info-bar notice.
+- **Auth can't be determined** (older `claude` without `auth status`, or unexpected output) → Loom fails closed: it skips `--remote-control` silently rather than launching a session that would fail.
+
 ### Branch Prefix
 
 `branch_prefix` is prepended to every auto-generated branch name. The value shown as the default — `{username}/` — is a placeholder for the rendered text: when Loom creates its config, it resolves your OS username and writes the literal value (e.g. `aidanb/`) into `config.json`. There is no runtime token expansion, so editing `branch_prefix` to anything you like (e.g. `"loom/"`, `"wip-"`) works as expected.

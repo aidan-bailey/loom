@@ -171,6 +171,10 @@ type home struct {
 	quickInputBar *ui.QuickInputBar
 	// errBox displays error messages
 	errBox *ui.ErrBox
+	// rcAuth caches whether the current Claude authentication can drive
+	// --remote-control, detected once at startup (see remote_control.go).
+	// Global to the machine's login, so one probe covers every workspace.
+	rcAuth session.RemoteControlAuth
 	// global spinner instance. we plumb this down to where it's needed
 	spinner spinner.Model
 	// activeOverlay is the currently displayed modal (nil when no overlay
@@ -323,6 +327,12 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	willRestoreSlots := len(savedOpen) > 0 && pendingDir == ""
 
 	cmdExec := cmd2.MakeExecutor()
+	// Probe Claude auth once up front (before any workspace terminal is
+	// created) so remote-control launch decisions are synchronous and
+	// startup terminals aren't stripped of the flag by fail-closed timing.
+	if appConfig != nil && appConfig.RemoteControlEnabled() {
+		h.rcAuth = session.DetectClaudeRemoteControlAuth(program, cmdExec)
+	}
 	if !willRestoreSlots {
 		// LoadAndReconcile centralizes RenameLegacySessions + per-record
 		// reconcile, and on a per-record failure stashes the raw data in
@@ -385,10 +395,15 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			if wsCtx.Name != "" {
 				wtTitle = wsCtx.Name
 			}
+			if h.remoteControlBlocked(program) {
+				// Non-interactive startup: fall back silently but leave a note
+				// (no auto-hide Cmd loop here yet — it clears on the next event).
+				h.errBox.SetError(fmt.Errorf("remote control off: %s", h.rcAuth.Reason))
+			}
 			wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
 				Title:               wtTitle,
 				Path:                wsCtx.RepoPath,
-				Program:             remoteControlProgram(appConfig, program, wtTitle),
+				Program:             remoteControlProgram(appConfig, h.rcAuth, program, wtTitle),
 				IsWorkspaceTerminal: true,
 				ConfigDir:           cfgDir,
 			})
@@ -1587,10 +1602,13 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 			log.For("app").Debug("workspace_terminal.orphan_kill", "workspace", ws.Name, "err", err.Error())
 		}
 
+		if m.remoteControlBlocked(appConfig.GetProgram()) {
+			m.errBox.SetError(fmt.Errorf("remote control off: %s", m.rcAuth.Reason))
+		}
 		wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
 			Title:               wtTitle,
 			Path:                wsCtx.RepoPath,
-			Program:             remoteControlProgram(appConfig, appConfig.GetProgram(), wtTitle),
+			Program:             remoteControlProgram(appConfig, m.rcAuth, appConfig.GetProgram(), wtTitle),
 			IsWorkspaceTerminal: true,
 			ConfigDir:           wsCtx.ConfigDir,
 		})

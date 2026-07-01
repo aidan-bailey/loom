@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
+	"github.com/aidan-bailey/loom/ui/overlay"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -50,27 +51,33 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				selected.Prompt = prompt
 
-				// Enable Claude remote control after any profile override, so the
-				// rewritten program persists for later resume/crash restarts.
-				selected.Program = remoteControlProgram(m.appConfig, selected.Program, selected.Title)
-
-				_ = selected.TransitionTo(session.Loading)
-				m.newInstanceFinalizer()
-				m.dismissOverlay()
-				m.state = stateDefault
-				m.menu.SetState(ui.StateDefault)
-
-				startCmd := func() tea.Msg {
-					err := selected.Start(true)
-					return instanceStartedMsg{
-						instance:        selected,
-						err:             err,
-						promptAfterName: false,
-						selectedBranch:  selectedBranch,
-					}
+				// Finalize + launch. Remote control is applied in Sync (only
+				// added when auth is OK); when auth is Blocked we prompt first,
+				// and the same task runs on "start anyway".
+				startTask := overlay.ConfirmationTask{
+					Sync: func() {
+						selected.Program = remoteControlProgram(m.appConfig, m.rcAuth, selected.Program, selected.Title)
+						_ = selected.TransitionTo(session.Loading)
+						m.newInstanceFinalizer()
+						m.dismissOverlay()
+						m.state = stateDefault
+						m.menu.SetState(ui.StateDefault)
+					},
+					Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
+						err := selected.Start(true)
+						return instanceStartedMsg{
+							instance:        selected,
+							err:             err,
+							promptAfterName: false,
+							selectedBranch:  selectedBranch,
+						}
+					}),
 				}
 
-				return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), startCmd)
+				if m.remoteControlBlocked(selected.Program) {
+					return m, m.promptRemoteControlBlocked(startTask)
+				}
+				return m, tea.Batch(startTask.Run(), m.instanceChanged())
 			}
 
 			// Regular flow: instance already running, just send prompt

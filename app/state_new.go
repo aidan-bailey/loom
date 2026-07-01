@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
+	"github.com/aidan-bailey/loom/ui/overlay"
 
 	tea "charm.land/bubbletea/v2"
 	runewidth "github.com/mattn/go-runewidth"
@@ -50,28 +51,32 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(tea.RequestWindowSize, initialSearch)
 		}
 
-		// Enable Claude remote control now that the title is known, so the
-		// rewritten program persists for later resume/crash restarts.
-		instance.Program = remoteControlProgram(m.appConfig, instance.Program, instance.Title)
-
-		// Set Loading status and finalize into the list immediately
-		_ = instance.TransitionTo(session.Loading)
-		m.newInstanceFinalizer()
-		m.promptAfterName = false
-		m.state = stateDefault
-		m.menu.SetState(ui.StateDefault)
-
-		// Return a tea.Cmd that runs instance.Start in the background
-		startCmd := func() tea.Msg {
-			err := instance.Start(true)
-			return instanceStartedMsg{
-				instance:        instance,
-				err:             err,
-				promptAfterName: false,
-			}
+		// Finalize + launch. Remote control is applied in Sync (only added
+		// when auth is OK); when auth is Blocked we prompt first, and the
+		// same task runs on "start anyway".
+		startTask := overlay.ConfirmationTask{
+			Sync: func() {
+				instance.Program = remoteControlProgram(m.appConfig, m.rcAuth, instance.Program, instance.Title)
+				_ = instance.TransitionTo(session.Loading)
+				m.newInstanceFinalizer()
+				m.promptAfterName = false
+				m.state = stateDefault
+				m.menu.SetState(ui.StateDefault)
+			},
+			Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
+				err := instance.Start(true)
+				return instanceStartedMsg{
+					instance:        instance,
+					err:             err,
+					promptAfterName: false,
+				}
+			}),
 		}
 
-		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), startCmd)
+		if m.remoteControlBlocked(instance.Program) {
+			return m, m.promptRemoteControlBlocked(startTask)
+		}
+		return m, tea.Batch(startTask.Run(), m.instanceChanged())
 	case tea.KeyBackspace:
 		runes := []rune(instance.Title)
 		if len(runes) == 0 {
