@@ -31,25 +31,34 @@ User presses `m` in stateDefault (not attached to a pane)
   → MergeSessionsIntent enqueued, coroutine yields
   → handleScriptIntent (app_scripts.go) → runMergeSelected(m)
       → selectedNotBusyNotWorkspace gate fails?
-          → cs.notify() explains why (not eligible), resume coroutine, done
+          → m.handleError(...) explains why (not eligible), resume coroutine, done
       → target.Worktree().IsDirty() == true?
-          → cs.notify("commit or stash first"), resume coroutine, done
+          → m.handleError("commit or stash first"), resume coroutine, done
       → build eligible source list: instances in the current workspace
         passing the same not-Loading/not-Deleting/not-workspace-terminal
         filter, excluding the target itself
       → list empty?
-          → cs.notify("no other sessions to merge"), resume coroutine, done
-      → open mergePicker overlay, m.state = stateMergePicker
-  (user interacts with the overlay)
-  → Esc → close overlay, m.state = stateDefault, resume coroutine ("cancelled")
-  → Enter on a highlighted row → target.Worktree().Merge(source.Branch())
-      → close overlay, m.state = stateDefault
-      → resume coroutine with {ok, source, target, err}
-  → Lua: cs.notify("Merged 'source' into 'target'") on success,
-         cs.notify("Merge failed: <git output>") on failure/conflict
+          → m.handleError("no other sessions to merge"), resume coroutine, done
+      → open mergePicker overlay, m.state = stateMergePicker, resume coroutine
+  (Lua's role ends here — same as stateWorkspace/stateConfirm, everything
+   past this point is plain Go state-handler code, decoupled from the
+   Lua coroutine, which has already resumed)
+  → user interacts with the overlay (app/state_mergepicker.go)
+  → Esc → close overlay, m.state = stateDefault, no git command runs
+  → Enter on a highlighted row → close overlay, m.state = stateDefault,
+    return mergeActionFor(target, source) as a tea.Cmd
+      → tea.Cmd runs target.Worktree().Merge(source.Branch())
+      → returns nil on success (silent, matching pushActionFor's
+        convention — see app/intents.go:260) or the raw error on failure
+      → a plain `error` tea.Msg is caught by the existing `case error:`
+        branch in Update() (app/app.go:858), which calls m.handleError
+        and surfaces it in the same auto-clearing error bar every other
+        git-operation failure uses
 ```
 
-There is no separate yes/no confirmation dialog after the picker — the picker itself shows exactly which branch is about to be merged into the target before Enter is pressed, so a second confirmation would be redundant friction.
+`m.handleError(...)` for the precondition checks is the same direct-call pattern `runOpenWorkspacePicker` already uses for its own precondition failures (`app/intents.go:448`, `:451`) — these are synchronous handler-level checks, not something a Lua script observes or reacts to, so they bypass `cs.notify`/`host.Notify` entirely (that channel is for scripts calling `cs.notify` themselves, not for Go-side intent handlers).
+
+There is no separate yes/no confirmation dialog after the picker — the picker itself shows exactly which branch is about to be merged into the target before Enter is pressed, so a second confirmation would be redundant friction. There is also no success toast: `ErrBox` has no info-style channel today (see `app/app_scripts.go`'s comment on `Notify`), and `pushActionFor`/`CommitChanges` already treat "no error" as sufficient feedback for a git operation — merge follows that same convention rather than inventing a new notification channel.
 
 ### Picker overlay
 
@@ -91,12 +100,12 @@ Runs `git merge <sourceBranch>` in the target worktree's directory via the exist
 
 | Situation | Behavior |
 |---|---|
-| Target fails `selectedNotBusyNotWorkspace` (no selection, workspace terminal, or mid-transition) | `cs.notify()` explaining why; no overlay opens. |
-| Target worktree is dirty | `cs.notify("commit or stash first")`; no overlay opens; no git command runs. |
-| No eligible source sessions | `cs.notify("no other sessions to merge")`; no overlay opens. |
+| Target fails `selectedNotBusyNotWorkspace` (no selection, workspace terminal, or mid-transition) | `m.handleError(...)` explains why; no overlay opens. |
+| Target worktree is dirty | `m.handleError("commit or stash first")`; no overlay opens; no git command runs. |
+| No eligible source sessions | `m.handleError("no other sessions to merge")`; no overlay opens. |
 | User cancels the picker (`esc`) | No git command runs; back to `stateDefault`. |
-| Merge succeeds (fast-forward or merge commit) | `cs.notify("Merged '<source>' into '<target>'")`. |
-| Merge conflicts | Left in place (no auto-abort); `cs.notify()` surfaces git's raw stderr so the user knows to resolve it. Treated the same code path as any other non-zero-exit failure — no special-case conflict detection needed since git's own default behavior (leave `MERGE_HEAD` + markers, non-zero exit) already matches the desired UX. |
+| Merge succeeds (fast-forward or merge commit) | Silent — no toast, matching `pushActionFor`'s convention of treating "no error" as sufficient feedback. |
+| Merge conflicts | Left in place (no auto-abort); the `mergeActionFor` `tea.Cmd` (mirroring `pushActionFor`, `app/intents.go:260`) returns the wrapped git error, caught by the generic `case error:` in `Update()` (`app/app.go:858`) and shown in the auto-clearing error bar via `m.handleError`. Treated the same code path as any other non-zero-exit failure — no special-case conflict detection needed since git's own default behavior (leave `MERGE_HEAD` + markers, non-zero exit) already matches the desired UX. |
 | Other merge failure (e.g. unrelated histories, missing ref) | Same generic error surface as conflicts — git's message is passed through rather than reinterpreted. |
 
 ## Testing
