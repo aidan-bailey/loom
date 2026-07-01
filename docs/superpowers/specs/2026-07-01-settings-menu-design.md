@@ -91,11 +91,22 @@ Fix: give `config.Config` the same treatment as `config.State` — an unexported
 
 ### Daemon reload
 
-The daemon (`daemon/daemon.go`) is a separate OS process (`daemon.LaunchDaemon`, spawned via `exec.Command`), not a goroutine — it reads `cfg.DaemonPollInterval` and `cfg.AutoYes` once at startup (`daemon/daemon.go:212-225`) and caches them locally; it does not observe later changes to the same `config.json` written by another process.
+The daemon (`daemon/daemon.go`) is a separate OS process (`daemon.LaunchDaemon`, spawned via `exec.Command`), not a goroutine. `RunDaemon(cfg *config.Config, wsCtx *config.WorkspaceContext)` reads `cfg.DaemonPollInterval` once at startup (`daemon/daemon.go:218,225`) into a local `pollInterval` used by its `time.Timer`/`ticker.Reset` loop (`daemon/daemon.go:247-289`), and never re-reads it.
 
-Fix, scoped to these two fields only (everything else in `config.Config` is read fresh by the TUI process itself and needs no daemon involvement): at the top of every tick, the daemon re-reads `config.LoadConfigFrom(configDir)` — the same call `session/git/worktree.go` already makes fresh on every worktree creation, so it's an established, cheap, atomic-write-safe pattern — and diffs the result against its cached copy. If `DaemonPollInterval` changed, the ticker is reset to the new duration; if `AutoYes` changed, the cached flag gating auto-confirm behavior is updated. No IPC or signal handling is introduced.
+**Correction from the original draft of this section:** the daemon does *not* gate on the global `cfg.AutoYes` field at all — `RunDaemon` doesn't even receive it. Auto-confirm eligibility is decided per-instance (`eligibleForAutoYes`, `daemon/daemon.go:151-167`, checking `instance.AutoYes`), and that per-instance flag is stamped once at instance-creation time from `home.autoYes` (`app/app.go:1008-1009,1619,1906`). `home.autoYes` itself is resolved once in `main.go:167-171` from `cfg.AutoYes` plus the `--autoyes` CLI flag, and never re-read afterward. So global `AutoYes` is an **in-process staleness problem, not a daemon one** — see the note added to "Persistence and concurrency" below.
+
+Fix, scoped to `DaemonPollInterval` only: at the top of every tick, the daemon re-reads `config.LoadConfigFrom(configDir)` — the same call `session/git/worktree.go` already makes fresh on every worktree creation, so it's an established, cheap, atomic-write-safe pattern — and compares `DaemonPollInterval` against the cached copy. If it changed, `pollInterval` is updated before the existing `ticker.Reset(pollInterval)` call, so the very next tick already uses the new cadence. No IPC or signal handling is introduced.
 
 `ClaudeRemoteControl` needs no daemon-side change: it is read fresh from `m.appConfig` at every new-session creation inside the TUI process itself (`app/app.go:1655,1660`), never cached by the daemon.
+
+### Correction: in-process staleness beyond `config.Config` itself
+
+Two fields are cached in plain, non-`appConfig` fields on `home` and must be explicitly refreshed by the settings overlay's commit handler, not just left to "mutate `appConfig` in place":
+
+- **`DefaultProgram`**: `home.program` (`app/app.go:137`) is resolved once at startup (`main.go:162-164`, `cfg.GetProgram()` unless overridden by `--program`) and is what `runNewInstance`/`runPromptNewInstance` actually stamp onto new instances (`app/intents.go:112,136`), not a fresh `appConfig.GetProgram()` call. Committing a `Default Program` edit must also set `m.program = m.appConfig.GetProgram()`, or new instances created via `n`/`N` keep using the stale value.
+- **`AutoYes`**: `home.autoYes` (`app/app.go:137`) is resolved once in `main.go:167-171` and used as the default stamped onto every newly-created instance (`app/app.go:1008-1009,1619,1906`). Committing an `Auto Yes` edit must also set `m.autoYes = m.appConfig.AutoYes`.
+
+Both are plain `bool`/`string` fields read only on the main goroutine (view rendering, instance creation during key handling), so updating them from the settings overlay's commit handler — itself running on the main goroutine — needs no additional locking beyond the `config.Config` mutex already covering `appConfig` itself.
 
 ## Testing
 
