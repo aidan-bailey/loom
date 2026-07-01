@@ -61,7 +61,7 @@ func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 	m.state = stateSettings
 
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"}) // Auto Yes row
-	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})  // toggle on
+	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})   // toggle on
 
 	reloaded := config.LoadConfigFrom(m.activeCtx.ConfigDir)
 	require.NotNil(t, reloaded)

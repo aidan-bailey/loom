@@ -212,6 +212,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `D` | Kill selected session (with confirmation) |
 | `d` | Toggle diff overlay |
 | `W` | Open workspace picker |
+| `S` | Open settings (edit config.json: Default Program, Auto Yes, Daemon Poll Interval, Branch Prefix, Profiles, Claude Preferences) |
 | `l` / `[` | Previous workspace tab |
 | `;` / `]` | Next workspace tab |
 | `?` | Show help screen |

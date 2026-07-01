@@ -97,6 +97,7 @@ loom --workspace <name>
 | `d` | Toggle diff overlay |
 | `up`/`k`, `down`/`j` | Navigate sessions |
 | `W` | Workspace picker |
+| `S` | Open settings |
 | `l`/`[`, `;`/`]` | Previous/next workspace tab |
 | `?` | Help |
 | `q` | Quit |
