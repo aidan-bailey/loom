@@ -33,6 +33,7 @@ func TestMigrationParity(t *testing.T) {
 		{"resume_selected", "r", script.ResumeIntent{}},
 		{"show_help", "?", script.ShowHelpIntent{}},
 		{"workspace_picker", "W", script.WorkspacePickerIntent{}},
+		{"open_settings", "S", script.SettingsIntent{}},
 		{"fullscreen_attach_agent", "alt+a", script.FullscreenAttachIntent{Pane: script.AttachPaneAgent}},
 		{"fullscreen_attach_terminal", "alt+t", script.FullscreenAttachIntent{Pane: script.AttachPaneTerminal}},
 		{"inline_attach_agent", "ctrl+a", script.InlineAttachIntent{Pane: script.AttachPaneAgent}},

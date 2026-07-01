@@ -112,6 +112,8 @@ const (
 	// closes (Esc) or the user picks a file (Enter -> $EDITOR via
 	// tea.ExecProcess).
 	stateFileExplorer
+	// stateSettings is the state when the settings overlay is displayed.
+	stateSettings
 )
 
 // workspaceSlot bundles per-workspace state so multiple workspaces can be
@@ -1240,6 +1242,8 @@ func (m *home) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return handleStateQuickInteractKey(m, msg)
 	case stateWorkspace:
 		return handleStateWorkspaceKey(m, msg)
+	case stateSettings:
+		return handleStateSettingsKey(m, msg)
 	case stateConfirm:
 		return handleStateConfirmKey(m, msg)
 	case stateFileExplorer:
@@ -2068,7 +2072,7 @@ func (m *home) View() tea.View {
 				m.activeOverlay.View()))
 		}
 		switch m.state {
-		case statePrompt, stateHelp, stateConfirm, stateWorkspace:
+		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateSettings:
 			return asView(overlay.PlaceOverlay(0, 0, m.activeOverlay.View(), mainView, true, true))
 		}
 	}

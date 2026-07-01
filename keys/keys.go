@@ -39,6 +39,7 @@ const (
 	KeyQuickInputTerminal
 	KeyDirectAttachAgent
 	KeyDirectAttachTerminal
+	KeySettings
 )
 
 // keyStringToName is the reverse lookup derived from GlobalkeyBindings. It
@@ -114,6 +115,11 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyWorkspace: key.NewBinding(
 		key.WithKeys("W"),
 		key.WithHelp("W", "workspace"),
+	),
+
+	KeySettings: key.NewBinding(
+		key.WithKeys("S"),
+		key.WithHelp("S", "settings"),
 	),
 
 	KeyWorkspaceLeft: key.NewBinding(

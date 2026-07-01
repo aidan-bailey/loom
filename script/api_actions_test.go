@@ -189,6 +189,18 @@ func TestCsActionsOpenWorkspacePickerEnqueues(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestCsActionsOpenSettingsEnqueues(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("S", function() cs.actions.open_settings() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "S")
+	_, ok := h.enqueued[0].(SettingsIntent)
+	assert.True(t, ok)
+}
+
 func TestCsActionsInlineAttachPanes(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()

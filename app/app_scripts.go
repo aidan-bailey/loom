@@ -499,6 +499,8 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 		_, cmd = runShowHelp(m)
 	case script.WorkspacePickerIntent:
 		_, cmd = runOpenWorkspacePicker(m)
+	case script.SettingsIntent:
+		_, cmd = runOpenSettings(m)
 	case script.InlineAttachIntent:
 		if !selectedReadyForInput(m) {
 			break

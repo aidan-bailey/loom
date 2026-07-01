@@ -462,6 +462,19 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// runOpenSettings opens the settings overlay over the active workspace's
+// config. authBlocked/authReason are passed as plain values (not
+// session.RemoteControlAuth) to keep ui/overlay decoupled from session.
+func runOpenSettings(m *home) (tea.Model, tea.Cmd) {
+	if m.appConfig == nil {
+		return m, m.handleError(fmt.Errorf("no configuration loaded"))
+	}
+	so := overlay.NewSettingsOverlay(m.appConfig, m.rcAuth.Blocked(), m.rcAuth.Reason)
+	m.setOverlay(so, overlaySettings)
+	m.state = stateSettings
+	return m, nil
+}
+
 // -- File explorer --
 
 // runToggleFileExplorer opens the file-explorer overlay scoped to the

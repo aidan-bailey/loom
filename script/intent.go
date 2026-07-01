@@ -75,6 +75,9 @@ type ShowHelpIntent struct{}
 // switching between registered workspaces.
 type WorkspacePickerIntent struct{}
 
+// SettingsIntent opens the settings overlay for editing config.json fields.
+type SettingsIntent struct{}
+
 // InlineAttachIntent asks the app to inline-attach to the named pane
 // (keystrokes route to tmux until the user detaches with ctrl+q).
 type InlineAttachIntent struct{ Pane AttachPane }
@@ -101,6 +104,7 @@ func (ResumeIntent) intent()             {}
 func (NewInstanceIntent) intent()        {}
 func (ShowHelpIntent) intent()           {}
 func (WorkspacePickerIntent) intent()    {}
+func (SettingsIntent) intent()           {}
 func (InlineAttachIntent) intent()       {}
 func (FullscreenAttachIntent) intent()   {}
 func (QuickInputIntent) intent()         {}

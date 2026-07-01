@@ -28,6 +28,9 @@ cs.bind("l", function() cs.actions.workspace_prev() end)
 cs.bind("]", function() cs.actions.workspace_next() end,        { help = "next ws" })
 cs.bind(";", function() cs.actions.workspace_next() end)
 
+-- Settings
+cs.bind("S", function() cs.actions.open_settings() end,        { help = "settings" })
+
 -- Interact (focus a pane: keys + mouse route into the agent; single esc reaches
 -- the agent, double-esc or ctrl+q returns to nav). i/ctrl+a target the agent.
 cs.bind("i",      function() cs.actions.inline_attach_agent() end,        { help = "interact (agent)" })

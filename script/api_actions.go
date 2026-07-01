@@ -231,6 +231,10 @@ func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 		return enqueue(L, WorkspacePickerIntent{})
 	}))
 
+	actions.RawSetString("open_settings", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, SettingsIntent{})
+	}))
+
 	actions.RawSetString("inline_attach_agent", L.NewFunction(func(L *lua.LState) int {
 		return enqueue(L, InlineAttachIntent{Pane: AttachPaneAgent})
 	}))

@@ -103,6 +103,7 @@ var (
 
 	generalOtherEntries = []helpEntry{
 		{bindings: []keys.KeyName{keys.KeyWorkspace}, desc: "Switch workspace"},
+		{bindings: []keys.KeyName{keys.KeySettings}, desc: "Open settings"},
 		{bindings: []keys.KeyName{keys.KeyDiff}, desc: "Toggle diff overlay"},
 		{bindings: []keys.KeyName{keys.KeyQuit}, desc: "Quit the application"},
 	}
