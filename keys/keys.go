@@ -26,6 +26,7 @@ const (
 	KeySubmit
 	KeySubmitName
 	KeyCheckout
+	KeyMerge
 	KeyResume
 	KeyPrompt
 	KeyHelp
@@ -106,6 +107,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyCheckout: key.NewBinding(
 		key.WithKeys("c"),
 		key.WithHelp("c", "checkout"),
+	),
+	KeyMerge: key.NewBinding(
+		key.WithKeys("m"),
+		key.WithHelp("m", "merge session"),
 	),
 	KeyResume: key.NewBinding(
 		key.WithKeys("r"),

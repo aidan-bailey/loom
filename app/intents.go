@@ -550,3 +550,110 @@ func resolveEditor() string {
 	}
 	return "vi"
 }
+
+// -- Merge --
+
+// runMergeSelected opens the merge-picker overlay for the currently
+// focused session, following the same precondition-then-open shape as
+// runOpenWorkspacePicker. Reuses selectedNotBusyNotWorkspace — the same
+// gate push/kill/checkout already use — rather than inventing bespoke
+// eligibility rules; see
+// docs/superpowers/specs/2026-07-01-git-merge-hotkey-design.md.
+func runMergeSelected(m *home) (tea.Model, tea.Cmd) {
+	if !selectedNotBusyNotWorkspace(m) {
+		return m, m.handleError(fmt.Errorf("no session selected, or the selection can't be merged into"))
+	}
+	target := m.list.GetSelectedInstance()
+
+	worktree, err := target.GetGitWorktree()
+	if err != nil {
+		return m, m.handleError(fmt.Errorf("merge: %w", err))
+	}
+	dirty, err := worktree.IsDirty()
+	if err != nil {
+		return m, m.handleError(fmt.Errorf("merge: failed to check worktree status: %w", err))
+	}
+	if dirty {
+		return m, m.handleError(fmt.Errorf("session '%s' has uncommitted changes — commit or stash before merging", target.Title))
+	}
+
+	rows := mergeSourceRows(m.list.GetInstances(), target)
+	if len(rows) == 0 {
+		return m, m.handleError(fmt.Errorf("no other sessions available to merge into '%s'", target.Title))
+	}
+
+	m.pendingMergeTarget = target
+	m.pendingMergeSourceItems = make([]*session.Instance, len(m.list.GetInstances()))
+	copy(m.pendingMergeSourceItems, m.list.GetInstances())
+
+	m.setOverlay(overlay.NewMergePicker(target.Title, rows), overlayMergePicker)
+	m.state = stateMergePicker
+	return m, nil
+}
+
+// mergeSourceRows builds the picker's row list: every instance in
+// items passing the same eligibility filter as the target
+// (selectedNotBusyNotWorkspace's rules, applied per-instance) except
+// the target itself, labeled with its original position in items
+// (ui.DisplayIndex) so a typed digit matches what's on-screen in the
+// main list.
+func mergeSourceRows(items []*session.Instance, target *session.Instance) []overlay.MergePickerRow {
+	var rows []overlay.MergePickerRow
+	for i, inst := range items {
+		if inst == target || inst.IsWorkspaceTerminal {
+			continue
+		}
+		status := inst.GetStatus()
+		if status == session.Loading || status == session.Deleting {
+			continue
+		}
+		rows = append(rows, overlay.MergePickerRow{
+			Index:  ui.DisplayIndex(items, i),
+			Title:  inst.Title,
+			Branch: inst.GetBranch(),
+			Status: status.String(),
+		})
+	}
+	return rows
+}
+
+// instanceByDisplayIndex returns the instance whose ui.DisplayIndex
+// position (the same number rendered in the main list) matches idx, or
+// nil if none matches. Called against m.pendingMergeSourceItems — a
+// snapshot frozen at the moment the picker opened, not live m.list data
+// — so a background message reassigning m.list's selection while the
+// picker is open can't redirect the merge to a different session (see
+// runMergeSelected). The trade-off: if a source instance is killed or
+// otherwise removed from m.list between the picker opening and commit,
+// this can still resolve it from the snapshot; the subsequent git
+// merge attempt then simply fails with a normal surfaced git error
+// (e.g. a missing branch/worktree) rather than silently succeeding or
+// corrupting anything — an accepted, bounded failure mode, not a
+// re-validated precondition.
+func instanceByDisplayIndex(items []*session.Instance, idx int) *session.Instance {
+	for i, inst := range items {
+		if ui.DisplayIndex(items, i) == idx {
+			return inst
+		}
+	}
+	return nil
+}
+
+// mergeActionFor returns the tea.Cmd that performs the actual git
+// merge once the user commits a selection in the picker. Mirrors
+// pushActionFor: returns nil on success (silent, matching push's
+// convention of treating "no error" as sufficient feedback) or the
+// wrapped git error, which Update()'s case error: branch surfaces via
+// m.handleError.
+func mergeActionFor(target, source *session.Instance) tea.Cmd {
+	return func() tea.Msg {
+		worktree, err := target.GetGitWorktree()
+		if err != nil {
+			return fmt.Errorf("merge: %w", err)
+		}
+		if err := worktree.Merge(source.GetBranch()); err != nil {
+			return err
+		}
+		return nil
+	}
+}

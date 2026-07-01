@@ -22,7 +22,7 @@ func TestEngineLoadsEmbeddedDefaults(t *testing.T) {
 	bound := e.actionKeys()
 	for _, k := range []string{
 		"up", "k", "down", "j", "d",
-		"n", "N", "D", "p", "c", "r", "?", "q",
+		"n", "N", "D", "p", "c", "r", "?", "q", "m",
 		"W", "[", "l", "]", ";",
 		"alt+a", "alt+t", "ctrl+a", "ctrl+t",
 		"a", "t",

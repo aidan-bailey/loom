@@ -258,6 +258,18 @@ func TestCsActionsQuickInputPanes(t *testing.T) {
 	assert.Equal(t, AttachPaneTerminal, term.Pane)
 }
 
+func TestCsActionsMergeSelectedEnqueues(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("m", function() cs.actions.merge_selected() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "m")
+	_, ok := h.enqueued[0].(MergeSessionsIntent)
+	assert.True(t, ok)
+}
+
 func TestCsActionsSyncPrimitivesCallHost(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()

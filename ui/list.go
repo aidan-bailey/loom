@@ -214,6 +214,21 @@ func (r *InstanceRenderer) setWidth(width int) {
 	r.width = AdjustPreviewWidth(width)
 }
 
+// DisplayIndex returns the 1-based number shown in the list UI for the
+// item at position i in items. A leading workspace terminal (position
+// 0) is numbered 0, not 1, so every other item's displayed number is
+// offset by one relative to its slice position. Exported so callers
+// that build a session-index picker from the same items (e.g. the
+// merge picker) label rows with the exact number the user already saw
+// in the main list.
+func DisplayIndex(items []*session.Instance, i int) int {
+	wsOffset := 0
+	if len(items) > 0 && items[0].IsWorkspaceTerminal {
+		wsOffset = 1
+	}
+	return i + 1 - wsOffset
+}
+
 // ɹ and ɻ are other options.
 const branchIcon = "Ꮧ"
 
@@ -417,15 +432,11 @@ func (l *List) String() string {
 	b.WriteString("\n")
 	b.WriteString("\n")
 
-	// Render only the visible window of items. Workspace terminal at index 0
-	// gets number 0, regular instances are numbered starting from 1.
-	wsOffset := 0
-	if len(l.items) > 0 && l.items[0].IsWorkspaceTerminal {
-		wsOffset = 1
-	}
+	// Render only the visible window of items. See DisplayIndex for the
+	// workspace-terminal numbering rule.
 	for i := startIdx; i < endIdx; i++ {
 		item := l.items[i]
-		num := i + 1 - wsOffset
+		num := DisplayIndex(l.items, i)
 		b.WriteString(l.renderer.Render(item, num, i == l.selectedIdx, len(l.repos) > 1))
 		if i != endIdx-1 {
 			b.WriteString("\n\n")

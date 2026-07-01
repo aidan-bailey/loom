@@ -96,6 +96,12 @@ type QuickInputIntent struct{ Pane AttachPane }
 // and invokes $EDITOR on Enter.
 type ToggleFileExplorerIntent struct{}
 
+// MergeSessionsIntent asks the app to open the merge-session picker for
+// the currently-selected instance. The picker itself (and the merge it
+// performs on commit) run entirely as plain Go state-handler code once
+// opened — this intent's only job is getting the picker on screen.
+type MergeSessionsIntent struct{}
+
 func (QuitIntent) intent()               {}
 func (PushSelectedIntent) intent()       {}
 func (KillSelectedIntent) intent()       {}
@@ -109,3 +115,4 @@ func (InlineAttachIntent) intent()       {}
 func (FullscreenAttachIntent) intent()   {}
 func (QuickInputIntent) intent()         {}
 func (ToggleFileExplorerIntent) intent() {}
+func (MergeSessionsIntent) intent()      {}

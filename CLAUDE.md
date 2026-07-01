@@ -89,6 +89,7 @@ loom --workspace <name>
 | `D` | Kill instance |
 | `p` | Push branch |
 | `c` | Checkout branch |
+| `m` | Merge another session's branch into the current one |
 | `a` | Quick input bar (send to agent) |
 | `t` | Quick input bar (send to terminal) |
 | `d` | Toggle diff overlay |

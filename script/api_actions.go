@@ -257,6 +257,10 @@ func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 	actions.RawSetString("toggle_file_explorer", L.NewFunction(func(L *lua.LState) int {
 		return enqueue(L, ToggleFileExplorerIntent{})
 	}))
+
+	actions.RawSetString("merge_selected", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, MergeSessionsIntent{})
+	}))
 }
 
 // optBool reads a boolean field from the single table argument at

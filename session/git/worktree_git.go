@@ -191,6 +191,20 @@ func (g *GitWorktree) CommitChanges(commitMessage string) error {
 	return nil
 }
 
+// Merge runs `git merge <sourceBranch>` in the worktree's directory,
+// bringing another session's branch into this one. On conflict or any
+// other non-zero exit, the git error/output is returned as-is and the
+// merge is left exactly as git leaves it (MERGE_HEAD + conflict
+// markers on a real conflict) — callers must not run `merge --abort`
+// automatically, so a conflicted merge stays available for the user
+// (or the agent) to resolve and commit.
+func (g *GitWorktree) Merge(sourceBranch string) error {
+	if _, err := g.runGitCommand(g.worktreePath, "merge", sourceBranch); err != nil {
+		return fmt.Errorf("failed to merge %s: %w", sourceBranch, err)
+	}
+	return nil
+}
+
 // IsDirty checks if the worktree has uncommitted changes
 func (g *GitWorktree) IsDirty() (bool, error) {
 	output, err := g.runGitCommand(g.worktreePath, "status", "--porcelain")

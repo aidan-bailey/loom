@@ -206,6 +206,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `a` | Quick input to agent |
 | `t` | Quick input to terminal |
 | `c` | Checkout — commit changes and pause session |
+| `m` | Merge another session's branch into the current one |
 | `r` | Resume a paused session |
 | `p` | Push branch to remote (with confirmation) |
 | `D` | Kill selected session (with confirmation) |

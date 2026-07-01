@@ -113,6 +113,9 @@ const (
 	stateFileExplorer
 	// stateSettings is the state when the settings overlay is displayed.
 	stateSettings
+	// stateMergePicker is the state when the merge-session picker
+	// overlay is displayed (opened by the 'm' key).
+	stateMergePicker
 )
 
 // workspaceSlot bundles per-workspace state so multiple workspaces can be
@@ -195,6 +198,18 @@ type home struct {
 	// pendingAttachTarget is the instance whose tmux session should be
 	// full-screen-attached after the attach help overlay is dismissed.
 	pendingAttachTarget *session.Instance
+	// pendingMergeTarget and pendingMergeSourceItems capture the merge
+	// target instance and a snapshot of the eligible source list at the
+	// moment the merge picker opens. A background message unrelated to
+	// key input (e.g. recoverDoneMsg reassigning m.list's selection, or
+	// a kill/resume completing) can still land while stateMergePicker is
+	// active — m.state only gates key-press routing, not arbitrary
+	// tea.Msg handling in Update(). Re-querying m.list live when Enter
+	// is pressed would let such a background change silently swap which
+	// instances the merge acts on. Both fields are cleared once the
+	// picker closes.
+	pendingMergeTarget      *session.Instance
+	pendingMergeSourceItems []*session.Instance
 
 	// -- Workspace slots --
 
@@ -1190,7 +1205,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnE
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker {
 		return nil, false
 	}
 	// If it maps to a built-in binding, highlight the corresponding menu
@@ -1238,6 +1253,8 @@ func (m *home) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return handleStateConfirmKey(m, msg)
 	case stateFileExplorer:
 		return handleStateFileExplorerKey(m, msg)
+	case stateMergePicker:
+		return handleStateMergePickerKey(m, msg)
 	default:
 		return handleStateDefaultKey(m, msg)
 	}
@@ -2056,7 +2073,7 @@ func (m *home) View() tea.View {
 				m.activeOverlay.View()))
 		}
 		switch m.state {
-		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateSettings:
+		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateSettings, stateMergePicker:
 			return asView(overlay.PlaceOverlay(0, 0, m.activeOverlay.View(), mainView, true, true))
 		}
 	}
