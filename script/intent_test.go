@@ -25,4 +25,5 @@ func TestIntentTypesImplementInterface(t *testing.T) {
 	var _ Intent = InlineAttachIntent{Pane: AttachPaneAgent}
 	var _ Intent = FullscreenAttachIntent{Pane: AttachPaneTerminal}
 	var _ Intent = QuickInputIntent{Pane: AttachPaneAgent}
+	var _ Intent = MergeSessionsIntent{}
 }
