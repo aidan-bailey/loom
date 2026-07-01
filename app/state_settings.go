@@ -10,9 +10,9 @@ import (
 
 // handleStateSettingsKey drives the settings overlay. Every key press
 // may report a field change; when it does, the change is persisted to
-// disk and the two home fields that shadow appConfig (m.program,
-// m.autoYes) are refreshed so new-instance creation picks up the new
-// values immediately instead of using a stale cached copy.
+// disk and the home field that shadows appConfig (m.program) is
+// refreshed so new-instance creation picks up the new value immediately
+// instead of using a stale cached copy.
 func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	so := m.settingsOverlay()
 	if so == nil {
@@ -31,7 +31,6 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.program = m.appConfig.GetProgram()
-		m.autoYes = m.appConfig.AutoYes
 	}
 
 	if closed {

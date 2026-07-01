@@ -12,7 +12,6 @@ import (
 func newTestSettingsCfg() *config.Config {
 	return &config.Config{
 		DefaultProgram:     "claude",
-		AutoYes:            false,
 		DaemonPollInterval: 1000,
 		BranchPrefix:       "aidan/",
 	}
@@ -42,22 +41,6 @@ func TestSettingsOverlayNavigationDoesNotOverflow(t *testing.T) {
 		so.HandleKeyPress(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	}
 	assert.Equal(t, 0, so.cursor)
-}
-
-func TestSettingsOverlayTogglesAutoYes(t *testing.T) {
-	cfg := newTestSettingsCfg()
-	so := NewSettingsOverlay(cfg, false, "")
-	so.cursor = int(settingsFieldAutoYes)
-
-	closed, changed := so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
-	assert.False(t, closed)
-	assert.True(t, changed)
-	assert.True(t, cfg.AutoYes)
-
-	closed, changed = so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
-	assert.False(t, closed)
-	assert.True(t, changed)
-	assert.False(t, cfg.AutoYes)
 }
 
 func TestSettingsOverlayEscCloses(t *testing.T) {

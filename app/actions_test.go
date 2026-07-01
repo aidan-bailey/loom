@@ -22,7 +22,7 @@ import (
 func newTestHome(t *testing.T) *home {
 	t.Helper()
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s, false)
+	list := ui.NewList(&s)
 
 	cfgDir := t.TempDir()
 	state := config.LoadStateFrom(cfgDir)

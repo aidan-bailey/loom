@@ -99,9 +99,9 @@ func ctxBranchPrefix(L *lua.LState) int {
 }
 
 // ctxNewInstance accepts a table with at least a `title` key and
-// optional `program`, `prompt`, `auto_yes`, `branch`, and `path`
-// fields. It creates the instance immediately and queues it with the
-// host so the main goroutine can finalize its addition to the list.
+// optional `program`, `prompt`, `branch`, and `path` fields. It creates
+// the instance immediately and queues it with the host so the main
+// goroutine can finalize its addition to the list.
 func ctxNewInstance(L *lua.LState) int {
 	c := checkCtx(L, 1)
 	opts := L.CheckTable(2)
@@ -114,13 +114,11 @@ func ctxNewInstance(L *lua.LState) int {
 	path := luaTableString(opts, "path", c.host.RepoPath())
 	prompt := luaTableString(opts, "prompt", "")
 	branch := luaTableString(opts, "branch", "")
-	autoYes := luaTableBool(opts, "auto_yes", false)
 
 	inst, err := session.NewInstance(session.InstanceOptions{
 		Title:     title,
 		Path:      path,
 		Program:   program,
-		AutoYes:   autoYes,
 		Branch:    branch,
 		ConfigDir: c.host.ConfigDir(),
 	})
@@ -180,17 +178,6 @@ func luaTableString(t *lua.LTable, key, def string) string {
 	}
 	if s, ok := v.(lua.LString); ok {
 		return string(s)
-	}
-	return def
-}
-
-func luaTableBool(t *lua.LTable, key string, def bool) bool {
-	v := t.RawGetString(key)
-	if v == lua.LNil {
-		return def
-	}
-	if b, ok := v.(lua.LBool); ok {
-		return bool(b)
 	}
 	return def
 }

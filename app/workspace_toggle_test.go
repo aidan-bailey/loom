@@ -46,7 +46,7 @@ func TestApplyWorkspaceToggle_GlobalToGlobalPersists(t *testing.T) {
 	require.NoError(t, err)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s, false)
+	list := ui.NewList(&s)
 
 	h := &home{
 		ctx:       context.Background(),
@@ -84,7 +84,7 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 	require.NoError(t, err)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s, false)
+	list := ui.NewList(&s)
 
 	h := &home{
 		ctx:       context.Background(),
@@ -120,7 +120,7 @@ func TestEnterGlobalMode_ClearsActiveCtxAndSlots(t *testing.T) {
 	t.Setenv("LOOM_HOME", t.TempDir())
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s, false)
+	list := ui.NewList(&s)
 
 	h := &home{
 		ctx:       context.Background(),
@@ -159,12 +159,12 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 	slotRecA := &recordingInstanceStorage{}
 	storageA, err := session.NewStorage(slotRecA, t.TempDir())
 	require.NoError(t, err)
-	slotARecListings := ui.NewList(&s, false)
+	slotARecListings := ui.NewList(&s)
 
 	slotRecB := &recordingInstanceStorage{}
 	storageB, err := session.NewStorage(slotRecB, t.TempDir())
 	require.NoError(t, err)
-	slotBRecListings := ui.NewList(&s, false)
+	slotBRecListings := ui.NewList(&s)
 
 	h := &home{
 		ctx:         context.Background(),

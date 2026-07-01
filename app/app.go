@@ -51,13 +51,12 @@ var statusLineStyle = lipgloss.NewStyle().
 //   - appConfig is the pre-loaded config from the resolved workspace dir.
 //   - program overrides the default agent command for new instances
 //     (empty string uses appConfig.GetProgram()).
-//   - autoYes enables the daemon-driven auto-confirm flow.
 //   - pendingDir is an optional directory to seed the new-instance
 //     overlay with (used by `loom` invoked from a non-workspace dir).
 //   - noScripts disables loading user scripts from ~/.loom/scripts;
 //     embedded defaults still load so core keybindings work.
-func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string, noScripts bool) error {
-	h, err := newHome(ctx, wsCtx, registry, appConfig, program, autoYes, pendingDir, noScripts)
+func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, pendingDir string, noScripts bool) error {
+	h, err := newHome(ctx, wsCtx, registry, appConfig, program, pendingDir, noScripts)
 	if err != nil {
 		return err
 	}
@@ -136,7 +135,6 @@ type home struct {
 	// -- Storage and Configuration --
 
 	program string
-	autoYes bool
 
 	// storage is the interface for saving/loading data to/from the app's state
 	storage *session.Storage
@@ -259,7 +257,7 @@ type home struct {
 	skipScripts bool
 }
 
-func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string, noScripts bool) (*home, error) {
+func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, pendingDir string, noScripts bool) (*home, error) {
 	cfgDir := ""
 	if wsCtx != nil {
 		cfgDir = wsCtx.ConfigDir
@@ -283,13 +281,12 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		storage:     storage,
 		appConfig:   appConfig,
 		program:     program,
-		autoYes:     autoYes,
 		state:       stateDefault,
 		appState:    appState,
 		tabBar:      ui.NewWorkspaceTabBar(),
 		skipScripts: noScripts,
 	}
-	h.list = ui.NewList(&h.spinner, autoYes)
+	h.list = ui.NewList(&h.spinner)
 	if wsCtx != nil && wsCtx.Name != "" {
 		h.list.SetWorkspaceName(wsCtx.Name)
 	}
@@ -332,9 +329,6 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 				hasWorkspaceTerminal = true
 			}
 			h.list.AddInstance(instance)()
-			if autoYes {
-				instance.AutoYes = true
-			}
 		}
 
 		// Restart crash-recovered instances
@@ -707,7 +701,6 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else {
 				if r.hasPrompt {
-					r.instance.TapEnter()
 					if err := r.instance.TransitionTo(session.Prompting); err != nil {
 						log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Prompting", "err", err.Error())
 					}
@@ -1006,9 +999,6 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Save after successful start
 		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
 			return m, m.handleError(err)
-		}
-		if m.autoYes {
-			msg.instance.AutoYes = true
 		}
 
 		if msg.promptAfterName {
@@ -1612,16 +1602,13 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	// picker, mid-session toggle, restore, registration) surfaces
 	// recovered sessions identically — no restart required.
 
-	list := ui.NewList(&m.spinner, m.autoYes)
+	list := ui.NewList(&m.spinner)
 	hasWorkspaceTerminal := false
 	for _, inst := range instances {
 		if inst.IsWorkspaceTerminal {
 			hasWorkspaceTerminal = true
 		}
 		list.AddInstance(inst)()
-		if m.autoYes {
-			inst.AutoYes = true
-		}
 	}
 
 	// Restart crash-recovered instances.
@@ -1903,12 +1890,9 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	m.appConfig = appConfig
 	m.activeCtx = nil
 
-	m.list = ui.NewList(&m.spinner, m.autoYes)
+	m.list = ui.NewList(&m.spinner)
 	for _, inst := range instances {
 		m.list.AddInstance(inst)()
-		if m.autoYes {
-			inst.AutoYes = true
-		}
 	}
 
 	// Clear registry's open-tab list so the next launch lands in

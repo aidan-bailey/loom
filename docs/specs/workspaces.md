@@ -79,7 +79,7 @@ The `.loom/` directory is automatically added to the repo's `.gitignore` on regi
 Workspaces achieve isolation through explicit `WorkspaceContext` propagation.
 
 1. On startup, `ResolveWorkspace(cwd, registry)` returns a `WorkspaceContext` with the matching workspace's `ConfigDir`.
-2. The `WorkspaceContext` is threaded through `app.Run` → `newHome` → all downstream functions (storage, worktree creation, daemon).
+2. The `WorkspaceContext` is threaded through `app.Run` → `newHome` → all downstream functions (storage, worktree creation).
 3. All state reads/writes use the context's `ConfigDir` directly via `LoadConfigFrom(dir)` / `LoadStateFrom(dir)`.
 4. `GetConfigDir()` honors `LOOM_HOME` (with `CLAUDE_SQUAD_HOME` as a deprecated fallback) for external tooling, but internal code passes config directories explicitly.
 
@@ -176,10 +176,9 @@ Source: `app/app.go`, `ui/overlay/workspacePicker.go`.
 When a workspace is selected:
 
 1. **Save current state** — persists instances to the current workspace's state file.
-2. **Stop daemon** — shuts down the auto-yes daemon for the current workspace.
-3. **Swap `LOOM_HOME`** — set to the new workspace's config dir (or unset for Global).
-4. **Update `LastUsed`** — in the global registry.
-5. **Full reload** — reloads config, state, and instances from the new workspace. Reinitializes all UI components.
+2. **Swap `LOOM_HOME`** — set to the new workspace's config dir (or unset for Global).
+3. **Update `LastUsed`** — in the global registry.
+4. **Full reload** — reloads config, state, and instances from the new workspace. Reinitializes all UI components.
 
 After reload, the app displays only the new workspace's instances. The workspace name appears in the list header.
 

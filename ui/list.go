@@ -94,10 +94,6 @@ var mainTitle = lipgloss.NewStyle().
 	Background(lipgloss.Color("62")).
 	Foreground(lipgloss.Color("230"))
 
-var autoYesStyle = lipgloss.NewStyle().
-	Background(lipgloss.Color("#dde4f0")).
-	Foreground(lipgloss.Color("#1a1a1a"))
-
 // List is the left-panel instance list. It owns the selection cursor
 // and viewport scroll offset, and delegates per-row rendering to
 // [InstanceRenderer]. The list does not spawn goroutines or mutate
@@ -109,7 +105,6 @@ type List struct {
 	scrollOffset  int // index of the first visible item in the viewport
 	height, width int
 	renderer      *InstanceRenderer
-	autoyes       bool
 
 	// map of repo name to number of instances using it. Used to display the repo name only if there are
 	// multiple repos in play.
@@ -119,15 +114,14 @@ type List struct {
 	workspaceName string
 }
 
-// NewList constructs an empty List bound to the given spinner and
-// auto-yes indicator. Items are added later via AddInstance; the list
-// is ready to render immediately.
-func NewList(spinner *spinner.Model, autoYes bool) *List {
+// NewList constructs an empty List bound to the given spinner. Items
+// are added later via AddInstance; the list is ready to render
+// immediately.
+func NewList(spinner *spinner.Model) *List {
 	return &List{
 		items:    []*session.Instance{},
 		renderer: &InstanceRenderer{spinner: spinner},
 		repos:    make(map[string]int),
-		autoyes:  autoYes,
 	}
 }
 
@@ -409,8 +403,6 @@ func (l *List) String() string {
 		titleText = fmt.Sprintf("%s%s ", strings.TrimRight(titleText, " "), arrow)
 	}
 
-	const autoYesText = " auto-yes "
-
 	// Write the title.
 	var b strings.Builder
 	b.WriteString("\n")
@@ -419,17 +411,8 @@ func (l *List) String() string {
 	// Write title line
 	// add padding of 2 because the border on list items adds some extra characters
 	titleWidth := AdjustPreviewWidth(l.width) + 2
-	if !l.autoyes {
-		b.WriteString(lipgloss.Place(
-			titleWidth, 1, lipgloss.Left, lipgloss.Bottom, mainTitle.Render(titleText)))
-	} else {
-		title := lipgloss.Place(
-			titleWidth/2, 1, lipgloss.Left, lipgloss.Bottom, mainTitle.Render(titleText))
-		autoYes := lipgloss.Place(
-			titleWidth-(titleWidth/2), 1, lipgloss.Right, lipgloss.Bottom, autoYesStyle.Render(autoYesText))
-		b.WriteString(lipgloss.JoinHorizontal(
-			lipgloss.Top, title, autoYes))
-	}
+	b.WriteString(lipgloss.Place(
+		titleWidth, 1, lipgloss.Left, lipgloss.Bottom, mainTitle.Render(titleText)))
 
 	b.WriteString("\n")
 	b.WriteString("\n")

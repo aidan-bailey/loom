@@ -35,7 +35,6 @@ type migrationInstance struct {
 	Width     int       `json:"width"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	AutoYes   bool      `json:"auto_yes"`
 
 	Program             string                `json:"program"`
 	Worktree            migrationWorktreeData `json:"worktree"`

@@ -109,9 +109,10 @@ var (
 //
 // Returns a non-nil error when the log file could not be opened. Callers
 // may still use the package-level loggers after an error — Initialize
-// falls back to stderr (or io.Discard in the daemon child, whose parent
-// has nil'd stdio), so the app stays functional in a degraded mode
-// instead of crashing via panic like the previous implementation.
+// falls back to stderr (or io.Discard when daemon is true, for a
+// detached child process whose parent has nil'd stdio), so the app
+// stays functional in a degraded mode instead of crashing via panic
+// like the previous implementation.
 func Initialize(logDir string, daemon bool) error {
 	if logDir == "" {
 		logDir = os.TempDir()
@@ -133,8 +134,8 @@ func Initialize(logDir string, daemon bool) error {
 	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		// Degraded path: pick a sink the process can actually write to.
-		// Daemon's stdio is nil'd by the parent (see daemon.LaunchDaemon),
-		// so stderr would write to a closed fd — discard instead.
+		// A detached child process with nil'd stdio would have stderr
+		// write to a closed fd — discard instead.
 		var sink io.Writer = os.Stderr
 		if daemon {
 			sink = io.Discard

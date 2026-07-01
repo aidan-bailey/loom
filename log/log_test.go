@@ -193,10 +193,10 @@ func TestInitialize_ReturnsErrorWhenLogFileUnopenable(t *testing.T) {
 	assert.NotPanics(t, func() { Structured.Info("degraded structured") })
 }
 
-// TestInitialize_DaemonFallbackUsesDiscard guards that the daemon
-// child never tries to write to stderr on log-open failure — its
-// stdio is nil'd by the parent (daemon.LaunchDaemon), so stderr
-// would be a closed fd. io.Discard is the safe sink.
+// TestInitialize_DaemonFallbackUsesDiscard guards that a daemon=true
+// caller never tries to write to stderr on log-open failure — a
+// detached child process with nil'd stdio would have stderr be a
+// closed fd. io.Discard is the safe sink.
 func TestInitialize_DaemonFallbackUsesDiscard(t *testing.T) {
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, logFileName)

@@ -124,9 +124,9 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 		return fromInstanceDataPaused(data, configDir)
 
 	case ActionKillAndPause:
-		// Best-effort: the tmux session may already be gone, the daemon may
-		// have just killed it, or the worktree-gone state may be stale. Log
-		// at Debug since this fires often during normal reconciliation.
+		// Best-effort: the tmux session may already be gone, or the
+		// worktree-gone state may be stale. Log at Debug since this fires
+		// often during normal reconciliation.
 		if err := KillTmuxSessionByTitle(data.Title, cmdExec); err != nil {
 			log.For("reconcile").Debug("tmux_kill_failed", "title", data.Title, "err", err.Error())
 		}
@@ -159,7 +159,6 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 		CreatedAt:           data.CreatedAt,
 		UpdatedAt:           data.UpdatedAt,
 		Program:             data.Program,
-		AutoYes:             data.AutoYes,
 		ConfigDir:           configDir,
 		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
 	}

@@ -74,8 +74,8 @@ func TestInstance_KillIsIdempotent(t *testing.T) {
 // TestInstance_KillBoundedWithStuckPump is the Instance-level
 // regression guard for F3+F7. A stuck pump goroutine inside TmuxSession
 // used to propagate into an unbounded wait in Close → Kill → Pause,
-// wedging the UI flow that triggered the op and — via the daemon's
-// UpdateDiffStats path — every other tracked instance. With the
+// wedging the UI flow that triggered the op and — via the app tick
+// loop's UpdateDiffStats path — every other tracked instance. With the
 // bounded pump wait in tmux, Kill must complete within a reasonable
 // budget even when the pump never exits.
 func TestInstance_KillBoundedWithStuckPump(t *testing.T) {

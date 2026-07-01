@@ -26,7 +26,6 @@ func TestMigrationInstance_MirrorsInstanceData_JSON(t *testing.T) {
 		"width": 20,
 		"created_at": "2026-01-01T00:00:00Z",
 		"updated_at": "2026-01-02T00:00:00Z",
-		"auto_yes": true,
 		"program": "claude",
 		"worktree": {
 			"repo_path": "/r",

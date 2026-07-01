@@ -47,7 +47,7 @@ func TestReconcileOrphans_CleanAutoRemoved_DirtyBecomesRecoverable(t *testing.T)
 	require.NoError(t, os.WriteFile(filepath.Join(dirtyWT, "UNSAVED.txt"), []byte("wip"), 0o644))
 
 	sp := spinner.New()
-	list := ui.NewList(&sp, false)
+	list := ui.NewList(&sp)
 	h := &home{}
 
 	summary := h.reconcileOrphans(cfgDir, "true", list, nil, cmd2.MakeExecutor())
@@ -95,7 +95,7 @@ func TestSelectedResumableNotWorkspace_AllowsRecoverable(t *testing.T) {
 	require.NoError(t, err)
 
 	sp := spinner.New()
-	list := ui.NewList(&sp, false)
+	list := ui.NewList(&sp)
 	list.AddInstance(inst)()
 	list.SelectInstance(inst)
 

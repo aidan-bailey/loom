@@ -13,7 +13,6 @@ A comprehensive guide to using Loom — the terminal UI for managing multiple AI
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
 - [Workspaces](#workspaces)
-- [Auto-Yes Mode](#auto-yes-mode)
 
 ---
 
@@ -212,7 +211,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `D` | Kill selected session (with confirmation) |
 | `d` | Toggle diff overlay |
 | `W` | Open workspace picker |
-| `S` | Open settings (edit config.json: Default Program, Auto Yes, Daemon Poll Interval, Branch Prefix, Profiles, Claude Preferences) |
+| `S` | Open settings (edit config.json: Default Program, Daemon Poll Interval, Branch Prefix, Profiles, Claude Preferences) |
 | `l` / `[` | Previous workspace tab |
 | `;` / `]` | Next workspace tab |
 | `?` | Show help screen |
@@ -367,7 +366,6 @@ loom [command]
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--program <prog>` | `-p` | Program to run in new sessions (e.g. `aider --model gpt-4`) |
-| `--autoyes` | `-y` | [Experimental] Auto-accept all agent prompts |
 | `--workspace <name>` | `-w` | Select workspace by name (bypasses auto-detection) |
 
 ### Commands
@@ -398,8 +396,8 @@ loom [command]
 # Run with a specific agent
 loom -p "aider --model ollama_chat/gemma3:1b"
 
-# Run with auto-yes in a specific workspace
-loom -y -w my-project
+# Run in a specific workspace
+loom -w my-project
 
 # Register current directory as a workspace
 loom workspace add
@@ -422,8 +420,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `default_program` | string | `"claude"` | Program to run in new sessions. Can be a profile name. |
-| `auto_yes` | bool | `false` | Auto-accept agent prompts via background daemon |
-| `daemon_poll_interval` | int | `1000` | Milliseconds between prompt checks (lower = more responsive) |
+| `daemon_poll_interval` | int | `1000` | Unused — retained for config.json backward compatibility only |
 | `branch_prefix` | string | `"{username}/"` | Prefix for auto-generated branch names |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
@@ -433,7 +430,6 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 ```json
 {
   "default_program": "claude",
-  "auto_yes": false,
   "daemon_poll_interval": 1000,
   "branch_prefix": "aidanb/",
   "profiles": [
@@ -530,51 +526,3 @@ loom workspace migrate
 ```
 
 Instances are matched to workspaces by their repository path. Unmatched instances remain in global storage.
-
----
-
-## Auto-Yes Mode
-
-Auto-yes mode uses a background daemon to automatically accept agent prompts (e.g. "Do you want to proceed?") without manual intervention.
-
-### Enable
-
-```bash
-# Via CLI flag
-loom --autoyes
-
-# Via config
-# Set "auto_yes": true in config.json
-```
-
-### How It Works
-
-1. A background daemon process is launched when the TUI starts
-2. The daemon polls all running sessions every `daemon_poll_interval` ms (default: 1000ms)
-3. When it detects a program-specific prompt pattern, it sends a carriage return (`Enter`)
-4. Diff stats are recalculated after each automatic acceptance
-
-### Detected Prompt Patterns
-
-| Agent | Prompt Pattern |
-|-------|---------------|
-| Claude Code | "No, and tell Claude what to do differently" |
-| Aider | "(Y)es/(N)o/(D)on't ask again" |
-| Gemini | "Yes, allow once" |
-
-Trust prompts (e.g. "Do you trust the files in this folder?") are handled separately and auto-dismissed for all agents.
-
-### Daemon Lifecycle
-
-- **Starts** when the TUI launches with auto-yes enabled
-- **Runs** in the background as a separate process (PID stored in `{configDir}/daemon.pid`)
-- **Stops** when the TUI exits, or manually via `loom reset`
-- Any running daemon is killed and restarted on each TUI launch to ensure a clean state
-
-### Troubleshooting
-
-- **Log location** — The daemon writes to the same file as the TUI (`{configDir}/logs/loom.log`). Daemon-emitted records carry `component=daemon`, so `grep component=daemon ~/.loom/logs/loom.log` narrows output to the daemon.
-- **Enable debug logging** — Set `LOOM_LOG_LEVEL=debug` or pass `--log-level=debug` when launching Loom; the level is inherited by the daemon child process, so both TUI and daemon become verbose.
-- **Healthy output** — Each poll tick logs its tracked instance count; when the daemon detects and dismisses a prompt, it logs the matched agent and pattern.
-- **Manual stop** — `kill "$(cat ~/.loom/daemon.pid)"` stops the current daemon. Because the TUI restarts the daemon on each launch, relaunching Loom will start a fresh one automatically.
-- **Force full reset** — `loom reset` removes the PID file, worktrees, and instance state. Use this if the daemon appears wedged and a simple relaunch does not recover.

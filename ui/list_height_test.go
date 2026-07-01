@@ -48,7 +48,7 @@ func TestListRenderDimensions(t *testing.T) {
 		contentHeight := termHeight - 2 // no tab bar
 
 		t.Run(fmt.Sprintf("termWidth_%d", termWidth), func(t *testing.T) {
-			list := NewList(&sp, false)
+			list := NewList(&sp)
 			list.SetSize(listWidth, contentHeight)
 
 			for _, inst := range instances {

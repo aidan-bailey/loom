@@ -65,7 +65,6 @@ var instanceMethods = map[string]lua.LGFunction{
 	"branch":      instanceBranch,
 	"path":        instancePath,
 	"program":     instanceProgram,
-	"auto_yes":    instanceAutoYes,
 	"started":     instanceStarted,
 	"paused":      instancePaused,
 	"diff_stats":  instanceDiffStats,
@@ -122,12 +121,6 @@ func instancePath(L *lua.LState) int {
 func instanceProgram(L *lua.LState) int {
 	inst := checkInstance(L, 1)
 	L.Push(lua.LString(inst.Program))
-	return 1
-}
-
-func instanceAutoYes(L *lua.LState) int {
-	inst := checkInstance(L, 1)
-	L.Push(lua.LBool(inst.AutoYes))
 	return 1
 }
 

@@ -114,8 +114,8 @@ func TestCaptureAndProcessHashesOnce(t *testing.T) {
 		"second CaptureAndProcess should add exactly one hash call")
 }
 
-// TestHasUpdatedHashesOnce mirrors TestCaptureAndProcessHashesOnce for the
-// daemon's HasUpdated path.
+// TestHasUpdatedHashesOnce mirrors TestCaptureAndProcessHashesOnce for
+// the HasUpdated path (the fallback used for unknown-adapter programs).
 func TestHasUpdatedHashesOnce(t *testing.T) {
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error { return nil },
@@ -220,8 +220,8 @@ func TestPumpWaitBoundedOnPausePreview(t *testing.T) {
 
 // TestPumpWaitBoundedOnClose verifies that Close does not block forever
 // on a stuck pump. Close is called from Instance.Pause and Kill, so a
-// hung pump here propagates into hung lifecycle ops and — via the
-// daemon's per-instance UpdateDiffStats — wedges the whole tick loop
+// hung pump here propagates into hung lifecycle ops and — via the app
+// tick loop's per-instance UpdateDiffStats — wedges the whole tick loop
 // for every other instance.
 func TestPumpWaitBoundedOnClose(t *testing.T) {
 	session := newTmuxSession("stuck-close", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{

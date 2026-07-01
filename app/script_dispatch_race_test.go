@@ -20,7 +20,7 @@ import (
 // `go test -race`.
 func TestScriptHost_ConcurrentNavAndRead(t *testing.T) {
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&sp, false)
+	list := ui.NewList(&sp)
 	for _, title := range []string{"a", "b", "c"} {
 		inst, err := session.NewInstance(session.InstanceOptions{
 			Title:   title,

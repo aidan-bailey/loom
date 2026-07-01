@@ -141,7 +141,7 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 func TestConfirmationModalKeyHandling(t *testing.T) {
 	// Import needed packages
 	spinner := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&spinner, false)
+	list := ui.NewList(&spinner)
 
 	// Create enough of home struct to test handleKeyPress in confirmation state
 	h := &home{
@@ -264,14 +264,13 @@ func TestConfirmationMessageFormatting(t *testing.T) {
 func TestConfirmationFlowSimulation(t *testing.T) {
 	// Create a minimal setup
 	spinner := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&spinner, false)
+	list := ui.NewList(&spinner)
 
 	// Add test instance
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:   "test-session",
 		Path:    t.TempDir(),
 		Program: "claude",
-		AutoYes: false,
 	})
 	require.NoError(t, err)
 	_ = list.AddInstance(instance)
@@ -484,7 +483,7 @@ func (m *mockInstanceStorage) DeleteAllInstances() error             { return ni
 // starting, the app auto-enters inline attach mode focused on the agent pane.
 func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&sp, false)
+	list := ui.NewList(&sp)
 	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	menu := ui.NewMenu()
 
@@ -560,7 +559,7 @@ func TestConfirmationModalVisualAppearance(t *testing.T) {
 // sets the instance status to Deleting before the async cleanup Cmd runs.
 func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s, false)
+	list := ui.NewList(&s)
 
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:   "test-delete",
@@ -603,7 +602,7 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 // reverts the instance status to its previous value.
 func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s, false)
+	list := ui.NewList(&s)
 
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:   "test-revert",
@@ -664,7 +663,7 @@ func TestPersistableInstancesFiltersDeleting(t *testing.T) {
 // can't leak into the next confirmation.
 func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s, false)
+	list := ui.NewList(&s)
 
 	h := &home{
 		ctx:       context.Background(),
@@ -706,7 +705,7 @@ func TestHandleQuitStaysInTUIOnSaveError(t *testing.T) {
 	require.NoError(t, err)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s, false)
+	list := ui.NewList(&s)
 	_ = list.AddInstance(inst)
 
 	h := &home{
@@ -750,7 +749,7 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 	require.NoError(t, err)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s, false)
+	list := ui.NewList(&s)
 	_ = list.AddInstance(inst)
 
 	wsCtx := &config.WorkspaceContext{Name: "test-ws", ConfigDir: cfgDir}

@@ -45,7 +45,7 @@ const tmuxStartTimeout = 10 * time.Second
 // ptmx.Close. The pump exits on any Read error, so in the common case
 // this receives immediately; a stuck tmux client or platform Read
 // pathology could otherwise hang the caller — which through Instance.
-// Pause and the daemon's UpdateDiffStats would wedge every other
+// Pause and the app tick loop's UpdateDiffStats would wedge every other
 // tracked instance. On timeout we log and move on: the leaked goroutine
 // is isolated to the dying session rather than the whole app.
 const pumpWaitTimeout = 2 * time.Second

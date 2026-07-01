@@ -128,8 +128,6 @@ type Instance struct {
 	CreatedAt time.Time
 	// UpdatedAt is the time the instance was last updated.
 	UpdatedAt time.Time
-	// AutoYes is true if the instance should automatically press enter when prompted.
-	AutoYes bool
 	// Prompt is the initial prompt to pass to the instance on startup
 	Prompt string
 	// ConfigDir is the workspace config directory for worktree resolution.
@@ -201,7 +199,6 @@ func (i *Instance) Snapshot() InstanceData {
 		CreatedAt:           i.CreatedAt,
 		UpdatedAt:           time.Now(),
 		Program:             i.Program,
-		AutoYes:             i.AutoYes,
 		IsWorkspaceTerminal: i.IsWorkspaceTerminal,
 	}
 
@@ -251,7 +248,6 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		CreatedAt:           data.CreatedAt,
 		UpdatedAt:           data.UpdatedAt,
 		Program:             data.Program,
-		AutoYes:             data.AutoYes,
 		ConfigDir:           configDir,
 		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
 		logger:              log.For("instance", "title", data.Title),
@@ -324,8 +320,7 @@ func (i *Instance) EnsureRunning() error {
 }
 
 // InstanceOptions collects the arguments for NewInstance. All fields
-// except AutoYes, IsWorkspaceTerminal, WsCtx, and ExecutorOverride are
-// required.
+// except IsWorkspaceTerminal, WsCtx, and ExecutorOverride are required.
 type InstanceOptions struct {
 	// Title is the title of the instance.
 	Title string
@@ -333,8 +328,6 @@ type InstanceOptions struct {
 	Path string
 	// Program is the program to run in the instance (e.g. "claude", "aider --model ollama_chat/gemma3:1b")
 	Program string
-	// If AutoYes is true, then
-	AutoYes bool
 	// Branch is an existing branch name to start the session on (empty = new branch from HEAD)
 	Branch string
 	// ConfigDir is the workspace config directory for worktree resolution.
@@ -366,7 +359,6 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		Width:               0,
 		CreatedAt:           t,
 		UpdatedAt:           t,
-		AutoYes:             false,
 		selectedBranch:      opts.Branch,
 		ConfigDir:           opts.ConfigDir,
 		IsWorkspaceTerminal: opts.IsWorkspaceTerminal,
@@ -818,11 +810,10 @@ func (i *Instance) CaptureAndProcessStatus() (updated bool, hasPrompt bool, err 
 }
 
 // TapEnter sends a single Enter keystroke to the tmux session when the
-// instance is running and AutoYes is enabled. No-op otherwise. Used by
-// the daemon to auto-dismiss agent prompts without requiring the user
-// to focus the pane.
+// instance is running. No-op otherwise. Exposed to Lua scripts as
+// inst:tap_enter().
 func (i *Instance) TapEnter() {
-	if !i.isStarted() || i.GetStatus() == Paused || !i.AutoYes {
+	if !i.isStarted() || i.GetStatus() == Paused {
 		return
 	}
 	ts := i.getTmuxSession()
@@ -1120,7 +1111,7 @@ func (i *Instance) UpdateDiffStatsShort() error {
 //     (selection-change upgrade path).
 //
 // When false, the tick can skip the git subprocess entirely. The paused
-// branch is also short-circuited so the daemon's AutoYes path stays cheap.
+// branch is also short-circuited so a paused instance's tick stays cheap.
 func (i *Instance) ShouldRefreshDiff(tmuxUpdated, wantFull bool) bool {
 	if !i.isStarted() || i.GetStatus() == Paused {
 		return false

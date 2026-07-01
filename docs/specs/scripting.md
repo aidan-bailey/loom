@@ -249,7 +249,7 @@ A userdata handed to every bound handler. Lives for one dispatch.
 | `ctx:repo_path()` | → string | Repo root new instances should be created against. |
 | `ctx:default_program()` | → string | The configured default agent command (e.g. `"claude"`). |
 | `ctx:branch_prefix()` | → string | The branch prefix for the active workspace (e.g. `"alice/"`). |
-| `ctx:new_instance{title=, ...}` | → instance | Create a new session. Required: `title`. Optional: `program`, `path`, `prompt`, `branch`, `auto_yes`. Instance is queued; actual `list.AddInstance` happens on the main goroutine after the script returns. |
+| `ctx:new_instance{title=, ...}` | → instance | Create a new session. Required: `title`. Optional: `program`, `path`, `prompt`, `branch`. Instance is queued; actual `list.AddInstance` happens on the main goroutine after the script returns. |
 | `ctx:log(level, msg)` | → void | Equivalent to `cs.log`. |
 | `ctx:notify(msg)` | → void | Equivalent to `cs.notify` when dispatch is active. |
 
@@ -264,7 +264,6 @@ Wraps `*session.Instance`. Obtained from `ctx:selected()`, `ctx:instances()`, `c
 | `inst:branch()` | string | Git branch name. |
 | `inst:path()` | string | Repo path for this session. |
 | `inst:program()` | string | Agent command. |
-| `inst:auto_yes()` | bool | Auto-yes flag. |
 | `inst:started()` | bool | True once the tmux session has been created. |
 | `inst:paused()` | bool | True while the worktree is torn down. |
 | `inst:diff_stats()` | {added, removed, content} \| nil | Diff stats. Nil if not yet computed. |

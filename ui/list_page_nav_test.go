@@ -20,7 +20,7 @@ const pageNavTestHeight = 18
 func newPageNavList(n int) *List {
 	log.Initialize("", false)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	l := NewList(&sp, false)
+	l := NewList(&sp)
 	l.SetSize(40, pageNavTestHeight)
 	for i := 0; i < n; i++ {
 		inst := &session.Instance{Title: fmt.Sprintf("inst-%02d", i)}

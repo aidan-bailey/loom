@@ -55,9 +55,6 @@ loom
 # Specify agent program
 loom --program "aider --model ollama_chat/gemma3:1b"
 
-# Enable auto-yes mode (experimental)
-loom --autoyes
-
 # Subcommands
 loom reset    # Reset all instances, cleanup tmux sessions and worktrees
 loom debug    # Print config paths and debug info
@@ -106,7 +103,7 @@ loom --workspace <name>
 
 - `LOOM_HOME` — Override config directory (default: `~/.loom`). Must be absolute path; supports `~` expansion. Used as a backward-compatible fallback; internal code uses explicit `WorkspaceContext` threading.
 - `LOOM_LOG_FORMAT` — Set to `json` to emit structured log records from `log.InfoKV/WarnKV/ErrorKV` as JSON lines; otherwise plain text. Legacy `log.Infof`/`Warnf`/`Errorf` callers are unaffected.
-- `LOOM_LOG_LEVEL` — `debug|info|warn|error` (default `info`). Gates both the Structured logger and the legacy `InfoLog`/`WarningLog`/`ErrorLog` writers (legacy records below the gate are dropped at the writer layer). The `--log-level` CLI flag (persistent on all subcommands) takes precedence over the env var and is also inherited by the daemon child process.
+- `LOOM_LOG_LEVEL` — `debug|info|warn|error` (default `info`). Gates both the Structured logger and the legacy `InfoLog`/`WarningLog`/`ErrorLog` writers (legacy records below the gate are dropped at the writer layer). The `--log-level` CLI flag (persistent on all subcommands) takes precedence over the env var.
 - `LOOM_PANE_RENDERER` — Set to `snapshot` to disable the embedded VT emulator and fall back to the legacy `tmux capture-pane` snapshot path for pane rendering (also the implicit path on Windows). Unset (default) renders panes from the emulator, enabling live-scroll and mouse forwarding.
 
 Legacy fallbacks (`CLAUDE_SQUAD_HOME`, `CLAUDE_SQUAD_LOG_FORMAT`, `CLAUDE_SQUAD_LOG_LEVEL`) are still honored with a one-time deprecation warning to stderr; remove them from your shell init once you've migrated.
@@ -121,7 +118,7 @@ Auto-commit tags flipped from `[claudesquad]` → `[loom]` at the v0.1.0 cutover
 
 - Log file: `{configDir}/logs/loom.log` (rotated once to `.log.1` at startup when >5 MB). Run `loom debug` to print the exact path plus the effective log level and format.
 - To enable verbose output, set `LOOM_LOG_LEVEL=debug` or pass `--log-level=debug`. Debug logs are routed exclusively through the Structured logger (`log.Debugf` / `log.DebugKV`); they never appear via the legacy `*log.Logger` vars.
-- New code should prefer `log.For("subsystem", ...)` to get a pre-tagged `*slog.Logger`, or call `log.InfoKV/WarnKV/ErrorKV/DebugKV` directly. The resulting records carry `subsystem=...` (plus `component=daemon` when running as the daemon child) so a single `grep subsystem=tmux loom.log` scopes output to one component.
+- New code should prefer `log.For("subsystem", ...)` to get a pre-tagged `*slog.Logger`, or call `log.InfoKV/WarnKV/ErrorKV/DebugKV` directly. The resulting records carry `subsystem=...` so a single `grep subsystem=tmux loom.log` scopes output to one component.
 
 ## Documentation
 
@@ -145,11 +142,10 @@ The app follows Bubble Tea's Model-View-Update pattern. `app/app.go` owns the `h
 - **`session/`** — Core domain. `Instance` represents a running agent session with status lifecycle (Ready → Loading → Running → Paused). `storage.go` handles JSON serialization to `~/.loom/instances.json` and retains raw `InstanceData` for records that fail `ReconcileAndRestore` (the unrecovered cache) so a transient failure does not silently drop the entry on the next save. `orphan.go` discovers worktree directories on disk not referenced in state.json and classifies them (`Disposition`): stale leftovers (dead tmux + clean) are auto-cleaned, ones with unsaved work or a live agent surface inline as `Recoverable` session entries. `reconcileOrphans` (`app/app.go`, run on every workspace activation) drives this — there is no blocking recovery modal.
 - **`session/agent/`** — `Adapter` interface and per-program implementations (claude, aider, gemini, default fallback). Centralizes trust-prompt keys, recovery flags, and `Supports(program)` checks. Look here when adding a new agent program rather than touching `tmux.go` or `agent_restart.go` directly.
 - **`session/git/`** — Git worktree operations. Each session gets an isolated worktree in `~/.loom/worktrees/`. Branches are named `{username}/{session_title}`. Handles setup, diff stats, push, and cleanup.
-- **`session/tmux/`** — Tmux session management. Creates/attaches terminal sessions, captures pane content, detects prompts (for auto-yes), sends keystrokes. Also pumps `ptmx` output into an embedded VT emulator (`emulator_unix.go`/`emulator_windows.go`, gated by `LOOM_PANE_RENDERER`) so panes render from the emulator with a capture-pane fallback; `RenderWindow`/`ScrollbackLen` back live-scroll, and `ForwardMouse`/bracketed paste back interact mode. `TmuxSession.stateMu` guards the `ptmx`/`monitor`/emulator fields against the metadata-fan-out vs attach-lifecycle race. Prefix is `loom_`; `LegacyTmuxPrefix` (`claudesquad_`) is still recognized by the orphan sweep and the startup rename pass.
+- **`session/tmux/`** — Tmux session management. Creates/attaches terminal sessions, captures pane content, detects prompts (surfaces a `Prompting` status so the user knows an instance needs attention), sends keystrokes. Also pumps `ptmx` output into an embedded VT emulator (`emulator_unix.go`/`emulator_windows.go`, gated by `LOOM_PANE_RENDERER`) so panes render from the emulator with a capture-pane fallback; `RenderWindow`/`ScrollbackLen` back live-scroll, and `ForwardMouse`/bracketed paste back interact mode. `TmuxSession.stateMu` guards the `ptmx`/`monitor`/emulator fields against the metadata-fan-out vs attach-lifecycle race. Prefix is `loom_`; `LegacyTmuxPrefix` (`claudesquad_`) is still recognized by the orphan sweep and the startup rename pass.
 - **`session/vt/`** — Embedded terminal emulator backing pane display. `vt.go` defines the `Emulator` interface; `xvt.go` is the `charm.land/x/vt`-backed implementation. Decouples on-screen rendering and scrollback from `tmux capture-pane` so panes can live-scroll and forward mouse/paste input.
 - **`session/files/`** — Stateless filesystem enumeration helpers backing the file-explorer overlay. Separate from `session/git/` because callers may operate on non-git roots (workspace terminals pointed at bare directories).
 - **`config/`** — Configuration (`config.json`), state (`state.json`), profiles, and workspace registry (`workspace.go`). Key types: `WorkspaceContext` (carries resolved config dir through the app), `InstanceStorage`, `AppState`, `StateManager`. `LoadConfigFrom("")`/`LoadStateFrom("")` accept empty string as "use default directory". `config/migration.go:MigrateLegacyHome` handles the one-time `~/.claude-squad` → `~/.loom` rename.
-- **`daemon/`** — Background auto-yes mode. Polls instances, detects prompts, auto-presses Enter. Platform-specific: `daemon_unix.go`, `daemon_windows.go`.
 - **`ui/`** — Bubble Tea view components. Left panel (`list.go`, 20% width), right panel (`split_pane.go`, 80% width) with agent and terminal panes stacked vertically (70/30 split) and a hotkey-toggled diff overlay. `terminal.go` renders a pane from the embedded VT emulator (with live-scroll offset, jump-to-bottom footer, and mouse drag-select/copy). `quick_input.go` provides an inline input bar for sending text to tmux. `workspace_tab_bar.go` renders workspace tabs. `ui/overlay/` has modal dialogs (text input, confirmation, branch picker, profile picker, workspace picker, file explorer).
 - **`keys/`** — Keybinding definitions. Enum-based `KeyName` with global maps for lookup.
 - **`cmd/`** — `Executor` interface wrapping `os/exec` for testability.
@@ -173,7 +169,7 @@ Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent act
 ### Gotchas
 
 - **Instance data schema changes.** `session.InstanceData` has a `SchemaVersion` field and `session.CurrentSchemaVersion` constant. When adding/removing/renaming fields: bump `CurrentSchemaVersion`, add an upgrade step to the switch in `session/storage_migrate.go:Migrate`, and update the JSON fixture in `cmd/workspace_migrate_shape_test.go` (drift guard for the `workspace migrate` CLI's typed mirror struct).
-- **Daemon decoupled from PTY attach.** `session.FromInstanceData` is a pure constructor — it does not spawn a tmux session. Callers that need a live PTY must call `inst.EnsureRunning()` explicitly. The daemon's `syncTracked` caches live `*Instance` objects across ticks so PTYs are spawned at most once per instance (DAEMON-05).
+- **`FromInstanceData` is decoupled from PTY attach.** It's a pure constructor — it does not spawn a tmux session. Callers that need a live PTY must call `inst.EnsureRunning()` explicitly (see `session/reconcile.go`).
 - **Inline orphan recovery (no modal).** `reconcileOrphans` (`app/app.go`, called from `activateWorkspace` and classic startup — so it runs on every workspace-load path) auto-cleans stale worktrees and surfaces unsaved/live ones as `Recoverable` list entries. `Recoverable` is **ephemeral**: filtered out of `persistableInstances`, re-derived from disk each load, and inert (`EnsureRunning` no-ops on it). `r` recovers (adopt via `ReconcileAndRestore`), `D` discards (worktree removed, branch kept via `IsExistingBranch`). When adding a per-instance loop, treat `Recoverable` like `Paused`/not-started so it never drives a PTY.
 - **Lua LState is not goroutine-safe.** All `script.Engine` dispatch runs under `engine.mu`; the Bubble Tea main loop invokes scripts via a `tea.Cmd` goroutine and awaits `scriptDoneMsg`. Pending instances created by scripts are queued on the `scriptHost` adapter and finalized on the main goroutine in `handleScriptDone` — never call `h.list.AddInstance` from inside the engine.
 - **No model mutation from `tea.Cmd` goroutines.** Bubble Tea runs every returned `tea.Cmd` in its own goroutine, concurrent with `Update`/`View` — so a Cmd body must not mutate shared state. `session.Storage`, `config.State`, and `tmux.TmuxSession` (its `ptmx`/`monitor`, via `stateMu` — snapshot under the lock, never hold it across PTY/subprocess I/O) each carry a mutex. Script nav/scroll/diff/workspace primitives record a `func(*home)` via `scriptHost.deferModelMutation`, drained into `scriptDoneMsg` and applied on the main goroutine in `handleScriptDone`; they do **not** touch `m.list`/`m.splitPane`/`m.slots` directly. Verify concurrent code with `go test -race` (see Build & Development Commands).
@@ -183,7 +179,7 @@ Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent act
 ### Persistent State
 
 All stored in `~/.loom/`:
-- `config.json` — user configuration: `DefaultProgram`, `AutoYes`, `DaemonPollInterval` (ms, default 1000), `BranchPrefix` (default: `{username}/`), `Profiles` (named program presets), `ClaudeRemoteControl` (`*bool`, default on — launches Claude sessions with `--remote-control <title>`; nil is treated as enabled, read via `Config.RemoteControlEnabled()`)
+- `config.json` — user configuration: `DefaultProgram`, `DaemonPollInterval` (ms, default 1000; retained for backward compatibility only — its consumer, the background daemon, was removed), `BranchPrefix` (default: `{username}/`), `Profiles` (named program presets), `ClaudeRemoteControl` (`*bool`, default on — launches Claude sessions with `--remote-control <title>`; nil is treated as enabled, read via `Config.RemoteControlEnabled()`)
 - `state.json` — app state (e.g. help screens seen)
 - `instances.json` — serialized session data
 - `workspaces.json` — registered workspaces with name, path, and last-used tracking
@@ -204,7 +200,7 @@ All stored in `~/.loom/`:
 - Module path is `github.com/aidan-bailey/loom`
 - Platform-specific code in `_unix.go` / `_windows.go` suffixed files
 - Private struct fields, public methods (PascalCase)
-- Minimal goroutine usage; concurrency mainly in tmux monitoring and daemon polling
+- Minimal goroutine usage; concurrency mainly in tmux monitoring
 
 ## CI/CD
 

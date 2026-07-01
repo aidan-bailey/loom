@@ -19,11 +19,10 @@ func newTestHomeWithActiveCtx(t *testing.T) *home {
 	m := newTestHome(t)
 	m.activeCtx = &config.WorkspaceContext{ConfigDir: t.TempDir()}
 	m.program = m.appConfig.DefaultProgram
-	m.autoYes = m.appConfig.AutoYes
 	return m
 }
 
-func TestHandleStateSettingsKeyRefreshesShadowFields(t *testing.T) {
+func TestHandleStateSettingsKeyRefreshesProgramShadow(t *testing.T) {
 	m := newTestHomeWithActiveCtx(t)
 	so := overlay.NewSettingsOverlay(m.appConfig, false, "")
 	m.setOverlay(so, overlaySettings)
@@ -46,12 +45,6 @@ func TestHandleStateSettingsKeyRefreshesShadowFields(t *testing.T) {
 
 	assert.Equal(t, "aider", m.appConfig.DefaultProgram)
 	assert.Equal(t, "aider", m.program, "m.program must be refreshed, not left stale")
-
-	// Move to Auto Yes (row 1) and toggle it.
-	handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
-	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	assert.True(t, m.appConfig.AutoYes)
-	assert.True(t, m.autoYes, "m.autoYes must be refreshed, not left stale")
 }
 
 func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
@@ -60,12 +53,21 @@ func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 
-	handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"}) // Auto Yes row
-	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})   // toggle on
+	// Branch Prefix is row 2 (Default Program, Daemon Poll Interval, Branch Prefix).
+	handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // open edit
+	for i := 0; i < 64; i++ {
+		handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	for _, r := range "team/" {
+		handleStateSettingsKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // submit
 
 	reloaded := config.LoadConfigFrom(m.activeCtx.ConfigDir)
 	require.NotNil(t, reloaded)
-	assert.True(t, reloaded.AutoYes, "the toggle must be persisted immediately, not only in memory")
+	assert.Equal(t, "team/", reloaded.BranchPrefix, "the edit must be persisted immediately, not only in memory")
 }
 
 func TestSettingsDrillsIntoClaudePreferences(t *testing.T) {
@@ -76,8 +78,9 @@ func TestSettingsDrillsIntoClaudePreferences(t *testing.T) {
 	so := m.settingsOverlay()
 	require.NotNil(t, so)
 
-	// Row 5 is Claude Preferences.
-	for i := 0; i < 5; i++ {
+	// Row 4 is Claude Preferences (Default Program, Daemon Poll Interval,
+	// Branch Prefix, Profiles, Claude Preferences).
+	for i := 0; i < 4; i++ {
 		handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // drill in

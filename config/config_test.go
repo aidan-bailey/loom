@@ -109,7 +109,6 @@ func TestDefaultConfig(t *testing.T) {
 
 		assert.NotNil(t, config)
 		assert.NotEmpty(t, config.DefaultProgram)
-		assert.False(t, config.AutoYes)
 		assert.Equal(t, 1000, config.DaemonPollInterval)
 		assert.NotEmpty(t, config.BranchPrefix)
 		assert.True(t, strings.HasSuffix(config.BranchPrefix, "/"))
@@ -222,7 +221,6 @@ func TestLoadConfig(t *testing.T) {
 
 		assert.NotNil(t, config)
 		assert.NotEmpty(t, config.DefaultProgram)
-		assert.False(t, config.AutoYes)
 		assert.Equal(t, 1000, config.DaemonPollInterval)
 		assert.NotEmpty(t, config.BranchPrefix)
 	})
@@ -238,7 +236,6 @@ func TestLoadConfig(t *testing.T) {
 		configPath := filepath.Join(configDir, ConfigFileName)
 		configContent := `{
 			"default_program": "test-claude",
-			"auto_yes": true,
 			"daemon_poll_interval": 2000,
 			"branch_prefix": "test/"
 		}`
@@ -254,7 +251,6 @@ func TestLoadConfig(t *testing.T) {
 
 		assert.NotNil(t, config)
 		assert.Equal(t, "test-claude", config.DefaultProgram)
-		assert.True(t, config.AutoYes)
 		assert.Equal(t, 2000, config.DaemonPollInterval)
 		assert.Equal(t, "test/", config.BranchPrefix)
 	})
@@ -282,7 +278,6 @@ func TestLoadConfig(t *testing.T) {
 		// Should return default config when JSON is invalid
 		assert.NotNil(t, config)
 		assert.NotEmpty(t, config.DefaultProgram)
-		assert.False(t, config.AutoYes)                  // Default value
 		assert.Equal(t, 1000, config.DaemonPollInterval) // Default value
 	})
 }
@@ -413,7 +408,6 @@ func TestSaveConfigTo(t *testing.T) {
 
 		testConfig := &Config{
 			DefaultProgram:     "test-program",
-			AutoYes:            true,
 			DaemonPollInterval: 3000,
 			BranchPrefix:       "test-branch/",
 		}
@@ -426,7 +420,6 @@ func TestSaveConfigTo(t *testing.T) {
 
 		loadedConfig := LoadConfigFrom(configDir)
 		assert.Equal(t, testConfig.DefaultProgram, loadedConfig.DefaultProgram)
-		assert.Equal(t, testConfig.AutoYes, loadedConfig.AutoYes)
 		assert.Equal(t, testConfig.DaemonPollInterval, loadedConfig.DaemonPollInterval)
 		assert.Equal(t, testConfig.BranchPrefix, loadedConfig.BranchPrefix)
 	})

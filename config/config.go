@@ -86,9 +86,8 @@ type Config struct {
 
 	// DefaultProgram is the default program to run in new instances
 	DefaultProgram string `json:"default_program"`
-	// AutoYes is a flag to automatically accept all prompts.
-	AutoYes bool `json:"auto_yes"`
-	// DaemonPollInterval is the interval (ms) at which the daemon polls sessions for autoyes mode.
+	// DaemonPollInterval is retained for config.json backward compatibility
+	// only — its consumer (the background daemon) has been removed.
 	DaemonPollInterval int `json:"daemon_poll_interval"`
 	// BranchPrefix is the prefix used for git branches created by the application.
 	BranchPrefix string `json:"branch_prefix"`
@@ -174,7 +173,6 @@ func DefaultConfig() *Config {
 
 	return &Config{
 		DefaultProgram:     program,
-		AutoYes:            false,
 		DaemonPollInterval: 1000,
 		BranchPrefix: func() string {
 			user, err := user.Current()

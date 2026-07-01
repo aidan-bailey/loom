@@ -50,7 +50,6 @@ Available Commands:
   workspace   Manage workspaces
 
 Flags:
-  -y, --autoyes            [experimental] If enabled, all instances will automatically accept prompts
   -h, --help               help for loom
       --log-level string   Override log level for the Structured logger (debug|info|warn|error). Takes precedence over LOOM_LOG_LEVEL.
       --no-scripts         Skip loading ~/.loom/scripts (embedded defaults still load). Use to recover from a broken user script.

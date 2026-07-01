@@ -17,7 +17,6 @@ type settingsField int
 
 const (
 	settingsFieldDefaultProgram settingsField = iota
-	settingsFieldAutoYes
 	settingsFieldDaemonPollInterval
 	settingsFieldBranchPrefix
 	settingsFieldProfiles
@@ -29,8 +28,6 @@ func (f settingsField) label() string {
 	switch f {
 	case settingsFieldDefaultProgram:
 		return "Default Program"
-	case settingsFieldAutoYes:
-		return "Auto Yes"
 	case settingsFieldDaemonPollInterval:
 		return "Daemon Poll Interval"
 	case settingsFieldBranchPrefix:
@@ -61,7 +58,7 @@ const (
 // no persistence — HandleKeyPress's second return value reports whether
 // a field changed; the caller (app.handleStateSettingsKey) is
 // responsible for config.SaveConfigTo and refreshing the home fields
-// that shadow cfg (m.program, m.autoYes).
+// that shadow cfg (m.program).
 //
 // authBlocked/authReason mirror session.RemoteControlAuth.Blocked()/
 // Reason, passed as plain values rather than the session type so this
@@ -133,13 +130,10 @@ func (s *SettingsOverlay) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed b
 }
 
 // activateRow runs the Enter/space action for the currently selected
-// row. Only Auto Yes changes cfg synchronously here; the rest open a
-// nested edit mode that reports its own change on a later HandleKeyPress.
+// row. Every row opens a nested edit mode that reports its own change
+// on a later HandleKeyPress.
 func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 	switch settingsField(s.cursor) {
-	case settingsFieldAutoYes:
-		s.cfg.Mutate(func(c *config.Config) { c.AutoYes = !c.AutoYes })
-		return false, true
 	case settingsFieldDefaultProgram:
 		s.startTextEdit(settingsFieldDefaultProgram, "Default Program", s.cfg.DefaultProgram)
 	case settingsFieldBranchPrefix:
@@ -286,11 +280,6 @@ func (s *SettingsOverlay) valueFor(f settingsField) string {
 	switch f {
 	case settingsFieldDefaultProgram:
 		return s.cfg.DefaultProgram
-	case settingsFieldAutoYes:
-		if s.cfg.AutoYes {
-			return "[x]"
-		}
-		return "[ ]"
 	case settingsFieldDaemonPollInterval:
 		return fmt.Sprintf("%d ms", s.cfg.DaemonPollInterval)
 	case settingsFieldBranchPrefix:

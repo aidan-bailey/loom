@@ -7,7 +7,6 @@ import (
 	"github.com/aidan-bailey/loom/app"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
-	"github.com/aidan-bailey/loom/daemon"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
@@ -21,10 +20,7 @@ import (
 var (
 	version            = "0.2.2"
 	programFlag        string
-	autoYesFlag        bool
 	noScriptsFlag      bool
-	daemonFlag         bool
-	configDirFlag      string
 	workspaceFlag      string
 	resetWorkspaceFlag string
 	logLevelFlag       string
@@ -49,38 +45,13 @@ var (
 			if err != nil {
 				configDir = os.TempDir()
 			}
-			if logErr := log.Initialize(filepath.Join(configDir, "logs"), daemonFlag); logErr != nil {
-				// Non-fatal: loggers fall back to stderr (or Discard for
-				// the daemon child) so the app still runs; we only lose
-				// the on-disk log file. Surface once so operators notice.
+			if logErr := log.Initialize(filepath.Join(configDir, "logs"), false); logErr != nil {
+				// Non-fatal: loggers fall back to stderr so the app still
+				// runs; we only lose the on-disk log file. Surface once so
+				// operators notice.
 				fmt.Fprintf(os.Stderr, "loom: %v\n", logErr)
 			}
 			defer log.Close()
-
-			if daemonFlag {
-				// Daemon child inherits --config-dir from the parent (see
-				// daemon.LaunchDaemon). When absent, fall back to the
-				// global config dir explicitly so state files go to a
-				// concrete location — never an empty-string shim.
-				daemonDir := configDirFlag
-				var cfg *config.Config
-				if daemonDir == "" {
-					cfg = config.LoadConfigFromGlobal()
-					globalDir, gErr := config.GetConfigDir()
-					if gErr != nil {
-						return fmt.Errorf("failed to get global config directory: %w", gErr)
-					}
-					daemonDir = globalDir
-				} else {
-					cfg = config.LoadConfigFrom(daemonDir)
-				}
-				daemonCtx := &config.WorkspaceContext{ConfigDir: daemonDir}
-				err := daemon.RunDaemon(cfg, daemonCtx)
-				if err != nil {
-					log.For("main").Error("daemon_start_failed", "err", err)
-				}
-				return err
-			}
 
 			// Resolve workspace context.
 			registry, regErr := config.LoadWorkspaceRegistry()
@@ -163,24 +134,8 @@ var (
 			if programFlag != "" {
 				program = programFlag
 			}
-			// AutoYes flag overrides config
-			autoYes := cfg.AutoYes
-			if autoYesFlag {
-				autoYes = true
-			}
-			if autoYes {
-				defer func() {
-					if err := daemon.LaunchDaemon(wsCtx); err != nil {
-						log.For("main").Error("daemon_launch_failed", "err", err)
-					}
-				}()
-			}
-			// Kill any daemon that's running.
-			if err := daemon.StopDaemon(wsCtx); err != nil {
-				log.For("main").Error("daemon_stop_failed", "err", err)
-			}
 
-			return app.Run(ctx, wsCtx, registry, cfg, program, autoYes, pendingDir, noScriptsFlag)
+			return app.Run(ctx, wsCtx, registry, cfg, program, pendingDir, noScriptsFlag)
 		},
 	}
 
@@ -220,11 +175,6 @@ var (
 				return fmt.Errorf("failed to cleanup worktrees: %w", err)
 			}
 			fmt.Println("Worktrees have been cleaned up")
-
-			if err := daemon.StopDaemon(wsCtx); err != nil {
-				return err
-			}
-			fmt.Println("daemon has been stopped")
 
 			return nil
 		},
@@ -303,28 +253,13 @@ func init() {
 
 	rootCmd.Flags().StringVarP(&programFlag, "program", "p", "",
 		"Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')")
-	rootCmd.Flags().BoolVarP(&autoYesFlag, "autoyes", "y", false,
-		"[experimental] If enabled, all instances will automatically accept prompts")
 	rootCmd.Flags().BoolVar(&noScriptsFlag, "no-scripts", false,
 		"Skip loading ~/.loom/scripts (embedded defaults still load). Use to recover from a broken user script.")
 	rootCmd.Flags().StringVarP(&workspaceFlag, "workspace", "w", "",
 		"Select workspace by name (bypasses auto-detection)")
-	rootCmd.Flags().BoolVar(&daemonFlag, "daemon", false, "Run a program that loads all sessions"+
-		" and runs autoyes mode on them.")
-	rootCmd.Flags().StringVar(&configDirFlag, "config-dir", "", "Config directory (internal use by daemon)")
 	rootCmd.PersistentFlags().StringVar(&logLevelFlag, "log-level", "",
 		"Override log level for the Structured logger (debug|info|warn|error). "+
 			"Takes precedence over LOOM_LOG_LEVEL.")
-
-	// Hide internal flags. A MarkHidden failure means the flag name is
-	// wrong — a programmer error that the panic would have obscured
-	// with a stack trace instead of naming the offending flag.
-	for _, name := range []string{"daemon", "config-dir"} {
-		if err := rootCmd.Flags().MarkHidden(name); err != nil {
-			fmt.Fprintf(os.Stderr, "mark hidden %q: %v\n", name, err)
-			os.Exit(2)
-		}
-	}
 
 	resetCmd.Flags().StringVarP(&resetWorkspaceFlag, "workspace", "w", "",
 		"Reset a specific workspace by name (default: global)")
@@ -336,11 +271,10 @@ func init() {
 }
 
 func main() {
-	// Legacy-home migration runs before any command so the daemon
-	// child (which inherits --config-dir from its parent) and the
-	// debug/reset subcommands both observe the new directory.
-	// Failure is non-fatal: the migration emits its own diagnostic and
-	// subsequent GetConfigDir calls still resolve either ~/.loom or
+	// Legacy-home migration runs before any command so the debug/reset
+	// subcommands both observe the new directory. Failure is non-fatal:
+	// the migration emits its own diagnostic and subsequent
+	// GetConfigDir calls still resolve either ~/.loom or
 	// CLAUDE_SQUAD_HOME as a deprecated fallback.
 	if err := config.MigrateLegacyHome(); err != nil {
 		fmt.Fprintf(os.Stderr, "loom: legacy-home migration failed: %v\n", err)

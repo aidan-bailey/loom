@@ -18,6 +18,19 @@ func TestMigrate_V0Upgrades(t *testing.T) {
 	assert.Equal(t, "legacy", data.Title)
 }
 
+// TestMigrate_V1UpgradesDropsAutoYes verifies a v1 record carrying the
+// now-removed auto_yes field migrates cleanly to CurrentSchemaVersion —
+// encoding/json silently drops the unknown key on unmarshal, so there's
+// no explicit field to clear, only the version stamp to advance.
+func TestMigrate_V1UpgradesDropsAutoYes(t *testing.T) {
+	raw := []byte(`{"schema_version":1,"title":"legacy","program":"claude","auto_yes":true}`)
+
+	data, err := Migrate(raw)
+	assert.NoError(t, err)
+	assert.Equal(t, CurrentSchemaVersion, data.SchemaVersion)
+	assert.Equal(t, "legacy", data.Title)
+}
+
 // TestMigrate_Idempotent verifies records already at CurrentSchemaVersion
 // migrate cleanly and stay stable.
 func TestMigrate_Idempotent(t *testing.T) {
