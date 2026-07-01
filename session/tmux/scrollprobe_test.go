@@ -31,15 +31,32 @@ func TestCaptureHistoryRealTmux(t *testing.T) {
 	if err := ts.SetDetachedSize(80, 24); err != nil {
 		t.Fatalf("setsize: %v", err)
 	}
-	time.Sleep(300 * time.Millisecond) // let the attach settle
 
-	if err := ts.SendKeys("for i in $(seq 200); do echo histline$i; done"); err != nil {
-		t.Fatalf("sendkeys: %v", err)
+	// Poll for the command's output instead of trusting fixed sleeps, and
+	// re-issue it if nothing has shown up yet: on a loaded CI runner the
+	// attach can still be settling when the first SendKeys/TapEnter land,
+	// silently swallowing them. That race is what made this test flake in
+	// CI (see race.yml's 4-core runner) while always passing locally,
+	// where the attach settles near-instantly.
+	const cmd = "for i in $(seq 200); do echo histline$i; done"
+	const marker = "histline200"
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		content, err := ts.CapturePaneContent()
+		if err == nil && strings.Contains(content, marker) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("shell never produced %q after retried SendKeys/TapEnter", marker)
+		}
+		if err := ts.SendKeys(cmd); err != nil {
+			t.Fatalf("sendkeys: %v", err)
+		}
+		if err := ts.TapEnter(); err != nil {
+			t.Fatalf("enter: %v", err)
+		}
+		time.Sleep(300 * time.Millisecond)
 	}
-	if err := ts.TapEnter(); err != nil {
-		t.Fatalf("enter: %v", err)
-	}
-	time.Sleep(1500 * time.Millisecond) // let output land in tmux history
 
 	hist, ok := ts.CaptureHistory()
 	if !ok {
