@@ -606,10 +606,17 @@ func mergeSourceRows(items []*session.Instance, target *session.Instance) []over
 
 // instanceByDisplayIndex returns the instance whose ui.DisplayIndex
 // position (the same number rendered in the main list) matches idx, or
-// nil if none matches. Re-scans live data rather than caching a
-// pointer from when the picker opened, so a background reconcile that
-// changed the list between open and commit can't hand back a stale
-// instance.
+// nil if none matches. Called against m.pendingMergeSourceItems — a
+// snapshot frozen at the moment the picker opened, not live m.list data
+// — so a background message reassigning m.list's selection while the
+// picker is open can't redirect the merge to a different session (see
+// runMergeSelected). The trade-off: if a source instance is killed or
+// otherwise removed from m.list between the picker opening and commit,
+// this can still resolve it from the snapshot; the subsequent git
+// merge attempt then simply fails with a normal surfaced git error
+// (e.g. a missing branch/worktree) rather than silently succeeding or
+// corrupting anything — an accepted, bounded failure mode, not a
+// re-validated precondition.
 func instanceByDisplayIndex(items []*session.Instance, idx int) *session.Instance {
 	for i, inst := range items {
 		if ui.DisplayIndex(items, i) == idx {
