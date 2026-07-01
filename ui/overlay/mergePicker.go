@@ -88,6 +88,7 @@ func (p *MergePicker) applyDigitBuf() {
 	for i, r := range p.rows {
 		if r.Index == n {
 			p.cursor = i
+			p.digitBuf = ""
 			return
 		}
 		if r.Index > maxIndex {
@@ -95,6 +96,10 @@ func (p *MergePicker) applyDigitBuf() {
 		}
 	}
 	if n > maxIndex {
+		if len(p.digitBuf) <= 1 {
+			p.digitBuf = ""
+			return
+		}
 		p.digitBuf = p.digitBuf[len(p.digitBuf)-1:]
 		p.applyDigitBuf()
 	}

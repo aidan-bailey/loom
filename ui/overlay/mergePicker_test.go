@@ -65,6 +65,39 @@ func TestMergePickerDigitJump(t *testing.T) {
 		p.HandleKeyPress(tea.KeyPressMsg{Code: '2', Text: "2"})
 		assert.Equal(t, 0, p.cursor)
 	})
+
+	t.Run("a single digit exceeding every row's index does not crash and does not move the cursor", func(t *testing.T) {
+		// Regression test for the applyDigitBuf infinite-recursion bug:
+		// with sampleRows() (max Index 4), pressing '9' as the very first
+		// keystroke used to recurse forever (digitBuf[len-1:] on a
+		// length-1 string is a no-op), crashing the whole process with an
+		// unrecoverable stack overflow. If this test hangs/crashes, the
+		// fix regressed.
+		p := NewMergePicker("current", sampleRows())
+		p.HandleKeyPress(tea.KeyPressMsg{Code: '9', Text: "9"})
+		assert.Equal(t, 0, p.cursor)
+	})
+
+	t.Run("two independent single-digit jumps land on the correct rows without concatenating", func(t *testing.T) {
+		// Regression test for the stale-digitBuf bug: after a successful
+		// jump, digitBuf must be cleared so the next single keystroke is
+		// a fresh jump rather than concatenating (e.g. "1" then "2"
+		// silently becoming "12").
+		rows := []MergePickerRow{
+			{Index: 1, Title: "one", Branch: "u/one", Status: "Running"},
+			{Index: 2, Title: "two", Branch: "u/two", Status: "Running"},
+			{Index: 12, Title: "twelve", Branch: "u/twelve", Status: "Running"},
+		}
+		p := NewMergePicker("current", rows)
+
+		p.HandleKeyPress(tea.KeyPressMsg{Code: '1', Text: "1"})
+		assert.Equal(t, 0, p.cursor)
+		assert.Equal(t, "one", p.SelectedRow().Title)
+
+		p.HandleKeyPress(tea.KeyPressMsg{Code: '2', Text: "2"})
+		assert.Equal(t, 1, p.cursor)
+		assert.Equal(t, "two", p.SelectedRow().Title)
+	})
 }
 
 func TestMergePickerSelection(t *testing.T) {
