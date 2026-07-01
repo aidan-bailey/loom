@@ -21,15 +21,18 @@ func handleStateMergePickerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 
-	target := m.list.GetSelectedInstance()
+	target := m.pendingMergeTarget
+	sourceItems := m.pendingMergeSourceItems
 	row := mp.SelectedRow()
 	m.dismissOverlay()
 	m.state = stateDefault
+	m.pendingMergeTarget = nil
+	m.pendingMergeSourceItems = nil
 
 	if canceled || row == nil || target == nil {
 		return m, nil
 	}
-	source := instanceByDisplayIndex(m.list.GetInstances(), row.Index)
+	source := instanceByDisplayIndex(sourceItems, row.Index)
 	if source == nil {
 		return m, nil
 	}

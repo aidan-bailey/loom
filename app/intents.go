@@ -569,6 +569,10 @@ func runMergeSelected(m *home) (tea.Model, tea.Cmd) {
 		return m, m.handleError(fmt.Errorf("no other sessions available to merge into '%s'", target.Title))
 	}
 
+	m.pendingMergeTarget = target
+	m.pendingMergeSourceItems = make([]*session.Instance, len(m.list.GetInstances()))
+	copy(m.pendingMergeSourceItems, m.list.GetInstances())
+
 	m.setOverlay(overlay.NewMergePicker(target.Title, rows), overlayMergePicker)
 	m.state = stateMergePicker
 	return m, nil

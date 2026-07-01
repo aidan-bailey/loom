@@ -194,6 +194,18 @@ type home struct {
 	// pendingAttachTarget is the instance whose tmux session should be
 	// full-screen-attached after the attach help overlay is dismissed.
 	pendingAttachTarget *session.Instance
+	// pendingMergeTarget and pendingMergeSourceItems capture the merge
+	// target instance and a snapshot of the eligible source list at the
+	// moment the merge picker opens. A background message unrelated to
+	// key input (e.g. recoverDoneMsg reassigning m.list's selection, or
+	// a kill/resume completing) can still land while stateMergePicker is
+	// active — m.state only gates key-press routing, not arbitrary
+	// tea.Msg handling in Update(). Re-querying m.list live when Enter
+	// is pressed would let such a background change silently swap which
+	// instances the merge acts on. Both fields are cleared once the
+	// picker closes.
+	pendingMergeTarget      *session.Instance
+	pendingMergeSourceItems []*session.Instance
 
 	// -- Workspace slots --
 

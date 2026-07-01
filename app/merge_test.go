@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/aidan-bailey/loom/session"
 
 	"github.com/stretchr/testify/assert"
@@ -131,4 +133,120 @@ func TestMergeActionFor_MergesBranchIntoTarget(t *testing.T) {
 	require.NoError(t, err)
 	_, statErr := os.Stat(filepath.Join(targetWT.GetWorktreePath(), "new.txt"))
 	assert.NoError(t, statErr, "target worktree should now contain source's new file")
+}
+
+func TestHandleStateMergePickerKey_EscCancelsWithoutMerging(t *testing.T) {
+	repoDir := setupMergeRepo(t)
+	m := newTestHome(t)
+
+	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
+	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
+	_ = m.list.AddInstance(target)
+	_ = m.list.AddInstance(source)
+	m.list.SelectInstance(target)
+
+	_, cmd := runMergeSelected(m)
+	require.Nil(t, cmd)
+	require.Equal(t, stateMergePicker, m.state)
+
+	_, cmd = handleStateMergePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	assert.Nil(t, cmd, "esc must not return a merge Cmd")
+	assert.Equal(t, stateDefault, m.state)
+	assert.Nil(t, m.mergePicker())
+	assert.Nil(t, m.pendingMergeTarget, "pending target must be cleared on cancel")
+	assert.Nil(t, m.pendingMergeSourceItems, "pending source snapshot must be cleared on cancel")
+
+	// Confirm no merge commit happened in target's worktree.
+	targetWT, err := target.GetGitWorktree()
+	require.NoError(t, err)
+	dirty, err := targetWT.IsDirty()
+	require.NoError(t, err)
+	assert.False(t, dirty, "canceling must not touch the target worktree")
+}
+
+func TestHandleStateMergePickerKey_EnterMergesTheDisplayedTarget(t *testing.T) {
+	repoDir := setupMergeRepo(t)
+	m := newTestHome(t)
+
+	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
+	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
+	_ = m.list.AddInstance(target)
+	_ = m.list.AddInstance(source)
+	m.list.SelectInstance(target)
+
+	sourceWT, err := source.GetGitWorktree()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(sourceWT.GetWorktreePath(), "new.txt"), []byte("new"), 0o644))
+	runGit(t, sourceWT.GetWorktreePath(), "add", ".")
+	runGit(t, sourceWT.GetWorktreePath(), "commit", "-qm", "add new.txt")
+
+	_, cmd := runMergeSelected(m)
+	require.Nil(t, cmd)
+	require.Equal(t, stateMergePicker, m.state)
+
+	_, cmd = handleStateMergePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd, "enter must return the merge Cmd")
+	assert.Equal(t, stateDefault, m.state)
+	assert.Nil(t, m.pendingMergeTarget)
+	assert.Nil(t, m.pendingMergeSourceItems)
+
+	msg := cmd()
+	assert.Nil(t, msg, "successful merge returns nil")
+
+	targetWT, err := target.GetGitWorktree()
+	require.NoError(t, err)
+	_, statErr := os.Stat(filepath.Join(targetWT.GetWorktreePath(), "new.txt"))
+	assert.NoError(t, statErr, "target worktree should now contain source's new file")
+}
+
+// TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange is the
+// regression test for the stale-target bug: once the picker is open,
+// changing m.list's selection out from under it (simulating a
+// background message like recoverDoneMsg reassigning selection) must
+// NOT change which instance Enter merges into — it must still act on
+// the instance that was selected when the picker opened.
+func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) {
+	repoDir := setupMergeRepo(t)
+	m := newTestHome(t)
+
+	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
+	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
+	other := pausedInstanceWithRealWorktree(t, repoDir, "other", "other-branch")
+	_ = m.list.AddInstance(target)
+	_ = m.list.AddInstance(source)
+	_ = m.list.AddInstance(other)
+	m.list.SelectInstance(target)
+
+	sourceWT, err := source.GetGitWorktree()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(sourceWT.GetWorktreePath(), "new.txt"), []byte("new"), 0o644))
+	runGit(t, sourceWT.GetWorktreePath(), "add", ".")
+	runGit(t, sourceWT.GetWorktreePath(), "commit", "-qm", "add new.txt")
+
+	_, cmd := runMergeSelected(m)
+	require.Nil(t, cmd)
+	require.Equal(t, stateMergePicker, m.state)
+
+	// Simulate a background message reassigning the list's selection
+	// while the picker is open (m.state gates key routing, not Msg
+	// handling in Update()).
+	m.list.SelectInstance(other)
+
+	_, cmd = handleStateMergePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	msg := cmd()
+	assert.Nil(t, msg, "merge should still succeed")
+
+	// The merge must have landed in the ORIGINAL target ("target"), not
+	// the instance the list's selection was reassigned to ("other").
+	targetWT, err := target.GetGitWorktree()
+	require.NoError(t, err)
+	_, statErr := os.Stat(filepath.Join(targetWT.GetWorktreePath(), "new.txt"))
+	assert.NoError(t, statErr, "the ORIGINAL target must receive the merge, not whatever m.list's selection changed to")
+
+	otherWT, err := other.GetGitWorktree()
+	require.NoError(t, err)
+	otherDirty, err := otherWT.IsDirty()
+	require.NoError(t, err)
+	assert.False(t, otherDirty, "the reassigned-to instance must be untouched")
 }
