@@ -2,6 +2,8 @@ package overlay
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/ui"
@@ -163,29 +165,49 @@ func (s *SettingsOverlay) startTextEdit(field settingsField, title, value string
 	s.editing.SetSize(s.width, 3)
 }
 
-// handleEditingText forwards to the embedded TextInputOverlay and, on
-// submit, applies the parsed value to cfg via Mutate. On cancel (Esc)
-// no change is made. Either way control returns to browsing mode.
+// handleEditingText owns Enter/Esc directly rather than relying on
+// TextInputOverlay's Tab-to-focus-the-Enter-button convention (built
+// for the multi-line prompt overlay, where Enter on the textarea must
+// insert a newline). These are single-line fields: Enter submits
+// whatever's in the textarea immediately, Esc cancels. Any other key
+// (typed runes, backspace, arrows) is forwarded to the embedded widget.
 func (s *SettingsOverlay) handleEditingText(msg tea.KeyPressMsg) (closed, changed bool) {
-	closedSub, _ := s.editing.HandleKeyPress(msg)
-	if !closedSub {
+	switch msg.Code {
+	case tea.KeyEnter:
+		value := s.editing.GetValue()
+		field := s.editingField
+		s.mode = settingsBrowsing
+		s.editing = nil
+		return false, s.applyTextEdit(field, value)
+	case tea.KeyEsc:
+		s.mode = settingsBrowsing
+		s.editing = nil
 		return false, false
 	}
-	submitted := s.editing.IsSubmitted()
-	value := s.editing.GetValue()
-	field := s.editingField
-	s.mode = settingsBrowsing
-	s.editing = nil
-	if !submitted {
-		return false, false
-	}
-	return false, s.applyTextEdit(field, value)
+	s.editing.HandleKeyPress(msg)
+	return false, false
 }
 
-// applyTextEdit is filled in fully in Task 4 (BranchPrefix/DaemonPollInterval
-// validation). For now it only handles the case exercised by this task's
-// tests: none — Auto Yes never reaches this path. Returns false always.
+// applyTextEdit parses and stores value for field. Returns whether cfg
+// changed; on a parse failure it records the error via s.lastErr
+// (polled by TakeError) and leaves cfg untouched.
 func (s *SettingsOverlay) applyTextEdit(field settingsField, value string) bool {
+	switch field {
+	case settingsFieldDefaultProgram:
+		s.cfg.Mutate(func(c *config.Config) { c.DefaultProgram = value })
+		return true
+	case settingsFieldBranchPrefix:
+		s.cfg.Mutate(func(c *config.Config) { c.BranchPrefix = value })
+		return true
+	case settingsFieldDaemonPollInterval:
+		n, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || n <= 0 {
+			s.lastErr = fmt.Errorf("daemon poll interval must be a positive integer, got %q", value)
+			return false
+		}
+		s.cfg.Mutate(func(c *config.Config) { c.DaemonPollInterval = n })
+		return true
+	}
 	return false
 }
 

@@ -1045,6 +1045,35 @@ func (s *SettingsOverlay) applyTextEdit(field settingsField, value string) bool 
 
 Add `"strconv"` and `"strings"` to the import block.
 
+**Amendment discovered running this step's tests:** `TestSettingsOverlayEditsDefaultProgram`/`EditsDaemonPollInterval` still failed after the above — `TextInputOverlay.HandleKeyPress`'s Enter case only sets `Submitted = true` when focus is on its Enter button (`isEnterButton()`), reached via Tab. A plain `NewTextInputOverlay` starts with focus on the textarea, where Enter just inserts a newline — correct for the multi-line prompt overlay this widget was built for, wrong for these single-line fields. Fix `handleEditingText` (from Task 2, Step 3) to own Enter/Esc directly instead of depending on `IsSubmitted()`/`Canceled`:
+
+```go
+// handleEditingText owns Enter/Esc directly rather than relying on
+// TextInputOverlay's Tab-to-focus-the-Enter-button convention (built
+// for the multi-line prompt overlay, where Enter on the textarea must
+// insert a newline). These are single-line fields: Enter submits
+// whatever's in the textarea immediately, Esc cancels. Any other key
+// (typed runes, backspace, arrows) is forwarded to the embedded widget.
+func (s *SettingsOverlay) handleEditingText(msg tea.KeyPressMsg) (closed, changed bool) {
+	switch msg.Code {
+	case tea.KeyEnter:
+		value := s.editing.GetValue()
+		field := s.editingField
+		s.mode = settingsBrowsing
+		s.editing = nil
+		return false, s.applyTextEdit(field, value)
+	case tea.KeyEsc:
+		s.mode = settingsBrowsing
+		s.editing = nil
+		return false, false
+	}
+	s.editing.HandleKeyPress(msg)
+	return false, false
+}
+```
+
+This replaces the Task 2 version of `handleEditingText` entirely. **The same defect applies to Task 5's `ProfilesManager`** (`handleAddingName`/`handleAddingProgram`/`handleEditingProgram` all use the same `closedSub`/`IsSubmitted()` pattern) — apply the equivalent Enter/Esc-owned fix there too rather than reusing the code as originally written below; Task 5's code blocks in this document have NOT been retroactively corrected, so treat every `p.input.HandleKeyPress(msg); ... IsSubmitted() ...` occurrence in Task 5 as needing the same rewrite.
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `go test ./ui/overlay/... -run TestSettingsOverlay -v`
