@@ -6,8 +6,10 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestReloadInstances_SeesFreshInstancesOnDisk verifies that
@@ -64,4 +66,29 @@ func writeStateJSON(t *testing.T, dir string, titles []string) {
 	if err := config.AtomicWriteFile(filepath.Join(dir, config.StateFileName), stateJSON, 0644); err != nil {
 		t.Fatalf("write state.json: %v", err)
 	}
+}
+
+func TestRefreshPollInterval_PicksUpChange(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.DaemonPollInterval = 1000
+	require.NoError(t, config.SaveConfigTo(cfg, dir))
+
+	got := refreshPollInterval(dir, 999*time.Millisecond)
+	assert.Equal(t, 1000*time.Millisecond, got)
+
+	cfg.DaemonPollInterval = 2500
+	require.NoError(t, config.SaveConfigTo(cfg, dir))
+
+	got = refreshPollInterval(dir, 1000*time.Millisecond)
+	assert.Equal(t, 2500*time.Millisecond, got)
+}
+
+func TestRefreshPollInterval_FallsBackOnMissingConfig(t *testing.T) {
+	dir := t.TempDir() // no config.json written
+	got := refreshPollInterval(dir, 1500*time.Millisecond)
+	// LoadConfigFrom falls back to DefaultConfig() (1000ms) when no file
+	// exists, so the fallback path here is really "non-positive value",
+	// not "missing file" — assert the actual DefaultConfig behavior.
+	assert.Equal(t, time.Duration(config.DefaultConfig().DaemonPollInterval)*time.Millisecond, got)
 }

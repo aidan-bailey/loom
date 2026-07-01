@@ -206,6 +206,20 @@ func reloadInstanceData(configDir string) ([]session.InstanceData, error) {
 	return storage.LoadInstanceData()
 }
 
+// refreshPollInterval re-reads configDir's config.json and returns the
+// poll interval it specifies, or fallback if the config can't be loaded
+// or specifies a non-positive interval. Called every tick so a
+// settings-menu edit to DaemonPollInterval reaches the already-running
+// daemon process without a restart — the daemon has no other way to
+// observe a config.json written by a different process.
+func refreshPollInterval(configDir string, fallback time.Duration) time.Duration {
+	cfg := config.LoadConfigFrom(configDir)
+	if cfg == nil || cfg.DaemonPollInterval <= 0 {
+		return fallback
+	}
+	return time.Duration(cfg.DaemonPollInterval) * time.Millisecond
+}
+
 // RunDaemon runs the daemon process which iterates over all sessions and runs AutoYes mode on them.
 // It's expected that the main process kills the daemon when the main process starts.
 // wsCtx must carry a resolved ConfigDir.
@@ -246,6 +260,8 @@ func RunDaemon(cfg *config.Config, wsCtx *config.WorkspaceContext) error {
 		defer wg.Done()
 		ticker := time.NewTimer(pollInterval)
 		for {
+			pollInterval = refreshPollInterval(configDir, pollInterval)
+
 			fresh, err := reloadInstanceData(configDir)
 			if err != nil {
 				if everyN.ShouldLog() {
