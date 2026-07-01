@@ -188,6 +188,13 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 				)),
 		))
 		return nil
+	case instance.GetStatus() == session.Recoverable:
+		p.setFallbackState(lipgloss.JoinVertical(lipgloss.Center,
+			"Recoverable session (found on disk).",
+			"",
+			"Press 'r' to recover it, or 'D' to discard.",
+		))
+		return nil
 	}
 
 	if p.scrollOffset == 0 {
@@ -460,7 +467,7 @@ func (p *PreviewPane) scrollBy(instance *session.Instance, delta int) error {
 // scroll gesture. The real top-of-buffer clamp happens in UpdateContent, which
 // has the captured line count.
 func (p *PreviewPane) setOffset(instance *session.Instance, off int) error {
-	if instance != nil && instance.GetStatus() == session.Paused {
+	if instance != nil && (instance.GetStatus() == session.Paused || instance.GetStatus() == session.Recoverable) {
 		return nil
 	}
 	if off < 0 {

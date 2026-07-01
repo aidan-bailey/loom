@@ -479,10 +479,10 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 		}
 		_, cmd = runCheckoutSelectedOpts(m, i.Confirm, i.Help)
 	case script.ResumeIntent:
-		if !selectedPausedNotWorkspace(m) {
+		if !selectedResumableNotWorkspace(m) {
 			break
 		}
-		_, cmd = runResumeSelected(m)
+		_, cmd = runResumeOrRecover(m)
 	case script.NewInstanceIntent:
 		// Title pre-fill is not yet wired through the overlay; for now
 		// the field is accepted but ignored. Follow-up can plumb a

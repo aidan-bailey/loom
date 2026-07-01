@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
@@ -46,14 +47,16 @@ func selectedNotBusyNotWorkspace(m *home) bool {
 	return s != session.Loading && s != session.Deleting
 }
 
-// selectedPausedNotWorkspace gates resume: only a paused,
-// non-workspace instance has a branch waiting to be checked back out.
-func selectedPausedNotWorkspace(m *home) bool {
+// selectedResumableNotWorkspace gates the 'r' key: a Paused instance
+// (resume → recreate worktree) or a Recoverable orphan (recover → adopt
+// the on-disk worktree), never a workspace terminal.
+func selectedResumableNotWorkspace(m *home) bool {
 	selected := m.list.GetSelectedInstance()
 	if selected == nil || selected.IsWorkspaceTerminal {
 		return false
 	}
-	return selected.GetStatus() == session.Paused
+	s := selected.GetStatus()
+	return s == session.Paused || s == session.Recoverable
 }
 
 // selectedReadyForInput gates attach/quick-input: the instance must
@@ -149,6 +152,9 @@ func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
 	preAction, killAction := killActionFor(m, selected)
 	message := fmt.Sprintf("[!] Kill session '%s'?", selected.Title)
+	if selected.GetStatus() == session.Recoverable {
+		message = fmt.Sprintf("[!] Discard recoverable session '%s'? Uncommitted changes are lost; the branch is kept.", selected.Title)
+	}
 	return m, m.confirmTask(message, overlay.ConfirmationTask{
 		Sync:  preAction,
 		Async: killAction,
@@ -341,6 +347,37 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 		return resumeDoneMsg{}
 	}
 	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), resumeCmd)
+}
+
+// runResumeOrRecover routes the 'r' key: Recoverable orphans are adopted
+// (recover), Paused instances are resumed.
+func runResumeOrRecover(m *home) (tea.Model, tea.Cmd) {
+	if m.list.GetSelectedInstance().GetStatus() == session.Recoverable {
+		return runRecoverSelected(m)
+	}
+	return runResumeSelected(m)
+}
+
+// runRecoverSelected adopts the selected Recoverable orphan: it serializes
+// the inline placeholder, flips the data to Running, and runs
+// ReconcileAndRestore (which adopts the existing worktree and spawns tmux)
+// off the UI goroutine. The list swap + persist happen in the recoverDoneMsg
+// handler on the main goroutine.
+func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
+	selected := m.list.GetSelectedInstance()
+	cfgDir := m.configDir()
+	data := selected.ToInstanceData()
+	data.Status = session.Running
+	oldTitle := selected.Title
+	cmdExec := cmd2.MakeExecutor()
+	recoverCmd := func() tea.Msg {
+		inst, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
+		if err != nil {
+			return recoverDoneMsg{oldTitle: oldTitle, err: err}
+		}
+		return recoverDoneMsg{oldTitle: oldTitle, recovered: inst}
+	}
+	return m, recoverCmd
 }
 
 // -- Attach --
