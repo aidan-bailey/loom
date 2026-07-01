@@ -112,6 +112,9 @@ const (
 	// closes (Esc) or the user picks a file (Enter -> $EDITOR via
 	// tea.ExecProcess).
 	stateFileExplorer
+	// stateMergePicker is the state when the merge-session picker
+	// overlay is displayed (opened by the 'm' key).
+	stateMergePicker
 )
 
 // workspaceSlot bundles per-workspace state so multiple workspaces can be
@@ -1183,7 +1186,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnE
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker {
 		return nil, false
 	}
 	// If it maps to a built-in binding, highlight the corresponding menu
@@ -1229,6 +1232,8 @@ func (m *home) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return handleStateConfirmKey(m, msg)
 	case stateFileExplorer:
 		return handleStateFileExplorerKey(m, msg)
+	case stateMergePicker:
+		return handleStateMergePickerKey(m, msg)
 	default:
 		return handleStateDefaultKey(m, msg)
 	}
@@ -2050,7 +2055,7 @@ func (m *home) View() tea.View {
 				m.activeOverlay.View()))
 		}
 		switch m.state {
-		case statePrompt, stateHelp, stateConfirm, stateWorkspace:
+		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateMergePicker:
 			return asView(overlay.PlaceOverlay(0, 0, m.activeOverlay.View(), mainView, true, true))
 		}
 	}

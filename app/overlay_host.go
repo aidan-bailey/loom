@@ -21,6 +21,7 @@ const (
 	overlayWorkspacePicker
 	overlayWorkspacePickerStartup
 	overlayFileExplorer
+	overlayMergePicker
 )
 
 // setOverlay installs o as the active overlay and records its kind.
@@ -84,6 +85,15 @@ func (m *home) workspacePicker() *overlay.WorkspacePicker {
 // different overlay is active.
 func (m *home) fileExplorer() *overlay.FileExplorerOverlay {
 	if o, ok := m.activeOverlay.(*overlay.FileExplorerOverlay); ok {
+		return o
+	}
+	return nil
+}
+
+// mergePicker returns the active MergePicker, or nil when a different
+// overlay is active.
+func (m *home) mergePicker() *overlay.MergePicker {
+	if o, ok := m.activeOverlay.(*overlay.MergePicker); ok {
 		return o
 	}
 	return nil
