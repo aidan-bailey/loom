@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -78,24 +79,41 @@ func TestMergePickerDigitJump(t *testing.T) {
 		assert.Equal(t, 0, p.cursor)
 	})
 
-	t.Run("two independent single-digit jumps land on the correct rows without concatenating", func(t *testing.T) {
-		// Regression test for the stale-digitBuf bug: after a successful
-		// jump, digitBuf must be cleared so the next single keystroke is
-		// a fresh jump rather than concatenating (e.g. "1" then "2"
-		// silently becoming "12").
+	t.Run("rapid double-digit entry within the idle window reaches a two-digit index", func(t *testing.T) {
 		rows := []MergePickerRow{
-			{Index: 1, Title: "one", Branch: "u/one", Status: "Running"},
-			{Index: 2, Title: "two", Branch: "u/two", Status: "Running"},
-			{Index: 12, Title: "twelve", Branch: "u/twelve", Status: "Running"},
+			{Index: 1, Title: "one"},
+			{Index: 2, Title: "two"},
+			{Index: 12, Title: "twelve"},
 		}
 		p := NewMergePicker("current", rows)
+		fakeNow := time.Now()
+		p.now = func() time.Time { return fakeNow }
 
 		p.HandleKeyPress(tea.KeyPressMsg{Code: '1', Text: "1"})
-		assert.Equal(t, 0, p.cursor)
-		assert.Equal(t, "one", p.SelectedRow().Title)
-
+		fakeNow = fakeNow.Add(50 * time.Millisecond) // well within the idle window
 		p.HandleKeyPress(tea.KeyPressMsg{Code: '2', Text: "2"})
-		assert.Equal(t, 1, p.cursor)
+
+		assert.Equal(t, 2, p.cursor)
+		assert.Equal(t, "twelve", p.SelectedRow().Title)
+	})
+
+	t.Run("a digit press after the idle window starts a fresh jump instead of concatenating", func(t *testing.T) {
+		rows := []MergePickerRow{
+			{Index: 1, Title: "one"},
+			{Index: 2, Title: "two"},
+			{Index: 12, Title: "twelve"},
+		}
+		p := NewMergePicker("current", rows)
+		fakeNow := time.Now()
+		p.now = func() time.Time { return fakeNow }
+
+		p.HandleKeyPress(tea.KeyPressMsg{Code: '1', Text: "1"})
+		assert.Equal(t, 0, p.cursor, "first digit should already land on row Index-1")
+
+		fakeNow = fakeNow.Add(2 * time.Second) // well past the idle window
+		p.HandleKeyPress(tea.KeyPressMsg{Code: '2', Text: "2"})
+
+		assert.Equal(t, 1, p.cursor, "a digit press after the idle window must start fresh, not concatenate into 12")
 		assert.Equal(t, "two", p.SelectedRow().Title)
 	})
 }

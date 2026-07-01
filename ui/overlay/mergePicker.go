@@ -3,12 +3,21 @@ package overlay
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
+
+// mergePickerDigitIdleWindow bounds how long between keystrokes still
+// counts as "typing the same multi-digit index." A shorter window risks
+// splitting a deliberate fast two-digit entry; a longer one risks
+// concatenating two genuinely separate single-digit jumps. 600ms is a
+// generous but still snappy window for a human typing two digits in a
+// row.
+const mergePickerDigitIdleWindow = 600 * time.Millisecond
 
 // MergePickerRow is one selectable source session in the merge picker.
 // Index is the session's original 1-based number from the main
@@ -34,12 +43,14 @@ type MergePicker struct {
 	cursor      int
 	width       int
 	digitBuf    string
+	lastDigitAt time.Time
+	now         func() time.Time
 }
 
 // NewMergePicker creates a merge picker for targetTitle (shown in the
 // header) offering rows as the selectable sources.
 func NewMergePicker(targetTitle string, rows []MergePickerRow) *MergePicker {
-	return &MergePicker{targetTitle: targetTitle, rows: rows, width: 56}
+	return &MergePicker{targetTitle: targetTitle, rows: rows, width: 56, now: time.Now}
 }
 
 // HandleKeyPress processes navigation, digit-jump, and selection keys.
@@ -66,6 +77,11 @@ func (p *MergePicker) HandleKeyPress(msg tea.KeyPressMsg) (bool, bool) {
 	default:
 		s := msg.String()
 		if len(s) == 1 && s[0] >= '0' && s[0] <= '9' {
+			now := p.now()
+			if p.digitBuf != "" && now.Sub(p.lastDigitAt) > mergePickerDigitIdleWindow {
+				p.digitBuf = ""
+			}
+			p.lastDigitAt = now
 			p.digitBuf += s
 			p.applyDigitBuf()
 		}
@@ -74,7 +90,11 @@ func (p *MergePicker) HandleKeyPress(msg tea.KeyPressMsg) (bool, bool) {
 }
 
 // applyDigitBuf jumps the cursor to the row whose Index matches the
-// buffered digits. If the buffered value already exceeds every row's
+// buffered digits. It does not clear the buffer on a successful match —
+// buffer lifecycle (starting a fresh entry vs. continuing a multi-digit
+// one) is owned entirely by the idle-window check in HandleKeyPress, so
+// a second digit arriving quickly can extend "1" into "12" and reach a
+// two-digit index. If the buffered value already exceeds every row's
 // Index, no row can ever match by appending more digits, so the buffer
 // resets to just the latest keystroke — this keeps a stray digit from
 // locking out further typing.
@@ -88,7 +108,6 @@ func (p *MergePicker) applyDigitBuf() {
 	for i, r := range p.rows {
 		if r.Index == n {
 			p.cursor = i
-			p.digitBuf = ""
 			return
 		}
 		if r.Index > maxIndex {
