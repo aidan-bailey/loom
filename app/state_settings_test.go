@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
 	tea "charm.land/bubbletea/v2"
@@ -65,4 +66,22 @@ func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 	reloaded := config.LoadConfigFrom(m.activeCtx.ConfigDir)
 	require.NotNil(t, reloaded)
 	assert.True(t, reloaded.AutoYes, "the toggle must be persisted immediately, not only in memory")
+}
+
+func TestSettingsDrillsIntoClaudePreferences(t *testing.T) {
+	m := newTestHomeWithActiveCtx(t)
+	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	_, _ = runOpenSettings(m)
+
+	so := m.settingsOverlay()
+	require.NotNil(t, so)
+
+	// Row 5 is Claude Preferences.
+	for i := 0; i < 5; i++ {
+		handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
+	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // drill in
+	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // toggle remote control off
+
+	assert.False(t, m.appConfig.RemoteControlEnabled())
 }
