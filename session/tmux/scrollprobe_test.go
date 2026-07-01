@@ -22,6 +22,15 @@ func TestCaptureHistoryRealTmux(t *testing.T) {
 		t.Skip("tmux not found in PATH; skipping real-tmux scroll-history test")
 	}
 
+	// `tmux attach-session` is a real terminal client and needs a usable
+	// TERM to negotiate input/output — CI runners execute steps without a
+	// tty, so TERM is unset there (unlike a dev box, which inherits one
+	// from the real terminal running `go test`). An unset or "dumb" TERM
+	// makes the attach client silently stop forwarding keystrokes to the
+	// pane, which is what made this test hang for its full timeout and
+	// fail in CI while always passing locally.
+	t.Setenv("TERM", "xterm-256color")
+
 	ts := NewTmuxSession("caphist", "sh")
 	if err := ts.Start(t.TempDir()); err != nil {
 		t.Fatalf("start: %v", err)
@@ -32,12 +41,10 @@ func TestCaptureHistoryRealTmux(t *testing.T) {
 		t.Fatalf("setsize: %v", err)
 	}
 
-	// Poll for the command's output instead of trusting fixed sleeps, and
-	// re-issue it if nothing has shown up yet: on a loaded CI runner the
-	// attach can still be settling when the first SendKeys/TapEnter land,
-	// silently swallowing them. That race is what made this test flake in
-	// CI (see race.yml's 4-core runner) while always passing locally,
-	// where the attach settles near-instantly.
+	// Still poll for the command's output instead of trusting a fixed
+	// sleep, and re-issue it if nothing has shown up yet, since a loaded
+	// CI runner can leave the attach settling when the first
+	// SendKeys/TapEnter land.
 	const cmd = "for i in $(seq 200); do echo histline$i; done"
 	const marker = "histline200"
 	deadline := time.Now().Add(10 * time.Second)
