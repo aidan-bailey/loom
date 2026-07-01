@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"github.com/aidan-bailey/loom/log"
 	"os"
 	"path/filepath"
@@ -429,4 +430,21 @@ func TestSaveConfigTo(t *testing.T) {
 		assert.Equal(t, testConfig.DaemonPollInterval, loadedConfig.DaemonPollInterval)
 		assert.Equal(t, testConfig.BranchPrefix, loadedConfig.BranchPrefix)
 	})
+}
+
+func TestConfigMutateIsRaceSafeWithGetBranchPrefix(t *testing.T) {
+	cfg := DefaultConfig()
+	done := make(chan struct{})
+
+	go func() {
+		for i := 0; i < 1000; i++ {
+			cfg.Mutate(func(c *Config) { c.BranchPrefix = fmt.Sprintf("user-%d/", i) })
+		}
+		close(done)
+	}()
+
+	for i := 0; i < 1000; i++ {
+		_ = cfg.GetBranchPrefix()
+	}
+	<-done
 }

@@ -93,10 +93,13 @@ func (s *scriptHost) DefaultProgram() string {
 	return s.m.program
 }
 
-// BranchPrefix implements script.Host.
+// BranchPrefix implements script.Host. Reads through the locked
+// accessor because this runs on the Lua dispatch goroutine while the
+// settings overlay can be mutating the same *Config concurrently on
+// the main goroutine — see Config.Mutate's doc comment.
 func (s *scriptHost) BranchPrefix() string {
 	if s.m.appConfig != nil {
-		return s.m.appConfig.BranchPrefix
+		return s.m.appConfig.GetBranchPrefix()
 	}
 	return ""
 }

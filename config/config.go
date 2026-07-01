@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/aidan-bailey/loom/log"
 )
@@ -71,6 +72,18 @@ type Profile struct {
 
 // Config represents the application configuration
 type Config struct {
+	// mu guards mutation of every field below once the settings overlay
+	// makes Config mutable at runtime. Before the settings overlay,
+	// Config was loaded once and never mutated, so nothing raced on it.
+	// scriptHost.BranchPrefix() (app/app_scripts.go) reads BranchPrefix
+	// from the Lua dispatch goroutine — a tea.Cmd body running
+	// concurrently with Update — while the settings overlay writes it
+	// from the main goroutine. Mutate/GetBranchPrefix close that race
+	// the same way config.State.mu already guards InstancesData/
+	// HelpScreensSeen against the same class of race. Unexported, so
+	// encoding/json skips it (same precedent as State.mu).
+	mu sync.RWMutex
+
 	// DefaultProgram is the default program to run in new instances
 	DefaultProgram string `json:"default_program"`
 	// AutoYes is a flag to automatically accept all prompts.
@@ -87,6 +100,26 @@ type Config struct {
 	// enabled rather than taking the bool zero value; only an explicit
 	// false disables it. Read it through RemoteControlEnabled.
 	ClaudeRemoteControl *bool `json:"claude_remote_control,omitempty"`
+}
+
+// Mutate runs fn with the write lock held. Callers outside this package
+// (the settings overlay) use this instead of writing exported fields
+// directly, so a concurrent GetBranchPrefix cannot observe a torn write.
+// fn must not call GetBranchPrefix or Mutate itself (would deadlock).
+func (c *Config) Mutate(fn func(*Config)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	fn(c)
+}
+
+// GetBranchPrefix returns BranchPrefix under a read lock. Use this
+// instead of reading the field directly from any goroutine other than
+// the one currently calling Mutate — in practice, scriptHost.BranchPrefix,
+// which runs on the Lua dispatch goroutine.
+func (c *Config) GetBranchPrefix() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.BranchPrefix
 }
 
 // RemoteControlEnabled reports whether new Claude sessions should launch
