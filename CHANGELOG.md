@@ -1,50 +1,150 @@
-## [0.2.2] - 2026-06-29
-
-### 🐛 Bug Fixes
-
-- *(ui)* Clamp pane dimensions on launch so a small terminal can't crash
-
-## [0.2.1] - 2026-06-26
-
-### 🐛 Bug Fixes
-
-- *(ui)* Size the pane body to full width so the right and bottom borders reach the edge
-- *(ui)* Cap pane content by rows so the bottom/right border isn't clipped
-- *(ui)* Clamp the split pane to its height
-## [0.2.0] - 2026-06-22
+## [0.3.0] - 2026-07-01
 
 ### 🚀 Features
 
-- *(ui)* Embedded VT terminal emulator powering pane display, with windowed scrollback rendering
-- *(ui)* Live-scroll offset model for the agent and terminal panes, with a jump-to-bottom footer and live new-line count
-- *(ui)* Forward the scroll wheel into TUI agents instead of windowing history
-- *(ui)* Mouse drag-select, copy, and click-to-focus across panes
-- *(app)* Interact mode (`i`): route mouse input and bracketed paste into the focused pane, double-esc to exit (relabels attach → interact)
-- *(tmux)* Pane renderer backed by the emulator with a `LOOM_PANE_RENDERER` kill-switch and capture-pane fallback
+- *(vt)* Add Emulator interface for pane display
+- *(vt)* Add x/vt-backed Emulator with golden + race tests
+- *(tmux)* Platform newEmulator factory with LOOM_PANE_RENDERER kill-switch
+- *(tmux)* Add emulator field, geometry tracking, and RenderEmulator accessor
+- *(tmux)* Pump ptmx output into the emulator (io.Discard fallback)
+- *(tmux)* Build emulator in Restore; tear down in Close/PausePreview
+- *(tmux)* Resize emulator and record geometry in SetDetachedSize
+- *(tmux)* Disable status bar so the emulator stream matches capture-pane
+- *(session)* Source agent-pane preview from the emulator with capture-pane fallback
+- *(ui)* Source terminal pane from the emulator with capture-pane fallback
+- *(vt)* Add RenderWindow + ScrollbackLen for windowed scrollback rendering
+- *(session)* Expose ScrollbackLen/RenderWindow through TmuxSession and Instance
+- *(ui)* Live-scroll offset model for the agent pane (drop viewport mode-switch)
+- *(ui)* Live-scroll offset model for the terminal pane
+- *(ui)* Jump-to-bottom footer with live new-line count while scrolled
+- *(ui)* Forward scroll into TUI agents instead of windowing (no-op) history
+- *(phase3)* Clipboard copy command + selection model (foundation)
+- *(phase3)* Mouse drag-select + copy + click-to-focus
+- *(phase5)* ForwardMouse + bracketed Paste primitives (foundation)
+- *(phase5)* Route mouse + bracketed paste into the focused pane in interact mode
+- *(phase5)* 'i' to interact, double-esc exit, relabel attach->interact
+- *(agent)* Auto-launch Claude sessions with --remote-control
+- *(agent)* Detect Claude auth before enabling remote control
+- *(session)* Add Recoverable status for inline orphan recovery
+- *(session)* Detect uncommitted changes on orphan candidates
+- *(session)* Classify orphans into clean vs needs-review
+- *(session)* Add branch-preserving orphan worktree removal
+- *(session)* Orphan->InstanceData builder and Recoverable EnsureRunning guard
+- *(app)* Exclude Recoverable instances from persistence
+- *(ui)* Render Recoverable status in list and preview
+- *(ui)* Add info-style status line to the error bar
+- *(app)* ReconcileOrphans engine with auto-clean and inline review
+- *(app)* Run orphan reconcile on every workspace-load path
+- *(app)* Inline recover and discard actions for Recoverable orphans
+- *(ui)* Add settings overlay skeleton with Auto Yes toggle
+- *(app)* Wire S to open the settings overlay
+- *(ui)* Support text-edit fields in the settings overlay
+- *(ui)* Implement the Profiles CRUD sub-screen
+- *(ui)* Implement the Claude Preferences sub-screen
+- *(daemon)* Reload DaemonPollInterval every tick
+- [**breaking**] Remove the Auto Yes feature entirely
+- *(git)* Add GitWorktree.Merge
+- *(script)* Add MergeSessionsIntent
+- *(script)* Wire cs.actions.merge_selected()
+- *(script)* Bind m to merge_selected in default keymap
+- *(ui)* Add MergePicker overlay
+- *(app)* Wire the merge-session picker end to end
+- *(keys)* Add KeyMerge for the help-panel listing
+
+### 🐛 Bug Fixes
+
+- *(vt)* Drain x/vt reply pipe to prevent startup deadlock
+- *(ui)* Source scroll history from tmux capture-pane, not the emulator
+- *(app)* Re-render the scrolled agent pane on the preview tick
+- *(phase3)* Offset selection hit-test by the tab bar height
+- *(phase3)* Allow drag-select in inline-attach, not just default state
+- *(phase5)* Drag-select in interact copies to Loom clipboard, not tmux
+- *(ui)* Agent pane shows its full height (drop the ellipsis row)
+- *(ui)* Clamp split pane to its height; truncate over-wide lines
+- *(ui)* Revert per-line truncation in renderPane (broke the box right border)
+- *(ui)* Cap pane content by rows so the bottom/right border isn't clipped
+- *(ui)* Size pane body to full width so the right/bottom border reaches the edge
+- *(ui)* Clamp pane dimensions so a small terminal can't crash on launch
+- *(config)* Make Config safely mutable at runtime
+- *(ui)* Stop MergePicker's digit-jump from crashing on out-of-range input
+- *(app)* Capture merge target/sources at picker-open time, not commit time
+- *(ui)* Support real two-digit index jumps in MergePicker
+- *(tmux)* Poll instead of sleep in TestCaptureHistoryRealTmux
+
+### 💼 Other
+
+- *(ui)* Dampen forwarded agent wheel speed; smaller page jump
+
+### 🚜 Refactor
+
+- Retire capture-pane history path now that scrollback is in the emulator
+- *(app)* Remove obsolete orphan-recovery overlay and plumbing
+- *(ui)* Extract DisplayIndex helper for list numbering
+
+### 📚 Documentation
+
+- Correct CLAUDE.md drift and document concurrency invariant
+- Add design spec for native terminal experience (embedded VT)
+- Add Bubble Tea v2 migration plan (Phase 0)
+- Add Phase 1 embedded-VT implementation plan
+- Add Phase 2 live-scroll implementation plan
+- Add recovery overhaul design spec
+- Add recovery overhaul implementation plan
+- Update CLAUDE.md for inline recovery; add recover-gate test; lint fix
+- Add settings menu design spec
+- Correct daemon-reload section of settings menu spec
+- Document the settings menu keybinding
+- Add design spec for git-merge session hotkey
+- Fix merge-hotkey spec eligibility rules to match reality
+- Fix merge-hotkey spec notification mechanism to match reality
+- Add implementation plan for git-merge session hotkey
+- Document the m (merge session) keybinding
+- *(app)* Fix instanceByDisplayIndex comment to describe the snapshot it actually resolves against
+
+### ⚡ Performance
+
+- *(ui)* Forward agent scroll via PTY write, not a send-keys subprocess
+- *(app)* Run the interact tick at ~60fps (16ms) for snappier echo
+
+### 🧪 Testing
+
+- Update key construction for Bubble Tea v2; fix space token
+- *(app)* Reframe inline-attach scroll-reset test for the offset model
+- *(nix)* Provide tmux to checkPhase so the real-tmux scroll test runs
+- *(app)* Add merge_selected to the dispatch parity suite
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ui)* Temporary panescroll diagnostics (offset/total/rows/maxOff)
+- *(ui)* Log agent-pane CaptureHistory total/rows to pin the bail path
+- *(ui)* Remove temporary panescroll diagnostics
+- *(app)* Temporary mouseselect diagnostics for drag-select debugging
+- *(app)* Remove temporary mouseselect diagnostics
+- Temporary panesize diagnostics (PTY size vs rendered line width)
+- Log reported terminal size in window-size handler (panesize diag)
+- Log composed view widths (panesize diag)
+- Log raw emulator line count vs pane height (panesize diag)
+- Log terminal pane height (panesize diag)
+- Remove temporary panesize diagnostics
+## [0.1.4] - 2026-06-19
+
+### 🚀 Features
+
 - *(cli)* Add -v/--version flag
 
 ### 🐛 Bug Fixes
 
-- *(ui)* Agent pane now shows its full height (drop the ellipsis row)
-- *(vt)* Drain the x/vt reply pipe to prevent a startup deadlock
-- *(app)* Re-render the scrolled agent pane on the preview tick
 - *(session)* Guard Storage mutable state with a mutex
 - *(config)* Guard State saves with a mutex
 - *(tmux)* Guard ptmx and monitor with a mutex
 - *(app,script)* Apply script nav effects on the main goroutine
 
-### 🚜 Refactor
+### 📚 Documentation
 
-- Retire the capture-pane history path now that scrollback lives in the emulator
-
-### ⚡ Performance
-
-- *(app)* Run the interact tick at ~60fps for snappier echo
-- *(ui)* Forward agent scroll via a PTY write instead of a send-keys subprocess
+- Add multi-agent codebase audit report
 
 ### ⚙️ Miscellaneous Tasks
 
-- *(deps)* Migrate to Bubble Tea v2 / Lip Gloss v2 / Bubbles v2
 - *(nix)* Derive flake version from main.go at eval time
 - Run the test suite under the race detector
 ## [0.1.3] - 2026-05-11
