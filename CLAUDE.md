@@ -181,7 +181,7 @@ Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent act
 ### Persistent State
 
 All stored in `~/.loom/`:
-- `config.json` — user configuration: `DefaultProgram`, `AutoYes`, `DaemonPollInterval` (ms, default 1000), `BranchPrefix` (default: `{username}/`), `Profiles` (named program presets)
+- `config.json` — user configuration: `DefaultProgram`, `AutoYes`, `DaemonPollInterval` (ms, default 1000), `BranchPrefix` (default: `{username}/`), `Profiles` (named program presets), `ClaudeRemoteControl` (`*bool`, default on — launches Claude sessions with `--remote-control <title>`; nil is treated as enabled, read via `Config.RemoteControlEnabled()`)
 - `state.json` — app state (e.g. help screens seen)
 - `instances.json` — serialized session data
 - `workspaces.json` — registered workspaces with name, path, and last-used tracking

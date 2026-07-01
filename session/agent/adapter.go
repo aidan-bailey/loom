@@ -56,6 +56,13 @@ type Adapter interface {
 	// already present, the input is returned unchanged. Returns the
 	// input unchanged if the adapter does not support recovery.
 	ApplyRecoveryFlag(program string) string
+	// ApplyRemoteControlFlag returns the program string with the agent's
+	// remote-control flag appended (e.g. "claude --remote-control foo"),
+	// using sessionName to name the remote session where the agent
+	// supports naming. Idempotent: if a remote-control flag is already
+	// present, the input is returned unchanged. Returns the input
+	// unchanged for agents without a remote-control mode.
+	ApplyRemoteControlFlag(program, sessionName string) string
 }
 
 // Registry is a prioritized list of adapters. Lookup returns the first

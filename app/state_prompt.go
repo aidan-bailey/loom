@@ -50,6 +50,10 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				selected.Prompt = prompt
 
+				// Enable Claude remote control after any profile override, so the
+				// rewritten program persists for later resume/crash restarts.
+				selected.Program = remoteControlProgram(m.appConfig, selected.Program, selected.Title)
+
 				_ = selected.TransitionTo(session.Loading)
 				m.newInstanceFinalizer()
 				m.dismissOverlay()

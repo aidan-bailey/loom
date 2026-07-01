@@ -16,3 +16,13 @@ var defaultRegistry = agent.DefaultRegistry()
 func BuildRecoveryCommand(program string) string {
 	return defaultRegistry.Lookup(program).ApplyRecoveryFlag(program)
 }
+
+// BuildRemoteControlCommand modifies a program command string to launch
+// the agent with its remote-control mode enabled, naming the remote
+// session after sessionName. The adapter registry decides whether and
+// how the string is modified (e.g. "claude" → "claude --remote-control
+// <name>"). Idempotent, and a no-op for agents without a remote-control
+// mode.
+func BuildRemoteControlCommand(program, sessionName string) string {
+	return defaultRegistry.Lookup(program).ApplyRemoteControlFlag(program, sessionName)
+}

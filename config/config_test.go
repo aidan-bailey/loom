@@ -347,6 +347,27 @@ func TestGetProgram(t *testing.T) {
 	})
 }
 
+func TestRemoteControlEnabled(t *testing.T) {
+	t.Run("nil (absent from config) defaults to enabled", func(t *testing.T) {
+		cfg := &Config{}
+		assert.True(t, cfg.RemoteControlEnabled())
+	})
+
+	t.Run("explicit true is enabled", func(t *testing.T) {
+		cfg := &Config{ClaudeRemoteControl: boolPtr(true)}
+		assert.True(t, cfg.RemoteControlEnabled())
+	})
+
+	t.Run("explicit false disables", func(t *testing.T) {
+		cfg := &Config{ClaudeRemoteControl: boolPtr(false)}
+		assert.False(t, cfg.RemoteControlEnabled())
+	})
+
+	t.Run("DefaultConfig enables it", func(t *testing.T) {
+		assert.True(t, DefaultConfig().RemoteControlEnabled())
+	})
+}
+
 func TestGetProfiles(t *testing.T) {
 	t.Run("no profiles returns single synthetic profile", func(t *testing.T) {
 		cfg := &Config{DefaultProgram: "/usr/local/bin/claude"}

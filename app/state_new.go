@@ -50,6 +50,10 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(tea.RequestWindowSize, initialSearch)
 		}
 
+		// Enable Claude remote control now that the title is known, so the
+		// rewritten program persists for later resume/crash restarts.
+		instance.Program = remoteControlProgram(m.appConfig, instance.Program, instance.Title)
+
 		// Set Loading status and finalize into the list immediately
 		_ = instance.TransitionTo(session.Loading)
 		m.newInstanceFinalizer()

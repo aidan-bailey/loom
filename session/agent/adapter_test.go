@@ -62,6 +62,48 @@ func TestNonClaudeAdaptersNoRecovery(t *testing.T) {
 	assert.Equal(t, "codex --foo", Default().ApplyRecoveryFlag("codex --foo"))
 }
 
+func TestClaudeRemoteControlFlag(t *testing.T) {
+	c := Claude()
+
+	cases := []struct {
+		name    string
+		program string
+		session string
+		want    string
+	}{
+		{"plain named", "claude", "fix login bug", "claude --remote-control fix-login-bug"},
+		{"preserves flags", "claude --model sonnet", "My Feature", "claude --remote-control My-Feature --model sonnet"},
+		{"absolute path", "/usr/bin/claude", "task", "/usr/bin/claude --remote-control task"},
+		{"strips unsafe chars", "claude", "fix: cache/bug (v2)!", "claude --remote-control fix-cachebug-v2"},
+		{"empty title omits name", "claude", "", "claude --remote-control"},
+		{"unsanitizable title omits name", "claude", "日本語", "claude --remote-control"},
+		{"idempotent bare", "claude --remote-control", "task", "claude --remote-control"},
+		{"idempotent named", "claude --remote-control existing", "task", "claude --remote-control existing"},
+		{"idempotent equals form", "claude --remote-control=existing", "task", "claude --remote-control=existing"},
+		{"empty program", "", "task", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, c.ApplyRemoteControlFlag(tc.program, tc.session))
+		})
+	}
+}
+
+func TestClaudeRemoteControlComposesWithRecovery(t *testing.T) {
+	// A persisted program already carrying --remote-control must survive a
+	// later recovery rewrite, with the name kept adjacent to its flag.
+	c := Claude()
+	rc := c.ApplyRemoteControlFlag("claude", "my task")
+	assert.Equal(t, "claude --remote-control my-task", rc)
+	assert.Equal(t, "claude --continue --remote-control my-task", c.ApplyRecoveryFlag(rc))
+}
+
+func TestNonClaudeAdaptersNoRemoteControl(t *testing.T) {
+	assert.Equal(t, "aider --model x", Aider().ApplyRemoteControlFlag("aider --model x", "t"))
+	assert.Equal(t, "gemini", Gemini().ApplyRemoteControlFlag("gemini", "t"))
+	assert.Equal(t, "codex --foo", Default().ApplyRemoteControlFlag("codex --foo", "t"))
+}
+
 func TestTrustPromptResponses(t *testing.T) {
 	assert.Equal(t, TrustPromptTapEnter, Claude().TrustPromptResponse())
 	assert.Equal(t, TrustPromptTapDAndEnter, Aider().TrustPromptResponse())

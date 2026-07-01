@@ -33,3 +33,8 @@ func (aiderAdapter) PendingPromptPattern() string {
 func (aiderAdapter) ApplyRecoveryFlag(program string) string {
 	return program
 }
+
+// ApplyRemoteControlFlag is a no-op for aider — it has no remote-control mode.
+func (aiderAdapter) ApplyRemoteControlFlag(program, _ string) string {
+	return program
+}

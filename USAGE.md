@@ -425,6 +425,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | `daemon_poll_interval` | int | `1000` | Milliseconds between prompt checks (lower = more responsive) |
 | `branch_prefix` | string | `"{username}/"` | Prefix for auto-generated branch names |
 | `profiles` | array | `[]` | Named program configurations |
+| `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
 
 ### Example config.json
 
@@ -455,6 +456,10 @@ A profile is a named shortcut for a program invocation. Profiles serve two purpo
 2. **As a picker in the prompt overlay.** When you press `N` to create a session with a prompt, the overlay exposes a profile picker (`←` / `→`). Pick a profile and the session launches with that profile's program.
 
 Profiles are defined in the `profiles` array; each entry needs a unique `name` and a `program` string. There is no inheritance or templating — each profile is a flat, literal command.
+
+### Claude Remote Control
+
+When `claude_remote_control` is enabled (the default), every Claude session Loom starts is launched with Claude's `--remote-control` flag, so you can drive it from a remote-control client. The remote session is named after the Loom session title (sanitized to a shell-safe token — e.g. `fix login bug` → `fix-login-bug`), making parallel sessions easy to tell apart. The flag is only added for the `claude` program; other agents are unaffected. To turn it off globally, set `"claude_remote_control": false`. If your `default_program` already includes `--remote-control`, Loom leaves it as-is rather than adding a second flag.
 
 ### Branch Prefix
 

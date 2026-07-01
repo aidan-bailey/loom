@@ -55,3 +55,26 @@ func TestBuildRecoveryCommand_ClaudettePath(t *testing.T) {
 	// Basename "claudette" must not match even at an absolute path.
 	assert.Equal(t, "/usr/bin/claudette", BuildRecoveryCommand("/usr/bin/claudette"))
 }
+
+func TestBuildRemoteControlCommand_Claude(t *testing.T) {
+	assert.Equal(t, "claude --remote-control fix-bug", BuildRemoteControlCommand("claude", "fix bug"))
+}
+
+func TestBuildRemoteControlCommand_ClaudeWithFlags(t *testing.T) {
+	assert.Equal(t,
+		"claude --remote-control task --model sonnet",
+		BuildRemoteControlCommand("claude --model sonnet", "task"),
+	)
+}
+
+func TestBuildRemoteControlCommand_Idempotent(t *testing.T) {
+	assert.Equal(t, "claude --remote-control keep", BuildRemoteControlCommand("claude --remote-control keep", "other"))
+}
+
+func TestBuildRemoteControlCommand_Aider(t *testing.T) {
+	assert.Equal(t, "aider --model gemma", BuildRemoteControlCommand("aider --model gemma", "task"))
+}
+
+func TestBuildRemoteControlCommand_Unknown(t *testing.T) {
+	assert.Equal(t, "codex", BuildRemoteControlCommand("codex", "task"))
+}

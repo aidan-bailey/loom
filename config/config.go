@@ -81,6 +81,19 @@ type Config struct {
 	BranchPrefix string `json:"branch_prefix"`
 	// Profiles is a list of named program profiles.
 	Profiles []Profile `json:"profiles,omitempty"`
+	// ClaudeRemoteControl controls whether new Claude sessions launch
+	// with `--remote-control` (named after the session title). It is a
+	// pointer so a config file predating this field (nil) is treated as
+	// enabled rather than taking the bool zero value; only an explicit
+	// false disables it. Read it through RemoteControlEnabled.
+	ClaudeRemoteControl *bool `json:"claude_remote_control,omitempty"`
+}
+
+// RemoteControlEnabled reports whether new Claude sessions should launch
+// with the --remote-control flag. Defaults to true when unset so the
+// feature is on out of the box; only an explicit false disables it.
+func (c *Config) RemoteControlEnabled() bool {
+	return c.ClaudeRemoteControl == nil || *c.ClaudeRemoteControl
 }
 
 // GetProgram returns the program to run. If Profiles is non-empty and
@@ -138,8 +151,13 @@ func DefaultConfig() *Config {
 			}
 			return fmt.Sprintf("%s/", strings.ToLower(user.Username))
 		}(),
+		ClaudeRemoteControl: boolPtr(true),
 	}
 }
+
+// boolPtr returns a pointer to b. Used for config fields whose absent
+// (nil) state must be distinguished from the false zero value.
+func boolPtr(b bool) *bool { return &b }
 
 // GetClaudeCommand attempts to find the "claude" command in the user's shell
 // It checks in the following order:
