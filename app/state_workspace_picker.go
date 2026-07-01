@@ -33,6 +33,7 @@ func handleStateWorkspaceKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			}
 			m.loadSlot(0)
 			m.updateTabBarStatuses()
+			m.showRecoverySummary(m.slots[0].recovery)
 			if m.registry != nil {
 				_ = m.registry.UpdateLastUsed(selected.Name)
 			}

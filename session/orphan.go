@@ -45,6 +45,32 @@ type OrphanCandidate struct {
 	// loom_<sanitized-title> is currently running. When true, recovery
 	// can adopt the live PTY rather than spawning a new one.
 	HasLiveTmux bool
+	// HasUncommittedChanges reports whether the worktree has uncommitted
+	// edits (git status --porcelain). True (conservatively, on probe
+	// error) keeps an orphan in the needs-review bucket so auto-clean
+	// never discards unsaved work.
+	HasUncommittedChanges bool
+}
+
+// OrphanDisposition tells reconcileOrphans how to handle a candidate.
+type OrphanDisposition int
+
+const (
+	// DisposeClean means dead tmux and no uncommitted changes — a stale
+	// leftover. Auto-remove the worktree (branch preserved).
+	DisposeClean OrphanDisposition = iota
+	// DisposeReview means live tmux or uncommitted changes — surface
+	// inline as a Recoverable entry for the user to recover or discard.
+	DisposeReview
+)
+
+// Disposition buckets a candidate. Any signal of life (a running agent or
+// unsaved edits) routes to review; everything else is safe to auto-clean.
+func (c OrphanCandidate) Disposition() OrphanDisposition {
+	if c.HasLiveTmux || c.HasUncommittedChanges {
+		return DisposeReview
+	}
+	return DisposeClean
 }
 
 // orphanProbeTimeout caps each git/tmux subprocess invocation during
@@ -68,6 +94,21 @@ var probeWorktreeRepo = func(worktreePath string) (repoPath, headSHA string, err
 		return "", "", err
 	}
 	return repo, head, nil
+}
+
+// probeWorktreeDirty reports whether the worktree has uncommitted changes.
+// Package-level var so tests stub it without a git fixture (mirrors
+// probeWorktreeRepo). On any git error it returns true — the safe default
+// that routes an unverifiable worktree to needs-review instead of auto-clean.
+var probeWorktreeDirty = func(worktreePath string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), orphanProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "status", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return true
+	}
+	return len(strings.TrimSpace(string(out))) > 0
 }
 
 // DiscoverOrphans scans configDir's worktrees directory and returns
@@ -159,12 +200,13 @@ func buildOrphanCandidate(worktreePath, userPrefix, leafDirName string, cmdExec 
 
 	title := HumanizeBranchLeaf(branchName)
 	return OrphanCandidate{
-		WorktreePath:  worktreePath,
-		BranchName:    branchName,
-		RepoPath:      repoPath,
-		BaseCommitSHA: headSHA,
-		Title:         title,
-		HasLiveTmux:   CheckTmuxAlive(title, cmdExec),
+		WorktreePath:          worktreePath,
+		BranchName:            branchName,
+		RepoPath:              repoPath,
+		BaseCommitSHA:         headSHA,
+		Title:                 title,
+		HasLiveTmux:           CheckTmuxAlive(title, cmdExec),
+		HasUncommittedChanges: probeWorktreeDirty(worktreePath),
 	}, true
 }
 
@@ -257,6 +299,46 @@ func readWorktreeHEAD(worktreePath string) (string, error) {
 		return "", fmt.Errorf("git returned empty HEAD sha for %s", worktreePath)
 	}
 	return sha, nil
+}
+
+// RemoveOrphanWorktree removes an orphaned worktree directory while
+// preserving its branch (git worktree remove -f deletes the working tree
+// but never the branch). Used to auto-clean stale leftovers during
+// reconciliation. -f is required because the worktree may hold tracked
+// edits we have already decided to discard, or git may consider it dirty.
+func RemoveOrphanWorktree(repoPath, worktreePath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), orphanProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "remove", "-f", worktreePath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("remove worktree %s: %w (%s)", worktreePath, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// InstanceDataFromOrphan reconstructs InstanceData for an orphan candidate.
+// IsExistingBranch is always true so a later Kill (discard) removes only the
+// worktree, never the branch. Status is left zero (Running); callers override
+// it (Recoverable for the inline placeholder, Running for recovery).
+func InstanceDataFromOrphan(cand OrphanCandidate, program string) InstanceData {
+	now := time.Now()
+	return InstanceData{
+		SchemaVersion: CurrentSchemaVersion,
+		Title:         cand.Title,
+		Path:          cand.RepoPath,
+		Branch:        cand.BranchName,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Program:       program,
+		Worktree: GitWorktreeData{
+			RepoPath:         cand.RepoPath,
+			WorktreePath:     cand.WorktreePath,
+			SessionName:      cand.Title,
+			BranchName:       cand.BranchName,
+			BaseCommitSHA:    cand.BaseCommitSHA,
+			IsExistingBranch: true,
+		},
+	}
 }
 
 // SanitizedToTmuxName mirrors tmux.ToLoomTmuxName. Re-exporting the

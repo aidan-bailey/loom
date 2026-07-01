@@ -112,11 +112,6 @@ const (
 	// closes (Esc) or the user picks a file (Enter -> $EDITOR via
 	// tea.ExecProcess).
 	stateFileExplorer
-	// stateOrphanRecovery is the state when the startup orphan-
-	// recovery overlay is displayed. Triggered when DiscoverOrphans
-	// finds worktrees on disk that aren't referenced in any loaded
-	// state.json — the user picks which to recover and which to skip.
-	stateOrphanRecovery
 )
 
 // workspaceSlot bundles per-workspace state so multiple workspaces can be
@@ -128,6 +123,9 @@ type workspaceSlot struct {
 	appState  config.AppState
 	list      *ui.List
 	splitPane *ui.SplitPane
+	// recovery holds the orphan-reconcile summary from this slot's last
+	// activation, surfaced once the slot becomes focused.
+	recovery recoverySummary
 }
 
 type home struct {
@@ -257,24 +255,6 @@ type home struct {
 	// is skipped. Provides an escape hatch when a user script
 	// broke the keymap.
 	skipScripts bool
-
-	// pendingOrphans accumulates orphan candidates discovered across
-	// every loaded storage at startup (global plus each workspace
-	// slot). Cleared when the user dismisses the recovery overlay.
-	pendingOrphans []session.OrphanCandidate
-	// orphanCfgDirs maps each pending orphan's WorktreePath to the
-	// configDir of the storage that should host the recovered
-	// instance. Avoids re-deriving the configDir from path-stripping
-	// at apply time, which would couple two layers to the same
-	// "<cfgDir>/worktrees/<user>/<dir>" convention.
-	orphanCfgDirs map[string]string
-	// pendingStartupOverlay is the deferred next-overlay closure
-	// captured when newHome chooses to show the orphan-recovery
-	// overlay first. Invoked by handleStateOrphanRecoveryKey after
-	// the user dismisses the overlay so the rest of the startup-
-	// dialog chain (pendingDir confirm, startup workspace picker)
-	// isn't lost. nil after running or when no chained overlay exists.
-	pendingStartupOverlay func()
 }
 
 func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, autoYes bool, pendingDir string, noScripts bool) (*home, error) {
@@ -333,6 +313,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	if appConfig != nil && appConfig.RemoteControlEnabled() {
 		h.rcAuth = session.DetectClaudeRemoteControlAuth(program, cmdExec)
 	}
+	var startupRecovery recoverySummary
 	if !willRestoreSlots {
 		// LoadAndReconcile centralizes RenameLegacySessions + per-record
 		// reconcile, and on a per-record failure stashes the raw data in
@@ -368,22 +349,17 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			inst.CrashRecovered = false
 		}
 
-		// Discover orphan worktrees (on disk but not in state.json)
-		// before CleanupOrphanedSessions runs — a recovered orphan
-		// claims its tmux session, so the orphan-tmux sweep below
-		// must not kill it. The user is prompted via the startup
-		// overlay (set up below in the picker-dispatch block).
-		h.recordOrphans(cfgDir, h.list.GetInstances(), storage, cmdExec)
+		// Discover orphan worktrees (on disk but not in state.json),
+		// auto-clean stale leftovers, and add inline Recoverable entries
+		// for any with unsaved work or a live agent. Runs before
+		// CleanupOrphanedSessions so a live recoverable's tmux (now a
+		// list instance) is exempted by the claimedTitles loop below.
+		startupRecovery = h.reconcileOrphans(cfgDir, program, h.list, storage, cmdExec)
 
 		// Clean up orphaned tmux sessions from previous crashes
 		claimedTitles := make(map[string]bool)
 		for _, inst := range h.list.GetInstances() {
 			claimedTitles[inst.Title] = true
-		}
-		// Also exempt orphan candidates: the user hasn't decided yet,
-		// and pre-emptively killing their tmux would lose the live PTY.
-		for _, cand := range h.pendingOrphans {
-			claimedTitles[cand.Title] = true
 		}
 		if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
 			log.For("app").Error("orphan_cleanup_failed", "err", err)
@@ -396,9 +372,9 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 				wtTitle = wsCtx.Name
 			}
 			if h.remoteControlBlocked(program) {
-				// Non-interactive startup: fall back silently but leave a note
-				// (no auto-hide Cmd loop here yet — it clears on the next event).
-				h.errBox.SetError(fmt.Errorf("remote control off: %s", h.rcAuth.Reason))
+				// Non-interactive startup: fall back silently but leave an
+				// info-style note (clears on the next status update).
+				h.errBox.SetInfo("remote control off: " + h.rcAuth.Reason)
 			}
 			wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
 				Title:               wtTitle,
@@ -460,19 +436,11 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		}
 	}
 
-	// Orphan recovery preempts every other startup overlay. Recovered
-	// instances may belong to a workspace the picker would otherwise
-	// ask about, so the user has to triage orphans first. The deferred
-	// closure runs after the user dismisses the overlay so the next
-	// dialog isn't lost.
-	if len(h.pendingOrphans) > 0 {
-		h.pendingStartupOverlay = registerNextOverlay
-		h.setOverlay(overlay.NewOrphanRecoveryPicker(h.pendingOrphans), overlayOrphanRecovery)
-		h.state = stateOrphanRecovery
-	} else {
-		registerNextOverlay()
-	}
+	// Orphans are handled inline by reconcileOrphans, so nothing preempts
+	// the startup overlay chain (workspace registration confirm / picker).
+	registerNextOverlay()
 
+	h.showRecoverySummary(startupRecovery)
 	return h, nil
 }
 
@@ -508,19 +476,6 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		}
 	}
 
-	// Per-workspace orphan discovery, deferred until each slot has
-	// been appended to m.slots. This keeps activateWorkspace itself
-	// free of startup-only side effects (so mid-session callers like
-	// workspaceRegisteredMsg don't queue orphans the user can't act
-	// on — the overlay only opens from newHome's startup chain).
-	cmdExec := cmd2.MakeExecutor()
-	for _, slot := range m.slots {
-		if slot.wsCtx == nil {
-			continue
-		}
-		m.recordOrphans(slot.wsCtx.ConfigDir, slot.list.GetInstances(), slot.storage, cmdExec)
-	}
-
 	if len(m.slots) == 0 {
 		return
 	}
@@ -540,6 +495,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	}
 	m.loadSlot(focused)
 	m.updateTabBarStatuses()
+	m.showRecoverySummary(m.slots[focused].recovery)
 
 	if m.registry != nil {
 		if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
@@ -950,6 +906,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case resumeDoneMsg:
 		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
+	case recoverDoneMsg:
+		if msg.err != nil {
+			return m, m.handleError(fmt.Errorf("recover %s: %w", msg.oldTitle, msg.err))
+		}
+		m.list.RemoveInstanceByTitle(msg.oldTitle)
+		m.list.AddInstance(msg.recovered)()
+		m.list.SelectInstance(msg.recovered)
+		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
+			log.For("app").Error("recover.save_failed", "title", msg.recovered.Title, "err", err)
+		}
+		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
 	case startFullScreenAttachMsg:
 		// Resolve the tmux session for the requested pane.
 		var ts *tmux.TmuxSession
@@ -1011,21 +978,6 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.activeCtx = config.WorkspaceContextFor(ws)
 
-		// Newly-registered workspaces commonly arrive with on-disk
-		// worktrees but no state.json entries — that's the whole
-		// reason the user is registering: a previous loom session
-		// lost its state. Run orphan discovery for the just-added
-		// slot so the recovery overlay gets one shot at surfacing
-		// them. Skipping this here would force the user to quit,
-		// add the workspace to open_workspaces manually, and
-		// relaunch — defeating the point of the register-on-startup
-		// flow.
-		cmdExec := cmd2.MakeExecutor()
-		if len(m.slots) > 0 {
-			newSlot := m.slots[len(m.slots)-1]
-			m.recordOrphans(newSlot.wsCtx.ConfigDir, newSlot.list.GetInstances(), newSlot.storage, cmdExec)
-		}
-
 		if err := m.registry.UpdateLastUsed(ws.Name); err != nil {
 			log.For("app").Debug("registry.update_last_used_failed", "workspace", ws.Name, "err", err)
 		}
@@ -1037,13 +989,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.focusedSlot = len(m.slots) - 1
 		m.loadSlot(m.focusedSlot)
 		m.updateTabBarStatuses()
-
-		// If discovery turned up anything, preempt the rest of the
-		// startup chain with the recovery overlay.
-		if len(m.pendingOrphans) > 0 {
-			m.setOverlay(overlay.NewOrphanRecoveryPicker(m.pendingOrphans), overlayOrphanRecovery)
-			m.state = stateOrphanRecovery
-		}
+		m.showRecoverySummary(m.slots[m.focusedSlot].recovery)
 
 		return m, tea.RequestWindowSize
 	case instanceStartedMsg:
@@ -1091,21 +1037,121 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// recoverySummary tallies what a reconcileOrphans pass did, for the
+// non-blocking one-line summary shown to the user.
+type recoverySummary struct {
+	cleaned int // stale worktrees auto-removed
+	review  int // Recoverable entries added to the list
+}
+
+func (s recoverySummary) empty() bool { return s.cleaned == 0 && s.review == 0 }
+
+func (s recoverySummary) String() string {
+	plural := func(n int, one, many string) string {
+		if n == 1 {
+			return fmt.Sprintf("%d %s", n, one)
+		}
+		return fmt.Sprintf("%d %s", n, many)
+	}
+	var parts []string
+	if s.cleaned > 0 {
+		parts = append(parts, "cleaned "+plural(s.cleaned, "stale worktree", "stale worktrees"))
+	}
+	if s.review > 0 {
+		verb := "need"
+		if s.review == 1 {
+			verb = "needs"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s review (in list)", plural(s.review, "session", "sessions"), verb))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Recovery: " + strings.Join(parts, " · ")
+}
+
 // persistableInstances filters out instances whose state should not reach disk:
-// Ready (mid-creation, no live resources yet) and Deleting (kill in progress,
-// about to be removed via DeleteInstance). All other statuses — Loading,
+// Ready (mid-creation), Deleting (kill in progress, about to be removed via
+// DeleteInstance), and Recoverable (an orphan surfaced inline; it is re-derived
+// from disk each load and adopted only on explicit recovery, so persisting it
+// would resurrect a never-confirmed entry). All other statuses — Loading,
 // Running, Paused — are persisted so that a crash or quit during the kill
 // window cannot orphan a live worktree from its JSON record.
 func persistableInstances(instances []*session.Instance) []*session.Instance {
 	var result []*session.Instance
 	for _, inst := range instances {
 		status := inst.GetStatus()
-		if status == session.Ready || status == session.Deleting {
+		if status == session.Ready || status == session.Deleting || status == session.Recoverable {
 			continue
 		}
 		result = append(result, inst)
 	}
 	return result
+}
+
+// claimedWorktreePaths returns the set of worktree paths already accounted
+// for: live instances plus storage's unrecovered cache (records that failed
+// reconcile but remain tracked in state.json). Orphan discovery skips these.
+func claimedWorktreePaths(claimed []*session.Instance, storage *session.Storage) map[string]bool {
+	paths := make(map[string]bool, len(claimed))
+	for _, inst := range claimed {
+		wt, err := inst.GetGitWorktree()
+		if err != nil || wt == nil {
+			continue
+		}
+		if p := wt.GetWorktreePath(); p != "" {
+			paths[p] = true
+		}
+	}
+	if storage != nil {
+		for p := range storage.UnrecoveredWorktreePaths() {
+			paths[p] = true
+		}
+	}
+	return paths
+}
+
+// reconcileOrphans discovers orphaned worktrees for one workspace, auto-cleans
+// stale leftovers, and adds inline Recoverable entries for orphans that need a
+// human decision. It mutates list (adds Recoverable instances) and returns a
+// summary for the caller to surface. Safe to run on any workspace-load path.
+func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *session.Storage, cmdExec cmd2.Executor) recoverySummary {
+	var summary recoverySummary
+	orphans, err := session.DiscoverOrphans(cfgDir, claimedWorktreePaths(list.GetInstances(), storage), cmdExec)
+	if err != nil {
+		log.For("app").Warn("orphan_discovery_failed", "cfg_dir", cfgDir, "err", err)
+		return summary
+	}
+	for _, cand := range orphans {
+		switch cand.Disposition() {
+		case session.DisposeClean:
+			if err := session.RemoveOrphanWorktree(cand.RepoPath, cand.WorktreePath); err != nil {
+				log.For("app").Warn("orphan_autoclean_failed", "worktree", cand.WorktreePath, "err", err)
+				continue
+			}
+			summary.cleaned++
+		case session.DisposeReview:
+			data := session.InstanceDataFromOrphan(cand, program)
+			data.Status = session.Recoverable
+			inst, err := session.FromInstanceData(data, cfgDir)
+			if err != nil {
+				log.For("app").Warn("orphan_placeholder_failed", "title", cand.Title, "err", err)
+				continue
+			}
+			list.AddInstance(inst)()
+			summary.review++
+		}
+	}
+	return summary
+}
+
+// showRecoverySummary surfaces a reconcile summary on the error bar as a
+// non-alarming info line. No-op when nothing happened.
+func (m *home) showRecoverySummary(s recoverySummary) {
+	if s.empty() {
+		return
+	}
+	m.errBox.SetInfo(s.String())
 }
 
 // handleQuit persists session state and terminates the TUI. Policy:
@@ -1152,7 +1198,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnE
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateOrphanRecovery {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer {
 		return nil, false
 	}
 	// If it maps to a built-in binding, highlight the corresponding menu
@@ -1198,8 +1244,6 @@ func (m *home) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return handleStateConfirmKey(m, msg)
 	case stateFileExplorer:
 		return handleStateFileExplorerKey(m, msg)
-	case stateOrphanRecovery:
-		return handleStateOrphanRecoveryKey(m, msg)
 	default:
 		return handleStateDefaultKey(m, msg)
 	}
@@ -1295,6 +1339,15 @@ type backgroundCleanupDoneMsg struct{}
 // resumeDoneMsg is returned by the Resume Cmd on success. Failures come
 // through transitionFailedMsg.
 type resumeDoneMsg struct{}
+
+// recoverDoneMsg is returned after a Recoverable orphan is adopted into a
+// live instance off the UI goroutine. The handler swaps the inline
+// placeholder for the recovered instance and persists.
+type recoverDoneMsg struct {
+	oldTitle  string
+	recovered *session.Instance
+	err       error
+}
 
 // fullScreenAttachTarget picks which tmux session (agent vs terminal) a
 // full-screen attach should target for the selected instance.
@@ -1551,13 +1604,9 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	if err != nil {
 		log.For("app").Error("workspace_load_instances_failed", "workspace", ws.Name, "err", err)
 	}
-	// Note: orphan discovery is intentionally NOT done here. It only
-	// runs during the startup paths (newHome's classic-mode load and
-	// restoreSavedWorkspaces) so the recovery overlay has a single
-	// fire-once trigger. Mid-session activations
-	// (applyWorkspaceToggle, workspaceRegisteredMsg) would otherwise
-	// queue orphans the user would never see — the overlay only opens
-	// from newHome.
+	// Orphan discovery runs here so every workspace-load path (startup
+	// picker, mid-session toggle, restore, registration) surfaces
+	// recovered sessions identically — no restart required.
 
 	list := ui.NewList(&m.spinner, m.autoYes)
 	hasWorkspaceTerminal := false
@@ -1603,7 +1652,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		}
 
 		if m.remoteControlBlocked(appConfig.GetProgram()) {
-			m.errBox.SetError(fmt.Errorf("remote control off: %s", m.rcAuth.Reason))
+			m.errBox.SetInfo("remote control off: " + m.rcAuth.Reason)
 		}
 		wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
 			Title:               wtTitle,
@@ -1635,6 +1684,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		splitPane.SetSize(paneWidth, contentHeight)
 	}
 
+	recovery := m.reconcileOrphans(wsCtx.ConfigDir, appConfig.GetProgram(), list, storage, cmdExec)
 	m.slots = append(m.slots, workspaceSlot{
 		wsCtx:     wsCtx,
 		storage:   storage,
@@ -1642,6 +1692,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		appState:  state,
 		list:      list,
 		splitPane: splitPane,
+		recovery:  recovery,
 	})
 	return nil
 }
@@ -1720,198 +1771,6 @@ func (m *home) loadSlot(idx int) {
 	}
 }
 
-// recordOrphans scans cfgDir's worktree directory for entries that
-// aren't referenced by any of the supplied loaded instances and
-// appends them to home.pendingOrphans. The cfgDir → configDir mapping
-// is recorded too so applyOrphanRecovery knows which storage to write
-// each recovered entry into.
-//
-// Worktree paths held in storage.unrecovered are also treated as
-// claimed: those records failed reconcile this launch but remain
-// tracked in state.json (preserved by the non-destructive reconcile
-// fix), so surfacing them as orphans would let the user adopt a
-// duplicate under a different title.
-//
-// Failures during scan are logged but do not abort startup — orphan
-// recovery is best-effort and the user can still launch loom into a
-// degraded state if filesystem access is broken.
-func (m *home) recordOrphans(cfgDir string, claimed []*session.Instance, storage *session.Storage, cmdExec cmd2.Executor) {
-	claimedPaths := make(map[string]bool, len(claimed))
-	for _, inst := range claimed {
-		wt, err := inst.GetGitWorktree()
-		if err != nil || wt == nil {
-			continue
-		}
-		if p := wt.GetWorktreePath(); p != "" {
-			claimedPaths[p] = true
-		}
-	}
-	if storage != nil {
-		for p := range storage.UnrecoveredWorktreePaths() {
-			claimedPaths[p] = true
-		}
-	}
-	orphans, err := session.DiscoverOrphans(cfgDir, claimedPaths, cmdExec)
-	if err != nil {
-		log.For("app").Warn("orphan_discovery_failed", "cfg_dir", cfgDir, "err", err)
-		return
-	}
-	if len(orphans) == 0 {
-		return
-	}
-	if m.orphanCfgDirs == nil {
-		m.orphanCfgDirs = make(map[string]string)
-	}
-	for _, o := range orphans {
-		m.orphanCfgDirs[o.WorktreePath] = cfgDir
-	}
-	m.pendingOrphans = append(m.pendingOrphans, orphans...)
-}
-
-// applyOrphanRecovery reconciles each selected orphan into a fresh
-// Instance, appends it to the right slot's list, and persists. Returns
-// a Cmd that surfaces any per-orphan errors via handleError so the
-// user sees what didn't recover; partial success is fine — the
-// already-recovered entries are saved before the error fires.
-func (m *home) applyOrphanRecovery(selected []session.OrphanCandidate) tea.Cmd {
-	if len(selected) == 0 {
-		return nil
-	}
-	cmdExec := cmd2.MakeExecutor()
-	now := time.Now()
-	program := ""
-	if m.appConfig != nil {
-		program = m.appConfig.GetProgram()
-	}
-
-	// Track which lists (and therefore which storages) need a save
-	// call after all candidates are reconciled.
-	touched := make(map[string]*ui.List)
-
-	var errs []string
-	for _, cand := range selected {
-		cfgDir := m.orphanCfgDirs[cand.WorktreePath]
-
-		// Refuse to recover orphans whose cfgDir isn't backed by an
-		// active list. The earlier alternative (writing to m.list +
-		// the foreign storage) was a sharp edge: it would corrupt
-		// the foreign workspace's state.json with the focused
-		// workspace's instances. v1 only discovers orphans during
-		// startup paths that always have an active slot, so this
-		// should not fire in practice — but it's the safe behavior
-		// if it ever does.
-		list, ok := m.listForCfgDir(cfgDir)
-		if !ok {
-			errs = append(errs, fmt.Sprintf("%s: no active list for %s", cand.Title, cfgDir))
-			continue
-		}
-
-		data := session.InstanceData{
-			SchemaVersion: session.CurrentSchemaVersion,
-			Title:         cand.Title,
-			Path:          cand.RepoPath,
-			Branch:        cand.BranchName,
-			Status:        session.Running, // ReconcileAndRestore adjusts based on tmux/wt state.
-			CreatedAt:     now,
-			UpdatedAt:     now,
-			Program:       m.programForCfgDir(cfgDir, program),
-			Worktree: session.GitWorktreeData{
-				RepoPath:         cand.RepoPath,
-				WorktreePath:     cand.WorktreePath,
-				SessionName:      cand.Title,
-				BranchName:       cand.BranchName,
-				BaseCommitSHA:    cand.BaseCommitSHA,
-				IsExistingBranch: true,
-			},
-		}
-
-		inst, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", cand.Title, err))
-			continue
-		}
-		list.AddInstance(inst)()
-		touched[cfgDir] = list
-	}
-
-	// Persist every list that received a recovered instance.
-	for cfgDir, list := range touched {
-		storage, err := m.storageForCfgDir(cfgDir)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", cfgDir, err))
-			continue
-		}
-		if err := storage.SaveInstances(persistableInstances(list.GetInstances())); err != nil {
-			errs = append(errs, fmt.Sprintf("save %s: %v", cfgDir, err))
-		}
-	}
-
-	if len(errs) > 0 {
-		return m.handleError(fmt.Errorf("orphan recovery: %s", strings.Join(errs, "; ")))
-	}
-	return nil
-}
-
-// listForCfgDir returns the live ui.List backing the workspace whose
-// configDir matches cfgDir, or (m.list, true) for the focused/global
-// case. Used by applyOrphanRecovery to surface the recovered instance
-// in the right tab so the user sees it without switching workspaces.
-func (m *home) listForCfgDir(cfgDir string) (*ui.List, bool) {
-	if cfgDir == "" || cfgDir == m.configDir() {
-		return m.list, true
-	}
-	for i, slot := range m.slots {
-		if slot.wsCtx != nil && slot.wsCtx.ConfigDir == cfgDir {
-			if i == m.focusedSlot {
-				return m.list, true
-			}
-			return slot.list, true
-		}
-	}
-	return nil, false
-}
-
-// storageForCfgDir returns the *session.Storage configured for cfgDir.
-// Reuses the focused slot or m.storage when applicable; otherwise
-// constructs a fresh Storage on demand. The fresh-construct path is
-// the cold case for orphans discovered in non-focused workspaces.
-func (m *home) storageForCfgDir(cfgDir string) (*session.Storage, error) {
-	if cfgDir == "" || cfgDir == m.configDir() {
-		return m.storage, nil
-	}
-	for _, slot := range m.slots {
-		if slot.wsCtx != nil && slot.wsCtx.ConfigDir == cfgDir {
-			return slot.storage, nil
-		}
-	}
-	state := config.LoadStateFrom(cfgDir)
-	return session.NewStorage(state, cfgDir)
-}
-
-// programForCfgDir resolves the agent program for an orphan in the
-// workspace at cfgDir. Falls back to fallback (typically the focused
-// workspace's program) when no slot matches — better than picking the
-// wrong workspace's binary, since fallback is at least the user's
-// current default and matches their PATH.
-func (m *home) programForCfgDir(cfgDir, fallback string) string {
-	if cfgDir == "" || cfgDir == m.configDir() {
-		if m.appConfig != nil {
-			return m.appConfig.GetProgram()
-		}
-		return fallback
-	}
-	for _, slot := range m.slots {
-		if slot.wsCtx != nil && slot.wsCtx.ConfigDir == cfgDir && slot.appConfig != nil {
-			return slot.appConfig.GetProgram()
-		}
-	}
-	cfg := config.LoadConfigFrom(cfgDir)
-	if cfg != nil {
-		return cfg.GetProgram()
-	}
-	return fallback
-}
-
 // applyWorkspaceToggle diffs the current slots against the desired list,
 // activating and deactivating workspaces as needed.
 // Activates new workspaces first so that if activation fails, the old
@@ -1982,6 +1841,9 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	m.saveOpenWorkspaces()
+	if len(m.slots) > 0 {
+		m.showRecoverySummary(m.slots[m.focusedSlot].recovery)
+	}
 
 	// 4. Surface activation/deactivation errors to the user.
 	var msgs []string
@@ -2195,13 +2057,12 @@ func (m *home) View() tea.View {
 	)
 
 	// Overlay render dispatch: all overlay states share the unified
-	// activeOverlay pointer. The activeOverlayKind tag distinguishes
-	// the cases that need full-screen placement (startup workspace
-	// picker and orphan recovery — both fire before mainView is
-	// meaningful and should center on the empty terminal).
+	// activeOverlay pointer. The activeOverlayKind tag distinguishes the
+	// startup workspace picker, which needs full-screen placement (it
+	// fires before mainView is meaningful and should center on the empty
+	// terminal).
 	if m.activeOverlay != nil && m.state != stateDefault {
-		if m.activeOverlayKind == overlayWorkspacePickerStartup ||
-			m.activeOverlayKind == overlayOrphanRecovery {
+		if m.activeOverlayKind == overlayWorkspacePickerStartup {
 			return asView(lipgloss.Place(m.lastWidth, m.lastHeight,
 				lipgloss.Center, lipgloss.Center,
 				m.activeOverlay.View()))

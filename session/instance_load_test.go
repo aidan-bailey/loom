@@ -59,3 +59,27 @@ func TestEnsureRunning_NoOpForPaused(t *testing.T) {
 	assert.Same(t, priorTs, inst.getTmuxSession(),
 		"EnsureRunning must not replace the TmuxSession for paused instances")
 }
+
+// TestEnsureRunning_NoOpForRecoverable asserts EnsureRunning does not spawn a
+// PTY for a Recoverable orphan placeholder (it goes live only via the explicit
+// recover action). The guard returns before any worktree/tmux I/O, so the
+// bogus temp paths below are never touched.
+func TestEnsureRunning_NoOpForRecoverable(t *testing.T) {
+	data := InstanceData{
+		SchemaVersion: CurrentSchemaVersion,
+		Title:         "orphan",
+		Path:          t.TempDir(),
+		Branch:        "u/orphan",
+		Status:        Recoverable,
+		Worktree: GitWorktreeData{
+			RepoPath:         t.TempDir(),
+			WorktreePath:     t.TempDir(),
+			BranchName:       "u/orphan",
+			IsExistingBranch: true,
+		},
+	}
+	inst, err := FromInstanceData(data, t.TempDir())
+	assert.NoError(t, err)
+	assert.NoError(t, inst.EnsureRunning(), "EnsureRunning must no-op for Recoverable")
+	assert.False(t, inst.Started(), "Recoverable instance must not be started")
+}

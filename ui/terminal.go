@@ -132,6 +132,10 @@ func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 		t.setFallbackState("Session is paused. Resume to use terminal.")
 		return nil
 	}
+	if instance.GetStatus() == session.Recoverable {
+		t.setFallbackState("Recoverable session. Press 'r' to recover.")
+		return nil
+	}
 	if !instance.Started() {
 		t.setFallbackState("Instance is not started yet.")
 		return nil

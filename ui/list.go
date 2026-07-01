@@ -17,6 +17,7 @@ const readyIcon = "● "
 const promptingIcon = "● "
 const pausedIcon = "⏸ "
 const deletingIcon = "✕ "
+const recoverableIcon = "⟲ "
 const workspaceTerminalIcon = "◆ "
 
 var readyStyle = lipgloss.NewStyle().
@@ -36,6 +37,9 @@ var pausedStyle = lipgloss.NewStyle().
 
 var deletingStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("#cc6666"))
+
+var recoverableStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("#d19a66"))
 
 var deletingTitleStyle = lipgloss.NewStyle().
 	Padding(1, 1, 0, 1).
@@ -271,6 +275,8 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 			join = readyStyle.Render(readyIcon)
 		case session.Paused:
 			join = pausedStyle.Render(pausedIcon)
+		case session.Recoverable:
+			join = recoverableStyle.Render(recoverableIcon)
 		case session.Deleting:
 			join = deletingStyle.Render(deletingIcon)
 		default:
