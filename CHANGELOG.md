@@ -1,3 +1,25 @@
+## [0.4.0] - 2026-07-02
+
+### 🚀 Features
+
+- *(config)* Add ClaudePermissionMode setting
+- *(agent)* Add ApplyPermissionModeFlag to the Adapter interface
+- *(session)* Add BuildPermissionModeCommand
+- *(app)* Apply Claude permission-mode flag at instance creation
+- *(ui)* Add Permission Mode row to Claude Preferences
+
+### 🐛 Bug Fixes
+
+- *(recovery)* Harden orphan picker, reconcile, and slot-restore paths
+- *(recovery)* Persist worktree title to recover exact orphan identity
+- *(session)* Resolve merge artifacts from rebasing recovery work onto main
+- *(session)* Mark Recoverable placeholders as started in FromInstanceData
+
+### 📚 Documentation
+
+- Add design spec for Claude permission-mode setting
+- Add implementation plan for Claude permission-mode setting
+
 ## [0.3.0] - 2026-07-01
 
 ### 🚀 Features
