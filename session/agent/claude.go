@@ -91,3 +91,26 @@ func sanitizeRemoteControlName(s string) string {
 	s = remoteControlNameRe.ReplaceAllString(s, "")
 	return strings.Trim(s, "-_")
 }
+
+// ApplyPermissionModeFlag inserts "--permission-mode <mode>" after
+// "claude". mode == "" or "default" is a no-op — Claude's own default
+// already matches. Returns program unchanged if a --permission-mode
+// flag is already present or if program is empty. mode is expected to
+// come from config.ClaudePermissionModes, never free-typed user input,
+// so no sanitization is applied (unlike ApplyRemoteControlFlag's
+// sessionName).
+func (claudeAdapter) ApplyPermissionModeFlag(program, mode string) string {
+	if mode == "" || mode == "default" {
+		return program
+	}
+	parts := strings.Fields(program)
+	if len(parts) == 0 {
+		return program
+	}
+	for _, p := range parts[1:] {
+		if p == "--permission-mode" || strings.HasPrefix(p, "--permission-mode=") {
+			return program
+		}
+	}
+	return parts[0] + " --permission-mode " + mode + strings.TrimPrefix(program, parts[0])
+}

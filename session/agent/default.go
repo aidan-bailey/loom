@@ -31,6 +31,11 @@ func (defaultAdapter) ApplyRecoveryFlag(program string) string { return program 
 // modifies the program string, so unknown agents get no remote-control flag.
 func (defaultAdapter) ApplyRemoteControlFlag(program, _ string) string { return program }
 
+// ApplyPermissionModeFlag implements Adapter. The fallback adapter
+// never modifies the program string, so unknown agents get no
+// permission-mode flag.
+func (defaultAdapter) ApplyPermissionModeFlag(program, _ string) string { return program }
+
 // DefaultRegistry returns the registry pre-populated with all built-in
 // adapters and the fallback.
 func DefaultRegistry() *Registry {

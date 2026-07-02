@@ -37,3 +37,9 @@ func (geminiAdapter) ApplyRecoveryFlag(program string) string {
 func (geminiAdapter) ApplyRemoteControlFlag(program, _ string) string {
 	return program
 }
+
+// ApplyPermissionModeFlag is a no-op for gemini — it has no
+// permission-mode equivalent.
+func (geminiAdapter) ApplyPermissionModeFlag(program, _ string) string {
+	return program
+}

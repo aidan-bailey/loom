@@ -38,3 +38,9 @@ func (aiderAdapter) ApplyRecoveryFlag(program string) string {
 func (aiderAdapter) ApplyRemoteControlFlag(program, _ string) string {
 	return program
 }
+
+// ApplyPermissionModeFlag is a no-op for aider — it has no
+// permission-mode equivalent.
+func (aiderAdapter) ApplyPermissionModeFlag(program, _ string) string {
+	return program
+}

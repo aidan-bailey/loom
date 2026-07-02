@@ -104,6 +104,48 @@ func TestNonClaudeAdaptersNoRemoteControl(t *testing.T) {
 	assert.Equal(t, "codex --foo", Default().ApplyRemoteControlFlag("codex --foo", "t"))
 }
 
+func TestClaudePermissionModeFlag(t *testing.T) {
+	c := Claude()
+
+	cases := []struct {
+		name    string
+		program string
+		mode    string
+		want    string
+	}{
+		{"plain", "claude", "acceptEdits", "claude --permission-mode acceptEdits"},
+		{"preserves flags", "claude --model sonnet", "plan", "claude --permission-mode plan --model sonnet"},
+		{"absolute path", "/usr/bin/claude", "bypassPermissions", "/usr/bin/claude --permission-mode bypassPermissions"},
+		{"empty mode is no-op", "claude --model sonnet", "", "claude --model sonnet"},
+		{"\"default\" mode is no-op", "claude --model sonnet", "default", "claude --model sonnet"},
+		{"idempotent bare", "claude --permission-mode acceptEdits", "plan", "claude --permission-mode acceptEdits"},
+		{"idempotent equals form", "claude --permission-mode=acceptEdits", "plan", "claude --permission-mode=acceptEdits"},
+		{"empty program", "", "acceptEdits", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, c.ApplyPermissionModeFlag(tc.program, tc.mode))
+		})
+	}
+}
+
+func TestClaudePermissionModeComposesWithRemoteControl(t *testing.T) {
+	// permission-mode and remote-control are applied by two independent
+	// wrapper calls at instance-creation time (app/remote_control.go);
+	// each must only ever touch its own flag name so composing them in
+	// either order still produces one well-formed command.
+	c := Claude()
+	withRC := c.ApplyRemoteControlFlag("claude", "my task")
+	assert.Equal(t, "claude --remote-control my-task", withRC)
+	assert.Equal(t, "claude --permission-mode acceptEdits --remote-control my-task", c.ApplyPermissionModeFlag(withRC, "acceptEdits"))
+}
+
+func TestNonClaudeAdaptersNoPermissionMode(t *testing.T) {
+	assert.Equal(t, "aider --model x", Aider().ApplyPermissionModeFlag("aider --model x", "acceptEdits"))
+	assert.Equal(t, "gemini", Gemini().ApplyPermissionModeFlag("gemini", "acceptEdits"))
+	assert.Equal(t, "codex --foo", Default().ApplyPermissionModeFlag("codex --foo", "acceptEdits"))
+}
+
 func TestTrustPromptResponses(t *testing.T) {
 	assert.Equal(t, TrustPromptTapEnter, Claude().TrustPromptResponse())
 	assert.Equal(t, TrustPromptTapDAndEnter, Aider().TrustPromptResponse())

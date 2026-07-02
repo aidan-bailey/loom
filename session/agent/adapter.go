@@ -63,6 +63,14 @@ type Adapter interface {
 	// present, the input is returned unchanged. Returns the input
 	// unchanged for agents without a remote-control mode.
 	ApplyRemoteControlFlag(program, sessionName string) string
+	// ApplyPermissionModeFlag returns the program string with
+	// "--permission-mode <mode>" inserted (e.g. "claude
+	// --permission-mode acceptEdits"). mode == "" or "default" is a
+	// no-op — Claude's own default already matches. Idempotent: if
+	// --permission-mode is already present, the input is returned
+	// unchanged. Returns the input unchanged for agents without a
+	// permission-mode concept.
+	ApplyPermissionModeFlag(program, mode string) string
 }
 
 // Registry is a prioritized list of adapters. Lookup returns the first
