@@ -276,7 +276,12 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		})
 	}
 
-	if instance.Paused() {
+	// Recoverable placeholders (inline orphan-review entries) point at a
+	// real worktree/tmux session on disk just like Paused, even though no
+	// PTY has been attached yet — every isStarted()-gated accessor
+	// (GetGitWorktree, RepoName, Kill) needs started=true here, or discard
+	// silently no-ops and the row never leaves the list.
+	if instance.Paused() || instance.GetStatus() == Recoverable {
 		instance.setStarted(true)
 		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program))
 	}
