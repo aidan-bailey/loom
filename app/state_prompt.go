@@ -56,7 +56,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				// and the same task runs on "start anyway".
 				startTask := overlay.ConfirmationTask{
 					Sync: func() {
-						selected.Program = remoteControlProgram(m.appConfig, m.rcAuth, selected.Program, selected.Title)
+						selected.Program = permissionModeProgram(m.appConfig, remoteControlProgram(m.appConfig, m.rcAuth, selected.Program, selected.Title))
 						_ = selected.TransitionTo(session.Loading)
 						m.newInstanceFinalizer()
 						m.dismissOverlay()

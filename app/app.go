@@ -390,7 +390,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
 				Title:               wtTitle,
 				Path:                wsCtx.RepoPath,
-				Program:             remoteControlProgram(appConfig, h.rcAuth, program, wtTitle),
+				Program:             permissionModeProgram(appConfig, remoteControlProgram(appConfig, h.rcAuth, program, wtTitle)),
 				IsWorkspaceTerminal: true,
 				ConfigDir:           cfgDir,
 			})
@@ -1693,7 +1693,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
 			Title:               wtTitle,
 			Path:                wsCtx.RepoPath,
-			Program:             remoteControlProgram(appConfig, m.rcAuth, appConfig.GetProgram(), wtTitle),
+			Program:             permissionModeProgram(appConfig, remoteControlProgram(appConfig, m.rcAuth, appConfig.GetProgram(), wtTitle)),
 			IsWorkspaceTerminal: true,
 			ConfigDir:           wsCtx.ConfigDir,
 		})

@@ -25,6 +25,17 @@ func remoteControlProgram(cfg *config.Config, auth session.RemoteControlAuth, pr
 	return session.BuildRemoteControlCommand(program, title)
 }
 
+// permissionModeProgram returns program with Claude's --permission-mode
+// flag applied per cfg.PermissionMode(). No-op when cfg is nil or the
+// program isn't Claude (BuildPermissionModeCommand's registry lookup
+// already no-ops for non-Claude adapters).
+func permissionModeProgram(cfg *config.Config, program string) string {
+	if cfg == nil {
+		return program
+	}
+	return session.BuildPermissionModeCommand(program, cfg.PermissionMode())
+}
+
 // remoteControlBlocked reports whether a launch of program should be
 // interrupted to tell the user remote control can't work: the toggle is on,
 // the program is Claude, and auth was clearly determined incompatible.

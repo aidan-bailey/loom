@@ -76,3 +76,26 @@ func TestRemoteControlBlocked(t *testing.T) {
 }
 
 func boolPtrTest(b bool) *bool { return &b }
+
+func stringPtrTest(s string) *string { return &s }
+
+func TestPermissionModeProgram(t *testing.T) {
+	t.Run("nil cfg is a no-op", func(t *testing.T) {
+		assert.Equal(t, "claude --model sonnet", permissionModeProgram(nil, "claude --model sonnet"))
+	})
+
+	t.Run("default mode is a no-op", func(t *testing.T) {
+		cfg := &config.Config{}
+		assert.Equal(t, "claude --model sonnet", permissionModeProgram(cfg, "claude --model sonnet"))
+	})
+
+	t.Run("explicit mode is injected", func(t *testing.T) {
+		cfg := &config.Config{ClaudePermissionMode: stringPtrTest("acceptEdits")}
+		assert.Equal(t, "claude --permission-mode acceptEdits --model sonnet", permissionModeProgram(cfg, "claude --model sonnet"))
+	})
+
+	t.Run("non-claude program is a no-op", func(t *testing.T) {
+		cfg := &config.Config{ClaudePermissionMode: stringPtrTest("acceptEdits")}
+		assert.Equal(t, "aider --model gemma", permissionModeProgram(cfg, "aider --model gemma"))
+	})
+}
