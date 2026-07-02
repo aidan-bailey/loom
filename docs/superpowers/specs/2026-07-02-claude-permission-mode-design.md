@@ -36,17 +36,18 @@ ClaudePermissionMode *string `json:"claude_permission_mode,omitempty"`
 ```
 
 ```go
-// PermissionMode returns the configured --permission-mode value under a
-// read lock, defaulting to "default" when unset (nil).
+// PermissionMode returns the configured --permission-mode value,
+// defaulting to "default" when unset (nil). Deliberately unlocked, like
+// RemoteControlEnabled — see the corrected note below.
 func (c *Config) PermissionMode() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	if c.ClaudePermissionMode == nil {
 		return "default"
 	}
 	return *c.ClaudePermissionMode
 }
 ```
+
+**Correction (found during implementation):** the first draft of this accessor took `c.mu.RLock()`, copying `GetBranchPrefix`'s pattern instead of `RemoteControlEnabled`'s. That deadlocks: the Claude Preferences cycle handler (below) calls `cc.PermissionMode()` *from inside* `cfg.Mutate(...)`, which already holds `c.mu` write-locked, and `sync.RWMutex` isn't reentrant. `GetBranchPrefix` is locked because it's read from the Lua dispatch goroutine (`scriptHost.BranchPrefix()`) concurrently with the main goroutine's `Mutate` calls; `PermissionMode` has no such caller — it's read only on the main goroutine, same as `RemoteControlEnabled`, so it stays unlocked.
 
 `DefaultConfig()` (`config/config.go:167-187`) gains `ClaudePermissionMode: stringPtr("default")` next to `ClaudeRemoteControl: boolPtr(true)`, plus a `stringPtr` helper mirroring `boolPtr` (`config/config.go:189-191`).
 
@@ -106,10 +107,23 @@ func permissionModeProgram(cfg *config.Config, program string) string {
 }
 ```
 
-Both `app/app.go` call sites that build a new instance's `Program` (line 393 and line 1696, currently `remoteControlProgram(appConfig, h.rcAuth, program, wtTitle)` / `remoteControlProgram(appConfig, m.rcAuth, appConfig.GetProgram(), wtTitle)`) wrap that same call in `permissionModeProgram(appConfig, ...)`:
+All four call sites of `remoteControlProgram` wrap that same call in `permissionModeProgram(cfg, ...)`, since permission mode applies wherever remote control does — new instances go through the same "apply Claude-specific launch flags once, at the point the title is known" moment:
+
+- `app/app.go:393` — auto-created workspace terminal on non-interactive startup.
+- `app/app.go:1696` — workspace terminal created on workspace switch.
+- `app/state_new.go:59` — regular new instance (`n` key), inside the `startTask.Sync` callback.
+- `app/state_prompt.go:59` — new instance with an initial prompt (`N` key / Shift+N flow), inside the `startTask.Sync` callback.
+
+Each becomes, e.g. for `app/app.go:393`:
 
 ```go
 Program: permissionModeProgram(appConfig, remoteControlProgram(appConfig, h.rcAuth, program, wtTitle)),
+```
+
+and for `app/state_new.go:59`:
+
+```go
+instance.Program = permissionModeProgram(m.appConfig, remoteControlProgram(m.appConfig, m.rcAuth, instance.Program, instance.Title))
 ```
 
 Because both `Apply*Flag` implementations insert immediately after `parts[0]` (the bare `claude` token), composing them this way still produces a single well-formed command (e.g. `claude --permission-mode acceptEdits --remote-control my-title`) regardless of which wrapper runs first — each only scans for its own flag name, so the two never interfere. This mirrors the existing note on `remoteControlProgram` (`app/remote_control.go:18-20`): applying at first-launch time means the rewritten command is persisted on the instance and inherited by `BuildRecoveryCommand` on later resume/crash restarts, with no separate recovery-path wiring needed.

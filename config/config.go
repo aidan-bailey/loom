@@ -139,11 +139,15 @@ func (c *Config) RemoteControlEnabled() bool {
 	return c.ClaudeRemoteControl == nil || *c.ClaudeRemoteControl
 }
 
-// PermissionMode returns the configured --permission-mode value under a
-// read lock, defaulting to "default" when unset (nil).
+// PermissionMode returns the configured --permission-mode value,
+// defaulting to "default" when unset (nil). Deliberately unlocked, like
+// RemoteControlEnabled: it's read only from the main goroutine (view
+// rendering, instance creation during key handling, and from inside a
+// Mutate callback in the Claude Preferences cycle handler — a
+// Mutate-held lock is not reentrant, so a locked accessor here would
+// deadlock). If a future caller needs this from the Lua dispatch
+// goroutine, add a locked variant rather than locking this one.
 func (c *Config) PermissionMode() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	if c.ClaudePermissionMode == nil {
 		return "default"
 	}
