@@ -39,8 +39,12 @@ func TestReconcileOrphans_CleanAutoRemoved_DirtyBecomesRecoverable(t *testing.T)
 	userDir := filepath.Join(cfgDir, "worktrees", "u")
 	require.NoError(t, os.MkdirAll(userDir, 0o755))
 
-	cleanWT := filepath.Join(userDir, "clean_dead0001")
-	dirtyWT := filepath.Join(userDir, "dirty_dead0002")
+	// Suffixes must look like a plausible generated nanosecond timestamp
+	// (~16 hex digits) — DiscoverOrphans now rejects short hex-looking
+	// tokens like "dead0001" as part of the branch name instead of a
+	// generated suffix, so a fixture using one would never get stripped.
+	cleanWT := filepath.Join(userDir, "clean_18be000000000001")
+	dirtyWT := filepath.Join(userDir, "dirty_18be000000000002")
 	runGit(t, repo, "worktree", "add", "-b", "u/clean", cleanWT)
 	runGit(t, repo, "worktree", "add", "-b", "u/dirty", dirtyWT)
 	// Make the dirty one dirty (uncommitted change).
