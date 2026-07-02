@@ -26,3 +26,12 @@ func BuildRecoveryCommand(program string) string {
 func BuildRemoteControlCommand(program, sessionName string) string {
 	return defaultRegistry.Lookup(program).ApplyRemoteControlFlag(program, sessionName)
 }
+
+// BuildPermissionModeCommand modifies a program command string to
+// launch with the given --permission-mode value. The adapter registry
+// decides whether and how the string is modified. Idempotent, and a
+// no-op for agents without a permission-mode concept or when mode is
+// "" / "default".
+func BuildPermissionModeCommand(program, mode string) string {
+	return defaultRegistry.Lookup(program).ApplyPermissionModeFlag(program, mode)
+}

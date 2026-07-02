@@ -78,3 +78,34 @@ func TestBuildRemoteControlCommand_Aider(t *testing.T) {
 func TestBuildRemoteControlCommand_Unknown(t *testing.T) {
 	assert.Equal(t, "codex", BuildRemoteControlCommand("codex", "task"))
 }
+
+func TestBuildPermissionModeCommand_Claude(t *testing.T) {
+	assert.Equal(t, "claude --permission-mode acceptEdits", BuildPermissionModeCommand("claude", "acceptEdits"))
+}
+
+func TestBuildPermissionModeCommand_ClaudeWithFlags(t *testing.T) {
+	assert.Equal(t,
+		"claude --permission-mode plan --model sonnet",
+		BuildPermissionModeCommand("claude --model sonnet", "plan"),
+	)
+}
+
+func TestBuildPermissionModeCommand_DefaultModeIsNoOp(t *testing.T) {
+	assert.Equal(t, "claude --model sonnet", BuildPermissionModeCommand("claude --model sonnet", "default"))
+	assert.Equal(t, "claude --model sonnet", BuildPermissionModeCommand("claude --model sonnet", ""))
+}
+
+func TestBuildPermissionModeCommand_Idempotent(t *testing.T) {
+	assert.Equal(t,
+		"claude --permission-mode plan",
+		BuildPermissionModeCommand("claude --permission-mode plan", "acceptEdits"),
+	)
+}
+
+func TestBuildPermissionModeCommand_Aider(t *testing.T) {
+	assert.Equal(t, "aider --model gemma", BuildPermissionModeCommand("aider --model gemma", "acceptEdits"))
+}
+
+func TestBuildPermissionModeCommand_Unknown(t *testing.T) {
+	assert.Equal(t, "codex", BuildPermissionModeCommand("codex", "acceptEdits"))
+}
