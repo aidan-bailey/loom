@@ -364,6 +364,35 @@ func TestRemoteControlEnabled(t *testing.T) {
 	})
 }
 
+func TestPermissionMode(t *testing.T) {
+	t.Run("nil (absent from config) defaults to \"default\"", func(t *testing.T) {
+		cfg := &Config{}
+		assert.Equal(t, "default", cfg.PermissionMode())
+	})
+
+	t.Run("explicit value round-trips", func(t *testing.T) {
+		cfg := &Config{ClaudePermissionMode: stringPtr("acceptEdits")}
+		assert.Equal(t, "acceptEdits", cfg.PermissionMode())
+	})
+
+	t.Run("explicit \"default\" round-trips", func(t *testing.T) {
+		cfg := &Config{ClaudePermissionMode: stringPtr("default")}
+		assert.Equal(t, "default", cfg.PermissionMode())
+	})
+
+	t.Run("DefaultConfig sets \"default\" explicitly", func(t *testing.T) {
+		cfg := DefaultConfig()
+		if assert.NotNil(t, cfg.ClaudePermissionMode) {
+			assert.Equal(t, "default", *cfg.ClaudePermissionMode)
+		}
+		assert.Equal(t, "default", cfg.PermissionMode())
+	})
+}
+
+func TestClaudePermissionModes(t *testing.T) {
+	assert.Equal(t, []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}, ClaudePermissionModes)
+}
+
 func TestGetProfiles(t *testing.T) {
 	t.Run("no profiles returns single synthetic profile", func(t *testing.T) {
 		cfg := &Config{DefaultProgram: "/usr/local/bin/claude"}

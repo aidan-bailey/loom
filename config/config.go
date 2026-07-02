@@ -99,7 +99,18 @@ type Config struct {
 	// enabled rather than taking the bool zero value; only an explicit
 	// false disables it. Read it through RemoteControlEnabled.
 	ClaudeRemoteControl *bool `json:"claude_remote_control,omitempty"`
+	// ClaudePermissionMode is the --permission-mode value new Claude
+	// sessions launch with. Unlike ClaudeRemoteControl, DefaultConfig
+	// sets this explicitly to "default" rather than leaving it nil — nil
+	// only occurs for a config.json predating this field, and is
+	// treated identically to "default" (no flag injected; Claude's own
+	// default applies). Read it through PermissionMode.
+	ClaudePermissionMode *string `json:"claude_permission_mode,omitempty"`
 }
+
+// ClaudePermissionModes lists the values --permission-mode accepts, in
+// the order the Claude Preferences screen cycles through them.
+var ClaudePermissionModes = []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 
 // Mutate runs fn with the write lock held. Callers outside this package
 // (the settings overlay) use this instead of writing exported fields
@@ -126,6 +137,17 @@ func (c *Config) GetBranchPrefix() string {
 // feature is on out of the box; only an explicit false disables it.
 func (c *Config) RemoteControlEnabled() bool {
 	return c.ClaudeRemoteControl == nil || *c.ClaudeRemoteControl
+}
+
+// PermissionMode returns the configured --permission-mode value under a
+// read lock, defaulting to "default" when unset (nil).
+func (c *Config) PermissionMode() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.ClaudePermissionMode == nil {
+		return "default"
+	}
+	return *c.ClaudePermissionMode
 }
 
 // GetProgram returns the program to run. If Profiles is non-empty and
@@ -182,13 +204,18 @@ func DefaultConfig() *Config {
 			}
 			return fmt.Sprintf("%s/", strings.ToLower(user.Username))
 		}(),
-		ClaudeRemoteControl: boolPtr(true),
+		ClaudeRemoteControl:  boolPtr(true),
+		ClaudePermissionMode: stringPtr("default"),
 	}
 }
 
 // boolPtr returns a pointer to b. Used for config fields whose absent
 // (nil) state must be distinguished from the false zero value.
 func boolPtr(b bool) *bool { return &b }
+
+// stringPtr returns a pointer to s. Used for config fields whose absent
+// (nil) state must be distinguished from the empty-string zero value.
+func stringPtr(s string) *string { return &s }
 
 // GetClaudeCommand attempts to find the "claude" command in the user's shell
 // It checks in the following order:
