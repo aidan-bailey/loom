@@ -58,7 +58,6 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 							selected.Program = applyLaunchOptions(opts, m.rcAuth, selected.Program, selected.Title)
 							_ = selected.TransitionTo(session.Loading)
 							m.newInstanceFinalizer()
-							m.dismissOverlay()
 							m.state = stateDefault
 							m.menu.SetState(ui.StateDefault)
 						},

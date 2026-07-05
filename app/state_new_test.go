@@ -44,3 +44,47 @@ func TestHandleStateNewKeyEnterOpensLaunchOptionsInsteadOfStartingImmediately(t 
 	require.NotNil(t, m.pendingLaunchOptions)
 	assert.NotNil(t, m.launchOptionsOverlay())
 }
+
+func TestNewInstanceFlowEndToEndComposesRealClosure(t *testing.T) {
+	m := newPendingTitleEntryHome(t)
+
+	for _, r := range "my-task" {
+		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // opens the real modal + stashes the real closure
+
+	require.Equal(t, stateLaunchOptions, m.state)
+	instance := m.list.GetInstances()[m.list.NumInstances()-1]
+
+	// Move to Model row (row 2), cycle it, then confirm through the real
+	// handleStateLaunchOptionsKey -> real pendingLaunchOptions closure
+	// (not newPendingLaunchOptionsHome's substitute).
+	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: ' ', Text: " "})
+	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	assert.Contains(t, instance.Program, "--model sonnet")
+	assert.Equal(t, stateDefault, m.state)
+	assert.Nil(t, m.pendingLaunchOptions)
+	assert.Equal(t, session.Loading, instance.GetStatus())
+}
+
+func TestNewInstanceFlowRemoteControlBlockedViaModalPromptsConfirm(t *testing.T) {
+	m := newPendingTitleEntryHome(t)
+	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+
+	for _, r := range "my-task" {
+		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // opens the real modal
+
+	require.Equal(t, stateLaunchOptions, m.state)
+
+	// Row 0 (Remote Control) defaults to enabled from DefaultConfig;
+	// confirm without toggling it off, so remoteControlBlocked fires.
+	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	assert.Equal(t, stateConfirm, m.state)
+	assert.NotNil(t, m.pendingConfirmation.Async)
+}
