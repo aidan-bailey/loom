@@ -40,7 +40,7 @@ func (claudeAdapter) PendingPromptPattern() string {
 // original program's remaining flags. Returns program unchanged if
 // --continue or --resume is already present.
 func (claudeAdapter) ApplyRecoveryFlag(program string) string {
-	prefix, rest := splitHeadroomWrap(program)
+	prefix, rest := SplitHeadroomWrap(program)
 	parts := strings.Fields(rest)
 	if len(parts) == 0 {
 		return program
@@ -59,6 +59,14 @@ func (claudeAdapter) ApplyRecoveryFlag(program string) string {
 // user-supplied title must be reduced to this safe subset before it is
 // appended.
 var remoteControlNameRe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
+
+// ApplyRemoteControlFlag, ApplyPermissionModeFlag, and ApplyModelFlag
+// (below) are deliberately NOT headroom-wrap-aware, unlike
+// ApplyRecoveryFlag above: app/remote_control.go's applyLaunchOptions
+// always composes Headroom Wrap last/outermost, so none of these three
+// ever see an already-wrapped program in this codebase's call graph.
+// If that composition order ever changes, these three would need the
+// same splitHeadroomWrap treatment ApplyRecoveryFlag already has.
 
 // ApplyRemoteControlFlag inserts "--remote-control <name>" after
 // "claude", naming the remote session after sessionName (sanitized to a

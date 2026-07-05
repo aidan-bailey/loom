@@ -9,6 +9,7 @@ import (
 	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/session/agent"
 )
 
 // RemoteControlAuthState is the tri-state result of checking whether the
@@ -90,7 +91,8 @@ func DetectClaudeRemoteControlAuth(program string, runner internalexec.Executor)
 		}
 	}
 
-	fields := strings.Fields(program)
+	_, rest := agent.SplitHeadroomWrap(program)
+	fields := strings.Fields(rest)
 	if len(fields) == 0 {
 		return RemoteControlAuth{State: RemoteControlAuthUnknown}
 	}

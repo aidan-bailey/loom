@@ -115,10 +115,10 @@ func (r *Registry) Lookup(program string) Adapter {
 // detection, and crash-recovery's --continue injection.
 const headroomWrapPrefix = "headroom wrap "
 
-// splitHeadroomWrap separates a leading headroomWrapPrefix from the
+// SplitHeadroomWrap separates a leading headroomWrapPrefix from the
 // rest of program, if present. prefix is "" when program isn't
 // wrapped.
-func splitHeadroomWrap(program string) (prefix, rest string) {
+func SplitHeadroomWrap(program string) (prefix, rest string) {
 	if strings.HasPrefix(program, headroomWrapPrefix) {
 		return headroomWrapPrefix, strings.TrimPrefix(program, headroomWrapPrefix)
 	}
@@ -129,7 +129,7 @@ func splitHeadroomWrap(program string) (prefix, rest string) {
 // (after stripping any headroom-wrap prefix), or the empty string if
 // program is all whitespace.
 func firstField(program string) string {
-	_, rest := splitHeadroomWrap(program)
+	_, rest := SplitHeadroomWrap(program)
 	parts := strings.Fields(rest)
 	if len(parts) == 0 {
 		return ""
