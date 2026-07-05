@@ -50,9 +50,13 @@ func BuildModelCommand(program, model string) string {
 // wrapping the agent invocation regardless of which adapter matches —
 // Headroom's context compression works the same way for every agent, so
 // this bypasses the adapter registry entirely. Idempotent: no-ops if
-// program is already wrapped.
+// program is already wrapped. Also a no-op for an empty program,
+// matching the empty-input guard every ApplyXFlag implementation has.
 func BuildHeadroomWrapCommand(program string) string {
 	parts := strings.Fields(program)
+	if len(parts) == 0 {
+		return program
+	}
 	if len(parts) >= 2 && parts[0] == "headroom" && parts[1] == "wrap" {
 		return program
 	}

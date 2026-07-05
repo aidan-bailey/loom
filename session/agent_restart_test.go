@@ -156,3 +156,7 @@ func TestBuildHeadroomWrapCommand_Aider(t *testing.T) {
 func TestBuildHeadroomWrapCommand_Idempotent(t *testing.T) {
 	assert.Equal(t, "headroom wrap claude", BuildHeadroomWrapCommand("headroom wrap claude"))
 }
+
+func TestBuildHeadroomWrapCommand_EmptyProgram(t *testing.T) {
+	assert.Equal(t, "", BuildHeadroomWrapCommand(""))
+}
