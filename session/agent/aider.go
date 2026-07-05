@@ -44,3 +44,9 @@ func (aiderAdapter) ApplyRemoteControlFlag(program, _ string) string {
 func (aiderAdapter) ApplyPermissionModeFlag(program, _ string) string {
 	return program
 }
+
+// ApplyModelFlag is a no-op for aider — model selection isn't exposed
+// through this settings screen for non-Claude agents.
+func (aiderAdapter) ApplyModelFlag(program, _ string) string {
+	return program
+}

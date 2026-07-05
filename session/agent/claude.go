@@ -114,3 +114,24 @@ func (claudeAdapter) ApplyPermissionModeFlag(program, mode string) string {
 	}
 	return parts[0] + " --permission-mode " + mode + strings.TrimPrefix(program, parts[0])
 }
+
+// ApplyModelFlag inserts "--model <model>" after "claude". model == ""
+// or "default" is a no-op — Claude's own default already matches.
+// Returns program unchanged if a --model flag is already present or if
+// program is empty. model is expected to come from config.ClaudeModels,
+// never free-typed user input, so no sanitization is applied.
+func (claudeAdapter) ApplyModelFlag(program, model string) string {
+	if model == "" || model == "default" {
+		return program
+	}
+	parts := strings.Fields(program)
+	if len(parts) == 0 {
+		return program
+	}
+	for _, p := range parts[1:] {
+		if p == "--model" || strings.HasPrefix(p, "--model=") {
+			return program
+		}
+	}
+	return parts[0] + " --model " + model + strings.TrimPrefix(program, parts[0])
+}

@@ -43,3 +43,9 @@ func (geminiAdapter) ApplyRemoteControlFlag(program, _ string) string {
 func (geminiAdapter) ApplyPermissionModeFlag(program, _ string) string {
 	return program
 }
+
+// ApplyModelFlag is a no-op for gemini — model selection isn't exposed
+// through this settings screen for non-Claude agents.
+func (geminiAdapter) ApplyModelFlag(program, _ string) string {
+	return program
+}

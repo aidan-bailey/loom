@@ -71,6 +71,13 @@ type Adapter interface {
 	// unchanged. Returns the input unchanged for agents without a
 	// permission-mode concept.
 	ApplyPermissionModeFlag(program, mode string) string
+	// ApplyModelFlag returns the program string with "--model <model>"
+	// inserted (e.g. "claude --model opus"). model == "" or "default"
+	// is a no-op — Claude's own default already matches. Idempotent: if
+	// --model is already present, the input is returned unchanged.
+	// Returns the input unchanged for agents without a model-selection
+	// concept.
+	ApplyModelFlag(program, model string) string
 }
 
 // Registry is a prioritized list of adapters. Lookup returns the first

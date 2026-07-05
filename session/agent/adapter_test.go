@@ -146,6 +146,45 @@ func TestNonClaudeAdaptersNoPermissionMode(t *testing.T) {
 	assert.Equal(t, "codex --foo", Default().ApplyPermissionModeFlag("codex --foo", "acceptEdits"))
 }
 
+func TestClaudeModelFlag(t *testing.T) {
+	c := Claude()
+
+	cases := []struct {
+		name    string
+		program string
+		model   string
+		want    string
+	}{
+		{"plain", "claude", "sonnet", "claude --model sonnet"},
+		{"preserves flags", "claude --permission-mode plan", "opus", "claude --model opus --permission-mode plan"},
+		{"absolute path", "/usr/bin/claude", "haiku", "/usr/bin/claude --model haiku"},
+		{"empty model is no-op", "claude --permission-mode plan", "", "claude --permission-mode plan"},
+		{"\"default\" model is no-op", "claude --permission-mode plan", "default", "claude --permission-mode plan"},
+		{"idempotent bare", "claude --model sonnet", "opus", "claude --model sonnet"},
+		{"idempotent equals form", "claude --model=sonnet", "opus", "claude --model=sonnet"},
+		{"empty program", "", "sonnet", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, c.ApplyModelFlag(tc.program, tc.model))
+		})
+	}
+}
+
+func TestClaudeModelComposesWithPermissionModeAndRemoteControl(t *testing.T) {
+	c := Claude()
+	withRC := c.ApplyRemoteControlFlag("claude", "my task")
+	withPM := c.ApplyPermissionModeFlag(withRC, "acceptEdits")
+	got := c.ApplyModelFlag(withPM, "opus")
+	assert.Equal(t, "claude --model opus --permission-mode acceptEdits --remote-control my-task", got)
+}
+
+func TestNonClaudeAdaptersNoModelFlag(t *testing.T) {
+	assert.Equal(t, "aider --model x", Aider().ApplyModelFlag("aider --model x", "opus"))
+	assert.Equal(t, "gemini", Gemini().ApplyModelFlag("gemini", "opus"))
+	assert.Equal(t, "codex --foo", Default().ApplyModelFlag("codex --foo", "opus"))
+}
+
 func TestTrustPromptResponses(t *testing.T) {
 	assert.Equal(t, TrustPromptTapEnter, Claude().TrustPromptResponse())
 	assert.Equal(t, TrustPromptTapDAndEnter, Aider().TrustPromptResponse())
