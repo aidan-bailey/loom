@@ -23,6 +23,7 @@ const (
 	overlayFileExplorer
 	overlaySettings
 	overlayMergePicker
+	overlayLaunchOptions
 )
 
 // setOverlay installs o as the active overlay and records its kind.
@@ -104,6 +105,15 @@ func (m *home) settingsOverlay() *overlay.SettingsOverlay {
 // overlay is active.
 func (m *home) mergePicker() *overlay.MergePicker {
 	if o, ok := m.activeOverlay.(*overlay.MergePicker); ok {
+		return o
+	}
+	return nil
+}
+
+// launchOptionsOverlay returns the active SessionLaunchOptions, or nil
+// when a different overlay is active.
+func (m *home) launchOptionsOverlay() *overlay.SessionLaunchOptions {
+	if o, ok := m.activeOverlay.(*overlay.SessionLaunchOptions); ok {
 		return o
 	}
 	return nil

@@ -116,6 +116,10 @@ const (
 	// stateMergePicker is the state when the merge-session picker
 	// overlay is displayed (opened by the 'm' key).
 	stateMergePicker
+	// stateLaunchOptions is the state when the Session Launch Options
+	// modal is displayed, between title/prompt entry and actually
+	// starting a new instance.
+	stateLaunchOptions
 )
 
 // workspaceSlot bundles per-workspace state so multiple workspaces can be
@@ -156,6 +160,15 @@ type home struct {
 
 	// promptAfterName tracks if we should enter prompt mode after naming
 	promptAfterName bool
+
+	// pendingLaunchOptions holds the compose-and-start closure for a
+	// not-yet-started instance while stateLaunchOptions is active.
+	// state_new.go/state_prompt.go stash it (capturing the instance and
+	// any prompt-flow-specific data like selectedBranch) right before
+	// opening the Session Launch Options modal; handleStateLaunchOptionsKey
+	// invokes it with the user's chosen overlay.LaunchOptions on confirm,
+	// then clears it. nil outside that window.
+	pendingLaunchOptions func(overlay.LaunchOptions) (tea.Model, tea.Cmd)
 
 	// keySent is used to manage underlining menu items
 	keySent bool
@@ -1224,7 +1237,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnE
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker {
+	if m.state == statePrompt || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker || m.state == stateLaunchOptions {
 		return nil, false
 	}
 	// If it maps to a built-in binding, highlight the corresponding menu
@@ -1274,6 +1287,8 @@ func (m *home) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return handleStateFileExplorerKey(m, msg)
 	case stateMergePicker:
 		return handleStateMergePickerKey(m, msg)
+	case stateLaunchOptions:
+		return handleStateLaunchOptionsKey(m, msg)
 	default:
 		return handleStateDefaultKey(m, msg)
 	}
@@ -2101,7 +2116,7 @@ func (m *home) View() tea.View {
 				m.activeOverlay.View()))
 		}
 		switch m.state {
-		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateSettings, stateMergePicker:
+		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateSettings, stateMergePicker, stateLaunchOptions:
 			return asView(overlay.PlaceOverlay(0, 0, m.activeOverlay.View(), mainView, true, true))
 		}
 	}
