@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 func TestClaudePreferencesTogglesRemoteControl(t *testing.T) {
 	cfg := &config.Config{}
 	cp := NewClaudePreferences(cfg, false, "")
@@ -42,22 +44,67 @@ func TestClaudePreferencesCyclesPermissionMode(t *testing.T) {
 	}
 }
 
+func TestClaudePreferencesCyclesModel(t *testing.T) {
+	cfg := &config.Config{}
+	cp := NewClaudePreferences(cfg, false, "")
+	assert.Equal(t, "default", cfg.Model())
+
+	// Move focus down to the Model row (row 2).
+	cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+
+	for _, want := range []string{"sonnet", "opus", "haiku", "default"} {
+		_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+		assert.True(t, changed)
+		assert.Equal(t, want, cfg.Model())
+	}
+}
+
+func TestClaudePreferencesHeadroomWrapExcludesRemoteControl(t *testing.T) {
+	cfg := &config.Config{}
+	cp := NewClaudePreferences(cfg, false, "")
+	assert.True(t, cfg.RemoteControlEnabled())
+
+	// Move focus down to the Headroom Wrap row (row 3) and enable it.
+	for i := 0; i < 3; i++ {
+		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
+	_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.True(t, changed)
+	assert.True(t, cfg.HeadroomWrapEnabled())
+	assert.False(t, cfg.RemoteControlEnabled(), "enabling Headroom Wrap must disable Remote Control")
+}
+
+func TestClaudePreferencesRemoteControlExcludesHeadroomWrap(t *testing.T) {
+	cfg := &config.Config{HeadroomWrap: boolPtr(true), ClaudeRemoteControl: boolPtr(false)}
+	cp := NewClaudePreferences(cfg, false, "")
+	assert.True(t, cfg.HeadroomWrapEnabled())
+
+	// Row 0 (Remote Control) is already focused by default.
+	_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.True(t, changed)
+	assert.True(t, cfg.RemoteControlEnabled())
+	assert.False(t, cfg.HeadroomWrapEnabled(), "enabling Remote Control must disable Headroom Wrap")
+}
+
 func TestClaudePreferencesRowNavigationClamps(t *testing.T) {
 	cfg := &config.Config{}
 	cp := NewClaudePreferences(cfg, false, "")
 
-	// Up from row 0 stays at row 0: toggles Remote Control, not Permission Mode.
+	// Up from row 0 stays at row 0: toggles Remote Control, not any other row.
 	cp.HandleKeyPress(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
 	assert.False(t, cfg.RemoteControlEnabled())
 
-	// Down twice stays at row 1 (only two rows): cycles Permission Mode, not Remote Control.
-	cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
-	cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	// Down four times stays at row 3 (only four rows): toggles Headroom
+	// Wrap, not any earlier row.
+	for i := 0; i < 4; i++ {
+		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
 	_, changed = cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
-	assert.Equal(t, "acceptEdits", cfg.PermissionMode())
+	assert.True(t, cfg.HeadroomWrapEnabled())
 }
 
 func TestClaudePreferencesRendersPermissionMode(t *testing.T) {
@@ -67,6 +114,23 @@ func TestClaudePreferencesRendersPermissionMode(t *testing.T) {
 	rendered := cp.Render()
 	assert.Contains(t, rendered, "Permission Mode")
 	assert.Contains(t, rendered, "plan")
+}
+
+func TestClaudePreferencesRendersModel(t *testing.T) {
+	model := "opus"
+	cfg := &config.Config{ClaudeModel: &model}
+	cp := NewClaudePreferences(cfg, false, "")
+	rendered := cp.Render()
+	assert.Contains(t, rendered, "Model")
+	assert.Contains(t, rendered, "opus")
+}
+
+func TestClaudePreferencesRendersHeadroomWrap(t *testing.T) {
+	cfg := &config.Config{HeadroomWrap: boolPtr(true)}
+	cp := NewClaudePreferences(cfg, false, "")
+	rendered := cp.Render()
+	assert.Contains(t, rendered, "Headroom Wrap")
+	assert.Contains(t, rendered, "[x]")
 }
 
 func TestClaudePreferencesShowsBlockedHint(t *testing.T) {

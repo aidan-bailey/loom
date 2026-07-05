@@ -11,8 +11,8 @@ import (
 // ClaudePreferences is the Claude-specific preferences drill-in
 // sub-screen. Structured as its own screen (rather than flat rows on
 // the main settings list) so more Claude-adapter-specific preferences
-// can be added later without growing that list — today it holds two
-// rows: Remote Control and Permission Mode.
+// can be added later without growing that list — today it holds four
+// rows: Remote Control, Permission Mode, Model, and Headroom Wrap.
 //
 // authBlocked/authReason mirror session.RemoteControlAuth.Blocked()/
 // Reason, passed as plain values so this package stays decoupled from
@@ -29,9 +29,9 @@ type ClaudePreferences struct {
 	cursor      int
 }
 
-// claudePrefsRowCount is the number of navigable rows: Remote Control
-// and Permission Mode.
-const claudePrefsRowCount = 2
+// claudePrefsRowCount is the number of navigable rows: Remote Control,
+// Permission Mode, Model, and Headroom Wrap.
+const claudePrefsRowCount = 4
 
 // NewClaudePreferences creates the Claude Preferences sub-screen over cfg.
 func NewClaudePreferences(cfg *config.Config, authBlocked bool, authReason string) *ClaudePreferences {
@@ -64,11 +64,29 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 			c.cfg.Mutate(func(cc *config.Config) {
 				v := !cc.RemoteControlEnabled()
 				cc.ClaudeRemoteControl = &v
+				if v {
+					hw := false
+					cc.HeadroomWrap = &hw
+				}
 			})
 		case 1:
 			c.cfg.Mutate(func(cc *config.Config) {
-				next := nextPermissionMode(cc.PermissionMode())
+				next := nextInList(config.ClaudePermissionModes, cc.PermissionMode())
 				cc.ClaudePermissionMode = &next
+			})
+		case 2:
+			c.cfg.Mutate(func(cc *config.Config) {
+				next := nextInList(config.ClaudeModels, cc.Model())
+				cc.ClaudeModel = &next
+			})
+		case 3:
+			c.cfg.Mutate(func(cc *config.Config) {
+				v := !cc.HeadroomWrapEnabled()
+				cc.HeadroomWrap = &v
+				if v {
+					rc := false
+					cc.ClaudeRemoteControl = &rc
+				}
 			})
 		}
 		return false, true
@@ -76,16 +94,16 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 	return false, false
 }
 
-// nextPermissionMode returns the value in config.ClaudePermissionModes
-// after current, wrapping from the last value back to the first.
-func nextPermissionMode(current string) string {
-	modes := config.ClaudePermissionModes
-	for i, m := range modes {
-		if m == current {
-			return modes[(i+1)%len(modes)]
+// nextInList returns the value in list after current, wrapping from the
+// last value back to the first. Falls back to list[0] if current isn't
+// found (e.g. a value predating this list's current contents).
+func nextInList(list []string, current string) string {
+	for i, v := range list {
+		if v == current {
+			return list[(i+1)%len(list)]
 		}
 	}
-	return modes[0]
+	return list[0]
 }
 
 var (
@@ -127,9 +145,37 @@ func (c *ClaudePreferences) Render() string {
 		pmRow = claudePrefsRowStyle.Render(pmRow)
 	}
 
+	modelCursor := "  "
+	if c.cursor == 2 {
+		modelCursor = "> "
+	}
+	modelRow := modelCursor + "Model             < " + c.cfg.Model() + " >"
+	if c.cursor == 2 {
+		modelRow = claudePrefsSelectedStyle.Render(modelRow)
+	} else {
+		modelRow = claudePrefsRowStyle.Render(modelRow)
+	}
+
+	hwCheck := "[ ]"
+	if c.cfg.HeadroomWrapEnabled() {
+		hwCheck = "[x]"
+	}
+	hwCursor := "  "
+	if c.cursor == 3 {
+		hwCursor = "> "
+	}
+	hwRow := hwCursor + "Headroom Wrap     " + hwCheck
+	if c.cursor == 3 {
+		hwRow = claudePrefsSelectedStyle.Render(hwRow)
+	} else {
+		hwRow = claudePrefsRowStyle.Render(hwRow)
+	}
+
 	content := claudePrefsTitleStyle.Render("Claude Preferences") + "\n\n" +
 		rcRow + "\n" +
-		pmRow + "\n\n" +
+		pmRow + "\n" +
+		modelRow + "\n" +
+		hwRow + "\n\n" +
 		claudePrefsHintStyle.Render("up/down move • enter/space toggle/cycle • esc back")
 
 	border := lipgloss.NewStyle().
