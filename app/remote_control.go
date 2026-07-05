@@ -10,40 +10,89 @@ import (
 )
 
 // remoteControlProgram returns program with Claude's --remote-control flag
-// (named after title) applied when cfg enables it AND the detected auth can
-// use it. It is a no-op when cfg is nil, the toggle is disabled, the auth is
-// not confirmed OK (fail closed on Blocked/Unknown), or the program isn't
-// Claude.
+// (named after title) applied when enabled AND the detected auth can use
+// it. It is a no-op when enabled is false, the auth is not confirmed OK
+// (fail closed on Blocked/Unknown), or the program isn't Claude.
 //
-// Callers apply it to an instance's Program at first launch — once the title
-// is known — so the rewritten command is persisted and later resume/crash
-// restarts inherit the flag through BuildRecoveryCommand.
-func remoteControlProgram(cfg *config.Config, auth session.RemoteControlAuth, program, title string) string {
-	if cfg == nil || !cfg.RemoteControlEnabled() || !auth.OK() {
+// Callers apply it to an instance's Program at first launch — once the
+// title is known — so the rewritten command is persisted and later
+// resume/crash restarts inherit the flag through BuildRecoveryCommand.
+func remoteControlProgram(enabled bool, auth session.RemoteControlAuth, program, title string) string {
+	if !enabled || !auth.OK() {
 		return program
 	}
 	return session.BuildRemoteControlCommand(program, title)
 }
 
 // permissionModeProgram returns program with Claude's --permission-mode
-// flag applied per cfg.PermissionMode(). No-op when cfg is nil or the
-// program isn't Claude (BuildPermissionModeCommand's registry lookup
-// already no-ops for non-Claude adapters).
-func permissionModeProgram(cfg *config.Config, program string) string {
-	if cfg == nil {
+// flag applied. No-op when the program isn't Claude
+// (BuildPermissionModeCommand's registry lookup already no-ops for
+// non-Claude adapters) or mode is "" / "default".
+func permissionModeProgram(mode, program string) string {
+	return session.BuildPermissionModeCommand(program, mode)
+}
+
+// modelProgram returns program with Claude's --model flag applied.
+// No-op when the program isn't Claude or model is "" / "default".
+func modelProgram(model, program string) string {
+	return session.BuildModelCommand(program, model)
+}
+
+// headroomWrapProgram returns program wrapped as "headroom wrap
+// <program>" when enabled. Agent-agnostic: applies regardless of which
+// program is configured.
+func headroomWrapProgram(enabled bool, program string) string {
+	if !enabled {
 		return program
 	}
-	return session.BuildPermissionModeCommand(program, cfg.PermissionMode())
+	return session.BuildHeadroomWrapCommand(program)
+}
+
+// launchOptionsFromConfig snapshots cfg's current global launch-option
+// values into an overlay.LaunchOptions, the same shape edited by the
+// Session Launch Options modal. Returns the zero value (all
+// disabled/default) for a nil cfg — matching the effect the old
+// cfg-nil guards in remoteControlProgram/permissionModeProgram had
+// before this refactor.
+func launchOptionsFromConfig(cfg *config.Config) overlay.LaunchOptions {
+	if cfg == nil {
+		return overlay.LaunchOptions{}
+	}
+	return overlay.LaunchOptions{
+		RemoteControl:  cfg.RemoteControlEnabled(),
+		PermissionMode: cfg.PermissionMode(),
+		Model:          cfg.Model(),
+		HeadroomWrap:   cfg.HeadroomWrapEnabled(),
+	}
+}
+
+// applyLaunchOptions composes program in order: remote-control,
+// permission-mode, model, then headroom-wrap last — headroom-wrap must
+// be outermost so the earlier three steps still see the bare agent
+// name at parts[0] when deciding how to modify the string. HeadroomWrap
+// forcibly disables RemoteControl here regardless of opts.RemoteControl:
+// this is the authoritative enforcement of the exclusivity rule (the
+// UI-level auto-disable in ClaudePreferences/SessionLaunchOptions is
+// the good-UX layer on top, not the only guarantee — a hand-edited
+// config.json with both fields true still can't launch both flags
+// together).
+func applyLaunchOptions(opts overlay.LaunchOptions, auth session.RemoteControlAuth, program, title string) string {
+	if opts.HeadroomWrap {
+		opts.RemoteControl = false
+	}
+	program = remoteControlProgram(opts.RemoteControl, auth, program, title)
+	program = permissionModeProgram(opts.PermissionMode, program)
+	program = modelProgram(opts.Model, program)
+	program = headroomWrapProgram(opts.HeadroomWrap, program)
+	return program
 }
 
 // remoteControlBlocked reports whether a launch of program should be
-// interrupted to tell the user remote control can't work: the toggle is on,
+// interrupted to tell the user remote control can't work: the toggle is
+// on (rcEnabled — either the global config or a per-instance override),
 // the program is Claude, and auth was clearly determined incompatible.
-func (m *home) remoteControlBlocked(program string) bool {
-	return m.appConfig != nil &&
-		m.appConfig.RemoteControlEnabled() &&
-		session.IsClaudeProgram(program) &&
-		m.rcAuth.Blocked()
+func (m *home) remoteControlBlocked(rcEnabled bool, program string) bool {
+	return rcEnabled && session.IsClaudeProgram(program) && m.rcAuth.Blocked()
 }
 
 // promptRemoteControlBlocked shows the "remote control unavailable" modal for

@@ -382,7 +382,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			if wsCtx.Name != "" {
 				wtTitle = wsCtx.Name
 			}
-			if h.remoteControlBlocked(program) {
+			if h.remoteControlBlocked(appConfig.RemoteControlEnabled(), program) {
 				// Non-interactive startup: fall back silently but leave an
 				// info-style note (clears on the next status update).
 				h.errBox.SetInfo("remote control off: " + h.rcAuth.Reason)
@@ -390,7 +390,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
 				Title:               wtTitle,
 				Path:                wsCtx.RepoPath,
-				Program:             permissionModeProgram(appConfig, remoteControlProgram(appConfig, h.rcAuth, program, wtTitle)),
+				Program:             applyLaunchOptions(launchOptionsFromConfig(appConfig), h.rcAuth, program, wtTitle),
 				IsWorkspaceTerminal: true,
 				ConfigDir:           cfgDir,
 			})
@@ -1687,13 +1687,13 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 			log.For("app").Debug("workspace_terminal.orphan_kill", "workspace", ws.Name, "err", err.Error())
 		}
 
-		if m.remoteControlBlocked(appConfig.GetProgram()) {
+		if m.remoteControlBlocked(appConfig.RemoteControlEnabled(), appConfig.GetProgram()) {
 			m.errBox.SetInfo("remote control off: " + m.rcAuth.Reason)
 		}
 		wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
 			Title:               wtTitle,
 			Path:                wsCtx.RepoPath,
-			Program:             permissionModeProgram(appConfig, remoteControlProgram(appConfig, m.rcAuth, appConfig.GetProgram(), wtTitle)),
+			Program:             applyLaunchOptions(launchOptionsFromConfig(appConfig), m.rcAuth, appConfig.GetProgram(), wtTitle),
 			IsWorkspaceTerminal: true,
 			ConfigDir:           wsCtx.ConfigDir,
 		})
