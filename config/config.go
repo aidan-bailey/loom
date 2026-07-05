@@ -106,11 +106,33 @@ type Config struct {
 	// treated identically to "default" (no flag injected; Claude's own
 	// default applies). Read it through PermissionMode.
 	ClaudePermissionMode *string `json:"claude_permission_mode,omitempty"`
+	// HeadroomWrap controls whether new sessions launch wrapped as
+	// `headroom wrap <program>`, regardless of agent. Unlike
+	// ClaudeRemoteControl, this defaults to off (DefaultConfig sets it
+	// explicitly to false) since it's an opt-in wrapper, not a
+	// backward-compatible default. Mutually exclusive with
+	// ClaudeRemoteControl: enabling one disables the other, enforced in
+	// the Claude Preferences toggle handler, the Session Launch Options
+	// modal, and defensively again in applyLaunchOptions so a
+	// hand-edited config.json with both fields true still can't launch
+	// both flags at once. Read it through HeadroomWrapEnabled.
+	HeadroomWrap *bool `json:"headroom_wrap,omitempty"`
+	// ClaudeModel is the --model value new Claude sessions launch with.
+	// Values are short CLI aliases (not versioned IDs) so the list
+	// stays valid as new models ship without a code change. "default"
+	// is a no-op — Claude's own default applies. Read it through Model.
+	ClaudeModel *string `json:"claude_model,omitempty"`
 }
 
 // ClaudePermissionModes lists the values --permission-mode accepts, in
 // the order the Claude Preferences screen cycles through them.
 var ClaudePermissionModes = []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
+
+// ClaudeModels lists the --model aliases the Claude Preferences and
+// Session Launch Options screens cycle through. Short aliases, not
+// versioned IDs, so this list doesn't need updating when new Claude
+// models ship.
+var ClaudeModels = []string{"default", "sonnet", "opus", "haiku"}
 
 // Mutate runs fn with the write lock held. Callers outside this package
 // (the settings overlay) use this instead of writing exported fields
@@ -152,6 +174,21 @@ func (c *Config) PermissionMode() string {
 		return "default"
 	}
 	return *c.ClaudePermissionMode
+}
+
+// HeadroomWrapEnabled reports whether new sessions should launch
+// wrapped as `headroom wrap <program>`. Defaults to false when unset.
+func (c *Config) HeadroomWrapEnabled() bool {
+	return c.HeadroomWrap != nil && *c.HeadroomWrap
+}
+
+// Model returns the configured --model alias, defaulting to "default"
+// when unset (nil). Unlocked for the same reason as PermissionMode.
+func (c *Config) Model() string {
+	if c.ClaudeModel == nil {
+		return "default"
+	}
+	return *c.ClaudeModel
 }
 
 // GetProgram returns the program to run. If Profiles is non-empty and
@@ -210,6 +247,8 @@ func DefaultConfig() *Config {
 		}(),
 		ClaudeRemoteControl:  boolPtr(true),
 		ClaudePermissionMode: stringPtr("default"),
+		HeadroomWrap:         boolPtr(false),
+		ClaudeModel:          stringPtr("default"),
 	}
 }
 

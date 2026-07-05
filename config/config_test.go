@@ -393,6 +393,51 @@ func TestClaudePermissionModes(t *testing.T) {
 	assert.Equal(t, []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}, ClaudePermissionModes)
 }
 
+func TestHeadroomWrapEnabled(t *testing.T) {
+	t.Run("nil (absent from config) defaults to disabled", func(t *testing.T) {
+		cfg := &Config{}
+		assert.False(t, cfg.HeadroomWrapEnabled())
+	})
+
+	t.Run("explicit true is enabled", func(t *testing.T) {
+		cfg := &Config{HeadroomWrap: boolPtr(true)}
+		assert.True(t, cfg.HeadroomWrapEnabled())
+	})
+
+	t.Run("explicit false is disabled", func(t *testing.T) {
+		cfg := &Config{HeadroomWrap: boolPtr(false)}
+		assert.False(t, cfg.HeadroomWrapEnabled())
+	})
+
+	t.Run("DefaultConfig disables it", func(t *testing.T) {
+		assert.False(t, DefaultConfig().HeadroomWrapEnabled())
+	})
+}
+
+func TestModel(t *testing.T) {
+	t.Run("nil (absent from config) defaults to \"default\"", func(t *testing.T) {
+		cfg := &Config{}
+		assert.Equal(t, "default", cfg.Model())
+	})
+
+	t.Run("explicit value round-trips", func(t *testing.T) {
+		cfg := &Config{ClaudeModel: stringPtr("opus")}
+		assert.Equal(t, "opus", cfg.Model())
+	})
+
+	t.Run("DefaultConfig sets \"default\" explicitly", func(t *testing.T) {
+		cfg := DefaultConfig()
+		if assert.NotNil(t, cfg.ClaudeModel) {
+			assert.Equal(t, "default", *cfg.ClaudeModel)
+		}
+		assert.Equal(t, "default", cfg.Model())
+	})
+}
+
+func TestClaudeModels(t *testing.T) {
+	assert.Equal(t, []string{"default", "sonnet", "opus", "haiku"}, ClaudeModels)
+}
+
 func TestGetProfiles(t *testing.T) {
 	t.Run("no profiles returns single synthetic profile", func(t *testing.T) {
 		cfg := &Config{DefaultProgram: "/usr/local/bin/claude"}
