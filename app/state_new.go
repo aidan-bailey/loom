@@ -51,32 +51,39 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(tea.RequestWindowSize, initialSearch)
 		}
 
-		// Finalize + launch. Remote control is applied in Sync (only added
-		// when auth is OK); when auth is Blocked we prompt first, and the
-		// same task runs on "start anyway".
-		startTask := overlay.ConfirmationTask{
-			Sync: func() {
-				instance.Program = permissionModeProgram(m.appConfig, remoteControlProgram(m.appConfig, m.rcAuth, instance.Program, instance.Title))
-				_ = instance.TransitionTo(session.Loading)
-				m.newInstanceFinalizer()
-				m.promptAfterName = false
-				m.state = stateDefault
-				m.menu.SetState(ui.StateDefault)
-			},
-			Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
-				err := instance.Start(true)
-				return instanceStartedMsg{
-					instance:        instance,
-					err:             err,
-					promptAfterName: false,
-				}
-			}),
-		}
+		// Show the Session Launch Options modal, seeded from the global
+		// config, before actually starting. Confirming there runs the
+		// closure stashed below (compose Program with the chosen
+		// overrides, then Start) via handleStateLaunchOptionsKey.
+		m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
+			startTask := overlay.ConfirmationTask{
+				Sync: func() {
+					instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
+					_ = instance.TransitionTo(session.Loading)
+					m.newInstanceFinalizer()
+					m.promptAfterName = false
+					m.state = stateDefault
+					m.menu.SetState(ui.StateDefault)
+				},
+				Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
+					err := instance.Start(true)
+					return instanceStartedMsg{
+						instance:        instance,
+						err:             err,
+						promptAfterName: false,
+					}
+				}),
+			}
 
-		if m.remoteControlBlocked(instance.Program) {
-			return m, m.promptRemoteControlBlocked(startTask)
+			if m.remoteControlBlocked(opts.RemoteControl, instance.Program) {
+				return m, m.promptRemoteControlBlocked(startTask)
+			}
+			return m, tea.Batch(startTask.Run(), m.instanceChanged())
 		}
-		return m, tea.Batch(startTask.Run(), m.instanceChanged())
+		m.state = stateLaunchOptions
+		m.setOverlay(overlay.NewSessionLaunchOptions(launchOptionsFromConfig(m.appConfig), m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
+		m.menu.SetState(ui.StateNewInstance)
+		return m, tea.RequestWindowSize
 	case tea.KeyBackspace:
 		runes := []rune(instance.Title)
 		if len(runes) == 0 {

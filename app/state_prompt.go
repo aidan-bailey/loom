@@ -42,7 +42,8 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			selectedProgram := ti.GetSelectedProgram()
 
 			if !selected.Started() {
-				// Shift+N flow: instance not started yet — set branch, start, then send prompt
+				// Shift+N flow: instance not started yet — set branch, then
+				// show the Session Launch Options modal before starting.
 				if selectedBranch != "" {
 					selected.SetSelectedBranch(selectedBranch)
 				}
@@ -51,33 +52,36 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				selected.Prompt = prompt
 
-				// Finalize + launch. Remote control is applied in Sync (only
-				// added when auth is OK); when auth is Blocked we prompt first,
-				// and the same task runs on "start anyway".
-				startTask := overlay.ConfirmationTask{
-					Sync: func() {
-						selected.Program = permissionModeProgram(m.appConfig, remoteControlProgram(m.appConfig, m.rcAuth, selected.Program, selected.Title))
-						_ = selected.TransitionTo(session.Loading)
-						m.newInstanceFinalizer()
-						m.dismissOverlay()
-						m.state = stateDefault
-						m.menu.SetState(ui.StateDefault)
-					},
-					Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
-						err := selected.Start(true)
-						return instanceStartedMsg{
-							instance:        selected,
-							err:             err,
-							promptAfterName: false,
-							selectedBranch:  selectedBranch,
-						}
-					}),
-				}
+				m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
+					startTask := overlay.ConfirmationTask{
+						Sync: func() {
+							selected.Program = applyLaunchOptions(opts, m.rcAuth, selected.Program, selected.Title)
+							_ = selected.TransitionTo(session.Loading)
+							m.newInstanceFinalizer()
+							m.dismissOverlay()
+							m.state = stateDefault
+							m.menu.SetState(ui.StateDefault)
+						},
+						Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
+							err := selected.Start(true)
+							return instanceStartedMsg{
+								instance:        selected,
+								err:             err,
+								promptAfterName: false,
+								selectedBranch:  selectedBranch,
+							}
+						}),
+					}
 
-				if m.remoteControlBlocked(selected.Program) {
-					return m, m.promptRemoteControlBlocked(startTask)
+					if m.remoteControlBlocked(opts.RemoteControl, selected.Program) {
+						return m, m.promptRemoteControlBlocked(startTask)
+					}
+					return m, tea.Batch(startTask.Run(), m.instanceChanged())
 				}
-				return m, tea.Batch(startTask.Run(), m.instanceChanged())
+				m.state = stateLaunchOptions
+				m.setOverlay(overlay.NewSessionLaunchOptions(launchOptionsFromConfig(m.appConfig), m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
+				m.menu.SetState(ui.StateNewInstance)
+				return m, tea.RequestWindowSize
 			}
 
 			// Regular flow: instance already running, just send prompt
