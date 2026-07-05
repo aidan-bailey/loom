@@ -105,19 +105,42 @@ func (r *Registry) Lookup(program string) Adapter {
 	return r.fallback
 }
 
-// firstField returns the first whitespace-separated token of program,
-// or the empty string if program is all whitespace.
+// headroomWrapPrefix is the literal prefix BuildHeadroomWrapCommand
+// (session/agent_restart.go) adds to a fully-composed program string
+// when the Headroom Wrap setting is enabled. Adapter matching and
+// flag insertion both need to see through it to find the real agent
+// invocation underneath — otherwise a headroom-wrapped session stops
+// being recognized as (and correctly modified as) whatever agent it
+// actually wraps, breaking trust-prompt detection, prompting-status
+// detection, and crash-recovery's --continue injection.
+const headroomWrapPrefix = "headroom wrap "
+
+// splitHeadroomWrap separates a leading headroomWrapPrefix from the
+// rest of program, if present. prefix is "" when program isn't
+// wrapped.
+func splitHeadroomWrap(program string) (prefix, rest string) {
+	if strings.HasPrefix(program, headroomWrapPrefix) {
+		return headroomWrapPrefix, strings.TrimPrefix(program, headroomWrapPrefix)
+	}
+	return "", program
+}
+
+// firstField returns the first whitespace-separated token of program
+// (after stripping any headroom-wrap prefix), or the empty string if
+// program is all whitespace.
 func firstField(program string) string {
-	parts := strings.Fields(program)
+	_, rest := splitHeadroomWrap(program)
+	parts := strings.Fields(rest)
 	if len(parts) == 0 {
 		return ""
 	}
 	return parts[0]
 }
 
-// basenameMatch reports whether the program's first token has the
-// given basename (after path stripping). Absolute paths like
-// /nix/store/.../bin/claude still match "claude".
+// basenameMatch reports whether the program's first token (after
+// stripping any headroom-wrap prefix) has the given basename (after
+// path stripping). Absolute paths like /nix/store/.../bin/claude still
+// match "claude".
 func basenameMatch(program, name string) bool {
 	first := firstField(program)
 	if first == "" {

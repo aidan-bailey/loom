@@ -66,21 +66,28 @@ func launchOptionsFromConfig(cfg *config.Config) overlay.LaunchOptions {
 	}
 }
 
+// effectiveRemoteControl reports whether opts should actually apply
+// the --remote-control flag once Headroom Wrap's exclusivity is
+// accounted for. applyLaunchOptions and every remoteControlBlocked
+// call site must agree on this value — otherwise a config.json
+// hand-edited to set both ClaudeRemoteControl and HeadroomWrap true
+// (or a Session Launch Options selection reaching that state) would
+// make remoteControlBlocked report a conflict the composed command
+// doesn't actually have.
+func effectiveRemoteControl(opts overlay.LaunchOptions) bool {
+	return opts.RemoteControl && !opts.HeadroomWrap
+}
+
 // applyLaunchOptions composes program in order: remote-control,
 // permission-mode, model, then headroom-wrap last — headroom-wrap must
 // be outermost so the earlier three steps still see the bare agent
-// name at parts[0] when deciding how to modify the string. HeadroomWrap
-// forcibly disables RemoteControl here regardless of opts.RemoteControl:
-// this is the authoritative enforcement of the exclusivity rule (the
-// UI-level auto-disable in ClaudePreferences/SessionLaunchOptions is
-// the good-UX layer on top, not the only guarantee — a hand-edited
-// config.json with both fields true still can't launch both flags
-// together).
+// name at parts[0] when deciding how to modify the string.
+// effectiveRemoteControl is the authoritative enforcement of the
+// Remote-Control/Headroom-Wrap exclusivity rule (the UI-level
+// auto-disable in ClaudePreferences/SessionLaunchOptions is the
+// good-UX layer on top, not the only guarantee).
 func applyLaunchOptions(opts overlay.LaunchOptions, auth session.RemoteControlAuth, program, title string) string {
-	if opts.HeadroomWrap {
-		opts.RemoteControl = false
-	}
-	program = remoteControlProgram(opts.RemoteControl, auth, program, title)
+	program = remoteControlProgram(effectiveRemoteControl(opts), auth, program, title)
 	program = permissionModeProgram(opts.PermissionMode, program)
 	program = modelProgram(opts.Model, program)
 	program = headroomWrapProgram(opts.HeadroomWrap, program)

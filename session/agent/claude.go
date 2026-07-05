@@ -40,7 +40,8 @@ func (claudeAdapter) PendingPromptPattern() string {
 // original program's remaining flags. Returns program unchanged if
 // --continue or --resume is already present.
 func (claudeAdapter) ApplyRecoveryFlag(program string) string {
-	parts := strings.Fields(program)
+	prefix, rest := splitHeadroomWrap(program)
+	parts := strings.Fields(rest)
 	if len(parts) == 0 {
 		return program
 	}
@@ -49,7 +50,7 @@ func (claudeAdapter) ApplyRecoveryFlag(program string) string {
 			return program
 		}
 	}
-	return parts[0] + " --continue" + strings.TrimPrefix(program, parts[0])
+	return prefix + parts[0] + " --continue" + strings.TrimPrefix(rest, parts[0])
 }
 
 // remoteControlNameRe matches every run of characters that are not safe

@@ -75,7 +75,7 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}),
 			}
 
-			if m.remoteControlBlocked(opts.RemoteControl, instance.Program) {
+			if m.remoteControlBlocked(effectiveRemoteControl(opts), instance.Program) {
 				return m, m.promptRemoteControlBlocked(startTask)
 			}
 			return m, tea.Batch(startTask.Run(), m.instanceChanged())

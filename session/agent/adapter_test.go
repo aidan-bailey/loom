@@ -54,6 +54,20 @@ func TestClaudeRecoveryFlag(t *testing.T) {
 	}
 }
 
+func TestClaudeRecoveryFlagThroughHeadroomWrap(t *testing.T) {
+	c := Claude()
+	assert.Equal(t, "headroom wrap claude --continue", c.ApplyRecoveryFlag("headroom wrap claude"))
+	assert.Equal(t, "headroom wrap claude --continue --model opus", c.ApplyRecoveryFlag("headroom wrap claude --model opus"))
+	assert.Equal(t, "headroom wrap claude --continue", c.ApplyRecoveryFlag("headroom wrap claude --continue"))
+}
+
+func TestDefaultRegistryLookupThroughHeadroomWrap(t *testing.T) {
+	r := DefaultRegistry()
+	assert.Equal(t, "claude", r.Lookup("headroom wrap claude").Name())
+	assert.Equal(t, "claude", r.Lookup("headroom wrap claude --model opus").Name())
+	assert.Equal(t, "aider", r.Lookup("headroom wrap aider --model gemma").Name())
+}
+
 func TestNonClaudeAdaptersNoRecovery(t *testing.T) {
 	// aider and gemini don't modify the program string — there's no
 	// CLI equivalent of --continue for those agents.

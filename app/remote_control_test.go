@@ -138,6 +138,23 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 	})
 }
 
+func TestEffectiveRemoteControl(t *testing.T) {
+	assert.True(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: true, HeadroomWrap: false}))
+	assert.False(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: false, HeadroomWrap: false}))
+	assert.False(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: true, HeadroomWrap: true}))
+	assert.False(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: false, HeadroomWrap: true}))
+}
+
+func TestRemoteControlBlockedAgreesWithComposedCommandWhenHeadroomWrapForcesRCOff(t *testing.T) {
+	// Reproduces the bug found in final review: a config.json (or a
+	// Session Launch Options selection) with both RemoteControl and
+	// HeadroomWrap true must not report "blocked" for a conflict the
+	// composed command doesn't actually have.
+	opts := overlay.LaunchOptions{RemoteControl: true, HeadroomWrap: true}
+	m := &home{rcAuth: session.RemoteControlAuth{State: session.RemoteControlAuthBlocked}}
+	assert.False(t, m.remoteControlBlocked(effectiveRemoteControl(opts), "claude"))
+}
+
 func TestApplyLaunchOptions(t *testing.T) {
 	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
 

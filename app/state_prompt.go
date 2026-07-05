@@ -72,7 +72,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 						}),
 					}
 
-					if m.remoteControlBlocked(opts.RemoteControl, selected.Program) {
+					if m.remoteControlBlocked(effectiveRemoteControl(opts), selected.Program) {
 						return m, m.promptRemoteControlBlocked(startTask)
 					}
 					return m, tea.Batch(startTask.Run(), m.instanceChanged())
