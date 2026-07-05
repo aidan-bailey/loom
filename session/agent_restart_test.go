@@ -109,3 +109,50 @@ func TestBuildPermissionModeCommand_Aider(t *testing.T) {
 func TestBuildPermissionModeCommand_Unknown(t *testing.T) {
 	assert.Equal(t, "codex", BuildPermissionModeCommand("codex", "acceptEdits"))
 }
+
+func TestBuildModelCommand_Claude(t *testing.T) {
+	assert.Equal(t, "claude --model opus", BuildModelCommand("claude", "opus"))
+}
+
+func TestBuildModelCommand_ClaudeWithFlags(t *testing.T) {
+	assert.Equal(t,
+		"claude --model opus --permission-mode plan",
+		BuildModelCommand("claude --permission-mode plan", "opus"),
+	)
+}
+
+func TestBuildModelCommand_DefaultModelIsNoOp(t *testing.T) {
+	assert.Equal(t, "claude --permission-mode plan", BuildModelCommand("claude --permission-mode plan", "default"))
+	assert.Equal(t, "claude --permission-mode plan", BuildModelCommand("claude --permission-mode plan", ""))
+}
+
+func TestBuildModelCommand_Idempotent(t *testing.T) {
+	assert.Equal(t,
+		"claude --model opus",
+		BuildModelCommand("claude --model opus", "sonnet"),
+	)
+}
+
+func TestBuildModelCommand_Aider(t *testing.T) {
+	assert.Equal(t, "aider --model gemma", BuildModelCommand("aider --model gemma", "opus"))
+}
+
+func TestBuildModelCommand_Unknown(t *testing.T) {
+	assert.Equal(t, "codex", BuildModelCommand("codex", "opus"))
+}
+
+func TestBuildHeadroomWrapCommand_Claude(t *testing.T) {
+	assert.Equal(t, "headroom wrap claude", BuildHeadroomWrapCommand("claude"))
+}
+
+func TestBuildHeadroomWrapCommand_ClaudeWithFlags(t *testing.T) {
+	assert.Equal(t, "headroom wrap claude --model opus", BuildHeadroomWrapCommand("claude --model opus"))
+}
+
+func TestBuildHeadroomWrapCommand_Aider(t *testing.T) {
+	assert.Equal(t, "headroom wrap aider --model gemma", BuildHeadroomWrapCommand("aider --model gemma"))
+}
+
+func TestBuildHeadroomWrapCommand_Idempotent(t *testing.T) {
+	assert.Equal(t, "headroom wrap claude", BuildHeadroomWrapCommand("headroom wrap claude"))
+}
