@@ -202,6 +202,44 @@ func TestInstance_ResumeSurfacesBranchGoneHint(t *testing.T) {
 	assert.Contains(t, err.Error(), "kill", "Resume error must hint the kill-to-recover affordance")
 }
 
+// TestInstance_PauseStashesUncommittedWork is the stash-mechanism
+// regression guard: Pause must preserve tracked and untracked changes
+// via git stash (StashRef ends up set) instead of the old auto-commit
+// (no new commit lands on the branch).
+func TestInstance_PauseStashesUncommittedWork(t *testing.T) {
+	inst := newTestPausableInstance(t)
+	gw, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+	dir := gw.GetWorktreePath()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted\n"), 0644))
+
+	logBefore, err := exec.Command("git", "-C", dir, "log", "--oneline").CombinedOutput()
+	require.NoError(t, err)
+
+	require.NoError(t, inst.Pause(nil))
+
+	assert.NotEmpty(t, gw.GetStashRef(), "Pause must record a StashRef when the worktree was dirty")
+
+	// No new commit landed — Pause no longer auto-commits. The worktree
+	// directory is gone after Pause, but the branch's history is still
+	// reachable from the main repo (GetRepoPath), which Pause never removes.
+	branchLog, err := exec.Command("git", "-C", gw.GetRepoPath(), "log", "pause-test-branch", "--oneline").CombinedOutput()
+	require.NoError(t, err)
+	assert.Equal(t, string(logBefore), string(branchLog), "Pause must not add a commit to the branch")
+}
+
+// TestInstance_PauseCleanWorktreeSetsNoStashRef ensures a clean pause
+// doesn't fabricate a stash entry.
+func TestInstance_PauseCleanWorktreeSetsNoStashRef(t *testing.T) {
+	inst := newTestPausableInstance(t)
+	gw, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+
+	require.NoError(t, inst.Pause(nil))
+	assert.Empty(t, gw.GetStashRef())
+}
+
 // TestInstance_StartIsIdempotent verifies Start is a no-op on an
 // already-started instance (INST-04). A second Start must not replace
 // the tmux session and orphan the first.

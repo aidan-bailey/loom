@@ -925,18 +925,17 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	ts := i.getTmuxSession()
 	var errs []error
 
-	// Check if there are any changes to commit
-	if dirty, err := gw.IsDirty(); err != nil {
-		errs = append(errs, fmt.Errorf("failed to check if worktree is dirty: %w", err))
-	} else if dirty {
-		// Commit changes locally (without pushing to GitHub)
-		commitMsg := fmt.Sprintf("[loom] update from '%s' on %s (paused)", i.Title, time.Now().Format(time.RFC822))
-		if err := gw.CommitChanges(commitMsg); err != nil {
-			errs = append(errs, fmt.Errorf("failed to commit changes: %w", err))
-			// Return early if we can't commit changes to avoid corrupted state
-			return i.combineErrors(errs)
-		}
+	// Stash any uncommitted changes (tracked and untracked) so Resume
+	// can restore them without polluting the branch's real history
+	// with a synthetic checkpoint commit.
+	stashMsg := fmt.Sprintf("[loom] stash from '%s' on %s (paused)", i.Title, time.Now().Format(time.RFC822))
+	sha, stashErr := gw.StashChanges(stashMsg)
+	if stashErr != nil {
+		errs = append(errs, fmt.Errorf("failed to stash changes: %w", stashErr))
+		// Return early if we can't stash changes to avoid corrupted state
+		return i.combineErrors(errs)
 	}
+	gw.SetStashRef(sha)
 
 	// Kill the tmux session so the agent process actually stops. Otherwise
 	// claude/aider would keep running inside a session whose worktree we are
