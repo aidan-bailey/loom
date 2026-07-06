@@ -14,9 +14,9 @@ import (
 // exists to establish the migration plumbing. v1→v2 drops the AutoYes
 // field (encoding/json already ignores the now-unknown "auto_yes" key
 // on unmarshal, so this step too is just a version stamp). v2→v3 adds
-// GitWorktreeData.StashRef; v3→v4 adds HeadroomProxy — both default
-// correctly on their own (empty string, false), so both steps are pure
-// version stamps too.
+// GitWorktreeData.StashRef; v3→v4 adds HeadroomProxy; v4→v5 adds
+// CacheTTL1h — all default correctly on their own (empty string,
+// false), so every step is a pure version stamp.
 //
 // Contributor protocol: when adding/renaming/removing an InstanceData
 // field, bump CurrentSchemaVersion and append a new case to the switch
@@ -54,6 +54,11 @@ func Migrate(raw []byte) (InstanceData, error) {
 			// the zero value (false) already matches the desired default
 			// for pre-existing records — just stamp the version.
 			data.SchemaVersion = 4
+		case 4:
+			// v4 → v5: CacheTTL1h added. No payload changes needed — the
+			// zero value (false) already matches the desired default for
+			// pre-existing records — just stamp the version.
+			data.SchemaVersion = 5
 		default:
 			return InstanceData{}, fmt.Errorf("no upgrade path from schema version %d", data.SchemaVersion)
 		}

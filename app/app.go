@@ -415,6 +415,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 				Path:                wsCtx.RepoPath,
 				Program:             applyLaunchOptions(wtOpts, h.rcAuth, program, wtTitle),
 				HeadroomProxy:       wtOpts.HeadroomProxy,
+				CacheTTL1h:          wtOpts.CacheTTL1h,
 				IsWorkspaceTerminal: true,
 				ConfigDir:           cfgDir,
 			})
@@ -1722,6 +1723,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 			Path:                wsCtx.RepoPath,
 			Program:             applyLaunchOptions(wtOpts, m.rcAuth, appConfig.GetProgram(), wtTitle),
 			HeadroomProxy:       wtOpts.HeadroomProxy,
+			CacheTTL1h:          wtOpts.CacheTTL1h,
 			IsWorkspaceTerminal: true,
 			ConfigDir:           wsCtx.ConfigDir,
 		})

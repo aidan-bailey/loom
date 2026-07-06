@@ -106,6 +106,7 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 			Model:          "default",
 			HeadroomProxy:  false,
 			Effort:         "default",
+			CacheTTL1h:     false,
 		}, got)
 	})
 
@@ -116,6 +117,7 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 			ClaudeModel:          stringPtrTest("opus"),
 			HeadroomProxy:        boolPtrTest(true),
 			ClaudeEffort:         stringPtrTest("high"),
+			CacheTTL1h:           boolPtrTest(true),
 		}
 		assert.Equal(t, overlay.LaunchOptions{
 			RemoteControl:  false,
@@ -123,6 +125,7 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 			Model:          "opus",
 			HeadroomProxy:  true,
 			Effort:         "high",
+			CacheTTL1h:     true,
 		}, launchOptionsFromConfig(cfg))
 	})
 }
@@ -193,6 +196,14 @@ func TestParseLaunchOptions_NeverSetsHeadroomProxy(t *testing.T) {
 	assert.False(t, opts.HeadroomProxy)
 }
 
+// TestParseLaunchOptions_NeverSetsCacheTTL1h mirrors
+// TestParseLaunchOptions_NeverSetsHeadroomProxy: CacheTTL1h is never
+// baked into Program either (see session.CacheTTL1hEnv).
+func TestParseLaunchOptions_NeverSetsCacheTTL1h(t *testing.T) {
+	opts, _ := ParseLaunchOptions("claude --model sonnet --permission-mode auto")
+	assert.False(t, opts.CacheTTL1h)
+}
+
 func TestParseLaunchOptions_UnrecognizedFlagLeftInBase(t *testing.T) {
 	opts, base := ParseLaunchOptions("claude --some-other-flag value --model opus")
 	assert.Equal(t, "opus", opts.Model)
@@ -230,6 +241,12 @@ func TestApplyLaunchOptions(t *testing.T) {
 		opts := overlay.LaunchOptions{RemoteControl: true, HeadroomProxy: true}
 		got := applyLaunchOptions(opts, authOK, "claude", "task")
 		assert.Equal(t, "claude", got)
+	})
+
+	t.Run("cache TTL never touches program", func(t *testing.T) {
+		opts := overlay.LaunchOptions{PermissionMode: "acceptEdits", Model: "opus", CacheTTL1h: true}
+		got := applyLaunchOptions(opts, authOK, "claude", "task")
+		assert.Equal(t, "claude --model opus --permission-mode acceptEdits", got)
 	})
 
 	t.Run("all defaults/disabled is a no-op", func(t *testing.T) {

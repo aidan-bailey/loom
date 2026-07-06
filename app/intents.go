@@ -381,10 +381,11 @@ func runResumeOrRecover(m *home) (tea.Model, tea.Cmd) {
 func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
 	opts, base := ParseLaunchOptions(selected.Program)
-	// HeadroomProxy is never baked into Program (see
-	// session.HeadroomProxyEnv) — ParseLaunchOptions can't recover it,
-	// so seed it from the instance's own field instead.
+	// HeadroomProxy/CacheTTL1h are never baked into Program (see
+	// session.HeadroomProxyEnv/CacheTTL1hEnv) — ParseLaunchOptions can't
+	// recover them, so seed them from the instance's own fields instead.
 	opts.HeadroomProxy = selected.HeadroomProxy
+	opts.CacheTTL1h = selected.CacheTTL1h
 
 	m.pendingLaunchOptions = func(newOpts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
 		resumeTitle := selected.Title
@@ -392,6 +393,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 			Sync: func() {
 				selected.Program = applyLaunchOptions(newOpts, m.rcAuth, base, selected.Title)
 				selected.HeadroomProxy = newOpts.HeadroomProxy
+				selected.CacheTTL1h = newOpts.CacheTTL1h
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
 				if err := selected.TransitionTo(session.Loading); err != nil {

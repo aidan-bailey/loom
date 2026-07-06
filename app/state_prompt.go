@@ -57,6 +57,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 						Sync: func() {
 							selected.Program = applyLaunchOptions(opts, m.rcAuth, selected.Program, selected.Title)
 							selected.HeadroomProxy = opts.HeadroomProxy
+							selected.CacheTTL1h = opts.CacheTTL1h
 							_ = selected.TransitionTo(session.Loading)
 							m.newInstanceFinalizer()
 							m.state = stateDefault

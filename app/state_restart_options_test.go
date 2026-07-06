@@ -19,6 +19,7 @@ func newPausedInstanceHome(t *testing.T) (*home, *session.Instance) {
 		Path:          t.TempDir(),
 		Program:       "claude --model sonnet --permission-mode auto",
 		HeadroomProxy: true,
+		CacheTTL1h:    true,
 	})
 	require.NoError(t, err)
 	_ = m.list.AddInstance(inst)
@@ -37,10 +38,11 @@ func TestRunRestartWithOptionsSelected_OpensModalSeededFromProgram(t *testing.T)
 	require.NotNil(t, lo)
 	assert.Equal(t, "sonnet", lo.Options().Model)
 	assert.Equal(t, "auto", lo.Options().PermissionMode)
-	// HeadroomProxy isn't derivable from Program (see
-	// session.HeadroomProxyEnv) — it must be seeded from the instance's
-	// own field instead.
+	// HeadroomProxy/CacheTTL1h aren't derivable from Program (see
+	// session.HeadroomProxyEnv/CacheTTL1hEnv) — they must be seeded from
+	// the instance's own fields instead.
 	assert.True(t, lo.Options().HeadroomProxy)
+	assert.True(t, lo.Options().CacheTTL1h)
 }
 
 func TestRunRestartWithOptionsSelected_ConfirmRecomposesProgramAndResumes(t *testing.T) {
@@ -53,6 +55,7 @@ func TestRunRestartWithOptionsSelected_ConfirmRecomposesProgramAndResumes(t *tes
 
 	assert.Contains(t, inst.Program, "--model opus")
 	assert.False(t, inst.HeadroomProxy, "toggling Headroom Proxy off during restart must update the instance field")
+	assert.False(t, inst.CacheTTL1h, "toggling Cache TTL off during restart must update the instance field")
 	assert.Equal(t, stateDefault, m.state)
 	assert.Equal(t, session.Loading, inst.GetStatus())
 	require.NotNil(t, cmd) // the Resume Cmd — not invoked here, just asserting it's returned

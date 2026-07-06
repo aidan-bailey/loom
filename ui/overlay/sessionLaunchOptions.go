@@ -8,7 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// LaunchOptions holds the five per-session launch toggles. Defined
+// LaunchOptions holds the six per-session launch toggles. Defined
 // here (rather than in app) so it's usable both by
 // SessionLaunchOptions (ephemeral, edited as a plain value) and by
 // app's launch-command composition, without an import cycle back to
@@ -19,6 +19,7 @@ type LaunchOptions struct {
 	Model          string
 	HeadroomProxy  bool
 	Effort         string
+	CacheTTL1h     bool
 }
 
 // SessionLaunchOptions is the per-instance "Session Launch Options"
@@ -36,8 +37,9 @@ type SessionLaunchOptions struct {
 }
 
 // sessionLaunchOptionsRowCount is the number of navigable rows: Remote
-// Control, Permission Mode, Model, Headroom Proxy, and Effort.
-const sessionLaunchOptionsRowCount = 5
+// Control, Permission Mode, Model, Headroom Proxy, Effort, and Cache
+// TTL (1h).
+const sessionLaunchOptionsRowCount = 6
 
 // NewSessionLaunchOptions creates the modal seeded with initial
 // (typically the global config's current values).
@@ -99,6 +101,8 @@ func (l *SessionLaunchOptions) toggleCursor() {
 		}
 	case 4:
 		l.opts.Effort = nextInList(config.ClaudeEfforts, l.opts.Effort)
+	case 5:
+		l.opts.CacheTTL1h = !l.opts.CacheTTL1h
 	}
 }
 
@@ -135,13 +139,18 @@ func (l *SessionLaunchOptions) Render() string {
 	if l.opts.HeadroomProxy {
 		hwCheck = "[x]"
 	}
+	cacheCheck := "[ ]"
+	if l.opts.CacheTTL1h {
+		cacheCheck = "[x]"
+	}
 
 	content := sessionLaunchOptionsTitleStyle.Render("Session Launch Options") + "\n\n" +
 		row(0, "Remote Control    ", rcCheck) + "\n" +
 		row(1, "Permission Mode   ", "< "+l.opts.PermissionMode+" >") + "\n" +
 		row(2, "Model             ", "< "+l.opts.Model+" >") + "\n" +
 		row(3, "Headroom Proxy    ", hwCheck) + "\n" +
-		row(4, "Effort            ", "< "+l.opts.Effort+" >") + "\n\n" +
+		row(4, "Effort            ", "< "+l.opts.Effort+" >") + "\n" +
+		row(5, "Cache TTL (1h)    ", cacheCheck) + "\n\n" +
 		sessionLaunchOptionsHintStyle.Render("up/down move • space toggle/cycle • enter start • esc cancel")
 
 	border := lipgloss.NewStyle().

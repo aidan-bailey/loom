@@ -181,3 +181,34 @@ func TestHeadroomProxyEnv_EnabledNonClaudeIsNoOp(t *testing.T) {
 func TestHeadroomProxyEnv_EmptyProgramIsNoOp(t *testing.T) {
 	assert.Nil(t, HeadroomProxyEnv(true, ""))
 }
+
+func TestCacheTTL1hEnv_DisabledIsNoOp(t *testing.T) {
+	assert.Nil(t, CacheTTL1hEnv(false, "claude"))
+}
+
+func TestCacheTTL1hEnv_EnabledClaude(t *testing.T) {
+	assert.Equal(t, []string{"ENABLE_PROMPT_CACHING_1H=1"}, CacheTTL1hEnv(true, "claude"))
+}
+
+func TestCacheTTL1hEnv_EnabledClaudeWithFlags(t *testing.T) {
+	assert.Equal(t, []string{"ENABLE_PROMPT_CACHING_1H=1"}, CacheTTL1hEnv(true, "claude --model opus"))
+}
+
+func TestCacheTTL1hEnv_EnabledNonClaudeIsNoOp(t *testing.T) {
+	assert.Nil(t, CacheTTL1hEnv(true, "aider --model gemma"))
+	assert.Nil(t, CacheTTL1hEnv(true, "codex"))
+}
+
+func TestCacheTTL1hEnv_EmptyProgramIsNoOp(t *testing.T) {
+	assert.Nil(t, CacheTTL1hEnv(true, ""))
+}
+
+func TestInstanceEnv_CombinesBothTogglesIndependently(t *testing.T) {
+	assert.Nil(t, InstanceEnv("claude", false, false))
+	assert.Equal(t, []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787"}, InstanceEnv("claude", true, false))
+	assert.Equal(t, []string{"ENABLE_PROMPT_CACHING_1H=1"}, InstanceEnv("claude", false, true))
+	assert.Equal(t,
+		[]string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787", "ENABLE_PROMPT_CACHING_1H=1"},
+		InstanceEnv("claude", true, true),
+	)
+}

@@ -11,9 +11,9 @@ import (
 // ClaudePreferences is the Claude-specific preferences drill-in
 // sub-screen. Structured as its own screen (rather than flat rows on
 // the main settings list) so more Claude-adapter-specific preferences
-// can be added later without growing that list — today it holds five
-// rows: Remote Control, Permission Mode, Model, Headroom Proxy, and
-// Effort.
+// can be added later without growing that list — today it holds six
+// rows: Remote Control, Permission Mode, Model, Headroom Proxy,
+// Effort, and Cache TTL (1h).
 //
 // authBlocked/authReason mirror session.RemoteControlAuth.Blocked()/
 // Reason, passed as plain values so this package stays decoupled from
@@ -31,8 +31,8 @@ type ClaudePreferences struct {
 }
 
 // claudePrefsRowCount is the number of navigable rows: Remote Control,
-// Permission Mode, Model, Headroom Proxy, and Effort.
-const claudePrefsRowCount = 5
+// Permission Mode, Model, Headroom Proxy, Effort, and Cache TTL (1h).
+const claudePrefsRowCount = 6
 
 // NewClaudePreferences creates the Claude Preferences sub-screen over cfg.
 func NewClaudePreferences(cfg *config.Config, authBlocked bool, authReason string) *ClaudePreferences {
@@ -93,6 +93,11 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 			c.cfg.Mutate(func(cc *config.Config) {
 				next := nextInList(config.ClaudeEfforts, cc.Effort())
 				cc.ClaudeEffort = &next
+			})
+		case 5:
+			c.cfg.Mutate(func(cc *config.Config) {
+				v := !cc.CacheTTL1hEnabled()
+				cc.CacheTTL1h = &v
 			})
 		}
 		return false, true
@@ -188,12 +193,28 @@ func (c *ClaudePreferences) Render() string {
 		effortRow = claudePrefsRowStyle.Render(effortRow)
 	}
 
+	cacheCheck := "[ ]"
+	if c.cfg.CacheTTL1hEnabled() {
+		cacheCheck = "[x]"
+	}
+	cacheCursor := "  "
+	if c.cursor == 5 {
+		cacheCursor = "> "
+	}
+	cacheRow := cacheCursor + "Cache TTL (1h)    " + cacheCheck
+	if c.cursor == 5 {
+		cacheRow = claudePrefsSelectedStyle.Render(cacheRow)
+	} else {
+		cacheRow = claudePrefsRowStyle.Render(cacheRow)
+	}
+
 	content := claudePrefsTitleStyle.Render("Claude Preferences") + "\n\n" +
 		rcRow + "\n" +
 		pmRow + "\n" +
 		modelRow + "\n" +
 		hwRow + "\n" +
-		effortRow + "\n\n" +
+		effortRow + "\n" +
+		cacheRow + "\n\n" +
 		claudePrefsHintStyle.Render("up/down move • enter/space toggle/cycle • esc back")
 
 	border := lipgloss.NewStyle().

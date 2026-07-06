@@ -67,6 +67,31 @@ func TestSnapshot_IncludesHeadroomProxy(t *testing.T) {
 	assert.True(t, data.HeadroomProxy)
 }
 
+// TestFromInstanceData_PreservesCacheTTL1h asserts the CacheTTL1h
+// toggle survives a Snapshot → FromInstanceData round trip, mirroring
+// TestFromInstanceData_PreservesHeadroomProxy.
+func TestFromInstanceData_PreservesCacheTTL1h(t *testing.T) {
+	data := InstanceData{
+		Title:               "cache-ws",
+		Status:              Paused,
+		IsWorkspaceTerminal: true,
+		Program:             "claude",
+		CacheTTL1h:          true,
+	}
+
+	inst, err := FromInstanceData(data, t.TempDir())
+	assert.NoError(t, err)
+	assert.True(t, inst.CacheTTL1h)
+}
+
+// TestSnapshot_IncludesCacheTTL1h asserts Snapshot carries CacheTTL1h
+// through to InstanceData, mirroring TestSnapshot_IncludesHeadroomProxy.
+func TestSnapshot_IncludesCacheTTL1h(t *testing.T) {
+	inst := &Instance{Title: "cache-ws", Status: Paused, Program: "claude", CacheTTL1h: true}
+	data := inst.Snapshot()
+	assert.True(t, data.CacheTTL1h)
+}
+
 // TestEnsureRunning_NoOpForPaused asserts EnsureRunning does not spawn a
 // PTY for paused instances.
 func TestEnsureRunning_NoOpForPaused(t *testing.T) {

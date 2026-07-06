@@ -414,6 +414,27 @@ func TestHeadroomProxyEnabled(t *testing.T) {
 	})
 }
 
+func TestCacheTTL1hEnabled(t *testing.T) {
+	t.Run("nil (absent from config) defaults to disabled", func(t *testing.T) {
+		cfg := &Config{}
+		assert.False(t, cfg.CacheTTL1hEnabled())
+	})
+
+	t.Run("explicit true is enabled", func(t *testing.T) {
+		cfg := &Config{CacheTTL1h: boolPtr(true)}
+		assert.True(t, cfg.CacheTTL1hEnabled())
+	})
+
+	t.Run("explicit false is disabled", func(t *testing.T) {
+		cfg := &Config{CacheTTL1h: boolPtr(false)}
+		assert.False(t, cfg.CacheTTL1hEnabled())
+	})
+
+	t.Run("DefaultConfig disables it", func(t *testing.T) {
+		assert.False(t, DefaultConfig().CacheTTL1hEnabled())
+	})
+}
+
 func TestModel(t *testing.T) {
 	t.Run("nil (absent from config) defaults to \"default\"", func(t *testing.T) {
 		cfg := &Config{}

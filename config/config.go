@@ -128,6 +128,13 @@ type Config struct {
 	// with. "default" is a no-op — Claude's own default applies. Read
 	// it through Effort.
 	ClaudeEffort *string `json:"claude_effort,omitempty"`
+	// CacheTTL1h controls whether new Claude sessions launch with
+	// ENABLE_PROMPT_CACHING_1H=1 (see session.CacheTTL1hEnv), extending
+	// Claude's prompt cache from the default 5-minute TTL to 1 hour. A
+	// no-op for agents other than Claude. Defaults to off (DefaultConfig
+	// sets it explicitly to false) since it's opt-in. Read it through
+	// CacheTTL1hEnabled.
+	CacheTTL1h *bool `json:"cache_ttl_1h,omitempty"`
 }
 
 // ClaudePermissionModes lists the values --permission-mode accepts, in
@@ -213,6 +220,12 @@ func (c *Config) Effort() string {
 	return *c.ClaudeEffort
 }
 
+// CacheTTL1hEnabled reports whether new Claude sessions should launch
+// with ENABLE_PROMPT_CACHING_1H=1. Defaults to false when unset.
+func (c *Config) CacheTTL1hEnabled() bool {
+	return c.CacheTTL1h != nil && *c.CacheTTL1h
+}
+
 // GetProgram returns the program to run. If Profiles is non-empty and
 // DefaultProgram matches a profile name, that profile's Program is returned.
 // Otherwise DefaultProgram is returned as-is.
@@ -272,6 +285,7 @@ func DefaultConfig() *Config {
 		HeadroomProxy:        boolPtr(false),
 		ClaudeModel:          stringPtr("default"),
 		ClaudeEffort:         stringPtr("default"),
+		CacheTTL1h:           boolPtr(false),
 	}
 }
 

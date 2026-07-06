@@ -38,6 +38,7 @@ type migrationInstance struct {
 
 	Program             string                `json:"program"`
 	HeadroomProxy       bool                  `json:"headroom_proxy,omitempty"`
+	CacheTTL1h          bool                  `json:"cache_ttl_1h,omitempty"`
 	Worktree            migrationWorktreeData `json:"worktree"`
 	DiffStats           migrationDiffStats    `json:"diff_stats"`
 	IsWorkspaceTerminal bool                  `json:"is_workspace_terminal"`

@@ -62,6 +62,7 @@ func launchOptionsFromConfig(cfg *config.Config) overlay.LaunchOptions {
 		Model:          cfg.Model(),
 		HeadroomProxy:  cfg.HeadroomProxyEnabled(),
 		Effort:         cfg.Effort(),
+		CacheTTL1h:     cfg.CacheTTL1hEnabled(),
 	}
 }
 
@@ -111,10 +112,11 @@ func applyLaunchOptions(opts overlay.LaunchOptions, auth session.RemoteControlAu
 // and simply doesn't set the corresponding opts field — never an
 // error.
 //
-// opts.HeadroomProxy is left at its zero value (false) — unlike the
-// other four options, Headroom Proxy is never baked into Program (see
-// session.HeadroomProxyEnv); callers must seed/apply it from
-// Instance.HeadroomProxy directly instead.
+// opts.HeadroomProxy and opts.CacheTTL1h are left at their zero value
+// (false) — unlike the other four options, neither is ever baked into
+// Program (see session.HeadroomProxyEnv/CacheTTL1hEnv); callers must
+// seed/apply them from Instance.HeadroomProxy/CacheTTL1h directly
+// instead.
 func ParseLaunchOptions(program string) (opts overlay.LaunchOptions, baseProgram string) {
 	parts := strings.Fields(program)
 	if len(parts) == 0 {

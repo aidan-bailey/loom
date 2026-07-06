@@ -71,3 +71,24 @@ func HeadroomProxyEnv(enabled bool, program string) []string {
 	}
 	return []string{"ANTHROPIC_BASE_URL=" + HeadroomProxyURL}
 }
+
+// CacheTTL1hEnv returns the tmux session environment variable that
+// extends Claude's prompt cache from the default 5-minute TTL to 1
+// hour. A no-op (nil) unless enabled and program resolves to Claude —
+// ENABLE_PROMPT_CACHING_1H is a Claude-CLI-specific toggle, so setting
+// it for any other agent wouldn't do anything useful.
+func CacheTTL1hEnv(enabled bool, program string) []string {
+	if !enabled || !IsClaudeProgram(program) {
+		return nil
+	}
+	return []string{"ENABLE_PROMPT_CACHING_1H=1"}
+}
+
+// InstanceEnv combines every per-session environment variable derived
+// from an instance's launch options (Headroom Proxy, Cache TTL) into
+// the single slice tmux.NewTmuxSession's variadic env parameter needs.
+// Centralized here so the four Instance call sites that construct a
+// TmuxSession don't each repeat the same combination.
+func InstanceEnv(program string, headroomProxy, cacheTTL1h bool) []string {
+	return append(HeadroomProxyEnv(headroomProxy, program), CacheTTL1hEnv(cacheTTL1h, program)...)
+}

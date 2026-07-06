@@ -55,11 +55,11 @@ func TestSessionLaunchOptionsRowNavigationClamps(t *testing.T) {
 	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 	assert.False(t, lo.Options().RemoteControl)
 
-	for i := 0; i < 6; i++ {
-		lo.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"}) // clamps at row 4 (Effort)
+	for i := 0; i < 7; i++ {
+		lo.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"}) // clamps at row 5 (Cache TTL)
 	}
 	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
-	assert.Equal(t, "low", lo.Options().Effort)
+	assert.True(t, lo.Options().CacheTTL1h)
 }
 
 func TestSessionLaunchOptionsEnterConfirms(t *testing.T) {
@@ -94,8 +94,8 @@ func TestSessionLaunchOptions_EffortRowCycles(t *testing.T) {
 	assert.Equal(t, "medium", l.Options().Effort)
 }
 
-func TestSessionLaunchOptionsRendersAllFiveRows(t *testing.T) {
-	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true, PermissionMode: "plan", Model: "opus", HeadroomProxy: false, Effort: "high"}, false, "")
+func TestSessionLaunchOptionsRendersAllSixRows(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true, PermissionMode: "plan", Model: "opus", HeadroomProxy: false, Effort: "high", CacheTTL1h: true}, false, "")
 	rendered := lo.Render()
 	assert.Contains(t, rendered, "Remote Control")
 	assert.Contains(t, rendered, "Permission Mode")
@@ -105,4 +105,17 @@ func TestSessionLaunchOptionsRendersAllFiveRows(t *testing.T) {
 	assert.Contains(t, rendered, "Headroom Proxy")
 	assert.Contains(t, rendered, "Effort")
 	assert.Contains(t, rendered, "high")
+	assert.Contains(t, rendered, "Cache TTL")
+}
+
+func TestSessionLaunchOptions_CacheTTL1hRowToggles(t *testing.T) {
+	l := NewSessionLaunchOptions(LaunchOptions{}, false, "")
+	// Move to row 5 (Cache TTL): down x5 from row 0.
+	for i := 0; i < 5; i++ {
+		l.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
+	l.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
+	assert.True(t, l.Options().CacheTTL1h)
+	l.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
+	assert.False(t, l.Options().CacheTTL1h)
 }

@@ -46,6 +46,19 @@ func TestMigrate_V2UpgradesAddsHeadroomProxy(t *testing.T) {
 	assert.False(t, data.HeadroomProxy)
 }
 
+// TestMigrate_V4UpgradesAddsCacheTTL1h verifies a v4 record with no
+// cache_ttl_1h key migrates to CurrentSchemaVersion with CacheTTL1h
+// defaulting to false — the zero value already matches the desired
+// default, so this is a pure version-stamp upgrade.
+func TestMigrate_V4UpgradesAddsCacheTTL1h(t *testing.T) {
+	raw := []byte(`{"schema_version":4,"title":"legacy","program":"claude"}`)
+
+	data, err := Migrate(raw)
+	assert.NoError(t, err)
+	assert.Equal(t, CurrentSchemaVersion, data.SchemaVersion)
+	assert.False(t, data.CacheTTL1h)
+}
+
 // TestMigrate_Idempotent verifies records already at CurrentSchemaVersion
 // migrate cleanly and stay stable.
 func TestMigrate_Idempotent(t *testing.T) {

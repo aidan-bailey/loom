@@ -97,14 +97,14 @@ func TestClaudePreferencesRowNavigationClamps(t *testing.T) {
 	assert.True(t, changed)
 	assert.False(t, cfg.RemoteControlEnabled())
 
-	// Down five times stays at row 4 (only five rows): cycles Effort,
+	// Down six times stays at row 5 (only six rows): toggles Cache TTL,
 	// not any earlier row.
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 6; i++ {
 		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	_, changed = cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
-	assert.Equal(t, "low", cfg.Effort())
+	assert.True(t, cfg.CacheTTL1hEnabled())
 }
 
 func TestClaudePreferencesRendersPermissionMode(t *testing.T) {
@@ -148,6 +148,26 @@ func TestClaudePreferences_EffortRowCycles(t *testing.T) {
 	}
 	c.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 	assert.Equal(t, "low", cfg.Effort())
+}
+
+func TestClaudePreferencesRendersCacheTTL1h(t *testing.T) {
+	cfg := &config.Config{CacheTTL1h: boolPtr(true)}
+	cp := NewClaudePreferences(cfg, false, "")
+	rendered := cp.Render()
+	assert.Contains(t, rendered, "Cache TTL")
+	assert.Contains(t, rendered, "[x]")
+}
+
+func TestClaudePreferences_CacheTTL1hRowToggles(t *testing.T) {
+	cfg := &config.Config{}
+	c := NewClaudePreferences(cfg, false, "")
+	for i := 0; i < 5; i++ {
+		c.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
+	c.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
+	assert.True(t, cfg.CacheTTL1hEnabled())
+	c.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
+	assert.False(t, cfg.CacheTTL1hEnabled())
 }
 
 func TestClaudePreferencesEscCloses(t *testing.T) {

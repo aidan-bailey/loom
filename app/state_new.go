@@ -60,6 +60,7 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				Sync: func() {
 					instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
 					instance.HeadroomProxy = opts.HeadroomProxy
+					instance.CacheTTL1h = opts.CacheTTL1h
 					_ = instance.TransitionTo(session.Loading)
 					m.newInstanceFinalizer()
 					m.promptAfterName = false
