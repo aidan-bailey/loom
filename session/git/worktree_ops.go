@@ -77,6 +77,15 @@ func removeTitleSidecar(worktreePath string) {
 	}
 }
 
+// RemoveTitleSidecar deletes the title sidecar if present. Exported for
+// callers outside this package that remove a worktree without going
+// through GitWorktree.Cleanup — e.g. session.RemoveOrphanWorktree, which
+// force-removes an orphaned worktree directly via `git worktree remove`.
+// Best-effort, mirroring removeTitleSidecar.
+func RemoveTitleSidecar(worktreePath string) {
+	removeTitleSidecar(worktreePath)
+}
+
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() (err error) {
 	t0 := time.Now()
