@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,6 +292,29 @@ func TestInstance_StashRefSurvivesSnapshotRoundTrip(t *testing.T) {
 	restoredGw, err := restored.GetGitWorktree()
 	require.NoError(t, err)
 	assert.Equal(t, wantSha, restoredGw.GetStashRef())
+}
+
+// TestInstance_KillDropsLeftoverStash guards against a Paused
+// instance's stash leaking on the shared refs/stash stack forever when
+// the user kills it (D) instead of resuming.
+func TestInstance_KillDropsLeftoverStash(t *testing.T) {
+	inst := newTestPausableInstance(t)
+	gw, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+	dir := gw.GetWorktreePath()
+	repoPath := gw.GetRepoPath()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted\n"), 0644))
+	require.NoError(t, inst.Pause(nil))
+	require.NotEmpty(t, gw.GetStashRef())
+
+	// Kill needs isStarted()==true, which Pause leaves it as (the
+	// instance is Paused, not un-started).
+	require.NoError(t, inst.Kill())
+
+	out, err := exec.Command("git", "-C", repoPath, "stash", "list").CombinedOutput()
+	require.NoError(t, err)
+	assert.Empty(t, strings.TrimSpace(string(out)), "Kill must drop a leftover stash, not leak it")
 }
 
 // TestInstance_StartIsIdempotent verifies Start is a no-op on an

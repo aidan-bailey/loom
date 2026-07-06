@@ -651,6 +651,15 @@ func (i *Instance) Kill() (err error) {
 
 	// Then clean up git worktree (workspace terminals don't have one)
 	if gitWT != nil && !isWorkspaceTerm {
+		// A Paused-then-killed instance may still have an unapplied
+		// stash (never resumed). Drop it so it doesn't leak on the
+		// shared refs/stash stack forever, referencing a branch that
+		// Cleanup is about to delete.
+		if sha := gitWT.GetStashRef(); sha != "" {
+			if err := gitWT.DropStash(sha); err != nil {
+				log.For("session").Warn("kill.stash_drop_failed", "err", err.Error())
+			}
+		}
 		if err := gitWT.Cleanup(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup git worktree: %w", err))
 		}
