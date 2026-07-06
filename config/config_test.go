@@ -393,24 +393,24 @@ func TestClaudePermissionModes(t *testing.T) {
 	assert.Equal(t, []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}, ClaudePermissionModes)
 }
 
-func TestHeadroomWrapEnabled(t *testing.T) {
+func TestHeadroomProxyEnabled(t *testing.T) {
 	t.Run("nil (absent from config) defaults to disabled", func(t *testing.T) {
 		cfg := &Config{}
-		assert.False(t, cfg.HeadroomWrapEnabled())
+		assert.False(t, cfg.HeadroomProxyEnabled())
 	})
 
 	t.Run("explicit true is enabled", func(t *testing.T) {
-		cfg := &Config{HeadroomWrap: boolPtr(true)}
-		assert.True(t, cfg.HeadroomWrapEnabled())
+		cfg := &Config{HeadroomProxy: boolPtr(true)}
+		assert.True(t, cfg.HeadroomProxyEnabled())
 	})
 
 	t.Run("explicit false is disabled", func(t *testing.T) {
-		cfg := &Config{HeadroomWrap: boolPtr(false)}
-		assert.False(t, cfg.HeadroomWrapEnabled())
+		cfg := &Config{HeadroomProxy: boolPtr(false)}
+		assert.False(t, cfg.HeadroomProxyEnabled())
 	})
 
 	t.Run("DefaultConfig disables it", func(t *testing.T) {
-		assert.False(t, DefaultConfig().HeadroomWrapEnabled())
+		assert.False(t, DefaultConfig().HeadroomProxyEnabled())
 	})
 }
 
