@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -93,9 +94,13 @@ func TestRunRestartWithOptionsSelected_BlockedRemoteControlCancelLeavesInstanceU
 	_, _ = pending(overlay.LaunchOptions{RemoteControl: true, PermissionMode: "default", Model: "default", Effort: "default"})
 	require.Equal(t, stateConfirm, m.state)
 
-	co := m.confirmation()
-	require.NotNil(t, co)
-	co.OnCancel()
+	// Dispatch a real cancel keypress through the actual confirm-state
+	// handler (not co.OnCancel() directly) — handleStateConfirmKey
+	// unconditionally runs m.pendingConfirmation.Run() once the overlay
+	// reports closed, for both confirm AND cancel, so this is the only
+	// way to prove OnCancel's pendingConfirmation neutralization
+	// actually prevents the resume task from running on a real cancel.
+	handleStateConfirmKey(m, tea.KeyPressMsg{Code: 'n', Text: "n"})
 
 	assert.Equal(t, session.Paused, inst.GetStatus())
 	assert.Equal(t, originalProgram, inst.Program)
