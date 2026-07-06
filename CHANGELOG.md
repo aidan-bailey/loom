@@ -1,3 +1,9 @@
+## [0.5.1] - 2026-07-06
+
+### 🐛 Bug Fixes
+
+- Pass the matched adapter name to headroom wrap, not the raw program
+
 ## [0.5.0] - 2026-07-06
 
 ### 🚀 Features
