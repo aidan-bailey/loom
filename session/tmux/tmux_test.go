@@ -303,3 +303,58 @@ func TestStartTmuxSession(t *testing.T) {
 	_, err = ptyFactory.files[1].Stat()
 	require.NoError(t, err)
 }
+
+func TestStartTmuxSessionWithEnv(t *testing.T) {
+	ptyFactory := NewMockPtyFactory(t)
+
+	created := false
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error {
+			if strings.Contains(cmd.String(), "has-session") && !created {
+				created = true
+				return fmt.Errorf("session already exists")
+			}
+			return nil
+		},
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
+			return []byte("output"), nil
+		},
+	}
+
+	workdir := t.TempDir()
+	session := newTmuxSession("test-session", "claude", ptyFactory, cmdExec, "ANTHROPIC_BASE_URL=http://127.0.0.1:8787")
+
+	err := session.Start(workdir)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(ptyFactory.cmds))
+	require.Equal(t,
+		fmt.Sprintf("tmux new-session -d -s loom_test-session -c %s -e ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude", workdir),
+		cmd2.ToString(ptyFactory.cmds[0]))
+}
+
+func TestStartTmuxSessionNoEnvUnchanged(t *testing.T) {
+	ptyFactory := NewMockPtyFactory(t)
+
+	created := false
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error {
+			if strings.Contains(cmd.String(), "has-session") && !created {
+				created = true
+				return fmt.Errorf("session already exists")
+			}
+			return nil
+		},
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
+			return []byte("output"), nil
+		},
+	}
+
+	workdir := t.TempDir()
+	session := newTmuxSession("test-session", "claude", ptyFactory, cmdExec)
+
+	err := session.Start(workdir)
+	require.NoError(t, err)
+	require.Equal(t,
+		fmt.Sprintf("tmux new-session -d -s loom_test-session -c %s claude", workdir),
+		cmd2.ToString(ptyFactory.cmds[0]))
+}

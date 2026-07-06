@@ -64,6 +64,10 @@ type TmuxSession struct {
 	// The name of the tmux session and the sanitized name used for tmux commands.
 	sanitizedName string
 	program       string
+	// env holds "KEY=VALUE" entries applied to the tmux session via
+	// `new-session -e` — e.g. ANTHROPIC_BASE_URL when Headroom Proxy is
+	// enabled. Scoped to just this session; never touches t.program.
+	env []string
 	// ptyFactory is used to create a PTY for the tmux session.
 	ptyFactory PtyFactory
 	// cmdExec is used to execute commands in the tmux session.
@@ -191,22 +195,24 @@ func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
 // NewTmuxSession constructs a TmuxSession wired to the production PTY
 // factory and subprocess executor. The tmux session is NOT created at
 // this point — call Start (for a fresh session) or Restore (to attach
-// to one that already exists on disk).
-func NewTmuxSession(name string, program string) *TmuxSession {
-	return newTmuxSession(name, program, MakePtyFactory(), internalexec.Default{})
+// to one that already exists on disk). env, if given, is a set of
+// "KEY=VALUE" pairs applied to the tmux session via `new-session -e`.
+func NewTmuxSession(name string, program string, env ...string) *TmuxSession {
+	return newTmuxSession(name, program, MakePtyFactory(), internalexec.Default{}, env...)
 }
 
 // NewTmuxSessionWithDeps is [NewTmuxSession] with injected dependencies
 // for tests. Pass a fake [PtyFactory] and [internalexec.Executor] to
 // avoid spawning real subprocesses or allocating real PTYs.
-func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor) *TmuxSession {
-	return newTmuxSession(name, program, ptyFactory, cmdExec)
+func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor, env ...string) *TmuxSession {
+	return newTmuxSession(name, program, ptyFactory, cmdExec, env...)
 }
 
-func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor) *TmuxSession {
+func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor, env ...string) *TmuxSession {
 	return &TmuxSession{
 		sanitizedName: ToLoomTmuxName(name),
 		program:       program,
+		env:           env,
 		ptyFactory:    ptyFactory,
 		cmdExec:       cmdExec,
 		// monitor is always non-nil for the session's lifetime so HasUpdated
@@ -244,7 +250,12 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	// returns control; tmux itself is quick, but the wrapped program may not be.
 	startCtx, startCancel := context.WithTimeout(context.Background(), tmuxStartTimeout)
 	defer startCancel()
-	cmd := exec.CommandContext(startCtx, "tmux", "new-session", "-d", "-s", t.sanitizedName, "-c", workDir, t.program)
+	args := []string{"new-session", "-d", "-s", t.sanitizedName, "-c", workDir}
+	for _, e := range t.env {
+		args = append(args, "-e", e)
+	}
+	args = append(args, t.program)
+	cmd := exec.CommandContext(startCtx, "tmux", args...)
 
 	ptmx, err := t.ptyFactory.Start(cmd)
 	if err != nil {
