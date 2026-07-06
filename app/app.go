@@ -170,6 +170,16 @@ type home struct {
 	// then clears it. nil outside that window.
 	pendingLaunchOptions func(overlay.LaunchOptions) (tea.Model, tea.Cmd)
 
+	// pendingLaunchOptionsCancel runs when the Session Launch Options
+	// modal is dismissed without confirming (Esc/ctrl+c). The creation
+	// flow (state_new.go/state_prompt.go) sets this to pop-and-kill the
+	// pending, not-yet-started instance. The restart flow
+	// (runRestartWithOptionsSelected, added in a later task) sets it to
+	// a no-op dismiss, since the instance being edited already exists
+	// and must survive a cancel untouched. nil outside the
+	// stateLaunchOptions window.
+	pendingLaunchOptionsCancel func() (tea.Model, tea.Cmd)
+
 	// keySent is used to manage underlining menu items
 	keySent bool
 

@@ -80,6 +80,7 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(startTask.Run(), m.instanceChanged())
 		}
+		m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 		m.state = stateLaunchOptions
 		m.setOverlay(overlay.NewSessionLaunchOptions(launchOptionsFromConfig(m.appConfig), m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
 		m.menu.SetState(ui.StateNewInstance)

@@ -37,6 +37,7 @@ func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*
 		m.menu.SetState(ui.StateDefault)
 		return m, nil
 	}
+	m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions
 	m.setOverlay(overlay.NewSessionLaunchOptions(initial, m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
@@ -84,4 +85,23 @@ func TestHandleStateLaunchOptionsKeyCtrlCCancels(t *testing.T) {
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 
 	assert.Equal(t, before-1, m.list.NumInstances())
+}
+
+func TestCancelLaunchOptions_UsesStashedCancelClosure(t *testing.T) {
+	m := newTestHome(t)
+	called := false
+	m.pendingLaunchOptionsCancel = func() (tea.Model, tea.Cmd) {
+		called = true
+		return m, nil
+	}
+	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
+		t.Fatal("must not run the confirm closure on cancel")
+		return m, nil
+	}
+
+	m.cancelLaunchOptions()
+
+	assert.True(t, called, "cancelLaunchOptions must run the stashed pendingLaunchOptionsCancel closure")
+	assert.Nil(t, m.pendingLaunchOptions)
+	assert.Nil(t, m.pendingLaunchOptionsCancel)
 }
