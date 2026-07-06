@@ -101,28 +101,28 @@ func TestCsActionsKillSelectedRespectsConfirmFalse(t *testing.T) {
 	assert.False(t, intent.Confirm)
 }
 
-func TestCsActionsCheckoutSelectedDefaults(t *testing.T) {
+func TestCsActionsStashSelectedDefaults(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()
 	e.BeginLoad("t.lua")
-	require.NoError(t, e.L.DoString(`cs.bind("c", function() cs.actions.checkout_selected() end)`))
+	require.NoError(t, e.L.DoString(`cs.bind("s", function() cs.actions.stash_selected() end)`))
 	e.EndLoad()
 
-	h := dispatchExpectYield(t, e, "c")
-	intent := h.enqueued[0].(CheckoutIntent)
+	h := dispatchExpectYield(t, e, "s")
+	intent := h.enqueued[0].(StashIntent)
 	assert.True(t, intent.Confirm)
 	assert.True(t, intent.Help)
 }
 
-func TestCsActionsCheckoutSelectedAllowsOverrides(t *testing.T) {
+func TestCsActionsStashSelectedAllowsOverrides(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()
 	e.BeginLoad("t.lua")
-	require.NoError(t, e.L.DoString(`cs.bind("c", function() cs.actions.checkout_selected{confirm=false, help=false} end)`))
+	require.NoError(t, e.L.DoString(`cs.bind("s", function() cs.actions.stash_selected{confirm=false, help=false} end)`))
 	e.EndLoad()
 
-	h := dispatchExpectYield(t, e, "c")
-	intent := h.enqueued[0].(CheckoutIntent)
+	h := dispatchExpectYield(t, e, "s")
+	intent := h.enqueued[0].(StashIntent)
 	assert.False(t, intent.Confirm)
 	assert.False(t, intent.Help)
 }

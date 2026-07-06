@@ -32,7 +32,7 @@ func (f fakePtyFactory) Start(*exec.Cmd) (*os.File, error) {
 func (f fakePtyFactory) Close() {}
 
 // homeWithAppState augments newTestHome with the appState dependency
-// needed by intents that funnel through showHelpScreen (checkout,
+// needed by intents that funnel through showHelpScreen (stash,
 // fullscreen_attach, show_help). Kept local to this file so other
 // tests keep their minimal fixture.
 func homeWithAppState(t *testing.T) *home {
@@ -43,7 +43,7 @@ func homeWithAppState(t *testing.T) *home {
 }
 
 // addReadyInstance attaches a Running instance so preconditions-gated
-// intents (push/kill/checkout/attach/quick_input) have a valid
+// intents (push/kill/stash/attach/quick_input) have a valid
 // selection. A mock TmuxSession is installed with a cmdExec that
 // reports tmux `has-session` success, so TmuxAlive() returns true
 // without touching a real tmux server.
@@ -143,13 +143,13 @@ func TestHandleScriptIntentKillSelectedNoConfirm(t *testing.T) {
 	require.NotNil(t, cmd)
 }
 
-func TestHandleScriptIntentCheckout(t *testing.T) {
+func TestHandleScriptIntentStash(t *testing.T) {
 	m := homeWithAppState(t)
 	addReadyInstance(t, m)
 
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
-		intent: script.CheckoutIntent{Confirm: true, Help: true},
+		intent: script.StashIntent{Confirm: true, Help: true},
 	})
 	// help=true opens the help screen first (unseen flag).
 	assert.Equal(t, stateHelp, m.state)

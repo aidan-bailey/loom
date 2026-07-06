@@ -46,7 +46,7 @@ func newTestHome(t *testing.T) *home {
 }
 
 // TestSelectedNotBusyNotWorkspaceGuardsLifecycle exercises the shared
-// precondition that gates kill/submit/checkout. Loading/Deleting block;
+// precondition that gates kill/submit/stash. Loading/Deleting block;
 // a workspace-terminal always blocks; Running passes.
 func TestSelectedNotBusyNotWorkspaceGuardsLifecycle(t *testing.T) {
 	h := newTestHome(t)

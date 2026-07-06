@@ -17,7 +17,7 @@ func TestIntentTypesImplementInterface(t *testing.T) {
 	var _ Intent = QuitIntent{}
 	var _ Intent = PushSelectedIntent{Confirm: true}
 	var _ Intent = KillSelectedIntent{Confirm: true}
-	var _ Intent = CheckoutIntent{Confirm: true, Help: true}
+	var _ Intent = StashIntent{Confirm: true, Help: true}
 	var _ Intent = ResumeIntent{}
 	var _ Intent = NewInstanceIntent{Prompt: true}
 	var _ Intent = ShowHelpIntent{}
