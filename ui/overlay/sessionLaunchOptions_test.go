@@ -94,8 +94,8 @@ func TestSessionLaunchOptions_EffortRowCycles(t *testing.T) {
 	assert.Equal(t, "medium", l.Options().Effort)
 }
 
-func TestSessionLaunchOptionsRendersAllFourRows(t *testing.T) {
-	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true, PermissionMode: "plan", Model: "opus", HeadroomWrap: false}, false, "")
+func TestSessionLaunchOptionsRendersAllFiveRows(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true, PermissionMode: "plan", Model: "opus", HeadroomWrap: false, Effort: "high"}, false, "")
 	rendered := lo.Render()
 	assert.Contains(t, rendered, "Remote Control")
 	assert.Contains(t, rendered, "Permission Mode")
@@ -103,4 +103,6 @@ func TestSessionLaunchOptionsRendersAllFourRows(t *testing.T) {
 	assert.Contains(t, rendered, "Model")
 	assert.Contains(t, rendered, "opus")
 	assert.Contains(t, rendered, "Headroom Wrap")
+	assert.Contains(t, rendered, "Effort")
+	assert.Contains(t, rendered, "high")
 }
