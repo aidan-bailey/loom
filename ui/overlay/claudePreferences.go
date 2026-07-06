@@ -12,7 +12,7 @@ import (
 // sub-screen. Structured as its own screen (rather than flat rows on
 // the main settings list) so more Claude-adapter-specific preferences
 // can be added later without growing that list — today it holds four
-// rows: Remote Control, Permission Mode, Model, and Headroom Wrap.
+// rows: Remote Control, Permission Mode, Model, and Headroom Proxy.
 //
 // authBlocked/authReason mirror session.RemoteControlAuth.Blocked()/
 // Reason, passed as plain values so this package stays decoupled from
@@ -30,7 +30,7 @@ type ClaudePreferences struct {
 }
 
 // claudePrefsRowCount is the number of navigable rows: Remote Control,
-// Permission Mode, Model, and Headroom Wrap.
+// Permission Mode, Model, and Headroom Proxy.
 const claudePrefsRowCount = 4
 
 // NewClaudePreferences creates the Claude Preferences sub-screen over cfg.
@@ -65,8 +65,8 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 				v := !cc.RemoteControlEnabled()
 				cc.ClaudeRemoteControl = &v
 				if v {
-					hw := false
-					cc.HeadroomWrap = &hw
+					hp := false
+					cc.HeadroomProxy = &hp
 				}
 			})
 		case 1:
@@ -81,8 +81,8 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 			})
 		case 3:
 			c.cfg.Mutate(func(cc *config.Config) {
-				v := !cc.HeadroomWrapEnabled()
-				cc.HeadroomWrap = &v
+				v := !cc.HeadroomProxyEnabled()
+				cc.HeadroomProxy = &v
 				if v {
 					rc := false
 					cc.ClaudeRemoteControl = &rc
@@ -157,14 +157,14 @@ func (c *ClaudePreferences) Render() string {
 	}
 
 	hwCheck := "[ ]"
-	if c.cfg.HeadroomWrapEnabled() {
+	if c.cfg.HeadroomProxyEnabled() {
 		hwCheck = "[x]"
 	}
 	hwCursor := "  "
 	if c.cursor == 3 {
 		hwCursor = "> "
 	}
-	hwRow := hwCursor + "Headroom Wrap     " + hwCheck
+	hwRow := hwCursor + "Headroom Proxy    " + hwCheck
 	if c.cursor == 3 {
 		hwRow = claudePrefsSelectedStyle.Render(hwRow)
 	} else {

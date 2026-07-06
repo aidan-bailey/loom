@@ -60,31 +60,31 @@ func TestClaudePreferencesCyclesModel(t *testing.T) {
 	}
 }
 
-func TestClaudePreferencesHeadroomWrapExcludesRemoteControl(t *testing.T) {
+func TestClaudePreferencesHeadroomProxyExcludesRemoteControl(t *testing.T) {
 	cfg := &config.Config{}
 	cp := NewClaudePreferences(cfg, false, "")
 	assert.True(t, cfg.RemoteControlEnabled())
 
-	// Move focus down to the Headroom Wrap row (row 3) and enable it.
+	// Move focus down to the Headroom Proxy row (row 3) and enable it.
 	for i := 0; i < 3; i++ {
 		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
-	assert.True(t, cfg.HeadroomWrapEnabled())
-	assert.False(t, cfg.RemoteControlEnabled(), "enabling Headroom Wrap must disable Remote Control")
+	assert.True(t, cfg.HeadroomProxyEnabled())
+	assert.False(t, cfg.RemoteControlEnabled(), "enabling Headroom Proxy must disable Remote Control")
 }
 
-func TestClaudePreferencesRemoteControlExcludesHeadroomWrap(t *testing.T) {
-	cfg := &config.Config{HeadroomWrap: boolPtr(true), ClaudeRemoteControl: boolPtr(false)}
+func TestClaudePreferencesRemoteControlExcludesHeadroomProxy(t *testing.T) {
+	cfg := &config.Config{HeadroomProxy: boolPtr(true), ClaudeRemoteControl: boolPtr(false)}
 	cp := NewClaudePreferences(cfg, false, "")
-	assert.True(t, cfg.HeadroomWrapEnabled())
+	assert.True(t, cfg.HeadroomProxyEnabled())
 
 	// Row 0 (Remote Control) is already focused by default.
 	_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
 	assert.True(t, cfg.RemoteControlEnabled())
-	assert.False(t, cfg.HeadroomWrapEnabled(), "enabling Remote Control must disable Headroom Wrap")
+	assert.False(t, cfg.HeadroomProxyEnabled(), "enabling Remote Control must disable Headroom Proxy")
 }
 
 func TestClaudePreferencesRowNavigationClamps(t *testing.T) {
@@ -98,13 +98,13 @@ func TestClaudePreferencesRowNavigationClamps(t *testing.T) {
 	assert.False(t, cfg.RemoteControlEnabled())
 
 	// Down four times stays at row 3 (only four rows): toggles Headroom
-	// Wrap, not any earlier row.
+	// Proxy, not any earlier row.
 	for i := 0; i < 4; i++ {
 		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	_, changed = cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
-	assert.True(t, cfg.HeadroomWrapEnabled())
+	assert.True(t, cfg.HeadroomProxyEnabled())
 }
 
 func TestClaudePreferencesRendersPermissionMode(t *testing.T) {
@@ -125,11 +125,11 @@ func TestClaudePreferencesRendersModel(t *testing.T) {
 	assert.Contains(t, rendered, "opus")
 }
 
-func TestClaudePreferencesRendersHeadroomWrap(t *testing.T) {
-	cfg := &config.Config{HeadroomWrap: boolPtr(true)}
+func TestClaudePreferencesRendersHeadroomProxy(t *testing.T) {
+	cfg := &config.Config{HeadroomProxy: boolPtr(true)}
 	cp := NewClaudePreferences(cfg, false, "")
 	rendered := cp.Render()
-	assert.Contains(t, rendered, "Headroom Wrap")
+	assert.Contains(t, rendered, "Headroom Proxy")
 	assert.Contains(t, rendered, "[x]")
 }
 
