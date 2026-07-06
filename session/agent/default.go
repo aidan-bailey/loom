@@ -40,6 +40,10 @@ func (defaultAdapter) ApplyPermissionModeFlag(program, _ string) string { return
 // modifies the program string, so unknown agents get no model flag.
 func (defaultAdapter) ApplyModelFlag(program, _ string) string { return program }
 
+// ApplyEffortFlag implements Adapter. The fallback adapter never
+// modifies the program string, so unknown agents get no effort flag.
+func (defaultAdapter) ApplyEffortFlag(program, _ string) string { return program }
+
 // DefaultRegistry returns the registry pre-populated with all built-in
 // adapters and the fallback.
 func DefaultRegistry() *Registry {

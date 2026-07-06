@@ -199,6 +199,21 @@ func TestNonClaudeAdaptersNoModelFlag(t *testing.T) {
 	assert.Equal(t, "codex --foo", Default().ApplyModelFlag("codex --foo", "opus"))
 }
 
+func TestClaudeEffortFlag(t *testing.T) {
+	c := Claude()
+	assert.Equal(t, "claude --effort high", c.ApplyEffortFlag("claude", "high"))
+	assert.Equal(t, "claude", c.ApplyEffortFlag("claude", ""))
+	assert.Equal(t, "claude", c.ApplyEffortFlag("claude", "default"))
+	assert.Equal(t, "claude --effort high", c.ApplyEffortFlag("claude --effort high", "max"), "idempotent: existing flag wins")
+	assert.Equal(t, "claude --effort low --model opus", c.ApplyEffortFlag("claude --model opus", "low"))
+}
+
+func TestNonClaudeAdaptersNoEffortFlag(t *testing.T) {
+	assert.Equal(t, "aider --model x", Aider().ApplyEffortFlag("aider --model x", "high"))
+	assert.Equal(t, "gemini", Gemini().ApplyEffortFlag("gemini", "high"))
+	assert.Equal(t, "codex --foo", Default().ApplyEffortFlag("codex --foo", "high"))
+}
+
 func TestTrustPromptResponses(t *testing.T) {
 	assert.Equal(t, TrustPromptTapEnter, Claude().TrustPromptResponse())
 	assert.Equal(t, TrustPromptTapDAndEnter, Aider().TrustPromptResponse())

@@ -144,3 +144,25 @@ func (claudeAdapter) ApplyModelFlag(program, model string) string {
 	}
 	return parts[0] + " --model " + model + strings.TrimPrefix(program, parts[0])
 }
+
+// ApplyEffortFlag inserts "--effort <level>" after "claude". effort ==
+// "" or "default" is a no-op — Claude's own default already matches.
+// Returns program unchanged if a --effort flag is already present or
+// if program is empty. effort is expected to come from
+// config.ClaudeEfforts, never free-typed user input, so no
+// sanitization is applied.
+func (claudeAdapter) ApplyEffortFlag(program, effort string) string {
+	if effort == "" || effort == "default" {
+		return program
+	}
+	parts := strings.Fields(program)
+	if len(parts) == 0 {
+		return program
+	}
+	for _, p := range parts[1:] {
+		if p == "--effort" || strings.HasPrefix(p, "--effort=") {
+			return program
+		}
+	}
+	return parts[0] + " --effort " + effort + strings.TrimPrefix(program, parts[0])
+}

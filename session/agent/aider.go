@@ -50,3 +50,9 @@ func (aiderAdapter) ApplyPermissionModeFlag(program, _ string) string {
 func (aiderAdapter) ApplyModelFlag(program, _ string) string {
 	return program
 }
+
+// ApplyEffortFlag is a no-op for aider — effort levels aren't exposed
+// through this settings screen for non-Claude agents.
+func (aiderAdapter) ApplyEffortFlag(program, _ string) string {
+	return program
+}

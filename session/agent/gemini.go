@@ -49,3 +49,9 @@ func (geminiAdapter) ApplyPermissionModeFlag(program, _ string) string {
 func (geminiAdapter) ApplyModelFlag(program, _ string) string {
 	return program
 }
+
+// ApplyEffortFlag is a no-op for gemini — effort levels aren't exposed
+// through this settings screen for non-Claude agents.
+func (geminiAdapter) ApplyEffortFlag(program, _ string) string {
+	return program
+}
