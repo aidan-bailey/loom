@@ -28,6 +28,7 @@ const (
 	KeyStash
 	KeyMerge
 	KeyResume
+	KeyRestartWithOptions
 	KeyPrompt
 	KeyHelp
 	KeyWorkspace
@@ -115,6 +116,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyResume: key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "resume"),
+	),
+	KeyRestartWithOptions: key.NewBinding(
+		key.WithKeys("R"),
+		key.WithHelp("R", "resume with options"),
 	),
 
 	KeyWorkspace: key.NewBinding(

@@ -59,6 +59,19 @@ func selectedResumableNotWorkspace(m *home) bool {
 	return s == session.Paused || s == session.Recoverable
 }
 
+// selectedPausedNotWorkspace gates the 'R' key (restart with
+// different launch options): only a Paused instance qualifies —
+// unlike selectedResumableNotWorkspace, Recoverable orphans are
+// excluded (they go live only via the explicit recover action, a
+// different code path than Resume).
+func selectedPausedNotWorkspace(m *home) bool {
+	selected := m.list.GetSelectedInstance()
+	if selected == nil || selected.IsWorkspaceTerminal {
+		return false
+	}
+	return selected.GetStatus() == session.Paused
+}
+
 // selectedReadyForInput gates attach/quick-input: the instance must
 // exist, have a live tmux pane, and not be mid-lifecycle.
 func selectedReadyForInput(m *home) bool {
@@ -356,6 +369,12 @@ func runResumeOrRecover(m *home) (tea.Model, tea.Cmd) {
 		return runRecoverSelected(m)
 	}
 	return runResumeSelected(m)
+}
+
+// runRestartWithOptionsSelected is implemented in a later task; this
+// stub only exists so the dispatch wiring compiles in the interim.
+func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
+	return m, nil
 }
 
 // runRecoverSelected adopts the selected Recoverable orphan: it serializes

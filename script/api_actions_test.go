@@ -139,6 +139,17 @@ func TestCsActionsResumeSelectedEnqueues(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestCsActionsRestartWithOptionsSelected(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("R", function() cs.actions.restart_with_options_selected() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "R")
+	_ = h.enqueued[0].(RestartWithOptionsIntent)
+}
+
 func TestCsActionsNewInstanceDefaults(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()

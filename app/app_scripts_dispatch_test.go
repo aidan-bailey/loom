@@ -168,6 +168,17 @@ func TestHandleScriptIntentResume(t *testing.T) {
 	assert.Equal(t, session.Loading, inst.GetStatus(), "resume flips selected to Loading")
 }
 
+func TestHandleScriptIntentRestartWithOptions_NotPausedIsNoOp(t *testing.T) {
+	m := homeWithAppState(t)
+	addReadyInstance(t, m) // Running, not Paused
+
+	m.handleScriptIntent(pendingIntent{
+		id:     script.NewIntentID(),
+		intent: script.RestartWithOptionsIntent{},
+	})
+	assert.Equal(t, stateDefault, m.state)
+}
+
 func TestHandleScriptIntentNewInstance(t *testing.T) {
 	m := newTestHome(t)
 

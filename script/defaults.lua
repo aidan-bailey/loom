@@ -19,6 +19,7 @@ cs.bind("p", function() cs.actions.push_selected{} end,             { help = "pu
 cs.bind("s", function() cs.actions.stash_selected{} end,            { help = "stash" })
 cs.bind("m", function() cs.actions.merge_selected() end,            { help = "merge session" })
 cs.bind("r", function() cs.actions.resume_selected() end,           { help = "resume" })
+cs.bind("R", function() cs.actions.restart_with_options_selected() end, { help = "resume with options" })
 cs.bind("?", function() cs.actions.show_help() end,                 { help = "help" })
 cs.bind("q", function() cs.actions.quit() end,                      { help = "quit" })
 

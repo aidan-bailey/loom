@@ -19,6 +19,7 @@ func TestIntentTypesImplementInterface(t *testing.T) {
 	var _ Intent = KillSelectedIntent{Confirm: true}
 	var _ Intent = StashIntent{Confirm: true, Help: true}
 	var _ Intent = ResumeIntent{}
+	var _ Intent = RestartWithOptionsIntent{}
 	var _ Intent = NewInstanceIntent{Prompt: true}
 	var _ Intent = ShowHelpIntent{}
 	var _ Intent = WorkspacePickerIntent{}

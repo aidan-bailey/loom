@@ -61,6 +61,12 @@ type StashIntent struct{ Confirm, Help bool }
 // ResumeIntent asks the app to resume the selected paused instance.
 type ResumeIntent struct{}
 
+// RestartWithOptionsIntent asks the app to open the Session Launch
+// Options modal for the selected Paused instance, seeded from its
+// current (reverse-parsed) launch options, so the user can change them
+// before resuming.
+type RestartWithOptionsIntent struct{}
+
 // NewInstanceIntent asks the app to open the new-instance overlay.
 // Prompt=true collects a starter prompt after the title. Title
 // pre-fills the title field when non-empty.
@@ -108,6 +114,7 @@ func (PushSelectedIntent) intent()       {}
 func (KillSelectedIntent) intent()       {}
 func (StashIntent) intent()              {}
 func (ResumeIntent) intent()             {}
+func (RestartWithOptionsIntent) intent() {}
 func (NewInstanceIntent) intent()        {}
 func (ShowHelpIntent) intent()           {}
 func (WorkspacePickerIntent) intent()    {}
