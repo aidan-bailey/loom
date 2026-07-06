@@ -140,6 +140,32 @@ func TestCleanupOrphanedSessions(t *testing.T) {
 	assert.NotContains(t, killedSessions, "other_session")
 }
 
+func TestCleanupOrphanedSessions_TerminalPaneSessionsExempted(t *testing.T) {
+	killedSessions := []string{}
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			for i, arg := range c.Args {
+				if arg == "kill-session" && i+2 < len(c.Args) {
+					killedSessions = append(killedSessions, c.Args[i+2])
+				}
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			// Each claimed instance owns both an agent session and a
+			// separate terminal-pane session (loom_term_<title>).
+			return []byte("loom_claimed: 1 windows\nloom_term_claimed: 1 windows\nloom_term_orphan: 1 windows\n"), nil
+		},
+	}
+
+	claimedTitles := map[string]bool{"claimed": true}
+	err := CleanupOrphanedSessions(claimedTitles, cmdExec)
+	assert.NoError(t, err)
+	assert.NotContains(t, killedSessions, "loom_claimed")
+	assert.NotContains(t, killedSessions, "loom_term_claimed")
+	assert.Contains(t, killedSessions, "loom_term_orphan")
+}
+
 func TestCleanupOrphanedSessions_NoTmux(t *testing.T) {
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error { return nil },

@@ -424,6 +424,17 @@ func (t *TmuxSession) currentPtmx() *os.File {
 	return t.ptmx
 }
 
+// PtmxAlive reports whether a PTY is currently attached. This is distinct
+// from DoesSessionExist: the tmux session can be alive on the server while
+// this is false — e.g. Restore's reattach failed (attach-session errored
+// after the prior ptmx was already cleared) or a full-screen attach has
+// PausePreview'd this session and not yet resumed. Callers that want to
+// self-heal a dead-ptmx-but-alive-session instance should re-run Restore;
+// callers checking during a legitimate PausePreview window must not.
+func (t *TmuxSession) PtmxAlive() bool {
+	return t.currentPtmx() != nil
+}
+
 // processContentHash feeds the latest pane content to the monitor and reports
 // whether it changed since the previous tick. Runs under stateMu so it is safe
 // against Restore swapping the monitor pointer and against a concurrent

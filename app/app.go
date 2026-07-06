@@ -81,6 +81,7 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 type metadataResult struct {
 	instance   *session.Instance
 	tmuxAlive  bool
+	ptmxAlive  bool
 	updated    bool
 	hasPrompt  bool
 	captureErr error
@@ -181,6 +182,15 @@ type home struct {
 
 	// keySent is used to manage underlining menu items
 	keySent bool
+
+	// attachingInstance is set for the duration of a full-screen attach
+	// (PausePreview -> tea.ExecProcess -> ResumePreview; see
+	// startFullScreenAttachMsg/attachDoneMsg) and nil otherwise. The metadata
+	// tick's ptmx self-heal (metadataReadyMsg) must not call RepairPtmx on
+	// this instance while it is set — PtmxAlive is expected to read false
+	// during that window, and racing a Restore against the in-flight
+	// ExecProcess would fight over the same tmux session's attach.
+	attachingInstance *session.Instance
 
 	// -- UI Components --
 
@@ -745,6 +755,24 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, r := range msg.results {
 			if !r.tmuxAlive {
 				if r.instance.IsWorkspaceTerminal {
+					if failures := r.instance.RecordRestartFailure(); failures >= maxWorkspaceTerminalRestartFailures {
+						// The session died again immediately after every
+						// recent Restart (e.g. a permanently broken Program
+						// string) — restarting further would just loop
+						// forever at tick cadence. Give up like a regular
+						// instance would. RestartWithOptions/Resume are both
+						// gated off for workspace terminals (see
+						// selectedPausedNotWorkspace/selectedResumableNotWorkspace
+						// in intents.go), so recovering today means killing
+						// this instance (a fresh one is auto-created from
+						// current config on next workspace activation) or
+						// fixing Program on disk and relaunching Loom.
+						log.For("app").Error("workspace_terminal.restart_circuit_tripped", "title", r.instance.Title, "consecutive_failures", failures)
+						if err := r.instance.TransitionTo(session.Paused); err != nil {
+							log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Paused", "err", err.Error())
+						}
+						continue
+					}
 					log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", r.instance.Title)
 					if err := r.instance.Restart(); err != nil {
 						log.For("app").Error("workspace_terminal.restart_failed", "title", r.instance.Title, "err", err)
@@ -756,6 +784,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Paused", "err", err.Error())
 				}
 				continue
+			}
+			r.instance.ResetRestartFailures()
+			if !r.ptmxAlive && r.instance != m.attachingInstance {
+				// Session exists but Loom's own attach client is gone (e.g. a
+				// reattach failed after full-screen attach returned). Nothing
+				// else ever retries this, so self-heal here — same shape as
+				// the workspace-terminal restart above, but at the PTY layer.
+				log.For("app").Warn("tick.ptmx_dead_repairing", "title", r.instance.Title)
+				if err := r.instance.RepairPtmx(); err != nil {
+					log.For("app").Error("tick.ptmx_repair_failed", "title", r.instance.Title, "err", err)
+				}
 			}
 			if r.updated {
 				if err := r.instance.TransitionTo(session.Running); err != nil {
@@ -991,6 +1030,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleError(err)
 		}
 		inst := msg.instance
+		m.attachingInstance = inst
 		return m, tea.ExecProcess(ts.FullScreenAttachCmd(), func(err error) tea.Msg {
 			return attachDoneMsg{instance: inst, err: err}
 		})
@@ -1006,8 +1046,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case attachDoneMsg:
 		// tea.ExecProcess has restored the terminal. Rebuild the preview PTYs
-		// so live capture resumes. Errors here are logged — the next metadata
-		// tick will notice a dead session and mark the instance paused.
+		// so live capture resumes. Errors here are logged — the session
+		// itself is untouched (only our attach client failed to reopen), so
+		// the metadata tick's ptmx self-heal (metadataReadyMsg) will retry
+		// this on the next tick now that attachingInstance is cleared below.
 		if ts := msg.instance.TmuxSession(); ts != nil {
 			if err := ts.ResumePreview(); err != nil {
 				log.For("app").Error("preview.resume_failed", "title", msg.instance.Title, "err", err)
@@ -1017,6 +1059,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err := ts.ResumePreview(); err != nil {
 				log.For("app").Error("terminal_preview.resume_failed", "title", msg.instance.Title, "err", err)
 			}
+		}
+		if m.attachingInstance == msg.instance {
+			m.attachingInstance = nil
 		}
 		m.state = stateDefault
 		var cmds []tea.Cmd
@@ -1507,6 +1552,18 @@ func (m *home) runBranchSearch(filter string, version uint64) tea.Cmd {
 	}
 }
 
+// maxWorkspaceTerminalRestartFailures bounds how many consecutive metadata
+// ticks the workspace-terminal auto-restart path (metadataReadyMsg) will
+// retry a dead tmux session before giving up and marking it Paused instead.
+// Without this, a permanently broken Program (e.g. a stale command left
+// over from a since-changed launch mechanism) restart-loops forever at
+// tick cadence — 500ms tickUpdateMetadataCmd below, so ~1.5s of thrash
+// before this trips. Restart's own Start(true) blocks until the session is
+// confirmed up before returning, so a genuinely successful restart should
+// never even reach 2 consecutive misses; this is slack for one flaky
+// blip, not a real recovery window.
+const maxWorkspaceTerminalRestartFailures = 3
+
 // tickUpdateMetadataCmd is the callback to update the metadata of the instances every 500ms. Note that we iterate
 // overall the instances and capture their output. It's a pretty expensive operation. Let's do it 2x a second only.
 var tickUpdateMetadataCmd = func() tea.Msg {
@@ -1538,6 +1595,7 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance) t
 				if !r.tmuxAlive {
 					return
 				}
+				r.ptmxAlive = instance.PtmxAlive()
 
 				r.updated, r.hasPrompt, r.captureErr = instance.CaptureAndProcessStatus()
 

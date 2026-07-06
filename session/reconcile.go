@@ -243,10 +243,16 @@ func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec
 		}
 		sessionName := line[:colonIdx]
 
-		// Check if any claimed instance owns this session under either prefix
+		// Check if any claimed instance owns this session — either its agent
+		// session (either prefix) or its separate terminal-pane session
+		// (loom_term_<title>, see tmux.TerminalSessionName). Every instance
+		// has both; missing the terminal-pane form here would make every
+		// instance's terminal pane look orphaned on every sweep.
 		claimed := false
 		for title := range claimedTitles {
-			if tmux.ToLoomTmuxName(title) == sessionName || tmux.ToLegacyTmuxName(title) == sessionName {
+			if tmux.ToLoomTmuxName(title) == sessionName ||
+				tmux.ToLegacyTmuxName(title) == sessionName ||
+				tmux.ToLoomTmuxName(tmux.TerminalSessionName(title)) == sessionName {
 				claimed = true
 				break
 			}

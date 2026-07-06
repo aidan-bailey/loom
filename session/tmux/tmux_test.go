@@ -164,6 +164,44 @@ func TestRestoreClosesPriorPty(t *testing.T) {
 	require.NoError(t, err, "new PTY should remain open")
 }
 
+// failingPtyFactory simulates a PTY attach that errors while fail is true —
+// modeling a transient `tmux attach-session` failure during Restore.
+type failingPtyFactory struct {
+	fail bool
+}
+
+func (f *failingPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
+	if f.fail {
+		return nil, fmt.Errorf("simulated PTY attach failure")
+	}
+	return os.CreateTemp("", "pty-*")
+}
+
+func (f *failingPtyFactory) Close() {}
+
+// TestPtmxAliveReflectsFailedReattach guards the exact condition behind the
+// "PTY is not available" symptom: a tmux session alive on the server
+// (DoesSessionExist true) whose Restore call failed to reopen a PTY. Restore
+// clears the old ptmx before attempting the new attach, so on failure it is
+// left nil — PtmxAlive must report that, distinct from a genuinely dead
+// session, so callers (the metadata tick's self-heal) know to retry Restore
+// rather than assuming everything is fine.
+func TestPtmxAliveReflectsFailedReattach(t *testing.T) {
+	factory := &failingPtyFactory{fail: true}
+	session := newTmuxSession("failed-reattach", "claude", factory, cmd_test.MockCmdExec{
+		RunFunc:    func(cmd *exec.Cmd) error { return nil },
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) { return nil, nil },
+	})
+
+	require.Error(t, session.Restore(), "Restore should surface the ptyFactory failure")
+	require.False(t, session.PtmxAlive(), "ptmx must read dead after a failed reattach")
+
+	// A later, successful Restore (what RepairPtmx calls) must recover it.
+	factory.fail = false
+	require.NoError(t, session.Restore())
+	require.True(t, session.PtmxAlive())
+}
+
 // TestStartTmuxSession_MultiWordProgram ensures the full program string
 // (e.g. "claude --continue" produced by BuildRecoveryCommand) reaches tmux as
 // a single shell-command argument. tmux's shell then splits on whitespace, so

@@ -169,6 +169,14 @@ type Instance struct {
 	tmuxSession *tmux.TmuxSession
 	// gitWorktree is the git worktree for the instance.
 	gitWorktree *git.GitWorktree
+	// restartFailureCount counts consecutive metadata ticks that observed
+	// this workspace terminal's tmux dead right after a Restart — i.e.
+	// Restart "succeeded" (no error) but the session died again before the
+	// next tick, as happens when its persisted Program is permanently
+	// broken. The app's tick loop uses this to trip a circuit breaker
+	// instead of restart-looping forever at tick cadence; see
+	// RecordRestartFailure/ResetRestartFailures.
+	restartFailureCount int
 
 	// mu guards concurrent access to fields that can be read from
 	// tick-fanout goroutines (Status, diffStats, Branch) and from
@@ -938,6 +946,58 @@ func (i *Instance) TmuxAlive() bool {
 		return false
 	}
 	return ts.DoesSessionExist()
+}
+
+// PtmxAlive reports whether the instance's tmux session currently has an
+// attached PTY. TmuxAlive can be true (the session exists on the server)
+// while this is false — e.g. a reattach failed after a full-screen attach
+// returned — leaving every keystroke/resize on this instance silently fail
+// forever with no periodic check ever noticing, since TmuxAlive is the only
+// thing the metadata tick otherwise watches. See RepairPtmx.
+func (i *Instance) PtmxAlive() bool {
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return false
+	}
+	return ts.PtmxAlive()
+}
+
+// RepairPtmx re-attaches this instance's tmux session PTY. Intended for the
+// metadata tick to call when it observes TmuxAlive()==true but
+// PtmxAlive()==false: the session is healthy but Loom's own handle to it is
+// gone, and nothing else will ever retry the attach. A no-op error if there
+// is no tmux session at all.
+func (i *Instance) RepairPtmx() error {
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return fmt.Errorf("no tmux session for %q", i.Title)
+	}
+	return ts.Restore()
+}
+
+// RecordRestartFailure increments and returns the consecutive-failure
+// counter backing the workspace-terminal auto-restart circuit breaker.
+// Call once per metadata tick this instance's tmux is observed dead.
+func (i *Instance) RecordRestartFailure() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.restartFailureCount++
+	return i.restartFailureCount
+}
+
+// ResetRestartFailures clears the consecutive-failure counter. Call once
+// per metadata tick this instance's tmux is observed alive.
+func (i *Instance) ResetRestartFailures() {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.restartFailureCount = 0
+}
+
+// RestartFailureCount reports the current consecutive-failure count.
+func (i *Instance) RestartFailureCount() int {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.restartFailureCount
 }
 
 // Pause stops the tmux session and removes the worktree, preserving the branch.

@@ -444,6 +444,24 @@ func TestInstance_RestartProceedsPastIdempotencyGuard(t *testing.T) {
 		"Restart should leave the instance in a started state on success")
 }
 
+// TestInstance_RestartFailureCounter guards the workspace-terminal restart
+// circuit breaker's underlying counter (app's metadataReadyMsg handling): it
+// must accumulate across consecutive dead-tmux ticks and reset the moment
+// the session is observed alive again, so a single flaky blip doesn't count
+// toward tripping the breaker on some later, unrelated failure streak.
+func TestInstance_RestartFailureCounter(t *testing.T) {
+	inst := &Instance{Title: "restart-counter", IsWorkspaceTerminal: true}
+
+	require.Equal(t, 1, inst.RecordRestartFailure())
+	require.Equal(t, 2, inst.RecordRestartFailure())
+	require.Equal(t, 2, inst.RestartFailureCount())
+
+	inst.ResetRestartFailures()
+	require.Equal(t, 0, inst.RestartFailureCount())
+	require.Equal(t, 1, inst.RecordRestartFailure(),
+		"counter must restart from zero after a reset, not keep accumulating")
+}
+
 // TestCombineErrorsIsUnwrapable guards that combineErrors uses errors.Join
 // so every underlying cause remains discoverable via errors.Is. The prior
 // fmt.Errorf("%s", ...) implementation stringified the causes and broke
