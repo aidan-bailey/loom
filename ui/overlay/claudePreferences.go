@@ -11,8 +11,9 @@ import (
 // ClaudePreferences is the Claude-specific preferences drill-in
 // sub-screen. Structured as its own screen (rather than flat rows on
 // the main settings list) so more Claude-adapter-specific preferences
-// can be added later without growing that list — today it holds four
-// rows: Remote Control, Permission Mode, Model, and Headroom Wrap.
+// can be added later without growing that list — today it holds five
+// rows: Remote Control, Permission Mode, Model, Headroom Wrap, and
+// Effort.
 //
 // authBlocked/authReason mirror session.RemoteControlAuth.Blocked()/
 // Reason, passed as plain values so this package stays decoupled from
@@ -30,8 +31,8 @@ type ClaudePreferences struct {
 }
 
 // claudePrefsRowCount is the number of navigable rows: Remote Control,
-// Permission Mode, Model, and Headroom Wrap.
-const claudePrefsRowCount = 4
+// Permission Mode, Model, Headroom Wrap, and Effort.
+const claudePrefsRowCount = 5
 
 // NewClaudePreferences creates the Claude Preferences sub-screen over cfg.
 func NewClaudePreferences(cfg *config.Config, authBlocked bool, authReason string) *ClaudePreferences {
@@ -87,6 +88,11 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 					rc := false
 					cc.ClaudeRemoteControl = &rc
 				}
+			})
+		case 4:
+			c.cfg.Mutate(func(cc *config.Config) {
+				next := nextInList(config.ClaudeEfforts, cc.Effort())
+				cc.ClaudeEffort = &next
 			})
 		}
 		return false, true
@@ -171,11 +177,23 @@ func (c *ClaudePreferences) Render() string {
 		hwRow = claudePrefsRowStyle.Render(hwRow)
 	}
 
+	effortCursor := "  "
+	if c.cursor == 4 {
+		effortCursor = "> "
+	}
+	effortRow := effortCursor + "Effort            < " + c.cfg.Effort() + " >"
+	if c.cursor == 4 {
+		effortRow = claudePrefsSelectedStyle.Render(effortRow)
+	} else {
+		effortRow = claudePrefsRowStyle.Render(effortRow)
+	}
+
 	content := claudePrefsTitleStyle.Render("Claude Preferences") + "\n\n" +
 		rcRow + "\n" +
 		pmRow + "\n" +
 		modelRow + "\n" +
-		hwRow + "\n\n" +
+		hwRow + "\n" +
+		effortRow + "\n\n" +
 		claudePrefsHintStyle.Render("up/down move • enter/space toggle/cycle • esc back")
 
 	border := lipgloss.NewStyle().

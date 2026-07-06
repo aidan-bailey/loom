@@ -97,14 +97,14 @@ func TestClaudePreferencesRowNavigationClamps(t *testing.T) {
 	assert.True(t, changed)
 	assert.False(t, cfg.RemoteControlEnabled())
 
-	// Down four times stays at row 3 (only four rows): toggles Headroom
-	// Wrap, not any earlier row.
-	for i := 0; i < 4; i++ {
+	// Down five times stays at row 4 (only five rows): cycles Effort,
+	// not any earlier row.
+	for i := 0; i < 5; i++ {
 		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	_, changed = cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
-	assert.True(t, cfg.HeadroomWrapEnabled())
+	assert.Equal(t, "low", cfg.Effort())
 }
 
 func TestClaudePreferencesRendersPermissionMode(t *testing.T) {
@@ -138,6 +138,16 @@ func TestClaudePreferencesShowsBlockedHint(t *testing.T) {
 	cp := NewClaudePreferences(cfg, true, "not logged in — run `claude auth login`.")
 	rendered := cp.Render()
 	assert.Contains(t, rendered, "not logged in")
+}
+
+func TestClaudePreferences_EffortRowCycles(t *testing.T) {
+	cfg := &config.Config{}
+	c := NewClaudePreferences(cfg, false, "")
+	for i := 0; i < 4; i++ {
+		c.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
+	c.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
+	assert.Equal(t, "low", cfg.Effort())
 }
 
 func TestClaudePreferencesEscCloses(t *testing.T) {
