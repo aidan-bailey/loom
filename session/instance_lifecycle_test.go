@@ -242,14 +242,17 @@ func TestInstance_PauseCleanWorktreeSetsNoStashRef(t *testing.T) {
 
 // TestInstance_ResumeRestoresStashedWork is the Pause→Resume round
 // trip: uncommitted work stashed by Pause must reappear after Resume,
-// and StashRef must be cleared on success.
+// and StashRef must be cleared on success. Covers both a modification
+// to an already-committed file (README.md, tracked-dirty) and a brand
+// new file (new.txt, untracked) — the two change classes `git stash`
+// treats differently.
 func TestInstance_ResumeRestoresStashedWork(t *testing.T) {
 	inst := newTestPausableInstance(t)
 	gw, err := inst.GetGitWorktree()
 	require.NoError(t, err)
 	dir := gw.GetWorktreePath()
 
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("uncommitted\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "new.txt"), []byte("untracked\n"), 0644))
 	require.NoError(t, inst.Pause(nil))
 	require.NotEmpty(t, gw.GetStashRef())
@@ -257,7 +260,7 @@ func TestInstance_ResumeRestoresStashedWork(t *testing.T) {
 	require.NoError(t, inst.Resume(nil))
 
 	assert.Empty(t, gw.GetStashRef(), "Resume must clear StashRef after a clean apply")
-	dirty, err := os.ReadFile(filepath.Join(gw.GetWorktreePath(), "dirty.txt"))
+	dirty, err := os.ReadFile(filepath.Join(gw.GetWorktreePath(), "README.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "uncommitted\n", string(dirty))
 	untracked, err := os.ReadFile(filepath.Join(gw.GetWorktreePath(), "new.txt"))
