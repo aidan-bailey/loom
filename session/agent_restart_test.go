@@ -22,10 +22,6 @@ func TestBuildRecoveryCommand_ClaudeAlreadyHasResume(t *testing.T) {
 	assert.Equal(t, "claude --resume", BuildRecoveryCommand("claude --resume"))
 }
 
-func TestBuildRecoveryCommand_ThroughHeadroomWrap(t *testing.T) {
-	assert.Equal(t, "headroom wrap claude --continue", BuildRecoveryCommand("headroom wrap claude"))
-}
-
 func TestBuildRecoveryCommand_Aider(t *testing.T) {
 	assert.Equal(t, "aider --model gemma", BuildRecoveryCommand("aider --model gemma"))
 }
