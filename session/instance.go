@@ -1018,6 +1018,19 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		return fmt.Errorf("failed to setup git worktree: %w", err)
 	}
 
+	// Restore any changes stashed by Pause. A failed apply (e.g. a
+	// conflict) is surfaced rather than silently dropped or retried —
+	// mirrors git's own refusal to drop a stash that didn't apply
+	// cleanly. StashRef stays set so the entry (and any conflict
+	// markers left in the worktree) remain available for the user to
+	// resolve manually.
+	if sha := gw.GetStashRef(); sha != "" {
+		if err := gw.ApplyStash(sha); err != nil {
+			return fmt.Errorf("failed to restore stashed changes: %w", err)
+		}
+		gw.SetStashRef("")
+	}
+
 	// Check if tmux session still exists from pause, otherwise create new one
 	if ts.DoesSessionExist() {
 		// Session exists, just restore PTY connection to it

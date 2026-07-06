@@ -240,6 +240,31 @@ func TestInstance_PauseCleanWorktreeSetsNoStashRef(t *testing.T) {
 	assert.Empty(t, gw.GetStashRef())
 }
 
+// TestInstance_ResumeRestoresStashedWork is the Pause→Resume round
+// trip: uncommitted work stashed by Pause must reappear after Resume,
+// and StashRef must be cleared on success.
+func TestInstance_ResumeRestoresStashedWork(t *testing.T) {
+	inst := newTestPausableInstance(t)
+	gw, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+	dir := gw.GetWorktreePath()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "new.txt"), []byte("untracked\n"), 0644))
+	require.NoError(t, inst.Pause(nil))
+	require.NotEmpty(t, gw.GetStashRef())
+
+	require.NoError(t, inst.Resume(nil))
+
+	assert.Empty(t, gw.GetStashRef(), "Resume must clear StashRef after a clean apply")
+	dirty, err := os.ReadFile(filepath.Join(gw.GetWorktreePath(), "dirty.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "uncommitted\n", string(dirty))
+	untracked, err := os.ReadFile(filepath.Join(gw.GetWorktreePath(), "new.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "untracked\n", string(untracked))
+}
+
 // TestInstance_StartIsIdempotent verifies Start is a no-op on an
 // already-started instance (INST-04). A second Start must not replace
 // the tmux session and orphan the first.
