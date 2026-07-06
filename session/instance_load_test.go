@@ -41,6 +41,32 @@ func TestFromInstanceData_Paused_PreservesShape(t *testing.T) {
 	assert.NotNil(t, inst.getTmuxSession(), "Paused instance should have a TmuxSession object")
 }
 
+// TestFromInstanceData_PreservesHeadroomProxy asserts the HeadroomProxy
+// toggle survives a Snapshot → FromInstanceData round trip, the same
+// way Program does — needed so pause/resume and crash recovery (which
+// construct a brand new TmuxSession from InstanceData) still apply it.
+func TestFromInstanceData_PreservesHeadroomProxy(t *testing.T) {
+	data := InstanceData{
+		Title:               "hp-ws",
+		Status:              Paused,
+		IsWorkspaceTerminal: true,
+		Program:             "claude",
+		HeadroomProxy:       true,
+	}
+
+	inst, err := FromInstanceData(data, t.TempDir())
+	assert.NoError(t, err)
+	assert.True(t, inst.HeadroomProxy)
+}
+
+// TestSnapshot_IncludesHeadroomProxy asserts Snapshot carries
+// HeadroomProxy through to InstanceData, mirroring how Program does.
+func TestSnapshot_IncludesHeadroomProxy(t *testing.T) {
+	inst := &Instance{Title: "hp-ws", Status: Paused, Program: "claude", HeadroomProxy: true}
+	data := inst.Snapshot()
+	assert.True(t, data.HeadroomProxy)
+}
+
 // TestEnsureRunning_NoOpForPaused asserts EnsureRunning does not spawn a
 // PTY for paused instances.
 func TestEnsureRunning_NoOpForPaused(t *testing.T) {

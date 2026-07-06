@@ -120,6 +120,13 @@ type Instance struct {
 	Status Status
 	// Program is the program to run in the instance.
 	Program string
+	// HeadroomProxy controls whether this instance's tmux session gets
+	// ANTHROPIC_BASE_URL pointed at Headroom's proxy (see
+	// session.HeadroomProxyEnv). A no-op unless Program resolves to
+	// Claude. Set once before Start() (same convention as Program) and
+	// persisted so pause/resume and crash recovery — which construct a
+	// brand new TmuxSession for the same instance — still apply it.
+	HeadroomProxy bool
 	// Height is the height of the instance.
 	Height int
 	// Width is the width of the instance.
@@ -199,6 +206,7 @@ func (i *Instance) Snapshot() InstanceData {
 		CreatedAt:           i.CreatedAt,
 		UpdatedAt:           time.Now(),
 		Program:             i.Program,
+		HeadroomProxy:       i.HeadroomProxy,
 		IsWorkspaceTerminal: i.IsWorkspaceTerminal,
 	}
 
@@ -248,6 +256,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		CreatedAt:           data.CreatedAt,
 		UpdatedAt:           data.UpdatedAt,
 		Program:             data.Program,
+		HeadroomProxy:       data.HeadroomProxy,
 		ConfigDir:           configDir,
 		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
 		logger:              log.For("instance", "title", data.Title),
@@ -283,7 +292,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 	// silently no-ops and the row never leaves the list.
 	if instance.Paused() || instance.GetStatus() == Recoverable {
 		instance.setStarted(true)
-		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program))
+		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program, HeadroomProxyEnv(instance.HeadroomProxy, instance.Program)...))
 	}
 
 	return instance, nil
@@ -333,6 +342,9 @@ type InstanceOptions struct {
 	Path string
 	// Program is the program to run in the instance (e.g. "claude", "aider --model ollama_chat/gemma3:1b")
 	Program string
+	// HeadroomProxy controls whether this instance's tmux session gets
+	// ANTHROPIC_BASE_URL pointed at Headroom's proxy. See Instance.HeadroomProxy.
+	HeadroomProxy bool
 	// Branch is an existing branch name to start the session on (empty = new branch from HEAD)
 	Branch string
 	// ConfigDir is the workspace config directory for worktree resolution.
@@ -360,6 +372,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		Status:              Ready,
 		Path:                absPath,
 		Program:             opts.Program,
+		HeadroomProxy:       opts.HeadroomProxy,
 		Height:              0,
 		Width:               0,
 		CreatedAt:           t,
@@ -523,7 +536,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 	ts := i.getTmuxSession()
 	if ts == nil {
 		// Create new tmux session
-		ts = tmux.NewTmuxSession(i.Title, i.Program)
+		ts = tmux.NewTmuxSession(i.Title, i.Program, HeadroomProxyEnv(i.HeadroomProxy, i.Program)...)
 	}
 	i.setTmuxSession(ts)
 
@@ -1072,7 +1085,7 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 // their prior conversation (e.g. `claude --continue`).
 func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 	program := BuildRecoveryCommand(i.Program)
-	ts := tmux.NewTmuxSession(i.Title, program)
+	ts := tmux.NewTmuxSession(i.Title, program, HeadroomProxyEnv(i.HeadroomProxy, program)...)
 	if err := ts.Start(gw.GetWorktreePath()); err != nil {
 		if cleanupErr := gw.Cleanup(); cleanupErr != nil {
 			err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
@@ -1089,7 +1102,7 @@ func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 // supported agents.
 func (i *Instance) CrashRestart() error {
 	program := BuildRecoveryCommand(i.Program)
-	ts := tmux.NewTmuxSession(i.Title, program)
+	ts := tmux.NewTmuxSession(i.Title, program, HeadroomProxyEnv(i.HeadroomProxy, program)...)
 
 	var workDir string
 	if i.IsWorkspaceTerminal {
