@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/aidan-bailey/loom/log"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -81,10 +82,21 @@ func SearchBranches(repoPath, filter string, runner CommandRunner) ([]string, er
 // Applies gitTimeout to bound wall time — critical for the metadata tick,
 // which fans this out every few seconds.
 func (g *GitWorktree) runGitCommand(path string, args ...string) (string, error) {
+	return g.runGitCommandEnv(nil, path, args...)
+}
+
+// runGitCommandEnv is runGitCommand with additional environment variables
+// appended onto the process's own environment (e.g. GIT_INDEX_FILE to
+// build a tree against a scratch index without touching the real one).
+// Pass nil extraEnv to behave exactly like runGitCommand.
+func (g *GitWorktree) runGitCommandEnv(extraEnv []string, path string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	baseArgs := []string{"-C", path}
 	c := exec.CommandContext(ctx, "git", append(baseArgs, args...)...)
+	if len(extraEnv) > 0 {
+		c.Env = append(os.Environ(), extraEnv...)
+	}
 
 	t0 := time.Now()
 	output, err := g.runner.CombinedOutput(c)
@@ -188,6 +200,149 @@ func (g *GitWorktree) CommitChanges(commitMessage string) error {
 		}
 	}
 
+	return nil
+}
+
+// StashChanges snapshots the worktree's tracked and untracked changes
+// into a stash commit without disturbing the shared stash stack's
+// ordering, and without ever calling `git stash push`/`create` (both
+// pass through the same option parser, which documents only
+// `git stash create [<message>]` — no -u/--include-untracked; passing
+// it anyway silently swallows the flag into the commit message and
+// drops untracked files from the snapshot, verified empirically
+// against the installed git). Instead this builds, by hand, the same
+// two-parent "index on ..." / "On ..." commit pair `git stash push -u`
+// itself would produce, via plumbing against a scratch
+// GIT_INDEX_FILE so the real index and working tree are left
+// untouched:
+//   - iCommit: tree = HEAD plus staged/unstaged modifications to
+//     already-tracked files (`add -u`), parent = HEAD. This is the
+//     "index" side of the stash.
+//   - the returned commit: tree = iCommit's tree plus untracked files
+//     (`add -A` on the same scratch index), parents = [HEAD, iCommit].
+//     Untracked files exist only in this tree, not iCommit's, so
+//     `stash apply` (which diffs parent1..parent2 for the index and
+//     parent2..commit for the worktree) restores them via the second
+//     diff, same as it would for a real `stash push -u` entry.
+//
+// `git stash store` then anchors the resulting commit against gc
+// (dangling commits are prunable after gc.pruneExpire) and makes it
+// visible via `git stash list` for manual recovery, using the SHA —
+// never stack position — that plumbing already handed back, so there
+// is no race window reading back "top of stack" afterward. Returns ""
+// (no error) if the worktree has nothing to stash, mirroring IsDirty's
+// scope (tracked and untracked).
+func (g *GitWorktree) StashChanges(message string) (string, error) {
+	isDirty, err := g.IsDirty()
+	if err != nil {
+		return "", fmt.Errorf("failed to check for changes: %w", err)
+	}
+	if !isDirty {
+		return "", nil
+	}
+
+	head, err := g.runGitCommand(g.worktreePath, "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve HEAD for stash: %w", err)
+	}
+	head = strings.TrimSpace(head)
+
+	tmpIndex, err := os.CreateTemp("", "loom-stash-index-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create scratch index for stash: %w", err)
+	}
+	tmpIndexPath := tmpIndex.Name()
+	tmpIndex.Close()
+	os.Remove(tmpIndexPath) // git creates it fresh; the path just needs to be reserved and unique.
+	defer os.Remove(tmpIndexPath)
+	env := []string{"GIT_INDEX_FILE=" + tmpIndexPath}
+
+	if _, err := g.runGitCommandEnv(env, g.worktreePath, "read-tree", head); err != nil {
+		return "", fmt.Errorf("failed to seed scratch index for stash: %w", err)
+	}
+	if _, err := g.runGitCommandEnv(env, g.worktreePath, "add", "-u"); err != nil {
+		return "", fmt.Errorf("failed to stage tracked changes for stash: %w", err)
+	}
+	iTree, err := g.runGitCommandEnv(env, g.worktreePath, "write-tree")
+	if err != nil {
+		return "", fmt.Errorf("failed to write index tree for stash: %w", err)
+	}
+	iCommit, err := g.runGitCommandEnv(env, g.worktreePath, "commit-tree", strings.TrimSpace(iTree), "-p", head, "-m", "index on stash: "+message)
+	if err != nil {
+		return "", fmt.Errorf("failed to create index commit for stash: %w", err)
+	}
+	iCommit = strings.TrimSpace(iCommit)
+
+	if _, err := g.runGitCommandEnv(env, g.worktreePath, "add", "-A"); err != nil {
+		return "", fmt.Errorf("failed to stage untracked files for stash: %w", err)
+	}
+	wTree, err := g.runGitCommandEnv(env, g.worktreePath, "write-tree")
+	if err != nil {
+		return "", fmt.Errorf("failed to write working-tree tree for stash: %w", err)
+	}
+	sha, err := g.runGitCommandEnv(env, g.worktreePath, "commit-tree", strings.TrimSpace(wTree), "-p", head, "-p", iCommit, "-m", "On stash: "+message)
+	if err != nil {
+		return "", fmt.Errorf("failed to create stash commit: %w", err)
+	}
+	sha = strings.TrimSpace(sha)
+
+	if _, err := g.runGitCommand(g.worktreePath, "stash", "store", "-m", message, sha); err != nil {
+		return "", fmt.Errorf("failed to store stash: %w", err)
+	}
+	return sha, nil
+}
+
+// ApplyStash applies the stash commit sha onto the worktree, targeting
+// the exact commit rather than stack position (stash@{0}) — refs/stash
+// is shared across every worktree of this repo. A no-op for an empty
+// sha. On a clean apply, the matching stash-list entry is dropped
+// (best-effort; a failed drop is logged, not returned, since the
+// restore itself already succeeded). On conflict, the stash entry is
+// left in place — mirroring `git stash pop`'s own safety behavior —
+// and the error is returned so the caller does not clear its
+// reference to it.
+func (g *GitWorktree) ApplyStash(sha string) error {
+	if sha == "" {
+		return nil
+	}
+	if _, err := g.runGitCommand(g.worktreePath, "stash", "apply", sha); err != nil {
+		return fmt.Errorf("failed to apply stash: %w", err)
+	}
+	if err := g.DropStash(sha); err != nil {
+		log.For("git").Warn("stash.drop_after_apply_failed", "err", err.Error())
+	}
+	return nil
+}
+
+// DropStash removes the stash-list entry matching sha, if present.
+// No-op if sha is empty or no longer found (already dropped, or never
+// stored). Resolves each entry's own commit hash via `git rev-parse`
+// rather than assuming stack position, for the same reason ApplyStash
+// does — refs/stash is shared across every worktree of this repo, so
+// "top of stack" could belong to a different worktree by now. Runs
+// against repoPath rather than worktreePath since refs/stash is a
+// repo-level concept and the worktree directory may not exist at call
+// time (e.g. after Kill has already removed it).
+func (g *GitWorktree) DropStash(sha string) error {
+	if sha == "" {
+		return nil
+	}
+	list, err := g.runGitCommand(g.repoPath, "stash", "list", "--format=%gd")
+	if err != nil {
+		return fmt.Errorf("failed to list stash: %w", err)
+	}
+	for _, ref := range strings.Fields(list) {
+		out, err := g.runGitCommand(g.repoPath, "rev-parse", ref)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(out) == sha {
+			if _, err := g.runGitCommand(g.repoPath, "stash", "drop", ref); err != nil {
+				return fmt.Errorf("failed to drop stash %s: %w", ref, err)
+			}
+			return nil
+		}
+	}
 	return nil
 }
 
