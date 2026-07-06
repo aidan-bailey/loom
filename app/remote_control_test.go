@@ -172,6 +172,60 @@ func TestApplyLaunchOptions_ComposesEffort(t *testing.T) {
 	assert.Contains(t, got, "--model opus")
 }
 
+func TestParseLaunchOptions_RoundTrip(t *testing.T) {
+	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+	cases := []struct {
+		name string
+		opts overlay.LaunchOptions
+	}{
+		{"all default", overlay.LaunchOptions{PermissionMode: "default", Model: "default", Effort: "default"}},
+		{"remote control on", overlay.LaunchOptions{RemoteControl: true, PermissionMode: "default", Model: "default", Effort: "default"}},
+		{"permission mode", overlay.LaunchOptions{PermissionMode: "acceptEdits", Model: "default", Effort: "default"}},
+		{"model", overlay.LaunchOptions{PermissionMode: "default", Model: "opus", Effort: "default"}},
+		{"effort", overlay.LaunchOptions{PermissionMode: "default", Model: "default", Effort: "high"}},
+		{"headroom wrap", overlay.LaunchOptions{PermissionMode: "default", Model: "default", Effort: "default", HeadroomWrap: true}},
+		{"all on (RC forced off by exclusivity)", overlay.LaunchOptions{RemoteControl: true, PermissionMode: "acceptEdits", Model: "opus", Effort: "high", HeadroomWrap: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			composed := applyLaunchOptions(tc.opts, authOK, "claude", "my-title")
+			gotOpts, gotBase := ParseLaunchOptions(composed)
+			assert.Equal(t, "claude", gotBase)
+			// effectiveRemoteControl forces RemoteControl off when
+			// HeadroomWrap is on, so the round-trip must reflect the
+			// composed reality, not the original (possibly
+			// self-contradictory) input.
+			wantRC := tc.opts.RemoteControl && !tc.opts.HeadroomWrap
+			assert.Equal(t, wantRC, gotOpts.RemoteControl)
+			assert.Equal(t, tc.opts.PermissionMode, gotOpts.PermissionMode)
+			assert.Equal(t, tc.opts.Model, gotOpts.Model)
+			assert.Equal(t, tc.opts.Effort, gotOpts.Effort)
+			assert.Equal(t, tc.opts.HeadroomWrap, gotOpts.HeadroomWrap)
+		})
+	}
+}
+
+func TestParseLaunchOptions_AbsolutePathBaseProgram(t *testing.T) {
+	opts, base := ParseLaunchOptions("headroom wrap claude --model sonnet --permission-mode auto")
+	assert.Equal(t, "claude", base)
+	assert.Equal(t, "sonnet", opts.Model)
+	assert.Equal(t, "auto", opts.PermissionMode)
+	assert.True(t, opts.HeadroomWrap)
+}
+
+func TestParseLaunchOptions_UnrecognizedFlagLeftInBase(t *testing.T) {
+	opts, base := ParseLaunchOptions("claude --some-other-flag value --model opus")
+	assert.Equal(t, "opus", opts.Model)
+	assert.Contains(t, base, "--some-other-flag value")
+	assert.NotContains(t, base, "--model")
+}
+
+func TestParseLaunchOptions_EmptyProgram(t *testing.T) {
+	opts, base := ParseLaunchOptions("")
+	assert.Equal(t, overlay.LaunchOptions{}, opts)
+	assert.Equal(t, "", base)
+}
+
 func TestApplyLaunchOptions(t *testing.T) {
 	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
 

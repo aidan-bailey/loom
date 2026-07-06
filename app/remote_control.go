@@ -1,8 +1,11 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/agent"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
@@ -101,6 +104,68 @@ func applyLaunchOptions(opts overlay.LaunchOptions, auth session.RemoteControlAu
 	program = effortProgram(opts.Effort, program)
 	program = headroomWrapProgram(opts.HeadroomWrap, program)
 	return program
+}
+
+// ParseLaunchOptions decodes a composed Program string back into the
+// overlay.LaunchOptions that produced it, plus the underlying bare
+// program (binary path/name and any *other* flags) applyLaunchOptions
+// would need to recompose it from scratch. It is the symmetric decode
+// of applyLaunchOptions: strips the "headroom wrap " prefix, then
+// scans tokens for --remote-control[=name], --permission-mode <mode>,
+// --model <model>, and --effort <level>, removing each recognized flag
+// (and its value token, where applicable) from the returned base
+// program. Recomposing must start from a bare program —
+// applyLaunchOptions's ApplyXFlag functions insert "right after
+// parts[0]", so calling them again on an already-flagged string would
+// insert --model after "headroom", or duplicate an existing
+// --permission-mode. A token this doesn't recognize (e.g. a hand-added
+// flag) is left in place in baseProgram and simply doesn't set the
+// corresponding opts field — never an error.
+func ParseLaunchOptions(program string) (opts overlay.LaunchOptions, baseProgram string) {
+	prefix, rest := agent.SplitHeadroomWrap(program)
+	opts.HeadroomWrap = prefix != ""
+
+	parts := strings.Fields(rest)
+	if len(parts) == 0 {
+		return opts, ""
+	}
+
+	// applyLaunchOptions's Build*Command helpers no-op (add no flag) for
+	// "default", so an absent flag means "default" once we know there's
+	// an actual program present — not the zero value, which the
+	// len(parts)==0 case above already returned.
+	opts.PermissionMode = "default"
+	opts.Model = "default"
+	opts.Effort = "default"
+
+	kept := []string{parts[0]}
+	for i := 1; i < len(parts); i++ {
+		switch {
+		case parts[i] == "--remote-control":
+			opts.RemoteControl = true
+			// May be followed by a session-name value token, or may
+			// stand alone (Claude auto-generates a name). Only
+			// consume the next token if it doesn't look like another
+			// flag.
+			if i+1 < len(parts) && !strings.HasPrefix(parts[i+1], "--") {
+				i++
+			}
+		case strings.HasPrefix(parts[i], "--remote-control="):
+			opts.RemoteControl = true
+		case parts[i] == "--permission-mode" && i+1 < len(parts):
+			opts.PermissionMode = parts[i+1]
+			i++
+		case parts[i] == "--model" && i+1 < len(parts):
+			opts.Model = parts[i+1]
+			i++
+		case parts[i] == "--effort" && i+1 < len(parts):
+			opts.Effort = parts[i+1]
+			i++
+		default:
+			kept = append(kept, parts[i])
+		}
+	}
+	return opts, strings.Join(kept, " ")
 }
 
 // remoteControlBlocked reports whether a launch of program should be
