@@ -35,7 +35,7 @@ type editorDoneMsg struct{ err error }
 // with which handler.
 
 // selectedNotBusyNotWorkspace gates lifecycle mutations (kill,
-// submit, checkout): the selected instance must exist, must not be a
+// submit, stash): the selected instance must exist, must not be a
 // workspace-terminal (no branch/worktree to act on), and must not be
 // mid-transition.
 func selectedNotBusyNotWorkspace(m *home) bool {
@@ -271,13 +271,13 @@ func pushActionFor(selected *session.Instance) tea.Cmd {
 	}
 }
 
-// runCheckoutSelectedOpts is the parameterized pause path. confirm
+// runStashSelectedOpts is the parameterized pause path. confirm
 // gates the confirmation overlay; help gates the prerequisite help
-// screen. Script callers use cs.actions.checkout_selected{confirm=,
+// screen. Script callers use cs.actions.stash_selected{confirm=,
 // help=} to tune either. Combinations that skip the confirm still
 // trigger the Loading transition synchronously so the spinner
 // renders immediately.
-func runCheckoutSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
+func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
 	pauseAction := pauseActionFor(m, selected)
 
@@ -300,7 +300,7 @@ func runCheckoutSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	}
 
 	if help {
-		return m.showHelpScreen(helpTypeInstanceCheckout{}, startPause)
+		return m.showHelpScreen(helpTypeInstanceStash{}, startPause)
 	}
 	return m, startPause()
 }

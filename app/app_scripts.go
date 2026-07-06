@@ -476,11 +476,11 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 		} else {
 			_, cmd = runKillSelectedNoConfirm(m)
 		}
-	case script.CheckoutIntent:
+	case script.StashIntent:
 		if !selectedNotBusyNotWorkspace(m) {
 			break
 		}
-		_, cmd = runCheckoutSelectedOpts(m, i.Confirm, i.Help)
+		_, cmd = runStashSelectedOpts(m, i.Confirm, i.Help)
 	case script.ResumeIntent:
 		if !selectedResumableNotWorkspace(m) {
 			break

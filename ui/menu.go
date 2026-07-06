@@ -152,7 +152,7 @@ func (m *Menu) addInstanceOptions() {
 		if m.instance.GetStatus() == session.Paused {
 			actionGroup = append(actionGroup, keys.KeyResume)
 		} else {
-			actionGroup = append(actionGroup, keys.KeyCheckout)
+			actionGroup = append(actionGroup, keys.KeyStash)
 		}
 	}
 
@@ -181,7 +181,7 @@ func (m *Menu) String() string {
 		end   int
 	}{
 		{0, 2}, // Instance management group (n, D)
-		{2, 4}, // Action group (submit, checkout/resume)
+		{2, 4}, // Action group (submit, stash/resume)
 		{4, 7}, // System group (diff, help, q)
 	}
 
