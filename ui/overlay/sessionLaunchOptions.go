@@ -8,15 +8,17 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// LaunchOptions holds the four per-session launch toggles. Defined here
-// (rather than in app) so it's usable both by SessionLaunchOptions
-// (ephemeral, edited as a plain value) and by app's launch-command
-// composition, without an import cycle back to app.
+// LaunchOptions holds the five per-session launch toggles. Defined
+// here (rather than in app) so it's usable both by
+// SessionLaunchOptions (ephemeral, edited as a plain value) and by
+// app's launch-command composition, without an import cycle back to
+// app.
 type LaunchOptions struct {
 	RemoteControl  bool
 	PermissionMode string
 	Model          string
 	HeadroomWrap   bool
+	Effort         string
 }
 
 // SessionLaunchOptions is the per-instance "Session Launch Options"
@@ -34,8 +36,8 @@ type SessionLaunchOptions struct {
 }
 
 // sessionLaunchOptionsRowCount is the number of navigable rows: Remote
-// Control, Permission Mode, Model, and Headroom Wrap.
-const sessionLaunchOptionsRowCount = 4
+// Control, Permission Mode, Model, Headroom Wrap, and Effort.
+const sessionLaunchOptionsRowCount = 5
 
 // NewSessionLaunchOptions creates the modal seeded with initial
 // (typically the global config's current values).
@@ -95,6 +97,17 @@ func (l *SessionLaunchOptions) toggleCursor() {
 		if l.opts.HeadroomWrap {
 			l.opts.RemoteControl = false
 		}
+	case 4:
+		// An unset Effort means "default" (mirrors Config.Effort()'s
+		// nil-pointer fallback), so normalize before cycling — otherwise
+		// the empty string wouldn't match any entry and nextInList's
+		// not-found fallback would land back on "default" instead of
+		// advancing to the next value.
+		current := l.opts.Effort
+		if current == "" {
+			current = "default"
+		}
+		l.opts.Effort = nextInList(config.ClaudeEfforts, current)
 	}
 }
 
@@ -136,7 +149,8 @@ func (l *SessionLaunchOptions) Render() string {
 		row(0, "Remote Control    ", rcCheck) + "\n" +
 		row(1, "Permission Mode   ", "< "+l.opts.PermissionMode+" >") + "\n" +
 		row(2, "Model             ", "< "+l.opts.Model+" >") + "\n" +
-		row(3, "Headroom Wrap     ", hwCheck) + "\n\n" +
+		row(3, "Headroom Wrap     ", hwCheck) + "\n" +
+		row(4, "Effort            ", "< "+l.opts.Effort+" >") + "\n\n" +
 		sessionLaunchOptionsHintStyle.Render("up/down move • space toggle/cycle • enter start • esc cancel")
 
 	border := lipgloss.NewStyle().
