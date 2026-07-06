@@ -124,6 +124,10 @@ type Config struct {
 	// stays valid as new models ship without a code change. "default"
 	// is a no-op — Claude's own default applies. Read it through Model.
 	ClaudeModel *string `json:"claude_model,omitempty"`
+	// ClaudeEffort is the --effort value new Claude sessions launch
+	// with. "default" is a no-op — Claude's own default applies. Read
+	// it through Effort.
+	ClaudeEffort *string `json:"claude_effort,omitempty"`
 }
 
 // ClaudePermissionModes lists the values --permission-mode accepts, in
@@ -135,6 +139,11 @@ var ClaudePermissionModes = []string{"default", "acceptEdits", "plan", "auto", "
 // versioned IDs, so this list doesn't need updating when new Claude
 // models ship.
 var ClaudeModels = []string{"default", "sonnet", "opus", "haiku"}
+
+// ClaudeEfforts lists the --effort values the Claude Preferences and
+// Session Launch Options screens cycle through, matching what
+// `claude --help` documents for --effort.
+var ClaudeEfforts = []string{"default", "low", "medium", "high", "xhigh", "max"}
 
 // Mutate runs fn with the write lock held. Callers outside this package
 // (the settings overlay) use this instead of writing exported fields
@@ -191,6 +200,16 @@ func (c *Config) Model() string {
 		return "default"
 	}
 	return *c.ClaudeModel
+}
+
+// Effort returns the configured --effort value, defaulting to
+// "default" when unset. Unlocked for the same reason as
+// PermissionMode/Model.
+func (c *Config) Effort() string {
+	if c.ClaudeEffort == nil {
+		return "default"
+	}
+	return *c.ClaudeEffort
 }
 
 // GetProgram returns the program to run. If Profiles is non-empty and
@@ -251,6 +270,7 @@ func DefaultConfig() *Config {
 		ClaudePermissionMode: stringPtr("default"),
 		HeadroomWrap:         boolPtr(false),
 		ClaudeModel:          stringPtr("default"),
+		ClaudeEffort:         stringPtr("default"),
 	}
 }
 

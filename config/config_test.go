@@ -438,6 +438,30 @@ func TestClaudeModels(t *testing.T) {
 	assert.Equal(t, []string{"default", "sonnet", "opus", "haiku"}, ClaudeModels)
 }
 
+func TestEffort(t *testing.T) {
+	t.Run("nil (absent from config) defaults to \"default\"", func(t *testing.T) {
+		cfg := &Config{}
+		assert.Equal(t, "default", cfg.Effort())
+	})
+
+	t.Run("explicit value round-trips", func(t *testing.T) {
+		cfg := &Config{ClaudeEffort: stringPtr("low")}
+		assert.Equal(t, "low", cfg.Effort())
+	})
+
+	t.Run("DefaultConfig sets \"default\" explicitly", func(t *testing.T) {
+		cfg := DefaultConfig()
+		if assert.NotNil(t, cfg.ClaudeEffort) {
+			assert.Equal(t, "default", *cfg.ClaudeEffort)
+		}
+		assert.Equal(t, "default", cfg.Effort())
+	})
+}
+
+func TestClaudeEfforts(t *testing.T) {
+	assert.Equal(t, []string{"default", "low", "medium", "high", "xhigh", "max"}, ClaudeEfforts)
+}
+
 func TestGetProfiles(t *testing.T) {
 	t.Run("no profiles returns single synthetic profile", func(t *testing.T) {
 		cfg := &Config{DefaultProgram: "/usr/local/bin/claude"}
