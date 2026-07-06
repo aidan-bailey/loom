@@ -209,6 +209,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `s` | Stash — stash changes and pause session |
 | `m` | Merge another session's branch into the current one |
 | `r` | Resume a paused session |
+| `R` | Resume a paused session with different launch options |
 | `p` | Push branch to remote (with confirmation) |
 | `D` | Kill selected session (with confirmation) |
 | `d` | Toggle diff overlay |

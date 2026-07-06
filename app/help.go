@@ -99,6 +99,7 @@ var (
 		{bindings: []keys.KeyName{keys.KeySubmit}, desc: "Commit and push branch to github"},
 		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Stash: stash changes and pause session"},
 		{bindings: []keys.KeyName{keys.KeyResume}, desc: "Resume a paused session"},
+		{bindings: []keys.KeyName{keys.KeyRestartWithOptions}, desc: "Resume a paused session with different launch options"},
 	}
 
 	generalOtherEntries = []helpEntry{

@@ -86,6 +86,7 @@ loom --workspace <name>
 | `alt+t` | Full-screen attach (terminal pane) |
 | `ctrl+q` / double-`esc` | Detach/exit interact (inline attach) |
 | `r` | Resume paused instance |
+| `R` | Resume paused instance with different launch options |
 | `D` | Kill instance |
 | `p` | Push branch |
 | `s` | Stash & pause |
