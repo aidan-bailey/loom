@@ -22,11 +22,30 @@ exist (`startFreshWithRecovery`). So the remaining work is: recover a
 instance's composed `Program` string, and wire a UI entry point that
 edits it before resuming.
 
+Separately, this also adds a fifth launch option, **Effort** — the
+real Claude CLI takes `--effort <level>` (`low`/`medium`/`high`/`xhigh`/`max`),
+not currently exposed anywhere in loom. It doesn't exist yet even at
+instance *creation*, so it's added end-to-end (Claude Preferences,
+creation-time Session Launch Options, and this spec's restart flow)
+rather than restart-only — otherwise a new session could never set
+effort at all, only change it later.
+
 ## Goals
 
+- New `Config.ClaudeEffort` field and `config.ClaudeEfforts` list
+  (`"default"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`),
+  following the exact shape of `ClaudeModel`/`ClaudeModels`: `"default"`
+  is a no-op (Claude's own default applies), editable as a fifth row in
+  Claude Preferences, and added to `overlay.LaunchOptions` as a fifth
+  field editable in the creation-time Session Launch Options modal.
+- `Adapter.ApplyEffortFlag(program, effort string) string` — Claude
+  inserts `--effort <level>` right after `parts[0]`, mirroring
+  `ApplyModelFlag`/`ApplyPermissionModeFlag`; `aider`/`gemini`/`default`
+  get a one-line no-op passthrough.
 - A new keybinding, `R`, on a **Paused** instance opens the existing
   Session Launch Options modal, seeded with that instance's current
-  launch options (reverse-parsed from its `Program` string).
+  launch options — now all five, Effort included — (reverse-parsed
+  from its `Program` string).
 - Confirming re-composes `Program` with the edited options and resumes
   the instance through the normal resume path (worktree setup,
   crash-recovery `--continue` injection, checkpoint save all
@@ -51,9 +70,12 @@ edits it before resuming.
 - **Persisting per-instance options to `config.json`.** Same as the
   creation-time modal: purely ephemeral, scoped to that instance's
   `Program` string.
-- **A profile/program picker in the restart modal.** Same four
+- **A profile/program picker in the restart modal.** Same five
   toggles as creation; choosing a different underlying agent binary is
   unchanged (out of scope here as it was there).
+- **Auth/eligibility gating for Effort**, same precedent as Model:
+  Claude is responsible for rejecting an invalid `--effort` value
+  itself; loom doesn't pre-validate.
 - **Exact round-trip fidelity for hand-edited `Program` strings.**
   Reverse-parsing only recognizes the flag shapes loom's own code
   inserts. Anything else (a manually added flag, unusual quoting) is
@@ -62,6 +84,35 @@ edits it before resuming.
   corrects one row in the modal.
 
 ## Design
+
+### Adding Effort as a launch option (prerequisite)
+
+Mechanical addition following `Model`'s exact precedent, touching the
+already-shipped headroom-wrap code rather than new files:
+
+- `config/config.go`: `ClaudeEffort *string` field (nil ≡ `"default"`,
+  same rationale as `ClaudePermissionMode`/`ClaudeModel` — a config.json
+  predating this field must not suddenly inject a flag), `Effort()`
+  accessor, `ClaudeEfforts = []string{"default", "low", "medium", "high", "xhigh", "max"}`.
+- `session/agent/adapter.go`: new `ApplyEffortFlag(program, effort string) string`
+  on `Adapter`. `session/agent/claude.go`: inserts `--effort <level>`
+  right after `parts[0]`, no-op for `""`/`"default"`, idempotent —
+  identical shape to `ApplyModelFlag`. `aider.go`/`gemini.go`/`default.go`:
+  one-line no-op passthrough.
+- `session/agent_restart.go`: `BuildEffortCommand(program, effort string) string`,
+  alongside `BuildModelCommand`.
+- `app/remote_control.go`: `overlay.LaunchOptions` gains `Effort string`;
+  `effortProgram(effort, program string) string` alongside
+  `modelProgram`; `launchOptionsFromConfig` reads `cfg.Effort()`;
+  `applyLaunchOptions` composes it in the same run of flag-insertions as
+  Permission Mode and Model (order among these three doesn't affect
+  correctness — each inserts "right after parts[0]", so whichever runs
+  last ends up closest to the binary name — only Headroom Wrap's
+  outermost position is load-bearing).
+- `ui/overlay/claudePreferences.go`: fifth row, `Effort < level >`,
+  cycling `config.ClaudeEfforts` via the existing `nextInList` helper.
+- `ui/overlay/sessionLaunchOptions.go`: fifth row in the creation-time
+  modal, same cycling.
 
 ### Reverse-parsing (`session/agent_restart.go`)
 
@@ -72,15 +123,15 @@ edits it before resuming.
 // would need to recompose it from scratch. It is the symmetric decode
 // of applyLaunchOptions: strips the "headroom wrap " prefix, then
 // scans tokens for --remote-control[=name], --permission-mode <mode>,
-// and --model <model>, removing each recognized flag (and its value
-// token, where applicable) from the returned base program. Recomposing
-// must start from a bare program — applyLaunchOptions's ApplyXFlag
-// functions insert "right after parts[0]", so calling them again on an
-// already-flagged string would insert --model after "headroom", or
-// duplicate an existing --permission-mode. A token this doesn't
-// recognize (e.g. a hand-added flag) is left in place in baseProgram
-// and simply doesn't set the corresponding opts field — never an
-// error.
+// --model <model>, and --effort <level>, removing each recognized flag
+// (and its value token, where applicable) from the returned base
+// program. Recomposing must start from a bare program —
+// applyLaunchOptions's ApplyXFlag functions insert "right after
+// parts[0]", so calling them again on an already-flagged string would
+// insert --model after "headroom", or duplicate an existing
+// --permission-mode. A token this doesn't recognize (e.g. a hand-added
+// flag) is left in place in baseProgram and simply doesn't set the
+// corresponding opts field — never an error.
 func ParseLaunchOptions(program string) (opts overlay.LaunchOptions, baseProgram string)
 ```
 
@@ -147,18 +198,27 @@ instance untouched (not the creation flow's kill-pending).
 
 ## Testing
 
-- `session/agent_restart_test.go`: `TestParseLaunchOptions_RoundTrip`
-  — for all 16 combinations of the four options,
-  `ParseLaunchOptions(applyLaunchOptions(opts, authOK, "claude", "t"))`
-  reproduces `opts` and a `baseProgram` of `"claude"`. Plus targeted
-  cases: absolute-path base program preserved, unrecognized trailing
-  flag left in `baseProgram` and ignored, empty/bare program.
+- `config/config_test.go`: `TestEffort`, `TestClaudeEfforts` — mirroring
+  `TestModel`/`TestClaudeModels`.
+- `session/agent/adapter_test.go`: `TestClaudeEffortFlag` (insertion,
+  idempotence, `""`/`"default"` no-op, composes with `--model`/
+  `--permission-mode`), `TestNonClaudeAdaptersNoEffortFlag`.
+- `session/agent_restart_test.go`: `TestBuildEffortCommand_*`, and
+  `TestParseLaunchOptions_RoundTrip` — a representative cross-section
+  of the five options (each enum's full value set at least once, each
+  boolean both ways, at least one all-on and one all-off case)
+  round-trips through `ParseLaunchOptions(applyLaunchOptions(opts, authOK, "claude", "t"))`
+  back to `opts` and a `baseProgram` of `"claude"`. Plus targeted cases:
+  absolute-path base program preserved, unrecognized trailing flag left
+  in `baseProgram` and ignored, empty/bare program.
+- `ui/overlay/claudePreferences_test.go` / `sessionLaunchOptions_test.go`:
+  extend row navigation/cycling coverage to five rows.
 - `app/state_restart_options_test.go` (new): `R` on a non-Paused
-  instance is a no-op; confirm applies new options and drives
-  Paused→Loading→Running; cancel leaves the instance `Paused` with
-  `Program` unchanged and no overlay; blocked-RC-via-modal routes to
-  the confirm dialog and its cancel branch also leaves the instance
-  untouched (distinct from creation's kill-pending cancel).
+  instance is a no-op; confirm applies new options (including Effort)
+  and drives Paused→Loading→Running; cancel leaves the instance
+  `Paused` with `Program` unchanged and no overlay; blocked-RC-via-modal
+  routes to the confirm dialog and its cancel branch also leaves the
+  instance untouched (distinct from creation's kill-pending cancel).
 - `app/state_launch_options_test.go`: extend to cover
   `pendingLaunchOptionsCancel` — creation flow's cancel still
   pops-and-kills; a stubbed restart-style cancel closure runs instead
