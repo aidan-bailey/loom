@@ -296,7 +296,7 @@ func (m *home) handleHelpState(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	shouldClose, dismissCmd := to.HandleKeyPress(msg)
 	if shouldClose {
 		// Only reset to default if the OnDismiss callback didn't transition to
-		// another state (e.g. checkout's callback sets stateConfirm).
+		// another state (e.g. stash's callback sets stateConfirm).
 		if m.state == stateHelp {
 			m.state = stateDefault
 		}
