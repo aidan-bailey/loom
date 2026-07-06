@@ -22,10 +22,6 @@ func TestBuildRecoveryCommand_ClaudeAlreadyHasResume(t *testing.T) {
 	assert.Equal(t, "claude --resume", BuildRecoveryCommand("claude --resume"))
 }
 
-func TestBuildRecoveryCommand_ThroughHeadroomWrap(t *testing.T) {
-	assert.Equal(t, "headroom wrap claude --continue", BuildRecoveryCommand("headroom wrap claude"))
-}
-
 func TestBuildRecoveryCommand_Aider(t *testing.T) {
 	assert.Equal(t, "aider --model gemma", BuildRecoveryCommand("aider --model gemma"))
 }
@@ -157,40 +153,31 @@ func TestBuildEffortCommand_Unknown(t *testing.T) {
 	assert.Equal(t, "codex", BuildEffortCommand("codex", "high"))
 }
 
-func TestBuildHeadroomWrapCommand_Claude(t *testing.T) {
-	assert.Equal(t, "headroom wrap claude", BuildHeadroomWrapCommand("claude"))
+func TestHeadroomProxyEnv_DisabledIsNoOp(t *testing.T) {
+	assert.Nil(t, HeadroomProxyEnv(false, "claude"))
 }
 
-func TestBuildHeadroomWrapCommand_ClaudeWithFlags(t *testing.T) {
-	assert.Equal(t, "headroom wrap claude --model opus", BuildHeadroomWrapCommand("claude --model opus"))
+func TestHeadroomProxyEnv_EnabledClaude(t *testing.T) {
+	assert.Equal(t, []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787"}, HeadroomProxyEnv(true, "claude"))
 }
 
-func TestBuildHeadroomWrapCommand_Aider(t *testing.T) {
-	assert.Equal(t, "headroom wrap aider --model gemma", BuildHeadroomWrapCommand("aider --model gemma"))
+func TestHeadroomProxyEnv_EnabledClaudeWithFlags(t *testing.T) {
+	assert.Equal(t, []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787"}, HeadroomProxyEnv(true, "claude --model opus"))
 }
 
-func TestBuildHeadroomWrapCommand_Idempotent(t *testing.T) {
-	assert.Equal(t, "headroom wrap claude", BuildHeadroomWrapCommand("headroom wrap claude"))
+func TestHeadroomProxyEnv_EnabledClaudeAbsolutePath(t *testing.T) {
+	assert.Equal(t,
+		[]string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787"},
+		HeadroomProxyEnv(true, "/etc/profiles/per-user/aidanb/bin/claude --model sonnet"),
+	)
 }
 
-func TestBuildHeadroomWrapCommand_EmptyProgram(t *testing.T) {
-	assert.Equal(t, "", BuildHeadroomWrapCommand(""))
+func TestHeadroomProxyEnv_EnabledNonClaudeIsNoOp(t *testing.T) {
+	assert.Nil(t, HeadroomProxyEnv(true, "aider --model gemma"))
+	assert.Nil(t, HeadroomProxyEnv(true, "gemini"))
+	assert.Nil(t, HeadroomProxyEnv(true, "codex"))
 }
 
-// Headroom's `wrap` subcommand takes a fixed tool keyword ("claude"),
-// not an arbitrary binary — `headroom wrap /path/to/claude` fails with
-// "Error: No such command '/path/to/claude'." and exits immediately.
-// This reproduces the real-world config (an absolute path from a Nix
-// profile) that triggered a launch → immediate-exit → repeated
-// tick.tmux_gone_marking_paused loop.
-func TestBuildHeadroomWrapCommand_AbsolutePath(t *testing.T) {
-	assert.Equal(t, "headroom wrap claude", BuildHeadroomWrapCommand("/etc/profiles/per-user/aidanb/bin/claude"))
-	assert.Equal(t, "headroom wrap claude --model sonnet --permission-mode auto",
-		BuildHeadroomWrapCommand("/etc/profiles/per-user/aidanb/bin/claude --model sonnet --permission-mode auto"))
-}
-
-func TestBuildHeadroomWrapCommand_UnsupportedAgentNoOp(t *testing.T) {
-	// gemini isn't one of Headroom's supported wrap targets; wrapping
-	// it would still fail the same way, so this is a no-op.
-	assert.Equal(t, "gemini --model x", BuildHeadroomWrapCommand("gemini --model x"))
+func TestHeadroomProxyEnv_EmptyProgramIsNoOp(t *testing.T) {
+	assert.Nil(t, HeadroomProxyEnv(true, ""))
 }

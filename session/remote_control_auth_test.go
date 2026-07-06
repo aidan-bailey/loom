@@ -77,15 +77,6 @@ func TestDetectClaudeRemoteControlAuth(t *testing.T) {
 	}
 }
 
-func TestDetectClaudeRemoteControlAuth_HeadroomWrap(t *testing.T) {
-	clearOverrideEnv(t)
-	fake := &fakeAuthExecutor{out: []byte(`{"loggedIn":true,"authMethod":"claude.ai"}`)}
-	got := DetectClaudeRemoteControlAuth("headroom wrap claude --model opus", fake)
-	assert.Equal(t, RemoteControlAuthOK, got.State)
-	assert.True(t, fake.called)
-	assert.Equal(t, "claude", fake.gotArgs[0])
-}
-
 func TestDetectClaudeRemoteControlAuth_EnvOverride(t *testing.T) {
 	for _, env := range remoteControlOverrideEnv {
 		t.Run(env, func(t *testing.T) {

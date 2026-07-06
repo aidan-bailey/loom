@@ -106,19 +106,19 @@ type Config struct {
 	// treated identically to "default" (no flag injected; Claude's own
 	// default applies). Read it through PermissionMode.
 	ClaudePermissionMode *string `json:"claude_permission_mode,omitempty"`
-	// HeadroomWrap controls whether new sessions launch wrapped as
-	// `headroom wrap <tool> <args>` for agents Headroom supports (see
-	// session.BuildHeadroomWrapCommand); a no-op for agents it doesn't.
-	// Unlike
-	// ClaudeRemoteControl, this defaults to off (DefaultConfig sets it
-	// explicitly to false) since it's an opt-in wrapper, not a
-	// backward-compatible default. Mutually exclusive with
-	// ClaudeRemoteControl: enabling one disables the other, enforced in
-	// the Claude Preferences toggle handler, the Session Launch Options
-	// modal, and defensively again in applyLaunchOptions so a
-	// hand-edited config.json with both fields true still can't launch
-	// both flags at once. Read it through HeadroomWrapEnabled.
-	HeadroomWrap *bool `json:"headroom_wrap,omitempty"`
+	// HeadroomProxy controls whether new Claude sessions launch with
+	// ANTHROPIC_BASE_URL pointed at Headroom's proxy (see
+	// session.HeadroomProxyEnv). A no-op for agents other than Claude.
+	// Loom does not start or manage the headroom proxy process itself —
+	// the user is expected to have it running separately. Defaults to
+	// off (DefaultConfig sets it explicitly to false) since it's
+	// opt-in. Mutually exclusive with ClaudeRemoteControl: enabling one
+	// disables the other, enforced in the Claude Preferences toggle
+	// handler, the Session Launch Options modal, and defensively again
+	// in applyLaunchOptions so a hand-edited config.json with both
+	// fields true still can't launch both at once. Read it through
+	// HeadroomProxyEnabled.
+	HeadroomProxy *bool `json:"headroom_proxy,omitempty"`
 	// ClaudeModel is the --model value new Claude sessions launch with.
 	// Values are short CLI aliases (not versioned IDs) so the list
 	// stays valid as new models ship without a code change. "default"
@@ -187,10 +187,11 @@ func (c *Config) PermissionMode() string {
 	return *c.ClaudePermissionMode
 }
 
-// HeadroomWrapEnabled reports whether new sessions should launch
-// wrapped as `headroom wrap <program>`. Defaults to false when unset.
-func (c *Config) HeadroomWrapEnabled() bool {
-	return c.HeadroomWrap != nil && *c.HeadroomWrap
+// HeadroomProxyEnabled reports whether new Claude sessions should
+// launch with ANTHROPIC_BASE_URL pointed at Headroom's proxy. Defaults
+// to false when unset.
+func (c *Config) HeadroomProxyEnabled() bool {
+	return c.HeadroomProxy != nil && *c.HeadroomProxy
 }
 
 // Model returns the configured --model alias, defaulting to "default"
@@ -268,7 +269,7 @@ func DefaultConfig() *Config {
 		}(),
 		ClaudeRemoteControl:  boolPtr(true),
 		ClaudePermissionMode: stringPtr("default"),
-		HeadroomWrap:         boolPtr(false),
+		HeadroomProxy:        boolPtr(false),
 		ClaudeModel:          stringPtr("default"),
 		ClaudeEffort:         stringPtr("default"),
 	}

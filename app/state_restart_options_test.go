@@ -15,9 +15,10 @@ func newPausedInstanceHome(t *testing.T) (*home, *session.Instance) {
 	t.Helper()
 	m := homeWithAppState(t)
 	inst, err := session.NewInstance(session.InstanceOptions{
-		Title:   "restart-me",
-		Path:    t.TempDir(),
-		Program: "headroom wrap claude --model sonnet --permission-mode auto",
+		Title:         "restart-me",
+		Path:          t.TempDir(),
+		Program:       "claude --model sonnet --permission-mode auto",
+		HeadroomProxy: true,
 	})
 	require.NoError(t, err)
 	_ = m.list.AddInstance(inst)
@@ -36,7 +37,10 @@ func TestRunRestartWithOptionsSelected_OpensModalSeededFromProgram(t *testing.T)
 	require.NotNil(t, lo)
 	assert.Equal(t, "sonnet", lo.Options().Model)
 	assert.Equal(t, "auto", lo.Options().PermissionMode)
-	assert.True(t, lo.Options().HeadroomWrap)
+	// HeadroomProxy isn't derivable from Program (see
+	// session.HeadroomProxyEnv) — it must be seeded from the instance's
+	// own field instead.
+	assert.True(t, lo.Options().HeadroomProxy)
 }
 
 func TestRunRestartWithOptionsSelected_ConfirmRecomposesProgramAndResumes(t *testing.T) {
@@ -48,7 +52,7 @@ func TestRunRestartWithOptionsSelected_ConfirmRecomposesProgramAndResumes(t *tes
 	_, cmd := pending(overlay.LaunchOptions{PermissionMode: "default", Model: "opus", Effort: "default"})
 
 	assert.Contains(t, inst.Program, "--model opus")
-	assert.NotContains(t, inst.Program, "headroom wrap", "unchecking Headroom Wrap must drop the prefix")
+	assert.False(t, inst.HeadroomProxy, "toggling Headroom Proxy off during restart must update the instance field")
 	assert.Equal(t, stateDefault, m.state)
 	assert.Equal(t, session.Loading, inst.GetStatus())
 	require.NotNil(t, cmd) // the Resume Cmd — not invoked here, just asserting it's returned

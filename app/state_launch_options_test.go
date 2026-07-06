@@ -33,6 +33,7 @@ func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*
 
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
 		instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
+		instance.HeadroomProxy = opts.HeadroomProxy
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
 		return m, nil
@@ -53,6 +54,14 @@ func TestHandleStateLaunchOptionsKeyConfirmComposesAndClearsPending(t *testing.T
 	assert.Equal(t, "claude --permission-mode acceptEdits", instance.Program)
 	assert.Equal(t, stateDefault, m.state)
 	assert.Nil(t, m.pendingLaunchOptions)
+}
+
+func TestHandleStateLaunchOptionsKeyConfirmSetsHeadroomProxy(t *testing.T) {
+	m, instance := newPendingLaunchOptionsHome(t, overlay.LaunchOptions{PermissionMode: "default", Model: "default", HeadroomProxy: true})
+
+	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	assert.True(t, instance.HeadroomProxy)
 }
 
 func TestHandleStateLaunchOptionsKeyTogglesBeforeConfirm(t *testing.T) {

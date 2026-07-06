@@ -17,7 +17,7 @@ type LaunchOptions struct {
 	RemoteControl  bool
 	PermissionMode string
 	Model          string
-	HeadroomWrap   bool
+	HeadroomProxy  bool
 	Effort         string
 }
 
@@ -36,7 +36,7 @@ type SessionLaunchOptions struct {
 }
 
 // sessionLaunchOptionsRowCount is the number of navigable rows: Remote
-// Control, Permission Mode, Model, Headroom Wrap, and Effort.
+// Control, Permission Mode, Model, Headroom Proxy, and Effort.
 const sessionLaunchOptionsRowCount = 5
 
 // NewSessionLaunchOptions creates the modal seeded with initial
@@ -79,22 +79,22 @@ func (l *SessionLaunchOptions) HandleKeyPress(msg tea.KeyPressMsg) (closed, conf
 }
 
 // toggleCursor applies the toggle/cycle action for the focused row,
-// enforcing the same Remote-Control/Headroom-Wrap exclusivity rule as
+// enforcing the same Remote-Control/Headroom-Proxy exclusivity rule as
 // ClaudePreferences.
 func (l *SessionLaunchOptions) toggleCursor() {
 	switch l.cursor {
 	case 0:
 		l.opts.RemoteControl = !l.opts.RemoteControl
 		if l.opts.RemoteControl {
-			l.opts.HeadroomWrap = false
+			l.opts.HeadroomProxy = false
 		}
 	case 1:
 		l.opts.PermissionMode = nextInList(config.ClaudePermissionModes, l.opts.PermissionMode)
 	case 2:
 		l.opts.Model = nextInList(config.ClaudeModels, l.opts.Model)
 	case 3:
-		l.opts.HeadroomWrap = !l.opts.HeadroomWrap
-		if l.opts.HeadroomWrap {
+		l.opts.HeadroomProxy = !l.opts.HeadroomProxy
+		if l.opts.HeadroomProxy {
 			l.opts.RemoteControl = false
 		}
 	case 4:
@@ -132,7 +132,7 @@ func (l *SessionLaunchOptions) Render() string {
 		rcCheck = "[x]"
 	}
 	hwCheck := "[ ]"
-	if l.opts.HeadroomWrap {
+	if l.opts.HeadroomProxy {
 		hwCheck = "[x]"
 	}
 
@@ -140,7 +140,7 @@ func (l *SessionLaunchOptions) Render() string {
 		row(0, "Remote Control    ", rcCheck) + "\n" +
 		row(1, "Permission Mode   ", "< "+l.opts.PermissionMode+" >") + "\n" +
 		row(2, "Model             ", "< "+l.opts.Model+" >") + "\n" +
-		row(3, "Headroom Wrap     ", hwCheck) + "\n" +
+		row(3, "Headroom Proxy    ", hwCheck) + "\n" +
 		row(4, "Effort            ", "< "+l.opts.Effort+" >") + "\n\n" +
 		sessionLaunchOptionsHintStyle.Render("up/down move • space toggle/cycle • enter start • esc cancel")
 

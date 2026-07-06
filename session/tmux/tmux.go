@@ -64,6 +64,10 @@ type TmuxSession struct {
 	// The name of the tmux session and the sanitized name used for tmux commands.
 	sanitizedName string
 	program       string
+	// env holds "KEY=VALUE" entries applied to the tmux session via
+	// `new-session -e` — e.g. ANTHROPIC_BASE_URL when Headroom Proxy is
+	// enabled. Scoped to just this session; never touches t.program.
+	env []string
 	// ptyFactory is used to create a PTY for the tmux session.
 	ptyFactory PtyFactory
 	// cmdExec is used to execute commands in the tmux session.
@@ -140,6 +144,19 @@ func ToLegacyTmuxName(str string) string {
 	return fmt.Sprintf("%s%s", LegacyTmuxPrefix, str)
 }
 
+// terminalSessionPrefix distinguishes a terminal pane's tmux session from
+// its instance's agent session, which otherwise share the same title.
+const terminalSessionPrefix = "term_"
+
+// TerminalSessionName returns the raw (pre-ToLoomTmuxName) tmux session
+// name for the terminal pane belonging to the instance with the given
+// title. Centralized here so session.Instance can tear this session down
+// by name — without depending on ui.TerminalPane — and ui/terminal.go can
+// construct the identical name when creating it.
+func TerminalSessionName(title string) string {
+	return terminalSessionPrefix + title
+}
+
 // RenameLegacySessions renames any tmux sessions matching the legacy
 // claudesquad_* prefix to their loom_* equivalent so that in-flight
 // sessions from a pre-rename binary continue to be found by reconcile
@@ -178,22 +195,24 @@ func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
 // NewTmuxSession constructs a TmuxSession wired to the production PTY
 // factory and subprocess executor. The tmux session is NOT created at
 // this point — call Start (for a fresh session) or Restore (to attach
-// to one that already exists on disk).
-func NewTmuxSession(name string, program string) *TmuxSession {
-	return newTmuxSession(name, program, MakePtyFactory(), internalexec.Default{})
+// to one that already exists on disk). env, if given, is a set of
+// "KEY=VALUE" pairs applied to the tmux session via `new-session -e`.
+func NewTmuxSession(name string, program string, env ...string) *TmuxSession {
+	return newTmuxSession(name, program, MakePtyFactory(), internalexec.Default{}, env...)
 }
 
 // NewTmuxSessionWithDeps is [NewTmuxSession] with injected dependencies
 // for tests. Pass a fake [PtyFactory] and [internalexec.Executor] to
 // avoid spawning real subprocesses or allocating real PTYs.
-func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor) *TmuxSession {
-	return newTmuxSession(name, program, ptyFactory, cmdExec)
+func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor, env ...string) *TmuxSession {
+	return newTmuxSession(name, program, ptyFactory, cmdExec, env...)
 }
 
-func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor) *TmuxSession {
+func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor, env ...string) *TmuxSession {
 	return &TmuxSession{
 		sanitizedName: ToLoomTmuxName(name),
 		program:       program,
+		env:           env,
 		ptyFactory:    ptyFactory,
 		cmdExec:       cmdExec,
 		// monitor is always non-nil for the session's lifetime so HasUpdated
@@ -231,7 +250,12 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	// returns control; tmux itself is quick, but the wrapped program may not be.
 	startCtx, startCancel := context.WithTimeout(context.Background(), tmuxStartTimeout)
 	defer startCancel()
-	cmd := exec.CommandContext(startCtx, "tmux", "new-session", "-d", "-s", t.sanitizedName, "-c", workDir, t.program)
+	args := []string{"new-session", "-d", "-s", t.sanitizedName, "-c", workDir}
+	for _, e := range t.env {
+		args = append(args, "-e", e)
+	}
+	args = append(args, t.program)
+	cmd := exec.CommandContext(startCtx, "tmux", args...)
 
 	ptmx, err := t.ptyFactory.Start(cmd)
 	if err != nil {
@@ -502,6 +526,16 @@ func (t *TmuxSession) SimulateStuckPumpForTest() {
 	t.stateMu.Unlock()
 }
 
+// SetCmdExecForTest swaps this session's executor after construction, so a
+// test can assert on the commands issued by methods (like Close or
+// CloseRelatedSession) that a fixture built via NewTmuxSessionWithDeps
+// already exercises for other purposes.
+// Test-only: the name and doc comment are guardrails, nothing about the
+// method enforces test-only use.
+func (t *TmuxSession) SetCmdExecForTest(cmdExec internalexec.Executor) {
+	t.cmdExec = cmdExec
+}
+
 // waitPumpExit blocks until the current pump goroutine signals exit or
 // pumpWaitTimeout elapses, whichever comes first. Only the pump
 // goroutine ever closes pumpDone, so callers must not close it
@@ -757,6 +791,23 @@ func (t *TmuxSession) Close() error {
 		errMsg += "\n  - " + err.Error()
 	}
 	return errors.New(errMsg)
+}
+
+// CloseRelatedSession best-effort kills another tmux session identified by
+// its raw (pre-ToLoomTmuxName) name, reusing this session's cmdExec. It
+// does not touch t's own PTY/emulator state.
+//
+// This exists so a resource whose lifecycle is tied to this session (e.g.
+// the terminal pane's shell, which shares this instance's title but is
+// otherwise untracked by *TmuxSession) can be torn down at the same point
+// this session is — without the caller needing its own injected executor.
+// The common case is "no such session", which is expected and harmless.
+func (t *TmuxSession) CloseRelatedSession(rawName string) error {
+	name := ToLoomTmuxName(rawName)
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", name)
+	return t.cmdExec.Run(cmd)
 }
 
 // SetDetachedSize set the width and height of the session while detached. This makes the

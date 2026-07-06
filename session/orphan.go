@@ -385,6 +385,10 @@ func RemoveOrphanWorktree(repoPath, worktreePath string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("remove worktree %s: %w (%s)", worktreePath, err, strings.TrimSpace(string(out)))
 	}
+	// Drop the title sidecar so it doesn't linger beside a now-removed
+	// worktree — otherwise a later orphan scan of the (now-gone) path
+	// leaves a dangling <path>.loom-title file forever.
+	git.RemoveTitleSidecar(worktreePath)
 	return nil
 }
 

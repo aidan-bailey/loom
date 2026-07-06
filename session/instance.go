@@ -120,6 +120,13 @@ type Instance struct {
 	Status Status
 	// Program is the program to run in the instance.
 	Program string
+	// HeadroomProxy controls whether this instance's tmux session gets
+	// ANTHROPIC_BASE_URL pointed at Headroom's proxy (see
+	// session.HeadroomProxyEnv). A no-op unless Program resolves to
+	// Claude. Set once before Start() (same convention as Program) and
+	// persisted so pause/resume and crash recovery — which construct a
+	// brand new TmuxSession for the same instance — still apply it.
+	HeadroomProxy bool
 	// Height is the height of the instance.
 	Height int
 	// Width is the width of the instance.
@@ -199,6 +206,7 @@ func (i *Instance) Snapshot() InstanceData {
 		CreatedAt:           i.CreatedAt,
 		UpdatedAt:           time.Now(),
 		Program:             i.Program,
+		HeadroomProxy:       i.HeadroomProxy,
 		IsWorkspaceTerminal: i.IsWorkspaceTerminal,
 	}
 
@@ -249,6 +257,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		CreatedAt:           data.CreatedAt,
 		UpdatedAt:           data.UpdatedAt,
 		Program:             data.Program,
+		HeadroomProxy:       data.HeadroomProxy,
 		ConfigDir:           configDir,
 		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
 		logger:              log.For("instance", "title", data.Title),
@@ -286,7 +295,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 	// silently no-ops and the row never leaves the list.
 	if instance.Paused() || instance.GetStatus() == Recoverable {
 		instance.setStarted(true)
-		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program))
+		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program, HeadroomProxyEnv(instance.HeadroomProxy, instance.Program)...))
 	}
 
 	return instance, nil
@@ -336,6 +345,9 @@ type InstanceOptions struct {
 	Path string
 	// Program is the program to run in the instance (e.g. "claude", "aider --model ollama_chat/gemma3:1b")
 	Program string
+	// HeadroomProxy controls whether this instance's tmux session gets
+	// ANTHROPIC_BASE_URL pointed at Headroom's proxy. See Instance.HeadroomProxy.
+	HeadroomProxy bool
 	// Branch is an existing branch name to start the session on (empty = new branch from HEAD)
 	Branch string
 	// ConfigDir is the workspace config directory for worktree resolution.
@@ -363,6 +375,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		Status:              Ready,
 		Path:                absPath,
 		Program:             opts.Program,
+		HeadroomProxy:       opts.HeadroomProxy,
 		Height:              0,
 		Width:               0,
 		CreatedAt:           t,
@@ -526,7 +539,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 	ts := i.getTmuxSession()
 	if ts == nil {
 		// Create new tmux session
-		ts = tmux.NewTmuxSession(i.Title, i.Program)
+		ts = tmux.NewTmuxSession(i.Title, i.Program, HeadroomProxyEnv(i.HeadroomProxy, i.Program)...)
 	}
 	i.setTmuxSession(ts)
 
@@ -646,6 +659,13 @@ func (i *Instance) Kill() (err error) {
 	if tmuxSess != nil {
 		if err := tmuxSess.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close tmux session: %w", err))
+		}
+		// See the matching comment in Pause: the terminal pane's tmux
+		// session is untracked by Instance and must be killed alongside
+		// the agent session, or it leaks until the next app-startup
+		// orphan sweep. Best-effort: "no such session" is the common case.
+		if err := tmuxSess.CloseRelatedSession(tmux.TerminalSessionName(i.Title)); err != nil {
+			log.For("session").Debug("kill_close_terminal_tmux_failed", "title", i.Title, "err", err)
 		}
 	}
 
@@ -959,6 +979,18 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 		// Continue with pause process; the tmux session may already be dead.
 	}
 
+	// The terminal pane (ui.TerminalPane) runs its own tmux session for
+	// this instance, keyed by the same title but tracked entirely outside
+	// Instance/TmuxSession. If it survives past this point, its shell stays
+	// cd'd into the worktree directory we're about to delete below; Resume
+	// would then silently reattach to that now-orphaned directory instead
+	// of the freshly recreated worktree. Kill it here so the invariant
+	// holds for every caller, not just the UI's pauseActionFor. Best-effort:
+	// "no such session" (never opened) is the common case.
+	if err := ts.CloseRelatedSession(tmux.TerminalSessionName(i.Title)); err != nil {
+		log.For("session").Debug("pause_close_terminal_tmux_failed", "err", err)
+	}
+
 	// Check if worktree exists before trying to remove it
 	if _, err := os.Stat(gw.GetWorktreePath()); err == nil {
 		// Remove worktree but keep branch
@@ -1077,7 +1109,7 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 // their prior conversation (e.g. `claude --continue`).
 func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 	program := BuildRecoveryCommand(i.Program)
-	ts := tmux.NewTmuxSession(i.Title, program)
+	ts := tmux.NewTmuxSession(i.Title, program, HeadroomProxyEnv(i.HeadroomProxy, program)...)
 	if err := ts.Start(gw.GetWorktreePath()); err != nil {
 		if cleanupErr := gw.Cleanup(); cleanupErr != nil {
 			err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
@@ -1094,7 +1126,7 @@ func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 // supported agents.
 func (i *Instance) CrashRestart() error {
 	program := BuildRecoveryCommand(i.Program)
-	ts := tmux.NewTmuxSession(i.Title, program)
+	ts := tmux.NewTmuxSession(i.Title, program, HeadroomProxyEnv(i.HeadroomProxy, program)...)
 
 	var workDir string
 	if i.IsWorkspaceTerminal {

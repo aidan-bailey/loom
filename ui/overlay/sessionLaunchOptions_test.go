@@ -27,25 +27,25 @@ func TestSessionLaunchOptionsCyclesPermissionModeAndModel(t *testing.T) {
 	assert.Equal(t, "sonnet", lo.Options().Model)
 }
 
-func TestSessionLaunchOptionsHeadroomWrapExcludesRemoteControl(t *testing.T) {
+func TestSessionLaunchOptionsHeadroomProxyExcludesRemoteControl(t *testing.T) {
 	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true}, false, "")
 
 	for i := 0; i < 3; i++ {
 		lo.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
-	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "}) // toggle Headroom Wrap on
+	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "}) // toggle Headroom Proxy on
 
-	assert.True(t, lo.Options().HeadroomWrap)
-	assert.False(t, lo.Options().RemoteControl, "enabling Headroom Wrap must disable Remote Control")
+	assert.True(t, lo.Options().HeadroomProxy)
+	assert.False(t, lo.Options().RemoteControl, "enabling Headroom Proxy must disable Remote Control")
 }
 
-func TestSessionLaunchOptionsRemoteControlExcludesHeadroomWrap(t *testing.T) {
-	lo := NewSessionLaunchOptions(LaunchOptions{HeadroomWrap: true}, false, "")
+func TestSessionLaunchOptionsRemoteControlExcludesHeadroomProxy(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{HeadroomProxy: true}, false, "")
 
 	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "}) // row 0: toggle Remote Control on
 
 	assert.True(t, lo.Options().RemoteControl)
-	assert.False(t, lo.Options().HeadroomWrap, "enabling Remote Control must disable Headroom Wrap")
+	assert.False(t, lo.Options().HeadroomProxy, "enabling Remote Control must disable Headroom Proxy")
 }
 
 func TestSessionLaunchOptionsRowNavigationClamps(t *testing.T) {
@@ -95,14 +95,14 @@ func TestSessionLaunchOptions_EffortRowCycles(t *testing.T) {
 }
 
 func TestSessionLaunchOptionsRendersAllFiveRows(t *testing.T) {
-	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true, PermissionMode: "plan", Model: "opus", HeadroomWrap: false, Effort: "high"}, false, "")
+	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true, PermissionMode: "plan", Model: "opus", HeadroomProxy: false, Effort: "high"}, false, "")
 	rendered := lo.Render()
 	assert.Contains(t, rendered, "Remote Control")
 	assert.Contains(t, rendered, "Permission Mode")
 	assert.Contains(t, rendered, "plan")
 	assert.Contains(t, rendered, "Model")
 	assert.Contains(t, rendered, "opus")
-	assert.Contains(t, rendered, "Headroom Wrap")
+	assert.Contains(t, rendered, "Headroom Proxy")
 	assert.Contains(t, rendered, "Effort")
 	assert.Contains(t, rendered, "high")
 }

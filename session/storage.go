@@ -22,7 +22,7 @@ var ErrInstanceNotFound = errors.New("instance not found")
 // CurrentSchemaVersion is the schema version written by the current
 // binary. Any on-disk InstanceData with a lower SchemaVersion is routed
 // through storage_migrate.go's Migrate before use.
-const CurrentSchemaVersion = 3
+const CurrentSchemaVersion = 4
 
 // InstanceData represents the serializable data of an Instance.
 //
@@ -42,6 +42,7 @@ type InstanceData struct {
 	UpdatedAt time.Time `json:"updated_at"`
 
 	Program             string          `json:"program"`
+	HeadroomProxy       bool            `json:"headroom_proxy,omitempty"`
 	Worktree            GitWorktreeData `json:"worktree"`
 	DiffStats           DiffStatsData   `json:"diff_stats"`
 	IsWorkspaceTerminal bool            `json:"is_workspace_terminal"`

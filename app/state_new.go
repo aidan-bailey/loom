@@ -59,6 +59,7 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			startTask := overlay.ConfirmationTask{
 				Sync: func() {
 					instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
+					instance.HeadroomProxy = opts.HeadroomProxy
 					_ = instance.TransitionTo(session.Loading)
 					m.newInstanceFinalizer()
 					m.promptAfterName = false
