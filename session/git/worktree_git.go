@@ -225,6 +225,14 @@ func (g *GitWorktree) CommitChanges(commitMessage string) error {
 //     parent2..commit for the worktree) restores them via the second
 //     diff, same as it would for a real `stash push -u` entry.
 //
+// Note this is deliberately a two-parent commit, not real git's
+// three-parent (b, i, u) --include-untracked format — there is no
+// separate untracked-only commit unpacked straight onto disk. Building
+// that would mean reproducing stash's internal object plumbing exactly;
+// instead ApplyStash restores content via this simpler shape and then
+// re-derives the tracked/untracked classification itself (see its doc
+// comment) so the user-visible result still matches real stash.
+//
 // `git stash store` then anchors the resulting commit against gc
 // (dangling commits are prunable after gc.pruneExpire) and makes it
 // visible via `git stash list` for manual recovery, using the SHA —
@@ -295,12 +303,28 @@ func (g *GitWorktree) StashChanges(message string) (string, error) {
 // ApplyStash applies the stash commit sha onto the worktree, targeting
 // the exact commit rather than stack position (stash@{0}) — refs/stash
 // is shared across every worktree of this repo. A no-op for an empty
-// sha. On a clean apply, the matching stash-list entry is dropped
-// (best-effort; a failed drop is logged, not returned, since the
-// restore itself already succeeded). On conflict, the stash entry is
-// left in place — mirroring `git stash pop`'s own safety behavior —
-// and the error is returned so the caller does not clear its
-// reference to it.
+// sha.
+//
+// Because StashChanges' commit is two-parent (see its doc comment),
+// `git stash apply` treats every previously-untracked file as a clean
+// "add" against the index, so it comes back staged (`git status`
+// would show it as `A`) rather than untracked (`??`) — unlike real
+// `git stash apply -u`, which restores untracked content straight to
+// disk without touching the index. To match the user-visible result
+// of a real stash, ApplyStash finds every path that is newly added in
+// the index relative to HEAD (`git diff --cached --diff-filter=A`)
+// and unstages it (`git reset --`); the file's content on disk is
+// untouched, only its index entry is removed, so it reads back as
+// untracked. Best-effort: a failure here is logged, not returned,
+// since the restore itself already succeeded and the file is still
+// present (just staged) either way.
+//
+// On a clean apply, the matching stash-list entry is dropped
+// (also best-effort, logged not returned, for the same reason). On
+// conflict, the stash entry is left in place — mirroring `git stash
+// pop`'s own safety behavior — and the error is returned so the
+// caller does not clear its reference to it; neither the unstage nor
+// the drop step runs in that case.
 func (g *GitWorktree) ApplyStash(sha string) error {
 	if sha == "" {
 		return nil
@@ -308,8 +332,39 @@ func (g *GitWorktree) ApplyStash(sha string) error {
 	if _, err := g.runGitCommand(g.worktreePath, "stash", "apply", sha); err != nil {
 		return fmt.Errorf("failed to apply stash: %w", err)
 	}
+	if err := g.unstageNewlyAddedFiles(); err != nil {
+		log.For("git").Warn("stash.unstage_new_files_failed", "err", err.Error())
+	}
 	if err := g.DropStash(sha); err != nil {
 		log.For("git").Warn("stash.drop_after_apply_failed", "err", err.Error())
+	}
+	return nil
+}
+
+// unstageNewlyAddedFiles unstages every path present in the index but
+// absent from HEAD's tree, turning files ApplyStash just staged as
+// "added" back into untracked working-tree files (content on disk is
+// untouched — only the index entry is removed). See ApplyStash's doc
+// comment for why this is needed: its commit format can't distinguish
+// "was untracked" from "was newly staged" any other way. A no-op if
+// nothing qualifies.
+func (g *GitWorktree) unstageNewlyAddedFiles() error {
+	out, err := g.runGitCommand(g.worktreePath, "diff", "--cached", "--name-only", "--diff-filter=A", "HEAD")
+	if err != nil {
+		return fmt.Errorf("failed to list newly staged files: %w", err)
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\n") {
+		if p = strings.TrimSpace(p); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"reset", "--"}, paths...)
+	if _, err := g.runGitCommand(g.worktreePath, args...); err != nil {
+		return fmt.Errorf("failed to unstage newly added files: %w", err)
 	}
 	return nil
 }
@@ -323,6 +378,15 @@ func (g *GitWorktree) ApplyStash(sha string) error {
 // against repoPath rather than worktreePath since refs/stash is a
 // repo-level concept and the worktree directory may not exist at call
 // time (e.g. after Kill has already removed it).
+//
+// Narrow TOCTOU: the loop resolves stash@{N} -> sha, then reuses that
+// same stash@{N} name in the "stash drop" call below rather than the
+// resolved sha, so a concurrent push from another worktree that lands
+// between the two could shift what stash@{N} refers to. Left as-is
+// deliberately — git serializes stash ref updates, so the window is a
+// single process's gap between two subprocess calls, and worst case is
+// a failed/no-op drop (caught by the caller's own list scan on any
+// retry), not data loss.
 func (g *GitWorktree) DropStash(sha string) error {
 	if sha == "" {
 		return nil

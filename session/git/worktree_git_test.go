@@ -95,9 +95,50 @@ func TestApplyStash_RestoresAndDrops(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "new\n", string(untracked))
 
+	// The file must read back as untracked (`??`), not staged (`A `),
+	// matching what a real `git stash pop -u` leaves behind — even
+	// though ApplyStash's underlying commit format restores it via the
+	// index and has to explicitly unstage it afterward to get there.
+	statusOut, err := exec.Command("git", "-C", dir, "status", "--porcelain").CombinedOutput()
+	require.NoError(t, err)
+	assert.Contains(t, string(statusOut), "?? untracked.txt", "previously-untracked file must come back untracked, not staged")
+	assert.NotContains(t, string(statusOut), "A  untracked.txt", "previously-untracked file must not be left staged")
+
 	out, err := exec.Command("git", "-C", dir, "stash", "list").CombinedOutput()
 	require.NoError(t, err)
 	assert.Empty(t, strings.TrimSpace(string(out)), "ApplyStash must drop the entry after a clean apply")
+}
+
+// TestApplyStash_PreviouslyUntrackedFileStaysUntracked is a dedicated
+// regression guard (separate from TestApplyStash_RestoresAndDrops'
+// inline assertion) for the classification bug: ApplyStash's restore
+// mechanism folds tracked and untracked changes into one commit/tree,
+// so a naive `git stash apply` stages every previously-untracked file
+// as a clean "add". ApplyStash must unstage those paths afterward so
+// `git status --porcelain` reports them as `??`, matching what a real
+// `git stash pop -u` leaves behind, not `A ` (staged).
+func TestApplyStash_PreviouslyUntrackedFileStaysUntracked(t *testing.T) {
+	gw := newStashTestRepo(t)
+	dir := gw.GetWorktreePath()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "brand_new.txt"), []byte("hello\n"), 0644))
+	sha, err := gw.StashChanges("untracked-only stash")
+	require.NoError(t, err)
+	require.NotEmpty(t, sha)
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "brand_new.txt")))
+
+	require.NoError(t, gw.ApplyStash(sha))
+
+	content, err := os.ReadFile(filepath.Join(dir, "brand_new.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello\n", string(content))
+
+	out, err := exec.Command("git", "-C", dir, "status", "--porcelain").CombinedOutput()
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	require.Len(t, lines, 1)
+	assert.Equal(t, "?? brand_new.txt", strings.TrimSpace(lines[0]))
 }
 
 func TestApplyStash_EmptyShaIsNoOp(t *testing.T) {
