@@ -1,8 +1,77 @@
-## [0.5.1] - 2026-07-06
+## [0.6.0] - 2026-07-06
+
+### 🚀 Features
+
+- *(git)* Add StashChanges/ApplyStash/DropStash to GitWorktree
+- *(git)* Add a mutable StashRef field to GitWorktree
+- *(session)* Persist StashRef on GitWorktreeData, bump schema to v3
+- *(session)* Stash uncommitted changes on Pause instead of auto-committing
+- *(session)* Restore stashed changes on Resume
+- *(session)* Thread StashRef through Snapshot/FromInstanceData/reconcile
+- *(config)* Add ClaudeEffort/ClaudeEfforts/Effort()
+- *(agent)* Add ApplyEffortFlag to the Adapter interface
+- *(session)* Add BuildEffortCommand
+- *(ui)* Add Effort as a fifth Session Launch Options row
+- *(ui)* Add Effort as a fifth Claude Preferences row
+- *(app)* Compose Effort into applyLaunchOptions
+- *(app)* Add ParseLaunchOptions, the reverse of applyLaunchOptions
+- *(app,script)* Wire the R keybinding to a stub RestartWithOptionsIntent handler
+- *(app)* Implement restart-with-options — reverse-parse, seed modal, resume
+- *(tmux)* Support per-session env vars via new-session -e
+- *(session)* Add HeadroomProxyEnv, delete BuildHeadroomWrapCommand
+- *(session)* Add InstanceData.HeadroomProxy, bump schema to v3
+- *(session)* Wire Instance.HeadroomProxy into tmux session creation
+- *(app)* Set Instance.HeadroomProxy at every instance-creation site
+- Add Cache TTL (1h) launch option for Claude's prompt cache
 
 ### 🐛 Bug Fixes
 
 - Pass the matched adapter name to headroom wrap, not the raw program
+- *(git)* Unstage previously-untracked files after ApplyStash
+- *(session)* Drop a Paused instance's leftover stash on Kill
+- *(ui)* Drop Effort's empty-string normalization, match sibling rows
+- *(app)* Guard Async against a failed Loading transition, add missing RequestWindowSize
+- *(app)* Fix RequestWindowSize for the blocked-RC restart path
+- *(session)* Remove .loom-title sidecar when auto-cleaning orphaned worktrees
+- *(session)* Kill terminal pane's tmux session on pause/kill
+- *(cmd)* Mirror InstanceData.HeadroomProxy in migrationInstance
+- *(app)* Check focused pane's tmux liveness during inline attach
+
+### 🚜 Refactor
+
+- *(keys)* Rename KeyCheckout to KeyStash, key 'c' to 's'
+- *(app)* Rename helpTypeInstanceCheckout to helpTypeInstanceStash
+- *(script)* Rename CheckoutIntent/checkout_selected to Stash
+- *(app,ui)* Rename checkout call sites to stash
+- *(app)* Generalize the Session Launch Options cancel path
+- *(agent)* Stop parsing a headroom-wrap prefix out of program
+- *(config)* Rename HeadroomWrap to HeadroomProxy
+- *(ui)* Rename Headroom Wrap to Headroom Proxy in both screens
+- *(app)* Drop headroom-wrap command composition step
+
+### 📚 Documentation
+
+- Add design spec for restarting a paused session with new options
+- Fold Effort into the restart-launch-options design spec
+- Switch Pause/Resume to git stash instead of an auto-commit
+- Rename the checkout keybinding to stash in the design spec
+- Add implementation plan for restart-launch-options
+- *(app)* Update stale 'checkout' comment reference to 'stash'
+- Fix remaining stale checkout references in scripting.md and intents.go
+- Update checkout references to stash in current-state docs
+- Describe stash-based (not commit-based) Pause/Resume in USAGE.md
+- Fix remaining stale wording found in Phase 2 doc review
+- Document the R (resume with options) keybinding
+- *(app)* Drop stale 'added in a later task' from a landed comment
+- *(spec)* Design Headroom Proxy (env-var) replacement for Headroom Wrap
+- *(plan)* Implementation plan for Headroom Proxy
+
+### 🧪 Testing
+
+- *(session)* Exercise tracked-file modification in Resume stash test
+- Rename checkout references to stash across the suite
+- *(ui)* Update stale row-count test name/assertions for Effort row
+- *(app)* Dispatch a real cancel keypress for the blocked-RC restart guard
 
 ## [0.5.0] - 2026-07-06
 
@@ -56,6 +125,7 @@
 
 - Add design spec for Claude permission-mode setting
 - Add implementation plan for Claude permission-mode setting
+
 ## [0.3.0] - 2026-07-01
 
 ### 🚀 Features
@@ -185,6 +255,7 @@
 - Log raw emulator line count vs pane height (panesize diag)
 - Log terminal pane height (panesize diag)
 - Remove temporary panesize diagnostics
+
 ## [0.1.4] - 2026-06-19
 
 ### 🚀 Features
@@ -206,6 +277,7 @@
 
 - *(nix)* Derive flake version from main.go at eval time
 - Run the test suite under the race detector
+
 ## [0.1.3] - 2026-05-11
 
 ### 🚀 Features
@@ -223,6 +295,7 @@
 - *(app)* Trigger orphan recovery on workspace registration
 - *(session,app)* Preserve reconcile failures across all load paths
 - *(app)* Route recovered orphans to their source workspace
+
 ## [0.1.2] - 2026-05-04
 
 ### 🚀 Features
@@ -237,6 +310,7 @@
 ### 📚 Documentation
 
 - *(script)* Add open_emacs sample script
+
 ## [0.1.1] - 2026-04-21
 
 ### 🚀 Features
@@ -256,6 +330,7 @@
 
 - *(release)* Pass changelog file path directly to goreleaser
 - *(ui)* Rebrand fallback splash from claude-squad to loom
+
 ## [0.1.0] - 2026-04-20
 
 ### 🚀 Features
