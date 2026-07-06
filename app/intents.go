@@ -371,10 +371,52 @@ func runResumeOrRecover(m *home) (tea.Model, tea.Cmd) {
 	return runResumeSelected(m)
 }
 
-// runRestartWithOptionsSelected is implemented in a later task; this
-// stub only exists so the dispatch wiring compiles in the interim.
+// runRestartWithOptionsSelected opens the Session Launch Options modal
+// for the selected Paused instance, seeded from its current
+// (reverse-parsed) launch options. Confirming re-composes Program
+// against the recovered base program and resumes through the same
+// Loading-transition/Resume/save-checkpoint shape runResumeSelected
+// uses directly; canceling leaves the instance Paused and untouched
+// (pendingLaunchOptionsCancel, not the creation flow's pop-and-kill).
 func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
-	return m, nil
+	selected := m.list.GetSelectedInstance()
+	opts, base := ParseLaunchOptions(selected.Program)
+
+	m.pendingLaunchOptions = func(newOpts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
+		resumeTitle := selected.Title
+		resumeTask := overlay.ConfirmationTask{
+			Sync: func() {
+				selected.Program = applyLaunchOptions(newOpts, m.rcAuth, base, selected.Title)
+				m.state = stateDefault
+				m.menu.SetState(ui.StateDefault)
+				if err := selected.TransitionTo(session.Loading); err != nil {
+					log.For("app").Warn("resume.skipped", "err", err)
+				}
+			},
+			Async: func() tea.Msg {
+				saveFunc := func() error {
+					return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
+				}
+				if err := selected.Resume(saveFunc); err != nil {
+					return transitionFailedMsg{title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
+				}
+				return resumeDoneMsg{}
+			},
+		}
+		if m.remoteControlBlocked(effectiveRemoteControl(newOpts), selected.Program) {
+			return m, m.promptRestartRemoteControlBlocked(resumeTask)
+		}
+		return m, tea.Batch(resumeTask.Run(), m.instanceChanged())
+	}
+	m.pendingLaunchOptionsCancel = func() (tea.Model, tea.Cmd) {
+		m.state = stateDefault
+		m.menu.SetState(ui.StateDefault)
+		return m, nil
+	}
+	m.state = stateLaunchOptions
+	m.setOverlay(overlay.NewSessionLaunchOptions(opts, m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
+	m.menu.SetState(ui.StateNewInstance)
+	return m, tea.RequestWindowSize
 }
 
 // runRecoverSelected adopts the selected Recoverable orphan: it serializes

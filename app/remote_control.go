@@ -200,3 +200,32 @@ func (m *home) promptRemoteControlBlocked(startWithoutRC overlay.ConfirmationTas
 	m.setOverlay(co, overlayConfirmation)
 	return nil
 }
+
+// promptRestartRemoteControlBlocked shows the "remote control
+// unavailable" modal for the restart-with-options flow.
+// resumeWithoutRC is the SAME task that would have run directly if
+// auth weren't blocked — remoteControlProgram already omits
+// --remote-control when auth isn't OK regardless of the enabled flag,
+// so confirming here just proceeds with the composition the caller
+// was always going to apply. Unlike promptRemoteControlBlocked
+// (creation flow, which pops/kills the pending not-yet-started
+// instance on cancel), cancel here just returns to stateDefault — the
+// already-existing Paused instance is untouched. handleStateConfirmKey
+// unconditionally calls m.pendingConfirmation.Run() once the overlay
+// reports closed=true (confirm AND cancel alike), so OnCancel must
+// neutralize pendingConfirmation to a zero-value ConfirmationTask —
+// otherwise cancel would still execute resumeWithoutRC's Sync/Async.
+func (m *home) promptRestartRemoteControlBlocked(resumeWithoutRC overlay.ConfirmationTask) tea.Cmd {
+	m.state = stateConfirm
+	m.pendingConfirmation = resumeWithoutRC
+	msg := "Remote control unavailable: " + m.rcAuth.Reason + "\n\nResume this session without remote control?"
+	co := overlay.NewConfirmationOverlay(msg)
+	co.SetWidth(60)
+	co.OnCancel = func() {
+		m.state = stateDefault
+		m.menu.SetState(ui.StateDefault)
+		m.pendingConfirmation = overlay.ConfirmationTask{}
+	}
+	m.setOverlay(co, overlayConfirmation)
+	return nil
+}

@@ -179,6 +179,21 @@ func TestHandleScriptIntentRestartWithOptions_NotPausedIsNoOp(t *testing.T) {
 	assert.Equal(t, stateDefault, m.state)
 }
 
+func TestHandleScriptIntentRestartWithOptions(t *testing.T) {
+	m := homeWithAppState(t)
+	inst, err := session.NewInstance(session.InstanceOptions{Title: "a", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	_ = m.list.AddInstance(inst)
+	require.NoError(t, inst.TransitionTo(session.Running))
+	require.NoError(t, inst.TransitionTo(session.Paused))
+
+	m.handleScriptIntent(pendingIntent{
+		id:     script.NewIntentID(),
+		intent: script.RestartWithOptionsIntent{},
+	})
+	assert.Equal(t, stateLaunchOptions, m.state)
+}
+
 func TestHandleScriptIntentNewInstance(t *testing.T) {
 	m := newTestHome(t)
 
