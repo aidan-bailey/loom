@@ -430,6 +430,14 @@ func (s *SplitPane) TerminalTmuxSession() *tmux.TmuxSession {
 	return s.terminal.CurrentTmuxSession()
 }
 
+// InjectTerminalSessionForTest installs ts as the cached terminal session for
+// the given instance title, bypassing the terminal pane's normal lazy-spawn
+// path. Test-only: the name and doc comment are guardrails, nothing about
+// the method enforces test-only use.
+func (s *SplitPane) InjectTerminalSessionForTest(title string, ts *tmux.TmuxSession, worktreePath string) {
+	s.terminal.InjectSessionForTest(title, ts, worktreePath)
+}
+
 // CleanupTerminal closes the terminal session.
 func (s *SplitPane) CleanupTerminal() {
 	s.terminal.Close()

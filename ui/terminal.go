@@ -302,6 +302,18 @@ func (t *TerminalPane) ensureSessionLocked(instance *session.Instance) error {
 	return nil
 }
 
+// InjectSessionForTest installs ts as the cached terminal session for the
+// given instance title, bypassing ensureSessionLocked's normal lazy-spawn
+// path so a test can pin a specific (possibly dead) session in place.
+// Test-only: the name and doc comment are guardrails, nothing about the
+// method enforces test-only use.
+func (t *TerminalPane) InjectSessionForTest(title string, ts *tmux.TmuxSession, worktreePath string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sessions[title] = &terminalSession{tmuxSession: ts, worktreePath: worktreePath}
+	t.currentTitle = title
+}
+
 // CurrentTmuxSession returns the cached tmux session for the currently
 // displayed instance, or nil if none exists or the session is dead. Intended
 // for callers that drive full-screen attach via tea.ExecProcess.

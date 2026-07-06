@@ -643,11 +643,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scriptResumeMsg:
 		return m, m.handleScriptResume(msg)
 	case previewTickMsg:
-		// Check if inline-attached instance is still alive
+		// Check if the inline-attached pane's own session is still alive
+		// (see focusedPaneAlive: the agent and terminal panes have
+		// independent tmux sessions, so this must track whichever one is
+		// actually focused, not always the agent's).
 		inlineAttachExited := false
 		if m.state == stateInlineAttach {
 			selected := m.list.GetSelectedInstance()
-			if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+			if selected == nil || selected.Paused() || !focusedPaneAlive(m, selected) {
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
 				inlineAttachExited = true
