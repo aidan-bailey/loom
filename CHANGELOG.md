@@ -1,3 +1,34 @@
+## [0.5.0] - 2026-07-06
+
+### 🚀 Features
+
+- *(config)* Add HeadroomWrap and ClaudeModel settings
+- *(agent)* Add ApplyModelFlag to the Adapter interface
+- *(session)* Add BuildModelCommand and BuildHeadroomWrapCommand
+- *(ui)* Add Model and Headroom Wrap rows to Claude Preferences
+- *(ui)* Add SessionLaunchOptions per-instance modal
+- *(app)* Add stateLaunchOptions and the Session Launch Options handler
+- *(app)* Show Session Launch Options before starting a new instance
+
+### 🐛 Bug Fixes
+
+- *(session)* Guard BuildHeadroomWrapCommand against an empty program
+- Preserve adapter identity through headroom wrap, fix stale RC-blocked check
+- Detect remote-control auth on the real binary through headroom wrap
+
+### 🚜 Refactor
+
+- *(app)* Compose launch options via overlay.LaunchOptions
+
+### 📚 Documentation
+
+- Add design spec for Headroom Wrap, Claude Model, and launch options modal
+- Add implementation plan for Headroom Wrap, Claude Model, and launch options modal
+
+### 🧪 Testing
+
+- *(app)* Cover the real launch-options closure and blocked-RC-via-modal path
+
 ## [0.4.0] - 2026-07-02
 
 ### 🚀 Features
@@ -19,7 +50,6 @@
 
 - Add design spec for Claude permission-mode setting
 - Add implementation plan for Claude permission-mode setting
-
 ## [0.3.0] - 2026-07-01
 
 ### 🚀 Features
@@ -92,6 +122,7 @@
 - *(app)* Capture merge target/sources at picker-open time, not commit time
 - *(ui)* Support real two-digit index jumps in MergePicker
 - *(tmux)* Poll instead of sleep in TestCaptureHistoryRealTmux
+- *(tmux)* Set TERM in TestCaptureHistoryRealTmux for CI's tty-less runners
 
 ### 💼 Other
 
