@@ -45,6 +45,13 @@ type GitWorktree struct {
 	// isExistingBranch is true if the branch existed before the session was created.
 	// When true, the branch will not be deleted on cleanup.
 	isExistingBranch bool
+	// stashRef is the commit SHA of the stash Pause created for this
+	// worktree's uncommitted changes, or "" if none is pending. Set by
+	// Instance.Pause (via StashChanges), cleared by Instance.Resume
+	// after a clean ApplyStash, or seeded from persisted
+	// GitWorktreeData.StashRef when rehydrating a Paused instance from
+	// disk (FromInstanceData, fromInstanceDataPaused).
+	stashRef string
 	// configDir is the resolved config directory for workspace-scoped worktrees.
 	configDir string
 	// runner executes git/gh subprocesses; injected so tests can mock them.
@@ -222,4 +229,15 @@ func (g *GitWorktree) GetRepoName() string {
 // GetBaseCommitSHA returns the base commit SHA for the worktree
 func (g *GitWorktree) GetBaseCommitSHA() string {
 	return g.baseCommitSHA
+}
+
+// GetStashRef returns the pending stash commit SHA, or "" if none.
+func (g *GitWorktree) GetStashRef() string {
+	return g.stashRef
+}
+
+// SetStashRef sets the pending stash commit SHA (or clears it, for
+// "").
+func (g *GitWorktree) SetStashRef(sha string) {
+	g.stashRef = sha
 }
