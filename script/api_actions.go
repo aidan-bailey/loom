@@ -205,8 +205,8 @@ func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 		return enqueue(L, KillSelectedIntent{Confirm: optBool(L, "confirm", true)})
 	}))
 
-	actions.RawSetString("checkout_selected", L.NewFunction(func(L *lua.LState) int {
-		return enqueue(L, CheckoutIntent{
+	actions.RawSetString("stash_selected", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, StashIntent{
 			Confirm: optBool(L, "confirm", true),
 			Help:    optBool(L, "help", true),
 		})

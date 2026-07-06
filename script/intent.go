@@ -52,10 +52,11 @@ type PushSelectedIntent struct{ Confirm bool }
 // instance. Confirm=true gates the destructive action behind an overlay.
 type KillSelectedIntent struct{ Confirm bool }
 
-// CheckoutIntent asks the app to check the selected instance's branch
-// out into the root repo. Confirm gates the operation; Help opens the
-// explanatory overlay instead of performing the checkout.
-type CheckoutIntent struct{ Confirm, Help bool }
+// StashIntent asks the app to stash the selected instance's
+// uncommitted changes and pause it, checking its branch out into the
+// root repo. Confirm gates the operation; Help opens the explanatory
+// overlay instead of performing the stash.
+type StashIntent struct{ Confirm, Help bool }
 
 // ResumeIntent asks the app to resume the selected paused instance.
 type ResumeIntent struct{}
@@ -105,7 +106,7 @@ type MergeSessionsIntent struct{}
 func (QuitIntent) intent()               {}
 func (PushSelectedIntent) intent()       {}
 func (KillSelectedIntent) intent()       {}
-func (CheckoutIntent) intent()           {}
+func (StashIntent) intent()              {}
 func (ResumeIntent) intent()             {}
 func (NewInstanceIntent) intent()        {}
 func (ShowHelpIntent) intent()           {}

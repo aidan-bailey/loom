@@ -16,7 +16,7 @@ cs.bind("n", function() cs.actions.new_instance{} end,              { help = "ne
 cs.bind("N", function() cs.actions.new_instance{prompt=true} end,   { help = "new with prompt" })
 cs.bind("D", function() cs.actions.kill_selected{} end,             { help = "kill" })
 cs.bind("p", function() cs.actions.push_selected{} end,             { help = "push branch" })
-cs.bind("c", function() cs.actions.checkout_selected{} end,         { help = "checkout" })
+cs.bind("s", function() cs.actions.stash_selected{} end,            { help = "stash" })
 cs.bind("m", function() cs.actions.merge_selected() end,            { help = "merge session" })
 cs.bind("r", function() cs.actions.resume_selected() end,           { help = "resume" })
 cs.bind("?", function() cs.actions.show_help() end,                 { help = "help" })
