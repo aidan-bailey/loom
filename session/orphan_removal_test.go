@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/aidan-bailey/loom/session/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,4 +45,22 @@ func TestRemoveOrphanWorktree_RemovesDirKeepsBranch(t *testing.T) {
 	cmd := exec.Command("git", "-C", repo, "branch", "--list", "feature")
 	out, _ := cmd.Output()
 	assert.Contains(t, string(out), "feature")
+}
+
+func TestRemoveOrphanWorktree_RemovesTitleSidecar(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "f"), []byte("x"), 0o644))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-qm", "init")
+	runGit(t, repo, "branch", "feature")
+
+	wt := filepath.Join(t.TempDir(), "feature_wt")
+	runGit(t, repo, "worktree", "add", wt, "feature")
+	sidecar := git.WorktreeTitleSidecarPath(wt)
+	require.NoError(t, os.WriteFile(sidecar, []byte("my feature"), 0o644))
+
+	err := RemoveOrphanWorktree(repo, wt)
+	assert.NoError(t, err)
+	assert.NoFileExists(t, sidecar, "orphan auto-clean must not leave a dangling .loom-title sidecar")
 }
