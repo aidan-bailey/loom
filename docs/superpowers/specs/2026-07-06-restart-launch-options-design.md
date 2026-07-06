@@ -14,13 +14,20 @@ instance's current `Program` string back into a `launchOptions` value"
 plus instance-lifecycle handling for tmux teardown/rebuild and
 uncommitted work.
 
-Both prerequisites now exist. `Instance.Pause` already commits dirty
-worktree changes before killing tmux, and `Instance.Resume` already
-re-reads `i.Program` from scratch whenever the tmux session doesn't
-exist (`startFreshWithRecovery`). So the remaining work is: recover a
-`launchOptions` value (and the underlying bare program) from an
-instance's composed `Program` string, and wire a UI entry point that
-edits it before resuming.
+Both prerequisites now exist, though this spec also changes one of
+them. `Instance.Resume` already re-reads `i.Program` from scratch
+whenever the tmux session doesn't exist (`startFreshWithRecovery`). And
+`Instance.Pause` already preserves uncommitted worktree changes before
+killing tmux and removing the worktree — today via an auto-commit
+(`"[loom] update from '<title>' on <time> (paused)"`). This spec
+replaces that with a `git stash` instead: an auto-commit pollutes the
+branch's real history with synthetic checkpoints, and once this spec
+gives users a reason to pause/resume more often (to change launch
+options), that pollution gets more visible. So the remaining work is:
+recover a `launchOptions` value (and the underlying bare program) from
+an instance's composed `Program` string, wire a UI entry point that
+edits it before resuming, and switch Pause/Resume's uncommitted-work
+handling from commit to stash.
 
 Separately, this also adds a fifth launch option, **Effort** — the
 real Claude CLI takes `--effort <level>` (`low`/`medium`/`high`/`xhigh`/`max`),
@@ -32,6 +39,10 @@ effort at all, only change it later.
 
 ## Goals
 
+- `Instance.Pause` preserves uncommitted work (tracked and untracked)
+  via `git stash` instead of an auto-commit; `Instance.Resume` restores
+  it. No synthetic "(paused)" commits land on the branch's real history
+  anymore.
 - New `Config.ClaudeEffort` field and `config.ClaudeEfforts` list
   (`"default"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`),
   following the exact shape of `ClaudeModel`/`ClaudeModels`: `"default"`
@@ -82,8 +93,74 @@ effort at all, only change it later.
   left untouched in the recovered base program and simply doesn't
   surface as a toggle — never a hard failure, worst case the user
   corrects one row in the modal.
+- **Automatic conflict resolution for a stash that no longer applies
+  cleanly.** Shouldn't normally happen — nothing else commits to a
+  paused instance's branch while it's parked (`IsBranchCheckedOut`
+  already blocks resuming onto a branch someone switched to) — but if
+  `git stash apply` ever does conflict, loom surfaces the error and
+  leaves the conflict markers and the stash entry in place for the user
+  to resolve manually, the same way git itself refuses to drop a stash
+  that didn't apply cleanly.
+- **Migrating already-Paused instances.** An instance paused before
+  this change has no stash — its uncommitted work is already safely on
+  the branch via the old auto-commit. Resume for those is unchanged
+  (empty `StashRef` skips the apply step entirely).
 
 ## Design
+
+### Pause/Resume: stash instead of commit (prerequisite)
+
+**The hazard that shapes this:** `git stash`'s backing ref,
+`refs/stash`, is a single stack shared by every worktree of the same
+repository — not per-worktree. Verified directly: pushing a stash from
+two different worktrees of one repo, `git stash list` shows both
+entries, interleaved, from either worktree. Two loom instances (each a
+worktree of the same parent repo) pausing around the same time would
+share one stack, so a naive `git stash pop` ("apply whatever's on top")
+on Resume could grab a *different* instance's stashed changes if it
+was pushed in between. Everything below is built to avoid ever relying
+on stack position.
+
+- `session/git/worktree_git.go`: replace `CommitChanges` (called from
+  `Instance.Pause`) with `StashChanges(message string) (sha string, err error)`:
+  ```go
+  // StashChanges snapshots the worktree's tracked and untracked changes
+  // into a stash commit without touching the shared stash stack's
+  // ordering semantics loom relies on: `git stash create` builds the
+  // commit object without pushing it onto refs/stash at all, and the
+  // returned SHA is what every later operation (store, apply, drop)
+  // targets directly — never "top of stack", which could belong to a
+  // different worktree of this repo by the time Resume runs.
+  // `git stash store` then anchors that commit against gc (dangling
+  // commits are prunable after gc.pruneExpire) and makes it visible via
+  // `git stash list` for manual recovery if something goes wrong.
+  // Returns "" (no error) if the worktree wasn't dirty.
+  func (g *GitWorktree) StashChanges(message string) (string, error)
+  ```
+  Implementation: `git stash create --include-untracked -m <message>`
+  (empty stdout ⇒ nothing to stash, matching `IsDirty`'s scope — tracked
+  and untracked, same as today's `git add .` before commit) → if
+  non-empty, `git stash store -m <message> <sha>` → return `sha`.
+- `session/storage.go`: `GitWorktreeData` gains `StashRef string
+  \`json:"stash_ref,omitempty"\`` — bump `CurrentSchemaVersion`, add the
+  upgrade step in `session/storage_migrate.go:Migrate` (old records get
+  `StashRef: ""`), update the fixture in
+  `cmd/workspace_migrate_shape_test.go` (this repo's drift guard).
+- `Instance.Pause`: call `StashChanges` instead of `IsDirty`+`CommitChanges`;
+  persist the returned `sha` (empty string if nothing was dirty) onto
+  the instance's `GitWorktreeData.StashRef` as part of the same
+  `saveState` checkpoint Pause already does.
+- `Instance.Resume`: after `gw.Setup()` recreates the worktree from the
+  branch (clean — nothing was ever committed to it), if `StashRef != ""`:
+  `git stash apply <StashRef>`. On a clean apply, find the matching
+  `stash@{n}` (resolve each entry's SHA via `git rev-parse` and compare
+  — `git stash list` doesn't print SHAs by default) and `git stash drop`
+  it, then clear `StashRef`. On conflict/error, leave `StashRef` set and
+  the stash entry in place, and surface the error through Resume's
+  existing error-return path (same shape as today's "branch is checked
+  out" / `ErrBranchGone` cases) — never silently drop a stash that
+  didn't apply cleanly, mirroring `git stash pop`'s own safety
+  behavior.
 
 ### Adding Effort as a launch option (prerequisite)
 
@@ -198,6 +275,26 @@ instance untouched (not the creation flow's kill-pending).
 
 ## Testing
 
+- `session/git/worktree_git_test.go`: `TestStashChanges_TrackedAndUntracked`
+  (both survive, `IsDirty` false immediately after — `stash create`
+  doesn't touch the working tree, so assert the working tree is
+  *unchanged*, not clean), `TestStashChanges_CleanWorktreeReturnsEmpty`,
+  `TestStashChanges_ConcurrentWorktreesDoNotInterfere` (two
+  `GitWorktree`s on the same repo each stash independently; each one's
+  returned SHA applies its own changes, not the other's — the
+  regression test for the shared-`refs/stash` hazard this design is
+  built around).
+- `session/instance_test.go`: `TestPauseResume_PreservesUncommittedWork`
+  (tracked + untracked, round-trips through Pause→Resume with no
+  auto-commit landing in `git log`); `TestPauseResume_CleanWorktreeNoOp`
+  (no stash created/applied when there's nothing to preserve);
+  `TestResume_StashApplyConflictSurfacesError` (conflicting apply
+  returns an error, leaves `StashRef` set, doesn't drop the stash
+  entry).
+- `session/storage_migrate_test.go` (or wherever existing schema-bump
+  tests live): old-schema record without `stash_ref` migrates to
+  `StashRef: ""` cleanly. Update `cmd/workspace_migrate_shape_test.go`'s
+  fixture for the new field.
 - `config/config_test.go`: `TestEffort`, `TestClaudeEfforts` — mirroring
   `TestModel`/`TestClaudeModels`.
 - `session/agent/adapter_test.go`: `TestClaudeEffortFlag` (insertion,
