@@ -37,6 +37,7 @@ type migrationInstance struct {
 	UpdatedAt time.Time `json:"updated_at"`
 
 	Program             string                `json:"program"`
+	HeadroomProxy       bool                  `json:"headroom_proxy,omitempty"`
 	Worktree            migrationWorktreeData `json:"worktree"`
 	DiffStats           migrationDiffStats    `json:"diff_stats"`
 	IsWorkspaceTerminal bool                  `json:"is_workspace_terminal"`
