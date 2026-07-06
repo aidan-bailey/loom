@@ -29,7 +29,7 @@ type helpTypeInstanceStart struct {
 
 type helpTypeInstanceAttach struct{}
 
-type helpTypeInstanceCheckout struct{}
+type helpTypeInstanceStash struct{}
 
 func helpStart(instance *session.Instance) helpText {
 	return helpTypeInstanceStart{instance: instance}
@@ -97,7 +97,7 @@ var (
 
 	generalHandoffEntries = []helpEntry{
 		{bindings: []keys.KeyName{keys.KeySubmit}, desc: "Commit and push branch to github"},
-		{bindings: []keys.KeyName{keys.KeyCheckout}, desc: "Checkout: commit changes and pause session"},
+		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Stash: stash changes and pause session"},
 		{bindings: []keys.KeyName{keys.KeyResume}, desc: "Resume a paused session"},
 	}
 
@@ -118,12 +118,12 @@ var (
 	}
 
 	instanceStartHandoffEntries = []helpEntry{
-		{bindings: []keys.KeyName{keys.KeyCheckout}, desc: "Checkout this instance's branch"},
+		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Stash this instance's branch"},
 		{bindings: []keys.KeyName{keys.KeySubmit}, desc: "Push branch to GitHub to create a PR"},
 	}
 
-	checkoutCommandEntries = []helpEntry{
-		{bindings: []keys.KeyName{keys.KeyCheckout}, desc: "Checkout: commit changes locally and pause session"},
+	stashCommandEntries = []helpEntry{
+		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Stash: stash changes locally and pause session"},
 		{bindings: []keys.KeyName{keys.KeyResume}, desc: "Resume a paused session"},
 	}
 )
@@ -205,16 +205,16 @@ func (h helpTypeInstanceAttach) toContent() string {
 	)
 }
 
-func (h helpTypeInstanceCheckout) toContent() string {
+func (h helpTypeInstanceStash) toContent() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
-		titleStyle.Render("Checkout Instance"),
+		titleStyle.Render("Stash Instance"),
 		"",
-		"Changes will be committed locally. The branch name has been copied to your clipboard for you to checkout.",
+		"Changes will be stashed locally. The branch name has been copied to your clipboard for you to checkout.",
 		"",
 		"Feel free to make changes to the branch and commit them. When resuming, the session will continue from where you left off.",
 		"",
 		headerStyle.Render("Commands:"),
-		renderHelpSection(checkoutCommandEntries, 2),
+		renderHelpSection(stashCommandEntries, 2),
 	)
 }
 func (h helpTypeGeneral) mask() uint32 {
@@ -227,7 +227,7 @@ func (h helpTypeInstanceStart) mask() uint32 {
 func (h helpTypeInstanceAttach) mask() uint32 {
 	return 1 << 2
 }
-func (h helpTypeInstanceCheckout) mask() uint32 {
+func (h helpTypeInstanceStash) mask() uint32 {
 	return 1 << 3
 }
 
