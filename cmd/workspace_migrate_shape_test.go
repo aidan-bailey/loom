@@ -33,7 +33,8 @@ func TestMigrationInstance_MirrorsInstanceData_JSON(t *testing.T) {
 			"session_name": "t",
 			"branch_name": "b",
 			"base_commit_sha": "abc",
-			"is_existing_branch": false
+			"is_existing_branch": false,
+			"stash_ref": "def456"
 		},
 		"diff_stats": {
 			"added": 1,

@@ -49,6 +49,7 @@ type migrationWorktreeData struct {
 	BranchName       string `json:"branch_name"`
 	BaseCommitSHA    string `json:"base_commit_sha"`
 	IsExistingBranch bool   `json:"is_existing_branch"`
+	StashRef         string `json:"stash_ref,omitempty"`
 }
 
 type migrationDiffStats struct {

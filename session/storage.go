@@ -22,7 +22,7 @@ var ErrInstanceNotFound = errors.New("instance not found")
 // CurrentSchemaVersion is the schema version written by the current
 // binary. Any on-disk InstanceData with a lower SchemaVersion is routed
 // through storage_migrate.go's Migrate before use.
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 // InstanceData represents the serializable data of an Instance.
 //
@@ -55,6 +55,11 @@ type GitWorktreeData struct {
 	BranchName       string `json:"branch_name"`
 	BaseCommitSHA    string `json:"base_commit_sha"`
 	IsExistingBranch bool   `json:"is_existing_branch"`
+	// StashRef is the commit SHA of a pending git stash created by
+	// Instance.Pause for this worktree's uncommitted changes, or ""
+	// if none is pending (nothing was dirty at pause time, or Resume
+	// already applied and cleared it). Added in schema v3.
+	StashRef string `json:"stash_ref,omitempty"`
 }
 
 // DiffStatsData represents the serializable data of a DiffStats

@@ -42,6 +42,11 @@ func Migrate(raw []byte) (InstanceData, error) {
 			// v1 → v2: AutoYes removed. No payload changes needed —
 			// unmarshal already dropped the field — just stamp the version.
 			data.SchemaVersion = 2
+		case 2:
+			// v2 → v3: GitWorktreeData gained StashRef. No payload
+			// changes needed — unmarshal already defaults a missing
+			// field to "" — just stamp the version.
+			data.SchemaVersion = 3
 		default:
 			return InstanceData{}, fmt.Errorf("no upgrade path from schema version %d", data.SchemaVersion)
 		}
