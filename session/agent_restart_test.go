@@ -164,3 +164,21 @@ func TestBuildHeadroomWrapCommand_Idempotent(t *testing.T) {
 func TestBuildHeadroomWrapCommand_EmptyProgram(t *testing.T) {
 	assert.Equal(t, "", BuildHeadroomWrapCommand(""))
 }
+
+// Headroom's `wrap` subcommand takes a fixed tool keyword ("claude"),
+// not an arbitrary binary — `headroom wrap /path/to/claude` fails with
+// "Error: No such command '/path/to/claude'." and exits immediately.
+// This reproduces the real-world config (an absolute path from a Nix
+// profile) that triggered a launch → immediate-exit → repeated
+// tick.tmux_gone_marking_paused loop.
+func TestBuildHeadroomWrapCommand_AbsolutePath(t *testing.T) {
+	assert.Equal(t, "headroom wrap claude", BuildHeadroomWrapCommand("/etc/profiles/per-user/aidanb/bin/claude"))
+	assert.Equal(t, "headroom wrap claude --model sonnet --permission-mode auto",
+		BuildHeadroomWrapCommand("/etc/profiles/per-user/aidanb/bin/claude --model sonnet --permission-mode auto"))
+}
+
+func TestBuildHeadroomWrapCommand_UnsupportedAgentNoOp(t *testing.T) {
+	// gemini isn't one of Headroom's supported wrap targets; wrapping
+	// it would still fail the same way, so this is a no-op.
+	assert.Equal(t, "gemini --model x", BuildHeadroomWrapCommand("gemini --model x"))
+}

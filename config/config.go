@@ -107,7 +107,9 @@ type Config struct {
 	// default applies). Read it through PermissionMode.
 	ClaudePermissionMode *string `json:"claude_permission_mode,omitempty"`
 	// HeadroomWrap controls whether new sessions launch wrapped as
-	// `headroom wrap <program>`, regardless of agent. Unlike
+	// `headroom wrap <tool> <args>` for agents Headroom supports (see
+	// session.BuildHeadroomWrapCommand); a no-op for agents it doesn't.
+	// Unlike
 	// ClaudeRemoteControl, this defaults to off (DefaultConfig sets it
 	// explicitly to false) since it's an opt-in wrapper, not a
 	// backward-compatible default. Mutually exclusive with

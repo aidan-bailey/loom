@@ -39,8 +39,9 @@ func modelProgram(model, program string) string {
 }
 
 // headroomWrapProgram returns program wrapped as "headroom wrap
-// <program>" when enabled. Agent-agnostic: applies regardless of which
-// program is configured.
+// <tool> <args>" when enabled, for whichever adapter matches program —
+// a no-op for agents Headroom doesn't support (see
+// session.BuildHeadroomWrapCommand).
 func headroomWrapProgram(enabled bool, program string) string {
 	if !enabled {
 		return program
