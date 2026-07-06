@@ -43,6 +43,12 @@ effort at all, only change it later.
   via `git stash` instead of an auto-commit; `Instance.Resume` restores
   it. No synthetic "(paused)" commits land on the branch's real history
   anymore.
+- The existing `c`/"checkout" keybinding — which today's help text
+  already describes as "commit changes locally and pause session"; it
+  *is* `Instance.Pause`, just named after the side effect (the branch
+  becomes checkoutable elsewhere) rather than the mechanism — is
+  renamed to `s`/"stash" throughout, to match the mechanism it now
+  actually uses.
 - New `Config.ClaudeEffort` field and `config.ClaudeEfforts` list
   (`"default"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`),
   following the exact shape of `ClaudeModel`/`ClaudeModels`: `"default"`
@@ -162,6 +168,45 @@ on stack position.
   didn't apply cleanly, mirroring `git stash pop`'s own safety
   behavior.
 
+### Renaming "checkout" to "stash" (prerequisite)
+
+`keys.KeyCheckout` (`c`) doesn't check anything out — it's the trigger
+for `Instance.Pause` (`app/intents.go:runCheckoutSelectedOpts`, "the
+parameterized pause path"), named after the side effect of pausing
+(the branch becomes free to `git checkout` elsewhere) rather than the
+mechanism. Now that the mechanism is `git stash`, the more direct name
+is "stash." Pure rename, no behavior change beyond Pause's own stash
+switch above — every identifier below keeps its existing shape, just
+relabeled:
+
+- `keys/keys.go`: `KeyCheckout` → `KeyStash`, key `"c"` → `"s"` (unused
+  today — verified no existing binding claims bare `s`), help label
+  `"checkout"` → `"stash"`.
+- `app/intents.go`: `runCheckoutSelectedOpts` → `runStashSelectedOpts`.
+- `app/help.go`: `helpTypeInstanceCheckout` → `helpTypeInstanceStash`,
+  `checkoutCommandEntries` → `stashCommandEntries`; description strings
+  "Checkout: commit changes locally and pause session" → "Stash: stash
+  changes locally and pause session" (and the sibling variants in
+  `generalHandoffEntries`/`instanceStartHandoffEntries`); the help
+  screen's "Changes will be committed locally..." body text → "Changes
+  will be stashed locally...".
+- `script/intent.go`: `CheckoutIntent` → `StashIntent`.
+- `script/api_actions.go`: Lua action `checkout_selected` →
+  `stash_selected`.
+- `app/app_scripts.go`: `script.CheckoutIntent` → `script.StashIntent`.
+- `script/defaults.lua`: `cs.bind("c", ...)` → `cs.bind("s", ...)`,
+  `checkout_selected` → `stash_selected`, help `"checkout"` → `"stash"`.
+- `ui/menu.go`: `keys.KeyCheckout` → `keys.KeyStash` in the action-group
+  slice.
+- Docs reflecting *current* behavior — `CLAUDE.md`'s keybindings table,
+  `USAGE.md`, `README.md` — updated to `s`/"stash". Historical spec/plan
+  files under `docs/superpowers/plans/`, `docs/plans/`, and
+  `CHANGELOG.md` are a record of past work and are not rewritten.
+- No back-compat shim for scripts calling `cs.actions.checkout_selected`
+  — this project has precedent for breaking script-facing renames
+  outright (e.g. `feat!: remove the Auto Yes feature entirely`) rather
+  than carrying dead aliases.
+
 ### Adding Effort as a launch option (prerequisite)
 
 Mechanical addition following `Model`'s exact precedent, touching the
@@ -275,6 +320,11 @@ instance untouched (not the creation flow's kill-pending).
 
 ## Testing
 
+- Rename sweep across existing tests referencing the old `checkout`
+  naming — `app/migration_parity_test.go`, `app/app_scripts_dispatch_test.go`,
+  `app/actions_test.go`, `script/intent_test.go`,
+  `script/api_actions_test.go` — updated in place to the `Stash`/`stash`
+  names, no new assertions needed (behavior is unchanged, only names).
 - `session/git/worktree_git_test.go`: `TestStashChanges_TrackedAndUntracked`
   (both survive, `IsDirty` false immediately after — `stash create`
   doesn't touch the working tree, so assert the working tree is
