@@ -644,6 +644,13 @@ func (i *Instance) Kill() (err error) {
 		if err := tmuxSess.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close tmux session: %w", err))
 		}
+		// See the matching comment in Pause: the terminal pane's tmux
+		// session is untracked by Instance and must be killed alongside
+		// the agent session, or it leaks until the next app-startup
+		// orphan sweep. Best-effort: "no such session" is the common case.
+		if err := tmuxSess.CloseRelatedSession(tmux.TerminalSessionName(i.Title)); err != nil {
+			log.For("session").Debug("kill_close_terminal_tmux_failed", "title", i.Title, "err", err)
+		}
 	}
 
 	// Then clean up git worktree (workspace terminals don't have one)
@@ -946,6 +953,18 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	if err := ts.Close(); err != nil {
 		log.For("session").Warn("pause_close_tmux_failed", "err", err)
 		// Continue with pause process; the tmux session may already be dead.
+	}
+
+	// The terminal pane (ui.TerminalPane) runs its own tmux session for
+	// this instance, keyed by the same title but tracked entirely outside
+	// Instance/TmuxSession. If it survives past this point, its shell stays
+	// cd'd into the worktree directory we're about to delete below; Resume
+	// would then silently reattach to that now-orphaned directory instead
+	// of the freshly recreated worktree. Kill it here so the invariant
+	// holds for every caller, not just the UI's pauseActionFor. Best-effort:
+	// "no such session" (never opened) is the common case.
+	if err := ts.CloseRelatedSession(tmux.TerminalSessionName(i.Title)); err != nil {
+		log.For("session").Debug("pause_close_terminal_tmux_failed", "err", err)
 	}
 
 	// Check if worktree exists before trying to remove it

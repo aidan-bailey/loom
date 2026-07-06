@@ -140,6 +140,19 @@ func ToLegacyTmuxName(str string) string {
 	return fmt.Sprintf("%s%s", LegacyTmuxPrefix, str)
 }
 
+// terminalSessionPrefix distinguishes a terminal pane's tmux session from
+// its instance's agent session, which otherwise share the same title.
+const terminalSessionPrefix = "term_"
+
+// TerminalSessionName returns the raw (pre-ToLoomTmuxName) tmux session
+// name for the terminal pane belonging to the instance with the given
+// title. Centralized here so session.Instance can tear this session down
+// by name — without depending on ui.TerminalPane — and ui/terminal.go can
+// construct the identical name when creating it.
+func TerminalSessionName(title string) string {
+	return terminalSessionPrefix + title
+}
+
 // RenameLegacySessions renames any tmux sessions matching the legacy
 // claudesquad_* prefix to their loom_* equivalent so that in-flight
 // sessions from a pre-rename binary continue to be found by reconcile
@@ -502,6 +515,16 @@ func (t *TmuxSession) SimulateStuckPumpForTest() {
 	t.stateMu.Unlock()
 }
 
+// SetCmdExecForTest swaps this session's executor after construction, so a
+// test can assert on the commands issued by methods (like Close or
+// CloseRelatedSession) that a fixture built via NewTmuxSessionWithDeps
+// already exercises for other purposes.
+// Test-only: the name and doc comment are guardrails, nothing about the
+// method enforces test-only use.
+func (t *TmuxSession) SetCmdExecForTest(cmdExec internalexec.Executor) {
+	t.cmdExec = cmdExec
+}
+
 // waitPumpExit blocks until the current pump goroutine signals exit or
 // pumpWaitTimeout elapses, whichever comes first. Only the pump
 // goroutine ever closes pumpDone, so callers must not close it
@@ -757,6 +780,23 @@ func (t *TmuxSession) Close() error {
 		errMsg += "\n  - " + err.Error()
 	}
 	return errors.New(errMsg)
+}
+
+// CloseRelatedSession best-effort kills another tmux session identified by
+// its raw (pre-ToLoomTmuxName) name, reusing this session's cmdExec. It
+// does not touch t's own PTY/emulator state.
+//
+// This exists so a resource whose lifecycle is tied to this session (e.g.
+// the terminal pane's shell, which shares this instance's title but is
+// otherwise untracked by *TmuxSession) can be torn down at the same point
+// this session is — without the caller needing its own injected executor.
+// The common case is "no such session", which is expected and harmless.
+func (t *TmuxSession) CloseRelatedSession(rawName string) error {
+	name := ToLoomTmuxName(rawName)
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", name)
+	return t.cmdExec.Run(cmd)
 }
 
 // SetDetachedSize set the width and height of the session while detached. This makes the

@@ -202,6 +202,66 @@ func TestInstance_ResumeSurfacesBranchGoneHint(t *testing.T) {
 	assert.Contains(t, err.Error(), "kill", "Resume error must hint the kill-to-recover affordance")
 }
 
+// TestInstance_PauseClosesTerminalPaneSession is the regression guard for
+// the "terminal not in the correct directory after resume" bug. The
+// terminal pane runs its own tmux session ("term_<title>") decoupled from
+// Instance, keyed only by title. Before this fix, Pause() closed the
+// agent's tmux session and removed the worktree, but never touched the
+// terminal pane's session — so a terminal session that outlived Pause()
+// (e.g. because it was reached via a caller other than the UI's
+// pauseActionFor, which used to be the only place this happened) stayed
+// alive, cd'd into the worktree directory Pause() was about to delete.
+// Resume() then recreated a fresh worktree at the same path, but the
+// surviving terminal shell kept the stale (deleted) directory as its cwd,
+// and the next reattach silently reused it instead of noticing the
+// mismatch. Pause must now kill the terminal session itself so the
+// invariant holds regardless of caller.
+func TestInstance_PauseClosesTerminalPaneSession(t *testing.T) {
+	inst := newTestPausableInstance(t)
+
+	var killedSessions []string
+	inst.getTmuxSession().SetCmdExecForTest(cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			if len(c.Args) >= 3 && c.Args[1] == "kill-session" {
+				killedSessions = append(killedSessions, c.Args[len(c.Args)-1])
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	})
+
+	require.NoError(t, inst.Pause(nil))
+
+	wantTerminalSession := tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title))
+	assert.Contains(t, killedSessions, wantTerminalSession,
+		"Pause must kill the terminal pane's tmux session so it can't survive worktree removal")
+}
+
+// TestInstance_KillClosesTerminalPaneSession mirrors
+// TestInstance_PauseClosesTerminalPaneSession for Kill(), which also
+// removes the worktree (via gitWorktree.Cleanup) and must not leave an
+// orphaned terminal-pane tmux session behind.
+func TestInstance_KillClosesTerminalPaneSession(t *testing.T) {
+	inst := newTestStartedInstance(t)
+
+	var killedSessions []string
+	inst.getTmuxSession().SetCmdExecForTest(cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			if len(c.Args) >= 3 && c.Args[1] == "kill-session" {
+				killedSessions = append(killedSessions, c.Args[len(c.Args)-1])
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	})
+
+	require.NoError(t, inst.Kill())
+
+	wantTerminalSession := tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title))
+	assert.Contains(t, killedSessions, wantTerminalSession,
+		"Kill must kill the terminal pane's tmux session so it doesn't leak")
+}
+
 // TestInstance_StartIsIdempotent verifies Start is a no-op on an
 // already-started instance (INST-04). A second Start must not replace
 // the tmux session and orphan the first.
