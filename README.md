@@ -86,7 +86,7 @@ The menu at the bottom of the screen shows available commands:
 ##### Actions
 - `↵/o` - Attach to the selected session to reprompt
 - `ctrl-q` - Detach from session
-- `s` - Commit and push branch to github
+- `p` - Commit and push branch to github
 - `s` - Stash. Stashes changes and pauses the session
 - `r` - Resume a paused session
 - `?` - Show help menu

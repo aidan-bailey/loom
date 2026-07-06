@@ -319,7 +319,7 @@ You're now inside the tmux session. Type naturally to communicate with the agent
 ```
 Select running session → s
 ```
-Changes are committed, worktree is removed, branch name is on your clipboard. The agent's tmux session remains in the background.
+Changes are stashed, worktree is removed, branch name is on your clipboard. The agent's tmux session remains in the background.
 
 **Resume** — picks up where you left off:
 ```
