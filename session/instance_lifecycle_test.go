@@ -268,6 +268,31 @@ func TestInstance_ResumeRestoresStashedWork(t *testing.T) {
 	assert.Equal(t, "untracked\n", string(untracked))
 }
 
+// TestInstance_StashRefSurvivesSnapshotRoundTrip guards the disk
+// round-trip: a Paused instance's StashRef must persist through
+// ToInstanceData → FromInstanceData, or a restart of loom itself
+// would lose track of a pending stash.
+func TestInstance_StashRefSurvivesSnapshotRoundTrip(t *testing.T) {
+	inst := newTestPausableInstance(t)
+	gw, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+
+	dir := gw.GetWorktreePath()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted\n"), 0644))
+	require.NoError(t, inst.Pause(nil))
+	wantSha := gw.GetStashRef()
+	require.NotEmpty(t, wantSha)
+
+	data := inst.ToInstanceData()
+	assert.Equal(t, wantSha, data.Worktree.StashRef)
+
+	restored, err := FromInstanceData(data, "")
+	require.NoError(t, err)
+	restoredGw, err := restored.GetGitWorktree()
+	require.NoError(t, err)
+	assert.Equal(t, wantSha, restoredGw.GetStashRef())
+}
+
 // TestInstance_StartIsIdempotent verifies Start is a no-op on an
 // already-started instance (INST-04). A second Start must not replace
 // the tmux session and orphan the first.

@@ -210,6 +210,7 @@ func (i *Instance) Snapshot() InstanceData {
 			BranchName:       i.gitWorktree.GetBranchName(),
 			BaseCommitSHA:    i.gitWorktree.GetBaseCommitSHA(),
 			IsExistingBranch: i.gitWorktree.IsExistingBranch(),
+			StashRef:         i.gitWorktree.GetStashRef(),
 		}
 	}
 
@@ -255,7 +256,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 
 	// Workspace terminals don't use git worktrees
 	if !data.IsWorkspaceTerminal {
-		instance.setGitWorktree(git.NewGitWorktreeFromStorage(
+		gw := git.NewGitWorktreeFromStorage(
 			data.Worktree.RepoPath,
 			data.Worktree.WorktreePath,
 			data.Worktree.SessionName,
@@ -263,7 +264,9 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 			data.Worktree.BaseCommitSHA,
 			data.Worktree.IsExistingBranch,
 			configDir,
-		))
+		)
+		gw.SetStashRef(data.Worktree.StashRef)
+		instance.setGitWorktree(gw)
 	}
 
 	// Only restore DiffStats if any field is non-zero, preserving nil for

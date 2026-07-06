@@ -192,7 +192,7 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 	}
 
 	if !data.IsWorkspaceTerminal {
-		instance.setGitWorktree(git.NewGitWorktreeFromStorage(
+		gw := git.NewGitWorktreeFromStorage(
 			data.Worktree.RepoPath,
 			data.Worktree.WorktreePath,
 			data.Worktree.SessionName,
@@ -200,7 +200,9 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 			data.Worktree.BaseCommitSHA,
 			data.Worktree.IsExistingBranch,
 			configDir,
-		))
+		)
+		gw.SetStashRef(data.Worktree.StashRef)
+		instance.setGitWorktree(gw)
 	}
 
 	if data.DiffStats.Added != 0 || data.DiffStats.Removed != 0 || data.DiffStats.Content != "" {
