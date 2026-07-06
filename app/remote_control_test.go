@@ -93,20 +93,6 @@ func TestModelProgram(t *testing.T) {
 	})
 }
 
-func TestHeadroomWrapProgram(t *testing.T) {
-	t.Run("disabled is a no-op", func(t *testing.T) {
-		assert.Equal(t, "claude --model sonnet", headroomWrapProgram(false, "claude --model sonnet"))
-	})
-
-	t.Run("enabled wraps the whole command", func(t *testing.T) {
-		assert.Equal(t, "headroom wrap claude --model sonnet", headroomWrapProgram(true, "claude --model sonnet"))
-	})
-
-	t.Run("agent-agnostic: wraps non-claude programs too", func(t *testing.T) {
-		assert.Equal(t, "headroom wrap aider --model gemma", headroomWrapProgram(true, "aider --model gemma"))
-	})
-}
-
 func TestLaunchOptionsFromConfig(t *testing.T) {
 	t.Run("nil cfg returns zero value", func(t *testing.T) {
 		assert.Equal(t, overlay.LaunchOptions{}, launchOptionsFromConfig(nil))
@@ -118,7 +104,7 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 			RemoteControl:  true,
 			PermissionMode: "default",
 			Model:          "default",
-			HeadroomWrap:   false,
+			HeadroomProxy:  false,
 		}, got)
 	})
 
@@ -127,30 +113,29 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 			ClaudeRemoteControl:  boolPtrTest(false),
 			ClaudePermissionMode: stringPtrTest("plan"),
 			ClaudeModel:          stringPtrTest("opus"),
-			HeadroomWrap:         boolPtrTest(true),
+			HeadroomProxy:        boolPtrTest(true),
 		}
 		assert.Equal(t, overlay.LaunchOptions{
 			RemoteControl:  false,
 			PermissionMode: "plan",
 			Model:          "opus",
-			HeadroomWrap:   true,
+			HeadroomProxy:  true,
 		}, launchOptionsFromConfig(cfg))
 	})
 }
 
 func TestEffectiveRemoteControl(t *testing.T) {
-	assert.True(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: true, HeadroomWrap: false}))
-	assert.False(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: false, HeadroomWrap: false}))
-	assert.False(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: true, HeadroomWrap: true}))
-	assert.False(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: false, HeadroomWrap: true}))
+	assert.True(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: true, HeadroomProxy: false}))
+	assert.False(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: false, HeadroomProxy: false}))
+	assert.False(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: true, HeadroomProxy: true}))
+	assert.False(t, effectiveRemoteControl(overlay.LaunchOptions{RemoteControl: false, HeadroomProxy: true}))
 }
 
-func TestRemoteControlBlockedAgreesWithComposedCommandWhenHeadroomWrapForcesRCOff(t *testing.T) {
-	// Reproduces the bug found in final review: a config.json (or a
-	// Session Launch Options selection) with both RemoteControl and
-	// HeadroomWrap true must not report "blocked" for a conflict the
-	// composed command doesn't actually have.
-	opts := overlay.LaunchOptions{RemoteControl: true, HeadroomWrap: true}
+func TestRemoteControlBlockedAgreesWithComposedCommandWhenHeadroomProxyForcesRCOff(t *testing.T) {
+	// A config.json (or a Session Launch Options selection) with both
+	// RemoteControl and HeadroomProxy true must not report "blocked" for
+	// a conflict the composed command doesn't actually have.
+	opts := overlay.LaunchOptions{RemoteControl: true, HeadroomProxy: true}
 	m := &home{rcAuth: session.RemoteControlAuth{State: session.RemoteControlAuthBlocked}}
 	assert.False(t, m.remoteControlBlocked(effectiveRemoteControl(opts), "claude"))
 }
@@ -159,21 +144,26 @@ func TestApplyLaunchOptions(t *testing.T) {
 	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
 
 	t.Run("stacks remote-control, permission-mode, and model", func(t *testing.T) {
-		opts := overlay.LaunchOptions{RemoteControl: true, PermissionMode: "acceptEdits", Model: "opus", HeadroomWrap: false}
+		opts := overlay.LaunchOptions{RemoteControl: true, PermissionMode: "acceptEdits", Model: "opus", HeadroomProxy: false}
 		got := applyLaunchOptions(opts, authOK, "claude", "my task")
 		assert.Equal(t, "claude --model opus --permission-mode acceptEdits --remote-control my-task", got)
 	})
 
-	t.Run("headroom wrap is applied last, outermost", func(t *testing.T) {
-		opts := overlay.LaunchOptions{PermissionMode: "acceptEdits", Model: "opus", HeadroomWrap: true}
+	t.Run("headroom proxy never touches program", func(t *testing.T) {
+		opts := overlay.LaunchOptions{PermissionMode: "acceptEdits", Model: "opus", HeadroomProxy: true}
 		got := applyLaunchOptions(opts, authOK, "claude", "task")
-		assert.Equal(t, "headroom wrap claude --model opus --permission-mode acceptEdits", got)
+		assert.Equal(t, "claude --model opus --permission-mode acceptEdits", got)
 	})
 
-	t.Run("headroom wrap forcibly disables remote control even if both are true", func(t *testing.T) {
-		opts := overlay.LaunchOptions{RemoteControl: true, HeadroomWrap: true}
+	t.Run("headroom proxy forcibly disables remote control even if both are true", func(t *testing.T) {
+		// applyLaunchOptions calls remoteControlProgram with
+		// effectiveRemoteControl(opts), not raw opts.RemoteControl — this
+		// is the authoritative enforcement of the RC/HeadroomProxy
+		// exclusivity rule (see TestEffectiveRemoteControl), not just a
+		// UI-level nicety.
+		opts := overlay.LaunchOptions{RemoteControl: true, HeadroomProxy: true}
 		got := applyLaunchOptions(opts, authOK, "claude", "task")
-		assert.Equal(t, "headroom wrap claude", got)
+		assert.Equal(t, "claude", got)
 	})
 
 	t.Run("all defaults/disabled is a no-op", func(t *testing.T) {

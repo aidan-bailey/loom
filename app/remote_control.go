@@ -38,17 +38,6 @@ func modelProgram(model, program string) string {
 	return session.BuildModelCommand(program, model)
 }
 
-// headroomWrapProgram returns program wrapped as "headroom wrap
-// <tool> <args>" when enabled, for whichever adapter matches program —
-// a no-op for agents Headroom doesn't support (see
-// session.BuildHeadroomWrapCommand).
-func headroomWrapProgram(enabled bool, program string) string {
-	if !enabled {
-		return program
-	}
-	return session.BuildHeadroomWrapCommand(program)
-}
-
 // launchOptionsFromConfig snapshots cfg's current global launch-option
 // values into an overlay.LaunchOptions, the same shape edited by the
 // Session Launch Options modal. Returns the zero value (all
@@ -63,35 +52,37 @@ func launchOptionsFromConfig(cfg *config.Config) overlay.LaunchOptions {
 		RemoteControl:  cfg.RemoteControlEnabled(),
 		PermissionMode: cfg.PermissionMode(),
 		Model:          cfg.Model(),
-		HeadroomWrap:   cfg.HeadroomWrapEnabled(),
+		HeadroomProxy:  cfg.HeadroomProxyEnabled(),
 	}
 }
 
 // effectiveRemoteControl reports whether opts should actually apply
-// the --remote-control flag once Headroom Wrap's exclusivity is
+// the --remote-control flag once Headroom Proxy's exclusivity is
 // accounted for. applyLaunchOptions and every remoteControlBlocked
 // call site must agree on this value — otherwise a config.json
-// hand-edited to set both ClaudeRemoteControl and HeadroomWrap true
+// hand-edited to set both ClaudeRemoteControl and HeadroomProxy true
 // (or a Session Launch Options selection reaching that state) would
 // make remoteControlBlocked report a conflict the composed command
 // doesn't actually have.
 func effectiveRemoteControl(opts overlay.LaunchOptions) bool {
-	return opts.RemoteControl && !opts.HeadroomWrap
+	return opts.RemoteControl && !opts.HeadroomProxy
 }
 
 // applyLaunchOptions composes program in order: remote-control,
-// permission-mode, model, then headroom-wrap last — headroom-wrap must
-// be outermost so the earlier three steps still see the bare agent
-// name at parts[0] when deciding how to modify the string.
-// effectiveRemoteControl is the authoritative enforcement of the
-// Remote-Control/Headroom-Wrap exclusivity rule (the UI-level
-// auto-disable in ClaudePreferences/SessionLaunchOptions is the
-// good-UX layer on top, not the only guarantee).
+// permission-mode, then model. Headroom Proxy is intentionally absent
+// from composition — it never touches program (see
+// session.HeadroomProxyEnv, applied separately to the tmux session's
+// environment via Instance.HeadroomProxy) — but it still affects
+// composition indirectly: remoteControlProgram receives
+// effectiveRemoteControl(opts), not raw opts.RemoteControl, so Headroom
+// Proxy being on still forces --remote-control off. This is the
+// authoritative enforcement of the RC/HeadroomProxy exclusivity rule —
+// the UI-level auto-disable (Claude Preferences, Session Launch
+// Options) is the good-UX layer on top, not the only guarantee.
 func applyLaunchOptions(opts overlay.LaunchOptions, auth session.RemoteControlAuth, program, title string) string {
 	program = remoteControlProgram(effectiveRemoteControl(opts), auth, program, title)
 	program = permissionModeProgram(opts.PermissionMode, program)
 	program = modelProgram(opts.Model, program)
-	program = headroomWrapProgram(opts.HeadroomWrap, program)
 	return program
 }
 
