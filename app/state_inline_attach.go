@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -24,12 +25,29 @@ func exitInteract(m *home) (tea.Model, tea.Cmd) {
 	return m, tea.RequestWindowSize
 }
 
+// focusedPaneAlive reports whether the tmux session backing the currently
+// focused pane is still alive. Inline attach forwards keystrokes to whichever
+// pane has focus (agent or terminal) — each pane is backed by its own,
+// independent tmux session, so liveness must be checked against THAT
+// session. Checking only the agent's session (regardless of focus) misses a
+// terminal-pane session that died out from under it (e.g. the user's shell
+// exited or crashed): tmux tears the session down as soon as its wrapped
+// program exits, printing a final "[exited]" into the pane, and further
+// keystrokes would silently vanish into the dead PTY forever instead of
+// dropping back to nav.
+func focusedPaneAlive(m *home, selected *session.Instance) bool {
+	if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
+		return m.splitPane.TerminalTmuxSession() != nil
+	}
+	return selected.TmuxAlive()
+}
+
 // handleStateInlineAttachKey forwards raw key bytes to the focused tmux pane
 // while interact (focus-to-interact) mode is active. Exit: ctrl+q, or a
 // double-Esc. A dead pane or paused instance drops the mode and returns to nav.
 func handleStateInlineAttachKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+	if selected == nil || selected.Paused() || !focusedPaneAlive(m, selected) {
 		return exitInteract(m)
 	}
 
