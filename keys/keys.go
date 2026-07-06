@@ -25,7 +25,7 @@ const (
 	KeyQuit
 	KeySubmit
 	KeySubmitName
-	KeyCheckout
+	KeyStash
 	KeyMerge
 	KeyResume
 	KeyPrompt
@@ -104,9 +104,9 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 		key.WithKeys("N"),
 		key.WithHelp("N", "new with prompt"),
 	),
-	KeyCheckout: key.NewBinding(
-		key.WithKeys("c"),
-		key.WithHelp("c", "checkout"),
+	KeyStash: key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "stash"),
 	),
 	KeyMerge: key.NewBinding(
 		key.WithKeys("m"),
