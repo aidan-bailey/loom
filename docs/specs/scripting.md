@@ -222,7 +222,7 @@ Installed as a global at engine construction (`script/api.go`).
 | `cs.actions.quit()` | — | | `QuitIntent` |
 | `cs.actions.push_selected{confirm=?}` | `confirm` | `true` | `PushSelectedIntent{Confirm}` |
 | `cs.actions.kill_selected{confirm=?}` | `confirm` | `true` | `KillSelectedIntent{Confirm}` |
-| `cs.actions.checkout_selected{confirm=?, help=?}` | `confirm`, `help` | `true`, `true` | `CheckoutIntent{Confirm, Help}` |
+| `cs.actions.stash_selected{confirm=?, help=?}` | `confirm`, `help` | `true`, `true` | `StashIntent{Confirm, Help}` |
 | `cs.actions.resume_selected()` | — | | `ResumeIntent` |
 | `cs.actions.new_instance{prompt=?, title=?}` | `prompt`, `title` | `false`, `""` | `NewInstanceIntent{Prompt, Title}` |
 | `cs.actions.show_help()` | — | | `ShowHelpIntent` |

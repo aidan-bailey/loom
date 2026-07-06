@@ -556,7 +556,7 @@ func resolveEditor() string {
 // runMergeSelected opens the merge-picker overlay for the currently
 // focused session, following the same precondition-then-open shape as
 // runOpenWorkspacePicker. Reuses selectedNotBusyNotWorkspace — the same
-// gate push/kill/checkout already use — rather than inventing bespoke
+// gate push/kill/stash already use — rather than inventing bespoke
 // eligibility rules; see
 // docs/superpowers/specs/2026-07-01-git-merge-hotkey-design.md.
 func runMergeSelected(m *home) (tea.Model, tea.Cmd) {
