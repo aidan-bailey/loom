@@ -49,7 +49,7 @@ func TestSessionLaunchOptionsRemoteControlExcludesHeadroomWrap(t *testing.T) {
 }
 
 func TestSessionLaunchOptionsRowNavigationClamps(t *testing.T) {
-	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true}, false, "")
+	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true, Effort: "default"}, false, "")
 
 	lo.HandleKeyPress(tea.KeyPressMsg{Code: 'k', Text: "k"}) // up from row 0 stays at row 0
 	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
@@ -83,7 +83,7 @@ func TestSessionLaunchOptionsShowsBlockedHint(t *testing.T) {
 }
 
 func TestSessionLaunchOptions_EffortRowCycles(t *testing.T) {
-	l := NewSessionLaunchOptions(LaunchOptions{}, false, "")
+	l := NewSessionLaunchOptions(LaunchOptions{Effort: "default"}, false, "")
 	// Move to row 4 (Effort): down x4 from row 0.
 	for i := 0; i < 4; i++ {
 		l.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})

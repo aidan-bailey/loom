@@ -98,16 +98,7 @@ func (l *SessionLaunchOptions) toggleCursor() {
 			l.opts.RemoteControl = false
 		}
 	case 4:
-		// An unset Effort means "default" (mirrors Config.Effort()'s
-		// nil-pointer fallback), so normalize before cycling — otherwise
-		// the empty string wouldn't match any entry and nextInList's
-		// not-found fallback would land back on "default" instead of
-		// advancing to the next value.
-		current := l.opts.Effort
-		if current == "" {
-			current = "default"
-		}
-		l.opts.Effort = nextInList(config.ClaudeEfforts, current)
+		l.opts.Effort = nextInList(config.ClaudeEfforts, l.opts.Effort)
 	}
 }
 
