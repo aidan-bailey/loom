@@ -268,7 +268,7 @@ func (t *TerminalPane) ensureSessionLocked(instance *session.Instance) error {
 		shell = "/bin/sh"
 	}
 
-	termName := "term_" + instance.Title
+	termName := tmux.TerminalSessionName(instance.Title)
 	ts := tmux.NewTmuxSession(termName, shell)
 
 	// Check if session already exists (e.g. from a previous run)
