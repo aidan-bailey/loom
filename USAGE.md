@@ -159,7 +159,7 @@ A session moves through these states:
 5. Agent begins working in the isolated worktree
 
 **Running → Paused** (on stash, `s`):
-1. Any uncommitted changes are staged and committed locally
+1. Any uncommitted changes (tracked and untracked) are stashed via `git stash`
 2. Tmux session is detached
 3. Worktree directory is removed (saves disk space)
 4. Branch is preserved in git — all work is safe
@@ -167,9 +167,10 @@ A session moves through these states:
 
 **Paused → Running** (on resume, `r`):
 1. Worktree recreated from the preserved branch
-2. Tmux session restored or recreated
-3. Diff baseline preserved — you see cumulative changes since session creation
-4. Agent picks up where it left off
+2. Stashed changes are restored
+3. Tmux session restored or recreated
+4. Diff baseline preserved — you see cumulative changes since session creation
+5. Agent picks up where it left off
 
 **Running/Paused → Killed** (on kill, `D`):
 1. Tmux session destroyed
