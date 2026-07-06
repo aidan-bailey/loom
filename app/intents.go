@@ -393,7 +393,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 					log.For("app").Warn("resume.skipped", "err", err)
 				}
 			},
-			Async: func() tea.Msg {
+			Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
 				// Sync's TransitionTo(Loading) may have failed (e.g. a
 				// concurrent reconcile flip landed the instance
 				// somewhere that transition can't legally proceed
@@ -411,12 +411,12 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 					return transitionFailedMsg{title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
 				}
 				return resumeDoneMsg{}
-			},
+			}),
 		}
 		if m.remoteControlBlocked(effectiveRemoteControl(newOpts), selected.Program) {
 			return m, m.promptRestartRemoteControlBlocked(resumeTask)
 		}
-		return m, tea.Batch(tea.RequestWindowSize, resumeTask.Run(), m.instanceChanged())
+		return m, tea.Batch(resumeTask.Run(), m.instanceChanged())
 	}
 	m.pendingLaunchOptionsCancel = func() (tea.Model, tea.Cmd) {
 		m.state = stateDefault

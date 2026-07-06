@@ -57,11 +57,8 @@ func TestRunRestartWithOptionsSelected_ConfirmRecomposesProgramAndResumes(t *tes
 func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFailed(t *testing.T) {
 	m, inst := newPausedInstanceHome(t)
 	// Route through the blocked-RC path so resumeTask lands directly in
-	// m.pendingConfirmation instead of being wrapped in the
-	// tea.Batch(tea.RequestWindowSize, resumeTask.Run(), ...) the direct
-	// path returns — that lets this test call Run() in isolation and
-	// inspect Async's own returned message, rather than unwrapping a
-	// tea.BatchMsg of unrelated commands.
+	// m.pendingConfirmation instead of being wrapped in the outer
+	// tea.Batch(resumeTask.Run(), ...) the direct path returns.
 	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
 	runRestartWithOptionsSelected(m)
 
@@ -82,9 +79,25 @@ func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFail
 
 	cmd := m.pendingConfirmation.Run() // runs Sync, returns Async
 	require.NotNil(t, cmd)
-	msg := cmd()
 
-	assert.Nil(t, msg, "Async must not run Resume when the Loading transition never happened")
+	// Async is tea.Batch(tea.RequestWindowSize, resumeFunc) — calling it
+	// returns a tea.BatchMsg (the sub-commands to run), not an
+	// already-resolved message. Run every sub-command and confirm none
+	// of them is the resume outcome (transitionFailedMsg/resumeDoneMsg);
+	// a tea.WindowSizeMsg from the RequestWindowSize half is expected
+	// and fine.
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	require.True(t, ok, "Async must be a batch (RequestWindowSize + the resume check)")
+	for _, sub := range batch {
+		require.NotNil(t, sub)
+		switch sub().(type) {
+		case transitionFailedMsg:
+			t.Fatal("Resume must not have run (and errored)")
+		case resumeDoneMsg:
+			t.Fatal("Resume must not have run (and succeeded)")
+		}
+	}
 	assert.Equal(t, session.Status(99), inst.GetStatus(), "status must be untouched by Resume")
 }
 
