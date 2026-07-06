@@ -119,6 +119,7 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 			PermissionMode: "default",
 			Model:          "default",
 			HeadroomWrap:   false,
+			Effort:         "default",
 		}, got)
 	})
 
@@ -128,12 +129,14 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 			ClaudePermissionMode: stringPtrTest("plan"),
 			ClaudeModel:          stringPtrTest("opus"),
 			HeadroomWrap:         boolPtrTest(true),
+			ClaudeEffort:         stringPtrTest("high"),
 		}
 		assert.Equal(t, overlay.LaunchOptions{
 			RemoteControl:  false,
 			PermissionMode: "plan",
 			Model:          "opus",
 			HeadroomWrap:   true,
+			Effort:         "high",
 		}, launchOptionsFromConfig(cfg))
 	})
 }
@@ -153,6 +156,20 @@ func TestRemoteControlBlockedAgreesWithComposedCommandWhenHeadroomWrapForcesRCOf
 	opts := overlay.LaunchOptions{RemoteControl: true, HeadroomWrap: true}
 	m := &home{rcAuth: session.RemoteControlAuth{State: session.RemoteControlAuthBlocked}}
 	assert.False(t, m.remoteControlBlocked(effectiveRemoteControl(opts), "claude"))
+}
+
+func TestEffortProgram(t *testing.T) {
+	assert.Equal(t, "claude --effort high", effortProgram("high", "claude"))
+	assert.Equal(t, "claude", effortProgram("default", "claude"))
+	assert.Equal(t, "claude", effortProgram("", "claude"))
+}
+
+func TestApplyLaunchOptions_ComposesEffort(t *testing.T) {
+	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+	opts := overlay.LaunchOptions{Model: "opus", Effort: "high"}
+	got := applyLaunchOptions(opts, authOK, "claude", "t")
+	assert.Contains(t, got, "--effort high")
+	assert.Contains(t, got, "--model opus")
 }
 
 func TestApplyLaunchOptions(t *testing.T) {

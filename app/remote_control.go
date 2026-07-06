@@ -38,6 +38,12 @@ func modelProgram(model, program string) string {
 	return session.BuildModelCommand(program, model)
 }
 
+// effortProgram returns program with Claude's --effort flag applied.
+// No-op when the program isn't Claude or effort is "" / "default".
+func effortProgram(effort, program string) string {
+	return session.BuildEffortCommand(program, effort)
+}
+
 // headroomWrapProgram returns program wrapped as "headroom wrap
 // <tool> <args>" when enabled, for whichever adapter matches program —
 // a no-op for agents Headroom doesn't support (see
@@ -64,6 +70,7 @@ func launchOptionsFromConfig(cfg *config.Config) overlay.LaunchOptions {
 		PermissionMode: cfg.PermissionMode(),
 		Model:          cfg.Model(),
 		HeadroomWrap:   cfg.HeadroomWrapEnabled(),
+		Effort:         cfg.Effort(),
 	}
 }
 
@@ -80,9 +87,9 @@ func effectiveRemoteControl(opts overlay.LaunchOptions) bool {
 }
 
 // applyLaunchOptions composes program in order: remote-control,
-// permission-mode, model, then headroom-wrap last — headroom-wrap must
-// be outermost so the earlier three steps still see the bare agent
-// name at parts[0] when deciding how to modify the string.
+// permission-mode, model, effort, then headroom-wrap last —
+// headroom-wrap must be outermost so the earlier steps still see the
+// bare agent name at parts[0] when deciding how to modify the string.
 // effectiveRemoteControl is the authoritative enforcement of the
 // Remote-Control/Headroom-Wrap exclusivity rule (the UI-level
 // auto-disable in ClaudePreferences/SessionLaunchOptions is the
@@ -91,6 +98,7 @@ func applyLaunchOptions(opts overlay.LaunchOptions, auth session.RemoteControlAu
 	program = remoteControlProgram(effectiveRemoteControl(opts), auth, program, title)
 	program = permissionModeProgram(opts.PermissionMode, program)
 	program = modelProgram(opts.Model, program)
+	program = effortProgram(opts.Effort, program)
 	program = headroomWrapProgram(opts.HeadroomWrap, program)
 	return program
 }
