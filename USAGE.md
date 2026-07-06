@@ -55,7 +55,7 @@ nix run .
 5. Press `d` to toggle the **Diff** overlay to see what the agent has changed
 6. Press `Ctrl+A` to attach to the agent pane and interact directly
 7. Press `Ctrl+Q` to detach back to the TUI
-8. Press `c` to checkout (pause) the session when done
+8. Press `s` to stash (pause) the session when done
 
 ---
 
@@ -81,7 +81,7 @@ nix run .
 │    user/refactor   │                                                │
 │                    │                                                │
 ├────────────────────┴────────────────────────────────────────────────┤
-│  n new • N prompt • c checkout • r resume • p push • ? help • q     │
+│  n new • N prompt • s stash • r resume • p push • ? help • q        │
 │                                                   ← Context Menu    │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Error: something went wrong                      ← Error Bar      │
@@ -137,7 +137,7 @@ A session moves through these states:
       ┌─────────┐  ◄──────────────────────────────┐
       │ Running │  Agent is working                │
       └──┬──┬───┘                                  │
-    c    │  │  D                                   │  r
+    s    │  │  D                                   │  r
   ┌──────┘  └──────────┐                           │
   ▼                    ▼                           │
 ┌────────┐       ┌──────────┐                      │
@@ -158,7 +158,7 @@ A session moves through these states:
 4. Tmux session launched running the configured program
 5. Agent begins working in the isolated worktree
 
-**Running → Paused** (on checkout, `c`):
+**Running → Paused** (on stash, `s`):
 1. Any uncommitted changes are staged and committed locally
 2. Tmux session is detached
 3. Worktree directory is removed (saves disk space)
@@ -182,7 +182,7 @@ A session moves through these states:
 When you launch Loom inside a registered workspace, a special instance is pinned at the top of the instance list — the **Workspace Terminal**. Unlike regular sessions, it runs directly in the root of the repository without creating a git worktree:
 
 - **No worktree** — the agent operates on your main checkout, so changes are immediately visible to other tools working in that directory.
-- **Cannot be paused or killed** — the workspace terminal is a permanent fixture while the workspace exists. `c` and `D` are no-ops when it is selected.
+- **Cannot be paused or killed** — the workspace terminal is a permanent fixture while the workspace exists. `s` and `D` are no-ops when it is selected.
 - **Diff stats** reflect the workspace's uncommitted changes against HEAD, not a cumulative diff against a base commit.
 - **Auto-recreated** — if its tmux session is missing at startup (e.g. after a reboot), Loom recreates it in place.
 
@@ -205,7 +205,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `O` | Full-screen attach (agent) |
 | `a` | Quick input to agent |
 | `t` | Quick input to terminal |
-| `c` | Checkout — commit changes and pause session |
+| `s` | Stash — stash changes and pause session |
 | `m` | Merge another session's branch into the current one |
 | `r` | Resume a paused session |
 | `p` | Push branch to remote (with confirmation) |
@@ -316,7 +316,7 @@ You're now inside the tmux session. Type naturally to communicate with the agent
 
 **Pause** — saves everything and frees disk space:
 ```
-Select running session → c
+Select running session → s
 ```
 Changes are committed, worktree is removed, branch name is on your clipboard. The agent's tmux session remains in the background.
 

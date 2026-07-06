@@ -88,7 +88,7 @@ loom --workspace <name>
 | `r` | Resume paused instance |
 | `D` | Kill instance |
 | `p` | Push branch |
-| `c` | Checkout branch |
+| `s` | Stash & pause |
 | `m` | Merge another session's branch into the current one |
 | `a` | Quick input bar (send to agent) |
 | `t` | Quick input bar (send to terminal) |
