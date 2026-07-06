@@ -33,6 +33,19 @@ func TestMigrate_V1UpgradesDropsAutoYes(t *testing.T) {
 
 // TestMigrate_Idempotent verifies records already at CurrentSchemaVersion
 // migrate cleanly and stay stable.
+// TestMigrate_V2UpgradesAddsHeadroomProxy verifies a v2 record with no
+// headroom_proxy key migrates to v3 with HeadroomProxy defaulting to
+// false — the zero value already matches the desired default, so this
+// is a pure version-stamp upgrade.
+func TestMigrate_V2UpgradesAddsHeadroomProxy(t *testing.T) {
+	raw := []byte(`{"schema_version":2,"title":"legacy","program":"claude"}`)
+
+	data, err := Migrate(raw)
+	assert.NoError(t, err)
+	assert.Equal(t, CurrentSchemaVersion, data.SchemaVersion)
+	assert.False(t, data.HeadroomProxy)
+}
+
 func TestMigrate_Idempotent(t *testing.T) {
 	original := InstanceData{
 		SchemaVersion: CurrentSchemaVersion,

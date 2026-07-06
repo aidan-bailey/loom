@@ -13,8 +13,9 @@ import (
 // pre-versioning. The v0→v1 step is a pure field-default upgrade and
 // exists to establish the migration plumbing. v1→v2 drops the AutoYes
 // field (encoding/json already ignores the now-unknown "auto_yes" key
-// on unmarshal, so this step too is just a version stamp) — future
-// schema changes extend this switch.
+// on unmarshal, so this step too is just a version stamp). v2→v3 adds
+// HeadroomProxy, defaulting to false for pre-existing records — again
+// just a version stamp, since the zero value is already correct.
 //
 // Contributor protocol: when adding/renaming/removing an InstanceData
 // field, bump CurrentSchemaVersion and append a new case to the switch
@@ -42,6 +43,11 @@ func Migrate(raw []byte) (InstanceData, error) {
 			// v1 → v2: AutoYes removed. No payload changes needed —
 			// unmarshal already dropped the field — just stamp the version.
 			data.SchemaVersion = 2
+		case 2:
+			// v2 → v3: HeadroomProxy added. No payload changes needed —
+			// the zero value (false) already matches the desired default
+			// for pre-existing records — just stamp the version.
+			data.SchemaVersion = 3
 		default:
 			return InstanceData{}, fmt.Errorf("no upgrade path from schema version %d", data.SchemaVersion)
 		}
