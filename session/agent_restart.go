@@ -46,6 +46,14 @@ func BuildModelCommand(program, model string) string {
 	return defaultRegistry.Lookup(program).ApplyModelFlag(program, model)
 }
 
+// BuildEffortCommand modifies a program command string to launch with
+// the given --effort value. The adapter registry decides whether and
+// how the string is modified. Idempotent, and a no-op for agents
+// without an effort-level concept or when effort is "" / "default".
+func BuildEffortCommand(program, effort string) string {
+	return defaultRegistry.Lookup(program).ApplyEffortFlag(program, effort)
+}
+
 // headroomSupportedTools lists the adapter Name() values Headroom's
 // `wrap` subcommand recognizes (`headroom wrap --help`: claude, codex,
 // copilot, aider, vibe, cursor, cline, continue, goose, openhands,

@@ -145,6 +145,18 @@ func TestBuildModelCommand_Unknown(t *testing.T) {
 	assert.Equal(t, "codex", BuildModelCommand("codex", "opus"))
 }
 
+func TestBuildEffortCommand_Claude(t *testing.T) {
+	assert.Equal(t, "claude --effort high", BuildEffortCommand("claude", "high"))
+}
+
+func TestBuildEffortCommand_Default(t *testing.T) {
+	assert.Equal(t, "claude", BuildEffortCommand("claude", "default"))
+}
+
+func TestBuildEffortCommand_Unknown(t *testing.T) {
+	assert.Equal(t, "codex", BuildEffortCommand("codex", "high"))
+}
+
 func TestBuildHeadroomWrapCommand_Claude(t *testing.T) {
 	assert.Equal(t, "headroom wrap claude", BuildHeadroomWrapCommand("claude"))
 }
