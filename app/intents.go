@@ -394,6 +394,16 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 				}
 			},
 			Async: func() tea.Msg {
+				// Sync's TransitionTo(Loading) may have failed (e.g. a
+				// concurrent reconcile flip landed the instance
+				// somewhere that transition can't legally proceed
+				// from) — mirrors runResumeSelected's early return on
+				// the same failure, just checked here since Sync's
+				// func() signature can't otherwise signal Run() to
+				// skip Async.
+				if selected.GetStatus() != session.Loading {
+					return nil
+				}
 				saveFunc := func() error {
 					return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
 				}
@@ -406,7 +416,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 		if m.remoteControlBlocked(effectiveRemoteControl(newOpts), selected.Program) {
 			return m, m.promptRestartRemoteControlBlocked(resumeTask)
 		}
-		return m, tea.Batch(resumeTask.Run(), m.instanceChanged())
+		return m, tea.Batch(tea.RequestWindowSize, resumeTask.Run(), m.instanceChanged())
 	}
 	m.pendingLaunchOptionsCancel = func() (tea.Model, tea.Cmd) {
 		m.state = stateDefault

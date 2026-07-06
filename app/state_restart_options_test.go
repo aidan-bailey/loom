@@ -54,6 +54,40 @@ func TestRunRestartWithOptionsSelected_ConfirmRecomposesProgramAndResumes(t *tes
 	require.NotNil(t, cmd) // the Resume Cmd — not invoked here, just asserting it's returned
 }
 
+func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFailed(t *testing.T) {
+	m, inst := newPausedInstanceHome(t)
+	// Route through the blocked-RC path so resumeTask lands directly in
+	// m.pendingConfirmation instead of being wrapped in the
+	// tea.Batch(tea.RequestWindowSize, resumeTask.Run(), ...) the direct
+	// path returns — that lets this test call Run() in isolation and
+	// inspect Async's own returned message, rather than unwrapping a
+	// tea.BatchMsg of unrelated commands.
+	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	runRestartWithOptionsSelected(m)
+
+	pending := m.pendingLaunchOptions
+	require.NotNil(t, pending)
+	_, _ = pending(overlay.LaunchOptions{RemoteControl: true, PermissionMode: "default", Model: "default", Effort: "default"})
+	require.Equal(t, stateConfirm, m.state)
+
+	// Every legal Status permits transitioning to Loading (see
+	// allowedTransitions in session/instance.go) — TransitionTo(Loading)
+	// only fails when the instance's current Status isn't one of the
+	// known enum values, e.g. clobbered by a concurrent write between
+	// the precondition check and Sync's write. Status is an exported
+	// field, so corrupt it directly to force that failure once the user
+	// confirms, proving Async bails instead of blindly calling Resume on
+	// an instance that never actually transitioned.
+	inst.Status = session.Status(99)
+
+	cmd := m.pendingConfirmation.Run() // runs Sync, returns Async
+	require.NotNil(t, cmd)
+	msg := cmd()
+
+	assert.Nil(t, msg, "Async must not run Resume when the Loading transition never happened")
+	assert.Equal(t, session.Status(99), inst.GetStatus(), "status must be untouched by Resume")
+}
+
 func TestRunRestartWithOptionsSelected_CancelLeavesInstanceUntouched(t *testing.T) {
 	m, inst := newPausedInstanceHome(t)
 	originalProgram := inst.Program
