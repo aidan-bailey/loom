@@ -1043,6 +1043,18 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	}
 	gw.SetStashRef(sha)
 
+	// Checkpoint the stash ref to disk before any destructive step. If
+	// Remove() fails (or Loom dies) past this point, the next launch
+	// otherwise reconciles the record with StashRef="" and Resume never
+	// re-applies the stash — the user's uncommitted work would sit
+	// invisible in `git stash list`.
+	if sha != "" && saveState != nil {
+		if err := saveState(); err != nil {
+			errs = append(errs, fmt.Errorf("pause stash checkpoint save: %w", err))
+			return i.combineErrors(errs)
+		}
+	}
+
 	// Kill the tmux session so the agent process actually stops. Otherwise
 	// claude/aider would keep running inside a session whose worktree we are
 	// about to delete. Resume rebuilds the session with BuildRecoveryCommand
