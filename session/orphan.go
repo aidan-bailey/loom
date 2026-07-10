@@ -139,50 +139,82 @@ var probeWorktreeDirty = func(worktreePath string) bool {
 func DiscoverOrphans(configDir string, claimedPaths map[string]bool, cmdExec internalexec.Executor) ([]OrphanCandidate, error) {
 	worktreesDir := filepath.Join(configDir, "worktrees")
 
-	// Per-user grouping mirrors the layout produced by
-	// session/git/worktree.go's resolveWorktreePaths: branch names
-	// like "aidanb/feature" expand to <worktreesDir>/aidanb/feature_<hex>.
-	userDirs, err := os.ReadDir(worktreesDir)
-	if err != nil {
+	if _, err := os.Stat(worktreesDir); err != nil {
 		if os.IsNotExist(err) {
 			return []OrphanCandidate{}, nil
 		}
 		return nil, fmt.Errorf("read worktrees dir: %w", err)
 	}
 
+	// The layout mirrors session/git/worktree.go's resolveWorktreePaths:
+	// <worktreesDir>/<sanitized branchPrefix+title>_<hex>. The default
+	// BranchPrefix ("{username}/") yields one intermediate directory, but
+	// an empty prefix yields none and a multi-slash prefix yields several
+	// — so walk recursively instead of assuming a fixed depth. A directory
+	// is a worktree candidate when it carries the generated `_<hex>`
+	// suffix or is itself a git worktree root; anything else is a prefix
+	// directory to descend into (bounded, so a runaway tree can't hang
+	// startup).
 	out := make([]OrphanCandidate, 0)
-	for _, userEntry := range userDirs {
-		if !userEntry.IsDir() {
-			continue
-		}
-		userDir := filepath.Join(worktreesDir, userEntry.Name())
-		wtEntries, err := os.ReadDir(userDir)
+	// walk returns how many candidates it surfaced beneath dir.
+	var walk func(dir, relPrefix string, depth int) int
+	walk = func(dir, relPrefix string, depth int) int {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			log.For("session").Warn("orphan_scan.read_user_dir_failed", "dir", userDir, "err", err)
-			continue
+			log.For("session").Warn("orphan_scan.read_dir_failed", "dir", dir, "err", err)
+			return 0
 		}
-		for _, wt := range wtEntries {
-			if !wt.IsDir() {
+		added := 0
+		for _, e := range entries {
+			if !e.IsDir() {
 				continue
 			}
-			wtPath := filepath.Join(userDir, wt.Name())
-			if claimedPaths[wtPath] {
+			path := filepath.Join(dir, e.Name())
+			if claimedPaths[path] {
 				continue
 			}
-			cand, ok := buildOrphanCandidate(wtPath, userEntry.Name(), wt.Name(), cmdExec)
-			if !ok {
-				// Discovery dropped the candidate because we can't
-				// reconstruct a recoverable instance from it (typically
-				// a stale dir whose underlying repo was deleted).
-				// Skipping is safe — CleanupOrphanedSessions will sweep
-				// the tmux session if one exists.
+			_, hasSuffix := stripTimestampSuffix(e.Name())
+			if hasSuffix || isGitWorktreeRoot(path) {
+				cand, ok := buildOrphanCandidate(path, relPrefix, e.Name(), cmdExec)
+				if !ok {
+					// Discovery dropped the candidate because we can't
+					// reconstruct a recoverable instance from it (typically
+					// a stale dir whose underlying repo was deleted).
+					// Skipping is safe — CleanupOrphanedSessions will sweep
+					// the tmux session if one exists.
+					continue
+				}
+				out = append(out, cand)
+				added++
 				continue
 			}
-			out = append(out, cand)
+			// Not a generated worktree dir: descend, then — below the
+			// top level, matching the historical two-level behavior —
+			// fall back to surfacing the dir itself under its raw name
+			// (probe-gated) when nothing was found beneath, so the user
+			// can still discard strays that sit at the worktree level.
+			sub := 0
+			if depth < maxOrphanScanDepth {
+				sub = walk(path, filepath.Join(relPrefix, e.Name()), depth+1)
+			}
+			added += sub
+			if sub == 0 && depth >= 1 {
+				if cand, ok := buildOrphanCandidate(path, relPrefix, e.Name(), cmdExec); ok {
+					out = append(out, cand)
+					added++
+				}
+			}
 		}
+		return added
 	}
+	walk(worktreesDir, "", 0)
 	return out, nil
 }
+
+// maxOrphanScanDepth bounds how many prefix directories DiscoverOrphans
+// descends through below <configDir>/worktrees before giving up. Branch
+// prefixes rarely contain more than one or two slashes.
+const maxOrphanScanDepth = 4
 
 // buildOrphanCandidate reconstructs the metadata for one orphaned
 // worktree. Returns ok=false when the worktree is unrecoverable — its
