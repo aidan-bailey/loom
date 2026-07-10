@@ -546,13 +546,6 @@ func (t *TmuxSession) signalPumpStop(ptmx *os.File) {
 	}
 }
 
-// setPumpDest changes where the output pump writes to (io.Discard or os.Stdout).
-func (t *TmuxSession) setPumpDest(w io.Writer) {
-	t.pumpMu.Lock()
-	t.pumpDest = w
-	t.pumpMu.Unlock()
-}
-
 // SimulateStuckPumpForTest replaces any live pump state with a live
 // channel nobody closes, modeling a pathological case where the pump
 // goroutine has wedged (stuck ptmx.Read, platform-specific Close that
@@ -992,7 +985,9 @@ func (t *TmuxSession) Paste(text string) error {
 	return nil
 }
 
-// CleanupSessions kills all tmux sessions that start with "session-"
+// CleanupSessions kills all Loom-owned tmux sessions — both the current
+// loom_ prefix and the legacy claudesquad_ prefix, so `loom reset` also
+// clears sessions created before the rename.
 func CleanupSessions(cmdExec internalexec.Executor) error {
 	// First try to list sessions
 	lsCtx, lsCancel := context.WithTimeout(context.Background(), tmuxTimeout)
@@ -1009,7 +1004,7 @@ func CleanupSessions(cmdExec internalexec.Executor) error {
 		return fmt.Errorf("failed to list tmux sessions: %v", err)
 	}
 
-	re := regexp.MustCompile(fmt.Sprintf(`%s.*:`, TmuxPrefix))
+	re := regexp.MustCompile(fmt.Sprintf(`(?m)^(?:%s|%s).*:`, TmuxPrefix, LegacyTmuxPrefix))
 	matches := re.FindAllString(string(output), -1)
 	for i, match := range matches {
 		matches[i] = match[:strings.Index(match, ":")]
