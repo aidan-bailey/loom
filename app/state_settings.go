@@ -25,8 +25,17 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if changed {
+		// In global mode (no active workspace) fall back to the global
+		// config dir — otherwise the change lives only in memory and
+		// silently vanishes on restart.
+		dir := ""
 		if m.activeCtx != nil {
-			if err := config.SaveConfigTo(m.appConfig, m.activeCtx.ConfigDir); err != nil {
+			dir = m.activeCtx.ConfigDir
+		} else if globalDir, err := config.GetConfigDir(); err == nil {
+			dir = globalDir
+		}
+		if dir != "" {
+			if err := config.SaveConfigTo(m.appConfig, dir); err != nil {
 				return m, m.handleError(fmt.Errorf("save settings: %w", err))
 			}
 		}
