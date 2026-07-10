@@ -40,6 +40,12 @@ type GitWorktree struct {
 	sessionName string
 	// Branch name for the worktree
 	branchName string
+	// refMu guards baseCommitSHA and stashRef. Writers run on tea.Cmd
+	// goroutines (Setup during Start/Resume, SetStashRef during Pause)
+	// while Instance.Snapshot and diff refreshes read concurrently from
+	// the metadata tick — without this, that's a data race. Never held
+	// across subprocess I/O.
+	refMu sync.Mutex
 	// Base commit hash for the worktree
 	baseCommitSHA string
 	// isExistingBranch is true if the branch existed before the session was created.
@@ -228,16 +234,29 @@ func (g *GitWorktree) GetRepoName() string {
 
 // GetBaseCommitSHA returns the base commit SHA for the worktree
 func (g *GitWorktree) GetBaseCommitSHA() string {
+	g.refMu.Lock()
+	defer g.refMu.Unlock()
 	return g.baseCommitSHA
+}
+
+// setBaseCommitSHA records the diff baseline for the worktree.
+func (g *GitWorktree) setBaseCommitSHA(sha string) {
+	g.refMu.Lock()
+	defer g.refMu.Unlock()
+	g.baseCommitSHA = sha
 }
 
 // GetStashRef returns the pending stash commit SHA, or "" if none.
 func (g *GitWorktree) GetStashRef() string {
+	g.refMu.Lock()
+	defer g.refMu.Unlock()
 	return g.stashRef
 }
 
 // SetStashRef sets the pending stash commit SHA (or clears it, for
 // "").
 func (g *GitWorktree) SetStashRef(sha string) {
+	g.refMu.Lock()
+	defer g.refMu.Unlock()
 	g.stashRef = sha
 }

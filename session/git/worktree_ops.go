@@ -164,12 +164,12 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 	// Record the base commit SHA for diff calculations, but only if not already
 	// set (e.g. preserved from storage during a resume). Overwriting it would
 	// reset the diff baseline to the pause commit, hiding all pre-pause changes.
-	if g.baseCommitSHA == "" {
+	if g.GetBaseCommitSHA() == "" {
 		output, err := g.runGitCommand(g.worktreePath, "rev-parse", "HEAD")
 		if err != nil {
 			return fmt.Errorf("failed to get base commit for existing branch %s: %w", g.branchName, err)
 		}
-		g.baseCommitSHA = strings.TrimSpace(string(output))
+		g.setBaseCommitSHA(strings.TrimSpace(string(output)))
 	}
 
 	return nil
@@ -202,7 +202,7 @@ func (g *GitWorktree) setupNewWorktree() error {
 		return fmt.Errorf("failed to get HEAD commit hash: %w", err)
 	}
 	headCommit := strings.TrimSpace(string(output))
-	g.baseCommitSHA = headCommit
+	g.setBaseCommitSHA(headCommit)
 
 	// Create a new worktree from the HEAD commit
 	// Otherwise, we'll inherit uncommitted changes from the previous worktree.
