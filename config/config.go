@@ -414,15 +414,21 @@ func LoadConfigFrom(dir string) *Config {
 	if err != nil {
 		return DefaultConfig()
 	}
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	// Unmarshal over a defaults-populated struct so a valid-but-partial
+	// file (e.g. hand-edited "{}") backfills required scalars like
+	// DefaultProgram and BranchPrefix instead of degrading to zero values.
+	// Fields present in the JSON still override the defaults.
+	cfg := DefaultConfig()
+	if err := json.Unmarshal(data, cfg); err != nil {
 		quarantined := quarantineCorruptFile(configPath)
 		if quarantined != "" {
 			log.For("config").Error("config_file_corrupt", "path", configPath, "quarantine_path", quarantined, "action", "starting_with_defaults")
 		} else {
 			log.For("config").Error("config_file_corrupt", "path", configPath, "err", err, "action", "starting_with_defaults")
 		}
+		// A failed unmarshal can leave cfg partially written — return a
+		// fresh defaults struct instead.
 		return DefaultConfig()
 	}
-	return &cfg
+	return cfg
 }
