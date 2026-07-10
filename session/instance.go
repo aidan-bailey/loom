@@ -710,7 +710,18 @@ func (i *Instance) Kill() (err error) {
 		}
 	}
 
-	return i.combineErrors(errs)
+	if err := i.combineErrors(errs); err != nil {
+		// Cleanup failed, so resources still exist on disk — restore the
+		// snapshot so a retried Kill actually re-attempts the cleanup
+		// instead of no-oping on the started guard above.
+		i.mu.Lock()
+		i.started = true
+		i.tmuxSession = tmuxSess
+		i.gitWorktree = gitWT
+		i.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // combineErrors combines multiple errors into a single error. Uses

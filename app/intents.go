@@ -235,13 +235,27 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 
 		if err := selected.Kill(); err != nil {
 			log.For("app").Error("kill.instance_kill_failed", "title", title, "err", err)
+			// A discarded orphan whose cleanup failed must NOT vanish from
+			// the list: the worktree is still on disk and would silently
+			// reappear on the next workspace load. Keep the row, revert to
+			// Recoverable, and show the error so the user can retry D.
+			if previousStatus == session.Recoverable {
+				return transitionFailedMsg{
+					title:          title,
+					op:             "discard",
+					previousStatus: previousStatus,
+					err:            fmt.Errorf("discard %s: %w", title, err),
+				}
+			}
 		}
 
-		// Past this point tmux + worktree + branch are gone. Reverting status
-		// on a storage error would leave a zombie in the list (Ready/Running
-		// with no backing resources); emit killInstanceMsg regardless so the
-		// UI matches reality. ErrInstanceNotFound just means storage already
-		// agreed, so it's a debug-level note rather than an error.
+		// Past this point tmux + worktree + branch are gone (or, for a
+		// non-Recoverable kill, best-effort gone with the failure logged).
+		// Reverting status on a storage error would leave a zombie in the
+		// list (Ready/Running with no backing resources); emit
+		// killInstanceMsg regardless so the UI matches reality.
+		// ErrInstanceNotFound just means storage already agreed, so it's a
+		// debug-level note rather than an error.
 		if err := m.storage.DeleteInstance(selected.Title); err != nil {
 			if errors.Is(err, session.ErrInstanceNotFound) {
 				log.For("app").Debug("kill.storage_already_absent", "title", title)
