@@ -556,6 +556,22 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		return nil
 	}
 
+	// Error handler: release the start reservation on ANY failure below so
+	// a retry isn't blocked by this failed attempt. Registered before the
+	// worktree-construction block — its early returns previously leaked
+	// the reservation, permanently wedging the instance. Resource cleanup
+	// happens at the failure sites themselves: Kill() is useless here
+	// because it no-ops until started is set true, which only happens in
+	// the success branch.
+	var setupErr error
+	defer func() {
+		if setupErr != nil {
+			i.releaseStart()
+		} else {
+			i.setStarted(true)
+		}
+	}()
+
 	ts := i.getTmuxSession()
 	if ts == nil {
 		// Create new tmux session
@@ -569,7 +585,8 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		if i.selectedBranch != "" {
 			gitWorktree, err := git.NewGitWorktreeFromBranch(i.Path, i.selectedBranch, i.Title, i.ConfigDir)
 			if err != nil {
-				return fmt.Errorf("failed to create git worktree from branch: %w", err)
+				setupErr = fmt.Errorf("failed to create git worktree from branch: %w", err)
+				return setupErr
 			}
 			i.mu.Lock()
 			i.gitWorktree = gitWorktree
@@ -579,7 +596,8 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		} else {
 			gitWorktree, branchName, err := git.NewGitWorktree(i.Path, i.Title, i.ConfigDir)
 			if err != nil {
-				return fmt.Errorf("failed to create git worktree: %w", err)
+				setupErr = fmt.Errorf("failed to create git worktree: %w", err)
+				return setupErr
 			}
 			i.mu.Lock()
 			i.gitWorktree = gitWorktree
@@ -590,22 +608,6 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 	} else {
 		gw = i.getGitWorktree()
 	}
-
-	// Setup error handler to cleanup resources on any error
-	var setupErr error
-	defer func() {
-		if setupErr != nil {
-			// Clear the starting reservation first so a retry isn't blocked
-			// by this failed attempt. Kill() below releases any resources
-			// that did get allocated.
-			i.releaseStart()
-			if cleanupErr := i.Kill(); cleanupErr != nil {
-				setupErr = fmt.Errorf("%v (cleanup error: %v)", setupErr, cleanupErr)
-			}
-		} else {
-			i.setStarted(true)
-		}
-	}()
 
 	if !firstTimeSetup {
 		// Reuse existing session
