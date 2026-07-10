@@ -1671,10 +1671,18 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance) t
 func (m *home) handleError(err error) tea.Cmd {
 	log.For("app").Error("handle_error", "err", err)
 	m.errBox.SetError(err)
+	// Scale visibility with message length: a multi-line git error can't
+	// be read in the flat 3 seconds that suits a one-liner. Every error
+	// is also in loom.log, but the toast is the only surface most users
+	// see.
+	duration := 3*time.Second + time.Duration(len(err.Error())/40)*time.Second
+	if duration > 10*time.Second {
+		duration = 10 * time.Second
+	}
 	return func() tea.Msg {
 		select {
 		case <-m.ctx.Done():
-		case <-time.After(3 * time.Second):
+		case <-time.After(duration):
 		}
 
 		return hideErrMsg{}

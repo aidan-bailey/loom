@@ -1170,7 +1170,10 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	// resolve manually.
 	if sha := gw.GetStashRef(); sha != "" {
 		if err := gw.ApplyStash(sha); err != nil {
-			return fmt.Errorf("failed to restore stashed changes: %w", err)
+			// Name the stash so the user can act on it — it is preserved
+			// (visible in `git stash list`) and this error is the only
+			// place they ever hear about it.
+			return fmt.Errorf("failed to restore stashed changes (kept as stash %.12s — resolve in the worktree or apply manually via git stash): %w", sha, err)
 		}
 		gw.SetStashRef("")
 	}
