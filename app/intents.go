@@ -318,17 +318,29 @@ func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	return m, startPause()
 }
 
+// snapshotSaveFunc returns a saveFunc for Pause/Resume that persists the
+// current instance list. Must be called on the main goroutine: it
+// snapshots list membership immediately because ui.List is unlocked and
+// must not be read from the tea.Cmd goroutine the saveFunc runs on.
+// Status filtering still happens at save time via persistableInstances,
+// so state changes made by Pause/Resume itself are captured.
+func snapshotSaveFunc(m *home) func() error {
+	storage := m.storage
+	snapshot := append([]*session.Instance(nil), m.list.GetInstances()...)
+	return func() error {
+		return storage.SaveInstances(persistableInstances(snapshot))
+	}
+}
+
 func pauseActionFor(m *home, selected *session.Instance) tea.Cmd {
 	previousStatus := selected.GetStatus()
 	pauseTitle := selected.Title
+	saveFunc := snapshotSaveFunc(m)
 	return func() tea.Msg {
 		if ts := m.splitPane.DetachTerminalForInstance(pauseTitle); ts != nil {
 			if err := ts.Close(); err != nil {
 				log.For("app").Error("pause.terminal_close_failed", "title", pauseTitle, "err", err)
 			}
-		}
-		saveFunc := func() error {
-			return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
 		}
 		if err := selected.Pause(saveFunc); err != nil {
 			return transitionFailedMsg{title: pauseTitle, op: "pause", previousStatus: previousStatus, err: err}
@@ -349,9 +361,7 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 		log.For("app").Warn("resume.skipped", "err", err)
 		return m, nil
 	}
-	saveFunc := func() error {
-		return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
-	}
+	saveFunc := snapshotSaveFunc(m)
 	resumeTitle := selected.Title
 	resumeCmd := func() tea.Msg {
 		if err := selected.Resume(saveFunc); err != nil {
@@ -389,6 +399,9 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 
 	m.pendingLaunchOptions = func(newOpts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
 		resumeTitle := selected.Title
+		// Snapshot here, on the main goroutine — Async below runs on a
+		// Cmd goroutine and must not touch the unlocked ui.List.
+		saveFunc := snapshotSaveFunc(m)
 		resumeTask := overlay.ConfirmationTask{
 			Sync: func() {
 				selected.Program = applyLaunchOptions(newOpts, m.rcAuth, base, selected.Title)
@@ -410,9 +423,6 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 				// skip Async.
 				if selected.GetStatus() != session.Loading {
 					return nil
-				}
-				saveFunc := func() error {
-					return m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
 				}
 				if err := selected.Resume(saveFunc); err != nil {
 					return transitionFailedMsg{title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
