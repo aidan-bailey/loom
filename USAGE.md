@@ -178,6 +178,11 @@ A session moves through these states:
 3. Branch deleted (unless it was a pre-existing branch you selected at creation)
 4. Instance removed from storage
 
+There is one more state that appears only after a crash or lost state
+file: **Recoverable** (`⟲`) — a worktree found on disk that Loom isn't
+tracking. It sits inertly in the list until you recover (`r`) or discard
+(`D`) it; see [Session Recovery](#session-recovery-orphaned-worktrees).
+
 ### Workspace Terminals
 
 When you launch Loom inside a registered workspace, a special instance is pinned at the top of the instance list — the **Workspace Terminal**. Unlike regular sessions, it runs directly in the root of the repository without creating a git worktree:
@@ -208,10 +213,10 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `t` | Quick input to terminal |
 | `s` | Stash — stash changes and pause session |
 | `m` | Merge another session's branch into the current one |
-| `r` | Resume a paused session |
+| `r` | Resume a paused session / recover an orphaned (`⟲`) session |
 | `R` | Resume a paused session with different launch options |
 | `p` | Push branch to remote (with confirmation) |
-| `D` | Kill selected session (with confirmation) |
+| `D` | Kill selected session (with confirmation); on an orphaned (`⟲`) session: discard its worktree, keeping the branch |
 | `d` | Toggle diff overlay |
 | `W` | Open workspace picker |
 | `S` | Open settings (edit config.json: Default Program, Daemon Poll Interval, Branch Prefix, Profiles, Claude Preferences) |
@@ -343,6 +348,42 @@ Select session → D → y (confirm)
 ```
 
 Destroys the tmux session, removes the worktree, and deletes the branch (unless it was pre-existing). This is irreversible.
+
+### Session Recovery (orphaned worktrees)
+
+If Loom crashes or its state file loses track of a session, the worktree
+and agent may still exist on disk. On every launch and workspace switch,
+Loom scans `~/.loom/worktrees/` for directories it isn't tracking:
+
+- **Stale leftovers** (no live agent, no uncommitted changes) are removed
+  automatically. A summary line reports the count — the branch itself is
+  never deleted by this cleanup.
+- **Worktrees with a live agent or uncommitted work** appear in the
+  session list as recoverable entries, marked with an orange `⟲` icon.
+
+For a `⟲` entry you have two choices:
+
+- `r` — **recover**: adopt it back as a normal session, reattaching to
+  the live agent if one is still running. If the session and worktree
+  turn out to be gone, it is recovered as *paused* (branch preserved);
+  press `r` again to resume it.
+- `D` — **discard**: remove the worktree. Uncommitted changes are lost,
+  but the branch is kept, so committed work survives.
+
+Unactioned `⟲` entries are re-derived from disk and will reappear on the
+next launch until you recover or discard them.
+
+If a stored session fails to load at startup (e.g. its repo moved), it is
+**not** deleted: the record is kept on disk and retried on every launch,
+and the startup summary reports "N sessions failed to load (kept; see
+loom.log)". Check the log for the reason; the record lives in
+`instances.json` until the underlying problem is fixed.
+
+**Stashes on pause/resume**: pausing stashes uncommitted work
+(`[loom] stash from '<title>' …` in `git stash list`); resuming re-applies
+it. If re-apply conflicts, the session returns to paused, the stash is
+preserved, and the error names the stash SHA so you can resolve it
+manually in the worktree.
 
 ### Work Across Multiple Workspaces
 
