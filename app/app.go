@@ -747,7 +747,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// handles) but must never be driven by the tick — RepairPtmx
 			// would attach a PTY and TransitionTo(Running) would promote a
 			// never-confirmed orphan past the explicit recover flow.
-			if inst.Started() && !inst.Paused() && status != session.Deleting && status != session.Recoverable {
+			// Loading rows are likewise owned by an in-flight
+			// Start/Resume/Recover: probing them mid-setup reads a dead
+			// tmux session and force-flips them to Paused under the op.
+			if inst.Started() && !inst.Paused() && status != session.Deleting && status != session.Recoverable && status != session.Loading {
 				active = append(active, inst)
 			}
 		}
@@ -1013,6 +1016,16 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.showHelpScreen(msg.helpType, nil)
 	case recoverDoneMsg:
 		if msg.err != nil {
+			// Put the row back into Recoverable so the user can retry r
+			// (runRecoverSelected flipped it to Loading for the spinner).
+			for _, inst := range m.list.GetInstances() {
+				if inst.Title == msg.oldTitle {
+					if terr := inst.TransitionTo(session.Recoverable); terr != nil {
+						log.For("app").Warn("recover.revert_failed", "title", msg.oldTitle, "err", terr)
+					}
+					break
+				}
+			}
 			return m, m.handleError(fmt.Errorf("recover %s: %w", msg.oldTitle, msg.err))
 		}
 		m.list.RemoveInstanceByTitle(msg.oldTitle)
@@ -1020,6 +1033,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SelectInstance(msg.recovered)
 		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
 			log.For("app").Error("recover.save_failed", "title", msg.recovered.Title, "err", err)
+		}
+		// Recovery is otherwise invisible when fast — confirm it, and be
+		// explicit about the degraded case where both the tmux session and
+		// worktree were already gone and adoption could only mark the
+		// record Paused (resume rebuilds the worktree from the branch).
+		if msg.recovered.GetStatus() == session.Paused {
+			m.errBox.SetInfo(fmt.Sprintf("Recovered '%s' as paused — its session and worktree were gone; branch preserved, press r to resume", msg.recovered.Title))
+		} else {
+			m.errBox.SetInfo(fmt.Sprintf("Recovered session '%s'", msg.recovered.Title))
 		}
 		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
 	case startFullScreenAttachMsg:

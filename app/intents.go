@@ -458,6 +458,15 @@ func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
 	data.Status = session.Running
 	oldTitle := selected.Title
 	cmdExec := cmd2.MakeExecutor()
+
+	// Show the spinner while ReconcileAndRestore does its blocking
+	// tmux/worktree probing — same shape as runResumeSelected. The
+	// recoverDoneMsg handler reverts to Recoverable on failure.
+	if err := selected.TransitionTo(session.Loading); err != nil {
+		log.For("app").Warn("recover.skipped", "err", err)
+		return m, nil
+	}
+
 	recoverCmd := func() tea.Msg {
 		inst, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
 		if err != nil {
@@ -465,7 +474,7 @@ func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
 		}
 		return recoverDoneMsg{oldTitle: oldTitle, recovered: inst}
 	}
-	return m, recoverCmd
+	return m, tea.Batch(recoverCmd, m.instanceChanged())
 }
 
 // -- Attach --

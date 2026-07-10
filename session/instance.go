@@ -71,12 +71,15 @@ func (s Status) String() string {
 // going through Loading/Running would produce an inconsistent UI state —
 // that's the main invariant this table enforces.
 var allowedTransitions = map[Status]map[Status]bool{
-	Ready:       {Loading: true, Running: true, Prompting: true, Paused: true, Deleting: true},
-	Loading:     {Ready: true, Running: true, Prompting: true, Paused: true, Deleting: true},
-	Running:     {Ready: true, Loading: true, Prompting: true, Paused: true, Deleting: true},
-	Prompting:   {Ready: true, Loading: true, Running: true, Paused: true, Deleting: true},
-	Paused:      {Loading: true, Running: true, Deleting: true},
-	Deleting:    {Ready: true, Loading: true, Running: true, Prompting: true, Paused: true},
+	Ready:     {Loading: true, Running: true, Prompting: true, Paused: true, Deleting: true},
+	Loading:   {Ready: true, Running: true, Prompting: true, Paused: true, Deleting: true, Recoverable: true},
+	Running:   {Ready: true, Loading: true, Prompting: true, Paused: true, Deleting: true},
+	Prompting: {Ready: true, Loading: true, Running: true, Paused: true, Deleting: true},
+	Paused:    {Loading: true, Running: true, Deleting: true},
+	// Deleting → X and Loading/Deleting → Recoverable are the failed-op
+	// revert paths: a discard whose cleanup failed goes back to
+	// Recoverable, a recover whose adoption failed likewise.
+	Deleting:    {Ready: true, Loading: true, Running: true, Prompting: true, Paused: true, Recoverable: true},
 	Recoverable: {Loading: true, Running: true, Deleting: true},
 }
 
