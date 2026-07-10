@@ -28,9 +28,16 @@ type Pty struct{}
 
 // Start allocates a PTY, launches cmd attached to it, and returns the
 // master file descriptor. The caller closes the returned file when the
-// session ends.
+// session ends. The child is reaped in the background: no caller
+// retains cmd, so without the Wait every tmux client subprocess would
+// linger as a zombie for the life of the Loom process.
 func (pt Pty) Start(cmd *exec.Cmd) (*os.File, error) {
-	return pty.Start(cmd)
+	f, err := pty.Start(cmd)
+	if err != nil {
+		return nil, err
+	}
+	go func() { _ = cmd.Wait() }()
+	return f, nil
 }
 
 // Close is a no-op for the production factory — each PTY is owned by

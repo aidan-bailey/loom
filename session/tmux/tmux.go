@@ -282,6 +282,11 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 		return fmt.Errorf("error starting tmux session: %w", err)
 	}
 
+	// The new-session ptmx only exists to launch the command; close it on
+	// every exit path (the timeout branch below previously leaked it —
+	// t.Close() closes t.ptmx, which is still nil at this point).
+	defer ptmx.Close()
+
 	// Poll for session existence with exponential backoff
 	timeout := time.After(2 * time.Second)
 	sleepDuration := 5 * time.Millisecond
@@ -300,7 +305,6 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 			}
 		}
 	}
-	ptmx.Close()
 
 	// Set history limit to enable scrollback (default is 2000, we'll use 10000 for more history)
 	histCtx, histCancel := context.WithTimeout(context.Background(), tmuxTimeout)
