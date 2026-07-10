@@ -102,9 +102,11 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		popped := m.list.PopSelectedForKill()
 		m.state = stateDefault
-		m.instanceChanged()
 
 		return m, tea.Batch(
+			// instanceChanged's returned Cmd surfaces pane-update errors;
+			// discarding it would silently swallow them.
+			m.instanceChanged(),
 			tea.Sequence(
 				tea.RequestWindowSize,
 				func() tea.Msg {
