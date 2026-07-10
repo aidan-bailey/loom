@@ -43,9 +43,6 @@ var (
 	// DangerAccent borders confirmation overlays for destructive actions.
 	DangerAccent = lipgloss.Color("#de613e")
 
-	// ShadowFg is the drop-shadow color beneath floating overlays.
-	ShadowFg = lipgloss.Color("#333333")
-
 	// OverlayBorder is the ANSI accent used for overlay borders and the
 	// selected-row background in pickers that opt into ANSI palette colors.
 	// Kept distinct from TitleAccent because ANSI 62 maps to the user's

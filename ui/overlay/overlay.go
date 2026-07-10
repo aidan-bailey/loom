@@ -2,11 +2,9 @@ package overlay
 
 import (
 	"bytes"
-	"github.com/aidan-bailey/loom/ui"
 	"regexp"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/ansi"
 	"github.com/muesli/reflow/truncate"
@@ -43,12 +41,11 @@ func CalculateCenterCoordinates(foregroundLines []string, backgroundLines []stri
 	return x, y
 }
 
-// PlaceOverlay places fg on top of bg with an optional shadow effect.
+// PlaceOverlay places fg on top of bg, fading the background behind it.
 // If center is true, the foreground is centered on the background; otherwise, the provided x and y are used.
 func PlaceOverlay(
 	x, y int,
 	fg, bg string,
-	shadow bool,
 	center bool,
 	opts ...WhitespaceOption,
 ) string {
@@ -98,24 +95,6 @@ func PlaceOverlay(
 	placeX, placeY := x, y
 	if center {
 		placeX, placeY = CalculateCenterCoordinates(fgLines, bgLines, fgWidth, bgWidth)
-	}
-
-	// Handle shadow if enabled
-	if shadow {
-		// Define shadow style and character
-		shadowStyle := lipgloss.NewStyle().Foreground(ui.ShadowFg)
-		shadowChar := shadowStyle.Render("░")
-
-		// Create shadow string with same dimensions as foreground
-		shadowLines := make([]string, fgHeight)
-		for i := 0; i < fgHeight; i++ {
-			shadowLines[i] = strings.Repeat(shadowChar, fgWidth)
-		}
-		shadowStr := strings.Join(shadowLines, "\n")
-
-		// Place shadow on background at an offset (e.g., +1, +1)
-		const shadowOffsetX, shadowOffsetY = 1, 1
-		_ = PlaceOverlay(placeX+shadowOffsetX, placeY+shadowOffsetY, shadowStr, bg, false, false, opts...)
 	}
 
 	// Check if foreground exceeds background size
@@ -243,14 +222,16 @@ func (w whitespace) render(width int) string {
 	j := 0
 	b := strings.Builder{}
 
-	// Cycle through runes and print them into the whitespace.
+	// Cycle through runes and print them into the whitespace. Advance the
+	// column counter by the width of the rune just written — not the next
+	// one — so multi-cell fill chars don't overshoot.
 	for i := 0; i < width; {
 		b.WriteRune(r[j])
+		i += ansi.PrintableRuneWidth(string(r[j]))
 		j++
 		if j >= len(r) {
 			j = 0
 		}
-		i += ansi.PrintableRuneWidth(string(r[j]))
 	}
 
 	// Fill any extra gaps white spaces. This might be necessary if any runes
