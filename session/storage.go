@@ -198,6 +198,20 @@ func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, 
 	return instances, nil
 }
 
+// UnrecoveredTitles returns the titles of records that failed the last
+// LoadAndReconcile pass. These are preserved on disk and retried on the
+// next load, but never appear in the live list — callers use this to
+// tell the user they exist at all.
+func (s *Storage) UnrecoveredTitles() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	titles := make([]string, 0, len(s.unrecovered))
+	for _, d := range s.unrecovered {
+		titles = append(titles, d.Title)
+	}
+	return titles
+}
+
 // DeleteInstance removes an instance from storage.
 // Operates on raw InstanceData so it does not construct live Instance objects
 // (which would open tmux attach PTYs for every remaining running instance).

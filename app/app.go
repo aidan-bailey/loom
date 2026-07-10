@@ -1172,9 +1172,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 type recoverySummary struct {
 	cleaned int // stale worktrees auto-removed
 	review  int // Recoverable entries added to the list
+	failed  int // records that failed reconcile (storage unrecovered cache)
 }
 
-func (s recoverySummary) empty() bool { return s.cleaned == 0 && s.review == 0 }
+func (s recoverySummary) empty() bool { return s.cleaned == 0 && s.review == 0 && s.failed == 0 }
 
 func (s recoverySummary) String() string {
 	plural := func(n int, one, many string) string {
@@ -1193,6 +1194,12 @@ func (s recoverySummary) String() string {
 			verb = "needs"
 		}
 		parts = append(parts, fmt.Sprintf("%s %s review (in list)", plural(s.review, "session", "sessions"), verb))
+	}
+	if s.failed > 0 {
+		// These records are preserved on disk and retried next launch,
+		// but never appear in the list — without this line they would
+		// look like silently lost sessions.
+		parts = append(parts, fmt.Sprintf("%s failed to load (kept; see loom.log)", plural(s.failed, "session", "sessions")))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -1271,6 +1278,11 @@ func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *
 			list.AddInstance(inst)()
 			summary.review++
 		}
+	}
+	// Records that failed reconcile at load time live only in the storage
+	// cache — surface their count so they don't read as lost sessions.
+	if storage != nil {
+		summary.failed = len(storage.UnrecoveredTitles())
 	}
 	return summary
 }
