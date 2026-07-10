@@ -5,7 +5,6 @@ import (
 	"fmt"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
 	"os/exec"
@@ -177,44 +176,22 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 // — in those cases the caller sets CrashRecovered=true and a later
 // CrashRestart spawns the real session.
 func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, error) {
-	instance := &Instance{
-		Title:               data.Title,
-		Path:                data.Path,
-		Branch:              data.Branch,
-		Status:              data.Status,
-		Height:              data.Height,
-		Width:               data.Width,
-		CreatedAt:           data.CreatedAt,
-		UpdatedAt:           data.UpdatedAt,
-		Program:             data.Program,
-		ConfigDir:           configDir,
-		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
+	// Delegate to the canonical rehydrator — this used to be a hand-rolled
+	// near-copy that had already drifted (it dropped HeadroomProxy,
+	// CacheTTL1h, the per-instance logger, and the tmux session env).
+	instance, err := FromInstanceData(data, configDir)
+	if err != nil {
+		return nil, err
 	}
 
-	if !data.IsWorkspaceTerminal {
-		gw := git.NewGitWorktreeFromStorage(
-			data.Worktree.RepoPath,
-			data.Worktree.WorktreePath,
-			data.Worktree.SessionName,
-			data.Worktree.BranchName,
-			data.Worktree.BaseCommitSHA,
-			data.Worktree.IsExistingBranch,
-			configDir,
-		)
-		gw.SetStashRef(data.Worktree.StashRef)
-		instance.setGitWorktree(gw)
-	}
-
-	if data.DiffStats.Added != 0 || data.DiffStats.Removed != 0 || data.DiffStats.Content != "" {
-		instance.setDiffStats(&git.DiffStats{
-			Added:   data.DiffStats.Added,
-			Removed: data.DiffStats.Removed,
-			Content: data.DiffStats.Content,
-		})
-	}
-
+	// Unlike FromInstanceData, which only wires these for Paused and
+	// Recoverable records, every caller of this variant needs the started
+	// flag and a detached TmuxSession regardless of persisted status —
+	// ActionRestart/ActionRestartWsTerminal rehydrate Running records.
 	instance.setStarted(true)
-	instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program))
+	if instance.getTmuxSession() == nil {
+		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program, InstanceEnv(instance.Program, instance.HeadroomProxy, instance.CacheTTL1h)...))
+	}
 	return instance, nil
 }
 
