@@ -42,6 +42,13 @@ const (
 	KeyDirectAttachAgent
 	KeyDirectAttachTerminal
 	KeySettings
+	// KeyRecover and KeyDiscard are display-only aliases of KeyResume and
+	// KeyKill for Recoverable (orphan) selections: same physical keys,
+	// menu/help labels that name what the keys actually do there. They are
+	// excluded from the reverse lookup so dispatch and highlight still
+	// resolve to the canonical names.
+	KeyRecover
+	KeyDiscard
 )
 
 // keyStringToName is the reverse lookup derived from GlobalkeyBindings. It
@@ -52,6 +59,12 @@ var keyStringToName = buildKeyStringToName()
 func buildKeyStringToName() map[string]KeyName {
 	out := make(map[string]KeyName)
 	for name, binding := range GlobalkeyBindings {
+		// Display-only aliases share physical keys with their canonical
+		// names; skipping them keeps the reverse lookup deterministic
+		// ("r" is always KeyResume, "D" always KeyKill).
+		if name == KeyRecover || name == KeyDiscard {
+			continue
+		}
 		for _, k := range binding.Keys() {
 			out[k] = name
 		}
@@ -120,6 +133,14 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyRestartWithOptions: key.NewBinding(
 		key.WithKeys("R"),
 		key.WithHelp("R", "resume with options"),
+	),
+	KeyRecover: key.NewBinding(
+		key.WithKeys("r"),
+		key.WithHelp("r", "recover"),
+	),
+	KeyDiscard: key.NewBinding(
+		key.WithKeys("D"),
+		key.WithHelp("D", "discard (branch kept)"),
 	),
 
 	KeyWorkspace: key.NewBinding(

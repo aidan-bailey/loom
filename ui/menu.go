@@ -80,6 +80,16 @@ func NewMenu() *Menu {
 // Keydown marks name as the most recently pressed key so the next render
 // underlines its menu entry. ClearKeydown resets this.
 func (m *Menu) Keydown(name keys.KeyName) {
+	// The reverse lookup always resolves the canonical names; when the
+	// menu is showing the Recoverable display aliases, highlight those
+	// instead so the pressed key lights the row the user actually sees.
+	for _, opt := range m.options {
+		if (opt == keys.KeyRecover && name == keys.KeyResume) ||
+			(opt == keys.KeyDiscard && name == keys.KeyKill) {
+			name = opt
+			break
+		}
+	}
 	m.keyDown = name
 }
 
@@ -136,6 +146,18 @@ func (m *Menu) addInstanceOptions() {
 	// Loading instances only get minimal options
 	if m.instance != nil && m.instance.GetStatus() == session.Loading {
 		m.options = []keys.KeyName{keys.KeyNew, keys.KeyHelp, keys.KeyQuit}
+		return
+	}
+
+	// Recoverable orphans have exactly two meaningful actions: adopt it
+	// (r) or discard the worktree keeping the branch (D). Stash/push/kill
+	// labels would mislead here — there is no attached agent or PTY yet.
+	if m.instance != nil && m.instance.GetStatus() == session.Recoverable {
+		m.options = []keys.KeyName{
+			keys.KeyNew,
+			keys.KeyRecover, keys.KeyDiscard,
+			keys.KeyDiff, keys.KeyHelp, keys.KeyQuit,
+		}
 		return
 	}
 
