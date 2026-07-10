@@ -396,3 +396,44 @@ func TestStartTmuxSessionNoEnvUnchanged(t *testing.T) {
 		fmt.Sprintf("tmux new-session -d -s loom_test-session -c %s claude", workdir),
 		cmd2.ToString(ptyFactory.cmds[0]))
 }
+
+// TestDetectionSurvivesLaunchFlags is the regression test for the
+// adapter-consolidation fix: prompt and trust detection used to compare
+// t.program against the bare command name (== "claude" / HasSuffix), so
+// any launch flag — including the default-on --remote-control — made
+// every Claude session undetectable. Detection now resolves through the
+// session/agent registry, which matches on the basename of the first
+// token.
+func TestDetectionSurvivesLaunchFlags(t *testing.T) {
+	paneContent := "No, and tell Claude what to do differently"
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			if strings.Contains(c.String(), "capture-pane") {
+				return []byte(paneContent), nil
+			}
+			return []byte{}, nil
+		},
+	}
+
+	for _, program := range []string{
+		"claude --remote-control mysession",
+		"claude --permission-mode acceptEdits",
+		"/usr/local/bin/claude --continue",
+	} {
+		ts := newTmuxSession("flags-session", program, &MockPtyFactory{t: t}, cmdExec)
+		ts.monitor = newStatusMonitor()
+
+		_, _, hasPrompt, _, err := ts.CaptureAndProcess()
+		require.NoError(t, err)
+		require.True(t, hasPrompt, "pending prompt must be detected for program %q", program)
+	}
+
+	// Aider via absolute path: the old HasPrefix match also failed here.
+	paneContent = "(Y)es/(N)o/(D)on't ask again"
+	ts := newTmuxSession("aider-path", "/usr/bin/aider --model gpt", &MockPtyFactory{t: t}, cmdExec)
+	ts.monitor = newStatusMonitor()
+	_, _, hasPrompt, _, err := ts.CaptureAndProcess()
+	require.NoError(t, err)
+	require.True(t, hasPrompt, "aider prompt must be detected through an absolute path")
+}

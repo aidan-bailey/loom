@@ -8,6 +8,7 @@ import (
 	"fmt"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/agent"
 	"github.com/aidan-bailey/loom/session/vt"
 	"io"
 	"os"
@@ -21,15 +22,20 @@ import (
 )
 
 // ProgramClaude, ProgramAider, and ProgramGemini are the canonical
-// program identifiers used by trust-prompt detection and adapter lookup.
-// They match the literal command names (no path or flags); per-program
-// behavior is keyed off these constants in CheckAndHandleTrustPrompt
-// and the session/agent registry.
+// program identifiers for the built-in agents. They match the literal
+// command names (no path or flags). Per-program behavior — trust-prompt
+// and pending-prompt detection — is resolved through the session/agent
+// registry, which matches on the basename of the program's first token
+// so paths and launch flags don't defeat the lookup.
 const (
 	ProgramClaude = "claude"
 	ProgramAider  = "aider"
 	ProgramGemini = "gemini"
 )
+
+// adapterRegistry resolves a program string to its agent adapter once
+// per TmuxSession. Shared and read-only after init.
+var adapterRegistry = agent.DefaultRegistry()
 
 // tmuxTimeout bounds the wall time of a single tmux subprocess invocation.
 // These calls run in the metadata tick (capture-pane, has-session), so a
@@ -64,6 +70,10 @@ type TmuxSession struct {
 	// The name of the tmux session and the sanitized name used for tmux commands.
 	sanitizedName string
 	program       string
+	// adapter is the agent adapter resolved from program at construction.
+	// It owns the trust-prompt and pending-prompt patterns used by
+	// CheckAndHandleTrustPrompt / CaptureAndProcess / HasUpdated.
+	adapter agent.Adapter
 	// env holds "KEY=VALUE" entries applied to the tmux session via
 	// `new-session -e` — e.g. ANTHROPIC_BASE_URL when Headroom Proxy is
 	// enabled. Scoped to just this session; never touches t.program.
@@ -212,6 +222,7 @@ func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec 
 	return &TmuxSession{
 		sanitizedName: ToLoomTmuxName(name),
 		program:       program,
+		adapter:       adapterRegistry.Lookup(program),
 		env:           env,
 		ptyFactory:    ptyFactory,
 		cmdExec:       cmdExec,
@@ -347,24 +358,40 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 	if err != nil {
 		return false
 	}
+	return t.handleTrustPrompt(content)
+}
 
-	if strings.HasSuffix(t.program, ProgramClaude) {
-		if strings.Contains(content, "Do you trust the files in this folder?") ||
-			strings.Contains(content, "new MCP server") {
-			if err := t.TapEnter(); err != nil {
-				log.For("tmux").Error("trust_prompt.tap_enter_failed", "prompt", "claude_trust_or_mcp", "err", err)
-			}
-			return true
+// handleTrustPrompt scans content for the adapter's trust-prompt
+// patterns and, on a hit, dismisses the prompt with the adapter's
+// declared response. Returns true when a prompt was found and handled.
+func (t *TmuxSession) handleTrustPrompt(content string) bool {
+	for _, pattern := range t.adapter.TrustPromptPatterns() {
+		if !strings.Contains(content, pattern) {
+			continue
 		}
-	} else {
-		if strings.Contains(content, "Open documentation url for more info") {
-			if err := t.TapDAndEnter(); err != nil {
-				log.For("tmux").Error("trust_prompt.tap_enter_failed", "prompt", "other_trust", "err", err)
-			}
-			return true
+		var tapErr error
+		switch t.adapter.TrustPromptResponse() {
+		case agent.TrustPromptTapEnter:
+			tapErr = t.TapEnter()
+		case agent.TrustPromptTapDAndEnter:
+			tapErr = t.TapDAndEnter()
+		default:
+			return false
 		}
+		if tapErr != nil {
+			log.For("tmux").Error("trust_prompt.dismiss_failed", "agent", t.adapter.Name(), "err", tapErr)
+		}
+		return true
 	}
 	return false
+}
+
+// pendingPrompt reports whether content shows the adapter's
+// blocked-waiting-for-user pattern. Agents without one (the fallback
+// adapter) never report a pending prompt.
+func (t *TmuxSession) pendingPrompt(content string) bool {
+	pattern := t.adapter.PendingPromptPattern()
+	return pattern != "" && strings.Contains(content, pattern)
 }
 
 // Restore attaches to an existing session and restores the window size.
@@ -644,14 +671,7 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 		return false, false
 	}
 
-	// Only set hasPrompt for claude and aider. Use these strings to check for a prompt.
-	if t.program == ProgramClaude {
-		hasPrompt = strings.Contains(content, "No, and tell Claude what to do differently")
-	} else if strings.HasPrefix(t.program, ProgramAider) {
-		hasPrompt = strings.Contains(content, "(Y)es/(N)o/(D)on't ask again")
-	} else if strings.HasPrefix(t.program, ProgramGemini) {
-		hasPrompt = strings.Contains(content, "Yes, allow once")
-	}
+	hasPrompt = t.pendingPrompt(content)
 
 	if t.processContentHash(content) {
 		return true, hasPrompt
@@ -670,33 +690,8 @@ func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasProm
 		return "", false, false, false, fmt.Errorf("capture pane content: %w", err)
 	}
 
-	// Trust prompt detection (from CheckAndHandleTrustPrompt).
-	if strings.HasSuffix(t.program, ProgramClaude) {
-		if strings.Contains(content, "Do you trust the files in this folder?") ||
-			strings.Contains(content, "new MCP server") {
-			if err := t.TapEnter(); err != nil {
-				log.For("tmux").Error("trust_prompt.tap_enter_failed", "prompt", "claude_trust_or_mcp", "err", err)
-			}
-			trustHandled = true
-		}
-	} else {
-		if strings.Contains(content, "Open documentation url for more info") {
-			if err := t.TapDAndEnter(); err != nil {
-				log.For("tmux").Error("trust_prompt.tap_enter_failed", "prompt", "other_trust", "err", err)
-			}
-			trustHandled = true
-		}
-	}
-
-	// Update detection (from HasUpdated).
-	if t.program == ProgramClaude {
-		hasPrompt = strings.Contains(content, "No, and tell Claude what to do differently")
-	} else if strings.HasPrefix(t.program, ProgramAider) {
-		hasPrompt = strings.Contains(content, "(Y)es/(N)o/(D)on't ask again")
-	} else if strings.HasPrefix(t.program, ProgramGemini) {
-		hasPrompt = strings.Contains(content, "Yes, allow once")
-	}
-
+	trustHandled = t.handleTrustPrompt(content)
+	hasPrompt = t.pendingPrompt(content)
 	updated = t.processContentHash(content)
 
 	return content, updated, hasPrompt, trustHandled, nil
