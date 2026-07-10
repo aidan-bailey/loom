@@ -191,8 +191,13 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	case instance.GetStatus() == session.Recoverable:
 		p.setFallbackState(lipgloss.JoinVertical(lipgloss.Center,
 			"Recoverable session (found on disk).",
+			"Its worktree may hold a live agent or uncommitted work.",
 			"",
-			"Press 'r' to recover it, or 'D' to discard.",
+			lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#FFD700")).
+				Render(fmt.Sprintf("Branch: %s", instance.GetBranch())),
+			"",
+			"Press 'r' to recover it, or 'D' to discard the worktree (branch is kept).",
 		))
 		return nil
 	}
