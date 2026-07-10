@@ -1008,6 +1008,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case resumeDoneMsg:
 		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
+	case showHelpScreenMsg:
+		m.menu.SetState(ui.StateDefault)
+		return m.showHelpScreen(msg.helpType, nil)
 	case recoverDoneMsg:
 		if msg.err != nil {
 			return m, m.handleError(fmt.Errorf("recover %s: %w", msg.oldTitle, msg.err))
@@ -1450,6 +1453,14 @@ type backgroundCleanupDoneMsg struct{}
 // resumeDoneMsg is returned by the Resume Cmd on success. Failures come
 // through transitionFailedMsg.
 type resumeDoneMsg struct{}
+
+// showHelpScreenMsg asks Update to open a help overlay. Emitted from
+// tea.Cmd closures, which run off the main goroutine and therefore must
+// not call showHelpScreen (it mutates m.state/overlay and writes app
+// state to disk) directly.
+type showHelpScreenMsg struct {
+	helpType helpText
+}
 
 // recoverDoneMsg is returned after a Recoverable orphan is adopted into a
 // live instance off the UI goroutine. The handler swaps the inline

@@ -94,13 +94,13 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 		m.dismissOverlay()
 		m.state = stateDefault
+		// showHelpScreen mutates model state and writes app state to
+		// disk, so it must run on the main goroutine — hand it back via
+		// a message instead of calling it inside the (goroutine-run)
+		// Sequence closure. The handler also resets the menu state.
 		return m, tea.Sequence(
 			tea.RequestWindowSize,
-			func() tea.Msg {
-				m.menu.SetState(ui.StateDefault)
-				m.showHelpScreen(helpStart(selected), nil)
-				return nil
-			},
+			func() tea.Msg { return showHelpScreenMsg{helpType: helpStart(selected)} },
 		)
 	}
 
