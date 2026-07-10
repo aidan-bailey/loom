@@ -120,29 +120,46 @@ func SaveWorkspaceRegistry(reg *WorkspaceRegistry) error {
 	return AtomicWriteFile(regPath, data, 0644)
 }
 
+// syncFrom refreshes the receiver's in-memory state from the merged
+// registry after a reload-before-save cycle.
+func (r *WorkspaceRegistry) syncFrom(fresh *WorkspaceRegistry) {
+	r.Workspaces = fresh.Workspaces
+	r.LastUsed = fresh.LastUsed
+	r.OpenWorkspaces = fresh.OpenWorkspaces
+}
+
 // Add registers a new workspace. Validates uniqueness of name and that the path
 // is a git repository. Automatically calls EnsureGitignore.
+//
+// Like UpdateLastUsed, the on-disk registry is reloaded before save so
+// concurrent writers (another `loom workspace` invocation, a second
+// running TUI) are not clobbered by this process's stale snapshot.
 func (r *WorkspaceRegistry) Add(name, repoPath string) error {
 	absPath, err := filepath.Abs(repoPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve absolute path: %w", err)
 	}
 
+	fresh, err := LoadWorkspaceRegistry()
+	if err != nil {
+		return err
+	}
+
 	// Validate unique name.
-	for _, ws := range r.Workspaces {
+	for _, ws := range fresh.Workspaces {
 		if ws.Name == name {
 			return fmt.Errorf("workspace with name %q already exists", name)
 		}
 	}
 
 	// Validate unique path.
-	for _, ws := range r.Workspaces {
+	for _, ws := range fresh.Workspaces {
 		if ws.Path == absPath {
 			return fmt.Errorf("workspace for path %q already exists (name: %s)", absPath, ws.Name)
 		}
 	}
 
-	r.Workspaces = append(r.Workspaces, Workspace{
+	fresh.Workspaces = append(fresh.Workspaces, Workspace{
 		Name:    name,
 		Path:    absPath,
 		AddedAt: time.Now(),
@@ -152,13 +169,22 @@ func (r *WorkspaceRegistry) Add(name, repoPath string) error {
 		return fmt.Errorf("failed to update .gitignore: %w", err)
 	}
 
-	return SaveWorkspaceRegistry(r)
+	if err := SaveWorkspaceRegistry(fresh); err != nil {
+		return err
+	}
+	r.syncFrom(fresh)
+	return nil
 }
 
 // Remove removes a workspace by name. Does NOT delete the .loom/ directory.
 func (r *WorkspaceRegistry) Remove(name string) error {
+	fresh, err := LoadWorkspaceRegistry()
+	if err != nil {
+		return err
+	}
+
 	idx := -1
-	for i, ws := range r.Workspaces {
+	for i, ws := range fresh.Workspaces {
 		if ws.Name == name {
 			idx = i
 			break
@@ -168,15 +194,19 @@ func (r *WorkspaceRegistry) Remove(name string) error {
 		return fmt.Errorf("workspace %q not found", name)
 	}
 
-	r.Workspaces = append(r.Workspaces[:idx], r.Workspaces[idx+1:]...)
+	fresh.Workspaces = append(fresh.Workspaces[:idx], fresh.Workspaces[idx+1:]...)
 
-	if r.LastUsed == name {
-		r.LastUsed = ""
+	if fresh.LastUsed == name {
+		fresh.LastUsed = ""
 	}
 
-	r.OpenWorkspaces = removeString(r.OpenWorkspaces, name)
+	fresh.OpenWorkspaces = removeString(fresh.OpenWorkspaces, name)
 
-	return SaveWorkspaceRegistry(r)
+	if err := SaveWorkspaceRegistry(fresh); err != nil {
+		return err
+	}
+	r.syncFrom(fresh)
+	return nil
 }
 
 func removeString(s []string, target string) []string {
@@ -196,12 +226,20 @@ func (r *WorkspaceRegistry) FindByPath(path string) *Workspace {
 		return nil
 	}
 
+	// Pick the deepest (longest-path) match so a workspace registered at
+	// /repo/sub wins over one at /repo for paths under both.
+	best := -1
 	for i, ws := range r.Workspaces {
 		if absPath == ws.Path || strings.HasPrefix(absPath, ws.Path+string(filepath.Separator)) {
-			return &r.Workspaces[i]
+			if best == -1 || len(ws.Path) > len(r.Workspaces[best].Path) {
+				best = i
+			}
 		}
 	}
-	return nil
+	if best == -1 {
+		return nil
+	}
+	return &r.Workspaces[best]
 }
 
 // Get finds a workspace by name.
@@ -219,16 +257,22 @@ func (r *WorkspaceRegistry) Rename(oldName, newName string) error {
 	if oldName == newName {
 		return nil
 	}
+
+	fresh, err := LoadWorkspaceRegistry()
+	if err != nil {
+		return err
+	}
+
 	// Check new name doesn't conflict.
-	for _, ws := range r.Workspaces {
+	for _, ws := range fresh.Workspaces {
 		if ws.Name == newName {
 			return fmt.Errorf("workspace with name %q already exists", newName)
 		}
 	}
 	found := false
-	for i, ws := range r.Workspaces {
+	for i, ws := range fresh.Workspaces {
 		if ws.Name == oldName {
-			r.Workspaces[i].Name = newName
+			fresh.Workspaces[i].Name = newName
 			found = true
 			break
 		}
@@ -236,15 +280,20 @@ func (r *WorkspaceRegistry) Rename(oldName, newName string) error {
 	if !found {
 		return fmt.Errorf("workspace %q not found", oldName)
 	}
-	if r.LastUsed == oldName {
-		r.LastUsed = newName
+	if fresh.LastUsed == oldName {
+		fresh.LastUsed = newName
 	}
-	for i, n := range r.OpenWorkspaces {
+	for i, n := range fresh.OpenWorkspaces {
 		if n == oldName {
-			r.OpenWorkspaces[i] = newName
+			fresh.OpenWorkspaces[i] = newName
 		}
 	}
-	return SaveWorkspaceRegistry(r)
+
+	if err := SaveWorkspaceRegistry(fresh); err != nil {
+		return err
+	}
+	r.syncFrom(fresh)
+	return nil
 }
 
 // UpdateLastUsed sets the last used workspace and saves the registry.
@@ -267,9 +316,7 @@ func (r *WorkspaceRegistry) UpdateLastUsed(name string) error {
 	if err := SaveWorkspaceRegistry(fresh); err != nil {
 		return err
 	}
-	r.Workspaces = fresh.Workspaces
-	r.LastUsed = fresh.LastUsed
-	r.OpenWorkspaces = fresh.OpenWorkspaces
+	r.syncFrom(fresh)
 	return nil
 }
 
@@ -302,9 +349,7 @@ func (r *WorkspaceRegistry) SetOpenWorkspaces(names []string) error {
 	if err := SaveWorkspaceRegistry(fresh); err != nil {
 		return err
 	}
-	r.Workspaces = fresh.Workspaces
-	r.LastUsed = fresh.LastUsed
-	r.OpenWorkspaces = fresh.OpenWorkspaces
+	r.syncFrom(fresh)
 	return nil
 }
 
@@ -338,7 +383,8 @@ func EnsureGitignore(repoPath string) error {
 
 	for _, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == entry || trimmed == entry+"/" {
+		// ".loom" (no slash) also ignores the directory — don't duplicate.
+		if trimmed == entry || trimmed == strings.TrimSuffix(entry, "/") {
 			return nil
 		}
 	}

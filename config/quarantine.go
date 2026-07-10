@@ -15,7 +15,9 @@ import (
 // proceed with defaults — quarantine is a best-effort forensic step,
 // not a correctness gate.
 func quarantineCorruptFile(path string) string {
-	ts := time.Now().UTC().Format("20060102-150405")
+	// Nanosecond precision: two quarantines within the same second must
+	// not collide, or the second rename silently overwrites the first.
+	ts := time.Now().UTC().Format("20060102-150405.000000000")
 	quarantine := fmt.Sprintf("%s.corrupted-%s", path, ts)
 	if err := os.Rename(path, quarantine); err != nil {
 		log.For("config").Error("quarantine_failed", "path", path, "err", err)
