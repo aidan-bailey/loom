@@ -132,3 +132,16 @@ func basenameMatch(program, name string) bool {
 	}
 	return filepath.Base(first) == name
 }
+
+// insertAfterCommand splices " <insertion>" immediately after program's
+// command token, preserving the remaining flags verbatim. program is
+// trimmed first: TrimPrefix on a string with leading whitespace would
+// fail to match the command token and duplicate it in the result.
+func insertAfterCommand(program, insertion string) string {
+	program = strings.TrimSpace(program)
+	first := firstField(program)
+	if first == "" {
+		return program
+	}
+	return first + " " + insertion + strings.TrimPrefix(program, first)
+}

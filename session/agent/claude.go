@@ -49,7 +49,7 @@ func (claudeAdapter) ApplyRecoveryFlag(program string) string {
 			return program
 		}
 	}
-	return parts[0] + " --continue" + strings.TrimPrefix(program, parts[0])
+	return insertAfterCommand(program, "--continue")
 }
 
 // remoteControlNameRe matches every run of characters that are not safe
@@ -74,11 +74,11 @@ func (claudeAdapter) ApplyRemoteControlFlag(program, sessionName string) string 
 			return program
 		}
 	}
-	flag := " --remote-control"
+	flag := "--remote-control"
 	if name := sanitizeRemoteControlName(sessionName); name != "" {
 		flag += " " + name
 	}
-	return parts[0] + flag + strings.TrimPrefix(program, parts[0])
+	return insertAfterCommand(program, flag)
 }
 
 // sanitizeRemoteControlName reduces an arbitrary session title to a
@@ -112,7 +112,7 @@ func (claudeAdapter) ApplyPermissionModeFlag(program, mode string) string {
 			return program
 		}
 	}
-	return parts[0] + " --permission-mode " + mode + strings.TrimPrefix(program, parts[0])
+	return insertAfterCommand(program, "--permission-mode "+mode)
 }
 
 // ApplyModelFlag inserts "--model <model>" after "claude". model == ""
@@ -133,7 +133,7 @@ func (claudeAdapter) ApplyModelFlag(program, model string) string {
 			return program
 		}
 	}
-	return parts[0] + " --model " + model + strings.TrimPrefix(program, parts[0])
+	return insertAfterCommand(program, "--model "+model)
 }
 
 // ApplyEffortFlag inserts "--effort <level>" after "claude". effort ==
@@ -155,5 +155,5 @@ func (claudeAdapter) ApplyEffortFlag(program, effort string) string {
 			return program
 		}
 	}
-	return parts[0] + " --effort " + effort + strings.TrimPrefix(program, parts[0])
+	return insertAfterCommand(program, "--effort "+effort)
 }
