@@ -23,6 +23,7 @@ var (
 	noScriptsFlag      bool
 	workspaceFlag      string
 	resetWorkspaceFlag string
+	resetForceFlag     bool
 	logLevelFlag       string
 	rootCmd            = &cobra.Command{
 		Use:     "loom [directory]",
@@ -141,8 +142,14 @@ var (
 
 	resetCmd = &cobra.Command{
 		Use:   "reset",
-		Short: "Reset all stored instances",
+		Short: "Delete all instances, tmux sessions, worktrees, and their branches (destructive)",
+		Long: "Reset deletes all stored instances, kills every Loom tmux session, and removes\n" +
+			"all managed worktrees INCLUDING their branches — unpushed commits on those\n" +
+			"branches are lost. This cannot be undone; it requires --force.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !resetForceFlag {
+				return fmt.Errorf("loom reset deletes all instances, tmux sessions, worktrees AND their branches (unpushed commits are lost); re-run with --force to proceed")
+			}
 			// Resolve target workspace explicitly — per
 			// docs/specs/workspaces.md §3, empty-string fallbacks are
 			// disallowed so each subsystem gets a concrete ConfigDir.
@@ -263,6 +270,8 @@ func init() {
 
 	resetCmd.Flags().StringVarP(&resetWorkspaceFlag, "workspace", "w", "",
 		"Reset a specific workspace by name (default: global)")
+	resetCmd.Flags().BoolVar(&resetForceFlag, "force", false,
+		"Confirm the reset: deletes instances, tmux sessions, worktrees, and branches")
 
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(versionCmd)
