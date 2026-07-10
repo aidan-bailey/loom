@@ -741,7 +741,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		selected := m.list.GetSelectedInstance()
 		var active []*session.Instance
 		for _, inst := range allInstances {
-			if inst.Started() && !inst.Paused() && inst.GetStatus() != session.Deleting {
+			status := inst.GetStatus()
+			// Recoverable placeholders are ephemeral orphan-review rows:
+			// they report Started() (so recover/discard can reach their
+			// handles) but must never be driven by the tick — RepairPtmx
+			// would attach a PTY and TransitionTo(Running) would promote a
+			// never-confirmed orphan past the explicit recover flow.
+			if inst.Started() && !inst.Paused() && status != session.Deleting && status != session.Recoverable {
 				active = append(active, inst)
 			}
 		}
