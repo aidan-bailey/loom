@@ -191,17 +191,19 @@ func apiAwait(e *Engine) lua.LGFunction {
 
 // apiSprintf is a convenience alias for string.format so scripts
 // don't need to chase the nested namespace for a common operation.
+// It delegates to the real string.format — the previous
+// implementation pre-stringified every argument and ran fmt.Sprintf,
+// which broke every non-%s verb (`cs.sprintf("%d", 5)` yielded
+// `%!d(string=5)`).
 func apiSprintf(L *lua.LState) int {
 	n := L.GetTop()
 	if n == 0 {
 		L.Push(lua.LString(""))
 		return 1
 	}
-	format := L.CheckString(1)
-	args := make([]interface{}, 0, n-1)
-	for i := 2; i <= n; i++ {
-		args = append(args, forceString(L.Get(i)))
-	}
-	L.Push(lua.LString(fmt.Sprintf(format, args...)))
+	L.CheckString(1) // same arg contract as before: format must be a string
+	format := L.GetField(L.GetGlobal("string"), "format")
+	L.Insert(format, 1)
+	L.Call(n, 1)
 	return 1
 }
