@@ -12,6 +12,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/aidan-bailey/loom/session/vt"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"os"
@@ -2414,5 +2415,38 @@ func (m *home) View() tea.View {
 		}
 	}
 
-	return asView(mainView)
+	view := asView(mainView)
+	m.attachCursor(&view)
+	return view
+}
+
+// attachCursor positions the REAL hardware cursor over the focused pane's
+// cursor cell — the host terminal then renders its own native cursor
+// (user-configured color, blink) there. Only on the plain main-view path:
+// overlays, pickers, and non-default states keep the cursor hidden
+// (Bubble Tea's default when View.Cursor is nil).
+func (m *home) attachCursor(v *tea.View) {
+	if m.state != stateDefault && m.state != stateInlineAttach {
+		return
+	}
+	if m.activeOverlay != nil {
+		return
+	}
+	lx, ly, cur, ok := m.splitPane.CursorScreenPosition(m.list.GetSelectedInstance())
+	if !ok {
+		return
+	}
+	// Same screen↔split mapping the mouse path uses:
+	// HitTest(mouse.X - m.listWidth, mouse.Y - m.tabBar.Height()).
+	c := tea.NewCursor(m.listWidth+lx, m.tabBar.Height()+ly)
+	c.Blink = cur.Blink
+	switch cur.Shape {
+	case vt.CursorShapeUnderline:
+		c.Shape = tea.CursorUnderline
+	case vt.CursorShapeBar:
+		c.Shape = tea.CursorBar
+	default:
+		c.Shape = tea.CursorBlock
+	}
+	v.Cursor = c
 }
