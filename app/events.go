@@ -71,6 +71,22 @@ func statusDetectCmd(inst *session.Instance) tea.Cmd {
 	}
 }
 
+// deadVerifiedMsg carries the background has-session probe triggered by a
+// ptyDeadMsg. A dead attach PTY does not always mean a dead session (a
+// failed reattach leaves the session alive), so the probe distinguishes
+// pause-the-instance from repair-the-ptmx.
+type deadVerifiedMsg struct {
+	instance  *session.Instance
+	tmuxAlive bool
+	ptmxAlive bool
+}
+
+func verifyDeadCmd(inst *session.Instance) tea.Cmd {
+	return func() tea.Msg {
+		return deadVerifiedMsg{instance: inst, tmuxAlive: inst.TmuxAlive(), ptmxAlive: inst.PtmxAlive()}
+	}
+}
+
 // statusEligible reports whether the tick/event pipelines may drive this
 // instance's status — the same guard set the metadata tick uses (Recoverable
 // placeholders and Loading rows are owned by explicit flows; see the comment

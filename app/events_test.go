@@ -70,3 +70,25 @@ func TestPaneQuietIgnoresUnknownAndInertSessions(t *testing.T) {
 	_, cmd := m.Update(paneQuietMsg{session: "loom_nonexistent"})
 	require.Nil(t, cmd, "unknown session → dropped")
 }
+
+// TestPtyDeadVerifiesBeforePausing: a ptyDeadMsg must probe has-session in a
+// Cmd; a still-live session (failed reattach) must NOT be marked Paused.
+func TestPtyDeadVerifiesBeforePausing(t *testing.T) {
+	var historyCaptures int
+	inst := startedInstanceWithHistory(t, &historyCaptures)
+	t.Setenv("LOOM_PANE_RENDERER", "")
+
+	m := homeWithAppState(t)
+	_ = m.list.AddInstance(inst)
+
+	_, cmd := m.Update(ptyDeadMsg{session: inst.TmuxSessionName()})
+	require.NotNil(t, cmd, "dead event on a live instance must schedule verification")
+	msg := cmd()
+	verified, ok := msg.(deadVerifiedMsg)
+	require.True(t, ok, "expected deadVerifiedMsg, got %T", msg)
+	// The mock cmdExec answers has-session with success → tmuxAlive true.
+	require.True(t, verified.tmuxAlive)
+	_, _ = m.Update(verified)
+	require.NotEqual(t, session.Paused, inst.GetStatus(),
+		"a live session must not be paused by a PTY-death false positive")
+}
