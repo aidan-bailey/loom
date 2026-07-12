@@ -15,6 +15,14 @@ type xvtEmulator struct {
 	mu        sync.RWMutex
 	term      *xvt.Emulator
 	drainDone chan struct{}
+
+	// Callback-fed state. x/vt invokes Callbacks inside term.Write/Resize,
+	// while THIS goroutine already holds e.mu's write lock — so callbacks
+	// must only assign these fields (never re-lock e.mu: RWMutex is not
+	// reentrant; never call out of the package). Readers take RLock.
+	cursorVisible bool
+	cursorShape   CursorShape
+	cursorBlink   bool
 }
 
 // NewXVT constructs a real terminal emulator sized to cols x rows.
@@ -26,9 +34,33 @@ func NewXVT(cols, rows int) Emulator {
 		rows = 1
 	}
 	e := &xvtEmulator{
-		term:      xvt.NewEmulator(cols, rows),
-		drainDone: make(chan struct{}),
+		term:          xvt.NewEmulator(cols, rows),
+		drainDone:     make(chan struct{}),
+		cursorVisible: true,
+		cursorShape:   CursorShapeBlock,
+		cursorBlink:   true,
 	}
+	e.term.SetCallbacks(xvt.Callbacks{
+		CursorVisibility: func(visible bool) {
+			e.cursorVisible = visible
+		},
+		CursorStyle: func(style xvt.CursorStyle, steady bool) {
+			switch style {
+			case xvt.CursorUnderline:
+				e.cursorShape = CursorShapeUnderline
+			case xvt.CursorBar:
+				e.cursorShape = CursorShapeBar
+			default:
+				e.cursorShape = CursorShapeBlock
+			}
+			// x/vt's Callbacks.CursorStyle signature names this param
+			// "blink", but screen.go's setCursorStyle invokes it as
+			// s.cb.CursorStyle(style, !blink) — the value delivered is
+			// actually Cursor.Steady. Negate to get blink (DECSCUSR odd
+			// codes blink, even codes are steady).
+			e.cursorBlink = !steady
+		},
+	})
 	// x/vt answers terminal queries (Device Attributes, Device Status / cursor
 	// position, foreground/background/cursor color, mode reports) by writing the
 	// reply to an UNBUFFERED io.Pipe. A write to that pipe blocks until the reply
@@ -70,7 +102,13 @@ func (e *xvtEmulator) Cursor() Cursor {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	p := e.term.CursorPosition()
-	return Cursor{X: p.X, Y: p.Y, Visible: true}
+	return Cursor{
+		X:       p.X,
+		Y:       p.Y,
+		Visible: e.cursorVisible,
+		Shape:   e.cursorShape,
+		Blink:   e.cursorBlink,
+	}
 }
 
 func (e *xvtEmulator) Close() error {

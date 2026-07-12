@@ -4,10 +4,24 @@
 // this is display only.
 package vt
 
-// Cursor is the visible cursor position in cells, 0-based, origin top-left.
+// CursorShape is the visual form of the cursor, as set by DECSCUSR.
+type CursorShape int
+
+const (
+	CursorShapeBlock CursorShape = iota
+	CursorShapeUnderline
+	CursorShapeBar
+)
+
+// Cursor is the visible cursor state in cells, 0-based, origin top-left.
+// Visible reflects DECTCEM (apps hide the cursor while painting); Shape and
+// Blink reflect DECSCUSR. The defaults — visible blinking block — match a
+// fresh terminal.
 type Cursor struct {
 	X, Y    int
 	Visible bool
+	Shape   CursorShape
+	Blink   bool
 }
 
 // Emulator is the display surface for one pane. Implementations must be safe
