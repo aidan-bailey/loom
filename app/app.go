@@ -835,7 +835,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateTabBarStatuses()
 		return m, m.instanceChanged()
 	case bellMsg:
-		return m, nil // Task 12: attention badge
+		if inst := m.instanceForSession(msg.session); inst != nil && inst != m.list.GetSelectedInstance() {
+			inst.SetBellPending(true)
+		}
+		return m, nil
 	case keyupMsg:
 		m.menu.ClearKeydown()
 		return m, nil
@@ -1497,6 +1500,10 @@ func (m *home) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m *home) instanceChanged() tea.Cmd {
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
+
+	if selected != nil {
+		selected.SetBellPending(false)
+	}
 
 	m.splitPane.UpdateDiff(selected)
 	m.splitPane.SetInstance(selected)

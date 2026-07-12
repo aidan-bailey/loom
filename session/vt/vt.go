@@ -46,6 +46,12 @@ type Emulator interface {
 	// OSC 0/2, or "" if never set.
 	Title() string
 
+	// SetBellFunc installs a handler invoked when the inner app rings BEL.
+	// The handler runs inside Write on the pump goroutine — it must be
+	// cheap, must not call back into the Emulator, and must be safe to
+	// invoke concurrently with readers (tea.Program.Send qualifies).
+	SetBellFunc(f func())
+
 	// Close releases emulator resources. Safe to call multiple times.
 	Close() error
 }

@@ -92,3 +92,28 @@ func TestPtyDeadVerifiesBeforePausing(t *testing.T) {
 	require.NotEqual(t, session.Paused, inst.GetStatus(),
 		"a live session must not be paused by a PTY-death false positive")
 }
+
+// TestBellBadgesUnselectedInstance: BEL from a backgrounded pane badges its
+// list row; the selected instance never badges (the user is looking at it),
+// and selecting a badged instance clears it.
+func TestBellBadgesUnselectedInstance(t *testing.T) {
+	var hc1, hc2 int
+	inst1 := startedInstanceWithHistoryTitled(t, &hc1, "scroll1")
+	inst2 := startedInstanceWithHistoryTitled(t, &hc2, "scroll2")
+	t.Setenv("LOOM_PANE_RENDERER", "")
+
+	m := homeWithAppState(t)
+	_ = m.list.AddInstance(inst1) // first add is auto-selected
+	fin := m.list.AddInstance(inst2)
+	fin()
+
+	_, _ = m.Update(bellMsg{session: inst2.TmuxSessionName()})
+	require.True(t, inst2.BellPending(), "bell on unselected instance must badge it")
+
+	_, _ = m.Update(bellMsg{session: inst1.TmuxSessionName()})
+	require.False(t, inst1.BellPending(), "bell on the selected instance is not badged")
+
+	m.list.SetSelectedInstance(1) // select inst2
+	_ = m.instanceChanged()
+	require.False(t, inst2.BellPending(), "selecting a badged instance clears the badge")
+}

@@ -24,6 +24,7 @@ type xvtEmulator struct {
 	cursorShape   CursorShape
 	cursorBlink   bool
 	title         string
+	bellFunc      func()
 }
 
 // NewXVT constructs a real terminal emulator sized to cols x rows.
@@ -63,6 +64,11 @@ func NewXVT(cols, rows int) Emulator {
 		},
 		Title: func(s string) {
 			e.title = s
+		},
+		Bell: func() {
+			if e.bellFunc != nil {
+				e.bellFunc()
+			}
 		},
 	})
 	// x/vt answers terminal queries (Device Attributes, Device Status / cursor
@@ -119,6 +125,12 @@ func (e *xvtEmulator) Title() string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.title
+}
+
+func (e *xvtEmulator) SetBellFunc(f func()) {
+	e.mu.Lock()
+	e.bellFunc = f
+	e.mu.Unlock()
 }
 
 func (e *xvtEmulator) Close() error {

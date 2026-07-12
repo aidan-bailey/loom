@@ -437,6 +437,15 @@ func (t *TmuxSession) Restore() error {
 		rows = 24
 	}
 	emu := newEmulator(cols, rows)
+	if emu != nil {
+		// Bell rides the notifier, NOT the coalescer: bells are rare,
+		// discrete signals that must never be swallowed by rate limiting.
+		emu.SetBellFunc(func() {
+			if f := currentNotifier().Bell; f != nil {
+				f(t.sanitizedName)
+			}
+		})
+	}
 	t.stateMu.Lock()
 	t.ptmx = ptmx
 	t.emu = emu

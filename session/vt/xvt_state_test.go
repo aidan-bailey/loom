@@ -81,3 +81,17 @@ func TestTitle_NonASCIITruncatesInVendoredParser(t *testing.T) {
 	require.False(t, utf8.ValidString(e.Title()),
 		"if this starts passing, the vendored x/vt parser was fixed — simplify PaneTitle's guard and update this test")
 }
+
+func TestBell_InvokesBellFunc(t *testing.T) {
+	e := NewXVT(80, 24)
+	defer e.Close()
+	rang := 0
+	e.SetBellFunc(func() { rang++ })
+	_, _ = e.Write([]byte("ding\x07dong"))
+	require.Equal(t, 1, rang)
+	require.NotPanics(t, func() {
+		e2 := NewXVT(10, 5)
+		defer e2.Close()
+		_, _ = e2.Write([]byte("\x07")) // no func set → no-op
+	})
+}

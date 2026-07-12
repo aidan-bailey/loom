@@ -292,6 +292,10 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		}
 	}
 
+	if i.BellPending() {
+		join = promptingStyle.Render("● ") + join
+	}
+
 	// Compute the width of the join suffix (status icon / spinner) so the
 	// Place block can shrink to keep the total within the padded width.
 	// Without this, workspace-terminal items (wider icon) overflow l.width,

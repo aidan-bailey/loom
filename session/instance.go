@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/atotto/clipboard"
@@ -181,6 +182,13 @@ type Instance struct {
 	// instead of restart-looping forever at tick cadence; see
 	// RecordRestartFailure/ResetRestartFailures.
 	restartFailureCount int
+
+	// bellPending marks that the pane rang BEL while this instance was not
+	// selected — surfaced as an attention badge in the session list and
+	// cleared on selection. Ephemeral: never serialized (absent from
+	// InstanceData). atomic because the list renderer and Update goroutine
+	// both touch it.
+	bellPending atomic.Bool
 
 	// mu guards concurrent access to fields that can be read from
 	// tick-fanout goroutines (Status, diffStats, Branch) and from
@@ -1389,6 +1397,12 @@ func (i *Instance) CursorState() (vt.Cursor, bool) {
 	}
 	return ts.CursorState()
 }
+
+// BellPending reports whether an unseen bell is pending for this instance.
+func (i *Instance) BellPending() bool { return i.bellPending.Load() }
+
+// SetBellPending sets or clears the pending-bell attention flag.
+func (i *Instance) SetBellPending(v bool) { i.bellPending.Store(v) }
 
 // PaneTitle returns the agent's OSC-set window title, or ok=false.
 func (i *Instance) PaneTitle() (string, bool) {

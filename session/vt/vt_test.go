@@ -11,6 +11,7 @@ func (nopEmulator) Resize(cols, rows int)       {}
 func (nopEmulator) Render() string              { return "" }
 func (nopEmulator) Cursor() Cursor              { return Cursor{} }
 func (nopEmulator) Title() string               { return "" }
+func (nopEmulator) SetBellFunc(f func())        {}
 func (nopEmulator) Close() error                { return nil }
 
 var _ Emulator = nopEmulator{}
