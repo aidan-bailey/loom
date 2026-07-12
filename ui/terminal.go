@@ -351,6 +351,20 @@ func (t *TerminalPane) CursorState() (vt.Cursor, bool) {
 	return s.tmuxSession.CursorState()
 }
 
+// ForwardFocus forwards a host focus in/out event to the current terminal
+// session, gated on mode 1004. Best-effort.
+func (t *TerminalPane) ForwardFocus(in bool) {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	t.mu.Unlock()
+	if !ok || s.tmuxSession == nil {
+		return
+	}
+	if err := s.tmuxSession.ForwardFocus(in); err != nil {
+		log.For("ui").Info("terminal.forward_focus_failed", "err", err)
+	}
+}
+
 // SendPrompt sends text followed by Enter to the current terminal session.
 func (t *TerminalPane) SendPrompt(text string) error {
 	t.mu.Lock()

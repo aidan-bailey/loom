@@ -18,7 +18,7 @@ const doubleEscWindow = 500 * time.Millisecond
 // exitInteract leaves interact (focus-to-interact) mode and returns to nav.
 func exitInteract(m *home) (tea.Model, tea.Cmd) {
 	m.splitPane.SetInlineAttach(false)
-	m.splitPane.SetFocusedPane(ui.FocusAgent)
+	m.setPaneFocus(ui.FocusAgent)
 	m.state = stateDefault
 	m.menu.SetState(ui.StateDefault)
 	m.lastEscAt = time.Time{}

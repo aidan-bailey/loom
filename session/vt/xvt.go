@@ -4,6 +4,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/charmbracelet/x/ansi"
 	xvt "github.com/charmbracelet/x/vt"
 )
 
@@ -20,11 +21,12 @@ type xvtEmulator struct {
 	// while THIS goroutine already holds e.mu's write lock — so callbacks
 	// must only assign these fields (never re-lock e.mu: RWMutex is not
 	// reentrant; never call out of the package). Readers take RLock.
-	cursorVisible bool
-	cursorShape   CursorShape
-	cursorBlink   bool
-	title         string
-	bellFunc      func()
+	cursorVisible  bool
+	cursorShape    CursorShape
+	cursorBlink    bool
+	title          string
+	bellFunc       func()
+	focusReporting bool
 }
 
 // NewXVT constructs a real terminal emulator sized to cols x rows.
@@ -68,6 +70,16 @@ func NewXVT(cols, rows int) Emulator {
 		Bell: func() {
 			if e.bellFunc != nil {
 				e.bellFunc()
+			}
+		},
+		EnableMode: func(mode ansi.Mode) {
+			if mode == ansi.ModeFocusEvent {
+				e.focusReporting = true
+			}
+		},
+		DisableMode: func(mode ansi.Mode) {
+			if mode == ansi.ModeFocusEvent {
+				e.focusReporting = false
 			}
 		},
 	})
@@ -131,6 +143,12 @@ func (e *xvtEmulator) SetBellFunc(f func()) {
 	e.mu.Lock()
 	e.bellFunc = f
 	e.mu.Unlock()
+}
+
+func (e *xvtEmulator) FocusReportingEnabled() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.focusReporting
 }
 
 func (e *xvtEmulator) Close() error {

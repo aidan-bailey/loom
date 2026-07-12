@@ -52,6 +52,12 @@ type Emulator interface {
 	// invoke concurrently with readers (tea.Program.Send qualifies).
 	SetBellFunc(f func())
 
+	// FocusReportingEnabled reports whether the inner app enabled focus
+	// reporting (DEC private mode 1004). Focus in/out sequences must only
+	// be forwarded while true — unsolicited CSI I/O is garbage input to
+	// apps that never asked for it.
+	FocusReportingEnabled() bool
+
 	// Close releases emulator resources. Safe to call multiple times.
 	Close() error
 }

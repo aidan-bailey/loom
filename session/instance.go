@@ -1398,6 +1398,22 @@ func (i *Instance) CursorState() (vt.Cursor, bool) {
 	return ts.CursorState()
 }
 
+// ForwardFocus forwards a host focus in/out event to the agent pane, gated
+// on the app having enabled focus reporting. Errors are logged, not
+// returned — focus is best-effort.
+func (i *Instance) ForwardFocus(in bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return
+	}
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return
+	}
+	if err := ts.ForwardFocus(in); err != nil {
+		log.For("session").Warn("forward_focus_failed", "instance", i.Title, "err", err)
+	}
+}
+
 // BellPending reports whether an unseen bell is pending for this instance.
 func (i *Instance) BellPending() bool { return i.bellPending.Load() }
 

@@ -82,6 +82,16 @@ func TestTitle_NonASCIITruncatesInVendoredParser(t *testing.T) {
 		"if this starts passing, the vendored x/vt parser was fixed — simplify PaneTitle's guard and update this test")
 }
 
+func TestFocusReporting_Mode1004Tracking(t *testing.T) {
+	e := NewXVT(80, 24)
+	defer e.Close()
+	require.False(t, e.FocusReportingEnabled(), "off until the app enables mode 1004")
+	_, _ = e.Write([]byte("\x1b[?1004h"))
+	require.True(t, e.FocusReportingEnabled())
+	_, _ = e.Write([]byte("\x1b[?1004l"))
+	require.False(t, e.FocusReportingEnabled())
+}
+
 func TestBell_InvokesBellFunc(t *testing.T) {
 	e := NewXVT(80, 24)
 	defer e.Close()

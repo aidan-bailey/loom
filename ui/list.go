@@ -534,6 +534,14 @@ func (l *List) RemoveInstanceByTitleAndRepo(title, repoName string) {
 	l.removeAtWithRepo(idx, repoName)
 }
 
+// GetInstanceByTitle returns the instance with the given title, or nil.
+func (l *List) GetInstanceByTitle(title string) *session.Instance {
+	if idx := l.findByTitle(title); idx >= 0 {
+		return l.items[idx]
+	}
+	return nil
+}
+
 func (l *List) findByTitle(title string) int {
 	for i, inst := range l.items {
 		if inst.Title == title {

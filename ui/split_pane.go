@@ -448,6 +448,11 @@ func (s *SplitPane) CurrentTerminalSessionName() string {
 	return ""
 }
 
+// ForwardTerminalFocus forwards a focus event to the terminal pane's session.
+func (s *SplitPane) ForwardTerminalFocus(in bool) {
+	s.terminal.ForwardFocus(in)
+}
+
 // CleanupTerminal closes the terminal session.
 func (s *SplitPane) CleanupTerminal() {
 	s.terminal.Close()

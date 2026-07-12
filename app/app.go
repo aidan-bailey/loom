@@ -312,6 +312,16 @@ type home struct {
 	// diff-stat refreshes. Update-goroutine only.
 	dirtySessions map[string]bool
 
+	// hostFocused mirrors the host terminal's focus state (via tea.FocusMsg/
+	// BlurMsg with ReportFocus on). Assumed focused at startup; used to
+	// synthesize correct focus events when panes/sessions switch.
+	hostFocused bool
+
+	// lastFocusTitle is the title of the instance that last received a
+	// synthesized focus-in on pane FocusAgent, so instanceChanged can
+	// synthesize the matching focus-out when the selection moves on.
+	lastFocusTitle string
+
 	// scripts owns the Lua script engine for user-bound keybindings.
 	// Lazily populated by initScripts() on first construction; never
 	// nil in normal operation (a failed load still produces an empty
@@ -352,6 +362,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		appState:    appState,
 		tabBar:      ui.NewWorkspaceTabBar(),
 		skipScripts: noScripts,
+		hostFocused: true,
 	}
 	h.list = ui.NewList(&h.spinner)
 	if wsCtx != nil && wsCtx.Name != "" {
@@ -839,6 +850,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			inst.SetBellPending(true)
 		}
 		return m, nil
+	case tea.FocusMsg:
+		m.hostFocused = true
+		m.forwardFocus(true)
+		return m, nil
+	case tea.BlurMsg:
+		m.hostFocused = false
+		m.forwardFocus(false)
+		return m, nil
 	case keyupMsg:
 		m.menu.ClearKeydown()
 		return m, nil
@@ -1001,7 +1020,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // left list panel — not a content selection
 		}
 		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok {
-			m.splitPane.SetFocusedPane(pane)
+			m.setPaneFocus(pane)
 			m.splitPane.BeginSelection(pane, row, col)
 			m.dragging = true
 			m.dragPane = pane
@@ -1250,7 +1269,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.instance.Prompt = ""
 			}
 			// Auto-focus agent pane and capture input
-			m.splitPane.SetFocusedPane(ui.FocusAgent)
+			m.setPaneFocus(ui.FocusAgent)
 			m.splitPane.SetInlineAttach(true)
 			m.state = stateInlineAttach
 			m.menu.SetState(ui.StateInlineAttach)
@@ -1503,6 +1522,24 @@ func (m *home) instanceChanged() tea.Cmd {
 
 	if selected != nil {
 		selected.SetBellPending(false)
+	}
+
+	newFocusTitle := ""
+	if selected != nil {
+		newFocusTitle = selected.Title
+	}
+	if newFocusTitle != m.lastFocusTitle {
+		// The user's attention moved to a different instance: the old pane
+		// loses focus, the new one gains it (host focus permitting).
+		if m.hostFocused && m.splitPane.GetFocusedPane() == ui.FocusAgent {
+			if prev := m.list.GetInstanceByTitle(m.lastFocusTitle); prev != nil {
+				prev.ForwardFocus(false)
+			}
+		}
+		m.lastFocusTitle = newFocusTitle
+		if m.hostFocused && selected != nil && m.splitPane.GetFocusedPane() == ui.FocusAgent {
+			selected.ForwardFocus(true)
+		}
 	}
 
 	m.splitPane.UpdateDiff(selected)
@@ -2368,6 +2405,7 @@ func (m *home) View() tea.View {
 		v := tea.NewView(content)
 		v.AltScreen = true
 		v.MouseMode = tea.MouseModeCellMotion
+		v.ReportFocus = true
 		return v
 	}
 	listView := m.list.String()
@@ -2426,6 +2464,39 @@ func (m *home) View() tea.View {
 	m.attachCursor(&view)
 	view.WindowTitle = m.windowTitle()
 	return view
+}
+
+// forwardFocus sends the host's focus state to whichever pane currently has
+// focus. PTY writes from the Update goroutine are established practice here
+// (inline attach does the same via SendKeysRaw).
+func (m *home) forwardFocus(in bool) {
+	selected := m.list.GetSelectedInstance()
+	if selected == nil {
+		return
+	}
+	switch m.splitPane.GetFocusedPane() {
+	case ui.FocusAgent:
+		selected.ForwardFocus(in)
+	case ui.FocusTerminal:
+		m.splitPane.ForwardTerminalFocus(in)
+	}
+}
+
+// setPaneFocus switches the focused pane, synthesizing focus-out to the old
+// pane's app and focus-in to the new one (only while the host itself is
+// focused) — so an agent that watches focus (e.g. Claude Code idle
+// notifications) sees Loom's pane focus like a real terminal's.
+func (m *home) setPaneFocus(pane int) {
+	if pane == m.splitPane.GetFocusedPane() {
+		return
+	}
+	if m.hostFocused {
+		m.forwardFocus(false)
+	}
+	m.splitPane.SetFocusedPane(pane)
+	if m.hostFocused {
+		m.forwardFocus(true)
+	}
 }
 
 // windowTitle passes the selected agent's OSC title through to the host

@@ -501,7 +501,7 @@ func runInlineAttachAgent(m *home) (tea.Model, tea.Cmd) {
 	if err := m.splitPane.ResetAgentToNormalMode(m.list.GetSelectedInstance()); err != nil {
 		log.For("app").Info("inline_attach.reset_agent_failed", "err", err)
 	}
-	m.splitPane.SetFocusedPane(ui.FocusAgent)
+	m.setPaneFocus(ui.FocusAgent)
 	m.splitPane.SetInlineAttach(true)
 	m.state = stateInlineAttach
 	m.menu.SetState(ui.StateInlineAttach)
@@ -510,7 +510,7 @@ func runInlineAttachAgent(m *home) (tea.Model, tea.Cmd) {
 
 func runInlineAttachTerminal(m *home) (tea.Model, tea.Cmd) {
 	m.splitPane.ResetTerminalToNormalMode()
-	m.splitPane.SetFocusedPane(ui.FocusTerminal)
+	m.setPaneFocus(ui.FocusTerminal)
 	m.splitPane.SetInlineAttach(true)
 	m.state = stateInlineAttach
 	m.menu.SetState(ui.StateInlineAttach)

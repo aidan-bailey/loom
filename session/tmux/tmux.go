@@ -970,6 +970,23 @@ func (t *TmuxSession) PaneTitle() (string, bool) {
 	return title, true
 }
 
+// ForwardFocus writes a focus-in (CSI I) or focus-out (CSI O) event into the
+// pane's PTY — but only when the inner app enabled focus reporting (mode
+// 1004). No-op (nil) otherwise: apps that never asked must not receive it.
+func (t *TmuxSession) ForwardFocus(in bool) error {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil || !emu.FocusReportingEnabled() {
+		return nil
+	}
+	seq := []byte("\x1b[O")
+	if in {
+		seq = []byte("\x1b[I")
+	}
+	return t.SendKeysRaw(seq)
+}
+
 // CapturePaneContent captures the content of the tmux pane
 func (t *TmuxSession) CapturePaneContent() (string, error) {
 	// Add -e flag to preserve escape sequences (ANSI color codes).
