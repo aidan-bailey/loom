@@ -1,3 +1,26 @@
+## [0.8.0] - 2026-07-12
+
+### 🚀 Features
+
+- *(tmux)* Pane-event notifier registry and per-session coalescer
+- *(tmux)* Emit dirty/quiet/dead pane events from the output pump
+- *(app)* Render panes on pump dirty events; gate preview tick to snapshot mode
+- *(tmux)* Source status detection from the emulator, capture-pane fallback
+- *(app)* Run status detection on pane quiet events
+- *(app)* Demote metadata poll to 3s health tick; verified PTY-death handling
+- *(vt)* Track cursor visibility, shape, and blink via x/vt callbacks
+- *(session,ui)* Expose emulator cursor state through tmux, instance, terminal pane
+- *(ui)* Map focused-pane emulator cursor to split-local coordinates
+- *(app)* Render the native hardware cursor over the focused pane
+- *(app)* Pass inner-app OSC titles through to the host terminal
+- *(app)* Surface pane bells as attention badges in the session list
+- *(app)* Forward host focus events to panes, gated on mode 1004
+
+### 📚 Documentation
+
+- Spec for event-driven panes and native cursor
+- Implementation plan for event-driven panes and native cursor
+- Document event-driven pane updates and native terminal behavior
 ## [0.7.0] - 2026-07-12
 
 ### 🚀 Features
@@ -39,6 +62,10 @@
 ### 📚 Documentation
 
 - Document session recovery in USAGE.md
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* V0.7.0
 ## [0.6.0] - 2026-07-06
 
 ### 🚀 Features
