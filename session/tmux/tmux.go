@@ -495,8 +495,12 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 	emu := t.emu
 	t.stateMu.Unlock()
 	var dest io.Writer = io.Discard
+	var co *coalescer
 	if emu != nil {
 		dest = emu
+		// Event-driven pane updates ride the pump: dirty/quiet notifications
+		// only exist on the emulator path — snapshot mode stays tick-polled.
+		co = newCoalescer(t.sanitizedName)
 	}
 	t.pumpMu.Lock()
 	t.pumpDest = dest
@@ -509,6 +513,9 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 		buf := make([]byte, 4096)
 		for {
 			if ctx.Err() != nil {
+				if co != nil {
+					co.stop()
+				}
 				return
 			}
 			n, err := ptmx.Read(buf)
@@ -517,8 +524,22 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 				dest := t.pumpDest
 				t.pumpMu.Unlock()
 				_, _ = dest.Write(buf[:n])
+				if co != nil {
+					co.touch()
+				}
 			}
 			if err != nil {
+				if co != nil {
+					co.stop()
+					// Dead only on a genuine EOF/read failure. Deliberate
+					// stops (Close/Restore/PausePreview) cancel ctx first via
+					// signalPumpStop, and must not look like a died session.
+					if ctx.Err() == nil {
+						if f := currentNotifier().Dead; f != nil {
+							f(t.sanitizedName)
+						}
+					}
+				}
 				return
 			}
 		}
@@ -852,6 +873,29 @@ func (t *TmuxSession) DoesSessionExist() bool {
 	defer cancel()
 	existsCmd := exec.CommandContext(ctx, "tmux", "has-session", fmt.Sprintf("-t=%s", t.sanitizedName))
 	return t.cmdExec.Run(existsCmd) == nil
+}
+
+// SessionName returns the sanitized tmux session name — the identity carried
+// by pane events (Notifier callbacks) and used by the app to route them.
+func (t *TmuxSession) SessionName() string {
+	return t.sanitizedName
+}
+
+// HasEmulator reports whether this session renders through the in-process
+// emulator (event-driven path) or the legacy capture-pane snapshot path.
+func (t *TmuxSession) HasEmulator() bool {
+	t.stateMu.Lock()
+	defer t.stateMu.Unlock()
+	return t.emu != nil
+}
+
+// SetEmulatorForTest wires an emulator directly, bypassing Restore's attach
+// lifecycle. Test-only: the name and doc comment are guardrails, nothing
+// about the method enforces test-only use.
+func (t *TmuxSession) SetEmulatorForTest(emu vt.Emulator) {
+	t.stateMu.Lock()
+	t.emu = emu
+	t.stateMu.Unlock()
 }
 
 // RenderEmulator returns the current visible screen from the in-process
