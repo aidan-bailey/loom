@@ -2,6 +2,7 @@ package vt
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -54,4 +55,29 @@ func TestCursor_TracksPosition(t *testing.T) {
 	c := e.Cursor()
 	require.Equal(t, 9, c.X)
 	require.Equal(t, 4, c.Y)
+}
+
+func TestTitle_OSCPassThrough(t *testing.T) {
+	e := NewXVT(80, 24)
+	defer e.Close()
+	require.Equal(t, "", e.Title())
+	_, _ = e.Write([]byte("\x1b]2;claude - working\x07"))
+	require.Equal(t, "claude - working", e.Title())
+	_, _ = e.Write([]byte("\x1b]0;both-title\x07")) // OSC 0 sets icon+title
+	require.Equal(t, "both-title", e.Title())
+}
+
+// TestTitle_NonASCIITruncatesInVendoredParser documents a known limitation
+// in the vendored charmbracelet/x/vt OSC-string parser (as of the pinned
+// commit): it terminates the title early on the lead byte of a multi-byte
+// UTF-8 sequence, rather than a mangled test bug on our side. Real agent
+// titles (e.g. Claude Code's "✳ ...") hit this — PaneTitle/windowTitle guard
+// against it by rejecting invalid UTF-8 (see TestPaneTitle_RejectsInvalidUTF8
+// in status_content_test.go), so callers never see the mangled byte(s).
+func TestTitle_NonASCIITruncatesInVendoredParser(t *testing.T) {
+	e := NewXVT(80, 24)
+	defer e.Close()
+	_, _ = e.Write([]byte("\x1b]2;✳ claude\x07"))
+	require.False(t, utf8.ValidString(e.Title()),
+		"if this starts passing, the vendored x/vt parser was fixed — simplify PaneTitle's guard and update this test")
 }

@@ -1390,6 +1390,18 @@ func (i *Instance) CursorState() (vt.Cursor, bool) {
 	return ts.CursorState()
 }
 
+// PaneTitle returns the agent's OSC-set window title, or ok=false.
+func (i *Instance) PaneTitle() (string, bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return "", false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return "", false
+	}
+	return ts.PaneTitle()
+}
+
 // TmuxSessionName returns the sanitized tmux session name backing this
 // instance, or "" when no session is attached. Pane events carry this name.
 func (i *Instance) TmuxSessionName() string {

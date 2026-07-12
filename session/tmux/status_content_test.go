@@ -65,3 +65,23 @@ func TestCursorState(t *testing.T) {
 	require.Equal(t, 2, c.Y)
 	require.True(t, c.Visible)
 }
+
+func TestPaneTitle_PassesValidTitle(t *testing.T) {
+	ts := NewTmuxSession("title-valid", "claude")
+	ts.SetEmulatorForTest(vt.NewXVT(80, 24))
+	_, _ = ts.emu.Write([]byte("\x1b]2;claude - working\x07"))
+	title, ok := ts.PaneTitle()
+	require.True(t, ok)
+	require.Equal(t, "claude - working", title)
+}
+
+func TestPaneTitle_RejectsInvalidUTF8(t *testing.T) {
+	ts := NewTmuxSession("title-invalid", "claude")
+	ts.SetEmulatorForTest(vt.NewXVT(80, 24))
+	// Triggers the vendored x/vt OSC parser's non-ASCII truncation bug (see
+	// TestTitle_NonASCIITruncatesInVendoredParser) — PaneTitle must not
+	// forward the resulting mangled bytes.
+	_, _ = ts.emu.Write([]byte("\x1b]2;✳ claude\x07"))
+	_, ok := ts.PaneTitle()
+	require.False(t, ok, "invalid UTF-8 title must be rejected, not forwarded")
+}

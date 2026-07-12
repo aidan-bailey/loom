@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 )
@@ -938,6 +939,26 @@ func (t *TmuxSession) CursorState() (vt.Cursor, bool) {
 		return vt.Cursor{}, false
 	}
 	return emu.Cursor(), true
+}
+
+// PaneTitle returns the inner app's OSC-set window title, or ok=false when
+// no emulator is wired, no title was ever set, or the title is invalid
+// UTF-8. The last case guards a known vendored charmbracelet/x/vt parser bug
+// that can truncate a title mid multi-byte rune (e.g. Claude Code's "✳ ..."
+// status) — better to fall back to the instance title than forward a
+// mangled byte sequence into the host terminal's own title escape sequence.
+func (t *TmuxSession) PaneTitle() (string, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return "", false
+	}
+	title := emu.Title()
+	if title == "" || !utf8.ValidString(title) {
+		return "", false
+	}
+	return title, true
 }
 
 // CapturePaneContent captures the content of the tmux pane

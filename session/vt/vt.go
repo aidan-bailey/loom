@@ -42,6 +42,10 @@ type Emulator interface {
 	// Cursor returns the current cursor position and visibility.
 	Cursor() Cursor
 
+	// Title returns the window title most recently set by the inner app via
+	// OSC 0/2, or "" if never set.
+	Title() string
+
 	// Close releases emulator resources. Safe to call multiple times.
 	Close() error
 }

@@ -2417,7 +2417,22 @@ func (m *home) View() tea.View {
 
 	view := asView(mainView)
 	m.attachCursor(&view)
+	view.WindowTitle = m.windowTitle()
 	return view
+}
+
+// windowTitle passes the selected agent's OSC title through to the host
+// terminal, suffixed so window lists stay identifiable; falls back to the
+// instance title when the inner app never set one.
+func (m *home) windowTitle() string {
+	sel := m.list.GetSelectedInstance()
+	if sel == nil {
+		return "loom"
+	}
+	if t, ok := sel.PaneTitle(); ok {
+		return t + " — loom"
+	}
+	return "loom — " + sel.Title
 }
 
 // attachCursor positions the REAL hardware cursor over the focused pane's
