@@ -5,6 +5,7 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/aidan-bailey/loom/session/vt"
 	"os"
 	"strings"
 	"sync"
@@ -328,6 +329,18 @@ func (t *TerminalPane) CurrentTmuxSession() *tmux.TmuxSession {
 		return nil
 	}
 	return s.tmuxSession
+}
+
+// CursorState returns the current terminal session's live cursor state, or
+// ok=false when no live emulator-backed session is displayed.
+func (t *TerminalPane) CursorState() (vt.Cursor, bool) {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	t.mu.Unlock()
+	if !ok || s.tmuxSession == nil {
+		return vt.Cursor{}, false
+	}
+	return s.tmuxSession.CursorState()
 }
 
 // SendPrompt sends text followed by Enter to the current terminal session.

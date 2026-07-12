@@ -927,6 +927,19 @@ func (t *TmuxSession) RenderEmulator() (string, bool) {
 	return emu.Render(), true
 }
 
+// CursorState returns the pane's live cursor (position, visibility, shape,
+// blink) from the in-process emulator, or ok=false when no emulator is
+// wired (snapshot/Windows path — those panes show no cursor).
+func (t *TmuxSession) CursorState() (vt.Cursor, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return vt.Cursor{}, false
+	}
+	return emu.Cursor(), true
+}
+
 // CapturePaneContent captures the content of the tmux pane
 func (t *TmuxSession) CapturePaneContent() (string, error) {
 	// Add -e flag to preserve escape sequences (ANSI color codes).

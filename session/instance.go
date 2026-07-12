@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/session/agent"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/aidan-bailey/loom/session/vt"
 	"path/filepath"
 
 	"fmt"
@@ -1374,6 +1375,19 @@ func (i *Instance) GetContentHash() []byte {
 		return nil
 	}
 	return ts.GetContentHash()
+}
+
+// CursorState returns the agent pane's live cursor state, or ok=false when
+// the instance has no running emulator-backed session.
+func (i *Instance) CursorState() (vt.Cursor, bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return vt.Cursor{}, false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return vt.Cursor{}, false
+	}
+	return ts.CursorState()
 }
 
 // TmuxSessionName returns the sanitized tmux session name backing this

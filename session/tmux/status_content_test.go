@@ -51,3 +51,17 @@ func TestStatusContent_PromptDetectionParity(t *testing.T) {
 	_, hasPrompt := ts.HasUpdated()
 	require.True(t, hasPrompt, "prompt marker must be detected in emulator content")
 }
+
+func TestCursorState(t *testing.T) {
+	ts := NewTmuxSession("cursor", "claude")
+	_, ok := ts.CursorState()
+	require.False(t, ok, "no emulator → no cursor state")
+
+	ts.SetEmulatorForTest(vt.NewXVT(80, 24))
+	_, _ = ts.emu.Write([]byte("\x1b[3;7H"))
+	c, ok := ts.CursorState()
+	require.True(t, ok)
+	require.Equal(t, 6, c.X)
+	require.Equal(t, 2, c.Y)
+	require.True(t, c.Visible)
+}
