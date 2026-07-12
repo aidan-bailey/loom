@@ -10,6 +10,9 @@ func (nopEmulator) Write(p []byte) (int, error) { return len(p), nil }
 func (nopEmulator) Resize(cols, rows int)       {}
 func (nopEmulator) Render() string              { return "" }
 func (nopEmulator) Cursor() Cursor              { return Cursor{} }
+func (nopEmulator) Title() string               { return "" }
+func (nopEmulator) SetBellFunc(f func())        {}
+func (nopEmulator) FocusReportingEnabled() bool { return false }
 func (nopEmulator) Close() error                { return nil }
 
 var _ Emulator = nopEmulator{}

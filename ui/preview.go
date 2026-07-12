@@ -257,6 +257,12 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	return nil
 }
 
+// ShowingFallback reports whether the pane is displaying splash/fallback
+// text instead of live terminal content (no cursor applies there).
+func (p *PreviewPane) ShowingFallback() bool {
+	return p.previewState.fallback
+}
+
 // Returns the preview pane content as a string.
 func (p *PreviewPane) String() string {
 	if p.width == 0 || p.height == 0 {

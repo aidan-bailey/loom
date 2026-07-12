@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/session/agent"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/aidan-bailey/loom/session/vt"
 	"path/filepath"
 
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/atotto/clipboard"
@@ -180,6 +182,13 @@ type Instance struct {
 	// instead of restart-looping forever at tick cadence; see
 	// RecordRestartFailure/ResetRestartFailures.
 	restartFailureCount int
+
+	// bellPending marks that the pane rang BEL while this instance was not
+	// selected — surfaced as an attention badge in the session list and
+	// cleared on selection. Ephemeral: never serialized (absent from
+	// InstanceData). atomic because the list renderer and Update goroutine
+	// both touch it.
+	bellPending atomic.Bool
 
 	// mu guards concurrent access to fields that can be read from
 	// tick-fanout goroutines (Status, diffStats, Branch) and from
@@ -1374,6 +1383,73 @@ func (i *Instance) GetContentHash() []byte {
 		return nil
 	}
 	return ts.GetContentHash()
+}
+
+// CursorState returns the agent pane's live cursor state, or ok=false when
+// the instance has no running emulator-backed session.
+func (i *Instance) CursorState() (vt.Cursor, bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return vt.Cursor{}, false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return vt.Cursor{}, false
+	}
+	return ts.CursorState()
+}
+
+// ForwardFocus forwards a host focus in/out event to the agent pane, gated
+// on the app having enabled focus reporting. Errors are logged, not
+// returned — focus is best-effort.
+func (i *Instance) ForwardFocus(in bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return
+	}
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return
+	}
+	if err := ts.ForwardFocus(in); err != nil {
+		log.For("session").Warn("forward_focus_failed", "instance", i.Title, "err", err)
+	}
+}
+
+// BellPending reports whether an unseen bell is pending for this instance.
+func (i *Instance) BellPending() bool { return i.bellPending.Load() }
+
+// SetBellPending sets or clears the pending-bell attention flag.
+func (i *Instance) SetBellPending(v bool) { i.bellPending.Store(v) }
+
+// PaneTitle returns the agent's OSC-set window title, or ok=false.
+func (i *Instance) PaneTitle() (string, bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return "", false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return "", false
+	}
+	return ts.PaneTitle()
+}
+
+// TmuxSessionName returns the sanitized tmux session name backing this
+// instance, or "" when no session is attached. Pane events carry this name.
+func (i *Instance) TmuxSessionName() string {
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return ""
+	}
+	return ts.SessionName()
+}
+
+// HasEmulator reports whether this instance's pane renders through the
+// in-process emulator (event-driven path).
+func (i *Instance) HasEmulator() bool {
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return false
+	}
+	return ts.HasEmulator()
 }
 
 // SetTmuxSession sets the tmux session for testing purposes

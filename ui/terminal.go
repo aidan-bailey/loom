@@ -5,6 +5,7 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/aidan-bailey/loom/session/vt"
 	"os"
 	"strings"
 	"sync"
@@ -328,6 +329,40 @@ func (t *TerminalPane) CurrentTmuxSession() *tmux.TmuxSession {
 		return nil
 	}
 	return s.tmuxSession
+}
+
+// ShowingFallback reports whether the pane is displaying fallback text
+// instead of live terminal content (no cursor applies there).
+func (t *TerminalPane) ShowingFallback() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.fallback
+}
+
+// CursorState returns the current terminal session's live cursor state, or
+// ok=false when no live emulator-backed session is displayed.
+func (t *TerminalPane) CursorState() (vt.Cursor, bool) {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	t.mu.Unlock()
+	if !ok || s.tmuxSession == nil {
+		return vt.Cursor{}, false
+	}
+	return s.tmuxSession.CursorState()
+}
+
+// ForwardFocus forwards a host focus in/out event to the current terminal
+// session, gated on mode 1004. Best-effort.
+func (t *TerminalPane) ForwardFocus(in bool) {
+	t.mu.Lock()
+	s, ok := t.sessions[t.currentTitle]
+	t.mu.Unlock()
+	if !ok || s.tmuxSession == nil {
+		return
+	}
+	if err := s.tmuxSession.ForwardFocus(in); err != nil {
+		log.For("ui").Info("terminal.forward_focus_failed", "err", err)
+	}
 }
 
 // SendPrompt sends text followed by Enter to the current terminal session.

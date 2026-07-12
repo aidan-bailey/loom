@@ -12,6 +12,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/aidan-bailey/loom/session/vt"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"os"
@@ -72,6 +73,17 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 		}
 	}()
 	p := tea.NewProgram(h) // alt-screen + mouse mode are set on the tea.View (see View())
+	// Pane events: the output pumps push dirty/quiet/bell/dead into the
+	// program from their own goroutines; Send is goroutine-safe by design.
+	// Torn down before Run returns so a late timer can't Send into a dead
+	// program (Send after Kill is a no-op, but keep the lifecycle explicit).
+	tmux.SetNotifier(tmux.Notifier{
+		Output: func(s string) { p.Send(paneDirtyMsg{session: s}) },
+		Quiet:  func(s string) { p.Send(paneQuietMsg{session: s}) },
+		Bell:   func(s string) { p.Send(bellMsg{session: s}) },
+		Dead:   func(s string) { p.Send(ptyDeadMsg{session: s}) },
+	})
+	defer tmux.SetNotifier(tmux.Notifier{})
 	_, err = p.Run()
 	return err
 }
@@ -86,6 +98,9 @@ type metadataResult struct {
 	hasPrompt  bool
 	captureErr error
 	diffErr    error
+	// emulatorDriven marks instances whose status rides pane events (quiet
+	// detection); the tick must not run the status ladder for them.
+	emulatorDriven bool
 }
 
 type state int
@@ -292,6 +307,21 @@ type home struct {
 	// lastPreviewTitle tracks which instance the hash belongs to.
 	lastPreviewTitle string
 
+	// dirtySessions records tmux session names that emitted output since the
+	// last health tick (event mode only). Consumed by takeDirty to gate
+	// diff-stat refreshes. Update-goroutine only.
+	dirtySessions map[string]bool
+
+	// hostFocused mirrors the host terminal's focus state (via tea.FocusMsg/
+	// BlurMsg with ReportFocus on). Assumed focused at startup; used to
+	// synthesize correct focus events when panes/sessions switch.
+	hostFocused bool
+
+	// lastFocusTitle is the title of the instance that last received a
+	// synthesized focus-in on pane FocusAgent, so instanceChanged can
+	// synthesize the matching focus-out when the selection moves on.
+	lastFocusTitle string
+
 	// scripts owns the Lua script engine for user-bound keybindings.
 	// Lazily populated by initScripts() on first construction; never
 	// nil in normal operation (a failed load still produces an empty
@@ -332,6 +362,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		appState:    appState,
 		tabBar:      ui.NewWorkspaceTabBar(),
 		skipScripts: noScripts,
+		hostFocused: true,
 	}
 	h.list = ui.NewList(&h.spinner)
 	if wsCtx != nil && wsCtx.Name != "" {
@@ -633,14 +664,19 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 // preview and metadata tick loops — those loops re-arm themselves by
 // returning the same tick message, so Init fires exactly once per Run.
 func (m *home) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		m.spinner.Tick,
-		func() tea.Msg {
+		tickUpdateMetadataCmd,
+	}
+	// Event mode renders on paneDirtyMsg; the timer poll only survives for
+	// the snapshot/Windows path, which has no emulator to emit events.
+	if !tmux.EmulatorEnabled() {
+		cmds = append(cmds, func() tea.Msg {
 			time.Sleep(100 * time.Millisecond)
 			return previewTickMsg{}
-		},
-		tickUpdateMetadataCmd,
-	)
+		})
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update implements tea.Model.
@@ -653,6 +689,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scriptResumeMsg:
 		return m, m.handleScriptResume(msg)
 	case previewTickMsg:
+		// Event mode renders on paneDirtyMsg — a stray tick neither renders
+		// nor re-arms. This case is the snapshot/Windows path only.
+		if tmux.EmulatorEnabled() {
+			return m, nil
+		}
 		// Check if the inline-attached pane's own session is still alive
 		// (see focusedPaneAlive: the agent and terminal panes have
 		// independent tmux sessions, so this must track whichever one is
@@ -719,6 +760,104 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tea.RequestWindowSize)
 		}
 		return m, tea.Batch(cmds...)
+	case paneDirtyMsg:
+		m.markDirty(msg.session)
+		selected := m.list.GetSelectedInstance()
+
+		if inst := m.instanceForSession(msg.session); inst != nil {
+			// Output arrived → the agent is doing something. Mirrors the old
+			// tick's updated→Running transition; Prompting/Ready re-derive on
+			// the quiet event once the burst settles.
+			st := inst.GetStatus()
+			if st == session.Ready || st == session.Prompting {
+				if err := inst.TransitionTo(session.Running); err != nil {
+					log.For("app").Warn("event.transition_failed", "instance", inst.Title, "to", "Running", "err", err.Error())
+				}
+				m.updateTabBarStatuses()
+			}
+			if selected != nil && inst == selected {
+				if err := m.splitPane.UpdateAgent(selected); err != nil {
+					return m, m.handleError(err)
+				}
+			}
+			return m, nil
+		}
+		// Not an agent session — the terminal pane's current session renders;
+		// dirty events from cached-but-hidden terminal sessions are dropped.
+		if selected != nil && msg.session == m.splitPane.CurrentTerminalSessionName() {
+			if err := m.splitPane.UpdateTerminal(selected); err != nil {
+				return m, m.handleError(err)
+			}
+		}
+		return m, nil
+	case paneQuietMsg:
+		inst := m.instanceForSession(msg.session)
+		if !statusEligible(inst) {
+			return m, nil
+		}
+		return m, statusDetectCmd(inst)
+	case statusDetectedMsg:
+		if !statusEligible(msg.instance) {
+			return m, nil
+		}
+		if msg.err != nil {
+			log.WarnKV("app.event.capture_failed", "instance", msg.instance.Title, "err", msg.err.Error())
+			return m, nil
+		}
+		// Same transition ladder as the old metadata tick: still-changing →
+		// Running; settled with a prompt → Prompting; settled → Ready.
+		target := session.Ready
+		if msg.updated {
+			target = session.Running
+		} else if msg.hasPrompt {
+			target = session.Prompting
+		}
+		if err := msg.instance.TransitionTo(target); err != nil {
+			log.For("app").Warn("event.transition_failed", "instance", msg.instance.Title, "to", target.String(), "err", err.Error())
+		}
+		m.updateTabBarStatuses()
+		return m, nil
+	case ptyDeadMsg:
+		var cmds []tea.Cmd
+		// If the dead session backs the inline-attached pane, exit attach
+		// immediately (the fast path for what the preview tick used to poll).
+		if m.state == stateInlineAttach {
+			selected := m.list.GetSelectedInstance()
+			if selected == nil || selected.Paused() || !focusedPaneAlive(m, selected) {
+				m.state = stateDefault
+				m.menu.SetState(ui.StateDefault)
+				cmds = append(cmds, tea.RequestWindowSize)
+			}
+		}
+		inst := m.instanceForSession(msg.session)
+		if inst == nil || inst == m.attachingInstance || !statusEligible(inst) {
+			if len(cmds) > 0 {
+				return m, tea.Batch(cmds...)
+			}
+			return m, nil
+		}
+		cmds = append(cmds, verifyDeadCmd(inst))
+		return m, tea.Batch(cmds...)
+	case deadVerifiedMsg:
+		if !statusEligible(msg.instance) {
+			return m, nil
+		}
+		_ = m.applyLiveness(msg.instance, msg.tmuxAlive, msg.ptmxAlive)
+		m.updateTabBarStatuses()
+		return m, m.instanceChanged()
+	case bellMsg:
+		if inst := m.instanceForSession(msg.session); inst != nil && inst != m.list.GetSelectedInstance() {
+			inst.SetBellPending(true)
+		}
+		return m, nil
+	case tea.FocusMsg:
+		m.hostFocused = true
+		m.forwardFocus(true)
+		return m, nil
+	case tea.BlurMsg:
+		m.hostFocused = false
+		m.forwardFocus(false)
+		return m, nil
 	case keyupMsg:
 		m.menu.ClearKeydown()
 		return m, nil
@@ -755,68 +894,46 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Inline-attach liveness backstop (the preview tick used to check
+		// this every 100ms in event mode; ptyDeadMsg is the fast path now,
+		// this tick is the safety net for deaths that never EOF'd the PTY).
+		var cmds []tea.Cmd
+		if m.state == stateInlineAttach {
+			if selected == nil || selected.Paused() || !focusedPaneAlive(m, selected) {
+				m.state = stateDefault
+				m.menu.SetState(ui.StateDefault)
+				cmds = append(cmds, tea.RequestWindowSize)
+			}
+		}
+
 		// Fan out I/O off the update goroutine. A stalled tmux or git process
 		// must not block the UI loop — gatherMetadataCmd runs wg.Wait() inside
 		// a background Cmd and returns the results via metadataReadyMsg.
-		return m, gatherMetadataCmd(active, selected)
+		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty()))
+		return m, tea.Batch(cmds...)
 	case metadataReadyMsg:
 		// Apply results on main thread.
 		for _, r := range msg.results {
-			if !r.tmuxAlive {
-				if r.instance.IsWorkspaceTerminal {
-					if failures := r.instance.RecordRestartFailure(); failures >= maxWorkspaceTerminalRestartFailures {
-						// The session died again immediately after every
-						// recent Restart (e.g. a permanently broken Program
-						// string) — restarting further would just loop
-						// forever at tick cadence. Give up like a regular
-						// instance would. RestartWithOptions/Resume are both
-						// gated off for workspace terminals (see
-						// selectedPausedNotWorkspace/selectedResumableNotWorkspace
-						// in intents.go), so recovering today means killing
-						// this instance (a fresh one is auto-created from
-						// current config on next workspace activation) or
-						// fixing Program on disk and relaunching Loom.
-						log.For("app").Error("workspace_terminal.restart_circuit_tripped", "title", r.instance.Title, "consecutive_failures", failures)
-						if err := r.instance.TransitionTo(session.Paused); err != nil {
-							log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Paused", "err", err.Error())
-						}
-						continue
-					}
-					log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", r.instance.Title)
-					if err := r.instance.Restart(); err != nil {
-						log.For("app").Error("workspace_terminal.restart_failed", "title", r.instance.Title, "err", err)
-					}
-					continue
-				}
-				log.For("app").Warn("tick.tmux_gone_marking_paused", "title", r.instance.Title)
-				if err := r.instance.TransitionTo(session.Paused); err != nil {
-					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Paused", "err", err.Error())
-				}
+			if !m.applyLiveness(r.instance, r.tmuxAlive, r.ptmxAlive) {
 				continue
 			}
-			r.instance.ResetRestartFailures()
-			if !r.ptmxAlive && r.instance != m.attachingInstance {
-				// Session exists but Loom's own attach client is gone (e.g. a
-				// reattach failed after full-screen attach returned). Nothing
-				// else ever retries this, so self-heal here — same shape as
-				// the workspace-terminal restart above, but at the PTY layer.
-				log.For("app").Warn("tick.ptmx_dead_repairing", "title", r.instance.Title)
-				if err := r.instance.RepairPtmx(); err != nil {
-					log.For("app").Error("tick.ptmx_repair_failed", "title", r.instance.Title, "err", err)
-				}
-			}
-			if r.updated {
-				if err := r.instance.TransitionTo(session.Running); err != nil {
-					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Running", "err", err.Error())
-				}
-			} else {
-				if r.hasPrompt {
-					if err := r.instance.TransitionTo(session.Prompting); err != nil {
-						log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Prompting", "err", err.Error())
+			// Event-mode instances get their status ladder from quiet
+			// events (statusDetectedMsg); running it here too would fight
+			// that pipeline with stale zero-valued results.
+			if !r.emulatorDriven {
+				if r.updated {
+					if err := r.instance.TransitionTo(session.Running); err != nil {
+						log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Running", "err", err.Error())
 					}
 				} else {
-					if err := r.instance.TransitionTo(session.Ready); err != nil {
-						log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Ready", "err", err.Error())
+					if r.hasPrompt {
+						if err := r.instance.TransitionTo(session.Prompting); err != nil {
+							log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Prompting", "err", err.Error())
+						}
+					} else {
+						if err := r.instance.TransitionTo(session.Ready); err != nil {
+							log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Ready", "err", err.Error())
+						}
 					}
 				}
 			}
@@ -903,7 +1020,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // left list panel — not a content selection
 		}
 		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok {
-			m.splitPane.SetFocusedPane(pane)
+			m.setPaneFocus(pane)
 			m.splitPane.BeginSelection(pane, row, col)
 			m.dragging = true
 			m.dragPane = pane
@@ -1152,7 +1269,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.instance.Prompt = ""
 			}
 			// Auto-focus agent pane and capture input
-			m.splitPane.SetFocusedPane(ui.FocusAgent)
+			m.setPaneFocus(ui.FocusAgent)
 			m.splitPane.SetInlineAttach(true)
 			m.state = stateInlineAttach
 			m.menu.SetState(ui.StateInlineAttach)
@@ -1403,6 +1520,28 @@ func (m *home) instanceChanged() tea.Cmd {
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
 
+	if selected != nil {
+		selected.SetBellPending(false)
+	}
+
+	newFocusTitle := ""
+	if selected != nil {
+		newFocusTitle = selected.Title
+	}
+	if newFocusTitle != m.lastFocusTitle {
+		// The user's attention moved to a different instance: the old pane
+		// loses focus, the new one gains it (host focus permitting).
+		if m.hostFocused && m.splitPane.GetFocusedPane() == ui.FocusAgent {
+			if prev := m.list.GetInstanceByTitle(m.lastFocusTitle); prev != nil {
+				prev.ForwardFocus(false)
+			}
+		}
+		m.lastFocusTitle = newFocusTitle
+		if m.hostFocused && selected != nil && m.splitPane.GetFocusedPane() == ui.FocusAgent {
+			selected.ForwardFocus(true)
+		}
+	}
+
 	m.splitPane.UpdateDiff(selected)
 	m.splitPane.SetInstance(selected)
 	// Update menu with current instance
@@ -1615,10 +1754,16 @@ func (m *home) runBranchSearch(filter string, version uint64) tea.Cmd {
 // blip, not a real recovery window.
 const maxWorkspaceTerminalRestartFailures = 3
 
-// tickUpdateMetadataCmd is the callback to update the metadata of the instances every 500ms. Note that we iterate
-// overall the instances and capture their output. It's a pretty expensive operation. Let's do it 2x a second only.
+// tickUpdateMetadataCmd drives the health tick. In event mode (emulator
+// path) it is a slow belt-and-braces sweep — liveness, ptmx self-heal, and
+// diff stats — because status detection rides pane events instead. On the
+// snapshot path it keeps the legacy 500ms cadence and does everything.
 var tickUpdateMetadataCmd = func() tea.Msg {
-	time.Sleep(500 * time.Millisecond)
+	if tmux.EmulatorEnabled() {
+		time.Sleep(3 * time.Second)
+	} else {
+		time.Sleep(500 * time.Millisecond)
+	}
 	return tickUpdateMetadataMessage{}
 }
 
@@ -1631,7 +1776,7 @@ var tickUpdateMetadataCmd = func() tea.Msg {
 // an idle instance with no pane output does not trigger a git subprocess on
 // every tick. For N active instances with a single active agent, the git
 // fan-out drops from ~N subprocesses per tick to ~1.
-func gatherMetadataCmd(active []*session.Instance, selected *session.Instance) tea.Cmd {
+func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, dirty map[string]bool) tea.Cmd {
 	return func() tea.Msg {
 		results := make([]metadataResult, len(active))
 		var wg sync.WaitGroup
@@ -1648,10 +1793,16 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance) t
 				}
 				r.ptmxAlive = instance.PtmxAlive()
 
-				r.updated, r.hasPrompt, r.captureErr = instance.CaptureAndProcessStatus()
+				// Event-mode instances get status from quiet events; the
+				// subprocess scan only remains for the snapshot path.
+				r.emulatorDriven = instance.HasEmulator()
+				if !r.emulatorDriven {
+					r.updated, r.hasPrompt, r.captureErr = instance.CaptureAndProcessStatus()
+				}
 
 				wantFull := instance == selected
-				if !instance.ShouldRefreshDiff(r.updated, wantFull) {
+				tmuxUpdated := r.updated || dirty[instance.TmuxSessionName()]
+				if !instance.ShouldRefreshDiff(tmuxUpdated, wantFull) {
 					return
 				}
 				if wantFull {
@@ -1664,6 +1815,58 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance) t
 		wg.Wait()
 		return metadataReadyMsg{results: results}
 	}
+}
+
+// applyLiveness reacts to one instance's health-probe result: dead tmux →
+// pause (or restart a workspace terminal, with the existing circuit
+// breaker); live tmux but dead attach PTY → RepairPtmx self-heal. Returns
+// false when the instance was found dead (so callers can stop treating it
+// as running). Must run on the Update goroutine.
+func (m *home) applyLiveness(inst *session.Instance, tmuxAlive, ptmxAlive bool) (alive bool) {
+	if !tmuxAlive {
+		if inst.IsWorkspaceTerminal {
+			if failures := inst.RecordRestartFailure(); failures >= maxWorkspaceTerminalRestartFailures {
+				// The session died again immediately after every
+				// recent Restart (e.g. a permanently broken Program
+				// string) — restarting further would just loop
+				// forever at tick cadence. Give up like a regular
+				// instance would. RestartWithOptions/Resume are both
+				// gated off for workspace terminals (see
+				// selectedPausedNotWorkspace/selectedResumableNotWorkspace
+				// in intents.go), so recovering today means killing
+				// this instance (a fresh one is auto-created from
+				// current config on next workspace activation) or
+				// fixing Program on disk and relaunching Loom.
+				log.For("app").Error("workspace_terminal.restart_circuit_tripped", "title", inst.Title, "consecutive_failures", failures)
+				if err := inst.TransitionTo(session.Paused); err != nil {
+					log.For("app").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
+				}
+				return false
+			}
+			log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", inst.Title)
+			if err := inst.Restart(); err != nil {
+				log.For("app").Error("workspace_terminal.restart_failed", "title", inst.Title, "err", err)
+			}
+			return false
+		}
+		log.For("app").Warn("tick.tmux_gone_marking_paused", "title", inst.Title)
+		if err := inst.TransitionTo(session.Paused); err != nil {
+			log.For("app").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
+		}
+		return false
+	}
+	inst.ResetRestartFailures()
+	if !ptmxAlive && inst != m.attachingInstance {
+		// Session exists but Loom's own attach client is gone (e.g. a
+		// reattach failed after full-screen attach returned). Nothing
+		// else ever retries this, so self-heal here — same shape as
+		// the workspace-terminal restart above, but at the PTY layer.
+		log.For("app").Warn("tick.ptmx_dead_repairing", "title", inst.Title)
+		if err := inst.RepairPtmx(); err != nil {
+			log.For("app").Error("tick.ptmx_repair_failed", "title", inst.Title, "err", err)
+		}
+	}
+	return true
 }
 
 // handleError handles all errors which get bubbled up to the app. sets the error message. We return a callback tea.Cmd that returns a hideErrMsg message
@@ -2202,6 +2405,7 @@ func (m *home) View() tea.View {
 		v := tea.NewView(content)
 		v.AltScreen = true
 		v.MouseMode = tea.MouseModeCellMotion
+		v.ReportFocus = true
 		return v
 	}
 	listView := m.list.String()
@@ -2256,5 +2460,86 @@ func (m *home) View() tea.View {
 		}
 	}
 
-	return asView(mainView)
+	view := asView(mainView)
+	m.attachCursor(&view)
+	view.WindowTitle = m.windowTitle()
+	return view
+}
+
+// forwardFocus sends the host's focus state to whichever pane currently has
+// focus. PTY writes from the Update goroutine are established practice here
+// (inline attach does the same via SendKeysRaw).
+func (m *home) forwardFocus(in bool) {
+	selected := m.list.GetSelectedInstance()
+	if selected == nil {
+		return
+	}
+	switch m.splitPane.GetFocusedPane() {
+	case ui.FocusAgent:
+		selected.ForwardFocus(in)
+	case ui.FocusTerminal:
+		m.splitPane.ForwardTerminalFocus(in)
+	}
+}
+
+// setPaneFocus switches the focused pane, synthesizing focus-out to the old
+// pane's app and focus-in to the new one (only while the host itself is
+// focused) — so an agent that watches focus (e.g. Claude Code idle
+// notifications) sees Loom's pane focus like a real terminal's.
+func (m *home) setPaneFocus(pane int) {
+	if pane == m.splitPane.GetFocusedPane() {
+		return
+	}
+	if m.hostFocused {
+		m.forwardFocus(false)
+	}
+	m.splitPane.SetFocusedPane(pane)
+	if m.hostFocused {
+		m.forwardFocus(true)
+	}
+}
+
+// windowTitle passes the selected agent's OSC title through to the host
+// terminal, suffixed so window lists stay identifiable; falls back to the
+// instance title when the inner app never set one.
+func (m *home) windowTitle() string {
+	sel := m.list.GetSelectedInstance()
+	if sel == nil {
+		return "loom"
+	}
+	if t, ok := sel.PaneTitle(); ok {
+		return t + " — loom"
+	}
+	return "loom — " + sel.Title
+}
+
+// attachCursor positions the REAL hardware cursor over the focused pane's
+// cursor cell — the host terminal then renders its own native cursor
+// (user-configured color, blink) there. Only on the plain main-view path:
+// overlays, pickers, and non-default states keep the cursor hidden
+// (Bubble Tea's default when View.Cursor is nil).
+func (m *home) attachCursor(v *tea.View) {
+	if m.state != stateDefault && m.state != stateInlineAttach {
+		return
+	}
+	if m.activeOverlay != nil {
+		return
+	}
+	lx, ly, cur, ok := m.splitPane.CursorScreenPosition(m.list.GetSelectedInstance())
+	if !ok {
+		return
+	}
+	// Same screen↔split mapping the mouse path uses:
+	// HitTest(mouse.X - m.listWidth, mouse.Y - m.tabBar.Height()).
+	c := tea.NewCursor(m.listWidth+lx, m.tabBar.Height()+ly)
+	c.Blink = cur.Blink
+	switch cur.Shape {
+	case vt.CursorShapeUnderline:
+		c.Shape = tea.CursorUnderline
+	case vt.CursorShapeBar:
+		c.Shape = tea.CursorBar
+	default:
+		c.Shape = tea.CursorBlock
+	}
+	v.Cursor = c
 }

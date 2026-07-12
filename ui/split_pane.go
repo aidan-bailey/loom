@@ -438,6 +438,21 @@ func (s *SplitPane) InjectTerminalSessionForTest(title string, ts *tmux.TmuxSess
 	s.terminal.InjectSessionForTest(title, ts, worktreePath)
 }
 
+// CurrentTerminalSessionName returns the tmux session name backing the
+// currently displayed terminal pane, or "" if none — the key pane events
+// are routed by.
+func (s *SplitPane) CurrentTerminalSessionName() string {
+	if ts := s.terminal.CurrentTmuxSession(); ts != nil {
+		return ts.SessionName()
+	}
+	return ""
+}
+
+// ForwardTerminalFocus forwards a focus event to the terminal pane's session.
+func (s *SplitPane) ForwardTerminalFocus(in bool) {
+	s.terminal.ForwardFocus(in)
+}
+
 // CleanupTerminal closes the terminal session.
 func (s *SplitPane) CleanupTerminal() {
 	s.terminal.Close()

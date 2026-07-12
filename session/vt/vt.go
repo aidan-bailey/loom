@@ -4,10 +4,24 @@
 // this is display only.
 package vt
 
-// Cursor is the visible cursor position in cells, 0-based, origin top-left.
+// CursorShape is the visual form of the cursor, as set by DECSCUSR.
+type CursorShape int
+
+const (
+	CursorShapeBlock CursorShape = iota
+	CursorShapeUnderline
+	CursorShapeBar
+)
+
+// Cursor is the visible cursor state in cells, 0-based, origin top-left.
+// Visible reflects DECTCEM (apps hide the cursor while painting); Shape and
+// Blink reflect DECSCUSR. The defaults — visible blinking block — match a
+// fresh terminal.
 type Cursor struct {
 	X, Y    int
 	Visible bool
+	Shape   CursorShape
+	Blink   bool
 }
 
 // Emulator is the display surface for one pane. Implementations must be safe
@@ -27,6 +41,22 @@ type Emulator interface {
 
 	// Cursor returns the current cursor position and visibility.
 	Cursor() Cursor
+
+	// Title returns the window title most recently set by the inner app via
+	// OSC 0/2, or "" if never set.
+	Title() string
+
+	// SetBellFunc installs a handler invoked when the inner app rings BEL.
+	// The handler runs inside Write on the pump goroutine — it must be
+	// cheap, must not call back into the Emulator, and must be safe to
+	// invoke concurrently with readers (tea.Program.Send qualifies).
+	SetBellFunc(f func())
+
+	// FocusReportingEnabled reports whether the inner app enabled focus
+	// reporting (DEC private mode 1004). Focus in/out sequences must only
+	// be forwarded while true — unsolicited CSI I/O is garbage input to
+	// apps that never asked for it.
+	FocusReportingEnabled() bool
 
 	// Close releases emulator resources. Safe to call multiple times.
 	Close() error

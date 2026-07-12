@@ -35,11 +35,20 @@ func (f runningPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
 
 func (f runningPtyFactory) Close() {}
 
-// startedInstanceWithHistory returns a started instance backed by a mock tmux
-// whose capture-pane returns 200 lines of history for the `-S` (CaptureHistory)
-// form and the bottom 24 for the plain visible capture. *historyCaptures counts
-// the `-S` captures so a test can observe whether the agent pane re-rendered.
+// startedInstanceWithHistory returns a started instance titled "scroll"
+// backed by a mock tmux whose capture-pane returns 200 lines of history for
+// the `-S` (CaptureHistory) form and the bottom 24 for the plain visible
+// capture. *historyCaptures counts the `-S` captures so a test can observe
+// whether the agent pane re-rendered.
 func startedInstanceWithHistory(t *testing.T, historyCaptures *int) *session.Instance {
+	t.Helper()
+	return startedInstanceWithHistoryTitled(t, historyCaptures, "scroll")
+}
+
+// startedInstanceWithHistoryTitled is startedInstanceWithHistory with an
+// explicit title, for tests that need more than one instance in the same
+// list (e.g. bell-badge routing).
+func startedInstanceWithHistoryTitled(t *testing.T, historyCaptures *int, title string) *session.Instance {
 	t.Helper()
 
 	workdir := t.TempDir()
@@ -59,7 +68,7 @@ func startedInstanceWithHistory(t *testing.T, historyCaptures *int) *session.Ins
 	t.Setenv("LOOM_PANE_RENDERER", "snapshot")
 
 	inst, err := session.NewInstance(session.InstanceOptions{
-		Title:     "scroll",
+		Title:     title,
 		Path:      workdir,
 		Program:   "bash",
 		ConfigDir: t.TempDir(),
@@ -102,7 +111,7 @@ func startedInstanceWithHistory(t *testing.T, historyCaptures *int) *session.Ins
 			return []byte(""), nil
 		},
 	}
-	ts := tmux.NewTmuxSessionWithDeps("scroll", "bash", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec)
+	ts := tmux.NewTmuxSessionWithDeps(title, "bash", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec)
 	inst.SetTmuxSession(ts)
 	require.NoError(t, inst.Start(true)) // creates the worktree and marks started
 	return inst

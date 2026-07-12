@@ -292,6 +292,10 @@ func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, h
 		}
 	}
 
+	if i.BellPending() {
+		join = promptingStyle.Render("● ") + join
+	}
+
 	// Compute the width of the join suffix (status icon / spinner) so the
 	// Place block can shrink to keep the total within the padded width.
 	// Without this, workspace-terminal items (wider icon) overflow l.width,
@@ -528,6 +532,14 @@ func (l *List) RemoveInstanceByTitleAndRepo(title, repoName string) {
 		return
 	}
 	l.removeAtWithRepo(idx, repoName)
+}
+
+// GetInstanceByTitle returns the instance with the given title, or nil.
+func (l *List) GetInstanceByTitle(title string) *session.Instance {
+	if idx := l.findByTitle(title); idx >= 0 {
+		return l.items[idx]
+	}
+	return nil
 }
 
 func (l *List) findByTitle(title string) int {

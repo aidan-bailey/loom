@@ -13,8 +13,15 @@ import (
 // kill-switch (A/B + emergency fallback). A nil emulator makes the output pump
 // default to io.Discard and Preview/terminal source from capture-pane.
 func newEmulator(cols, rows int) vt.Emulator {
-	if os.Getenv("LOOM_PANE_RENDERER") == "snapshot" {
+	if !EmulatorEnabled() {
 		return nil
 	}
 	return vt.NewXVT(cols, rows)
+}
+
+// EmulatorEnabled reports whether panes render from the in-process emulator —
+// i.e. whether the event-driven update path (pane dirty/quiet/dead events)
+// is available. False selects the legacy tick-polled snapshot path.
+func EmulatorEnabled() bool {
+	return os.Getenv("LOOM_PANE_RENDERER") != "snapshot"
 }

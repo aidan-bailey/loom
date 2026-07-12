@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/creack/pty"
 )
@@ -358,7 +359,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 // CheckAndHandleTrustPrompt checks the pane content once for a trust prompt and dismisses it if found.
 // Returns true if the prompt was found and handled.
 func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
-	content, err := t.CapturePaneContent()
+	content, err := t.statusContent()
 	if err != nil {
 		return false
 	}
@@ -436,6 +437,15 @@ func (t *TmuxSession) Restore() error {
 		rows = 24
 	}
 	emu := newEmulator(cols, rows)
+	if emu != nil {
+		// Bell rides the notifier, NOT the coalescer: bells are rare,
+		// discrete signals that must never be swallowed by rate limiting.
+		emu.SetBellFunc(func() {
+			if f := currentNotifier().Bell; f != nil {
+				f(t.sanitizedName)
+			}
+		})
+	}
 	t.stateMu.Lock()
 	t.ptmx = ptmx
 	t.emu = emu
@@ -495,8 +505,12 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 	emu := t.emu
 	t.stateMu.Unlock()
 	var dest io.Writer = io.Discard
+	var co *coalescer
 	if emu != nil {
 		dest = emu
+		// Event-driven pane updates ride the pump: dirty/quiet notifications
+		// only exist on the emulator path — snapshot mode stays tick-polled.
+		co = newCoalescer(t.sanitizedName)
 	}
 	t.pumpMu.Lock()
 	t.pumpDest = dest
@@ -509,6 +523,9 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 		buf := make([]byte, 4096)
 		for {
 			if ctx.Err() != nil {
+				if co != nil {
+					co.stop()
+				}
 				return
 			}
 			n, err := ptmx.Read(buf)
@@ -517,8 +534,22 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 				dest := t.pumpDest
 				t.pumpMu.Unlock()
 				_, _ = dest.Write(buf[:n])
+				if co != nil {
+					co.touch()
+				}
 			}
 			if err != nil {
+				if co != nil {
+					co.stop()
+					// Dead only on a genuine EOF/read failure. Deliberate
+					// stops (Close/Restore/PausePreview) cancel ctx first via
+					// signalPumpStop, and must not look like a died session.
+					if ctx.Err() == nil {
+						if f := currentNotifier().Dead; f != nil {
+							f(t.sanitizedName)
+						}
+					}
+				}
 				return
 			}
 		}
@@ -659,10 +690,26 @@ func (t *TmuxSession) SendKeysRaw(b []byte) error {
 	return err
 }
 
+// statusContent returns the pane content that status detection (update hash,
+// pending-prompt, trust-prompt) scans. With an emulator wired it reads the
+// in-process visible screen — no subprocess; the capture-pane fallback keeps
+// the snapshot/Windows path working. Both sources carry SGR escapes
+// (capture-pane is invoked with -e), so downstream pattern scans see the
+// same shape of content either way.
+func (t *TmuxSession) statusContent() (string, error) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu != nil {
+		return emu.Render(), nil
+	}
+	return t.CapturePaneContent()
+}
+
 // HasUpdated checks if the tmux pane content has changed since the last tick. It also returns true if
 // the tmux pane has a prompt for aider or claude code.
 func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
-	content, err := t.CapturePaneContent()
+	content, err := t.statusContent()
 	if err != nil {
 		log.For("tmux").Error("capture_pane_failed", "context", "status_monitor", "session", t.sanitizedName, "err", err)
 		return false, false
@@ -682,7 +729,7 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 // surface this instead of treating zero values as "no change", which used
 // to hide tmux failures as a frozen UI.
 func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasPrompt bool, trustHandled bool, err error) {
-	content, err = t.CapturePaneContent()
+	content, err = t.statusContent()
 	if err != nil {
 		return "", false, false, false, fmt.Errorf("capture pane content: %w", err)
 	}
@@ -854,6 +901,29 @@ func (t *TmuxSession) DoesSessionExist() bool {
 	return t.cmdExec.Run(existsCmd) == nil
 }
 
+// SessionName returns the sanitized tmux session name — the identity carried
+// by pane events (Notifier callbacks) and used by the app to route them.
+func (t *TmuxSession) SessionName() string {
+	return t.sanitizedName
+}
+
+// HasEmulator reports whether this session renders through the in-process
+// emulator (event-driven path) or the legacy capture-pane snapshot path.
+func (t *TmuxSession) HasEmulator() bool {
+	t.stateMu.Lock()
+	defer t.stateMu.Unlock()
+	return t.emu != nil
+}
+
+// SetEmulatorForTest wires an emulator directly, bypassing Restore's attach
+// lifecycle. Test-only: the name and doc comment are guardrails, nothing
+// about the method enforces test-only use.
+func (t *TmuxSession) SetEmulatorForTest(emu vt.Emulator) {
+	t.stateMu.Lock()
+	t.emu = emu
+	t.stateMu.Unlock()
+}
+
 // RenderEmulator returns the current visible screen from the in-process
 // emulator as an ANSI-styled string, or ("", false) if no emulator is wired
 // (callers then fall back to CapturePaneContent).
@@ -865,6 +935,56 @@ func (t *TmuxSession) RenderEmulator() (string, bool) {
 		return "", false
 	}
 	return emu.Render(), true
+}
+
+// CursorState returns the pane's live cursor (position, visibility, shape,
+// blink) from the in-process emulator, or ok=false when no emulator is
+// wired (snapshot/Windows path — those panes show no cursor).
+func (t *TmuxSession) CursorState() (vt.Cursor, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return vt.Cursor{}, false
+	}
+	return emu.Cursor(), true
+}
+
+// PaneTitle returns the inner app's OSC-set window title, or ok=false when
+// no emulator is wired, no title was ever set, or the title is invalid
+// UTF-8. The last case guards a known vendored charmbracelet/x/vt parser bug
+// that can truncate a title mid multi-byte rune (e.g. Claude Code's "✳ ..."
+// status) — better to fall back to the instance title than forward a
+// mangled byte sequence into the host terminal's own title escape sequence.
+func (t *TmuxSession) PaneTitle() (string, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return "", false
+	}
+	title := emu.Title()
+	if title == "" || !utf8.ValidString(title) {
+		return "", false
+	}
+	return title, true
+}
+
+// ForwardFocus writes a focus-in (CSI I) or focus-out (CSI O) event into the
+// pane's PTY — but only when the inner app enabled focus reporting (mode
+// 1004). No-op (nil) otherwise: apps that never asked must not receive it.
+func (t *TmuxSession) ForwardFocus(in bool) error {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil || !emu.FocusReportingEnabled() {
+		return nil
+	}
+	seq := []byte("\x1b[O")
+	if in {
+		seq = []byte("\x1b[I")
+	}
+	return t.SendKeysRaw(seq)
 }
 
 // CapturePaneContent captures the content of the tmux pane
