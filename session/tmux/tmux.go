@@ -358,7 +358,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 // CheckAndHandleTrustPrompt checks the pane content once for a trust prompt and dismisses it if found.
 // Returns true if the prompt was found and handled.
 func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
-	content, err := t.CapturePaneContent()
+	content, err := t.statusContent()
 	if err != nil {
 		return false
 	}
@@ -680,10 +680,26 @@ func (t *TmuxSession) SendKeysRaw(b []byte) error {
 	return err
 }
 
+// statusContent returns the pane content that status detection (update hash,
+// pending-prompt, trust-prompt) scans. With an emulator wired it reads the
+// in-process visible screen — no subprocess; the capture-pane fallback keeps
+// the snapshot/Windows path working. Both sources carry SGR escapes
+// (capture-pane is invoked with -e), so downstream pattern scans see the
+// same shape of content either way.
+func (t *TmuxSession) statusContent() (string, error) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu != nil {
+		return emu.Render(), nil
+	}
+	return t.CapturePaneContent()
+}
+
 // HasUpdated checks if the tmux pane content has changed since the last tick. It also returns true if
 // the tmux pane has a prompt for aider or claude code.
 func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
-	content, err := t.CapturePaneContent()
+	content, err := t.statusContent()
 	if err != nil {
 		log.For("tmux").Error("capture_pane_failed", "context", "status_monitor", "session", t.sanitizedName, "err", err)
 		return false, false
@@ -703,7 +719,7 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 // surface this instead of treating zero values as "no change", which used
 // to hide tmux failures as a frozen UI.
 func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasPrompt bool, trustHandled bool, err error) {
-	content, err = t.CapturePaneContent()
+	content, err = t.statusContent()
 	if err != nil {
 		return "", false, false, false, fmt.Errorf("capture pane content: %w", err)
 	}
