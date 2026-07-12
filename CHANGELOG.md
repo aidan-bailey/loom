@@ -1,4 +1,74 @@
+## [0.7.0] - 2026-07-12
+
+### 🚀 Features
+
+- *(app)* Give recovery a spinner, retryable failure, and success feedback
+- *(app)* Surface load-failed sessions in the recovery summary
+- *(ui)* Explain recoverable sessions in the preview pane
+- *(cli)* Require --force for loom reset
+
+### 🐛 Bug Fixes
+
+- *(session)* Stop tmux sessions from silently going unusable
+- *(tmux)* Route prompt/trust detection through the agent adapter registry
+- *(tmux)* Reap PTY children and stop leaking the new-session ptmx
+- *(tmux)* Sweep legacy-prefixed sessions on reset; drop dead setPumpDest
+- *(app)* Exclude Recoverable placeholders from the metadata tick
+- *(app)* Open the post-prompt help screen on the main goroutine
+- *(app)* Snapshot the instance list for Pause/Resume persistence
+- *(app)* Persist settings edits made in global mode
+- *(app)* Surface instanceChanged errors on cancel paths, no menu flash in title entry
+- *(session)* Release the start reservation on worktree-construction failure
+- *(session)* Checkpoint the stash ref before pause's destructive steps
+- *(git)* Guard baseCommitSHA and stashRef with a mutex
+- *(session)* Discover orphans at any branch-prefix depth
+- *(config)* Load partial config files over defaults
+- *(config)* Harden workspace registry writes and lookups
+- *(script)* Make cs.sprintf a true string.format alias
+- *(ui)* Drop the dead overlay shadow pass, fix fill-rune width advance
+- *(cli)* Exit non-zero and print CLI errors to stderr
+- *(ui)* Show recover/discard in the menu and help for orphaned sessions
+- *(app)* Keep a failed discard's row instead of silently dropping it
+- *(app)* Scale error toast duration; name the stash on resume conflict
+
+### 🚜 Refactor
+
+- *(agent)* Dedupe claude flag insertion, tolerate leading whitespace
+- *(session)* Delegate fromInstanceDataPaused to FromInstanceData
+
+### 📚 Documentation
+
+- Document session recovery in USAGE.md
 ## [0.6.0] - 2026-07-06
+
+### 🚀 Features
+
+- *(tmux)* Support per-session env vars via new-session -e
+- *(session)* Add HeadroomProxyEnv, delete BuildHeadroomWrapCommand
+- *(session)* Add InstanceData.HeadroomProxy, bump schema to v3
+- *(session)* Wire Instance.HeadroomProxy into tmux session creation
+- *(app)* Set Instance.HeadroomProxy at every instance-creation site
+- Add Cache TTL (1h) launch option for Claude's prompt cache
+
+### 🐛 Bug Fixes
+
+- *(session)* Remove .loom-title sidecar when auto-cleaning orphaned worktrees
+- *(session)* Kill terminal pane's tmux session on pause/kill
+- *(cmd)* Mirror InstanceData.HeadroomProxy in migrationInstance
+- *(app)* Check focused pane's tmux liveness during inline attach
+
+### 🚜 Refactor
+
+- *(agent)* Stop parsing a headroom-wrap prefix out of program
+- *(config)* Rename HeadroomWrap to HeadroomProxy
+- *(ui)* Rename Headroom Wrap to Headroom Proxy in both screens
+- *(app)* Drop headroom-wrap command composition step
+
+### 📚 Documentation
+
+- *(spec)* Design Headroom Proxy (env-var) replacement for Headroom Wrap
+- *(plan)* Implementation plan for Headroom Proxy
+## [0.5.1] - 2026-07-06
 
 ### 🚀 Features
 
@@ -17,12 +87,6 @@
 - *(app)* Add ParseLaunchOptions, the reverse of applyLaunchOptions
 - *(app,script)* Wire the R keybinding to a stub RestartWithOptionsIntent handler
 - *(app)* Implement restart-with-options — reverse-parse, seed modal, resume
-- *(tmux)* Support per-session env vars via new-session -e
-- *(session)* Add HeadroomProxyEnv, delete BuildHeadroomWrapCommand
-- *(session)* Add InstanceData.HeadroomProxy, bump schema to v3
-- *(session)* Wire Instance.HeadroomProxy into tmux session creation
-- *(app)* Set Instance.HeadroomProxy at every instance-creation site
-- Add Cache TTL (1h) launch option for Claude's prompt cache
 
 ### 🐛 Bug Fixes
 
@@ -32,10 +96,6 @@
 - *(ui)* Drop Effort's empty-string normalization, match sibling rows
 - *(app)* Guard Async against a failed Loading transition, add missing RequestWindowSize
 - *(app)* Fix RequestWindowSize for the blocked-RC restart path
-- *(session)* Remove .loom-title sidecar when auto-cleaning orphaned worktrees
-- *(session)* Kill terminal pane's tmux session on pause/kill
-- *(cmd)* Mirror InstanceData.HeadroomProxy in migrationInstance
-- *(app)* Check focused pane's tmux liveness during inline attach
 
 ### 🚜 Refactor
 
@@ -44,10 +104,6 @@
 - *(script)* Rename CheckoutIntent/checkout_selected to Stash
 - *(app,ui)* Rename checkout call sites to stash
 - *(app)* Generalize the Session Launch Options cancel path
-- *(agent)* Stop parsing a headroom-wrap prefix out of program
-- *(config)* Rename HeadroomWrap to HeadroomProxy
-- *(ui)* Rename Headroom Wrap to Headroom Proxy in both screens
-- *(app)* Drop headroom-wrap command composition step
 
 ### 📚 Documentation
 
@@ -63,8 +119,6 @@
 - Fix remaining stale wording found in Phase 2 doc review
 - Document the R (resume with options) keybinding
 - *(app)* Drop stale 'added in a later task' from a landed comment
-- *(spec)* Design Headroom Proxy (env-var) replacement for Headroom Wrap
-- *(plan)* Implementation plan for Headroom Proxy
 
 ### 🧪 Testing
 
@@ -72,7 +126,6 @@
 - Rename checkout references to stash across the suite
 - *(ui)* Update stale row-count test name/assertions for Effort row
 - *(app)* Dispatch a real cancel keypress for the blocked-RC restart guard
-
 ## [0.5.0] - 2026-07-06
 
 ### 🚀 Features
@@ -103,7 +156,6 @@
 ### 🧪 Testing
 
 - *(app)* Cover the real launch-options closure and blocked-RC-via-modal path
-
 ## [0.4.0] - 2026-07-02
 
 ### 🚀 Features
@@ -125,7 +177,6 @@
 
 - Add design spec for Claude permission-mode setting
 - Add implementation plan for Claude permission-mode setting
-
 ## [0.3.0] - 2026-07-01
 
 ### 🚀 Features
@@ -255,7 +306,6 @@
 - Log raw emulator line count vs pane height (panesize diag)
 - Log terminal pane height (panesize diag)
 - Remove temporary panesize diagnostics
-
 ## [0.1.4] - 2026-06-19
 
 ### 🚀 Features
@@ -277,7 +327,6 @@
 
 - *(nix)* Derive flake version from main.go at eval time
 - Run the test suite under the race detector
-
 ## [0.1.3] - 2026-05-11
 
 ### 🚀 Features
@@ -295,7 +344,6 @@
 - *(app)* Trigger orphan recovery on workspace registration
 - *(session,app)* Preserve reconcile failures across all load paths
 - *(app)* Route recovered orphans to their source workspace
-
 ## [0.1.2] - 2026-05-04
 
 ### 🚀 Features
@@ -310,7 +358,6 @@
 ### 📚 Documentation
 
 - *(script)* Add open_emacs sample script
-
 ## [0.1.1] - 2026-04-21
 
 ### 🚀 Features
@@ -330,7 +377,6 @@
 
 - *(release)* Pass changelog file path directly to goreleaser
 - *(ui)* Rebrand fallback splash from claude-squad to loom
-
 ## [0.1.0] - 2026-04-20
 
 ### 🚀 Features
