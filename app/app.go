@@ -776,7 +776,32 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case paneQuietMsg:
-		return m, nil // Task 5: status detection on settled content
+		inst := m.instanceForSession(msg.session)
+		if !statusEligible(inst) {
+			return m, nil
+		}
+		return m, statusDetectCmd(inst)
+	case statusDetectedMsg:
+		if !statusEligible(msg.instance) {
+			return m, nil
+		}
+		if msg.err != nil {
+			log.WarnKV("app.event.capture_failed", "instance", msg.instance.Title, "err", msg.err.Error())
+			return m, nil
+		}
+		// Same transition ladder as the old metadata tick: still-changing →
+		// Running; settled with a prompt → Prompting; settled → Ready.
+		target := session.Ready
+		if msg.updated {
+			target = session.Running
+		} else if msg.hasPrompt {
+			target = session.Prompting
+		}
+		if err := msg.instance.TransitionTo(target); err != nil {
+			log.For("app").Warn("event.transition_failed", "instance", msg.instance.Title, "to", target.String(), "err", err.Error())
+		}
+		m.updateTabBarStatuses()
+		return m, nil
 	case ptyDeadMsg:
 		return m, nil // Task 6: verified death handling
 	case bellMsg:

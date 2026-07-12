@@ -3,6 +3,8 @@ package app
 import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // Pane events, Sent from pump/timer goroutines via tea.Program.Send and
@@ -48,6 +50,37 @@ func (m *home) instanceForSession(name string) *session.Instance {
 		return nil
 	}
 	return check(m.list)
+}
+
+// statusDetectedMsg carries one instance's settled-content detection result
+// back to the Update goroutine (the detection itself runs in a tea.Cmd:
+// in-process on the emulator path, but trust-prompt handling can write keys
+// to the PTY, and the snapshot fallback shells out — neither belongs on the
+// Update goroutine).
+type statusDetectedMsg struct {
+	instance  *session.Instance
+	updated   bool
+	hasPrompt bool
+	err       error
+}
+
+func statusDetectCmd(inst *session.Instance) tea.Cmd {
+	return func() tea.Msg {
+		updated, hasPrompt, err := inst.CaptureAndProcessStatus()
+		return statusDetectedMsg{instance: inst, updated: updated, hasPrompt: hasPrompt, err: err}
+	}
+}
+
+// statusEligible reports whether the tick/event pipelines may drive this
+// instance's status — the same guard set the metadata tick uses (Recoverable
+// placeholders and Loading rows are owned by explicit flows; see the comment
+// on the tickUpdateMetadataMessage case).
+func statusEligible(inst *session.Instance) bool {
+	if inst == nil || !inst.Started() || inst.Paused() {
+		return false
+	}
+	st := inst.GetStatus()
+	return st != session.Deleting && st != session.Recoverable && st != session.Loading
 }
 
 // markDirty records that a session produced output since the last health

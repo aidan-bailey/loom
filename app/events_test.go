@@ -3,6 +3,7 @@ package app
 import (
 	"testing"
 
+	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,4 +38,35 @@ func TestPaneDirtyRerendersScrolledAgent(t *testing.T) {
 	require.Greater(t, historyCaptures, before,
 		"a dirty event must re-render a scrolled agent pane")
 	require.True(t, m.splitPane.IsAgentInScrollMode())
+}
+
+// TestPaneQuietRunsStatusDetection: a quiet event on an agent session runs
+// CaptureAndProcessStatus and applies Prompting/Ready, mirroring the old
+// 500ms metadata tick's transition logic.
+func TestPaneQuietRunsStatusDetection(t *testing.T) {
+	var historyCaptures int
+	inst := startedInstanceWithHistory(t, &historyCaptures)
+	t.Setenv("LOOM_PANE_RENDERER", "")
+
+	m := homeWithAppState(t)
+	_ = m.list.AddInstance(inst)
+
+	// Quiet handler returns a statusDetectCmd; run it and feed the result
+	// message back through Update, as the Bubble Tea runtime would.
+	_, cmd := m.Update(paneQuietMsg{session: inst.TmuxSessionName()})
+	require.NotNil(t, cmd, "quiet on a live agent session must schedule detection")
+	msg := cmd()
+	detected, ok := msg.(statusDetectedMsg)
+	require.True(t, ok, "detection cmd must return statusDetectedMsg, got %T", msg)
+	_, _ = m.Update(detected)
+	// The mock capture returns non-prompt content and the first hash counts
+	// as an update → instance lands in Running.
+	require.Equal(t, session.Running, inst.GetStatus())
+}
+
+// TestPaneQuietIgnoresUnknownAndInertSessions guards the drop paths.
+func TestPaneQuietIgnoresUnknownAndInertSessions(t *testing.T) {
+	m := homeWithAppState(t)
+	_, cmd := m.Update(paneQuietMsg{session: "loom_nonexistent"})
+	require.Nil(t, cmd, "unknown session → dropped")
 }
