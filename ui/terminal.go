@@ -331,6 +331,14 @@ func (t *TerminalPane) CurrentTmuxSession() *tmux.TmuxSession {
 	return s.tmuxSession
 }
 
+// ShowingFallback reports whether the pane is displaying fallback text
+// instead of live terminal content (no cursor applies there).
+func (t *TerminalPane) ShowingFallback() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.fallback
+}
+
 // CursorState returns the current terminal session's live cursor state, or
 // ok=false when no live emulator-backed session is displayed.
 func (t *TerminalPane) CursorState() (vt.Cursor, bool) {
