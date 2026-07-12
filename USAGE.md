@@ -115,6 +115,20 @@ Context-sensitive — shows only the actions available for the current state. Ke
 
 Visible only when multiple workspaces are active. Switch between workspace tabs with `[` and `]`. Toggle which workspaces are visible with `W`.
 
+### Native Terminal Behavior
+
+The focused pane shows your terminal's **real cursor** — native blink, color,
+and shape (bar/underline/block follow the app's DECSCUSR setting, and apps
+that hide their cursor hide yours). The cursor only appears at the live tail;
+scrolling back or opening an overlay hides it.
+
+The host window title mirrors the selected agent's own title (e.g. Claude's
+status line). A backgrounded session that rings the terminal bell gets a ●
+attention badge in the session list until you select it. Apps that enable
+focus reporting (like Claude Code) receive real focus in/out events when you
+focus/unfocus Loom's window, switch panes, or switch sessions — so idle
+notifications fire correctly.
+
 ---
 
 ## Session Lifecycle
