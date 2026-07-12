@@ -1376,6 +1376,26 @@ func (i *Instance) GetContentHash() []byte {
 	return ts.GetContentHash()
 }
 
+// TmuxSessionName returns the sanitized tmux session name backing this
+// instance, or "" when no session is attached. Pane events carry this name.
+func (i *Instance) TmuxSessionName() string {
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return ""
+	}
+	return ts.SessionName()
+}
+
+// HasEmulator reports whether this instance's pane renders through the
+// in-process emulator (event-driven path).
+func (i *Instance) HasEmulator() bool {
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return false
+	}
+	return ts.HasEmulator()
+}
+
 // SetTmuxSession sets the tmux session for testing purposes
 func (i *Instance) SetTmuxSession(session *tmux.TmuxSession) {
 	i.setTmuxSession(session)

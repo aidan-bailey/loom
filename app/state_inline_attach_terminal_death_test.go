@@ -92,11 +92,25 @@ func TestHandleStateInlineAttachKey_DeadTerminalSessionExitsInteract(t *testing.
 		"a dead terminal-pane session must exit inline attach even though the agent session is alive")
 }
 
-// TestPreviewTick_DeadTerminalSessionExitsInlineAttach is the previewTickMsg
-// counterpart of the key-handler regression above: the per-tick liveness
-// check that runs continuously during inline attach has the same
-// agent-only blind spot.
+// TestHealthTick_DeadTerminalSessionExitsInlineAttach is the periodic-check
+// counterpart of the key-handler regression above: the continuous liveness
+// check during inline attach has the same agent-only blind spot. In event
+// mode that check lives on the metadata/health tick (the preview tick only
+// survives in snapshot mode); ptyDeadMsg is the fast path, this is the
+// backstop.
+func TestHealthTick_DeadTerminalSessionExitsInlineAttach(t *testing.T) {
+	m, _ := setupInlineAttachTerminalDeathFixture(t)
+
+	_, _ = m.Update(tickUpdateMetadataMessage{})
+
+	require.Equal(t, stateDefault, m.state,
+		"the health tick must exit inline attach once the focused terminal session is found dead")
+}
+
+// TestPreviewTick_DeadTerminalSessionExitsInlineAttach keeps the same guard
+// on the snapshot path, where the preview tick still runs the check.
 func TestPreviewTick_DeadTerminalSessionExitsInlineAttach(t *testing.T) {
+	t.Setenv("LOOM_PANE_RENDERER", "snapshot")
 	m, _ := setupInlineAttachTerminalDeathFixture(t)
 
 	_, _ = m.Update(previewTickMsg{})

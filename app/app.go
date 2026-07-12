@@ -72,6 +72,17 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 		}
 	}()
 	p := tea.NewProgram(h) // alt-screen + mouse mode are set on the tea.View (see View())
+	// Pane events: the output pumps push dirty/quiet/bell/dead into the
+	// program from their own goroutines; Send is goroutine-safe by design.
+	// Torn down before Run returns so a late timer can't Send into a dead
+	// program (Send after Kill is a no-op, but keep the lifecycle explicit).
+	tmux.SetNotifier(tmux.Notifier{
+		Output: func(s string) { p.Send(paneDirtyMsg{session: s}) },
+		Quiet:  func(s string) { p.Send(paneQuietMsg{session: s}) },
+		Bell:   func(s string) { p.Send(bellMsg{session: s}) },
+		Dead:   func(s string) { p.Send(ptyDeadMsg{session: s}) },
+	})
+	defer tmux.SetNotifier(tmux.Notifier{})
 	_, err = p.Run()
 	return err
 }
@@ -291,6 +302,11 @@ type home struct {
 	lastPreviewHash []byte
 	// lastPreviewTitle tracks which instance the hash belongs to.
 	lastPreviewTitle string
+
+	// dirtySessions records tmux session names that emitted output since the
+	// last health tick (event mode only). Consumed by takeDirty to gate
+	// diff-stat refreshes. Update-goroutine only.
+	dirtySessions map[string]bool
 
 	// scripts owns the Lua script engine for user-bound keybindings.
 	// Lazily populated by initScripts() on first construction; never
@@ -633,14 +649,19 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 // preview and metadata tick loops — those loops re-arm themselves by
 // returning the same tick message, so Init fires exactly once per Run.
 func (m *home) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		m.spinner.Tick,
-		func() tea.Msg {
+		tickUpdateMetadataCmd,
+	}
+	// Event mode renders on paneDirtyMsg; the timer poll only survives for
+	// the snapshot/Windows path, which has no emulator to emit events.
+	if !tmux.EmulatorEnabled() {
+		cmds = append(cmds, func() tea.Msg {
 			time.Sleep(100 * time.Millisecond)
 			return previewTickMsg{}
-		},
-		tickUpdateMetadataCmd,
-	)
+		})
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update implements tea.Model.
@@ -653,6 +674,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scriptResumeMsg:
 		return m, m.handleScriptResume(msg)
 	case previewTickMsg:
+		// Event mode renders on paneDirtyMsg — a stray tick neither renders
+		// nor re-arms. This case is the snapshot/Windows path only.
+		if tmux.EmulatorEnabled() {
+			return m, nil
+		}
 		// Check if the inline-attached pane's own session is still alive
 		// (see focusedPaneAlive: the agent and terminal panes have
 		// independent tmux sessions, so this must track whichever one is
@@ -719,6 +745,42 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tea.RequestWindowSize)
 		}
 		return m, tea.Batch(cmds...)
+	case paneDirtyMsg:
+		m.markDirty(msg.session)
+		selected := m.list.GetSelectedInstance()
+
+		if inst := m.instanceForSession(msg.session); inst != nil {
+			// Output arrived → the agent is doing something. Mirrors the old
+			// tick's updated→Running transition; Prompting/Ready re-derive on
+			// the quiet event once the burst settles.
+			st := inst.GetStatus()
+			if st == session.Ready || st == session.Prompting {
+				if err := inst.TransitionTo(session.Running); err != nil {
+					log.For("app").Warn("event.transition_failed", "instance", inst.Title, "to", "Running", "err", err.Error())
+				}
+				m.updateTabBarStatuses()
+			}
+			if selected != nil && inst == selected {
+				if err := m.splitPane.UpdateAgent(selected); err != nil {
+					return m, m.handleError(err)
+				}
+			}
+			return m, nil
+		}
+		// Not an agent session — the terminal pane's current session renders;
+		// dirty events from cached-but-hidden terminal sessions are dropped.
+		if selected != nil && msg.session == m.splitPane.CurrentTerminalSessionName() {
+			if err := m.splitPane.UpdateTerminal(selected); err != nil {
+				return m, m.handleError(err)
+			}
+		}
+		return m, nil
+	case paneQuietMsg:
+		return m, nil // Task 5: status detection on settled content
+	case ptyDeadMsg:
+		return m, nil // Task 6: verified death handling
+	case bellMsg:
+		return m, nil // Task 12: attention badge
 	case keyupMsg:
 		m.menu.ClearKeydown()
 		return m, nil
@@ -755,10 +817,23 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Inline-attach liveness backstop (the preview tick used to check
+		// this every 100ms in event mode; ptyDeadMsg is the fast path now,
+		// this tick is the safety net for deaths that never EOF'd the PTY).
+		var cmds []tea.Cmd
+		if m.state == stateInlineAttach {
+			if selected == nil || selected.Paused() || !focusedPaneAlive(m, selected) {
+				m.state = stateDefault
+				m.menu.SetState(ui.StateDefault)
+				cmds = append(cmds, tea.RequestWindowSize)
+			}
+		}
+
 		// Fan out I/O off the update goroutine. A stalled tmux or git process
 		// must not block the UI loop — gatherMetadataCmd runs wg.Wait() inside
 		// a background Cmd and returns the results via metadataReadyMsg.
-		return m, gatherMetadataCmd(active, selected)
+		cmds = append(cmds, gatherMetadataCmd(active, selected))
+		return m, tea.Batch(cmds...)
 	case metadataReadyMsg:
 		// Apply results on main thread.
 		for _, r := range msg.results {
