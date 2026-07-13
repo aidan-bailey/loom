@@ -1,3 +1,8 @@
+## [0.8.1] - 2026-07-13
+
+### 🐛 Bug Fixes
+
+- *(vt)* Deliver BEL notifications outside the emulator write lock
 ## [0.8.0] - 2026-07-12
 
 ### 🚀 Features
@@ -21,6 +26,10 @@
 - Spec for event-driven panes and native cursor
 - Implementation plan for event-driven panes and native cursor
 - Document event-driven pane updates and native terminal behavior
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* V0.8.0
 ## [0.7.0] - 2026-07-12
 
 ### 🚀 Features
