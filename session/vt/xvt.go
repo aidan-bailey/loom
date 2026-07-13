@@ -21,11 +21,19 @@ type xvtEmulator struct {
 	// while THIS goroutine already holds e.mu's write lock — so callbacks
 	// must only assign these fields (never re-lock e.mu: RWMutex is not
 	// reentrant; never call out of the package). Readers take RLock.
+	//
+	// bellPending is why the Bell callback assigns instead of invoking
+	// bellFunc directly: the production bellFunc forwards to
+	// tea.Program.Send, which blocks until the Update goroutine receives —
+	// and the Update goroutine routinely blocks on THIS lock
+	// (Render/Resize/Cursor). Invoking it under the lock deadlocked the
+	// whole UI; Write/Resize drain the flag after unlocking instead.
 	cursorVisible  bool
 	cursorShape    CursorShape
 	cursorBlink    bool
 	title          string
 	bellFunc       func()
+	bellPending    bool
 	focusReporting bool
 }
 
@@ -68,9 +76,7 @@ func NewXVT(cols, rows int) Emulator {
 			e.title = s
 		},
 		Bell: func() {
-			if e.bellFunc != nil {
-				e.bellFunc()
-			}
+			e.bellPending = true
 		},
 		EnableMode: func(mode ansi.Mode) {
 			if mode == ansi.ModeFocusEvent {
@@ -101,8 +107,13 @@ func NewXVT(cols, rows int) Emulator {
 
 func (e *xvtEmulator) Write(p []byte) (int, error) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.term.Write(p)
+	n, err := e.term.Write(p)
+	bell := e.takeBellLocked()
+	e.mu.Unlock()
+	if bell != nil {
+		bell()
+	}
+	return n, err
 }
 
 func (e *xvtEmulator) Resize(cols, rows int) {
@@ -110,8 +121,24 @@ func (e *xvtEmulator) Resize(cols, rows int) {
 		return
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.term.Resize(cols, rows)
+	bell := e.takeBellLocked()
+	e.mu.Unlock()
+	if bell != nil {
+		bell()
+	}
+}
+
+// takeBellLocked clears a pending bell and returns the func to invoke for
+// it, or nil. Caller must hold e.mu and must invoke the returned func only
+// AFTER releasing it: the production bellFunc blocks on the Update
+// goroutine, which blocks on e.mu — invoking under the lock deadlocks.
+func (e *xvtEmulator) takeBellLocked() func() {
+	if !e.bellPending {
+		return nil
+	}
+	e.bellPending = false
+	return e.bellFunc
 }
 
 func (e *xvtEmulator) Render() string {

@@ -2,6 +2,7 @@ package vt
 
 import (
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -104,4 +105,59 @@ func TestBell_InvokesBellFunc(t *testing.T) {
 		defer e2.Close()
 		_, _ = e2.Write([]byte("\x07")) // no func set → no-op
 	})
+}
+
+// TestBell_FiresOutsideWriteLock pins the fix for a real-world total-UI
+// deadlock: the production bellFunc forwards to tea.Program.Send, which
+// blocks until the Update goroutine receives the message — and the Update
+// goroutine routinely blocks on this emulator's lock (Render/Resize/Cursor).
+// If Write invokes bellFunc while still holding the write lock, those two
+// goroutines wait on each other forever (observed live: goroutine 1 in
+// Resize→Lock, pump goroutine in Write→Bell→Send). Bell must therefore be
+// delivered only after Write has released the lock.
+func TestBell_FiresOutsideWriteLock(t *testing.T) {
+	e := NewXVT(80, 24)
+	defer e.Close()
+
+	inBell := make(chan struct{})
+	release := make(chan struct{})
+	e.SetBellFunc(func() {
+		close(inBell)
+		<-release // models p.Send blocking on a busy Update goroutine
+	})
+
+	writeDone := make(chan struct{})
+	go func() {
+		_, _ = e.Write([]byte("\x07"))
+		close(writeDone)
+	}()
+
+	select {
+	case <-inBell:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bellFunc never invoked")
+	}
+
+	// With bellFunc still blocked, every lock-taking method must proceed —
+	// this is exactly what the Update goroutine does while the pump delivers
+	// a bell. A timeout here means the bell is being fired under the lock.
+	proceeded := make(chan struct{})
+	go func() {
+		e.Resize(100, 30)
+		_ = e.Render()
+		_ = e.Cursor()
+		close(proceeded)
+	}()
+	select {
+	case <-proceeded:
+	case <-time.After(2 * time.Second):
+		t.Fatal("emulator lock held while bell callback was blocked — deadlock with tea.Program.Send")
+	}
+
+	close(release)
+	select {
+	case <-writeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write did not return after bell callback unblocked")
+	}
 }
