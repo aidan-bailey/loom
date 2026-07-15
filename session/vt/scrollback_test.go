@@ -72,3 +72,29 @@ func TestSetScrollbackSize_CapsRetention(t *testing.T) {
 	}
 	require.LessOrEqual(t, e.ScrollbackLen(), 5)
 }
+
+// TestRenderWindow_ConcurrentWithWrite pins the lock discipline: the pump
+// goroutine Writes while the Update goroutine reads windows. Run with -race.
+func TestRenderWindow_ConcurrentWithWrite(t *testing.T) {
+	e := NewXVT(40, 8)
+	defer e.Close()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_, _ = e.Write([]byte("concurrent line output\r\n"))
+			}
+		}
+	}()
+	for i := 0; i < 500; i++ {
+		_ = e.RenderWindow(i%50, 8)
+		_ = e.ScrollbackLen()
+	}
+	close(stop)
+	<-done
+}
