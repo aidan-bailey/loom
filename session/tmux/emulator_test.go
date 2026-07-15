@@ -69,7 +69,10 @@ func TestOutputPump_FeedsEmulator(t *testing.T) {
 // Restore wires a fresh emulator on the new ptmx; Close tears it down.
 func TestRestore_BuildsEmulator_CloseTearsDown(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
-	noop := cmd_test.MockCmdExec{RunFunc: func(*exec.Cmd) error { return nil }}
+	noop := cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return []byte(""), nil },
+	}
 	ts := newTmuxSession("emu-restore", "prog", NewMockPtyFactory(t), noop)
 
 	require.NoError(t, ts.Restore())

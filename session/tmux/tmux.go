@@ -115,6 +115,11 @@ type TmuxSession struct {
 	// so a freshly built emulator in Restore starts at the correct size.
 	lastCols int
 	lastRows int
+	// seedHistory holds pre-attach scrollback rows captured once per
+	// Restore (history-only: capture-pane -S - -E -1, so it can never
+	// overlap what the emulator mirrors post-attach). Immutable after
+	// assignment; guarded by stateMu.
+	seedHistory []string
 
 	// Output pump — continuously drains PTY output to prevent buffer deadlock.
 	// When nothing reads from ptmx, the tmux client blocks on stdout and stops
@@ -447,6 +452,18 @@ func (t *TmuxSession) Restore() error {
 	// still-draining pump can't write into a freed emulator.
 	if oldEmu != nil {
 		_ = oldEmu.Close()
+	}
+
+	// Seed pre-attach history. Rows that scroll off between this capture
+	// and the attach are lost from scroll-back (tiny window, accepted by
+	// design) — the alternative, capturing after attach, would duplicate
+	// rows the emulator also observes.
+	if seed, ok := t.captureHistoryRowsOnly(); ok {
+		t.stateMu.Lock()
+		t.seedHistory = seed
+		t.stateMu.Unlock()
+	} else {
+		log.For("tmux").Warn("seed_history_capture_failed", "session", t.sanitizedName)
 	}
 
 	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
@@ -1049,6 +1066,58 @@ func (t *TmuxSession) CaptureHistory() (string, bool) {
 		return "", false
 	}
 	return string(output), true
+}
+
+// captureHistoryRowsOnly captures the pane's HISTORY rows (excluding the
+// visible screen) with ANSI styles: capture-pane -S - -E -1. Row -1 is the
+// last history line in tmux's coordinate space (0 = first visible row).
+// Returns (nil, true) when the pane simply has no history yet.
+func (t *TmuxSession) captureHistoryRowsOnly() ([]string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-e", "-S", "-", "-E", "-1", "-t", t.sanitizedName)
+	output, err := t.cmdExec.Output(cmd)
+	if err != nil {
+		return nil, false
+	}
+	trimmed := strings.TrimRight(string(output), "\n")
+	if trimmed == "" {
+		return nil, true
+	}
+	return strings.Split(trimmed, "\n"), true
+}
+
+// SeedHistory returns the pre-attach history rows captured at the last
+// Restore. Callers must treat the slice as immutable.
+func (t *TmuxSession) SeedHistory() []string {
+	t.stateMu.Lock()
+	defer t.stateMu.Unlock()
+	return t.seedHistory
+}
+
+// ScrollbackLen returns the emulator's scrollback line count; ok=false on
+// the snapshot path (no emulator).
+func (t *TmuxSession) ScrollbackLen() (int, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return 0, false
+	}
+	return emu.ScrollbackLen(), true
+}
+
+// RenderWindow renders `rows` lines ending `offset` lines above the live
+// bottom from the emulator's scrollback + screen; ok=false without an
+// emulator.
+func (t *TmuxSession) RenderWindow(offset, rows int) (string, bool) {
+	t.stateMu.Lock()
+	emu := t.emu
+	t.stateMu.Unlock()
+	if emu == nil {
+		return "", false
+	}
+	return emu.RenderWindow(offset, rows), true
 }
 
 // IsAlternateScreen reports whether the pane's foreground app is on the
