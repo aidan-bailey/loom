@@ -1,8 +1,41 @@
-## [0.8.1] - 2026-07-13
+## [0.9.0] - 2026-07-15
+
+### 🚀 Features
+
+- *(vt)* Emulator scrollback API + alt-screen filter for tmux client streams
+- *(tmux)* Seed pre-attach history on Restore and expose emulator scroll accessors
+- *(ui)* Add ScrollModel — shared emulator-backed pane scroll state
+- *(ui)* Drive agent-pane scrolling from emulator scrollback
+- *(ui)* Terminal pane on ScrollModel; fix lock-across-capture and alt-screen scroll
 
 ### 🐛 Bug Fixes
 
 - *(vt)* Deliver BEL notifications outside the emulator write lock
+- *(app)* Converge status detection so idle agents don't latch on Running
+- *(vt)* Harden alt-screen filter CSI abort and spike-test teardown
+- *(tmux)* Drop stale seed history when a re-capture fails
+- *(ui)* Align ScrollModel with the emulator's true screen span
+
+### 🚜 Refactor
+
+- *(ui)* Rename ScrollModel.Window to AdvanceAndRender; document cap limits; backfill routing tests
+
+### 📚 Documentation
+
+- Add emulator-owned scrollback design spec
+- Add emulator-scrollback implementation plan
+- Amend scrollback spec — tmux clients live on the alt screen; adopt mode-1049 filter
+- Amend scrollback plan — mode-1049 filter task, RenderWindow contract fix, probe-based alt routing
+
+### 🧪 Testing
+
+- *(vt)* Pin RenderWindow/ScrollbackLen lock discipline under -race
+- *(ui)* Pin terminal-pane capture revalidation; guard the unlock/relock idiom
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* V0.8.1
+- Remove capture-pane scroll remnants; document emulator scrollback
 ## [0.8.0] - 2026-07-12
 
 ### 🚀 Features
