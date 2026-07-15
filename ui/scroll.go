@@ -3,7 +3,22 @@ package ui
 import (
 	"strings"
 	"time"
+
+	"github.com/aidan-bailey/loom/session"
 )
+
+// scrollSourceFor adapts an instance's tmux session to scrollSource.
+// ok=false when the instance has no live session.
+func scrollSourceFor(instance *session.Instance) (scrollSource, bool) {
+	if instance == nil {
+		return nil, false
+	}
+	ts := instance.TmuxSession()
+	if ts == nil {
+		return nil, false
+	}
+	return ts, true
+}
 
 // scrollSource is the pane-agnostic view of one session's scroll data: an
 // immutable pre-attach seed, the emulator's growing scrollback + screen,

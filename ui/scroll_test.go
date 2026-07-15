@@ -60,6 +60,21 @@ func newFake() *fakeScrollSource {
 	}
 }
 
+// TestPreviewPane_ScrollRoutingPrefersEmulator pins the routing decision:
+// with an emulator-backed source the ScrollModel engages and the snapshot
+// state stays untouched.
+func TestPreviewPane_ScrollRoutingPrefersEmulator(t *testing.T) {
+	p := NewPreviewPane()
+	p.SetSize(40, 10)
+	f := newFake()
+	p.scroll.ScrollBy(f, 3)
+	w, live, ok := p.scroll.AdvanceAndRender(f, 9)
+	require.True(t, ok)
+	require.False(t, live)
+	require.NotEmpty(t, w)
+	require.Zero(t, p.snapFallback.offset, "emulator path must not touch snapshot state")
+}
+
 func TestScrollModel_LiveTailByDefault(t *testing.T) {
 	var m ScrollModel
 	require.False(t, m.IsScrolling())

@@ -332,9 +332,9 @@ func TestPreviewPane_TUIAgentForwardsWheel(t *testing.T) {
 	require.NoError(t, p.ScrollUp(setup.instance))
 	require.NoError(t, p.PageUp(setup.instance))
 
-	require.True(t, p.altScreen, "alt-screen TUI agent must be detected")
+	require.True(t, setup.instance.IsAlternateScreen(), "alt-screen TUI agent must be detected")
 	require.False(t, p.IsScrolling(), "TUI agent: Loom stays at the live tail, no offset window")
-	require.Equal(t, 0, p.scrollOffset, "offset model must not be engaged for a TUI agent")
+	require.Equal(t, 0, p.snapFallback.offset, "offset model must not be engaged for a TUI agent")
 }
 
 func TestPreviewPane_ScrollOffsetFloorsAtZero(t *testing.T) {
@@ -344,8 +344,8 @@ func TestPreviewPane_ScrollOffsetFloorsAtZero(t *testing.T) {
 	// top-of-buffer clamp lives in UpdateContent, which needs a captured
 	// buffer; setOffset only floors at the bottom.)
 	_ = p.ScrollDown(nil)
-	if p.scrollOffset != 0 {
-		t.Fatalf("ScrollDown from live tail must stay at 0; got %d", p.scrollOffset)
+	if p.snapFallback.offset != 0 {
+		t.Fatalf("ScrollDown from live tail must stay at 0; got %d", p.snapFallback.offset)
 	}
 	if p.IsScrolling() {
 		t.Fatal("live tail is not a scrolled state")
@@ -379,8 +379,8 @@ func TestPreviewPane_windowLines(t *testing.T) {
 func TestPreviewPane_ScrolledFooterShowsNewLines(t *testing.T) {
 	p := NewPreviewPane()
 	p.SetSize(80, 10)
-	p.scrollOffset = 3
-	p.newLinesBelow = 5
+	p.snapFallback.offset = 3
+	p.newLinesBelowRender = 5
 	p.previewState = previewState{fallback: false, text: "some\ncontent"}
 	out := p.String()
 	if !strings.Contains(out, "5") || !strings.Contains(out, "jump to bottom") {
@@ -390,9 +390,9 @@ func TestPreviewPane_ScrolledFooterShowsNewLines(t *testing.T) {
 
 func TestPreviewPane_GotoBottomResetsOffset(t *testing.T) {
 	p := NewPreviewPane()
-	p.scrollOffset = 7
+	p.snapFallback.offset = 7
 	_ = p.GotoBottom(nil) // nil instance still resets to live tail
-	if p.scrollOffset != 0 || p.IsScrolling() {
-		t.Fatalf("GotoBottom must reset to live tail; offset=%d", p.scrollOffset)
+	if p.snapFallback.offset != 0 || p.IsScrolling() {
+		t.Fatalf("GotoBottom must reset to live tail; offset=%d", p.snapFallback.offset)
 	}
 }

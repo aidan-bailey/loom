@@ -64,10 +64,12 @@ func windowLines(lines []string, fromBottom, rows int) []string {
 }
 
 // PreviewPane renders the agent tmux pane's content in the top half of the
-// split view. It tails the emulator's live screen at scrollOffset 0, and when
-// scrolled paints a window into tmux's authoritative history (capture-pane -S -)
-// while live output keeps flowing. lastInstanceTitle resets the scroll position
-// on selection change rather than persisting a stale offset.
+// split view. It tails the emulator's live screen at the live tail, and when
+// scrolled windows the emulator's scrollback in-process (ScrollModel); on the
+// no-emulator path (snapshot mode / Windows) it paints a window into tmux's
+// authoritative history (capture-pane -S -) via snapFallback. Either way live
+// output keeps flowing. lastInstanceTitle resets the scroll position on
+// selection change rather than persisting a stale offset.
 type PreviewPane struct {
 	width  int
 	height int
@@ -75,30 +77,18 @@ type PreviewPane struct {
 	previewState      previewState
 	lastInstanceTitle string // tracks the current instance to reset scroll on change
 
-	// scrollOffset is lines-from-bottom into the captured history buffer; 0 =
-	// live tail. setOffset only floors it at 0; UpdateContent clamps to the
-	// real top once it has captured the buffer.
-	scrollOffset int
-	// scrollStarting marks the first UpdateContent after leaving the live tail,
-	// so the new-lines baseline is set from the freshly captured buffer.
-	scrollStarting bool
-	// totalAtScrollStart is the buffer line count when scrolling began; the
-	// "new lines below" count is total-now minus this.
-	totalAtScrollStart int
-	// lastTotal is the buffer line count from the previous scrolled tick, used
-	// to anchor the view to content as new output appends below.
-	lastTotal int
-	// newLinesBelow is the live-output line count accrued since scrolling up.
-	newLinesBelow int
-
-	// altScreen caches whether the agent is a full-screen TUI (no tmux
-	// scrollback); when true, scrolling is forwarded into the agent rather than
-	// windowed. Refreshed at most once per agentScrollTTL on the scroll path.
-	altScreen        bool
-	altScreenChecked time.Time
-	// wheelAccum dampens forwarded wheel speed (see wheelEventsPerNotch); signed:
-	// positive accrues toward an up notch, negative toward a down notch.
-	wheelAccum int
+	// scroll owns offset/anchoring/wheel/alt-probe state on the emulator path.
+	scroll ScrollModel
+	// snapFallback carries the legacy capture-pane windowing state, used
+	// only when the instance has no emulator (snapshot / Windows).
+	snapFallback snapshotScroll
+	// newLinesBelowRender is what String()'s scrolled footer shows; written
+	// by UpdateContent on whichever path produced the window.
+	newLinesBelowRender int
+	// src caches the scroll source resolved in UpdateContent so the arg-less
+	// ScrollPercent can query the emulator path. Update-goroutine only; nil on
+	// the snapshot / no-session path.
+	src scrollSource
 
 	// sel is the current mouse selection over the displayed content.
 	// displayedPlain holds the plain (ANSI-stripped) lines most recently rendered
@@ -114,6 +104,15 @@ type previewState struct {
 	text string
 }
 
+// snapshotScroll is the legacy capture-pane windowing state, kept only for
+// the no-emulator path. See ScrollModel for the emulator path.
+type snapshotScroll struct {
+	offset             int
+	starting           bool
+	totalAtScrollStart int
+	lastTotal          int
+}
+
 // NewPreviewPane constructs a PreviewPane at live tail; the caller must SetSize
 // before the first render.
 func NewPreviewPane() *PreviewPane {
@@ -124,6 +123,13 @@ func NewPreviewPane() *PreviewPane {
 // content exceeding it is truncated with an ellipsis at live tail or windowed
 // when scrolled.
 func (p *PreviewPane) SetSize(width, maxHeight int) {
+	// A width change re-wraps the emulator/capture buffer, invalidating any
+	// line-based scroll anchor, so a resize while scrolled returns to live tail.
+	if width != p.width {
+		p.scroll.Reset()
+		p.snapFallback = snapshotScroll{}
+		p.newLinesBelowRender = 0
+	}
 	p.width = width
 	p.height = maxHeight
 }
@@ -147,15 +153,16 @@ func (p *PreviewPane) liveTail(instance *session.Instance) error {
 	} else {
 		p.previewState = previewState{fallback: false, text: content}
 	}
-	p.newLinesBelow = 0
+	p.newLinesBelowRender = 0
 	return nil
 }
 
-// UpdateContent refreshes the pane from the given instance. At scrollOffset 0 it
-// tails the live emulator screen; when scrolled it windows tmux's authoritative
-// history (capture-pane -S -) at the current offset, anchoring the view to its
-// content as live output accrues below. Falls back to splash text for
-// nil/loading/paused instances and resets the offset on instance change.
+// UpdateContent refreshes the pane from the given instance. At the live tail it
+// tails the live emulator screen; when scrolled it windows the emulator's
+// scrollback in-process (ScrollModel), or, on the no-emulator path, tmux's
+// authoritative history (capture-pane -S -) at the current offset, anchoring the
+// view to its content as live output accrues below. Falls back to splash text
+// for nil/loading/paused instances and resets the offset on instance change.
 func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	// Reset to live tail when the selected instance changes.
 	newTitle := ""
@@ -164,9 +171,10 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	}
 	if newTitle != p.lastInstanceTitle {
 		p.lastInstanceTitle = newTitle
-		p.scrollOffset = 0
-		p.newLinesBelow = 0
-		p.lastTotal = 0
+		p.scroll.Reset()
+		p.snapFallback = snapshotScroll{}
+		p.newLinesBelowRender = 0
+		p.src = nil
 	}
 
 	switch {
@@ -202,57 +210,88 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 		return nil
 	}
 
-	if p.scrollOffset == 0 {
+	if !p.scroll.IsScrolling() && p.snapFallback.offset == 0 {
 		return p.liveTail(instance)
 	}
 
+	rows := p.height - 1
+	if rows < 1 {
+		rows = 1
+	}
+	// Emulator path: window in-process from the emulator's scrollback.
+	if src, srcOK := scrollSourceFor(instance); srcOK {
+		w, live, ok := p.scroll.AdvanceAndRender(src, rows)
+		if ok {
+			p.src = src
+			if live {
+				return p.liveTail(instance)
+			}
+			p.previewState = previewState{fallback: false, text: w}
+			p.newLinesBelowRender = p.scroll.NewLinesBelow()
+			return nil
+		}
+	}
+	// No emulator: fall back to the legacy capture-pane windowing.
+	return p.updateContentSnapshotScrolled(instance, rows)
+}
+
+// updateContentSnapshotScrolled windows tmux's authoritative capture-pane
+// buffer at p.snapFallback.offset. Used only on the no-emulator path
+// (snapshot mode / Windows); the emulator path is handled inline in
+// UpdateContent via ScrollModel. It anchors the view to its content as live
+// output accrues below, and — unlike the emulator path — snaps back to the
+// live tail when the captured buffer SHRINKS (clear-history / alt-screen
+// flip / re-wrap), where the offset anchor is meaningless.
+func (p *PreviewPane) updateContentSnapshotScrolled(instance *session.Instance, rows int) error {
 	// Scrolled: window into tmux's authoritative buffer (scrollback + visible).
 	// The in-process emulator only mirrors the visible screen, so windowed
 	// history must come from tmux, not emu.Scrollback().
 	hist, ok := instance.CaptureHistory()
 	if !ok {
-		p.scrollOffset = 0
+		p.snapFallback.offset = 0
 		return p.liveTail(instance)
 	}
 	lines := strings.Split(strings.TrimRight(hist, "\n"), "\n")
 	total := len(lines)
-	rows := p.height - 1
-	if rows < 1 {
-		rows = 1
-	}
 
 	switch {
-	case p.scrollStarting:
+	case p.snapFallback.starting:
 		// First tick of this scroll gesture: baseline the new-lines counter.
-		p.totalAtScrollStart = total
-		p.lastTotal = total
-		p.scrollStarting = false
-	case p.lastTotal > 0 && total > p.lastTotal:
+		p.snapFallback.totalAtScrollStart = total
+		p.snapFallback.lastTotal = total
+		p.snapFallback.starting = false
+	case p.snapFallback.lastTotal > 0 && total < p.snapFallback.lastTotal:
+		// Buffer shrank (clear-history / alt-screen flip / re-wrap): the anchor
+		// is meaningless — snap back to live instead of drifting.
+		p.snapFallback = snapshotScroll{}
+		p.newLinesBelowRender = 0
+		return p.liveTail(instance)
+	case p.snapFallback.lastTotal > 0 && total > p.snapFallback.lastTotal:
 		// New output appended below while scrolled: bump the offset by the same
 		// amount so the content under the cursor stays put.
-		p.scrollOffset += total - p.lastTotal
+		p.snapFallback.offset += total - p.snapFallback.lastTotal
 	}
-	p.lastTotal = total
+	p.snapFallback.lastTotal = total
 
 	maxOff := total - rows
 	if maxOff < 0 {
 		maxOff = 0
 	}
-	if p.scrollOffset > maxOff {
-		p.scrollOffset = maxOff
+	if p.snapFallback.offset > maxOff {
+		p.snapFallback.offset = maxOff
 	}
-	if p.scrollOffset <= 0 {
+	if p.snapFallback.offset <= 0 {
 		// Anchored back to the bottom -> live tail.
-		p.scrollOffset = 0
+		p.snapFallback.offset = 0
 		return p.liveTail(instance)
 	}
 
-	window := windowLines(lines, p.scrollOffset, rows)
+	window := windowLines(lines, p.snapFallback.offset, rows)
 	p.previewState = previewState{fallback: false, text: strings.Join(window, "\n")}
-	if newBelow := total - p.totalAtScrollStart; newBelow > 0 {
-		p.newLinesBelow = newBelow
+	if newBelow := total - p.snapFallback.totalAtScrollStart; newBelow > 0 {
+		p.newLinesBelowRender = newBelow
 	} else {
-		p.newLinesBelow = 0
+		p.newLinesBelowRender = 0
 	}
 	return nil
 }
@@ -303,11 +342,11 @@ func (p *PreviewPane) String() string {
 	}
 
 	// Scrolled: render the windowed history with a jump-to-bottom footer.
-	if p.scrollOffset > 0 {
+	if p.scroll.IsScrolling() || p.snapFallback.offset > 0 {
 		wlines := strings.Split(p.previewState.text, "\n")
 		display, plain := renderWithSelection(wlines, p.sel)
 		p.displayedPlain = plain
-		footer := previewScrollFooterStyle.Render(scrollFooter(p.newLinesBelow))
+		footer := previewScrollFooterStyle.Render(scrollFooter(p.newLinesBelowRender))
 		body := lipgloss.JoinVertical(lipgloss.Left, strings.Join(display, "\n"), footer)
 		return previewPaneStyle.Width(p.width).Render(body)
 	}
@@ -358,140 +397,142 @@ func (p *PreviewPane) ClearSelection() { p.sel = selection{} }
 // SelectedText returns the currently selected text (plain), or "" if none.
 func (p *PreviewPane) SelectedText() string { return extractSelection(p.displayedPlain, p.sel) }
 
-// isAgentTUI reports whether the agent is a full-screen TUI (alt-screen, no tmux
-// scrollback), caching the tmux probe for agentScrollTTL so rapid wheel events
-// don't spawn a subprocess each.
-func (p *PreviewPane) isAgentTUI(instance *session.Instance) bool {
-	if instance == nil {
-		return false
+// emulatorScroll reports the scroll source when the instance is emulator-backed
+// (live session with an emulator). ok=false routes the caller to the snapshot
+// (capture-pane) fallback used in snapshot mode / on Windows.
+func (p *PreviewPane) emulatorScroll(instance *session.Instance) (scrollSource, bool) {
+	src, ok := scrollSourceFor(instance)
+	if !ok {
+		return nil, false
 	}
-	now := time.Now()
-	if !p.altScreenChecked.IsZero() && now.Sub(p.altScreenChecked) < agentScrollTTL {
-		return p.altScreen
+	if _, emuOK := src.ScrollbackLen(); !emuOK {
+		return nil, false
 	}
-	p.altScreen = instance.IsAlternateScreen()
-	p.altScreenChecked = now
-	return p.altScreen
-}
-
-// forwardWheel forwards n wheel notches to a TUI agent so it scrolls its own
-// view; Loom stays at the live tail and shows the redraw.
-func (p *PreviewPane) forwardWheel(instance *session.Instance, up bool, n int) error {
-	return instance.ForwardWheel(up, n)
-}
-
-// forwardWheelDamped forwards one notch per wheelEventsPerNotch same-direction
-// wheel events, so wheel scrolling on a TUI agent isn't oversensitive. The
-// accumulator resets when the scroll direction flips.
-func (p *PreviewPane) forwardWheelDamped(instance *session.Instance, up bool) error {
-	if p.wheelAccum != 0 && (p.wheelAccum > 0) != up {
-		p.wheelAccum = 0 // direction change
-	}
-	if up {
-		p.wheelAccum++
-		if p.wheelAccum >= wheelEventsPerNotch {
-			p.wheelAccum = 0
-			return p.forwardWheel(instance, true, 1)
-		}
-		return nil
-	}
-	p.wheelAccum--
-	if p.wheelAccum <= -wheelEventsPerNotch {
-		p.wheelAccum = 0
-		return p.forwardWheel(instance, false, 1)
-	}
-	return nil
+	return src, true
 }
 
 // ScrollUp scrolls one line up into history (or forwards a damped wheel-up to a TUI agent).
 func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
-	if p.isAgentTUI(instance) {
-		return p.forwardWheelDamped(instance, true)
+	if src, ok := p.emulatorScroll(instance); ok {
+		return p.scroll.ScrollUp(src)
 	}
-	return p.scrollBy(instance, +1)
+	// Snapshot path: probe tmux directly (rare path, no TTL cache).
+	if instance != nil && instance.IsAlternateScreen() {
+		return instance.ForwardWheel(true, 1)
+	}
+	p.snapshotScrollBy(instance, +1)
+	return nil
 }
 
 // ScrollDown scrolls one line down toward the live tail (or forwards a damped wheel-down).
 func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
-	if p.isAgentTUI(instance) {
-		return p.forwardWheelDamped(instance, false)
+	if src, ok := p.emulatorScroll(instance); ok {
+		return p.scroll.ScrollDown(src)
 	}
-	return p.scrollBy(instance, -1)
+	if instance != nil && instance.IsAlternateScreen() {
+		return instance.ForwardWheel(false, 1)
+	}
+	p.snapshotScrollBy(instance, -1)
+	return nil
 }
 
 // PageUp scrolls up by half a pane height (or forwards a burst of wheel-ups).
 func (p *PreviewPane) PageUp(instance *session.Instance) error {
-	if p.isAgentTUI(instance) {
-		return p.forwardWheel(instance, true, agentPageNotches)
+	if src, ok := p.emulatorScroll(instance); ok {
+		return p.scroll.PageUp(src, p.height)
 	}
-	return p.scrollBy(instance, +(p.height / 2))
+	if instance != nil && instance.IsAlternateScreen() {
+		return instance.ForwardWheel(true, agentPageNotches)
+	}
+	p.snapshotScrollBy(instance, +(p.height / 2))
+	return nil
 }
 
 // PageDown scrolls down by half a pane height (or forwards a burst of wheel-downs).
 func (p *PreviewPane) PageDown(instance *session.Instance) error {
-	if p.isAgentTUI(instance) {
-		return p.forwardWheel(instance, false, agentPageNotches)
+	if src, ok := p.emulatorScroll(instance); ok {
+		return p.scroll.PageDown(src, p.height)
 	}
-	return p.scrollBy(instance, -(p.height / 2))
+	if instance != nil && instance.IsAlternateScreen() {
+		return instance.ForwardWheel(false, agentPageNotches)
+	}
+	p.snapshotScrollBy(instance, -(p.height / 2))
+	return nil
 }
 
 // GotoTop jumps to the oldest line of captured history (TUI: a large wheel-up burst).
 func (p *PreviewPane) GotoTop(instance *session.Instance) error {
-	if p.isAgentTUI(instance) {
-		return p.forwardWheel(instance, true, 30)
+	if src, ok := p.emulatorScroll(instance); ok {
+		p.scroll.GotoTop(src)
+		return nil
 	}
-	return p.setOffset(instance, scrollToTopOffset)
+	if instance != nil && instance.IsAlternateScreen() {
+		return instance.ForwardWheel(true, 30)
+	}
+	p.snapshotScrollBy(instance, scrollToTopOffset)
+	return nil
 }
 
 // GotoBottom returns to the live tail (TUI: a large wheel-down burst).
 func (p *PreviewPane) GotoBottom(instance *session.Instance) error {
-	if p.isAgentTUI(instance) {
-		return p.forwardWheel(instance, false, 30)
+	if _, ok := p.emulatorScroll(instance); ok {
+		p.scroll.Reset()
+		return nil
 	}
-	return p.setOffset(instance, 0)
+	if instance != nil && instance.IsAlternateScreen() {
+		return instance.ForwardWheel(false, 30)
+	}
+	p.snapFallback = snapshotScroll{}
+	p.newLinesBelowRender = 0
+	return nil
 }
 
 // ScrollPercent returns the scroll position as a fraction [0, 1]; 1.0 == live
 // tail (bottom).
 func (p *PreviewPane) ScrollPercent() float64 {
-	if p.scrollOffset <= 0 || p.lastTotal <= 0 {
+	if p.scroll.IsScrolling() && p.src != nil {
+		return p.scroll.ScrollPercent(p.src)
+	}
+	if p.snapFallback.offset <= 0 || p.snapFallback.lastTotal <= 0 {
 		return 1.0
 	}
-	return 1.0 - float64(p.scrollOffset)/float64(p.lastTotal)
+	return 1.0 - float64(p.snapFallback.offset)/float64(p.snapFallback.lastTotal)
 }
 
 // IsScrolling reports whether the pane is scrolled away from the live tail.
 func (p *PreviewPane) IsScrolling() bool {
-	return p.scrollOffset > 0
+	return p.scroll.IsScrolling() || p.snapFallback.offset > 0
 }
 
-// ResetToNormalMode returns the pane to the live tail.
+// ResetToNormalMode returns the pane to the live tail on both paths.
 func (p *PreviewPane) ResetToNormalMode(instance *session.Instance) error {
-	return p.setOffset(instance, 0)
+	p.scroll.Reset()
+	p.snapFallback = snapshotScroll{}
+	p.newLinesBelowRender = 0
+	return nil
 }
 
-func (p *PreviewPane) scrollBy(instance *session.Instance, delta int) error {
-	return p.setOffset(instance, p.scrollOffset+delta)
-}
-
-// setOffset floors a new lines-from-bottom offset at 0 and marks the start of a
-// scroll gesture. The real top-of-buffer clamp happens in UpdateContent, which
-// has the captured line count.
-func (p *PreviewPane) setOffset(instance *session.Instance, off int) error {
+// snapshotScrollBy applies a lines-from-bottom delta to the legacy
+// capture-pane offset (no-emulator path). It floors at 0, marks the start of a
+// gesture when leaving the tail, and clears the new-lines counters at the tail
+// — the old setOffset semantics on p.snapFallback. The real top-of-buffer
+// clamp happens in updateContentSnapshotScrolled, which has the captured line
+// count.
+func (p *PreviewPane) snapshotScrollBy(instance *session.Instance, delta int) {
 	if instance != nil && (instance.GetStatus() == session.Paused || instance.GetStatus() == session.Recoverable) {
-		return nil
+		return
 	}
+	off := p.snapFallback.offset + delta
 	if off < 0 {
 		off = 0
 	}
-	wasBottom := p.scrollOffset == 0
-	p.scrollOffset = off
+	wasBottom := p.snapFallback.offset == 0
+	p.snapFallback.offset = off
 	if wasBottom && off > 0 {
-		p.scrollStarting = true
+		p.snapFallback.starting = true
 	}
 	if off == 0 {
-		p.newLinesBelow = 0
-		p.lastTotal = 0
+		p.newLinesBelowRender = 0
+		p.snapFallback.lastTotal = 0
 	}
-	return nil
 }
