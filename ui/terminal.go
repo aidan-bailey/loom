@@ -38,13 +38,20 @@ type TerminalPane struct {
 	fallback      bool
 	fallbackText  string
 
-	// scrollOffset is lines-from-bottom into the captured history buffer; 0 =
-	// live tail. All scroll state is guarded by t.mu.
-	scrollOffset       int
-	scrollStarting     bool
-	totalAtScrollStart int
-	lastTotal          int
-	newLinesBelow      int
+	// scroll owns offset/anchoring/wheel/alt-probe state on the emulator
+	// path; snapFallback carries the legacy capture-pane windowing state
+	// for the no-emulator path. Both guarded by t.mu (ScrollModel is
+	// unlocked by design; this pane's mutex is its guard).
+	scroll       ScrollModel
+	snapFallback snapshotScroll
+	// newLinesBelowRender is what String()'s scrolled footer shows; written
+	// by UpdateContent on whichever path produced the window.
+	newLinesBelowRender int
+	// src caches the emulator scroll source resolved in UpdateContent so the
+	// per-render ScrollPercent can query it WITHOUT re-resolving the session
+	// (which runs a has-session subprocess). Guarded by t.mu; nil on the
+	// snapshot / no-session path. Mirrors PreviewPane.src.
+	src scrollSource
 
 	// sel is the current mouse selection; displayedPlain holds the plain lines
 	// most recently rendered by String(). Both guarded by t.mu.
@@ -67,6 +74,13 @@ func NewTerminalPane() *TerminalPane {
 func (t *TerminalPane) SetSize(width, height int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// A width change re-wraps the emulator/capture buffer, invalidating any
+	// line-based scroll anchor, so a resize while scrolled returns to live tail.
+	if width != t.width {
+		t.scroll.Reset()
+		t.snapFallback = snapshotScroll{}
+		t.newLinesBelowRender = 0
+	}
 	t.width = width
 	t.height = height
 	// Resize all cached sessions so that no session has a stale width. A stale
@@ -100,27 +114,32 @@ func (t *TerminalPane) currentSessionLocked() *tmux.TmuxSession {
 	return s.tmuxSession
 }
 
-// setOffsetLocked floors a new lines-from-bottom offset at 0 and marks the start
-// of a scroll gesture. The real top-of-buffer clamp happens in UpdateContent,
-// which has the captured line count. Caller must hold t.mu.
-func (t *TerminalPane) setOffsetLocked(off int) {
+// snapshotScrollByLocked applies a lines-from-bottom delta to the legacy
+// capture-pane offset (no-emulator path). It floors at 0, marks the start of a
+// gesture when leaving the tail, and clears the new-lines counters at the tail.
+// The real top-of-buffer clamp happens in updateContentSnapshotLocked, which
+// has the captured line count. Mirrors PreviewPane.snapshotScrollBy. Caller
+// must hold t.mu.
+func (t *TerminalPane) snapshotScrollByLocked(delta int) {
+	off := t.snapFallback.offset + delta
 	if off < 0 {
 		off = 0
 	}
-	wasBottom := t.scrollOffset == 0
-	t.scrollOffset = off
+	wasBottom := t.snapFallback.offset == 0
+	t.snapFallback.offset = off
 	if wasBottom && off > 0 {
-		t.scrollStarting = true
+		t.snapFallback.starting = true
 	}
 	if off == 0 {
-		t.newLinesBelow = 0
-		t.lastTotal = 0
+		t.newLinesBelowRender = 0
+		t.snapFallback.lastTotal = 0
 	}
 }
 
-// UpdateContent captures the terminal pane output. At scrollOffset 0 it tails
+// UpdateContent captures the terminal pane output. At the live tail it tails
 // the live emulator screen (capture-pane fallback when no emulator); when
-// scrolled it paints a window of the session's scrollback at the offset.
+// scrolled it windows the emulator's scrollback in-process (ScrollModel), or,
+// on the no-emulator path, tmux's authoritative history at the current offset.
 func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -145,8 +164,10 @@ func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 	// Reset to live tail when the instance changes (currentTitle is still the
 	// previous instance until ensureSessionLocked updates it below).
 	if instance.Title != t.currentTitle {
-		t.scrollOffset = 0
-		t.newLinesBelow = 0
+		t.scroll.Reset()
+		t.snapFallback = snapshotScroll{}
+		t.newLinesBelowRender = 0
+		t.src = nil
 	}
 
 	// Ensure we have a terminal session for this instance.
@@ -160,76 +181,111 @@ func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 		return nil
 	}
 
-	if t.scrollOffset == 0 {
-		// Live tail: emulator visible screen; fall back to capture-pane when no
-		// emulator is wired (Windows / LOOM_PANE_RENDERER=snapshot).
-		content, rok := s.RenderEmulator()
-		if !rok {
-			var err error
-			content, err = s.CapturePaneContent()
-			if err != nil {
-				return fmt.Errorf("terminal pane: failed to capture content: %w", err)
-			}
-		}
-		t.fallback = false
-		t.content = content
-		t.newLinesBelow = 0
-		return nil
+	if !t.scroll.IsScrolling() && t.snapFallback.offset == 0 {
+		return t.liveTailLocked(s)
 	}
 
-	// Scrolled: window into tmux's authoritative history (capture-pane -S -),
-	// anchoring the view to its content as live output accrues below.
-	hist, hok := s.CaptureHistory()
-	if !hok {
-		t.scrollOffset = 0
-		content, _ := s.CapturePaneContent()
-		t.fallback = false
-		t.content = content
-		t.newLinesBelow = 0
-		return nil
-	}
-	lines := strings.Split(strings.TrimRight(hist, "\n"), "\n")
-	total := len(lines)
 	rows := t.height - 1
 	if rows < 1 {
 		rows = 1
 	}
+	// Emulator path: window in-process from the emulator's scrollback.
+	// AdvanceAndRender reads only in-process emulator state (no subprocess),
+	// so calling it under t.mu is fine; ok=false means no emulator → the
+	// legacy capture-pane windowing below.
+	w, live, ok := t.scroll.AdvanceAndRender(s, rows)
+	if ok {
+		t.src = s
+		if live {
+			return t.liveTailLocked(s)
+		}
+		t.fallback = false
+		t.content = w
+		t.newLinesBelowRender = t.scroll.NewLinesBelow()
+		return nil
+	}
+	return t.updateContentSnapshotLocked(s, rows)
+}
+
+// liveTailLocked renders the session's live emulator screen (capture-pane
+// fallback when no emulator) at the live tail. Caller must hold t.mu.
+func (t *TerminalPane) liveTailLocked(s *tmux.TmuxSession) error {
+	content, rok := s.RenderEmulator()
+	if !rok {
+		var err error
+		content, err = s.CapturePaneContent()
+		if err != nil {
+			return fmt.Errorf("terminal pane: failed to capture content: %w", err)
+		}
+	}
+	t.fallback = false
+	t.content = content
+	t.newLinesBelowRender = 0
+	return nil
+}
+
+// updateContentSnapshotLocked windows tmux's authoritative capture-pane buffer
+// at t.snapFallback.offset — the no-emulator path (snapshot mode / Windows).
+// It anchors the view to its content as live output accrues below and, unlike
+// the emulator path, snaps back to the live tail when the captured buffer
+// SHRINKS (clear-history / alt-screen flip / re-wrap), where the offset anchor
+// is meaningless. Caller must hold t.mu on entry and exit; the CaptureHistory
+// subprocess runs with the lock RELEASED (never hold t.mu across a tmux
+// subprocess).
+func (t *TerminalPane) updateContentSnapshotLocked(s *tmux.TmuxSession, rows int) error {
+	// Snapshot the displayed identity, capture unlocked, re-validate after
+	// re-locking: a stale window for a switched-away instance must not
+	// overwrite the new instance's view.
+	title := t.currentTitle
+	t.mu.Unlock()
+	hist, hok := s.CaptureHistory()
+	t.mu.Lock()
+	if t.currentTitle != title {
+		return nil
+	}
+	if !hok {
+		t.snapFallback.offset = 0
+		return t.liveTailLocked(s)
+	}
+	lines := strings.Split(strings.TrimRight(hist, "\n"), "\n")
+	total := len(lines)
 
 	switch {
-	case t.scrollStarting:
-		t.totalAtScrollStart = total
-		t.lastTotal = total
-		t.scrollStarting = false
-	case t.lastTotal > 0 && total > t.lastTotal:
-		t.scrollOffset += total - t.lastTotal
+	case t.snapFallback.starting:
+		// First tick of this scroll gesture: baseline the new-lines counter.
+		t.snapFallback.totalAtScrollStart = total
+		t.snapFallback.lastTotal = total
+		t.snapFallback.starting = false
+	case t.snapFallback.lastTotal > 0 && total < t.snapFallback.lastTotal:
+		// Buffer shrank: the anchor is meaningless — snap back to live.
+		t.snapFallback = snapshotScroll{}
+		t.newLinesBelowRender = 0
+		return t.liveTailLocked(s)
+	case t.snapFallback.lastTotal > 0 && total > t.snapFallback.lastTotal:
+		// New output appended below while scrolled: bump the offset so the
+		// content under the cursor stays put.
+		t.snapFallback.offset += total - t.snapFallback.lastTotal
 	}
-	t.lastTotal = total
+	t.snapFallback.lastTotal = total
 
 	maxOff := total - rows
 	if maxOff < 0 {
 		maxOff = 0
 	}
-	if t.scrollOffset > maxOff {
-		t.scrollOffset = maxOff
+	if t.snapFallback.offset > maxOff {
+		t.snapFallback.offset = maxOff
 	}
-	if t.scrollOffset <= 0 {
-		t.scrollOffset = 0
-		content, rok := s.RenderEmulator()
-		if !rok {
-			content, _ = s.CapturePaneContent()
-		}
-		t.fallback = false
-		t.content = content
-		t.newLinesBelow = 0
-		return nil
+	if t.snapFallback.offset <= 0 {
+		t.snapFallback.offset = 0
+		return t.liveTailLocked(s)
 	}
 
 	t.fallback = false
-	t.content = strings.Join(windowLines(lines, t.scrollOffset, rows), "\n")
-	if newBelow := total - t.totalAtScrollStart; newBelow > 0 {
-		t.newLinesBelow = newBelow
+	t.content = strings.Join(windowLines(lines, t.snapFallback.offset, rows), "\n")
+	if newBelow := total - t.snapFallback.totalAtScrollStart; newBelow > 0 {
+		t.newLinesBelowRender = newBelow
 	} else {
-		t.newLinesBelow = 0
+		t.newLinesBelowRender = 0
 	}
 	return nil
 }
@@ -546,11 +602,11 @@ func (t *TerminalPane) String() string {
 	}
 
 	// Scrolled: render the windowed history with a jump-to-bottom footer.
-	if t.scrollOffset > 0 {
+	if t.scroll.IsScrolling() || t.snapFallback.offset > 0 {
 		wlines := strings.Split(content, "\n")
 		display, plain := renderWithSelection(wlines, t.sel)
 		t.displayedPlain = plain
-		footer := terminalFooterStyle.Render(scrollFooter(t.newLinesBelow))
+		footer := terminalFooterStyle.Render(scrollFooter(t.newLinesBelowRender))
 		body := lipgloss.JoinVertical(lipgloss.Left, strings.Join(display, "\n"), footer)
 		return terminalPaneStyle.Width(width).Render(body)
 	}
@@ -605,51 +661,145 @@ func (t *TerminalPane) SelectedText() string {
 	return extractSelection(t.displayedPlain, t.sel)
 }
 
-// ScrollUp scrolls one line up into scrollback.
+// emuSourceLocked resolves the current session and whether it is
+// emulator-backed. currentSessionLocked runs a has-session probe (the file's
+// pervasive convention under t.mu) and ScrollbackLen reads only in-process
+// emulator state, so this is safe under the lock. Returns nil when no live
+// session is displayed. Caller must hold t.mu.
+func (t *TerminalPane) emuSourceLocked() (*tmux.TmuxSession, bool) {
+	s := t.currentSessionLocked()
+	if s == nil {
+		return nil, false
+	}
+	_, emuOK := s.ScrollbackLen()
+	return s, emuOK
+}
+
+// routeEmuScroll runs an emulator-path routing op (ScrollUp/Down, PageUp/Down)
+// with the alt-screen probe kept OUT of t.mu. When the TTL cache is fresh it
+// takes the lock once and runs op; when stale it drops the lock for the
+// IsAlternateScreen subprocess, stores the result, then runs op on the
+// now-fresh cache so op's internal isAltScreen never re-probes under the lock.
+// op mutates ScrollModel state and may ForwardWheel — a quick in-process PTY
+// write — which is the only bounded I/O left under the lock.
+func (t *TerminalPane) routeEmuScroll(s *tmux.TmuxSession, op func() error) error {
+	t.mu.Lock()
+	if !t.scroll.NeedsAltProbe() {
+		defer t.mu.Unlock()
+		return op()
+	}
+	t.mu.Unlock()
+	alt := s.IsAlternateScreen() // tmux subprocess — OUTSIDE t.mu
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.scroll.SetAltProbe(alt)
+	return op()
+}
+
+// snapScroll routes a scroll on the no-emulator path: it probes alt-screen
+// OUTSIDE t.mu (a tmux subprocess), forwarding `notches` wheel events to a
+// full-screen TUI, or else moving the snapshot window offset by `delta` under
+// the lock. up selects the forward direction.
+func (t *TerminalPane) snapScroll(s *tmux.TmuxSession, up bool, notches, delta int) error {
+	if s.IsAlternateScreen() { // subprocess — OUTSIDE t.mu
+		return s.ForwardWheel(up, notches)
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.snapshotScrollByLocked(delta)
+	return nil
+}
+
+// ScrollUp scrolls one line up into history (or forwards a damped wheel-up to a
+// TUI agent on the alternate screen).
 func (t *TerminalPane) ScrollUp() error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.setOffsetLocked(t.scrollOffset + 1)
-	return nil
+	s, emuOK := t.emuSourceLocked()
+	t.mu.Unlock()
+	if s == nil {
+		return nil
+	}
+	if emuOK {
+		return t.routeEmuScroll(s, func() error { return t.scroll.ScrollUp(s) })
+	}
+	return t.snapScroll(s, true, 1, +1)
 }
 
-// ScrollDown scrolls one line down toward the live tail.
+// ScrollDown scrolls one line down toward the live tail (or forwards a damped
+// wheel-down to a TUI agent).
 func (t *TerminalPane) ScrollDown() error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.setOffsetLocked(t.scrollOffset - 1)
-	return nil
+	s, emuOK := t.emuSourceLocked()
+	t.mu.Unlock()
+	if s == nil {
+		return nil
+	}
+	if emuOK {
+		return t.routeEmuScroll(s, func() error { return t.scroll.ScrollDown(s) })
+	}
+	return t.snapScroll(s, false, 1, -1)
 }
 
-// PageUp scrolls up by half a pane height.
+// PageUp scrolls up by half a pane height (or forwards a burst of wheel-ups).
 func (t *TerminalPane) PageUp() error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.setOffsetLocked(t.scrollOffset + t.height/2)
-	return nil
+	s, emuOK := t.emuSourceLocked()
+	half := t.height / 2
+	t.mu.Unlock()
+	if s == nil {
+		return nil
+	}
+	if emuOK {
+		return t.routeEmuScroll(s, func() error { return t.scroll.PageUp(s, t.height) })
+	}
+	return t.snapScroll(s, true, agentPageNotches, +half)
 }
 
-// PageDown scrolls down by half a pane height.
+// PageDown scrolls down by half a pane height (or forwards a burst of wheel-downs).
 func (t *TerminalPane) PageDown() error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.setOffsetLocked(t.scrollOffset - t.height/2)
-	return nil
+	s, emuOK := t.emuSourceLocked()
+	half := t.height / 2
+	t.mu.Unlock()
+	if s == nil {
+		return nil
+	}
+	if emuOK {
+		return t.routeEmuScroll(s, func() error { return t.scroll.PageDown(s, t.height) })
+	}
+	return t.snapScroll(s, false, agentPageNotches, -half)
 }
 
-// GotoTop jumps to the oldest scrollback line.
+// GotoTop jumps to the oldest line of history (TUI: a large wheel-up burst).
 func (t *TerminalPane) GotoTop() error {
 	t.mu.Lock()
+	s, emuOK := t.emuSourceLocked()
+	if s == nil {
+		t.mu.Unlock()
+		return nil
+	}
+	if emuOK {
+		t.scroll.GotoTop(s) // pure window move, no alt probe (mirrors PreviewPane)
+		t.mu.Unlock()
+		return nil
+	}
+	t.mu.Unlock()
+	if s.IsAlternateScreen() { // subprocess — OUTSIDE t.mu
+		return s.ForwardWheel(true, 30)
+	}
+	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.setOffsetLocked(scrollToTopOffset)
+	t.snapshotScrollByLocked(scrollToTopOffset)
 	return nil
 }
 
-// GotoBottom returns to the live tail.
+// GotoBottom returns to the live tail on both paths.
 func (t *TerminalPane) GotoBottom() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.setOffsetLocked(0)
+	t.scroll.Reset()
+	t.snapFallback = snapshotScroll{}
+	t.newLinesBelowRender = 0
 }
 
 // ScrollPercent returns the scroll position as a fraction [0, 1]; 1.0 == live
@@ -657,22 +807,29 @@ func (t *TerminalPane) GotoBottom() {
 func (t *TerminalPane) ScrollPercent() float64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.scrollOffset <= 0 || t.lastTotal <= 0 {
+	// Use the cached src (no per-render session resolution / has-session
+	// subprocess); it is set only on the emulator path. in-process reads only.
+	if t.scroll.IsScrolling() && t.src != nil {
+		return t.scroll.ScrollPercent(t.src)
+	}
+	if t.snapFallback.offset <= 0 || t.snapFallback.lastTotal <= 0 {
 		return 1.0
 	}
-	return 1.0 - float64(t.scrollOffset)/float64(t.lastTotal)
+	return 1.0 - float64(t.snapFallback.offset)/float64(t.snapFallback.lastTotal)
 }
 
-// ResetToNormalMode returns the pane to the live tail.
+// ResetToNormalMode returns the pane to the live tail on both paths.
 func (t *TerminalPane) ResetToNormalMode() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.setOffsetLocked(0)
+	t.scroll.Reset()
+	t.snapFallback = snapshotScroll{}
+	t.newLinesBelowRender = 0
 }
 
 // IsScrolling reports whether the pane is scrolled away from the live tail.
 func (t *TerminalPane) IsScrolling() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.scrollOffset > 0
+	return t.scroll.IsScrolling() || t.snapFallback.offset > 0
 }

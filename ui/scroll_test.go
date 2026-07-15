@@ -231,6 +231,46 @@ func TestScrollModel_WheelDirectionFlipResetsDamping(t *testing.T) {
 	require.Equal(t, []int{-1}, f.forwarded)
 }
 
+// TestTerminalPane_ScrollModelAltRouting: a full-screen TUI in the
+// terminal pane must receive wheel events instead of a frozen window.
+func TestTerminalPane_ScrollModelAltRouting(t *testing.T) {
+	var m ScrollModel
+	f := newFake()
+	f.alt = true
+	for i := 0; i < wheelEventsPerNotch; i++ {
+		require.NoError(t, m.ScrollUp(f))
+	}
+	require.NotEmpty(t, f.forwarded, "alt-screen terminal scroll must forward wheel events")
+}
+
+// TestScrollModel_AltProbeSplit pins the off-lock probe entry point used by
+// TerminalPane: NeedsAltProbe is true until SetAltProbe stamps the cache,
+// after which a route within the TTL is a cache hit (no re-probe).
+func TestScrollModel_AltProbeSplit(t *testing.T) {
+	var m ScrollModel
+	f := newFake()
+	f.alt = true
+	require.True(t, m.NeedsAltProbe(), "a fresh model must want a probe")
+
+	// Caller probes off-lock and stores the result.
+	m.SetAltProbe(f.alt)
+	require.False(t, m.NeedsAltProbe(), "a freshly stamped cache must not want a re-probe")
+
+	// A route on the fresh cache uses the stored alt result: wheel events are
+	// forwarded, and the source's own probe is never consulted (it would flip
+	// the cached decision if it were).
+	f.alt = false // if the route re-probed, it would move the window instead
+	for i := 0; i < wheelEventsPerNotch; i++ {
+		require.NoError(t, m.ScrollUp(f))
+	}
+	require.NotEmpty(t, f.forwarded, "route on a fresh cache must use the stored alt result")
+	require.False(t, m.IsScrolling(), "alt route must not move the window offset")
+
+	// Once the TTL lapses, NeedsAltProbe reports staleness again.
+	m.altScreenChecked = time.Now().Add(-2 * agentScrollTTL)
+	require.True(t, m.NeedsAltProbe(), "a lapsed cache must want a fresh probe")
+}
+
 func TestScrollModel_AltScreenReprobesAfterTTL(t *testing.T) {
 	var m ScrollModel
 	f := newFake()

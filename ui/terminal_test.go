@@ -274,10 +274,10 @@ func TestTerminalSessionCaching(t *testing.T) {
 
 func TestTerminalPane_GotoBottomResetsOffset(t *testing.T) {
 	tp := NewTerminalPane()
-	tp.scrollOffset = 5
+	tp.snapFallback.offset = 5
 	tp.GotoBottom()
-	if tp.scrollOffset != 0 || tp.IsScrolling() {
-		t.Fatalf("GotoBottom must reset to live tail; offset=%d", tp.scrollOffset)
+	if tp.snapFallback.offset != 0 || tp.IsScrolling() {
+		t.Fatalf("GotoBottom must reset to live tail; offset=%d", tp.snapFallback.offset)
 	}
 }
 

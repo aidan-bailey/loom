@@ -231,6 +231,26 @@ func (m *ScrollModel) PageDown(src scrollSource, height int) error {
 	return nil
 }
 
+// NeedsAltProbe reports whether the alt-screen TTL cache is stale, i.e. the
+// next isAltScreen would run a subprocess probe. It only reads cache
+// timestamps, so a caller holding its own mutex can consult it, drop the
+// mutex, run the probe (IsAlternateScreen — a tmux subprocess) off-lock, then
+// SetAltProbe the result before invoking a routing method. That keeps the
+// subprocess out of the caller's lock while a subsequent route()/PageUp on the
+// now-fresh cache never re-probes. Used by TerminalPane, whose t.mu wraps all
+// ScrollModel access; PreviewPane is unlocked and calls the routers directly.
+func (m *ScrollModel) NeedsAltProbe() bool {
+	return m.altScreenChecked.IsZero() || time.Since(m.altScreenChecked) >= agentScrollTTL
+}
+
+// SetAltProbe stores a freshly-probed alt-screen result and stamps the TTL, so
+// the next isAltScreen within agentScrollTTL is a cache hit. Pairs with
+// NeedsAltProbe for off-lock probing (see there).
+func (m *ScrollModel) SetAltProbe(alt bool) {
+	m.altScreen = alt
+	m.altScreenChecked = time.Now()
+}
+
 // isAltScreen probes tmux for the inner app's alternate-screen state,
 // cached for agentScrollTTL (the probe is a subprocess).
 func (m *ScrollModel) isAltScreen(src scrollSource) bool {
