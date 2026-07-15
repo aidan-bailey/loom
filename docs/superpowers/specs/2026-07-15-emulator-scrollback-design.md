@@ -180,3 +180,40 @@ ScrollModel wholesale (no config flag — `LOOM_PANE_RENDERER=snapshot` is the
 escape hatch, same as for event-driven rendering). CLAUDE.md's pane-renderer
 section is updated to describe scrollback sourcing, replacing the stale
 `RenderWindow`/`ScrollbackLen` mention with the real semantics.
+
+## Amendment 1 (2026-07-15): spike verdict — tmux clients never leave the alt screen
+
+The Task 1 validation spike falsified the original premise. Facts, verified
+against real tmux and the vendored library:
+
+- tmux sends `CSI ? 1049 h` immediately on attach and never exits — the
+  entire client session renders inside the alternate screen.
+- x/vt's `Scrollback()`/`ScrollbackLen()` are hardcoded to the primary
+  screen (`e.scrs[0]`); the alt screen's buffer is unreachable (screens are
+  unexported). So no scrollback ever accumulates where the API reads.
+- The scroll mechanism itself is sound: replaying tmux's actual scroll
+  sequences (DECSTBM + SU) outside the alt screen populates x/vt scrollback
+  correctly.
+
+**Mitigation (adopted):** strip alternate-screen enter/exit private modes
+(47/1047/1049) from the tmux client stream before it reaches x/vt — a
+streaming filter (`session/vt`) wrapping the emulator as the pump
+destination, stateful across chunk-split sequences. tmux then paints on the
+primary screen and the design works as originally specified. This is the
+classic tmux `smcup@/rmcup@` terminal-overrides trick applied on Loom's side
+only; the user's real `alt+a` attach client is unaffected.
+
+**Consequence — AltScreen() is dropped from the design:** the emulator
+observes tmux's client stream, never the inner app's screen mode, so
+emulator-tracked alt-screen detection can never work for wheel routing
+(with or without the filter). Wheel routing keeps the tmux
+`#{alternate_on}` probe on BOTH panes, with the existing 750ms TTL cache
+moved into the shared ScrollModel (audit finding 6 is thereby accepted as a
+bounded limitation rather than fixed; finding 5 — no alt handling on the
+terminal pane — is still fixed by the sharing).
+
+**RenderWindow contract clarification:** `offset` anchors the WINDOW BOTTOM,
+measured in lines above the live bottom row (`offset=0` ⇒ bottom row of the
+window is the screen's bottom row). The original plan's unit test
+(`RenderWindow(sbLen, 1)` = oldest line) contradicted this; the test is
+corrected (oldest line = `RenderWindow(total-1, 1)`).
