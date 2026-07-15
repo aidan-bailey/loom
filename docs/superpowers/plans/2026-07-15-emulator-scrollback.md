@@ -1471,3 +1471,330 @@ restart Loom against the same tmux session and confirm pre-restart output is
 reachable (seed).
 
 - [ ] **Step 2: Report results honestly; fix or file anything that misbehaves before declaring done**
+
+---
+
+## Amendment 1 (2026-07-15) — spike verdict overrides
+
+The Task 1 spike falsified the premise that a tmux client stream feeds x/vt's
+primary-screen scrollback: tmux enters the alternate screen (`CSI ?1049h`) at
+attach and never leaves, and x/vt's `Scrollback()` reads only the primary
+screen. Adopted mitigation: strip alt-screen private modes from the client
+stream (spec Amendment 1). These overrides apply on top of the task texts
+above; where they conflict, the amendment wins.
+
+### Override A — Task 2 changes
+
+1. **Drop `AltScreen()`** from the `vt.Emulator` interface, `xvtEmulator`,
+   and the `nopEmulator` test stub. Delete `TestAltScreen_TracksMode1049`
+   (with the Task 2.5 filter installed the emulator never sees mode 1049;
+   inner-app alt-screen state is invisible in a tmux client stream anyway).
+   Keep `ScrollbackLen`/`RenderWindow`/`SetScrollbackSize`.
+2. **RenderWindow contract:** `offset` anchors the WINDOW BOTTOM, in lines
+   above the live bottom row. Implementation formula (in the plan's
+   coordinate space, `total = sbLen + len(screen)`):
+   `top := total - offset - rows` — as in the original Task 2 Step 4 code.
+   Fix the unit test that contradicted this:
+
+```go
+func TestRenderWindow_WindowsIntoScrollback(t *testing.T) {
+	e := NewXVT(20, 4)
+	defer e.Close()
+	feed(t, e, "l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8")
+	sb := e.ScrollbackLen()
+	require.Greater(t, sb, 0)
+	// Oldest line: a 1-row window whose bottom sits total-1 above the live
+	// bottom (total = scrollback + 4 screen rows).
+	top := e.RenderWindow(sb+4-1, 1)
+	require.Contains(t, stripANSI(top), "l1")
+	// A window one line up from live keeps exactly `rows` lines.
+	w := e.RenderWindow(1, 4)
+	require.Equal(t, 4, len(strings.Split(w, "\n")))
+	// Its bottom row is the screen's second-to-last row.
+	rows := strings.Split(w, "\n")
+	scr := strings.Split(e.Render(), "\n")
+	require.Equal(t, stripANSI(scr[len(scr)-2]), stripANSI(rows[len(rows)-1]))
+}
+```
+
+   In the integration test, change the `RenderWindow(got, 5)` "top of the
+   buffer" probe to `RenderWindow(got+10-1, 5)` (10 = screen rows); the
+   full-buffer probe `RenderWindow(e.ScrollbackLen(), e.ScrollbackLen()+10)`
+   is already correct under this contract (offset clamps to 0, window covers
+   everything).
+
+### Override B — NEW Task 2.5: alt-screen filter
+
+**Files:** create `session/vt/altfilter.go`, `session/vt/altfilter_test.go`;
+modify `session/tmux/tmux.go` (pump destination) — the pump currently writes
+to the emulator; wrap it.
+
+Failing tests first (`session/vt/altfilter_test.go`):
+
+```go
+package vt
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func filterAll(t *testing.T, chunks ...string) string {
+	t.Helper()
+	var out bytes.Buffer
+	f := NewAltScreenFilter(&out)
+	for _, c := range chunks {
+		n, err := f.Write([]byte(c))
+		require.NoError(t, err)
+		require.Equal(t, len(c), n, "filter must report full consumption")
+	}
+	return out.String()
+}
+
+func TestAltScreenFilter_StripsEnterExit(t *testing.T) {
+	require.Equal(t, "ab", filterAll(t, "a\x1b[?1049hb"))
+	require.Equal(t, "ab", filterAll(t, "a\x1b[?1049lb"))
+	require.Equal(t, "ab", filterAll(t, "a\x1b[?1047hb"))
+	require.Equal(t, "ab", filterAll(t, "a\x1b[?47hb"))
+}
+
+func TestAltScreenFilter_RewritesCombinedParams(t *testing.T) {
+	// tmux may set several private modes in one sequence; only the
+	// alt-screen ones are removed.
+	require.Equal(t, "\x1b[?1000h", filterAll(t, "\x1b[?1000;1049h"))
+	require.Equal(t, "\x1b[?1000;1002h", filterAll(t, "\x1b[?1000;1049;1002h"))
+}
+
+func TestAltScreenFilter_PassesUnrelatedSequences(t *testing.T) {
+	in := "x\x1b[31mred\x1b[0m\x1b[?25l\x1b]0;title\x07\x1b[2Jy"
+	require.Equal(t, in, filterAll(t, in))
+}
+
+func TestAltScreenFilter_HandlesChunkSplitSequences(t *testing.T) {
+	// The 1049h sequence arrives split across three Writes.
+	require.Equal(t, "ab", filterAll(t, "a\x1b[?", "104", "9hb"))
+	// A split SGR must survive untouched.
+	require.Equal(t, "a\x1b[3;1mb", filterAll(t, "a\x1b[3;", "1mb"))
+}
+
+func TestAltScreenFilter_FlushesOversizeSequences(t *testing.T) {
+	// A pathological never-terminating "sequence" must not buffer forever.
+	long := "\x1b[?" + string(bytes.Repeat([]byte("1;"), 64))
+	out := filterAll(t, long)
+	require.NotEmpty(t, out, "oversize partial sequences must flush through")
+}
+```
+
+Implementation (`session/vt/altfilter.go`):
+
+```go
+package vt
+
+import (
+	"bytes"
+	"io"
+)
+
+// altScreenModes are the DEC private modes that switch to/from the
+// alternate screen. A tmux client enters the alt screen at attach and
+// never leaves, which would make x/vt accumulate scrollback in the
+// (unreachable) alt-screen buffer — see the scrollback design doc,
+// Amendment 1.
+var altScreenModes = map[string]bool{"47": true, "1047": true, "1049": true}
+
+// maxPendingSeq bounds the partial-sequence hold-back buffer; anything
+// longer flushes through unfiltered rather than stalling the stream.
+const maxPendingSeq = 64
+
+// altScreenFilter is an io.Writer decorator that removes alt-screen
+// enter/exit private-mode parameters from CSI ? ... h/l sequences and
+// forwards everything else verbatim. It is stateful across Writes so
+// sequences split between chunks are still recognized. Single-writer only
+// (the tmux output pump); not safe for concurrent Write.
+type altScreenFilter struct {
+	dst  io.Writer
+	pend []byte // partial escape sequence held back from the previous Write
+}
+
+// NewAltScreenFilter wraps dst, stripping alternate-screen mode switches
+// from the byte stream. Install between the tmux output pump and the
+// emulator.
+func NewAltScreenFilter(dst io.Writer) io.Writer {
+	return &altScreenFilter{dst: dst}
+}
+
+func (f *altScreenFilter) Write(p []byte) (int, error) {
+	data := p
+	if len(f.pend) > 0 {
+		data = append(f.pend, p...) //nolint:gocritic // deliberate copy-join
+		f.pend = nil
+	}
+	var out bytes.Buffer
+	i := 0
+	for i < len(data) {
+		if data[i] != 0x1b {
+			out.WriteByte(data[i])
+			i++
+			continue
+		}
+		seq, complete := scanEscape(data[i:])
+		if !complete {
+			if len(seq) <= maxPendingSeq {
+				f.pend = append([]byte(nil), seq...)
+				i += len(seq)
+				continue
+			}
+			// Pathological: flush through rather than buffer forever.
+			out.Write(seq)
+			i += len(seq)
+			continue
+		}
+		out.Write(rewritePrivateModeSeq(seq))
+		i += len(seq)
+	}
+	if _, err := f.dst.Write(out.Bytes()); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// scanEscape returns the escape sequence starting at data[0] == ESC and
+// whether it is complete. Recognizes CSI (ESC [ ... final @-~) and OSC
+// (ESC ] ... BEL or ESC \); anything else is treated as a two-byte
+// sequence.
+func scanEscape(data []byte) (seq []byte, complete bool) {
+	if len(data) == 1 {
+		return data, false
+	}
+	switch data[1] {
+	case '[':
+		for j := 2; j < len(data); j++ {
+			if data[j] >= '@' && data[j] <= '~' {
+				return data[:j+1], true
+			}
+		}
+		return data, false
+	case ']':
+		for j := 2; j < len(data); j++ {
+			if data[j] == 0x07 {
+				return data[:j+1], true
+			}
+			if data[j] == 0x1b {
+				if j+1 < len(data) && data[j+1] == '\\' {
+					return data[:j+2], true
+				}
+				return data[:j], true // next ESC starts a new sequence
+			}
+		}
+		return data, false
+	default:
+		return data[:2], true
+	}
+}
+
+// rewritePrivateModeSeq removes alt-screen modes from a CSI ? ... h/l
+// sequence, returning the sequence unchanged when it is not a private
+// mode set/reset or contains no alt-screen modes. Returns nil when every
+// parameter was an alt-screen mode.
+func rewritePrivateModeSeq(seq []byte) []byte {
+	// Shape: ESC [ ? params h|l
+	if len(seq) < 5 || seq[1] != '[' || seq[2] != '?' {
+		return seq
+	}
+	final := seq[len(seq)-1]
+	if final != 'h' && final != 'l' {
+		return seq
+	}
+	params := bytes.Split(seq[3:len(seq)-1], []byte(";"))
+	kept := params[:0]
+	removed := false
+	for _, p := range params {
+		if altScreenModes[string(p)] {
+			removed = true
+			continue
+		}
+		kept = append(kept, p)
+	}
+	if !removed {
+		return seq
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	out := append([]byte("\x1b[?"), bytes.Join(kept, []byte(";"))...)
+	return append(out, final)
+}
+```
+
+Wiring in `session/tmux/tmux.go`: wherever the output pump's destination is
+set to the emulator (the `pumpDest` assignment when the emulator is created
+in Restore), wrap it:
+
+```go
+	pumpDest = vt.NewAltScreenFilter(emu)
+```
+
+(Keep the emulator itself in `t.emu` unchanged — only the pump's write
+destination is wrapped. Check how `startOutputPump`/pumpDest is currently
+structured and preserve everything else, including the pump still being the
+sole writer.)
+
+Then: `CGO_ENABLED=0 go test ./session/vt/ ./session/tmux/ -v` — ALL green
+including `TestScrollbackAccumulation_RealTmux` (the integration test's pass
+is the amended spike verdict; report its actual before/after numbers).
+Race: `CC=clang CGO_ENABLED=1 go test -race -count=1 ./session/vt/ ./session/tmux/`.
+Commit Tasks 1+2+2.5 together:
+
+```bash
+git add session/vt/ session/tmux/
+git commit -m "feat(vt): emulator scrollback API + alt-screen filter for tmux client streams"
+```
+
+### Override C — Task 4 changes
+
+Drop the `EmuAltScreen` accessor (Step 1 test `TestScrollAccessors_NoEmulator`
+loses its `EmuAltScreen` assertion; Step 3 loses the method). Everything else
+in Task 4 stands.
+
+### Override D — Task 5/6/7 changes
+
+`scrollSource` replaces `EmuAltScreen() (bool, bool)` with the existing tmux
+probe (already on `*tmux.TmuxSession`, subprocess-backed):
+
+```go
+	IsAlternateScreen() bool
+```
+
+`ScrollModel` keeps the TTL cache (moved from PreviewPane, shared by both
+panes — audit finding 5 stays fixed; finding 6's bounded 750ms staleness is
+accepted per spec Amendment 1):
+
+```go
+	// altScreen caches the tmux alternate_on probe for altScreenTTL —
+	// a subprocess per wheel tick would be worse than 750ms staleness.
+	altScreen        bool
+	altScreenChecked time.Time
+```
+
+```go
+func (m *ScrollModel) isAltScreen(src scrollSource) bool {
+	now := time.Now()
+	if !m.altScreenChecked.IsZero() && now.Sub(m.altScreenChecked) < agentScrollTTL {
+		return m.altScreen
+	}
+	m.altScreen = src.IsAlternateScreen()
+	m.altScreenChecked = now
+	return m.altScreen
+}
+```
+
+(replaces the amendment-invalidated `altScreen(src)` one-liner; `route`,
+`PageUp`, `PageDown` call `m.isAltScreen(src)`). The fake in
+`ui/scroll_test.go` implements `IsAlternateScreen() bool { return f.alt }`
+and the alt-routing tests are unchanged in spirit. Task 6's Step 3 note
+about deleting the TTL cache is amended: the cache MOVES into ScrollModel
+instead of being deleted; `Reset()` also zeroes `altScreenChecked` so a new
+gesture re-probes. Task 8's dead-code sweep greps change accordingly
+(`agentScrollTTL` survives, relocated to `ui/scroll.go`).
