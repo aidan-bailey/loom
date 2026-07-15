@@ -236,6 +236,14 @@ func (t *TerminalPane) updateContentSnapshotLocked(s *tmux.TmuxSession, rows int
 	// Snapshot the displayed identity, capture unlocked, re-validate after
 	// re-locking: a stale window for a switched-away instance must not
 	// overwrite the new instance's view.
+	//
+	// CAREFUL: UpdateContent holds t.mu via a deferred Unlock. Between this
+	// Unlock and the Lock below the mutex is NOT held, so we must not return
+	// here — an early return would let the deferred Unlock double-unlock
+	// (fatal: "unlock of unlocked mutex"). A panic in CaptureHistory has the
+	// same effect (the deferred Unlock runs during unwind on an unlocked
+	// mutex). Keep the unlock / capture / relock trio strictly paired with no
+	// return and no panicking call between them beyond the capture itself.
 	title := t.currentTitle
 	t.mu.Unlock()
 	hist, hok := s.CaptureHistory()
@@ -680,8 +688,15 @@ func (t *TerminalPane) emuSourceLocked() (*tmux.TmuxSession, bool) {
 // takes the lock once and runs op; when stale it drops the lock for the
 // IsAlternateScreen subprocess, stores the result, then runs op on the
 // now-fresh cache so op's internal isAltScreen never re-probes under the lock.
-// op mutates ScrollModel state and may ForwardWheel — a quick in-process PTY
-// write — which is the only bounded I/O left under the lock.
+//
+// op mutates ScrollModel state and may ForwardWheel — a tiny in-process PTY
+// write, bounded to ≤1 per wheelEventsPerNotch alt-screen ticks. Holding t.mu
+// across THAT is deliberate and safe: it is not a tmux subprocess, it takes a
+// DIFFERENT mutex (the session's stateMu, via currentPtmx), and the only lock
+// order taken anywhere is t.mu → stateMu, so there is no ordering inversion.
+// This is intentionally unlike snapScroll, which keeps its ForwardWheel
+// off-lock only because it must also run the IsAlternateScreen SUBPROCESS on
+// the same path.
 func (t *TerminalPane) routeEmuScroll(s *tmux.TmuxSession, op func() error) error {
 	t.mu.Lock()
 	if !t.scroll.NeedsAltProbe() {

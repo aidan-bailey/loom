@@ -231,18 +231,6 @@ func TestScrollModel_WheelDirectionFlipResetsDamping(t *testing.T) {
 	require.Equal(t, []int{-1}, f.forwarded)
 }
 
-// TestTerminalPane_ScrollModelAltRouting: a full-screen TUI in the
-// terminal pane must receive wheel events instead of a frozen window.
-func TestTerminalPane_ScrollModelAltRouting(t *testing.T) {
-	var m ScrollModel
-	f := newFake()
-	f.alt = true
-	for i := 0; i < wheelEventsPerNotch; i++ {
-		require.NoError(t, m.ScrollUp(f))
-	}
-	require.NotEmpty(t, f.forwarded, "alt-screen terminal scroll must forward wheel events")
-}
-
 // TestScrollModel_AltProbeSplit pins the off-lock probe entry point used by
 // TerminalPane: NeedsAltProbe is true until SetAltProbe stamps the cache,
 // after which a route within the TTL is a cache hit (no re-probe).

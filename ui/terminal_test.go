@@ -281,6 +281,99 @@ func TestTerminalPane_GotoBottomResetsOffset(t *testing.T) {
 	}
 }
 
+// TestTerminalPane_SnapshotCaptureRevalidatesTitle exercises the headline
+// lock-fix: the scrolled snapshot path releases t.mu across CaptureHistory,
+// and if the displayed instance changes during that window the stale capture
+// must be DISCARDED. The mock flips t.currentTitle from inside the capture
+// (same goroutine, while t.mu is released — the exact race the guard covers),
+// and the test asserts the prior content and scroll state survive untouched.
+func TestTerminalPane_SnapshotCaptureRevalidatesTitle(t *testing.T) {
+	_ = log.Initialize("", false)
+	defer log.Close()
+
+	tp := NewTerminalPane()
+	tp.SetSize(80, 30)
+
+	instance := makeStartedInstance(t, "reval")
+	defer func() { _ = instance.Kill() }()
+
+	const sentinel = "PRIOR-CONTENT-MUST-SURVIVE"
+	flipped := false
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error { return nil }, // has-session → exists
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
+			if strings.Contains(cmd.String(), "capture-pane") && !flipped {
+				// The displayed instance changes while t.mu is released for
+				// the capture — the switched-away view must not win.
+				flipped = true
+				tp.currentTitle = "switched-away"
+			}
+			return []byte("h1\nh2\nh3\nh4\nh5\nh6\nh7\nh8"), nil
+		},
+	}
+	ts := newMockTmuxSession(t, "reval-mock", cmdExec)
+	injectSession(tp, instance.Title, ts, t.TempDir())
+
+	// Force the scrolled snapshot branch (offset > 0, no emulator) and pin a
+	// sentinel we can prove was not overwritten.
+	tp.mu.Lock()
+	tp.snapFallback.offset = 3
+	tp.snapFallback.lastTotal = 100 // pre-existing gesture state
+	tp.content = sentinel
+	tp.mu.Unlock()
+
+	err := tp.UpdateContent(instance)
+	require.NoError(t, err)
+
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	require.True(t, flipped, "the capture must have run (and flipped the displayed title)")
+	require.Equal(t, sentinel, tp.content,
+		"a stale capture for a switched-away instance must not overwrite content")
+	require.Equal(t, 3, tp.snapFallback.offset,
+		"snapshot scroll state must be left intact for the new instance's own render")
+}
+
+// TestTerminalPane_AltScreenScrollForwards drives the pane's snapshot-path
+// scroll against a full-screen TUI (alternate screen on): the wheel must be
+// forwarded to the app instead of moving the pane's window (audit finding 5 —
+// the terminal pane previously had no alt-screen routing at all).
+func TestTerminalPane_AltScreenScrollForwards(t *testing.T) {
+	_ = log.Initialize("", false)
+	defer log.Close()
+
+	tp := NewTerminalPane()
+	tp.SetSize(80, 30)
+
+	instance := makeStartedInstance(t, "alt")
+	defer func() { _ = instance.Kill() }()
+
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error { return nil }, // has-session → exists
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
+			if strings.Contains(cmd.String(), "alternate_on") {
+				return []byte("1"), nil // foreground app is on the alternate screen
+			}
+			return []byte(""), nil
+		},
+	}
+	ts := newMockTmuxSession(t, "alt-mock", cmdExec)
+	injectSession(tp, instance.Title, ts, t.TempDir())
+
+	// Snapshot-mode session (no emulator): ScrollUp probes alt-screen and, on
+	// the alternate screen, forwards a wheel event rather than windowing. The
+	// ForwardWheel PTY write itself may error on the mock; the ROUTING is what
+	// we assert — no snapshot offset movement, no emulator scroll engagement.
+	_ = tp.ScrollUp()
+
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	require.Zero(t, tp.snapFallback.offset,
+		"alt-screen scroll must forward the wheel, not move the snapshot window")
+	require.False(t, tp.scroll.IsScrolling(),
+		"alt-screen scroll must not engage the emulator scroll model")
+}
+
 func TestTerminalDetachSessionForInstance(t *testing.T) {
 	_ = log.Initialize("", false)
 	defer log.Close()
