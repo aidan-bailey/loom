@@ -45,6 +45,11 @@ func startTmux(t *testing.T, cols, rows int) (sock, name string, emu Emulator, c
 	// falsified premise instead of validating the adopted mitigation.
 	dest := NewAltScreenFilter(emu)
 	attach := exec.Command("tmux", "-L", sock, "attach-session", "-t", name)
+	// tmux paints the client according to the client's TERM; on CI runners
+	// TERM is unset/dumb and tmux emits no scroll sequences at all
+	// (ScrollbackLen stays 0). Pin a capable terminfo entry so the harness
+	// behaves like a real terminal regardless of the environment.
+	attach.Env = append(os.Environ(), "TERM=xterm-256color")
 	ptmx, err := pty.StartWithSize(attach, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	require.NoError(t, err)
 	done := make(chan struct{})
@@ -84,6 +89,20 @@ func sendShell(t *testing.T, sock, name, cmd string) {
 // settle waits for pane output to go quiet (crude: fixed delay is fine for a spike).
 func settle() { time.Sleep(500 * time.Millisecond) }
 
+// settleUntil polls cond every 100ms for up to 10s — loaded CI runners can
+// take well over the fixed settle to execute a shell loop and stream it
+// through the attach client. Falls through on timeout so the caller's
+// assertion reports the real values.
+func settleUntil(cond func() bool) {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // TestScrollbackAccumulation_RealTmux answers the design spike:
 //  1. lines scrolled off the top land in scrollback, in order;
 //  2. `clear` does not multiply history;
@@ -95,7 +114,7 @@ func TestScrollbackAccumulation_RealTmux(t *testing.T) {
 
 	// Emit 30 numbered lines through a 10-row screen → ≥20 must scroll off.
 	sendShell(t, sock, name, `for i in $(seq 1 30); do echo "spikeline$i"; done`)
-	settle()
+	settleUntil(func() bool { return emu.ScrollbackLen() > 15 })
 
 	got := emu.ScrollbackLen()
 	require.Greater(t, got, 15, "scroll-off lines must accumulate in scrollback")
