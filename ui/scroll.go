@@ -95,11 +95,13 @@ func (m *ScrollModel) AdvanceAndRender(src scrollSource, rows int) (window strin
 		rows = 1
 	}
 	seed := src.SeedHistory()
-	// The emulator screen is sized to the pane, so its row count is ≥ the
-	// scrolled view's rows (the view reserves a footer line); using `rows`
-	// for the screen span keeps the clamp conservative — one row of slack
-	// at the very top, never an out-of-range window.
-	total := len(seed) + sbLen + rows
+	// The emulator screen is one row taller than the scrolled view: panes
+	// reserve the footer line, so rows == paneHeight-1 by contract on both
+	// panes while RenderWindow's coordinate space uses the true screen height
+	// H = rows+1. total must live in that coordinate space, or the composition
+	// math falls one line short of RenderWindow and drops the oldest
+	// post-attach scrollback line at the seed↔scrollback junction.
+	total := len(seed) + sbLen + rows + 1
 	if maxOff := total - rows; m.offset > maxOff {
 		m.offset = maxOff
 	}
@@ -199,6 +201,10 @@ func (m *ScrollModel) ScrollPercent(src scrollSource) float64 {
 	if !ok {
 		return 1.0
 	}
+	// maxOff here (seed+sbLen) is one less than the clamp's in AdvanceAndRender
+	// (seed+sbLen+1), so a GotoTop offset floors this percent slightly negative
+	// → 0 below. Intentional: the +1 slack is the emulator's footer row, not a
+	// scrollable line, so the top of history is percent 0.
 	maxOff := len(src.SeedHistory()) + sbLen
 	if maxOff <= 0 {
 		return 1.0

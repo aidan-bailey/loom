@@ -52,10 +52,15 @@ func (f *fakeScrollSource) ForwardWheel(up bool, n int) error {
 }
 
 func newFake() *fakeScrollSource {
+	// screen is rows+1 lines (the tests scroll with rows=3): the real
+	// emulator is sized to the full pane height while the scrolled view
+	// reserves a footer line, so its screen span is one row taller than the
+	// view. Modeling screen as exactly `rows` collapsed that mismatch and hid
+	// the seed↔scrollback junction off-by-one.
 	return &fakeScrollSource{
 		seed:   []string{"seedA", "seedB", "seedC"},
 		sb:     []string{"sb1", "sb2", "sb3", "sb4"},
-		screen: []string{"scr1", "scr2", "scr3"},
+		screen: []string{"scr1", "scr2", "scr3", "scr4"},
 		ok:     true,
 	}
 }
@@ -90,14 +95,40 @@ func TestScrollModel_WindowsScrollbackThenSeed(t *testing.T) {
 	w, live, ok := m.AdvanceAndRender(f, 3)
 	require.True(t, ok)
 	require.False(t, live)
-	require.Equal(t, "sb3\nsb4\nscr1", w)
+	// Logical buffer: [seedA seedB seedC sb1 sb2 sb3 sb4 scr1 scr2 scr3 scr4]
+	// (screen is 4 rows, one taller than the view); offset 2 → indexes 6..8.
+	require.Equal(t, "sb4\nscr1\nscr2", w)
 
-	// Scroll past the emulator span into the seed.
-	// Logical buffer: [seedA seedB seedC sb1 sb2 sb3 sb4 scr1 scr2 scr3],
-	// offset 6 → window rows are indexes 1..3.
+	// Scroll past the emulator span into the seed. Offset 6 → indexes 2..4,
+	// which straddles the seed→scrollback boundary.
 	m.ScrollBy(f, 4)
 	w, _, _ = m.AdvanceAndRender(f, 3)
-	require.Equal(t, "seedB\nseedC\nsb1", w)
+	require.Equal(t, "seedC\nsb1\nsb2", w)
+}
+
+// TestScrollModel_SeedJunctionReachesOldestScrollback: the emulator screen
+// is one row taller than the scrolled view; modeling the span as `rows`
+// made the oldest post-attach scrollback line unreachable at every offset
+// (permanent one-line gap between seed and scrollback).
+func TestScrollModel_SeedJunctionReachesOldestScrollback(t *testing.T) {
+	var m ScrollModel
+	f := newFake()
+	var all strings.Builder
+	for off := 1; ; off++ {
+		m.Reset()
+		m.ScrollBy(f, off)
+		w, live, ok := m.AdvanceAndRender(f, 3)
+		require.True(t, ok)
+		if live {
+			break
+		}
+		all.WriteString(w + "\n")
+		if off > 50 {
+			break
+		}
+	}
+	require.Contains(t, all.String(), "sb1",
+		"the oldest scrollback line must be reachable somewhere in the sweep")
 }
 
 func TestScrollModel_ClampsAtSeedTop(t *testing.T) {
@@ -117,9 +148,10 @@ func TestScrollModel_AnchorsWhenScrollbackGrows(t *testing.T) {
 	f := newFake()
 	m.ScrollBy(f, 2)
 	w1, _, _ := m.AdvanceAndRender(f, 3)
-	// Two lines scroll off the screen into scrollback (output arrived).
+	// Two lines scroll off the screen into scrollback (output arrived). The
+	// screen stays 4 rows (rows+1) so the emulator geometry is unchanged.
 	f.sb = append(f.sb, "scr1", "scr2")
-	f.screen = []string{"scr3", "new1", "new2"}
+	f.screen = []string{"scr3", "scr4", "new1", "new2"}
 	w2, _, _ := m.AdvanceAndRender(f, 3)
 	require.Equal(t, w1, w2, "content under the cursor must stay put as output accrues")
 	require.Equal(t, 2, m.NewLinesBelow(), "footer must count lines accrued below")
