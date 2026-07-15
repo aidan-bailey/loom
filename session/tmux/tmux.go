@@ -458,13 +458,16 @@ func (t *TmuxSession) Restore() error {
 	// and the attach are lost from scroll-back (tiny window, accepted by
 	// design) — the alternative, capturing after attach, would duplicate
 	// rows the emulator also observes.
-	if seed, ok := t.captureHistoryRowsOnly(); ok {
-		t.stateMu.Lock()
-		t.seedHistory = seed
-		t.stateMu.Unlock()
-	} else {
+	seed, seedOK := t.captureHistoryRowsOnly()
+	if !seedOK {
+		// Drop any seed from a previous Restore too — stale pre-attach
+		// history from an older attach would misalign with what the new
+		// emulator observes.
 		log.For("tmux").Warn("seed_history_capture_failed", "session", t.sanitizedName)
 	}
+	t.stateMu.Lock()
+	t.seedHistory = seed
+	t.stateMu.Unlock()
 
 	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
 	if err != nil {
