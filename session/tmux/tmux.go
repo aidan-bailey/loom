@@ -474,7 +474,7 @@ func (t *TmuxSession) Restore() error {
 	t.emu = emu
 	t.monitor = newStatusMonitor()
 	t.stateMu.Unlock()
-	t.startOutputPump(ptmx) // defaults pumpDest = emu (Task 6)
+	t.startOutputPump(ptmx) // defaults pumpDest = alt-screen-filtered emu (Task 6)
 	return nil
 }
 
@@ -530,7 +530,14 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 	var dest io.Writer = io.Discard
 	var co *coalescer
 	if emu != nil {
-		dest = emu
+		// Strip alt-screen enter/exit before the emulator sees it: a tmux
+		// client attach-session stream enters the alt screen immediately and
+		// never leaves, which would otherwise make x/vt accumulate
+		// scrollback in the unreachable alt-screen buffer (see
+		// docs/superpowers/specs/2026-07-15-emulator-scrollback-design.md,
+		// Amendment 1). t.emu itself stays the raw emulator — Render/
+		// statusContent read it directly, unaware of the filter.
+		dest = vt.NewAltScreenFilter(emu)
 		// Event-driven pane updates ride the pump: dirty/quiet notifications
 		// only exist on the emulator path — snapshot mode stays tick-polled.
 		co = newCoalescer(t.sanitizedName)

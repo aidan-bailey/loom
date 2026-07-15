@@ -14,6 +14,14 @@ func (nopEmulator) Title() string               { return "" }
 func (nopEmulator) SetBellFunc(f func())        {}
 func (nopEmulator) FocusReportingEnabled() bool { return false }
 func (nopEmulator) Close() error                { return nil }
+func (nopEmulator) ScrollbackLen() int          { return 0 }
+func (nopEmulator) RenderWindow(offset, rows int) string {
+	if rows < 1 {
+		return ""
+	}
+	return ""
+}
+func (nopEmulator) SetScrollbackSize(n int) {}
 
 var _ Emulator = nopEmulator{}
 

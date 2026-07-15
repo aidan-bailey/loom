@@ -2,6 +2,7 @@ package vt
 
 import (
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/charmbracelet/x/ansi"
@@ -194,4 +195,55 @@ func (e *xvtEmulator) Close() error {
 	// Close never leaks the goroutine.
 	<-e.drainDone
 	return nil
+}
+
+func (e *xvtEmulator) ScrollbackLen() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.term.ScrollbackLen()
+}
+
+func (e *xvtEmulator) SetScrollbackSize(n int) {
+	e.mu.Lock()
+	e.term.SetScrollbackSize(n)
+	e.mu.Unlock()
+}
+
+func (e *xvtEmulator) RenderWindow(offset, rows int) string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if rows < 1 {
+		return ""
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	screen := strings.Split(e.term.Render(), "\n")
+	sb := e.term.Scrollback() // nil while on the alt screen
+	sbLen := 0
+	if sb != nil {
+		sbLen = sb.Len()
+	}
+	// Coordinate space: index 0 is the oldest scrollback line, total-1 is
+	// the bottom screen row. offset counts lines the window's bottom sits
+	// above the live bottom, so the window is [top, top+rows) with
+	// top = total-offset-rows. Positions above the buffer's start (top < 0)
+	// render blank rather than clamping the window.
+	total := sbLen + len(screen)
+	top := total - offset - rows
+	out := make([]string, rows)
+	for i := 0; i < rows; i++ {
+		idx := top + i
+		switch {
+		case idx < 0:
+			out[i] = ""
+		case idx < sbLen:
+			out[i] = sb.Line(idx).Render()
+		default:
+			if si := idx - sbLen; si < len(screen) {
+				out[i] = screen[si]
+			}
+		}
+	}
+	return strings.Join(out, "\n")
 }
