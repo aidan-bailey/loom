@@ -69,8 +69,8 @@ type Emulator interface {
 	// RenderWindow returns exactly `rows` lines ending `offset` lines above
 	// the live bottom, composed from scrollback + the visible screen, with
 	// ANSI styles. offset 0 with rows == screen height is equivalent to
-	// Render(). Out-of-range offset/rows are clamped; rows < 1 returns "".
-	// Positions above the top of the buffer render as blank lines.
+	// Render(). offset < 0 is treated as 0; rows < 1 returns "". Positions
+	// above the top of the buffer render as blank lines.
 	RenderWindow(offset, rows int) string
 
 	// SetScrollbackSize caps scrollback retention in lines.

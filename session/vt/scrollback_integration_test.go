@@ -27,6 +27,14 @@ func startTmux(t *testing.T, cols, rows int) (sock, name string, emu Emulator, c
 		require.NoError(t, err, "tmux %v: %s", args, out)
 	}
 	run("new-session", "-d", "-x", fmt.Sprint(cols), "-y", fmt.Sprint(rows), "-s", name, "sh")
+	// Kill the tmux server as soon as the session exists, via t.Cleanup
+	// rather than the returned cleanup func: a require failure below (e.g.
+	// pty.StartWithSize) would stop this function before it reaches the
+	// `return`, leaking the server since the caller never gets a cleanup
+	// to defer. t.Cleanup runs regardless of how the test exits.
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "-L", sock, "kill-server").Run()
+	})
 	run("set-option", "-t", name, "status", "off")
 
 	emu = NewXVT(cols, rows)
@@ -53,8 +61,9 @@ func startTmux(t *testing.T, cols, rows int) (sock, name string, emu Emulator, c
 			}
 		}
 	}()
+	// PTY/emulator teardown; the tmux server itself is already handled by
+	// the t.Cleanup registered above.
 	cleanup = func() {
-		_ = exec.Command("tmux", "-L", sock, "kill-server").Run()
 		_ = ptmx.Close()
 		select {
 		case <-done:

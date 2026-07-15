@@ -45,6 +45,14 @@ func TestAltScreenFilter_HandlesChunkSplitSequences(t *testing.T) {
 	require.Equal(t, "a\x1b[3;1mb", filterAll(t, "a\x1b[3;", "1mb"))
 }
 
+func TestAltScreenFilter_AbortedCSIStartsFreshSequence(t *testing.T) {
+	// An embedded ESC before a CSI final byte aborts that CSI. "\x1b[12"
+	// never gets a final byte before the next ESC starts "\x1b[?1049h" —
+	// the aborted prefix passes through verbatim, and the well-formed
+	// 1049h sequence that follows is still recognized and stripped.
+	require.Equal(t, "\x1b[12", filterAll(t, "\x1b[12\x1b[?1049h"))
+}
+
 func TestAltScreenFilter_FlushesOversizeSequences(t *testing.T) {
 	// A pathological never-terminating "sequence" must not buffer forever.
 	long := "\x1b[?" + string(bytes.Repeat([]byte("1;"), 64))

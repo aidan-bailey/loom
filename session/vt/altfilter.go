@@ -63,7 +63,12 @@ func (f *altScreenFilter) Write(p []byte) (int, error) {
 		i += len(seq)
 	}
 	if _, err := f.dst.Write(out.Bytes()); err != nil {
-		return 0, err
+		// p has already been fully consumed (parsed and forwarded, or held
+		// in f.pend) — it cannot be un-consumed to justify a short count.
+		// The sink is the in-process emulator, which is not expected to
+		// error; report the full count so callers don't retry a write the
+		// filter already processed.
+		return len(p), err
 	}
 	return len(p), nil
 }
@@ -79,6 +84,14 @@ func scanEscape(data []byte) (seq []byte, complete bool) {
 	switch data[1] {
 	case '[':
 		for j := 2; j < len(data); j++ {
+			if data[j] == 0x1b {
+				// An embedded ESC aborts this CSI before a final byte
+				// arrived. Treat the bytes up to (not including) it as a
+				// complete pass-through unit so the new ESC starts a fresh
+				// sequence, rather than absorbing unrelated bytes hunting
+				// for a final byte that will never belong to this CSI.
+				return data[:j], true
+			}
 			if data[j] >= '@' && data[j] <= '~' {
 				return data[:j+1], true
 			}

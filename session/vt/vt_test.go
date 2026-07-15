@@ -6,22 +6,17 @@ import "testing"
 // and a stand-in for tests that don't need real emulation.
 type nopEmulator struct{}
 
-func (nopEmulator) Write(p []byte) (int, error) { return len(p), nil }
-func (nopEmulator) Resize(cols, rows int)       {}
-func (nopEmulator) Render() string              { return "" }
-func (nopEmulator) Cursor() Cursor              { return Cursor{} }
-func (nopEmulator) Title() string               { return "" }
-func (nopEmulator) SetBellFunc(f func())        {}
-func (nopEmulator) FocusReportingEnabled() bool { return false }
-func (nopEmulator) Close() error                { return nil }
-func (nopEmulator) ScrollbackLen() int          { return 0 }
-func (nopEmulator) RenderWindow(offset, rows int) string {
-	if rows < 1 {
-		return ""
-	}
-	return ""
-}
-func (nopEmulator) SetScrollbackSize(n int) {}
+func (nopEmulator) Write(p []byte) (int, error)          { return len(p), nil }
+func (nopEmulator) Resize(cols, rows int)                {}
+func (nopEmulator) Render() string                       { return "" }
+func (nopEmulator) Cursor() Cursor                       { return Cursor{} }
+func (nopEmulator) Title() string                        { return "" }
+func (nopEmulator) SetBellFunc(f func())                 {}
+func (nopEmulator) FocusReportingEnabled() bool          { return false }
+func (nopEmulator) Close() error                         { return nil }
+func (nopEmulator) ScrollbackLen() int                   { return 0 }
+func (nopEmulator) RenderWindow(offset, rows int) string { return "" }
+func (nopEmulator) SetScrollbackSize(n int)              {}
 
 var _ Emulator = nopEmulator{}
 
