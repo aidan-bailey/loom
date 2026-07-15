@@ -312,6 +312,11 @@ type home struct {
 	// diff-stat refreshes. Update-goroutine only.
 	dirtySessions map[string]bool
 
+	// redetectPending tracks sessions with an armed delayed re-detection
+	// (see maybeRedetect), so inconclusive detections cannot stack parallel
+	// re-detect chains. Update-goroutine only.
+	redetectPending map[string]bool
+
 	// hostFocused mirrors the host terminal's focus state (via tea.FocusMsg/
 	// BlurMsg with ReportFocus on). Assumed focused at startup; used to
 	// synthesize correct focus events when panes/sessions switch.
@@ -766,10 +771,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if inst := m.instanceForSession(msg.session); inst != nil {
 			// Output arrived → the agent is doing something. Mirrors the old
-			// tick's updated→Running transition; Prompting/Ready re-derive on
-			// the quiet event once the burst settles.
+			// tick's updated→Running transition; Ready re-derives on the
+			// quiet event once the burst settles. Prompting is exempt:
+			// focus-in/out forwarding (host focus, selection changes) makes
+			// agents repaint, and that output must not relabel a waiting
+			// prompt as Running — quiet-time detection owns leaving
+			// Prompting once the prompt is actually gone.
 			st := inst.GetStatus()
-			if st == session.Ready || st == session.Prompting {
+			if st == session.Ready {
 				if err := inst.TransitionTo(session.Running); err != nil {
 					log.For("app").Warn("event.transition_failed", "instance", inst.Title, "to", "Running", "err", err.Error())
 				}
@@ -793,6 +802,23 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case paneQuietMsg:
 		inst := m.instanceForSession(msg.session)
 		if !statusEligible(inst) {
+			// A quiet that lands mid-Start (Loading) is this burst's only
+			// settle signal — quiet never re-fires without new output, so
+			// dropping it would leave the unconditional Running set by
+			// Start/Resume uncorrected. Re-check after the start resolves.
+			if inst != nil && inst.GetStatus() == session.Loading {
+				return m, m.maybeRedetect(msg.session)
+			}
+			return m, nil
+		}
+		return m, statusDetectCmd(inst)
+	case redetectMsg:
+		delete(m.redetectPending, msg.session)
+		inst := m.instanceForSession(msg.session)
+		if !statusEligible(inst) {
+			if inst != nil && inst.GetStatus() == session.Loading {
+				return m, m.maybeRedetect(msg.session)
+			}
 			return m, nil
 		}
 		return m, statusDetectCmd(inst)
@@ -816,6 +842,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			log.For("app").Warn("event.transition_failed", "instance", msg.instance.Title, "to", target.String(), "err", err.Error())
 		}
 		m.updateTabBarStatuses()
+		if msg.updated {
+			// One sample of changed content cannot distinguish "still
+			// working" from "finished a burst and idled" — under the
+			// emulator this was the only sample per burst, so Running
+			// latched on idle agents (and masked visible prompts, since
+			// updated wins over hasPrompt). Re-sample until a detection
+			// sees unchanged content and settles to Ready/Prompting.
+			return m, m.maybeRedetect(msg.instance.TmuxSessionName())
+		}
 		return m, nil
 	case ptyDeadMsg:
 		var cmds []tea.Cmd

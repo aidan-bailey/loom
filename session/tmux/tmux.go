@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/creack/pty"
@@ -370,8 +371,9 @@ func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
 // patterns and, on a hit, dismisses the prompt with the adapter's
 // declared response. Returns true when a prompt was found and handled.
 func (t *TmuxSession) handleTrustPrompt(content string) bool {
+	normalized := normalizeForPatternMatch(content)
 	for _, pattern := range t.adapter.TrustPromptPatterns() {
-		if !strings.Contains(content, pattern) {
+		if !strings.Contains(normalized, normalizeForPatternMatch(pattern)) {
 			continue
 		}
 		var tapErr error
@@ -396,7 +398,28 @@ func (t *TmuxSession) handleTrustPrompt(content string) bool {
 // adapter) never report a pending prompt.
 func (t *TmuxSession) pendingPrompt(content string) bool {
 	pattern := t.adapter.PendingPromptPattern()
-	return pattern != "" && strings.Contains(content, pattern)
+	return pattern != "" &&
+		strings.Contains(normalizeForPatternMatch(content), normalizeForPatternMatch(pattern))
+}
+
+// ansiSeqRe matches CSI sequences (SGR colors etc. — statusContent carries
+// them on both the emulator and capture-pane -e paths) and OSC sequences,
+// so pattern scans see plain text.
+var ansiSeqRe = regexp.MustCompile(`\x1b\[[0-9;:?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+
+// normalizeForPatternMatch strips ANSI escapes and ALL whitespace so
+// prompt/trust patterns match content the terminal wrapped at the pane
+// width — wrapping splits patterns mid-word with a bare newline (plus any
+// row padding), which defeats plain substring matching. Patterns are long
+// enough that whitespace-free matching stays unambiguous.
+func normalizeForPatternMatch(s string) string {
+	s = ansiSeqRe.ReplaceAllString(s, "")
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // Restore attaches to an existing session and restores the window size.

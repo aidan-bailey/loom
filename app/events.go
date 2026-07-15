@@ -1,6 +1,8 @@
 package app
 
 import (
+	"time"
+
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -69,6 +71,37 @@ func statusDetectCmd(inst *session.Instance) tea.Cmd {
 		updated, hasPrompt, err := inst.CaptureAndProcessStatus()
 		return statusDetectedMsg{instance: inst, updated: updated, hasPrompt: hasPrompt, err: err}
 	}
+}
+
+// redetectMsg re-runs status detection for a session whose last detection
+// could not settle the status. Two producers: an updated=true detection
+// (content changed since the previous sample, so "settled vs still working"
+// is undecidable from one sample) and a quiet event that landed while the
+// instance was still Loading (dropped by statusEligible, and quiet never
+// re-fires without new output). Without this follow-up the status ladder is
+// one-shot per burst and an idle agent latches on Running forever.
+type redetectMsg struct{ session string }
+
+// redetectDelay matches tmux's quietDelay: the follow-up sample runs one
+// settle-window after the inconclusive one, mirroring the legacy 500ms
+// metadata poll's cadence.
+const redetectDelay = 500 * time.Millisecond
+
+// maybeRedetect arms a delayed one-shot re-detection for the given session,
+// deduped so concurrent quiet events cannot stack parallel re-detect chains.
+// Returns nil when one is already pending (or the name is empty). Must be
+// called on the Update goroutine (redetectPending is unsynchronized).
+func (m *home) maybeRedetect(sessionName string) tea.Cmd {
+	if sessionName == "" || m.redetectPending[sessionName] {
+		return nil
+	}
+	if m.redetectPending == nil {
+		m.redetectPending = make(map[string]bool)
+	}
+	m.redetectPending[sessionName] = true
+	return tea.Tick(redetectDelay, func(time.Time) tea.Msg {
+		return redetectMsg{session: sessionName}
+	})
 }
 
 // deadVerifiedMsg carries the background has-session probe triggered by a
