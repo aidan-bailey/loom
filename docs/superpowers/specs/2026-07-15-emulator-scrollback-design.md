@@ -1,7 +1,7 @@
 # Emulator-Owned Scrollback — Design
 
 **Date:** 2026-07-15
-**Status:** Approved (design review with maintainer)
+**Status:** Implemented (2026-07-15; see Amendment 1 for the alt-screen filter pivot)
 **Replaces:** capture-pane-windowed scroll-back in `ui/preview.go` / `ui/terminal.go`
 
 ## Problem

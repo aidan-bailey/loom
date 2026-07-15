@@ -399,7 +399,12 @@ func (p *PreviewPane) SelectedText() string { return extractSelection(p.displaye
 
 // emulatorScroll reports the scroll source when the instance is emulator-backed
 // (live session with an emulator). ok=false routes the caller to the snapshot
-// (capture-pane) fallback used in snapshot mode / on Windows.
+// (capture-pane) fallback used in snapshot mode / on Windows. This is the same
+// "does this pane have an emulator" decision UpdateContent makes via
+// scrollSourceFor + AdvanceAndRender's internal ok — duplicated here (rather
+// than shared) because the scroll methods must pick a branch (emulator vs.
+// snapshot probe/state) before acting, whereas UpdateContent can try the
+// emulator path and let AdvanceAndRender's ok fall through inline.
 func (p *PreviewPane) emulatorScroll(instance *session.Instance) (scrollSource, bool) {
 	src, ok := scrollSourceFor(instance)
 	if !ok {
