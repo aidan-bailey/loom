@@ -45,12 +45,24 @@ type ScrollModel struct {
 	altScreenChecked time.Time
 }
 
-// Window renders `rows` lines at the current offset. live=true means the
-// pane is at the live tail (offset 0) and the caller should render its
-// normal live view instead. ok=false means no emulator (snapshot fallback).
-// Window also performs the per-render anchoring bump and clamping, so it
-// must be called exactly once per render pass.
-func (m *ScrollModel) Window(src scrollSource, rows int) (window string, live bool, ok bool) {
+// AdvanceAndRender renders `rows` lines at the current offset. live=true
+// means the pane is at the live tail (offset 0) and the caller should
+// render its normal live view instead. ok=false means no emulator
+// (snapshot fallback).
+//
+// It also performs the per-render anchoring bump and clamping (hence the
+// name — it advances the anchor state AND renders), so it must be called
+// exactly once per render pass. A repeat call with no intervening output
+// is idempotent: sbLen is unchanged so the anchor bump is a no-op and the
+// window is identical. The only failure mode of an extra call is
+// NewLinesBelow drift if output *did* arrive between the two calls — never
+// corruption of the rendered window.
+//
+// Limitation: at the emulator's scrollback cap (x/vt default 10k lines)
+// sbLen plateaus, so the anchor bump stops compensating for further
+// scroll-off and the view drifts up by at most the overflow. Bounded,
+// graceful degradation — accepted.
+func (m *ScrollModel) AdvanceAndRender(src scrollSource, rows int) (window string, live bool, ok bool) {
 	sbLen, sbOK := src.ScrollbackLen()
 	if !sbOK {
 		return "", false, false
@@ -147,7 +159,9 @@ func (m *ScrollModel) Reset() {
 }
 
 // NewLinesBelow is the footer count: scroll-off lines accrued since the
-// gesture began.
+// gesture began. Limitation: at the scrollback cap (x/vt default 10k
+// lines) sbLen plateaus, so the count stops growing even as new output
+// arrives — bounded, graceful degradation, accepted.
 func (m *ScrollModel) NewLinesBelow() int {
 	if m.offset <= 0 {
 		return 0
@@ -162,7 +176,7 @@ func (m *ScrollModel) NewLinesBelow() int {
 func (m *ScrollModel) IsScrolling() bool { return m.offset > 0 }
 
 // ScrollPercent maps the offset to [0,1]; 1.0 = live tail.
-func (m *ScrollModel) ScrollPercent(src scrollSource, rows int) float64 {
+func (m *ScrollModel) ScrollPercent(src scrollSource) float64 {
 	if m.offset <= 0 {
 		return 1.0
 	}
