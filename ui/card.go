@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"cmp"
 	"fmt"
 	"image/color"
+	"slices"
 	"strings"
 	"time"
 
@@ -86,7 +88,10 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 
 // TailLines returns the last n non-blank-tail lines of screen with ANSI
 // styling stripped (card chrome owns the styling; embedded SGR would
-// bleed). Returns nil for an effectively empty screen.
+// bleed). C0 controls survive ansi.Strip, so tabs are normalized to a
+// single space and carriage returns dropped — emulator output never
+// contains them today, but the helper is exported and generic. Returns
+// nil for an effectively empty screen.
 func TailLines(screen string, n int) []string {
 	if screen == "" {
 		return nil
@@ -105,7 +110,10 @@ func TailLines(screen string, n int) []string {
 	}
 	out := make([]string, 0, end-start)
 	for _, l := range lines[start:end] {
-		out = append(out, ansi.Strip(l))
+		l = ansi.Strip(l)
+		l = strings.ReplaceAll(l, "\t", " ")
+		l = strings.ReplaceAll(l, "\r", "")
+		out = append(out, l)
 	}
 	return out
 }
@@ -177,7 +185,9 @@ func formatAge(d time.Duration) string {
 	}
 }
 
-// truncate cuts s to width cells with an ellipsis.
+// truncate cuts s to at most width cells, appending an ellipsis when
+// content is dropped (runewidth.Truncate reserves the tail's width
+// itself, so the full budget is passed through).
 func truncate(s string, width int) string {
 	if width <= 0 {
 		return ""
@@ -185,10 +195,10 @@ func truncate(s string, width int) string {
 	if runewidth.StringWidth(s) <= width {
 		return s
 	}
-	if width <= 3 {
+	if width <= 1 {
 		return runewidth.Truncate(s, width, "")
 	}
-	return runewidth.Truncate(s, width-1, "…")
+	return runewidth.Truncate(s, width, "…")
 }
 
 // RenderCard renders d at the given density and total width. DensityCard
@@ -198,7 +208,14 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 	if width < 4 {
 		width = 4
 	}
-	bar := lipgloss.NewStyle().Foreground(d.accentColor()).Render("▌")
+	// Selected rail cards paint a solid Panel background. It has to
+	// ride the inner styles: wrapping the assembled line in a
+	// Background style does not survive the embedded SGR resets
+	// (lipgloss does not re-inject the outer background after a reset,
+	// leaving the bg only on the bar and padding — a striped look).
+	solidBg := d.Selected && density == DensityRail
+	barStyle := lipgloss.NewStyle().Foreground(d.accentColor())
+	sepStyle := lipgloss.NewStyle()
 	titleFg := Text
 	if d.NeedsAttention() {
 		titleFg = Attention
@@ -210,11 +227,18 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 	if d.Selected {
 		titleStyleC = titleStyleC.Bold(true)
 	}
+	if solidBg {
+		barStyle = barStyle.Background(Panel)
+		sepStyle = sepStyle.Background(Panel)
+		titleStyleC = titleStyleC.Background(Panel)
+	}
+	bar := barStyle.Render("▌")
+	sep := sepStyle.Render(" ")
 
 	prefix := fmt.Sprintf("%d. ", d.Index)
 	inner := width - 2 // bar + space
 	title := truncate(prefix+d.Title, inner)
-	titleLine := bar + " " + titleStyleC.Render(title)
+	titleLine := bar + sep + titleStyleC.Render(title)
 
 	if density == DensityLine {
 		return titleLine
@@ -228,12 +252,17 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 	} else if len(d.TailLines) > 0 {
 		second = d.TailLines[len(d.TailLines)-1]
 	}
-	secondLine := bar + " " + lipgloss.NewStyle().Foreground(secondFg).Render(truncate(second, inner))
+	secondStyle := lipgloss.NewStyle().Foreground(secondFg)
+	if solidBg {
+		secondStyle = secondStyle.Background(Panel)
+	}
+	secondLine := bar + sep + secondStyle.Render(truncate(second, inner))
 
-	// Selected rail cards get a Panel background across both lines.
-	if d.Selected {
-		bgStyle := lipgloss.NewStyle().Background(Panel).Width(width)
-		return bgStyle.Render(titleLine) + "\n" + bgStyle.Render(secondLine)
+	if solidBg {
+		// Outer style only right-pads to full width (padding spaces
+		// carry the background); the visible runs above own their own.
+		pad := lipgloss.NewStyle().Background(Panel).Width(width)
+		return pad.Render(titleLine) + "\n" + pad.Render(secondLine)
 	}
 	return titleLine + "\n" + secondLine
 }
@@ -243,44 +272,42 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 // first, then attention > running/loading > ready > paused/recoverable,
 // stable by title within a tier. Deleting sorts last.
 func SortForOverview(items []*session.Instance) []int {
-	tier := func(inst *session.Instance) int {
-		if inst.IsWorkspaceTerminal {
-			return 0
-		}
-		st := inst.GetStatus()
-		switch {
-		case st == session.Prompting || inst.BellPending():
-			return 1
-		case st == session.Running || st == session.Loading:
-			return 2
-		case st == session.Ready:
-			return 3
-		case st == session.Paused || st == session.Recoverable:
-			return 4
-		default: // Deleting
-			return 5
-		}
+	// Tiers are computed once up front so the sort sees a consistent
+	// snapshot (status/bell are read under the instance lock) and each
+	// instance is read exactly once instead of O(n log n) times.
+	tiers := make([]int, len(items))
+	for i, inst := range items {
+		tiers[i] = overviewTier(inst)
 	}
 	order := make([]int, len(items))
 	for i := range order {
 		order[i] = i
 	}
-	sortSliceStable(order, func(a, b int) bool {
-		ta, tb := tier(items[a]), tier(items[b])
-		if ta != tb {
-			return ta < tb
+	slices.SortStableFunc(order, func(a, b int) int {
+		if c := cmp.Compare(tiers[a], tiers[b]); c != 0 {
+			return c
 		}
-		return items[a].Title < items[b].Title
+		return strings.Compare(items[a].Title, items[b].Title)
 	})
 	return order
 }
 
-// sortSliceStable is a tiny stable insertion sort — n is small (session
-// counts), and keeping it local avoids importing sort here.
-func sortSliceStable(order []int, less func(a, b int) bool) {
-	for i := 1; i < len(order); i++ {
-		for j := i; j > 0 && less(order[j], order[j-1]); j-- {
-			order[j], order[j-1] = order[j-1], order[j]
-		}
+// overviewTier maps an instance to its SortForOverview tier.
+func overviewTier(inst *session.Instance) int {
+	if inst.IsWorkspaceTerminal {
+		return 0
+	}
+	st := inst.GetStatus()
+	switch {
+	case st == session.Prompting || inst.BellPending():
+		return 1
+	case st == session.Running || st == session.Loading:
+		return 2
+	case st == session.Ready:
+		return 3
+	case st == session.Paused || st == session.Recoverable:
+		return 4
+	default: // Deleting
+		return 5
 	}
 }
