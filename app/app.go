@@ -2210,6 +2210,7 @@ func (m *home) loadSlot(idx int) {
 		m.list.SetSize(listWidth, contentHeight)
 		m.splitPane.SetSize(paneWidth, contentHeight)
 	}
+	m.refreshPeerSections()
 }
 
 // applyWorkspaceToggle diffs the current slots against the desired list,
@@ -2411,6 +2412,37 @@ func (m *home) updateTabBarStatuses() {
 		}
 	}
 	m.tabBar.SetStatuses(statuses)
+	m.refreshPeerSections()
+}
+
+// refreshPeerSections rebuilds the rail's peer-workspace summaries from
+// the non-focused slots' live lists. Main-goroutine only (reads slot
+// lists, which are only mutated there).
+func (m *home) refreshPeerSections() {
+	if len(m.slots) <= 1 {
+		m.list.SetPeerSections(nil)
+		return
+	}
+	peers := make([]ui.PeerSection, 0, len(m.slots)-1)
+	for i, slot := range m.slots {
+		if i == m.focusedSlot {
+			continue
+		}
+		p := ui.PeerSection{Name: slot.wsCtx.Name}
+		for _, inst := range slot.list.GetInstances() {
+			st := inst.GetStatus()
+			switch {
+			case st == session.Prompting || inst.BellPending():
+				p.Attention++
+			case st == session.Running || st == session.Loading:
+				p.Running++
+			default:
+				p.Idle++
+			}
+		}
+		peers = append(peers, p)
+	}
+	m.list.SetPeerSections(peers)
 }
 
 // saveOpenWorkspaces persists the current ordered list of open workspace tabs
