@@ -86,6 +86,9 @@ func (l *List) SetWorkspaceName(name string) {
 // SetPeerSections sets the peer-workspace summaries rendered under the rail.
 func (l *List) SetPeerSections(peers []PeerSection) { l.peers = peers }
 
+// PeerSections returns the peer-workspace summaries currently set.
+func (l *List) PeerSections() []PeerSection { return l.peers }
+
 // SelectedIdx returns the current selection index (for jump helpers).
 func (l *List) SelectedIdx() int { return l.selectedIdx }
 

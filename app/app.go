@@ -900,6 +900,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bellMsg:
 		if inst := m.instanceForSession(msg.session); inst != nil && inst != m.list.GetSelectedInstance() {
 			inst.SetBellPending(true)
+			// A bell from a background workspace is the canonical
+			// peer-attention signal — refresh the rail's peer summaries
+			// immediately instead of waiting for the next status event.
+			// (Tab statuses don't consume bells, so no full
+			// updateTabBarStatuses here.)
+			m.refreshPeerSections()
 		}
 		return m, nil
 	case tea.FocusMsg:
@@ -2437,6 +2443,7 @@ func (m *home) refreshPeerSections() {
 			case st == session.Running || st == session.Loading:
 				p.Running++
 			default:
+				// Paused/Deleting/unstarted intentionally count as idle.
 				p.Idle++
 			}
 		}

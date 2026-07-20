@@ -12,23 +12,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRefreshPeerSections_TwoSlots verifies that with two workspace
-// slots, the focused list gains a peer summary for the non-focused
-// slot (rendered as an uppercased footer line), built from that slot's
-// live list.
-func TestRefreshPeerSections_TwoSlots(t *testing.T) {
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	listA := ui.NewList(&s)
-	listB := ui.NewList(&s)
-	listA.SetSize(40, 30)
-
+// peerTestInstance builds an unstarted instance (status Ready) for
+// peer-classification tests.
+func peerTestInstance(t *testing.T, title string) *session.Instance {
+	t.Helper()
 	inst, err := session.NewInstance(session.InstanceOptions{
-		Title:   "b1",
+		Title:   title,
 		Path:    t.TempDir(),
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	_ = listB.AddInstance(inst)
+	return inst
+}
+
+// TestRefreshPeerSections_TwoSlots_Classification verifies that with two
+// workspace slots the focused list gains one peer summary for the
+// non-focused slot, and that each classification branch lands in the
+// right bucket: Prompting and bell-pending → Attention, Running →
+// Running, unstarted (Ready) → Idle.
+func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
+	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	listA := ui.NewList(&s)
+	listB := ui.NewList(&s)
+
+	prompting := peerTestInstance(t, "prompting")
+	require.NoError(t, prompting.TransitionTo(session.Prompting))
+	belled := peerTestInstance(t, "belled")
+	belled.SetBellPending(true)
+	running := peerTestInstance(t, "running")
+	require.NoError(t, running.TransitionTo(session.Running))
+	idle := peerTestInstance(t, "idle")
+
+	for _, inst := range []*session.Instance{prompting, belled, running, idle} {
+		_ = listB.AddInstance(inst)
+	}
 
 	h := &home{
 		list:        listA,
@@ -41,10 +58,9 @@ func TestRefreshPeerSections_TwoSlots(t *testing.T) {
 
 	h.refreshPeerSections()
 
-	out := listA.String()
-	assert.Contains(t, out, "WS-B", "non-focused slot must appear as a peer line")
-	assert.Contains(t, out, "·1", "unstarted instance counts as Idle")
-	assert.NotContains(t, out, "WS-A", "focused slot is not its own peer")
+	assert.Equal(t, []ui.PeerSection{
+		{Name: "ws-b", Attention: 2, Running: 1, Idle: 1},
+	}, listA.PeerSections(), "focused slot skipped; peer counts classified")
 }
 
 // TestRefreshPeerSections_SingleSlotClears verifies that dropping to a
@@ -52,7 +68,6 @@ func TestRefreshPeerSections_TwoSlots(t *testing.T) {
 func TestRefreshPeerSections_SingleSlotClears(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	listA := ui.NewList(&s)
-	listA.SetSize(40, 30)
 	listA.SetPeerSections([]ui.PeerSection{{Name: "stale", Idle: 1}})
 
 	h := &home{
@@ -65,5 +80,5 @@ func TestRefreshPeerSections_SingleSlotClears(t *testing.T) {
 
 	h.refreshPeerSections()
 
-	assert.NotContains(t, listA.String(), "STALE", "single-slot home must clear peer sections")
+	assert.Nil(t, listA.PeerSections(), "single-slot home must clear peer sections")
 }
