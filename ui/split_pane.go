@@ -514,7 +514,7 @@ func (s *SplitPane) String() string {
 	}
 
 	showFocus := s.inlineAttach
-	agentTitle := " Agent" + scrollSuffix(s.agent.ScrollPercent()) + " "
+	agentTitle := s.agentPaneTitle()
 	terminalTitle := " Terminal" + scrollSuffix(s.terminal.ScrollPercent()) + " "
 	agentBox := s.renderPane(agentTitle, s.agent.String(), s.agent.height, showFocus && s.focusedPane == FocusAgent)
 	terminalBox := s.renderPane(terminalTitle, s.terminal.String(), s.terminal.height, showFocus && s.focusedPane == FocusTerminal)
@@ -524,6 +524,29 @@ func (s *SplitPane) String() string {
 	// would otherwise overflow the terminal and push the status/quick-input bar
 	// off-screen.
 	return clampHeight(lipgloss.JoinVertical(lipgloss.Left, agentBox, terminalBox), s.height)
+}
+
+// agentPaneTitle composes the agent pane's border title. Per the
+// focus-mode design mockup it carries the session's branch and diff
+// stats when an instance is attached and started:
+// " Agent · aidan/auth · +12 −3 (42% ↑) ". The scroll suffix survives
+// truncation; the branch/diff text is cut instead so the top border
+// (corners + 2 leading dashes + title) never exceeds the pane width.
+func (s *SplitPane) agentPaneTitle() string {
+	base := "Agent"
+	if s.instance != nil && s.instance.Started() {
+		if br := s.instance.GetBranch(); br != "" {
+			base += " · " + br
+		}
+		if stat := s.instance.GetDiffStats(); stat != nil && stat.Error == nil && !stat.IsEmpty() {
+			base += fmt.Sprintf(" · +%d −%d", stat.Added, stat.Removed)
+		}
+	}
+	suffix := scrollSuffix(s.agent.ScrollPercent())
+	// Border budget: ╭ + ── + title + ╮ ⇒ the full title (incl. its two
+	// surrounding spaces and the suffix) must fit in width-4.
+	budget := s.width - 4 - 2 - lipgloss.Width(suffix)
+	return " " + truncate(base, budget) + suffix + " "
 }
 
 // clampHeight truncates s to at most n rows so a component never overflows its
@@ -612,12 +635,16 @@ func (s *SplitPane) buildTopBorder(title string, focused bool) string {
 	}
 	bc := lipgloss.NewStyle().Foreground(borderColor)
 
-	titleRendered := titleStyle.Render(title)
-	titleWidth := lipgloss.Width(titleRendered)
-
 	// ╭ + ── + title + ─── ... ─── + ╮
 	innerWidth := s.width - 2 // minus corners
 	leftDashes := 2
+
+	// A title longer than the border line would widen the whole pane
+	// past s.width (rightDashes only clamps to zero, it can't shrink
+	// the title) — truncate before styling so no caller can overflow.
+	title = truncate(title, innerWidth-leftDashes)
+	titleRendered := titleStyle.Render(title)
+	titleWidth := lipgloss.Width(titleRendered)
 	rightDashes := innerWidth - leftDashes - titleWidth
 	if rightDashes < 0 {
 		rightDashes = 0

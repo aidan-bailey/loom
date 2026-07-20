@@ -73,7 +73,10 @@ func (d CardData) NeedsAttention() bool {
 
 // BuildCardData snapshots inst into a CardData. spinnerFrame is the
 // current spinner view (pass "" when unavailable). tailN caps the live
-// tail; 0 skips the Preview read entirely (DensityLine callers).
+// tail; 0 skips the screen read entirely (DensityLine callers). The
+// tail comes from Instance.EmulatorScreen — in-memory only, so calling
+// this per visible card per frame forks no subprocesses; snapshot-path
+// instances simply render their status label instead of a tail.
 func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, tailN int) CardData {
 	d := CardData{
 		Title:               inst.Title,
@@ -89,7 +92,7 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 		d.HasDiff, d.DiffAdded, d.DiffRemoved = true, stat.Added, stat.Removed
 	}
 	if tailN > 0 {
-		if screen, err := inst.Preview(); err == nil {
+		if screen, ok := inst.EmulatorScreen(); ok {
 			d.TailLines = TailLines(screen, tailN)
 		}
 	}
@@ -128,7 +131,9 @@ func TailLines(screen string, n int) []string {
 	return out
 }
 
-// accentColor returns the left-bar/border accent for a card.
+// accentColor returns the left-bar/border accent for a card:
+// attention > selected > workspace-terminal > running (OK, the green
+// border the approved mockups give active cards) > Rule.
 func (d CardData) accentColor() color.Color {
 	switch {
 	case d.NeedsAttention():
@@ -137,6 +142,8 @@ func (d CardData) accentColor() color.Color {
 		return Accent
 	case d.IsWorkspaceTerminal:
 		return Workspace
+	case d.Status == session.Running || d.Status == session.Loading:
+		return OK
 	default:
 		return Rule
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -79,5 +80,49 @@ func TestSplitPaneStringBordersReachRightEdge(t *testing.T) {
 				assertRowsReachRightEdge(t, sp.String(), sz.w)
 			})
 		}
+	}
+}
+
+// TestSplitPaneAgentTitleCarriesBranchAndDiff verifies the agent pane's
+// border title shows the attached instance's branch and diff stats
+// (focus-mode design mockup) without ever widening the top border past
+// the pane width.
+func TestSplitPaneAgentTitleCarriesBranchAndDiff(t *testing.T) {
+	// FromInstanceData with a Paused record yields started=true without
+	// spawning tmux — the cheapest way to a Started() instance in a test.
+	inst, err := session.FromInstanceData(session.InstanceData{
+		SchemaVersion: session.CurrentSchemaVersion,
+		Title:         "auth",
+		Path:          t.TempDir(),
+		Branch:        "aidan/auth-refactor",
+		Status:        session.Paused,
+		Worktree: session.GitWorktreeData{
+			RepoPath:    t.TempDir(),
+			SessionName: "auth",
+			BranchName:  "aidan/auth-refactor",
+		},
+		DiffStats: session.DiffStatsData{Added: 12, Removed: 3, Content: "x"},
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("FromInstanceData: %v", err)
+	}
+
+	sp := NewSplitPane(NewPreviewPane(), NewDiffPane(), NewTerminalPane())
+	sp.SetSize(80, 24)
+	sp.SetInstance(inst)
+
+	title := ansi.Strip(sp.agentPaneTitle())
+	if !strings.Contains(title, "aidan/auth-refactor") {
+		t.Errorf("agent title missing branch: %q", title)
+	}
+	if !strings.Contains(title, "+12") || !strings.Contains(title, "−3") {
+		t.Errorf("agent title missing diff stats: %q", title)
+	}
+
+	// The composed output must stay exactly pane-width at every size,
+	// including widths too narrow for the full branch text.
+	for _, w := range []int{80, 40, 24, 12} {
+		sp.SetSize(w, 24)
+		assertRowsReachRightEdge(t, sp.String(), w)
 	}
 }

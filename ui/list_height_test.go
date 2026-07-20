@@ -129,6 +129,36 @@ func TestListString_RendersRailCards(t *testing.T) {
 	assert.Contains(t, out, "▌")             // accent bar
 }
 
+// TestListString_NeverExceedsHeight sweeps degenerate sizes: the rail
+// must never emit more lines than its allocated height, or the
+// alt-screen scrolls and clips the top of the TUI (see clampHeight).
+func TestListString_NeverExceedsHeight(t *testing.T) {
+	_ = log.Initialize("", false)
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	for height := 1; height <= 8; height++ {
+		for _, nPeers := range []int{0, 3, 5} {
+			for _, nItems := range []int{0, 1, 5} {
+				l := NewList(&sp)
+				l.SetSize(30, height)
+				l.SetWorkspaceName("loom")
+				peers := make([]PeerSection, nPeers)
+				for i := range peers {
+					peers[i] = PeerSection{Name: fmt.Sprintf("peer-%d", i), Running: 1}
+				}
+				l.SetPeerSections(peers)
+				for i := 0; i < nItems; i++ {
+					inst := &session.Instance{Title: fmt.Sprintf("inst-%d", i)}
+					_ = inst.TransitionTo(session.Ready)
+					l.AddInstance(inst)
+				}
+				out := l.String()
+				assert.LessOrEqual(t, len(strings.Split(out, "\n")), height,
+					"height=%d peers=%d items=%d: rail output overflows", height, nPeers, nItems)
+			}
+		}
+	}
+}
+
 func TestListString_RendersPeerSummaries(t *testing.T) {
 	_ = log.Initialize("", false)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
@@ -138,5 +168,5 @@ func TestListString_RendersPeerSummaries(t *testing.T) {
 	l.SetPeerSections([]PeerSection{{Name: "summa", Attention: 2, Running: 1, Idle: 3}})
 	out := ansi.Strip(l.String())
 	assert.Contains(t, out, "SUMMA")
-	assert.Contains(t, out, "2") // attention count surfaced
+	assert.Contains(t, out, "❯2") // attention count surfaced with its glyph
 }

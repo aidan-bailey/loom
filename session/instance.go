@@ -778,6 +778,27 @@ func (i *Instance) Preview() (string, error) {
 	return ts.CapturePaneContent()
 }
 
+// EmulatorScreen returns the current visible screen from the in-process
+// VT emulator, or ok=false when the instance is not started, is paused,
+// or has no emulator wired (snapshot path / Windows). Unlike Preview it
+// performs no subprocess work — no tmux has-session liveness probe and
+// no capture-pane fallback — so it is safe to call once per visible
+// card per render frame (the rail's card tails). Two deliberate
+// trade-offs versus Preview: a just-died session may serve one stale
+// screen (the dead-event path handles liveness), and the snapshot path
+// yields no tail at all rather than degrading to a per-frame
+// capture-pane fork (cards fall back to their status label instead).
+func (i *Instance) EmulatorScreen() (string, bool) {
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return "", false
+	}
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return "", false
+	}
+	return ts.RenderEmulator()
+}
+
 // CaptureHistory returns the agent pane's full tmux buffer (scrollback +
 // visible screen) for windowed scroll-back, or ("",false) if unavailable.
 func (i *Instance) CaptureHistory() (string, bool) {

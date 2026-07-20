@@ -35,8 +35,10 @@ type List struct {
 	spinner       *spinner.Model
 	peers         []PeerSection
 
-	// map of repo name to number of instances using it. Used to display the repo name only if there are
-	// multiple repos in play.
+	// map of repo name to number of instances using it. Currently
+	// write-only: the repo badge that read it died with the old
+	// InstanceRenderer row pipeline. The bookkeeping is retained
+	// pending a decision in final cleanup.
 	repos map[string]int
 
 	// workspaceName is the current workspace name, shown in the title
@@ -191,8 +193,9 @@ func (l *List) String() string {
 
 	// Visible window of rail cards, one blank gap line between cards.
 	// See DisplayIndex for the workspace-terminal numbering rule.
+	spinnerFrame := l.spinner.View()
 	for i := startIdx; i < endIdx; i++ {
-		d := BuildCardData(l.items[i], i == l.selectedIdx, l.spinner.View(), 1)
+		d := BuildCardData(l.items[i], i == l.selectedIdx, spinnerFrame, 1)
 		d.Index = DisplayIndex(l.items, i)
 		parts = append(parts, RenderCard(d, DensityRail, l.width))
 		if i != endIdx-1 {
@@ -208,8 +211,12 @@ func (l *List) String() string {
 		}
 	}
 
-	return lipgloss.Place(l.width, l.height, lipgloss.Left, lipgloss.Top,
-		strings.Join(parts, "\n"))
+	// Place pads short content to the full box but GROWS on over-tall
+	// content, which would scroll the alt-screen — clamp hard to the
+	// allocated height (degenerate sizes: clamped maxVisibleItems plus
+	// a large peer footer can exceed a tiny height).
+	return clampHeight(lipgloss.Place(l.width, l.height, lipgloss.Left, lipgloss.Top,
+		strings.Join(parts, "\n")), l.height)
 }
 
 // renderPeerLine renders one peer-workspace summary line: uppercased
