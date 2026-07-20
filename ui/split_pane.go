@@ -51,10 +51,11 @@ func rebuildSplitPaneStyles() {
 }
 
 // SplitPane composes the right-hand side of the TUI: an agent preview
-// on top (70%), a terminal pane below (30%), and a hotkey-toggled diff
-// overlay that replaces both. SplitPane holds the currently-focused
-// pane index and inline-attach flag but does not own scroll state —
-// each child pane manages its own viewport.
+// on top, a terminal pane below (split by the adjustable agentRatio,
+// default SplitAgentPercent; the terminal pane can be hidden entirely),
+// and a hotkey-toggled diff overlay that replaces both. SplitPane
+// holds the currently-focused pane index and inline-attach flag but
+// does not own scroll state — each child pane manages its own viewport.
 type SplitPane struct {
 	agent    *PreviewPane
 	terminal *TerminalPane
@@ -97,9 +98,10 @@ func (s *SplitPane) SetInstance(instance *session.Instance) {
 	s.instance = instance
 }
 
-// SetSize recomputes the 70/30 agent/terminal split for the given
-// container dimensions and propagates widths to every child pane,
-// including the diff overlay which uses the full inner height.
+// SetSize recomputes the agent/terminal split (per AgentRatio, or all
+// agent when the terminal is hidden) for the given container dimensions
+// and propagates widths to every child pane, including the diff overlay
+// which uses the full inner height.
 func (s *SplitPane) SetSize(width, height int) {
 	s.width = width
 	s.height = height
@@ -303,7 +305,9 @@ func (s *SplitPane) UpdateDiff(instance *session.Instance) {
 	s.diff.SetDiff(instance)
 }
 
-// UpdateTerminal updates the terminal pane content. Always updates since it's always visible.
+// UpdateTerminal updates the terminal pane content. It intentionally
+// keeps updating while the pane is hidden so the content stays warm
+// for an instant unhide.
 func (s *SplitPane) UpdateTerminal(instance *session.Instance) error {
 	return s.terminal.UpdateContent(instance)
 }

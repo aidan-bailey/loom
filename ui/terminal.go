@@ -87,6 +87,13 @@ func (t *TerminalPane) SetSize(width, height int) {
 	}
 	t.width = width
 	t.height = height
+	// A hidden pane (height < 1) is inert: record the size but skip the
+	// per-session resize — driving every tmux session to a degenerate size
+	// would churn PTYs for a pane that isn't rendered. The next visible
+	// SetSize re-syncs the sessions.
+	if height < 1 {
+		return
+	}
 	// Resize all cached sessions so that no session has a stale width. A stale
 	// width causes captured lines to be wider than width, which re-wraps when
 	// rendered and overflows the pane's height constraint.

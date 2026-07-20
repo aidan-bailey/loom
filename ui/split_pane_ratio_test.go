@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,4 +46,16 @@ func TestSplitPane_TerminalHiddenGivesAgentEverything(t *testing.T) {
 
 	// AgentContentHeight matches for the app's mouse anchor.
 	assert.Equal(t, 42, s.AgentContentHeight())
+}
+
+func TestSplitPane_HiddenTerminalStringKeepsAgentChrome(t *testing.T) {
+	s := newTestSplit()
+	s.SetSize(80, 44)
+	s.SetTerminalHidden(true)
+
+	out := s.String()
+	lines := strings.Split(out, "\n")
+	assert.LessOrEqual(t, len(lines), 44, "one-pane output must fit the allocated height")
+	// The agent pane's bottom border survives the one-pane chrome.
+	assert.Contains(t, lines[len(lines)-1], "╰")
 }

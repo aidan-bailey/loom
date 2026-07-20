@@ -295,6 +295,9 @@ type home struct {
 	// (= int(lastWidth * ListWidthPercent)). Cached for mouse-wheel
 	// hit-testing in the tea.MouseMsg branch.
 	listWidth int
+	// railHidden hides the left session-list rail, giving the split
+	// pane the full width. Persisted via config.UIPrefs.RailHidden.
+	railHidden bool
 	// agentBottomY is the screen Y (inclusive) of the last row of the
 	// agent pane's bottom border. Mouse events with Y <= agentBottomY
 	// route to the agent pane; anything greater routes to the terminal
@@ -635,6 +638,9 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.tabBar.SetWidth(msg.Width)
 
 	listWidth := int(float32(msg.Width) * ui.ListWidthPercent)
+	if m.railHidden {
+		listWidth = 0
+	}
 	paneWidth := msg.Width - listWidth
 
 	// Content gets all height minus tab bar, status line (1), and error box (1).
@@ -674,6 +680,43 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	agentWidth, agentHeight := m.splitPane.GetAgentSize()
 	if err := m.list.SetSessionPreviewSize(agentWidth, agentHeight); err != nil {
 		log.For("app").Error("session_preview_size_failed", "err", err)
+	}
+}
+
+// applyUIPrefs pushes persisted layout prefs onto the components.
+// Called after a slot is loaded/focused and at startup (the startup
+// path runs through loadSlot).
+func (m *home) applyUIPrefs() {
+	if m.appState == nil {
+		// Bare test homes construct no app state; nothing to apply.
+		return
+	}
+	p := m.appState.GetUIPrefs()
+	m.railHidden = p.RailHidden
+	m.splitPane.SetTerminalHidden(p.TerminalHidden)
+	if sel := m.list.GetSelectedInstance(); sel != nil {
+		if r, ok := p.SplitRatios[sel.Title]; ok {
+			m.splitPane.SetAgentRatio(r)
+		}
+	}
+	if m.lastWidth > 0 {
+		m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+	}
+}
+
+// mutateUIPrefs applies fn to a copy of the prefs and persists; save
+// errors are logged, not surfaced (layout prefs are best-effort).
+// Persistence is a synchronous write-through to state.json — fine for
+// rare toggles; debounce burst callers (e.g. key-repeat ratio changes).
+func (m *home) mutateUIPrefs(fn func(*config.UIPrefs)) {
+	if m.appState == nil {
+		// Bare test homes construct no app state; nothing to persist.
+		return
+	}
+	p := m.appState.GetUIPrefs()
+	fn(&p)
+	if err := m.appState.SetUIPrefs(p); err != nil {
+		log.For("app").Warn("ui_prefs_save_failed", "err", err)
 	}
 }
 
@@ -1581,6 +1624,15 @@ func (m *home) instanceChanged() tea.Cmd {
 		selected.SetBellPending(false)
 	}
 
+	// Re-apply the newly selected instance's persisted split ratio so
+	// switching sessions restores its layout. Guard appState — tests may
+	// construct bare homes.
+	if m.appState != nil && selected != nil {
+		if r, ok := m.appState.GetUIPrefs().SplitRatios[selected.Title]; ok {
+			m.splitPane.SetAgentRatio(r)
+		}
+	}
+
 	newFocusTitle := ""
 	if selected != nil {
 		newFocusTitle = selected.Title
@@ -2216,6 +2268,10 @@ func (m *home) loadSlot(idx int) {
 		m.splitPane.SetSize(paneWidth, contentHeight)
 	}
 	m.refreshPeerSections()
+	// The freshly-loaded slot's components carry no layout prefs yet;
+	// re-apply the persisted rail/terminal/ratio state (re-runs the
+	// window-size layout when sized, superseding the interim resize above).
+	m.applyUIPrefs()
 }
 
 // applyWorkspaceToggle diffs the current slots against the desired list,
@@ -2498,7 +2554,10 @@ func (m *home) View() tea.View {
 		v.ReportFocus = true
 		return v
 	}
-	listView := m.list.String()
+	listView := ""
+	if !m.railHidden {
+		listView = m.list.String()
+	}
 	// The file explorer is the only overlay that wholly replaces the
 	// right pane rather than floating on top of it. Keeping the list
 	// visible is the whole point of this state, so it renders

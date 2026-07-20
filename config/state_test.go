@@ -164,4 +164,9 @@ func TestUIPrefs_RoundTrip(t *testing.T) {
 	// Returned map is a copy — caller mutation must not leak back.
 	got.SplitRatios["auth"] = 0.1
 	assert.Equal(t, 0.8, s2.GetUIPrefs().SplitRatios["auth"])
+
+	// Write side clones too — mutating the prefs passed to SetUIPrefs
+	// after the call must not leak into the stored state.
+	p.SplitRatios["auth"] = 0.3
+	assert.Equal(t, 0.8, s.GetUIPrefs().SplitRatios["auth"])
 }
