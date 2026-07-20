@@ -648,19 +648,14 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.splitPane.SetSize(paneWidth, contentHeight)
 	m.list.SetSize(listWidth, contentHeight)
 
-	// Cache mouse-wheel hit-test anchors. Mirrors SplitPane.SetSize's
-	// own arithmetic — kept in sync here rather than added as a
-	// SplitPane accessor because the mouse handler lives in app/.
+	// Cache mouse-wheel hit-test anchors. The agent pane's inner height
+	// comes straight from the SplitPane via AgentContentHeight() —
+	// SetSize ran above, so the accessor reflects the current
+	// ratio/hidden-terminal layout.
 	m.listWidth = listWidth
-	const paneChromePerPane = 2 // 1 top border + 1 bottom border
-	availableHeight := contentHeight - 2*paneChromePerPane
-	if availableHeight < 0 {
-		availableHeight = 0
-	}
-	agentContentHeight := int(float64(availableHeight) * ui.SplitAgentPercent)
 	// Screen-Y inclusive end of the agent's bottom border:
 	//   tabBar + 1 (agent top border) + content + 1 (agent bottom border) - 1
-	m.agentBottomY = m.tabBar.Height() + 1 + agentContentHeight
+	m.agentBottomY = m.tabBar.Height() + 1 + m.splitPane.AgentContentHeight()
 
 	if m.activeOverlay != nil {
 		if m.activeOverlayKind == overlayFileExplorer {
@@ -1043,7 +1038,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case tea.MouseWheelDown:
 					m.splitPane.ScrollDiffDown()
 				}
-			case mouse.Y <= m.agentBottomY:
+			// With the terminal pane hidden the agent owns the whole
+			// right-hand column, so wheel events below the anchor
+			// (bottom border/status rows) go to the agent instead of
+			// scrolling an invisible terminal.
+			case mouse.Y <= m.agentBottomY || m.splitPane.IsTerminalHidden():
 				switch mouse.Button {
 				case tea.MouseWheelUp:
 					m.splitPane.ScrollAgentUp()

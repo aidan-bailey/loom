@@ -2,10 +2,12 @@ package ui
 
 import (
 	"fmt"
+	"math"
+	"strings"
+
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
-	"strings"
 
 	"charm.land/lipgloss/v2"
 )
@@ -62,6 +64,12 @@ type SplitPane struct {
 	inlineAttach bool
 	diffVisible  bool
 
+	// agentRatio is the agent pane's share of the available height
+	// (0 means "unset, use SplitAgentPercent"); terminalHidden gives
+	// the agent pane everything.
+	agentRatio     float64
+	terminalHidden bool
+
 	height int
 	width  int
 
@@ -109,11 +117,19 @@ func (s *SplitPane) SetSize(width, height int) {
 
 	// Each pane = 1 (top border w/ title) + content + bodyBorderV (bottom border)
 	// Two panes: 2 top lines + 2× bodyBorderV + agentContent + terminalContent = height
-	paneChrome := 2 * (1 + bodyBorderV) // 2 panes × (top line + bottom border)
+	panes := 2
+	if s.terminalHidden {
+		panes = 1
+	}
+	paneChrome := panes * (1 + bodyBorderV) // per pane: top line + bottom border
 	availableHeight := max(height-paneChrome, 0)
 
-	agentHeight := int(float64(availableHeight) * SplitAgentPercent)
-	terminalHeight := availableHeight - agentHeight
+	agentHeight := availableHeight
+	terminalHeight := 0
+	if !s.terminalHidden {
+		agentHeight = int(float64(availableHeight) * s.AgentRatio())
+		terminalHeight = availableHeight - agentHeight
+	}
 
 	s.agent.SetSize(contentWidth, agentHeight)
 	s.terminal.SetSize(contentWidth, terminalHeight)
@@ -128,6 +144,56 @@ func (s *SplitPane) SetSize(width, height int) {
 func (s *SplitPane) GetAgentSize() (width, height int) {
 	return s.agent.width, s.agent.height
 }
+
+// AgentRatio returns the agent pane's height share (default
+// SplitAgentPercent when unset).
+func (s *SplitPane) AgentRatio() float64 {
+	if s.agentRatio == 0 {
+		return SplitAgentPercent
+	}
+	return s.agentRatio
+}
+
+// SetAgentRatio sets the agent share (clamped to [0.2, 0.9]) and
+// re-lays-out at the current size. The ratio is snapped to two
+// decimals so repeated ±delta nudges don't accumulate float drift
+// (0.7+0.1 = 0.7999… would truncate a row short in SetSize).
+func (s *SplitPane) SetAgentRatio(r float64) {
+	r = math.Round(r*100) / 100
+	if r < 0.2 {
+		r = 0.2
+	}
+	if r > 0.9 {
+		r = 0.9
+	}
+	s.agentRatio = r
+	if s.width > 0 && s.height > 0 {
+		s.SetSize(s.width, s.height)
+	}
+}
+
+// AdjustAgentRatio nudges the split by delta and returns the new ratio.
+func (s *SplitPane) AdjustAgentRatio(delta float64) float64 {
+	s.SetAgentRatio(s.AgentRatio() + delta)
+	return s.AgentRatio()
+}
+
+// SetTerminalHidden shows/hides the terminal pane; hidden gives the
+// agent pane the full height.
+func (s *SplitPane) SetTerminalHidden(h bool) {
+	s.terminalHidden = h
+	if s.width > 0 && s.height > 0 {
+		s.SetSize(s.width, s.height)
+	}
+}
+
+// IsTerminalHidden reports whether the terminal pane is hidden.
+func (s *SplitPane) IsTerminalHidden() bool { return s.terminalHidden }
+
+// AgentContentHeight is the agent pane's inner height — the app's
+// mouse hit-test anchor mirrors layout through this instead of
+// duplicating the math.
+func (s *SplitPane) AgentContentHeight() int { return s.agent.height }
 
 // SetInlineAttach toggles whether inline-attach mode is active,
 // controlling whether the focused-pane highlight is rendered.
@@ -172,6 +238,9 @@ func (s *SplitPane) HitTest(localX, y int) (pane, row, col int, ok bool) {
 	// Agent content occupies rows [1, 1+agentHeight); row 0 is the title border.
 	if y >= 1 && y < 1+s.agent.height {
 		return FocusAgent, y - 1, col, true
+	}
+	if s.terminalHidden {
+		return 0, 0, 0, false // no terminal region when hidden
 	}
 	// Terminal content starts after agent title + agent body + agent bottom
 	// border + terminal title = agent.height + 3.
@@ -515,14 +584,17 @@ func (s *SplitPane) String() string {
 
 	showFocus := s.inlineAttach
 	agentTitle := s.agentPaneTitle()
-	terminalTitle := " Terminal" + scrollSuffix(s.terminal.ScrollPercent()) + " "
 	agentBox := s.renderPane(agentTitle, s.agent.String(), s.agent.height, showFocus && s.focusedPane == FocusAgent)
-	terminalBox := s.renderPane(terminalTitle, s.terminal.String(), s.terminal.height, showFocus && s.focusedPane == FocusTerminal)
 
 	// Hard-clamp to the allocated height: if a pane's content ever renders taller
 	// than its box (e.g. an over-wide line wraps into extra rows), the whole view
 	// would otherwise overflow the terminal and push the status/quick-input bar
 	// off-screen.
+	if s.terminalHidden {
+		return clampHeight(agentBox, s.height)
+	}
+	terminalTitle := " Terminal" + scrollSuffix(s.terminal.ScrollPercent()) + " "
+	terminalBox := s.renderPane(terminalTitle, s.terminal.String(), s.terminal.height, showFocus && s.focusedPane == FocusTerminal)
 	return clampHeight(lipgloss.JoinVertical(lipgloss.Left, agentBox, terminalBox), s.height)
 }
 
