@@ -147,6 +147,9 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 		s.mode = settingsClaudePrefsSub
 	case settingsFieldTheme:
 		names := ui.ThemeNames()
+		if len(names) == 0 {
+			return false, false
+		}
 		cur := s.cfg.GetTheme()
 		if cur == "" {
 			cur = ui.DefaultThemeName
@@ -157,6 +160,7 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 		for i, n := range names {
 			if n == cur {
 				idx = i
+				break
 			}
 		}
 		next := names[(idx+1)%len(names)]

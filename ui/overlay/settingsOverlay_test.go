@@ -88,13 +88,11 @@ func TestSettingsOverlayEditsDefaultProgram(t *testing.T) {
 
 func TestSettingsOverlay_ThemeRowCycles(t *testing.T) {
 	defer ui.ApplyTheme(ui.DefaultThemeName)
-	cfg := config.DefaultConfig() // Theme: "afterglow"
+	cfg := newTestSettingsCfg()
+	cfg.Theme = "afterglow"
 	so := NewSettingsOverlay(cfg, false, "")
 
-	// Move cursor to the Theme row (last row).
-	for i := 0; i < int(settingsFieldCount)-1; i++ {
-		so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
-	}
+	so.cursor = int(settingsFieldTheme)
 	closed, changed := so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.False(t, closed)
 	assert.True(t, changed)
@@ -119,6 +117,13 @@ func TestSettingsOverlay_ThemeRowCyclesFromUnknownName(t *testing.T) {
 	_, changed := so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
 	assert.Contains(t, ui.ThemeNames(), cfg.GetTheme())
+}
+
+// Pins the cross-package invariant promised by the comment on
+// config.DefaultConfig's Theme field (config cannot import ui, so only
+// this package can assert it).
+func TestDefaultConfigThemeMatchesUIDefault(t *testing.T) {
+	assert.Equal(t, ui.DefaultThemeName, config.DefaultConfig().Theme)
 }
 
 func TestSettingsOverlayEscCancelsTextEdit(t *testing.T) {
