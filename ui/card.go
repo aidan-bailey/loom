@@ -36,6 +36,16 @@ const (
 	RailHeaderLines = 2
 )
 
+// PeerSection summarizes a non-focused workspace slot for the rail
+// footer (live counts from that slot's list; selection stays scoped to
+// the focused workspace until cross-workspace lands).
+type PeerSection struct {
+	Name      string
+	Attention int // Prompting or bell-pending
+	Running   int // Running/Loading
+	Idle      int // everything else
+}
+
 // CardData is the render-ready view-model for one instance card. It is
 // plain data so RenderCard stays a pure, table-testable function; build
 // it from a live instance with BuildCardData.

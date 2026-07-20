@@ -11,8 +11,9 @@ import (
 )
 
 // List height that yields exactly maxVisibleItems() == 3
-// (formula: n = (height - 3) / 5, so height = 18 gives n = 3).
-const pageNavTestHeight = 18
+// (formula: n = (height - RailHeaderLines) / RailCardLines, so
+// height = 11 gives n = (11 - 2) / 3 = 3).
+const pageNavTestHeight = 11
 
 // newPageNavList builds a list containing n instances and sizes it so
 // maxVisibleItems() returns pageSize. Every item starts as Running;

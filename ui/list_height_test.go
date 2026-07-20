@@ -98,3 +98,45 @@ func TestListRenderDimensions(t *testing.T) {
 		})
 	}
 }
+
+func TestMaxVisibleItems_RailMath(t *testing.T) {
+	_ = log.Initialize("", false)
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	l := NewList(&sp)
+	// height 20: (20 - RailHeaderLines) / RailCardLines = 6
+	l.SetSize(30, 20)
+	assert.Equal(t, 6, l.maxVisibleItems())
+	// Peer sections consume bottom lines: 2 peers = blank + 2 lines.
+	l.SetPeerSections([]PeerSection{{Name: "a"}, {Name: "b"}})
+	assert.Equal(t, 5, l.maxVisibleItems())
+	// Tiny heights clamp to 1.
+	l.SetSize(30, 3)
+	assert.Equal(t, 1, l.maxVisibleItems())
+}
+
+func TestListString_RendersRailCards(t *testing.T) {
+	_ = log.Initialize("", false)
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	l := NewList(&sp)
+	l.SetWorkspaceName("loom")
+	l.SetSize(40, 30)
+	inst := &session.Instance{Title: "auth-refactor"}
+	_ = inst.TransitionTo(session.Ready)
+	l.AddInstance(inst)
+	out := ansi.Strip(l.String())
+	assert.Contains(t, out, "LOOM")          // section label, uppercased
+	assert.Contains(t, out, "auth-refactor") // card title
+	assert.Contains(t, out, "▌")             // accent bar
+}
+
+func TestListString_RendersPeerSummaries(t *testing.T) {
+	_ = log.Initialize("", false)
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	l := NewList(&sp)
+	l.SetWorkspaceName("loom")
+	l.SetSize(40, 30)
+	l.SetPeerSections([]PeerSection{{Name: "summa", Attention: 2, Running: 1, Idle: 3}})
+	out := ansi.Strip(l.String())
+	assert.Contains(t, out, "SUMMA")
+	assert.Contains(t, out, "2") // attention count surfaced
+}

@@ -12,56 +12,28 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-const readyIcon = "● "
-const promptingIcon = "● "
-const pausedIcon = "⏸ "
-const deletingIcon = "✕ "
-const recoverableIcon = "⟲ "
-const workspaceTerminalIcon = "◆ "
-
-var (
-	readyStyle, promptingStyle, addedLinesStyle, removedLinesStyle,
-	pausedStyle, deletingStyle, recoverableStyle, deletingTitleStyle,
-	deletingDescStyle, workspaceTerminalStyle, wtTitleStyle, wtDescStyle,
-	wtSelectedTitleStyle, wtSelectedDescStyle, titleStyle, listDescStyle,
-	selectedTitleStyle, selectedDescStyle, mainTitle lipgloss.Style
-)
+var workspaceLabelStyle, railAttentionStyle, railDimStyle lipgloss.Style
 
 func init() { RegisterThemeHook(rebuildListStyles) }
 
 func rebuildListStyles() {
-	readyStyle = lipgloss.NewStyle().Foreground(OK)
-	promptingStyle = lipgloss.NewStyle().Foreground(Attention)
-	addedLinesStyle = lipgloss.NewStyle().Foreground(OK)
-	removedLinesStyle = lipgloss.NewStyle().Foreground(ErrorColor)
-	pausedStyle = lipgloss.NewStyle().Foreground(Dim)
-	deletingStyle = lipgloss.NewStyle().Foreground(ErrorColor)
-	recoverableStyle = lipgloss.NewStyle().Foreground(Attention)
-	deletingTitleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Foreground(Dim)
-	deletingDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Foreground(Dim)
-	workspaceTerminalStyle = lipgloss.NewStyle().Foreground(Workspace)
-	wtTitleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Background(Panel).Foreground(Text)
-	wtDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Background(Panel).Foreground(Workspace)
-	wtSelectedTitleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Background(SelectionBg).Foreground(SelectionFg)
-	wtSelectedDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Background(SelectionBg).Foreground(Workspace)
-	titleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Foreground(Text)
-	listDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Foreground(Dim)
-	selectedTitleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Background(SelectionBg).Foreground(SelectionFg)
-	selectedDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Background(SelectionBg).Foreground(SelectionFg)
-	mainTitle = lipgloss.NewStyle().Background(Accent).Foreground(SelectionFg)
+	workspaceLabelStyle = lipgloss.NewStyle().Foreground(Workspace)
+	railAttentionStyle = lipgloss.NewStyle().Foreground(Attention)
+	railDimStyle = lipgloss.NewStyle().Foreground(Dim)
 }
 
-// List is the left-panel instance list. It owns the selection cursor
-// and viewport scroll offset, and delegates per-row rendering to
-// [InstanceRenderer]. The list does not spawn goroutines or mutate
-// Instance state beyond reordering; all status is read via the
+// List is the left-panel session rail. It owns the selection cursor
+// and viewport scroll offset, and delegates per-item rendering to
+// [RenderCard] at [DensityRail]. The list does not spawn goroutines or
+// mutate Instance state beyond reordering; all status is read via the
 // Instance accessors.
 type List struct {
 	items         []*session.Instance
 	selectedIdx   int
 	scrollOffset  int // index of the first visible item in the viewport
 	height, width int
-	renderer      *InstanceRenderer
+	spinner       *spinner.Model
+	peers         []PeerSection
 
 	// map of repo name to number of instances using it. Used to display the repo name only if there are
 	// multiple repos in play.
@@ -76,9 +48,9 @@ type List struct {
 // immediately.
 func NewList(spinner *spinner.Model) *List {
 	return &List{
-		items:    []*session.Instance{},
-		renderer: &InstanceRenderer{spinner: spinner},
-		repos:    make(map[string]int),
+		items:   []*session.Instance{},
+		spinner: spinner,
+		repos:   make(map[string]int),
 	}
 }
 
@@ -86,7 +58,6 @@ func NewList(spinner *spinner.Model) *List {
 func (l *List) SetSize(width, height int) {
 	l.width = width
 	l.height = height
-	l.renderer.setWidth(width)
 }
 
 // SetSessionPreviewSize sets the height and width for the tmux sessions. This makes the stdout line have the correct
@@ -110,16 +81,24 @@ func (l *List) SetWorkspaceName(name string) {
 	l.workspaceName = name
 }
 
-// maxVisibleItems returns the maximum number of items that fit in the
-// list's current height. The layout is:
-//
-//	header: 4 lines (2 blank + title + 1 blank)
-//	each item: 4 lines (top-pad + title + branch + bottom-pad)
-//	separator between items: 1 line
-//
-// So N items occupy 4 + 4N + (N-1) = 3 + 5N lines.
+// SetPeerSections sets the peer-workspace summaries rendered under the rail.
+func (l *List) SetPeerSections(peers []PeerSection) { l.peers = peers }
+
+// SelectedIdx returns the current selection index (for jump helpers).
+func (l *List) SelectedIdx() int { return l.selectedIdx }
+
+// peerLines is the vertical budget the peer footer consumes.
+func (l *List) peerLines() int {
+	if len(l.peers) == 0 {
+		return 0
+	}
+	return len(l.peers) + 1 // blank separator + one line per peer
+}
+
+// maxVisibleItems returns how many rail cards fit: header (2 lines) +
+// RailCardLines per item, minus the peer footer.
 func (l *List) maxVisibleItems() int {
-	n := (l.height - 3) / 5
+	n := (l.height - RailHeaderLines - l.peerLines()) / RailCardLines
 	if n < 1 {
 		n = 1
 	}
@@ -161,16 +140,6 @@ func (l *List) NumInstances() int {
 	return len(l.items)
 }
 
-// InstanceRenderer handles rendering of session.Instance objects
-type InstanceRenderer struct {
-	spinner *spinner.Model
-	width   int
-}
-
-func (r *InstanceRenderer) setWidth(width int) {
-	r.width = AdjustPreviewWidth(width)
-}
-
 // DisplayIndex returns the 1-based number shown in the list UI for the
 // item at position i in items. A leading workspace terminal (position
 // 0) is numbered 0, not 1, so every other item's displayed number is
@@ -186,171 +155,6 @@ func DisplayIndex(items []*session.Instance, i int) int {
 	return i + 1 - wsOffset
 }
 
-// ɹ and ɻ are other options.
-const branchIcon = "Ꮧ"
-
-// Render produces the single-line representation of instance i at the
-// given index, applying the style preset matching the instance's
-// status and selection flag. hasMultipleRepos controls whether a repo
-// badge is appended to disambiguate cross-workspace lists.
-func (r *InstanceRenderer) Render(i *session.Instance, idx int, selected bool, hasMultipleRepos bool) string {
-	prefix := fmt.Sprintf(" %d. ", idx)
-	if idx >= 10 {
-		prefix = prefix[:len(prefix)-1]
-	}
-	var titleS, descS lipgloss.Style
-	switch {
-	case i.GetStatus() == session.Deleting:
-		titleS = deletingTitleStyle
-		descS = deletingDescStyle
-	case i.IsWorkspaceTerminal && selected:
-		titleS = wtSelectedTitleStyle
-		descS = wtSelectedDescStyle
-	case i.IsWorkspaceTerminal:
-		titleS = wtTitleStyle
-		descS = wtDescStyle
-	case selected:
-		titleS = selectedTitleStyle
-		descS = selectedDescStyle
-	default:
-		titleS = titleStyle
-		descS = listDescStyle
-	}
-
-	// add spinner next to title if it's running
-	status := i.GetStatus()
-	var join string
-	if i.IsWorkspaceTerminal {
-		// Workspace terminal always shows its distinct icon, plus spinner if running
-		if status == session.Running || status == session.Loading {
-			join = fmt.Sprintf("%s%s ", workspaceTerminalStyle.Render(workspaceTerminalIcon), r.spinner.View())
-		} else if status == session.Prompting {
-			join = fmt.Sprintf("%s%s", workspaceTerminalStyle.Render(workspaceTerminalIcon), promptingStyle.Render(promptingIcon))
-		} else if status == session.Deleting {
-			join = deletingStyle.Render(deletingIcon)
-		} else {
-			join = workspaceTerminalStyle.Render(workspaceTerminalIcon)
-		}
-	} else {
-		switch status {
-		case session.Running, session.Loading:
-			join = fmt.Sprintf("%s ", r.spinner.View())
-		case session.Prompting:
-			join = promptingStyle.Render(promptingIcon)
-		case session.Ready:
-			join = readyStyle.Render(readyIcon)
-		case session.Paused:
-			join = pausedStyle.Render(pausedIcon)
-		case session.Recoverable:
-			join = recoverableStyle.Render(recoverableIcon)
-		case session.Deleting:
-			join = deletingStyle.Render(deletingIcon)
-		default:
-		}
-	}
-
-	if i.BellPending() {
-		join = promptingStyle.Render("● ") + join
-	}
-
-	// Compute the width of the join suffix (status icon / spinner) so the
-	// Place block can shrink to keep the total within the padded width.
-	// Without this, workspace-terminal items (wider icon) overflow l.width,
-	// causing lipgloss.JoinHorizontal to widen every list line past the
-	// terminal width and scroll the alt-screen.
-	joinWidth := lipgloss.Width(join)
-	placeWidth := r.width - 1 - joinWidth // 1 for the " " separator
-	if placeWidth < 1 {
-		placeWidth = 1
-	}
-
-	// Cut the title if it's too long
-	titleText := i.Title
-	widthAvail := placeWidth - runewidth.StringWidth(prefix) - 1
-	if widthAvail > 0 && runewidth.StringWidth(titleText) > widthAvail {
-		titleText = runewidth.Truncate(titleText, widthAvail-3, "...")
-	}
-	title := titleS.Render(lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		lipgloss.Place(placeWidth, 1, lipgloss.Left, lipgloss.Center, fmt.Sprintf("%s %s", prefix, titleText)),
-		" ",
-		join,
-	))
-
-	stat := i.GetDiffStats()
-
-	var diff string
-	var addedDiff, removedDiff string
-	if stat == nil || stat.Error != nil || stat.IsEmpty() {
-		// Don't show diff stats if there's an error or if they don't exist
-		addedDiff = ""
-		removedDiff = ""
-		diff = ""
-	} else {
-		addedDiff = fmt.Sprintf("+%d", stat.Added)
-		removedDiff = fmt.Sprintf("-%d ", stat.Removed)
-		diff = lipgloss.JoinHorizontal(
-			lipgloss.Center,
-			addedLinesStyle.Background(descS.GetBackground()).Render(addedDiff),
-			lipgloss.Style{}.Background(descS.GetBackground()).Foreground(descS.GetForeground()).Render(","),
-			removedLinesStyle.Background(descS.GetBackground()).Render(removedDiff),
-		)
-	}
-
-	remainingWidth := r.width
-	remainingWidth -= runewidth.StringWidth(prefix)
-	remainingWidth -= runewidth.StringWidth(branchIcon)
-	remainingWidth -= 2 // for the literal " " and "-" in the branchLine format string
-
-	diffWidth := runewidth.StringWidth(addedDiff) + runewidth.StringWidth(removedDiff)
-	if diffWidth > 0 {
-		diffWidth += 1
-	}
-
-	// Use fixed width for diff stats to avoid layout issues
-	remainingWidth -= diffWidth
-
-	branch := i.GetBranch()
-	if i.Started() && hasMultipleRepos {
-		repoName, err := i.RepoName()
-		if err != nil {
-			log.For("ui").Error("list.repo_name_failed", "context", "instance_renderer", "err", err)
-		} else {
-			branch += fmt.Sprintf(" (%s)", repoName)
-		}
-	}
-	// Don't show branch if there's no space for it. Or show ellipsis if it's too long.
-	branchWidth := runewidth.StringWidth(branch)
-	if remainingWidth < 0 {
-		branch = ""
-	} else if remainingWidth < branchWidth {
-		if remainingWidth < 3 {
-			branch = ""
-		} else {
-			// We know the remainingWidth is at least 4 and branch is longer than that, so this is safe.
-			branch = runewidth.Truncate(branch, remainingWidth-3, "...")
-		}
-	}
-	remainingWidth -= runewidth.StringWidth(branch)
-
-	// Add spaces to fill the remaining width.
-	spaces := ""
-	if remainingWidth > 0 {
-		spaces = strings.Repeat(" ", remainingWidth)
-	}
-
-	branchLine := fmt.Sprintf("%s %s-%s%s%s", strings.Repeat(" ", len(prefix)), branchIcon, branch, spaces, diff)
-
-	// join title and subtitle
-	text := lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		descS.Render(branchLine),
-	)
-
-	return text
-}
-
 func (l *List) String() string {
 	l.ensureSelectedVisible()
 
@@ -361,49 +165,73 @@ func (l *List) String() string {
 		endIdx = len(l.items)
 	}
 
-	titleText := " Instances "
+	titleText := "Instances"
 	if l.workspaceName != "" {
-		titleText = fmt.Sprintf(" %s ", l.workspaceName)
+		titleText = l.workspaceName
 	}
 
-	// Show scroll indicators in title when the list is truncated.
+	// Show scroll indicators in the header when the rail is truncated.
 	hasAbove := startIdx > 0
 	hasBelow := endIdx < len(l.items)
-	if hasAbove || hasBelow {
-		arrow := " ↓"
-		if hasAbove && hasBelow {
-			arrow = " ↕"
-		} else if hasAbove {
-			arrow = " ↑"
-		}
-		titleText = fmt.Sprintf("%s%s ", strings.TrimRight(titleText, " "), arrow)
+	arrow := ""
+	switch {
+	case hasAbove && hasBelow:
+		arrow = " ↕"
+	case hasAbove:
+		arrow = " ↑"
+	case hasBelow:
+		arrow = " ↓"
 	}
 
-	// Write the title.
-	var b strings.Builder
-	b.WriteString("\n")
-	b.WriteString("\n")
+	// Section header (RailHeaderLines): workspace label + blank line.
+	parts := []string{
+		workspaceLabelStyle.Render(truncate(" "+strings.ToUpper(titleText)+arrow, l.width)),
+		"",
+	}
 
-	// Write title line
-	// add padding of 2 because the border on list items adds some extra characters
-	titleWidth := AdjustPreviewWidth(l.width) + 2
-	b.WriteString(lipgloss.Place(
-		titleWidth, 1, lipgloss.Left, lipgloss.Bottom, mainTitle.Render(titleText)))
-
-	b.WriteString("\n")
-	b.WriteString("\n")
-
-	// Render only the visible window of items. See DisplayIndex for the
-	// workspace-terminal numbering rule.
+	// Visible window of rail cards, one blank gap line between cards.
+	// See DisplayIndex for the workspace-terminal numbering rule.
 	for i := startIdx; i < endIdx; i++ {
-		item := l.items[i]
-		num := DisplayIndex(l.items, i)
-		b.WriteString(l.renderer.Render(item, num, i == l.selectedIdx, len(l.repos) > 1))
+		d := BuildCardData(l.items[i], i == l.selectedIdx, l.spinner.View(), 1)
+		d.Index = DisplayIndex(l.items, i)
+		parts = append(parts, RenderCard(d, DensityRail, l.width))
 		if i != endIdx-1 {
-			b.WriteString("\n\n")
+			parts = append(parts, "")
 		}
 	}
-	return lipgloss.Place(l.width, l.height, lipgloss.Left, lipgloss.Top, b.String())
+
+	// Peer-workspace footer: blank separator + one summary line per peer.
+	if len(l.peers) > 0 {
+		parts = append(parts, "")
+		for _, p := range l.peers {
+			parts = append(parts, l.renderPeerLine(p))
+		}
+	}
+
+	return lipgloss.Place(l.width, l.height, lipgloss.Left, lipgloss.Top,
+		strings.Join(parts, "\n"))
+}
+
+// renderPeerLine renders one peer-workspace summary line: uppercased
+// name plus compact status counts ("❯2 ✻1 ·3"), omitting zero
+// segments. The attention count is the only loud (Attention-colored)
+// element; the rest stays Dim.
+func (l *List) renderPeerLine(p PeerSection) string {
+	var att, rest string
+	if p.Attention > 0 {
+		att = fmt.Sprintf(" ❯%d", p.Attention)
+	}
+	if p.Running > 0 {
+		rest += fmt.Sprintf(" ✻%d", p.Running)
+	}
+	if p.Idle > 0 {
+		rest += fmt.Sprintf(" ·%d", p.Idle)
+	}
+	nameBudget := l.width - 1 - runewidth.StringWidth(att) - runewidth.StringWidth(rest)
+	name := truncate(strings.ToUpper(p.Name), nameBudget)
+	return workspaceLabelStyle.Render(" "+name) +
+		railAttentionStyle.Render(att) +
+		railDimStyle.Render(rest)
 }
 
 // Down selects the next non-Deleting item in the list. If every item
