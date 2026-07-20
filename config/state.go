@@ -35,6 +35,33 @@ type AppState interface {
 	GetHelpScreensSeen() uint32
 	// SetHelpScreensSeen updates the bitmask of seen help screens
 	SetHelpScreensSeen(seen uint32) error
+	// GetUIPrefs returns a copy of the persisted UI layout prefs.
+	GetUIPrefs() UIPrefs
+	// SetUIPrefs replaces and persists the UI layout prefs.
+	SetUIPrefs(p UIPrefs) error
+}
+
+// UIPrefs is per-workspace UI layout state (view mode, rail/terminal
+// visibility, per-session split ratios). Stored in state.json, so each
+// workspace keeps its own layout.
+type UIPrefs struct {
+	ViewMode       string             `json:"view_mode,omitempty"`
+	RailHidden     bool               `json:"rail_hidden,omitempty"`
+	TerminalHidden bool               `json:"terminal_hidden,omitempty"`
+	SplitRatios    map[string]float64 `json:"split_ratios,omitempty"`
+}
+
+// clone deep-copies the prefs so callers can mutate the returned value
+// (including the SplitRatios map) without affecting the stored state.
+func (p UIPrefs) clone() UIPrefs {
+	out := p
+	if p.SplitRatios != nil {
+		out.SplitRatios = make(map[string]float64, len(p.SplitRatios))
+		for k, v := range p.SplitRatios {
+			out.SplitRatios[k] = v
+		}
+	}
+	return out
 }
 
 // StateManager combines instance storage and app state management
@@ -59,6 +86,8 @@ type State struct {
 	HelpScreensSeen uint32 `json:"help_screens_seen"`
 	// Instances stores the serialized instance data as raw JSON
 	InstancesData json.RawMessage `json:"instances"`
+	// UI stores the per-workspace UI layout prefs
+	UI UIPrefs `json:"ui"`
 
 	// configDir, when set, directs SaveState to write to this directory
 	// instead of GetConfigDir(). Set by LoadStateFrom for workspace isolation.
@@ -268,6 +297,25 @@ func (s *State) SetHelpScreensSeen(seen uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.HelpScreensSeen = seen
+	dir, err := s.resolveDirLocked()
+	if err != nil {
+		return err
+	}
+	return s.saveToLocked(dir)
+}
+
+// GetUIPrefs returns a copy of the persisted UI layout prefs.
+func (s *State) GetUIPrefs() UIPrefs {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.UI.clone()
+}
+
+// SetUIPrefs replaces and persists the UI layout prefs.
+func (s *State) SetUIPrefs(p UIPrefs) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.UI = p.clone()
 	dir, err := s.resolveDirLocked()
 	if err != nil {
 		return err

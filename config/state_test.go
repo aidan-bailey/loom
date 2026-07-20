@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadStateFrom_MissingFileReturnsDefault(t *testing.T) {
@@ -147,4 +148,20 @@ func TestSaveStateTo_SkipsWriteWhenUnchanged(t *testing.T) {
 	fi3, err := os.Stat(path)
 	assert.NoError(t, err)
 	require(!os.SameFile(fi2, fi3), "mutated save must rewrite the file")
+}
+
+func TestUIPrefs_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s := LoadStateFrom(dir)
+	p := UIPrefs{ViewMode: "overview", RailHidden: true, TerminalHidden: true,
+		SplitRatios: map[string]float64{"auth": 0.8}}
+	require.NoError(t, s.SetUIPrefs(p))
+
+	s2 := LoadStateFrom(dir)
+	got := s2.GetUIPrefs()
+	assert.Equal(t, p, got)
+
+	// Returned map is a copy — caller mutation must not leak back.
+	got.SplitRatios["auth"] = 0.1
+	assert.Equal(t, 0.8, s2.GetUIPrefs().SplitRatios["auth"])
 }
