@@ -7,10 +7,20 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // overviewCardTailLines is the live-tail depth on overview cards.
 const overviewCardTailLines = 2
+
+// overviewCardHeight is the total line count of one rendered overview
+// card: 3 content lines (title/status, branch/meta, rule) +
+// overviewCardTailLines + 2 border lines. renderOverviewCard
+// guarantees this height — every composed line is truncated to the
+// inner width so lipgloss never wraps, and the tail is padded to
+// exactly overviewCardTailLines (pinned by
+// TestOverview_UniformCardHeight).
+const overviewCardHeight = overviewCardTailLines + 5
 
 // OverviewData is everything Render needs, assembled by the app on the
 // Update goroutine each frame (same pattern as List reading instances).
@@ -89,11 +99,14 @@ func (o *Overview) Render(d OverviewData) string {
 		b.WriteString("\n")
 		for _, p := range d.Peers {
 			total := p.Attention + p.Running + p.Idle
-			line := fmt.Sprintf("▸ %s · %d", strings.ToUpper(p.Name), total)
+			// Separately-styled concatenated segments — never nest a
+			// styled run inside another Render (see RenderCard's solidBg
+			// note: an outer style does not survive embedded SGR resets).
+			line := dim.Render(fmt.Sprintf("▸ %s · %d", strings.ToUpper(p.Name), total))
 			if p.Attention > 0 {
 				line += lipgloss.NewStyle().Foreground(Attention).Render(fmt.Sprintf("  ❯%d waiting", p.Attention))
 			}
-			b.WriteString(dim.Render(line) + "\n")
+			b.WriteString(line + "\n")
 		}
 	}
 	return clampHeight(lipgloss.Place(o.width, o.height, lipgloss.Left, lipgloss.Top, b.String()), o.height)
@@ -128,12 +141,9 @@ func (o *Overview) renderGrid(d OverviewData) string {
 	}
 
 	// Window rows so selRow stays visible within the height budget
-	// (header + peers consumed elsewhere; approximate one card row's
-	// height from its rendered line count).
-	rowH := 1
-	if len(rows) > 0 {
-		rowH = len(strings.Split(rows[0], "\n"))
-	}
+	// (header + peers consumed elsewhere). Every card row is exactly
+	// overviewCardHeight lines — renderOverviewCard guarantees it.
+	rowH := overviewCardHeight
 	budget := o.height - 1 - peerBudget(d.Peers)
 	visRows := budget / rowH
 	if visRows < 1 {
@@ -196,11 +206,12 @@ func renderOverviewCard(d CardData, width int) string {
 	if d.NeedsAttention() {
 		titleFg = Attention
 	}
-	// Left columns are truncated against the right side's actual width
-	// (not a fixed reservation): the border style sets Width, so a line
-	// wider than inner would wrap and make this card a line taller than
-	// its row peers, breaking grid alignment.
-	status := lipgloss.NewStyle().Foreground(statusFgFor(d)).Render(d.statusLabel())
+	// Both columns are truncated against inner (not a fixed
+	// reservation): right column first, then left against the
+	// remainder. The border style sets Width, so a line wider than
+	// inner would wrap and make this card taller than its row peers,
+	// breaking grid alignment and the overviewCardHeight invariant.
+	status := lipgloss.NewStyle().Foreground(statusFgFor(d)).Render(truncate(d.statusLabel(), inner))
 	title := lipgloss.NewStyle().Foreground(titleFg).Bold(d.Selected).
 		Render(truncate(d.Title, inner-lipgloss.Width(status)-1))
 	top := spreadLine(title, status, inner)
@@ -210,6 +221,10 @@ func renderOverviewCard(d CardData, width int) string {
 	if d.HasDiff {
 		meta = lipgloss.NewStyle().Foreground(OK).Render(fmt.Sprintf("+%d", d.DiffAdded)) + " " +
 			lipgloss.NewStyle().Foreground(ErrorColor).Render(fmt.Sprintf("−%d", d.DiffRemoved))
+		if lipgloss.Width(meta) > inner {
+			// Styled composition, so ANSI-aware truncation.
+			meta = ansi.Truncate(meta, inner, "…")
+		}
 	}
 	mid := spreadLine(dim.Render(truncate(d.Branch, inner-lipgloss.Width(meta)-1)), meta, inner)
 
@@ -244,10 +259,14 @@ func statusFgFor(d CardData) color.Color {
 }
 
 // spreadLine left-aligns l and right-aligns r within width cells.
+// Callers truncate l against r's actual width, so gap ≥ 1 whenever
+// both are non-empty; clamping at 0 (not 1) means an r that alone
+// fills the width still composes to exactly width cells instead of
+// overflowing by one and wrapping.
 func spreadLine(l, r string, width int) string {
 	gap := width - lipgloss.Width(l) - lipgloss.Width(r)
-	if gap < 1 {
-		gap = 1
+	if gap < 0 {
+		gap = 0
 	}
 	return l + strings.Repeat(" ", gap) + r
 }
