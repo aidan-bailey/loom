@@ -317,12 +317,13 @@ func TestSyncActions_FleetPrimitivesReachHost(t *testing.T) {
 		cs.bind("[", function() cs.actions.prev_waiting() end)
 		cs.bind("\\", function() cs.actions.toggle_rail() end)
 		cs.bind("T", function() cs.actions.toggle_terminal_pane() end)
+		cs.bind("tab", function() cs.actions.toggle_overview() end)
 		cs.bind("ctrl+up", function() cs.actions.resize_split_up() end)
 		cs.bind("ctrl+down", function() cs.actions.resize_split_down() end)
 	`))
 	e.EndLoad()
 
-	for _, key := range []string{"]", "[", "\\", "T", "ctrl+up", "ctrl+down"} {
+	for _, key := range []string{"]", "[", "\\", "T", "tab", "ctrl+up", "ctrl+down"} {
 		_, err := e.Dispatch(context.Background(), key, h)
 		require.NoError(t, err, key)
 	}
@@ -330,6 +331,7 @@ func TestSyncActions_FleetPrimitivesReachHost(t *testing.T) {
 	assert.Equal(t, 1, h.prevWaitingCalls)
 	assert.Equal(t, 1, h.toggleRailCalls)
 	assert.Equal(t, 1, h.toggleTerminalPaneCalls)
+	assert.Equal(t, 1, h.toggleOverviewCalls)
 	assert.Equal(t, 1, h.resizeSplitUpCalls)
 	assert.Equal(t, 1, h.resizeSplitDownCalls)
 }

@@ -107,6 +107,10 @@ type Host interface {
 	PrevWaiting()
 	ToggleRail()
 	ToggleTerminalPane()
+	// ToggleOverview flips the top-level presentation between focus
+	// (rail + panes) and the fleet-overview card grid, persisting the
+	// chosen mode so it survives restarts.
+	ToggleOverview()
 	ResizeSplitUp()
 	ResizeSplitDown()
 

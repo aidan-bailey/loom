@@ -157,12 +157,12 @@ func (s *scriptHost) deferModelMutation(fn func(*home)) {
 
 // CursorUp implements script.Host.
 func (s *scriptHost) CursorUp() {
-	s.deferModelMutation(func(m *home) { m.list.Up() })
+	s.deferModelMutation(func(m *home) { m.moveCursor(-1) })
 }
 
 // CursorDown implements script.Host.
 func (s *scriptHost) CursorDown() {
-	s.deferModelMutation(func(m *home) { m.list.Down() })
+	s.deferModelMutation(func(m *home) { m.moveCursor(1) })
 }
 
 // ToggleDiff implements script.Host.
@@ -326,6 +326,22 @@ func (s *scriptHost) ToggleTerminalPane() {
 		if m.lastWidth > 0 {
 			m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
 		}
+	})
+}
+
+// ToggleOverview implements script.Host.
+func (s *scriptHost) ToggleOverview() {
+	s.deferModelMutation(func(m *home) {
+		if m.viewMode == viewOverview {
+			m.viewMode = viewFocus
+		} else {
+			m.viewMode = viewOverview
+		}
+		mode := ""
+		if m.viewMode == viewOverview {
+			mode = "overview"
+		}
+		m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = mode })
 	})
 }
 

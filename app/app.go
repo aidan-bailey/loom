@@ -155,6 +155,16 @@ const (
 	stateLaunchOptions
 )
 
+// viewMode selects the top-level presentation: focus (rail + panes) or
+// overview (fleet card grid). Orthogonal to the state machine — only
+// stateDefault key routing and View branch on it.
+type viewMode int
+
+const (
+	viewFocus viewMode = iota
+	viewOverview
+)
+
 // workspaceSlot bundles per-workspace state so multiple workspaces can be
 // loaded in memory simultaneously.
 type workspaceSlot struct {
@@ -232,6 +242,12 @@ type home struct {
 	menu *ui.Menu
 	// splitPane displays the agent and terminal panes with diff overlay
 	splitPane *ui.SplitPane
+	// viewMode selects focus (rail + panes) or overview (fleet card
+	// grid). Restored from config.UIPrefs.ViewMode at startup.
+	viewMode viewMode
+	// overview renders the fleet-triage card grid when viewMode is
+	// viewOverview.
+	overview *ui.Overview
 	// quickInputBar displays the inline input bar for quick interactions
 	quickInputBar *ui.QuickInputBar
 	// errBox displays error messages
@@ -389,6 +405,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		spinner:     spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		menu:        ui.NewMenu(),
 		splitPane:   ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		overview:    ui.NewOverview(),
 		errBox:      ui.NewErrBox(),
 		storage:     storage,
 		appConfig:   appConfig,
@@ -669,6 +686,9 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	}
 	m.splitPane.SetSize(paneWidth, contentHeight)
 	m.list.SetSize(listWidth, contentHeight)
+	if m.overview != nil { // bare test homes may not construct one
+		m.overview.SetSize(msg.Width, contentHeight)
+	}
 
 	// Cache mouse-wheel hit-test anchors. The agent pane's inner height
 	// comes straight from the SplitPane via AgentContentHeight() —
@@ -708,6 +728,11 @@ func (m *home) applyUIPrefs() {
 		return
 	}
 	p := m.appState.GetUIPrefs()
+	if p.ViewMode == "overview" {
+		m.viewMode = viewOverview
+	} else {
+		m.viewMode = viewFocus
+	}
 	m.railHidden = p.RailHidden
 	m.splitPane.SetTerminalHidden(p.TerminalHidden)
 	m.applyStoredRatio(m.list.GetSelectedInstance())
@@ -1164,6 +1189,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateTabBarStatuses()
 		return m, tickUpdateMetadataCmd
 	case tea.MouseWheelMsg:
+		// v1 simplification: the wheel hit-tests below (listWidth /
+		// agentBottomY) describe the focus layout and are meaningless
+		// over the overview grid, so overview ignores the mouse entirely.
+		if m.viewMode == viewOverview {
+			return m, nil
+		}
 		// Route mouse-wheel events by cursor position. One wheel tick
 		// moves one line (terminal-emulator convention, not half-page).
 		//
@@ -1224,6 +1255,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseClickMsg:
+		// v1 simplification: no mouse in overview — a drag here would
+		// BeginSelection over the hidden focus layout.
+		if m.viewMode == viewOverview {
+			return m, nil
+		}
 		mouse := msg.Mouse()
 		// Interact mode: defer the left button — a drag becomes a Loom selection,
 		// a plain click is forwarded into the agent.
@@ -1248,6 +1284,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMotionMsg:
+		// v1 simplification: no mouse in overview (see MouseClickMsg).
+		if m.viewMode == viewOverview {
+			return m, nil
+		}
 		mouse := msg.Mouse()
 		// Interact mode: a left-drag becomes a Loom selection (never forwarded,
 		// so it can't trigger tmux's copy-mode).
@@ -1264,6 +1304,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseReleaseMsg:
+		// v1 simplification: no mouse in overview (see MouseClickMsg).
+		// A drag can straddle the toggle (tab pressed with the button
+		// held), so drop any in-flight drag state instead of letting a
+		// stale selection resume after returning to focus mode.
+		if m.viewMode == viewOverview {
+			m.dragging = false
+			m.splitPane.ClearSelections()
+			return m, nil
+		}
 		// Interact mode: finalize a drag-selection (copy) or forward a plain click.
 		if m.state == stateInlineAttach {
 			return m, m.interactMouseRelease()
@@ -2620,22 +2669,89 @@ func (m *home) refreshPeerSections() {
 		if i == m.focusedSlot {
 			continue
 		}
-		p := ui.PeerSection{Name: slot.wsCtx.Name}
-		for _, inst := range slot.list.GetInstances() {
-			st := inst.GetStatus()
-			switch {
-			case st == session.Prompting || inst.BellPending():
-				p.Attention++
-			case st == session.Running || st == session.Loading:
-				p.Running++
-			default:
-				// Paused/Deleting/unstarted intentionally count as idle.
-				p.Idle++
-			}
-		}
-		peers = append(peers, p)
+		peers = append(peers, m.peerSectionFor(slot))
 	}
 	m.list.SetPeerSections(peers)
+}
+
+// peerSectionFor summarizes one non-focused slot's instance statuses
+// into a PeerSection. Shared by refreshPeerSections (rail) and
+// overviewData (overview footer). Main-goroutine only.
+func (m *home) peerSectionFor(slot workspaceSlot) ui.PeerSection {
+	p := ui.PeerSection{Name: slot.wsCtx.Name}
+	for _, inst := range slot.list.GetInstances() {
+		st := inst.GetStatus()
+		switch {
+		case st == session.Prompting || inst.BellPending():
+			p.Attention++
+		case st == session.Running || st == session.Loading:
+			p.Running++
+		default:
+			// Paused/Deleting/unstarted intentionally count as idle.
+			p.Idle++
+		}
+	}
+	return p
+}
+
+// overviewData snapshots the focused workspace + peers for the overview
+// render. Update-goroutine only.
+func (m *home) overviewData() ui.OverviewData {
+	items := m.list.GetInstances()
+	name := ""
+	if m.activeCtx != nil {
+		name = m.activeCtx.Name
+	}
+	var peers []ui.PeerSection
+	for i, slot := range m.slots {
+		if i == m.focusedSlot {
+			continue
+		}
+		peers = append(peers, m.peerSectionFor(slot))
+	}
+	return ui.OverviewData{
+		ActiveName:  name,
+		Items:       items,
+		Order:       ui.SortForOverview(items),
+		SelectedIdx: m.list.SelectedIdx(),
+		Peers:       peers,
+		Spinner:     m.spinner.View(),
+	}
+}
+
+// moveCursor advances the selection by dir: list order in focus mode,
+// attention-sorted display order in overview mode.
+func (m *home) moveCursor(dir int) {
+	if m.viewMode != viewOverview {
+		if dir < 0 {
+			m.list.Up()
+		} else {
+			m.list.Down()
+		}
+		return
+	}
+	items := m.list.GetInstances()
+	if len(items) == 0 {
+		return
+	}
+	order := ui.SortForOverview(items)
+	pos := 0
+	for p, idx := range order {
+		if idx == m.list.SelectedIdx() {
+			pos = p
+			break
+		}
+	}
+	for i := 1; i <= len(order); i++ {
+		np := pos + dir*i
+		if np < 0 || np >= len(order) {
+			return // no wrap in the grid
+		}
+		if items[order[np]].GetStatus() != session.Deleting {
+			m.list.SetSelectedInstance(order[np])
+			return
+		}
+	}
 }
 
 // saveOpenWorkspaces persists the current ordered list of open workspace tabs
@@ -2685,21 +2801,30 @@ func (m *home) View() tea.View {
 		v.ReportFocus = true
 		return v
 	}
-	listView := ""
-	if !m.railHidden {
-		listView = m.list.String()
-	}
-	// The file explorer is the only overlay that wholly replaces the
-	// right pane rather than floating on top of it. It renders inline
-	// via JoinHorizontal — instead of via PlaceOverlay below — so the
-	// list stays visible alongside it (unless the rail is hidden).
-	var rightContent string
-	if m.state == stateFileExplorer && m.activeOverlay != nil {
-		rightContent = m.activeOverlay.View()
+	// Overview replaces the whole rail+panes assembly. The file-explorer
+	// state keeps the focus layout (its overlay replaces the right pane),
+	// though it is currently unreachable from overview — 'f' is not in
+	// overviewKeyAllowed — so the guard is belt-and-braces.
+	var mainContent string
+	if m.viewMode == viewOverview && m.state != stateFileExplorer {
+		mainContent = m.overview.Render(m.overviewData())
 	} else {
-		rightContent = m.splitPane.String()
+		listView := ""
+		if !m.railHidden {
+			listView = m.list.String()
+		}
+		// The file explorer is the only overlay that wholly replaces the
+		// right pane rather than floating on top of it. It renders inline
+		// via JoinHorizontal — instead of via PlaceOverlay below — so the
+		// list stays visible alongside it (unless the rail is hidden).
+		var rightContent string
+		if m.state == stateFileExplorer && m.activeOverlay != nil {
+			rightContent = m.activeOverlay.View()
+		} else {
+			rightContent = m.splitPane.String()
+		}
+		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, listView, rightContent)
 	}
-	listAndPreview := lipgloss.JoinHorizontal(lipgloss.Top, listView, rightContent)
 
 	sections := []string{}
 	if tabBarStr := m.tabBar.String(); tabBarStr != "" {
@@ -2709,13 +2834,17 @@ func (m *home) View() tea.View {
 	// Bottom bar: quick input or inline attach hint replaces the status line
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
 		// Quick input is 2 lines, replaces both status line and error box so panes don't shift.
-		sections = append(sections, listAndPreview, m.quickInputBar.View())
+		sections = append(sections, mainContent, m.quickInputBar.View())
 	} else if m.state == stateInlineAttach {
 		hint := inlineAttachHintStyle.Render("▶ CAPTURING INPUT  ·  ctrl+q to detach, then alt+a/alt+t for fullscreen")
-		sections = append(sections, listAndPreview, hint, m.errBox.String())
+		sections = append(sections, mainContent, hint, m.errBox.String())
 	} else {
-		statusLine := statusLineStyle.Render("? help · q quit")
-		sections = append(sections, listAndPreview, statusLine, m.errBox.String())
+		hint := "tab overview · ] next waiting · \\ rail · ? help · q quit"
+		if m.viewMode == viewOverview {
+			hint = "enter focus · ] next waiting · z collapse · tab focus · ? help"
+		}
+		statusLine := statusLineStyle.Render(hint)
+		sections = append(sections, mainContent, statusLine, m.errBox.String())
 	}
 
 	mainView := lipgloss.JoinVertical(
@@ -2799,6 +2928,12 @@ func (m *home) windowTitle() string {
 // overlays, pickers, and non-default states keep the cursor hidden
 // (Bubble Tea's default when View.Cursor is nil).
 func (m *home) attachCursor(v *tea.View) {
+	// The overview grid has no pane content on screen — a hardware
+	// cursor positioned from the hidden split layout would float over
+	// arbitrary card cells.
+	if m.viewMode == viewOverview {
+		return
+	}
 	if m.state != stateDefault && m.state != stateInlineAttach {
 		return
 	}

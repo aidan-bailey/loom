@@ -35,6 +35,7 @@ cs.bind("]", function() cs.actions.next_waiting() end,          { help = "next w
 cs.bind("[", function() cs.actions.prev_waiting() end,          { help = "prev waiting" })
 cs.bind("\\", function() cs.actions.toggle_rail() end,          { help = "toggle rail" })
 cs.bind("T", function() cs.actions.toggle_terminal_pane() end,  { help = "toggle terminal" })
+cs.bind("tab", function() cs.actions.toggle_overview() end,     { help = "overview" })
 cs.bind("ctrl+up",   function() cs.actions.resize_split_up() end,   { help = "split up" })
 cs.bind("ctrl+down", function() cs.actions.resize_split_down() end, { help = "split down" })
 
