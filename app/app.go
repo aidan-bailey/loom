@@ -197,10 +197,6 @@ type home struct {
 
 	// state is the current discrete state of the application
 	state state
-	// newInstanceFinalizer is called when the state is stateNew and then you press enter.
-	// It registers the new instance in the list after the instance has been started.
-	newInstanceFinalizer func()
-
 	// promptAfterName tracks if we should enter prompt mode after naming
 	promptAfterName bool
 
@@ -458,7 +454,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			if instance.IsWorkspaceTerminal {
 				hasWorkspaceTerminal = true
 			}
-			h.list.AddInstance(instance)()
+			h.list.AddInstance(instance)
 		}
 
 		// Restart crash-recovered instances
@@ -515,7 +511,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			if wtErr != nil {
 				log.For("app").Error("workspace_terminal.create_failed", "err", wtErr)
 			} else {
-				h.list.AddInstance(wtInstance)()
+				h.list.AddInstance(wtInstance)
 				if err := wtInstance.Start(true); err != nil {
 					log.For("app").Error("workspace_terminal.start_failed", "err", err)
 				}
@@ -1371,7 +1367,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case killInstanceMsg:
 		// Terminal session was already closed inside killAction off the update
 		// goroutine. Here we only do in-memory list bookkeeping.
-		m.list.RemoveInstanceByTitleAndRepo(msg.title, msg.repoName)
+		m.list.RemoveInstanceByTitle(msg.title)
 		return m, m.instanceChanged()
 	case transitionFailedMsg:
 		// Revert instance status on failed background op (kill/pause/resume).
@@ -1416,7 +1412,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleError(fmt.Errorf("recover %s: %w", msg.oldTitle, msg.err))
 		}
 		m.list.RemoveInstanceByTitle(msg.oldTitle)
-		m.list.AddInstance(msg.recovered)()
+		m.list.AddInstance(msg.recovered)
 		m.list.SelectInstance(msg.recovered)
 		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
 			log.For("app").Error("recover.save_failed", "title", msg.recovered.Title, "err", err)
@@ -1506,6 +1502,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// instances immediately. activateWorkspace appends to the
 		// end, so the new slot is at len-1 (not 0 — the prior
 		// loadSlot(0) would have surfaced an unrelated tab).
+		// Flush any pending split-ratio save for the outgoing slot
+		// before loadSlot swaps the active workspace context.
+		m.flushPendingRatioSaves()
 		m.focusedSlot = len(m.slots) - 1
 		m.loadSlot(m.focusedSlot)
 		m.updateTabBarStatuses()
@@ -1662,7 +1661,7 @@ func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *
 				log.For("app").Warn("orphan_placeholder_failed", "title", cand.Title, "err", err)
 				continue
 			}
-			list.AddInstance(inst)()
+			list.AddInstance(inst)
 			summary.review++
 		}
 	}
@@ -1874,15 +1873,8 @@ type instanceChangedMsg struct{}
 // killInstanceMsg is returned by the killAction goroutine after I/O cleanup
 // (git checks, instance kill, storage deletion) is complete. The main event loop
 // handles the list removal so it doesn't race with rendering.
-//
-// repoName is captured before Instance.Kill() zeroes out the git worktree —
-// Instance.RepoName() refuses to answer once started=false, so post-hoc lookup
-// from the list handler would log "cannot get repo name" and leak the repo
-// counter. Empty string means the caller couldn't determine it (not started
-// yet, or the pre-capture itself errored); in that case rmRepo is skipped.
 type killInstanceMsg struct {
-	title    string
-	repoName string
+	title string
 }
 
 // transitionFailedMsg is returned when a background status-transitioning
@@ -2285,7 +2277,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		if inst.IsWorkspaceTerminal {
 			hasWorkspaceTerminal = true
 		}
-		list.AddInstance(inst)()
+		list.AddInstance(inst)
 	}
 
 	// Restart crash-recovered instances.
@@ -2337,7 +2329,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		if wtErr != nil {
 			log.For("app").Error("workspace_terminal.create_failed", "workspace", ws.Name, "err", wtErr)
 		} else {
-			list.AddInstance(wtInstance)()
+			list.AddInstance(wtInstance)
 			if startErr := wtInstance.Start(true); startErr != nil {
 				log.For("app").Error("workspace_terminal.start_failed", "workspace", ws.Name, "err", startErr)
 			}
@@ -2591,7 +2583,7 @@ func (m *home) enterGlobalMode() tea.Cmd {
 
 	m.list = ui.NewList(&m.spinner)
 	for _, inst := range instances {
-		m.list.AddInstance(inst)()
+		m.list.AddInstance(inst)
 	}
 
 	// Clear registry's open-tab list so the next launch lands in

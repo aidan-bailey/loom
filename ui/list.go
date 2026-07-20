@@ -3,7 +3,6 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"strings"
 
@@ -35,12 +34,6 @@ type List struct {
 	spinner       *spinner.Model
 	peers         []PeerSection
 
-	// map of repo name to number of instances using it. Currently
-	// write-only: the repo badge that read it died with the old
-	// InstanceRenderer row pipeline. The bookkeeping is retained
-	// pending a decision in final cleanup.
-	repos map[string]int
-
 	// workspaceName is the current workspace name, shown in the title
 	workspaceName string
 }
@@ -52,7 +45,6 @@ func NewList(spinner *spinner.Model) *List {
 	return &List{
 		items:   []*session.Instance{},
 		spinner: spinner,
-		repos:   make(map[string]int),
 	}
 }
 
@@ -265,8 +257,8 @@ func (l *List) Down() {
 // cleanup) off the Bubble Tea update goroutine. Returns nil when the list is
 // empty or the selected item is a workspace terminal (which cannot be killed).
 //
-// Only in-memory bookkeeping happens here: repo-name unregister, slice pop,
-// selectedIdx adjustment. No subprocesses are spawned.
+// Only in-memory bookkeeping happens here: slice pop and selectedIdx
+// adjustment. No subprocesses are spawned.
 func (l *List) PopSelectedForKill() *session.Instance {
 	if len(l.items) == 0 {
 		return nil
@@ -281,14 +273,6 @@ func (l *List) PopSelectedForKill() *session.Instance {
 		defer l.Up()
 	}
 
-	// Unregister the reponame.
-	repoName, err := targetInstance.RepoName()
-	if err != nil {
-		log.For("ui").Error("list.repo_name_failed", "context", "kill_instance", "err", err)
-	} else {
-		l.rmRepo(repoName)
-	}
-
 	// Since there's items after this, the selectedIdx can stay the same.
 	l.items = append(l.items[:l.selectedIdx], l.items[l.selectedIdx+1:]...)
 	return targetInstance
@@ -298,35 +282,12 @@ func (l *List) PopSelectedForKill() *session.Instance {
 // Unlike Kill(), this does not perform I/O (no tmux/worktree cleanup) —
 // the caller is responsible for that. This is safe to call from the main
 // event loop after a Cmd goroutine has already performed I/O cleanup.
-//
-// This variant reads the repo name from the instance itself, which only
-// works while the instance is still started. Callers that run this after
-// Instance.Kill() has zeroed out the backend should use
-// RemoveInstanceByTitleAndRepo with a pre-captured name instead.
 func (l *List) RemoveInstanceByTitle(title string) {
 	idx := l.findByTitle(title)
 	if idx < 0 {
 		return
 	}
-	repoName, err := l.items[idx].RepoName()
-	if err != nil {
-		log.For("ui").Error("list.repo_name_failed", "context", "remove_at_idx", "err", err)
-		repoName = ""
-	}
-	l.removeAtWithRepo(idx, repoName)
-}
-
-// RemoveInstanceByTitleAndRepo is RemoveInstanceByTitle with a
-// pre-captured repo name, used by the kill path: Instance.Kill() clears
-// the git worktree before this runs, so a post-hoc RepoName() lookup
-// would fail and the repo counter would leak. An empty repoName skips
-// rmRepo (used when the pre-capture itself errored).
-func (l *List) RemoveInstanceByTitleAndRepo(title, repoName string) {
-	idx := l.findByTitle(title)
-	if idx < 0 {
-		return
-	}
-	l.removeAtWithRepo(idx, repoName)
+	l.removeAt(idx)
 }
 
 // GetInstanceByTitle returns the instance with the given title, or nil.
@@ -346,10 +307,7 @@ func (l *List) findByTitle(title string) int {
 	return -1
 }
 
-func (l *List) removeAtWithRepo(idx int, repoName string) {
-	if repoName != "" {
-		l.rmRepo(repoName)
-	}
+func (l *List) removeAt(idx int) {
 	l.items = append(l.items[:idx], l.items[idx+1:]...)
 	if l.selectedIdx >= len(l.items) && l.selectedIdx > 0 {
 		l.selectedIdx--
@@ -440,43 +398,13 @@ func (l *List) Bottom() {
 	l.ensureSelectedVisible()
 }
 
-func (l *List) addRepo(repo string) {
-	if _, ok := l.repos[repo]; !ok {
-		l.repos[repo] = 0
-	}
-	l.repos[repo]++
-}
-
-func (l *List) rmRepo(repo string) {
-	if _, ok := l.repos[repo]; !ok {
-		log.For("ui").Error("list.repo_not_found", "repo", repo)
-		return
-	}
-	l.repos[repo]--
-	if l.repos[repo] == 0 {
-		delete(l.repos, repo)
-	}
-}
-
-// AddInstance adds a new instance to the list. It returns a finalizer function that should be called when the instance
-// is started. If the instance was restored from storage or is paused, you can call the finalizer immediately.
-// When creating a new one and entering the name, you want to call the finalizer once the name is done.
-func (l *List) AddInstance(instance *session.Instance) (finalize func()) {
+// AddInstance adds a new instance to the list.
+func (l *List) AddInstance(instance *session.Instance) {
 	// Workspace terminals are always pinned at index 0
 	if instance.IsWorkspaceTerminal {
 		l.items = append([]*session.Instance{instance}, l.items...)
 	} else {
 		l.items = append(l.items, instance)
-	}
-	// The finalizer registers the repo name once the instance is started.
-	return func() {
-		repoName, err := instance.RepoName()
-		if err != nil {
-			log.For("ui").Error("list.repo_name_failed", "context", "add_finalizer", "err", err)
-			return
-		}
-
-		l.addRepo(repoName)
 	}
 }
 

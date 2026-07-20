@@ -129,7 +129,7 @@ func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 		return m, m.handleError(err)
 	}
 
-	m.newInstanceFinalizer = m.list.AddInstance(instance)
+	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)
@@ -153,7 +153,7 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 		return m, m.handleError(err)
 	}
 
-	m.newInstanceFinalizer = m.list.AddInstance(instance)
+	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)
@@ -218,15 +218,6 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 			}
 		}
 
-		// Capture the repo name up front: Instance.Kill() flips started=false
-		// and nils the worktree, after which RepoName() refuses to answer.
-		// Empty string is tolerated downstream — rmRepo just gets skipped.
-		repoName, repoErr := selected.RepoName()
-		if repoErr != nil {
-			log.For("app").Warn("kill.repo_name_lookup_failed", "title", title, "err", repoErr)
-			repoName = ""
-		}
-
 		if ts := m.splitPane.DetachTerminalForInstance(title); ts != nil {
 			if err := ts.Close(); err != nil {
 				log.For("app").Error("kill.terminal_close_failed", "title", title, "err", err)
@@ -264,7 +255,7 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 			}
 		}
 
-		return killInstanceMsg{title: title, repoName: repoName}
+		return killInstanceMsg{title: title}
 	}
 
 	return preAction, killAction

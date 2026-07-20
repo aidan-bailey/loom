@@ -67,7 +67,7 @@ func TestRunMergeSelected_BlocksOnDirtyTarget(t *testing.T) {
 	m := newTestHome(t)
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
-	_ = m.list.AddInstance(target)
+	m.list.AddInstance(target)
 	m.list.SelectInstance(target)
 
 	// Make the target worktree dirty.
@@ -85,7 +85,7 @@ func TestRunMergeSelected_BlocksWhenNoEligibleSources(t *testing.T) {
 	m := newTestHome(t)
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
-	_ = m.list.AddInstance(target)
+	m.list.AddInstance(target)
 	m.list.SelectInstance(target)
 
 	_, cmd := runMergeSelected(m)
@@ -99,8 +99,8 @@ func TestRunMergeSelected_OpensPickerWithEligibleSources(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	_ = m.list.AddInstance(target)
-	_ = m.list.AddInstance(source)
+	m.list.AddInstance(target)
+	m.list.AddInstance(source)
 	m.list.SelectInstance(target)
 
 	_, cmd := runMergeSelected(m)
@@ -141,8 +141,8 @@ func TestHandleStateMergePickerKey_EscCancelsWithoutMerging(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	_ = m.list.AddInstance(target)
-	_ = m.list.AddInstance(source)
+	m.list.AddInstance(target)
+	m.list.AddInstance(source)
 	m.list.SelectInstance(target)
 
 	_, cmd := runMergeSelected(m)
@@ -170,8 +170,8 @@ func TestHandleStateMergePickerKey_EnterMergesTheDisplayedTarget(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	_ = m.list.AddInstance(target)
-	_ = m.list.AddInstance(source)
+	m.list.AddInstance(target)
+	m.list.AddInstance(source)
 	m.list.SelectInstance(target)
 
 	sourceWT, err := source.GetGitWorktree()
@@ -212,9 +212,9 @@ func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
 	other := pausedInstanceWithRealWorktree(t, repoDir, "other", "other-branch")
-	_ = m.list.AddInstance(target)
-	_ = m.list.AddInstance(source)
-	_ = m.list.AddInstance(other)
+	m.list.AddInstance(target)
+	m.list.AddInstance(source)
+	m.list.AddInstance(other)
 	m.list.SelectInstance(target)
 
 	sourceWT, err := source.GetGitWorktree()

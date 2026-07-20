@@ -22,7 +22,7 @@ func newPausedInstanceHome(t *testing.T) (*home, *session.Instance) {
 		CacheTTL1h:    true,
 	})
 	require.NoError(t, err)
-	_ = m.list.AddInstance(inst)
+	m.list.AddInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 	require.NoError(t, inst.TransitionTo(session.Paused))
 	return m, inst

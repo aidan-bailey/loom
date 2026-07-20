@@ -273,7 +273,7 @@ func TestConfirmationFlowSimulation(t *testing.T) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	_ = list.AddInstance(instance)
+	list.AddInstance(instance)
 	list.SetSelectedInstance(0)
 
 	h := &home{
@@ -493,7 +493,7 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	_ = list.AddInstance(instance)
+	list.AddInstance(instance)
 	list.SetSelectedInstance(0)
 
 	storage, err := session.NewStorage(&mockInstanceStorage{}, t.TempDir())
@@ -568,7 +568,7 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_ = instance.TransitionTo(session.Running)
-	_ = list.AddInstance(instance)
+	list.AddInstance(instance)
 	list.SetSelectedInstance(0)
 
 	h := &home{
@@ -611,7 +611,7 @@ func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_ = instance.TransitionTo(session.Deleting)
-	_ = list.AddInstance(instance)
+	list.AddInstance(instance)
 
 	h := &home{
 		ctx:       context.Background(),
@@ -706,7 +706,7 @@ func TestHandleQuitStaysInTUIOnSaveError(t *testing.T) {
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	list := ui.NewList(&s)
-	_ = list.AddInstance(inst)
+	list.AddInstance(inst)
 
 	h := &home{
 		ctx:       context.Background(),
@@ -750,7 +750,7 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	list := ui.NewList(&s)
-	_ = list.AddInstance(inst)
+	list.AddInstance(inst)
 
 	wsCtx := &config.WorkspaceContext{Name: "test-ws", ConfigDir: cfgDir}
 	slot := workspaceSlot{

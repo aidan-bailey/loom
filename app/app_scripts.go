@@ -105,9 +105,8 @@ func (s *scriptHost) BranchPrefix() string {
 }
 
 // QueueInstance stages an instance for finalization on the main
-// goroutine. We can't call h.list.AddInstance here because the
-// returned finalizer must run on the main loop — the list isn't
-// goroutine-safe.
+// goroutine. We can't call h.list.AddInstance here because the list
+// isn't goroutine-safe.
 func (s *scriptHost) QueueInstance(inst *session.Instance) {
 	if inst == nil {
 		return
@@ -665,8 +664,7 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 		act(m)
 	}
 	for _, inst := range msg.pendingInstances {
-		finalizer := m.list.AddInstance(inst)
-		finalizer()
+		m.list.AddInstance(inst)
 	}
 	// Notices surface through the error bar so they auto-clear on
 	// the same 3s schedule as real errors. ErrBox has no info-style

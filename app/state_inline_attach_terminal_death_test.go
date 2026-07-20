@@ -62,7 +62,7 @@ func setupInlineAttachTerminalDeathFixture(t *testing.T) (*home, *session.Instan
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	_ = m.list.AddInstance(inst)
+	m.list.AddInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 
 	agentTs := tmux.NewTmuxSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())

@@ -21,7 +21,7 @@ func TestPaneDirtyRerendersScrolledAgent(t *testing.T) {
 	require.NotEmpty(t, inst.TmuxSessionName())
 
 	m := homeWithAppState(t)
-	_ = m.list.AddInstance(inst)
+	m.list.AddInstance(inst)
 	require.Same(t, inst, m.list.GetSelectedInstance())
 	m.splitPane.SetSize(100, 40)
 	m.splitPane.SetInstance(inst)
@@ -49,7 +49,7 @@ func TestPaneQuietRunsStatusDetection(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	_ = m.list.AddInstance(inst)
+	m.list.AddInstance(inst)
 
 	// Quiet handler returns a statusDetectCmd; run it and feed the result
 	// message back through Update, as the Bubble Tea runtime would.
@@ -79,7 +79,7 @@ func TestPtyDeadVerifiesBeforePausing(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	_ = m.list.AddInstance(inst)
+	m.list.AddInstance(inst)
 
 	_, cmd := m.Update(ptyDeadMsg{session: inst.TmuxSessionName()})
 	require.NotNil(t, cmd, "dead event on a live instance must schedule verification")
@@ -103,9 +103,8 @@ func TestBellBadgesUnselectedInstance(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	_ = m.list.AddInstance(inst1) // first add is auto-selected
-	fin := m.list.AddInstance(inst2)
-	fin()
+	m.list.AddInstance(inst1) // first add is auto-selected
+	m.list.AddInstance(inst2)
 
 	_, _ = m.Update(bellMsg{session: inst2.TmuxSessionName()})
 	require.True(t, inst2.BellPending(), "bell on unselected instance must badge it")

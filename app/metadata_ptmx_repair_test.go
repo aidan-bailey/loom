@@ -23,7 +23,7 @@ func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	_ = m.list.AddInstance(inst)
+	m.list.AddInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 
 	ts := tmux.NewTmuxSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())

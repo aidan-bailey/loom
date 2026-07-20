@@ -24,7 +24,7 @@ func setupWorkspaceTerminalDeadFixture(t *testing.T) (*home, *session.Instance) 
 		IsWorkspaceTerminal: true,
 	})
 	require.NoError(t, err)
-	_ = m.list.AddInstance(inst)
+	m.list.AddInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 
 	ts := tmux.NewTmuxSessionWithDeps("ws-term", "broken-program", fakePtyFactory{t: t}, aliveCmdExecForTest())

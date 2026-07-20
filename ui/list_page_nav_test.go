@@ -26,7 +26,7 @@ func newPageNavList(n int) *List {
 	for i := 0; i < n; i++ {
 		inst := &session.Instance{Title: fmt.Sprintf("inst-%02d", i)}
 		_ = inst.TransitionTo(session.Running)
-		l.AddInstance(inst)()
+		l.AddInstance(inst)
 	}
 	return l
 }

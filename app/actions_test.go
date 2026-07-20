@@ -58,7 +58,7 @@ func TestSelectedNotBusyNotWorkspaceGuardsLifecycle(t *testing.T) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	_ = h.list.AddInstance(instance)
+	h.list.AddInstance(instance)
 
 	_ = instance.TransitionTo(session.Loading)
 	assert.False(t, selectedNotBusyNotWorkspace(h), "Loading should block")

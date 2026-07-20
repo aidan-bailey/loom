@@ -127,7 +127,7 @@ func TestPreviewTickRerendersScrolledAgent(t *testing.T) {
 	inst := startedInstanceWithHistory(t, &historyCaptures)
 
 	m := homeWithAppState(t)
-	_ = m.list.AddInstance(inst) // first add is auto-selected
+	m.list.AddInstance(inst) // first add is auto-selected
 	require.Same(t, inst, m.list.GetSelectedInstance())
 
 	m.splitPane.SetSize(100, 40)

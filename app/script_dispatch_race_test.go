@@ -30,7 +30,7 @@ func TestScriptHost_ConcurrentNavAndRead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = list.AddInstance(inst)
+		list.AddInstance(inst)
 	}
 	list.SetSelectedInstance(0)
 

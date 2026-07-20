@@ -100,7 +100,7 @@ func TestSelectedResumableNotWorkspace_AllowsRecoverable(t *testing.T) {
 
 	sp := spinner.New()
 	list := ui.NewList(&sp)
-	list.AddInstance(inst)()
+	list.AddInstance(inst)
 	list.SelectInstance(inst)
 
 	h := &home{list: list}

@@ -52,7 +52,7 @@ func TestListRenderDimensions(t *testing.T) {
 			list.SetSize(listWidth, contentHeight)
 
 			for _, inst := range instances {
-				list.AddInstance(inst)()
+				list.AddInstance(inst)
 			}
 
 			output := list.String()

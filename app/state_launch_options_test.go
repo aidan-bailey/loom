@@ -14,7 +14,7 @@ import (
 
 // newPendingLaunchOptionsHome builds a *home with one not-yet-started
 // instance in the list, the Session Launch Options modal open, and
-// m.pendingLaunchOptions wired the same way state_new.go's finalize
+// m.pendingLaunchOptions wired the same way state_new.go's Enter
 // branch wires it — capturing instance.Program/Title so confirming
 // composes and stashes the result on instance.Program without actually
 // invoking Start() (which would need a real git worktree + tmux).
@@ -28,7 +28,7 @@ func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*
 		ConfigDir: t.TempDir(),
 	})
 	require.NoError(t, err)
-	m.newInstanceFinalizer = m.list.AddInstance(instance)
+	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {

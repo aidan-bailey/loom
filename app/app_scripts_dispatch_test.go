@@ -55,7 +55,7 @@ func addReadyInstance(t *testing.T, h *home) *session.Instance {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	_ = h.list.AddInstance(inst)
+	h.list.AddInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 
 	cmdExec := cmd_test.MockCmdExec{
@@ -183,7 +183,7 @@ func TestHandleScriptIntentRestartWithOptions(t *testing.T) {
 	m := homeWithAppState(t)
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "a", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
-	_ = m.list.AddInstance(inst)
+	m.list.AddInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 	require.NoError(t, inst.TransitionTo(session.Paused))
 

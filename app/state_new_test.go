@@ -25,7 +25,7 @@ func newPendingTitleEntryHome(t *testing.T) *home {
 		ConfigDir: t.TempDir(),
 	})
 	require.NoError(t, err)
-	m.newInstanceFinalizer = m.list.AddInstance(instance)
+	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)

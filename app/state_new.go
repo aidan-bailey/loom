@@ -62,7 +62,6 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					instance.HeadroomProxy = opts.HeadroomProxy
 					instance.CacheTTL1h = opts.CacheTTL1h
 					_ = instance.TransitionTo(session.Loading)
-					m.newInstanceFinalizer()
 					m.promptAfterName = false
 					m.state = stateDefault
 					m.menu.SetState(ui.StateDefault)
