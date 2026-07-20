@@ -201,6 +201,11 @@ type Instance struct {
 	// outside the locked accessors.
 	mu sync.RWMutex
 
+	// statusChangedAt is when Status last changed (in-memory only, not
+	// serialized — ages reset on restart, which is acceptable for the
+	// "waiting 4m" card labels it feeds).
+	statusChangedAt time.Time
+
 	// logger is a per-instance slog.Logger pre-tagged with
 	// subsystem=instance and title. Populated by NewInstance and
 	// FromInstanceData; tests that build Instance directly are covered
@@ -440,6 +445,7 @@ func (i *Instance) TransitionTo(to Status) error {
 		return fmt.Errorf("illegal status transition for %q: %s → %s", i.Title, from, to)
 	}
 	i.Status = to
+	i.statusChangedAt = time.Now()
 	return nil
 }
 
@@ -448,6 +454,17 @@ func (i *Instance) GetStatus() Status {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	return i.Status
+}
+
+// StatusAge returns how long the instance has been in its current
+// status, or 0 when no transition has been observed this process.
+func (i *Instance) StatusAge() time.Duration {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	if i.statusChangedAt.IsZero() {
+		return 0
+	}
+	return time.Since(i.statusChangedAt)
 }
 
 func (i *Instance) getTmuxSession() *tmux.TmuxSession {
