@@ -128,10 +128,22 @@ A user may already have their own `--append-system-prompt-file` in their
 *different* append-file is present (both flags passed). This relies on Claude
 accepting repeated `--append-system-prompt-file` flags additively.
 
-> **Pre-implementation verification task:** confirm `claude` accepts multiple
-> `--append-system-prompt-file` flags and concatenates them (rather than
-> last-wins). If it does not, fall back to skip-if-any-`--append-system-prompt-file`-present
-> and document that a user append-file suppresses loom's context.
+> **Pre-implementation verification (RESOLVED 2026-07-20, claude 2.1.210):**
+> - `--append-system-prompt-file <path>` **exists and works**, but is **hidden
+>   from `--help`** (the flag listing shows only `--append-system-prompt` /
+>   `--system-prompt`; the `-file` variant is referenced only in a parenthetical).
+>   Verified empirically: a bogus flag exits 1 with `error: unknown option`,
+>   whereas `--append-system-prompt-file /dev/null` is accepted (proceeds to
+>   launch). Minor risk: relying on an undocumented flag.
+> - `tmux new-session` receives the whole program as a **single
+>   shell-interpreted argument** (`session/tmux/tmux.go` `args = append(args,
+>   t.program)`), so the adapter must **single-quote the file path**
+>   (`--append-system-prompt-file '<path>'`) to survive spaces/metacharacters in
+>   the config dir.
+> - Repeated-`--append-system-prompt-file` concatenation (for the user-own-append
+>   coexistence case) was **not** separately verified; v1 keys idempotency on
+>   loom's own path and passes loom's flag regardless, documenting that a user's
+>   own append-file coexists only if the CLI concatenates repeated flags.
 
 ## The injected prompts
 
