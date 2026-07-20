@@ -109,7 +109,6 @@ func TestDefaultConfig(t *testing.T) {
 
 		assert.NotNil(t, config)
 		assert.NotEmpty(t, config.DefaultProgram)
-		assert.Equal(t, 1000, config.DaemonPollInterval)
 		assert.NotEmpty(t, config.BranchPrefix)
 		assert.True(t, strings.HasSuffix(config.BranchPrefix, "/"))
 	})
@@ -221,7 +220,6 @@ func TestLoadConfig(t *testing.T) {
 
 		assert.NotNil(t, config)
 		assert.NotEmpty(t, config.DefaultProgram)
-		assert.Equal(t, 1000, config.DaemonPollInterval)
 		assert.NotEmpty(t, config.BranchPrefix)
 	})
 
@@ -236,7 +234,6 @@ func TestLoadConfig(t *testing.T) {
 		configPath := filepath.Join(configDir, ConfigFileName)
 		configContent := `{
 			"default_program": "test-claude",
-			"daemon_poll_interval": 2000,
 			"branch_prefix": "test/"
 		}`
 		err = os.WriteFile(configPath, []byte(configContent), 0644)
@@ -251,7 +248,30 @@ func TestLoadConfig(t *testing.T) {
 
 		assert.NotNil(t, config)
 		assert.Equal(t, "test-claude", config.DefaultProgram)
-		assert.Equal(t, 2000, config.DaemonPollInterval)
+		assert.Equal(t, "test/", config.BranchPrefix)
+	})
+
+	t.Run("ignores legacy daemon_poll_interval key", func(t *testing.T) {
+		tempHome := t.TempDir()
+		configDir := filepath.Join(tempHome, ".loom")
+		require.NoError(t, os.MkdirAll(configDir, 0755))
+
+		configPath := filepath.Join(configDir, ConfigFileName)
+		configContent := `{
+			"default_program": "test-claude",
+			"daemon_poll_interval": 2000,
+			"branch_prefix": "test/"
+		}`
+		require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644))
+
+		originalHome := os.Getenv("HOME")
+		os.Setenv("HOME", tempHome)
+		defer os.Setenv("HOME", originalHome)
+
+		config := LoadConfig()
+
+		assert.NotNil(t, config)
+		assert.Equal(t, "test-claude", config.DefaultProgram)
 		assert.Equal(t, "test/", config.BranchPrefix)
 	})
 
@@ -278,7 +298,6 @@ func TestLoadConfig(t *testing.T) {
 		// Should return default config when JSON is invalid
 		assert.NotNil(t, config)
 		assert.NotEmpty(t, config.DefaultProgram)
-		assert.Equal(t, 1000, config.DaemonPollInterval) // Default value
 	})
 }
 
@@ -526,9 +545,8 @@ func TestSaveConfigTo(t *testing.T) {
 		configDir := t.TempDir()
 
 		testConfig := &Config{
-			DefaultProgram:     "test-program",
-			DaemonPollInterval: 3000,
-			BranchPrefix:       "test-branch/",
+			DefaultProgram: "test-program",
+			BranchPrefix:   "test-branch/",
 		}
 
 		err := SaveConfigTo(testConfig, configDir)
@@ -539,7 +557,6 @@ func TestSaveConfigTo(t *testing.T) {
 
 		loadedConfig := LoadConfigFrom(configDir)
 		assert.Equal(t, testConfig.DefaultProgram, loadedConfig.DefaultProgram)
-		assert.Equal(t, testConfig.DaemonPollInterval, loadedConfig.DaemonPollInterval)
 		assert.Equal(t, testConfig.BranchPrefix, loadedConfig.BranchPrefix)
 	})
 }

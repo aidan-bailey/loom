@@ -233,7 +233,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `D` | Kill selected session (with confirmation); on an orphaned (`⟲`) session: discard its worktree, keeping the branch |
 | `d` | Toggle diff overlay |
 | `W` | Open workspace picker |
-| `S` | Open settings (edit config.json: Default Program, Daemon Poll Interval, Branch Prefix, Profiles, Claude Preferences) |
+| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Profiles, Claude Preferences) |
 | `l` / `[` | Previous workspace tab |
 | `;` / `]` | Next workspace tab |
 | `?` | Show help screen |
@@ -478,7 +478,6 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `default_program` | string | `"claude"` | Program to run in new sessions. Can be a profile name. |
-| `daemon_poll_interval` | int | `1000` | Unused — retained for config.json backward compatibility only |
 | `branch_prefix` | string | `"{username}/"` | Prefix for auto-generated branch names |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
@@ -488,7 +487,6 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 ```json
 {
   "default_program": "claude",
-  "daemon_poll_interval": 1000,
   "branch_prefix": "aidanb/",
   "profiles": [
     {

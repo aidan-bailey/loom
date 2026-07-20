@@ -2,8 +2,6 @@ package overlay
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/ui"
@@ -17,7 +15,6 @@ type settingsField int
 
 const (
 	settingsFieldDefaultProgram settingsField = iota
-	settingsFieldDaemonPollInterval
 	settingsFieldBranchPrefix
 	settingsFieldProfiles
 	settingsFieldClaudePreferences
@@ -28,8 +25,6 @@ func (f settingsField) label() string {
 	switch f {
 	case settingsFieldDefaultProgram:
 		return "Default Program"
-	case settingsFieldDaemonPollInterval:
-		return "Daemon Poll Interval"
 	case settingsFieldBranchPrefix:
 		return "Branch Prefix"
 	case settingsFieldProfiles:
@@ -138,8 +133,6 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 		s.startTextEdit(settingsFieldDefaultProgram, "Default Program", s.cfg.DefaultProgram)
 	case settingsFieldBranchPrefix:
 		s.startTextEdit(settingsFieldBranchPrefix, "Branch Prefix", s.cfg.BranchPrefix)
-	case settingsFieldDaemonPollInterval:
-		s.startTextEdit(settingsFieldDaemonPollInterval, "Daemon Poll Interval (ms)", fmt.Sprintf("%d", s.cfg.DaemonPollInterval))
 	case settingsFieldProfiles:
 		s.profiles = NewProfilesManager(s.cfg)
 		s.profiles.SetWidth(s.width)
@@ -193,21 +186,12 @@ func (s *SettingsOverlay) applyTextEdit(field settingsField, value string) bool 
 	case settingsFieldBranchPrefix:
 		s.cfg.Mutate(func(c *config.Config) { c.BranchPrefix = value })
 		return true
-	case settingsFieldDaemonPollInterval:
-		n, err := strconv.Atoi(strings.TrimSpace(value))
-		if err != nil || n <= 0 {
-			s.lastErr = fmt.Errorf("daemon poll interval must be a positive integer, got %q", value)
-			return false
-		}
-		s.cfg.Mutate(func(c *config.Config) { c.DaemonPollInterval = n })
-		return true
 	}
 	return false
 }
 
-// TakeError returns and clears the last validation error (currently only
-// possible from the Daemon Poll Interval field). Callers poll this after
-// HandleKeyPress.
+// TakeError returns and clears the last validation error from a text-edit
+// field. Callers poll this after HandleKeyPress.
 func (s *SettingsOverlay) TakeError() error {
 	err := s.lastErr
 	s.lastErr = nil
@@ -280,8 +264,6 @@ func (s *SettingsOverlay) valueFor(f settingsField) string {
 	switch f {
 	case settingsFieldDefaultProgram:
 		return s.cfg.DefaultProgram
-	case settingsFieldDaemonPollInterval:
-		return fmt.Sprintf("%d ms", s.cfg.DaemonPollInterval)
 	case settingsFieldBranchPrefix:
 		return s.cfg.BranchPrefix
 	case settingsFieldProfiles:

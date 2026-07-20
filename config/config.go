@@ -86,9 +86,6 @@ type Config struct {
 
 	// DefaultProgram is the default program to run in new instances
 	DefaultProgram string `json:"default_program"`
-	// DaemonPollInterval is retained for config.json backward compatibility
-	// only — its consumer (the background daemon) has been removed.
-	DaemonPollInterval int `json:"daemon_poll_interval"`
 	// BranchPrefix is the prefix used for git branches created by the application.
 	BranchPrefix string `json:"branch_prefix"`
 	// Profiles is a list of named program profiles.
@@ -270,8 +267,7 @@ func DefaultConfig() *Config {
 	}
 
 	return &Config{
-		DefaultProgram:     program,
-		DaemonPollInterval: 1000,
+		DefaultProgram: program,
 		BranchPrefix: func() string {
 			user, err := user.Current()
 			if err != nil || user == nil || user.Username == "" {

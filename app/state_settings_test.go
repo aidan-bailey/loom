@@ -53,8 +53,7 @@ func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 
-	// Branch Prefix is row 2 (Default Program, Daemon Poll Interval, Branch Prefix).
-	handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	// Branch Prefix is row 1 (Default Program, Branch Prefix).
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // open edit
 	for i := 0; i < 64; i++ {
@@ -78,9 +77,9 @@ func TestSettingsDrillsIntoClaudePreferences(t *testing.T) {
 	so := m.settingsOverlay()
 	require.NotNil(t, so)
 
-	// Row 4 is Claude Preferences (Default Program, Daemon Poll Interval,
-	// Branch Prefix, Profiles, Claude Preferences).
-	for i := 0; i < 4; i++ {
+	// Row 3 is Claude Preferences (Default Program, Branch Prefix,
+	// Profiles, Claude Preferences).
+	for i := 0; i < 3; i++ {
 		handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // drill in

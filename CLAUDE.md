@@ -184,7 +184,7 @@ Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent act
 ### Persistent State
 
 All stored in `~/.loom/`:
-- `config.json` — user configuration: `DefaultProgram`, `DaemonPollInterval` (ms, default 1000; retained for backward compatibility only — its consumer, the background daemon, was removed), `BranchPrefix` (default: `{username}/`), `Profiles` (named program presets), `ClaudeRemoteControl` (`*bool`, default on — launches Claude sessions with `--remote-control <title>`; nil is treated as enabled, read via `Config.RemoteControlEnabled()`), `ClaudePermissionMode` (`*string`, default `"default"` — launches Claude sessions with `--permission-mode <mode>`; nil is treated as `"default"` (no flag injected), read via `Config.PermissionMode()`; valid values enumerated in `config.ClaudePermissionModes` and cycled from the Claude Preferences overlay)
+- `config.json` — user configuration: `DefaultProgram`, `BranchPrefix` (default: `{username}/`), `Profiles` (named program presets), `ClaudeRemoteControl` (`*bool`, default on — launches Claude sessions with `--remote-control <title>`; nil is treated as enabled, read via `Config.RemoteControlEnabled()`), `ClaudePermissionMode` (`*string`, default `"default"` — launches Claude sessions with `--permission-mode <mode>`; nil is treated as `"default"` (no flag injected), read via `Config.PermissionMode()`; valid values enumerated in `config.ClaudePermissionModes` and cycled from the Claude Preferences overlay)
 - `state.json` — app state (e.g. help screens seen)
 - `instances.json` — serialized session data
 - `workspaces.json` — registered workspaces with name, path, and last-used tracking

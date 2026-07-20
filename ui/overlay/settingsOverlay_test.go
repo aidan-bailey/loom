@@ -11,9 +11,8 @@ import (
 
 func newTestSettingsCfg() *config.Config {
 	return &config.Config{
-		DefaultProgram:     "claude",
-		DaemonPollInterval: 1000,
-		BranchPrefix:       "aidan/",
+		DefaultProgram: "claude",
+		BranchPrefix:   "aidan/",
 	}
 }
 
@@ -84,23 +83,6 @@ func TestSettingsOverlayEditsDefaultProgram(t *testing.T) {
 	_, changed := submitText(t, so, settingsFieldDefaultProgram, "aider")
 	assert.True(t, changed)
 	assert.Equal(t, "aider", cfg.DefaultProgram)
-}
-
-func TestSettingsOverlayEditsDaemonPollInterval(t *testing.T) {
-	cfg := newTestSettingsCfg()
-	so := NewSettingsOverlay(cfg, false, "")
-	_, changed := submitText(t, so, settingsFieldDaemonPollInterval, "2000")
-	assert.True(t, changed)
-	assert.Equal(t, 2000, cfg.DaemonPollInterval)
-}
-
-func TestSettingsOverlayRejectsNonNumericPollInterval(t *testing.T) {
-	cfg := newTestSettingsCfg()
-	so := NewSettingsOverlay(cfg, false, "")
-	_, changed := submitText(t, so, settingsFieldDaemonPollInterval, "notanumber")
-	assert.False(t, changed)
-	assert.Equal(t, 1000, cfg.DaemonPollInterval, "invalid input must not overwrite the existing value")
-	assert.Error(t, so.TakeError())
 }
 
 func TestSettingsOverlayEscCancelsTextEdit(t *testing.T) {
