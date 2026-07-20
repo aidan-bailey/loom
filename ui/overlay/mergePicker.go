@@ -152,10 +152,10 @@ func (p *MergePicker) SetSize(width, _ int) {
 
 // Render renders the merge picker overlay.
 func (p *MergePicker) Render() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.TitleAccent)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.Accent)
 	selectedStyle := lipgloss.NewStyle().Background(ui.SelectionBg).Foreground(ui.SelectionFg)
-	normalStyle := lipgloss.NewStyle().Foreground(ui.TextPrimary)
-	hintStyle := lipgloss.NewStyle().Foreground(ui.TextHint)
+	normalStyle := lipgloss.NewStyle().Foreground(ui.Text)
+	hintStyle := lipgloss.NewStyle().Foreground(ui.Faint)
 
 	content := titleStyle.Render(fmt.Sprintf("Merge into '%s'", p.targetTitle)) + "\n\n"
 
@@ -179,7 +179,7 @@ func (p *MergePicker) Render() string {
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.TitleAccent).
+		BorderForeground(ui.Accent).
 		Padding(1, 2).
 		Width(p.width)
 

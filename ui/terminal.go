@@ -12,14 +12,18 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/compat"
 )
 
-var terminalPaneStyle = lipgloss.NewStyle().
-	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
+var (
+	terminalPaneStyle, terminalFooterStyle lipgloss.Style
+)
 
-var terminalFooterStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#FFD700"))
+func init() { RegisterThemeHook(rebuildTerminalStyles) }
+
+func rebuildTerminalStyles() {
+	terminalPaneStyle = lipgloss.NewStyle().Foreground(Text)
+	terminalFooterStyle = lipgloss.NewStyle().Foreground(Highlight)
+}
 
 // terminalSession holds a cached tmux session for a specific instance.
 type terminalSession struct {

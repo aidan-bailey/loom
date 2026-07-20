@@ -218,11 +218,17 @@ func (s *SettingsOverlay) View() string {
 }
 
 var (
-	settingsTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(ui.TitleAccent)
-	settingsSelectedStyle = lipgloss.NewStyle().Background(ui.SelectionBg).Foreground(ui.SelectionFg)
-	settingsNormalStyle   = lipgloss.NewStyle().Foreground(ui.TextPrimary)
-	settingsHintStyle     = lipgloss.NewStyle().Foreground(ui.TextHint)
+	settingsTitleStyle, settingsSelectedStyle, settingsNormalStyle, settingsHintStyle lipgloss.Style
 )
+
+func init() { ui.RegisterThemeHook(rebuildSettingsStyles) }
+
+func rebuildSettingsStyles() {
+	settingsTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(ui.Accent)
+	settingsSelectedStyle = lipgloss.NewStyle().Background(ui.SelectionBg).Foreground(ui.SelectionFg)
+	settingsNormalStyle = lipgloss.NewStyle().Foreground(ui.Text)
+	settingsHintStyle = lipgloss.NewStyle().Foreground(ui.Faint)
+}
 
 // Render renders whichever mode is active: the main row list, an
 // embedded text edit, or a nested sub-screen.
@@ -253,7 +259,7 @@ func (s *SettingsOverlay) Render() string {
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.TitleAccent).
+		BorderForeground(ui.Accent).
 		Padding(1, 2).
 		Width(s.width)
 	return border.Render(content)

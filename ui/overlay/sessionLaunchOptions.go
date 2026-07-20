@@ -107,12 +107,20 @@ func (l *SessionLaunchOptions) toggleCursor() {
 }
 
 var (
-	sessionLaunchOptionsTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(ui.TitleAccent)
-	sessionLaunchOptionsRowStyle      = lipgloss.NewStyle().Foreground(ui.TextPrimary)
-	sessionLaunchOptionsSelectedStyle = lipgloss.NewStyle().Foreground(ui.TitleAccent).Bold(true)
-	sessionLaunchOptionsHintStyle     = lipgloss.NewStyle().Foreground(ui.TextHint)
-	sessionLaunchOptionsBlockedText   = lipgloss.NewStyle().Foreground(ui.DangerAccent)
+	sessionLaunchOptionsTitleStyle, sessionLaunchOptionsRowStyle,
+	sessionLaunchOptionsSelectedStyle, sessionLaunchOptionsHintStyle,
+	sessionLaunchOptionsBlockedText lipgloss.Style
 )
+
+func init() { ui.RegisterThemeHook(rebuildSessionLaunchOptionsStyles) }
+
+func rebuildSessionLaunchOptionsStyles() {
+	sessionLaunchOptionsTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(ui.Accent)
+	sessionLaunchOptionsRowStyle = lipgloss.NewStyle().Foreground(ui.Text)
+	sessionLaunchOptionsSelectedStyle = lipgloss.NewStyle().Foreground(ui.Accent).Bold(true)
+	sessionLaunchOptionsHintStyle = lipgloss.NewStyle().Foreground(ui.Faint)
+	sessionLaunchOptionsBlockedText = lipgloss.NewStyle().Foreground(ui.ErrorColor)
+}
 
 // Render renders the modal.
 func (l *SessionLaunchOptions) Render() string {
@@ -155,7 +163,7 @@ func (l *SessionLaunchOptions) Render() string {
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.TitleAccent).
+		BorderForeground(ui.Accent).
 		Padding(1, 2).
 		Width(l.width)
 	return border.Render(content)

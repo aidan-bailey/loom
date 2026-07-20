@@ -30,8 +30,14 @@ const (
 )
 
 var (
-	quickInputHintStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#808080"))
+	quickInputHintStyle lipgloss.Style
 )
+
+func init() { RegisterThemeHook(rebuildQuickInputStyles) }
+
+func rebuildQuickInputStyles() {
+	quickInputHintStyle = lipgloss.NewStyle().Foreground(Dim)
+}
 
 // QuickInputBar is a single-line input bar for quick interactions with tmux sessions.
 type QuickInputBar struct {

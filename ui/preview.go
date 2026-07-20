@@ -8,7 +8,6 @@ import (
 	"github.com/aidan-bailey/loom/session"
 
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/compat"
 )
 
 // agentScrollTTL bounds how often the alt-screen state is probed (a tmux
@@ -28,10 +27,16 @@ const (
 // UpdateContent clamps it to the real top of the captured buffer.
 const scrollToTopOffset = 1 << 30
 
-var previewPaneStyle = lipgloss.NewStyle().
-	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
+var (
+	previewPaneStyle, previewScrollFooterStyle lipgloss.Style
+)
 
-var previewScrollFooterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700"))
+func init() { RegisterThemeHook(rebuildPreviewStyles) }
+
+func rebuildPreviewStyles() {
+	previewPaneStyle = lipgloss.NewStyle().Foreground(Text)
+	previewScrollFooterStyle = lipgloss.NewStyle().Foreground(Highlight)
+}
 
 // scrollFooter renders the jump-to-bottom affordance shown while a pane is
 // scrolled away from the live tail. newLines is the count of live-output lines
@@ -189,7 +194,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 			"Session is paused. Press 'r' to resume.",
 			"",
 			lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#FFD700")).
+				Foreground(Highlight).
 				Render(fmt.Sprintf(
 					"The instance can be checked out at '%s' (copied to your clipboard)",
 					instance.GetBranch(),
@@ -202,7 +207,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 			"Its worktree may hold a live agent or uncommitted work.",
 			"",
 			lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#FFD700")).
+				Foreground(Highlight).
 				Render(fmt.Sprintf("Branch: %s", instance.GetBranch())),
 			"",
 			"Press 'r' to recover it, or 'D' to discard the worktree (branch is kept).",

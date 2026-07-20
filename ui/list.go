@@ -9,7 +9,6 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/compat"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -20,79 +19,37 @@ const deletingIcon = "✕ "
 const recoverableIcon = "⟲ "
 const workspaceTerminalIcon = "◆ "
 
-var readyStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#51bd73"))
+var (
+	readyStyle, promptingStyle, addedLinesStyle, removedLinesStyle,
+	pausedStyle, deletingStyle, recoverableStyle, deletingTitleStyle,
+	deletingDescStyle, workspaceTerminalStyle, wtTitleStyle, wtDescStyle,
+	wtSelectedTitleStyle, wtSelectedDescStyle, titleStyle, listDescStyle,
+	selectedTitleStyle, selectedDescStyle, mainTitle lipgloss.Style
+)
 
-var promptingStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#e5c07b"))
+func init() { RegisterThemeHook(rebuildListStyles) }
 
-var addedLinesStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#51bd73"))
-
-var removedLinesStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#de613e"))
-
-var pausedStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#888888"))
-
-var deletingStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#cc6666"))
-
-var recoverableStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#d19a66"))
-
-var deletingTitleStyle = lipgloss.NewStyle().
-	Padding(1, 1, 0, 1).
-	Foreground(TextDim)
-
-var deletingDescStyle = lipgloss.NewStyle().
-	Padding(0, 1, 1, 1).
-	Foreground(TextDim)
-
-var workspaceTerminalStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#6c71c4"))
-
-var wtTitleStyle = lipgloss.NewStyle().
-	Padding(1, 1, 0, 1).
-	Background(compat.AdaptiveColor{Light: lipgloss.Color("#e8e0f0"), Dark: lipgloss.Color("#2d2640")}).
-	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#c4b5d9")})
-
-var wtDescStyle = lipgloss.NewStyle().
-	Padding(0, 1, 1, 1).
-	Background(compat.AdaptiveColor{Light: lipgloss.Color("#e8e0f0"), Dark: lipgloss.Color("#2d2640")}).
-	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#6c71c4"), Dark: lipgloss.Color("#8a80b0")})
-
-var wtSelectedTitleStyle = lipgloss.NewStyle().
-	Padding(1, 1, 0, 1).
-	Background(compat.AdaptiveColor{Light: lipgloss.Color("#d0c4e8"), Dark: lipgloss.Color("#3d3260")}).
-	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#e0d4f0")})
-
-var wtSelectedDescStyle = lipgloss.NewStyle().
-	Padding(0, 1, 1, 1).
-	Background(compat.AdaptiveColor{Light: lipgloss.Color("#d0c4e8"), Dark: lipgloss.Color("#3d3260")}).
-	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#c4b5d9")})
-
-var titleStyle = lipgloss.NewStyle().
-	Padding(1, 1, 0, 1).
-	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#1a1a1a"), Dark: lipgloss.Color("#dddddd")})
-
-var listDescStyle = lipgloss.NewStyle().
-	Padding(0, 1, 1, 1).
-	Foreground(compat.AdaptiveColor{Light: lipgloss.Color("#A49FA5"), Dark: lipgloss.Color("#777777")})
-
-var selectedTitleStyle = lipgloss.NewStyle().
-	Padding(1, 1, 0, 1).
-	Background(lipgloss.Color("#dde4f0")).
-	Foreground(lipgloss.Color("#1a1a1a"))
-
-var selectedDescStyle = lipgloss.NewStyle().
-	Padding(0, 1, 1, 1).
-	Background(lipgloss.Color("#dde4f0")).
-	Foreground(lipgloss.Color("#1a1a1a"))
-
-var mainTitle = lipgloss.NewStyle().
-	Background(lipgloss.Color("62")).
-	Foreground(lipgloss.Color("230"))
+func rebuildListStyles() {
+	readyStyle = lipgloss.NewStyle().Foreground(OK)
+	promptingStyle = lipgloss.NewStyle().Foreground(Attention)
+	addedLinesStyle = lipgloss.NewStyle().Foreground(OK)
+	removedLinesStyle = lipgloss.NewStyle().Foreground(ErrorColor)
+	pausedStyle = lipgloss.NewStyle().Foreground(Dim)
+	deletingStyle = lipgloss.NewStyle().Foreground(ErrorColor)
+	recoverableStyle = lipgloss.NewStyle().Foreground(Attention)
+	deletingTitleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Foreground(Dim)
+	deletingDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Foreground(Dim)
+	workspaceTerminalStyle = lipgloss.NewStyle().Foreground(Workspace)
+	wtTitleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Background(Panel).Foreground(Text)
+	wtDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Background(Panel).Foreground(Workspace)
+	wtSelectedTitleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Background(SelectionBg).Foreground(SelectionFg)
+	wtSelectedDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Background(SelectionBg).Foreground(Workspace)
+	titleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Foreground(Text)
+	listDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Foreground(Dim)
+	selectedTitleStyle = lipgloss.NewStyle().Padding(1, 1, 0, 1).Background(SelectionBg).Foreground(SelectionFg)
+	selectedDescStyle = lipgloss.NewStyle().Padding(0, 1, 1, 1).Background(SelectionBg).Foreground(SelectionFg)
+	mainTitle = lipgloss.NewStyle().Background(Accent).Foreground(SelectionFg)
+}
 
 // List is the left-panel instance list. It owns the selection cursor
 // and viewport scroll offset, and delegates per-row rendering to

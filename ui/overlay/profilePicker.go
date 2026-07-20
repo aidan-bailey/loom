@@ -75,17 +75,21 @@ func (pp *ProfilePicker) HasMultiple() bool {
 }
 
 var (
-	ppLabelStyle = lipgloss.NewStyle().
-			Foreground(ui.OverlayBorder).
-			Bold(true)
-
-	ppSelectedStyle = lipgloss.NewStyle().
-			Background(ui.OverlayBorder).
-			Foreground(ui.OverlaySelectedFg)
-
-	ppDimStyle = lipgloss.NewStyle().
-			Foreground(ui.OverlayHintFg)
+	ppLabelStyle, ppSelectedStyle, ppDimStyle lipgloss.Style
 )
+
+func init() { ui.RegisterThemeHook(rebuildProfilePickerStyles) }
+
+func rebuildProfilePickerStyles() {
+	ppLabelStyle = lipgloss.NewStyle().
+		Foreground(ui.Accent).
+		Bold(true)
+	ppSelectedStyle = lipgloss.NewStyle().
+		Background(ui.Accent).
+		Foreground(ui.SelectionFg)
+	ppDimStyle = lipgloss.NewStyle().
+		Foreground(ui.Faint)
+}
 
 // Render renders the profile picker.
 func (pp *ProfilePicker) Render() string {

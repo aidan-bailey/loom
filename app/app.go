@@ -33,12 +33,19 @@ import (
 // worktree overhead are the real upper bound; raise deliberately.
 const GlobalInstanceLimit = 10
 
-var inlineAttachHintStyle = lipgloss.NewStyle().
-	Foreground(ui.BorderActive).
-	Bold(true)
+var (
+	inlineAttachHintStyle, statusLineStyle lipgloss.Style
+)
 
-var statusLineStyle = lipgloss.NewStyle().
-	Foreground(ui.BorderMuted)
+func init() { ui.RegisterThemeHook(rebuildAppStyles) }
+
+func rebuildAppStyles() {
+	inlineAttachHintStyle = lipgloss.NewStyle().
+		Foreground(ui.Accent).
+		Bold(true)
+	statusLineStyle = lipgloss.NewStyle().
+		Foreground(ui.Rule)
+}
 
 // Run starts the Bubble Tea program and blocks until the user quits or
 // ctx is cancelled. It wires the home model, installs a shutdown hook
@@ -57,6 +64,16 @@ var statusLineStyle = lipgloss.NewStyle().
 //   - noScripts disables loading user scripts from ~/.loom/scripts;
 //     embedded defaults still load so core keybindings work.
 func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, pendingDir string, noScripts bool) error {
+	// Activate the configured theme before any component renders.
+	// Package-init styles are theme-hooked (ui.RegisterThemeHook), so
+	// this rebuild-on-apply is what makes config-selected themes stick.
+	themeName := ""
+	if appConfig != nil {
+		themeName = appConfig.GetTheme()
+	}
+	if !ui.ApplyTheme(themeName) && themeName != "" {
+		log.For("ui").Warn("unknown_theme", "name", themeName, "fallback", ui.DefaultThemeName)
+	}
 	h, err := newHome(ctx, wsCtx, registry, appConfig, program, pendingDir, noScripts)
 	if err != nil {
 		return err

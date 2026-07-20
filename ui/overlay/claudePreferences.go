@@ -118,12 +118,19 @@ func nextInList(list []string, current string) string {
 }
 
 var (
-	claudePrefsTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(ui.TitleAccent)
-	claudePrefsRowStyle      = lipgloss.NewStyle().Foreground(ui.TextPrimary)
-	claudePrefsSelectedStyle = lipgloss.NewStyle().Foreground(ui.TitleAccent).Bold(true)
-	claudePrefsHintStyle     = lipgloss.NewStyle().Foreground(ui.TextHint)
-	claudePrefsBlockedText   = lipgloss.NewStyle().Foreground(ui.DangerAccent)
+	claudePrefsTitleStyle, claudePrefsRowStyle, claudePrefsSelectedStyle,
+	claudePrefsHintStyle, claudePrefsBlockedText lipgloss.Style
 )
+
+func init() { ui.RegisterThemeHook(rebuildClaudePrefsStyles) }
+
+func rebuildClaudePrefsStyles() {
+	claudePrefsTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(ui.Accent)
+	claudePrefsRowStyle = lipgloss.NewStyle().Foreground(ui.Text)
+	claudePrefsSelectedStyle = lipgloss.NewStyle().Foreground(ui.Accent).Bold(true)
+	claudePrefsHintStyle = lipgloss.NewStyle().Foreground(ui.Faint)
+	claudePrefsBlockedText = lipgloss.NewStyle().Foreground(ui.ErrorColor)
+}
 
 // Render renders the sub-screen.
 func (c *ClaudePreferences) Render() string {
@@ -219,7 +226,7 @@ func (c *ClaudePreferences) Render() string {
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.TitleAccent).
+		BorderForeground(ui.Accent).
 		Padding(1, 2).
 		Width(c.width)
 	return border.Render(content)

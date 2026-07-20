@@ -5,24 +5,29 @@ import (
 )
 
 var (
-	wsActiveTabStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder(), true).
-				BorderForeground(BorderActive).
-				Bold(true).
-				Foreground(BorderActive).
-				AlignHorizontal(lipgloss.Center)
-
-	wsInactiveTabStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder(), true).
-				BorderForeground(BorderMuted).
-				AlignHorizontal(lipgloss.Center)
+	wsActiveTabStyle, wsInactiveTabStyle, wsPromptIndicator, wsRunningIndicator,
+	wsReadyIndicator, wsLoadingIndicator, wsPausedIndicator lipgloss.Style
 )
 
-var wsPromptIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#e5c07b")).Bold(true)
-var wsRunningIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#61afef")).Bold(true)
-var wsReadyIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#51bd73")).Bold(true)
-var wsLoadingIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#c678dd")).Bold(true)
-var wsPausedIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+func init() { RegisterThemeHook(rebuildWorkspaceTabBarStyles) }
+
+func rebuildWorkspaceTabBarStyles() {
+	wsActiveTabStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder(), true).
+		BorderForeground(Accent).
+		Bold(true).
+		Foreground(Accent).
+		AlignHorizontal(lipgloss.Center)
+	wsInactiveTabStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder(), true).
+		BorderForeground(Rule).
+		AlignHorizontal(lipgloss.Center)
+	wsPromptIndicator = lipgloss.NewStyle().Foreground(Attention).Bold(true)
+	wsRunningIndicator = lipgloss.NewStyle().Foreground(Info).Bold(true)
+	wsReadyIndicator = lipgloss.NewStyle().Foreground(OK).Bold(true)
+	wsLoadingIndicator = lipgloss.NewStyle().Foreground(Workspace).Bold(true)
+	wsPausedIndicator = lipgloss.NewStyle().Foreground(Dim)
+}
 
 // TabStatus represents the highest-priority instance status within a workspace tab.
 // Precedence (high→low): Prompting > Running > Ready > Loading > Paused > None.

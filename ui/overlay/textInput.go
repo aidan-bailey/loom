@@ -11,26 +11,28 @@ import (
 )
 
 var (
+	tiStyle, tiTitleStyle, tiButtonStyle, tiFocusedButtonStyle, tiDividerStyle lipgloss.Style
+)
+
+func init() { ui.RegisterThemeHook(rebuildTextInputStyles) }
+
+func rebuildTextInputStyles() {
 	tiStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.OverlayBorder).
+		BorderForeground(ui.Accent).
 		Padding(1, 2)
-
 	tiTitleStyle = lipgloss.NewStyle().
-			Foreground(ui.OverlayBorder).
-			Bold(true).
-			MarginBottom(1)
-
+		Foreground(ui.Accent).
+		Bold(true).
+		MarginBottom(1)
 	tiButtonStyle = lipgloss.NewStyle().
-			Foreground(ui.OverlayItemFg)
-
+		Foreground(ui.Text)
 	tiFocusedButtonStyle = lipgloss.NewStyle().
-				Background(ui.OverlayBorder).
-				Foreground(ui.OverlaySelectedFg)
-
+		Background(ui.Accent).
+		Foreground(ui.SelectionFg)
 	tiDividerStyle = lipgloss.NewStyle().
-			Foreground(ui.OverlayHintFg)
-)
+		Foreground(ui.Faint)
+}
 
 // TextInputOverlay represents a text input overlay with state management.
 type TextInputOverlay struct {

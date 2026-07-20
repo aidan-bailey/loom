@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aidan-bailey/loom/ui"
+
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -18,22 +20,25 @@ import (
 const feHeaderRows = 5
 
 var (
-	feBorder = lipgloss.NewStyle().
-			BorderForeground(lipgloss.Color("#7c7cff")).
-			Border(lipgloss.RoundedBorder(), false, true, true, true)
-
-	feTitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#7c7cff")).
-			Bold(true)
-
-	feHintStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#808080"))
-
-	feSelectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#ffffff")).
-			Background(lipgloss.Color("#3a3a5a")).
-			Bold(true)
+	feBorder, feTitleStyle, feHintStyle, feSelectedStyle lipgloss.Style
 )
+
+func init() { ui.RegisterThemeHook(rebuildFileExplorerStyles) }
+
+func rebuildFileExplorerStyles() {
+	feBorder = lipgloss.NewStyle().
+		BorderForeground(ui.Accent).
+		Border(lipgloss.RoundedBorder(), false, true, true, true)
+	feTitleStyle = lipgloss.NewStyle().
+		Foreground(ui.Accent).
+		Bold(true)
+	feHintStyle = lipgloss.NewStyle().
+		Foreground(ui.Dim)
+	feSelectedStyle = lipgloss.NewStyle().
+		Foreground(ui.SelectionFg).
+		Background(ui.SelectionBg).
+		Bold(true)
+}
 
 // FileExplorerOverlay is a full-right-pane modal that lists files in
 // a root directory and invokes a caller-provided callback when the

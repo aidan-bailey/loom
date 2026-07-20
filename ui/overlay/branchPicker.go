@@ -148,20 +148,23 @@ func (bp *BranchPicker) GetSelectedBranch() string {
 }
 
 var (
-	bpLabelStyle = lipgloss.NewStyle().
-			Foreground(ui.OverlayBorder).
-			Bold(true)
-
-	bpFilterStyle = lipgloss.NewStyle().
-			Foreground(ui.OverlayItemFg)
-
-	bpSelectedStyle = lipgloss.NewStyle().
-			Background(ui.OverlayBorder).
-			Foreground(ui.OverlaySelectedFg)
-
-	bpDimStyle = lipgloss.NewStyle().
-			Foreground(ui.OverlayHintFg)
+	bpLabelStyle, bpFilterStyle, bpSelectedStyle, bpDimStyle lipgloss.Style
 )
+
+func init() { ui.RegisterThemeHook(rebuildBranchPickerStyles) }
+
+func rebuildBranchPickerStyles() {
+	bpLabelStyle = lipgloss.NewStyle().
+		Foreground(ui.Accent).
+		Bold(true)
+	bpFilterStyle = lipgloss.NewStyle().
+		Foreground(ui.Text)
+	bpSelectedStyle = lipgloss.NewStyle().
+		Background(ui.Accent).
+		Foreground(ui.SelectionFg)
+	bpDimStyle = lipgloss.NewStyle().
+		Foreground(ui.Faint)
+}
 
 // Render renders the branch picker.
 func (bp *BranchPicker) Render() string {

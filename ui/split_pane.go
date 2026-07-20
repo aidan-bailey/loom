@@ -10,8 +10,6 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-var highlightColor = BorderActive
-
 // AdjustPreviewWidth adjusts the width of the preview pane per PreviewWidthPercent.
 func AdjustPreviewWidth(width int) int {
 	return int(float64(width) * PreviewWidthPercent)
@@ -25,25 +23,30 @@ const (
 	FocusTerminal
 )
 
-var dimBorderColor = BorderMuted
-
 var (
 	// paneBodyBorder renders left, right, bottom — top line is built manually with an inline title.
-	paneBodyBorder = lipgloss.NewStyle().
-			BorderForeground(dimBorderColor).
-			Border(lipgloss.RoundedBorder(), false, true, true, true)
-	focusedPaneBodyBorder = lipgloss.NewStyle().
-				BorderForeground(highlightColor).
-				Border(lipgloss.RoundedBorder(), false, true, true, true)
-	paneTitleStyle = lipgloss.NewStyle().
-			Foreground(dimBorderColor)
-	focusedPaneTitleStyle = lipgloss.NewStyle().
-				Foreground(highlightColor).
-				Bold(true)
-	diffOverlayTitleStyle = lipgloss.NewStyle().
-				Foreground(highlightColor).
-				Bold(true)
+	paneBodyBorder, focusedPaneBodyBorder, paneTitleStyle,
+	focusedPaneTitleStyle, diffOverlayTitleStyle lipgloss.Style
 )
+
+func init() { RegisterThemeHook(rebuildSplitPaneStyles) }
+
+func rebuildSplitPaneStyles() {
+	paneBodyBorder = lipgloss.NewStyle().
+		BorderForeground(Rule).
+		Border(lipgloss.RoundedBorder(), false, true, true, true)
+	focusedPaneBodyBorder = lipgloss.NewStyle().
+		BorderForeground(Accent).
+		Border(lipgloss.RoundedBorder(), false, true, true, true)
+	paneTitleStyle = lipgloss.NewStyle().
+		Foreground(Rule)
+	focusedPaneTitleStyle = lipgloss.NewStyle().
+		Foreground(Accent).
+		Bold(true)
+	diffOverlayTitleStyle = lipgloss.NewStyle().
+		Foreground(Accent).
+		Bold(true)
+}
 
 // SplitPane composes the right-hand side of the TUI: an agent preview
 // on top (70%), a terminal pane below (30%), and a hotkey-toggled diff
@@ -601,10 +604,10 @@ func (s *SplitPane) renderPane(title, content string, innerHeight int, focused b
 
 // buildTopBorder creates a top border line with an inline title: ╭── Title ─────────╮
 func (s *SplitPane) buildTopBorder(title string, focused bool) string {
-	borderColor := dimBorderColor
+	borderColor := Rule
 	titleStyle := paneTitleStyle
 	if focused {
-		borderColor = highlightColor
+		borderColor = Accent
 		titleStyle = focusedPaneTitleStyle
 	}
 	bc := lipgloss.NewStyle().Foreground(borderColor)

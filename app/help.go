@@ -235,11 +235,17 @@ func (h helpTypeInstanceStash) mask() uint32 {
 }
 
 var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Underline(true).Foreground(ui.TitleAccent)
-	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(ui.HeaderAccent)
-	keyStyle    = lipgloss.NewStyle().Bold(true).Foreground(ui.KeyHighlight)
-	descStyle   = lipgloss.NewStyle().Foreground(ui.TextPrimary)
+	titleStyle, headerStyle, keyStyle, descStyle lipgloss.Style
 )
+
+func init() { ui.RegisterThemeHook(rebuildHelpStyles) }
+
+func rebuildHelpStyles() {
+	titleStyle = lipgloss.NewStyle().Bold(true).Underline(true).Foreground(ui.Accent)
+	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(ui.Accent)
+	keyStyle = lipgloss.NewStyle().Bold(true).Foreground(ui.Highlight)
+	descStyle = lipgloss.NewStyle().Foreground(ui.Text)
+}
 
 // showHelpScreen displays the help screen overlay if it hasn't been shown before.
 // The onDismiss callback, if non-nil, is invoked when the overlay is closed (or

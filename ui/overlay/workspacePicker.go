@@ -165,10 +165,10 @@ func (w *WorkspacePicker) SetSize(width, _ int) {
 
 // Render renders the workspace picker overlay.
 func (w *WorkspacePicker) Render() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.TitleAccent)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(ui.Accent)
 	selectedStyle := lipgloss.NewStyle().Background(ui.SelectionBg).Foreground(ui.SelectionFg)
-	normalStyle := lipgloss.NewStyle().Foreground(ui.TextPrimary)
-	pathStyle := lipgloss.NewStyle().Foreground(ui.TextHint)
+	normalStyle := lipgloss.NewStyle().Foreground(ui.Text)
+	pathStyle := lipgloss.NewStyle().Foreground(ui.Faint)
 
 	var content string
 	if w.isStartup {
@@ -231,7 +231,7 @@ func (w *WorkspacePicker) Render() string {
 		}
 	}
 
-	helpStyle := lipgloss.NewStyle().Foreground(ui.TextHint)
+	helpStyle := lipgloss.NewStyle().Foreground(ui.Faint)
 	if w.isStartup {
 		content += "\n" + helpStyle.Render("enter select • esc global")
 	} else {
@@ -240,7 +240,7 @@ func (w *WorkspacePicker) Render() string {
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.TitleAccent).
+		BorderForeground(ui.Accent).
 		Padding(1, 2).
 		Width(w.width)
 

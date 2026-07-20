@@ -14,10 +14,16 @@ import (
 // They are exported so tests and callers composing their own diff
 // renderers can reuse the same palette.
 var (
-	AdditionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
-	DeletionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
-	HunkStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#0ea5e9"))
+	AdditionStyle, DeletionStyle, HunkStyle lipgloss.Style
 )
+
+func init() { RegisterThemeHook(rebuildDiffStyles) }
+
+func rebuildDiffStyles() {
+	AdditionStyle = lipgloss.NewStyle().Foreground(OK)
+	DeletionStyle = lipgloss.NewStyle().Foreground(ErrorColor)
+	HunkStyle = lipgloss.NewStyle().Foreground(Info)
+}
 
 // DiffPane renders the colorized git diff overlay shown when the user
 // toggles it on with `d`. It caches the last rendered diff content so

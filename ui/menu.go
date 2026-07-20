@@ -7,31 +7,24 @@ import (
 	"github.com/aidan-bailey/loom/session"
 
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/compat"
 )
 
-var keyStyle = lipgloss.NewStyle().Foreground(compat.AdaptiveColor{
-	Light: lipgloss.Color("#655F5F"),
-	Dark:  lipgloss.Color("#7F7A7A"),
-})
+var (
+	keyStyle, descStyle, sepStyle, actionGroupStyle, menuStyle lipgloss.Style
+)
 
-var descStyle = lipgloss.NewStyle().Foreground(compat.AdaptiveColor{
-	Light: lipgloss.Color("#7A7474"),
-	Dark:  lipgloss.Color("#9C9494"),
-})
+func init() { RegisterThemeHook(rebuildMenuStyles) }
 
-var sepStyle = lipgloss.NewStyle().Foreground(compat.AdaptiveColor{
-	Light: lipgloss.Color("#DDDADA"),
-	Dark:  lipgloss.Color("#3C3C3C"),
-})
-
-var actionGroupStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+func rebuildMenuStyles() {
+	keyStyle = lipgloss.NewStyle().Foreground(Dim)
+	descStyle = lipgloss.NewStyle().Foreground(Dim)
+	sepStyle = lipgloss.NewStyle().Foreground(Rule)
+	actionGroupStyle = lipgloss.NewStyle().Foreground(Workspace)
+	menuStyle = lipgloss.NewStyle().Foreground(Accent)
+}
 
 var separator = " • "
 var verticalSeparator = " │ "
-
-var menuStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("205"))
 
 // MenuState represents different states the menu can be in
 type MenuState int

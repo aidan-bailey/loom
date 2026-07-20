@@ -16,8 +16,16 @@ type ErrBox struct {
 	info          string
 }
 
-var errStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000"))
-var infoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7AA2F7"))
+var (
+	errStyle, infoStyle lipgloss.Style
+)
+
+func init() { RegisterThemeHook(rebuildErrStyles) }
+
+func rebuildErrStyles() {
+	errStyle = lipgloss.NewStyle().Foreground(ErrorColor)
+	infoStyle = lipgloss.NewStyle().Foreground(Info)
+}
 
 // NewErrBox constructs an empty ErrBox; the caller must SetSize before
 // the first render.

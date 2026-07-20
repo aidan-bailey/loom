@@ -37,7 +37,7 @@ func NewConfirmationOverlay(message string) *ConfirmationOverlay {
 		width:       50, // Default width
 		ConfirmKey:  "y",
 		CancelKey:   "n",
-		borderColor: ui.DangerAccent,
+		borderColor: ui.ErrorColor,
 	}
 }
 

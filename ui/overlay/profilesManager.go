@@ -205,11 +205,17 @@ func (p *ProfilesManager) handleConfirmingDelete(msg tea.KeyPressMsg) (closed, c
 }
 
 var (
-	profilesTitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(ui.TitleAccent)
-	profilesSelectedStyle = lipgloss.NewStyle().Background(ui.SelectionBg).Foreground(ui.SelectionFg)
-	profilesNormalStyle   = lipgloss.NewStyle().Foreground(ui.TextPrimary)
-	profilesHintStyle     = lipgloss.NewStyle().Foreground(ui.TextHint)
+	profilesTitleStyle, profilesSelectedStyle, profilesNormalStyle, profilesHintStyle lipgloss.Style
 )
+
+func init() { ui.RegisterThemeHook(rebuildProfilesManagerStyles) }
+
+func rebuildProfilesManagerStyles() {
+	profilesTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(ui.Accent)
+	profilesSelectedStyle = lipgloss.NewStyle().Background(ui.SelectionBg).Foreground(ui.SelectionFg)
+	profilesNormalStyle = lipgloss.NewStyle().Foreground(ui.Text)
+	profilesHintStyle = lipgloss.NewStyle().Foreground(ui.Faint)
+}
 
 // Render renders whichever mode is active.
 func (p *ProfilesManager) Render() string {
@@ -246,7 +252,7 @@ func (p *ProfilesManager) Render() string {
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.TitleAccent).
+		BorderForeground(ui.Accent).
 		Padding(1, 2).
 		Width(p.width)
 	return border.Render(content)
