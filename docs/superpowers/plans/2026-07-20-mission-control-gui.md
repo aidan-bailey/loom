@@ -1001,6 +1001,8 @@ Note: `CardData.accentColor` returns `color.Color`-shaped interface inline to av
 - [ ] **Step 4: Run** — same command — Expected: PASS
 - [ ] **Step 5: Commit** — `git commit -am "feat(ui): card component with densities, tails, and overview sort"`
 
+> **AMENDMENT (2026-07-20, during execution):** The RenderCard code above has two defects fixed in commit `6670e23` (review-driven; the fixed code in `ui/card.go` supersedes this plan text): (1) the selected-card Panel background must be applied on the *inner* styles — lipgloss v2 does not re-inject an outer background after an embedded SGR reset, so wrapping pre-styled lines renders striped; (2) `runewidth.Truncate` already reserves the ellipsis width, so pass `width`, not `width-1`. Additionally `sortSliceStable` was replaced by `slices.SortStableFunc` over precomputed tiers, and `TailLines` sanitizes C0 controls. Later tasks referencing card.go should treat the committed code as authoritative.
+
 ### Task 9: Rail rendering in `List`
 
 **Files:**
