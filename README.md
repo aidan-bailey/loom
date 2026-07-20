@@ -81,10 +81,10 @@ The menu at the bottom of the screen shows available commands:
 - `n` - Create a new session
 - `N` - Create a new session with a prompt
 - `D` - Kill (delete) the selected session
-- `↑/j`, `↓/k` - Navigate between sessions
+- `↑/k`, `↓/j` - Navigate between sessions
 
 ##### Actions
-- `↵/o` - Attach to the selected session to reprompt
+- `i`/`ctrl-a` - Attach to the selected agent to reprompt
 - `ctrl-q` - Detach from session
 - `p` - Commit and push branch to github
 - `s` - Stash. Stashes changes and pauses the session
@@ -92,9 +92,11 @@ The menu at the bottom of the screen shows available commands:
 - `?` - Show help menu
 
 ##### Navigation
-- `tab` - Switch between preview tab and diff tab
+- `tab` - Toggle the overview (fleet card grid) / focus view
+- `]`/`[` - Jump to the next/previous agent waiting for input
+- `d` - Toggle the diff overlay
 - `q` - Quit the application
-- `shift-↓/↑` - scroll in diff view
+- `shift-↓/↑` - scroll the active pane
 
 ### Configuration
 

@@ -61,25 +61,27 @@ nix run .
 
 ## TUI Layout
 
+Loom has two view modes, toggled with `tab`:
+
+- **Focus mode** (the default, shown below) — a session rail on the left plus the selected session's agent and terminal panes on the right.
+- **Overview mode** — a full-width fleet card grid for triaging many sessions at once. See [Overview Mode](#overview-mode).
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  [ Global ]  [ my-project ]  [ other-repo ]    ← Workspace Tabs    │
 ├────────────────────┬────────────────────────────────────────────────┤
-│                    │  Agent  │  Terminal              ← Pane Bar      │
-│   INSTANCE LIST    ├────────────────────────────────────────────────┤
-│    (30% width)     │                                                │
+│                    │  fix-auth · user/fix-auth · +42/-15 ← Title    │
+│   SESSION RAIL     ├────────────────────────────────────────────────┤
+│    (20% width)     │                                                │
+│                    │              AGENT PANE                        │
+│ ▌fix-auth          │          live agent output                     │
+│ ▌❯ awaiting input  │        (ctrl+a to interact)                    │
 │                    │                                                │
-│  ⟳ fix-auth       │         CONTENT AREA                           │
-│    user/fix-auth   │          (70% width)                           │
-│    +42 / -15       │                                                │
-│                    │  Agent and Terminal panes stacked:              │
-│  ⏸ add-tests      │   • Agent — live agent output (ctrl+a attach)  │
-│    user/add-tests  │   • Terminal — terminal session (ctrl+t)       │
-│    +120 / -8       │   • Diff overlay toggled with d                │
-│                    │                                                │
-│  ● refactor-api   │                                                │
-│    user/refactor   │                                                │
-│                    │                                                │
+│ ▌add-tests         ├────────────────────────────────────────────────┤
+│ ▌✻ working         │             TERMINAL PANE                      │
+│ ▌ …output tail…    │           (ctrl+t to interact;                 │
+│                    │   hide with T, resize with ctrl+↑ / ctrl+↓)    │
+│  other-repo · 3    │                                                │
 ├────────────────────┴────────────────────────────────────────────────┤
 │  n new • N prompt • s stash • r resume • p push • ? help • q        │
 │                                                   ← Context Menu    │
@@ -88,23 +90,35 @@ nix run .
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Left Panel — Instance List
+### Left Panel — Session Rail
 
-Each session shows its title, branch name, and diff stats (lines added/removed). Status indicators:
+Each session renders as a live mini-card: its title, a status line with wait age (e.g. `❯ awaiting input · 4m`, `✻ working`, `✓ idle`, `paused · 3d`, `⟲ recoverable`), and a tail of recent agent output. The colored accent bar on the card's left edge encodes state at a glance:
 
-| Icon | Status | Meaning |
-|------|--------|---------|
-| `⟳` | Running | Agent is actively working |
-| `●` | Ready | Waiting for user input |
-| `⏳` | Loading | Session is starting up |
-| `⏸` | Paused | Worktree removed, branch preserved |
+| Accent | Meaning |
+|--------|---------|
+| Gold | Needs your input (prompting or bell) |
+| Blue | Selected session |
+| Green | Agent running |
+| Purple | Workspace terminal |
 
-The selected instance is highlighted. Navigate with `↑`/`↓` or `k`/`j`.
+Branch name and diff stats moved off the rail — they now live in the agent pane's title bar and on overview cards. Dimmed one-line summaries of your other (peer) workspaces sit at the bottom of the rail. Navigate with `↑`/`↓` or `k`/`j`; hide the rail entirely with `\` for a full-width pane view. Rail visibility persists per workspace.
 
-### Right Panel — Tabbed Content
+### Overview Mode
 
-- **Agent** — Live read-only view of the agent's tmux output. Press `Ctrl+A` to attach and interact directly; `Ctrl+Q` to detach.
-- **Terminal** — Terminal pane for the session. Press `Ctrl+T` to attach; `Ctrl+Q` to detach.
+Press `tab` to switch to overview: a card grid of every session in the active workspace, sorted so sessions needing attention come first. Each card shows the title, status with wait age, branch and diff stats, and a live output tail. Peer workspaces appear as dimmed count lines.
+
+- `j`/`k` (or `↑`/`↓`) walk the sorted grid; `enter` or `esc` returns to focus mode on the selected session.
+- `z` collapses/expands the active workspace's group.
+- `]` / `[` jump to the next/previous agent waiting for input, same as in focus mode.
+- `n`/`N` drop back to focus mode first, then open the create flow.
+- Focus-only keys (attach, quick input, scroll, diff, file explorer) are inactive here, and mouse input is ignored in overview (v1).
+
+The current view mode persists per workspace — switching workspaces restores whichever mode that workspace last used, and it survives restarts.
+
+### Right Panel — Agent & Terminal Panes
+
+- **Agent** — Live view of the agent's tmux output. Its title bar shows the session's branch and diff stats. Press `Ctrl+A` (or `i`) to attach and interact directly; `Ctrl+Q` to detach.
+- **Terminal** — Terminal pane for the session. Press `Ctrl+T` to attach; `Ctrl+Q` to detach. Show/hide it with `T`; resize the agent/terminal split with `Ctrl+↑` / `Ctrl+↓` (the ratio is remembered per session).
 - **Diff** — Toggle with `d` to see git changes since the session started.
 
 ### Bottom Menu
@@ -113,7 +127,7 @@ Context-sensitive — shows only the actions available for the current state. Ke
 
 ### Workspace Tab Bar
 
-Visible only when multiple workspaces are active. Switch between workspace tabs with `[` and `]`. Toggle which workspaces are visible with `W`.
+Visible only when multiple workspaces are active. Switch between workspace tabs with `{` and `}` (or `l` and `;`). Toggle which workspaces are visible with `W`.
 
 ### Native Terminal Behavior
 
@@ -212,7 +226,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 
 ## Keyboard Reference
 
-### Default State
+### Default State (focus mode)
 
 | Key | Action |
 |-----|--------|
@@ -220,11 +234,16 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `↓` / `j` | Move selection down |
 | `n` | Create new session (name only) |
 | `N` | Create new session with prompt, profile, and branch picker |
-| `Ctrl+A` | Inline attach to agent pane |
+| `Tab` | Toggle overview mode (fleet card grid) |
+| `]` / `[` | Jump to next/previous agent waiting for input (prompting or bell; wraps) |
+| `i` / `Ctrl+A` | Inline attach to agent pane |
 | `Ctrl+T` | Inline attach to terminal pane |
-| `O` | Full-screen attach (agent) |
+| `Alt+A` / `Alt+T` | Full-screen attach (agent / terminal) |
 | `a` | Quick input to agent |
 | `t` | Quick input to terminal |
+| `\` | Show/hide the session rail |
+| `T` | Show/hide the terminal pane |
+| `Ctrl+↑` / `Ctrl+↓` | Resize the agent/terminal split (remembered per session) |
 | `s` | Stash — stash changes and pause session |
 | `m` | Merge another session's branch into the current one |
 | `r` | Resume a paused session / recover an orphaned (`⟲`) session |
@@ -233,11 +252,24 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `D` | Kill selected session (with confirmation); on an orphaned (`⟲`) session: discard its worktree, keeping the branch |
 | `d` | Toggle diff overlay |
 | `W` | Open workspace picker |
-| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Profiles, Claude Preferences) |
-| `l` / `[` | Previous workspace tab |
-| `;` / `]` | Next workspace tab |
+| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Theme, Profiles, Claude Preferences) |
+| `{` / `l` | Previous workspace tab |
+| `}` / `;` | Next workspace tab |
 | `?` | Show help screen |
 | `q` | Quit |
+
+### Overview Mode (after pressing `Tab`)
+
+Session-lifecycle keys (`D`, `r`, `R`), workspace keys, and `q`/`?`/`W`/`S` keep working; keys that act on an invisible pane (attach, quick input, scroll, diff, file explorer) are inactive.
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k`, `↓` / `j` | Walk the attention-sorted card grid |
+| `Enter` / `Esc` | Return to focus mode on the selected session |
+| `Tab` | Return to focus mode |
+| `z` | Collapse/expand the active workspace group |
+| `]` / `[` | Jump to next/previous agent waiting for input |
+| `n` / `N` | Drop to focus mode, then open the create flow |
 
 ### Name Entry Mode (after pressing `n` or `N`)
 
@@ -403,7 +435,7 @@ manually in the worktree.
 
 ```
 W → Space to toggle workspaces on/off → Esc
-[ / ] to switch between active workspace tabs
+{ / } to switch between active workspace tabs
 ```
 
 Each workspace tab shows only the sessions for that repository.
@@ -479,6 +511,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 |-------|------|---------|-------------|
 | `default_program` | string | `"claude"` | Program to run in new sessions. Can be a profile name. |
 | `branch_prefix` | string | `"{username}/"` | Prefix for auto-generated branch names |
+| `theme` | string | `"afterglow"` | UI color theme (`"afterglow"` or `"legacy"`) |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
 
@@ -509,6 +542,19 @@ A profile is a named shortcut for a program invocation. Profiles serve two purpo
 2. **As a picker in the prompt overlay.** When you press `N` to create a session with a prompt, the overlay exposes a profile picker (`←` / `→`). Pick a profile and the session launches with that profile's program.
 
 Profiles are defined in the `profiles` array; each entry needs a unique `name` and a `program` string. There is no inheritance or templating — each profile is a flat, literal command.
+
+### Themes
+
+The `theme` field selects the UI color theme. Two themes ship with Loom:
+
+- `"afterglow"` (default) — the warm dark palette introduced with the mission-control UI.
+- `"legacy"` — the original pre-theme color scheme.
+
+The easiest way to switch is the settings overlay: press `S`, move to the **Theme** row, and press `Enter`/`Space` to cycle. The change applies live — no restart — and is saved to `config.json`. An absent or empty `theme` field means the default.
+
+### UI Layout Persistence
+
+Layout tweaks are remembered per workspace in `state.json` (under a `ui` block): the current view mode (focus/overview), rail visibility (`\`), terminal pane visibility (`T`), and the agent/terminal split ratio (`Ctrl+↑`/`Ctrl+↓`, stored per session title). Everything is restored on the next launch or workspace switch; there is nothing to configure by hand.
 
 ### Claude Remote Control
 
