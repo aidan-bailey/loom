@@ -18,6 +18,7 @@ const (
 	settingsFieldBranchPrefix
 	settingsFieldProfiles
 	settingsFieldClaudePreferences
+	settingsFieldTheme
 	settingsFieldCount
 )
 
@@ -31,6 +32,8 @@ func (f settingsField) label() string {
 		return "Profiles"
 	case settingsFieldClaudePreferences:
 		return "Claude Preferences"
+	case settingsFieldTheme:
+		return "Theme"
 	}
 	return ""
 }
@@ -125,8 +128,9 @@ func (s *SettingsOverlay) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed b
 }
 
 // activateRow runs the Enter/space action for the currently selected
-// row. Every row opens a nested edit mode that reports its own change
-// on a later HandleKeyPress.
+// row. Most rows open a nested edit mode that reports its own change on
+// a later HandleKeyPress; the Theme row cycles in place and reports the
+// change immediately.
 func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 	switch settingsField(s.cursor) {
 	case settingsFieldDefaultProgram:
@@ -141,6 +145,24 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 		s.claudePrefs = NewClaudePreferences(s.cfg, s.authBlocked, s.authReason)
 		s.claudePrefs.SetWidth(s.width)
 		s.mode = settingsClaudePrefsSub
+	case settingsFieldTheme:
+		names := ui.ThemeNames()
+		cur := s.cfg.GetTheme()
+		if cur == "" {
+			cur = ui.DefaultThemeName
+		}
+		// idx stays 0 when cur isn't registered (hand-edited config), so
+		// cycling always lands on a valid name.
+		idx := 0
+		for i, n := range names {
+			if n == cur {
+				idx = i
+			}
+		}
+		next := names[(idx+1)%len(names)]
+		s.cfg.Mutate(func(c *config.Config) { c.Theme = next })
+		ui.ApplyTheme(next)
+		return false, true
 	}
 	return false, false
 }
@@ -276,6 +298,11 @@ func (s *SettingsOverlay) valueFor(f settingsField) string {
 		return fmt.Sprintf("(%d) →", len(s.cfg.Profiles))
 	case settingsFieldClaudePreferences:
 		return "→"
+	case settingsFieldTheme:
+		if v := s.cfg.GetTheme(); v != "" {
+			return v
+		}
+		return ui.DefaultThemeName
 	}
 	return ""
 }

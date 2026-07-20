@@ -290,7 +290,7 @@ func DefaultConfig() *Config {
 		}(),
 		ClaudeRemoteControl:  boolPtr(true),
 		ClaudePermissionMode: stringPtr("default"),
-		Theme:                "afterglow",
+		Theme:                "afterglow", // must match ui.DefaultThemeName (config cannot import ui)
 		HeadroomProxy:        boolPtr(false),
 		ClaudeModel:          stringPtr("default"),
 		ClaudeEffort:         stringPtr("default"),

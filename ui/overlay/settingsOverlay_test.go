@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -83,6 +84,41 @@ func TestSettingsOverlayEditsDefaultProgram(t *testing.T) {
 	_, changed := submitText(t, so, settingsFieldDefaultProgram, "aider")
 	assert.True(t, changed)
 	assert.Equal(t, "aider", cfg.DefaultProgram)
+}
+
+func TestSettingsOverlay_ThemeRowCycles(t *testing.T) {
+	defer ui.ApplyTheme(ui.DefaultThemeName)
+	cfg := config.DefaultConfig() // Theme: "afterglow"
+	so := NewSettingsOverlay(cfg, false, "")
+
+	// Move cursor to the Theme row (last row).
+	for i := 0; i < int(settingsFieldCount)-1; i++ {
+		so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	closed, changed := so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.False(t, closed)
+	assert.True(t, changed)
+	assert.Equal(t, "legacy", cfg.GetTheme())
+	assert.Equal(t, "legacy", ui.CurrentThemeName())
+
+	// Cycles back around.
+	_, changed = so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.True(t, changed)
+	assert.Equal(t, "afterglow", cfg.GetTheme())
+}
+
+// A hand-edited config naming an unknown theme must still cycle onto a
+// valid registered name rather than wedging the row.
+func TestSettingsOverlay_ThemeRowCyclesFromUnknownName(t *testing.T) {
+	defer ui.ApplyTheme(ui.DefaultThemeName)
+	cfg := newTestSettingsCfg()
+	cfg.Theme = "bogus"
+	so := NewSettingsOverlay(cfg, false, "")
+
+	so.cursor = int(settingsFieldTheme)
+	_, changed := so.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.True(t, changed)
+	assert.Contains(t, ui.ThemeNames(), cfg.GetTheme())
 }
 
 func TestSettingsOverlayEscCancelsTextEdit(t *testing.T) {
