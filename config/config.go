@@ -145,7 +145,7 @@ var ClaudePermissionModes = []string{"default", "acceptEdits", "plan", "auto", "
 // Session Launch Options screens cycle through. Short aliases, not
 // versioned IDs, so this list doesn't need updating when new Claude
 // models ship.
-var ClaudeModels = []string{"default", "sonnet", "opus", "haiku"}
+var ClaudeModels = []string{"default", "sonnet", "opus", "fable", "haiku"}
 
 // ClaudeEfforts lists the --effort values the Claude Preferences and
 // Session Launch Options screens cycle through, matching what

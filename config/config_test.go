@@ -456,7 +456,7 @@ func TestModel(t *testing.T) {
 }
 
 func TestClaudeModels(t *testing.T) {
-	assert.Equal(t, []string{"default", "sonnet", "opus", "haiku"}, ClaudeModels)
+	assert.Equal(t, []string{"default", "sonnet", "opus", "fable", "haiku"}, ClaudeModels)
 }
 
 func TestEffort(t *testing.T) {

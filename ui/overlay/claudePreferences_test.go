@@ -53,7 +53,7 @@ func TestClaudePreferencesCyclesModel(t *testing.T) {
 	cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 
-	for _, want := range []string{"sonnet", "opus", "haiku", "default"} {
+	for _, want := range []string{"sonnet", "opus", "fable", "haiku", "default"} {
 		_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 		assert.True(t, changed)
 		assert.Equal(t, want, cfg.Model())
