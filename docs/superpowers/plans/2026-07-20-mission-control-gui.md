@@ -2181,6 +2181,8 @@ Also update the Persistent State section: `config.json` gains `Theme`; `state.js
 
 ---
 
+> **AMENDMENT 2 (2026-07-20, final review):** Three spec deviations shipped without an earlier note, now on the record as deliberate: (1) overview cards omit the spec's "agent program, session age" fields — the card carries status-age labels and diff/branch metadata instead; program identity was judged low-value at card density (revisit in phase 4 if multi-agent fleets make it ambiguous). (2) Peer-workspace headers cover *open slots only* (live counts); registered-but-closed workspaces do not appear — the spec's "counts from persisted state" fallback was superseded by the slots architecture and full coverage belongs to phase 4's cross-workspace loading. (3) On the snapshot path (`LOOM_PANE_RENDERER=snapshot`/Windows), cards show the status label rather than the spec's "latest capture content" — a capture per card per frame would fork subprocesses on the render path (see `Instance.EmulatorScreen`'s doc comment). Also fixed post-review: `jumpWaiting` and the overview tier now treat `Deleting` instances consistently (never selectable, never attention-tinted), and overview in classic/global mode renders under a "global" group header.
+
 ## Self-review checklist (ran at authoring time)
 
 - Spec coverage: theme registry+roles+hooks (T1–5), settings row (T6), status ages (T7), card densities Line/Rail (T8) and Card (T15), rail + peers (T9–10), prefs (T11), split controls (T12–13), Lua actions + `]`/`[` rebind (T14), overview grid/sort/collapse (T15), viewMode/tab/whitelist/mode-aware cursor (T16), regression+race (T17), docs (T18). Deviations called out in "Required background": `{`/`}` rebind, linear grid nav, overview-as-viewMode (not engine per-mode keymaps).

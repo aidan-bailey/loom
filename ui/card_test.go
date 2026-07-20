@@ -77,6 +77,21 @@ func TestSortForOverview_AttentionFirstStable(t *testing.T) {
 	assert.Equal(t, []string{"a-prompting", "e-prompting", "b-running", "c-ready", "d-paused"}, titles)
 }
 
+func TestSortForOverview_DeletingWithBellSortsLast(t *testing.T) {
+	deleting := &session.Instance{Title: "a-deleting", Status: session.Deleting}
+	deleting.SetBellPending(true) // stale bell must not float a mid-kill card into the attention tier
+	items := []*session.Instance{
+		deleting,
+		{Title: "b-ready", Status: session.Ready},
+	}
+	order := SortForOverview(items)
+	assert.Equal(t, "b-ready", items[order[0]].Title)
+	assert.Equal(t, "a-deleting", items[order[1]].Title)
+
+	d := CardData{Title: "a-deleting", Status: session.Deleting, BellPending: true}
+	assert.False(t, d.NeedsAttention(), "Deleting card must never carry the attention accent")
+}
+
 // assertSolidBg walks a raw (un-stripped) rendered line and fails if
 // any visible rune is emitted while the given background SGR sub-
 // sequence is not active. SGR state machine: a sequence containing

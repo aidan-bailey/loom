@@ -52,9 +52,9 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = "" })
 			return m, m.instanceChanged()
 		case "z":
-			if m.activeCtx != nil {
-				m.overview.ToggleCollapse(m.activeCtx.Name)
-			}
+			// Same fallback name overviewData renders with, so collapse
+			// works in classic/global mode too.
+			m.overview.ToggleCollapse(m.overviewGroupName())
 			return m, nil
 		case "esc":
 			m.viewMode = viewFocus

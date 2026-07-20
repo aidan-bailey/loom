@@ -775,7 +775,13 @@ func (m *home) jumpWaiting(dir int) {
 	for i := 1; i <= n; i++ {
 		idx := ((start+dir*i)%n + n) % n
 		inst := items[idx]
-		if inst.GetStatus() == session.Prompting || inst.BellPending() {
+		st := inst.GetStatus()
+		// Skip Deleting like every other nav path — a mid-kill instance
+		// with a stale prompt/bell must not be selected.
+		if st == session.Deleting {
+			continue
+		}
+		if st == session.Prompting || inst.BellPending() {
 			m.list.SetSelectedInstance(idx)
 			return
 		}
@@ -2694,12 +2700,20 @@ func (m *home) peerSectionFor(slot workspaceSlot) ui.PeerSection {
 
 // overviewData snapshots the focused workspace + peers for the overview
 // render. Update-goroutine only.
+// overviewGroupName is the label for the active group in overview mode:
+// the workspace name, or "global" in classic/global mode (activeCtx nil
+// or unnamed) so the header never renders empty and `z` still has a
+// stable collapse key.
+func (m *home) overviewGroupName() string {
+	if m.activeCtx != nil && m.activeCtx.Name != "" {
+		return m.activeCtx.Name
+	}
+	return "global"
+}
+
 func (m *home) overviewData() ui.OverviewData {
 	items := m.list.GetInstances()
-	name := ""
-	if m.activeCtx != nil {
-		name = m.activeCtx.Name
-	}
+	name := m.overviewGroupName()
 	var peers []ui.PeerSection
 	for i, slot := range m.slots {
 		if i == m.focusedSlot {

@@ -66,9 +66,11 @@ type CardData struct {
 }
 
 // NeedsAttention reports whether this card should carry the Attention
-// accent — the only loud signal in the UI.
+// accent — the only loud signal in the UI. A Deleting instance never
+// needs attention: a stale bell on a mid-kill card must not paint it
+// gold or float it into the attention tier.
 func (d CardData) NeedsAttention() bool {
-	return d.Status == session.Prompting || d.BellPending
+	return d.Status != session.Deleting && (d.Status == session.Prompting || d.BellPending)
 }
 
 // BuildCardData snapshots inst into a CardData. spinnerFrame is the
@@ -316,6 +318,10 @@ func overviewTier(inst *session.Instance) int {
 	}
 	st := inst.GetStatus()
 	switch {
+	case st == session.Deleting:
+		// Checked before the bell: a stale bell on a mid-kill instance
+		// must not float it into the attention tier.
+		return 5
 	case st == session.Prompting || inst.BellPending():
 		return 1
 	case st == session.Running || st == session.Loading:
