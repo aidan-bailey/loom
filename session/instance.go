@@ -191,14 +191,15 @@ type Instance struct {
 	bellPending atomic.Bool
 
 	// mu guards concurrent access to fields that can be read from
-	// tick-fanout goroutines (Status, diffStats, Branch) and from
-	// lifecycle Cmd goroutines (tmuxSession, gitWorktree, started).
-	// Held for writes; RLock for reads. Do not hold across I/O.
+	// tick-fanout goroutines (Status, statusChangedAt, diffStats,
+	// Branch) and from lifecycle Cmd goroutines (tmuxSession,
+	// gitWorktree, started). Held for writes; RLock for reads. Do not
+	// hold across I/O.
 	//
 	// Every accessor on Instance goes through TransitionTo/GetStatus,
-	// GetBranch, GetDiffStats, Snapshot, or the unexported get*/set*
-	// helpers below. Do not read or write these fields directly from
-	// outside the locked accessors.
+	// StatusAge, GetBranch, GetDiffStats, Snapshot, or the unexported
+	// get*/set* helpers below. Do not read or write these fields
+	// directly from outside the locked accessors.
 	mu sync.RWMutex
 
 	// statusChangedAt is when Status last changed (in-memory only, not
