@@ -577,3 +577,16 @@ func TestConfigMutateIsRaceSafeWithGetBranchPrefix(t *testing.T) {
 	}
 	<-done
 }
+
+func TestConfigTheme_DefaultAndAccessor(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.Equal(t, "afterglow", cfg.GetTheme())
+
+	cfg.Mutate(func(c *Config) { c.Theme = "legacy" })
+	assert.Equal(t, "legacy", cfg.GetTheme())
+
+	// Pre-existing config files have no theme field: empty passes
+	// through; ui.ApplyTheme treats "" as the default.
+	var zero Config
+	assert.Equal(t, "", zero.GetTheme())
+}

@@ -103,6 +103,10 @@ type Config struct {
 	// treated identically to "default" (no flag injected; Claude's own
 	// default applies). Read it through PermissionMode.
 	ClaudePermissionMode *string `json:"claude_permission_mode,omitempty"`
+	// Theme names the active UI color theme (see ui.ThemeNames).
+	// Empty (pre-existing config files) means the default theme.
+	// Read through GetTheme.
+	Theme string `json:"theme,omitempty"`
 	// HeadroomProxy controls whether new Claude sessions launch with
 	// ANTHROPIC_BASE_URL pointed at Headroom's proxy (see
 	// session.HeadroomProxyEnv). A no-op for agents other than Claude.
@@ -167,6 +171,14 @@ func (c *Config) GetBranchPrefix() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.BranchPrefix
+}
+
+// GetTheme returns the configured UI theme name under the config lock
+// (the settings overlay mutates Config at runtime).
+func (c *Config) GetTheme() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Theme
 }
 
 // RemoteControlEnabled reports whether new Claude sessions should launch
@@ -278,6 +290,7 @@ func DefaultConfig() *Config {
 		}(),
 		ClaudeRemoteControl:  boolPtr(true),
 		ClaudePermissionMode: stringPtr("default"),
+		Theme:                "afterglow",
 		HeadroomProxy:        boolPtr(false),
 		ClaudeModel:          stringPtr("default"),
 		ClaudeEffort:         stringPtr("default"),
