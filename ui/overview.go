@@ -115,34 +115,25 @@ func (o *Overview) Render(d OverviewData) string {
 // renderGrid lays cards out in rows of overviewColumns, windowed so the
 // selected card's row is always visible. Like ScrollModel's
 // AdvanceAndRender, rendering mutates the scroll anchor (o.rowOffset) —
-// exactly once per render pass.
+// exactly once per render pass. The window is computed BEFORE any card
+// is rendered (selRow needs only Order positions and every card row is
+// exactly overviewCardHeight lines), so only visible rows' cards are
+// ever built — off-window instances cost nothing per frame.
 func (o *Overview) renderGrid(d OverviewData) string {
 	cols := overviewColumns(o.width)
 	cardW := (o.width - (cols - 1)) / cols
 
-	cards := make([]string, 0, len(d.Order))
 	selRow := 0
 	for pos, idx := range d.Order {
-		cd := BuildCardData(d.Items[idx], idx == d.SelectedIdx, d.Spinner, overviewCardTailLines)
-		cd.Index = DisplayIndex(d.Items, idx)
-		cards = append(cards, renderOverviewCard(cd, cardW))
 		if idx == d.SelectedIdx {
 			selRow = pos / cols
+			break
 		}
 	}
-
-	rows := make([]string, 0, (len(cards)+cols-1)/cols)
-	for i := 0; i < len(cards); i += cols {
-		end := i + cols
-		if end > len(cards) {
-			end = len(cards)
-		}
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, joinWithGap(cards[i:end])...))
-	}
+	nRows := (len(d.Order) + cols - 1) / cols
 
 	// Window rows so selRow stays visible within the height budget
-	// (header + peers consumed elsewhere). Every card row is exactly
-	// overviewCardHeight lines — renderOverviewCard guarantees it.
+	// (header + peers consumed elsewhere).
 	rowH := overviewCardHeight
 	budget := o.height - 1 - peerBudget(d.Peers)
 	visRows := budget / rowH
@@ -155,17 +146,33 @@ func (o *Overview) renderGrid(d OverviewData) string {
 	if selRow >= o.rowOffset+visRows {
 		o.rowOffset = selRow - visRows + 1
 	}
-	if o.rowOffset > len(rows)-visRows {
-		o.rowOffset = len(rows) - visRows
+	if o.rowOffset > nRows-visRows {
+		o.rowOffset = nRows - visRows
 	}
 	if o.rowOffset < 0 {
 		o.rowOffset = 0
 	}
-	end := o.rowOffset + visRows
-	if end > len(rows) {
-		end = len(rows)
+	endRow := o.rowOffset + visRows
+	if endRow > nRows {
+		endRow = nRows
 	}
-	return strings.Join(rows[o.rowOffset:end], "\n")
+
+	rows := make([]string, 0, endRow-o.rowOffset)
+	for r := o.rowOffset; r < endRow; r++ {
+		start := r * cols
+		end := start + cols
+		if end > len(d.Order) {
+			end = len(d.Order)
+		}
+		cards := make([]string, 0, end-start)
+		for _, idx := range d.Order[start:end] {
+			cd := BuildCardData(d.Items[idx], idx == d.SelectedIdx, d.Spinner, overviewCardTailLines)
+			cd.Index = DisplayIndex(d.Items, idx)
+			cards = append(cards, renderOverviewCard(cd, cardW))
+		}
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, joinWithGap(cards)...))
+	}
+	return strings.Join(rows, "\n")
 }
 
 // peerBudget is the line budget consumed by the peer footer (one line
@@ -239,8 +246,16 @@ func renderOverviewCard(d CardData, width int) string {
 	}
 
 	content := strings.Join(append([]string{top, mid, rule}, tails...), "\n")
+	// The selected card gets a thick border so selection is unmistakable
+	// regardless of which accent color ranks (attention stays gold, but
+	// the border weight marks the cursor). Border height is identical, so
+	// the overviewCardHeight invariant is unaffected.
+	border := lipgloss.RoundedBorder()
+	if d.Selected {
+		border = lipgloss.ThickBorder()
+	}
 	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+		Border(border).
 		BorderForeground(borderColor).
 		Width(width).
 		Render(content)

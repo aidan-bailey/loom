@@ -8,14 +8,23 @@ import (
 
 // overviewKeyAllowed whitelists script-dispatched keys in overview mode.
 // Everything else (attach, quick input, scroll, diff, file explorer) is
-// focus-mode-only and no-ops here rather than acting on an invisible pane.
+// focus-mode-only and no-ops here rather than acting on an invisible
+// pane. List-index jumps (K/J/g/G) are excluded too: they address list
+// order, which is incoherent over the attention-sorted grid.
+//
+// v1 limitation: the gate is keyed on raw key strings, not on the
+// actions they dispatch — a user script that rebinds a whitelisted key
+// to a focus-only action (or a focus key to a grid-safe one) gets the
+// default key's gating, not its action's. Fixing that properly means
+// per-mode keymaps in the engine (deferred; see the plan's "required
+// background" notes). n/N are absent because they are intercepted
+// above the gate: they drop to focus mode first, then dispatch.
 var overviewKeyAllowed = map[string]bool{
 	"j": true, "k": true, "up": true, "down": true,
 	"]": true, "[": true, "tab": true,
-	"n": true, "N": true, "D": true, "r": true, "R": true,
+	"D": true, "r": true, "R": true,
 	"q": true, "?": true, "W": true, "S": true,
 	"{": true, "}": true, "l": true, ";": true,
-	"K": true, "J": true, "g": true, "G": true,
 }
 
 // handleStateDefaultKey processes keys while the list is in its normal
@@ -51,6 +60,19 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.viewMode = viewFocus
 			m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = "" })
 			return m, m.instanceChanged()
+		case "n", "N":
+			// Creating a session from the grid would collect the title
+			// blind — the inline title entry is a focus-layout
+			// affordance. Drop to focus first (persisted, same as
+			// enter/esc), then dispatch the create flow normally so it
+			// proceeds in the layout the user will type into.
+			m.viewMode = viewFocus
+			m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = "" })
+			cmds := []tea.Cmd{m.instanceChanged()}
+			if cmd, handled := m.dispatchScript(msg.String()); handled {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
 		}
 		if !overviewKeyAllowed[msg.String()] {
 			return m, nil

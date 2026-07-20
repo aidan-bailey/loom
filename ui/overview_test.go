@@ -109,6 +109,7 @@ func TestOverview_UniformCardHeight(t *testing.T) {
 		{Title: "running-card", Status: session.Running, Spinner: "✻",
 			TailLines: []string{"line one", "line two"}},
 		{Title: "ready-card", Status: session.Ready, TailLines: []string{"only tail"}},
+		{Title: "selected-card", Status: session.Ready, Selected: true}, // thick border, same height
 		{Title: "paused-card", Status: session.Paused},
 		{Title: strings.Repeat("very-long-title-", 8), Status: session.Running,
 			Branch:  strings.Repeat("user/branch-", 6),

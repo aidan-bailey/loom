@@ -1794,7 +1794,13 @@ func (m *home) instanceChanged() tea.Cmd {
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
 
-	if selected != nil {
+	// Seen in the grid ≠ attended: in overview the cursor walks the
+	// attention-sorted grid, and clearing the bell on landing would
+	// reshuffle the sort order under the cursor mid-walk. The bell
+	// clears when the user actually drops into focus on the card —
+	// the enter/esc handlers flip viewMode to viewFocus before calling
+	// instanceChanged, so the landing itself performs the clear.
+	if selected != nil && m.viewMode != viewOverview {
 		selected.SetBellPending(false)
 	}
 
@@ -2841,7 +2847,7 @@ func (m *home) View() tea.View {
 	} else {
 		hint := "tab overview · ] next waiting · \\ rail · ? help · q quit"
 		if m.viewMode == viewOverview {
-			hint = "enter focus · ] next waiting · z collapse · tab focus · ? help"
+			hint = "enter focus · ] next waiting · z collapse · n new · tab/esc focus · q quit"
 		}
 		statusLine := statusLineStyle.Render(hint)
 		sections = append(sections, mainContent, statusLine, m.errBox.String())

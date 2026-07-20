@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -69,18 +70,129 @@ func TestOverviewEnterEsc_ReturnToFocusAndPersist(t *testing.T) {
 // TestOverviewKeyWhitelist_BlocksFocusOnlyKeys verifies that keys
 // outside overviewKeyAllowed never reach the script engine in overview
 // mode (they would act on the hidden focus layout), while whitelisted
-// keys still dispatch.
+// keys still dispatch. List-index jumps (K/J/g/G) are blocked too:
+// they address list order, which is incoherent over the sorted grid.
 func TestOverviewKeyWhitelist_BlocksFocusOnlyKeys(t *testing.T) {
 	m := newTestHome(t)
 	m.viewMode = viewOverview
 
-	// "d" (toggle diff) is bound in defaults.lua but not whitelisted.
-	_, cmd := handleStateDefaultKey(m, tea.KeyPressMsg{Code: 'd', Text: "d"})
-	assert.Nil(t, cmd, "non-whitelisted key must not dispatch in overview")
+	// Bound in defaults.lua but focus-only: d (diff), g/G/K/J (list jumps).
+	for _, k := range []string{"d", "g", "G", "K", "J"} {
+		_, cmd := handleStateDefaultKey(m, tea.KeyPressMsg{Code: rune(k[0]), Text: k})
+		assert.Nil(t, cmd, "non-whitelisted key %q must not dispatch in overview", k)
+	}
 
 	// "j" (cursor down) is whitelisted and bound.
-	_, cmd = handleStateDefaultKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	_, cmd := handleStateDefaultKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	assert.NotNil(t, cmd, "whitelisted key must dispatch in overview")
+}
+
+// flattenCmdMsgs executes cmd and recursively flattens tea.BatchMsg so
+// tests can assert on the leaf messages regardless of batching shape.
+func flattenCmdMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, flattenCmdMsgs(c)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+// TestOverviewNewInstance_DropsToFocusFirst pins the n/N interception:
+// creating a session from the grid would collect the title blind (the
+// inline title affordance lives in the focus layout), so n/N flip to
+// focus mode — persisted — and then still dispatch the create flow
+// through the script engine.
+func TestOverviewNewInstance_DropsToFocusFirst(t *testing.T) {
+	m := newTestHome(t)
+	m.viewMode = viewOverview
+	require.NoError(t, m.appState.SetUIPrefs(config.UIPrefs{ViewMode: "overview"}))
+
+	_, cmd := handleStateDefaultKey(m, tea.KeyPressMsg{Code: 'n', Text: "n"})
+	assert.Equal(t, viewFocus, m.viewMode, "n must drop overview back to focus")
+	assert.Equal(t, "", m.appState.GetUIPrefs().ViewMode, "the focus drop must persist")
+
+	require.NotNil(t, cmd)
+	var done *scriptDoneMsg
+	for _, msg := range flattenCmdMsgs(cmd) {
+		if d, ok := msg.(scriptDoneMsg); ok {
+			done = &d
+			break
+		}
+	}
+	require.NotNil(t, done, "the create flow must still dispatch through the script engine")
+	require.NoError(t, done.err)
+	require.Len(t, done.pendingIntents, 1)
+	_, ok := done.pendingIntents[0].intent.(script.NewInstanceIntent)
+	assert.True(t, ok, "expected NewInstanceIntent, got %T", done.pendingIntents[0].intent)
+}
+
+// TestOverviewBell_ClearedOnFocusNotGridCursor pins the "seen in the
+// grid ≠ attended" semantic: walking the overview cursor onto a
+// bell-pending card (instanceChanged fires after every script dispatch)
+// must not eat the attention signal — the sort order would reshuffle
+// under the cursor. Dropping into focus on it (enter) is what clears it.
+func TestOverviewBell_ClearedOnFocusNotGridCursor(t *testing.T) {
+	m := newTestHome(t)
+	m.viewMode = viewOverview
+
+	a := mustAddInstance(t, m, "a")
+	b := mustAddInstance(t, m, "b")
+	b.SetBellPending(true)
+
+	// Selection starts on "a"; walk onto "b" (bell → attention tier,
+	// overview position 0) the way a j/k dispatch does: moveCursor,
+	// then the unconditional instanceChanged from handleScriptDone.
+	require.Same(t, a, m.list.GetSelectedInstance())
+	m.moveCursor(-1)
+	require.Same(t, b, m.list.GetSelectedInstance())
+	_ = m.instanceChanged()
+	assert.True(t, b.BellPending(), "overview cursor landing must not clear the bell")
+
+	// Enter drops to focus on the card — now it is attended.
+	_, _ = handleStateDefaultKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Equal(t, viewFocus, m.viewMode)
+	assert.False(t, b.BellPending(), "entering focus on the card must clear the bell")
+}
+
+// TestOverviewMouse_Ignored pins the v1 no-mouse-in-overview rule: a
+// click that would begin a drag-selection over the (hidden) focus
+// layout is swallowed without touching drag state.
+func TestOverviewMouse_Ignored(t *testing.T) {
+	m := newTestHome(t)
+	m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.viewMode = viewOverview
+	mustAddInstance(t, m, "a")
+
+	_, cmd := m.Update(tea.MouseClickMsg{X: 60, Y: 5, Button: tea.MouseLeft})
+	assert.Nil(t, cmd)
+	assert.False(t, m.dragging, "click in overview must not begin a drag")
+
+	_, _ = m.Update(tea.MouseMotionMsg{X: 65, Y: 6, Button: tea.MouseLeft})
+	_, cmd = m.Update(tea.MouseReleaseMsg{X: 65, Y: 6, Button: tea.MouseLeft})
+	assert.Nil(t, cmd, "release in overview must not copy a selection")
+	assert.False(t, m.dragging)
+}
+
+// TestApplyUIPrefs_RestoresViewMode pins the startup restore: a
+// persisted "overview" pref lands the app in overview mode, anything
+// else in focus mode.
+func TestApplyUIPrefs_RestoresViewMode(t *testing.T) {
+	m := newTestHome(t)
+
+	require.NoError(t, m.appState.SetUIPrefs(config.UIPrefs{ViewMode: "overview"}))
+	m.applyUIPrefs()
+	assert.Equal(t, viewOverview, m.viewMode)
+
+	require.NoError(t, m.appState.SetUIPrefs(config.UIPrefs{ViewMode: ""}))
+	m.applyUIPrefs()
+	assert.Equal(t, viewFocus, m.viewMode)
 }
 
 // TestMoveCursor_OverviewWalksSortedOrder builds a list whose

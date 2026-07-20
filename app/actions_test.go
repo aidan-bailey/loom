@@ -37,6 +37,7 @@ func newTestHome(t *testing.T) *home {
 		menu:      ui.NewMenu(),
 		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		overview:  ui.NewOverview(),
+		tabBar:    ui.NewWorkspaceTabBar(),
 		errBox:    ui.NewErrBox(),
 		storage:   storage,
 		appState:  state,
