@@ -543,6 +543,12 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	registerNextOverlay()
 
 	h.showRecoverySummary(startupRecovery)
+
+	// Apply persisted layout prefs on every startup path. The slot-restore
+	// path already applied them via loadSlot — re-applying is idempotent.
+	// lastWidth is still 0 here, so this only sets the flags; the first
+	// WindowSizeMsg lays out honoring them.
+	h.applyUIPrefs()
 	return h, nil
 }
 
@@ -684,8 +690,8 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 }
 
 // applyUIPrefs pushes persisted layout prefs onto the components.
-// Called after a slot is loaded/focused and at startup (the startup
-// path runs through loadSlot).
+// Called at the end of newHome (classic startup), after a slot is
+// loaded/focused (loadSlot), and on entering global mode.
 func (m *home) applyUIPrefs() {
 	if m.appState == nil {
 		// Bare test homes construct no app state; nothing to apply.
@@ -694,14 +700,26 @@ func (m *home) applyUIPrefs() {
 	p := m.appState.GetUIPrefs()
 	m.railHidden = p.RailHidden
 	m.splitPane.SetTerminalHidden(p.TerminalHidden)
-	if sel := m.list.GetSelectedInstance(); sel != nil {
-		if r, ok := p.SplitRatios[sel.Title]; ok {
-			m.splitPane.SetAgentRatio(r)
-		}
-	}
+	m.applyStoredRatio(m.list.GetSelectedInstance())
 	if m.lastWidth > 0 {
 		m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
 	}
+}
+
+// applyStoredRatio applies inst's persisted split ratio, or resets to
+// the default when none is stored. The else-reset keeps the layout
+// deterministic: switching to an instance always shows the same split
+// a fresh restart would, instead of inheriting whatever ratio the
+// previously selected instance left behind.
+func (m *home) applyStoredRatio(inst *session.Instance) {
+	if m.appState == nil || inst == nil {
+		return
+	}
+	if r, ok := m.appState.GetUIPrefs().SplitRatios[inst.Title]; ok {
+		m.splitPane.SetAgentRatio(r)
+		return
+	}
+	m.splitPane.SetAgentRatio(ui.SplitAgentPercent)
 }
 
 // mutateUIPrefs applies fn to a copy of the prefs and persists; save
@@ -1624,14 +1642,9 @@ func (m *home) instanceChanged() tea.Cmd {
 		selected.SetBellPending(false)
 	}
 
-	// Re-apply the newly selected instance's persisted split ratio so
-	// switching sessions restores its layout. Guard appState — tests may
-	// construct bare homes.
-	if m.appState != nil && selected != nil {
-		if r, ok := m.appState.GetUIPrefs().SplitRatios[selected.Title]; ok {
-			m.splitPane.SetAgentRatio(r)
-		}
-	}
+	// Re-apply the newly selected instance's persisted split ratio (or
+	// the default) so switching sessions restores its layout.
+	m.applyStoredRatio(selected)
 
 	newFocusTitle := ""
 	if selected != nil {
@@ -2260,7 +2273,11 @@ func (m *home) loadSlot(idx int) {
 	// the first View() after a workspace switch uses components pre-sized when
 	// the tab bar had 0 names (height=0 instead of 3), producing 3 extra lines
 	// that Bubble Tea clips from the top, cutting off the workspace tab bar.
-	if m.lastWidth > 0 && m.lastHeight > 0 {
+	// applyUIPrefs below runs the full layout whenever appState exists, so
+	// this interim resize survives only for bare test homes — a redundant
+	// SetSize here would loop tmux SetDetachedSize subprocess calls twice
+	// per workspace switch.
+	if m.appState == nil && m.lastWidth > 0 && m.lastHeight > 0 {
 		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
 		paneWidth := m.lastWidth - listWidth
 		contentHeight := m.lastHeight - m.tabBar.Height() - 2
@@ -2269,8 +2286,8 @@ func (m *home) loadSlot(idx int) {
 	}
 	m.refreshPeerSections()
 	// The freshly-loaded slot's components carry no layout prefs yet;
-	// re-apply the persisted rail/terminal/ratio state (re-runs the
-	// window-size layout when sized, superseding the interim resize above).
+	// apply the persisted rail/terminal/ratio state (re-runs the
+	// window-size layout when sized).
 	m.applyUIPrefs()
 }
 
@@ -2417,14 +2434,13 @@ func (m *home) enterGlobalMode() tea.Cmd {
 
 	m.tabBar.SetWorkspaces(nil, 0)
 
-	// Resize components for the now-zero-height tab bar.
-	if m.lastWidth > 0 && m.lastHeight > 0 {
-		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
-		paneWidth := m.lastWidth - listWidth
-		contentHeight := m.lastHeight - m.tabBar.Height() - 2
-		m.list.SetSize(listWidth, contentHeight)
-		m.splitPane.SetSize(paneWidth, contentHeight)
-	}
+	// Apply the global state's persisted layout prefs so global mode
+	// renders with its own rail/terminal/ratio settings — not the
+	// previous workspace's — and the display agrees with where
+	// mutateUIPrefs will write. When sized, this re-runs the full
+	// window-size layout, which also resizes the components for the
+	// now-zero-height tab bar.
+	m.applyUIPrefs()
 
 	return tea.RequestWindowSize
 }
@@ -2559,9 +2575,9 @@ func (m *home) View() tea.View {
 		listView = m.list.String()
 	}
 	// The file explorer is the only overlay that wholly replaces the
-	// right pane rather than floating on top of it. Keeping the list
-	// visible is the whole point of this state, so it renders
-	// inline via JoinHorizontal instead of via PlaceOverlay below.
+	// right pane rather than floating on top of it. It renders inline
+	// via JoinHorizontal — instead of via PlaceOverlay below — so the
+	// list stays visible alongside it (unless the rail is hidden).
 	var rightContent string
 	if m.state == stateFileExplorer && m.activeOverlay != nil {
 		rightContent = m.activeOverlay.View()
