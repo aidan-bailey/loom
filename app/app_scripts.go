@@ -308,7 +308,10 @@ func (s *scriptHost) ToggleRail() {
 	s.deferModelMutation(func(m *home) {
 		m.railHidden = !m.railHidden
 		m.mutateUIPrefs(func(p *config.UIPrefs) { p.RailHidden = m.railHidden })
-		m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+		// Guard like applyUIPrefs: no size yet means nothing to re-lay-out.
+		if m.lastWidth > 0 {
+			m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+		}
 	})
 }
 
@@ -319,7 +322,10 @@ func (s *scriptHost) ToggleTerminalPane() {
 		hidden := !m.splitPane.IsTerminalHidden()
 		m.splitPane.SetTerminalHidden(hidden)
 		m.mutateUIPrefs(func(p *config.UIPrefs) { p.TerminalHidden = hidden })
-		m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+		// Guard like applyUIPrefs: no size yet means nothing to re-lay-out.
+		if m.lastWidth > 0 {
+			m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+		}
 	})
 }
 
@@ -650,7 +656,7 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	// the same 3s schedule as real errors. ErrBox has no info-style
 	// channel yet; adding one is deferred to a follow-up change.
 	var cmds []tea.Cmd
-	// Debounced split-ratio persistence: resizeSplit (run just above as a
+	// Throttled split-ratio persistence: resizeSplit (run just above as a
 	// deferred action) only records pending ratios in-memory — a deferred
 	// action can't return a tea.Cmd, so the flush tick is armed here where
 	// Cmds flow. maybeArmRatioSave no-ops when nothing is pending or a

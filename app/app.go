@@ -338,10 +338,12 @@ type home struct {
 	redetectPending map[string]bool
 
 	// pendingRatioSaves buffers title→ratio pairs recorded by resizeSplit
-	// until the debounced ratioSaveMsg flushes them into one mutateUIPrefs
+	// until the throttled ratioSaveMsg flushes them into one mutateUIPrefs
 	// write — key-repeat resize would otherwise fsync state.json per
-	// keystroke. ratioSaveArmed dedupes the flush tick (see
-	// maybeArmRatioSave). Update-goroutine only.
+	// keystroke. applyStoredRatio reads it first (pending is newest
+	// truth); saveCurrentSlot/handleQuit flush it synchronously.
+	// ratioSaveArmed dedupes the flush tick (see maybeArmRatioSave).
+	// Update-goroutine only.
 	pendingRatioSaves map[string]float64
 	ratioSaveArmed    bool
 
@@ -723,6 +725,16 @@ func (m *home) applyStoredRatio(inst *session.Instance) {
 	if m.appState == nil || inst == nil {
 		return
 	}
+	// A pending (not-yet-flushed) resize is the newest truth and must win
+	// over persisted state: handleScriptDone runs instanceChanged — and
+	// therefore this function — unconditionally right after applying the
+	// deferred resizeSplit action, so consulting only the persisted
+	// SplitRatios would revert the fresh adjustment to the stale/default
+	// ratio before View ever renders it.
+	if r, ok := m.pendingRatioSaves[inst.Title]; ok {
+		m.splitPane.SetAgentRatio(r)
+		return
+	}
 	if r, ok := m.appState.GetUIPrefs().SplitRatios[inst.Title]; ok {
 		m.splitPane.SetAgentRatio(r)
 		return
@@ -755,7 +767,7 @@ func (m *home) jumpWaiting(dir int) {
 // (key-repeat ≈30/s) via a deferred script action, and mutateUIPrefs
 // write-through would block the Update goroutine on an fsync each time.
 // The deferred action can't return a tea.Cmd, so handleScriptDone arms
-// the debounced flush tick via maybeArmRatioSave after applying us.
+// the throttled flush tick via maybeArmRatioSave after applying us.
 func (m *home) resizeSplit(delta float64) {
 	r := m.splitPane.AdjustAgentRatio(delta)
 	if sel := m.list.GetSelectedInstance(); sel != nil {
@@ -764,7 +776,45 @@ func (m *home) resizeSplit(delta float64) {
 		}
 		m.pendingRatioSaves[sel.Title] = r
 	}
-	m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+	// Guard like applyUIPrefs: before the first WindowSizeMsg (or in bare
+	// test homes) there is no size to re-lay-out against.
+	if m.lastWidth > 0 {
+		m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+	}
+}
+
+// flushPendingRatioSaves synchronously drains resizeSplit's pending
+// title→ratio map into one persisted mutateUIPrefs write, pruning
+// SplitRatios entries whose instances are no longer in the
+// (per-workspace) list so killed sessions don't leak entries forever.
+// Callers: the throttled ratioSaveMsg tick, saveCurrentSlot (pending
+// entries must land in the CURRENT slot's state.json before a slot
+// swap — workspaces can share instance titles like "main"), and
+// handleQuit (so the last resize survives exit). No-op when nothing is
+// pending. Update-goroutine only.
+func (m *home) flushPendingRatioSaves() {
+	if len(m.pendingRatioSaves) == 0 {
+		return
+	}
+	pend := m.pendingRatioSaves
+	m.pendingRatioSaves = nil
+	live := make(map[string]bool)
+	for _, inst := range m.list.GetInstances() {
+		live[inst.Title] = true
+	}
+	m.mutateUIPrefs(func(p *config.UIPrefs) {
+		if p.SplitRatios == nil {
+			p.SplitRatios = make(map[string]float64)
+		}
+		for title, r := range pend {
+			p.SplitRatios[title] = r
+		}
+		for title := range p.SplitRatios {
+			if !live[title] {
+				delete(p.SplitRatios, title)
+			}
+		}
+	})
 }
 
 // mutateUIPrefs applies fn to a copy of the prefs and persists; save
@@ -931,33 +981,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, statusDetectCmd(inst)
 	case ratioSaveMsg:
-		// Debounced flush of resizeSplit's pending ratios — one persisted
-		// write per settle window instead of one per keystroke.
+		// Throttled flush of resizeSplit's pending ratios — one persisted
+		// write per 750ms window instead of one per keystroke. A flush
+		// that already ran (slot switch, quit) leaves the map empty and
+		// this tick simply disarms.
 		m.ratioSaveArmed = false
-		if len(m.pendingRatioSaves) == 0 {
-			return m, nil
-		}
-		pend := m.pendingRatioSaves
-		m.pendingRatioSaves = nil
-		live := make(map[string]bool)
-		for _, inst := range m.list.GetInstances() {
-			live[inst.Title] = true
-		}
-		m.mutateUIPrefs(func(p *config.UIPrefs) {
-			if p.SplitRatios == nil {
-				p.SplitRatios = make(map[string]float64)
-			}
-			for title, r := range pend {
-				p.SplitRatios[title] = r
-			}
-			// Prune entries for instances no longer in the (per-workspace)
-			// list so killed sessions don't leak ratios forever.
-			for title := range p.SplitRatios {
-				if !live[title] {
-					delete(p.SplitRatios, title)
-				}
-			}
-		})
+		m.flushPendingRatioSaves()
 		return m, nil
 	case redetectMsg:
 		delete(m.redetectPending, msg.session)
@@ -1614,6 +1643,10 @@ func (m *home) showRecoverySummary(s recoverySummary) {
 // policy; the multi-slot branch used to log-and-quit, which is the
 // bug this function comment now documents has been fixed.
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
+	// Persist any not-yet-flushed split resize before exit (the throttle
+	// tick may still be in flight; covers the single-slot path too, where
+	// saveCurrentSlot below is a no-op).
+	m.flushPendingRatioSaves()
 	if len(m.slots) > 0 {
 		m.saveCurrentSlot()
 		var firstErr error
@@ -2317,6 +2350,14 @@ func (m *home) deactivateWorkspace(name string) error {
 
 // saveCurrentSlot writes the home's active UI fields back into the focused slot.
 func (m *home) saveCurrentSlot() {
+	// Flush pending split-ratio saves into THIS slot's state.json before
+	// the slot swap: the pending map would otherwise survive the switch
+	// and the armed throttle tick would drain slot A's title→ratio into
+	// slot B's prefs — a durable wrong value when workspaces share a
+	// title. One synchronous write per slot switch is mutateUIPrefs'
+	// blessed rare-toggle case; the in-flight tick then finds the map
+	// empty and simply disarms.
+	m.flushPendingRatioSaves()
 	if len(m.slots) == 0 {
 		return
 	}

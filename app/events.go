@@ -104,24 +104,29 @@ func (m *home) maybeRedetect(sessionName string) tea.Cmd {
 	})
 }
 
-// ratioSaveMsg flushes the debounced split-ratio persistence: resizeSplit
+// ratioSaveMsg flushes the throttled split-ratio persistence: resizeSplit
 // applies ratio changes in-memory per keystroke and only records the
 // title→ratio pair in m.pendingRatioSaves; this message drains the map
-// into a single mutateUIPrefs write. Without the debounce, key-repeat
+// into a single mutateUIPrefs write. Without the throttle, key-repeat
 // resize (~30/s) would fsync state.json per keystroke on the Update
 // goroutine.
 type ratioSaveMsg struct{}
 
-// ratioSaveDelay is the settle window between the last resize keystroke
-// burst and the state.json write.
+// ratioSaveDelay bounds the state.json write rate during a resize burst
+// (see maybeArmRatioSave).
 const ratioSaveDelay = 750 * time.Millisecond
 
 // maybeArmRatioSave arms the one-shot flush tick when resizeSplit has
 // recorded pending ratios and no tick is already in flight (mirrors
-// maybeRedetect's dedupe). Called from handleScriptDone — the deferred
-// script action that runs resizeSplit cannot return a tea.Cmd itself, so
-// the tick is armed where Cmds flow. Must be called on the Update
-// goroutine (pendingRatioSaves/ratioSaveArmed are unsynchronized).
+// maybeRedetect's dedupe). This is a THROTTLE, not a trailing-edge
+// debounce: the tick is armed on the first keystroke of a burst and
+// fires ratioSaveDelay later regardless of further keystrokes, so a
+// continuous burst flushes mid-burst every 750ms (bounded write rate)
+// rather than waiting for the burst to end. Called from handleScriptDone
+// — the deferred script action that runs resizeSplit cannot return a
+// tea.Cmd itself, so the tick is armed where Cmds flow. Must be called
+// on the Update goroutine (pendingRatioSaves/ratioSaveArmed are
+// unsynchronized).
 func (m *home) maybeArmRatioSave() tea.Cmd {
 	if len(m.pendingRatioSaves) == 0 || m.ratioSaveArmed {
 		return nil

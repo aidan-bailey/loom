@@ -23,7 +23,8 @@ func TestEngineLoadsEmbeddedDefaults(t *testing.T) {
 	for _, k := range []string{
 		"up", "k", "down", "j", "d",
 		"n", "N", "D", "p", "s", "r", "?", "q", "m",
-		"W", "[", "l", "]", ";",
+		"W", "{", "l", "}", ";",
+		"[", "]", "\\", "T", "ctrl+up", "ctrl+down",
 		"alt+a", "alt+t", "ctrl+a", "ctrl+t",
 		"a", "t",
 	} {
