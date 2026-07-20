@@ -173,6 +173,44 @@ func installSyncActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 		}
 		return 0
 	}))
+
+	// Fleet actions — attention jumps and layout toggles/resize.
+	actions.RawSetString("next_waiting", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.NextWaiting()
+		}
+		return 0
+	}))
+	actions.RawSetString("prev_waiting", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.PrevWaiting()
+		}
+		return 0
+	}))
+	actions.RawSetString("toggle_rail", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ToggleRail()
+		}
+		return 0
+	}))
+	actions.RawSetString("toggle_terminal_pane", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ToggleTerminalPane()
+		}
+		return 0
+	}))
+	actions.RawSetString("resize_split_up", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ResizeSplitUp()
+		}
+		return 0
+	}))
+	actions.RawSetString("resize_split_down", L.NewFunction(func(L *lua.LState) int {
+		if e.curHost != nil {
+			e.curHost.ResizeSplitDown()
+		}
+		return 0
+	}))
 }
 
 // installDeferredActions attaches primitives that can't complete on

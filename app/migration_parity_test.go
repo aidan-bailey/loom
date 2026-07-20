@@ -15,7 +15,7 @@ import (
 // handler would have. This is the single guard against defaults.lua
 // drifting away from the legacy keymap.
 //
-// Sync primitives (j/k/d/[/]/;/l) don't emit intents — they mutate
+// Sync primitives (j/k/d/{/}/;/l) don't emit intents — they mutate
 // host state directly. Those have their own subtest below that observes
 // the side-effect rather than a pendingIntent.
 func TestMigrationParity(t *testing.T) {
@@ -118,7 +118,9 @@ func TestMigrationParitySyncPrimitives(t *testing.T) {
 	// wiring, so assert only that the key is bound and the primitive
 	// runs without error. The underlying slot-switching behavior has
 	// its own coverage in ui/ and script/.
-	for _, key := range []string{"[", "l", "]", ";"} {
+	// Workspace cycling moved to {/} when [/] became attention jumps;
+	// l and ; remain as the legacy home-row aliases.
+	for _, key := range []string{"{", "l", "}", ";"} {
 		t.Run("workspace_"+key, func(t *testing.T) {
 			m := newTestHome(t)
 			runDispatch(t, m, key)

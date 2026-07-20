@@ -154,12 +154,12 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	),
 
 	KeyWorkspaceLeft: key.NewBinding(
-		key.WithKeys("[", "l"),
-		key.WithHelp("[/l", "prev ws"),
+		key.WithKeys("{", "l"),
+		key.WithHelp("{/l", "prev ws"),
 	),
 	KeyWorkspaceRight: key.NewBinding(
-		key.WithKeys("]", ";"),
-		key.WithHelp("]/;", "next ws"),
+		key.WithKeys("}", ";"),
+		key.WithHelp("}/;", "next ws"),
 	),
 
 	KeyFullScreenAttachAgent: key.NewBinding(

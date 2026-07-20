@@ -337,6 +337,14 @@ type home struct {
 	// re-detect chains. Update-goroutine only.
 	redetectPending map[string]bool
 
+	// pendingRatioSaves buffers title→ratio pairs recorded by resizeSplit
+	// until the debounced ratioSaveMsg flushes them into one mutateUIPrefs
+	// write — key-repeat resize would otherwise fsync state.json per
+	// keystroke. ratioSaveArmed dedupes the flush tick (see
+	// maybeArmRatioSave). Update-goroutine only.
+	pendingRatioSaves map[string]float64
+	ratioSaveArmed    bool
+
 	// hostFocused mirrors the host terminal's focus state (via tea.FocusMsg/
 	// BlurMsg with ReportFocus on). Assumed focused at startup; used to
 	// synthesize correct focus events when panes/sessions switch.
@@ -722,6 +730,43 @@ func (m *home) applyStoredRatio(inst *session.Instance) {
 	m.splitPane.SetAgentRatio(ui.SplitAgentPercent)
 }
 
+// jumpWaiting moves the selection to the next/prev instance needing
+// attention (Prompting or bell), wrapping around. No-op when none.
+func (m *home) jumpWaiting(dir int) {
+	items := m.list.GetInstances()
+	n := len(items)
+	if n == 0 {
+		return
+	}
+	start := m.list.SelectedIdx()
+	for i := 1; i <= n; i++ {
+		idx := ((start+dir*i)%n + n) % n
+		inst := items[idx]
+		if inst.GetStatus() == session.Prompting || inst.BellPending() {
+			m.list.SetSelectedInstance(idx)
+			return
+		}
+	}
+}
+
+// resizeSplit adjusts the agent/terminal ratio in-memory immediately and
+// records the new ratio for the selected instance in pendingRatioSaves.
+// Persistence is deliberately NOT synchronous: this runs per keystroke
+// (key-repeat ≈30/s) via a deferred script action, and mutateUIPrefs
+// write-through would block the Update goroutine on an fsync each time.
+// The deferred action can't return a tea.Cmd, so handleScriptDone arms
+// the debounced flush tick via maybeArmRatioSave after applying us.
+func (m *home) resizeSplit(delta float64) {
+	r := m.splitPane.AdjustAgentRatio(delta)
+	if sel := m.list.GetSelectedInstance(); sel != nil {
+		if m.pendingRatioSaves == nil {
+			m.pendingRatioSaves = make(map[string]float64)
+		}
+		m.pendingRatioSaves[sel.Title] = r
+	}
+	m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+}
+
 // mutateUIPrefs applies fn to a copy of the prefs and persists; save
 // errors are logged, not surfaced (layout prefs are best-effort).
 // Persistence is a synchronous write-through to state.json — fine for
@@ -885,6 +930,35 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, statusDetectCmd(inst)
+	case ratioSaveMsg:
+		// Debounced flush of resizeSplit's pending ratios — one persisted
+		// write per settle window instead of one per keystroke.
+		m.ratioSaveArmed = false
+		if len(m.pendingRatioSaves) == 0 {
+			return m, nil
+		}
+		pend := m.pendingRatioSaves
+		m.pendingRatioSaves = nil
+		live := make(map[string]bool)
+		for _, inst := range m.list.GetInstances() {
+			live[inst.Title] = true
+		}
+		m.mutateUIPrefs(func(p *config.UIPrefs) {
+			if p.SplitRatios == nil {
+				p.SplitRatios = make(map[string]float64)
+			}
+			for title, r := range pend {
+				p.SplitRatios[title] = r
+			}
+			// Prune entries for instances no longer in the (per-workspace)
+			// list so killed sessions don't leak ratios forever.
+			for title := range p.SplitRatios {
+				if !live[title] {
+					delete(p.SplitRatios, title)
+				}
+			}
+		})
+		return m, nil
 	case redetectMsg:
 		delete(m.redetectPending, msg.session)
 		inst := m.instanceForSession(msg.session)

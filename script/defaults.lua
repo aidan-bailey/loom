@@ -25,10 +25,18 @@ cs.bind("q", function() cs.actions.quit() end,                      { help = "qu
 
 -- Workspace
 cs.bind("W", function() cs.actions.open_workspace_picker() end, { help = "workspace" })
-cs.bind("[", function() cs.actions.workspace_prev() end,        { help = "prev ws" })
+cs.bind("{", function() cs.actions.workspace_prev() end,        { help = "prev ws" })
 cs.bind("l", function() cs.actions.workspace_prev() end)
-cs.bind("]", function() cs.actions.workspace_next() end,        { help = "next ws" })
+cs.bind("}", function() cs.actions.workspace_next() end,        { help = "next ws" })
 cs.bind(";", function() cs.actions.workspace_next() end)
+
+-- Fleet: attention jumps and layout
+cs.bind("]", function() cs.actions.next_waiting() end,          { help = "next waiting" })
+cs.bind("[", function() cs.actions.prev_waiting() end,          { help = "prev waiting" })
+cs.bind("\\", function() cs.actions.toggle_rail() end,          { help = "toggle rail" })
+cs.bind("T", function() cs.actions.toggle_terminal_pane() end,  { help = "toggle terminal" })
+cs.bind("ctrl+up",   function() cs.actions.resize_split_up() end,   { help = "split up" })
+cs.bind("ctrl+down", function() cs.actions.resize_split_down() end, { help = "split down" })
 
 -- Settings
 cs.bind("S", function() cs.actions.open_settings() end,        { help = "settings" })

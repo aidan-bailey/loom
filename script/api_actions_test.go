@@ -306,3 +306,30 @@ func TestCsActionsSyncPrimitivesCallHost(t *testing.T) {
 		"ResetAgentScroll", "ResetTerminalScroll",
 	}, h.calls)
 }
+
+func TestSyncActions_FleetPrimitivesReachHost(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	h := &fakeHost{}
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`
+		cs.bind("]", function() cs.actions.next_waiting() end)
+		cs.bind("[", function() cs.actions.prev_waiting() end)
+		cs.bind("\\", function() cs.actions.toggle_rail() end)
+		cs.bind("T", function() cs.actions.toggle_terminal_pane() end)
+		cs.bind("ctrl+up", function() cs.actions.resize_split_up() end)
+		cs.bind("ctrl+down", function() cs.actions.resize_split_down() end)
+	`))
+	e.EndLoad()
+
+	for _, key := range []string{"]", "[", "\\", "T", "ctrl+up", "ctrl+down"} {
+		_, err := e.Dispatch(context.Background(), key, h)
+		require.NoError(t, err, key)
+	}
+	assert.Equal(t, 1, h.nextWaitingCalls)
+	assert.Equal(t, 1, h.prevWaitingCalls)
+	assert.Equal(t, 1, h.toggleRailCalls)
+	assert.Equal(t, 1, h.toggleTerminalPaneCalls)
+	assert.Equal(t, 1, h.resizeSplitUpCalls)
+	assert.Equal(t, 1, h.resizeSplitDownCalls)
+}

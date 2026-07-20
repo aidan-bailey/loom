@@ -21,6 +21,15 @@ type fakeHost struct {
 	enqueued        []Intent
 	enqueuedIDs     []IntentID
 	terminalKeys    []terminalKeysCall
+
+	// Fleet primitive counters — asserted by
+	// TestSyncActions_FleetPrimitivesReachHost.
+	nextWaitingCalls        int
+	prevWaitingCalls        int
+	toggleRailCalls         int
+	toggleTerminalPaneCalls int
+	resizeSplitUpCalls      int
+	resizeSplitDownCalls    int
 }
 
 func (f *fakeHost) SelectedInstance() *session.Instance   { return f.selected }
@@ -72,6 +81,13 @@ func (f *fakeHost) ListPageUp()             {}
 func (f *fakeHost) ListPageDown()           {}
 func (f *fakeHost) ListTop()                {}
 func (f *fakeHost) ListBottom()             {}
+
+func (f *fakeHost) NextWaiting()        { f.nextWaitingCalls++ }
+func (f *fakeHost) PrevWaiting()        { f.prevWaitingCalls++ }
+func (f *fakeHost) ToggleRail()         { f.toggleRailCalls++ }
+func (f *fakeHost) ToggleTerminalPane() { f.toggleTerminalPaneCalls++ }
+func (f *fakeHost) ResizeSplitUp()      { f.resizeSplitUpCalls++ }
+func (f *fakeHost) ResizeSplitDown()    { f.resizeSplitDownCalls++ }
 
 // terminalKeysCall records a SendTerminalKeys invocation so tests can
 // assert the right instance and text reached the host without standing

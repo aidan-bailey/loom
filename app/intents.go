@@ -508,7 +508,22 @@ func runInlineAttachAgent(m *home) (tea.Model, tea.Cmd) {
 	return m, tea.RequestWindowSize
 }
 
+// ensureTerminalVisible unhides the terminal pane before a
+// terminal-targeting intent runs: with the pane hidden these intents
+// would drop the user into an interact/input mode with zero visual
+// feedback (typing into an invisible pane). The user asked for the
+// terminal — show it. Re-layout rides the tea.RequestWindowSize the
+// callers already return.
+func (m *home) ensureTerminalVisible() {
+	if !m.splitPane.IsTerminalHidden() {
+		return
+	}
+	m.splitPane.SetTerminalHidden(false)
+	m.mutateUIPrefs(func(p *config.UIPrefs) { p.TerminalHidden = false })
+}
+
 func runInlineAttachTerminal(m *home) (tea.Model, tea.Cmd) {
+	m.ensureTerminalVisible()
 	m.splitPane.ResetTerminalToNormalMode()
 	m.setPaneFocus(ui.FocusTerminal)
 	m.splitPane.SetInlineAttach(true)
@@ -541,6 +556,9 @@ func runQuickInputAgent(m *home) (tea.Model, tea.Cmd) {
 }
 
 func runQuickInputTerminal(m *home) (tea.Model, tea.Cmd) {
+	// See ensureTerminalVisible — the user is sending text to the
+	// terminal, so it must be on screen.
+	m.ensureTerminalVisible()
 	m.state = stateQuickInteract
 	m.quickInputBar = ui.NewQuickInputBar(ui.QuickInputTargetTerminal)
 	m.menu.SetState(ui.StateQuickInteract)

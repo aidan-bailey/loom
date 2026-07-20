@@ -291,6 +291,48 @@ func (s *scriptHost) ListBottom() {
 	s.deferModelMutation(func(m *home) { m.list.Bottom() })
 }
 
+// NextWaiting implements script.Host.
+func (s *scriptHost) NextWaiting() {
+	s.deferModelMutation(func(m *home) { m.jumpWaiting(1) })
+}
+
+// PrevWaiting implements script.Host.
+func (s *scriptHost) PrevWaiting() {
+	s.deferModelMutation(func(m *home) { m.jumpWaiting(-1) })
+}
+
+// ToggleRail implements script.Host. Persists the flag and re-runs the
+// full window-size layout so the split pane immediately absorbs (or
+// yields) the rail's width.
+func (s *scriptHost) ToggleRail() {
+	s.deferModelMutation(func(m *home) {
+		m.railHidden = !m.railHidden
+		m.mutateUIPrefs(func(p *config.UIPrefs) { p.RailHidden = m.railHidden })
+		m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+	})
+}
+
+// ToggleTerminalPane implements script.Host. Same persist + re-layout
+// shape as ToggleRail.
+func (s *scriptHost) ToggleTerminalPane() {
+	s.deferModelMutation(func(m *home) {
+		hidden := !m.splitPane.IsTerminalHidden()
+		m.splitPane.SetTerminalHidden(hidden)
+		m.mutateUIPrefs(func(p *config.UIPrefs) { p.TerminalHidden = hidden })
+		m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: m.lastWidth, Height: m.lastHeight})
+	})
+}
+
+// ResizeSplitUp implements script.Host (divider up = agent shrinks).
+func (s *scriptHost) ResizeSplitUp() {
+	s.deferModelMutation(func(m *home) { m.resizeSplit(-0.05) })
+}
+
+// ResizeSplitDown implements script.Host.
+func (s *scriptHost) ResizeSplitDown() {
+	s.deferModelMutation(func(m *home) { m.resizeSplit(+0.05) })
+}
+
 // SendTerminalKeys implements script.Host.
 func (s *scriptHost) SendTerminalKeys(inst *session.Instance, text string) error {
 	if inst == nil {
@@ -608,6 +650,14 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	// the same 3s schedule as real errors. ErrBox has no info-style
 	// channel yet; adding one is deferred to a follow-up change.
 	var cmds []tea.Cmd
+	// Debounced split-ratio persistence: resizeSplit (run just above as a
+	// deferred action) only records pending ratios in-memory — a deferred
+	// action can't return a tea.Cmd, so the flush tick is armed here where
+	// Cmds flow. maybeArmRatioSave no-ops when nothing is pending or a
+	// tick is already in flight.
+	if c := m.maybeArmRatioSave(); c != nil {
+		cmds = append(cmds, c)
+	}
 	for _, n := range msg.notices {
 		cmds = append(cmds, m.handleError(errors.New(n)))
 	}

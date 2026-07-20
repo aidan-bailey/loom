@@ -104,6 +104,34 @@ func (m *home) maybeRedetect(sessionName string) tea.Cmd {
 	})
 }
 
+// ratioSaveMsg flushes the debounced split-ratio persistence: resizeSplit
+// applies ratio changes in-memory per keystroke and only records the
+// title→ratio pair in m.pendingRatioSaves; this message drains the map
+// into a single mutateUIPrefs write. Without the debounce, key-repeat
+// resize (~30/s) would fsync state.json per keystroke on the Update
+// goroutine.
+type ratioSaveMsg struct{}
+
+// ratioSaveDelay is the settle window between the last resize keystroke
+// burst and the state.json write.
+const ratioSaveDelay = 750 * time.Millisecond
+
+// maybeArmRatioSave arms the one-shot flush tick when resizeSplit has
+// recorded pending ratios and no tick is already in flight (mirrors
+// maybeRedetect's dedupe). Called from handleScriptDone — the deferred
+// script action that runs resizeSplit cannot return a tea.Cmd itself, so
+// the tick is armed where Cmds flow. Must be called on the Update
+// goroutine (pendingRatioSaves/ratioSaveArmed are unsynchronized).
+func (m *home) maybeArmRatioSave() tea.Cmd {
+	if len(m.pendingRatioSaves) == 0 || m.ratioSaveArmed {
+		return nil
+	}
+	m.ratioSaveArmed = true
+	return tea.Tick(ratioSaveDelay, func(time.Time) tea.Msg {
+		return ratioSaveMsg{}
+	})
+}
+
 // deadVerifiedMsg carries the background has-session probe triggered by a
 // ptyDeadMsg. A dead attach PTY does not always mean a dead session (a
 // failed reattach leaves the session alive), so the probe distinguishes

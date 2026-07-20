@@ -100,6 +100,16 @@ type Host interface {
 	ListTop()
 	ListBottom()
 
+	// Fleet primitives — rail/terminal-pane visibility, split resize,
+	// and attention jumps. Deferred model mutations like the scroll
+	// primitives above.
+	NextWaiting()
+	PrevWaiting()
+	ToggleRail()
+	ToggleTerminalPane()
+	ResizeSplitUp()
+	ResizeSplitDown()
+
 	// SendTerminalKeys writes text followed by Enter to the named
 	// instance's cached terminal-pane tmux session. The terminal pane
 	// caches sessions per instance title, so this addresses the
