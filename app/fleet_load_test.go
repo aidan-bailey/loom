@@ -108,3 +108,33 @@ func TestEnterOverview_SetsPendingLoad(t *testing.T) {
 }
 
 var assertErr = fmt.Errorf("boom")
+
+// TestHandleQuit_SavesBackgroundSlots pins that handleQuit's save loop
+// iterates ALL slots, background included — a fleet-loaded peer workspace
+// (never focused this session) must still flush its instance to disk on
+// quit, just like the focused slot does. Status is Paused rather than
+// Ready: persistableInstances intentionally drops Ready (not-yet-started)
+// instances (session/storage.go:110), so Ready would fail for reasons
+// unrelated to the background filter this test pins.
+func TestHandleQuit_SavesBackgroundSlots(t *testing.T) {
+	m := newTestHome(t)
+	m.registry = &config.WorkspaceRegistry{}
+	fg := fleetSlot(t, "fg")
+	bg := fleetSlot(t, "bg")
+	bg.background = true
+	bg.list.AddInstance(&session.Instance{Title: "bgsess", Status: session.Paused})
+	m.slots = []workspaceSlot{fg, bg}
+	m.focusedSlot = 0
+	m.list = fg.list
+
+	_, _ = m.handleQuit()
+
+	// Reload bg's storage from disk and confirm the instance persisted.
+	reloaded, err := bg.storage.LoadInstanceData() // session/storage.go:288
+	require.NoError(t, err)
+	titles := make([]string, 0, len(reloaded))
+	for _, d := range reloaded {
+		titles = append(titles, d.Title)
+	}
+	assert.Contains(t, titles, "bgsess", "background slot persisted on quit")
+}
