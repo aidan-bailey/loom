@@ -177,6 +177,12 @@ type workspaceSlot struct {
 	// recovery holds the orphan-reconcile summary from this slot's last
 	// activation, surfaced once the slot becomes focused.
 	recovery recoverySummary
+	// background marks a slot loaded solely to feed the live global
+	// overview: fully reconciled and PTY-attached like any slot, but
+	// hidden from the tab bar and never persisted to OpenWorkspaces.
+	// Cleared (promoted) when the slot becomes focused. The focused slot
+	// is never background.
+	background bool
 }
 
 type home struct {
@@ -648,7 +654,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	m.showRecoverySummary(m.slots[focused].recovery)
 
 	if m.registry != nil {
-		if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
+		if err := m.registry.SetOpenWorkspaces(m.foregroundSlotNames()); err != nil {
 			log.For("app").Debug("registry.set_open_failed", "err", err)
 		}
 		if name := m.slots[focused].wsCtx.Name; name != "" {
@@ -2436,7 +2442,8 @@ func (m *home) loadSlot(idx int) {
 	m.appConfig = slot.appConfig
 	m.appState = slot.appState
 	m.list.SetWorkspaceName(slot.wsCtx.Name)
-	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
+	fgNames, fgSel := m.foregroundSlotsAndSelected()
+	m.tabBar.SetWorkspaces(fgNames, fgSel)
 	// Resize immediately using the now-correct tab bar height. Without this,
 	// the first View() after a workspace switch uses components pre-sized when
 	// the tab bar had 0 names (height=0 instead of 3), producing 3 extra lines
@@ -2527,7 +2534,8 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		m.loadSlot(m.focusedSlot)
 	}
 
-	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
+	fgNames, fgSel := m.foregroundSlotsAndSelected()
+	m.tabBar.SetWorkspaces(fgNames, fgSel)
 	m.saveOpenWorkspaces()
 	if len(m.slots) > 0 {
 		m.showRecoverySummary(m.slots[m.focusedSlot].recovery)
@@ -2772,7 +2780,7 @@ func (m *home) saveOpenWorkspaces() {
 	if m.registry == nil {
 		return
 	}
-	if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
+	if err := m.registry.SetOpenWorkspaces(m.foregroundSlotNames()); err != nil {
 		log.For("app").Error("persist_open_workspaces_failed", "err", err)
 	}
 }
@@ -2799,6 +2807,36 @@ func (m *home) slotNames() []string {
 		names[i] = slot.wsCtx.Name
 	}
 	return names
+}
+
+// foregroundSlotNames returns the names of non-background slots, in slot
+// order — the set the tab bar shows and saveOpenWorkspaces persists.
+func (m *home) foregroundSlotNames() []string {
+	names := make([]string, 0, len(m.slots))
+	for _, slot := range m.slots {
+		if !slot.background {
+			names = append(names, slot.wsCtx.Name)
+		}
+	}
+	return names
+}
+
+// foregroundSlotsAndSelected returns the foreground slot names plus the
+// focused slot remapped to its index within that subset. Safe because
+// the focused slot is never background; falls back to 0 if it somehow is.
+func (m *home) foregroundSlotsAndSelected() ([]string, int) {
+	names := make([]string, 0, len(m.slots))
+	sel := 0
+	for i, slot := range m.slots {
+		if slot.background {
+			continue
+		}
+		if i == m.focusedSlot {
+			sel = len(names)
+		}
+		names = append(names, slot.wsCtx.Name)
+	}
+	return names, sel
 }
 
 // View implements tea.Model.
