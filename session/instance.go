@@ -590,7 +590,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		// with --append-system-prompt-file for Claude sessions (no-op when
 		// disabled, non-Claude, or the file is missing); InstanceEnv still
 		// keys off the bare i.Program.
-		launchProgram := loomContextProgram(i.Program, i.ConfigDir, i.IsWorkspaceTerminal)
+		launchProgram := i.applyLoomContext(i.Program)
 		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(i.Program, i.HeadroomProxy, i.CacheTTL1h)...)
 	}
 	i.setTmuxSession(ts)
@@ -1219,13 +1219,23 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	return nil
 }
 
+// applyLoomContext wraps program with this instance's loom-context flag
+// for launch. Applied at every tmux-session (re)creation — first launch,
+// resume, and crash-restart — so all three inject consistently. No-op
+// when disabled, non-Claude, or the prompt file is missing; selects the
+// worktree vs workspace-terminal variant via i.IsWorkspaceTerminal.
+func (i *Instance) applyLoomContext(program string) string {
+	return loomContextProgram(program, i.ConfigDir, i.IsWorkspaceTerminal)
+}
+
 // startFreshWithRecovery creates a brand-new tmux session for an instance
 // whose previous session no longer exists (normal after crash or kill-server).
 // The program is rewritten via BuildRecoveryCommand so supported agents resume
 // their prior conversation (e.g. `claude --continue`).
 func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 	program := BuildRecoveryCommand(i.Program)
-	ts := tmux.NewTmuxSession(i.Title, program, InstanceEnv(program, i.HeadroomProxy, i.CacheTTL1h)...)
+	launchProgram := i.applyLoomContext(program)
+	ts := tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(program, i.HeadroomProxy, i.CacheTTL1h)...)
 	if err := ts.Start(gw.GetWorktreePath()); err != nil {
 		if cleanupErr := gw.Cleanup(); cleanupErr != nil {
 			err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
@@ -1242,7 +1252,8 @@ func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 // supported agents.
 func (i *Instance) CrashRestart() error {
 	program := BuildRecoveryCommand(i.Program)
-	ts := tmux.NewTmuxSession(i.Title, program, InstanceEnv(program, i.HeadroomProxy, i.CacheTTL1h)...)
+	launchProgram := i.applyLoomContext(program)
+	ts := tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(program, i.HeadroomProxy, i.CacheTTL1h)...)
 
 	var workDir string
 	if i.IsWorkspaceTerminal {
