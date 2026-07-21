@@ -2785,6 +2785,32 @@ func (m *home) saveOpenWorkspaces() {
 	}
 }
 
+// promoteSlot clears a slot's background flag (making it a real tab),
+// refreshes the tab bar, and persists the new open-workspace set. Called
+// when a background slot becomes the focus target. Main-goroutine only.
+func (m *home) promoteSlot(idx int) {
+	if idx < 0 || idx >= len(m.slots) || !m.slots[idx].background {
+		return
+	}
+	m.slots[idx].background = false
+	fgNames, fgSel := m.foregroundSlotsAndSelected()
+	m.tabBar.SetWorkspaces(fgNames, fgSel)
+	m.saveOpenWorkspaces()
+}
+
+// demoteSlot marks a foreground slot as background (dropping it from the
+// tab bar and OpenWorkspaces) while keeping it live. Never demotes the
+// focused slot — callers move focus away first. Main-goroutine only.
+func (m *home) demoteSlot(idx int) {
+	if idx < 0 || idx >= len(m.slots) || m.slots[idx].background || idx == m.focusedSlot {
+		return
+	}
+	m.slots[idx].background = true
+	fgNames, fgSel := m.foregroundSlotsAndSelected()
+	m.tabBar.SetWorkspaces(fgNames, fgSel)
+	m.saveOpenWorkspaces()
+}
+
 // persistFocusedWorkspace writes the currently focused slot's name to
 // LastUsed so the next launch focuses the same tab.
 func (m *home) persistFocusedWorkspace() {
