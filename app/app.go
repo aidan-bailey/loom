@@ -165,6 +165,12 @@ const (
 	viewOverview
 )
 
+// overviewCursor is the fleet overview's selection in domain coordinates.
+type overviewCursor struct {
+	slot int // index into home.slots
+	inst int // index into that slot's list
+}
+
 // workspaceSlot bundles per-workspace state so multiple workspaces can be
 // loaded in memory simultaneously.
 type workspaceSlot struct {
@@ -308,6 +314,20 @@ type home struct {
 	// lastWidth and lastHeight cache the terminal size for sizing new slots
 	lastWidth  int
 	lastHeight int
+
+	// fleetLoading holds the names of workspaces whose background
+	// activation Cmd is in flight (so ensureFleetLoaded doesn't
+	// double-fire). fleetLoadErrors records the last background-load
+	// error per workspace, surfaced as an error group in the overview.
+	// fleetEngaged is set once the user has opened the overview at least
+	// once this session; it flips tab-close from teardown to demote.
+	fleetLoading    map[string]bool
+	fleetLoadErrors map[string]error
+	fleetEngaged    bool
+	// overviewCursor is the domain-space overview selection: a slot index
+	// into m.slots and an instance index into that slot's list. Distinct
+	// from the render-space ui.OverviewCursor overviewData() translates to.
+	overviewCursor overviewCursor
 
 	// listWidth is the current rendered width of the left list panel
 	// (= int(lastWidth * ListWidthPercent)). Cached for mouse-wheel
@@ -2372,6 +2392,75 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		recovery:  recovery,
 	})
 	return nil
+}
+
+// workspaceActivatedMsg carries the reconciled domain data for a
+// background-loaded workspace back to the Update goroutine, where the
+// slot's UI is built and appended. Produced off-goroutine by
+// loadWorkspaceForFleet.
+type workspaceActivatedMsg struct {
+	name      string
+	wsCtx     *config.WorkspaceContext
+	storage   *session.Storage
+	appConfig *config.Config
+	appState  config.AppState
+	instances []*session.Instance
+	err       error
+}
+
+// loadWorkspaceForFleet reconciles one workspace off the Update goroutine
+// (git validation + PTY attach happen inside LoadAndReconcile). It builds
+// NO UI components and mutates NO model state — only the returned message
+// crosses back. On any failure it returns a msg carrying err. Safe to run
+// in a tea.Cmd goroutine.
+func (m *home) loadWorkspaceForFleet(ws config.Workspace) workspaceActivatedMsg {
+	wsCtx := config.WorkspaceContextFor(&ws)
+	state := config.LoadStateFrom(wsCtx.ConfigDir)
+	appConfig := config.LoadConfigFrom(wsCtx.ConfigDir)
+	storage, err := session.NewStorage(state, wsCtx.ConfigDir)
+	if err != nil {
+		return workspaceActivatedMsg{name: ws.Name, err: fmt.Errorf("storage: %w", err)}
+	}
+	instances, err := storage.LoadAndReconcile(cmd2.MakeExecutor())
+	if err != nil {
+		return workspaceActivatedMsg{name: ws.Name, err: fmt.Errorf("reconcile: %w", err)}
+	}
+	return workspaceActivatedMsg{
+		name: ws.Name, wsCtx: wsCtx, storage: storage,
+		appConfig: appConfig, appState: state, instances: instances,
+	}
+}
+
+// ensureFleetLoaded marks fleet-engaged and returns a batched Cmd that
+// background-activates every registered workspace not already a slot or
+// already loading. Nil when nothing remains — safe to call on every
+// overview entry (it naturally retries errored/newly-registered ones).
+// Main-goroutine only.
+func (m *home) ensureFleetLoaded() tea.Cmd {
+	m.fleetEngaged = true
+	if m.registry == nil {
+		return nil
+	}
+	if m.fleetLoading == nil {
+		m.fleetLoading = map[string]bool{}
+	}
+	open := map[string]bool{}
+	for _, slot := range m.slots {
+		open[slot.wsCtx.Name] = true
+	}
+	var cmds []tea.Cmd
+	for _, ws := range m.registry.Workspaces {
+		if ws.Name == "" || open[ws.Name] || m.fleetLoading[ws.Name] {
+			continue
+		}
+		m.fleetLoading[ws.Name] = true
+		wsCopy := ws
+		cmds = append(cmds, func() tea.Msg { return m.loadWorkspaceForFleet(wsCopy) })
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 // deactivateWorkspace saves and removes a workspace slot by name.
