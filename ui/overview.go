@@ -26,19 +26,16 @@ const overviewCardHeight = overviewCardTailLines + 5
 type GroupState int
 
 const (
-	GroupLoaded  GroupState = iota // reconciled; render cards
-	GroupLoading                   // background activation in flight
-	GroupError                     // background activation failed
-	GroupEmpty                     // loaded but no instances
+	GroupLoaded GroupState = iota // reconciled; render cards
+	GroupEmpty                    // loaded but no instances
 )
 
-// OverviewGroup is one workspace's slice of the fleet overview.
+// OverviewGroup is one open workspace's slice of the overview.
 type OverviewGroup struct {
 	Name  string
 	Items []*session.Instance
-	Order []int // SortForOverview(Items); empty for non-loaded states
+	Order []int // SortForOverview(Items); empty when the group is empty
 	State GroupState
-	Err   string // populated when State == GroupError
 }
 
 // OverviewCursor is the render-space selection: a group index into
@@ -56,10 +53,10 @@ type OverviewData struct {
 	Spinner string
 }
 
-// Overview renders the fleet-triage card grid: every workspace group's
+// Overview renders the triage card grid: every open workspace group's
 // instances as bordered cards under a collapsible group header, with
-// loading/error/empty groups rendered inline. The render cursor spans
-// groups (OverviewCursor{Group,Item}).
+// empty groups rendered inline. The render cursor spans groups
+// (OverviewCursor{Group,Item}).
 type Overview struct {
 	width, height int
 	collapsed     map[string]bool
@@ -114,7 +111,6 @@ func (o *Overview) groupBlocks(d OverviewData) []string {
 	blocks := make([]string, len(d.Groups))
 	wsStyle := lipgloss.NewStyle().Foreground(Workspace)
 	dim := lipgloss.NewStyle().Foreground(Dim)
-	errStyle := lipgloss.NewStyle().Foreground(ErrorColor)
 	for gi, g := range d.Groups {
 		collapsed := o.IsCollapsed(g.Name)
 		marker := "▾"
@@ -126,10 +122,6 @@ func (o *Overview) groupBlocks(d OverviewData) []string {
 		switch {
 		case collapsed:
 			body = ""
-		case g.State == GroupLoading:
-			body = dim.Render("  loading…")
-		case g.State == GroupError:
-			body = errStyle.Render("  failed to load — " + g.Err)
 		case g.State == GroupEmpty || len(g.Order) == 0:
 			body = dim.Render("  no sessions")
 		default:

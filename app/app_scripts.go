@@ -701,15 +701,6 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 			cmds = append(cmds, c)
 		}
 	}
-	// Drain a pending overview-entry fleet load. enterOverview (run above
-	// as a deferred action) can't return a Cmd, so it raises the flag and
-	// we fire the progressive fleet load here where Cmds flow.
-	if m.pendingOverviewLoad {
-		m.pendingOverviewLoad = false
-		if c := m.ensureFleetLoaded(); c != nil {
-			cmds = append(cmds, c)
-		}
-	}
 	if len(cmds) == 0 {
 		return nil
 	}

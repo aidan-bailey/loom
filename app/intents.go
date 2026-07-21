@@ -580,13 +580,10 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 }
 
 // pickerActiveNames returns the set of workspace names shown pre-checked
-// in the workspace picker: foreground (tab) slots only. Background
-// fleet-overview slots render unchecked so opening+closing the picker
-// never promotes them into the tab bar or OpenWorkspaces (which would
-// break lazy fleet loading).
+// in the workspace picker: the open (tab) slots.
 func (m *home) pickerActiveNames() map[string]bool {
 	active := make(map[string]bool, len(m.slots))
-	for _, name := range m.foregroundSlotNames() {
+	for _, name := range m.slotNames() {
 		active[name] = true
 	}
 	return active

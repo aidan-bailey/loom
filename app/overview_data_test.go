@@ -24,21 +24,16 @@ func TestOverviewData_GroupsFocusedFirstThenAlpha(t *testing.T) {
 		overview:    ui.NewOverview(), // overviewData normalizes the cursor via fleetOrder
 		focusedSlot: 1,
 		slots: []workspaceSlot{
-			{wsCtx: &config.WorkspaceContext{Name: "zebra"}, list: mk("z1"), background: true},
+			{wsCtx: &config.WorkspaceContext{Name: "zebra"}, list: mk("z1")},
 			{wsCtx: &config.WorkspaceContext{Name: "focused"}, list: focused},
-			{wsCtx: &config.WorkspaceContext{Name: "apple"}, list: mk("a1"), background: true},
+			{wsCtx: &config.WorkspaceContext{Name: "apple"}, list: mk("a1")},
 		},
-		fleetLoading:    map[string]bool{"loadingws": true},
-		fleetLoadErrors: map[string]error{"errws": assertErr},
 	}
 	d := m.overviewData()
 	names := make([]string, len(d.Groups))
-	states := make([]ui.GroupState, len(d.Groups))
 	for i, g := range d.Groups {
-		names[i], states[i] = g.Name, g.State
+		names[i] = g.Name
 	}
-	// focused first, then alpha (apple, zebra), then extras alpha (errws, loadingws).
-	assert.Equal(t, []string{"focused", "apple", "zebra", "errws", "loadingws"}, names)
-	assert.Equal(t, ui.GroupError, states[3])
-	assert.Equal(t, ui.GroupLoading, states[4])
+	// Focused first, then the rest alphabetical.
+	assert.Equal(t, []string{"focused", "apple", "zebra"}, names)
 }

@@ -1043,19 +1043,6 @@ func (i *Instance) RepairPtmx() error {
 	return ts.Restore()
 }
 
-// ReleasePreview detaches this instance's preview PTY (pump, PTY handle,
-// emulator) without killing the tmux session — the agent keeps running.
-// For reconciled instances that are discarded before adoption (stale or
-// duplicate fleet load) so the attach doesn't leak. No-op without a
-// tmux session.
-func (i *Instance) ReleasePreview() error {
-	ts := i.getTmuxSession()
-	if ts == nil {
-		return nil
-	}
-	return ts.PausePreview()
-}
-
 // RecordRestartFailure increments and returns the consecutive-failure
 // counter backing the workspace-terminal auto-restart circuit breaker.
 // Call once per metadata tick this instance's tmux is observed dead.

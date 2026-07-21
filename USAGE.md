@@ -105,9 +105,9 @@ Branch name and diff stats moved off the rail — they now live in the agent pan
 
 ### Overview Mode
 
-Press `tab` to switch to overview: a card grid of every session in the active workspace, sorted so sessions needing attention come first. Each card shows the title, status with wait age, branch and diff stats, and a live output tail. Peer workspaces appear as dimmed count lines.
+Press `tab` to switch to overview: a card grid of every session in your open workspaces, one group per workspace (focused workspace first, the rest alphabetical), each group sorted so sessions needing attention come first. Each card shows the title, status with wait age, branch and diff stats, and a live output tail. Only workspaces open in the tab bar appear — use `W` to open more.
 
-- `j`/`k` (or `↑`/`↓`) walk the sorted grid; `enter` or `esc` returns to focus mode on the selected session.
+- `j`/`k` (or `↑`/`↓`) walk the sorted grid across all groups; `enter` returns to focus mode on the selected session (switching workspace tabs if it lives in another group); `esc` returns to focus mode where you left it.
 - `z` collapses/expands the active workspace's group.
 - `]` / `[` jump to the next/previous agent waiting for input, same as in focus mode.
 - `n`/`N` drop back to focus mode first, then open the create flow.

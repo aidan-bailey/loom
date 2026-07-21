@@ -184,12 +184,6 @@ type workspaceSlot struct {
 	// recovery holds the orphan-reconcile summary from this slot's last
 	// activation, surfaced once the slot becomes focused.
 	recovery recoverySummary
-	// background marks a slot loaded solely to feed the live global
-	// overview: fully reconciled and PTY-attached like any slot, but
-	// hidden from the tab bar and never persisted to OpenWorkspaces.
-	// Cleared (promoted) when the slot becomes focused. The focused slot
-	// is never background.
-	background bool
 }
 
 type home struct {
@@ -316,19 +310,6 @@ type home struct {
 	lastWidth  int
 	lastHeight int
 
-	// fleetLoading holds the names of workspaces whose background
-	// activation Cmd is in flight (so ensureFleetLoaded doesn't
-	// double-fire). fleetLoadErrors records the last background-load
-	// error per workspace, surfaced as an error group in the overview.
-	// fleetEngaged is set once the user has opened the overview at least
-	// once this session; it flips tab-close from teardown to demote.
-	fleetLoading    map[string]bool
-	fleetLoadErrors map[string]error
-	fleetEngaged    bool
-	// pendingOverviewLoad is raised by enterOverview (which runs inside
-	// deferred model mutations / startup, neither of which can return a
-	// tea.Cmd) and drained by handleScriptDone / Init via ensureFleetLoaded.
-	pendingOverviewLoad bool
 	// overviewCursor is the domain-space overview selection: a slot index
 	// into m.slots and an instance index into that slot's list. Distinct
 	// from the render-space ui.OverviewCursor overviewData() translates to.
@@ -690,7 +671,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	m.showRecoverySummary(m.slots[focused].recovery)
 
 	if m.registry != nil {
-		if err := m.registry.SetOpenWorkspaces(m.foregroundSlotNames()); err != nil {
+		if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
 			log.For("app").Debug("registry.set_open_failed", "err", err)
 		}
 		if name := m.slots[focused].wsCtx.Name; name != "" {
@@ -805,18 +786,18 @@ func (m *home) applyStoredRatio(inst *session.Instance) {
 	m.splitPane.SetAgentRatio(ui.SplitAgentPercent)
 }
 
-// jumpWaiting moves selection to the next/prev fleet agent needing
-// attention (Prompting or bell), across all workspaces, wrapping. When
-// the target is in another slot it saves the current slot, promotes the
-// target if background, focuses it, and selects there. No-op when none
-// wait. Main-goroutine only.
+// jumpWaiting moves selection to the next/prev agent needing attention
+// (Prompting or bell), across all open workspaces, wrapping. When the
+// target is in another slot it saves the current slot, focuses the
+// target's, and selects there. No-op when none wait. Main-goroutine
+// only.
 func (m *home) jumpWaiting(dir int) {
-	// Overview mode with fleet slots: `]`/`[` move the overview cursor to
-	// the next waiting card — no focus switch, no background promotion,
-	// no OpenWorkspaces write. Committing is enter/D/r's job
-	// (focusCursorSlot). Collapsed groups are skipped, matching cursor
-	// motion (the cursor cannot sit on an unrendered card). Classic
-	// overview falls through: m.list's selection IS the cursor there.
+	// Overview mode with slots: `]`/`[` move the overview cursor to the
+	// next waiting card — no focus switch, no OpenWorkspaces write.
+	// Committing is enter/D/r's job (focusCursorSlot). Collapsed groups
+	// are skipped, matching cursor motion (the cursor cannot sit on an
+	// unrendered card). Classic overview falls through: m.list's
+	// selection IS the cursor there.
 	if m.viewMode == viewOverview && len(m.slots) > 0 {
 		order := m.fleetOrder()
 		n := len(order)
@@ -894,9 +875,6 @@ func (m *home) jumpWaiting(dir int) {
 		if inst.GetStatus() == session.Prompting || inst.BellPending() {
 			if len(m.slots) != 0 && p.slot != m.focusedSlot {
 				m.saveCurrentSlot()
-				if m.slots[p.slot].background {
-					m.promoteSlot(p.slot)
-				}
 				m.loadSlot(p.slot)
 			}
 			m.list.SetSelectedInstance(p.inst)
@@ -992,15 +970,6 @@ func (m *home) Init() tea.Cmd {
 			time.Sleep(100 * time.Millisecond)
 			return previewTickMsg{}
 		})
-	}
-	// A restored-into-overview launch: applyUIPrefs (run during newHome)
-	// raised pendingOverviewLoad but couldn't return a Cmd. Drain it here,
-	// the first place a startup Cmd can flow, so the fleet loads at launch.
-	if m.pendingOverviewLoad {
-		m.pendingOverviewLoad = false
-		if c := m.ensureFleetLoaded(); c != nil {
-			cmds = append(cmds, c)
-		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -1616,9 +1585,6 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, tea.RequestWindowSize, m.instanceChanged())
 		return m, tea.Batch(cmds...)
-	case workspaceActivatedMsg:
-		m.handleWorkspaceActivated(msg)
-		return m, m.instanceChanged()
 	case workspaceRegisteredMsg:
 		ws := m.registry.FindByPath(msg.dir)
 		if ws == nil {
@@ -2504,171 +2470,6 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	return nil
 }
 
-// workspaceActivatedMsg carries the reconciled domain data for a
-// background-loaded workspace back to the Update goroutine, where the
-// slot's UI is built and appended. Produced off-goroutine by
-// loadWorkspaceForFleet.
-type workspaceActivatedMsg struct {
-	name      string
-	wsCtx     *config.WorkspaceContext
-	storage   *session.Storage
-	appConfig *config.Config
-	appState  config.AppState
-	instances []*session.Instance
-	err       error
-}
-
-// loadWorkspaceForFleet reconciles one workspace off the Update goroutine
-// (git validation + PTY attach happen inside LoadAndReconcile). It builds
-// NO UI components and mutates NO model state — only the returned message
-// crosses back. On any failure it returns a msg carrying err. Safe to run
-// in a tea.Cmd goroutine.
-func (m *home) loadWorkspaceForFleet(ws config.Workspace) workspaceActivatedMsg {
-	wsCtx := config.WorkspaceContextFor(&ws)
-	state := config.LoadStateFrom(wsCtx.ConfigDir)
-	appConfig := config.LoadConfigFrom(wsCtx.ConfigDir)
-	storage, err := session.NewStorage(state, wsCtx.ConfigDir)
-	if err != nil {
-		return workspaceActivatedMsg{name: ws.Name, err: fmt.Errorf("storage: %w", err)}
-	}
-	instances, err := storage.LoadAndReconcile(cmd2.MakeExecutor())
-	if err != nil {
-		return workspaceActivatedMsg{name: ws.Name, err: fmt.Errorf("reconcile: %w", err)}
-	}
-	return workspaceActivatedMsg{
-		name: ws.Name, wsCtx: wsCtx, storage: storage,
-		appConfig: appConfig, appState: state, instances: instances,
-	}
-}
-
-// releaseFleetInstances detaches the preview PTYs (pump, handle,
-// emulator) of reconciled instances that will never be adopted into a
-// slot, so a discarded fleet load doesn't leak attach processes for the
-// app's life. The tmux sessions themselves stay alive — the agents (and
-// any other owner of the same sessions) are untouched.
-func releaseFleetInstances(instances []*session.Instance, reason string) {
-	for _, inst := range instances {
-		if err := inst.ReleasePreview(); err != nil {
-			log.For("app").Warn("fleet_discard_detach_failed",
-				"instance", inst.Title, "reason", reason, "err", err)
-		}
-	}
-}
-
-// handleWorkspaceActivated finalizes a background workspace load on the
-// Update goroutine: builds the slot's UI from the reconciled instances
-// and appends it as a background slot. Errors are recorded (not fatal);
-// stale loads (the mode flipped mid-flight) and duplicates are discarded
-// with their preview PTYs released. Main-goroutine only.
-func (m *home) handleWorkspaceActivated(msg workspaceActivatedMsg) {
-	if m.fleetLoading != nil {
-		delete(m.fleetLoading, msg.name)
-	}
-	if msg.err != nil {
-		if m.fleetLoadErrors == nil {
-			m.fleetLoadErrors = map[string]error{}
-		}
-		m.fleetLoadErrors[msg.name] = msg.err
-		log.For("app").Warn("fleet_load_failed", "workspace", msg.name, "err", msg.err)
-		return
-	}
-	// Mode guard: the load may have outlived the fleet that requested it
-	// (the user returned to global/classic mode mid-flight, which resets
-	// fleetEngaged and empties m.slots). Adopting it would append a
-	// background slot with no foreground anchor — the focused "slot"
-	// would itself be background, breaking the never-background-focused
-	// invariant and misrouting saveCurrentSlot.
-	if !m.fleetEngaged || len(m.slots) == 0 {
-		releaseFleetInstances(msg.instances, "stale_mode")
-		return
-	}
-	// Duplicate guard: a slot for this workspace may already exist if the
-	// user opened it via the picker while the Cmd was in flight. Keyed by
-	// name, matching ensureFleetLoaded's own "already open" check.
-	for _, slot := range m.slots {
-		if slot.wsCtx.Name == msg.wsCtx.Name {
-			releaseFleetInstances(msg.instances, "duplicate")
-			return
-		}
-	}
-	if m.fleetLoadErrors != nil {
-		delete(m.fleetLoadErrors, msg.name)
-	}
-
-	list := ui.NewList(&m.spinner)
-	for _, inst := range msg.instances {
-		if inst.CrashRecovered {
-			if err := inst.CrashRestart(); err != nil {
-				log.For("app").Error("fleet_crash_restart_failed", "instance", inst.Title, "err", err)
-				if tErr := inst.TransitionTo(session.Paused); tErr != nil {
-					log.For("app").Warn("fleet_crash_transition_failed", "instance", inst.Title, "err", tErr)
-				}
-			}
-			inst.CrashRecovered = false
-		}
-		list.AddInstance(inst)
-	}
-	list.SetWorkspaceName(msg.name)
-
-	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
-	if m.lastWidth > 0 && m.lastHeight > 0 {
-		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
-		paneWidth := m.lastWidth - listWidth
-		contentHeight := m.lastHeight - m.tabBar.Height() - 2
-		list.SetSize(listWidth, contentHeight)
-		splitPane.SetSize(paneWidth, contentHeight)
-	}
-
-	// Orphan reconcile on the main goroutine (bounded disk scan; matches
-	// activateWorkspace). Background slots suppress workspace-terminal
-	// auto-spawn — no WT is created here, by design.
-	recovery := m.reconcileOrphans(msg.wsCtx.ConfigDir, msg.appConfig.GetProgram(), list, msg.storage, cmd2.MakeExecutor())
-
-	m.slots = append(m.slots, workspaceSlot{
-		wsCtx: msg.wsCtx, storage: msg.storage, appConfig: msg.appConfig,
-		appState: msg.appState, list: list, splitPane: splitPane,
-		recovery: recovery, background: true,
-	})
-	m.refreshPeerSections()
-}
-
-// ensureFleetLoaded marks fleet-engaged and returns a batched Cmd that
-// background-activates every registered workspace not already a slot or
-// already loading. Nil when nothing remains — safe to call on every
-// overview entry (it naturally retries errored/newly-registered ones).
-// Main-goroutine only.
-func (m *home) ensureFleetLoaded() tea.Cmd {
-	// Fleet loading requires workspace mode: with no slots (global or
-	// classic mode) there is no foreground slot for background slots to
-	// anchor to — appending one would leave the focused "slot" background,
-	// breaking the never-background-focused invariant. The overview then
-	// simply renders the classic single-group view.
-	if m.registry == nil || len(m.slots) == 0 {
-		return nil
-	}
-	m.fleetEngaged = true
-	if m.fleetLoading == nil {
-		m.fleetLoading = map[string]bool{}
-	}
-	open := map[string]bool{}
-	for _, slot := range m.slots {
-		open[slot.wsCtx.Name] = true
-	}
-	var cmds []tea.Cmd
-	for _, ws := range m.registry.Workspaces {
-		if ws.Name == "" || open[ws.Name] || m.fleetLoading[ws.Name] {
-			continue
-		}
-		m.fleetLoading[ws.Name] = true
-		wsCopy := ws
-		cmds = append(cmds, func() tea.Msg { return m.loadWorkspaceForFleet(wsCopy) })
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
-}
-
 // deactivateWorkspace saves and removes a workspace slot by name.
 // Returns an error if SaveInstances fails; in that case the slot is
 // kept in memory so the user can retry rather than losing access to
@@ -2737,8 +2538,7 @@ func (m *home) loadSlot(idx int) {
 	m.appConfig = slot.appConfig
 	m.appState = slot.appState
 	m.list.SetWorkspaceName(slot.wsCtx.Name)
-	fgNames, fgSel := m.foregroundSlotsAndSelected()
-	m.tabBar.SetWorkspaces(fgNames, fgSel)
+	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	// Resize immediately using the now-correct tab bar height. Without this,
 	// the first View() after a workspace switch uses components pre-sized when
 	// the tab bar had 0 names (height=0 instead of 3), producing 3 extra lines
@@ -2797,60 +2597,27 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	var activationErrors []string
 	var deactivationErrors []string
 
-	if m.fleetEngaged && len(m.slots) > 0 {
-		// Fleet mode: every registered workspace is already a slot. The
-		// picker only chooses which are foreground tabs — promote desired,
-		// demote the rest. Never tear down (agents stay live). The slots
-		// check is defense in depth: enterGlobalMode resets fleetEngaged,
-		// but a stale flag over empty slots must fall through to the
-		// pre-fleet activate path, not index into nothing.
-		//
-		// If the focused slot got dropped from desired, move focus to a
-		// desired slot FIRST (the focused slot can never be background), then
-		// demote the rest.
-		if !desiredNames[m.slots[m.focusedSlot].wsCtx.Name] {
-			for i := range m.slots {
-				if desiredNames[m.slots[i].wsCtx.Name] {
-					m.saveCurrentSlot()
-					m.loadSlot(i)
-					break
-				}
+	// 1. Activate new workspaces first (safe — adds to slots without removing).
+	currentNames := make(map[string]bool, len(m.slots))
+	for _, slot := range m.slots {
+		currentNames[slot.wsCtx.Name] = true
+	}
+	for _, ws := range desired {
+		if !currentNames[ws.Name] {
+			if err := m.activateWorkspace(ws); err != nil {
+				activationErrors = append(activationErrors,
+					fmt.Sprintf("%s: %v", ws.Name, err))
 			}
 		}
-		for i := range m.slots {
-			if desiredNames[m.slots[i].wsCtx.Name] {
-				if m.slots[i].background {
-					m.promoteSlot(i)
-				}
-			} else if i != m.focusedSlot {
-				m.demoteSlot(i)
-			}
-		}
-	} else {
-		// Pre-fleet behavior: activate new workspaces, deactivate missing.
+	}
 
-		// 1. Activate new workspaces first (safe — adds to slots without removing).
-		currentNames := make(map[string]bool, len(m.slots))
-		for _, slot := range m.slots {
-			currentNames[slot.wsCtx.Name] = true
-		}
-		for _, ws := range desired {
-			if !currentNames[ws.Name] {
-				if err := m.activateWorkspace(ws); err != nil {
-					activationErrors = append(activationErrors,
-						fmt.Sprintf("%s: %v", ws.Name, err))
-				}
-			}
-		}
-
-		// 2. Deactivate slots not in desired (reverse order to keep indices stable).
-		// Slots whose save fails stay in m.slots; the user is told via handleError below.
-		for i := len(m.slots) - 1; i >= 0; i-- {
-			if !desiredNames[m.slots[i].wsCtx.Name] {
-				if err := m.deactivateWorkspace(m.slots[i].wsCtx.Name); err != nil {
-					deactivationErrors = append(deactivationErrors,
-						fmt.Sprintf("%s: %v", m.slots[i].wsCtx.Name, err))
-				}
+	// 2. Deactivate slots not in desired (reverse order to keep indices stable).
+	// Slots whose save fails stay in m.slots; the user is told via handleError below.
+	for i := len(m.slots) - 1; i >= 0; i-- {
+		if !desiredNames[m.slots[i].wsCtx.Name] {
+			if err := m.deactivateWorkspace(m.slots[i].wsCtx.Name); err != nil {
+				deactivationErrors = append(deactivationErrors,
+					fmt.Sprintf("%s: %v", m.slots[i].wsCtx.Name, err))
 			}
 		}
 	}
@@ -2863,8 +2630,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		m.loadSlot(m.focusedSlot)
 	}
 
-	fgNames, fgSel := m.foregroundSlotsAndSelected()
-	m.tabBar.SetWorkspaces(fgNames, fgSel)
+	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	m.saveOpenWorkspaces()
 	if len(m.slots) > 0 {
 		m.showRecoverySummary(m.slots[m.focusedSlot].recovery)
@@ -2898,16 +2664,6 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 // PTYs that are already attached elsewhere — the safety constraint
 // documented at the classic-mode-load comment higher up doesn't apply.
 func (m *home) enterGlobalMode() tea.Cmd {
-	// Fleet state is workspace-mode-only. A sticky fleetEngaged surviving
-	// into global mode made applyWorkspaceToggle's fleet branch index the
-	// now-empty m.slots (panic); stale loading/error bookkeeping would
-	// render phantom overview groups. In-flight load Cmds are not
-	// cancelled — handleWorkspaceActivated's mode guard discards their
-	// results and releases the PTYs.
-	m.fleetEngaged = false
-	m.fleetLoading = nil
-	m.fleetLoadErrors = nil
-
 	// Deactivate every workspace tab. Each slot persists its own
 	// instances via deactivateWorkspace before being dropped.
 	for i := len(m.slots) - 1; i >= 0; i-- {
@@ -3025,14 +2781,11 @@ func (m *home) refreshPeerSections() {
 	m.list.SetPeerSections(peers)
 }
 
-// enterOverview switches to overview mode and seeds the cursor. It does
-// NOT dispatch the fleet-load Cmd itself (callers run inside deferred
-// funcs that can't return a Cmd); it raises pendingOverviewLoad, which
-// handleScriptDone drains via ensureFleetLoaded. Main-goroutine only.
+// enterOverview switches to overview mode and seeds the cursor.
+// Main-goroutine only.
 func (m *home) enterOverview() {
 	m.viewMode = viewOverview
 	m.seedOverviewCursor()
-	m.pendingOverviewLoad = true
 }
 
 // fleetPos is one selectable card in fleet display order.
@@ -3095,11 +2848,11 @@ func (m *home) seedOverviewCursor() {
 	m.normalizeOverviewCursor(m.fleetOrder())
 }
 
-// focusCursorSlot makes the overview cursor's slot the focused slot,
-// promoting it out of background first, and selects the cursor's
-// instance. No-op fast path when already focused. The single primitive
-// every cursor-committing overview action routes through, so they reuse
-// focus-mode intents unchanged. Main-goroutine only.
+// focusCursorSlot makes the overview cursor's slot the focused slot and
+// selects the cursor's instance. No-op fast path when already focused.
+// The single primitive every cursor-committing overview action routes
+// through, so they reuse focus-mode intents unchanged. Main-goroutine
+// only.
 func (m *home) focusCursorSlot() {
 	c := m.overviewCursor
 	if c.slot < 0 || c.slot >= len(m.slots) {
@@ -3107,9 +2860,6 @@ func (m *home) focusCursorSlot() {
 	}
 	if c.slot != m.focusedSlot {
 		m.saveCurrentSlot()
-		if m.slots[c.slot].background {
-			m.promoteSlot(c.slot)
-		}
 		m.loadSlot(c.slot)
 	}
 	if c.inst >= 0 && c.inst < len(m.list.GetInstances()) {
@@ -3149,8 +2899,7 @@ func (m *home) overviewGroupName() string {
 }
 
 // fleetSlotOrder returns slot indices in overview display order: focused
-// slot first, then the rest alphabetical by workspace name. Stable
-// regardless of background-load arrival order.
+// slot first, then the rest alphabetical by workspace name.
 func (m *home) fleetSlotOrder() []int {
 	order := make([]int, 0, len(m.slots))
 	if m.focusedSlot >= 0 && m.focusedSlot < len(m.slots) {
@@ -3201,12 +2950,12 @@ func cursorFor(gi, inst int, g ui.OverviewGroup) ui.OverviewCursor {
 	return ui.OverviewCursor{Group: gi, Item: 0}
 }
 
-// overviewData assembles the multi-group fleet overview: the focused
-// slot first, then the remaining slots alphabetical by workspace name,
-// then loading/errored (not-yet-slot) workspaces as trailing extra
-// groups. It translates the domain cursor (slot,inst) into render
-// coordinates (group,item). In classic/global mode (no slots) it renders
-// the focused m.list as a single "global" group. Update-goroutine only.
+// overviewData assembles the multi-group overview over the open
+// workspace slots: the focused slot first, then the remaining slots
+// alphabetical by workspace name. It translates the domain cursor
+// (slot,inst) into render coordinates (group,item). In classic/global
+// mode (no slots) it renders the focused m.list as a single "global"
+// group. Update-goroutine only.
 func (m *home) overviewData() ui.OverviewData {
 	cursor := ui.OverviewCursor{}
 
@@ -3229,7 +2978,7 @@ func (m *home) overviewData() ui.OverviewData {
 	m.normalizeOverviewCursor(m.fleetOrder())
 
 	slotOrder := m.fleetSlotOrder()
-	groups := make([]ui.OverviewGroup, 0, len(slotOrder)+len(m.fleetLoadErrors)+len(m.fleetLoading))
+	groups := make([]ui.OverviewGroup, 0, len(slotOrder))
 	for _, si := range slotOrder {
 		slot := m.slots[si]
 		g := overviewGroupFor(m.slotGroupName(slot), m.slotList(si).GetInstances())
@@ -3240,17 +2989,6 @@ func (m *home) overviewData() ui.OverviewData {
 		}
 		groups = append(groups, g)
 	}
-
-	// Loading + errored (not-yet-slot) workspaces as trailing groups, alphabetical.
-	extras := make([]ui.OverviewGroup, 0, len(m.fleetLoading)+len(m.fleetLoadErrors))
-	for name := range m.fleetLoading {
-		extras = append(extras, ui.OverviewGroup{Name: name, State: ui.GroupLoading})
-	}
-	for name, err := range m.fleetLoadErrors {
-		extras = append(extras, ui.OverviewGroup{Name: name, State: ui.GroupError, Err: err.Error()})
-	}
-	sort.SliceStable(extras, func(a, b int) bool { return extras[a].Name < extras[b].Name })
-	groups = append(groups, extras...)
 
 	return ui.OverviewData{Groups: groups, Cursor: cursor, Spinner: m.spinner.View()}
 }
@@ -3323,35 +3061,9 @@ func (m *home) saveOpenWorkspaces() {
 	if m.registry == nil {
 		return
 	}
-	if err := m.registry.SetOpenWorkspaces(m.foregroundSlotNames()); err != nil {
+	if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
 		log.For("app").Error("persist_open_workspaces_failed", "err", err)
 	}
-}
-
-// promoteSlot clears a slot's background flag (making it a real tab),
-// refreshes the tab bar, and persists the new open-workspace set. Called
-// when a background slot becomes the focus target. Main-goroutine only.
-func (m *home) promoteSlot(idx int) {
-	if idx < 0 || idx >= len(m.slots) || !m.slots[idx].background {
-		return
-	}
-	m.slots[idx].background = false
-	fgNames, fgSel := m.foregroundSlotsAndSelected()
-	m.tabBar.SetWorkspaces(fgNames, fgSel)
-	m.saveOpenWorkspaces()
-}
-
-// demoteSlot marks a foreground slot as background (dropping it from the
-// tab bar and OpenWorkspaces) while keeping it live. Never demotes the
-// focused slot — callers move focus away first. Main-goroutine only.
-func (m *home) demoteSlot(idx int) {
-	if idx < 0 || idx >= len(m.slots) || m.slots[idx].background || idx == m.focusedSlot {
-		return
-	}
-	m.slots[idx].background = true
-	fgNames, fgSel := m.foregroundSlotsAndSelected()
-	m.tabBar.SetWorkspaces(fgNames, fgSel)
-	m.saveOpenWorkspaces()
 }
 
 // persistFocusedWorkspace writes the currently focused slot's name to
@@ -3369,43 +3081,14 @@ func (m *home) persistFocusedWorkspace() {
 	}
 }
 
-// slotNames returns the names of all active workspace slots.
+// slotNames returns the names of all active workspace slots — the set
+// the tab bar shows and saveOpenWorkspaces persists.
 func (m *home) slotNames() []string {
 	names := make([]string, len(m.slots))
 	for i, slot := range m.slots {
 		names[i] = slot.wsCtx.Name
 	}
 	return names
-}
-
-// foregroundSlotNames returns the names of non-background slots, in slot
-// order — the set the tab bar shows and saveOpenWorkspaces persists.
-func (m *home) foregroundSlotNames() []string {
-	names := make([]string, 0, len(m.slots))
-	for _, slot := range m.slots {
-		if !slot.background {
-			names = append(names, slot.wsCtx.Name)
-		}
-	}
-	return names
-}
-
-// foregroundSlotsAndSelected returns the foreground slot names plus the
-// focused slot remapped to its index within that subset. Safe because
-// the focused slot is never background; falls back to 0 if it somehow is.
-func (m *home) foregroundSlotsAndSelected() ([]string, int) {
-	names := make([]string, 0, len(m.slots))
-	sel := 0
-	for i, slot := range m.slots {
-		if slot.background {
-			continue
-		}
-		if i == m.focusedSlot {
-			sel = len(names)
-		}
-		names = append(names, slot.wsCtx.Name)
-	}
-	return names, sel
 }
 
 // View implements tea.Model.

@@ -10,10 +10,10 @@ import (
 )
 
 // In overview mode, `]`/`[` move the overview cursor to the next waiting
-// card — no focus switch, no background promotion, no OpenWorkspaces
-// write. Committing is enter/D/r's job via focusCursorSlot.
+// card — no focus switch, no OpenWorkspaces write. Committing is
+// enter/D/r's job via focusCursorSlot.
 func TestJumpWaiting_OverviewMovesCursorOnly(t *testing.T) {
-	m := fleetHome(t) // viewOverview; focused "afocus" (f1,f2), background "bpeer" (b1)
+	m := fleetHome(t) // viewOverview; focused "afocus" (f1,f2), peer "bpeer" (b1)
 	waiter := &session.Instance{Title: "b-wait", Status: session.Ready}
 	require.NoError(t, waiter.TransitionTo(session.Prompting))
 	m.slots[1].list.AddInstance(waiter)
@@ -23,7 +23,6 @@ func TestJumpWaiting_OverviewMovesCursorOnly(t *testing.T) {
 	assert.Equal(t, overviewCursor{slot: 1, inst: 1}, m.overviewCursor,
 		"cursor moved to the waiting card")
 	assert.Equal(t, 0, m.focusedSlot, "no focus switch while browsing the overview")
-	assert.True(t, m.slots[1].background, "no promotion while browsing the overview")
 }
 
 // Collapsing the cursor's group must re-anchor the cursor to the first

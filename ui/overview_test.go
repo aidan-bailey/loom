@@ -52,9 +52,8 @@ func TestOverview_CollapseHidesCards(t *testing.T) {
 	assert.NotContains(t, out, "db-migration")
 }
 
-// TestOverview_RendersMultipleGroups pins the multi-group fleet view:
-// loaded, loading, error, and empty groups each render their header and
-// state-appropriate body.
+// TestOverview_RendersMultipleGroups pins the multi-group view: loaded
+// and empty groups each render their header and state-appropriate body.
 func TestOverview_RendersMultipleGroups(t *testing.T) {
 	o := NewOverview()
 	o.SetSize(80, 40)
@@ -63,8 +62,6 @@ func TestOverview_RendersMultipleGroups(t *testing.T) {
 			{Name: "alpha", State: GroupLoaded,
 				Items: []*session.Instance{{Title: "a1", Status: session.Ready}},
 				Order: []int{0}},
-			{Name: "beta", State: GroupLoading},
-			{Name: "gamma", State: GroupError, Err: "reconcile: boom"},
 			{Name: "delta", State: GroupEmpty},
 		},
 		Cursor: OverviewCursor{Group: 0, Item: 0},
@@ -72,10 +69,6 @@ func TestOverview_RendersMultipleGroups(t *testing.T) {
 	out := ansi.Strip(o.Render(d))
 	assert.Contains(t, out, "ALPHA")
 	assert.Contains(t, out, "a1")
-	assert.Contains(t, out, "BETA")
-	assert.Contains(t, out, "loading")
-	assert.Contains(t, out, "GAMMA")
-	assert.Contains(t, out, "boom")
 	assert.Contains(t, out, "DELTA")
 	assert.Contains(t, out, "no sessions")
 }
@@ -222,9 +215,8 @@ func TestOverview_WindowAccountsForShortPrecedingGroups(t *testing.T) {
 func TestOverview_NeverExceedsHeightDegenerate(t *testing.T) {
 	extraGroupSets := map[int][]OverviewGroup{
 		0: nil,
-		3: {
-			{Name: "alpha", State: GroupLoading},
-			{Name: "beta", State: GroupError, Err: "boom"},
+		2: {
+			{Name: "alpha", State: GroupEmpty},
 			{Name: "gamma", State: GroupEmpty},
 		},
 	}
