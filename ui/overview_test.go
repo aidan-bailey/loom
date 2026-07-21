@@ -147,6 +147,75 @@ func TestOverview_WindowKeepsCursorGroupVisible(t *testing.T) {
 	assert.LessOrEqual(t, len(strings.Split(out, "\n")), overviewCardHeight+4)
 }
 
+// TestOverview_WindowUpScrollsToFirstGroup exercises the up-scroll
+// branch (top < o.rowOffset) and the rowOffset < 0 guard: after a first
+// render pushes rowOffset down (cursor deep in the second group), a
+// second render with the cursor on the first card of the first group
+// must scroll back up so that card is visible.
+func TestOverview_WindowUpScrollsToFirstGroup(t *testing.T) {
+	o := NewOverview()
+	o.SetSize(80, overviewCardHeight+4) // room for ~1 card row + a header
+	mkItems := func(p string) ([]*session.Instance, []int) {
+		its := []*session.Instance{
+			{Title: p + "1", Status: session.Ready},
+			{Title: p + "2", Status: session.Ready},
+			{Title: p + "3", Status: session.Ready},
+		}
+		return its, []int{0, 1, 2}
+	}
+	i1, ord1 := mkItems("g")
+	i2, ord2 := mkItems("h")
+	d := OverviewData{
+		Groups: []OverviewGroup{
+			{Name: "one", State: GroupLoaded, Items: i1, Order: ord1},
+			{Name: "two", State: GroupLoaded, Items: i2, Order: ord2},
+		},
+	}
+	// First render: cursor deep in the SECOND group pushes rowOffset down.
+	d.Cursor = OverviewCursor{Group: 1, Item: 2}
+	_ = o.Render(d)
+	// Second render: cursor jumps to the first card of the first group;
+	// the window must scroll back up so g1 is visible.
+	d.Cursor = OverviewCursor{Group: 0, Item: 0}
+	out := ansi.Strip(o.Render(d))
+	assert.Contains(t, out, "g1", "up-scroll brings the first group's first card back into view")
+	assert.LessOrEqual(t, len(strings.Split(out, "\n")), overviewCardHeight+4)
+}
+
+// TestOverview_WindowAccountsForShortPrecedingGroups pins the
+// cursorLineSpan variable-block-height accounting: a SHORT preceding
+// block (a collapsed, header-only group) must be counted as its actual
+// line count (strings.Count+1), not assumed to be a full card row. If the
+// per-block accounting were off, the cursor card in the following loaded
+// group would be windowed out.
+func TestOverview_WindowAccountsForShortPrecedingGroups(t *testing.T) {
+	o := NewOverview()
+	o.SetSize(80, overviewCardHeight+4)
+	o.ToggleCollapse("groupzero") // block 0 becomes header-only (1 line)
+	loaded := []*session.Instance{
+		{Title: "loom0", Status: session.Ready},
+		{Title: "loom1", Status: session.Ready},
+		{Title: "loom2", Status: session.Ready},
+		{Title: "loom3", Status: session.Ready},
+	}
+	tail := []*session.Instance{{Title: "z1", Status: session.Ready}}
+	d := OverviewData{
+		Groups: []OverviewGroup{
+			{Name: "groupzero", State: GroupLoaded,
+				Items: []*session.Instance{{Title: "hidden", Status: session.Ready}},
+				Order: []int{0}},
+			{Name: "loom", State: GroupLoaded, Items: loaded, Order: []int{0, 1, 2, 3}},
+			{Name: "zeta", State: GroupLoaded, Items: tail, Order: []int{0}},
+		},
+		// Cursor on the last card of the loaded middle group requires
+		// scrolling past the short (collapsed) preceding block.
+		Cursor: OverviewCursor{Group: 1, Item: 3},
+	}
+	out := ansi.Strip(o.Render(d))
+	assert.Contains(t, out, "loom3", "short preceding block is accounted correctly so the cursor card is visible")
+	assert.LessOrEqual(t, len(strings.Split(out, "\n")), overviewCardHeight+4)
+}
+
 // TestOverview_NeverExceedsHeightDegenerate sweeps degenerate sizes:
 // every combination of tiny heights, group counts, and item counts must
 // stay within the height budget (clampHeight bounds the final render).
