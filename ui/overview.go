@@ -170,10 +170,57 @@ func (o *Overview) renderGroupGrid(g OverviewGroup, gi int, d OverviewData) stri
 	return strings.Join(rows, "\n")
 }
 
-// window joins group blocks vertically. Combined cursor-aware windowing
-// lands in Task 7; for now it joins all blocks (clampHeight bounds it).
+// window vertically scrolls the joined group blocks so the cursor card's
+// line range stays visible within o.height. Mutates o.rowOffset exactly
+// once per render pass (same discipline as the old single-group grid).
 func (o *Overview) window(blocks []string, d OverviewData) string {
-	return strings.Join(blocks, "\n")
+	joined := strings.Join(blocks, "\n")
+	lines := strings.Split(joined, "\n")
+	budget := o.height
+	if len(lines) <= budget {
+		o.rowOffset = 0
+		return joined
+	}
+	// Absolute line span of the cursor card.
+	top, bottom := o.cursorLineSpan(blocks, d)
+	if top < o.rowOffset {
+		o.rowOffset = top
+	}
+	if bottom >= o.rowOffset+budget {
+		o.rowOffset = bottom - budget + 1
+	}
+	if o.rowOffset > len(lines)-budget {
+		o.rowOffset = len(lines) - budget
+	}
+	if o.rowOffset < 0 {
+		o.rowOffset = 0
+	}
+	end := o.rowOffset + budget
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return strings.Join(lines[o.rowOffset:end], "\n")
+}
+
+// cursorLineSpan returns the absolute [top,bottom] line indices (into the
+// joined blocks) of the cursor's card. Each group block is 1 header line
+// plus its body; a card row is overviewCardHeight lines. Groups are
+// separated by one join newline (already accounted for because each
+// block's own line count includes only its content and the join adds one
+// line between blocks — see the running `line` counter).
+func (o *Overview) cursorLineSpan(blocks []string, d OverviewData) (int, int) {
+	line := 0
+	cols := overviewColumns(o.width)
+	for gi, b := range blocks {
+		blockLines := strings.Count(b, "\n") + 1
+		if gi == d.Cursor.Group {
+			cardRow := d.Cursor.Item / cols
+			top := line + 1 + cardRow*overviewCardHeight // +1 skips the header
+			return top, top + overviewCardHeight - 1
+		}
+		line += blockLines
+	}
+	return 0, 0
 }
 
 // joinWithGap interleaves a one-column gap between cards for

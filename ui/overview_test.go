@@ -119,6 +119,34 @@ func TestOverview_UniformCardHeight(t *testing.T) {
 	}
 }
 
+func TestOverview_WindowKeepsCursorGroupVisible(t *testing.T) {
+	o := NewOverview()
+	o.SetSize(80, overviewCardHeight+4) // room for ~1 card row + a header
+	// Two loaded groups, each with 3 cards; cursor deep in the SECOND
+	// group must be visible (the first group scrolls off the top).
+	mkItems := func(p string) ([]*session.Instance, []int) {
+		its := []*session.Instance{
+			{Title: p + "1", Status: session.Ready},
+			{Title: p + "2", Status: session.Ready},
+			{Title: p + "3", Status: session.Ready},
+		}
+		return its, []int{0, 1, 2}
+	}
+	i1, o1 := mkItems("g")
+	i2, o2 := mkItems("h")
+	d := OverviewData{
+		Groups: []OverviewGroup{
+			{Name: "one", State: GroupLoaded, Items: i1, Order: o1},
+			{Name: "two", State: GroupLoaded, Items: i2, Order: o2},
+		},
+		Cursor: OverviewCursor{Group: 1, Item: 2}, // last card of second group
+	}
+	out := ansi.Strip(o.Render(d))
+	assert.Contains(t, out, "h3", "cursor card is within the visible window")
+	// Height budget respected.
+	assert.LessOrEqual(t, len(strings.Split(out, "\n")), overviewCardHeight+4)
+}
+
 // TestOverview_NeverExceedsHeightDegenerate sweeps degenerate sizes:
 // every combination of tiny heights, group counts, and item counts must
 // stay within the height budget (clampHeight bounds the final render).
