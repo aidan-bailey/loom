@@ -2723,29 +2723,60 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		desiredNames[ws.Name] = true
 	}
 
-	// 1. Activate new workspaces first (safe — adds to slots without removing).
-	currentNames := make(map[string]bool, len(m.slots))
-	for _, slot := range m.slots {
-		currentNames[slot.wsCtx.Name] = true
-	}
 	var activationErrors []string
-	for _, ws := range desired {
-		if !currentNames[ws.Name] {
-			if err := m.activateWorkspace(ws); err != nil {
-				activationErrors = append(activationErrors,
-					fmt.Sprintf("%s: %v", ws.Name, err))
+	var deactivationErrors []string
+
+	if m.fleetEngaged {
+		// Fleet mode: every registered workspace is already a slot. The
+		// picker only chooses which are foreground tabs — promote desired,
+		// demote the rest. Never tear down (agents stay live).
+		//
+		// If the focused slot got dropped from desired, move focus to a
+		// desired slot FIRST (the focused slot can never be background), then
+		// demote the rest.
+		if !desiredNames[m.slots[m.focusedSlot].wsCtx.Name] {
+			for i := range m.slots {
+				if desiredNames[m.slots[i].wsCtx.Name] {
+					m.saveCurrentSlot()
+					m.loadSlot(i)
+					break
+				}
 			}
 		}
-	}
+		for i := range m.slots {
+			if desiredNames[m.slots[i].wsCtx.Name] {
+				if m.slots[i].background {
+					m.promoteSlot(i)
+				}
+			} else if i != m.focusedSlot {
+				m.demoteSlot(i)
+			}
+		}
+	} else {
+		// Pre-fleet behavior: activate new workspaces, deactivate missing.
 
-	// 2. Deactivate slots not in desired (reverse order to keep indices stable).
-	// Slots whose save fails stay in m.slots; the user is told via handleError below.
-	var deactivationErrors []string
-	for i := len(m.slots) - 1; i >= 0; i-- {
-		if !desiredNames[m.slots[i].wsCtx.Name] {
-			if err := m.deactivateWorkspace(m.slots[i].wsCtx.Name); err != nil {
-				deactivationErrors = append(deactivationErrors,
-					fmt.Sprintf("%s: %v", m.slots[i].wsCtx.Name, err))
+		// 1. Activate new workspaces first (safe — adds to slots without removing).
+		currentNames := make(map[string]bool, len(m.slots))
+		for _, slot := range m.slots {
+			currentNames[slot.wsCtx.Name] = true
+		}
+		for _, ws := range desired {
+			if !currentNames[ws.Name] {
+				if err := m.activateWorkspace(ws); err != nil {
+					activationErrors = append(activationErrors,
+						fmt.Sprintf("%s: %v", ws.Name, err))
+				}
+			}
+		}
+
+		// 2. Deactivate slots not in desired (reverse order to keep indices stable).
+		// Slots whose save fails stay in m.slots; the user is told via handleError below.
+		for i := len(m.slots) - 1; i >= 0; i-- {
+			if !desiredNames[m.slots[i].wsCtx.Name] {
+				if err := m.deactivateWorkspace(m.slots[i].wsCtx.Name); err != nil {
+					deactivationErrors = append(deactivationErrors,
+						fmt.Sprintf("%s: %v", m.slots[i].wsCtx.Name, err))
+				}
 			}
 		}
 	}
