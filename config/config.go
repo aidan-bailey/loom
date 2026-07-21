@@ -96,6 +96,12 @@ type Config struct {
 	// enabled rather than taking the bool zero value; only an explicit
 	// false disables it. Read it through RemoteControlEnabled.
 	ClaudeRemoteControl *bool `json:"claude_remote_control,omitempty"`
+	// ClaudeLoomContext controls whether new Claude sessions launch with
+	// --append-system-prompt-file pointing at loom's embedded context
+	// file (see session.WriteLoomContextFiles). nil is treated as enabled
+	// (read via LoomContextEnabled), matching ClaudeRemoteControl. A no-op
+	// for agents other than Claude.
+	ClaudeLoomContext *bool `json:"claude_loom_context,omitempty"`
 	// ClaudePermissionMode is the --permission-mode value new Claude
 	// sessions launch with. Unlike ClaudeRemoteControl, DefaultConfig
 	// sets this explicitly to "default" rather than leaving it nil — nil
@@ -174,6 +180,13 @@ func (c *Config) GetBranchPrefix() string {
 // feature is on out of the box; only an explicit false disables it.
 func (c *Config) RemoteControlEnabled() bool {
 	return c.ClaudeRemoteControl == nil || *c.ClaudeRemoteControl
+}
+
+// LoomContextEnabled reports whether new Claude sessions should launch
+// with loom's context file injected. nil (unset) is treated as enabled,
+// mirroring RemoteControlEnabled. Read only from the main goroutine.
+func (c *Config) LoomContextEnabled() bool {
+	return c.ClaudeLoomContext == nil || *c.ClaudeLoomContext
 }
 
 // PermissionMode returns the configured --permission-mode value,
