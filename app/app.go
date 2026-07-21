@@ -2911,6 +2911,28 @@ func (m *home) seedOverviewCursor() {
 	}
 }
 
+// focusCursorSlot makes the overview cursor's slot the focused slot,
+// promoting it out of background first, and selects the cursor's
+// instance. No-op fast path when already focused. The single primitive
+// every cursor-committing overview action routes through, so they reuse
+// focus-mode intents unchanged. Main-goroutine only.
+func (m *home) focusCursorSlot() {
+	c := m.overviewCursor
+	if c.slot < 0 || c.slot >= len(m.slots) {
+		return
+	}
+	if c.slot != m.focusedSlot {
+		m.saveCurrentSlot()
+		if m.slots[c.slot].background {
+			m.promoteSlot(c.slot)
+		}
+		m.loadSlot(c.slot)
+	}
+	if c.inst >= 0 && c.inst < len(m.list.GetInstances()) {
+		m.list.SetSelectedInstance(c.inst)
+	}
+}
+
 // peerSectionFor summarizes one non-focused slot's instance statuses
 // into a PeerSection for refreshPeerSections (rail). Main-goroutine
 // only.
