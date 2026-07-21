@@ -95,7 +95,7 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 	}
 	if tailN > 0 {
 		if screen, ok := inst.EmulatorScreen(); ok {
-			d.TailLines = TailLines(screen, tailN)
+			d.TailLines = ContentTailLines(screen, tailN)
 		}
 	}
 	return d
@@ -125,10 +125,145 @@ func TailLines(screen string, n int) []string {
 	}
 	out := make([]string, 0, end-start)
 	for _, l := range lines[start:end] {
-		l = ansi.Strip(l)
-		l = strings.ReplaceAll(l, "\t", " ")
-		l = strings.ReplaceAll(l, "\r", "")
-		out = append(out, l)
+		out = append(out, sanitizeTailLine(l))
+	}
+	return out
+}
+
+// sanitizeTailLine strips ANSI styling and normalizes C0 controls the
+// same way TailLines documents: tabs become a single space, carriage
+// returns are dropped.
+func sanitizeTailLine(l string) string {
+	l = ansi.Strip(l)
+	l = strings.ReplaceAll(l, "\t", " ")
+	return strings.ReplaceAll(l, "\r", "")
+}
+
+// Chrome scan bounds for ContentTailLines. Claude Code's footer below
+// the input area is currently three lines (statusline, context meter,
+// mode line); legacy builds used one. The input area grows with
+// multiline typed input.
+const (
+	chromeFooterMax = 6 // non-delimiter lines allowed below the bottom delimiter
+	chromeInputMax  = 8 // interior lines allowed between the delimiters
+)
+
+// chromeDelimiter reports whether a sanitized line is an input-area
+// delimiter: a horizontal rule (the current Claude Code UI) or a
+// box-border line (the legacy rounded-box UI) — nothing but horizontal
+// box-drawing runes and corners, at least 4 of them.
+func chromeDelimiter(s string) bool {
+	s = strings.TrimSpace(s)
+	runes := 0
+	for _, r := range s {
+		switch r {
+		case '─', '━', '═', '╌', '╍', '┄', '┅', '┈', '┉',
+			'╭', '╮', '╰', '╯', '┌', '┐', '└', '┘':
+			runes++
+		default:
+			return false
+		}
+	}
+	return runes >= 4
+}
+
+// chromeInteriorText reduces an input-area interior line to its
+// significant content: side borders (legacy box) and a leading prompt
+// char are stripped. An empty result means the line is chrome (an idle
+// prompt), not content.
+func chromeInteriorText(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "│")
+	s = strings.TrimSuffix(s, "│")
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "❯")
+	s = strings.TrimPrefix(s, ">")
+	return strings.TrimSpace(s)
+}
+
+// ContentTailLines is TailLines minus trailing agent chrome. Coding-agent
+// TUIs (Claude Code and friends) pin an input area — delimited by
+// horizontal rules or a box — plus footer lines to the bottom of the
+// screen, so a bottom-anchored tail shows only that chrome and never the
+// conversation. This scans the trailing lines for that shape and anchors
+// the tail above it; a dialog rendered inside the input area (permission
+// prompt) is real content, so its interior is returned instead. Any
+// screen without the shape (shells, aider, half-drawn panes) falls back
+// to the plain TailLines behavior.
+func ContentTailLines(screen string, n int) []string {
+	if screen == "" {
+		return nil
+	}
+	raw := strings.Split(screen, "\n")
+	lines := make([]string, len(raw))
+	for i, l := range raw {
+		lines[i] = sanitizeTailLine(l)
+	}
+	end := len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	if end == 0 {
+		return nil
+	}
+
+	// Bottom delimiter: scan up through the footer (blank lines free,
+	// non-delimiter lines bounded by chromeFooterMax).
+	bottom := -1
+	footer := 0
+	for i := end - 1; i >= 0 && footer < chromeFooterMax; i-- {
+		t := strings.TrimSpace(lines[i])
+		if t == "" {
+			continue
+		}
+		if chromeDelimiter(t) {
+			bottom = i
+			break
+		}
+		footer++
+	}
+	if bottom < 0 {
+		return TailLines(screen, n)
+	}
+
+	// Top delimiter: within chromeInputMax interior lines above.
+	top := -1
+	for i := bottom - 1; i >= 0 && bottom-1-i < chromeInputMax; i-- {
+		if chromeDelimiter(strings.TrimSpace(lines[i])) {
+			top = i
+			break
+		}
+	}
+	if top < 0 {
+		return TailLines(screen, n)
+	}
+
+	// A dialog inside the input area is the informative content.
+	var dialog []string
+	for _, l := range lines[top+1 : bottom] {
+		if chromeInteriorText(l) != "" {
+			dialog = append(dialog, l)
+		}
+	}
+	if len(dialog) > 0 {
+		if len(dialog) > n {
+			dialog = dialog[len(dialog)-n:]
+		}
+		return dialog
+	}
+
+	// Idle input area: tail is the content above it. Blank lines carry
+	// no signal on a 1-2 line card, so take the last n non-blank lines
+	// (unlike the plain-TailLines fallback, which preserves layout).
+	var out []string
+	for i := top - 1; i >= 0 && len(out) < n; i-- {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		out = append([]string{lines[i]}, out...)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
