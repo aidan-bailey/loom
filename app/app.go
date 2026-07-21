@@ -2868,10 +2868,47 @@ func (m *home) enterOverview() {
 	m.pendingOverviewLoad = true
 }
 
-// seedOverviewCursor points the overview cursor at the focused slot's
-// selection. (Expanded to skip non-selectable positions in Task 9.)
+// fleetPos is one selectable card in fleet display order.
+type fleetPos struct{ slot, inst int }
+
+// fleetOrder flattens all loaded, non-collapsed slots into a single
+// display-ordered, attention-sorted list of selectable positions,
+// skipping Deleting instances. Mirrors overviewData's grouping so cursor
+// motion matches what's on screen.
+func (m *home) fleetOrder() []fleetPos {
+	var out []fleetPos
+	for _, si := range m.fleetSlotOrder() {
+		if m.overview.IsCollapsed(m.slotGroupName(m.slots[si])) {
+			continue
+		}
+		list := m.slots[si].list
+		if si == m.focusedSlot {
+			list = m.list
+		}
+		items := list.GetInstances()
+		for _, idx := range ui.SortForOverview(items) {
+			if items[idx].GetStatus() == session.Deleting {
+				continue
+			}
+			out = append(out, fleetPos{slot: si, inst: idx})
+		}
+	}
+	return out
+}
+
+// seedOverviewCursor points the cursor at the focused slot's selection,
+// or the first selectable fleet position if that isn't selectable.
 func (m *home) seedOverviewCursor() {
 	m.overviewCursor = overviewCursor{slot: m.focusedSlot, inst: m.list.SelectedIdx()}
+	order := m.fleetOrder()
+	for _, p := range order {
+		if p.slot == m.overviewCursor.slot && p.inst == m.overviewCursor.inst {
+			return
+		}
+	}
+	if len(order) > 0 {
+		m.overviewCursor = overviewCursor{slot: order[0].slot, inst: order[0].inst}
+	}
 }
 
 // peerSectionFor summarizes one non-focused slot's instance statuses
@@ -3011,8 +3048,8 @@ func (m *home) overviewData() ui.OverviewData {
 	return ui.OverviewData{Groups: groups, Cursor: cursor, Spinner: m.spinner.View()}
 }
 
-// moveCursor advances the selection by dir: list order in focus mode,
-// attention-sorted display order in overview mode.
+// moveCursor advances selection: list order in focus mode, fleet display
+// order (across all groups) in overview mode. No wrap in the grid.
 func (m *home) moveCursor(dir int) {
 	if m.viewMode != viewOverview {
 		if dir < 0 {
@@ -3022,28 +3059,50 @@ func (m *home) moveCursor(dir int) {
 		}
 		return
 	}
-	items := m.list.GetInstances()
-	if len(items) == 0 {
+	// Classic/global mode (no slots): fleetSlotOrder is empty, so fleetOrder
+	// yields nothing. Walk m.list in sorted overview order directly, mirroring
+	// overviewData's classic fallback (which renders the cursor from m.list).
+	if len(m.slots) == 0 {
+		items := m.list.GetInstances()
+		if len(items) == 0 {
+			return
+		}
+		order := ui.SortForOverview(items)
+		pos := 0
+		for p, idx := range order {
+			if idx == m.list.SelectedIdx() {
+				pos = p
+				break
+			}
+		}
+		for i := 1; i <= len(order); i++ {
+			np := pos + dir*i
+			if np < 0 || np >= len(order) {
+				return // no wrap in the grid
+			}
+			if items[order[np]].GetStatus() != session.Deleting {
+				m.list.SetSelectedInstance(order[np])
+				return
+			}
+		}
 		return
 	}
-	order := ui.SortForOverview(items)
-	pos := 0
-	for p, idx := range order {
-		if idx == m.list.SelectedIdx() {
-			pos = p
+	order := m.fleetOrder()
+	if len(order) == 0 {
+		return
+	}
+	cur := 0
+	for i, p := range order {
+		if p.slot == m.overviewCursor.slot && p.inst == m.overviewCursor.inst {
+			cur = i
 			break
 		}
 	}
-	for i := 1; i <= len(order); i++ {
-		np := pos + dir*i
-		if np < 0 || np >= len(order) {
-			return // no wrap in the grid
-		}
-		if items[order[np]].GetStatus() != session.Deleting {
-			m.list.SetSelectedInstance(order[np])
-			return
-		}
+	np := cur + dir
+	if np < 0 || np >= len(order) {
+		return
 	}
+	m.overviewCursor = overviewCursor{slot: order[np].slot, inst: order[np].inst}
 }
 
 // saveOpenWorkspaces persists the current ordered list of open workspace tabs
