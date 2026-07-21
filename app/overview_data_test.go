@@ -21,6 +21,7 @@ func TestOverviewData_GroupsFocusedFirstThenAlpha(t *testing.T) {
 	m := &home{
 		spinner:     s,
 		list:        focused,
+		overview:    ui.NewOverview(), // overviewData normalizes the cursor via fleetOrder
 		focusedSlot: 1,
 		slots: []workspaceSlot{
 			{wsCtx: &config.WorkspaceContext{Name: "zebra"}, list: mk("z1"), background: true},

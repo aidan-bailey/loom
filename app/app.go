@@ -811,6 +811,35 @@ func (m *home) applyStoredRatio(inst *session.Instance) {
 // target if background, focuses it, and selects there. No-op when none
 // wait. Main-goroutine only.
 func (m *home) jumpWaiting(dir int) {
+	// Overview mode with fleet slots: `]`/`[` move the overview cursor to
+	// the next waiting card — no focus switch, no background promotion,
+	// no OpenWorkspaces write. Committing is enter/D/r's job
+	// (focusCursorSlot). Collapsed groups are skipped, matching cursor
+	// motion (the cursor cannot sit on an unrendered card). Classic
+	// overview falls through: m.list's selection IS the cursor there.
+	if m.viewMode == viewOverview && len(m.slots) > 0 {
+		order := m.fleetOrder()
+		n := len(order)
+		if n == 0 {
+			return
+		}
+		start := 0
+		for i, p := range order {
+			if p.slot == m.overviewCursor.slot && p.inst == m.overviewCursor.inst {
+				start = i
+				break
+			}
+		}
+		for step := 1; step <= n; step++ {
+			p := order[((start+dir*step)%n+n)%n]
+			inst := m.slotList(p.slot).GetInstances()[p.inst]
+			if inst.GetStatus() == session.Prompting || inst.BellPending() {
+				m.overviewCursor = overviewCursor{slot: p.slot, inst: p.inst}
+				return
+			}
+		}
+		return
+	}
 	// Build fleet display order over ALL slots (not just loaded/expanded
 	// — waiting agents in collapsed groups are still reachable). Unlike
 	// fleetOrder (used by overview cursor motion), this does NOT skip
@@ -827,11 +856,7 @@ func (m *home) jumpWaiting(dir int) {
 		}
 	} else {
 		for _, si := range m.fleetSlotOrder() {
-			list := m.slots[si].list
-			if si == m.focusedSlot {
-				list = m.list
-			}
-			items := list.GetInstances()
+			items := m.slotList(si).GetInstances()
 			for _, idx := range ui.SortForOverview(items) {
 				if items[idx].GetStatus() == session.Deleting {
 					continue
@@ -862,10 +887,8 @@ func (m *home) jumpWaiting(dir int) {
 		var list *ui.List
 		if len(m.slots) == 0 {
 			list = m.list
-		} else if p.slot == m.focusedSlot {
-			list = m.list
 		} else {
-			list = m.slots[p.slot].list
+			list = m.slotList(p.slot)
 		}
 		inst := list.GetInstances()[p.inst]
 		if inst.GetStatus() == session.Prompting || inst.BellPending() {
@@ -2518,11 +2541,25 @@ func (m *home) loadWorkspaceForFleet(ws config.Workspace) workspaceActivatedMsg 
 	}
 }
 
+// releaseFleetInstances detaches the preview PTYs (pump, handle,
+// emulator) of reconciled instances that will never be adopted into a
+// slot, so a discarded fleet load doesn't leak attach processes for the
+// app's life. The tmux sessions themselves stay alive — the agents (and
+// any other owner of the same sessions) are untouched.
+func releaseFleetInstances(instances []*session.Instance, reason string) {
+	for _, inst := range instances {
+		if err := inst.ReleasePreview(); err != nil {
+			log.For("app").Warn("fleet_discard_detach_failed",
+				"instance", inst.Title, "reason", reason, "err", err)
+		}
+	}
+}
+
 // handleWorkspaceActivated finalizes a background workspace load on the
 // Update goroutine: builds the slot's UI from the reconciled instances
 // and appends it as a background slot. Errors are recorded (not fatal);
-// a duplicate (the user opened this workspace via the picker mid-load) is
-// discarded. Main-goroutine only.
+// stale loads (the mode flipped mid-flight) and duplicates are discarded
+// with their preview PTYs released. Main-goroutine only.
 func (m *home) handleWorkspaceActivated(msg workspaceActivatedMsg) {
 	if m.fleetLoading != nil {
 		delete(m.fleetLoading, msg.name)
@@ -2535,11 +2572,22 @@ func (m *home) handleWorkspaceActivated(msg workspaceActivatedMsg) {
 		log.For("app").Warn("fleet_load_failed", "workspace", msg.name, "err", msg.err)
 		return
 	}
+	// Mode guard: the load may have outlived the fleet that requested it
+	// (the user returned to global/classic mode mid-flight, which resets
+	// fleetEngaged and empties m.slots). Adopting it would append a
+	// background slot with no foreground anchor — the focused "slot"
+	// would itself be background, breaking the never-background-focused
+	// invariant and misrouting saveCurrentSlot.
+	if !m.fleetEngaged || len(m.slots) == 0 {
+		releaseFleetInstances(msg.instances, "stale_mode")
+		return
+	}
 	// Duplicate guard: a slot for this workspace may already exist if the
 	// user opened it via the picker while the Cmd was in flight. Keyed by
 	// name, matching ensureFleetLoaded's own "already open" check.
 	for _, slot := range m.slots {
 		if slot.wsCtx.Name == msg.wsCtx.Name {
+			releaseFleetInstances(msg.instances, "duplicate")
 			return
 		}
 	}
@@ -2590,10 +2638,15 @@ func (m *home) handleWorkspaceActivated(msg workspaceActivatedMsg) {
 // overview entry (it naturally retries errored/newly-registered ones).
 // Main-goroutine only.
 func (m *home) ensureFleetLoaded() tea.Cmd {
-	m.fleetEngaged = true
-	if m.registry == nil {
+	// Fleet loading requires workspace mode: with no slots (global or
+	// classic mode) there is no foreground slot for background slots to
+	// anchor to — appending one would leave the focused "slot" background,
+	// breaking the never-background-focused invariant. The overview then
+	// simply renders the classic single-group view.
+	if m.registry == nil || len(m.slots) == 0 {
 		return nil
 	}
+	m.fleetEngaged = true
 	if m.fleetLoading == nil {
 		m.fleetLoading = map[string]bool{}
 	}
@@ -2744,10 +2797,13 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	var activationErrors []string
 	var deactivationErrors []string
 
-	if m.fleetEngaged {
+	if m.fleetEngaged && len(m.slots) > 0 {
 		// Fleet mode: every registered workspace is already a slot. The
 		// picker only chooses which are foreground tabs — promote desired,
-		// demote the rest. Never tear down (agents stay live).
+		// demote the rest. Never tear down (agents stay live). The slots
+		// check is defense in depth: enterGlobalMode resets fleetEngaged,
+		// but a stale flag over empty slots must fall through to the
+		// pre-fleet activate path, not index into nothing.
 		//
 		// If the focused slot got dropped from desired, move focus to a
 		// desired slot FIRST (the focused slot can never be background), then
@@ -2842,6 +2898,16 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 // PTYs that are already attached elsewhere — the safety constraint
 // documented at the classic-mode-load comment higher up doesn't apply.
 func (m *home) enterGlobalMode() tea.Cmd {
+	// Fleet state is workspace-mode-only. A sticky fleetEngaged surviving
+	// into global mode made applyWorkspaceToggle's fleet branch index the
+	// now-empty m.slots (panic); stale loading/error bookkeeping would
+	// render phantom overview groups. In-flight load Cmds are not
+	// cancelled — handleWorkspaceActivated's mode guard discards their
+	// results and releases the PTYs.
+	m.fleetEngaged = false
+	m.fleetLoading = nil
+	m.fleetLoadErrors = nil
+
 	// Deactivate every workspace tab. Each slot persists its own
 	// instances via deactivateWorkspace before being dropped.
 	for i := len(m.slots) - 1; i >= 0; i-- {
@@ -2972,6 +3038,15 @@ func (m *home) enterOverview() {
 // fleetPos is one selectable card in fleet display order.
 type fleetPos struct{ slot, inst int }
 
+// slotList resolves the live list for a slot index: the focused slot's
+// list is hoisted onto m.list, every other slot keeps its own.
+func (m *home) slotList(si int) *ui.List {
+	if si == m.focusedSlot {
+		return m.list
+	}
+	return m.slots[si].list
+}
+
 // fleetOrder flattens all loaded, non-collapsed slots into a single
 // display-ordered, attention-sorted list of selectable positions,
 // skipping Deleting instances. Mirrors overviewData's grouping so cursor
@@ -2982,11 +3057,7 @@ func (m *home) fleetOrder() []fleetPos {
 		if m.overview.IsCollapsed(m.slotGroupName(m.slots[si])) {
 			continue
 		}
-		list := m.slots[si].list
-		if si == m.focusedSlot {
-			list = m.list
-		}
-		items := list.GetInstances()
+		items := m.slotList(si).GetInstances()
 		for _, idx := range ui.SortForOverview(items) {
 			if items[idx].GetStatus() == session.Deleting {
 				continue
@@ -2997,19 +3068,31 @@ func (m *home) fleetOrder() []fleetPos {
 	return out
 }
 
+// normalizeOverviewCursor re-anchors a cursor that no longer maps to a
+// visible card (instance killed, group collapsed, slots changed) to the
+// first selectable position in order. Reports whether it moved. The
+// single staleness choke point: called from render (overviewData) and
+// nav (moveCursor) so every event that invalidates the cursor is healed
+// without per-event-site bookkeeping. No-op in classic mode, where the
+// cursor is m.list's selection.
+func (m *home) normalizeOverviewCursor(order []fleetPos) bool {
+	for _, p := range order {
+		if p.slot == m.overviewCursor.slot && p.inst == m.overviewCursor.inst {
+			return false
+		}
+	}
+	if len(order) == 0 {
+		return false
+	}
+	m.overviewCursor = overviewCursor{slot: order[0].slot, inst: order[0].inst}
+	return true
+}
+
 // seedOverviewCursor points the cursor at the focused slot's selection,
 // or the first selectable fleet position if that isn't selectable.
 func (m *home) seedOverviewCursor() {
 	m.overviewCursor = overviewCursor{slot: m.focusedSlot, inst: m.list.SelectedIdx()}
-	order := m.fleetOrder()
-	for _, p := range order {
-		if p.slot == m.overviewCursor.slot && p.inst == m.overviewCursor.inst {
-			return
-		}
-	}
-	if len(order) > 0 {
-		m.overviewCursor = overviewCursor{slot: order[0].slot, inst: order[0].inst}
-	}
+	m.normalizeOverviewCursor(m.fleetOrder())
 }
 
 // focusCursorSlot makes the overview cursor's slot the focused slot,
@@ -3140,15 +3223,16 @@ func (m *home) overviewData() ui.OverviewData {
 		}
 	}
 
+	// Heal a cursor invalidated since the last frame (instance killed,
+	// group collapsed, slots changed) before translating it — a cursor
+	// pointing into a collapsed group would window to a bogus offset.
+	m.normalizeOverviewCursor(m.fleetOrder())
+
 	slotOrder := m.fleetSlotOrder()
 	groups := make([]ui.OverviewGroup, 0, len(slotOrder)+len(m.fleetLoadErrors)+len(m.fleetLoading))
 	for _, si := range slotOrder {
 		slot := m.slots[si]
-		list := slot.list
-		if si == m.focusedSlot {
-			list = m.list
-		}
-		g := overviewGroupFor(m.slotGroupName(slot), list.GetInstances())
+		g := overviewGroupFor(m.slotGroupName(slot), m.slotList(si).GetInstances())
 		// Translate the domain cursor (slot,inst) → render cursor
 		// (group,item) when this is the cursor's slot.
 		if si == m.overviewCursor.slot {
@@ -3212,6 +3296,11 @@ func (m *home) moveCursor(dir int) {
 	}
 	order := m.fleetOrder()
 	if len(order) == 0 {
+		return
+	}
+	// A stale cursor re-anchors to the first visible card on this
+	// keypress; stepping from a phantom position would skip a card.
+	if m.normalizeOverviewCursor(order) {
 		return
 	}
 	cur := 0

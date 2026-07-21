@@ -45,6 +45,7 @@ func TestEnsureFleetLoaded_NothingToLoad(t *testing.T) {
 
 func TestHandleWorkspaceActivated_AppendsBackgroundSlot(t *testing.T) {
 	m := newTestHome(t)
+	m.fleetEngaged = true // loads only exist while the fleet is engaged
 	m.slots = []workspaceSlot{{wsCtx: &config.WorkspaceContext{Name: "a"}, list: m.list}}
 	m.focusedSlot = 0
 	m.fleetLoading = map[string]bool{"b": true}
@@ -78,6 +79,7 @@ func TestHandleWorkspaceActivated_ErrorRecorded(t *testing.T) {
 
 func TestHandleWorkspaceActivated_DuplicateDiscarded(t *testing.T) {
 	m := newTestHome(t)
+	m.fleetEngaged = true // loads only exist while the fleet is engaged
 	m.slots = []workspaceSlot{
 		{wsCtx: &config.WorkspaceContext{Name: "a", ConfigDir: "/x/a"}, list: m.list},
 	}

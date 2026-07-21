@@ -216,7 +216,21 @@ func (o *Overview) cursorLineSpan(blocks []string, d OverviewData) (int, int) {
 		if gi == d.Cursor.Group {
 			cardRow := d.Cursor.Item / cols
 			top := line + 1 + cardRow*overviewCardHeight // +1 skips the header
-			return top, top + overviewCardHeight - 1
+			bottom := top + overviewCardHeight - 1
+			// Defense in depth: a cursor pointing into a block shorter
+			// than a card row (a collapsed group's 1-line header) must not
+			// yield a span past the block — window() would scroll to a
+			// bogus offset. The app layer re-anchors such cursors
+			// (normalizeOverviewCursor); this clamp covers any that slip
+			// through a render.
+			last := line + blockLines - 1
+			if top > last {
+				top = last
+			}
+			if bottom > last {
+				bottom = last
+			}
+			return top, bottom
 		}
 		line += blockLines
 	}
