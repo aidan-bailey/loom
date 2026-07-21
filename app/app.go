@@ -2009,6 +2009,13 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	wsCtx := config.WorkspaceContextFor(&ws)
 	state := config.LoadStateFrom(wsCtx.ConfigDir)
 	appConfig := config.LoadConfigFrom(wsCtx.ConfigDir)
+	// Loom-context injection: keep the config-dir prompt files current and
+	// sync the global enabled flag on every workspace load, before any
+	// Claude session (workspace terminal, crash-restart, resume) launches.
+	session.SetLoomContextEnabled(appConfig.LoomContextEnabled())
+	if err := session.WriteLoomContextFiles(wsCtx.ConfigDir); err != nil {
+		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
+	}
 	storage, err := session.NewStorage(state, wsCtx.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("failed to create storage for workspace %s: %w", ws.Name, err)
