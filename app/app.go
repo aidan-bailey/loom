@@ -324,6 +324,10 @@ type home struct {
 	fleetLoading    map[string]bool
 	fleetLoadErrors map[string]error
 	fleetEngaged    bool
+	// pendingOverviewLoad is raised by enterOverview (which runs inside
+	// deferred model mutations / startup, neither of which can return a
+	// tea.Cmd) and drained by handleScriptDone / Init via ensureFleetLoaded.
+	pendingOverviewLoad bool
 	// overviewCursor is the domain-space overview selection: a slot index
 	// into m.slots and an instance index into that slot's list. Distinct
 	// from the render-space ui.OverviewCursor overviewData() translates to.
@@ -751,7 +755,7 @@ func (m *home) applyUIPrefs() {
 	}
 	p := m.appState.GetUIPrefs()
 	if p.ViewMode == "overview" {
-		m.viewMode = viewOverview
+		m.enterOverview()
 	} else {
 		m.viewMode = viewFocus
 	}
@@ -901,6 +905,15 @@ func (m *home) Init() tea.Cmd {
 			time.Sleep(100 * time.Millisecond)
 			return previewTickMsg{}
 		})
+	}
+	// A restored-into-overview launch: applyUIPrefs (run during newHome)
+	// raised pendingOverviewLoad but couldn't return a Cmd. Drain it here,
+	// the first place a startup Cmd can flow, so the fleet loads at launch.
+	if m.pendingOverviewLoad {
+		m.pendingOverviewLoad = false
+		if c := m.ensureFleetLoaded(); c != nil {
+			cmds = append(cmds, c)
+		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -2842,6 +2855,22 @@ func (m *home) refreshPeerSections() {
 		peers = append(peers, m.peerSectionFor(slot))
 	}
 	m.list.SetPeerSections(peers)
+}
+
+// enterOverview switches to overview mode and seeds the cursor. It does
+// NOT dispatch the fleet-load Cmd itself (callers run inside deferred
+// funcs that can't return a Cmd); it raises pendingOverviewLoad, which
+// handleScriptDone drains via ensureFleetLoaded. Main-goroutine only.
+func (m *home) enterOverview() {
+	m.viewMode = viewOverview
+	m.seedOverviewCursor()
+	m.pendingOverviewLoad = true
+}
+
+// seedOverviewCursor points the overview cursor at the focused slot's
+// selection. (Expanded to skip non-selectable positions in Task 9.)
+func (m *home) seedOverviewCursor() {
+	m.overviewCursor = overviewCursor{slot: m.focusedSlot, inst: m.list.SelectedIdx()}
 }
 
 // peerSectionFor summarizes one non-focused slot's instance statuses

@@ -89,4 +89,22 @@ func TestHandleWorkspaceActivated_DuplicateDiscarded(t *testing.T) {
 	assert.Len(t, m.slots, 1, "duplicate ConfigDir discarded")
 }
 
+func TestEnterOverview_SetsPendingLoad(t *testing.T) {
+	m := newTestHome(t)
+	m.registry = &config.WorkspaceRegistry{Workspaces: []config.Workspace{
+		{Name: "a", Path: "/tmp/a"}, {Name: "b", Path: "/tmp/b"},
+	}}
+	m.slots = []workspaceSlot{{wsCtx: &config.WorkspaceContext{Name: "a"}, list: m.list}}
+	m.focusedSlot = 0
+
+	m.enterOverview()
+	assert.Equal(t, viewOverview, m.viewMode)
+	assert.True(t, m.pendingOverviewLoad, "overview entry raises the load flag")
+
+	// handleScriptDone drains it into a real load Cmd.
+	cmd := m.ensureFleetLoaded()
+	assert.NotNil(t, cmd, "load Cmd for workspace b")
+	assert.True(t, m.fleetLoading["b"])
+}
+
 var assertErr = fmt.Errorf("boom")
