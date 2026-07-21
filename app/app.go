@@ -17,6 +17,7 @@ import (
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -2874,8 +2875,8 @@ func (m *home) seedOverviewCursor() {
 }
 
 // peerSectionFor summarizes one non-focused slot's instance statuses
-// into a PeerSection. Shared by refreshPeerSections (rail) and
-// overviewData (overview footer). Main-goroutine only.
+// into a PeerSection for refreshPeerSections (rail). Main-goroutine
+// only.
 func (m *home) peerSectionFor(slot workspaceSlot) ui.PeerSection {
 	p := ui.PeerSection{Name: slot.wsCtx.Name}
 	for _, inst := range slot.list.GetInstances() {
@@ -2893,8 +2894,6 @@ func (m *home) peerSectionFor(slot workspaceSlot) ui.PeerSection {
 	return p
 }
 
-// overviewData snapshots the focused workspace + peers for the overview
-// render. Update-goroutine only.
 // overviewGroupName is the label for the active group in overview mode:
 // the workspace name, or "global" in classic/global mode (activeCtx nil
 // or unnamed) so the header never renders empty and `z` still has a
@@ -2906,24 +2905,110 @@ func (m *home) overviewGroupName() string {
 	return "global"
 }
 
-func (m *home) overviewData() ui.OverviewData {
-	items := m.list.GetInstances()
-	name := m.overviewGroupName()
-	var peers []ui.PeerSection
-	for i, slot := range m.slots {
-		if i == m.focusedSlot {
-			continue
+// fleetSlotOrder returns slot indices in overview display order: focused
+// slot first, then the rest alphabetical by workspace name. Stable
+// regardless of background-load arrival order.
+func (m *home) fleetSlotOrder() []int {
+	order := make([]int, 0, len(m.slots))
+	if m.focusedSlot >= 0 && m.focusedSlot < len(m.slots) {
+		order = append(order, m.focusedSlot)
+	}
+	rest := make([]int, 0, len(m.slots))
+	for i := range m.slots {
+		if i != m.focusedSlot {
+			rest = append(rest, i)
 		}
-		peers = append(peers, m.peerSectionFor(slot))
 	}
-	return ui.OverviewData{
-		ActiveName:  name,
-		Items:       items,
-		Order:       ui.SortForOverview(items),
-		SelectedIdx: m.list.SelectedIdx(),
-		Peers:       peers,
-		Spinner:     m.spinner.View(),
+	sort.SliceStable(rest, func(a, b int) bool {
+		return m.slots[rest[a]].wsCtx.Name < m.slots[rest[b]].wsCtx.Name
+	})
+	return append(order, rest...)
+}
+
+// slotGroupName is the display name for a slot's overview group,
+// falling back to "global" for the unnamed classic slot.
+func (m *home) slotGroupName(slot workspaceSlot) string {
+	if slot.wsCtx != nil && slot.wsCtx.Name != "" {
+		return slot.wsCtx.Name
 	}
+	return "global"
+}
+
+// overviewGroupFor builds one OverviewGroup from a list's instances,
+// deriving GroupEmpty/Order from the item count.
+func overviewGroupFor(name string, items []*session.Instance) ui.OverviewGroup {
+	g := ui.OverviewGroup{Name: name, Items: items, State: ui.GroupLoaded}
+	if len(items) == 0 {
+		g.State = ui.GroupEmpty
+	} else {
+		g.Order = ui.SortForOverview(items)
+	}
+	return g
+}
+
+// cursorFor translates the domain cursor position (an instance index)
+// into the render cursor for group gi, defaulting to item 0 when the
+// index is not found in the group's sorted order.
+func cursorFor(gi, inst int, g ui.OverviewGroup) ui.OverviewCursor {
+	for pos, idx := range g.Order {
+		if idx == inst {
+			return ui.OverviewCursor{Group: gi, Item: pos}
+		}
+	}
+	return ui.OverviewCursor{Group: gi, Item: 0}
+}
+
+// overviewData assembles the multi-group fleet overview: the focused
+// slot first, then the remaining slots alphabetical by workspace name,
+// then loading/errored (not-yet-slot) workspaces as trailing extra
+// groups. It translates the domain cursor (slot,inst) into render
+// coordinates (group,item). In classic/global mode (no slots) it renders
+// the focused m.list as a single "global" group. Update-goroutine only.
+func (m *home) overviewData() ui.OverviewData {
+	cursor := ui.OverviewCursor{}
+
+	// Classic/global mode: no slots loaded, render the focused m.list as
+	// a single "global" group (matching the pre-fleet overview behavior).
+	if len(m.slots) == 0 {
+		items := m.list.GetInstances()
+		g := overviewGroupFor(m.overviewGroupName(), items)
+		cursor = cursorFor(0, m.list.SelectedIdx(), g)
+		return ui.OverviewData{
+			Groups:  []ui.OverviewGroup{g},
+			Cursor:  cursor,
+			Spinner: m.spinner.View(),
+		}
+	}
+
+	slotOrder := m.fleetSlotOrder()
+	groups := make([]ui.OverviewGroup, 0, len(slotOrder)+len(m.fleetLoadErrors)+len(m.fleetLoading))
+	for _, si := range slotOrder {
+		slot := m.slots[si]
+		list := slot.list
+		if si == m.focusedSlot {
+			list = m.list
+		}
+		g := overviewGroupFor(m.slotGroupName(slot), list.GetInstances())
+		// Translate the domain cursor (slot,inst) → render cursor
+		// (group,item) when this is the cursor's slot.
+		if si == m.overviewCursor.slot {
+			cursor = cursorFor(len(groups), m.overviewCursor.inst, g)
+		}
+		groups = append(groups, g)
+	}
+
+	// Loading + errored (not-yet-slot) workspaces as trailing groups, alphabetical.
+	extras := make([]ui.OverviewGroup, 0, len(m.fleetLoading)+len(m.fleetLoadErrors))
+	for name := range m.fleetLoading {
+		extras = append(extras, ui.OverviewGroup{Name: name, State: ui.GroupLoading})
+	}
+	for name, err := range m.fleetLoadErrors {
+		extras = append(extras, ui.OverviewGroup{Name: name, State: ui.GroupError, Err: err.Error()})
+	}
+	sort.SliceStable(extras, func(a, b int) bool { return extras[a].Name < extras[b].Name })
+	groups = append(groups, extras...)
+
+	return ui.OverviewData{Groups: groups, Cursor: cursor, Spinner: m.spinner.View()}
 }
 
 // moveCursor advances the selection by dir: list order in focus mode,
