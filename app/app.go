@@ -794,26 +794,78 @@ func (m *home) applyStoredRatio(inst *session.Instance) {
 	m.splitPane.SetAgentRatio(ui.SplitAgentPercent)
 }
 
-// jumpWaiting moves the selection to the next/prev instance needing
-// attention (Prompting or bell), wrapping around. No-op when none.
+// jumpWaiting moves selection to the next/prev fleet agent needing
+// attention (Prompting or bell), across all workspaces, wrapping. When
+// the target is in another slot it saves the current slot, promotes the
+// target if background, focuses it, and selects there. No-op when none
+// wait. Main-goroutine only.
 func (m *home) jumpWaiting(dir int) {
-	items := m.list.GetInstances()
-	n := len(items)
+	// Build fleet display order over ALL slots (not just loaded/expanded
+	// — waiting agents in collapsed groups are still reachable). Unlike
+	// fleetOrder (used by overview cursor motion), this does NOT skip
+	// collapsed groups.
+	var order []fleetPos
+	if len(m.slots) == 0 {
+		// Classic/global mode: no slots, walk m.list directly.
+		items := m.list.GetInstances()
+		for _, idx := range ui.SortForOverview(items) {
+			if items[idx].GetStatus() == session.Deleting {
+				continue
+			}
+			order = append(order, fleetPos{slot: 0, inst: idx})
+		}
+	} else {
+		for _, si := range m.fleetSlotOrder() {
+			list := m.slots[si].list
+			if si == m.focusedSlot {
+				list = m.list
+			}
+			items := list.GetInstances()
+			for _, idx := range ui.SortForOverview(items) {
+				if items[idx].GetStatus() == session.Deleting {
+					continue
+				}
+				order = append(order, fleetPos{slot: si, inst: idx})
+			}
+		}
+	}
+	n := len(order)
 	if n == 0 {
 		return
 	}
-	start := m.list.SelectedIdx()
-	for i := 1; i <= n; i++ {
-		idx := ((start+dir*i)%n + n) % n
-		inst := items[idx]
-		st := inst.GetStatus()
-		// Skip Deleting like every other nav path — a mid-kill instance
-		// with a stale prompt/bell must not be selected.
-		if st == session.Deleting {
-			continue
+	// Current position: focused slot's current selection (or -1).
+	start := -1
+	selIdx := m.list.SelectedIdx()
+	for i, p := range order {
+		if p.slot == m.focusedSlot && p.inst == selIdx {
+			start = i
+			break
 		}
-		if st == session.Prompting || inst.BellPending() {
-			m.list.SetSelectedInstance(idx)
+	}
+	if start < 0 {
+		start = 0
+	}
+	for step := 1; step <= n; step++ {
+		i := ((start+dir*step)%n + n) % n
+		p := order[i]
+		var list *ui.List
+		if len(m.slots) == 0 {
+			list = m.list
+		} else if p.slot == m.focusedSlot {
+			list = m.list
+		} else {
+			list = m.slots[p.slot].list
+		}
+		inst := list.GetInstances()[p.inst]
+		if inst.GetStatus() == session.Prompting || inst.BellPending() {
+			if len(m.slots) != 0 && p.slot != m.focusedSlot {
+				m.saveCurrentSlot()
+				if m.slots[p.slot].background {
+					m.promoteSlot(p.slot)
+				}
+				m.loadSlot(p.slot)
+			}
+			m.list.SetSelectedInstance(p.inst)
 			return
 		}
 	}
