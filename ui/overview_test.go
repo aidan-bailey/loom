@@ -12,16 +12,18 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// testOverviewData builds a single loaded group ("loom") with two
+// instances, cursor on the first.
 func testOverviewData() OverviewData {
 	items := []*session.Instance{
 		{Title: "auth-refactor", Status: session.Running},
 		{Title: "db-migration", Status: session.Prompting},
 	}
 	return OverviewData{
-		ActiveName:  "loom",
-		Items:       items,
-		Order:       SortForOverview(items),
-		SelectedIdx: 0,
+		Groups: []OverviewGroup{
+			{Name: "loom", Items: items, Order: SortForOverview(items), State: GroupLoaded},
+		},
+		Cursor: OverviewCursor{Group: 0, Item: 0},
 	}
 }
 
@@ -50,13 +52,32 @@ func TestOverview_CollapseHidesCards(t *testing.T) {
 	assert.NotContains(t, out, "db-migration")
 }
 
-func TestOverview_RendersPeersAsDimHeaders(t *testing.T) {
+// TestOverview_RendersMultipleGroups pins the multi-group fleet view:
+// loaded, loading, error, and empty groups each render their header and
+// state-appropriate body.
+func TestOverview_RendersMultipleGroups(t *testing.T) {
 	o := NewOverview()
-	o.SetSize(120, 40)
-	d := testOverviewData()
-	d.Peers = []PeerSection{{Name: "summa", Attention: 1, Running: 2, Idle: 0}}
+	o.SetSize(80, 40)
+	d := OverviewData{
+		Groups: []OverviewGroup{
+			{Name: "alpha", State: GroupLoaded,
+				Items: []*session.Instance{{Title: "a1", Status: session.Ready}},
+				Order: []int{0}},
+			{Name: "beta", State: GroupLoading},
+			{Name: "gamma", State: GroupError, Err: "reconcile: boom"},
+			{Name: "delta", State: GroupEmpty},
+		},
+		Cursor: OverviewCursor{Group: 0, Item: 0},
+	}
 	out := ansi.Strip(o.Render(d))
-	assert.Contains(t, out, "SUMMA · 3")
+	assert.Contains(t, out, "ALPHA")
+	assert.Contains(t, out, "a1")
+	assert.Contains(t, out, "BETA")
+	assert.Contains(t, out, "loading")
+	assert.Contains(t, out, "GAMMA")
+	assert.Contains(t, out, "boom")
+	assert.Contains(t, out, "DELTA")
+	assert.Contains(t, out, "no sessions")
 }
 
 func TestOverview_NeverExceedsHeight(t *testing.T) {
@@ -66,41 +87,10 @@ func TestOverview_NeverExceedsHeight(t *testing.T) {
 	assert.LessOrEqual(t, len(strings.Split(out, "\n")), 12)
 }
 
-// TestOverview_SelectionFollowWindowing pins the selection-follow
-// invariant: whatever the selected index, its card's row is scrolled
-// into view. 80x16 with 12 one-column cards gives a 2-row window over
-// 12 rows; sweeping the selection down then back up exercises both
-// scroll directions against the persistent rowOffset.
-func TestOverview_SelectionFollowWindowing(t *testing.T) {
-	items := make([]*session.Instance, 12)
-	for i := range items {
-		items[i] = &session.Instance{Title: fmt.Sprintf("task-%02d", i), Status: session.Ready}
-	}
-	o := NewOverview()
-	o.SetSize(80, 16)
-	seq := make([]int, 0, 23)
-	for i := 0; i < 12; i++ { // top → bottom
-		seq = append(seq, i)
-	}
-	for i := 10; i >= 0; i-- { // bottom → top
-		seq = append(seq, i)
-	}
-	for _, sel := range seq {
-		d := OverviewData{
-			ActiveName:  "loom",
-			Items:       items,
-			Order:       SortForOverview(items),
-			SelectedIdx: sel,
-		}
-		out := ansi.Strip(o.Render(d))
-		assert.Contains(t, out, items[sel].Title, "selected card missing at sel=%d", sel)
-	}
-}
-
 // TestOverview_UniformCardHeight pins the fixed-card-height invariant
-// that renderGrid's windowing math depends on: every card renders at
-// exactly overviewCardHeight lines regardless of status, tail depth,
-// or title/branch length — including degenerate card widths where the
+// that the grid math depends on: every card renders at exactly
+// overviewCardHeight lines regardless of status, tail depth, or
+// title/branch length — including degenerate card widths where the
 // status label alone exceeds the inner width (which must truncate, not
 // wrap inside the border).
 func TestOverview_UniformCardHeight(t *testing.T) {
@@ -129,16 +119,113 @@ func TestOverview_UniformCardHeight(t *testing.T) {
 	}
 }
 
+func TestOverview_WindowKeepsCursorGroupVisible(t *testing.T) {
+	o := NewOverview()
+	o.SetSize(80, overviewCardHeight+4) // room for ~1 card row + a header
+	// Two loaded groups, each with 3 cards; cursor deep in the SECOND
+	// group must be visible (the first group scrolls off the top).
+	mkItems := func(p string) ([]*session.Instance, []int) {
+		its := []*session.Instance{
+			{Title: p + "1", Status: session.Ready},
+			{Title: p + "2", Status: session.Ready},
+			{Title: p + "3", Status: session.Ready},
+		}
+		return its, []int{0, 1, 2}
+	}
+	i1, o1 := mkItems("g")
+	i2, o2 := mkItems("h")
+	d := OverviewData{
+		Groups: []OverviewGroup{
+			{Name: "one", State: GroupLoaded, Items: i1, Order: o1},
+			{Name: "two", State: GroupLoaded, Items: i2, Order: o2},
+		},
+		Cursor: OverviewCursor{Group: 1, Item: 2}, // last card of second group
+	}
+	out := ansi.Strip(o.Render(d))
+	assert.Contains(t, out, "h3", "cursor card is within the visible window")
+	// Height budget respected.
+	assert.LessOrEqual(t, len(strings.Split(out, "\n")), overviewCardHeight+4)
+}
+
+// TestOverview_WindowUpScrollsToFirstGroup exercises the up-scroll
+// branch (top < o.rowOffset) and the rowOffset < 0 guard: after a first
+// render pushes rowOffset down (cursor deep in the second group), a
+// second render with the cursor on the first card of the first group
+// must scroll back up so that card is visible.
+func TestOverview_WindowUpScrollsToFirstGroup(t *testing.T) {
+	o := NewOverview()
+	o.SetSize(80, overviewCardHeight+4) // room for ~1 card row + a header
+	mkItems := func(p string) ([]*session.Instance, []int) {
+		its := []*session.Instance{
+			{Title: p + "1", Status: session.Ready},
+			{Title: p + "2", Status: session.Ready},
+			{Title: p + "3", Status: session.Ready},
+		}
+		return its, []int{0, 1, 2}
+	}
+	i1, ord1 := mkItems("g")
+	i2, ord2 := mkItems("h")
+	d := OverviewData{
+		Groups: []OverviewGroup{
+			{Name: "one", State: GroupLoaded, Items: i1, Order: ord1},
+			{Name: "two", State: GroupLoaded, Items: i2, Order: ord2},
+		},
+	}
+	// First render: cursor deep in the SECOND group pushes rowOffset down.
+	d.Cursor = OverviewCursor{Group: 1, Item: 2}
+	_ = o.Render(d)
+	// Second render: cursor jumps to the first card of the first group;
+	// the window must scroll back up so g1 is visible.
+	d.Cursor = OverviewCursor{Group: 0, Item: 0}
+	out := ansi.Strip(o.Render(d))
+	assert.Contains(t, out, "g1", "up-scroll brings the first group's first card back into view")
+	assert.LessOrEqual(t, len(strings.Split(out, "\n")), overviewCardHeight+4)
+}
+
+// TestOverview_WindowAccountsForShortPrecedingGroups pins the
+// cursorLineSpan variable-block-height accounting: a SHORT preceding
+// block (a collapsed, header-only group) must be counted as its actual
+// line count (strings.Count+1), not assumed to be a full card row. If the
+// per-block accounting were off, the cursor card in the following loaded
+// group would be windowed out.
+func TestOverview_WindowAccountsForShortPrecedingGroups(t *testing.T) {
+	o := NewOverview()
+	o.SetSize(80, overviewCardHeight+4)
+	o.ToggleCollapse("groupzero") // block 0 becomes header-only (1 line)
+	loaded := []*session.Instance{
+		{Title: "loom0", Status: session.Ready},
+		{Title: "loom1", Status: session.Ready},
+		{Title: "loom2", Status: session.Ready},
+		{Title: "loom3", Status: session.Ready},
+	}
+	tail := []*session.Instance{{Title: "z1", Status: session.Ready}}
+	d := OverviewData{
+		Groups: []OverviewGroup{
+			{Name: "groupzero", State: GroupLoaded,
+				Items: []*session.Instance{{Title: "hidden", Status: session.Ready}},
+				Order: []int{0}},
+			{Name: "loom", State: GroupLoaded, Items: loaded, Order: []int{0, 1, 2, 3}},
+			{Name: "zeta", State: GroupLoaded, Items: tail, Order: []int{0}},
+		},
+		// Cursor on the last card of the loaded middle group requires
+		// scrolling past the short (collapsed) preceding block.
+		Cursor: OverviewCursor{Group: 1, Item: 3},
+	}
+	out := ansi.Strip(o.Render(d))
+	assert.Contains(t, out, "loom3", "short preceding block is accounted correctly so the cursor card is visible")
+	assert.LessOrEqual(t, len(strings.Split(out, "\n")), overviewCardHeight+4)
+}
+
 // TestOverview_NeverExceedsHeightDegenerate sweeps degenerate sizes:
-// every combination of tiny heights, peer counts, and item counts must
-// stay within the height budget (mirrors the List height-clamp sweep).
+// every combination of tiny heights, group counts, and item counts must
+// stay within the height budget (clampHeight bounds the final render).
 func TestOverview_NeverExceedsHeightDegenerate(t *testing.T) {
-	peerSets := map[int][]PeerSection{
+	extraGroupSets := map[int][]OverviewGroup{
 		0: nil,
 		3: {
-			{Name: "alpha", Attention: 1, Running: 1, Idle: 1},
-			{Name: "beta", Running: 2},
-			{Name: "gamma", Idle: 4},
+			{Name: "alpha", State: GroupLoading},
+			{Name: "beta", State: GroupError, Err: "boom"},
+			{Name: "gamma", State: GroupEmpty},
 		},
 	}
 	itemSets := map[int][]*session.Instance{
@@ -149,18 +236,19 @@ func TestOverview_NeverExceedsHeightDegenerate(t *testing.T) {
 		},
 	}
 	for height := 1; height <= 8; height++ {
-		for nPeers, peers := range peerSets {
+		for nExtra, extras := range extraGroupSets {
 			for nItems, items := range itemSets {
-				name := fmt.Sprintf("h=%d peers=%d items=%d", height, nPeers, nItems)
+				name := fmt.Sprintf("h=%d extra=%d items=%d", height, nExtra, nItems)
 				o := NewOverview()
 				o.SetSize(80, height)
-				d := OverviewData{
-					ActiveName:  "loom",
-					Items:       items,
-					Order:       SortForOverview(items),
-					SelectedIdx: 0,
-					Peers:       peers,
+				groups := []OverviewGroup{{Name: "loom", Items: items, State: GroupLoaded}}
+				if len(items) == 0 {
+					groups[0].State = GroupEmpty
+				} else {
+					groups[0].Order = SortForOverview(items)
 				}
+				groups = append(groups, extras...)
+				d := OverviewData{Groups: groups, Cursor: OverviewCursor{Group: 0, Item: 0}}
 				out := o.Render(d)
 				assert.LessOrEqual(t, len(strings.Split(out, "\n")), height, name)
 			}

@@ -334,7 +334,7 @@ func (s *scriptHost) ToggleOverview() {
 		if m.viewMode == viewOverview {
 			m.viewMode = viewFocus
 		} else {
-			m.viewMode = viewOverview
+			m.enterOverview()
 		}
 		mode := ""
 		if m.viewMode == viewOverview {
@@ -698,6 +698,15 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	// message for the awaiting coroutine.
 	for _, p := range msg.pendingIntents {
 		if c := m.handleScriptIntent(p); c != nil {
+			cmds = append(cmds, c)
+		}
+	}
+	// Drain a pending overview-entry fleet load. enterOverview (run above
+	// as a deferred action) can't return a Cmd, so it raises the flag and
+	// we fire the progressive fleet load here where Cmds flow.
+	if m.pendingOverviewLoad {
+		m.pendingOverviewLoad = false
+		if c := m.ensureFleetLoaded(); c != nil {
 			cmds = append(cmds, c)
 		}
 	}

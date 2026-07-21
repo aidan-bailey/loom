@@ -22,25 +22,48 @@ const overviewCardTailLines = 2
 // TestOverview_UniformCardHeight).
 const overviewCardHeight = overviewCardTailLines + 5
 
+// GroupState classifies how an overview group renders.
+type GroupState int
+
+const (
+	GroupLoaded  GroupState = iota // reconciled; render cards
+	GroupLoading                   // background activation in flight
+	GroupError                     // background activation failed
+	GroupEmpty                     // loaded but no instances
+)
+
+// OverviewGroup is one workspace's slice of the fleet overview.
+type OverviewGroup struct {
+	Name  string
+	Items []*session.Instance
+	Order []int // SortForOverview(Items); empty for non-loaded states
+	State GroupState
+	Err   string // populated when State == GroupError
+}
+
+// OverviewCursor is the render-space selection: a group index into
+// Groups and an item position within that group's Order.
+type OverviewCursor struct {
+	Group int
+	Item  int
+}
+
 // OverviewData is everything Render needs, assembled by the app on the
 // Update goroutine each frame (same pattern as List reading instances).
 type OverviewData struct {
-	ActiveName  string
-	Items       []*session.Instance
-	Order       []int // display order (indices into Items), from SortForOverview
-	SelectedIdx int   // list index of the selected instance
-	Peers       []PeerSection
-	Spinner     string
+	Groups  []OverviewGroup
+	Cursor  OverviewCursor
+	Spinner string
 }
 
-// Overview renders the fleet-triage card grid: the active workspace's
-// instances as bordered cards under a collapsible group header, peer
-// workspaces as dimmed count headers (live selection stays scoped to
-// the active workspace until cross-workspace lands).
+// Overview renders the fleet-triage card grid: every workspace group's
+// instances as bordered cards under a collapsible group header, with
+// loading/error/empty groups rendered inline. The render cursor spans
+// groups (OverviewCursor{Group,Item}).
 type Overview struct {
 	width, height int
 	collapsed     map[string]bool
-	rowOffset     int // first visible card row (scroll window)
+	rowOffset     int // first visible card row (Task 7 combined window)
 }
 
 // NewOverview constructs an empty overview component.
@@ -74,100 +97,72 @@ func overviewColumns(width int) int {
 	return cols
 }
 
-// Render draws the overview. Height is hard-clamped.
+// Render draws the multi-group fleet overview. Height is hard-clamped;
+// the combined vertical window (Task 7) keeps the cursor group/card
+// visible.
 func (o *Overview) Render(d OverviewData) string {
 	if o.width == 0 || o.height == 0 {
 		return ""
 	}
-	var b strings.Builder
-
-	marker := "▾"
-	collapsed := o.IsCollapsed(d.ActiveName)
-	if collapsed {
-		marker = "▸"
-	}
-	header := fmt.Sprintf("%s %s · %d", marker, strings.ToUpper(d.ActiveName), len(d.Items))
-	wsStyle := lipgloss.NewStyle().Foreground(Workspace)
-	b.WriteString(wsStyle.Render(header) + "\n")
-
-	if !collapsed && len(d.Items) > 0 {
-		b.WriteString(o.renderGrid(d))
-	}
-
-	if len(d.Peers) > 0 {
-		dim := lipgloss.NewStyle().Foreground(Dim)
-		b.WriteString("\n")
-		for _, p := range d.Peers {
-			total := p.Attention + p.Running + p.Idle
-			// Separately-styled concatenated segments — never nest a
-			// styled run inside another Render (see RenderCard's solidBg
-			// note: an outer style does not survive embedded SGR resets).
-			line := dim.Render(fmt.Sprintf("▸ %s · %d", strings.ToUpper(p.Name), total))
-			if p.Attention > 0 {
-				line += lipgloss.NewStyle().Foreground(Attention).Render(fmt.Sprintf("  ❯%d waiting", p.Attention))
-			}
-			b.WriteString(line + "\n")
-		}
-	}
-	return clampHeight(lipgloss.Place(o.width, o.height, lipgloss.Left, lipgloss.Top, b.String()), o.height)
+	blocks := o.groupBlocks(d) // []string, one rendered block per group
+	windowed := o.window(blocks, d)
+	return clampHeight(lipgloss.Place(o.width, o.height, lipgloss.Left, lipgloss.Top, windowed), o.height)
 }
 
-// renderGrid lays cards out in rows of overviewColumns, windowed so the
-// selected card's row is always visible. Like ScrollModel's
-// AdvanceAndRender, rendering mutates the scroll anchor (o.rowOffset) —
-// exactly once per render pass. The window is computed BEFORE any card
-// is rendered (selRow needs only Order positions and every card row is
-// exactly overviewCardHeight lines), so only visible rows' cards are
-// ever built — off-window instances cost nothing per frame.
-func (o *Overview) renderGrid(d OverviewData) string {
+// groupBlocks renders each group to a string block (header + body).
+func (o *Overview) groupBlocks(d OverviewData) []string {
+	blocks := make([]string, len(d.Groups))
+	wsStyle := lipgloss.NewStyle().Foreground(Workspace)
+	dim := lipgloss.NewStyle().Foreground(Dim)
+	errStyle := lipgloss.NewStyle().Foreground(ErrorColor)
+	for gi, g := range d.Groups {
+		collapsed := o.IsCollapsed(g.Name)
+		marker := "▾"
+		if collapsed {
+			marker = "▸"
+		}
+		header := wsStyle.Render(fmt.Sprintf("%s %s · %d", marker, strings.ToUpper(g.Name), len(g.Items)))
+		var body string
+		switch {
+		case collapsed:
+			body = ""
+		case g.State == GroupLoading:
+			body = dim.Render("  loading…")
+		case g.State == GroupError:
+			body = errStyle.Render("  failed to load — " + g.Err)
+		case g.State == GroupEmpty || len(g.Order) == 0:
+			body = dim.Render("  no sessions")
+		default:
+			body = o.renderGroupGrid(g, gi, d)
+		}
+		if body == "" {
+			blocks[gi] = header
+		} else {
+			blocks[gi] = header + "\n" + body
+		}
+	}
+	return blocks
+}
+
+// renderGroupGrid lays one group's cards in rows of overviewColumns.
+// Highlighting keys on the render cursor matching this group + position.
+func (o *Overview) renderGroupGrid(g OverviewGroup, gi int, d OverviewData) string {
 	cols := overviewColumns(o.width)
 	cardW := (o.width - (cols - 1)) / cols
-
-	selRow := 0
-	for pos, idx := range d.Order {
-		if idx == d.SelectedIdx {
-			selRow = pos / cols
-			break
-		}
-	}
-	nRows := (len(d.Order) + cols - 1) / cols
-
-	// Window rows so selRow stays visible within the height budget
-	// (header + peers consumed elsewhere).
-	rowH := overviewCardHeight
-	budget := o.height - 1 - peerBudget(d.Peers)
-	visRows := budget / rowH
-	if visRows < 1 {
-		visRows = 1
-	}
-	if selRow < o.rowOffset {
-		o.rowOffset = selRow
-	}
-	if selRow >= o.rowOffset+visRows {
-		o.rowOffset = selRow - visRows + 1
-	}
-	if o.rowOffset > nRows-visRows {
-		o.rowOffset = nRows - visRows
-	}
-	if o.rowOffset < 0 {
-		o.rowOffset = 0
-	}
-	endRow := o.rowOffset + visRows
-	if endRow > nRows {
-		endRow = nRows
-	}
-
-	rows := make([]string, 0, endRow-o.rowOffset)
-	for r := o.rowOffset; r < endRow; r++ {
+	nRows := (len(g.Order) + cols - 1) / cols
+	rows := make([]string, 0, nRows)
+	for r := 0; r < nRows; r++ {
 		start := r * cols
 		end := start + cols
-		if end > len(d.Order) {
-			end = len(d.Order)
+		if end > len(g.Order) {
+			end = len(g.Order)
 		}
 		cards := make([]string, 0, end-start)
-		for _, idx := range d.Order[start:end] {
-			cd := BuildCardData(d.Items[idx], idx == d.SelectedIdx, d.Spinner, overviewCardTailLines)
-			cd.Index = DisplayIndex(d.Items, idx)
+		for pos := start; pos < end; pos++ {
+			idx := g.Order[pos]
+			selected := d.Cursor.Group == gi && d.Cursor.Item == pos
+			cd := BuildCardData(g.Items[idx], selected, d.Spinner, overviewCardTailLines)
+			cd.Index = DisplayIndex(g.Items, idx)
 			cards = append(cards, renderOverviewCard(cd, cardW))
 		}
 		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, joinWithGap(cards)...))
@@ -175,13 +170,57 @@ func (o *Overview) renderGrid(d OverviewData) string {
 	return strings.Join(rows, "\n")
 }
 
-// peerBudget is the line budget consumed by the peer footer (one line
-// per peer plus the separating blank line).
-func peerBudget(peers []PeerSection) int {
-	if len(peers) == 0 {
-		return 0
+// window vertically scrolls the joined group blocks so the cursor card's
+// line range stays visible within o.height. Mutates o.rowOffset exactly
+// once per render pass (same discipline as the old single-group grid).
+func (o *Overview) window(blocks []string, d OverviewData) string {
+	joined := strings.Join(blocks, "\n")
+	lines := strings.Split(joined, "\n")
+	budget := o.height
+	if len(lines) <= budget {
+		o.rowOffset = 0
+		return joined
 	}
-	return len(peers) + 1
+	// Absolute line span of the cursor card.
+	top, bottom := o.cursorLineSpan(blocks, d)
+	if top < o.rowOffset {
+		o.rowOffset = top
+	}
+	if bottom >= o.rowOffset+budget {
+		o.rowOffset = bottom - budget + 1
+	}
+	if o.rowOffset > len(lines)-budget {
+		o.rowOffset = len(lines) - budget
+	}
+	if o.rowOffset < 0 {
+		o.rowOffset = 0
+	}
+	end := o.rowOffset + budget
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return strings.Join(lines[o.rowOffset:end], "\n")
+}
+
+// cursorLineSpan returns the absolute [top,bottom] line indices (into the
+// joined blocks) of the cursor's card. Each group block is 1 header line
+// plus its body; a card row is overviewCardHeight lines. Groups are
+// separated by one join newline (already accounted for because each
+// block's own line count includes only its content and the join adds one
+// line between blocks — see the running `line` counter).
+func (o *Overview) cursorLineSpan(blocks []string, d OverviewData) (int, int) {
+	line := 0
+	cols := overviewColumns(o.width)
+	for gi, b := range blocks {
+		blockLines := strings.Count(b, "\n") + 1
+		if gi == d.Cursor.Group {
+			cardRow := d.Cursor.Item / cols
+			top := line + 1 + cardRow*overviewCardHeight // +1 skips the header
+			return top, top + overviewCardHeight - 1
+		}
+		line += blockLines
+	}
+	return 0, 0
 }
 
 // joinWithGap interleaves a one-column gap between cards for

@@ -570,16 +570,26 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 	if len(registry.Workspaces) == 0 {
 		return m, m.handleError(fmt.Errorf("no workspaces registered"))
 	}
-	activeNames := make(map[string]bool, len(m.slots))
-	for _, slot := range m.slots {
-		activeNames[slot.wsCtx.Name] = true
-	}
+	activeNames := m.pickerActiveNames()
 	// allowGlobal=true gives the user a single-keystroke return to global
 	// mode without quitting. Required to round-trip the global ↔
 	// workspace transition that applyWorkspaceToggle now handles.
 	m.setOverlay(overlay.NewWorkspacePicker(registry.Workspaces, activeNames, true), overlayWorkspacePicker)
 	m.state = stateWorkspace
 	return m, nil
+}
+
+// pickerActiveNames returns the set of workspace names shown pre-checked
+// in the workspace picker: foreground (tab) slots only. Background
+// fleet-overview slots render unchecked so opening+closing the picker
+// never promotes them into the tab bar or OpenWorkspaces (which would
+// break lazy fleet loading).
+func (m *home) pickerActiveNames() map[string]bool {
+	active := make(map[string]bool, len(m.slots))
+	for _, name := range m.foregroundSlotNames() {
+		active[name] = true
+	}
+	return active
 }
 
 // runOpenSettings opens the settings overlay over the active workspace's
