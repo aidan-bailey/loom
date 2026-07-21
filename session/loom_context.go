@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+
+	"github.com/aidan-bailey/loom/config"
 )
 
 // Loom-context prompt files, embedded at build time and written to the
@@ -53,7 +55,7 @@ func WriteLoomContextFiles(configDir string) error {
 		if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, f.content) {
 			continue
 		}
-		if err := os.WriteFile(path, f.content, 0o644); err != nil {
+		if err := config.AtomicWriteFile(path, f.content, 0o644); err != nil {
 			return fmt.Errorf("write loom context %s: %w", f.name, err)
 		}
 	}

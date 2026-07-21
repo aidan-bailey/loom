@@ -20,6 +20,20 @@ func TestWriteLoomContextFiles(t *testing.T) {
 		assert.Contains(t, string(b), "Loom session context")
 	}
 
+	// skip-if-current: a second write with already-current content must not
+	// rewrite the file. AtomicWriteFile renames a fresh temp into place, so a
+	// real rewrite yields a new inode regardless of mtime resolution; assert
+	// via os.SameFile (inode-robust) plus an mtime-unchanged signal.
+	before, err := os.Stat(ws)
+	assert.NoError(t, err)
+	assert.NoError(t, WriteLoomContextFiles(dir))
+	after, err := os.Stat(ws)
+	assert.NoError(t, err)
+	assert.True(t, os.SameFile(before, after),
+		"WriteLoomContextFiles rewrote an up-to-date file (inode changed)")
+	assert.Equal(t, before.ModTime(), after.ModTime(),
+		"WriteLoomContextFiles rewrote an up-to-date file (mtime changed)")
+
 	// stale content is rewritten
 	assert.NoError(t, os.WriteFile(wt, []byte("stale"), 0o644))
 	assert.NoError(t, WriteLoomContextFiles(dir))
