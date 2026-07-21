@@ -85,6 +85,16 @@ type Adapter interface {
 	// returned unchanged. Returns the input unchanged for agents
 	// without an effort-level concept.
 	ApplyEffortFlag(program, effort string) string
+	// ApplyLoomContextFlag returns the program string with
+	// "--append-system-prompt-file '<filePath>'" inserted (e.g. "claude
+	// --append-system-prompt-file '/home/u/.loom/claude-loom-context.md'"),
+	// pointing Claude at loom's context file. filePath == "" is a no-op.
+	// Idempotent on loom's own path: if the exact flag+path is already
+	// present the input is returned unchanged, but a different
+	// user-supplied --append-system-prompt-file is left in place and
+	// loom's is still added. Returns the input unchanged for agents
+	// without a system-prompt-file concept.
+	ApplyLoomContextFlag(program, filePath string) string
 }
 
 // Registry is a prioritized list of adapters. Lookup returns the first
