@@ -206,3 +206,33 @@ func TestTrustPromptResponses(t *testing.T) {
 	assert.Equal(t, TrustPromptTapDAndEnter, Gemini().TrustPromptResponse())
 	assert.Equal(t, TrustPromptNone, Default().TrustPromptResponse())
 }
+
+func TestApplyLoomContextFlag(t *testing.T) {
+	reg := DefaultRegistry()
+	path := "/home/u/.loom/claude-loom-context.md"
+
+	// claude: inserts single-quoted flag right after the command token
+	got := reg.Lookup("claude").ApplyLoomContextFlag("claude", path)
+	assert.Equal(t, "claude --append-system-prompt-file '"+path+"'", got)
+
+	// preserves existing flags, inserting after the command
+	got = reg.Lookup("claude").ApplyLoomContextFlag("claude --permission-mode plan", path)
+	assert.Equal(t, "claude --append-system-prompt-file '"+path+"' --permission-mode plan", got)
+
+	// idempotent on loom's own path
+	assert.Equal(t, got, reg.Lookup("claude").ApplyLoomContextFlag(got, path))
+
+	// coexists with a DIFFERENT user-supplied append-file (both present)
+	user := "claude --append-system-prompt-file /my/own.md"
+	got = reg.Lookup("claude").ApplyLoomContextFlag(user, path)
+	assert.Contains(t, got, "--append-system-prompt-file '"+path+"'")
+	assert.Contains(t, got, "--append-system-prompt-file /my/own.md")
+
+	// empty path is a no-op
+	assert.Equal(t, "claude", reg.Lookup("claude").ApplyLoomContextFlag("claude", ""))
+
+	// non-claude adapters are no-ops
+	assert.Equal(t, "aider", reg.Lookup("aider").ApplyLoomContextFlag("aider", path))
+	assert.Equal(t, "gemini", reg.Lookup("gemini").ApplyLoomContextFlag("gemini", path))
+	assert.Equal(t, "unknownprog", reg.Lookup("unknownprog").ApplyLoomContextFlag("unknownprog", path))
+}

@@ -561,6 +561,20 @@ func TestSaveConfigTo(t *testing.T) {
 	})
 }
 
+func TestLoomContextEnabled(t *testing.T) {
+	// nil => enabled (mirrors RemoteControlEnabled)
+	c := &Config{}
+	assert.True(t, c.LoomContextEnabled())
+
+	tru := true
+	c.ClaudeLoomContext = &tru
+	assert.True(t, c.LoomContextEnabled())
+
+	fls := false
+	c.ClaudeLoomContext = &fls
+	assert.False(t, c.LoomContextEnabled())
+}
+
 func TestConfigMutateIsRaceSafeWithGetBranchPrefix(t *testing.T) {
 	cfg := DefaultConfig()
 	done := make(chan struct{})

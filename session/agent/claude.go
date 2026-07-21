@@ -157,3 +157,25 @@ func (claudeAdapter) ApplyEffortFlag(program, effort string) string {
 	}
 	return insertAfterCommand(program, "--effort "+effort)
 }
+
+// ApplyLoomContextFlag inserts "--append-system-prompt-file '<filePath>'"
+// after "claude". The path is single-quoted because tmux runs the whole
+// program string through the shell (session/tmux/tmux.go appends it as
+// one argument), so an unquoted path with spaces would be word-split;
+// loom's config-dir paths are assumed free of single quotes. filePath ==
+// "" or an empty program is a no-op. Idempotent on loom's own flag+path
+// fragment — a different user-supplied --append-system-prompt-file is
+// left untouched and loom's is still added, so both coexist.
+func (claudeAdapter) ApplyLoomContextFlag(program, filePath string) string {
+	if filePath == "" {
+		return program
+	}
+	if len(strings.Fields(program)) == 0 {
+		return program
+	}
+	flag := "--append-system-prompt-file '" + filePath + "'"
+	if strings.Contains(program, flag) {
+		return program
+	}
+	return insertAfterCommand(program, flag)
+}

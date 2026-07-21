@@ -55,3 +55,9 @@ func (geminiAdapter) ApplyModelFlag(program, _ string) string {
 func (geminiAdapter) ApplyEffortFlag(program, _ string) string {
 	return program
 }
+
+// ApplyLoomContextFlag is a no-op for gemini — it has no
+// system-prompt-file concept.
+func (geminiAdapter) ApplyLoomContextFlag(program, _ string) string {
+	return program
+}

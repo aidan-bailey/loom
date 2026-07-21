@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -40,6 +41,9 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.program = m.appConfig.GetProgram()
+		// Re-sync the loom-context toggle so an in-place change takes
+		// effect on the next session launch without a workspace switch.
+		session.SetLoomContextEnabled(m.appConfig.LoomContextEnabled())
 	}
 
 	if closed {

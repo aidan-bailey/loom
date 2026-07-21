@@ -97,14 +97,14 @@ func TestClaudePreferencesRowNavigationClamps(t *testing.T) {
 	assert.True(t, changed)
 	assert.False(t, cfg.RemoteControlEnabled())
 
-	// Down six times stays at row 5 (only six rows): toggles Cache TTL,
-	// not any earlier row.
-	for i := 0; i < 6; i++ {
+	// Down seven times stays at row 6 (only seven rows): toggles Loom
+	// Context, not any earlier row.
+	for i := 0; i < 7; i++ {
 		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	_, changed = cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
-	assert.True(t, cfg.CacheTTL1hEnabled())
+	assert.False(t, cfg.LoomContextEnabled())
 }
 
 func TestClaudePreferencesRendersPermissionMode(t *testing.T) {
@@ -176,4 +176,23 @@ func TestClaudePreferencesEscCloses(t *testing.T) {
 	closed, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.True(t, closed)
 	assert.False(t, changed)
+}
+
+func TestClaudePreferences_LoomContextToggle(t *testing.T) {
+	cfg := &config.Config{}
+	cp := NewClaudePreferences(cfg, false, "")
+
+	// Row 6 is Loom Context. Move the cursor there from row 0.
+	for i := 0; i < 6; i++ {
+		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
+
+	// Default (nil) is enabled; toggling once turns it off.
+	assert.True(t, cfg.LoomContextEnabled())
+	_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.True(t, changed)
+	assert.False(t, cfg.LoomContextEnabled())
+
+	// Render shows the row.
+	assert.Contains(t, cp.Render(), "Loom Context")
 }

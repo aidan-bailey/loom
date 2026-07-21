@@ -387,6 +387,17 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		cfgDir = wsCtx.ConfigDir
 	}
 
+	// Loom-context injection: establish the global enabled flag and write
+	// the config-dir prompt files at process startup, covering BOTH the
+	// classic/global path (this function) and the multi-tab slots path
+	// (activateWorkspace re-syncs per workspace). Without this, a
+	// classic-path launch (single-tab `loom --workspace`, or bare `loom`)
+	// would never init the flag and the feature would be inert.
+	session.SetLoomContextEnabled(appConfig.LoomContextEnabled())
+	if err := session.WriteLoomContextFiles(cfgDir); err != nil {
+		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
+	}
+
 	appState := config.LoadStateFrom(cfgDir)
 
 	storage, err := session.NewStorage(appState, cfgDir)
@@ -2256,6 +2267,13 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	wsCtx := config.WorkspaceContextFor(&ws)
 	state := config.LoadStateFrom(wsCtx.ConfigDir)
 	appConfig := config.LoadConfigFrom(wsCtx.ConfigDir)
+	// Loom-context injection: keep the config-dir prompt files current and
+	// sync the global enabled flag on every workspace load, before any
+	// Claude session (workspace terminal, crash-restart, resume) launches.
+	session.SetLoomContextEnabled(appConfig.LoomContextEnabled())
+	if err := session.WriteLoomContextFiles(wsCtx.ConfigDir); err != nil {
+		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
+	}
 	storage, err := session.NewStorage(state, wsCtx.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("failed to create storage for workspace %s: %w", ws.Name, err)

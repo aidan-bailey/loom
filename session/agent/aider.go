@@ -56,3 +56,9 @@ func (aiderAdapter) ApplyModelFlag(program, _ string) string {
 func (aiderAdapter) ApplyEffortFlag(program, _ string) string {
 	return program
 }
+
+// ApplyLoomContextFlag is a no-op for aider — it has no
+// system-prompt-file concept.
+func (aiderAdapter) ApplyLoomContextFlag(program, _ string) string {
+	return program
+}
