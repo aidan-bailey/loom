@@ -216,26 +216,36 @@ cards are built" property.
 
 ### 4. Cross-workspace navigation
 
-- **Overview `enter`** (`app/state_default.go:48`): if `cursor.slot !=
-  focusedSlot`, run `saveCurrentSlot()` → `promoteSlot(cursor.slot)` when the
-  target is background → `loadSlot(cursor.slot)` → set that list's selection to
-  `cursor.inst`; then `viewMode = viewFocus`. Same-slot enter is today's
-  behavior.
+**The unifying primitive `focusCursorSlot()`.** Because the focused slot can
+never be background, *any* action that operates on the cursor's card must first
+make that card's slot the focused one. One helper does this: `saveCurrentSlot()`
+→ `promoteSlot(cursor.slot)` if background → `loadSlot(cursor.slot)` → set
+`m.list` selection to `cursor.inst`. It is a no-op fast path when the cursor is
+already in the focused slot. Every cursor-committing overview action routes
+through it, which lets each reuse the *existing* focus-mode intent code unchanged
+(they all read `m.list`). Consequence, made explicit: `D`/`r`/`n` on a
+background-workspace card **promote** that workspace (it is now one you're acting
+in) — the promotion-trigger set is therefore `enter`, fleet-jump landing, picker
+selection, **and** a committed `D`/`r`/`n`. Bare cursor movement (`j/k/h/l`) does
+**not** focus or promote — browsing stays cheap.
+
+- **Overview `enter`** (`app/state_default.go:48`): `focusCursorSlot()`, then
+  `viewMode = viewFocus`.
 - **Overview `j/k/h/l`**: move `overviewCursor` across the global order (§3);
-  non-selectable groups are skipped.
+  non-selectable groups are skipped. No focus switch.
 - **Focus-mode `]`/`[` — `jumpWaiting` rewrite** (`app/app.go:768`): build a
   fleet-wide attention list — every slot's instances that are `Prompting` or
   bell-pending, in display order (focused slot first, then alphabetical, matching
   the overview). Step next/prev with fleet-wide wrap. When the target is in
   another slot: `saveCurrentSlot` → promote-if-background → `loadSlot` → select
   there. A lone remote waiter is reachable with a single `]`.
-- **Overview `D` (kill) / `r` (recover)** — correctness-critical rewrite: today
-  they act on `m.list`. They must act on the **cursor's** instance in **its
-  slot's** list + storage — deleting a card in workspace B mutates B, not the
-  focused slot. After a cursor-target mutation, re-clamp the cursor to a valid
+- **Overview `D` (kill) / `r`/`R` (recover/resume)**: `focusCursorSlot()` (which
+  selects the cursor's instance in the now-focused slot), then dispatch the
+  existing kill/recover intent — it now naturally mutates the correct slot's
+  list + storage. After the mutation, re-clamp `overviewCursor` to a valid
   position.
-- **Overview `n`/`N` (create)**: promote+focus the cursor's slot, then run the
-  existing create flow (design already drops create to focus first).
+- **Overview `n`/`N` (create)**: `focusCursorSlot()`, `viewMode = viewFocus`,
+  then run the existing create flow (create in the cursor's workspace).
 
 ### 5. Persistence, teardown, tab bar, edge cases
 
