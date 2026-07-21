@@ -48,9 +48,20 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.viewMode == viewOverview {
 		switch msg.String() {
 		case "enter":
+			m.focusCursorSlot()
 			m.viewMode = viewFocus
 			m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = "" })
 			return m, m.instanceChanged()
+		case "D", "r", "R":
+			// Cross-workspace commit: the cursor may be sitting on a peer
+			// workspace's card, so focus its slot before dispatching the
+			// existing focus-mode intent (kill/recover). Re-seed the
+			// cursor afterward since the target may now be gone (kill) or
+			// have moved list position (resume).
+			m.focusCursorSlot()
+			cmd, _ := m.dispatchScript(msg.String())
+			m.seedOverviewCursor()
+			return m, cmd
 		case "z":
 			// Same fallback name overviewData renders with, so collapse
 			// works in classic/global mode too.
@@ -66,6 +77,7 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// affordance. Drop to focus first (persisted, same as
 			// enter/esc), then dispatch the create flow normally so it
 			// proceeds in the layout the user will type into.
+			m.focusCursorSlot()
 			m.viewMode = viewFocus
 			m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = "" })
 			cmds := []tea.Cmd{m.instanceChanged()}

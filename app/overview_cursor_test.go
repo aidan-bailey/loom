@@ -48,6 +48,7 @@ func fleetHome(t *testing.T) *home {
 		focusedSlot: 0,
 		overview:    ui.NewOverview(), // fleetOrder() reads m.overview.IsCollapsed
 		tabBar:      ui.NewWorkspaceTabBar(),
+		menu:        ui.NewMenu(),
 		registry:    &config.WorkspaceRegistry{},
 		slots:       []workspaceSlot{focus, peer},
 		list:        focus.list,
