@@ -586,8 +586,12 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 
 	ts := i.getTmuxSession()
 	if ts == nil {
-		// Create new tmux session
-		ts = tmux.NewTmuxSession(i.Title, i.Program, InstanceEnv(i.Program, i.HeadroomProxy, i.CacheTTL1h)...)
+		// Create new tmux session. loomContextProgram wraps the program
+		// with --append-system-prompt-file for Claude sessions (no-op when
+		// disabled, non-Claude, or the file is missing); InstanceEnv still
+		// keys off the bare i.Program.
+		launchProgram := loomContextProgram(i.Program, i.ConfigDir, i.IsWorkspaceTerminal)
+		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(i.Program, i.HeadroomProxy, i.CacheTTL1h)...)
 	}
 	i.setTmuxSession(ts)
 
