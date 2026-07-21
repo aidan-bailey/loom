@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
 	"github.com/aidan-bailey/loom/session"
@@ -140,12 +141,12 @@ func sanitizeTailLine(l string) string {
 }
 
 // Chrome scan bounds for ContentTailLines. Claude Code's footer below
-// the input area is currently three lines (statusline, context meter,
-// mode line); legacy builds used one. The input area grows with
-// multiline typed input.
+// the input area is statusline, context meter, and mode line, plus an
+// agents strip that grows one line per running subagent; legacy builds
+// used one line. The input area grows with multiline typed input.
 const (
-	chromeFooterMax = 6 // non-delimiter lines allowed below the bottom delimiter
-	chromeInputMax  = 8 // interior lines allowed between the delimiters
+	chromeFooterMax = 12 // non-delimiter lines allowed below the bottom delimiter
+	chromeInputMax  = 8  // interior lines allowed between the delimiters
 )
 
 // chromeDelimiter reports whether a sanitized line is an input-area
@@ -165,6 +166,31 @@ func chromeDelimiter(s string) bool {
 		}
 	}
 	return runes >= 4
+}
+
+// tipHead reports whether a sanitized line opens one of the agent's
+// transient hint blocks: "⎿  Tip: …" attached under the working spinner
+// or "※ Tip: …" on idle screens. These are harness chrome, not
+// conversation; ordinary "⎿" tool-result lines stay content.
+func tipHead(s string) bool {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "⎿")
+	s = strings.TrimPrefix(s, "※")
+	return strings.HasPrefix(strings.TrimSpace(s), "Tip:")
+}
+
+// indentWidth counts a line's leading whitespace runes. A wrapped tip's
+// continuation lines are indented deeper than their head's marker, which
+// is how the whole block is recognized.
+func indentWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		if !unicode.IsSpace(r) {
+			break
+		}
+		n++
+	}
+	return n
 }
 
 // chromeInteriorText reduces an input-area interior line to its
@@ -253,17 +279,31 @@ func ContentTailLines(screen string, n int) []string {
 	}
 
 	// Idle input area: tail is the content above it. Blank lines carry
-	// no signal on a 1-2 line card, so take the last n non-blank lines
-	// (unlike the plain-TailLines fallback, which preserves layout).
+	// no signal on a 1-2 line card, and neither do the agent's transient
+	// "Tip:" hints — both are skipped, a wrapped tip's indented
+	// continuation lines going with their head. Take the last n of what
+	// remains (unlike the plain-TailLines fallback, which preserves
+	// layout).
 	var out []string
-	for i := top - 1; i >= 0 && len(out) < n; i-- {
+	for i := 0; i < top; i++ {
 		if strings.TrimSpace(lines[i]) == "" {
 			continue
 		}
-		out = append([]string{lines[i]}, out...)
+		if tipHead(lines[i]) {
+			ind := indentWidth(lines[i])
+			for i+1 < top && strings.TrimSpace(lines[i+1]) != "" &&
+				indentWidth(lines[i+1]) > ind && !tipHead(lines[i+1]) {
+				i++
+			}
+			continue
+		}
+		out = append(out, lines[i])
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	if len(out) > n {
+		out = out[len(out)-n:]
 	}
 	return out
 }
