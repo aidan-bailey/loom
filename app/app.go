@@ -1516,6 +1516,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, tea.RequestWindowSize, m.instanceChanged())
 		return m, tea.Batch(cmds...)
+	case workspaceActivatedMsg:
+		m.handleWorkspaceActivated(msg)
+		return m, m.instanceChanged()
 	case workspaceRegisteredMsg:
 		ws := m.registry.FindByPath(msg.dir)
 		if ws == nil {
@@ -2429,6 +2432,72 @@ func (m *home) loadWorkspaceForFleet(ws config.Workspace) workspaceActivatedMsg 
 		name: ws.Name, wsCtx: wsCtx, storage: storage,
 		appConfig: appConfig, appState: state, instances: instances,
 	}
+}
+
+// handleWorkspaceActivated finalizes a background workspace load on the
+// Update goroutine: builds the slot's UI from the reconciled instances
+// and appends it as a background slot. Errors are recorded (not fatal);
+// a duplicate (the user opened this workspace via the picker mid-load) is
+// discarded. Main-goroutine only.
+func (m *home) handleWorkspaceActivated(msg workspaceActivatedMsg) {
+	if m.fleetLoading != nil {
+		delete(m.fleetLoading, msg.name)
+	}
+	if msg.err != nil {
+		if m.fleetLoadErrors == nil {
+			m.fleetLoadErrors = map[string]error{}
+		}
+		m.fleetLoadErrors[msg.name] = msg.err
+		log.For("app").Warn("fleet_load_failed", "workspace", msg.name, "err", msg.err)
+		return
+	}
+	// Duplicate guard: a slot for this workspace may already exist if the
+	// user opened it via the picker while the Cmd was in flight. Keyed by
+	// name, matching ensureFleetLoaded's own "already open" check.
+	for _, slot := range m.slots {
+		if slot.wsCtx.Name == msg.wsCtx.Name {
+			return
+		}
+	}
+	if m.fleetLoadErrors != nil {
+		delete(m.fleetLoadErrors, msg.name)
+	}
+
+	list := ui.NewList(&m.spinner)
+	for _, inst := range msg.instances {
+		if inst.CrashRecovered {
+			if err := inst.CrashRestart(); err != nil {
+				log.For("app").Error("fleet_crash_restart_failed", "instance", inst.Title, "err", err)
+				if tErr := inst.TransitionTo(session.Paused); tErr != nil {
+					log.For("app").Warn("fleet_crash_transition_failed", "instance", inst.Title, "err", tErr)
+				}
+			}
+			inst.CrashRecovered = false
+		}
+		list.AddInstance(inst)
+	}
+	list.SetWorkspaceName(msg.name)
+
+	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+	if m.lastWidth > 0 && m.lastHeight > 0 {
+		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
+		paneWidth := m.lastWidth - listWidth
+		contentHeight := m.lastHeight - m.tabBar.Height() - 2
+		list.SetSize(listWidth, contentHeight)
+		splitPane.SetSize(paneWidth, contentHeight)
+	}
+
+	// Orphan reconcile on the main goroutine (bounded disk scan; matches
+	// activateWorkspace). Background slots suppress workspace-terminal
+	// auto-spawn — no WT is created here, by design.
+	recovery := m.reconcileOrphans(msg.wsCtx.ConfigDir, msg.appConfig.GetProgram(), list, msg.storage, cmd2.MakeExecutor())
+
+	m.slots = append(m.slots, workspaceSlot{
+		wsCtx: msg.wsCtx, storage: msg.storage, appConfig: msg.appConfig,
+		appState: msg.appState, list: list, splitPane: splitPane,
+		recovery: recovery, background: true,
+	})
+	m.refreshPeerSections()
 }
 
 // ensureFleetLoaded marks fleet-engaged and returns a batched Cmd that

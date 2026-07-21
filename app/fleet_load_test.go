@@ -1,9 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,3 +42,51 @@ func TestEnsureFleetLoaded_NothingToLoad(t *testing.T) {
 	assert.Nil(t, cmd, "no workspaces left to load → no Cmd")
 	assert.True(t, m.fleetEngaged)
 }
+
+func TestHandleWorkspaceActivated_AppendsBackgroundSlot(t *testing.T) {
+	m := newTestHome(t)
+	m.slots = []workspaceSlot{{wsCtx: &config.WorkspaceContext{Name: "a"}, list: m.list}}
+	m.focusedSlot = 0
+	m.fleetLoading = map[string]bool{"b": true}
+
+	st := config.LoadStateFrom(t.TempDir())
+	stor, err := session.NewStorage(st, t.TempDir())
+	require.NoError(t, err)
+	msg := workspaceActivatedMsg{
+		name: "b", wsCtx: &config.WorkspaceContext{Name: "b"},
+		storage: stor, appConfig: config.DefaultConfig(), appState: st,
+		instances: []*session.Instance{{Title: "sess", Status: session.Ready}},
+	}
+	m.handleWorkspaceActivated(msg)
+
+	require.Len(t, m.slots, 2)
+	assert.Equal(t, "b", m.slots[1].wsCtx.Name)
+	assert.True(t, m.slots[1].background, "fleet-loaded slot is background")
+	assert.False(t, m.fleetLoading["b"], "loading flag cleared")
+	assert.Equal(t, 0, m.focusedSlot, "focus unchanged by a background load")
+	assert.NotEqual(t, m.list, m.slots[1].list, "background slot has its own list")
+}
+
+func TestHandleWorkspaceActivated_ErrorRecorded(t *testing.T) {
+	m := newTestHome(t)
+	m.fleetLoading = map[string]bool{"b": true}
+	m.handleWorkspaceActivated(workspaceActivatedMsg{name: "b", err: assertErr})
+	assert.Empty(t, m.slots)
+	assert.False(t, m.fleetLoading["b"])
+	assert.Error(t, m.fleetLoadErrors["b"])
+}
+
+func TestHandleWorkspaceActivated_DuplicateDiscarded(t *testing.T) {
+	m := newTestHome(t)
+	m.slots = []workspaceSlot{
+		{wsCtx: &config.WorkspaceContext{Name: "a", ConfigDir: "/x/a"}, list: m.list},
+	}
+	m.focusedSlot = 0
+	m.fleetLoading = map[string]bool{"a": true}
+	m.handleWorkspaceActivated(workspaceActivatedMsg{
+		name: "a", wsCtx: &config.WorkspaceContext{Name: "a", ConfigDir: "/x/a"},
+	})
+	assert.Len(t, m.slots, 1, "duplicate ConfigDir discarded")
+}
+
+var assertErr = fmt.Errorf("boom")
