@@ -70,3 +70,30 @@ func TestMarkdownPane_ReRendersOnThemeChange(t *testing.T) {
 	t.Cleanup(func() { ApplyTheme("afterglow") })
 	assert.NotEqual(t, before, p.View(), "stale generation must trigger re-render")
 }
+
+func TestMarkdownPane_HeightResizeClampsScroll(t *testing.T) {
+	p := newTestMDPane()
+	var b strings.Builder
+	for i := 0; i < 100; i++ {
+		b.WriteString("line\n\n")
+	}
+	p.SetDocument("/tmp/x/plan.md", b.String(), time.Now())
+	p.ScrollBottom()
+
+	p.SetSize(60, 60)
+	after := p.View()
+	// Growing the pane shrinks maxScroll; a stale scroll must have been
+	// clamped down to it. If we were already at (the new) bottom,
+	// scrolling further down is a no-op.
+	p.ScrollDown()
+	assert.Equal(t, after, p.View(), "scroll must already be clamped to the new, smaller maxScroll")
+}
+
+func TestMarkdownPane_ClearZeroesMtime(t *testing.T) {
+	p := newTestMDPane()
+	p.SetDocument("/tmp/x.md", "# Hi\n", time.Now())
+	require.False(t, p.Mtime().IsZero())
+
+	p.Clear()
+	assert.True(t, p.Mtime().IsZero(), "Clear must zero mtime so a later save-conflict guard can't compare against a dead file")
+}

@@ -94,6 +94,7 @@ func (m *MarkdownPane) SetDocument(path, raw string, mtime time.Time) {
 // Clear empties the pane (file deleted / no markdown in tree).
 func (m *MarkdownPane) Clear() {
 	m.path, m.raw, m.rendered, m.scroll = "", "", nil, 0
+	m.mtime = time.Time{}
 }
 
 func (m *MarkdownPane) bodyHeight() int { return max(m.height-2, 0) }
@@ -127,6 +128,7 @@ func (m *MarkdownPane) ensureRendered() {
 		return
 	}
 	if m.rendered != nil && m.renderedGen == mdStyleGen && m.renderedWidth == m.width {
+		m.clampScroll()
 		return
 	}
 	src := m.raw
