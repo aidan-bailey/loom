@@ -292,6 +292,40 @@ func TestWbSaveMsg_ConflictOpensConfirm(t *testing.T) {
 	assert.NotNil(t, m.pendingConfirmation.Async, "confirm must carry the force save")
 }
 
+// TestWbSaveMsg_ConflictDroppedWhenConfirmAlreadyOpen carries forward the
+// Task 10 review fix: a save conflict must never clobber an already-open
+// confirmation (e.g. the esc discard-edit confirm) — otherwise the user's
+// next "yes" press would silently execute a force overwrite instead of
+// the discard they actually confirmed.
+func TestWbSaveMsg_ConflictDroppedWhenConfirmAlreadyOpen(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	sel := m.list.GetSelectedInstance()
+	require.NotNil(t, sel)
+
+	md := m.workbench.Markdown
+	md.SetDocument("/tmp/doc.md", "old", time.Now())
+	require.True(t, md.StartEdit())
+	md.HandleEditKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	require.True(t, md.EditDirty(), "edit must be dirty to trigger the discard confirm")
+
+	_, _ = handleStateDefaultKey(m, wbKey("esc"))
+	require.Equal(t, stateConfirm, m.state, "esc on a dirty edit must open the discard confirm")
+	require.Nil(t, m.pendingConfirmation.Async, "discard confirm carries only a Sync step")
+	require.NotNil(t, m.pendingConfirmation.Sync, "discard confirm must have a pending Sync step")
+	require.True(t, md.Editing(), "edit stays open until the user actually confirms")
+
+	m.Update(wbSaveMsg{title: sel.Title, path: "/tmp/other.md", content: "new", conflict: true})
+
+	assert.Equal(t, stateConfirm, m.state,
+		"the open discard confirm must survive an incoming save conflict")
+	assert.Nil(t, m.pendingConfirmation.Async,
+		"the conflict must not smuggle a force-save Async step into the open confirm")
+	assert.True(t, md.Editing(),
+		"the pending discard confirm must remain armed, not silently resolved")
+}
+
 // TestWbLoadMsg_FollowWhilePinnedDropped pins the Task 9 review fix: a
 // stale in-flight follow load must not clobber (and un-pin) a document
 // the user just pinned.

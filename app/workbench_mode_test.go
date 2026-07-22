@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -188,6 +190,77 @@ func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 		"in-progress markdown edit must be canceled")
 	assert.Same(t, m.slots[1].workbench, m.workbench,
 		"target slot's workbench must be live after the switch")
+}
+
+// TestWorkbench_WheelOverRightPanelScrollsMarkdown pins the mouse-wheel
+// routing split: wheel events at/past wbLeftWidth scroll the active
+// right-panel tab (markdown here) instead of the hidden focus split.
+func TestWorkbench_WheelOverRightPanelScrollsMarkdown(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	require.Equal(t, viewWorkbench, m.viewMode)
+	require.Equal(t, ui.WbTabMarkdown, m.workbench.Tab())
+
+	m.wbLeftWidth = 40
+	m.workbench.SetSize(40, 10) // small body so a big document overflows and can scroll
+	var doc strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&doc, "line %d\n", i)
+	}
+	m.workbench.Markdown.SetDocument("/tmp/doc.md", doc.String(), time.Now())
+	require.Equal(t, 0, m.workbench.Markdown.Scroll())
+
+	_, cmd := m.Update(tea.MouseWheelMsg{X: 50, Y: 5, Button: tea.MouseWheelDown})
+	assert.Nil(t, cmd)
+	assert.Equal(t, 1, m.workbench.Markdown.Scroll(),
+		"wheel-down over the right panel must scroll the markdown pane")
+
+	_, cmd = m.Update(tea.MouseWheelMsg{X: 50, Y: 5, Button: tea.MouseWheelUp})
+	assert.Nil(t, cmd)
+	assert.Equal(t, 0, m.workbench.Markdown.Scroll(),
+		"wheel-up over the right panel must scroll the markdown pane back")
+}
+
+// TestWorkbench_WheelOverLeftHalfDoesNotScrollMarkdown pins the other
+// side of the split: wheel events left of wbLeftWidth are routed to the
+// agent pane via the split machinery, never to the right-panel tab.
+func TestWorkbench_WheelOverLeftHalfDoesNotScrollMarkdown(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	require.Equal(t, viewWorkbench, m.viewMode)
+
+	m.wbLeftWidth = 40
+	m.workbench.SetSize(40, 10)
+	var doc strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&doc, "line %d\n", i)
+	}
+	m.workbench.Markdown.SetDocument("/tmp/doc.md", doc.String(), time.Now())
+	require.Equal(t, 0, m.workbench.Markdown.Scroll())
+
+	_, cmd := m.Update(tea.MouseWheelMsg{X: 10, Y: 5, Button: tea.MouseWheelDown})
+	assert.Nil(t, cmd)
+	assert.Equal(t, 0, m.workbench.Markdown.Scroll(),
+		"wheel events left of wbLeftWidth must not touch the right-panel tab")
+}
+
+// TestWorkbench_WheelOverTerminalTabNoOps pins the v1 simplification:
+// the terminal tab shares scroll state with the hidden focus split, so
+// a wheel over the right panel while it's active must not touch the
+// (invisible-to-the-user) split terminal scroll.
+func TestWorkbench_WheelOverTerminalTabNoOps(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	m.workbench.SetTab(ui.WbTabTerminal)
+	m.wbLeftWidth = 40
+	m.workbench.SetSize(40, 10)
+
+	_, cmd := m.Update(tea.MouseWheelMsg{X: 50, Y: 5, Button: tea.MouseWheelDown})
+	assert.Nil(t, cmd)
+	assert.Equal(t, viewWorkbench, m.viewMode, "wheel over the terminal tab must not disturb workbench mode")
 }
 
 // TestWorkbench_EnterWithNoInstanceNoOps pins the empty-list guard:

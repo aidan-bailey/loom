@@ -134,3 +134,35 @@ Mirrors `app/overview_mode_test.go` conventions:
 - Side-by-side raw/preview markdown editing.
 - Auto-follow of non-markdown files.
 - fsnotify-based instant follow.
+
+## Deviations (v1)
+
+Where the shipped implementation diverged from this spec, and why:
+
+- **No separate full-width session header.** Branch name and diff stats
+  already live in the agent pane's title border (same as focus mode), so a
+  dedicated header row would have duplicated that information for no
+  benefit.
+- **Conflict dialog is binary (overwrite / cancel), not the three-way
+  overwrite / reload / cancel this spec originally called for.** "Reload"
+  collapses to cancel + `esc` + letting follow mode re-load the file
+  naturally — a fourth confirmation-overlay branch wasn't worth the
+  complexity for a case that resolves the same way through existing keys.
+- **Mouse wheel over the terminal tab no-ops.** The terminal tab shares
+  scroll state with the hidden focus-mode split, and there is no hardware
+  cursor while attached to it in workbench mode. Drag-select works on the
+  agent pane only — the terminal tab's `HitTest` region isn't wired for it
+  in v1.
+- **Workbench does not survive implicit workspace slot switches.**
+  Workspace nav keys, the workspace picker, and a cross-workspace `]`/`[`
+  jump all exit cleanly to focus mode in the target workspace rather than
+  carrying the workbench across; a same-slot `]`/`[` jump retargets the
+  panel to the new session instead of leaving the mode.
+- **`g`/`G` and `pgup`/`pgdown` route per-tab, not uniformly.** `g`/`G` jump
+  to top/bottom on the diff, files, and markdown tabs; `pgup`/`pgdown` only
+  page the markdown and diff tabs (files and terminal have no page-scroll
+  concept in v1).
+- **Workbench mode is never persisted across restarts, by design** (this
+  matches the spec's "out of scope" call), but `tab`'s hop from workbench to
+  overview *does* persist the resulting overview mode — consistent with the
+  existing focus-mode `tab` toggle, which also persists.

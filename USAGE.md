@@ -61,10 +61,11 @@ nix run .
 
 ## TUI Layout
 
-Loom has two view modes, toggled with `tab`:
+Loom has three view modes:
 
-- **Focus mode** (the default, shown below) — a session rail on the left plus the selected session's agent and terminal panes on the right.
+- **Focus mode** (the default, shown below) — a session rail on the left plus the selected session's agent and terminal panes on the right. Toggle to overview with `tab`.
 - **Overview mode** — a full-width fleet card grid for triaging many sessions at once. See [Overview Mode](#overview-mode).
+- **Session workbench** — a single-session deep-dive: the agent pane on the left, a tabbed panel (markdown / diff / files / terminal) on the right. Press `enter` in focus mode to open it. See [Session Workbench](#session-workbench).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -113,7 +114,31 @@ Press `tab` to switch to overview: a card grid of every session in your open wor
 - `n`/`N` drop back to focus mode first, then open the create flow.
 - Focus-only keys (attach, quick input, scroll, diff, file explorer) are inactive here, and mouse input is ignored in overview (v1).
 
-The current view mode persists per workspace — switching workspaces restores whichever mode that workspace last used, and it survives restarts.
+The current view mode persists per workspace — switching workspaces restores whichever mode that workspace last used, and it survives restarts. Workbench mode is the exception — see below.
+
+### Session Workbench
+
+Press `enter` on a selected session in focus mode to open the workbench: a single-session deep-dive with the agent pane on the left and a tabbed panel on the right (default 50/50 split). It reuses the focus-mode split's terminal for its Terminal tab, so the split's own terminal pane is hidden for the duration.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    │  1 Markdown  2 Diff  3 Files  4 Terminal        │
+│     AGENT PANE     ├────────────────────────────────────────────────┤
+│   (ctrl+a/i to     │                                                │
+│     interact)      │              PANEL CONTENT                     │
+│                     │      (markdown / diff / files / terminal)      │
+│                     │                                                │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- **Tabs** — `1` Markdown, `2` or `d` Diff, `3` Files, `4` (or `t`/`ctrl+t`) Terminal.
+- **Markdown tab** — follows the most-recently-modified markdown file in the session's worktree by default (a lightweight scan rides the same 3-second health tick used elsewhere). Press `f` to resume following after you've pinned a file; opening a file from the Files tab (`enter` on a `.md` entry) pins it until you follow again. Press `e` to edit in place; `ctrl+s` saves, `esc` cancels (prompting to discard if the buffer is dirty). If the file changed on disk since it was loaded, saving prompts to overwrite rather than silently clobbering the external edit — choose overwrite or cancel (there's no separate "reload"; cancel, then `esc` out and let follow/re-open pick up the latest content).
+- **Diff tab** — the same git-diff view as focus mode's `d` overlay, scoped to this session.
+- **Files tab** — a flat listing of the session's worktree; `enter` on a markdown file opens it in the Markdown tab.
+- **Terminal tab** — the shared terminal pane; `t`/`ctrl+t` inline-attach, `alt+t` full-screen attach, same as focus mode. Mouse wheel and hardware cursor are unavailable on this tab in v1.
+- **Resize** — `ctrl+left` / `ctrl+right` adjust the agent/panel split in 5% steps (20–80% range), remembered per session title.
+- **Navigation** — `g`/`G` jump to the top/bottom of the active tab; `pgup`/`pgdown` page the markdown and diff tabs; mouse wheel scrolls the pane under the cursor (agent pane on the left, active tab on the right). `]`/`[` still jump to the next/previous agent waiting for input — within the same workspace slot this retargets the workbench to that session, while a cross-workspace jump exits cleanly to focus mode on the target.
+- **Exit** — `esc` returns to focus mode; `tab` exits straight to overview. Workbench mode is never persisted across restarts, and it does not survive an implicit workspace switch (workspace nav, the picker, or a cross-workspace `]`/`[` jump lands you in the target workspace's focus mode instead).
 
 ### Right Panel — Agent & Terminal Panes
 
@@ -269,6 +294,30 @@ Session-lifecycle keys (`D`, `r`, `R`), workspace keys, and `q`/`?`/`W`/`S` keep
 | `Tab` | Return to focus mode |
 | `z` | Collapse/expand the active workspace group |
 | `]` / `[` | Jump to next/previous agent waiting for input |
+| `n` / `N` | Drop to focus mode, then open the create flow |
+
+### Session Workbench (after pressing `Enter` on a selected session)
+
+Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive.
+
+| Key | Action |
+|-----|--------|
+| `1` | Markdown tab |
+| `2` / `d` | Diff tab |
+| `3` | Files tab |
+| `4` / `t` / `Ctrl+T` | Terminal tab (also inline-attaches on `t`/`Ctrl+T`) |
+| `Alt+T` | Full-screen attach to the terminal tab |
+| `e` | Edit the markdown tab's document |
+| `f` | Resume following the worktree's most-recently-modified markdown file |
+| `Enter` | On the Files tab: open the file under the cursor (markdown files load into the Markdown tab) |
+| `↑` / `k`, `↓` / `j` | Scroll the active tab (or move the file cursor on the Files tab) |
+| `g` / `G` | Jump to top/bottom of the active tab |
+| `PgUp` / `PgDn` | Page the Markdown or Diff tab |
+| `Ctrl+←` / `Ctrl+→` | Resize the agent/panel split (remembered per session) |
+| *(mouse wheel)* | Scroll the pane under the cursor — agent pane on the left, active tab on the right (no-op on the Terminal tab) |
+| `Ctrl+S` | (editing) Save the markdown document |
+| `Esc` | (editing) Cancel the edit, confirming first if there are unsaved changes; (otherwise) return to focus mode |
+| `Tab` | Exit straight to overview mode |
 | `n` / `N` | Drop to focus mode, then open the create flow |
 
 ### Name Entry Mode (after pressing `n` or `N`)
@@ -554,7 +603,7 @@ The easiest way to switch is the settings overlay: press `S`, move to the **Them
 
 ### UI Layout Persistence
 
-Layout tweaks are remembered per workspace in `state.json` (under a `ui` block): the current view mode (focus/overview), rail visibility (`\`), terminal pane visibility (`T`), and the agent/terminal split ratio (`Ctrl+↑`/`Ctrl+↓`, stored per session title). Everything is restored on the next launch or workspace switch; there is nothing to configure by hand.
+Layout tweaks are remembered per workspace in `state.json` (under a `ui` block): the current view mode (focus/overview), rail visibility (`\`), terminal pane visibility (`T`), the agent/terminal split ratio (`Ctrl+↑`/`Ctrl+↓`, stored per session title), and the workbench's agent/panel split ratio (`Ctrl+←`/`Ctrl+→`, also stored per session title). Everything is restored on the next launch or workspace switch; there is nothing to configure by hand. Workbench mode itself is the one exception — it's never persisted, so a restart or workspace switch always lands in focus mode.
 
 ### Claude Remote Control
 

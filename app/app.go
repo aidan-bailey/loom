@@ -1377,6 +1377,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.handleError(msg.err)
 		}
 		if msg.conflict {
+			if m.state == stateConfirm {
+				// Never replace an open confirmation — e.g. a pending
+				// discard-edit confirm — with the save conflict: the
+				// user's next "yes" must not silently turn into a force
+				// overwrite of a different action. Drop it; the user can
+				// re-save once the current confirm resolves.
+				return m, nil
+			}
 			return m, m.confirmTask(
 				filepath.Base(msg.path)+" changed on disk — overwrite?",
 				overlay.ConfirmationTask{
@@ -1403,6 +1411,32 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// agentBottomY) describe the focus layout and are meaningless
 		// over the overview grid, so overview ignores the mouse entirely.
 		if m.viewMode == viewOverview {
+			return m, nil
+		}
+		if m.viewMode == viewWorkbench {
+			mouse := msg.Mouse()
+			if mouse.Button != tea.MouseWheelUp && mouse.Button != tea.MouseWheelDown {
+				return m, nil
+			}
+			if mouse.X >= m.wbLeftWidth {
+				// Right panel: scroll the active tab (terminal tab
+				// no-ops in v1 — its scroll state is shared with the
+				// hidden focus split).
+				if m.workbench.Tab() != ui.WbTabTerminal {
+					if mouse.Button == tea.MouseWheelUp {
+						m.workbenchScrollUp()
+					} else {
+						m.workbenchScrollDown()
+					}
+				}
+				return m, nil
+			}
+			// Left half: agent scroll via the existing split machinery.
+			if mouse.Button == tea.MouseWheelUp {
+				m.splitPane.ScrollAgentUp()
+			} else {
+				m.splitPane.ScrollAgentDown()
+			}
 			return m, nil
 		}
 		// Route mouse-wheel events by cursor position. One wheel tick

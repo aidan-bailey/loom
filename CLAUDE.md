@@ -95,14 +95,17 @@ loom --workspace <name>
 | `t` | Quick input bar (send to terminal) |
 | `d` | Toggle diff overlay |
 | `up`/`k`, `down`/`j` | Navigate sessions |
-| `tab` | Toggle overview (fleet card grid) / focus mode |
-| `]` / `[` | Jump to next/prev agent waiting for input (Prompting or bell; spans **all open workspaces** — in focus mode crosses workspaces, switching the focused tab; in overview it moves only the cursor, no focus switch; wraps) |
+| `tab` | Toggle overview (fleet card grid) / focus mode (from the workbench, tab exits straight to overview) |
+| `]` / `[` | Jump to next/prev agent waiting for input (Prompting or bell; spans **all open workspaces** — in focus mode crosses workspaces, switching the focused tab; in overview it moves only the cursor, no focus switch; in the workbench, same-slot jumps retarget the panel while cross-workspace jumps exit to focus; wraps) |
 | `\` | Toggle the session rail |
 | `T` | Show/hide the terminal pane |
 | `ctrl+up` / `ctrl+down` | Resize the agent/terminal split (persisted per session title) |
 | `z` | (overview) Collapse/expand the active workspace group |
-| `enter` | (overview) Focus the selected card's workspace + instance (crosses open workspaces) |
-| `esc` | (overview) Return to focus mode |
+| `enter` | (overview) Focus the selected card's workspace + instance (crosses open workspaces); (focus) Open the workbench for the selected session |
+| `esc` | (overview) Return to focus mode; (workbench) Return to focus mode |
+| `1`–`4` | (workbench) Select panel tab (markdown / diff / files / terminal) |
+| `e` / `f` | (workbench) Edit the shown markdown / resume follow mode |
+| `ctrl+left` / `ctrl+right` | (workbench) Resize the agent/panel split (persisted per session) |
 | `W` | Workspace picker |
 | `S` | Open settings |
 | `l`/`{`, `;`/`}` | Previous/next workspace tab |
@@ -193,8 +196,9 @@ Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent act
 - **Pane scroll-back is emulator-owned; the alt-screen filter is ARCHITECTURAL.** tmux client streams live permanently on the alt screen; x/vt only exposes primary-screen scrollback; `vt.NewAltScreenFilter` between pump and emulator is what makes scrollback accumulate at all — removing it silently kills scroll-back (the real-tmux integration test `TestScrollbackAccumulation_RealTmux` pins this). `ScrollModel.AdvanceAndRender` mutates anchor state — exactly once per render pass. TerminalPane's `updateContentSnapshotLocked` releases `t.mu` around CaptureHistory — never add an early return between its Unlock/Lock.
 - **Tmux prefix transition.** `tmux.TmuxPrefix = "loom_"`, `tmux.LegacyTmuxPrefix = "claudesquad_"`. `tmux.RenameLegacySessions` is centralized in `Storage.LoadAndReconcile`, running before per-record reconcile on every load path, so live sessions survive the flip. The orphan sweep accepts both prefixes.
 - **Theme-derived styles must be hook-built.** Any package-level `lipgloss.Style` using a `ui` color role must be constructed inside a `ui.RegisterThemeHook` callback, not in a var initializer — init-time styles capture pre-`ApplyTheme` colors and go stale when the settings overlay switches themes live. Roles only, no literal colors (see `ui/theme.go`).
-- **Overview mode is a `viewMode`, orthogonal to the state machine.** `m.viewMode` (focus/overview) is not an `m.state` value — overlays and per-state handlers work unchanged on top of it. In overview, `state_default.go` gates script dispatch through the `overviewKeyAllowed` whitelist (everything else no-ops rather than acting on an invisible pane), mouse events are dropped, and bell/attention badges clear only on entering focus so the attention-sorted grid stays stable while you look at it. New key work must respect both: add grid-safe keys to the whitelist explicitly, and don't clear attention state from overview handlers.
+- **Overview and workbench are `viewMode`s, orthogonal to the state machine.** `m.viewMode` (focus/overview/workbench) is not an `m.state` value — overlays and per-state handlers work unchanged on top of it. In overview, `state_default.go` gates script dispatch through the `overviewKeyAllowed` whitelist (everything else no-ops rather than acting on an invisible pane), mouse events are dropped, and bell/attention badges clear only on entering focus so the attention-sorted grid stays stable while you look at it. New key work must respect both: add grid-safe keys to the whitelist explicitly, and don't clear attention state from overview handlers.
 - **Overview cursor and nav share one classic-vs-slots split.** `overviewData`'s cursor translation, `moveCursor`/`fleetOrder`, and `jumpWaiting` all key on the same `len(m.slots)==0` classic-vs-workspace-mode split — keep them in sync or nav and render diverge. A stale overview cursor (killed instance, collapsed group) is healed by `normalizeOverviewCursor` at render (`overviewData`) and nav (`moveCursor`) — don't add per-event cursor bookkeeping. The overview only ever renders open workspace slots; there is no background/lazy fleet loading (removed 2026-07-21).
+- **Workbench mode reuses the focus split for its left half.** `viewWorkbench` force-hides the split's terminal (restored from `wbPrevTerminalHidden` on exit — `cleanupWorkbench` is the single teardown choke point, called from `saveCurrentSlot`/`loadSlot` so implicit workspace switches can't leave a half-cleaned workbench) and shares its `TerminalPane` with the right panel via `SplitPane.Terminal()` — `SplitPane.SetSize` must run before `Workbench.SetSize`. The markdown follow scan rides the 3s health tick as a `tea.Cmd`; scan/load/save results are applied only in `Update` handlers, gated on session title to drop stale deliveries. Workbench is never persisted: restart lands in focus. Glamour styles rebuild in a theme hook (`ui/markdown_style.go`); `MarkdownPane` re-renders lazily off the `mdStyleGen` counter.
 
 ### Persistent State
 
