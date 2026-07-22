@@ -164,6 +164,10 @@ type viewMode int
 const (
 	viewFocus viewMode = iota
 	viewOverview
+	// viewWorkbench is the single-session deep-dive: agent split left
+	// (terminal force-hidden), tabbed content panel right. Never
+	// persisted — quit/restart lands in focus.
+	viewWorkbench
 )
 
 // overviewCursor is the fleet overview's selection in domain coordinates.
@@ -181,6 +185,10 @@ type workspaceSlot struct {
 	appState  config.AppState
 	list      *ui.List
 	splitPane *ui.SplitPane
+	// workbench pairs with this slot's splitPane (its terminal tab
+	// shows the slot's shared TerminalPane), swapped onto home by
+	// loadSlot exactly like splitPane.
+	workbench *ui.Workbench
 	// recovery holds the orphan-reconcile summary from this slot's last
 	// activation, surfaced once the slot becomes focused.
 	recovery recoverySummary
@@ -251,6 +259,17 @@ type home struct {
 	// overview renders the fleet-triage card grid when viewMode is
 	// viewOverview.
 	overview *ui.Overview
+	// workbench renders the right content panel when viewMode is
+	// viewWorkbench; the left half is m.splitPane with its terminal
+	// hidden (wbPrevTerminalHidden restores the user's setting on exit).
+	workbench            *ui.Workbench
+	wbPrevTerminalHidden bool
+	// wbLeftWidth is the workbench's agent-column width in screen
+	// cells, cached for mouse-wheel routing (like listWidth).
+	wbLeftWidth int
+	// wbRatio is the in-memory agent share for the current session
+	// (0 = default). Flushed to UIPrefs.WorkbenchRatios on exit/quit.
+	wbRatio float64
 	// quickInputBar displays the inline input bar for quick interactions
 	quickInputBar *ui.QuickInputBar
 	// errBox displays error messages
@@ -417,13 +436,15 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		return nil, fmt.Errorf("initialize storage: %w", err)
 	}
 
+	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	h := &home{
 		ctx:         ctx,
 		activeCtx:   wsCtx,
 		registry:    registry,
 		spinner:     spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		menu:        ui.NewMenu(),
-		splitPane:   ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		splitPane:   sp,
+		workbench:   ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 		overview:    ui.NewOverview(),
 		errBox:      ui.NewErrBox(),
 		storage:     storage,
@@ -689,8 +710,11 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.lastHeight = msg.Height
 	m.tabBar.SetWidth(msg.Width)
 
+	// Workbench mode has no rail: zero the list width (mirroring the
+	// railHidden path) so the cached m.listWidth mouse anchor is correct.
+	inWorkbench := m.viewMode == viewWorkbench && m.workbench != nil
 	listWidth := int(float32(msg.Width) * ui.ListWidthPercent)
-	if m.railHidden {
+	if m.railHidden || inWorkbench {
 		listWidth = 0
 	}
 	paneWidth := msg.Width - listWidth
@@ -703,7 +727,17 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	if m.state == stateQuickInteract && m.quickInputBar != nil {
 		m.quickInputBar.SetWidth(int(float32(msg.Width) * 0.5))
 	}
-	m.splitPane.SetSize(paneWidth, contentHeight)
+	if inWorkbench {
+		// ORDERING CONTRACT: SplitPane.SetSize zeroes the hidden
+		// terminal; Workbench.SetSize afterwards re-sizes it for the
+		// panel when its tab is active.
+		leftW := int(float64(msg.Width) * m.workbenchRatio())
+		m.splitPane.SetSize(leftW, contentHeight)
+		m.workbench.SetSize(msg.Width-leftW, contentHeight)
+		m.wbLeftWidth = leftW
+	} else {
+		m.splitPane.SetSize(paneWidth, contentHeight)
+	}
 	m.list.SetSize(listWidth, contentHeight)
 	if m.overview != nil { // bare test homes may not construct one
 		m.overview.SetSize(msg.Width, contentHeight)
@@ -1794,8 +1828,10 @@ func (m *home) showRecoverySummary(s recoverySummary) {
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	// Persist any not-yet-flushed split resize before exit (the throttle
 	// tick may still be in flight; covers the single-slot path too, where
-	// saveCurrentSlot below is a no-op).
+	// saveCurrentSlot below is a no-op). The workbench ratio flushes the
+	// same way — it is only written on workbench exit otherwise.
 	m.flushPendingRatioSaves()
+	m.flushWorkbenchRatio()
 	if len(m.slots) > 0 {
 		m.saveCurrentSlot()
 		var firstErr error
@@ -2465,6 +2501,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		appState:  state,
 		list:      list,
 		splitPane: splitPane,
+		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitPane.Terminal()),
 		recovery:  recovery,
 	})
 	return nil
@@ -2519,6 +2556,7 @@ func (m *home) saveCurrentSlot() {
 	s := &m.slots[m.focusedSlot]
 	s.list = m.list
 	s.splitPane = m.splitPane
+	s.workbench = m.workbench
 	s.storage = m.storage
 	s.appConfig = m.appConfig
 	s.appState = m.appState
@@ -2534,6 +2572,12 @@ func (m *home) loadSlot(idx int) {
 	m.activeCtx = slot.wsCtx
 	m.list = slot.list
 	m.splitPane = slot.splitPane
+	// The workbench travels with its splitPane (its terminal tab shows
+	// the slot's shared TerminalPane). Nil-guarded for test slots built
+	// without one.
+	if slot.workbench != nil {
+		m.workbench = slot.workbench
+	}
 	m.storage = slot.storage
 	m.appConfig = slot.appConfig
 	m.appState = slot.appState
@@ -3110,6 +3154,11 @@ func (m *home) View() tea.View {
 	var mainContent string
 	if m.viewMode == viewOverview && m.state != stateFileExplorer {
 		mainContent = m.overview.Render(m.overviewData())
+	} else if m.viewMode == viewWorkbench && m.state != stateFileExplorer {
+		// Workbench: agent split (terminal hidden) left, tabbed content
+		// panel right. The rail is not rendered — listWidth is zeroed by
+		// the sizing branch.
+		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, m.splitPane.String(), m.workbench.String())
 	} else {
 		listView := ""
 		if !m.railHidden {
@@ -3144,6 +3193,8 @@ func (m *home) View() tea.View {
 		hint := "tab overview · ] next waiting · \\ rail · ? help · q quit"
 		if m.viewMode == viewOverview {
 			hint = "enter focus · ] next waiting · z collapse · n new · tab/esc focus · q quit"
+		} else if m.viewMode == viewWorkbench {
+			hint = "esc focus · 1-4 panel · e edit · f follow · i attach · ] next waiting · q quit"
 		}
 		statusLine := statusLineStyle.Render(hint)
 		sections = append(sections, mainContent, statusLine, m.errBox.String())
@@ -3236,6 +3287,16 @@ func (m *home) attachCursor(v *tea.View) {
 	if m.viewMode == viewOverview {
 		return
 	}
+	// Workbench: only the agent split (left column, x-offset 0) shows a
+	// live pane cursor. The terminal pane is force-hidden inside the
+	// split, so a non-agent pane focus has no on-screen cursor cell.
+	xOff := m.listWidth
+	if m.viewMode == viewWorkbench {
+		if m.splitPane.GetFocusedPane() != ui.FocusAgent {
+			return
+		}
+		xOff = 0
+	}
 	if m.state != stateDefault && m.state != stateInlineAttach {
 		return
 	}
@@ -3248,7 +3309,7 @@ func (m *home) attachCursor(v *tea.View) {
 	}
 	// Same screen↔split mapping the mouse path uses:
 	// HitTest(mouse.X - m.listWidth, mouse.Y - m.tabBar.Height()).
-	c := tea.NewCursor(m.listWidth+lx, m.tabBar.Height()+ly)
+	c := tea.NewCursor(xOff+lx, m.tabBar.Height()+ly)
 	c.Blink = cur.Blink
 	switch cur.Shape {
 	case vt.CursorShapeUnderline:

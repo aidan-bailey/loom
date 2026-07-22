@@ -45,6 +45,14 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
+	if m.viewMode == viewWorkbench {
+		if model, cmd, handled := handleWorkbenchKey(m, msg); handled {
+			return model, cmd
+		}
+		if !workbenchKeyAllowed[msg.String()] {
+			return m, nil
+		}
+	}
 	if m.viewMode == viewOverview {
 		switch msg.String() {
 		case "enter":
@@ -110,6 +118,18 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.splitPane.ResetTerminalToNormalMode()
 			return m, m.instanceChanged()
 		}
+	}
+
+	// Enter in focus mode opens the workbench deep-dive on the selected
+	// instance. Intercepted here rather than script-bound: the overview
+	// branch has already returned for its own enter, and defaults.lua
+	// does not bind "enter", so this adds behavior without stealing any
+	// existing binding.
+	if msg.String() == "enter" && m.viewMode == viewFocus {
+		if cmd := m.enterWorkbench(); cmd != nil {
+			return m, cmd
+		}
+		return m, nil
 	}
 
 	if cmd, handled := m.dispatchScript(msg.String()); handled {
