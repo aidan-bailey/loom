@@ -1283,6 +1283,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// must not block the UI loop — gatherMetadataCmd runs wg.Wait() inside
 		// a background Cmd and returns the results via metadataReadyMsg.
 		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty()))
+
+		// Workbench follow scan rides the health tick: cheap stat-walk
+		// of the selected worktree, guarded stale on delivery.
+		if m.viewMode == viewWorkbench {
+			if scan := m.workbenchScanCmd(); scan != nil {
+				cmds = append(cmds, scan)
+			}
+		}
 		return m, tea.Batch(cmds...)
 	case metadataReadyMsg:
 		// Apply results on main thread.
@@ -1319,6 +1327,47 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.updateTabBarStatuses()
 		return m, tickUpdateMetadataCmd
+	case wbScanMsg:
+		title, ok := m.wbCurrentTitle()
+		if !ok || msg.title != title || msg.err != nil {
+			return m, nil
+		}
+		md := m.workbench.Markdown
+		if !md.Following() || md.Editing() {
+			return m, nil
+		}
+		if msg.path == "" {
+			md.Clear()
+			return m, nil
+		}
+		if msg.path == md.Path() && !msg.mtime.After(md.Mtime()) {
+			return m, nil
+		}
+		return m, loadMarkdownCmd(title, msg.path, true)
+	case wbLoadMsg:
+		title, ok := m.wbCurrentTitle()
+		if !ok || msg.title != title {
+			return m, nil
+		}
+		if msg.err != nil {
+			// File vanished between scan and read (agent moved it):
+			// clear and let the next tick's scan re-resolve.
+			m.workbench.Markdown.Clear()
+			return m, nil
+		}
+		if m.workbench.Markdown.Editing() {
+			return m, nil // never clobber an open editor
+		}
+		m.workbench.Markdown.SetDocument(msg.path, msg.raw, msg.mtime)
+		m.workbench.Markdown.SetFollowing(msg.follow)
+		return m, nil
+	case wbFilesMsg:
+		title, ok := m.wbCurrentTitle()
+		if !ok || msg.title != title || msg.err != nil {
+			return m, nil
+		}
+		m.workbench.SetFiles(msg.root, msg.paths)
+		return m, nil
 	case tea.MouseWheelMsg:
 		// v1 simplification: the wheel hit-tests below (listWidth /
 		// agentBottomY) describe the focus layout and are meaningless
@@ -1930,6 +1979,12 @@ func (m *home) instanceChanged() tea.Cmd {
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
 
+	// Workbench heal: the deep-dive lost its instance (last one
+	// killed) — drop back to focus rather than render a dead panel.
+	if m.viewMode == viewWorkbench && selected == nil {
+		m.cleanupWorkbench()
+	}
+
 	// Seen in the grid ≠ attended: in overview the cursor walks the
 	// attention-sorted grid, and clearing the bell on landing would
 	// reshuffle the sort order under the cursor mid-walk. The bell
@@ -1967,13 +2022,28 @@ func (m *home) instanceChanged() tea.Cmd {
 	// Update menu with current instance
 	m.menu.SetInstance(selected)
 
+	// Workbench retarget: selection moved while deep-diving (]/[ jump,
+	// wheel over the rail) — point the panel at the new session and, on
+	// an actual title change, kick a fresh scan + files load.
+	// DiffPane.SetDiff carries its own nil/unstarted fallbacks, so no
+	// extra guard is needed (mirrors SplitPane.UpdateDiff's blind call).
+	var wbRefresh tea.Cmd
+	if m.viewMode == viewWorkbench && selected != nil {
+		prevTitle := m.workbench.SessionTitle()
+		m.workbench.SetSession(selected.Title, selected.GetWorktreePath())
+		m.workbench.Diff().SetDiff(selected)
+		if prevTitle != selected.Title {
+			wbRefresh = m.workbenchRefresh()
+		}
+	}
+
 	if err := m.splitPane.UpdateAgent(selected); err != nil {
 		return m.handleError(err)
 	}
 	if err := m.splitPane.UpdateTerminal(selected); err != nil {
 		return m.handleError(err)
 	}
-	return nil
+	return wbRefresh
 }
 
 type keyupMsg struct{}

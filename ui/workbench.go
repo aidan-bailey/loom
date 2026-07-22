@@ -75,6 +75,10 @@ func (w *Workbench) SetTab(t WorkbenchTab) {
 func (w *Workbench) Root() string    { return w.root }
 func (w *Workbench) Diff() *DiffPane { return w.diff }
 
+// SessionTitle reports the session the panel is currently targeting
+// ("" before the first SetSession).
+func (w *Workbench) SessionTitle() string { return w.sessionTitle }
+
 // SetSession retargets the panel to a different session. Clears the
 // per-session content (document, file list) and resumes follow mode.
 // No-op when the title is unchanged.
@@ -142,6 +146,13 @@ func (w *Workbench) FilesDown() {
 	if w.fileCursor < len(w.files)-1 {
 		w.fileCursor++
 	}
+}
+
+// FilesTop/FilesBottom jump the files cursor to the first/last entry.
+func (w *Workbench) FilesTop() { w.fileCursor = 0 }
+
+func (w *Workbench) FilesBottom() {
+	w.fileCursor = max(len(w.files)-1, 0)
 }
 
 // FileUnderCursor resolves the cursor to an absolute path.
