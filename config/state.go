@@ -49,6 +49,10 @@ type UIPrefs struct {
 	RailHidden     bool               `json:"rail_hidden,omitempty"`
 	TerminalHidden bool               `json:"terminal_hidden,omitempty"`
 	SplitRatios    map[string]float64 `json:"split_ratios,omitempty"`
+	// WorkbenchRatios maps session title → agent-pane width share in
+	// workbench mode (sibling of SplitRatios, which is the focus-mode
+	// vertical split).
+	WorkbenchRatios map[string]float64 `json:"workbench_ratios,omitempty"`
 }
 
 // clone deep-copies the prefs so callers can mutate the returned value
@@ -59,6 +63,12 @@ func (p UIPrefs) clone() UIPrefs {
 		out.SplitRatios = make(map[string]float64, len(p.SplitRatios))
 		for k, v := range p.SplitRatios {
 			out.SplitRatios[k] = v
+		}
+	}
+	if p.WorkbenchRatios != nil {
+		out.WorkbenchRatios = make(map[string]float64, len(p.WorkbenchRatios))
+		for k, v := range p.WorkbenchRatios {
+			out.WorkbenchRatios[k] = v
 		}
 	}
 	return out
