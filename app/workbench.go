@@ -43,16 +43,34 @@ func (m *home) enterWorkbench() tea.Cmd {
 	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), m.workbenchRefresh())
 }
 
-// exitWorkbench returns to `to` (viewFocus or viewOverview),
-// restoring the split terminal and flushing the ratio.
-func (m *home) exitWorkbench(to viewMode) tea.Cmd {
+// cleanupWorkbench tears down workbench-mode state: flushes the ratio,
+// cancels any in-progress markdown edit, restores the split terminal to
+// its pre-entry setting, and lands in focus mode. Idempotent — no-op
+// unless currently in workbench mode. Shared by exitWorkbench (explicit
+// esc/tab) and the slot-switch choke points saveCurrentSlot/loadSlot:
+// workbench mode does not survive an implicit workspace switch (v1
+// design decision — a half-cleaned workbench is worse than landing in
+// the target workspace's focus mode).
+func (m *home) cleanupWorkbench() {
+	if m.viewMode != viewWorkbench {
+		return
+	}
 	m.flushWorkbenchRatio()
 	// Reset after the flush: handleQuit also flushes, and a stale
 	// non-zero ratio would otherwise be re-written later under whatever
 	// instance happens to be selected at quit time.
 	m.wbRatio = 0
-	m.workbench.Markdown.CancelEdit()
+	if m.workbench != nil {
+		m.workbench.Markdown.CancelEdit()
+	}
 	m.splitPane.SetTerminalHidden(m.wbPrevTerminalHidden)
+	m.viewMode = viewFocus
+}
+
+// exitWorkbench returns to `to` (viewFocus or viewOverview),
+// restoring the split terminal and flushing the ratio.
+func (m *home) exitWorkbench(to viewMode) tea.Cmd {
+	m.cleanupWorkbench()
 	m.viewMode = to
 	if to == viewOverview {
 		m.enterOverview()

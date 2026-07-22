@@ -2542,6 +2542,10 @@ func (m *home) deactivateWorkspace(name string) error {
 
 // saveCurrentSlot writes the home's active UI fields back into the focused slot.
 func (m *home) saveCurrentSlot() {
+	// Workbench mode does not survive a slot switch: tear it down while
+	// the departing slot's splitPane/appState are still active, so the
+	// terminal-hidden restore and ratio flush land on the right slot.
+	m.cleanupWorkbench()
 	// Flush pending split-ratio saves into THIS slot's state.json before
 	// the slot swap: the pending map would otherwise survive the switch
 	// and the armed throttle tick would drain slot A's title→ratio into
@@ -2567,6 +2571,11 @@ func (m *home) loadSlot(idx int) {
 	if idx < 0 || idx >= len(m.slots) {
 		return
 	}
+	// Second workbench choke point (idempotent — saveCurrentSlot already
+	// ran it on most paths): the workspace-registration flow reaches
+	// loadSlot without a preceding saveCurrentSlot, and cleanup here
+	// still sees the departing slot's fields (the swap is below).
+	m.cleanupWorkbench()
 	slot := m.slots[idx]
 	m.focusedSlot = idx
 	m.activeCtx = slot.wsCtx

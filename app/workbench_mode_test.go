@@ -2,11 +2,14 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 )
 
@@ -120,6 +123,71 @@ func TestWorkbench_NonWhitelistedKeysNoOp(t *testing.T) {
 			"key %q must not leave workbench mode", k)
 		assert.Nil(t, cmd, "non-whitelisted key %q must not dispatch in workbench", k)
 	}
+}
+
+// TestWorkbench_SlotSwitchCleansUp pins the v1 rule that workbench mode
+// does not survive an implicit workspace slot switch: the departing
+// slot's terminal-hidden setting is restored, any in-progress markdown
+// edit is canceled, and the mode drops out of workbench — the exact
+// saveCurrentSlot → loadSlot sequence every switch path (workspace nav
+// keys, picker toggle, cross-workspace jumps) runs.
+func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+
+	stateB := config.LoadStateFrom(t.TempDir())
+	storageB, err := session.NewStorage(stateB, t.TempDir())
+	require.NoError(t, err)
+	listB := ui.NewList(&m.spinner)
+	splitB := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+	m.slots = []workspaceSlot{
+		{
+			wsCtx:     &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()},
+			storage:   m.storage,
+			appConfig: m.appConfig,
+			appState:  m.appState,
+			list:      m.list,
+			splitPane: m.splitPane,
+			workbench: m.workbench,
+		},
+		{
+			wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
+			storage:   storageB,
+			appConfig: config.DefaultConfig(),
+			appState:  stateB,
+			list:      listB,
+			splitPane: splitB,
+			workbench: ui.NewWorkbench(ui.NewDiffPane(), splitB.Terminal()),
+		},
+	}
+	m.focusedSlot = 0
+	m.activeCtx = m.slots[0].wsCtx
+
+	departingSplit := m.splitPane
+	departingWb := m.workbench
+	require.False(t, departingSplit.IsTerminalHidden(), "terminal visible before entry")
+
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	require.Equal(t, viewWorkbench, m.viewMode)
+	require.True(t, departingSplit.IsTerminalHidden())
+
+	// Start a markdown edit so cleanup has something to cancel.
+	departingWb.Markdown.SetDocument("notes.md", "# hi", time.Now())
+	require.True(t, departingWb.Markdown.StartEdit())
+	require.True(t, departingWb.Markdown.Editing())
+
+	// The choke-point sequence every implicit switch path runs.
+	m.saveCurrentSlot()
+	m.loadSlot(1)
+
+	assert.NotEqual(t, viewWorkbench, m.viewMode,
+		"workbench must not survive a slot switch")
+	assert.False(t, departingSplit.IsTerminalHidden(),
+		"departing slot's terminal-hidden must be restored to its pre-entry value")
+	assert.False(t, departingWb.Markdown.Editing(),
+		"in-progress markdown edit must be canceled")
+	assert.Same(t, m.slots[1].workbench, m.workbench,
+		"target slot's workbench must be live after the switch")
 }
 
 // TestWorkbench_EnterWithNoInstanceNoOps pins the empty-list guard:
