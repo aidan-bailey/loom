@@ -1326,6 +1326,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.updateTabBarStatuses()
+		// A user parked on the workbench's diff tab generates none of the
+		// nav traffic that refreshes the diff in focus mode, so ride the
+		// metadata tick: re-render from the just-updated diff stats so the
+		// tab tracks the agent's work live.
+		if m.viewMode == viewWorkbench && m.workbench != nil && m.workbench.Tab() == ui.WbTabDiff {
+			if selected := m.list.GetSelectedInstance(); selected != nil {
+				m.workbench.Diff().SetDiff(selected)
+			}
+		}
 		return m, tickUpdateMetadataCmd
 	case wbScanMsg:
 		title, ok := m.wbCurrentTitle()
@@ -1431,7 +1440,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			// Left half: agent scroll via the existing split machinery.
+			// Left half: agent scroll via the existing split machinery —
+			// same paused/nil bail as the focus-mode wheel path below.
+			// (The right-half panel scrolls above are local pane state
+			// and deliberately stay unguarded.)
+			selected := m.list.GetSelectedInstance()
+			if selected == nil || selected.GetStatus() == session.Paused {
+				return m, nil
+			}
 			if mouse.Button == tea.MouseWheelUp {
 				m.splitPane.ScrollAgentUp()
 			} else {
@@ -2851,6 +2867,12 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 // PTYs that are already attached elsewhere — the safety constraint
 // documented at the classic-mode-load comment higher up doesn't apply.
 func (m *home) enterGlobalMode() tea.Cmd {
+	// Picker escape hatch (W → deselect-all) reaches here without the
+	// saveCurrentSlot/loadSlot choke points — clean up workbench residue
+	// (wbRatio flush, split-terminal restore) while the workspace slot's
+	// appState is still current, or handleQuit later flushes it into the
+	// wrong (global) state.json.
+	m.cleanupWorkbench()
 	// Deactivate every workspace tab. Each slot persists its own
 	// instances via deactivateWorkspace before being dropped.
 	for i := len(m.slots) - 1; i >= 0; i-- {

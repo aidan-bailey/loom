@@ -263,6 +263,52 @@ func TestWorkbench_WheelOverTerminalTabNoOps(t *testing.T) {
 	assert.Equal(t, viewWorkbench, m.viewMode, "wheel over the terminal tab must not disturb workbench mode")
 }
 
+// TestWorkbench_TerminalIntentsKeepSplitTerminalHidden pins the
+// workbench terminal invariant: `t`/`ctrl+t` route to the terminal tab
+// of the panel, and the intent runners they dispatch must NOT un-hide
+// the force-hidden split terminal (two places, one pane) nor persist
+// TerminalHidden=false over the user's focus-mode pref.
+func TestWorkbench_TerminalIntentsKeepSplitTerminalHidden(t *testing.T) {
+	runners := map[string]func(*home) (tea.Model, tea.Cmd){
+		"inline_attach": runInlineAttachTerminal,
+		"quick_input":   runQuickInputTerminal,
+	}
+	for name, runner := range runners {
+		t.Run(name, func(t *testing.T) {
+			m := newWorkbenchTestHome(t)
+			mustAddInstance(t, m, "a")
+			// The user's focus-mode pref is terminal-hidden.
+			m.splitPane.SetTerminalHidden(true)
+			m.mutateUIPrefs(func(p *config.UIPrefs) { p.TerminalHidden = true })
+
+			_, _ = handleStateDefaultKey(m, wbKey("enter"))
+			require.Equal(t, viewWorkbench, m.viewMode)
+			require.True(t, m.splitPane.IsTerminalHidden())
+
+			_, _ = runner(m)
+			assert.True(t, m.splitPane.IsTerminalHidden(),
+				"terminal intent must not un-hide the split terminal in workbench mode")
+			assert.True(t, m.appState.GetUIPrefs().TerminalHidden,
+				"terminal intent must not persist TerminalHidden=false over the focus-mode pref")
+		})
+	}
+}
+
+// TestWorkbench_EnterComputesLeftWidthEagerly pins the eager
+// wbLeftWidth computation: a wheel tick or `4` press arriving before
+// the RequestWindowSize round-trip must already route on the correct
+// split boundary.
+func TestWorkbench_EnterComputesLeftWidthEagerly(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	m.lastWidth = 100
+
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	require.Equal(t, viewWorkbench, m.viewMode)
+	assert.Equal(t, 50, m.wbLeftWidth,
+		"entry must eagerly compute the left-column width from lastWidth * ratio")
+}
+
 // TestWorkbench_EnterWithNoInstanceNoOps pins the empty-list guard:
 // with nothing selected there is no session to deep-dive, so enter
 // stays in focus mode.

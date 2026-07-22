@@ -143,6 +143,47 @@ func TestEnterGlobalMode_ClearsActiveCtxAndSlots(t *testing.T) {
 	assert.NotNil(t, h.list, "list must be reset to a fresh ui.List")
 }
 
+// TestEnterGlobalMode_CleansUpWorkbench guards the picker escape hatch
+// (W → deselect-all) that reaches enterGlobalMode without passing the
+// saveCurrentSlot/loadSlot choke points: workbench residue (wbRatio,
+// force-hidden split terminal) must be cleaned up before the slots are
+// dropped, or handleQuit later flushes the stale ratio into the wrong
+// (global) state.json.
+func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
+	t.Setenv("LOOM_HOME", t.TempDir())
+
+	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	list := ui.NewList(&s)
+	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+
+	h := &home{
+		ctx:       context.Background(),
+		state:     stateDefault,
+		appConfig: config.DefaultConfig(),
+		list:      list,
+		menu:      ui.NewMenu(),
+		splitPane: split,
+		workbench: ui.NewWorkbench(ui.NewDiffPane(), split.Terminal()),
+		tabBar:    ui.NewWorkspaceTabBar(),
+		errBox:    ui.NewErrBox(),
+		activeCtx: &config.WorkspaceContext{Name: "stale-ws"},
+	}
+	// Simulate an active workbench: terminal force-hidden, non-default ratio.
+	h.viewMode = viewWorkbench
+	h.wbPrevTerminalHidden = false
+	h.splitPane.SetTerminalHidden(true)
+	h.wbRatio = 0.7
+
+	h.enterGlobalMode()
+
+	assert.NotEqual(t, viewWorkbench, h.viewMode,
+		"workbench must not survive the workspace → global transition")
+	assert.False(t, h.splitPane.IsTerminalHidden(),
+		"the force-hidden split terminal must be restored")
+	assert.Zero(t, h.wbRatio,
+		"wbRatio residue must be cleared so handleQuit can't flush it into global state.json")
+}
+
 // TestEnterGlobalMode_WithSlots_PersistsAndDeactivates verifies the
 // workspace → global transition properly fires deactivateWorkspace
 // (which saves each slot's instances via slot.storage) before the

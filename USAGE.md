@@ -135,7 +135,7 @@ Press `enter` on a selected session in focus mode to open the workbench: a singl
 - **Markdown tab** — follows the most-recently-modified markdown file in the session's worktree by default (a lightweight scan rides the same 3-second health tick used elsewhere). Press `f` to resume following after you've pinned a file; opening a file from the Files tab (`enter` on a `.md` entry) pins it until you follow again. Press `e` to edit in place; `ctrl+s` saves, `esc` cancels (prompting to discard if the buffer is dirty). If the file changed on disk since it was loaded, saving prompts to overwrite rather than silently clobbering the external edit — choose overwrite or cancel (there's no separate "reload"; cancel, then `esc` out and let follow/re-open pick up the latest content).
 - **Diff tab** — the same git-diff view as focus mode's `d` overlay, scoped to this session.
 - **Files tab** — a flat listing of the session's worktree; `enter` on a markdown file opens it in the Markdown tab.
-- **Terminal tab** — the shared terminal pane; `t`/`ctrl+t` inline-attach, `alt+t` full-screen attach, same as focus mode. Mouse wheel and hardware cursor are unavailable on this tab in v1.
+- **Terminal tab** — the shared terminal pane; `t` opens the quick-input bar, `ctrl+t` inline-attaches, `alt+t` full-screen attaches, same as focus mode. Mouse wheel and hardware cursor are unavailable on this tab in v1.
 - **Resize** — `ctrl+left` / `ctrl+right` adjust the agent/panel split in 5% steps (20–80% range), remembered per session title.
 - **Navigation** — `g`/`G` jump to the top/bottom of the active tab; `pgup`/`pgdown` page the markdown and diff tabs; mouse wheel scrolls the pane under the cursor (agent pane on the left, active tab on the right). `]`/`[` still jump to the next/previous agent waiting for input — within the same workspace slot this retargets the workbench to that session, while a cross-workspace jump exits cleanly to focus mode on the target.
 - **Exit** — `esc` returns to focus mode; `tab` exits straight to overview. Workbench mode is never persisted across restarts, and it does not survive an implicit workspace switch (workspace nav, the picker, or a cross-workspace `]`/`[` jump lands you in the target workspace's focus mode instead).
@@ -305,7 +305,7 @@ Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt
 | `1` | Markdown tab |
 | `2` / `d` | Diff tab |
 | `3` | Files tab |
-| `4` / `t` / `Ctrl+T` | Terminal tab (also inline-attaches on `t`/`Ctrl+T`) |
+| `4` / `t` / `Ctrl+T` | Terminal tab (`t` also opens the quick-input bar, `Ctrl+T` also inline-attaches) |
 | `Alt+T` | Full-screen attach to the terminal tab |
 | `e` | Edit the markdown tab's document |
 | `f` | Resume following the worktree's most-recently-modified markdown file |

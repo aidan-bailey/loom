@@ -166,3 +166,13 @@ Where the shipped implementation diverged from this spec, and why:
   matches the spec's "out of scope" call), but `tab`'s hop from workbench to
   overview *does* persist the resulting overview mode — consistent with the
   existing focus-mode `tab` toggle, which also persists.
+- **Load errors clear the pane, not an in-pane error line.** A binary,
+  unreadable, or vanished file clears the markdown pane back to the empty
+  state rather than rendering an error message in place; the next follow
+  scan re-resolves to the current most-recent file.
+- **The last-selected tab is remembered per workspace slot, not per
+  session.** All sessions in a slot share the panel's tab selection.
+- **Truncation cap is 256 KB, not ~1 MB.**
+- **A pinned file's on-disk changes/deletion are not detected while
+  pinned.** Follow mode owns freshness; unpin with `f` to re-sync a pinned
+  document with disk.

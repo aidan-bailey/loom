@@ -53,6 +53,13 @@ func (m *home) enterWorkbench() tea.Cmd {
 			m.wbRatio = r
 		}
 	}
+	// Eagerly compute the left-column width so a wheel tick or `4` press
+	// arriving before the RequestWindowSize round-trip routes on the
+	// correct split boundary (updateHandleWindowSizeEvent recomputes it
+	// once the round-trip lands).
+	if m.lastWidth > 0 {
+		m.wbLeftWidth = int(float64(m.lastWidth) * m.workbenchRatio())
+	}
 	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), m.workbenchRefresh())
 }
 
@@ -316,7 +323,9 @@ type wbFilesMsg struct {
 
 // workbenchScanCmd builds the follow scan for the selected instance:
 // resolve the worktree's most recently modified markdown file off the
-// Update goroutine and report it via wbScanMsg.
+// Update goroutine and report it via wbScanMsg. Recoverable instances
+// are intentionally scannable: they report Started()=true with a real
+// on-disk worktree, and the scan is read-only and harmless.
 func (m *home) workbenchScanCmd() tea.Cmd {
 	sel := m.list.GetSelectedInstance()
 	if sel == nil || !sel.Started() || sel.Paused() {

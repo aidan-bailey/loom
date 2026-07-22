@@ -506,6 +506,14 @@ func runInlineAttachAgent(m *home) (tea.Model, tea.Cmd) {
 // terminal — show it. Re-layout rides the tea.RequestWindowSize the
 // callers already return.
 func (m *home) ensureTerminalVisible() {
+	// Workbench mode: the terminal IS visible — in the panel's terminal
+	// tab (handleWorkbenchKey switches to it before dispatching). The
+	// split terminal is force-hidden by design (two places, one pane);
+	// un-hiding it here would break that layout AND durably persist
+	// TerminalHidden=false over the user's focus-mode pref.
+	if m.viewMode == viewWorkbench {
+		return
+	}
 	if !m.splitPane.IsTerminalHidden() {
 		return
 	}
