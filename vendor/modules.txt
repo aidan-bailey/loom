@@ -13,6 +13,7 @@ charm.land/bubbles/v2/viewport
 charm.land/bubbletea/v2
 # charm.land/glamour/v2 v2.0.1
 ## explicit; go 1.25.8
+charm.land/glamour/v2
 charm.land/glamour/v2/ansi
 charm.land/glamour/v2/internal/autolink
 charm.land/glamour/v2/styles
@@ -144,13 +145,18 @@ github.com/stretchr/testify/require
 github.com/xo/terminfo
 # github.com/yuin/goldmark v1.7.8
 ## explicit; go 1.19
+github.com/yuin/goldmark
 github.com/yuin/goldmark/ast
+github.com/yuin/goldmark/extension
 github.com/yuin/goldmark/extension/ast
+github.com/yuin/goldmark/parser
 github.com/yuin/goldmark/renderer
+github.com/yuin/goldmark/renderer/html
 github.com/yuin/goldmark/text
 github.com/yuin/goldmark/util
 # github.com/yuin/goldmark-emoji v1.0.5
 ## explicit; go 1.15
+github.com/yuin/goldmark-emoji
 github.com/yuin/goldmark-emoji/ast
 github.com/yuin/goldmark-emoji/definition
 # github.com/yuin/gopher-lua v1.1.2
