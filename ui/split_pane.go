@@ -89,6 +89,13 @@ func NewSplitPane(agent *PreviewPane, diff *DiffPane, terminal *TerminalPane) *S
 	}
 }
 
+// Terminal exposes the terminal child pane so workbench mode can
+// render/size the same TerminalPane instance in its right panel.
+// Ordering contract: in workbench mode the app calls SplitPane.SetSize
+// (which, with the terminal hidden, sizes it to zero) BEFORE
+// Workbench.SetSize re-sizes it for the panel — keep that order.
+func (s *SplitPane) Terminal() *TerminalPane { return s.terminal }
+
 // SetInstance sets the instance whose state the child panes will
 // render on the next UpdateAgent/UpdateDiff/UpdateTerminal call. The
 // child panes read their content from the instance, so switching here
