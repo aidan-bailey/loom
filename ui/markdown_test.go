@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,6 +14,10 @@ func newTestMDPane() *MarkdownPane {
 	p := NewMarkdownPane()
 	p.SetSize(60, 20)
 	return p
+}
+
+func keyPress(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
 func TestMarkdownPane_StartsFollowingAndEmpty(t *testing.T) {
@@ -96,4 +101,44 @@ func TestMarkdownPane_ClearZeroesMtime(t *testing.T) {
 
 	p.Clear()
 	assert.True(t, p.Mtime().IsZero(), "Clear must zero mtime so a later save-conflict guard can't compare against a dead file")
+}
+
+func TestMarkdownPane_EditCycle(t *testing.T) {
+	p := newTestMDPane()
+	p.SetDocument("/tmp/a.md", "# One\n", time.Now())
+
+	require.True(t, p.StartEdit())
+	assert.True(t, p.Editing())
+	assert.False(t, p.EditDirty())
+	assert.Equal(t, "# One\n", p.EditValue())
+
+	p.HandleEditKey(keyPress('!'))
+	assert.True(t, p.EditDirty())
+
+	p.CancelEdit()
+	assert.False(t, p.Editing())
+	assert.Contains(t, p.View(), "One", "view mode shows the untouched document")
+}
+
+func TestMarkdownPane_StartEditRequiresDocument(t *testing.T) {
+	p := newTestMDPane()
+	assert.False(t, p.StartEdit(), "no document → no edit mode")
+}
+
+func TestMarkdownPane_ApplySavedExitsEditAndRerenders(t *testing.T) {
+	p := newTestMDPane()
+	p.SetDocument("/tmp/a.md", "# One\n", time.Now())
+	require.True(t, p.StartEdit())
+	newMtime := time.Now().Add(time.Minute)
+	p.ApplySaved("# Two\n", newMtime)
+	assert.False(t, p.Editing())
+	assert.Equal(t, newMtime, p.Mtime())
+	assert.Contains(t, p.View(), "Two")
+}
+
+func TestMarkdownPane_EditingSuspendsFollowSwap(t *testing.T) {
+	p := newTestMDPane()
+	p.SetDocument("/tmp/a.md", "# One\n", time.Now())
+	require.True(t, p.StartEdit())
+	assert.True(t, p.Editing()) // app-side scan handler checks this and skips
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 	glamour "charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -175,7 +176,7 @@ func (m *MarkdownPane) headerLine() string {
 
 func (m *MarkdownPane) View() string {
 	if m.editing {
-		return m.editView() // implemented in a later task
+		return m.editView()
 	}
 	if m.path == "" {
 		return mdHeaderStyle.Render("▸ —") + "\n" +
@@ -189,4 +190,46 @@ func (m *MarkdownPane) View() string {
 	return m.headerLine() + "\n" + strings.Join(body[lo:hi], "\n") + "\n" + footer
 }
 
-func (m *MarkdownPane) editView() string { return "" }
+// StartEdit flips to the raw-text editor seeded with the loaded
+// content. Returns false when there is nothing to edit.
+func (m *MarkdownPane) StartEdit() bool {
+	if m.path == "" {
+		return false
+	}
+	m.ta.SetValue(m.raw)
+	m.ta.Focus()
+	m.editing = true
+	return true
+}
+
+func (m *MarkdownPane) EditValue() string { return m.ta.Value() }
+func (m *MarkdownPane) EditDirty() bool   { return m.editing && m.ta.Value() != m.raw }
+
+func (m *MarkdownPane) CancelEdit() {
+	m.ta.Blur()
+	m.editing = false
+}
+
+// ApplySaved is called after a successful disk write: adopt the saved
+// content as the new baseline and drop back to the rendered view.
+func (m *MarkdownPane) ApplySaved(raw string, mtime time.Time) {
+	m.raw, m.mtime = raw, mtime
+	m.rendered = nil
+	m.CancelEdit()
+}
+
+// HandleEditKey forwards a key to the textarea.
+func (m *MarkdownPane) HandleEditKey(msg tea.KeyPressMsg) {
+	m.ta, _ = m.ta.Update(msg)
+}
+
+func (m *MarkdownPane) editView() string {
+	name := filepath.Base(m.path)
+	dirty := ""
+	if m.EditDirty() {
+		dirty = mdPinStyle.Render(" [+]")
+	}
+	header := mdHeaderStyle.Render("✎ "+name) + dirty
+	footer := mdFaintStyle.Render("ctrl+s save · esc cancel")
+	return header + "\n" + m.ta.View() + "\n" + footer
+}
