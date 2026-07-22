@@ -14,9 +14,6 @@ import (
 	"os"
 	"path/filepath"
 
-	// glamour is imported to ensure it's vendored. It will be used by the markdown viewer
-	// feature in later tasks.
-	_ "charm.land/glamour/v2"
 	"github.com/spf13/cobra"
 )
 
