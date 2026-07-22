@@ -9,6 +9,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session/files"
 	"github.com/aidan-bailey/loom/ui"
+	"github.com/aidan-bailey/loom/ui/overlay"
 )
 
 // workbenchKeyAllowed whitelists script-dispatched keys in workbench
@@ -386,7 +387,56 @@ func (m *home) wbCurrentTitle() (string, bool) {
 	return sel.Title, true
 }
 
-// ---- stubs replaced by the next task (markdown editing) ----
+// wbSaveMsg reports a save attempt. conflict=true means the file
+// changed on disk after load and force was false — nothing written;
+// content rides along so the confirm path can retry with force.
+type wbSaveMsg struct {
+	title    string
+	path     string
+	content  string
+	mtime    time.Time
+	conflict bool
+	err      error
+}
 
-func (m *home) saveWorkbenchMarkdown(force bool) tea.Cmd { return nil }
-func (m *home) confirmDiscardEdit() tea.Cmd              { return nil }
+// saveMarkdownCmd writes content to path off the Update goroutine,
+// guarding against concurrent disk edits: unless force is set, a disk
+// mtime newer than loadedMtime reports conflict instead of writing.
+func saveMarkdownCmd(title, path, content string, loadedMtime time.Time, force bool) tea.Cmd {
+	return func() tea.Msg {
+		if !force {
+			if info, err := os.Stat(path); err == nil && info.ModTime().After(loadedMtime) {
+				return wbSaveMsg{title: title, path: path, content: content, conflict: true}
+			}
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return wbSaveMsg{title: title, path: path, err: err}
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return wbSaveMsg{title: title, path: path, err: err}
+		}
+		return wbSaveMsg{title: title, path: path, content: content, mtime: info.ModTime()}
+	}
+}
+
+// saveWorkbenchMarkdown dispatches a save of the open editor buffer.
+// Gated on Editing() at read time — EditValue returns the stale
+// discarded buffer after a cancel (pane-side contract).
+func (m *home) saveWorkbenchMarkdown(force bool) tea.Cmd {
+	md := m.workbench.Markdown
+	sel := m.list.GetSelectedInstance()
+	if sel == nil || !md.Editing() || md.Path() == "" {
+		return nil
+	}
+	return saveMarkdownCmd(sel.Title, md.Path(), md.EditValue(), md.Mtime(), force)
+}
+
+// confirmDiscardEdit asks before dropping unsaved editor changes.
+// CancelEdit runs as the Sync step: on the main goroutine, per the
+// no-model-mutation-in-Cmd rule.
+func (m *home) confirmDiscardEdit() tea.Cmd {
+	return m.confirmTask("Discard unsaved changes?", overlay.ConfirmationTask{
+		Sync: func() { m.workbench.Markdown.CancelEdit() },
+	})
+}

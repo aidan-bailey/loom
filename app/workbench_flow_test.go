@@ -192,3 +192,138 @@ func TestWorkbench_EnterDismissesDiffOverlay(t *testing.T) {
 	require.Equal(t, viewWorkbench, m.viewMode)
 	assert.False(t, m.splitPane.IsDiffVisible())
 }
+
+// TestSaveMarkdownCmd_CleanSaveWrites pins the happy path: no
+// concurrent disk change, so the buffer lands on disk and the fresh
+// mtime rides back for the new conflict baseline.
+func TestSaveMarkdownCmd_CleanSaveWrites(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "doc.md")
+	require.NoError(t, os.WriteFile(p, []byte("old"), 0o644))
+	info, err := os.Stat(p)
+	require.NoError(t, err)
+
+	msg := saveMarkdownCmd("s", p, "new", info.ModTime(), false)()
+	sm, ok := msg.(wbSaveMsg)
+	require.True(t, ok)
+	assert.NoError(t, sm.err)
+	assert.False(t, sm.conflict)
+	got, _ := os.ReadFile(p)
+	assert.Equal(t, "new", string(got))
+	assert.False(t, sm.mtime.IsZero(), "fresh mtime must ride back as the new baseline")
+}
+
+// TestSaveMarkdownCmd_ConflictDetected pins the guard: disk newer than
+// our loaded mtime and force off → nothing written, conflict flagged.
+func TestSaveMarkdownCmd_ConflictDetected(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "doc.md")
+	require.NoError(t, os.WriteFile(p, []byte("old"), 0o644))
+	loaded := time.Now().Add(-time.Hour) // disk is newer than our load
+
+	msg := saveMarkdownCmd("s", p, "new", loaded, false)()
+	sm := msg.(wbSaveMsg)
+	assert.True(t, sm.conflict)
+	got, _ := os.ReadFile(p)
+	assert.Equal(t, "old", string(got), "conflicted save must not write")
+}
+
+// TestSaveMarkdownCmd_ForceOverwrites pins the confirm path: force
+// skips the mtime check entirely and writes.
+func TestSaveMarkdownCmd_ForceOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "doc.md")
+	require.NoError(t, os.WriteFile(p, []byte("old"), 0o644))
+
+	msg := saveMarkdownCmd("s", p, "new", time.Now().Add(-time.Hour), true)()
+	sm := msg.(wbSaveMsg)
+	assert.NoError(t, sm.err)
+	assert.False(t, sm.conflict)
+	got, _ := os.ReadFile(p)
+	assert.Equal(t, "new", string(got))
+}
+
+// TestWbSaveMsg_SuccessExitsEditMode pins save delivery: a successful
+// save adopts the content as the new baseline and drops the pane back
+// to the rendered view.
+func TestWbSaveMsg_SuccessExitsEditMode(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	sel := m.list.GetSelectedInstance()
+	require.NotNil(t, sel)
+	md := m.workbench.Markdown
+	md.SetDocument("/tmp/doc.md", "old", time.Now())
+	require.True(t, md.StartEdit())
+
+	m.Update(wbSaveMsg{title: sel.Title, path: "/tmp/doc.md", content: "new", mtime: time.Now()})
+	assert.False(t, md.Editing(), "successful save drops back to the rendered view")
+	assert.False(t, md.EditDirty(), "saved content becomes the new baseline")
+}
+
+// TestWbSaveMsg_StalePathDropped pins the retarget guard: a save
+// result for a document the pane is no longer showing must not clobber
+// the current document's baseline.
+func TestWbSaveMsg_StalePathDropped(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	sel := m.list.GetSelectedInstance()
+	require.NotNil(t, sel)
+	md := m.workbench.Markdown
+	md.SetDocument("/tmp/other.md", "current", time.Now())
+
+	m.Update(wbSaveMsg{title: sel.Title, path: "/tmp/doc.md", content: "new", mtime: time.Now()})
+	assert.Equal(t, "/tmp/other.md", md.Path(), "stale save must not retarget the pane")
+}
+
+// TestWbSaveMsg_ConflictOpensConfirm pins the conflict surface: the
+// message flips the app into the confirmation state with a force-save
+// queued rather than silently overwriting.
+func TestWbSaveMsg_ConflictOpensConfirm(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	sel := m.list.GetSelectedInstance()
+	require.NotNil(t, sel)
+
+	m.Update(wbSaveMsg{title: sel.Title, path: "/tmp/doc.md", content: "new", conflict: true})
+	assert.Equal(t, stateConfirm, m.state, "conflict must ask before overwriting")
+	assert.NotNil(t, m.pendingConfirmation.Async, "confirm must carry the force save")
+}
+
+// TestWbLoadMsg_FollowWhilePinnedDropped pins the Task 9 review fix: a
+// stale in-flight follow load must not clobber (and un-pin) a document
+// the user just pinned.
+func TestWbLoadMsg_FollowWhilePinnedDropped(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	sel := m.list.GetSelectedInstance()
+	require.NotNil(t, sel)
+	md := m.workbench.Markdown
+	md.SetDocument("/tmp/pinned.md", "pinned", time.Now())
+	md.SetFollowing(false)
+
+	m.Update(wbLoadMsg{title: sel.Title, path: "/tmp/follow.md", raw: "x", mtime: time.Now(), follow: true})
+	assert.Equal(t, "/tmp/pinned.md", md.Path(), "stale follow load must not clobber a pinned document")
+	assert.False(t, md.Following(), "stale follow load must not un-pin the pane")
+}
+
+// TestWbLoadMsg_ErrorWhileEditingKeepsPane pins the Task 9 review fix:
+// a load error landing while the editor is open must not clear the
+// pane out from under the edit buffer.
+func TestWbLoadMsg_ErrorWhileEditingKeepsPane(t *testing.T) {
+	m := newWorkbenchTestHome(t)
+	mustAddInstance(t, m, "a")
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	sel := m.list.GetSelectedInstance()
+	require.NotNil(t, sel)
+	md := m.workbench.Markdown
+	md.SetDocument("/tmp/doc.md", "old", time.Now())
+	require.True(t, md.StartEdit())
+
+	m.Update(wbLoadMsg{title: sel.Title, path: "/tmp/doc.md", follow: true, err: os.ErrNotExist})
+	assert.True(t, md.Editing(), "load error must not cancel an open editor")
+	assert.Equal(t, "/tmp/doc.md", md.Path(), "load error must not clear the pane under an open editor")
+}

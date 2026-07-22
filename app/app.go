@@ -1349,17 +1349,47 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok || msg.title != title {
 			return m, nil
 		}
+		if m.workbench.Markdown.Editing() {
+			// Never clobber an open editor — checked before the error
+			// branch so a failed load can't clear the pane under it.
+			return m, nil
+		}
+		if msg.follow && !m.workbench.Markdown.Following() {
+			// Stale in-flight follow load: the user pinned a document
+			// after this dispatch; applying it would clobber and un-pin.
+			return m, nil
+		}
 		if msg.err != nil {
 			// File vanished between scan and read (agent moved it):
 			// clear and let the next tick's scan re-resolve.
 			m.workbench.Markdown.Clear()
 			return m, nil
 		}
-		if m.workbench.Markdown.Editing() {
-			return m, nil // never clobber an open editor
-		}
 		m.workbench.Markdown.SetDocument(msg.path, msg.raw, msg.mtime)
 		m.workbench.Markdown.SetFollowing(msg.follow)
+		return m, nil
+	case wbSaveMsg:
+		title, ok := m.wbCurrentTitle()
+		if !ok || msg.title != title {
+			return m, nil
+		}
+		if msg.err != nil {
+			return m, m.handleError(msg.err)
+		}
+		if msg.conflict {
+			return m, m.confirmTask(
+				filepath.Base(msg.path)+" changed on disk — overwrite?",
+				overlay.ConfirmationTask{
+					// force=true skips the mtime check, so the zero
+					// loadedMtime baseline is irrelevant here.
+					Async: saveMarkdownCmd(title, msg.path, msg.content, time.Time{}, true),
+				})
+		}
+		if m.workbench.Markdown.Path() == msg.path {
+			m.workbench.Markdown.ApplySaved(msg.content, msg.mtime)
+		}
+		// Else stale: the user switched documents mid-save — the write
+		// landed on disk, but the pane no longer shows that file.
 		return m, nil
 	case wbFilesMsg:
 		title, ok := m.wbCurrentTitle()
