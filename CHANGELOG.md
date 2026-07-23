@@ -1,4 +1,4 @@
-## [0.9.0] - 2026-07-15
+## [0.10.0] - 2026-07-23
 
 ### 🚀 Features
 
@@ -7,14 +7,75 @@
 - *(ui)* Add ScrollModel — shared emulator-backed pane scroll state
 - *(ui)* Drive agent-pane scrolling from emulator scrollback
 - *(ui)* Terminal pane on ScrollModel; fix lock-across-capture and alt-screen scroll
+- *(config)* Add fable to the Claude model selector
+- *(config)* Add Theme field with locked accessor
+- *(ui)* Theme registry with role vars and rebuild hooks; migrate all styles
+- *(settings)* Theme selector row with live apply
+- *(session)* Track status age for card wait labels
+- *(ui)* Card component with densities, tails, and overview sort
+- *(ui)* Render session list as live mini-card rail with peer summaries
+- *(app)* Feed live peer-workspace summaries to the rail
+- *(config)* Persist UI layout prefs in state.json
+- *(ui)* Adjustable agent/terminal split with hideable terminal pane
+- *(app)* Rail visibility + persisted layout prefs plumbing
+- *(keys)* Attention jumps, rail/terminal toggles, split resize via Lua actions
+- *(ui)* Overview card-grid component with grouping and collapse
+- *(app)* Overview view mode with tab toggle, sorted grid cursor, and key whitelist
+- *(config)* Add ClaudeLoomContext with nil-on default
+- *(session)* Add embedded loom-context prompt files
+- *(agent)* Add ApplyLoomContextFlag for --append-system-prompt-file
+- *(session)* Add loom-context enabled flag, file writer, launch wrapper
+- *(session)* Inject loom-context flag at instance launch
+- *(app)* Write loom-context files and sync enabled flag
+- *(ui)* Add Loom Context toggle to Claude Preferences
+- *(app)* Background slot flag and foreground-only tab bar/persistence
+- *(app)* PromoteSlot/demoteSlot for background-slot transitions
+- *(app)* Off-goroutine workspace reconcile and ensureFleetLoaded
+- *(app)* Append background slot on workspaceActivatedMsg
+- *(app)* Trigger progressive fleet load on overview entry
+- *(overview)* Multi-group fleet data model and rendering
+- *(overview)* Combined vertical windowing keeps fleet cursor visible
+- *(app)* Global fleet cursor across overview groups
+- *(app)* FocusCursorSlot primitive for cross-workspace actions
+- *(app)* Cross-workspace enter/D/r/n via focusCursorSlot in overview
+- *(app)* Fleet-wide jump-to-waiting across workspaces
+- *(app)* Fleet-engaged tab toggle demotes/promotes instead of teardown
+- *(ui)* [**breaking**] Overview shows only open workspaces (drop lazy fleet loading)
+- *(config)* Persist per-session workbench split ratios
+- *(files)* MostRecentMarkdown follow-scan helper
+- *(ui)* Theme-derived glamour style for markdown rendering
+- *(ui)* MarkdownPane glamour viewer with follow/pin and scroll
+- *(ui)* MarkdownPane raw-text edit mode
+- *(ui)* Workbench right panel (tabs: markdown/diff/files/terminal)
+- *(app)* Workbench view mode — enter/esc/tab, key gating, layout
+- *(app)* Workbench markdown follow scan, load, and files listing
+- *(app)* Workbench markdown save with mtime conflict guard
+- *(app)* Workbench mouse routing; docs for workbench mode
 
 ### 🐛 Bug Fixes
 
-- *(vt)* Deliver BEL notifications outside the emulator write lock
 - *(app)* Converge status detection so idle agents don't latch on Running
 - *(vt)* Harden alt-screen filter CSI abort and spike-test teardown
 - *(tmux)* Drop stale seed history when a re-capture fails
 - *(ui)* Align ScrollModel with the emulator's true screen span
+- *(vt)* Make scrollback integration test CI-proof
+- *(ui)* Solid selected-card background; harden card text handling
+- *(ui)* In-memory card tails, rail height clamp, richer agent pane title
+- *(app)* Refresh peer sections on bell; pin classification branches
+- *(app)* Apply layout prefs on all startup paths; deterministic ratio reset
+- *(app)* Pending-ratio precedence, slot-switch flush, resize regression tests
+- *(ui)* Overview width hardening; pin windowing and card-height invariants
+- *(app)* Stable triage grid, focus-drop for create flow, visible-window rendering
+- *(ui)* Deleting instances never attention-ranked or jump-selected; global overview header
+- *(session)* Write loom-context files atomically
+- *(loom-context)* Inject on classic startup, resume, and crash-restart
+- *(app)* Workspace picker excludes background slots from pre-checked set
+- *(app)* Reconcile fleet overview with global mode; heal stale cursors
+- *(ui)* Card tails skip Claude Code's bottom chrome
+- *(ui)* Card tails skip Tip hints and tolerate the agents-strip footer
+- *(ui)* Clamp markdown scroll on height resize; zero mtime on Clear
+- *(app)* Clean up workbench state on implicit workspace slot switch
+- *(app)* Workbench final-review fixes — terminal-visibility guard, global-mode cleanup, wheel guards
 
 ### 🚜 Refactor
 
@@ -26,16 +87,47 @@
 - Add emulator-scrollback implementation plan
 - Amend scrollback spec — tmux clients live on the alt screen; adopt mode-1049 filter
 - Amend scrollback plan — mode-1049 filter task, RenderWindow contract fix, probe-based alt routing
+- *(specs)* Mission control GUI design — two-mode UI, card system, afterglow theme
+- *(plans)* Mission control GUI implementation plan (phases 1-3)
+- *(plans)* Amend Task 8 — committed card.go supersedes plan's RenderCard code
+- Mission-control keys, view modes, theme system, ui prefs
+- *(spec)* Design loom context injection into Claude sessions
+- *(plan)* Implementation plan for loom-context injection
+- *(spec)* Cross-workspace overview (mission control phase 4) design
+- *(spec)* Clarify focusCursorSlot primitive and D/r/n promotion
+- *(plan)* Cross-workspace overview (phase 4) implementation plan
+- Cross-workspace fleet overview (phase 4) behavior and gotchas
+- Session workbench (focus view) design spec
+- Session workbench implementation plan
 
 ### 🧪 Testing
 
 - *(vt)* Pin RenderWindow/ScrollbackLen lock discipline under -race
 - *(ui)* Pin terminal-pane capture revalidation; guard the unlock/relock idiom
+- *(settings)* Harden theme row tests; guard empty theme registry
+- *(app)* Pin that quit persists background fleet slots
+- *(overview)* Harden fleet windowing (up-scroll, short preceding groups)
+
+### 🔧 Build
+
+- *(deps)* Add charm.land/glamour/v2 for markdown rendering
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove capture-pane scroll remnants; document emulator scrollback
+- *(release)* V0.9.0
+- *(config)* Remove DaemonPollInterval field
+- *(ui)* Remove dead repo-badge machinery; flush ratio saves on workspace registration
+- Restore vendor to upstream (drop accidental gofmt reformat)
+## [0.8.1] - 2026-07-13
+
+### 🐛 Bug Fixes
+
+- *(vt)* Deliver BEL notifications outside the emulator write lock
 
 ### ⚙️ Miscellaneous Tasks
 
 - *(release)* V0.8.1
-- Remove capture-pane scroll remnants; document emulator scrollback
 ## [0.8.0] - 2026-07-12
 
 ### 🚀 Features
