@@ -172,7 +172,6 @@ The default state renders in one of two **view modes** (`m.viewMode`), toggled w
 - **`cmd/`** — `Executor` interface wrapping `os/exec` for testability.
 - **`log/`** — Centralized logging to `{configDir}/logs/loom.log` with Info/Warning/Error loggers and rate limiting.
 - **`script/`** — Lua scripting engine (`github.com/yuin/gopher-lua`). The full built-in keymap lives in `script/defaults.lua`, embedded via `go:embed` and loaded at engine init before any user script. Users extend or override bindings from `~/.loom/scripts/*.lua` (global, not per-workspace). Dispatch is driven from `state_default.go` through `app/app_scripts.go`'s `scriptHost` adapter. Hard-sandboxed: only `base`/`string`/`table`/`math`/`coroutine`; `dofile`/`loadfile`/`load`/`loadstring`/`require`/`string.dump`/`collectgarbage` stripped. Exposed API: `cs.bind`/`cs.unbind`/`cs.register_action`, `cs.actions.*` (sync primitives + deferred intent factories), `cs.await`, `cs.log`, `cs.notify`, `cs.now`, `cs.sprintf`, plus userdata wrappers for `session.Instance`, `git.GitWorktree`, and a per-dispatch `ctx`.
-- **`web/`** — Next.js marketing site (no CI deployment; build locally with `cd web && npm run build`).
 
 ### Session Lifecycle
 
