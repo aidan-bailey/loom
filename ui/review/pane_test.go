@@ -1,6 +1,7 @@
 package reviewui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -128,6 +129,103 @@ func TestPane_QExitsWithPersist(t *testing.T) {
 	assert.True(t, handled)
 	assert.True(t, exit)
 	require.NotNil(t, cmd)
+}
+
+// The exit path must persist EVERY tab, not just the active one.
+func TestPane_QPersistsAllTabs(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "a_first.md")
+	second := filepath.Join(root, "b_second.md")
+	require.NoError(t, os.WriteFile(first, []byte("# First\n\nalpha\n"), 0o644))
+	require.NoError(t, os.WriteFile(second, []byte("# Second\n\nbeta\n"), 0o644))
+
+	p := &Pane{m: AppModel{
+		title:     "sess",
+		root:      root,
+		multiFile: true,
+		tabs: []FileTab{
+			{path: first, display: "a_first.md", cursorLine: 1},
+			{path: second, display: "b_second.md", cursorLine: 1},
+		},
+		contentViewport: viewport.New(),
+		commentViewport: viewport.New(),
+		modalTextarea:   newTextarea(),
+	}}
+	p.SetSize(100, 40)
+	p.HandleMsg(p.LoadCmd()())
+
+	// Comment on tab 0, switch to tab 1, comment there too.
+	p.HandleKey(code(tea.KeyEnter))
+	typeText(t, p, "note one")
+	p.HandleKey(ctrl('s'))
+
+	p.HandleKey(code(tea.KeyTab)) // next tab
+	require.Equal(t, 1, p.m.activeTab)
+	p.HandleKey(code(tea.KeyEnter))
+	typeText(t, p, "note two")
+	p.HandleKey(ctrl('s'))
+
+	require.Equal(t, 2, p.CommentCount())
+
+	// q returns a tea.Batch of one persist Cmd per tab.
+	cmd, handled, exit := p.HandleKey(kp('q'))
+	require.True(t, handled)
+	require.True(t, exit)
+	require.NotNil(t, cmd)
+
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok, "exit persists via a tea.Batch")
+	require.Len(t, batch, 2, "one persist Cmd per tab")
+
+	for _, c := range batch {
+		saved, ok := c().(SavedMsg)
+		require.True(t, ok)
+		require.NoError(t, saved.Err)
+		assert.Equal(t, "sess", saved.Title)
+	}
+
+	// Both review files exist on disk with their comment intact.
+	for path, body := range map[string]string{first: "note one", second: "note two"} {
+		st, err := review.Load(root, path)
+		require.NoError(t, err)
+		require.Len(t, st.Comments, 1, "review for %s", path)
+		assert.Equal(t, body, st.Comments[0].Body)
+	}
+}
+
+// A background save failure must not blank a loaded review.
+func TestPane_SaveErrorIsNonFatal(t *testing.T) {
+	p := loadedDocPane(t)
+	require.Contains(t, p.View(), "body line")
+
+	p.HandleMsg(SavedMsg{Title: "sess", Err: errors.New("disk full")})
+	v := p.View()
+	assert.Contains(t, v, "body line", "the review stays visible")
+	assert.Contains(t, v, "save failed")
+	assert.Contains(t, v, "disk full")
+
+	// A later successful save clears the flag.
+	p.HandleMsg(SavedMsg{Title: "sess"})
+	v = p.View()
+	assert.Contains(t, v, "body line")
+	assert.NotContains(t, v, "save failed")
+}
+
+// A pane built from an empty file set must not panic on keypresses.
+func TestPane_EmptyPaneSwallowsKeys(t *testing.T) {
+	root := t.TempDir()
+	p := NewCodePane("t", root, nil, "HEAD")
+	p.SetSize(100, 40)
+	p.HandleMsg(p.LoadCmd()())
+
+	for _, msg := range []tea.KeyPressMsg{kp('j'), kp('v'), code(tea.KeyEnter), kp('q'), code(tea.KeyEscape)} {
+		cmd, _, exit := p.HandleKey(msg)
+		assert.Nil(t, cmd)
+		assert.False(t, exit)
+	}
+	assert.False(t, p.Busy())
+	assert.Equal(t, 0, p.CommentCount())
+	assert.Contains(t, p.View(), "Loading")
 }
 
 func TestPane_CommentCount(t *testing.T) {

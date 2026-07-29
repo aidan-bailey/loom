@@ -68,7 +68,11 @@ type AppModel struct {
 	editingID  string // ID of the comment being edited
 	modalFocus int    // 0=textarea, 1=save button, 2=cancel button, 3=delete button (edit modal only)
 
-	err error
+	// err is fatal: the load had nothing to show, so view() renders
+	// only the error. A failed background save is NOT fatal — it goes
+	// to saveErr and surfaces in the footer with the review intact.
+	err     error
+	saveErr error
 }
 
 // tab returns the active FileTab. Panics if no tabs exist.
@@ -273,14 +277,19 @@ func (m *AppModel) update(msg tea.Msg) tea.Cmd {
 				t.ensureHighlightCache()
 			}
 		}
+		// An empty file set leaves no tab to render; both helpers below
+		// index m.tab().
+		if len(m.tabs) == 0 {
+			return nil
+		}
 		m.rebuildContent()
 		m.updateCommentSidebar()
 		return nil
 
 	case SavedMsg:
-		if msg.Err != nil {
-			m.err = msg.Err
-		}
+		// Non-fatal: keep showing the review, flag it in the footer.
+		// A later successful save clears the flag.
+		m.saveErr = msg.Err
 		return nil
 
 	case tea.KeyPressMsg:
@@ -304,6 +313,12 @@ func (m *AppModel) update(msg tea.Msg) tea.Cmd {
 }
 
 func (m *AppModel) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
+	// A pane built from an empty file set has no tab to act on; every
+	// branch below would panic in m.tab(). Swallow the key instead.
+	if len(m.tabs) == 0 {
+		return nil
+	}
+
 	if m.modal == commentModal || m.modal == editModal {
 		return m.handleTextModal(msg)
 	}
@@ -1888,7 +1903,12 @@ func (m *AppModel) renderFooter() string {
 		}
 	}
 
-	return footerStyle.Width(m.width).Render(strings.Join(items, "  "))
+	footer := footerStyle.Render(strings.Join(items, "  "))
+	if m.saveErr != nil {
+		footer += footerStyle.Render(" │ ") +
+			modalDeleteBtnLabel.Render(fmt.Sprintf("save failed: %v", m.saveErr))
+	}
+	return footerStyle.Width(m.width).Render(footer)
 }
 
 func (m *AppModel) renderModalButton(label, hint string, focused bool) string {

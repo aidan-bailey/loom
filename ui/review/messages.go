@@ -15,10 +15,18 @@ type LoadedDoc struct {
 type LoadedMsg struct {
 	Title string
 	Docs  []LoadedDoc
-	Err   error
+
+	// Err is fatal and means the load had nothing left to show — every
+	// file was unreadable and there were no binary/deleted placeholder
+	// tabs to fall back on. A single unreadable file among several is
+	// NOT an Err: that tab arrives with a nil Doc and renders as a
+	// placeholder while the rest load normally.
+	Err error
 }
 
-// SavedMsg reports a background review-state write.
+// SavedMsg reports a background review-state write. A non-nil Err is
+// non-fatal — it surfaces in the footer, leaving the review usable, and
+// is cleared by the next successful save.
 type SavedMsg struct {
 	Title string
 	Err   error
