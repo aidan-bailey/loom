@@ -1903,10 +1903,9 @@ func (m *AppModel) renderFooter() string {
 		}
 	}
 
-	footer := footerStyle.Render(strings.Join(items, "  "))
+	footer := strings.Join(items, "  ")
 	if m.saveErr != nil {
-		footer += footerStyle.Render(" │ ") +
-			modalDeleteBtnLabel.Render(fmt.Sprintf("save failed: %v", m.saveErr))
+		footer += " │ " + modalDeleteBtnLabel.Render(fmt.Sprintf("save failed: %v", m.saveErr))
 	}
 	return footerStyle.Width(m.width).Render(footer)
 }
