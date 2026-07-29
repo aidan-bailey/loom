@@ -586,7 +586,7 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 			_ = instance.TransitionTo(session.Deleting)
 		},
 		Async: func() tea.Msg {
-			return killInstanceMsg{title: "test-delete"}
+			return killInstanceMsg{inst: instance, title: "test-delete"}
 		},
 	})
 
@@ -624,6 +624,7 @@ func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
 	}
 
 	msg := transitionFailedMsg{
+		inst:           instance,
 		title:          "test-revert",
 		op:             "delete",
 		previousStatus: session.Running,

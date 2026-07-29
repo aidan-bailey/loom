@@ -201,16 +201,17 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 	killAction := func() tea.Msg {
 		worktree, err := selected.GetGitWorktree()
 		if err != nil {
-			return transitionFailedMsg{title: title, op: "delete", previousStatus: previousStatus, err: err}
+			return transitionFailedMsg{inst: selected, title: title, op: "delete", previousStatus: previousStatus, err: err}
 		}
 
 		checkedOut, err := worktree.IsBranchCheckedOut()
 		if err != nil {
-			return transitionFailedMsg{title: title, op: "delete", previousStatus: previousStatus, err: err}
+			return transitionFailedMsg{inst: selected, title: title, op: "delete", previousStatus: previousStatus, err: err}
 		}
 
 		if checkedOut {
 			return transitionFailedMsg{
+				inst:           selected,
 				title:          title,
 				op:             "delete",
 				previousStatus: previousStatus,
@@ -232,6 +233,7 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 			// Recoverable, and show the error so the user can retry D.
 			if previousStatus == session.Recoverable {
 				return transitionFailedMsg{
+					inst:           selected,
 					title:          title,
 					op:             "discard",
 					previousStatus: previousStatus,
@@ -255,7 +257,7 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 			}
 		}
 
-		return killInstanceMsg{title: title}
+		return killInstanceMsg{inst: selected, title: title}
 	}
 
 	return preAction, killAction
@@ -348,7 +350,7 @@ func pauseActionFor(m *home, selected *session.Instance) tea.Cmd {
 			}
 		}
 		if err := selected.Pause(saveFunc); err != nil {
-			return transitionFailedMsg{title: pauseTitle, op: "pause", previousStatus: previousStatus, err: err}
+			return transitionFailedMsg{inst: selected, title: pauseTitle, op: "pause", previousStatus: previousStatus, err: err}
 		}
 		return pauseInstanceMsg{title: pauseTitle}
 	}
@@ -370,7 +372,7 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	resumeTitle := selected.Title
 	resumeCmd := func() tea.Msg {
 		if err := selected.Resume(saveFunc); err != nil {
-			return transitionFailedMsg{title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
+			return transitionFailedMsg{inst: selected, title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
 		}
 		return resumeDoneMsg{}
 	}
@@ -430,7 +432,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 					return nil
 				}
 				if err := selected.Resume(saveFunc); err != nil {
-					return transitionFailedMsg{title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
+					return transitionFailedMsg{inst: selected, title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
 				}
 				return resumeDoneMsg{}
 			}),

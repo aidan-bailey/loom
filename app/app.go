@@ -1630,20 +1630,23 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.instanceChanged()
 	case killInstanceMsg:
 		// Terminal session was already closed inside killAction off the update
-		// goroutine. Here we only do in-memory list bookkeeping.
-		m.list.RemoveInstanceByTitle(msg.title)
+		// goroutine. Here we only do in-memory list bookkeeping. The kill ran
+		// for seconds off the update goroutine, so the focused m.list may no
+		// longer be the list that owns the instance (workspace tab switch,
+		// global-mode transition) — remove it from whichever list holds it,
+		// by identity, or the row stays Deleting until restart.
+		m.removeInstanceEverywhere(msg.inst)
 		return m, m.instanceChanged()
 	case transitionFailedMsg:
 		// Revert instance status on failed background op (kill/pause/resume).
 		// previousStatus came from this same instance, so the reverse
 		// transition should always be allowed; if the state machine rejects
 		// it, log and leave the status as-is rather than masking a real bug.
-		for _, inst := range m.list.GetInstances() {
-			if inst.Title == msg.title {
-				if terr := inst.TransitionTo(msg.previousStatus); terr != nil {
-					log.For("app").Warn("revert_transition_failed", "err", terr)
-				}
-				break
+		// The message carries the instance pointer: like killInstanceMsg, the
+		// focused m.list may have been swapped since the op started.
+		if msg.inst != nil {
+			if terr := msg.inst.TransitionTo(msg.previousStatus); terr != nil {
+				log.For("app").Warn("revert_transition_failed", "err", terr)
 			}
 		}
 		log.For("app").Error("op_failed", "op", msg.op, "title", msg.title, "err", msg.err)
@@ -2161,6 +2164,11 @@ type instanceChangedMsg struct{}
 // (git checks, instance kill, storage deletion) is complete. The main event loop
 // handles the list removal so it doesn't race with rendering.
 type killInstanceMsg struct {
+	// inst is the killed instance itself. The handler removes it by
+	// identity from whichever slot list owns it — the focused m.list may
+	// have been swapped (workspace tab switch, global mode) between kill
+	// start and completion, so a title lookup against m.list can miss.
+	inst  *session.Instance
 	title string
 }
 
@@ -2169,6 +2177,10 @@ type killInstanceMsg struct {
 // instance to previousStatus so the user can retry. `op` identifies the
 // operation for the error log.
 type transitionFailedMsg struct {
+	// inst is the instance whose background op failed. Reverted directly
+	// by pointer — see killInstanceMsg.inst for why a title search against
+	// the focused m.list is not enough.
+	inst           *session.Instance
 	title          string
 	op             string
 	previousStatus session.Status
@@ -2691,6 +2703,23 @@ func (m *home) deactivateWorkspace(name string) error {
 }
 
 // saveCurrentSlot writes the home's active UI fields back into the focused slot.
+// removeInstanceEverywhere removes inst (by identity) from the focused list
+// and every workspace slot's list. Async op completions land on whatever
+// m.list is focused at delivery time, which may not be the list that owns
+// the instance — slot lists are in-memory until restart, so a missed removal
+// would orphan the row (e.g. stuck in Deleting) with its backing resources
+// already gone. Removal is idempotent, so hitting both m.list and its
+// backing slot entry is harmless.
+func (m *home) removeInstanceEverywhere(inst *session.Instance) {
+	if inst == nil {
+		return
+	}
+	m.list.RemoveInstance(inst)
+	for i := range m.slots {
+		m.slots[i].list.RemoveInstance(inst)
+	}
+}
+
 func (m *home) saveCurrentSlot() {
 	// Workbench mode does not survive a slot switch: tear it down while
 	// the departing slot's splitPane/appState are still active, so the

@@ -290,6 +290,19 @@ func (l *List) RemoveInstanceByTitle(title string) {
 	l.removeAt(idx)
 }
 
+// RemoveInstance removes the given instance by pointer identity, no-oping
+// when this list does not contain it. Identity (not title) matters: two
+// workspaces can hold same-titled instances, and kill-completion messages
+// are resolved against every slot's list, not just the focused one.
+func (l *List) RemoveInstance(inst *session.Instance) {
+	for i, item := range l.items {
+		if item == inst {
+			l.removeAt(i)
+			return
+		}
+	}
+}
+
 // GetInstanceByTitle returns the instance with the given title, or nil.
 func (l *List) GetInstanceByTitle(title string) *session.Instance {
 	if idx := l.findByTitle(title); idx >= 0 {
