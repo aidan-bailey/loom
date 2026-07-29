@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/aidan-bailey/loom/review"
+	gitpkg "github.com/aidan-bailey/loom/review/gitdiff"
 )
 
 // key builds a printable-rune keypress in loom's idiom.
@@ -301,6 +302,110 @@ func TestPane_UnreadableFileDoesNotAbortLoad(t *testing.T) {
 	assert.NotNil(t, p.m.tabs[0].doc)
 	assert.Nil(t, p.m.tabs[1].doc)
 	assert.Nil(t, p.m.tabs[1].chromaLines, "no highlight cache for a nil doc")
+}
+
+// An idle doc-mode pane must claim only the keys it acts on; the rest
+// belong to the workbench (panel tabs, session ops, workspace nav).
+func TestPane_IdleKeyClaimsAreNarrow(t *testing.T) {
+	p := loadedDocPane(t)
+
+	for _, msg := range []tea.KeyPressMsg{kp('D'), kp('1'), code(tea.KeyTab), kp('W'), kp('r'), kp('p')} {
+		cmd, handled, exit := p.HandleKey(msg)
+		assert.Falsef(t, handled, "%q belongs to the workbench while idle", msg.String())
+		assert.Nil(t, cmd)
+		assert.False(t, exit)
+	}
+
+	for _, msg := range []tea.KeyPressMsg{kp('j'), code(tea.KeyEnter)} {
+		_, handled, _ := p.HandleKey(msg)
+		assert.Truef(t, handled, "%q is a pane key", msg.String())
+	}
+	// enter opened the comment modal — leave it before testing q.
+	p.HandleKey(code(tea.KeyEscape))
+	require.False(t, p.Busy())
+
+	_, handled, exit := p.HandleKey(kp('q'))
+	assert.True(t, handled)
+	assert.True(t, exit)
+}
+
+// While busy the pane still captures everything, workbench keys included.
+func TestPane_BusyCapturesEverything(t *testing.T) {
+	p := loadedDocPane(t)
+	_, handled, _ := p.HandleKey(code(tea.KeyEnter))
+	require.True(t, handled)
+	require.True(t, p.Busy(), "comment modal is a capture-all state")
+
+	_, handled, _ = p.HandleKey(kp('D'))
+	assert.True(t, handled, "the modal swallows workbench keys")
+}
+
+// Multi-file mode additionally claims tab switching, search, change nav
+// and the 1-9 direct tab jumps.
+func TestPane_MultiFileClaimsTabKeys(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "a_first.md")
+	second := filepath.Join(root, "b_second.md")
+	require.NoError(t, os.WriteFile(first, []byte("# First\n\nalpha\n"), 0o644))
+	require.NoError(t, os.WriteFile(second, []byte("# Second\n\nbeta\n"), 0o644))
+
+	p := &Pane{m: AppModel{
+		title:     "sess",
+		root:      root,
+		multiFile: true,
+		tabs: []FileTab{
+			{path: first, display: "a_first.md", cursorLine: 1},
+			{path: second, display: "b_second.md", cursorLine: 1},
+		},
+		contentViewport: viewport.New(),
+		commentViewport: viewport.New(),
+		modalTextarea:   newTextarea(),
+	}}
+	p.SetSize(100, 40)
+	p.HandleMsg(p.LoadCmd()())
+
+	for _, msg := range []tea.KeyPressMsg{code(tea.KeyTab), kp('2'), kp('n'), kp('N'), kp('/')} {
+		_, handled, _ := p.HandleKey(msg)
+		assert.Truef(t, handled, "%q is a multi-file pane key", msg.String())
+	}
+	// '/' opened tab search — a capture-all state; leave it.
+	require.True(t, p.Busy())
+	p.HandleKey(code(tea.KeyEscape))
+
+	// Session ops still fall through.
+	_, handled, _ := p.HandleKey(kp('D'))
+	assert.False(t, handled)
+}
+
+// NewCodePane must not shell out to git: construction stays instant even
+// against a root that is not a repo, and the per-file diffs happen in
+// LoadCmd. Tabs whose documents are missing degrade to placeholders.
+func TestNewCodePane_DefersDiffToLoad(t *testing.T) {
+	bogus := filepath.Join(t.TempDir(), "not-a-repo")
+	p := NewCodePane("sess", bogus, []gitpkg.FileChange{
+		{Path: "a.go", Status: gitpkg.StatusModified},
+		{Path: "b.bin", Status: gitpkg.StatusBinary},
+	}, "HEAD")
+	require.NotNil(t, p)
+	require.Equal(t, "HEAD", p.m.diffRef)
+	require.Len(t, p.m.tabs, 2)
+	for i := range p.m.tabs {
+		assert.Nil(t, p.m.tabs[i].changedLines, "constructor computed no diff")
+		assert.Nil(t, p.m.tabs[i].changeChunks)
+	}
+
+	p.SetSize(100, 40)
+	msg, ok := p.LoadCmd()().(LoadedMsg)
+	require.True(t, ok)
+	// The binary placeholder keeps the load showable despite the
+	// unreadable a.go.
+	require.NoError(t, msg.Err)
+	require.Len(t, msg.Docs, 2)
+	assert.Nil(t, msg.Docs[0].Doc)
+	assert.Nil(t, msg.Docs[0].Diff)
+
+	p.HandleMsg(msg)
+	assert.NotContains(t, p.View(), "Error:")
 }
 
 func TestPane_LoadErrorSurfaces(t *testing.T) {

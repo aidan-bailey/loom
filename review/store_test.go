@@ -75,3 +75,16 @@ func TestStore_InvisibleToGitStatus(t *testing.T) {
 	assert.Empty(t, strings.TrimSpace(run("status", "--porcelain")),
 		".crit must be fully self-ignored")
 }
+
+// A save that lands after the worktree was removed must fail loudly
+// instead of recreating a review skeleton under the deleted root.
+func TestSave_WorktreeRootMissing(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "gone")
+	st := &ReviewState{File: filepath.Join(root, "plan.md")}
+	st.AddComment(Comment{ID: "a", Line: 1, Body: "x", CreatedAt: time.Now()})
+
+	err := Save(root, st)
+	assert.ErrorContains(t, err, "worktree root missing")
+	_, statErr := os.Stat(root)
+	assert.True(t, os.IsNotExist(statErr), "Save must not create the root")
+}

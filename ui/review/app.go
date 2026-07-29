@@ -43,6 +43,10 @@ type AppModel struct {
 	title string
 	// root is the worktree root; all review state is stored under it.
 	root string
+	// diffRef is the git ref every per-file diff is taken against. It is
+	// consumed by loadDocuments (off the Update goroutine) — the
+	// constructor must never shell out to git itself.
+	diffRef string
 
 	width, height int
 	focused       pane
@@ -119,13 +123,13 @@ func NewCodePane(title, root string, files []gitpkg.FileChange, ref string) *Pan
 		return sortedFiles[i].Path < sortedFiles[j].Path
 	})
 
+	// Tabs are built WITHOUT diff info: one git subprocess per file on
+	// the caller's goroutine would stall the whole TUI on a large
+	// review. loadDocuments computes the diffs off-goroutine and the
+	// LoadedMsg handler installs them.
 	tabs := make([]FileTab, 0, len(sortedFiles))
 	for _, f := range sortedFiles {
-		var diff *gitpkg.DiffInfo
-		if f.Status != gitpkg.StatusDeleted && f.Status != gitpkg.StatusBinary {
-			diff, _ = gitpkg.DiffFile(root, f.Path, ref)
-		}
-		ft := newFileTab(filepath.Join(root, f.Path), f.Path, diff)
+		ft := newFileTab(filepath.Join(root, f.Path), f.Path, nil)
 		if f.Status == gitpkg.StatusBinary {
 			ft.isBinary = true
 		}
@@ -138,6 +142,7 @@ func NewCodePane(title, root string, files []gitpkg.FileChange, ref string) *Pan
 	return &Pane{m: AppModel{
 		title:           title,
 		root:            root,
+		diffRef:         ref,
 		tabs:            tabs,
 		activeTab:       0,
 		multiFile:       true,
@@ -147,22 +152,28 @@ func NewCodePane(title, root string, files []gitpkg.FileChange, ref string) *Pan
 	}}
 }
 
-// loadDocuments reads every tab's document and review state off the
-// Update goroutine. It must not touch the model, so the tab paths and
-// placeholder flags are snapshotted into locals first.
+// loadDocuments reads every tab's document, per-file diff, and review
+// state off the Update goroutine. It must not touch the model, so the
+// tab paths, rel paths and placeholder flags are snapshotted into
+// locals first.
 func (m *AppModel) loadDocuments() tea.Cmd {
 	type req struct {
 		path        string
+		relPath     string
 		placeholder bool
+		wantDiff    bool
 	}
 	reqs := make([]req, len(m.tabs))
 	for i := range m.tabs {
+		placeholder := m.tabs[i].isBinary || m.tabs[i].isDeleted
 		reqs[i] = req{
 			path:        m.tabs[i].path,
-			placeholder: m.tabs[i].isBinary || m.tabs[i].isDeleted,
+			relPath:     m.tabs[i].display,
+			placeholder: placeholder,
+			wantDiff:    m.multiFile && !placeholder,
 		}
 	}
-	root, title := m.root, m.title
+	root, title, ref := m.root, m.title, m.diffRef
 
 	return func() tea.Msg {
 		docs := make([]LoadedDoc, 0, len(reqs))
@@ -191,6 +202,16 @@ func (m *AppModel) loadDocuments() tea.Cmd {
 			}
 			showable = true
 			ld.Doc = doc
+			if r.wantDiff {
+				// Same per-file tolerance as the document read: a diff
+				// that fails leaves the tab without change markers
+				// rather than failing the load.
+				if diff, err := gitpkg.DiffFile(root, r.relPath, ref); err == nil {
+					ld.Diff = diff
+				} else if firstErr == nil {
+					firstErr = err
+				}
+			}
 			if state, err := review.Load(root, r.path); err == nil {
 				ld.State = state
 			}
@@ -238,6 +259,37 @@ func (m *AppModel) busy() bool {
 	return len(m.tabs) > 0 && m.tab().selecting
 }
 
+// claimsIdleKey reports whether the pane acts on msg while idle. Only
+// keys handleKeyPress actually consumes are claimed; everything else
+// falls through to the workbench (panel tabs, session ops, attach,
+// workspace nav, workbench exit). Esc is deliberately absent: idle esc
+// belongs to the workbench, and while busy HandleKey never consults
+// this predicate.
+func (m *AppModel) claimsIdleKey(msg tea.KeyPressMsg) bool {
+	if len(m.tabs) == 0 {
+		return false
+	}
+	if key.Matches(msg,
+		keys.Up, keys.Down,
+		keys.HalfPageUp, keys.HalfPageDown,
+		keys.Top, keys.Bottom,
+		keys.NextComment, keys.PrevComment,
+		keys.Tab, keys.VisualMode, keys.Confirm, keys.Quit,
+	) {
+		return true
+	}
+	if !m.multiFile {
+		return false
+	}
+	// Multi-file-only keys: change nav, tab switching/search, and the
+	// 1-9 direct tab jumps. In doc mode these stay the workbench's.
+	if key.Matches(msg, keys.NextChange, keys.PrevChange, keys.TabSearch, keys.PrevTab, keys.NextTab) {
+		return true
+	}
+	s := msg.String()
+	return len(s) == 1 && s[0] >= '1' && s[0] <= '9'
+}
+
 // selectionRange returns the ordered start/end of the current selection.
 // If not selecting, returns cursorLine, cursorLine.
 func (m *AppModel) selectionRange() (int, int) {
@@ -270,6 +322,15 @@ func (m *AppModel) update(msg tea.Msg) tea.Cmd {
 			t.state = ld.State
 			if t.state == nil {
 				t.state = &review.ReviewState{File: t.path, Comments: []review.Comment{}}
+			}
+			// Diff-derived fields must land before ensureHighlightCache:
+			// it pre-highlights deletedAfter. A nil Diff (doc mode,
+			// placeholder tab, or a diff that failed) simply leaves the
+			// tab without change markers.
+			if ld.Diff != nil {
+				t.changedLines = ld.Diff.ChangedLines
+				t.deletedAfter = ld.Diff.DeletedAfter
+				t.changeChunks = computeChangeChunks(ld.Diff)
 			}
 			// A nil doc is an unreadable file — treated like the
 			// binary/deleted placeholders: no highlight cache.

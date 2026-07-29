@@ -31,11 +31,14 @@ func (p *Pane) SetSize(w, h int) {
 // goroutine. Deliver the result back via HandleMsg.
 func (p *Pane) LoadCmd() tea.Cmd { return p.m.loadDocuments() }
 
-// HandleKey routes a keystroke. handled=false → the workbench owns the
-// key (only esc while idle falls through, so workbench-exit works).
+// HandleKey routes a keystroke. While the pane is busy (comment modal,
+// tab search, visual selection) it captures everything. While idle it
+// claims only the keys it actually acts on (see claimsIdleKey) and
+// returns handled=false for the rest, so the workbench keeps its panel
+// tabs, session ops, attach and workspace-nav keys — esc included.
 // exit=true → the user pressed q: persist Cmd returned, leave the tab.
 func (p *Pane) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled, exit bool) {
-	if !p.m.busy() && msg.String() == "esc" {
+	if !p.m.busy() && !p.m.claimsIdleKey(msg) {
 		return nil, false, false
 	}
 	cmd = p.m.handleKeyPress(msg)
@@ -44,7 +47,9 @@ func (p *Pane) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled, exit bool) 
 	return cmd, true, exit
 }
 
-// HandleMsg applies async deliveries (LoadedMsg, textarea blink, ...).
+// HandleMsg applies async deliveries. The app layer routes only
+// LoadedMsg and SavedMsg today; any other msg is forwarded to the
+// focused viewport (or the modal textarea) should routing ever widen.
 func (p *Pane) HandleMsg(msg tea.Msg) tea.Cmd { return p.m.update(msg) }
 
 func (p *Pane) View() string { return p.m.view() }

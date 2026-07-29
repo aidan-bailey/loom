@@ -30,6 +30,12 @@ func Load(root, docPath string) (*ReviewState, error) {
 // Save writes state atomically (tmp + rename) under a flock so a
 // concurrently running crit CLI in the same worktree can't interleave.
 func Save(root string, state *ReviewState) error {
+	// A pending save can land after the worktree was removed (session
+	// killed/paused). EnsureDirs would happily MkdirAll a review
+	// skeleton back under the deleted root — check the root first.
+	if _, err := os.Stat(root); err != nil {
+		return fmt.Errorf("worktree root missing, not writing review: %w", err)
+	}
 	if err := EnsureDirs(root); err != nil {
 		return err
 	}

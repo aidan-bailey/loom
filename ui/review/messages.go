@@ -1,12 +1,18 @@
 package reviewui
 
-import "github.com/aidan-bailey/loom/review"
+import (
+	"github.com/aidan-bailey/loom/review"
+	gitpkg "github.com/aidan-bailey/loom/review/gitdiff"
+)
 
-// LoadedDoc carries one tab's document and review state back from the
-// load Cmd. Doc is nil for binary/deleted placeholder tabs.
+// LoadedDoc carries one tab's document, per-file diff, and review state
+// back from the load Cmd. Doc is nil for binary/deleted placeholder
+// tabs. Diff is nil in doc mode, for placeholder tabs, and when the
+// per-file diff failed — the tab then renders without change markers.
 type LoadedDoc struct {
 	Path  string
 	Doc   *review.Document
+	Diff  *gitpkg.DiffInfo
 	State *review.ReviewState
 }
 
