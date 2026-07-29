@@ -232,12 +232,18 @@ func TestWorkbenchReview_CleanupClearsPane(t *testing.T) {
 
 // TestWorkbenchReview_5WithoutReviewNotifies pins the tab key's guard:
 // with no active review, `5` must not land on an empty review tab.
-func TestWorkbenchReview_5WithoutReviewNotifies(t *testing.T) {
-	m, _ := newReviewWorkbenchHome(t)
+// TestWorkbenchReview_5NonGitWorktreeErrors pins the failure ladder's
+// hard rung: starting a code review in a worktree that isn't a git
+// repo surfaces the git error and opens nothing. (The soft "no
+// changes" rung is TestWorkbenchReview_5NoChangesNotifies.)
+func TestWorkbenchReview_5NonGitWorktreeErrors(t *testing.T) {
+	m, _ := newReviewWorkbenchHome(t) // worktree is a plain TempDir, not a repo
 	require.Nil(t, m.wbReview)
 
-	_, _, handled := handleWorkbenchKey(m, wbKey("5"))
+	_, cmd, handled := handleWorkbenchKey(m, wbKey("5"))
 	require.True(t, handled)
+	assert.NotNil(t, cmd, "handleError returns its timed-clear Cmd")
+	assert.Contains(t, m.errBox.String(), "listing changes")
 	assert.NotEqual(t, ui.WbTabReview, m.workbench.Tab())
 	assert.Nil(t, m.wbReview)
 }
