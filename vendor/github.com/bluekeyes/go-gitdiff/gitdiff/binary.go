@@ -2,7 +2,10 @@ package gitdiff
 
 import (
 	"bytes"
+	"compress/zlib"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"strconv"
 	"strings"
 )
@@ -90,9 +93,6 @@ func (p *parser) ParseBinaryFragmentHeader() (*BinaryFragment, error) {
 		nerr := err.(*strconv.NumError)
 		return nil, p.Errorf(0, "binary patch: invalid size: %v", nerr.Err)
 	}
-	if frag.Size < 0 {
-		return nil, p.Errorf(0, "binary patch: invalid size: %d", frag.Size)
-	}
 
 	if err := p.Next(); err != nil && err != io.EOF {
 		return nil, err
@@ -152,11 +152,35 @@ func (p *parser) ParseBinaryChunk(frag *BinaryFragment) error {
 			return err
 		}
 	}
-	frag.RawData = data.Bytes()
+
+	if err := inflateBinaryChunk(frag, &data); err != nil {
+		return p.Errorf(0, "binary patch: %v", err)
+	}
 
 	// consume the empty line that ended the fragment
 	if err := p.Next(); err != nil && err != io.EOF {
 		return err
 	}
+	return nil
+}
+
+func inflateBinaryChunk(frag *BinaryFragment, r io.Reader) error {
+	zr, err := zlib.NewReader(r)
+	if err != nil {
+		return err
+	}
+
+	data, err := ioutil.ReadAll(zr)
+	if err != nil {
+		return err
+	}
+	if err := zr.Close(); err != nil {
+		return err
+	}
+
+	if int64(len(data)) != frag.Size {
+		return fmt.Errorf("%d byte fragment inflated to %d", frag.Size, len(data))
+	}
+	frag.Data = data
 	return nil
 }

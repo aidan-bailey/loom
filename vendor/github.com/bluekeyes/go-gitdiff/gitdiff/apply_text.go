@@ -1,9 +1,7 @@
 package gitdiff
 
 import (
-	"errors"
 	"io"
-	"math"
 )
 
 // TextApplier applies changes described in text fragments to source data. If
@@ -17,7 +15,6 @@ type TextApplier struct {
 	src      io.ReaderAt
 	lineSrc  LineReaderAt
 	nextLine int64
-	opts     applyOptions
 
 	closed bool
 	dirty  bool
@@ -25,11 +22,10 @@ type TextApplier struct {
 
 // NewTextApplier creates a TextApplier that reads data from src and writes
 // modified data to dst. If src implements LineReaderAt, it is used directly.
-func NewTextApplier(dst io.Writer, src io.ReaderAt, opts ...ApplyOption) *TextApplier {
+func NewTextApplier(dst io.Writer, src io.ReaderAt) *TextApplier {
 	a := TextApplier{
-		dst:  dst,
-		src:  src,
-		opts: collectApplyOptions(opts),
+		dst: dst,
+		src: src,
 	}
 
 	if lineSrc, ok := src.(LineReaderAt); ok {
@@ -69,9 +65,6 @@ func (a *TextApplier) ApplyFragment(f *TextFragment) error {
 	if fragStart < 0 {
 		fragStart = 0
 	}
-	if f.OldLines > math.MaxInt64-fragStart {
-		return applyError(errors.New("fragment bounds overflow"))
-	}
 	fragEnd := fragStart + f.OldLines
 
 	start := a.nextLine
@@ -89,9 +82,10 @@ func (a *TextApplier) ApplyFragment(f *TextFragment) error {
 		}
 	}
 
-	preimage, err := readPreimage(a.lineSrc, start, fragEnd-start)
+	preimage := make([][]byte, fragEnd-start)
+	n, err := a.lineSrc.ReadLinesAt(preimage, start)
 	if err != nil {
-		return applyError(err)
+		return applyError(err, lineNum(start+int64(n)))
 	}
 
 	// copy leading data before the fragment starts
@@ -129,43 +123,6 @@ func (a *TextApplier) ApplyFragment(f *TextFragment) error {
 	}
 
 	return nil
-}
-
-// readPreimage attempts to read lines from the reader in chunks to avoid
-// allocating too much memory if the expected line count is longer than the
-// actual input.
-func readPreimage(r LineReaderAt, start int64, lines int64) ([][]byte, error) {
-	// This chunk size is arbitrary, but is large enough that most preimages
-	// should read in a single chunk. It's generally safe to pick a large chunk
-	// size, as the chunk only allocates slice headers for the line content,
-	// with the actual content only allocated if it exists in the source. With
-	// a chunk size of 4096, we allocate at most ~96KB extra before detecting
-	// the short source in the worst case.
-	const chunkSize = 4096
-
-	chunks := ((lines - 1) / chunkSize) + 1
-	remaining := lines
-
-	var preimage [][]byte
-	for c := int64(0); c < chunks; c++ {
-		readSize := min(chunkSize, remaining)
-
-		i := int64(len(preimage))
-		preimage = append(preimage, make([][]byte, readSize)...)
-
-		n, err := r.ReadLinesAt(preimage[i:i+readSize], start)
-		if err != nil {
-			// an EOF indicates that source file is shorter than the patch expects,
-			// which should be reported as a conflict rather than a generic error
-			if errors.Is(err, io.EOF) {
-				err = &Conflict{"src has fewer lines than required by fragment"}
-			}
-			return nil, applyError(err, lineNum(start+int64(n)))
-		}
-		start += int64(n)
-		remaining -= int64(n)
-	}
-	return preimage, nil
 }
 
 func applyTextLine(dst io.Writer, line Line, preimage [][]byte, i int64) (err error) {
