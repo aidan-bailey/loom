@@ -1,15 +1,20 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/review"
+	gitdiff "github.com/aidan-bailey/loom/review/gitdiff"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/files"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
+	reviewui "github.com/aidan-bailey/loom/ui/review"
 )
 
 // workbenchKeyAllowed whitelists script-dispatched keys in workbench
@@ -47,6 +52,11 @@ func (m *home) enterWorkbench() tea.Cmd {
 	m.wbPrevTerminalHidden = m.splitPane.IsTerminalHidden()
 	m.splitPane.SetTerminalHidden(true)
 	m.workbench.SetSession(sel.Title, sel.GetWorktreePath())
+	// SetSession only clears the workbench's interface field on an actual
+	// title change; dropping unconditionally keeps the wbReview invariant
+	// trivially true (cleanup runs on every exit path anyway, so a stale
+	// same-title pane cannot survive to here).
+	m.dropReviewPane()
 	m.wbRatio = 0
 	if m.appState != nil {
 		if r, ok := m.appState.GetUIPrefs().WorkbenchRatios[sel.Title]; ok {
@@ -82,6 +92,8 @@ func (m *home) cleanupWorkbench() {
 	m.wbRatio = 0
 	if m.workbench != nil {
 		m.workbench.Markdown.CancelEdit()
+		m.dropReviewPane()
+		m.workbench.Markdown.SetFollowing(true)
 	}
 	m.splitPane.SetTerminalHidden(m.wbPrevTerminalHidden)
 	m.viewMode = viewFocus
@@ -136,6 +148,23 @@ func (m *home) flushWorkbenchRatio() {
 func handleWorkbenchKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	md := m.workbench.Markdown
 
+	// Review tab owns its keys. The pane declines idle-esc
+	// (handled=false) so workbench exit still works; q inside the pane
+	// exits the review back to the markdown tab.
+	if m.workbench.Tab() == ui.WbTabReview && m.wbReview != nil {
+		rv := m.wbReview
+		if msg.String() == "S" && !rv.Busy() {
+			return m, m.sendReviewCmd(), true
+		}
+		if cmd, handled, exit := rv.HandleKey(msg); handled {
+			if exit {
+				return m, tea.Batch(cmd, m.closeReview()), true
+			}
+			return m, cmd, true
+		}
+		// fall through: idle esc → workbench exit below.
+	}
+
 	// Edit mode captures everything except save/cancel.
 	if md.Editing() {
 		switch msg.String() {
@@ -183,6 +212,17 @@ func handleWorkbenchKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool)
 			md.StartEdit()
 		}
 		return m, nil, true
+	case "c":
+		if m.workbench.Tab() == ui.WbTabMarkdown && !md.Editing() && md.Path() != "" {
+			return m, m.openDocReview(md.Path()), true
+		}
+		return m, nil, true
+	case "5":
+		if m.wbReview != nil {
+			m.workbench.SetTab(ui.WbTabReview)
+			return m, nil, true
+		}
+		return m, m.openCodeReview(), true
 	case "f":
 		if !md.Following() {
 			md.SetFollowing(true)
@@ -269,7 +309,159 @@ func handleWorkbenchKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool)
 	return m, nil, false
 }
 
-// workbenchScrollUp/Down route j/k to the active tab.
+// dropReviewPane clears both halves of the review-pane invariant
+// (home.wbReview and the workbench's interface field), which must be
+// nil iff the other is. Safe to call when no review is open.
+func (m *home) dropReviewPane() {
+	m.wbReview = nil
+	if m.workbench != nil {
+		m.workbench.SetReview(nil)
+	}
+}
+
+// reviewableSelection resolves the instance a review may be opened on,
+// surfacing a notice (and returning nil) for the excluded states — a
+// paused or Recoverable session has no live agent to send comments to,
+// and its worktree may not even be on disk.
+func (m *home) reviewableSelection() *session.Instance {
+	sel := m.list.GetSelectedInstance()
+	if sel == nil {
+		return nil
+	}
+	if sel.Paused() || sel.GetStatus() == session.Recoverable {
+		m.errBox.SetInfo("session is not running — resume it before reviewing")
+		return nil
+	}
+	return sel
+}
+
+// openDocReview freezes the markdown pane (same contract as edit mode:
+// follow-mode pauses so line anchors can't rot under a live agent) and
+// opens the review tab on docPath.
+func (m *home) openDocReview(docPath string) tea.Cmd {
+	sel := m.reviewableSelection()
+	if sel == nil {
+		return nil
+	}
+	root := sel.GetWorktreePath()
+	if root == "" {
+		return nil
+	}
+	m.workbench.Markdown.SetFollowing(false)
+	p := reviewui.NewDocPane(sel.Title, root, docPath)
+	m.wbReview = p
+	m.workbench.SetReview(p)
+	m.wbReviewPrevTab = ui.WbTabMarkdown
+	m.workbench.SetTab(ui.WbTabReview)
+	return p.LoadCmd()
+}
+
+// openCodeReview builds a multi-file review over the worktree's
+// changes vs HEAD and writes the interop session manifest (so an agent
+// running the crit CLI in the same worktree sees the same file set).
+// ChangedFiles shells out synchronously on the Update goroutine —
+// same weight and precedent as the inline diff-stat calls.
+func (m *home) openCodeReview() tea.Cmd {
+	sel := m.reviewableSelection()
+	if sel == nil {
+		return nil
+	}
+	root := sel.GetWorktreePath()
+	if root == "" {
+		return nil
+	}
+	files, err := gitdiff.ChangedFiles(root)
+	if err != nil {
+		return m.handleError(fmt.Errorf("listing changes: %w", err))
+	}
+	if len(files) == 0 {
+		m.errBox.SetInfo("no changes to review in this worktree")
+		return nil
+	}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	title, sessionRoot := sel.Title, root
+	p := reviewui.NewCodePane(title, root, files, "HEAD")
+	m.wbReview = p
+	m.workbench.SetReview(p)
+	// Remember where the user came from so q lands back there. A review
+	// tab can't be its own return target (nothing would be showing).
+	if prev := m.workbench.Tab(); prev != ui.WbTabReview {
+		m.wbReviewPrevTab = prev
+	} else {
+		m.wbReviewPrevTab = ui.WbTabMarkdown
+	}
+	m.workbench.SetTab(ui.WbTabReview)
+	manifest := func() tea.Msg {
+		err := review.SaveSession(sessionRoot, &review.CodeReviewSession{
+			Files: paths, DiffBase: "HEAD", CreatedAt: time.Now(),
+		})
+		return reviewui.SavedMsg{Title: title, Err: err}
+	}
+	return tea.Batch(p.LoadCmd(), manifest)
+}
+
+// enterWorkbenchReview is the focus-mode entry: workbench + code review
+// in one hop.
+func (m *home) enterWorkbenchReview() tea.Cmd {
+	enter := m.enterWorkbench()
+	if m.viewMode != viewWorkbench {
+		return enter // nothing selected; enterWorkbench no-opped
+	}
+	return tea.Batch(enter, m.openCodeReview())
+}
+
+// closeReview leaves the review tab for whichever panel tab the review
+// was opened from (markdown by default) and resumes follow mode (the
+// freeze counterpart of openDocReview).
+func (m *home) closeReview() tea.Cmd {
+	m.dropReviewPane()
+	back := m.wbReviewPrevTab
+	if back == ui.WbTabReview {
+		back = ui.WbTabMarkdown
+	}
+	m.wbReviewPrevTab = ui.WbTabMarkdown
+	m.workbench.SetTab(back)
+	m.workbench.Markdown.SetFollowing(true)
+	return m.workbenchScanCmd()
+}
+
+// sendReviewCmd composes the review comments into a prompt and, after
+// confirmation, sends it to the session's agent pane. The prompt is
+// composed at press time — the confirm overlay's Sync step runs on the
+// main goroutine (SendPrompt has its own locking, same precedent as
+// the quick-input bar).
+func (m *home) sendReviewCmd() tea.Cmd {
+	sel := m.list.GetSelectedInstance()
+	rv := m.wbReview
+	if sel == nil || rv == nil {
+		return nil
+	}
+	if sel.Paused() || !sel.TmuxAlive() {
+		m.errBox.SetInfo("agent is not running — resume the session first")
+		return nil
+	}
+	prompt := review.ComposePrompt(rv.Root(), rv.States())
+	if prompt == "" {
+		m.errBox.SetInfo("no review comments to send")
+		return nil
+	}
+	title := sel.Title
+	msg := fmt.Sprintf("Send %d review comment(s) to %s?", rv.CommentCount(), title)
+	return m.confirmTask(msg, overlay.ConfirmationTask{
+		Sync: func() {
+			if err := sel.SendPrompt(prompt); err != nil {
+				m.errBox.SetError(err)
+			}
+		},
+	})
+}
+
+// workbenchScrollUp/Down route j/k (and wheel ticks) to the active tab.
+// The review pane has no scroll API of its own — its cursor *is* the
+// scroll position — so a tick is fed to it as the equivalent key press.
 func (m *home) workbenchScrollUp() {
 	switch m.workbench.Tab() {
 	case ui.WbTabDiff:
@@ -278,6 +470,8 @@ func (m *home) workbenchScrollUp() {
 		m.workbench.FilesUp()
 	case ui.WbTabMarkdown:
 		m.workbench.Markdown.ScrollUp()
+	case ui.WbTabReview:
+		m.reviewScrollKey('k')
 	}
 }
 
@@ -289,7 +483,22 @@ func (m *home) workbenchScrollDown() {
 		m.workbench.FilesDown()
 	case ui.WbTabMarkdown:
 		m.workbench.Markdown.ScrollDown()
+	case ui.WbTabReview:
+		m.reviewScrollKey('j')
 	}
+}
+
+// reviewScrollKey feeds a synthetic cursor key to the review pane. The
+// returned Cmd is dropped: cursor moves are synchronous and produce no
+// Cmd, and the callers (j/k, wheel) have no Cmd channel of their own.
+func (m *home) reviewScrollKey(r rune) {
+	// Busy() gates the synthetic keystroke out of capture-all states —
+	// without it a wheel tick over an open comment modal types "j"/"k"
+	// into the comment body.
+	if m.wbReview == nil || m.wbReview.Busy() {
+		return
+	}
+	m.wbReview.HandleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
 }
 
 // wbScanMsg reports the follow scan's most-recent markdown file.

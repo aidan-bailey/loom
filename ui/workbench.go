@@ -15,7 +15,16 @@ const (
 	WbTabDiff
 	WbTabFiles
 	WbTabTerminal
+	WbTabReview
 )
+
+// ReviewPane is the workbench's view of the review panel. The concrete
+// *reviewui.Pane lives in the app layer: ui/review imports ui for
+// theme roles, so package ui must not import it back.
+type ReviewPane interface {
+	SetSize(width, height int)
+	View() string
+}
 
 var (
 	wbBorderStyle    lipgloss.Style
@@ -51,6 +60,8 @@ type Workbench struct {
 	diff     *DiffPane
 	terminal *TerminalPane
 
+	reviewPane ReviewPane
+
 	sessionTitle string
 	root         string // worktree root for the files tab + follow scan
 
@@ -75,6 +86,17 @@ func (w *Workbench) SetTab(t WorkbenchTab) {
 func (w *Workbench) Root() string    { return w.root }
 func (w *Workbench) Diff() *DiffPane { return w.diff }
 
+func (w *Workbench) Review() ReviewPane { return w.reviewPane }
+
+// SetReview installs (or clears, with nil) the review pane and sizes it.
+// Callers must pass either a non-nil ReviewPane or an untyped nil; a nil
+// typed pointer boxed into the interface would make the != nil check
+// below misbehave.
+func (w *Workbench) SetReview(p ReviewPane) {
+	w.reviewPane = p
+	w.applySizes()
+}
+
 // SessionTitle reports the session the panel is currently targeting
 // ("" before the first SetSession).
 func (w *Workbench) SessionTitle() string { return w.sessionTitle }
@@ -94,6 +116,7 @@ func (w *Workbench) SetSession(title, root string) {
 	w.Markdown.CancelEdit()
 	w.files = nil
 	w.fileCursor, w.fileOffset = 0, 0
+	w.reviewPane = nil
 }
 
 func (w *Workbench) SetSize(width, height int) {
@@ -112,10 +135,13 @@ func (w *Workbench) applySizes() {
 	if w.tab == WbTabTerminal {
 		w.terminal.SetSize(iw, ih)
 	}
+	if w.reviewPane != nil {
+		w.reviewPane.SetSize(iw, ih)
+	}
 }
 
 func (w *Workbench) tabsRow() string {
-	names := []string{"1 markdown", "2 diff", "3 files", "4 terminal"}
+	names := []string{"1 markdown", "2 diff", "3 files", "4 terminal", "5 review"}
 	parts := make([]string, len(names))
 	for i, n := range names {
 		if WorkbenchTab(i) == w.tab {
@@ -204,6 +230,11 @@ func (w *Workbench) body() string {
 		return w.filesView()
 	case WbTabTerminal:
 		return w.terminal.String()
+	case WbTabReview:
+		if w.reviewPane == nil {
+			return wbFileStyle.Render("no active review — press c on a markdown doc (or 5 again on the diff) to start one")
+		}
+		return w.reviewPane.View()
 	default:
 		return w.Markdown.View()
 	}

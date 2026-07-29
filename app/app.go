@@ -15,6 +15,7 @@ import (
 	"github.com/aidan-bailey/loom/session/vt"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
+	reviewui "github.com/aidan-bailey/loom/ui/review"
 	"os"
 	"path/filepath"
 	"sort"
@@ -270,6 +271,13 @@ type home struct {
 	// wbRatio is the in-memory agent share for the current session
 	// (0 = default). Flushed to UIPrefs.WorkbenchRatios on exit/quit.
 	wbRatio float64
+	// wbReview is the concrete review pane; the workbench itself only
+	// holds the ui.ReviewPane render interface (import-cycle rule).
+	// Invariant: nil iff m.workbench.Review() is nil.
+	wbReview *reviewui.Pane
+	// wbReviewPrevTab is the panel tab the active review was opened
+	// from; closeReview returns there (markdown when unset).
+	wbReviewPrevTab ui.WorkbenchTab
 	// quickInputBar displays the inline input bar for quick interactions
 	quickInputBar *ui.QuickInputBar
 	// errBox displays error messages
@@ -1424,6 +1432,25 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.workbench.SetFiles(msg.root, msg.paths)
 		return m, nil
+	case reviewui.LoadedMsg:
+		if t, ok := m.wbCurrentTitle(); ok && t == msg.Title && m.wbReview != nil {
+			return m, m.wbReview.HandleMsg(msg)
+		}
+		return m, nil
+	case reviewui.SavedMsg:
+		// Two paths on purpose: the pane renders a non-fatal save error
+		// in its own footer (only if the msg reaches it), while
+		// handleError surfaces the failure even when the user has
+		// navigated away from the review — a dropped persistence error
+		// is never acceptable.
+		var cmds []tea.Cmd
+		if t, ok := m.wbCurrentTitle(); ok && t == msg.Title && m.wbReview != nil {
+			cmds = append(cmds, m.wbReview.HandleMsg(msg))
+		}
+		if msg.Err != nil {
+			cmds = append(cmds, m.handleError(msg.Err))
+		}
+		return m, tea.Batch(cmds...)
 	case tea.MouseWheelMsg:
 		// v1 simplification: the wheel hit-tests below (listWidth /
 		// agentBottomY) describe the focus layout and are meaningless
@@ -2125,6 +2152,15 @@ func (m *home) instanceChanged() tea.Cmd {
 		m.workbench.SetSession(selected.Title, selected.GetWorktreePath())
 		m.workbench.Diff().SetDiff(selected)
 		if prevTitle != selected.Title {
+			// SetSession dropped the workbench's half of the review-pane
+			// invariant; drop ours too, or keys would keep routing into an
+			// invisible pane and `S` would compose the previous session's
+			// comments and send them to this one.
+			m.dropReviewPane()
+			if m.workbench.Tab() == ui.WbTabReview {
+				m.workbench.SetTab(ui.WbTabMarkdown)
+			}
+			m.wbReviewPrevTab = ui.WbTabMarkdown
 			wbRefresh = m.workbenchRefresh()
 		}
 	}
@@ -3397,7 +3433,7 @@ func (m *home) View() tea.View {
 		if m.viewMode == viewOverview {
 			hint = "enter focus · ] next waiting · z collapse · n new · tab/esc focus · q quit"
 		} else if m.viewMode == viewWorkbench {
-			hint = "esc focus · 1-4 panel · e edit · f follow · i attach · ] next waiting · q quit"
+			hint = "esc focus · 1-5 panel · e edit · f follow · i attach · ] next waiting · q quit"
 		}
 		statusLine := statusLineStyle.Render(hint)
 		sections = append(sections, mainContent, statusLine, m.errBox.String())

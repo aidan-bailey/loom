@@ -554,6 +554,8 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 			break
 		}
 		_, cmd = runRestartWithOptionsSelected(m)
+	case script.OpenReviewIntent:
+		cmd = m.enterWorkbenchReview()
 	case script.NewInstanceIntent:
 		// Title pre-fill is not yet wired through the overlay; for now
 		// the field is accepted but ignored. Follow-up can plumb a
