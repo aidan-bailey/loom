@@ -15,6 +15,7 @@ import (
 	"github.com/aidan-bailey/loom/session/vt"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
+	reviewui "github.com/aidan-bailey/loom/ui/review"
 	"os"
 	"path/filepath"
 	"sort"
@@ -270,6 +271,10 @@ type home struct {
 	// wbRatio is the in-memory agent share for the current session
 	// (0 = default). Flushed to UIPrefs.WorkbenchRatios on exit/quit.
 	wbRatio float64
+	// wbReview is the concrete review pane; the workbench itself only
+	// holds the ui.ReviewPane render interface (import-cycle rule).
+	// Invariant: nil iff m.workbench.Review() is nil.
+	wbReview *reviewui.Pane
 	// quickInputBar displays the inline input bar for quick interactions
 	quickInputBar *ui.QuickInputBar
 	// errBox displays error messages
@@ -1415,6 +1420,25 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.workbench.SetFiles(msg.root, msg.paths)
 		return m, nil
+	case reviewui.LoadedMsg:
+		if t, ok := m.wbCurrentTitle(); ok && t == msg.Title && m.wbReview != nil {
+			return m, m.wbReview.HandleMsg(msg)
+		}
+		return m, nil
+	case reviewui.SavedMsg:
+		// Two paths on purpose: the pane renders a non-fatal save error
+		// in its own footer (only if the msg reaches it), while
+		// handleError surfaces the failure even when the user has
+		// navigated away from the review — a dropped persistence error
+		// is never acceptable.
+		var cmds []tea.Cmd
+		if t, ok := m.wbCurrentTitle(); ok && t == msg.Title && m.wbReview != nil {
+			cmds = append(cmds, m.wbReview.HandleMsg(msg))
+		}
+		if msg.Err != nil {
+			cmds = append(cmds, m.handleError(msg.Err))
+		}
+		return m, tea.Batch(cmds...)
 	case tea.MouseWheelMsg:
 		// v1 simplification: the wheel hit-tests below (listWidth /
 		// agentBottomY) describe the focus layout and are meaningless

@@ -10,6 +10,7 @@ import (
 	"github.com/aidan-bailey/loom/session/files"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
+	reviewui "github.com/aidan-bailey/loom/ui/review"
 )
 
 // workbenchKeyAllowed whitelists script-dispatched keys in workbench
@@ -47,6 +48,11 @@ func (m *home) enterWorkbench() tea.Cmd {
 	m.wbPrevTerminalHidden = m.splitPane.IsTerminalHidden()
 	m.splitPane.SetTerminalHidden(true)
 	m.workbench.SetSession(sel.Title, sel.GetWorktreePath())
+	// SetSession only clears the workbench's interface field on an actual
+	// title change; nil-ing unconditionally keeps the wbReview invariant
+	// trivially true (cleanup runs on every exit path anyway, so a stale
+	// same-title pane cannot survive to here).
+	m.wbReview = nil
 	m.wbRatio = 0
 	if m.appState != nil {
 		if r, ok := m.appState.GetUIPrefs().WorkbenchRatios[sel.Title]; ok {
@@ -82,6 +88,9 @@ func (m *home) cleanupWorkbench() {
 	m.wbRatio = 0
 	if m.workbench != nil {
 		m.workbench.Markdown.CancelEdit()
+		m.wbReview = nil
+		m.workbench.SetReview(nil)
+		m.workbench.Markdown.SetFollowing(true)
 	}
 	m.splitPane.SetTerminalHidden(m.wbPrevTerminalHidden)
 	m.viewMode = viewFocus
@@ -136,6 +145,23 @@ func (m *home) flushWorkbenchRatio() {
 func handleWorkbenchKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	md := m.workbench.Markdown
 
+	// Review tab owns its keys. The pane declines idle-esc
+	// (handled=false) so workbench exit still works; q inside the pane
+	// exits the review back to the markdown tab.
+	if m.workbench.Tab() == ui.WbTabReview && m.wbReview != nil {
+		rv := m.wbReview
+		if msg.String() == "S" && !rv.Busy() {
+			return m, m.sendReviewCmd(), true
+		}
+		if cmd, handled, exit := rv.HandleKey(msg); handled {
+			if exit {
+				return m, tea.Batch(cmd, m.closeReview()), true
+			}
+			return m, cmd, true
+		}
+		// fall through: idle esc → workbench exit below.
+	}
+
 	// Edit mode captures everything except save/cancel.
 	if md.Editing() {
 		switch msg.String() {
@@ -181,6 +207,18 @@ func handleWorkbenchKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool)
 	case "e":
 		if m.workbench.Tab() == ui.WbTabMarkdown {
 			md.StartEdit()
+		}
+		return m, nil, true
+	case "c":
+		if m.workbench.Tab() == ui.WbTabMarkdown && !md.Editing() && md.Path() != "" {
+			return m, m.openDocReview(md.Path()), true
+		}
+		return m, nil, true
+	case "5":
+		if m.wbReview != nil {
+			m.workbench.SetTab(ui.WbTabReview)
+		} else {
+			m.errBox.SetInfo("no active review — press c on a markdown doc to start one")
 		}
 		return m, nil, true
 	case "f":
@@ -268,6 +306,39 @@ func handleWorkbenchKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool)
 	}
 	return m, nil, false
 }
+
+// openDocReview freezes the markdown pane (same contract as edit mode:
+// follow-mode pauses so line anchors can't rot under a live agent) and
+// opens the review tab on docPath.
+func (m *home) openDocReview(docPath string) tea.Cmd {
+	sel := m.list.GetSelectedInstance()
+	if sel == nil || sel.Paused() {
+		return nil
+	}
+	root := sel.GetWorktreePath()
+	if root == "" {
+		return nil
+	}
+	m.workbench.Markdown.SetFollowing(false)
+	p := reviewui.NewDocPane(sel.Title, root, docPath)
+	m.wbReview = p
+	m.workbench.SetReview(p)
+	m.workbench.SetTab(ui.WbTabReview)
+	return p.LoadCmd()
+}
+
+// closeReview leaves the review tab back to markdown and resumes
+// follow mode (the freeze counterpart of openDocReview).
+func (m *home) closeReview() tea.Cmd {
+	m.wbReview = nil
+	m.workbench.SetReview(nil)
+	m.workbench.SetTab(ui.WbTabMarkdown)
+	m.workbench.Markdown.SetFollowing(true)
+	return m.workbenchScanCmd()
+}
+
+// sendReviewCmd is implemented in the send-bridge task.
+func (m *home) sendReviewCmd() tea.Cmd { return nil }
 
 // workbenchScrollUp/Down route j/k to the active tab.
 func (m *home) workbenchScrollUp() {
