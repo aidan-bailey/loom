@@ -371,6 +371,35 @@ func TestWorkbenchReview_ScrollRoutesToPane(t *testing.T) {
 		"scrolling back must restore the original cursor position")
 }
 
+// TestWorkbenchReview_ScrollIgnoredWhileModalOpen pins the wheel/modal
+// interaction: a wheel tick over an open comment modal must not type
+// synthetic j/k into the comment body.
+func TestWorkbenchReview_ScrollIgnoredWhileModalOpen(t *testing.T) {
+	m, _ := newReviewWorkbenchHome(t)
+	m.workbench.SetSize(120, 40)
+	enterReview(t, m)
+
+	_, _, handled := handleWorkbenchKey(m, wbKey("enter")) // open comment modal
+	require.True(t, handled)
+	require.True(t, m.wbReview.Busy())
+
+	m.workbenchScrollDown()
+	m.workbenchScrollUp()
+
+	for _, r := range "ok" {
+		handleWorkbenchKey(m, wbKey(string(r)))
+	}
+	_, cmd, _ := handleWorkbenchKey(m, wbKey("ctrl+s"))
+	require.NotNil(t, cmd, "ctrl+s must submit the comment")
+	m.Update(cmd())
+
+	st, err := review.Load(m.wbReview.Root(), m.wbReview.States()[0].File)
+	require.NoError(t, err)
+	require.Len(t, st.Comments, 1)
+	assert.Equal(t, "ok", st.Comments[0].Body,
+		"wheel ticks during the modal must not leak into the comment body")
+}
+
 // aliveTmuxSessionForTest builds a TmuxSession whose DoesSessionExist
 // (and thus Instance.TmuxAlive) reports true without touching a real
 // tmux server — mirrors addReadyInstance's fixture in

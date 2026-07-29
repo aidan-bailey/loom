@@ -492,7 +492,10 @@ func (m *home) workbenchScrollDown() {
 // returned Cmd is dropped: cursor moves are synchronous and produce no
 // Cmd, and the callers (j/k, wheel) have no Cmd channel of their own.
 func (m *home) reviewScrollKey(r rune) {
-	if m.wbReview == nil {
+	// Busy() gates the synthetic keystroke out of capture-all states —
+	// without it a wheel tick over an open comment modal types "j"/"k"
+	// into the comment body.
+	if m.wbReview == nil || m.wbReview.Busy() {
 		return
 	}
 	m.wbReview.HandleKey(tea.KeyPressMsg{Code: r, Text: string(r)})

@@ -338,7 +338,7 @@ Session-lifecycle keys (`D`, `r`, `R`), workspace keys, and `q`/`?`/`W`/`S` keep
 
 ### Session Workbench (after pressing `Enter` on a selected session)
 
-Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive. The Review tab passes those same keys through, with three exceptions: `S` sends the review comments to the agent instead of opening settings, `q` closes the review instead of quitting, and `]`/`[` move between comments instead of jumping to a waiting agent. In a code review the pane also owns `1`–`9` and `Tab`/`Shift+Tab` (file tabs) — see [Reviewing](#reviewing) for the full set of review keys.
+Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive. The Review tab passes most of those keys through, with these exceptions: `S` sends the review comments to the agent instead of opening settings, `q` closes the review instead of quitting, `]`/`[` move between comments instead of jumping to a waiting agent, and `s` toggles the comment sidebar instead of stash-and-pause (in a code review, `n`/`N` jump between changes instead of creating instances). In a code review the pane also owns `1`–`9` and `Tab`/`Shift+Tab` (file tabs) — see [Reviewing](#reviewing) for the full set of review keys.
 
 | Key | Action |
 |-----|--------|
