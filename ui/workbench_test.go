@@ -77,3 +77,29 @@ func TestWorkbench_SetSessionTitleResetsMarkdownAndFiles(t *testing.T) {
 	assert.False(t, ok, "session switch clears the file list")
 	assert.Equal(t, "/repo2", w.Root())
 }
+
+// stubReviewPane satisfies ui.ReviewPane for workbench tests.
+type stubReviewPane struct{ w, h int }
+
+func (s *stubReviewPane) SetSize(w, h int) { s.w, s.h = w, h }
+func (s *stubReviewPane) View() string     { return "REVIEW-PANE-CONTENT" }
+
+func TestWorkbench_ReviewTab(t *testing.T) {
+	w := newTestWorkbench()
+	w.SetSize(100, 40)
+	assert.Nil(t, w.Review())
+
+	w.SetTab(WbTabReview)
+	assert.Contains(t, w.String(), "no active review", "empty state before SetReview")
+
+	p := &stubReviewPane{}
+	w.SetReview(p)
+	assert.Same(t, p, w.Review().(*stubReviewPane))
+	assert.Contains(t, w.tabsRow(), "5 review")
+	assert.Contains(t, w.String(), "REVIEW-PANE-CONTENT")
+	assert.Greater(t, p.w, 0, "SetReview must size the pane")
+
+	// SetSession to a different session clears the review pane.
+	w.SetSession("other", t.TempDir())
+	assert.Nil(t, w.Review())
+}
