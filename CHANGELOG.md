@@ -1,3 +1,46 @@
+## [0.11.0] - 2026-07-29
+
+### 🚀 Features
+
+- *(review)* Vendor crit review store, root-threaded
+- *(review)* Compose review comments into an agent prompt
+- *(review)* Vendor crit git diff parser, dir-threaded
+- *(ui/review)* Vendor crit TUI as embeddable review pane
+- *(ui)* Workbench review tab hosting the review pane
+- *(app)* Workbench review tab wiring — open, freeze, route, teardown
+- *(app)* Send review comments to the agent with confirmation
+- *(app)* Code review mode + focus-mode review entry (c / 5)
+
+### 🐛 Bug Fixes
+
+- *(app)* Resolve kill/fail completions by instance, not focused list
+- *(ui)* Expire ErrBox info toasts so they stop lingering
+- *(review)* Close review lock fd on contended-save path
+- *(ui/review)* Tolerate per-file load errors; drop dead errMsg/filePath
+- *(ui/review)* Non-fatal save errors, empty-pane key guard, exit-persist test
+- *(ui/review)* Apply footer style once in renderFooter
+- *(ui/review)* Narrow idle key capture, async per-file diffs, guard saves after worktree removal
+- *(app)* Clear review pane on session retarget; review-tab wheel, notices, prev-tab return
+- *(app)* Gate review wheel-scroll out of modal capture; doc prose fixes
+
+### 📚 Documentation
+
+- Crit absorption design spec
+- Crit absorption implementation plan
+- Attribute vendored crit code in NOTICE.md
+- Workbench review tab usage and keybindings
+
+### 🧪 Testing
+
+- *(app)* Pin the non-git-worktree error path for code review entry
+
+### ⚙️ Miscellaneous Tasks
+
+- Add crit vendoring dependencies
+- Sync vendor/ for chroma v2.23.1 upgrade
+- Pin go-gitdiff to upstream crit's v0.8.1
+- Remove unused web/ marketing site
+
 ## [0.10.0] - 2026-07-23
 
 ### 🚀 Features
