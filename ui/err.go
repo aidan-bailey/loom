@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/mattn/go-runewidth"
@@ -14,6 +15,13 @@ type ErrBox struct {
 	height, width int
 	err           error
 	info          string
+	// expiresAt is when the current message should auto-clear; zero
+	// means no message is armed. Checked lazily by ExpireIfDue rather
+	// than a per-message timer, so every SetError/SetInfo call site gets
+	// the same expiry behavior for free — including ones reached from
+	// startup code that runs before anything exists to drive a
+	// per-message timer callback.
+	expiresAt time.Time
 }
 
 var (
@@ -33,22 +41,61 @@ func NewErrBox() *ErrBox {
 	return &ErrBox{}
 }
 
-// SetError replaces the currently displayed error. Pass nil to hide the
-// box on the next render; prefer Clear for clarity.
+// SetError replaces the currently displayed error and arms its auto-clear
+// deadline (see ExpireIfDue). Pass nil to hide the box on the next render;
+// prefer Clear for clarity.
 func (e *ErrBox) SetError(err error) {
 	e.err = err
+	e.info = ""
+	if err == nil {
+		e.expiresAt = time.Time{}
+		return
+	}
+	e.expiresAt = time.Now().Add(toastDuration(err.Error()))
 }
 
-// SetInfo sets a non-error status line (e.g. the recovery summary). An active
-// error takes precedence over info in String().
+// SetInfo sets a non-error status line (e.g. the recovery summary) and arms
+// its auto-clear deadline, mirroring SetError. An active error takes
+// precedence over info in String().
 func (e *ErrBox) SetInfo(msg string) {
 	e.info = msg
+	e.err = nil
+	if msg == "" {
+		e.expiresAt = time.Time{}
+		return
+	}
+	e.expiresAt = time.Now().Add(toastDuration(msg))
 }
 
-// Clear removes the currently displayed error and info line.
+// toastDuration scales visible time with message length so a multi-line
+// git error or multi-part recovery summary can be read fully, capped so a
+// long message can't pin the box open indefinitely.
+func toastDuration(msg string) time.Duration {
+	d := 3*time.Second + time.Duration(len(msg)/40)*time.Second
+	if d > 10*time.Second {
+		d = 10 * time.Second
+	}
+	return d
+}
+
+// ExpireIfDue clears the box once its armed deadline has passed. Intended
+// to be called from an existing periodic tick rather than scheduling a
+// timer per message — without this, SetInfo/SetError have no way to expire
+// on their own and a toast lingers on screen indefinitely once shown.
+func (e *ErrBox) ExpireIfDue(now time.Time) {
+	if e.expiresAt.IsZero() || now.Before(e.expiresAt) {
+		return
+	}
+	e.err = nil
+	e.info = ""
+	e.expiresAt = time.Time{}
+}
+
+// Clear removes the currently displayed error and info line immediately.
 func (e *ErrBox) Clear() {
 	e.err = nil
 	e.info = ""
+	e.expiresAt = time.Time{}
 }
 
 // SetSize updates the rendering bounds.

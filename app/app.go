@@ -1235,6 +1235,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.menu.ClearKeydown()
 		return m, nil
 	case tickUpdateMetadataMessage:
+		// Sweep expired error/info toasts. This tick is a self-perpetuating
+		// heartbeat that runs unconditionally every ~3s regardless of state
+		// or view mode, which is what makes it a reliable place to expire
+		// ErrBox messages: SetInfo/SetError only arm a deadline, they don't
+		// schedule anything to act on it, and the event-driven render loop
+		// (see CLAUDE.md gotchas) won't otherwise redraw on its own just
+		// because time passed with no other activity.
+		m.errBox.ExpireIfDue(time.Now())
+
 		// Collect instances from all workspace slots (focused uses m.list).
 		var allInstances []*session.Instance
 		if len(m.slots) > 0 {
