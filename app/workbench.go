@@ -1,12 +1,14 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/review"
 	"github.com/aidan-bailey/loom/session/files"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
@@ -337,8 +339,36 @@ func (m *home) closeReview() tea.Cmd {
 	return m.workbenchScanCmd()
 }
 
-// sendReviewCmd is implemented in the send-bridge task.
-func (m *home) sendReviewCmd() tea.Cmd { return nil }
+// sendReviewCmd composes the review comments into a prompt and, after
+// confirmation, sends it to the session's agent pane. The prompt is
+// composed at press time — the confirm overlay's Sync step runs on the
+// main goroutine (SendPrompt has its own locking, same precedent as
+// the quick-input bar).
+func (m *home) sendReviewCmd() tea.Cmd {
+	sel := m.list.GetSelectedInstance()
+	rv := m.wbReview
+	if sel == nil || rv == nil {
+		return nil
+	}
+	if sel.Paused() || !sel.TmuxAlive() {
+		m.errBox.SetInfo("agent is not running — resume the session first")
+		return nil
+	}
+	prompt := review.ComposePrompt(rv.Root(), rv.States())
+	if prompt == "" {
+		m.errBox.SetInfo("no review comments to send")
+		return nil
+	}
+	title := sel.Title
+	msg := fmt.Sprintf("Send %d review comment(s) to %s?", rv.CommentCount(), title)
+	return m.confirmTask(msg, overlay.ConfirmationTask{
+		Sync: func() {
+			if err := sel.SendPrompt(prompt); err != nil {
+				m.errBox.SetError(err)
+			}
+		},
+	})
+}
 
 // workbenchScrollUp/Down route j/k to the active tab.
 func (m *home) workbenchScrollUp() {

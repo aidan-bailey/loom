@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,7 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/review"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 )
 
@@ -145,4 +149,70 @@ func TestWorkbenchReview_5WithoutReviewNotifies(t *testing.T) {
 	require.True(t, handled)
 	assert.NotEqual(t, ui.WbTabReview, m.workbench.Tab())
 	assert.Nil(t, m.wbReview)
+}
+
+// aliveTmuxSessionForTest builds a TmuxSession whose DoesSessionExist
+// (and thus Instance.TmuxAlive) reports true without touching a real
+// tmux server — mirrors addReadyInstance's fixture in
+// app_scripts_dispatch_test.go.
+func aliveTmuxSessionForTest(t *testing.T, name string) *tmux.TmuxSession {
+	t.Helper()
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	return tmux.NewTmuxSessionWithDeps(name, "true", fakePtyFactory{t: t}, cmdExec)
+}
+
+// TestWorkbenchReview_SendNoComments pins the zero-comment guard: `S`
+// with an empty review must not open the confirm overlay, and must
+// surface an info notice via errBox. The harness instance has no live
+// tmux session (TmuxAlive()==false), so the liveness guard actually
+// fires first — that is asserted directly, and the zero-comment intent
+// is covered separately via a direct ComposePrompt assertion below.
+func TestWorkbenchReview_SendNoComments(t *testing.T) {
+	m, _ := newReviewWorkbenchHome(t)
+	enterReview(t, m)
+	require.NotNil(t, m.wbReview)
+	require.Equal(t, 0, m.wbReview.CommentCount())
+
+	cmd := m.sendReviewCmd()
+	assert.Nil(t, cmd, "guard path returns no confirm cmd")
+	assert.NotEqual(t, stateConfirm, m.state, "must not open the confirm overlay")
+	assert.Contains(t, m.errBox.String(), "agent is not running",
+		"harness instance has no live tmux session, so the liveness guard fires")
+
+	// Direct unit coverage of the zero-comment intent itself, independent
+	// of which guard the harness happens to trip first.
+	assert.Equal(t, "", review.ComposePrompt(m.wbReview.Root(), m.wbReview.States()))
+}
+
+// TestWorkbenchReview_SendOpensConfirm pins the happy path: with
+// comments loaded and a live tmux session attached, `S` opens the
+// confirm overlay rather than sending immediately.
+func TestWorkbenchReview_SendOpensConfirm(t *testing.T) {
+	m, doc := newReviewWorkbenchHome(t)
+	sel := m.list.GetSelectedInstance()
+	require.NotNil(t, sel)
+	sel.SetTmuxSession(aliveTmuxSessionForTest(t, "a"))
+	require.True(t, sel.TmuxAlive(), "fixture precondition")
+
+	root := sel.GetWorktreePath()
+	require.NoError(t, review.Save(root, &review.ReviewState{
+		File: doc,
+		Comments: []review.Comment{
+			{ID: "a", Line: 1, Body: "fix"},
+			{ID: "b", Line: 2, Body: "also"},
+		},
+	}))
+
+	enterReview(t, m)
+	require.NotNil(t, m.wbReview)
+	require.Equal(t, 2, m.wbReview.CommentCount(), "seeded comments must load into the pane")
+
+	// confirmTask itself always returns nil (the overlay drives dispatch
+	// from here on) — the real signal is the state flip below.
+	_ = m.sendReviewCmd()
+	assert.Equal(t, stateConfirm, m.state, "S must open the confirm overlay")
+	assert.NotNil(t, m.pendingConfirmation.Sync, "pending task must carry the send side-effect")
 }
