@@ -37,6 +37,9 @@ func Save(root string, state *ReviewState) error {
 	lockPath := reviewPath + ".lock"
 
 	fileLock := flock.New(lockPath)
+	// Close releases the lock file's fd even when the lock was never
+	// acquired — the contended-return path would otherwise leak it.
+	defer func() { _ = fileLock.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	locked, err := fileLock.TryLockContext(ctx, 100*time.Millisecond)
