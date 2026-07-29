@@ -275,6 +275,9 @@ type home struct {
 	// holds the ui.ReviewPane render interface (import-cycle rule).
 	// Invariant: nil iff m.workbench.Review() is nil.
 	wbReview *reviewui.Pane
+	// wbReviewPrevTab is the panel tab the active review was opened
+	// from; closeReview returns there (markdown when unset).
+	wbReviewPrevTab ui.WorkbenchTab
 	// quickInputBar displays the inline input bar for quick interactions
 	quickInputBar *ui.QuickInputBar
 	// errBox displays error messages
@@ -2137,6 +2140,15 @@ func (m *home) instanceChanged() tea.Cmd {
 		m.workbench.SetSession(selected.Title, selected.GetWorktreePath())
 		m.workbench.Diff().SetDiff(selected)
 		if prevTitle != selected.Title {
+			// SetSession dropped the workbench's half of the review-pane
+			// invariant; drop ours too, or keys would keep routing into an
+			// invisible pane and `S` would compose the previous session's
+			// comments and send them to this one.
+			m.dropReviewPane()
+			if m.workbench.Tab() == ui.WbTabReview {
+				m.workbench.SetTab(ui.WbTabMarkdown)
+			}
+			m.wbReviewPrevTab = ui.WbTabMarkdown
 			wbRefresh = m.workbenchRefresh()
 		}
 	}
@@ -3383,7 +3395,7 @@ func (m *home) View() tea.View {
 		if m.viewMode == viewOverview {
 			hint = "enter focus · ] next waiting · z collapse · n new · tab/esc focus · q quit"
 		} else if m.viewMode == viewWorkbench {
-			hint = "esc focus · 1-4 panel · e edit · f follow · i attach · ] next waiting · q quit"
+			hint = "esc focus · 1-5 panel · e edit · f follow · i attach · ] next waiting · q quit"
 		}
 		statusLine := statusLineStyle.Render(hint)
 		sections = append(sections, mainContent, statusLine, m.errBox.String())

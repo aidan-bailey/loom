@@ -137,7 +137,7 @@ Press `enter` on a selected session in focus mode to open the workbench: a singl
 - **Files tab** — a flat listing of the session's worktree; `enter` on a markdown file opens it in the Markdown tab.
 - **Terminal tab** — the shared terminal pane; `t` opens the quick-input bar, `ctrl+t` inline-attaches, `alt+t` full-screen attaches, same as focus mode. Mouse wheel and hardware cursor are unavailable on this tab in v1.
 - **Resize** — `ctrl+left` / `ctrl+right` adjust the agent/panel split in 5% steps (20–80% range), remembered per session title.
-- **Navigation** — `g`/`G` jump to the top/bottom of the active tab; `pgup`/`pgdown` page the markdown and diff tabs; mouse wheel scrolls the pane under the cursor (agent pane on the left, active tab on the right). `]`/`[` still jump to the next/previous agent waiting for input — within the same workspace slot this retargets the workbench to that session, while a cross-workspace jump exits cleanly to focus mode on the target.
+- **Navigation** — `g`/`G` jump to the top/bottom of the active tab; `pgup`/`pgdown` page the markdown and diff tabs; mouse wheel scrolls the pane under the cursor (agent pane on the left, active tab on the right). `]`/`[` still jump to the next/previous agent waiting for input — within the same workspace slot this retargets the workbench to that session (closing any open review, since it belonged to the session you left), while a cross-workspace jump exits cleanly to focus mode on the target. On the Review tab `]`/`[` are prev/next comment instead.
 - **Exit** — `esc` returns to focus mode; `tab` exits straight to overview. Workbench mode is never persisted across restarts, and it does not survive an implicit workspace switch (workspace nav, the picker, or a cross-workspace `]`/`[` jump lands you in the target workspace's focus mode instead).
 
 #### Reviewing
@@ -165,10 +165,17 @@ Once inside the Review tab:
 | `Enter` | Add/edit a comment (or confirm a selection in visual mode) |
 | `/` | Search file tabs (code review) |
 | `Esc` | Cancel the current action |
-| `q` | Save and close — returns to the Markdown tab |
+| `q` | Save and close — returns to the panel tab you opened the review from (Markdown by default) |
 | `S` | Send the review comments to the session's agent (with confirmation) |
 
-Opening a review freezes the Markdown tab's follow mode, so line anchors can't shift under a live agent while you're commenting; `q` resumes following. `S` composes all outstanding comments into a single prompt and sends it to the agent's pane after you confirm — the session must be running (not paused).
+Keys the review doesn't use fall through to the workbench, so session-lifecycle keys, attach, quick input and workspace navigation keep working while a review is open. Which keys those are depends on the mode:
+
+- **Document review** (`c`) — the panel-tab digits `1`–`4` and `Tab` behave as usual (switch tabs / leave to the overview); the review stays open and `5` returns to it.
+- **Code review** (`5` / focus-mode `c`) — the pane owns digits `1`–`9` (jump to a file tab) and `Tab`/`Shift+Tab` (cycle file tabs), so press `q` first if you want to switch panel tabs.
+
+Note that `[` / `]` inside the Review tab are previous/next *comment*, not the waiting-agent jump.
+
+Opening a review freezes the Markdown tab's follow mode, so line anchors can't shift under a live agent while you're commenting; `q` resumes following. `S` composes all outstanding comments into a single prompt and sends it to the agent's pane after you confirm — the session must be running: a paused or recoverable session refuses to open a review and says so in the status area.
 
 Comments are stored as YAML under `.crit/` in the session's worktree. That directory self-gitignores, and its layout is interop-compatible with the upstream `crit` CLI, so an agent invoked to run `crit` in the same worktree sees the same comments and (for code reviews) the same file set.
 
@@ -331,7 +338,7 @@ Session-lifecycle keys (`D`, `r`, `R`), workspace keys, and `q`/`?`/`W`/`S` keep
 
 ### Session Workbench (after pressing `Enter` on a selected session)
 
-Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive. On the Review tab, `S` sends the review comments to the agent instead of opening settings — see [Reviewing](#reviewing) for the full set of review keys.
+Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive. The Review tab passes those same keys through, with three exceptions: `S` sends the review comments to the agent instead of opening settings, `q` closes the review instead of quitting, and `]`/`[` move between comments instead of jumping to a waiting agent. In a code review the pane also owns `1`–`9` and `Tab`/`Shift+Tab` (file tabs) — see [Reviewing](#reviewing) for the full set of review keys.
 
 | Key | Action |
 |-----|--------|
@@ -339,7 +346,7 @@ Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt
 | `2` / `d` | Diff tab |
 | `3` | Files tab |
 | `4` / `t` / `Ctrl+T` | Terminal tab (`t` also opens the quick-input bar, `Ctrl+T` also inline-attaches) |
-| `5` | Review tab — open a code review of the worktree's changes vs `HEAD` (or reopen the active review); see [Reviewing](#reviewing) |
+| `5` | Review tab — open a code review of the worktree's changes vs `HEAD` (or reopen the active review); `q` closes it and returns to the tab you came from. See [Reviewing](#reviewing) |
 | `Alt+T` | Full-screen attach to the terminal tab |
 | `e` | Edit the markdown tab's document |
 | `f` | Resume following the worktree's most-recently-modified markdown file |

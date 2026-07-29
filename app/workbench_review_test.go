@@ -248,6 +248,129 @@ func TestWorkbenchReview_5NonGitWorktreeErrors(t *testing.T) {
 	assert.Nil(t, m.wbReview)
 }
 
+// TestWorkbenchReview_RetargetDropsPane pins the invariant across a
+// workbench retarget (]/[ waiting-jump, kill-reselect): instanceChanged
+// re-points the panel at a different session, which clears the
+// workbench's interface field — home.wbReview must go with it, or keys
+// route into an invisible pane and `S` sends session A's comments to
+// session B. Drives the real path: select another instance, then call
+// instanceChanged exactly as the app does.
+func TestWorkbenchReview_RetargetDropsPane(t *testing.T) {
+	m, _ := newReviewWorkbenchHome(t)
+	enterReview(t, m)
+	require.NotNil(t, m.wbReview)
+	require.NotNil(t, m.workbench.Review())
+	require.Equal(t, ui.WbTabReview, m.workbench.Tab())
+
+	other := t.TempDir()
+	inst, err := session.FromInstanceData(session.InstanceData{
+		Title:   "b",
+		Path:    other,
+		Program: "claude",
+		Status:  session.Ready,
+		Worktree: session.GitWorktreeData{
+			RepoPath:     other,
+			WorktreePath: other,
+			SessionName:  "b",
+			BranchName:   "test/b",
+		},
+	}, t.TempDir())
+	require.NoError(t, err)
+	m.list.AddInstance(inst)
+	m.list.SetSelectedInstance(1)
+	require.Equal(t, "b", m.list.GetSelectedInstance().Title)
+
+	m.instanceChanged()
+
+	assert.Equal(t, "b", m.workbench.SessionTitle(), "panel must retarget")
+	assert.Nil(t, m.wbReview, "retarget must drop the concrete review pane")
+	assert.Nil(t, m.workbench.Review())
+	assert.NotEqual(t, ui.WbTabReview, m.workbench.Tab(),
+		"no review is open, so the review tab must not stay selected")
+}
+
+// TestWorkbenchReview_PausedSessionNotifies pins the excluded-state
+// notice: a paused (or Recoverable) session has no live agent, so the
+// review entry keys must say so rather than silently no-op.
+func TestWorkbenchReview_PausedSessionNotifies(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status session.Status
+	}{
+		{"paused", session.Paused},
+		{"recoverable", session.Recoverable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newWorkbenchTestHome(t)
+			root := t.TempDir()
+			doc := filepath.Join(root, "plan.md")
+			require.NoError(t, os.WriteFile(doc, []byte("# Plan\n"), 0o644))
+			inst, err := session.FromInstanceData(session.InstanceData{
+				Title:   "a",
+				Path:    root,
+				Program: "claude",
+				Status:  tc.status,
+				Worktree: session.GitWorktreeData{
+					RepoPath:     root,
+					WorktreePath: root,
+					SessionName:  "a",
+					BranchName:   "test/a",
+				},
+			}, t.TempDir())
+			require.NoError(t, err)
+			m.list.AddInstance(inst)
+			m.list.SetSelectedInstance(0)
+
+			assert.Nil(t, m.openDocReview(doc))
+			assert.Nil(t, m.wbReview)
+			assert.NotEqual(t, ui.WbTabReview, m.workbench.Tab())
+			assert.Contains(t, m.errBox.String(), "resume it before reviewing")
+
+			m.errBox.Clear()
+			assert.Nil(t, m.openCodeReview())
+			assert.Nil(t, m.wbReview)
+			assert.Contains(t, m.errBox.String(), "resume it before reviewing")
+		})
+	}
+}
+
+// TestWorkbenchReview_QReturnsToOriginTab pins the exit target: a code
+// review started from the diff tab returns to the diff tab, not to
+// markdown.
+func TestWorkbenchReview_QReturnsToOriginTab(t *testing.T) {
+	m, _ := newCodeReviewWorkbenchHome(t, true)
+	_, _, handled := handleWorkbenchKey(m, wbKey("2"))
+	require.True(t, handled)
+	require.Equal(t, ui.WbTabDiff, m.workbench.Tab())
+
+	_, _, handled = handleWorkbenchKey(m, wbKey("5"))
+	require.True(t, handled)
+	require.Equal(t, ui.WbTabReview, m.workbench.Tab())
+
+	_, _, handled = handleWorkbenchKey(m, wbKey("q"))
+	require.True(t, handled)
+	assert.Equal(t, ui.WbTabDiff, m.workbench.Tab(),
+		"q must return to the tab the review was opened from")
+	assert.Nil(t, m.wbReview)
+}
+
+// TestWorkbenchReview_ScrollRoutesToPane pins the wheel/j-k routing on
+// the review tab: the pane's cursor moves rather than the tick being
+// swallowed.
+func TestWorkbenchReview_ScrollRoutesToPane(t *testing.T) {
+	m, _ := newReviewWorkbenchHome(t)
+	m.workbench.SetSize(120, 40)
+	enterReview(t, m)
+
+	before := m.workbench.Review().View()
+	m.workbenchScrollDown()
+	assert.NotEqual(t, before, m.workbench.Review().View(),
+		"scrolling the review tab must move its cursor")
+	m.workbenchScrollUp()
+	assert.Equal(t, before, m.workbench.Review().View(),
+		"scrolling back must restore the original cursor position")
+}
+
 // aliveTmuxSessionForTest builds a TmuxSession whose DoesSessionExist
 // (and thus Instance.TmuxAlive) reports true without touching a real
 // tmux server — mirrors addReadyInstance's fixture in

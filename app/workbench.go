@@ -10,6 +10,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/review"
 	gitdiff "github.com/aidan-bailey/loom/review/gitdiff"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/files"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
@@ -52,10 +53,10 @@ func (m *home) enterWorkbench() tea.Cmd {
 	m.splitPane.SetTerminalHidden(true)
 	m.workbench.SetSession(sel.Title, sel.GetWorktreePath())
 	// SetSession only clears the workbench's interface field on an actual
-	// title change; nil-ing unconditionally keeps the wbReview invariant
+	// title change; dropping unconditionally keeps the wbReview invariant
 	// trivially true (cleanup runs on every exit path anyway, so a stale
 	// same-title pane cannot survive to here).
-	m.wbReview = nil
+	m.dropReviewPane()
 	m.wbRatio = 0
 	if m.appState != nil {
 		if r, ok := m.appState.GetUIPrefs().WorkbenchRatios[sel.Title]; ok {
@@ -91,8 +92,7 @@ func (m *home) cleanupWorkbench() {
 	m.wbRatio = 0
 	if m.workbench != nil {
 		m.workbench.Markdown.CancelEdit()
-		m.wbReview = nil
-		m.workbench.SetReview(nil)
+		m.dropReviewPane()
 		m.workbench.Markdown.SetFollowing(true)
 	}
 	m.splitPane.SetTerminalHidden(m.wbPrevTerminalHidden)
@@ -309,12 +309,38 @@ func handleWorkbenchKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool)
 	return m, nil, false
 }
 
+// dropReviewPane clears both halves of the review-pane invariant
+// (home.wbReview and the workbench's interface field), which must be
+// nil iff the other is. Safe to call when no review is open.
+func (m *home) dropReviewPane() {
+	m.wbReview = nil
+	if m.workbench != nil {
+		m.workbench.SetReview(nil)
+	}
+}
+
+// reviewableSelection resolves the instance a review may be opened on,
+// surfacing a notice (and returning nil) for the excluded states — a
+// paused or Recoverable session has no live agent to send comments to,
+// and its worktree may not even be on disk.
+func (m *home) reviewableSelection() *session.Instance {
+	sel := m.list.GetSelectedInstance()
+	if sel == nil {
+		return nil
+	}
+	if sel.Paused() || sel.GetStatus() == session.Recoverable {
+		m.errBox.SetInfo("session is not running — resume it before reviewing")
+		return nil
+	}
+	return sel
+}
+
 // openDocReview freezes the markdown pane (same contract as edit mode:
 // follow-mode pauses so line anchors can't rot under a live agent) and
 // opens the review tab on docPath.
 func (m *home) openDocReview(docPath string) tea.Cmd {
-	sel := m.list.GetSelectedInstance()
-	if sel == nil || sel.Paused() {
+	sel := m.reviewableSelection()
+	if sel == nil {
 		return nil
 	}
 	root := sel.GetWorktreePath()
@@ -325,6 +351,7 @@ func (m *home) openDocReview(docPath string) tea.Cmd {
 	p := reviewui.NewDocPane(sel.Title, root, docPath)
 	m.wbReview = p
 	m.workbench.SetReview(p)
+	m.wbReviewPrevTab = ui.WbTabMarkdown
 	m.workbench.SetTab(ui.WbTabReview)
 	return p.LoadCmd()
 }
@@ -335,8 +362,8 @@ func (m *home) openDocReview(docPath string) tea.Cmd {
 // ChangedFiles shells out synchronously on the Update goroutine —
 // same weight and precedent as the inline diff-stat calls.
 func (m *home) openCodeReview() tea.Cmd {
-	sel := m.list.GetSelectedInstance()
-	if sel == nil || sel.Paused() {
+	sel := m.reviewableSelection()
+	if sel == nil {
 		return nil
 	}
 	root := sel.GetWorktreePath()
@@ -359,6 +386,13 @@ func (m *home) openCodeReview() tea.Cmd {
 	p := reviewui.NewCodePane(title, root, files, "HEAD")
 	m.wbReview = p
 	m.workbench.SetReview(p)
+	// Remember where the user came from so q lands back there. A review
+	// tab can't be its own return target (nothing would be showing).
+	if prev := m.workbench.Tab(); prev != ui.WbTabReview {
+		m.wbReviewPrevTab = prev
+	} else {
+		m.wbReviewPrevTab = ui.WbTabMarkdown
+	}
 	m.workbench.SetTab(ui.WbTabReview)
 	manifest := func() tea.Msg {
 		err := review.SaveSession(sessionRoot, &review.CodeReviewSession{
@@ -379,12 +413,17 @@ func (m *home) enterWorkbenchReview() tea.Cmd {
 	return tea.Batch(enter, m.openCodeReview())
 }
 
-// closeReview leaves the review tab back to markdown and resumes
-// follow mode (the freeze counterpart of openDocReview).
+// closeReview leaves the review tab for whichever panel tab the review
+// was opened from (markdown by default) and resumes follow mode (the
+// freeze counterpart of openDocReview).
 func (m *home) closeReview() tea.Cmd {
-	m.wbReview = nil
-	m.workbench.SetReview(nil)
-	m.workbench.SetTab(ui.WbTabMarkdown)
+	m.dropReviewPane()
+	back := m.wbReviewPrevTab
+	if back == ui.WbTabReview {
+		back = ui.WbTabMarkdown
+	}
+	m.wbReviewPrevTab = ui.WbTabMarkdown
+	m.workbench.SetTab(back)
 	m.workbench.Markdown.SetFollowing(true)
 	return m.workbenchScanCmd()
 }
@@ -420,7 +459,9 @@ func (m *home) sendReviewCmd() tea.Cmd {
 	})
 }
 
-// workbenchScrollUp/Down route j/k to the active tab.
+// workbenchScrollUp/Down route j/k (and wheel ticks) to the active tab.
+// The review pane has no scroll API of its own — its cursor *is* the
+// scroll position — so a tick is fed to it as the equivalent key press.
 func (m *home) workbenchScrollUp() {
 	switch m.workbench.Tab() {
 	case ui.WbTabDiff:
@@ -429,6 +470,8 @@ func (m *home) workbenchScrollUp() {
 		m.workbench.FilesUp()
 	case ui.WbTabMarkdown:
 		m.workbench.Markdown.ScrollUp()
+	case ui.WbTabReview:
+		m.reviewScrollKey('k')
 	}
 }
 
@@ -440,7 +483,19 @@ func (m *home) workbenchScrollDown() {
 		m.workbench.FilesDown()
 	case ui.WbTabMarkdown:
 		m.workbench.Markdown.ScrollDown()
+	case ui.WbTabReview:
+		m.reviewScrollKey('j')
 	}
+}
+
+// reviewScrollKey feeds a synthetic cursor key to the review pane. The
+// returned Cmd is dropped: cursor moves are synchronous and produce no
+// Cmd, and the callers (j/k, wheel) have no Cmd channel of their own.
+func (m *home) reviewScrollKey(r rune) {
+	if m.wbReview == nil {
+		return
+	}
+	m.wbReview.HandleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
 }
 
 // wbScanMsg reports the follow scan's most-recent markdown file.
