@@ -264,6 +264,10 @@ func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 		return enqueue(L, RestartWithOptionsIntent{})
 	}))
 
+	actions.RawSetString("open_review", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, OpenReviewIntent{})
+	}))
+
 	actions.RawSetString("new_instance", L.NewFunction(func(L *lua.LState) int {
 		return enqueue(L, NewInstanceIntent{
 			Prompt: optBool(L, "prompt", false),

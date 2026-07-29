@@ -150,6 +150,17 @@ func TestCsActionsRestartWithOptionsSelected(t *testing.T) {
 	_ = h.enqueued[0].(RestartWithOptionsIntent)
 }
 
+func TestCsActionsOpenReview(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("c", function() cs.actions.open_review() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "c")
+	_ = h.enqueued[0].(OpenReviewIntent)
+}
+
 func TestCsActionsNewInstanceDefaults(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()

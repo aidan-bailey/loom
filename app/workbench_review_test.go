@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -55,6 +56,96 @@ func newReviewWorkbenchHome(t *testing.T) (*home, string) {
 	m.workbench.Markdown.SetDocument(doc, "# Plan\n\nfirst line\n", time.Now())
 	m.workbench.Markdown.SetFollowing(true)
 	return m, doc
+}
+
+// initReviewRepo creates a git repo with one commit, optionally leaving
+// a working-tree modification behind. Mirrors review/gitdiff's initRepo.
+func initReviewRepo(t *testing.T, dirty bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	run("init", "-q")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "t")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\ntwo\nthree\n"), 0o644))
+	run("add", ".")
+	run("commit", "-q", "-m", "init")
+	if dirty {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\nTWO\nthree\nfour\n"), 0o644))
+	}
+	return dir
+}
+
+// newCodeReviewWorkbenchHome is newReviewWorkbenchHome with a real git
+// worktree root, so gitdiff.ChangedFiles has something to enumerate.
+func newCodeReviewWorkbenchHome(t *testing.T, dirty bool) (*home, string) {
+	t.Helper()
+	m := newWorkbenchTestHome(t)
+
+	root := initReviewRepo(t, dirty)
+
+	inst, err := session.FromInstanceData(session.InstanceData{
+		Title:   "a",
+		Path:    root,
+		Program: "claude",
+		Status:  session.Ready,
+		Worktree: session.GitWorktreeData{
+			RepoPath:     root,
+			WorktreePath: root,
+			SessionName:  "a",
+			BranchName:   "test/a",
+		},
+	}, t.TempDir())
+	require.NoError(t, err)
+	m.list.AddInstance(inst)
+	m.list.SetSelectedInstance(0)
+
+	_, _ = handleStateDefaultKey(m, wbKey("enter"))
+	require.Equal(t, viewWorkbench, m.viewMode)
+	m.workbench.SetSize(120, 40)
+	m.workbench.SetTab(ui.WbTabMarkdown)
+	return m, root
+}
+
+// TestWorkbenchReview_5StartsCodeReview pins the multi-file entry: with
+// no active review, `5` builds a review over the worktree diff, loads
+// it, and writes the crit interop manifest.
+func TestWorkbenchReview_5StartsCodeReview(t *testing.T) {
+	m, root := newCodeReviewWorkbenchHome(t, true)
+	require.Nil(t, m.wbReview)
+
+	_, cmd, handled := handleWorkbenchKey(m, wbKey("5"))
+	require.True(t, handled)
+	require.NotNil(t, cmd, "5 must dispatch load + manifest")
+	require.NotNil(t, m.wbReview)
+	assert.Equal(t, ui.WbTabReview, m.workbench.Tab())
+
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok, "expected a batch of load + manifest cmds")
+	for _, c := range batch {
+		m.Update(c())
+	}
+	assert.Contains(t, m.workbench.String(), "a.txt", "loaded review must show the changed file")
+
+	manifest := filepath.Join(root, ".crit", "code-review.yaml")
+	_, err := os.Stat(manifest)
+	assert.NoError(t, err, "manifest must be written for crit interop")
+}
+
+// TestWorkbenchReview_5NoChangesNotifies pins the empty-diff guard: a
+// clean worktree surfaces a notice rather than an empty review tab.
+func TestWorkbenchReview_5NoChangesNotifies(t *testing.T) {
+	m, _ := newCodeReviewWorkbenchHome(t, false)
+
+	_, cmd, handled := handleWorkbenchKey(m, wbKey("5"))
+	require.True(t, handled)
+	assert.Nil(t, cmd)
+	assert.Nil(t, m.wbReview)
+	assert.NotEqual(t, ui.WbTabReview, m.workbench.Tab())
+	assert.Contains(t, m.errBox.String(), "no changes to review")
 }
 
 // enterReview drives the `c` entry key and delivers the load result so

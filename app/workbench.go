@@ -9,6 +9,7 @@ import (
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/review"
+	gitdiff "github.com/aidan-bailey/loom/review/gitdiff"
 	"github.com/aidan-bailey/loom/session/files"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
@@ -219,10 +220,9 @@ func handleWorkbenchKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool)
 	case "5":
 		if m.wbReview != nil {
 			m.workbench.SetTab(ui.WbTabReview)
-		} else {
-			m.errBox.SetInfo("no active review — press c on a markdown doc to start one")
+			return m, nil, true
 		}
-		return m, nil, true
+		return m, m.openCodeReview(), true
 	case "f":
 		if !md.Following() {
 			md.SetFollowing(true)
@@ -327,6 +327,56 @@ func (m *home) openDocReview(docPath string) tea.Cmd {
 	m.workbench.SetReview(p)
 	m.workbench.SetTab(ui.WbTabReview)
 	return p.LoadCmd()
+}
+
+// openCodeReview builds a multi-file review over the worktree's
+// changes vs HEAD and writes the interop session manifest (so an agent
+// running the crit CLI in the same worktree sees the same file set).
+// ChangedFiles shells out synchronously on the Update goroutine —
+// same weight and precedent as the inline diff-stat calls.
+func (m *home) openCodeReview() tea.Cmd {
+	sel := m.list.GetSelectedInstance()
+	if sel == nil || sel.Paused() {
+		return nil
+	}
+	root := sel.GetWorktreePath()
+	if root == "" {
+		return nil
+	}
+	files, err := gitdiff.ChangedFiles(root)
+	if err != nil {
+		return m.handleError(fmt.Errorf("listing changes: %w", err))
+	}
+	if len(files) == 0 {
+		m.errBox.SetInfo("no changes to review in this worktree")
+		return nil
+	}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	title, sessionRoot := sel.Title, root
+	p := reviewui.NewCodePane(title, root, files, "HEAD")
+	m.wbReview = p
+	m.workbench.SetReview(p)
+	m.workbench.SetTab(ui.WbTabReview)
+	manifest := func() tea.Msg {
+		err := review.SaveSession(sessionRoot, &review.CodeReviewSession{
+			Files: paths, DiffBase: "HEAD", CreatedAt: time.Now(),
+		})
+		return reviewui.SavedMsg{Title: title, Err: err}
+	}
+	return tea.Batch(p.LoadCmd(), manifest)
+}
+
+// enterWorkbenchReview is the focus-mode entry: workbench + code review
+// in one hop.
+func (m *home) enterWorkbenchReview() tea.Cmd {
+	enter := m.enterWorkbench()
+	if m.viewMode != viewWorkbench {
+		return enter // nothing selected; enterWorkbench no-opped
+	}
+	return tea.Batch(enter, m.openCodeReview())
 }
 
 // closeReview leaves the review tab back to markdown and resumes

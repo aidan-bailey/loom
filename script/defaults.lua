@@ -18,6 +18,7 @@ cs.bind("D", function() cs.actions.kill_selected{} end,             { help = "ki
 cs.bind("p", function() cs.actions.push_selected{} end,             { help = "push branch" })
 cs.bind("s", function() cs.actions.stash_selected{} end,            { help = "stash" })
 cs.bind("m", function() cs.actions.merge_selected() end,            { help = "merge session" })
+cs.bind("c", function() cs.actions.open_review() end,               { help = "review" })
 cs.bind("r", function() cs.actions.resume_selected() end,           { help = "resume" })
 cs.bind("R", function() cs.actions.restart_with_options_selected() end, { help = "resume with options" })
 cs.bind("?", function() cs.actions.show_help() end,                 { help = "help" })

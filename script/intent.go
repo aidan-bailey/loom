@@ -67,6 +67,10 @@ type ResumeIntent struct{}
 // before resuming.
 type RestartWithOptionsIntent struct{}
 
+// OpenReviewIntent asks the app to open the workbench on the review
+// tab for the selected instance (code review over the worktree diff).
+type OpenReviewIntent struct{}
+
 // NewInstanceIntent asks the app to open the new-instance overlay.
 // Prompt=true collects a starter prompt after the title. Title
 // pre-fills the title field when non-empty.
@@ -115,6 +119,7 @@ func (KillSelectedIntent) intent()       {}
 func (StashIntent) intent()              {}
 func (ResumeIntent) intent()             {}
 func (RestartWithOptionsIntent) intent() {}
+func (OpenReviewIntent) intent()         {}
 func (NewInstanceIntent) intent()        {}
 func (ShowHelpIntent) intent()           {}
 func (WorkspacePickerIntent) intent()    {}
