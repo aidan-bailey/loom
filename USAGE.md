@@ -65,7 +65,7 @@ Loom has three view modes:
 
 - **Focus mode** (the default, shown below) — a session rail on the left plus the selected session's agent and terminal panes on the right. Toggle to overview with `tab`.
 - **Overview mode** — a full-width fleet card grid for triaging many sessions at once. See [Overview Mode](#overview-mode).
-- **Session workbench** — a single-session deep-dive: the agent pane on the left, a tabbed panel (markdown / diff / files / terminal) on the right. Press `enter` in focus mode to open it. See [Session Workbench](#session-workbench).
+- **Session workbench** — a single-session deep-dive: the agent pane on the left, a tabbed panel (markdown / diff / files / terminal / review) on the right. Press `enter` in focus mode to open it. See [Session Workbench](#session-workbench).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -131,14 +131,46 @@ Press `enter` on a selected session in focus mode to open the workbench: a singl
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Tabs** — `1` Markdown, `2` or `d` Diff, `3` Files, `4` (or `t`/`ctrl+t`) Terminal.
-- **Markdown tab** — follows the most-recently-modified markdown file in the session's worktree by default (a lightweight scan rides the same 3-second health tick used elsewhere). Press `f` to resume following after you've pinned a file; opening a file from the Files tab (`enter` on a `.md` entry) pins it until you follow again. Press `e` to edit in place; `ctrl+s` saves, `esc` cancels (prompting to discard if the buffer is dirty). If the file changed on disk since it was loaded, saving prompts to overwrite rather than silently clobbering the external edit — choose overwrite or cancel (there's no separate "reload"; cancel, then `esc` out and let follow/re-open pick up the latest content).
+- **Tabs** — `1` Markdown, `2` or `d` Diff, `3` Files, `4` (or `t`/`ctrl+t`) Terminal, `5` Review (opened on demand — see [Reviewing](#reviewing)).
+- **Markdown tab** — follows the most-recently-modified markdown file in the session's worktree by default (a lightweight scan rides the same 3-second health tick used elsewhere). Press `f` to resume following after you've pinned a file; opening a file from the Files tab (`enter` on a `.md` entry) pins it until you follow again. Press `e` to edit in place; `ctrl+s` saves, `esc` cancels (prompting to discard if the buffer is dirty). If the file changed on disk since it was loaded, saving prompts to overwrite rather than silently clobbering the external edit — choose overwrite or cancel (there's no separate "reload"; cancel, then `esc` out and let follow/re-open pick up the latest content). Press `c` to review the currently-shown document with inline comments — see [Reviewing](#reviewing).
 - **Diff tab** — the same git-diff view as focus mode's `d` overlay, scoped to this session.
 - **Files tab** — a flat listing of the session's worktree; `enter` on a markdown file opens it in the Markdown tab.
 - **Terminal tab** — the shared terminal pane; `t` opens the quick-input bar, `ctrl+t` inline-attaches, `alt+t` full-screen attaches, same as focus mode. Mouse wheel and hardware cursor are unavailable on this tab in v1.
 - **Resize** — `ctrl+left` / `ctrl+right` adjust the agent/panel split in 5% steps (20–80% range), remembered per session title.
 - **Navigation** — `g`/`G` jump to the top/bottom of the active tab; `pgup`/`pgdown` page the markdown and diff tabs; mouse wheel scrolls the pane under the cursor (agent pane on the left, active tab on the right). `]`/`[` still jump to the next/previous agent waiting for input — within the same workspace slot this retargets the workbench to that session, while a cross-workspace jump exits cleanly to focus mode on the target.
 - **Exit** — `esc` returns to focus mode; `tab` exits straight to overview. Workbench mode is never persisted across restarts, and it does not survive an implicit workspace switch (workspace nav, the picker, or a cross-workspace `]`/`[` jump lands you in the target workspace's focus mode instead).
+
+#### Reviewing
+
+The Review tab is a full code-review UI (vendored from the [crit](https://github.com/kevindutra/crit) project) for leaving inline comments on a session's changes, either a single document or the whole worktree diff.
+
+There are three ways in:
+
+- **`c` on the Markdown tab** — reviews the currently-shown document, with comments anchored to its lines.
+- **`5` in the workbench** — opens a multi-file code review over the session worktree's changes against `HEAD` (or, if a review is already open, just switches to the Review tab).
+- **`c` in focus mode** — jumps straight into the workbench and opens the code review for the selected session in one step.
+
+Once inside the Review tab:
+
+| Key | Action |
+|-----|--------|
+| `↑` / `k`, `↓` / `j` | Move |
+| `Shift+↑` / `Shift+↓` | Half-page up/down |
+| `g` / `G` | Top / bottom |
+| `[` / `]` | Previous / next comment |
+| `n` / `N` | Next / previous change (code review) |
+| `Tab` / `Shift+Tab` | Next / previous file (code review) |
+| `s` | Toggle the sidebar |
+| `v` | Visual mode — select a range of lines |
+| `Enter` | Add/edit a comment (or confirm a selection in visual mode) |
+| `/` | Search file tabs (code review) |
+| `Esc` | Cancel the current action |
+| `q` | Save and close — returns to the Markdown tab |
+| `S` | Send the review comments to the session's agent (with confirmation) |
+
+Opening a review freezes the Markdown tab's follow mode, so line anchors can't shift under a live agent while you're commenting; `q` resumes following. `S` composes all outstanding comments into a single prompt and sends it to the agent's pane after you confirm — the session must be running (not paused).
+
+Comments are stored as YAML under `.crit/` in the session's worktree. That directory self-gitignores, and its layout is interop-compatible with the upstream `crit` CLI, so an agent invoked to run `crit` in the same worktree sees the same comments and (for code reviews) the same file set.
 
 ### Right Panel — Agent & Terminal Panes
 
@@ -276,6 +308,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `p` | Push branch to remote (with confirmation) |
 | `D` | Kill selected session (with confirmation); on an orphaned (`⟲`) session: discard its worktree, keeping the branch |
 | `d` | Toggle diff overlay |
+| `c` | Open the workbench code review for the selected session |
 | `W` | Open workspace picker |
 | `S` | Open settings (edit config.json: Default Program, Branch Prefix, Theme, Profiles, Claude Preferences) |
 | `{` / `l` | Previous workspace tab |
@@ -298,7 +331,7 @@ Session-lifecycle keys (`D`, `r`, `R`), workspace keys, and `q`/`?`/`W`/`S` keep
 
 ### Session Workbench (after pressing `Enter` on a selected session)
 
-Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive.
+Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive. On the Review tab, `S` sends the review comments to the agent instead of opening settings — see [Reviewing](#reviewing) for the full set of review keys.
 
 | Key | Action |
 |-----|--------|
@@ -306,9 +339,11 @@ Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt
 | `2` / `d` | Diff tab |
 | `3` | Files tab |
 | `4` / `t` / `Ctrl+T` | Terminal tab (`t` also opens the quick-input bar, `Ctrl+T` also inline-attaches) |
+| `5` | Review tab — open a code review of the worktree's changes vs `HEAD` (or reopen the active review); see [Reviewing](#reviewing) |
 | `Alt+T` | Full-screen attach to the terminal tab |
 | `e` | Edit the markdown tab's document |
 | `f` | Resume following the worktree's most-recently-modified markdown file |
+| `c` | (Markdown tab) Review the shown document with inline comments |
 | `Enter` | On the Files tab: open the file under the cursor (markdown files load into the Markdown tab) |
 | `↑` / `k`, `↓` / `j` | Scroll the active tab (or move the file cursor on the Files tab) |
 | `g` / `G` | Jump to top/bottom of the active tab |
