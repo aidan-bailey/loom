@@ -56,9 +56,6 @@ type AppModel struct {
 	tabSearch    string
 	tabMatches   []int // indices of matching tabs during search
 
-	// Single-file mode (legacy)
-	filePath string
-
 	// exitRequested is set when the user pressed the quit key; the Pane
 	// wrapper reads and clears it so the app layer can leave the tab.
 	exitRequested bool
@@ -99,7 +96,6 @@ func NewDocPane(title, root, filePath string) *Pane {
 	return &Pane{m: AppModel{
 		title:           title,
 		root:            root,
-		filePath:        filePath,
 		tabs:            []FileTab{tab},
 		activeTab:       0,
 		contentViewport: viewport.New(),
@@ -166,24 +162,38 @@ func (m *AppModel) loadDocuments() tea.Cmd {
 
 	return func() tea.Msg {
 		docs := make([]LoadedDoc, 0, len(reqs))
+		// An unreadable file must not blank the whole pane: its tab
+		// degrades to a placeholder while the rest load. Err is
+		// reserved for a load with nothing left to show.
+		var firstErr error
+		showable := false
 		for _, r := range reqs {
-			ld := LoadedDoc{Path: r.path}
+			ld := LoadedDoc{
+				Path:  r.path,
+				State: &review.ReviewState{File: r.path, Comments: []review.Comment{}},
+			}
 			if r.placeholder {
-				ld.State = &review.ReviewState{File: r.path, Comments: []review.Comment{}}
+				showable = true
 				docs = append(docs, ld)
 				continue
 			}
 			doc, err := review.LoadDocument(r.path)
 			if err != nil {
-				return LoadedMsg{Title: title, Err: err}
+				if firstErr == nil {
+					firstErr = err
+				}
+				docs = append(docs, ld)
+				continue
 			}
+			showable = true
 			ld.Doc = doc
-			state, err := review.Load(root, r.path)
-			if err != nil {
-				state = &review.ReviewState{File: r.path, Comments: []review.Comment{}}
+			if state, err := review.Load(root, r.path); err == nil {
+				ld.State = state
 			}
-			ld.State = state
 			docs = append(docs, ld)
+		}
+		if !showable && firstErr != nil {
+			return LoadedMsg{Title: title, Err: firstErr}
 		}
 		return LoadedMsg{Title: title, Docs: docs}
 	}
@@ -257,7 +267,11 @@ func (m *AppModel) update(msg tea.Msg) tea.Cmd {
 			if t.state == nil {
 				t.state = &review.ReviewState{File: t.path, Comments: []review.Comment{}}
 			}
-			t.ensureHighlightCache()
+			// A nil doc is an unreadable file — treated like the
+			// binary/deleted placeholders: no highlight cache.
+			if t.doc != nil {
+				t.ensureHighlightCache()
+			}
 		}
 		m.rebuildContent()
 		m.updateCommentSidebar()
@@ -267,10 +281,6 @@ func (m *AppModel) update(msg tea.Msg) tea.Cmd {
 		if msg.Err != nil {
 			m.err = msg.Err
 		}
-		return nil
-
-	case errMsg:
-		m.err = msg.err
 		return nil
 
 	case tea.KeyPressMsg:

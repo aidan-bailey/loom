@@ -23,7 +23,3 @@ type SavedMsg struct {
 	Title string
 	Err   error
 }
-
-type errMsg struct {
-	err error
-}

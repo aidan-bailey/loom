@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -163,6 +164,45 @@ func TestPane_LoadsExistingComments(t *testing.T) {
 	assert.Equal(t, "test-comment-1", got.Comments[0].ID)
 	assert.Equal(t, "This is a test comment", got.Comments[0].Body)
 	assert.Equal(t, 1, p.CommentCount())
+}
+
+// A single unreadable file in multi-file mode must degrade to a
+// placeholder tab, not blank the whole pane with a global error.
+func TestPane_UnreadableFileDoesNotAbortLoad(t *testing.T) {
+	root := t.TempDir()
+	good := filepath.Join(root, "a_good.md")
+	require.NoError(t, os.WriteFile(good, []byte("# Good\n\nkept\n"), 0o644))
+	missing := filepath.Join(root, "b_missing.md")
+
+	p := &Pane{m: AppModel{
+		title:     "sess",
+		root:      root,
+		multiFile: true,
+		tabs: []FileTab{
+			{path: good, display: "a_good.md", cursorLine: 1},
+			{path: missing, display: "b_missing.md", cursorLine: 1},
+		},
+		contentViewport: viewport.New(),
+		commentViewport: viewport.New(),
+		modalTextarea:   newTextarea(),
+	}}
+	p.SetSize(100, 40)
+
+	msg, ok := p.LoadCmd()().(LoadedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.Err, "one bad file must not fail the whole load")
+	p.HandleMsg(msg)
+
+	v := p.View()
+	assert.NotContains(t, v, "Error:")
+	assert.Contains(t, v, "a_good.md")
+	assert.Contains(t, v, "kept", "the readable file still renders")
+
+	// Both tabs carry review state; only the good one has a document.
+	require.Len(t, p.States(), 2)
+	assert.NotNil(t, p.m.tabs[0].doc)
+	assert.Nil(t, p.m.tabs[1].doc)
+	assert.Nil(t, p.m.tabs[1].chromaLines, "no highlight cache for a nil doc")
 }
 
 func TestPane_LoadErrorSurfaces(t *testing.T) {
