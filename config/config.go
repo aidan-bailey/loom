@@ -142,6 +142,14 @@ type Config struct {
 	// sets it explicitly to false) since it's opt-in. Read it through
 	// CacheTTL1hEnabled.
 	CacheTTL1h *bool `json:"cache_ttl_1h,omitempty"`
+	// Claude1MContext controls whether new Claude sessions launch with
+	// the [1m] long-context suffix appended to their --model alias
+	// (e.g. "sonnet[1m]"). A no-op for agents other than Claude, and
+	// for aliases that don't accept the suffix (see
+	// ClaudeModelSupports1M). Defaults to off (DefaultConfig sets it
+	// explicitly to false) since it's opt-in. Read it through
+	// Context1MEnabled.
+	Claude1MContext *bool `json:"claude_1m_context,omitempty"`
 }
 
 // ClaudePermissionModes lists the values --permission-mode accepts, in
@@ -288,6 +296,13 @@ func (c *Config) CacheTTL1hEnabled() bool {
 	return c.CacheTTL1h != nil && *c.CacheTTL1h
 }
 
+// Context1MEnabled reports whether new Claude sessions should launch
+// with the [1m] long-context suffix on their --model alias. Defaults to
+// false when unset. Unlocked for the same reason as PermissionMode.
+func (c *Config) Context1MEnabled() bool {
+	return c.Claude1MContext != nil && *c.Claude1MContext
+}
+
 // GetProgram returns the program to run. If Profiles is non-empty and
 // DefaultProgram matches a profile name, that profile's Program is returned.
 // Otherwise DefaultProgram is returned as-is.
@@ -348,6 +363,7 @@ func DefaultConfig() *Config {
 		ClaudeModel:          stringPtr("default"),
 		ClaudeEffort:         stringPtr("default"),
 		CacheTTL1h:           boolPtr(false),
+		Claude1MContext:      boolPtr(false),
 	}
 }
 

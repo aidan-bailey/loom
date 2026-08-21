@@ -625,3 +625,25 @@ func TestConfigTheme_DefaultAndAccessor(t *testing.T) {
 	var zero Config
 	assert.Equal(t, "", zero.GetTheme())
 }
+
+func TestContext1MEnabled(t *testing.T) {
+	t.Run("nil is off", func(t *testing.T) {
+		cfg := &Config{}
+		assert.False(t, cfg.Context1MEnabled())
+	})
+	t.Run("explicit true", func(t *testing.T) {
+		cfg := &Config{Claude1MContext: boolPtr(true)}
+		assert.True(t, cfg.Context1MEnabled())
+	})
+	t.Run("explicit false", func(t *testing.T) {
+		cfg := &Config{Claude1MContext: boolPtr(false)}
+		assert.False(t, cfg.Context1MEnabled())
+	})
+	t.Run("default config is off", func(t *testing.T) {
+		cfg := DefaultConfig()
+		if assert.NotNil(t, cfg.Claude1MContext) {
+			assert.False(t, *cfg.Claude1MContext)
+		}
+		assert.False(t, cfg.Context1MEnabled())
+	})
+}
