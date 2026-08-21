@@ -554,3 +554,36 @@ func TestInstance_PauseAbortsWhenTmuxSurvives(t *testing.T) {
 	assert.DirExists(t, gw.GetWorktreePath(),
 		"Pause must not delete the worktree out from under a surviving tmux session")
 }
+
+// TestInstance_PauseAbortsWhenTmuxLivenessUnknown closes the gap the
+// previous test leaves open. Under the load that starved the probes on
+// 2026-08-21, kill-session fails AND the follow-up has-session is killed
+// at its deadline. DoesSessionExist collapses that inconclusive probe into
+// false, so Pause read "already dead" and went on to remove the worktree —
+// the very thing the guard exists to prevent. A probe that never answered
+// must be treated as "maybe alive": abort, keep the worktree.
+func TestInstance_PauseAbortsWhenTmuxLivenessUnknown(t *testing.T) {
+	inst := newTestPausableInstanceWithExec(t, cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			for _, a := range c.Args {
+				switch a {
+				case "kill-session":
+					return errors.New("tmux: server not responding")
+				case "has-session":
+					time.Sleep(5300 * time.Millisecond) // outlive tmuxTimeout → LivenessUnknown
+					return errors.New("signal: killed")
+				}
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	})
+	gw, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+
+	err = inst.Pause(nil)
+
+	require.Error(t, err, "Pause must not report success when it cannot tell whether the agent is still running")
+	assert.DirExists(t, gw.GetWorktreePath(),
+		"Pause must not delete the worktree on an inconclusive liveness probe")
+}

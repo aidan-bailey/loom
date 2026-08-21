@@ -1148,9 +1148,15 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 		// writes race `worktree remove` into leaving a half-removed
 		// worktree that no later resume can recover. Abort instead; the
 		// instance stays Running and the pause can be retried.
-		if ts.DoesSessionExist() {
+		//
+		// Only an answered "no such session" clears us to proceed. The
+		// same load that makes kill-session fail also starves the
+		// liveness probe, and DoesSessionExist would read that
+		// inconclusive probe as "already dead" — removing the worktree
+		// under an agent we never established was gone.
+		if ts.SessionLiveness() != tmux.LivenessDead {
 			errs = append(errs, fmt.Errorf(
-				"failed to stop the agent's tmux session and it is still running; worktree left intact: %w", err))
+				"failed to stop the agent's tmux session and cannot confirm it is gone; worktree left intact: %w", err))
 			return i.combineErrors(errs)
 		}
 	}
