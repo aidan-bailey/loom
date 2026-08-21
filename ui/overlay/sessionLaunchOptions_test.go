@@ -30,7 +30,7 @@ func TestSessionLaunchOptionsCyclesPermissionModeAndModel(t *testing.T) {
 func TestSessionLaunchOptionsHeadroomProxyExcludesRemoteControl(t *testing.T) {
 	lo := NewSessionLaunchOptions(LaunchOptions{RemoteControl: true}, false, "")
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		lo.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "}) // toggle Headroom Proxy on
@@ -84,8 +84,8 @@ func TestSessionLaunchOptionsShowsBlockedHint(t *testing.T) {
 
 func TestSessionLaunchOptions_EffortRowCycles(t *testing.T) {
 	l := NewSessionLaunchOptions(LaunchOptions{Effort: "default"}, false, "")
-	// Move to row 4 (Effort): down x4 from row 0.
-	for i := 0; i < 4; i++ {
+	// Move to row 5 (Effort): down x5 from row 0.
+	for i := 0; i < 5; i++ {
 		l.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	l.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
@@ -110,12 +110,69 @@ func TestSessionLaunchOptionsRendersAllSixRows(t *testing.T) {
 
 func TestSessionLaunchOptions_CacheTTL1hRowToggles(t *testing.T) {
 	l := NewSessionLaunchOptions(LaunchOptions{}, false, "")
-	// Move to row 5 (Cache TTL): down x5 from row 0.
-	for i := 0; i < 5; i++ {
+	// Move to row 6 (Cache TTL): down x6 from row 0.
+	for i := 0; i < 6; i++ {
 		l.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	l.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 	assert.True(t, l.Options().CacheTTL1h)
 	l.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 	assert.False(t, l.Options().CacheTTL1h)
+}
+
+func TestSessionLaunchOptions_Context1MRow(t *testing.T) {
+	t.Run("row count", func(t *testing.T) {
+		assert.Equal(t, 7, sessionLaunchOptionsRowCount)
+	})
+
+	t.Run("space on row 3 toggles Context1M", func(t *testing.T) {
+		l := NewSessionLaunchOptions(LaunchOptions{Model: "sonnet"}, false, "")
+		l.cursor = 3
+		l.toggleCursor()
+		assert.True(t, l.opts.Context1M)
+		l.toggleCursor()
+		assert.False(t, l.opts.Context1M)
+	})
+
+	t.Run("toggling 1M leaves every other option alone", func(t *testing.T) {
+		before := LaunchOptions{
+			RemoteControl:  true,
+			PermissionMode: "plan",
+			Model:          "opus",
+			HeadroomProxy:  false,
+			Effort:         "high",
+			CacheTTL1h:     true,
+		}
+		l := NewSessionLaunchOptions(before, false, "")
+		l.cursor = 3
+		l.toggleCursor()
+		assert.Equal(t, before.RemoteControl, l.opts.RemoteControl)
+		assert.Equal(t, before.PermissionMode, l.opts.PermissionMode)
+		assert.Equal(t, before.Model, l.opts.Model)
+		assert.Equal(t, before.HeadroomProxy, l.opts.HeadroomProxy)
+		assert.Equal(t, before.Effort, l.opts.Effort)
+		assert.Equal(t, before.CacheTTL1h, l.opts.CacheTTL1h)
+	})
+
+	t.Run("rows below Model shifted down by one", func(t *testing.T) {
+		l := NewSessionLaunchOptions(LaunchOptions{Effort: "default"}, false, "")
+		l.cursor = 4
+		l.toggleCursor()
+		assert.True(t, l.opts.HeadroomProxy)
+
+		l = NewSessionLaunchOptions(LaunchOptions{Effort: "default"}, false, "")
+		l.cursor = 5
+		l.toggleCursor()
+		assert.Equal(t, "low", l.opts.Effort)
+
+		l = NewSessionLaunchOptions(LaunchOptions{Effort: "default"}, false, "")
+		l.cursor = 6
+		l.toggleCursor()
+		assert.True(t, l.opts.CacheTTL1h)
+	})
+
+	t.Run("render shows the row and its state", func(t *testing.T) {
+		l := NewSessionLaunchOptions(LaunchOptions{Model: "sonnet", Context1M: true}, false, "")
+		assert.Contains(t, l.Render(), "1M Context")
+	})
 }

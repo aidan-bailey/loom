@@ -41,9 +41,9 @@ type SessionLaunchOptions struct {
 }
 
 // sessionLaunchOptionsRowCount is the number of navigable rows: Remote
-// Control, Permission Mode, Model, Headroom Proxy, Effort, and Cache
-// TTL (1h).
-const sessionLaunchOptionsRowCount = 6
+// Control, Permission Mode, Model, 1M Context, Headroom Proxy, Effort,
+// and Cache TTL (1h).
+const sessionLaunchOptionsRowCount = 7
 
 // NewSessionLaunchOptions creates the modal seeded with initial
 // (typically the global config's current values).
@@ -99,13 +99,15 @@ func (l *SessionLaunchOptions) toggleCursor() {
 	case 2:
 		l.opts.Model = nextInList(config.ClaudeModelAliases(), l.opts.Model)
 	case 3:
+		l.opts.Context1M = !l.opts.Context1M
+	case 4:
 		l.opts.HeadroomProxy = !l.opts.HeadroomProxy
 		if l.opts.HeadroomProxy {
 			l.opts.RemoteControl = false
 		}
-	case 4:
-		l.opts.Effort = nextInList(config.ClaudeEfforts, l.opts.Effort)
 	case 5:
+		l.opts.Effort = nextInList(config.ClaudeEfforts, l.opts.Effort)
+	case 6:
 		l.opts.CacheTTL1h = !l.opts.CacheTTL1h
 	}
 }
@@ -151,6 +153,10 @@ func (l *SessionLaunchOptions) Render() string {
 	if l.opts.HeadroomProxy {
 		hwCheck = "[x]"
 	}
+	ctxCheck := "[ ]"
+	if l.opts.Context1M {
+		ctxCheck = "[x]"
+	}
 	cacheCheck := "[ ]"
 	if l.opts.CacheTTL1h {
 		cacheCheck = "[x]"
@@ -160,9 +166,10 @@ func (l *SessionLaunchOptions) Render() string {
 		row(0, "Remote Control    ", rcCheck) + "\n" +
 		row(1, "Permission Mode   ", "< "+l.opts.PermissionMode+" >") + "\n" +
 		row(2, "Model             ", "< "+l.opts.Model+" >") + "\n" +
-		row(3, "Headroom Proxy    ", hwCheck) + "\n" +
-		row(4, "Effort            ", "< "+l.opts.Effort+" >") + "\n" +
-		row(5, "Cache TTL (1h)    ", cacheCheck) + "\n\n" +
+		row(3, "1M Context        ", ctxCheck) + "\n" +
+		row(4, "Headroom Proxy    ", hwCheck) + "\n" +
+		row(5, "Effort            ", "< "+l.opts.Effort+" >") + "\n" +
+		row(6, "Cache TTL (1h)    ", cacheCheck) + "\n\n" +
 		sessionLaunchOptionsHintStyle.Render("up/down move • space toggle/cycle • enter start • esc cancel")
 
 	border := lipgloss.NewStyle().
