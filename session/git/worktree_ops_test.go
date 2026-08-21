@@ -195,3 +195,86 @@ func TestIsBranchAbsentErr(t *testing.T) {
 		})
 	}
 }
+
+// TestSetup_RecoversFromHalfRemovedWorktree pins the fix for the
+// permanently-unresumable session bug. `git worktree remove -f` drops the
+// worktree's .git file and then rmdir's the tree, so an agent process that
+// outlived its tmux session and is still writing into it (node_modules,
+// target/) makes the rmdir fail with "Directory not empty". That leaves a
+// half-removed worktree — directory still on disk, registry entry marked
+// `prunable` — and because the failure was only logged, every later resume
+// fell through to `worktree add` and died with a cryptic
+// `fatal: '<path>' already exists`. Forever: the state is not self-healing,
+// so the session could never be resumed again.
+func TestSetup_RecoversFromHalfRemovedWorktree(t *testing.T) {
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+
+	// Reproduce the half-removed state observed in the incident: git got far
+	// enough to unlink .git (making the registry entry `prunable`) but the
+	// directory survived, holding files a concurrent writer re-created.
+	require.NoError(t, os.Remove(filepath.Join(worktreePath, ".git")))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(worktreePath, "leftover-from-live-writer"), []byte("x"), 0644))
+
+	gw := NewGitWorktreeFromStorage(repoDir, worktreePath, "sess", branchName, "", true, configDir)
+
+	require.NoError(t, gw.Setup(), "resume must recover from a half-removed worktree")
+
+	// The worktree is a working tree again, checked out at the preserved branch.
+	assert.FileExists(t, filepath.Join(worktreePath, ".git"))
+	out, err := exec.Command("git", "-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	require.NoError(t, err)
+	assert.Equal(t, branchName, strings.TrimSpace(string(out)),
+		"recovered worktree must be checked out at the session's branch")
+}
+
+// TestSetup_RefusesToDeleteLiveWorktree guards the recovery path above.
+// Clearing a leftover directory is only safe once git has unlinked .git,
+// because nothing tracked can survive there. A directory that is still a
+// working tree may hold tracked work, so Setup must fail loudly rather
+// than delete it. A locked worktree is the deterministic stand-in for any
+// `worktree remove -f` failure that leaves .git intact.
+func TestSetup_RefusesToDeleteLiveWorktree(t *testing.T) {
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+	runGit(t, repoDir, "worktree", "lock", worktreePath)
+	t.Cleanup(func() { _ = exec.Command("git", "-C", repoDir, "worktree", "unlock", worktreePath).Run() })
+
+	gw := NewGitWorktreeFromStorage(repoDir, worktreePath, "sess", branchName, "", true, configDir)
+
+	err := gw.Setup()
+
+	require.Error(t, err, "Setup must not silently proceed past a live worktree")
+	assert.Contains(t, err.Error(), "live working tree")
+	assert.FileExists(t, filepath.Join(worktreePath, "README.md"),
+		"tracked work in a live worktree must never be deleted by recovery")
+}
+
+// TestSetup_PreservesGuttedWorktreeContents guards the recovery path
+// against silent data loss. A gutted worktree (git unlinked .git, then
+// its delete was interrupted — by a timeout kill or a losing race with a
+// live writer) can still hold work that was never committed; the
+// 2026-08-21 incident stranded a modified README.md exactly this way.
+// Since .git is gone, git can no longer tell us what is dirty, so
+// recovery must not assume the leftovers are disposable: set them aside
+// rather than delete them.
+func TestSetup_PreservesGuttedWorktreeContents(t *testing.T) {
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+	require.NoError(t, os.Remove(filepath.Join(worktreePath, ".git")))
+	require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "uncommitted.txt"),
+		[]byte("work that was never committed\n"), 0644))
+
+	gw := NewGitWorktreeFromStorage(repoDir, worktreePath, "sess", branchName, "", true, configDir)
+	require.NoError(t, gw.Setup())
+
+	// The session is usable again...
+	assert.FileExists(t, filepath.Join(worktreePath, ".git"))
+
+	// ...and the stranded work was set aside, not destroyed.
+	matches, err := filepath.Glob(worktreePath + ".orphaned*")
+	require.NoError(t, err)
+	require.NotEmpty(t, matches, "gutted worktree contents must be preserved, not deleted")
+	body, err := os.ReadFile(filepath.Join(matches[0], "uncommitted.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "work that was never committed\n", string(body),
+		"uncommitted work must survive recovery verbatim")
+}

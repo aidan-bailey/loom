@@ -130,16 +130,80 @@ func (g *GitWorktree) Setup() (err error) {
 	return err
 }
 
+// clearWorktreePath frees worktreePath so a subsequent `git worktree add`
+// can use it.
+//
+// `git worktree remove` deletes the tree's files and then rmdir's the
+// directory. A process still writing inside it — an agent that outlived
+// its tmux session, or a build it spawned dropping files into
+// node_modules/ or target/ — makes that rmdir fail with ENOTEMPTY. git
+// has already unlinked .git by then, so what survives is a half-removed
+// worktree: a directory on disk with a registry entry marked `prunable`.
+// Merely logging that failure and pressing on makes `worktree add` die
+// with a cryptic "already exists", and because nothing self-heals the
+// state, every later resume of that session fails the same way forever.
+func (g *GitWorktree) clearWorktreePath() error {
+	if _, err := g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath); err != nil && !isWorktreeAbsentErr(err) {
+		log.WarnKV("git.worktree_cleanup_failed", "path", g.worktreePath, "err", err.Error())
+	}
+
+	if _, err := os.Stat(g.worktreePath); os.IsNotExist(err) {
+		return nil // removed cleanly, or was never there — the common case
+	}
+
+	// Drop a registry entry still pointing here, so the branch is not
+	// reported as checked out somewhere else by the `worktree add` below.
+	if _, err := g.runGitCommand(g.repoPath, "worktree", "prune"); err != nil {
+		log.WarnKV("git.worktree_prune_failed", "path", g.worktreePath, "err", err.Error())
+	}
+
+	// A surviving .git means this is still a live working tree, which may
+	// hold tracked work. Deleting it is not ours to do — say so plainly
+	// instead.
+	if _, err := os.Stat(filepath.Join(g.worktreePath, ".git")); err == nil {
+		return fmt.Errorf("worktree directory %s already exists and is still a live working tree; refusing to remove it", g.worktreePath)
+	}
+
+	// No .git, so git can no longer tell us what is dirty here — and a
+	// gutted worktree can still hold work that was never committed. Move
+	// the leftovers aside rather than deleting them: `worktree add` gets a
+	// free path, and anything stranded stays recoverable on disk.
+	orphaned, err := freeOrphanPath(g.worktreePath)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(g.worktreePath, orphaned); err != nil {
+		return fmt.Errorf("failed to move leftover worktree directory %s aside (a process may still be writing into it): %w", g.worktreePath, err)
+	}
+	log.WarnKV("git.worktree_leftover_preserved", "path", g.worktreePath, "moved_to", orphaned)
+	return nil
+}
+
+// freeOrphanPath returns an unused sibling path to park a leftover
+// worktree directory at. Sibling rather than child so it never lands
+// inside the worktree git is about to recreate, and suffixed rather than
+// deleted so stranded uncommitted work survives.
+func freeOrphanPath(worktreePath string) (string, error) {
+	candidate := worktreePath + ".orphaned"
+	for n := 1; ; n++ {
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		}
+		if n > 100 {
+			return "", fmt.Errorf("no free path to preserve leftover worktree directory %s: %s and 100 suffixed variants all exist", worktreePath, worktreePath+".orphaned")
+		}
+		candidate = fmt.Sprintf("%s.orphaned-%d", worktreePath, n)
+	}
+}
+
 // setupFromExistingBranch creates a worktree from an existing branch
 func (g *GitWorktree) setupFromExistingBranch() error {
 	// Directory already created in Setup(), skip duplicate creation
 
-	// Clean up any existing worktree first. "Not a working tree" is the
-	// normal case (nothing to remove); any other failure — lockfile,
-	// permissions — should surface so the next `worktree add` doesn't
-	// fail cryptically with a stale registration in the way.
-	if _, err := g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath); err != nil && !isWorktreeAbsentErr(err) {
-		log.WarnKV("git.worktree_cleanup_failed", "path", g.worktreePath, "err", err.Error())
+	// Free the path for `worktree add`, recovering from a half-removed
+	// worktree if one is left in the way.
+	if err := g.clearWorktreePath(); err != nil {
+		return err
 	}
 
 	// Check if the local branch exists
@@ -177,12 +241,10 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 
 // setupNewWorktree creates a new worktree from HEAD
 func (g *GitWorktree) setupNewWorktree() error {
-	// Clean up any existing worktree first. Absent-worktree is the
-	// common case during fresh session setup; any other failure
-	// (permissions, lockfile) would otherwise silently poison the
-	// subsequent `worktree add`.
-	if _, err := g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath); err != nil && !isWorktreeAbsentErr(err) {
-		log.WarnKV("git.worktree_cleanup_failed", "path", g.worktreePath, "err", err.Error())
+	// Free the path for `worktree add`, recovering from a half-removed
+	// worktree if one is left in the way.
+	if err := g.clearWorktreePath(); err != nil {
+		return err
 	}
 
 	// Clean up any existing branch using git CLI (much faster than go-git PlainOpen).
