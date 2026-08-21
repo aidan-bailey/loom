@@ -17,9 +17,13 @@ type LaunchOptions struct {
 	RemoteControl  bool
 	PermissionMode string
 	Model          string
-	HeadroomProxy  bool
-	Effort         string
-	CacheTTL1h     bool
+	// Context1M requests Claude's [1m] long-context suffix on Model.
+	// Applied only when Model accepts it (see
+	// config.ClaudeModelSupports1M); otherwise silently ignored.
+	Context1M     bool
+	HeadroomProxy bool
+	Effort        string
+	CacheTTL1h    bool
 }
 
 // SessionLaunchOptions is the per-instance "Session Launch Options"

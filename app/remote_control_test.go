@@ -255,3 +255,20 @@ func TestApplyLaunchOptions(t *testing.T) {
 		assert.Equal(t, "claude", got)
 	})
 }
+
+func TestLaunchOptionsFromConfig_SeedsContext1M(t *testing.T) {
+	t.Run("on", func(t *testing.T) {
+		cfg := &config.Config{Claude1MContext: boolPtrTest(true)}
+		assert.True(t, launchOptionsFromConfig(cfg).Context1M)
+	})
+	t.Run("off", func(t *testing.T) {
+		cfg := &config.Config{Claude1MContext: boolPtrTest(false)}
+		assert.False(t, launchOptionsFromConfig(cfg).Context1M)
+	})
+	t.Run("unset", func(t *testing.T) {
+		assert.False(t, launchOptionsFromConfig(&config.Config{}).Context1M)
+	})
+	t.Run("nil config", func(t *testing.T) {
+		assert.False(t, launchOptionsFromConfig(nil).Context1M)
+	})
+}

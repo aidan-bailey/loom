@@ -60,6 +60,7 @@ func launchOptionsFromConfig(cfg *config.Config) overlay.LaunchOptions {
 		RemoteControl:  cfg.RemoteControlEnabled(),
 		PermissionMode: cfg.PermissionMode(),
 		Model:          cfg.Model(),
+		Context1M:      cfg.Context1MEnabled(),
 		HeadroomProxy:  cfg.HeadroomProxyEnabled(),
 		Effort:         cfg.Effort(),
 		CacheTTL1h:     cfg.CacheTTL1hEnabled(),
