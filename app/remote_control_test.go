@@ -85,7 +85,7 @@ func TestModelProgram(t *testing.T) {
 	})
 
 	t.Run("explicit model is injected", func(t *testing.T) {
-		assert.Equal(t, "claude --model sonnet --permission-mode plan", modelProgram("sonnet", "claude --permission-mode plan"))
+		assert.Equal(t, "claude --model 'sonnet' --permission-mode plan", modelProgram("sonnet", "claude --permission-mode plan"))
 	})
 
 	t.Run("non-claude program is a no-op", func(t *testing.T) {
@@ -157,7 +157,7 @@ func TestApplyLaunchOptions_ComposesEffort(t *testing.T) {
 	opts := overlay.LaunchOptions{Model: "opus", Effort: "high"}
 	got := applyLaunchOptions(opts, authOK, "claude", "t")
 	assert.Contains(t, got, "--effort high")
-	assert.Contains(t, got, "--model opus")
+	assert.Contains(t, got, "--model 'opus'")
 }
 
 func TestParseLaunchOptions_RoundTrip(t *testing.T) {
@@ -223,13 +223,13 @@ func TestApplyLaunchOptions(t *testing.T) {
 	t.Run("stacks remote-control, permission-mode, and model", func(t *testing.T) {
 		opts := overlay.LaunchOptions{RemoteControl: true, PermissionMode: "acceptEdits", Model: "opus", HeadroomProxy: false}
 		got := applyLaunchOptions(opts, authOK, "claude", "my task")
-		assert.Equal(t, "claude --model opus --permission-mode acceptEdits --remote-control my-task", got)
+		assert.Equal(t, "claude --model 'opus' --permission-mode acceptEdits --remote-control my-task", got)
 	})
 
 	t.Run("headroom proxy never touches program", func(t *testing.T) {
 		opts := overlay.LaunchOptions{PermissionMode: "acceptEdits", Model: "opus", HeadroomProxy: true}
 		got := applyLaunchOptions(opts, authOK, "claude", "task")
-		assert.Equal(t, "claude --model opus --permission-mode acceptEdits", got)
+		assert.Equal(t, "claude --model 'opus' --permission-mode acceptEdits", got)
 	})
 
 	t.Run("headroom proxy forcibly disables remote control even if both are true", func(t *testing.T) {
@@ -246,7 +246,7 @@ func TestApplyLaunchOptions(t *testing.T) {
 	t.Run("cache TTL never touches program", func(t *testing.T) {
 		opts := overlay.LaunchOptions{PermissionMode: "acceptEdits", Model: "opus", CacheTTL1h: true}
 		got := applyLaunchOptions(opts, authOK, "claude", "task")
-		assert.Equal(t, "claude --model opus --permission-mode acceptEdits", got)
+		assert.Equal(t, "claude --model 'opus' --permission-mode acceptEdits", got)
 	})
 
 	t.Run("all defaults/disabled is a no-op", func(t *testing.T) {

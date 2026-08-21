@@ -73,7 +73,7 @@ func TestHandleStateLaunchOptionsKeyTogglesBeforeConfirm(t *testing.T) {
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: ' ', Text: " "})
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	assert.Equal(t, "claude --model sonnet", instance.Program)
+	assert.Equal(t, "claude --model 'sonnet'", instance.Program)
 }
 
 func TestHandleStateLaunchOptionsKeyEscCancelsAndKillsPendingInstance(t *testing.T) {

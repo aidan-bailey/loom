@@ -53,7 +53,7 @@ func TestRunRestartWithOptionsSelected_ConfirmRecomposesProgramAndResumes(t *tes
 	require.NotNil(t, pending)
 	_, cmd := pending(overlay.LaunchOptions{PermissionMode: "default", Model: "opus", Effort: "default"})
 
-	assert.Contains(t, inst.Program, "--model opus")
+	assert.Contains(t, inst.Program, "--model 'opus'")
 	assert.False(t, inst.HeadroomProxy, "toggling Headroom Proxy off during restart must update the instance field")
 	assert.False(t, inst.CacheTTL1h, "toggling Cache TTL off during restart must update the instance field")
 	assert.Equal(t, stateDefault, m.state)

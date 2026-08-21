@@ -111,12 +111,12 @@ func TestBuildPermissionModeCommand_Unknown(t *testing.T) {
 }
 
 func TestBuildModelCommand_Claude(t *testing.T) {
-	assert.Equal(t, "claude --model opus", BuildModelCommand("claude", "opus"))
+	assert.Equal(t, "claude --model 'opus'", BuildModelCommand("claude", "opus"))
 }
 
 func TestBuildModelCommand_ClaudeWithFlags(t *testing.T) {
 	assert.Equal(t,
-		"claude --model opus --permission-mode plan",
+		"claude --model 'opus' --permission-mode plan",
 		BuildModelCommand("claude --permission-mode plan", "opus"),
 	)
 }

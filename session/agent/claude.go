@@ -115,11 +115,18 @@ func (claudeAdapter) ApplyPermissionModeFlag(program, mode string) string {
 	return insertAfterCommand(program, "--permission-mode "+mode)
 }
 
-// ApplyModelFlag inserts "--model <model>" after "claude". model == ""
+// ApplyModelFlag inserts "--model '<model>'" after "claude". model == ""
 // or "default" is a no-op — Claude's own default already matches.
 // Returns program unchanged if a --model flag is already present or if
-// program is empty. model is expected to come from config.ClaudeModels,
-// never free-typed user input, so no sanitization is applied.
+// program is empty.
+//
+// The value is single-quoted because tmux runs the composed program
+// string through a shell (session/tmux/tmux.go passes it to new-session
+// as one argument), and the [1m] long-context suffix contains square
+// brackets — glob metacharacters that zsh, with its default nomatch,
+// treats as a fatal error rather than a literal. model still comes from
+// config.ClaudeModels rather than free-typed input; the quoting makes
+// any metacharacter in an alias inert regardless.
 func (claudeAdapter) ApplyModelFlag(program, model string) string {
 	if model == "" || model == "default" {
 		return program
@@ -133,7 +140,7 @@ func (claudeAdapter) ApplyModelFlag(program, model string) string {
 			return program
 		}
 	}
-	return insertAfterCommand(program, "--model "+model)
+	return insertAfterCommand(program, "--model '"+model+"'")
 }
 
 // ApplyEffortFlag inserts "--effort <level>" after "claude". effort ==

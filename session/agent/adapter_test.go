@@ -155,14 +155,19 @@ func TestClaudeModelFlag(t *testing.T) {
 		model   string
 		want    string
 	}{
-		{"plain", "claude", "sonnet", "claude --model sonnet"},
-		{"preserves flags", "claude --permission-mode plan", "opus", "claude --model opus --permission-mode plan"},
-		{"absolute path", "/usr/bin/claude", "haiku", "/usr/bin/claude --model haiku"},
+		{"plain", "claude", "sonnet", "claude --model 'sonnet'"},
+		{"preserves flags", "claude --permission-mode plan", "opus", "claude --model 'opus' --permission-mode plan"},
+		{"absolute path", "/usr/bin/claude", "haiku", "/usr/bin/claude --model 'haiku'"},
 		{"empty model is no-op", "claude --permission-mode plan", "", "claude --permission-mode plan"},
 		{"\"default\" model is no-op", "claude --permission-mode plan", "default", "claude --permission-mode plan"},
 		{"idempotent bare", "claude --model sonnet", "opus", "claude --model sonnet"},
+		{"idempotent quoted", "claude --model 'sonnet'", "opus", "claude --model 'sonnet'"},
 		{"idempotent equals form", "claude --model=sonnet", "opus", "claude --model=sonnet"},
 		{"empty program", "", "sonnet", ""},
+		// Brackets are zsh glob metacharacters and tmux runs the composed
+		// program through a shell, so the suffix must reach Claude quoted
+		// or the pane dies at launch with "no matches found".
+		{"1m suffix is quoted", "claude", "sonnet[1m]", "claude --model 'sonnet[1m]'"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,7 +181,7 @@ func TestClaudeModelComposesWithPermissionModeAndRemoteControl(t *testing.T) {
 	withRC := c.ApplyRemoteControlFlag("claude", "my task")
 	withPM := c.ApplyPermissionModeFlag(withRC, "acceptEdits")
 	got := c.ApplyModelFlag(withPM, "opus")
-	assert.Equal(t, "claude --model opus --permission-mode acceptEdits --remote-control my-task", got)
+	assert.Equal(t, "claude --model 'opus' --permission-mode acceptEdits --remote-control my-task", got)
 }
 
 func TestNonClaudeAdaptersNoModelFlag(t *testing.T) {
