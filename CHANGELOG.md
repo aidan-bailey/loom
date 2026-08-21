@@ -1,3 +1,33 @@
+## [0.12.0] - 2026-08-21
+
+### 🚀 Features
+
+- *(config)* Add the Claude1MContext global default
+- *(app)* Carry Context1M through LaunchOptions
+- *(app)* Decode quoted and [1m]-suffixed --model values
+- *(app)* Compose the [1m] suffix onto supported models
+- *(ui)* Add the 1M Context row to Session Launch Options
+- *(ui)* Add the 1M Context row to Claude Preferences
+
+### 🐛 Bug Fixes
+
+- *(agent)* Single-quote the --model value so [1m] survives zsh
+
+### 🚜 Refactor
+
+- *(config)* Move the 1M capability onto ClaudeModels
+
+### 📚 Documentation
+
+- Drop stale web/ entry from CLAUDE.md
+- *(specs)* Design for the Claude [1m] long-context option
+- *(plans)* Implementation plan for the Claude [1m] option
+- Document the Claude1MContext config field
+
+### ⚙️ Miscellaneous Tasks
+
+- *(build)* Drop windows from the build/test matrix
+
 ## [0.11.0] - 2026-07-29
 
 ### 🚀 Features
