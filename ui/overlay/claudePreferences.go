@@ -31,9 +31,9 @@ type ClaudePreferences struct {
 }
 
 // claudePrefsRowCount is the number of navigable rows: Remote Control,
-// Permission Mode, Model, Headroom Proxy, Effort, Cache TTL (1h), and
-// Loom Context — seven rows.
-const claudePrefsRowCount = 7
+// Permission Mode, Model, 1M Context, Headroom Proxy, Effort, Cache TTL
+// (1h), and Loom Context — eight rows.
+const claudePrefsRowCount = 8
 
 // NewClaudePreferences creates the Claude Preferences sub-screen over cfg.
 func NewClaudePreferences(cfg *config.Config, authBlocked bool, authReason string) *ClaudePreferences {
@@ -83,6 +83,11 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 			})
 		case 3:
 			c.cfg.Mutate(func(cc *config.Config) {
+				v := !cc.Context1MEnabled()
+				cc.Claude1MContext = &v
+			})
+		case 4:
+			c.cfg.Mutate(func(cc *config.Config) {
 				v := !cc.HeadroomProxyEnabled()
 				cc.HeadroomProxy = &v
 				if v {
@@ -90,17 +95,17 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 					cc.ClaudeRemoteControl = &rc
 				}
 			})
-		case 4:
+		case 5:
 			c.cfg.Mutate(func(cc *config.Config) {
 				next := nextInList(config.ClaudeEfforts, cc.Effort())
 				cc.ClaudeEffort = &next
 			})
-		case 5:
+		case 6:
 			c.cfg.Mutate(func(cc *config.Config) {
 				v := !cc.CacheTTL1hEnabled()
 				cc.CacheTTL1h = &v
 			})
-		case 6:
+		case 7:
 			c.cfg.Mutate(func(cc *config.Config) {
 				v := !cc.LoomContextEnabled()
 				cc.ClaudeLoomContext = &v
@@ -180,27 +185,42 @@ func (c *ClaudePreferences) Render() string {
 		modelRow = claudePrefsRowStyle.Render(modelRow)
 	}
 
+	ctxCheck := "[ ]"
+	if c.cfg.Context1MEnabled() {
+		ctxCheck = "[x]"
+	}
+	ctxCursor := "  "
+	if c.cursor == 3 {
+		ctxCursor = "> "
+	}
+	ctxRow := ctxCursor + "1M Context        " + ctxCheck
+	if c.cursor == 3 {
+		ctxRow = claudePrefsSelectedStyle.Render(ctxRow)
+	} else {
+		ctxRow = claudePrefsRowStyle.Render(ctxRow)
+	}
+
 	hwCheck := "[ ]"
 	if c.cfg.HeadroomProxyEnabled() {
 		hwCheck = "[x]"
 	}
 	hwCursor := "  "
-	if c.cursor == 3 {
+	if c.cursor == 4 {
 		hwCursor = "> "
 	}
 	hwRow := hwCursor + "Headroom Proxy    " + hwCheck
-	if c.cursor == 3 {
+	if c.cursor == 4 {
 		hwRow = claudePrefsSelectedStyle.Render(hwRow)
 	} else {
 		hwRow = claudePrefsRowStyle.Render(hwRow)
 	}
 
 	effortCursor := "  "
-	if c.cursor == 4 {
+	if c.cursor == 5 {
 		effortCursor = "> "
 	}
 	effortRow := effortCursor + "Effort            < " + c.cfg.Effort() + " >"
-	if c.cursor == 4 {
+	if c.cursor == 5 {
 		effortRow = claudePrefsSelectedStyle.Render(effortRow)
 	} else {
 		effortRow = claudePrefsRowStyle.Render(effortRow)
@@ -211,11 +231,11 @@ func (c *ClaudePreferences) Render() string {
 		cacheCheck = "[x]"
 	}
 	cacheCursor := "  "
-	if c.cursor == 5 {
+	if c.cursor == 6 {
 		cacheCursor = "> "
 	}
 	cacheRow := cacheCursor + "Cache TTL (1h)    " + cacheCheck
-	if c.cursor == 5 {
+	if c.cursor == 6 {
 		cacheRow = claudePrefsSelectedStyle.Render(cacheRow)
 	} else {
 		cacheRow = claudePrefsRowStyle.Render(cacheRow)
@@ -226,11 +246,11 @@ func (c *ClaudePreferences) Render() string {
 		loomCheck = "[x]"
 	}
 	loomCursor := "  "
-	if c.cursor == 6 {
+	if c.cursor == 7 {
 		loomCursor = "> "
 	}
 	loomRow := loomCursor + "Loom Context      " + loomCheck
-	if c.cursor == 6 {
+	if c.cursor == 7 {
 		loomRow = claudePrefsSelectedStyle.Render(loomRow)
 	} else {
 		loomRow = claudePrefsRowStyle.Render(loomRow)
@@ -240,6 +260,7 @@ func (c *ClaudePreferences) Render() string {
 		rcRow + "\n" +
 		pmRow + "\n" +
 		modelRow + "\n" +
+		ctxRow + "\n" +
 		hwRow + "\n" +
 		effortRow + "\n" +
 		cacheRow + "\n" +

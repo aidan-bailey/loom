@@ -65,8 +65,8 @@ func TestClaudePreferencesHeadroomProxyExcludesRemoteControl(t *testing.T) {
 	cp := NewClaudePreferences(cfg, false, "")
 	assert.True(t, cfg.RemoteControlEnabled())
 
-	// Move focus down to the Headroom Proxy row (row 3) and enable it.
-	for i := 0; i < 3; i++ {
+	// Move focus down to the Headroom Proxy row (row 4) and enable it.
+	for i := 0; i < 4; i++ {
 		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -97,9 +97,9 @@ func TestClaudePreferencesRowNavigationClamps(t *testing.T) {
 	assert.True(t, changed)
 	assert.False(t, cfg.RemoteControlEnabled())
 
-	// Down seven times stays at row 6 (only seven rows): toggles Loom
+	// Down eight times stays at row 7 (only eight rows): toggles Loom
 	// Context, not any earlier row.
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 8; i++ {
 		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	_, changed = cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -143,7 +143,7 @@ func TestClaudePreferencesShowsBlockedHint(t *testing.T) {
 func TestClaudePreferences_EffortRowCycles(t *testing.T) {
 	cfg := &config.Config{}
 	c := NewClaudePreferences(cfg, false, "")
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		c.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	c.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
@@ -161,7 +161,7 @@ func TestClaudePreferencesRendersCacheTTL1h(t *testing.T) {
 func TestClaudePreferences_CacheTTL1hRowToggles(t *testing.T) {
 	cfg := &config.Config{}
 	c := NewClaudePreferences(cfg, false, "")
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 6; i++ {
 		c.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	c.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
@@ -182,8 +182,8 @@ func TestClaudePreferences_LoomContextToggle(t *testing.T) {
 	cfg := &config.Config{}
 	cp := NewClaudePreferences(cfg, false, "")
 
-	// Row 6 is Loom Context. Move the cursor there from row 0.
-	for i := 0; i < 6; i++ {
+	// Row 7 is Loom Context. Move the cursor there from row 0.
+	for i := 0; i < 7; i++ {
 		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 
@@ -195,4 +195,55 @@ func TestClaudePreferences_LoomContextToggle(t *testing.T) {
 
 	// Render shows the row.
 	assert.Contains(t, cp.Render(), "Loom Context")
+}
+
+func TestClaudePreferences_Context1MRow(t *testing.T) {
+	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
+
+	t.Run("row count", func(t *testing.T) {
+		assert.Equal(t, 8, claudePrefsRowCount)
+	})
+
+	t.Run("enter on row 3 toggles Claude1MContext", func(t *testing.T) {
+		cfg := &config.Config{}
+		cp := NewClaudePreferences(cfg, false, "")
+		cp.cursor = 3
+		_, changed := cp.HandleKeyPress(enter)
+		assert.True(t, changed)
+		assert.True(t, cfg.Context1MEnabled())
+		cp.HandleKeyPress(enter)
+		assert.False(t, cfg.Context1MEnabled())
+	})
+
+	t.Run("rows below Model shifted down by one", func(t *testing.T) {
+		cfg := &config.Config{}
+		cp := NewClaudePreferences(cfg, false, "")
+		cp.cursor = 4
+		cp.HandleKeyPress(enter)
+		assert.True(t, cfg.HeadroomProxyEnabled())
+
+		cfg = &config.Config{}
+		cp = NewClaudePreferences(cfg, false, "")
+		cp.cursor = 5
+		cp.HandleKeyPress(enter)
+		assert.Equal(t, "low", cfg.Effort())
+
+		cfg = &config.Config{}
+		cp = NewClaudePreferences(cfg, false, "")
+		cp.cursor = 6
+		cp.HandleKeyPress(enter)
+		assert.True(t, cfg.CacheTTL1hEnabled())
+
+		cfg = &config.Config{}
+		cp = NewClaudePreferences(cfg, false, "")
+		cp.cursor = 7
+		cp.HandleKeyPress(enter)
+		// Loom Context defaults to enabled, so one toggle turns it off.
+		assert.False(t, cfg.LoomContextEnabled())
+	})
+
+	t.Run("render shows the row", func(t *testing.T) {
+		cp := NewClaudePreferences(&config.Config{}, false, "")
+		assert.Contains(t, cp.Render(), "1M Context")
+	})
 }
