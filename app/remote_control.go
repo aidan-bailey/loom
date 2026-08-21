@@ -79,6 +79,26 @@ func effectiveRemoteControl(opts overlay.LaunchOptions) bool {
 	return opts.RemoteControl && !opts.HeadroomProxy
 }
 
+// effectiveModel returns the --model value to launch with, appending
+// Claude's [1m] long-context suffix when the option is on and the
+// selected alias accepts it.
+//
+// An alias that doesn't support the suffix (default, haiku, or anything
+// this build doesn't recognize) is returned unchanged rather than
+// producing a value Claude would reject. That makes the toggle a silent
+// no-op for those models, which is deliberate: the alternative failure
+// is a pane that dies at launch. One consequence is documented in the
+// design doc — {haiku, Context1M: true} composes to a bare "haiku", so
+// re-decoding that Program yields Context1M false and the checkbox
+// reverts on resume. The state was never meaningful, and the global
+// config default is unaffected.
+func effectiveModel(opts overlay.LaunchOptions) string {
+	if opts.Context1M && config.ClaudeModelSupports1M(opts.Model) {
+		return opts.Model + "[1m]"
+	}
+	return opts.Model
+}
+
 // applyLaunchOptions composes program in order: remote-control,
 // permission-mode, model, then effort. Headroom Proxy is intentionally
 // absent from composition — it never touches program (see
@@ -93,7 +113,7 @@ func effectiveRemoteControl(opts overlay.LaunchOptions) bool {
 func applyLaunchOptions(opts overlay.LaunchOptions, auth session.RemoteControlAuth, program, title string) string {
 	program = remoteControlProgram(effectiveRemoteControl(opts), auth, program, title)
 	program = permissionModeProgram(opts.PermissionMode, program)
-	program = modelProgram(opts.Model, program)
+	program = modelProgram(effectiveModel(opts), program)
 	program = effortProgram(opts.Effort, program)
 	return program
 }

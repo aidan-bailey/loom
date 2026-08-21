@@ -172,6 +172,9 @@ func TestParseLaunchOptions_RoundTrip(t *testing.T) {
 		{"model", overlay.LaunchOptions{PermissionMode: "default", Model: "opus", Effort: "default"}},
 		{"effort", overlay.LaunchOptions{PermissionMode: "default", Model: "default", Effort: "high"}},
 		{"all on", overlay.LaunchOptions{RemoteControl: true, PermissionMode: "acceptEdits", Model: "opus", Effort: "high"}},
+		{"1m on", overlay.LaunchOptions{PermissionMode: "default", Model: "sonnet", Context1M: true, Effort: "default"}},
+		{"1m on with everything", overlay.LaunchOptions{RemoteControl: true, PermissionMode: "acceptEdits", Model: "opus", Context1M: true, Effort: "high"}},
+		{"1m off explicitly", overlay.LaunchOptions{PermissionMode: "default", Model: "opus", Context1M: false, Effort: "default"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,6 +184,7 @@ func TestParseLaunchOptions_RoundTrip(t *testing.T) {
 			assert.Equal(t, tc.opts.RemoteControl, gotOpts.RemoteControl)
 			assert.Equal(t, tc.opts.PermissionMode, gotOpts.PermissionMode)
 			assert.Equal(t, tc.opts.Model, gotOpts.Model)
+			assert.Equal(t, tc.opts.Context1M, gotOpts.Context1M)
 			assert.Equal(t, tc.opts.Effort, gotOpts.Effort)
 		})
 	}
@@ -314,4 +318,41 @@ func TestParseLaunchOptions_HandEditedSuffix(t *testing.T) {
 	assert.Equal(t, "claude", base)
 	assert.Equal(t, "sonnet", opts.Model)
 	assert.True(t, opts.Context1M)
+}
+
+func TestEffectiveModel(t *testing.T) {
+	cases := []struct {
+		name string
+		opts overlay.LaunchOptions
+		want string
+	}{
+		{"off", overlay.LaunchOptions{Model: "sonnet"}, "sonnet"},
+		{"on, supported", overlay.LaunchOptions{Model: "sonnet", Context1M: true}, "sonnet[1m]"},
+		{"on, opus", overlay.LaunchOptions{Model: "opus", Context1M: true}, "opus[1m]"},
+		{"on, fable", overlay.LaunchOptions{Model: "fable", Context1M: true}, "fable[1m]"},
+		{"on, haiku is a no-op", overlay.LaunchOptions{Model: "haiku", Context1M: true}, "haiku"},
+		{"on, default is a no-op", overlay.LaunchOptions{Model: "default", Context1M: true}, "default"},
+		{"on, unknown alias is a no-op", overlay.LaunchOptions{Model: "future", Context1M: true}, "future"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, effectiveModel(tc.opts))
+		})
+	}
+}
+
+func TestApplyLaunchOptions_Context1M(t *testing.T) {
+	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+	t.Run("supported model gets a quoted suffix", func(t *testing.T) {
+		opts := overlay.LaunchOptions{PermissionMode: "default", Model: "sonnet", Context1M: true, Effort: "default"}
+		assert.Equal(t, "claude --model 'sonnet[1m]'", applyLaunchOptions(opts, authOK, "claude", "t"))
+	})
+	t.Run("unsupported model is left bare", func(t *testing.T) {
+		opts := overlay.LaunchOptions{PermissionMode: "default", Model: "haiku", Context1M: true, Effort: "default"}
+		assert.Equal(t, "claude --model 'haiku'", applyLaunchOptions(opts, authOK, "claude", "t"))
+	})
+	t.Run("default model emits no flag at all", func(t *testing.T) {
+		opts := overlay.LaunchOptions{PermissionMode: "default", Model: "default", Context1M: true, Effort: "default"}
+		assert.Equal(t, "claude", applyLaunchOptions(opts, authOK, "claude", "t"))
+	})
 }
