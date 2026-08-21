@@ -148,11 +148,51 @@ type Config struct {
 // the order the Claude Preferences screen cycles through them.
 var ClaudePermissionModes = []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 
+// ClaudeModel pairs a --model alias with whether it accepts Claude
+// Code's [1m] long-context suffix. The capability lives on the model
+// rather than in a parallel list so the two can't drift; this mirrors
+// how Claude Code itself models it (supports_1m_suffix is a field on
+// the model, not a side table).
+type ClaudeModel struct {
+	Alias      string
+	Supports1M bool
+}
+
 // ClaudeModels lists the --model aliases the Claude Preferences and
 // Session Launch Options screens cycle through. Short aliases, not
 // versioned IDs, so this list doesn't need updating when new Claude
 // models ship.
-var ClaudeModels = []string{"default", "sonnet", "opus", "fable", "haiku"}
+var ClaudeModels = []ClaudeModel{
+	{"default", false},
+	{"sonnet", true},
+	{"opus", true},
+	{"fable", true},
+	{"haiku", false},
+}
+
+// ClaudeModelAliases returns just the aliases, in cycle order. The
+// overlays cycle with nextInList, which stays []string-shaped so the
+// permission-mode and effort lists keep sharing it unchanged.
+func ClaudeModelAliases() []string {
+	aliases := make([]string, len(ClaudeModels))
+	for i, m := range ClaudeModels {
+		aliases[i] = m.Alias
+	}
+	return aliases
+}
+
+// ClaudeModelSupports1M reports whether alias accepts the [1m]
+// long-context suffix. An unknown alias reports false: declining to
+// append is a silent no-op, whereas appending to a model that rejects
+// it kills the pane at launch.
+func ClaudeModelSupports1M(alias string) bool {
+	for _, m := range ClaudeModels {
+		if m.Alias == alias {
+			return m.Supports1M
+		}
+	}
+	return false
+}
 
 // ClaudeEfforts lists the --effort values the Claude Preferences and
 // Session Launch Options screens cycle through, matching what

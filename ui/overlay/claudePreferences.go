@@ -78,7 +78,7 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 			})
 		case 2:
 			c.cfg.Mutate(func(cc *config.Config) {
-				next := nextInList(config.ClaudeModels, cc.Model())
+				next := nextInList(config.ClaudeModelAliases(), cc.Model())
 				cc.ClaudeModel = &next
 			})
 		case 3:

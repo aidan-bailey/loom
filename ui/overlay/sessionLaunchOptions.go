@@ -93,7 +93,7 @@ func (l *SessionLaunchOptions) toggleCursor() {
 	case 1:
 		l.opts.PermissionMode = nextInList(config.ClaudePermissionModes, l.opts.PermissionMode)
 	case 2:
-		l.opts.Model = nextInList(config.ClaudeModels, l.opts.Model)
+		l.opts.Model = nextInList(config.ClaudeModelAliases(), l.opts.Model)
 	case 3:
 		l.opts.HeadroomProxy = !l.opts.HeadroomProxy
 		if l.opts.HeadroomProxy {

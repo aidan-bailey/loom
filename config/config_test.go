@@ -475,7 +475,28 @@ func TestModel(t *testing.T) {
 }
 
 func TestClaudeModels(t *testing.T) {
-	assert.Equal(t, []string{"default", "sonnet", "opus", "fable", "haiku"}, ClaudeModels)
+	assert.Equal(t, []ClaudeModel{
+		{"default", false},
+		{"sonnet", true},
+		{"opus", true},
+		{"fable", true},
+		{"haiku", false},
+	}, ClaudeModels)
+}
+
+func TestClaudeModelAliases(t *testing.T) {
+	assert.Equal(t, []string{"default", "sonnet", "opus", "fable", "haiku"}, ClaudeModelAliases())
+}
+
+func TestClaudeModelSupports1M(t *testing.T) {
+	assert.True(t, ClaudeModelSupports1M("sonnet"))
+	assert.True(t, ClaudeModelSupports1M("opus"))
+	assert.True(t, ClaudeModelSupports1M("fable"))
+	assert.False(t, ClaudeModelSupports1M("haiku"))
+	assert.False(t, ClaudeModelSupports1M("default"))
+	// An alias this build has never heard of must not get the suffix.
+	assert.False(t, ClaudeModelSupports1M("some-future-model"))
+	assert.False(t, ClaudeModelSupports1M(""))
 }
 
 func TestEffort(t *testing.T) {
