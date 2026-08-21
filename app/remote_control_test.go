@@ -272,3 +272,46 @@ func TestLaunchOptionsFromConfig_SeedsContext1M(t *testing.T) {
 		assert.False(t, launchOptionsFromConfig(nil).Context1M)
 	})
 }
+
+func TestParseModelValue(t *testing.T) {
+	cases := []struct {
+		name      string
+		tok       string
+		wantModel string
+		want1M    bool
+	}{
+		{"bare", "opus", "opus", false},
+		{"quoted", "'opus'", "opus", false},
+		{"bare suffixed", "sonnet[1m]", "sonnet", true},
+		{"quoted suffixed", "'sonnet[1m]'", "sonnet", true},
+		{"uppercase suffix", "'sonnet[1M]'", "sonnet", true},
+		{"mixed-case suffix", "opus[1M]", "opus", true},
+		{"suffix only is not a suffix", "[1m]", "[1m]", false},
+		{"empty", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotModel, got1M := parseModelValue(tc.tok)
+			assert.Equal(t, tc.wantModel, gotModel)
+			assert.Equal(t, tc.want1M, got1M)
+		})
+	}
+}
+
+// A Program written by an older loom has an unquoted --model and no
+// suffix. Those records are decoded on every load via
+// Storage.LoadAndReconcile, so the decoder must keep accepting them.
+func TestParseLaunchOptions_LegacyUnquotedModel(t *testing.T) {
+	opts, base := ParseLaunchOptions("claude --model opus --effort high")
+	assert.Equal(t, "claude", base)
+	assert.Equal(t, "opus", opts.Model)
+	assert.False(t, opts.Context1M)
+	assert.Equal(t, "high", opts.Effort)
+}
+
+func TestParseLaunchOptions_HandEditedSuffix(t *testing.T) {
+	opts, base := ParseLaunchOptions("claude --model sonnet[1m]")
+	assert.Equal(t, "claude", base)
+	assert.Equal(t, "sonnet", opts.Model)
+	assert.True(t, opts.Context1M)
+}

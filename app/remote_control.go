@@ -150,7 +150,7 @@ func ParseLaunchOptions(program string) (opts overlay.LaunchOptions, baseProgram
 			opts.PermissionMode = parts[i+1]
 			i++
 		case parts[i] == "--model" && i+1 < len(parts):
-			opts.Model = parts[i+1]
+			opts.Model, opts.Context1M = parseModelValue(parts[i+1])
 			i++
 		case parts[i] == "--effort" && i+1 < len(parts):
 			opts.Effort = parts[i+1]
@@ -160,6 +160,32 @@ func ParseLaunchOptions(program string) (opts overlay.LaunchOptions, baseProgram
 		}
 	}
 	return opts, strings.Join(kept, " ")
+}
+
+// parseModelValue decodes a --model token into its alias and whether
+// Claude's [1m] long-context suffix was present.
+//
+// It is deliberately more permissive than what applyLaunchOptions
+// emits. Single quotes are stripped because ApplyModelFlag now quotes
+// its value, while every Program persisted before that change has none,
+// and those records are decoded on every load through
+// Storage.LoadAndReconcile — so both shapes must be accepted
+// permanently. The suffix match is case-insensitive to mirror Claude
+// Code's own /\[1m\]/i test, so a hand-edited Program decodes the same
+// way loom's own output does.
+//
+// A token that is nothing but the suffix is returned unchanged rather
+// than yielding an empty alias, so a degenerate input can't silently
+// turn into "no --model flag".
+func parseModelValue(tok string) (model string, context1M bool) {
+	if len(tok) >= 2 && strings.HasPrefix(tok, "'") && strings.HasSuffix(tok, "'") {
+		tok = tok[1 : len(tok)-1]
+	}
+	const suffix = "[1m]"
+	if len(tok) > len(suffix) && strings.EqualFold(tok[len(tok)-len(suffix):], suffix) {
+		return tok[:len(tok)-len(suffix)], true
+	}
+	return tok, false
 }
 
 // remoteControlBlocked reports whether a launch of program should be
