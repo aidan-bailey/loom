@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -143,13 +144,13 @@ func (m *home) maybeArmRatioSave() tea.Cmd {
 // pause-the-instance from repair-the-ptmx.
 type deadVerifiedMsg struct {
 	instance  *session.Instance
-	tmuxAlive bool
+	tmuxLive  tmux.Liveness
 	ptmxAlive bool
 }
 
 func verifyDeadCmd(inst *session.Instance) tea.Cmd {
 	return func() tea.Msg {
-		return deadVerifiedMsg{instance: inst, tmuxAlive: inst.TmuxAlive(), ptmxAlive: inst.PtmxAlive()}
+		return deadVerifiedMsg{instance: inst, tmuxLive: inst.TmuxLiveness(), ptmxAlive: inst.PtmxAlive()}
 	}
 }
 

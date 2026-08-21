@@ -12,7 +12,9 @@ import (
 	"time"
 )
 
-const reconcileTmuxTimeout = 5 * time.Second
+// reconcileTmuxTimeout bounds one has-session probe attempt. A var, not a
+// const, so tests can shorten it.
+var reconcileTmuxTimeout = 5 * time.Second
 
 // RecoveryAction describes what to do with an instance during startup reconciliation.
 type RecoveryAction int
@@ -33,12 +35,30 @@ const (
 )
 
 // CheckTmuxAlive checks if a tmux session exists by its sanitized name.
+// A probe killed at its deadline is not evidence of death: under load
+// `tmux has-session` can simply take too long while the session is
+// perfectly healthy. Reading that as "gone" maps to ActionRestart, which
+// then tries to create a session that already exists ("duplicate
+// session"). So retry once, and if tmux still has not answered, assume
+// alive — a wrong "alive" costs a failed restore, while a wrong "dead"
+// tears down a running agent's session.
 func CheckTmuxAlive(sessionTitle string, cmdExec internalexec.Executor) bool {
 	sanitized := tmux.ToLoomTmuxName(sessionTitle)
-	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
-	defer cancel()
-	existsCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t="+sanitized)
-	return cmdExec.Run(existsCmd) == nil
+	for attempt := 0; attempt < 2; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
+		existsCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t="+sanitized)
+		err := cmdExec.Run(existsCmd)
+		timedOut := ctx.Err() == context.DeadlineExceeded
+		cancel()
+		if err == nil {
+			return true
+		}
+		if !timedOut {
+			return false // tmux answered: the session really is gone
+		}
+	}
+	log.For("session").Warn("reconcile.tmux_probe_inconclusive", "title", sessionTitle)
+	return true
 }
 
 // KillTmuxSessionByTitle kills the tmux session matching title's sanitized

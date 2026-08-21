@@ -100,6 +100,17 @@ func TestInstance_KillBoundedWithStuckPump(t *testing.T) {
 // exercise Pause/Resume end-to-end with a controllable saveState hook.
 func newTestPausableInstance(t *testing.T) *Instance {
 	t.Helper()
+	return newTestPausableInstanceWithExec(t, cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	})
+}
+
+// newTestPausableInstanceWithExec is newTestPausableInstance with the tmux
+// command runner injected, so a test can make individual tmux subcommands
+// (kill-session, has-session) fail or succeed independently of each other.
+func newTestPausableInstanceWithExec(t *testing.T, cmdExec cmd_test.MockCmdExec) *Instance {
+	t.Helper()
 
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, "config")
@@ -127,10 +138,6 @@ func newTestPausableInstance(t *testing.T) *Instance {
 	gw := git.NewGitWorktreeFromStorage(repoDir, worktreePath, "pause-test", branchName, "", true, configDir)
 
 	ptyFactory := fakePtyFactory{t: t}
-	cmdExec := cmd_test.MockCmdExec{
-		RunFunc:    func(c *exec.Cmd) error { return nil },
-		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
-	}
 	ts := tmux.NewTmuxSessionWithDeps("pause-test", "true", ptyFactory, cmdExec)
 
 	inst := &Instance{
@@ -488,4 +495,62 @@ func TestCombineErrorsIsUnwrapable(t *testing.T) {
 	joined2 := inst.combineErrors([]error{wrapped, sentinelB})
 	assert.ErrorIs(t, joined2, sentinelA, "errors.Is must traverse both Join and Wrap")
 	assert.ErrorIs(t, joined2, sentinelB)
+}
+
+// TestInstance_ResumeDoesNotRebuildWorktreeUnderLiveSession pins the fix
+// for the orphaned-agent leak. Resume called gw.Setup() — which removes
+// and re-adds the worktree — before it ever checked whether a tmux
+// session was still alive. When loom itself died while sessions were
+// running, no Pause ever ran, so the agents were never stopped; the
+// user's next resume then deleted the worktree out from under a live
+// agent still executing with its cwd inside it. The agent kept running,
+// orphaned, writing into a directory git had already unlinked — which is
+// what raced `worktree remove` and wedged the session unresumable.
+func TestInstance_ResumeDoesNotRebuildWorktreeUnderLiveSession(t *testing.T) {
+	inst := newTestPausableInstance(t)
+	gw, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+	dir := gw.GetWorktreePath()
+
+	// Untracked in-flight work, as a live agent would have on disk.
+	inFlight := filepath.Join(dir, "agent-in-flight.txt")
+	require.NoError(t, os.WriteFile(inFlight, []byte("live agent output\n"), 0644))
+
+	// The mock answers `tmux has-session` successfully, so this instance's
+	// session is live — exactly the state loom lands in after a crash.
+	require.True(t, inst.getTmuxSession().DoesSessionExist(),
+		"precondition: the tmux session must look alive")
+
+	require.NoError(t, inst.Resume(nil))
+
+	assert.FileExists(t, inFlight,
+		"Resume must not rebuild the worktree while a live tmux session is using it")
+}
+
+// TestInstance_PauseAbortsWhenTmuxSurvives is the Pause-side guard against
+// the same agent-process leak. Pause kills the tmux session precisely so the
+// agent stops before its worktree is deleted, but a failed Close was only
+// logged — Pause then removed the worktree anyway, leaving the agent running
+// with its cwd inside a directory git had unlinked. Aborting keeps the
+// instance in a consistent, retryable state instead.
+func TestInstance_PauseAbortsWhenTmuxSurvives(t *testing.T) {
+	inst := newTestPausableInstanceWithExec(t, cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			for _, a := range c.Args {
+				if a == "kill-session" {
+					return errors.New("tmux: server not responding")
+				}
+			}
+			return nil // has-session succeeds → the session is still alive
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	})
+	gw, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+
+	err = inst.Pause(nil)
+
+	require.Error(t, err, "Pause must not report success while the agent is still running")
+	assert.DirExists(t, gw.GetWorktreePath(),
+		"Pause must not delete the worktree out from under a surviving tmux session")
 }

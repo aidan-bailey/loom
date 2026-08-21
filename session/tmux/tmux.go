@@ -943,12 +943,56 @@ func (t *TmuxSession) updateWindowSize(cols, rows int) error {
 // DoesSessionExist reports whether the backing tmux session is still
 // alive on the tmux server. Used as a sanity check before attach and
 // for orphan detection during reconcile.
-func (t *TmuxSession) DoesSessionExist() bool {
+// Liveness is the outcome of a tmux session liveness probe.
+type Liveness int
+
+const (
+	// LivenessDead means tmux answered and the session is not there.
+	LivenessDead Liveness = iota
+	// LivenessAlive means tmux answered and the session exists.
+	LivenessAlive
+	// LivenessUnknown means the probe never got an answer, so the state
+	// is simply not known. Callers must not treat this as death.
+	LivenessUnknown
+)
+
+// livenessProbeTimeout bounds the has-session probe. A var, not the shared
+// tmuxTimeout const, so tests can shorten it.
+var livenessProbeTimeout = tmuxTimeout
+
+// SessionLiveness probes whether the tmux session exists, distinguishing
+// "tmux said no" from "tmux never answered". The distinction matters: the
+// probe is a subprocess, and under heavy load it can be killed at its
+// deadline while the session is perfectly healthy. Collapsing that into a
+// plain false is what let one loaded machine mark every running session
+// Paused at once.
+func (t *TmuxSession) SessionLiveness() Liveness {
 	// Using "-t name" does a prefix match, which is wrong. `-t=` does an exact match.
-	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), livenessProbeTimeout)
 	defer cancel()
 	existsCmd := exec.CommandContext(ctx, "tmux", "has-session", fmt.Sprintf("-t=%s", t.sanitizedName))
-	return t.cmdExec.Run(existsCmd) == nil
+	if err := t.cmdExec.Run(existsCmd); err != nil {
+		// Killed at the deadline: tmux never answered, so we learned
+		// nothing. Reporting death here would be an assertion the probe
+		// cannot support — and the load that starves the probe starves
+		// every session's probe at once, so the mistake arrives for the
+		// whole fleet simultaneously.
+		if ctx.Err() == context.DeadlineExceeded {
+			log.For("tmux").Warn("liveness.probe_timeout",
+				"session", t.sanitizedName, "timeout_ms", livenessProbeTimeout.Milliseconds())
+			return LivenessUnknown
+		}
+		return LivenessDead
+	}
+	return LivenessAlive
+}
+
+// DoesSessionExist reports whether the session is known to be alive. An
+// inconclusive probe reads as false here, preserving the original
+// semantics for callers that only gate reads on it; callers that act
+// destructively on a negative should use SessionLiveness instead.
+func (t *TmuxSession) DoesSessionExist() bool {
+	return t.SessionLiveness() == LivenessAlive
 }
 
 // SessionName returns the sanitized tmux session name — the identity carried

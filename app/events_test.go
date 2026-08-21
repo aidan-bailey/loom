@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,7 +88,7 @@ func TestPtyDeadVerifiesBeforePausing(t *testing.T) {
 	verified, ok := msg.(deadVerifiedMsg)
 	require.True(t, ok, "expected deadVerifiedMsg, got %T", msg)
 	// The mock cmdExec answers has-session with success → tmuxAlive true.
-	require.True(t, verified.tmuxAlive)
+	require.Equal(t, tmux.LivenessAlive, verified.tmuxLive)
 	_, _ = m.Update(verified)
 	require.NotEqual(t, session.Paused, inst.GetStatus(),
 		"a live session must not be paused by a PTY-death false positive")

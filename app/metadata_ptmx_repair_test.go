@@ -42,7 +42,7 @@ func TestMetadataReadyMsg_RepairsDeadPtmx(t *testing.T) {
 	m, inst := setupPtmxDeadFixture(t)
 
 	_, _ = m.Update(metadataReadyMsg{results: []metadataResult{
-		{instance: inst, tmuxAlive: true, ptmxAlive: false},
+		{instance: inst, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
 	}})
 
 	require.True(t, inst.PtmxAlive(), "metadata tick should have repaired the dead ptmx")
@@ -57,7 +57,7 @@ func TestMetadataReadyMsg_SkipsRepairDuringFullScreenAttach(t *testing.T) {
 	m.attachingInstance = inst
 
 	_, _ = m.Update(metadataReadyMsg{results: []metadataResult{
-		{instance: inst, tmuxAlive: true, ptmxAlive: false},
+		{instance: inst, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
 	}})
 
 	require.False(t, inst.PtmxAlive(), "repair must not run for the instance currently mid full-screen attach")

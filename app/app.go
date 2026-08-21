@@ -111,7 +111,7 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 // metadata tick. Written by goroutine; status updates applied on main thread.
 type metadataResult struct {
 	instance   *session.Instance
-	tmuxAlive  bool
+	tmuxLive   tmux.Liveness
 	ptmxAlive  bool
 	updated    bool
 	hasPrompt  bool
@@ -1217,7 +1217,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !statusEligible(msg.instance) {
 			return m, nil
 		}
-		_ = m.applyLiveness(msg.instance, msg.tmuxAlive, msg.ptmxAlive)
+		_ = m.applyLiveness(msg.instance, msg.tmuxLive, msg.ptmxAlive)
 		m.updateTabBarStatuses()
 		return m, m.instanceChanged()
 	case bellMsg:
@@ -1312,7 +1312,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case metadataReadyMsg:
 		// Apply results on main thread.
 		for _, r := range msg.results {
-			if !m.applyLiveness(r.instance, r.tmuxAlive, r.ptmxAlive) {
+			if !m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive) {
 				continue
 			}
 			// Event-mode instances get their status ladder from quiet
@@ -2407,8 +2407,8 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 				r := &results[idx]
 				r.instance = instance
 
-				r.tmuxAlive = instance.TmuxAlive()
-				if !r.tmuxAlive {
+				r.tmuxLive = instance.TmuxLiveness()
+				if r.tmuxLive != tmux.LivenessAlive {
 					return
 				}
 				r.ptmxAlive = instance.PtmxAlive()
@@ -2442,8 +2442,18 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 // breaker); live tmux but dead attach PTY → RepairPtmx self-heal. Returns
 // false when the instance was found dead (so callers can stop treating it
 // as running). Must run on the Update goroutine.
-func (m *home) applyLiveness(inst *session.Instance, tmuxAlive, ptmxAlive bool) (alive bool) {
-	if !tmuxAlive {
+func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool) (alive bool) {
+	if tmuxLive == tmux.LivenessUnknown {
+		// The probe never got an answer, which says nothing about the
+		// session — under load it is simply what a starved subprocess
+		// looks like. Acting on it would pause a healthy agent, and
+		// because that same load starves every instance's probe at once,
+		// it would do so across the whole fleet simultaneously. Leave
+		// the instance untouched; the next tick re-probes.
+		log.For("app").Debug("tick.tmux_probe_inconclusive", "title", inst.Title)
+		return true
+	}
+	if tmuxLive != tmux.LivenessAlive {
 		if inst.IsWorkspaceTerminal {
 			if failures := inst.RecordRestartFailure(); failures >= maxWorkspaceTerminalRestartFailures {
 				// The session died again immediately after every

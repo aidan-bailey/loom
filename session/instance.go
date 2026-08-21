@@ -1016,6 +1016,18 @@ func (i *Instance) TmuxAlive() bool {
 	return ts.DoesSessionExist()
 }
 
+// TmuxLiveness reports the session's liveness, distinguishing "tmux
+// answered no" from "the probe never got an answer". Callers that change
+// an instance's state on a negative must use this rather than TmuxAlive,
+// which collapses both cases into false.
+func (i *Instance) TmuxLiveness() tmux.Liveness {
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return tmux.LivenessDead
+	}
+	return ts.SessionLiveness()
+}
+
 // PtmxAlive reports whether the instance's tmux session currently has an
 // attached PTY. TmuxAlive can be true (the session exists on the server)
 // while this is false — e.g. a reattach failed after a full-screen attach
@@ -1128,7 +1140,19 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// that support it.
 	if err := ts.Close(); err != nil {
 		log.For("session").Warn("pause_close_tmux_failed", "err", err)
-		// Continue with pause process; the tmux session may already be dead.
+		// A Close failure usually just means the session was already dead,
+		// which is harmless — carry on. But a session that is still alive
+		// still has an agent running with its cwd inside the worktree
+		// removed below. Deleting it would orphan that process, leaving it
+		// writing into a tree git has unlinked: the process leaks, and its
+		// writes race `worktree remove` into leaving a half-removed
+		// worktree that no later resume can recover. Abort instead; the
+		// instance stays Running and the pause can be retried.
+		if ts.DoesSessionExist() {
+			errs = append(errs, fmt.Errorf(
+				"failed to stop the agent's tmux session and it is still running; worktree left intact: %w", err))
+			return i.combineErrors(errs)
+		}
 	}
 
 	// The terminal pane (ui.TerminalPane) runs its own tmux session for
@@ -1206,6 +1230,24 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		return fmt.Errorf("cannot resume: branch is checked out, please switch to a different branch")
 	}
 
+	// A live tmux session means this instance was never really paused:
+	// Pause always kills the session before touching the worktree, so a
+	// surviving one implies loom itself died while the agent was running.
+	// That agent is still executing with its cwd inside the worktree, so
+	// rebuilding it here — Setup removes and re-adds the directory —
+	// would delete the tree out from under a live process. It would keep
+	// running, orphaned, writing into a directory git had unlinked, which
+	// both leaks the process and races `worktree remove` into leaving a
+	// half-removed worktree behind. Reattach to what is already there.
+	_, wtErr := os.Stat(gw.GetWorktreePath())
+	switch decideResume(ts.SessionLiveness(), wtErr == nil) {
+	case resumeReattach:
+		lg.Debug("instance.resume.reattach_live_session", "worktree", gw.GetWorktreePath())
+		return i.finishResume(saveState, ts, gw)
+	case resumeRefuse:
+		return fmt.Errorf("cannot tell whether this session's agent is still running (tmux did not answer in time); leaving the worktree untouched — retry once the machine is less busy")
+	}
+
 	// Setup git worktree
 	if err := gw.Setup(); err != nil {
 		if errors.Is(err, git.ErrBranchGone) {
@@ -1230,6 +1272,14 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		gw.SetStashRef("")
 	}
 
+	return i.finishResume(saveState, ts, gw)
+}
+
+// finishResume reattaches (or rebuilds) the tmux session and marks the
+// instance Running. Shared by both Resume paths: the normal one, which
+// has just recreated the worktree, and the live-session one, which
+// deliberately left the worktree alone.
+func (i *Instance) finishResume(saveState func() error, ts *tmux.TmuxSession, gw *git.GitWorktree) error {
 	// Check if tmux session still exists from pause, otherwise create new one
 	if ts.DoesSessionExist() {
 		// Session exists, just restore PTY connection to it
