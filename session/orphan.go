@@ -411,7 +411,11 @@ func readWorktreeHEAD(worktreePath string) (string, error) {
 // reconciliation. -f is required because the worktree may hold tracked
 // edits we have already decided to discard, or git may consider it dirty.
 func RemoveOrphanWorktree(repoPath, worktreePath string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), orphanProbeTimeout)
+	// Not orphanProbeTimeout: that bounds cheap probes. A remove walks and
+	// unlinks the whole tree, and killing it at a short deadline leaves a
+	// half-removed worktree (.git gone, sources partly present) — see
+	// git.WorktreeRemoveTimeout.
+	ctx, cancel := context.WithTimeout(context.Background(), git.WorktreeRemoveTimeout())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "remove", "-f", worktreePath)
 	if out, err := cmd.CombinedOutput(); err != nil {

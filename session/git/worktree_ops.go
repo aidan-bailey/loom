@@ -143,7 +143,7 @@ func (g *GitWorktree) Setup() (err error) {
 // with a cryptic "already exists", and because nothing self-heals the
 // state, every later resume of that session fails the same way forever.
 func (g *GitWorktree) clearWorktreePath() error {
-	if _, err := g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath); err != nil && !isWorktreeAbsentErr(err) {
+	if _, err := g.removeWorktree(); err != nil && !isWorktreeAbsentErr(err) {
 		log.WarnKV("git.worktree_cleanup_failed", "path", g.worktreePath, "err", err.Error())
 	}
 
@@ -294,7 +294,7 @@ func (g *GitWorktree) Cleanup() (err error) {
 	// Check if worktree path exists before attempting removal
 	if _, err := os.Stat(g.worktreePath); err == nil {
 		// Remove the worktree using git command
-		if _, err := g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath); err != nil {
+		if _, err := g.removeWorktree(); err != nil {
 			errs = append(errs, err)
 		}
 	} else if !os.IsNotExist(err) {
@@ -331,7 +331,7 @@ func (g *GitWorktree) Cleanup() (err error) {
 // Remove removes the worktree but keeps the branch
 func (g *GitWorktree) Remove() error {
 	// Remove the worktree using git command
-	if _, err := g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath); err != nil {
+	if _, err := g.removeWorktree(); err != nil {
 		return fmt.Errorf("failed to remove worktree: %w", err)
 	}
 

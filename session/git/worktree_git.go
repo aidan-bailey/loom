@@ -15,7 +15,26 @@ const MaxBranchSearchResults = 50
 
 // gitTimeout bounds any single git subprocess. The metadata tick fans these out
 // on every tick, so a hung git process would freeze the UI without this cap.
-const gitTimeout = 8 * time.Second
+// A var, not a const, so tests can shorten it.
+var gitTimeout = 8 * time.Second
+
+// gitWorktreeRemoveTimeout bounds `git worktree remove`. It must NOT share
+// gitTimeout: that budget is sized for the metadata tick, but a remove
+// walks and unlinks the whole tree — a built Rust worktree with a
+// multi-GB target/ easily outlives 8s on a loaded box — and killing git
+// mid-delete is not a clean failure. It leaves a half-removed worktree:
+// .git already unlinked, sources partly gone, registry entry prunable.
+// That is exactly the state that wedged resume on 2026-08-21. Remove runs
+// from Pause/Kill/Setup in a tea.Cmd goroutine, never on the tick, so a
+// generous bound costs nothing; it exists only so a truly hung git (dead
+// NFS, D-state I/O) cannot pin the operation forever.
+var gitWorktreeRemoveTimeout = 5 * time.Minute
+
+// WorktreeRemoveTimeout exposes the `git worktree remove` deadline to the
+// one caller outside this package that removes a worktree directly
+// (session.RemoveOrphanWorktree), so it cannot fall back to a tick-sized
+// budget and reintroduce the half-removed-worktree failure.
+func WorktreeRemoveTimeout() time.Duration { return gitWorktreeRemoveTimeout }
 
 // gitNetworkTimeout applies to commands that talk to a remote (push/sync/fetch).
 const gitNetworkTimeout = 30 * time.Second
@@ -82,7 +101,21 @@ func SearchBranches(repoPath, filter string, runner CommandRunner) ([]string, er
 // Applies gitTimeout to bound wall time — critical for the metadata tick,
 // which fans this out every few seconds.
 func (g *GitWorktree) runGitCommand(path string, args ...string) (string, error) {
-	return g.runGitCommandEnv(nil, path, args...)
+	return g.runGitCommandEnvTimeout(nil, gitTimeout, path, args...)
+}
+
+// runGitCommandTimeout is runGitCommand with an explicit deadline, for the
+// few commands whose wall time scales with tree size rather than with the
+// tick budget (see gitWorktreeRemoveTimeout).
+func (g *GitWorktree) runGitCommandTimeout(timeout time.Duration, path string, args ...string) (string, error) {
+	return g.runGitCommandEnvTimeout(nil, timeout, path, args...)
+}
+
+// removeWorktree runs `git worktree remove -f` under the remove-specific
+// deadline. Every remove site must go through here rather than
+// runGitCommand so none of them inherit the tick budget.
+func (g *GitWorktree) removeWorktree() (string, error) {
+	return g.runGitCommandTimeout(gitWorktreeRemoveTimeout, g.repoPath, "worktree", "remove", "-f", g.worktreePath)
 }
 
 // runGitCommandEnv is runGitCommand with additional environment variables
@@ -90,7 +123,13 @@ func (g *GitWorktree) runGitCommand(path string, args ...string) (string, error)
 // build a tree against a scratch index without touching the real one).
 // Pass nil extraEnv to behave exactly like runGitCommand.
 func (g *GitWorktree) runGitCommandEnv(extraEnv []string, path string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	return g.runGitCommandEnvTimeout(extraEnv, gitTimeout, path, args...)
+}
+
+// runGitCommandEnvTimeout is the single implementation behind every
+// runGitCommand* variant: env overlay plus an explicit deadline.
+func (g *GitWorktree) runGitCommandEnvTimeout(extraEnv []string, timeout time.Duration, path string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	baseArgs := []string{"-C", path}
 	c := exec.CommandContext(ctx, "git", append(baseArgs, args...)...)
@@ -101,8 +140,8 @@ func (g *GitWorktree) runGitCommandEnv(extraEnv []string, path string, args ...s
 	t0 := time.Now()
 	output, err := g.runner.CombinedOutput(c)
 	if ctx.Err() == context.DeadlineExceeded {
-		log.For("git").Debug("git.cmd.timeout", "cmd", strings.Join(args, " "), "path", path, "timeout_ms", gitTimeout.Milliseconds())
-		return "", fmt.Errorf("git command timed out after %s: git %s", gitTimeout, strings.Join(args, " "))
+		log.For("git").Debug("git.cmd.timeout", "cmd", strings.Join(args, " "), "path", path, "timeout_ms", timeout.Milliseconds())
+		return "", fmt.Errorf("git command timed out after %s: git %s", timeout, strings.Join(args, " "))
 	}
 	if err != nil {
 		// Debug because many callers intentionally ignore "branch not found" /
