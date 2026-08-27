@@ -245,8 +245,8 @@ A session moves through these states:
 
 **Ready → Loading → Running** (on creation):
 1. Git worktree created at `~/.loom/worktrees/{name}_{timestamp}`
-2. New branch created: `{branch_prefix}{session_title}` (default prefix: `username/`)
-3. Base commit SHA recorded (used as the baseline for diffs)
+2. New branch created: `{branch_prefix}{session_title}` (default prefix: `username/`). The prefix can be changed for this one session in the Session Launch Options modal.
+3. Base branch resolved (`base_branch`, or auto-detected) and its commit SHA recorded — this is both where the worktree starts and the baseline for diffs
 4. Tmux session launched running the configured program
 5. Agent begins working in the isolated worktree
 
@@ -317,7 +317,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `d` | Toggle diff overlay |
 | `c` | Open the workbench code review for the selected session |
 | `W` | Open workspace picker |
-| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Theme, Profiles, Claude Preferences) |
+| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Base Branch, Theme, Profiles, Claude Preferences) |
 | `{` / `l` | Previous workspace tab |
 | `}` / `;` | Next workspace tab |
 | `?` | Show help screen |
@@ -602,6 +602,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 |-------|------|---------|-------------|
 | `default_program` | string | `"claude"` | Program to run in new sessions. Can be a profile name. |
 | `branch_prefix` | string | `"{username}/"` | Prefix for auto-generated branch names |
+| `base_branch` | string | `""` | Branch new sessions are cut from. Empty auto-detects. |
 | `theme` | string | `"afterglow"` | UI color theme (`"afterglow"` or `"legacy"`) |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
@@ -612,6 +613,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 {
   "default_program": "claude",
   "branch_prefix": "aidanb/",
+  "base_branch": "main",
   "profiles": [
     {
       "name": "aider-gpt4",
@@ -662,6 +664,27 @@ When `claude_remote_control` is enabled (the default), every Claude session Loom
 `branch_prefix` is prepended to every auto-generated branch name. The value shown as the default — `{username}/` — is a placeholder for the rendered text: when Loom creates its config, it resolves your OS username and writes the literal value (e.g. `aidanb/`) into `config.json`. There is no runtime token expansion, so editing `branch_prefix` to anything you like (e.g. `"loom/"`, `"wip-"`) works as expected.
 
 The resulting branch for a session titled `fix-auth` with the default prefix would be `aidanb/fix-auth`.
+
+`branch_prefix` sets the default. To use a different prefix for a single session, edit the **Branch Prefix** row in the Session Launch Options modal that appears just before the session starts — press `space` on the row to edit it, `enter` to commit. Clearing it entirely is allowed and produces a bare `fix-auth`. The override applies only to that session and is not written to `config.json`; on `R` (restart with options) the row shows the session's existing branch read-only, since a branch cannot be renamed after the fact.
+
+### Base Branch
+
+`base_branch` names the branch new session worktrees are cut from — and therefore the baseline their diffs are measured against.
+
+Leave it empty (the default) to auto-detect, in this order:
+
+1. `refs/remotes/origin/HEAD` — what the remote declares its default branch to be
+2. `main`
+3. `master`
+4. Whatever the root repo currently has checked out
+
+Set it explicitly (e.g. `"develop"`) to pin one branch. A configured branch is looked up locally first, then as `origin/<branch>`; if it resolves to neither, session creation fails rather than silently starting somewhere else.
+
+Resolution reads local refs only — Loom never fetches for this, so it stays fast and works offline. If your local copy of the base branch is behind the remote, new sessions start from that older commit; `git fetch` (or the `N` flow, which fetches for the branch picker) brings it current.
+
+Because `config.json` lives in each workspace's own `.loom/` directory, `base_branch` is naturally per-repository — a `main` repo and a `master` repo can each hold the right value.
+
+This setting only affects sessions created on a **new** branch. Picking an existing branch in the `N` flow's branch picker starts from that branch instead, and resuming a paused session always returns to its own branch with its original diff baseline intact.
 
 ### Environment Variables
 

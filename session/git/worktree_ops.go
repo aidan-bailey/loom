@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"os"
 	"os/exec"
@@ -175,7 +176,8 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 	return nil
 }
 
-// setupNewWorktree creates a new worktree from HEAD
+// setupNewWorktree creates a new worktree rooted at the resolved base
+// commit (see ResolveBaseCommit).
 func (g *GitWorktree) setupNewWorktree() error {
 	// Clean up any existing worktree first. Absent-worktree is the
 	// common case during fresh session setup; any other failure
@@ -192,24 +194,24 @@ func (g *GitWorktree) setupNewWorktree() error {
 		log.WarnKV("git.branch_cleanup_failed", "branch", g.branchName, "err", err.Error())
 	}
 
-	output, err := g.runGitCommand(g.repoPath, "rev-parse", "HEAD")
+	// The configured base is read here rather than cached on the struct so
+	// every constructor — including NewGitWorktreeFromStorage, which does no
+	// config load — behaves the same. This is the only path that needs it,
+	// and it runs once per session creation, not on any hot path.
+	baseSHA, baseName, err := ResolveBaseCommit(g.repoPath, config.LoadConfigFrom(g.configDir).GetBaseBranch(), g.runner)
 	if err != nil {
-		if strings.Contains(err.Error(), "fatal: ambiguous argument 'HEAD'") ||
-			strings.Contains(err.Error(), "fatal: not a valid object name") ||
-			strings.Contains(err.Error(), "fatal: HEAD: not a valid object name") {
-			return fmt.Errorf("this appears to be a brand new repository: please create an initial commit before creating an instance")
-		}
-		return fmt.Errorf("failed to get HEAD commit hash: %w", err)
+		return err
 	}
-	headCommit := strings.TrimSpace(string(output))
-	g.setBaseCommitSHA(headCommit)
+	g.setBaseCommitSHA(baseSHA)
+	log.For("git").Debug("worktree.base_resolved", "branch", g.branchName, "base_ref", baseName, "base_sha", baseSHA)
 
-	// Create a new worktree from the HEAD commit
-	// Otherwise, we'll inherit uncommitted changes from the previous worktree.
-	// This way, we can start the worktree with a clean slate.
-	// TODO: we might want to give an option to use main/master instead of the current branch.
-	if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, headCommit); err != nil {
-		return fmt.Errorf("failed to create worktree from commit %s: %w", headCommit, err)
+	// Create the worktree at the resolved base commit rather than at the root
+	// repo's HEAD: a feature branch checked out in the main checkout must not
+	// silently become every new session's starting point. Pinning a commit
+	// (not a branch name) also keeps the new worktree free of any uncommitted
+	// changes sitting in the main checkout.
+	if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, baseSHA); err != nil {
+		return fmt.Errorf("failed to create worktree from %s (%s): %w", baseName, baseSHA, err)
 	}
 
 	return nil

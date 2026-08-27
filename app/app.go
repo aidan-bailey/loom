@@ -215,6 +215,11 @@ type home struct {
 	state state
 	// promptAfterName tracks if we should enter prompt mode after naming
 	promptAfterName bool
+	// baseBranchName is the ref new sessions are cut from, resolved in the
+	// background when the prompt flow starts (see git.ResolveBaseCommit) and
+	// used only to label the branch picker's "New branch" row. Empty until
+	// resolved, or when resolution failed — the picker then makes no claim.
+	baseBranchName string
 
 	// pendingLaunchOptions holds the compose-and-start closure for a
 	// not-yet-started instance while stateLaunchOptions is active.
@@ -1653,6 +1658,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ti.SetBranchResults(msg.branches, msg.version)
 		}
 		return m, nil
+	case baseBranchResolvedMsg:
+		m.baseBranchName = msg.name
+		// The overlay may already be open (resolution is racing the user
+		// typing a title), so push the label through as well as caching it
+		// for the next newPromptOverlay.
+		if ti := m.textInput(); ti != nil {
+			ti.SetBaseBranchName(msg.name)
+		}
+		return m, nil
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 	case tea.WindowSizeMsg:
@@ -2333,6 +2347,13 @@ type branchSearchDebounceMsg struct {
 	version uint64
 }
 
+// baseBranchResolvedMsg carries the resolved base branch name back to
+// Update. Resolution runs off the main goroutine because it shells out to
+// git; the name is display-only, so a failure just leaves it empty.
+type baseBranchResolvedMsg struct {
+	name string
+}
+
 // branchSearchResultMsg carries search results back to Update.
 type branchSearchResultMsg struct {
 	branches []string
@@ -2513,7 +2534,27 @@ func (m *home) handleError(err error) tea.Cmd {
 }
 
 func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
-	return overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig.GetProfiles())
+	ti := overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig.GetProfiles())
+	ti.SetBaseBranchName(m.baseBranchName)
+	return ti
+}
+
+// resolveBaseBranchCmd looks up the ref new sessions will be cut from, for
+// the branch picker's label. The configured value is read here, on the main
+// goroutine, rather than inside the returned Cmd — appConfig is mutable at
+// runtime and Cmd bodies run concurrently with Update.
+func (m *home) resolveBaseBranchCmd() tea.Cmd {
+	repoDir := m.repoPath()
+	configured := m.appConfig.GetBaseBranch()
+	return func() tea.Msg {
+		_, name, err := git.ResolveBaseCommit(repoDir, configured, nil)
+		if err != nil {
+			// Display-only: session creation surfaces the real error later.
+			log.For("app").Debug("base_branch_resolve_failed", "err", err.Error())
+			return nil
+		}
+		return baseBranchResolvedMsg{name: name}
+	}
 }
 
 // cancelPromptOverlay cancels the prompt overlay, cleaning up unstarted instances.

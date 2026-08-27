@@ -77,9 +77,10 @@ func TestSettingsDrillsIntoClaudePreferences(t *testing.T) {
 	so := m.settingsOverlay()
 	require.NotNil(t, so)
 
-	// Row 3 is Claude Preferences (Default Program, Branch Prefix,
-	// Profiles, Claude Preferences).
-	for i := 0; i < 3; i++ {
+	// Claude Preferences is row 4: Default Program, Branch Prefix, Base
+	// Branch, Profiles, Claude Preferences. Bump this when inserting a row
+	// above it in settingsOverlay.go's settingsField enum.
+	for i := 0; i < 4; i++ {
 		handleStateSettingsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // drill in

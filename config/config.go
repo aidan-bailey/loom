@@ -88,6 +88,14 @@ type Config struct {
 	DefaultProgram string `json:"default_program"`
 	// BranchPrefix is the prefix used for git branches created by the application.
 	BranchPrefix string `json:"branch_prefix"`
+	// BaseBranch names the branch new session worktrees are cut from.
+	// Empty means auto-detect (origin/HEAD, then main, then master, then
+	// whatever the root repo currently has checked out) — see
+	// git.ResolveBaseCommit. DefaultConfig deliberately leaves it empty:
+	// unlike BranchPrefix there is no sensible universal literal, and
+	// auto-detect is correct for main/master/develop repos alike.
+	// Read through GetBaseBranch.
+	BaseBranch string `json:"base_branch,omitempty"`
 	// Profiles is a list of named program profiles.
 	Profiles []Profile `json:"profiles,omitempty"`
 	// ClaudeRemoteControl controls whether new Claude sessions launch
@@ -225,6 +233,16 @@ func (c *Config) GetBranchPrefix() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.BranchPrefix
+}
+
+// GetBaseBranch returns BaseBranch under a read lock. Locked rather
+// than bare like PermissionMode because worktree setup reads it from a
+// tea.Cmd goroutine (Instance.Start) while the settings overlay writes
+// it from the main goroutine — the same race GetBranchPrefix closes.
+func (c *Config) GetBaseBranch() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.BaseBranch
 }
 
 // GetTheme returns the configured UI theme name under the config lock

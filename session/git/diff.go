@@ -172,7 +172,9 @@ func DiffUncommittedShortStat(repoPath string, runner CommandRunner) *DiffStats 
 	return stats
 }
 
-// Diff returns the git diff between the worktree and the base branch along with statistics
+// Diff returns the git diff between the worktree and its base commit —
+// the commit the session branched from (see ResolveBaseCommit) — along
+// with statistics.
 func (g *GitWorktree) Diff() *DiffStats {
 	stats := &DiffStats{}
 

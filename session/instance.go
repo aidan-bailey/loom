@@ -161,6 +161,13 @@ type Instance struct {
 
 	// selectedBranch is the existing branch to start on (empty = new branch from HEAD)
 	selectedBranch string
+	// branchPrefix overrides config.BranchPrefix when composing this
+	// session's branch name. nil means "use the configured prefix"; a
+	// non-nil empty string means no prefix at all. Deliberately not
+	// persisted: it is consumed once, during first-time setup, and the
+	// branch name it produced is stored in Branch — so a resume has no use
+	// for it and InstanceData needs no schema bump.
+	branchPrefix *string
 
 	// The below fields are initialized upon calling Start().
 
@@ -556,6 +563,19 @@ func (i *Instance) SetSelectedBranch(branch string) {
 	i.selectedBranch = branch
 }
 
+// SetBranchPrefix overrides the configured branch prefix for this instance.
+// Call before Start(true); it has no effect afterwards, since the branch name
+// is composed during first-time setup and fixed from then on.
+func (i *Instance) SetBranchPrefix(prefix string) {
+	i.branchPrefix = &prefix
+}
+
+// BranchPrefixOverride returns the per-session branch prefix override, or nil
+// when none was set and the configured prefix applies.
+func (i *Instance) BranchPrefixOverride() *string {
+	return i.branchPrefix
+}
+
 // Start brings the instance online: sets up the worktree, spawns the
 // tmux session, and transitions Ready → Loading → Running. Pass
 // firstTimeSetup=true when the instance is newly created (initial
@@ -628,7 +648,12 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 			i.mu.Unlock()
 			gw = gitWorktree
 		} else {
-			gitWorktree, branchName, err := git.NewGitWorktree(i.Path, i.Title, i.ConfigDir)
+			gitWorktree, branchName, err := git.NewGitWorktreeFromSpec(git.WorktreeSpec{
+				RepoPath:     i.Path,
+				SessionName:  i.Title,
+				ConfigDir:    i.ConfigDir,
+				BranchPrefix: i.branchPrefix,
+			})
 			if err != nil {
 				setupErr = fmt.Errorf("failed to create git worktree: %w", err)
 				return setupErr

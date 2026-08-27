@@ -137,7 +137,28 @@ func resolveWorktreePaths(repoPath string, branchName string, configDir string, 
 	return resolvedRepo, worktreePath, nil
 }
 
-// NewGitWorktree creates a new GitWorktree instance.
+// WorktreeSpec describes a request for a new-branch worktree. It exists so
+// callers can override the branch prefix per session without every
+// constructor growing another positional parameter — the same shape as
+// session.InstanceOptions and overlay.LaunchOptions.
+type WorktreeSpec struct {
+	// RepoPath is any path inside the target repository.
+	RepoPath string
+	// SessionName is the instance title; it becomes the branch name's leaf.
+	SessionName string
+	// ConfigDir is the workspace config directory. Empty falls back to the
+	// global directory and logs a warning.
+	ConfigDir string
+	// BranchPrefix overrides the workspace config's branch_prefix for this
+	// session. nil means "use the configured value"; a non-nil empty string
+	// deliberately means "no prefix at all", which is why this is a pointer.
+	BranchPrefix *string
+	// Runner injects a CommandRunner for tests. nil uses the default.
+	Runner CommandRunner
+}
+
+// NewGitWorktree creates a new GitWorktree instance using the workspace
+// config's branch prefix.
 // configDir is the workspace config directory; if empty, falls back to GetConfigDir().
 func NewGitWorktree(repoPath string, sessionName string, configDir string) (tree *GitWorktree, branchname string, err error) {
 	return NewGitWorktreeWithRunner(repoPath, sessionName, configDir, nil)
@@ -149,6 +170,18 @@ func NewGitWorktree(repoPath string, sessionName string, configDir string) (tree
 // through via config.WorkspaceContext); passing empty string falls back to
 // the global directory and logs a warning.
 func NewGitWorktreeWithRunner(repoPath string, sessionName string, configDir string, runner CommandRunner) (tree *GitWorktree, branchname string, err error) {
+	return NewGitWorktreeFromSpec(WorktreeSpec{
+		RepoPath:    repoPath,
+		SessionName: sessionName,
+		ConfigDir:   configDir,
+		Runner:      runner,
+	})
+}
+
+// NewGitWorktreeFromSpec creates a new GitWorktree from spec, returning the
+// composed branch name alongside it.
+func NewGitWorktreeFromSpec(spec WorktreeSpec) (tree *GitWorktree, branchname string, err error) {
+	configDir := spec.ConfigDir
 	if configDir == "" {
 		log.For("git").Warn("new_worktree_missing_config_dir", "action", "falling_back_to_global")
 		resolved, resolveErr := config.GetConfigDir()
@@ -157,21 +190,34 @@ func NewGitWorktreeWithRunner(repoPath string, sessionName string, configDir str
 		}
 		configDir = resolved
 	}
-	cfg := config.LoadConfigFrom(configDir)
-	branchName := fmt.Sprintf("%s%s", cfg.BranchPrefix, sessionName)
+
+	prefix := ""
+	if spec.BranchPrefix != nil {
+		prefix = *spec.BranchPrefix
+	} else {
+		prefix = config.LoadConfigFrom(configDir).GetBranchPrefix()
+	}
+
+	branchName := fmt.Sprintf("%s%s", prefix, spec.SessionName)
 	// Sanitize the final branch name to handle invalid characters from any source
 	// (e.g., backslashes from Windows domain usernames like DOMAIN\user)
 	branchName = sanitizeBranchName(branchName)
+	// Reachable only since the prefix became user-controlled: with it
+	// cleared, a title that is entirely punctuation sanitizes away to
+	// nothing, and `worktree add -b ""` fails cryptically further down.
+	if branchName == "" {
+		return nil, "", fmt.Errorf("cannot derive a branch name from prefix %q and title %q: nothing usable remains after sanitization", prefix, spec.SessionName)
+	}
 
-	r := defaultRunner(runner)
-	repoPath, worktreePath, err := resolveWorktreePaths(repoPath, branchName, configDir, r)
+	r := defaultRunner(spec.Runner)
+	repoPath, worktreePath, err := resolveWorktreePaths(spec.RepoPath, branchName, configDir, r)
 	if err != nil {
 		return nil, "", err
 	}
 
 	return &GitWorktree{
 		repoPath:     repoPath,
-		sessionName:  sessionName,
+		sessionName:  spec.SessionName,
 		branchName:   branchName,
 		worktreePath: worktreePath,
 		configDir:    configDir,

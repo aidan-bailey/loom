@@ -135,7 +135,9 @@ func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 	m.menu.SetState(ui.StateNewInstance)
 	m.promptAfterName = true
 
-	return m, fetchCmd
+	// Resolve the base branch alongside the fetch rather than after it —
+	// it is a local ref lookup and must not wait on 30s of network.
+	return m, tea.Batch(fetchCmd, m.resolveBaseBranchCmd())
 }
 
 func runNewInstance(m *home) (tea.Model, tea.Cmd) {
@@ -448,7 +450,11 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.state = stateLaunchOptions
-	m.setOverlay(overlay.NewSessionLaunchOptions(opts, m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
+	lo := overlay.NewSessionLaunchOptions(opts, m.rcAuth.Blocked(), m.rcAuth.Reason)
+	// The branch already exists, so the prefix row shows it read-only rather
+	// than implying a rename that restarting cannot perform.
+	lo.SetBranchPrefixLocked(selected.GetBranch())
+	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
 	return m, tea.RequestWindowSize
 }

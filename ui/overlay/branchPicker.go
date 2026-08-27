@@ -8,7 +8,12 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-const newBranchOption = "New branch (from HEAD)"
+// newBranchOption is the sentinel item meaning "cut a fresh branch" rather
+// than check out an existing one. It is matched by identity in
+// visibleItems/GetSelectedBranch, so it must stay a fixed string — the text
+// actually shown to the user comes from newBranchLabel, which appends the
+// resolved base branch once it is known.
+const newBranchOption = "New branch"
 
 // BranchPicker is an embeddable component for selecting a branch.
 // It does not hold the full branch list — results are provided asynchronously
@@ -21,6 +26,10 @@ type BranchPicker struct {
 	focused       bool
 	width         int
 	showNewBranch bool // whether to show the "New branch" option
+	// baseBranchName is the ref new branches will be cut from, resolved
+	// asynchronously by the host (see git.ResolveBaseCommit). Empty until
+	// that lands, in which case the row makes no claim about the base.
+	baseBranchName string
 }
 
 // NewBranchPicker creates a new empty branch picker.
@@ -134,6 +143,20 @@ func (bp *BranchPicker) visibleItems() []string {
 	return items
 }
 
+// SetBaseBranchName records the ref new branches are cut from, for display
+// only. It never affects what GetSelectedBranch reports.
+func (bp *BranchPicker) SetBaseBranchName(name string) {
+	bp.baseBranchName = name
+}
+
+// newBranchLabel is the display text for the new-branch row.
+func (bp *BranchPicker) newBranchLabel() string {
+	if bp.baseBranchName == "" {
+		return newBranchOption
+	}
+	return newBranchOption + " (from " + bp.baseBranchName + ")"
+}
+
 // GetSelectedBranch returns the selected branch name, or empty string for "New branch".
 func (bp *BranchPicker) GetSelectedBranch() string {
 	items := bp.visibleItems()
@@ -198,6 +221,9 @@ func (bp *BranchPicker) Render() string {
 	for i := start; i < end; i++ {
 		prefix := "  "
 		label := items[i]
+		if label == newBranchOption {
+			label = bp.newBranchLabel()
+		}
 		if i == bp.cursor && bp.focused {
 			prefix = "> "
 			s.WriteString(bpSelectedStyle.Render(prefix + label))

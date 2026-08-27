@@ -8,7 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// LaunchOptions holds the six per-session launch toggles. Defined
+// LaunchOptions holds the per-session launch overrides. Defined
 // here (rather than in app) so it's usable both by
 // SessionLaunchOptions (ephemeral, edited as a plain value) and by
 // app's launch-command composition, without an import cycle back to
@@ -24,6 +24,12 @@ type LaunchOptions struct {
 	HeadroomProxy bool
 	Effort        string
 	CacheTTL1h    bool
+	// BranchPrefix overrides config.BranchPrefix for this one session.
+	// Unlike the fields above it never reaches the agent command line —
+	// it is consumed by git worktree setup (see session.Instance.
+	// SetBranchPrefix), so ParseLaunchOptions cannot recover it and the
+	// restart path seeds it from the instance instead.
+	BranchPrefix string
 }
 
 // SessionLaunchOptions is the per-instance "Session Launch Options"
@@ -38,17 +44,46 @@ type SessionLaunchOptions struct {
 	authReason  string
 	width       int
 	cursor      int
+	// editing is the nested single-line editor for the Branch Prefix row,
+	// non-nil only while that row is being edited. It exists because this
+	// modal's other rows are all toggles/cycles, so its key handling can
+	// treat enter/esc as confirm/cancel — a text row cannot, and routing
+	// through this field is what keeps those keys off the modal.
+	editing *TextInputOverlay
+	// prefixLocked replaces the editable Branch Prefix row with a read-only
+	// one. Set on the restart path, where the branch already exists and
+	// renaming it is not possible. Kept separate from lockedBranch because
+	// an instance may have no branch name recorded — locking must not
+	// depend on having something to display.
+	prefixLocked bool
+	// lockedBranch is the already-created branch shown on a locked row, or
+	// "" when it is not known.
+	lockedBranch string
 }
 
 // sessionLaunchOptionsRowCount is the number of navigable rows: Remote
 // Control, Permission Mode, Model, 1M Context, Headroom Proxy, Effort,
-// and Cache TTL (1h).
-const sessionLaunchOptionsRowCount = 7
+// Cache TTL (1h), and Branch Prefix.
+const sessionLaunchOptionsRowCount = 8
+
+// sessionLaunchOptionsBranchPrefixRow is the cursor index of the Branch
+// Prefix row — the only text-entry row, so several call sites need it by
+// name rather than by position.
+const sessionLaunchOptionsBranchPrefixRow = 7
 
 // NewSessionLaunchOptions creates the modal seeded with initial
 // (typically the global config's current values).
 func NewSessionLaunchOptions(initial LaunchOptions, authBlocked bool, authReason string) *SessionLaunchOptions {
 	return &SessionLaunchOptions{opts: initial, authBlocked: authBlocked, authReason: authReason, width: 60}
+}
+
+// SetBranchPrefixLocked switches the Branch Prefix row to a read-only
+// display of branch. Used on the restart path, where the session's branch
+// already exists and an editable prefix would imply a rename that cannot
+// happen.
+func (l *SessionLaunchOptions) SetBranchPrefixLocked(branch string) {
+	l.prefixLocked = true
+	l.lockedBranch = branch
 }
 
 // SetWidth sets the render width.
@@ -62,6 +97,12 @@ func (l *SessionLaunchOptions) Options() LaunchOptions { return l.opts }
 // distinguishes the two — the caller only applies Options() and starts
 // the instance when confirmed is true.
 func (l *SessionLaunchOptions) HandleKeyPress(msg tea.KeyPressMsg) (closed, confirmed bool) {
+	// Editing must be checked before the switch below: while a text row is
+	// open, enter and esc belong to the editor, not to the modal.
+	if l.editing != nil {
+		l.handleEditingKey(msg)
+		return false, false
+	}
 	switch msg.String() {
 	case "esc", "q":
 		return true, false
@@ -109,6 +150,31 @@ func (l *SessionLaunchOptions) toggleCursor() {
 		l.opts.Effort = nextInList(config.ClaudeEfforts, l.opts.Effort)
 	case 6:
 		l.opts.CacheTTL1h = !l.opts.CacheTTL1h
+	case sessionLaunchOptionsBranchPrefixRow:
+		if l.prefixLocked {
+			return
+		}
+		l.editing = NewTextInputOverlay("Branch Prefix", l.opts.BranchPrefix)
+		l.editing.SetSize(l.width, 3)
+	}
+}
+
+// handleEditingKey owns enter/esc while the Branch Prefix editor is open,
+// mirroring SettingsOverlay.handleEditingText: enter commits the single-line
+// value immediately, esc discards it, and everything else is forwarded to the
+// embedded widget.
+func (l *SessionLaunchOptions) handleEditingKey(msg tea.KeyPressMsg) {
+	switch msg.Code {
+	case tea.KeyEnter:
+		// No trimming or trailing-slash coercion: an empty prefix is a
+		// legitimate choice, and sanitizeBranchName already normalizes the
+		// composed branch name downstream.
+		l.opts.BranchPrefix = l.editing.GetValue()
+		l.editing = nil
+	case tea.KeyEsc:
+		l.editing = nil
+	default:
+		l.editing.HandleKeyPress(msg)
 	}
 }
 
@@ -130,6 +196,14 @@ func rebuildSessionLaunchOptionsStyles() {
 
 // Render renders the modal.
 func (l *SessionLaunchOptions) Render() string {
+	// The nested editor draws its own complete bordered box, so it replaces
+	// the modal rather than rendering inside it — same as
+	// SettingsOverlay.Render does for its text-edit mode. Nesting it would
+	// double-border and line-wrap the inner box.
+	if l.editing != nil {
+		return l.editing.Render()
+	}
+
 	row := func(idx int, label, value string) string {
 		cursor := "  "
 		if l.cursor == idx {
@@ -169,8 +243,9 @@ func (l *SessionLaunchOptions) Render() string {
 		row(3, "1M Context        ", ctxCheck) + "\n" +
 		row(4, "Headroom Proxy    ", hwCheck) + "\n" +
 		row(5, "Effort            ", "< "+l.opts.Effort+" >") + "\n" +
-		row(6, "Cache TTL (1h)    ", cacheCheck) + "\n\n" +
-		sessionLaunchOptionsHintStyle.Render("up/down move • space toggle/cycle • enter start • esc cancel")
+		row(6, "Cache TTL (1h)    ", cacheCheck) + "\n" +
+		row(sessionLaunchOptionsBranchPrefixRow, "Branch Prefix     ", l.branchPrefixValue()) + "\n\n" +
+		sessionLaunchOptionsHintStyle.Render(l.hint())
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -178,6 +253,31 @@ func (l *SessionLaunchOptions) Render() string {
 		Padding(1, 2).
 		Width(l.width)
 	return border.Render(content)
+}
+
+// branchPrefixValue renders the Branch Prefix row's right-hand side: the
+// already-created branch when locked, the editable prefix otherwise, and an
+// explicit marker when the prefix is empty (which is valid but invisible).
+func (l *SessionLaunchOptions) branchPrefixValue() string {
+	if l.prefixLocked {
+		if l.lockedBranch == "" {
+			return sessionLaunchOptionsHintStyle.Render("(fixed)")
+		}
+		return sessionLaunchOptionsHintStyle.Render(l.lockedBranch + " (fixed)")
+	}
+	if l.opts.BranchPrefix == "" {
+		return sessionLaunchOptionsHintStyle.Render("(none)")
+	}
+	return l.opts.BranchPrefix
+}
+
+// hint tailors the key legend to the focused row, since Branch Prefix is the
+// only row where space opens an editor rather than toggling.
+func (l *SessionLaunchOptions) hint() string {
+	if l.cursor == sessionLaunchOptionsBranchPrefixRow && !l.prefixLocked {
+		return "up/down move • space edit • enter start • esc cancel"
+	}
+	return "up/down move • space toggle/cycle • enter start • esc cancel"
 }
 
 // HandleKey satisfies the Overlay interface. State handlers that need
@@ -191,6 +291,11 @@ func (l *SessionLaunchOptions) HandleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 // SetSize satisfies the Overlay interface.
 func (l *SessionLaunchOptions) SetSize(width, _ int) {
 	l.width = width
+	// Keep an open editor in step with a resize; it owns the whole frame
+	// while it is up.
+	if l.editing != nil {
+		l.editing.SetSize(width, 3)
+	}
 }
 
 // View satisfies the Overlay interface.
