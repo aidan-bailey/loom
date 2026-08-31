@@ -144,3 +144,6 @@ func TestRosterQueryCmdRunsForClaudeInstances(t *testing.T) {
 	claude := startedInstanceWithProgram(t, "mixed-claude", "claude", "x")
 	require.NotNil(t, rosterQueryCmd([]*session.Instance{aider, claude}))
 }
+
+// errAssertRoster is a sentinel for roster query failures in tests.
+var errAssertRoster = errors.New("roster query failed")

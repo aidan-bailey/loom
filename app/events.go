@@ -138,6 +138,35 @@ func rosterQueryCmd(active []*session.Instance) tea.Cmd {
 	}
 }
 
+// rosterInterval is the roster's own polling cadence. It is deliberately
+// NOT the health tick's: that tick fires every 500ms on the snapshot path,
+// and a ~380ms subprocess every 500ms keeps a claude process alive ~76% of
+// the time purely to poll status — on the one path whose capture-pane
+// scraper is fully functional anyway. 3s matches the emulator-path tick,
+// which is the cadence the roster was sized for.
+const rosterInterval = 3 * time.Second
+
+// maybeRosterQuery returns a roster query when one is due: none already in
+// flight, and at least rosterInterval since the last dispatch. The
+// in-flight guard matters because a slow or hung CLI is bounded only by
+// claudeRosterTimeout (5s) — without it, ticks would stack concurrent
+// subprocesses. Returns nil when nothing should run, including when no
+// Claude agent is present; in that case neither the window nor the flag is
+// armed, since no query means no rosterReadyMsg to disarm them. Must be
+// called on the Update goroutine (both fields are unsynchronized).
+func (m *home) maybeRosterQuery(active []*session.Instance) tea.Cmd {
+	if m.rosterInFlight || time.Since(m.lastRosterQuery) < rosterInterval {
+		return nil
+	}
+	cmd := rosterQueryCmd(active)
+	if cmd == nil {
+		return nil
+	}
+	m.rosterInFlight = true
+	m.lastRosterQuery = time.Now()
+	return cmd
+}
+
 // rosterStatusFor returns Claude's authoritative status for inst, if it
 // published one. The bool is false whenever Loom must fall back to the
 // pane-content ladder: a non-Claude agent, an empty or failed roster, no

@@ -393,6 +393,14 @@ type home struct {
 	// re-detect chains. Update-goroutine only.
 	redetectPending map[string]bool
 
+	// lastRosterQuery / rosterInFlight throttle the roster poll (see
+	// maybeRosterQuery). The health tick they ride fires every 500ms on the
+	// snapshot path, far too often for a ~380ms subprocess, and without an
+	// in-flight guard a hung CLI would stack concurrent processes.
+	// Update-goroutine only.
+	lastRosterQuery time.Time
+	rosterInFlight  bool
+
 	// roster is Claude's own view of its live sessions, keyed by working
 	// directory, refreshed once per health tick (see rosterQueryCmd). It is
 	// authoritative where the pane scraper is inferential, so status events
@@ -1175,6 +1183,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, statusDetectCmd(inst)
 	case rosterReadyMsg:
+		// Disarm before anything else: a result that does not clear this
+		// latches the roster off for the rest of the session.
+		m.rosterInFlight = false
 		if msg.err != nil {
 			// Debug, not warn: a missing daemon or an older CLI without
 			// `agents --json` is a supported configuration, not a fault —
@@ -1335,11 +1346,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a background Cmd and returns the results via metadataReadyMsg.
 		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty()))
 
-		// One `claude agents --json` per tick for the whole fleet (~380ms,
-		// off the Update goroutine). Claude reports its own busy/idle/
-		// waiting state, which beats inferring it from pane text — see
-		// rosterStatusFor. nil when no Claude agent is running.
-		if roster := rosterQueryCmd(active); roster != nil {
+		// One `claude agents --json` for the whole fleet (~380ms, off the
+		// Update goroutine), on its OWN cadence rather than the tick's —
+		// this tick runs at 500ms on the snapshot path, which would keep a
+		// claude process alive most of the time. Claude reports its own
+		// busy/idle/waiting state, which beats inferring it from pane text
+		// (see rosterStatusFor). nil when not due, already in flight, or no
+		// Claude agent is running.
+		if roster := m.maybeRosterQuery(active); roster != nil {
 			cmds = append(cmds, roster)
 		}
 
