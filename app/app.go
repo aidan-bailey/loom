@@ -393,6 +393,13 @@ type home struct {
 	// re-detect chains. Update-goroutine only.
 	redetectPending map[string]bool
 
+	// roster is Claude's own view of its live sessions, keyed by working
+	// directory, refreshed once per health tick (see rosterQueryCmd). It is
+	// authoritative where the pane scraper is inferential, so status events
+	// consult it first and fall back when it has no entry for a session.
+	// Update-goroutine only.
+	roster map[string]session.RosterEntry
+
 	// pendingRatioSaves buffers title→ratio pairs recorded by resizeSplit
 	// until the throttled ratioSaveMsg flushes them into one mutateUIPrefs
 	// write — key-repeat resize would otherwise fsync state.json per
@@ -1167,6 +1174,19 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, statusDetectCmd(inst)
+	case rosterReadyMsg:
+		if msg.err != nil {
+			// Debug, not warn: a missing daemon or an older CLI without
+			// `agents --json` is a supported configuration, not a fault —
+			// detection simply falls back to pane content. Dropping the
+			// previous roster is deliberate; a stale snapshot would keep
+			// driving transitions long after it stopped being true.
+			log.DebugKV("app.roster.query_failed", "err", msg.err.Error())
+			m.roster = nil
+			return m, nil
+		}
+		m.roster = msg.entries
+		return m, nil
 	case statusDetectedMsg:
 		if !statusEligible(msg.instance) {
 			return m, nil
@@ -1175,19 +1195,28 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			log.WarnKV("app.event.capture_failed", "instance", msg.instance.Title, "err", msg.err.Error())
 			return m, nil
 		}
-		// Same transition ladder as the old metadata tick: still-changing →
-		// Running; settled with a prompt → Prompting; settled → Ready.
-		target := session.Ready
-		if msg.updated {
-			target = session.Running
-		} else if msg.hasPrompt {
-			target = session.Prompting
+		// Claude publishes its own status, so prefer it over the pane
+		// ladder below, which can only infer one from screen text. An
+		// authoritative answer also retires the re-detection chain: the
+		// ladder re-samples because one content hash cannot distinguish
+		// "still working" from "just finished", but the roster says which
+		// it is, and the next health tick refreshes it.
+		target, authoritative := m.rosterStatusFor(msg.instance)
+		if !authoritative {
+			// Same transition ladder as the old metadata tick: still-changing →
+			// Running; settled with a prompt → Prompting; settled → Ready.
+			target = session.Ready
+			if msg.updated {
+				target = session.Running
+			} else if msg.hasPrompt {
+				target = session.Prompting
+			}
 		}
 		if err := msg.instance.TransitionTo(target); err != nil {
 			log.For("app").Warn("event.transition_failed", "instance", msg.instance.Title, "to", target.String(), "err", err.Error())
 		}
 		m.updateTabBarStatuses()
-		if msg.updated {
+		if !authoritative && msg.updated {
 			// One sample of changed content cannot distinguish "still
 			// working" from "finished a burst and idled" — under the
 			// emulator this was the only sample per burst, so Running
@@ -1306,6 +1335,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a background Cmd and returns the results via metadataReadyMsg.
 		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty()))
 
+		// One `claude agents --json` per tick for the whole fleet (~380ms,
+		// off the Update goroutine). Claude reports its own busy/idle/
+		// waiting state, which beats inferring it from pane text — see
+		// rosterStatusFor. nil when no Claude agent is running.
+		if roster := rosterQueryCmd(active); roster != nil {
+			cmds = append(cmds, roster)
+		}
+
 		// Workbench follow scan rides the health tick: cheap stat-walk
 		// of the selected worktree, guarded stale on delivery.
 		if m.viewMode == viewWorkbench {
@@ -1320,10 +1357,25 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.applyLiveness(r.instance, r.tmuxAlive, r.ptmxAlive) {
 				continue
 			}
-			// Event-mode instances get their status ladder from quiet
-			// events (statusDetectedMsg); running it here too would fight
-			// that pipeline with stale zero-valued results.
-			if !r.emulatorDriven {
+			// The roster applies on BOTH paths. The exclusion below is
+			// specifically about r.updated/r.hasPrompt, which are zero for
+			// emulator instances (no capture ran) and would fight the event
+			// pipeline; the roster is a real freshly-queried value, so it is
+			// safe here — and it is the only thing that corrects a session
+			// that changes state while emitting no output at all (a long
+			// silent tool call fires no quiet event to sample). It may be up
+			// to one tick stale: rosterQueryCmd is dispatched in the same
+			// batch as gatherMetadataCmd, so this reads the previous tick's
+			// answer. TransitionTo still validates, so an illegal transition
+			// is rejected rather than forced.
+			if target, authoritative := m.rosterStatusFor(r.instance); authoritative {
+				if err := r.instance.TransitionTo(target); err != nil {
+					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", target.String(), "err", err.Error())
+				}
+			} else if !r.emulatorDriven {
+				// Event-mode instances get their status ladder from quiet
+				// events (statusDetectedMsg); running it here too would fight
+				// that pipeline with stale zero-valued results.
 				if r.updated {
 					if err := r.instance.TransitionTo(session.Running); err != nil {
 						log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Running", "err", err.Error())

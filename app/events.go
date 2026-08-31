@@ -3,6 +3,7 @@ package app
 import (
 	"time"
 
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -102,6 +103,60 @@ func (m *home) maybeRedetect(sessionName string) tea.Cmd {
 	return tea.Tick(redetectDelay, func(time.Time) tea.Msg {
 		return redetectMsg{session: sessionName}
 	})
+}
+
+// rosterReadyMsg carries one health tick's `claude agents --json` result
+// back to the Update goroutine. err set means the query failed (daemon
+// down, CLI too old, unparseable output); the handler clears the roster so
+// status detection falls back to pane content rather than acting on a
+// snapshot that may be minutes stale.
+type rosterReadyMsg struct {
+	entries map[string]session.RosterEntry
+	err     error
+}
+
+// rosterQueryCmd schedules one roster query covering the whole fleet.
+// Returns nil when no active instance runs Claude, so a fleet of aider or
+// shell sessions never pays for a Claude subprocess. The binary is taken
+// from a live instance's Program rather than assumed to be "claude" on
+// PATH, so absolute paths (a Nix store path, a version-pinned install)
+// resolve to the same CLI the agents were launched with.
+func rosterQueryCmd(active []*session.Instance) tea.Cmd {
+	var program string
+	for _, inst := range active {
+		if session.IsClaudeProgram(inst.Program) {
+			program = inst.Program
+			break
+		}
+	}
+	if program == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		entries, err := session.QueryClaudeRoster(program, internalexec.Default{})
+		return rosterReadyMsg{entries: entries, err: err}
+	}
+}
+
+// rosterStatusFor returns Claude's authoritative status for inst, if it
+// published one. The bool is false whenever Loom must fall back to the
+// pane-content ladder: a non-Claude agent, an empty or failed roster, no
+// entry for this worktree (the join key is the directory Claude runs in),
+// or a status string this build does not recognize.
+//
+// The join is exact string equality on the path. Claude reports a
+// symlink-resolved cwd, so a Loom config dir reached through a symlink
+// (a dotfiles setup, say) simply produces no match and falls back — a
+// silent degradation to the old behavior, never a wrong status.
+func (m *home) rosterStatusFor(inst *session.Instance) (session.Status, bool) {
+	if inst == nil || len(m.roster) == 0 || !session.IsClaudeProgram(inst.Program) {
+		return session.Ready, false
+	}
+	entry, ok := m.roster[inst.GetWorktreePath()]
+	if !ok {
+		return session.Ready, false
+	}
+	return entry.LoomStatus()
 }
 
 // ratioSaveMsg flushes the throttled split-ratio persistence: resizeSplit
