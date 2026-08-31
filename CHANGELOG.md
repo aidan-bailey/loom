@@ -1,3 +1,9 @@
+## [0.13.0] - 2026-08-31
+
+### 🚀 Features
+
+- *(git)* Configurable base branch and per-session branch prefix
+
 ## [0.12.0] - 2026-08-21
 
 ### 🚀 Features
