@@ -97,22 +97,24 @@ func Scan(req Request, now time.Time) (Result, error) {
 		if e.IsDir() {
 			continue
 		}
+		name := e.Name()
+		kind, stem := classifyEntry(name, req.Cold)
+		if kind == entrySkip {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil {
 			continue // removed since ReadDir
 		}
-		name := e.Name()
-		f := eventFile{path: filepath.Join(dir, name), mod: info.ModTime(), size: info.Size()}
-		switch {
-		case strings.HasSuffix(name, ".tmp"):
+		f := eventFile{path: filepath.Join(dir, name), stem: stem, mod: info.ModTime(), size: info.Size()}
+		switch kind {
+		case entryTmp:
 			if now.Sub(f.mod) > staleTmpAge {
 				_ = os.Remove(f.path)
 			}
-		case strings.HasSuffix(name, ".json"):
-			f.stem = strings.TrimSuffix(name, ".json")
+		case entryFresh:
 			fresh = append(fresh, f)
-		case strings.HasSuffix(name, ".ev") && req.Cold:
-			f.stem = strings.TrimSuffix(name, ".ev")
+		case entryKept:
 			kept = append(kept, f)
 		}
 	}
@@ -144,6 +146,32 @@ func Scan(req Request, now time.Time) (Result, error) {
 		Meta:     readMeta(events, req.MissingMeta),
 		Replayed: req.Cold,
 	}, nil
+}
+
+// entryKind is what Scan does with one entry of the events folder.
+type entryKind int
+
+const (
+	entrySkip  entryKind = iota // an unrelated name, or a retained .ev on a warm scan
+	entryTmp                    // a write in progress; removed once stale
+	entryFresh                  // a new .json event
+	entryKept                   // a retained .ev event, replayed by a cold scan
+)
+
+// classifyEntry decides an entry's kind, and its file stem, from the name
+// alone, so Scan only lstats the entries it uses. A warm scan skips every
+// retained .ev file, which would otherwise cost one lstat per file on
+// every scan for the rest of a long, teammate-heavy session.
+func classifyEntry(name string, cold bool) (entryKind, string) {
+	switch {
+	case strings.HasSuffix(name, ".tmp"):
+		return entryTmp, ""
+	case strings.HasSuffix(name, ".json"):
+		return entryFresh, strings.TrimSuffix(name, ".json")
+	case strings.HasSuffix(name, ".ev") && cold:
+		return entryKept, strings.TrimSuffix(name, ".ev")
+	}
+	return entrySkip, ""
 }
 
 func discard(path, reason string) {
