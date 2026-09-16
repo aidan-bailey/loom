@@ -5,6 +5,7 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/agent"
 	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/session/vt"
 	"path/filepath"
@@ -222,6 +223,16 @@ type Instance struct {
 	// agents and whenever the scraper is deciding. Ephemeral: never
 	// serialized (absent from InstanceData).
 	waitReason string
+
+	// subagents, hookLaunchID and subagentWarm track the agents this
+	// session has spawned, from loom's hook events (see
+	// subagent_hooks.go). hookLaunchID is the hooks folder generation a
+	// scan result must come from; subagentWarm records whether the tracker
+	// has applied a result for it yet. Guarded by mu. Ephemeral: never
+	// serialized (absent from InstanceData).
+	subagents    *subagent.Tracker
+	hookLaunchID string
+	subagentWarm bool
 
 	// logger is a per-instance slog.Logger pre-tagged with
 	// subsystem=instance and title. Populated by NewInstance and
@@ -633,11 +644,12 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 
 	ts := i.getTmuxSession()
 	if ts == nil {
-		// Create new tmux session. loomContextProgram wraps the program
-		// with --append-system-prompt-file for Claude sessions (no-op when
-		// disabled, non-Claude, or the file is missing); InstanceEnv still
-		// keys off the bare i.Program.
-		launchProgram := i.applyLoomContext(i.Program)
+		// Create new tmux session. launchProgram adds loom's context flag
+		// and, only when this Start actually launches (firstTimeSetup),
+		// the subagent hooks. Start(false) reattaches with Restore, and
+		// that Claude keeps writing to its existing hooks folder.
+		// InstanceEnv still keys off the bare i.Program.
+		launchProgram := i.launchProgram(i.Program, firstTimeSetup)
 		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(i.Program, i.HeadroomProxy, i.CacheTTL1h)...)
 	}
 	i.setTmuxSession(ts)
@@ -758,6 +770,10 @@ func (i *Instance) Kill() (err error) {
 			log.For("session").Debug("kill_close_terminal_tmux_failed", "title", i.Title, "err", err)
 		}
 	}
+
+	// After the agent's tmux session is gone, so a SessionEnd hook firing
+	// on exit finds no folder and exits harmlessly.
+	i.removeSubagentHooks()
 
 	// Then clean up git worktree (workspace terminals don't have one)
 	if gitWT != nil && !isWorkspaceTerm {
@@ -1292,22 +1308,12 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	return nil
 }
 
-// applyLoomContext wraps program with this instance's loom-context flag
-// for launch. Applied at every tmux-session (re)creation — first launch,
-// resume, and crash-restart — so all three inject consistently. No-op
-// when disabled, non-Claude, or the prompt file is missing; selects the
-// worktree vs workspace-terminal variant via i.IsWorkspaceTerminal.
-func (i *Instance) applyLoomContext(program string) string {
-	return loomContextProgram(program, i.ConfigDir, i.IsWorkspaceTerminal)
-}
-
 // startFreshWithRecovery creates a brand-new tmux session for an instance
 // whose previous session no longer exists (normal after crash or kill-server).
 // The program is rewritten via BuildRecoveryCommand so supported agents resume
 // their prior conversation (e.g. `claude --continue`).
 func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
-	program := BuildRecoveryCommand(i.Program)
-	launchProgram := i.applyLoomContext(program)
+	program, launchProgram := i.recoveryLaunch()
 	ts := tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(program, i.HeadroomProxy, i.CacheTTL1h)...)
 	if err := ts.Start(gw.GetWorktreePath()); err != nil {
 		if cleanupErr := gw.Cleanup(); cleanupErr != nil {
@@ -1324,8 +1330,7 @@ func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 // (for workspace terminals). The program is modified with --continue for
 // supported agents.
 func (i *Instance) CrashRestart() error {
-	program := BuildRecoveryCommand(i.Program)
-	launchProgram := i.applyLoomContext(program)
+	program, launchProgram := i.recoveryLaunch()
 	ts := tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(program, i.HeadroomProxy, i.CacheTTL1h)...)
 
 	var workDir string

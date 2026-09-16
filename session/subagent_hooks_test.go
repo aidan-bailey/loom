@@ -1,0 +1,261 @@
+package session
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/session/subagent"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func withTracking(t *testing.T, enabled bool) {
+	t.Helper()
+	prev := subagentTrackingEnabled.Load()
+	SetSubagentTrackingEnabled(enabled)
+	t.Cleanup(func() { SetSubagentTrackingEnabled(prev) })
+}
+
+func hooksInstance(t *testing.T, program string) *Instance {
+	t.Helper()
+	return &Instance{Title: "hooks test", Program: program, ConfigDir: t.TempDir(), Status: Running}
+}
+
+func settingsFlag(inst *Instance) string {
+	return "--settings '" + subagent.SettingsPath(SubagentHooksDir(inst.ConfigDir, inst.Title)) + "'"
+}
+
+func TestSubagentHooksDir(t *testing.T) {
+	assert.Equal(t, filepath.Join("/cfg", "hooks", "loom_hookstest"), SubagentHooksDir("/cfg", "hooks test"))
+}
+
+func TestLaunchProgram_AddsHooksWhenLaunching(t *testing.T) {
+	withTracking(t, true)
+	inst := hooksInstance(t, "claude")
+
+	got := inst.launchProgram("claude", true)
+
+	assert.Contains(t, got, settingsFlag(inst))
+	assert.Equal(t, "claude", inst.Program, "Program is never rewritten")
+	dir := SubagentHooksDir(inst.ConfigDir, inst.Title)
+	stored, err := os.ReadFile(filepath.Join(dir, "launch-id"))
+	require.NoError(t, err)
+	assert.Equal(t, string(stored), inst.hookLaunchID)
+	assert.False(t, inst.subagentWarm)
+}
+
+func TestLaunchProgram_ReattachLeavesFolderAlone(t *testing.T) {
+	withTracking(t, true)
+	inst := hooksInstance(t, "claude")
+	inst.launchProgram("claude", true)
+	launchID := inst.hookLaunchID
+	kept := filepath.Join(subagent.EventsDir(SubagentHooksDir(inst.ConfigDir, inst.Title)), "1-1.ev")
+	require.NoError(t, os.WriteFile(kept, []byte("{}"), 0o600))
+
+	got := inst.launchProgram("claude", false)
+
+	assert.NotContains(t, got, "--settings")
+	assert.FileExists(t, kept)
+	assert.Equal(t, launchID, inst.hookLaunchID)
+}
+
+func TestLaunchProgram_SkipsHooks(t *testing.T) {
+	cases := []struct {
+		name    string
+		enabled bool
+		program string
+		noDir   bool
+	}{
+		{"disabled", false, "claude", false},
+		{"non-claude", true, "aider", false},
+		{"user settings", true, "claude --settings /mine.json", false},
+		{"no config dir", true, "claude", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withTracking(t, tc.enabled)
+			inst := hooksInstance(t, tc.program)
+			if tc.noDir {
+				inst.ConfigDir = ""
+			}
+
+			got := inst.launchProgram(tc.program, true)
+
+			assert.Equal(t, strings.Count(tc.program, "--settings"), strings.Count(got, "--settings"))
+			if inst.ConfigDir != "" {
+				assert.NoDirExists(t, filepath.Join(inst.ConfigDir, "hooks"))
+			}
+			assert.Empty(t, inst.hookLaunchID)
+		})
+	}
+}
+
+func TestRecoveryLaunch_AddsHooks(t *testing.T) {
+	withTracking(t, true)
+	inst := hooksInstance(t, "claude")
+
+	program, launch := inst.recoveryLaunch()
+
+	assert.Equal(t, "claude --continue", program)
+	assert.NotContains(t, program, "--settings", "InstanceEnv sees the bare recovery program")
+	assert.Contains(t, launch, settingsFlag(inst))
+	assert.Contains(t, launch, "--continue")
+}
+
+// writeHookEvent drops a raw payload the way the hook command does.
+func writeHookEvent(t *testing.T, inst *Instance, stem, payload string, mod time.Time) {
+	t.Helper()
+	path := filepath.Join(subagent.EventsDir(SubagentHooksDir(inst.ConfigDir, inst.Title)), stem+".json")
+	require.NoError(t, os.WriteFile(path, []byte(payload), 0o600))
+	require.NoError(t, os.Chtimes(path, mod, mod))
+}
+
+// fakeTranscript creates a transcript path with one agent's sidecar.
+func fakeTranscript(t *testing.T, agentID, meta string) string {
+	t.Helper()
+	root := t.TempDir()
+	sub := filepath.Join(root, "sess", "subagents")
+	require.NoError(t, os.MkdirAll(sub, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(sub, "agent-"+agentID+".meta.json"), []byte(meta), 0o600))
+	return filepath.Join(root, "sess.jsonl")
+}
+
+func scanAndApply(t *testing.T, inst *Instance) bool {
+	t.Helper()
+	req, ok := inst.SubagentScanRequest()
+	require.True(t, ok)
+	res, err := subagent.Scan(req, time.Now())
+	require.NoError(t, err)
+	return inst.ApplySubagentScan(res)
+}
+
+func TestSubagents_EndToEndAndRestart(t *testing.T) {
+	withTracking(t, true)
+	inst := hooksInstance(t, "claude")
+	inst.launchProgram("claude", true)
+	transcript := fakeTranscript(t, "amate-1", `{"agentType":"mate","name":"mate","description":"implement","taskKind":"in_process_teammate"}`)
+	t0 := time.Now().Add(-time.Minute)
+	writeHookEvent(t, inst, "1", fmt.Sprintf(`{"hook_event_name":"SubagentStart","agent_id":"amate-1","agent_type":"mate","transcript_path":%q}`, transcript), t0)
+	writeHookEvent(t, inst, "2", `{"hook_event_name":"SubagentStop","agent_id":"amate-1"}`, t0.Add(time.Second))
+	writeHookEvent(t, inst, "3", `{"hook_event_name":"TeammateIdle","teammate_name":"mate"}`, t0.Add(2*time.Second))
+
+	require.True(t, scanAndApply(t, inst))
+	want := []subagent.View{{Name: "mate", Description: "implement", Idle: true}}
+	assert.Equal(t, want, inst.Subagents())
+
+	// A new loom process restores the same instance with empty memory.
+	restored := &Instance{Title: inst.Title, Program: "claude", ConfigDir: inst.ConfigDir, Status: Running}
+	req, ok := restored.SubagentScanRequest()
+	require.True(t, ok)
+	assert.True(t, req.Cold)
+	require.True(t, scanAndApply(t, restored))
+	assert.Equal(t, inst.hookLaunchID, restored.hookLaunchID, "restored instance adopts the folder's launch ID")
+	assert.Equal(t, want, restored.Subagents())
+
+	req, _ = restored.SubagentScanRequest()
+	assert.False(t, req.Cold)
+}
+
+func TestApplySubagentScan_Gates(t *testing.T) {
+	withTracking(t, true)
+	inst := hooksInstance(t, "claude")
+	inst.launchProgram("claude", true)
+	start := subagent.Event{Name: subagent.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}
+	meta := map[string]subagent.Meta{"a1": {AgentType: "Explore", Description: "d"}}
+
+	assert.False(t, inst.ApplySubagentScan(subagent.Result{}), "empty launch ID")
+	assert.False(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "other", Replayed: true,
+		Events: []subagent.Event{start}, Meta: meta}), "another launch")
+	assert.False(t, inst.ApplySubagentScan(subagent.Result{LaunchID: inst.hookLaunchID,
+		Events: []subagent.Event{start}, Meta: meta}), "incremental result for a cold tracker")
+	assert.Empty(t, inst.Subagents())
+
+	assert.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: inst.hookLaunchID, Replayed: true,
+		Events: []subagent.Event{start}, Meta: meta}))
+	assert.Len(t, inst.Subagents(), 1)
+}
+
+func TestSubagents_HiddenWhenNotLive(t *testing.T) {
+	inst := hooksInstance(t, "claude")
+	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "L", Replayed: true,
+		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
+	for _, st := range []Status{Paused, Recoverable, Deleting} {
+		inst.Status = st
+		assert.Nil(t, inst.Subagents(), st.String())
+	}
+	inst.Status = Prompting
+	assert.Len(t, inst.Subagents(), 1)
+}
+
+func TestSubagentScanRequest(t *testing.T) {
+	aider := hooksInstance(t, "aider")
+	_, ok := aider.SubagentScanRequest()
+	assert.False(t, ok)
+
+	paused := hooksInstance(t, "claude")
+	paused.Status = Paused
+	_, ok = paused.SubagentScanRequest()
+	assert.False(t, ok)
+
+	noDir := hooksInstance(t, "claude")
+	noDir.ConfigDir = ""
+	_, ok = noDir.SubagentScanRequest()
+	assert.False(t, ok)
+
+	inst := hooksInstance(t, "claude")
+	req, ok := inst.SubagentScanRequest()
+	require.True(t, ok)
+	assert.Equal(t, SubagentHooksDir(inst.ConfigDir, inst.Title), req.Dir)
+	assert.True(t, req.Cold)
+
+	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "L", Replayed: true,
+		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}}}))
+	req, _ = inst.SubagentScanRequest()
+	assert.False(t, req.Cold)
+	assert.Equal(t, []subagent.MetaRef{{AgentID: "a1", Path: "/p/s/subagents/agent-a1.meta.json"}}, req.MissingMeta)
+}
+
+func TestKill_RemovesHooksFolder(t *testing.T) {
+	withTracking(t, true)
+	inst := newTestStartedInstance(t)
+	inst.Program = "claude"
+	inst.ConfigDir = t.TempDir()
+	inst.launchProgram("claude", true)
+	dir := SubagentHooksDir(inst.ConfigDir, inst.Title)
+	require.DirExists(t, dir)
+
+	require.NoError(t, inst.Kill())
+	assert.NoDirExists(t, dir)
+}
+
+func TestSweepSubagentHooks(t *testing.T) {
+	cfg := t.TempDir()
+	for _, title := range []string{"claimed", "alive", "dead"} {
+		require.NoError(t, os.MkdirAll(SubagentHooksDir(cfg, title), 0o700))
+	}
+	tmuxLs := func(out string, err error) cmd_test.MockCmdExec {
+		return cmd_test.MockCmdExec{OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			require.Contains(t, c.Args, "list-sessions")
+			return []byte(out), err
+		}}
+	}
+	claimed := map[string]bool{"claimed": true}
+
+	// tmux unreachable: nothing is removed on a guess.
+	SweepSubagentHooks(cfg, claimed, tmuxLs("", errors.New("no server")))
+	assert.DirExists(t, SubagentHooksDir(cfg, "dead"))
+
+	SweepSubagentHooks(cfg, claimed, tmuxLs("loom_alive\nloom_term_x\n", nil))
+	assert.DirExists(t, SubagentHooksDir(cfg, "claimed"))
+	assert.DirExists(t, SubagentHooksDir(cfg, "alive"))
+	assert.NoDirExists(t, SubagentHooksDir(cfg, "dead"))
+}
