@@ -65,12 +65,13 @@ type CardData struct {
 	StatusAge           time.Duration // 0 = unknown/not applicable
 	Spinner             string        // current spinner frame for Running/Loading
 	// WaitReason is Claude's own account of what a Prompting session is
-	// blocked on ("sandbox request", "dialog open"), verbatim from the
-	// agent roster. Empty when unknown — non-Claude agents, and any status
-	// the pane scraper rather than the roster decided.
+	// blocked on ("sandbox request", "dialog open"), from the agent roster
+	// via sanitizeCardText. Empty when unknown — non-Claude agents, and any
+	// status the pane scraper rather than the roster decided.
 	WaitReason string
 	// Subagents lists the session's live subagents and teammates, working
-	// first. Empty for most cards; see session.Instance.Subagents.
+	// first, with names and descriptions passed through sanitizeCardText.
+	// Empty for most cards; see session.Instance.Subagents.
 	Subagents []SubagentRow
 }
 
@@ -98,10 +99,14 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 		Branch:              inst.GetBranch(),
 		StatusAge:           inst.StatusAge(),
 		Spinner:             spinnerFrame,
-		WaitReason:          inst.WaitReason(),
+		WaitReason:          sanitizeCardText(inst.WaitReason()),
 	}
 	for _, v := range inst.Subagents() {
-		d.Subagents = append(d.Subagents, SubagentRow{Name: v.Name, Description: v.Description, Idle: v.Idle})
+		d.Subagents = append(d.Subagents, SubagentRow{
+			Name:        sanitizeCardText(v.Name),
+			Description: sanitizeCardText(v.Description),
+			Idle:        v.Idle,
+		})
 	}
 	if stat := inst.GetDiffStats(); stat != nil && stat.Error == nil && !stat.IsEmpty() {
 		d.HasDiff, d.DiffAdded, d.DiffRemoved = true, stat.Added, stat.Removed
@@ -150,6 +155,22 @@ func sanitizeTailLine(l string) string {
 	l = ansi.Strip(l)
 	l = strings.ReplaceAll(l, "\t", " ")
 	return strings.ReplaceAll(l, "\r", "")
+}
+
+// sanitizeCardText makes text the model or Claude wrote safe to print on
+// a card: ANSI sequences are stripped, then every remaining control
+// character (C0 including LF, CR and TAB; DEL; C1 including NEL) becomes
+// a single space. Subagent names and descriptions come from metadata
+// files the model writes, so unsanitized they could emit terminal escapes
+// (an OSC 52 clipboard write, say) or break a card's fixed height with a
+// newline.
+func sanitizeCardText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, ansi.Strip(s))
 }
 
 // Chrome scan bounds for ContentTailLines. Claude Code's footer below

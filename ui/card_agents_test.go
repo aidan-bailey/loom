@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +82,62 @@ func TestBuildCardData_CopiesSubagents(t *testing.T) {
 
 	d := BuildCardData(inst, false, "", 0)
 	assert.Equal(t, []SubagentRow{{Name: "Explore", Description: "map code"}}, d.Subagents)
+}
+
+// themeSGR matches the SGR sequences card styling emits itself: resets,
+// bold, and truecolor foreground/background from the theme roles. What
+// is left after removing them came from the card's text, not its chrome.
+var themeSGR = regexp.MustCompile(`\x1b\[(?:(?:1|[34]8;2;\d+;\d+;\d+);?)*m`)
+
+// Subagent names and descriptions come from metadata files the model
+// writes, and the wait reason from Claude's roster, so each can carry
+// terminal escapes (here an OSC 52 clipboard write) or a newline that
+// would break the overview card's fixed height.
+func TestBuildCardData_SanitizesAgentText(t *testing.T) {
+	const osc52 = "\x1b]52;c;aGk=\x07pwn\nnext"
+	inst, err := session.NewInstance(session.InstanceOptions{Title: "cd", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	require.True(t, inst.ApplySubagentScan(subagent.Result{
+		LaunchID: "L", Replayed: true,
+		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}},
+		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore", Name: "\x1b[31mred", Description: osc52}},
+	}))
+	inst.SetWaitReason(osc52)
+	require.NoError(t, inst.TransitionTo(session.Prompting))
+
+	d := BuildCardData(inst, false, "", 0)
+	require.Len(t, d.Subagents, 1)
+	overview := renderOverviewCard(d, 60)
+	rail := RenderCard(d, DensityRail, 60)
+
+	for name, out := range map[string]string{"overview": overview, "rail": rail} {
+		text := themeSGR.ReplaceAllString(out, "")
+		assert.NotContains(t, text, "\x1b", name)
+		assert.NotContains(t, text, "\x07", name)
+	}
+	assert.Len(t, strings.Split(overview, "\n"), overviewCardHeight)
+	assert.Contains(t, plain(overview), "red")
+	assert.Contains(t, plain(overview), "pwn next")
+}
+
+func TestSanitizeCardText(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"plain", "Implement Task 3", "Implement Task 3"},
+		{"unicode", "résumé ✻ 日本", "résumé ✻ 日本"},
+		{"tab", "a\tb", "a b"},
+		{"cr", "a\rb", "a b"},
+		{"lf", "a\nb", "a b"},
+		{"del", "a\x7fb", "a b"},
+		{"nel", "a\u0085b", "a b"},
+		{"bel", "a\x07b", "a b"},
+		{"sgr", "\x1b[31mred\x1b[0m", "red"},
+		{"osc 52", "\x1b]52;c;aGk=\x07pwn", "pwn"},
+		{"invalid utf-8", "a\xffb", "ab"},
+		{"c1 csi rune", "a\u009b31mb", "a 31mb"},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, sanitizeCardText(tc.in), tc.name)
+	}
 }
 
 func overviewLines(t *testing.T, d CardData, width int) []string {
