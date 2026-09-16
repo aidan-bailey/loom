@@ -61,3 +61,6 @@ func (geminiAdapter) ApplyEffortFlag(program, _ string) string {
 func (geminiAdapter) ApplyLoomContextFlag(program, _ string) string {
 	return program
 }
+
+// ApplySettingsFlag is a no-op for gemini — it has no settings-file flag.
+func (geminiAdapter) ApplySettingsFlag(program, _ string) string { return program }

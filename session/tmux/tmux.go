@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -225,9 +226,31 @@ func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, 
 	return newTmuxSession(name, program, ptyFactory, cmdExec, env...)
 }
 
+// WithProgram returns a new, unstarted TmuxSession for the same tmux
+// session that runs program instead of t's program. The result keeps t's
+// session name, injected PTY factory and executor, env, and last pane
+// geometry, and resolves its agent adapter from program exactly as
+// NewTmuxSession does. No runtime state (PTY, emulator, output pump,
+// seed history) is carried over, and t itself is left unchanged: the
+// caller is expected to Close t and Start the result. Instance.Restart
+// uses it to relaunch a dead session with a freshly composed command.
+func (t *TmuxSession) WithProgram(program string) *TmuxSession {
+	n := newSanitizedTmuxSession(t.sanitizedName, program, t.ptyFactory, t.cmdExec, slices.Clone(t.env)...)
+	t.stateMu.Lock()
+	n.lastCols, n.lastRows = t.lastCols, t.lastRows
+	t.stateMu.Unlock()
+	return n
+}
+
 func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor, env ...string) *TmuxSession {
+	return newSanitizedTmuxSession(ToLoomTmuxName(name), program, ptyFactory, cmdExec, env...)
+}
+
+// newSanitizedTmuxSession is newTmuxSession for a name that has already
+// been through ToLoomTmuxName.
+func newSanitizedTmuxSession(sanitizedName string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor, env ...string) *TmuxSession {
 	return &TmuxSession{
-		sanitizedName: ToLoomTmuxName(name),
+		sanitizedName: sanitizedName,
 		program:       program,
 		adapter:       adapterRegistry.Lookup(program),
 		env:           env,

@@ -60,14 +60,15 @@ func TestQueryClaudeRoster_NonClaudeProgramSkipsExec(t *testing.T) {
 	assert.False(t, fake.called, "non-claude program must not shell out")
 }
 
-func TestQueryClaudeRoster_AmbiguousCwdIsDropped(t *testing.T) {
-	// Two Claude sessions in one directory (e.g. the user ran claude by
-	// hand inside a Loom worktree): we cannot tell which one backs the
-	// instance, so the entry must be omitted and the caller falls back.
+func TestQueryClaudeRoster_TwoInteractiveInOneCwdIsDropped(t *testing.T) {
+	// Genuine ambiguity: the user ran claude by hand inside a Loom
+	// worktree, so two interactive sessions share the directory and
+	// neither can be attributed to the instance. Drop it and let the
+	// caller fall back rather than driving transitions off a coin flip.
 	dup := `[
-	  {"cwd":"/w/dup","kind":"interactive","sessionId":"a","status":"busy"},
-	  {"cwd":"/w/dup","kind":"background","sessionId":"b","status":"idle"},
-	  {"cwd":"/w/solo","kind":"interactive","sessionId":"c","status":"idle"}
+	  {"pid":1,"cwd":"/w/dup","kind":"interactive","sessionId":"a","status":"busy"},
+	  {"pid":2,"cwd":"/w/dup","kind":"interactive","sessionId":"b","status":"idle"},
+	  {"pid":3,"cwd":"/w/solo","kind":"interactive","sessionId":"c","status":"idle"}
 	]`
 	fake := &fakeRosterExecutor{out: []byte(dup)}
 
@@ -76,6 +77,54 @@ func TestQueryClaudeRoster_AmbiguousCwdIsDropped(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotContains(t, got, "/w/dup")
 	assert.Contains(t, got, "/w/solo")
+}
+
+func TestQueryClaudeRoster_BackgroundSiblingDoesNotBlindInteractive(t *testing.T) {
+	// A `claude --bg` session started inside a Loom worktree shares the
+	// cwd with Loom's own tmux-hosted session, but that is not ambiguous:
+	// the instance IS the interactive one. Joining to it keeps the status
+	// override alive instead of silently falling back to the scraper.
+	mixed := `[
+	  {"pid":1,"cwd":"/w/mixed","kind":"interactive","sessionId":"live","status":"waiting","waitingFor":"sandbox request"},
+	  {"id":"bg1","cwd":"/w/mixed","kind":"background","sessionId":"bg","state":"running"}
+	]`
+	fake := &fakeRosterExecutor{out: []byte(mixed)}
+
+	got, err := QueryClaudeRoster("claude", fake)
+
+	assert.NoError(t, err)
+	assert.Contains(t, got, "/w/mixed")
+	assert.Equal(t, "live", got["/w/mixed"].SessionID)
+	assert.Equal(t, RosterStatusWaiting, got["/w/mixed"].Status)
+	assert.Equal(t, "sandbox request", got["/w/mixed"].WaitingFor)
+}
+
+func TestQueryClaudeRoster_BackgroundOnlyCwdYieldsNoEntry(t *testing.T) {
+	// Background sessions carry {id,state} where interactive ones carry
+	// {pid,status}; Loom instances are always interactive. A directory
+	// with only background sessions therefore backs no instance, and the
+	// roster must express no opinion rather than guess at `state`.
+	bg := `[{"id":"bg1","cwd":"/w/bgonly","kind":"background","sessionId":"bg","state":"running"}]`
+	fake := &fakeRosterExecutor{out: []byte(bg)}
+
+	got, err := QueryClaudeRoster("claude", fake)
+
+	assert.NoError(t, err)
+	assert.NotContains(t, got, "/w/bgonly")
+}
+
+func TestQueryClaudeRoster_MissingKindTreatedAsInteractive(t *testing.T) {
+	// `kind` is absent in older CLI output. Defaulting an unlabeled entry
+	// to interactive preserves the pre-kind join behavior; defaulting it
+	// to background would silently drop every entry on those builds.
+	nokind := `[{"pid":1,"cwd":"/w/nokind","sessionId":"x","status":"busy"}]`
+	fake := &fakeRosterExecutor{out: []byte(nokind)}
+
+	got, err := QueryClaudeRoster("claude", fake)
+
+	assert.NoError(t, err)
+	assert.Contains(t, got, "/w/nokind")
+	assert.Equal(t, RosterStatusBusy, got["/w/nokind"].Status)
 }
 
 func TestQueryClaudeRoster_UnparseableOutputErrors(t *testing.T) {

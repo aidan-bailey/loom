@@ -64,6 +64,15 @@ type CardData struct {
 	TailLines           []string
 	StatusAge           time.Duration // 0 = unknown/not applicable
 	Spinner             string        // current spinner frame for Running/Loading
+	// WaitReason is Claude's own account of what a Prompting session is
+	// blocked on ("sandbox request", "dialog open"), from the agent roster
+	// via sanitizeCardText. Empty when unknown — non-Claude agents, and any
+	// status the pane scraper rather than the roster decided.
+	WaitReason string
+	// Subagents lists the session's live subagents and teammates, working
+	// first, with names and descriptions passed through sanitizeCardText.
+	// Empty for most cards; see session.Instance.Subagents.
+	Subagents []SubagentRow
 }
 
 // NeedsAttention reports whether this card should carry the Attention
@@ -90,6 +99,14 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 		Branch:              inst.GetBranch(),
 		StatusAge:           inst.StatusAge(),
 		Spinner:             spinnerFrame,
+		WaitReason:          sanitizeCardText(inst.WaitReason()),
+	}
+	for _, v := range inst.Subagents() {
+		d.Subagents = append(d.Subagents, SubagentRow{
+			Name:        sanitizeCardText(v.Name),
+			Description: sanitizeCardText(v.Description),
+			Idle:        v.Idle,
+		})
 	}
 	if stat := inst.GetDiffStats(); stat != nil && stat.Error == nil && !stat.IsEmpty() {
 		d.HasDiff, d.DiffAdded, d.DiffRemoved = true, stat.Added, stat.Removed
@@ -138,6 +155,22 @@ func sanitizeTailLine(l string) string {
 	l = ansi.Strip(l)
 	l = strings.ReplaceAll(l, "\t", " ")
 	return strings.ReplaceAll(l, "\r", "")
+}
+
+// sanitizeCardText makes text the model or Claude wrote safe to print on
+// a card: ANSI sequences are stripped, then every remaining control
+// character (C0 including LF, CR and TAB; DEL; C1 including NEL) becomes
+// a single space. Subagent names and descriptions come from metadata
+// files the model writes, so unsanitized they could emit terminal escapes
+// (an OSC 52 clipboard write, say) or break a card's fixed height with a
+// newline.
+func sanitizeCardText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, ansi.Strip(s))
 }
 
 // Chrome scan bounds for ContentTailLines. Claude Code's footer below
@@ -332,10 +365,18 @@ func (d CardData) statusLabel() string {
 	age := formatAge(d.StatusAge)
 	switch d.Status {
 	case session.Prompting:
-		if age != "" {
-			return "❯ awaiting input · " + age
+		// Claude's own reason for the block ("sandbox request") replaces
+		// the generic phrase rather than joining it: "awaiting input" only
+		// restates what the attention accent already signals, while the
+		// reason is the part that tells the user what to do.
+		phrase := "awaiting input"
+		if reason := strings.TrimSpace(d.WaitReason); reason != "" {
+			phrase = reason
 		}
-		return "❯ awaiting input"
+		if age != "" {
+			return "❯ " + phrase + " · " + age
+		}
+		return "❯ " + phrase
 	case session.Running, session.Loading:
 		return d.Spinner + " working"
 	case session.Ready:
@@ -438,12 +479,18 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 		return titleLine
 	}
 
-	// Second line: attention prompt beats tail beats status label.
+	// Second line: attention prompt, then live agents, then tail, then
+	// status label. The agent count is a suffix, so end-truncation drops
+	// it before the status.
 	second := d.statusLabel()
 	secondFg := Dim
-	if d.NeedsAttention() {
+	switch {
+	case d.NeedsAttention():
 		secondFg = Attention
-	} else if len(d.TailLines) > 0 {
+		second += d.agentSummary()
+	case len(d.Subagents) > 0:
+		second += d.agentSummary()
+	case len(d.TailLines) > 0:
 		second = d.TailLines[len(d.TailLines)-1]
 	}
 	secondStyle := lipgloss.NewStyle().Foreground(secondFg)

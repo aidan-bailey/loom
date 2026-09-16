@@ -95,6 +95,13 @@ type Adapter interface {
 	// loom's is still added. Returns the input unchanged for agents
 	// without a system-prompt-file concept.
 	ApplyLoomContextFlag(program, filePath string) string
+	// ApplySettingsFlag returns the program string with "--settings
+	// '<path>'" inserted, pointing the agent at an extra settings file
+	// (loom uses it to register subagent-tracking hooks). path == "" is a
+	// no-op. Returns the input unchanged when any --settings flag is
+	// already present, loom's or the user's, and for agents without a
+	// settings-file concept.
+	ApplySettingsFlag(program, path string) string
 }
 
 // Registry is a prioritized list of adapters. Lookup returns the first
@@ -154,4 +161,19 @@ func insertAfterCommand(program, insertion string) string {
 		return program
 	}
 	return first + " " + insertion + strings.TrimPrefix(program, first)
+}
+
+// HasSettingsFlag reports whether program passes --settings after its
+// command token.
+func HasSettingsFlag(program string) bool {
+	parts := strings.Fields(program)
+	if len(parts) < 2 {
+		return false
+	}
+	for _, p := range parts[1:] {
+		if p == "--settings" || strings.HasPrefix(p, "--settings=") {
+			return true
+		}
+	}
+	return false
 }
