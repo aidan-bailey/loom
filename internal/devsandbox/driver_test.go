@@ -129,12 +129,13 @@ func TestDriver_WaitForTimeoutCarriesScreen(t *testing.T) {
 }
 
 // TestDriver_StartAfterStopWithServerKeptAlive pins a regression found
-// while writing e2e_test.go: on at least one tmux build (3.7b),
-// `display-message -p -t <target>` for a session that does not exist on
-// an otherwise-alive server — never created, or fully removed, either
-// way — exits 0 with EMPTY output instead of erroring (an empty-server
-// socket, by contrast, errors outright, so this needs a sibling session
-// to reproduce). Before the fix, paneDead() read that empty string as
+// while writing e2e_test.go: tmux prints empty output for a
+// display-message whose target no longer exists on an otherwise-alive
+// server (the server stays up because other sessions keep it alive) —
+// never created, or fully removed, either way — instead of erroring (an
+// empty-server socket, by contrast, errors outright, so this needs a
+// sibling session to reproduce). Before the fix, paneDead() read that empty
+// string as
 // "not dead" (it only checked for "1"), so DriverRunning() reported true
 // for a driver session that didn't exist, and Start()'s "already
 // running, no-op" branch then silently swallowed the next Start() call —

@@ -71,12 +71,11 @@ func (s *Sandbox) driverExists() bool {
 // paneDead queries tmux's own pane_dead flag for the driver pane: "1" once
 // its program has exited (remain-on-exit keeps the pane itself around), "0"
 // while it's still running. Shared by DriverRunning and Screen so there's
-// one place that knows the tmux format string. Parsed strictly: on at least
-// one tmux build (3.7b), `display-message -p -t <target>` for a session
-// that has been fully removed — while the server itself stays alive for
-// other sessions — exits 0 with empty output instead of erroring, so any
-// output other than exactly "1" or "0" (including empty) is treated as the
-// driver session not existing, not as "not dead".
+// one place that knows the tmux format string. Parsed strictly: tmux prints
+// empty output for a display-message whose target no longer exists (the
+// server stays up because other sessions keep it alive) instead of
+// erroring, so any output other than exactly "1" or "0" (including empty)
+// is treated as the driver session not existing, not as "not dead".
 func (s *Sandbox) paneDead() (bool, error) {
 	out, err := s.runTmux("display-message", "-p", "-t", DriverSession, "#{pane_dead}")
 	if err != nil {

@@ -45,3 +45,4 @@ state's own prompt text before sending the next keys.
 - Never run `./loom`, `go run .`, or `loom reset` directly in a loom pane.
 - Never run `clean.sh` / `clean_hard.sh` from inside loom (they refuse anyway).
 - Fix the product, not the sandbox, when the UI misbehaves; fix the test's key sequence when the UI is right.
+- The nesting guard only recognizes loom-managed enclosing sessions (`loom_*`/`claudesquad_*`); a dev loom started from a plain (non-loom) tmux pane on a server that also hosts loom sessions is not refused, so still use `loomdev` (or `LOOM_TMUX_SOCKET`) there.

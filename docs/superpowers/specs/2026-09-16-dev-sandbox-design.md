@@ -237,8 +237,15 @@ harmless), prints a banner, and reads commands from stdin:
 | `crash` | Exit 1 (drives crash recovery). |
 
 The Claude roster stays inert for fake personas: `rosterQueryCmd` runs the
-real `claude agents --json` from `PATH`, no real entry has a sandbox worktree
-cwd, so `rosterStatusFor` expresses no opinion and the scraper ladder decides.
+instance's own program (matched by `IsClaudeProgram`, e.g. a `fake-claude`
+profile's binary is named `claude`), not a fixed `claude` on `PATH`. For
+`fake-claude` that program is the fakeagent persona, which prints its banner
+and exits on EOF instead of emitting `claude agents --json` output, so the
+JSON parse fails and `rosterStatusFor` expresses no opinion — the scraper
+ladder decides. In a mixed fleet started with `up --real-claude`, the query
+still only runs one program (the first Claude-identified instance found), so
+if that happens to be the fake persona, real Claude sessions in the same
+fleet fall back to the scraper too.
 
 #### Known limitation
 
@@ -334,4 +341,5 @@ Discovered while writing `docs/superpowers/plans/2026-09-16-dev-sandbox.md`:
 7. **Shell quoting:** `internal/devsandbox` exports `ShellQuote`; `shellJoin` and `loomdev env` both use it (no duplicated quoting).
 8. **Toy repo completeness:** an existing toy repo counts as complete only when `origin/HEAD` resolves; an incomplete one makes `Up` fail with a hint to run `loomdev down` then `up` (no self-healing).
 9. **Dead-pane capture:** `Screen()` adds a one-line scrollback margin (`capture-pane -S -1`) only when the driver pane is dead, because tmux's remain-on-exit message scrolls a dead pane by one line; live panes are captured exactly as shown.
-10. **Driver liveness:** `#{pane_dead}` is parsed strictly ("1"/"0"); anything else — including the empty output tmux 3.7b returns for a removed session while the server is still alive — means the driver is not running, so `stop` followed by a plain `start` really restarts it.
+10. **Driver liveness:** `#{pane_dead}` is parsed strictly ("1"/"0"); anything else — including the empty output tmux prints for a display-message whose target no longer exists (the server stays up because other sessions keep it alive) — means the driver is not running, so `stop` followed by a plain `start` really restarts it.
+11. **Nesting guard vs. private sockets:** a tmux server copies the environment of the client that started it, so every pane of a server started with `LOOM_TMUX_SOCKET=X` set inherits both `$TMUX` (naming server X) and `LOOM_TMUX_SOCKET=X` — trusting a non-empty `LOOM_TMUX_SOCKET` unconditionally would let the guard wave through a bare run inside its own sandbox server. `CheckNesting` instead skips the enclosing-session lookup only when `LOOM_TMUX_SOCKET` names a server *other than* the one `$TMUX` points at (compared by socket basename); when they match, the lookup still runs and a loom-managed enclosing session is refused as usual. This keeps `loomdev run` from a host pane allowed (socket differs from `$TMUX`'s basename) while still catching an accidental bare run inside the sandbox's own driver server; the driver pane itself is exempt because its enclosing session (`dev-driver`) has no loom prefix.
