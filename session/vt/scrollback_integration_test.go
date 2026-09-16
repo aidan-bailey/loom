@@ -142,6 +142,38 @@ func TestScrollbackAccumulation_RealTmux(t *testing.T) {
 		"a client repaint must not push content into scrollback")
 }
 
+// TestSyncOutputDefeatsEmulatorScrollback_RealTmux pins why Loom forces
+// Claude's fullscreen renderer (session.ClaudeFullscreenEnv). Output wrapped
+// in synchronized-update brackets (DEC 2026, which Claude's classic renderer
+// emits around every frame) still scrolls tmux's own history, but tmux
+// delivers it to the attach client as a repaint rather than as scroll
+// sequences, so nothing ever reaches the emulator's scrollback. If this
+// starts failing, tmux (or x/vt) now preserves scroll-off through
+// synchronized updates and the forced fullscreen can be revisited.
+func TestSyncOutputDefeatsEmulatorScrollback_RealTmux(t *testing.T) {
+	sock, name, emu, cleanup := startTmux(t, 80, 10)
+	defer cleanup()
+	settle()
+
+	historySize := func() int {
+		out, err := exec.Command("tmux", "-L", sock, "display", "-p", "-t", name, "#{history_size}").Output()
+		require.NoError(t, err)
+		var n int
+		_, err = fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &n)
+		require.NoError(t, err)
+		return n
+	}
+
+	sendShell(t, sock, name, `for i in $(seq 1 30); do printf '\033[?2026h%s\n\033[?2026l' "syncline$i"; done`)
+	settleUntil(func() bool { return strings.Contains(stripANSI(emu.Render()), "syncline30") })
+	settle()
+
+	require.Contains(t, stripANSI(emu.Render()), "syncline30", "the synchronized output must reach the client")
+	require.Greater(t, historySize(), 15, "tmux itself must keep the scrolled-off lines")
+	require.Zero(t, emu.ScrollbackLen(),
+		"synchronized output reached emulator scrollback; tmux now scrolls clients through sync updates")
+}
+
 // stripANSI removes CSI/OSC escapes so Contains-assertions see plain text.
 func stripANSI(s string) string {
 	var b strings.Builder

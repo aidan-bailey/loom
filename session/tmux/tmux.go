@@ -1056,10 +1056,9 @@ func (t *TmuxSession) CapturePaneContent() (string, error) {
 
 // CaptureHistory returns the full pane buffer — scrollback history plus the
 // visible screen — as physical rows with ANSI escapes, via capture-pane -S -.
-// Returns ("", false) on error. This is tmux's AUTHORITATIVE scrollback: the
-// in-process emulator only ever sees the visible screen from the tmux client
-// stream (tmux paints clients with redraws, not scroll-through history), so the
-// windowed scroll-back must be sourced here rather than from emu.Scrollback().
+// Returns ("", false) on error. Only the no-emulator path (snapshot mode /
+// Windows) windows this; the emulator path windows SeedHistory plus the
+// emulator's own scrollback (ui.ScrollModel).
 func (t *TmuxSession) CaptureHistory() (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()

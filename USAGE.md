@@ -659,6 +659,14 @@ When `claude_remote_control` is enabled (the default), every Claude session Loom
 - **Incompatible auth detected** → when you create a session (`n`/`N`), Loom shows a modal explaining the problem (e.g. "not logged in — run `claude auth login`") and lets you **start the session without remote control** (`y`) or **cancel** (`n`/`esc`). Auto-created workspace terminals skip the flag silently and show a brief info-bar notice.
 - **Auth can't be determined** (older `claude` without `auth status`, or unexpected output) → Loom fails closed: it skips `--remote-control` silently rather than launching a session that would fail.
 
+### Claude Fullscreen Renderer
+
+Every Claude session Loom starts runs Claude's fullscreen renderer (Loom sets `CLAUDE_CODE_NO_FLICKER=1` in the session's environment), regardless of your `/tui` setting. Scrolling the agent pane then scrolls Claude's own transcript. Claude's classic inline renderer can't be scrolled inside Loom: it draws every frame as a synchronized update, which tmux relays to Loom as a full repaint, so no scroll-back ever builds up. Mouse-wheeling over it shows the "scrolled" footer but the content doesn't move.
+
+- Sessions started before this change keep their renderer until Loom restarts their tmux session; run `/tui fullscreen` inside one to switch it now.
+- To use the classic renderer for a single session anyway, run `/tui default` in it.
+- To opt out globally, run `tmux set-environment -g CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN 1`; Claude checks it before `CLAUDE_CODE_NO_FLICKER`. It applies to sessions created afterwards, and agent-pane scrolling won't work in them. Exporting the variable in the shell you start Loom from isn't enough when the tmux server is already running: tmux only copies its `update-environment` variables into new sessions.
+
 ### Branch Prefix
 
 `branch_prefix` is prepended to every auto-generated branch name. The value shown as the default — `{username}/` — is a placeholder for the rendered text: when Loom creates its config, it resolves your OS username and writes the literal value (e.g. `aidanb/`) into `config.json`. There is no runtime token expansion, so editing `branch_prefix` to anything you like (e.g. `"loom/"`, `"wip-"`) works as expected.
