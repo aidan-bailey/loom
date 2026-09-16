@@ -241,3 +241,36 @@ func TestApplyLoomContextFlag(t *testing.T) {
 	assert.Equal(t, "gemini", reg.Lookup("gemini").ApplyLoomContextFlag("gemini", path))
 	assert.Equal(t, "unknownprog", reg.Lookup("unknownprog").ApplyLoomContextFlag("unknownprog", path))
 }
+
+func TestApplySettingsFlag(t *testing.T) {
+	reg := DefaultRegistry()
+	path := "/home/u/.loom/hooks/loom_a/settings.json"
+	claude := reg.Lookup("claude")
+
+	assert.Equal(t, "claude --settings '"+path+"'", claude.ApplySettingsFlag("claude", path))
+	assert.Equal(t, "claude --settings '"+path+"' --model opus",
+		claude.ApplySettingsFlag("claude --model opus", path))
+
+	// idempotent
+	once := claude.ApplySettingsFlag("claude", path)
+	assert.Equal(t, once, claude.ApplySettingsFlag(once, path))
+
+	// a user's own --settings wins
+	assert.Equal(t, "claude --settings /mine.json", claude.ApplySettingsFlag("claude --settings /mine.json", path))
+	assert.Equal(t, "claude --settings=/mine.json", claude.ApplySettingsFlag("claude --settings=/mine.json", path))
+
+	// no-ops
+	assert.Equal(t, "claude", claude.ApplySettingsFlag("claude", ""))
+	assert.Equal(t, "", claude.ApplySettingsFlag("", path))
+	assert.Equal(t, "aider", reg.Lookup("aider").ApplySettingsFlag("aider", path))
+	assert.Equal(t, "gemini", reg.Lookup("gemini").ApplySettingsFlag("gemini", path))
+	assert.Equal(t, "codex --x", Default().ApplySettingsFlag("codex --x", path))
+}
+
+func TestHasSettingsFlag(t *testing.T) {
+	assert.True(t, HasSettingsFlag("claude --settings x.json"))
+	assert.True(t, HasSettingsFlag("claude --model opus --settings=x.json"))
+	assert.False(t, HasSettingsFlag("claude --setting-sources user"))
+	assert.False(t, HasSettingsFlag("--settings"), "the command token itself is not a flag")
+	assert.False(t, HasSettingsFlag(""))
+}
