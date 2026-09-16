@@ -28,10 +28,16 @@ var toyHistory = []toyCommit{
 }
 
 // initToyRepo creates the sandbox workspace repo with a short history,
-// pushed to a bare origin. A repoDir that already holds a git repo is left
-// untouched (a half-built one needs `loomdev down`).
+// pushed to a bare origin. A repoDir that already has a complete repo
+// (resolves origin/HEAD) is left untouched; one that has a .git but never
+// finished (a step after `git init` failed partway) is reported as an
+// error rather than silently skipped — there is no self-healing, so
+// `loomdev down` + `loomdev up` is required to recreate it.
 func initToyRepo(repoDir, originDir string) error {
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err == nil {
+		if err := git(repoDir, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/HEAD"); err != nil {
+			return fmt.Errorf("toy repo %s is incomplete (no origin/HEAD); run `loomdev down` and `loomdev up` to recreate it", repoDir)
+		}
 		return nil
 	}
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {

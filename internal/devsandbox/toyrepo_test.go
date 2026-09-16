@@ -1,6 +1,7 @@
 package devsandbox
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -22,4 +23,17 @@ func TestInitToyRepo_HistoryAndOrigin(t *testing.T) {
 	assert.FileExists(t, filepath.Join(repo, "docs", "notes.md"))
 
 	require.NoError(t, initToyRepo(repo, origin), "re-running is a no-op")
+}
+
+func TestInitToyRepo_IncompleteRepoIsAnError(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	repo, origin := filepath.Join(dir, "repo"), filepath.Join(dir, "origin.git")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	require.NoError(t, git(repo, "init", "-q", "-b", "main"))
+
+	err := initToyRepo(repo, origin)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "incomplete")
+	assert.Contains(t, err.Error(), "loomdev down")
 }
