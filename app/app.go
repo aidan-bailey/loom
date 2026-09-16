@@ -401,6 +401,11 @@ type home struct {
 	lastRosterQuery time.Time
 	rosterInFlight  bool
 
+	// lastSubagentScan / subagentInFlight throttle the hook-event scan
+	// (see maybeSubagentScan), in the same way as the roster fields.
+	lastSubagentScan time.Time
+	subagentInFlight bool
+
 	// roster is Claude's own view of its live sessions, keyed by working
 	// directory, refreshed once per health tick (see rosterQueryCmd). It is
 	// authoritative where the pane scraper is inferential, so status events
@@ -453,6 +458,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	// classic-path launch (single-tab `loom --workspace`, or bare `loom`)
 	// would never init the flag and the feature would be inert.
 	session.SetLoomContextEnabled(appConfig.LoomContextEnabled())
+	session.SetSubagentTrackingEnabled(appConfig.SubagentTrackingEnabled())
 	if err := session.WriteLoomContextFiles(cfgDir); err != nil {
 		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
 	}
@@ -1182,6 +1188,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, statusDetectCmd(inst)
+	case subagentScanMsg:
+		m.handleSubagentScan(msg)
+		return m, nil
 	case rosterReadyMsg:
 		// Disarm before anything else: a result that does not clear this
 		// latches the roster off for the rest of the session.
@@ -1355,6 +1364,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Claude agent is running.
 		if roster := m.maybeRosterQuery(active); roster != nil {
 			cmds = append(cmds, roster)
+		}
+
+		// Subagent hook events, throttled like the roster (see
+		// maybeSubagentScan). nil when not due, in flight, or no Claude
+		// agent is live.
+		if scan := m.maybeSubagentScan(active); scan != nil {
+			cmds = append(cmds, scan)
 		}
 
 		// Workbench follow scan rides the health tick: cheap stat-walk
@@ -2048,11 +2064,21 @@ func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *
 			summary.review++
 		}
 	}
+	claimed := make(map[string]bool)
+	for _, inst := range list.GetInstances() {
+		claimed[inst.Title] = true
+	}
 	// Records that failed reconcile at load time live only in the storage
 	// cache — surface their count so they don't read as lost sessions.
 	if storage != nil {
 		summary.failed = len(storage.UnrecoveredTitles())
+		// Unrecovered records may come back on the next load; keep their
+		// hooks folders.
+		for _, title := range storage.UnrecoveredTitles() {
+			claimed[title] = true
+		}
 	}
+	session.SweepSubagentHooks(cfgDir, claimed, cmdExec)
 	return summary
 }
 
@@ -2705,6 +2731,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	// sync the global enabled flag on every workspace load, before any
 	// Claude session (workspace terminal, crash-restart, resume) launches.
 	session.SetLoomContextEnabled(appConfig.LoomContextEnabled())
+	session.SetSubagentTrackingEnabled(appConfig.SubagentTrackingEnabled())
 	if err := session.WriteLoomContextFiles(wsCtx.ConfigDir); err != nil {
 		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
 	}
