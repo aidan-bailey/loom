@@ -93,7 +93,7 @@ Loom has three view modes:
 
 ### Left Panel — Session Rail
 
-Each session renders as a live mini-card: its title, a status line with wait age (e.g. `❯ awaiting input · 4m`, `✻ working`, `✓ idle`, `paused · 3d`, `⟲ recoverable`), and a tail of recent agent output. The colored accent bar on the card's left edge encodes state at a glance:
+Each session renders as a live mini-card: its title, a status line with wait age (e.g. `❯ awaiting input · 4m`, `✻ working`, `✓ idle`, `paused · 3d`, `⟲ recoverable`), and a tail of recent agent output. When Claude says why it is waiting, the reason replaces the generic phrase (`❯ sandbox request · 4m`). When a Claude session has live subagents or teammates, the status line replaces the tail and ends with a count, e.g. `✻ working · 3 agents (1 idle)`. The colored accent bar on the card's left edge encodes state at a glance:
 
 | Accent | Meaning |
 |--------|---------|
@@ -106,7 +106,7 @@ Branch name and diff stats moved off the rail — they now live in the agent pan
 
 ### Overview Mode
 
-Press `tab` to switch to overview: a card grid of every session in your open workspaces, one group per workspace (focused workspace first, the rest alphabetical), each group sorted so sessions needing attention come first. Each card shows the title, status with wait age, branch and diff stats, and a live output tail. Only workspaces open in the tab bar appear — use `W` to open more.
+Press `tab` to switch to overview: a card grid of every session in your open workspaces, one group per workspace (focused workspace first, the rest alphabetical), each group sorted so sessions needing attention come first. Each card shows the title, status with wait age, branch and diff stats, and a live output tail. While a Claude session has live subagents, the tail shows them instead: `✻` for working, `◦` for idle, with a `+N more` line when more than two are running. Only workspaces open in the tab bar appear — use `W` to open more.
 
 - `j`/`k` (or `↑`/`↓`) walk the sorted grid across all groups; `enter` returns to focus mode on the selected session (switching workspace tabs if it lives in another group); `esc` returns to focus mode where you left it.
 - `z` collapses/expands the active workspace's group.
@@ -658,6 +658,16 @@ When `claude_remote_control` is enabled (the default), every Claude session Loom
 - **Logged in via claude.ai** → sessions launch with `--remote-control`.
 - **Incompatible auth detected** → when you create a session (`n`/`N`), Loom shows a modal explaining the problem (e.g. "not logged in — run `claude auth login`") and lets you **start the session without remote control** (`y`) or **cancel** (`n`/`esc`). Auto-created workspace terminals skip the flag silently and show a brief info-bar notice.
 - **Auth can't be determined** (older `claude` without `auth status`, or unexpected output) → Loom fails closed: it skips `--remote-control` silently rather than launching a session that would fail.
+
+### Subagent Tracking
+
+Loom shows the subagents and agent-team teammates a Claude session has spawned: a count on its rail card and rows on its overview card. It works by launching Claude with an extra `--settings` file that registers hooks for subagent events; your own hooks keep running alongside them.
+
+- Toggle it with **Track Subagents** under `S` → Claude Preferences. It is on by default, and a change applies the next time a session launches or resumes.
+- Only live agents are shown. A finished subagent disappears; a teammate stays listed as idle until it is shut down.
+- Sessions launched before you enabled it aren't tracked until they are resumed. Sessions whose program already passes `--settings`, and sessions on Windows, are never tracked.
+- Restarting loom keeps the rows: loom replays the events it already collected for sessions that are still running.
+- Event files live in `~/.loom/hooks/`. They are cleared at each launch and removed when you kill the session.
 
 ### Branch Prefix
 
