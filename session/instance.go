@@ -370,11 +370,27 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 // Start race, but the wrong behavior when the caller knows the tmux
 // session is gone and wants to recreate it. Restart clears the flags
 // first so Start can run its real path.
+//
+// A restart is a real launch: the dead session object is closed and
+// replaced by one running a command freshly composed by launchProgram,
+// so the previous launch's subagent state and hooks folder are reset,
+// new hooks are prepared, and the loom context flag is re-applied.
+// Reusing the old object would relaunch its old command — for a session
+// restored after a loom restart, the bare Program, with no hooks or
+// context at all — while the tracker kept the dead process's rows.
 func (i *Instance) Restart() error {
 	i.mu.Lock()
+	old := i.tmuxSession
 	i.started = false
 	i.starting = false
 	i.mu.Unlock()
+	if old != nil {
+		// Already dead; this only releases the PTY, emulator and pump.
+		if err := old.Close(); err != nil {
+			i.getLogger().Debug("instance.restart.close_old_failed", "err", err.Error())
+		}
+		i.setTmuxSession(old.WithProgram(i.launchProgram(i.Program, true)))
+	}
 	return i.Start(true)
 }
 
