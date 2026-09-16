@@ -67,8 +67,18 @@ func ResolveWorkspace(cwd string, registry *WorkspaceRegistry) (*WorkspaceContex
 	return GlobalWorkspaceContext()
 }
 
-// GetGlobalConfigDir returns ~/.loom/ regardless of LOOM_HOME.
+// EnvGlobalDir overrides the directory GetGlobalConfigDir returns — the home
+// of workspaces.json and of the global workspace context. Deliberately
+// separate from LOOM_HOME, which GetGlobalConfigDir ignores by design; the
+// dev sandbox (internal/devsandbox) sets both.
+const EnvGlobalDir = "LOOM_GLOBAL_DIR"
+
+// GetGlobalConfigDir returns $LOOM_GLOBAL_DIR when set, otherwise ~/.loom/ —
+// regardless of LOOM_HOME.
 func GetGlobalConfigDir() (string, error) {
+	if dir := os.Getenv(EnvGlobalDir); dir != "" {
+		return resolveEnvDir(EnvGlobalDir, dir)
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)

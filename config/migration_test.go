@@ -44,6 +44,7 @@ func withTempHome(t *testing.T) string {
 	t.Setenv("HOME", home)
 	t.Setenv("LOOM_HOME", "")
 	t.Setenv("CLAUDE_SQUAD_HOME", "")
+	t.Setenv("LOOM_GLOBAL_DIR", "")
 	return home
 }
 
@@ -146,5 +147,20 @@ func TestMigrateLegacyHome_SkipsWhenClaudeSquadHomeSet(t *testing.T) {
 
 	assert.Empty(t, strings.TrimSpace(stderr))
 	assert.DirExists(t, legacy)
+	assert.NoDirExists(t, filepath.Join(home, ".loom"))
+}
+
+func TestMigrateLegacyHome_SkipsWhenGlobalDirSet(t *testing.T) {
+	home := withTempHome(t)
+	legacy := filepath.Join(home, ".claude-squad")
+	require.NoError(t, os.MkdirAll(legacy, 0o755))
+	t.Setenv(EnvGlobalDir, t.TempDir())
+
+	stderr := captureStderr(t, func() {
+		require.NoError(t, MigrateLegacyHome())
+	})
+
+	assert.Empty(t, strings.TrimSpace(stderr))
+	assert.DirExists(t, legacy, "legacy dir must survive when LOOM_GLOBAL_DIR is set")
 	assert.NoDirExists(t, filepath.Join(home, ".loom"))
 }

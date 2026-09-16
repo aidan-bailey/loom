@@ -37,17 +37,7 @@ const (
 // back to ~/.loom otherwise.
 func GetConfigDir() (string, error) {
 	if envDir := log.GetEnvWithLegacy(EnvHome, legacyEnvHome); envDir != "" {
-		if envDir == "~" || strings.HasPrefix(envDir, "~/") {
-			homeDir, err := os.UserHomeDir()
-			if err != nil {
-				return "", fmt.Errorf("failed to expand ~ in %s: %w", EnvHome, err)
-			}
-			envDir = filepath.Join(homeDir, envDir[1:])
-		}
-		if !filepath.IsAbs(envDir) {
-			return "", fmt.Errorf("%s must be an absolute path, got: %s", EnvHome, envDir)
-		}
-		return envDir, nil
+		return resolveEnvDir(EnvHome, envDir)
 	}
 
 	homeDir, err := os.UserHomeDir()
@@ -55,6 +45,22 @@ func GetConfigDir() (string, error) {
 		return "", fmt.Errorf("failed to get config home directory: %w", err)
 	}
 	return filepath.Join(homeDir, ".loom"), nil
+}
+
+// resolveEnvDir expands a leading ~ in dir (the value of env var name) and
+// requires the result to be absolute.
+func resolveEnvDir(name, dir string) (string, error) {
+	if dir == "~" || strings.HasPrefix(dir, "~/") {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to expand ~ in %s: %w", name, err)
+		}
+		dir = filepath.Join(homeDir, dir[1:])
+	}
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("%s must be an absolute path, got: %s", name, dir)
+	}
+	return dir, nil
 }
 
 // Profile is a named shortcut for a program invocation. Profiles let
