@@ -98,6 +98,21 @@ func TestSubagentScanMsgAppliesAndGatesByLaunch(t *testing.T) {
 	require.Len(t, inst.Subagents(), 1)
 }
 
+// A warm instance whose hooks folder disappears mid-run drops its rows
+// instead of keeping them frozen.
+func TestSubagentScanMsgNoHooksForgetsWarmRows(t *testing.T) {
+	inst := startedInstanceWithProgram(t, "sub-gone", "claude", "x")
+	m := homeWithAppState(t)
+	m.list.AddInstance(inst)
+	m.Update(subagentScanMsg{results: []subagentScanResult{{instance: inst, result: explorerResult("L1", true)}}})
+	require.Len(t, inst.Subagents(), 1)
+
+	m.Update(subagentScanMsg{results: []subagentScanResult{{instance: inst, err: subagent.ErrNoHooks}}})
+
+	require.Empty(t, inst.Subagents())
+	require.False(t, m.subagentInFlight)
+}
+
 func TestSubagentScanCmdEndToEnd(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "sub-e2e", "claude", "x")
 	m := homeWithAppState(t)

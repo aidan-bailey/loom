@@ -245,6 +245,52 @@ func TestApplySubagentScan_Gates(t *testing.T) {
 	assert.Len(t, inst.Subagents(), 1)
 }
 
+// A tracked launch whose folder disappears mid-run (deleted by hand, or by
+// another loom process's sweep) must not keep its last rows forever.
+func TestForgetSubagentsWithoutHooks(t *testing.T) {
+	withTracking(t, true)
+	inst := hooksInstance(t, "claude")
+	inst.launchProgram("claude", true)
+	transcript := fakeTranscript(t, "a1", `{"agentType":"Explore","description":"map code"}`)
+	writeHookEvent(t, inst, "1", fmt.Sprintf(`{"hook_event_name":"SubagentStart","agent_id":"a1","agent_type":"Explore","transcript_path":%q}`, transcript),
+		time.Now().Add(-time.Second))
+	require.True(t, scanAndApply(t, inst))
+	require.Len(t, inst.Subagents(), 1)
+	launchID := inst.hookLaunchID
+
+	require.NoError(t, os.RemoveAll(SubagentHooksDir(inst.ConfigDir, inst.Title)))
+	req, ok := inst.SubagentScanRequest()
+	require.True(t, ok)
+	_, err := subagent.Scan(req, time.Now())
+	require.ErrorIs(t, err, subagent.ErrNoHooks)
+
+	inst.ForgetSubagentsWithoutHooks()
+
+	assert.Empty(t, inst.Subagents())
+	assert.False(t, inst.subagentWarm)
+	assert.Equal(t, launchID, inst.hookLaunchID, "the launch ID is kept, so another launch's folder is never adopted")
+}
+
+// ErrNoHooks is the normal state of an instance restored after a loom
+// restart that has not adopted a launch ID yet (""), and of a launch
+// without hooks (noHooksLaunchID). Neither can hold rows in practice, so
+// the IDs are set by hand after the rows to make the guard observable.
+func TestForgetSubagentsWithoutHooks_NoRealLaunchIDUntouched(t *testing.T) {
+	for _, id := range []string{"", noHooksLaunchID} {
+		inst := hooksInstance(t, "claude")
+		require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "L", Replayed: true,
+			Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+			Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
+		inst.hookLaunchID = id
+
+		inst.ForgetSubagentsWithoutHooks()
+
+		assert.Len(t, inst.Subagents(), 1, "launch ID %q", id)
+		assert.True(t, inst.subagentWarm, "launch ID %q", id)
+		assert.Equal(t, id, inst.hookLaunchID)
+	}
+}
+
 func TestSubagents_HiddenWhenNotLive(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "L", Replayed: true,

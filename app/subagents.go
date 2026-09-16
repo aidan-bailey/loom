@@ -81,9 +81,12 @@ func (m *home) handleSubagentScan(msg subagentScanMsg) {
 	m.subagentInFlight = false
 	for _, r := range msg.results {
 		if r.err != nil {
-			// ErrNoHooks is the normal state of a session launched
-			// without tracking.
-			if !errors.Is(r.err, subagent.ErrNoHooks) {
+			if errors.Is(r.err, subagent.ErrNoHooks) {
+				// The normal state of a session launched without
+				// tracking. For a tracked launch the folder vanished
+				// mid-run, and its rows would otherwise stay frozen.
+				r.instance.ForgetSubagentsWithoutHooks()
+			} else {
 				log.DebugKV("app.subagent.scan_failed", "instance", r.instance.Title, "err", r.err.Error())
 			}
 			continue

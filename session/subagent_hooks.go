@@ -201,6 +201,30 @@ func (i *Instance) ApplySubagentScan(res subagent.Result) bool {
 	return true
 }
 
+// ForgetSubagentsWithoutHooks drops the tracked agents of a launch whose
+// hooks folder has disappeared, which a scan reports as
+// subagent.ErrNoHooks: the folder was deleted by hand, or by another loom
+// process's sweep. Without it the last rows would stay on screen until
+// the next launch. It acts only when hookLaunchID is a real launch ID:
+// for an instance restored after a loom restart ("", nothing adopted yet)
+// or launched without hooks (noHooksLaunchID), ErrNoHooks is the normal
+// state. hookLaunchID itself is kept, so a folder written by another
+// launch is still never adopted. Call it on the Update goroutine.
+func (i *Instance) ForgetSubagentsWithoutHooks() {
+	i.mu.Lock()
+	if i.hookLaunchID == "" || i.hookLaunchID == noHooksLaunchID {
+		i.mu.Unlock()
+		return
+	}
+	wasWarm := i.subagentWarm
+	i.subagentWarm = false
+	i.subagentTrackerLocked().Reset()
+	i.mu.Unlock()
+	if wasWarm {
+		i.getLogger().Debug("subagent_hooks.folder_gone", "action", "tracked agents dropped")
+	}
+}
+
 // Subagents returns the live agents to render, or nil when nothing is
 // tracked or the instance is in a status where no agent can be running
 // (Paused, Recoverable, Deleting).
