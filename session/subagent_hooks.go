@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -278,7 +277,7 @@ func SweepSubagentHooks(configDir string, claimedTitles map[string]bool, cmdExec
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer cancel()
-	out, err := cmdExec.Output(exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}"))
+	out, err := cmdExec.Output(tmux.Command(ctx, "list-sessions", "-F", "#{session_name}"))
 	if err != nil {
 		return
 	}
