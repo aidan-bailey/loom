@@ -710,6 +710,9 @@ This setting only affects sessions created on a **new** branch. Picking an exist
 | Variable | Description |
 |----------|-------------|
 | `LOOM_HOME` | Override the config directory (default: `~/.loom`). Must be an absolute path; supports `~` expansion. |
+| `LOOM_TMUX_SOCKET` | Run all of loom's tmux commands against a private server (`tmux -L <name>`). |
+| `LOOM_GLOBAL_DIR` | Override the directory holding `workspaces.json` (default: `~/.loom`). Absolute path; supports `~`. |
+| `LOOM_ALLOW_NESTED` | Set to `1` to start loom inside one of its own tmux sessions anyway (normally refused, because startup cleanup would kill the enclosing loom's sessions). |
 
 ---
 

@@ -34,9 +34,16 @@ gofmt -w .
 # Lint (CI uses golangci-lint v1.60.1)
 golangci-lint run --timeout=3m --fast
 
-# Cleanup scripts
+# Cleanup scripts (refuse to run inside a loom-managed tmux session)
 ./clean.sh        # Kill tmux server, remove worktrees and ~/.loom/
 ./clean_hard.sh   # Same as clean.sh + git worktree prune
+
+# Dev sandbox — run a dev build safely from inside loom (.claude/skills/loom-dev)
+go run ./tools/loomdev up                 # create + build (named after the branch leaf)
+go run ./tools/loomdev run                # interactive, in this terminal
+go run ./tools/loomdev start              # headless, then: wait --text toy / keys … / shot
+go run ./tools/loomdev down               # delete the sandbox and its tmux server
+go test -tags e2e ./e2e/...               # end-to-end smoke suite (needs tmux)
 
 # Install (adds ~/.local/bin to PATH)
 ./install.sh
@@ -121,6 +128,9 @@ loom --workspace <name>
 - `LOOM_LOG_FORMAT` — Set to `json` to emit structured log records from `log.InfoKV/WarnKV/ErrorKV` as JSON lines; otherwise plain text. Legacy `log.Infof`/`Warnf`/`Errorf` callers are unaffected.
 - `LOOM_LOG_LEVEL` — `debug|info|warn|error` (default `info`). Gates both the Structured logger and the legacy `InfoLog`/`WarningLog`/`ErrorLog` writers (legacy records below the gate are dropped at the writer layer). The `--log-level` CLI flag (persistent on all subcommands) takes precedence over the env var.
 - `LOOM_PANE_RENDERER` — Set to `snapshot` to disable the embedded VT emulator and fall back to the legacy `tmux capture-pane` snapshot path for pane rendering (also the implicit path on Windows). Unset (default) renders panes from the emulator, enabling mouse forwarding, event-driven updates (no render/status polling), the native hardware cursor, and title/bell/focus pass-through. Scroll-back is emulator-owned on this path: windows render in-process from x/vt scrollback (`vt.Emulator.RenderWindow`), seeded once per attach from `tmux capture-pane -S - -E -1`; `tmux capture-pane` windowing survives only on the snapshot path.
+- `LOOM_TMUX_SOCKET` — Private tmux socket name: every tmux invocation gets `-L <name>` (via `tmux.Command`), overriding `$TMUX`. Used by the dev sandbox.
+- `LOOM_GLOBAL_DIR` — Relocates `GetGlobalConfigDir()` (workspace registry + global context), which ignores `LOOM_HOME` by design. Absolute; supports `~`. Also disables the legacy-home migration.
+- `LOOM_ALLOW_NESTED` — Set to `1` to bypass the nesting guard (see Gotchas).
 
 Legacy fallbacks (`CLAUDE_SQUAD_HOME`, `CLAUDE_SQUAD_LOG_FORMAT`, `CLAUDE_SQUAD_LOG_LEVEL`) are still honored with a one-time deprecation warning to stderr; remove them from your shell init once you've migrated.
 
@@ -172,6 +182,7 @@ The default state renders in one of two **view modes** (`m.viewMode`), toggled w
 - **`keys/`** — Keybinding definitions. Enum-based `KeyName` with global maps for lookup.
 - **`cmd/`** — `Executor` interface wrapping `os/exec` for testability.
 - **`log/`** — Centralized logging to `{configDir}/logs/loom.log` with Info/Warning/Error loggers and rate limiting.
+- **`internal/devsandbox/`** — Dev sandboxes for developing loom inside loom: `Up` (toy repo + bare origin, sandbox config/state seeded into both `global/` and `repo/.loom/`, registry entry), `Build`, and a headless driver (`Start`/`SendKeys`/`Screen`/`WaitFor`) on a private tmux socket. CLI: `tools/loomdev`; deterministic agent stand-in: `tools/fakeagent` (persona from `argv[0]` via the adapter registry). `tools/` is excluded from the Nix package.
 - **`script/`** — Lua scripting engine (`github.com/yuin/gopher-lua`). The full built-in keymap lives in `script/defaults.lua`, embedded via `go:embed` and loaded at engine init before any user script. Users extend or override bindings from `~/.loom/scripts/*.lua` (global, not per-workspace). Dispatch is driven from `state_default.go` through `app/app_scripts.go`'s `scriptHost` adapter. Hard-sandboxed: only `base`/`string`/`table`/`math`/`coroutine`; `dofile`/`loadfile`/`load`/`loadstring`/`require`/`string.dump`/`collectgarbage` stripped. Exposed API: `cs.bind`/`cs.unbind`/`cs.register_action`, `cs.actions.*` (sync primitives + deferred intent factories), `cs.await`, `cs.log`, `cs.notify`, `cs.now`, `cs.sprintf`, plus userdata wrappers for `session.Instance`, `git.GitWorktree`, and a per-dispatch `ctx`.
 
 ### Session Lifecycle
@@ -206,6 +217,8 @@ Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent act
 - **Overview and workbench are `viewMode`s, orthogonal to the state machine.** `m.viewMode` (focus/overview/workbench) is not an `m.state` value — overlays and per-state handlers work unchanged on top of it. In overview, `state_default.go` gates script dispatch through the `overviewKeyAllowed` whitelist (everything else no-ops rather than acting on an invisible pane), mouse events are dropped, and bell/attention badges clear only on entering focus so the attention-sorted grid stays stable while you look at it. New key work must respect both: add grid-safe keys to the whitelist explicitly, and don't clear attention state from overview handlers.
 - **Overview cursor and nav share one classic-vs-slots split.** `overviewData`'s cursor translation, `moveCursor`/`fleetOrder`, and `jumpWaiting` all key on the same `len(m.slots)==0` classic-vs-workspace-mode split — keep them in sync or nav and render diverge. A stale overview cursor (killed instance, collapsed group) is healed by `normalizeOverviewCursor` at render (`overviewData`) and nav (`moveCursor`) — don't add per-event cursor bookkeeping. The overview only ever renders open workspace slots; there is no background/lazy fleet loading (removed 2026-07-21).
 - **Workbench mode reuses the focus split for its left half.** `viewWorkbench` force-hides the split's terminal (restored from `wbPrevTerminalHidden` on exit — `cleanupWorkbench` is the single teardown choke point, called from `saveCurrentSlot`/`loadSlot` so implicit workspace switches can't leave a half-cleaned workbench) and shares its `TerminalPane` with the right panel via `SplitPane.Terminal()` — `SplitPane.SetSize` must run before `Workbench.SetSize`. The markdown follow scan rides the 3s health tick as a `tea.Cmd`; scan/load/save results are applied only in `Update` handlers, gated on session title to drop stale deliveries. Workbench is never persisted: restart lands in focus. Glamour styles rebuild in a theme hook (`ui/markdown_style.go`); `MarkdownPane` re-renders lazily off the `mdStyleGen` counter. The review tab (`5`/`c`) freezes markdown follow-mode on entry and resumes it on exit (`q`)/teardown, and `q` returns to the panel tab the review was opened from (`home.wbReviewPrevTab`); review persistence runs as Cmds delivering `reviewui.SavedMsg` (non-fatal, footer-surfaced). The pane claims only the keys it acts on (`reviewui.claimsIdleKey`) and declines the rest — idle `esc`, session ops, workspace nav, and (in doc mode) the panel-tab digits all fall through to the workbench. The app-layer `home.wbReview` concrete pane and `Workbench.SetReview` interface field must stay in lockstep (nil iff nil): `Workbench.SetSession` drops its half on a title change, so **every** retarget path must go through `home.dropReviewPane` — `instanceChanged`'s workbench retarget does, and a miss silently routes keys (and `S`'s composed comments) into the previous session's pane.
+- **Every tmux exec goes through `tmux.Command`/`tmux.CommandOnSocket`.** They honor `LOOM_TMUX_SOCKET`; a raw `exec.Command("tmux", …)` would follow `$TMUX` to whatever server encloses the process. `TestNoRawTmuxExec` fails the build on any raw tmux exec outside `session/tmux/command.go` (whose `EnclosingSessionName` is the one deliberate exception).
+- **The nesting guard exists because the orphan sweep is server-wide.** `CleanupOrphanedSessions` kills every `loom_*` session the process didn't load, on the server it talks to. `main.go`'s `nestingCheck` refuses the TUI and `reset` inside a `loom_*`/`claudesquad_*` session unless `LOOM_TMUX_SOCKET` names a server other than the enclosing one (or `LOOM_ALLOW_NESTED=1`) — a tmux server copies the environment of the client that started it, so every pane of a server started with `LOOM_TMUX_SOCKET` set inherits that same variable, and trusting it unconditionally would wave through a bare run inside its own sandbox server. Run dev builds through `tools/loomdev`, never directly in a pane. The guard only recognizes loom-managed enclosing sessions (`loom_*`/`claudesquad_*`); a dev loom started from a non-loom tmux session (e.g. a plain shell pane) on a server that also hosts loom sessions is not refused, so use `loomdev` (or `LOOM_TMUX_SOCKET`) there too.
 
 ### Persistent State
 

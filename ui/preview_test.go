@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/log"
@@ -48,7 +49,7 @@ func setupTestEnvironment(t *testing.T, cmdExec cmd_test.MockCmdExec) *testSetup
 	sessionName := fmt.Sprintf("test-preview-%s-%d-%d", t.Name(), time.Now().UnixNano(), random)
 
 	// Clean up any existing tmux session
-	cleanupCmd := exec.Command("tmux", "kill-session", "-t", "loom_"+sessionName)
+	cleanupCmd := tmux.Command(context.Background(), "kill-session", "-t", "loom_"+sessionName)
 	_ = cleanupCmd.Run() // Ignore errors if session doesn't exist
 
 	// Create instance

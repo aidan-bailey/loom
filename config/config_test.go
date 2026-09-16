@@ -21,6 +21,7 @@ func TestMain(m *testing.M) {
 	// Prevent LOOM_HOME / CLAUDE_SQUAD_HOME from polluting tests
 	os.Unsetenv("LOOM_HOME")
 	os.Unsetenv("CLAUDE_SQUAD_HOME")
+	os.Unsetenv("LOOM_GLOBAL_DIR")
 
 	exitCode := m.Run()
 	log.Close()

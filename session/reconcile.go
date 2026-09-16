@@ -7,7 +7,6 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -37,7 +36,7 @@ func CheckTmuxAlive(sessionTitle string, cmdExec internalexec.Executor) bool {
 	sanitized := tmux.ToLoomTmuxName(sessionTitle)
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer cancel()
-	existsCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t="+sanitized)
+	existsCmd := tmux.Command(ctx, "has-session", "-t="+sanitized)
 	return cmdExec.Run(existsCmd) == nil
 }
 
@@ -49,7 +48,7 @@ func KillTmuxSessionByTitle(title string, cmdExec internalexec.Executor) error {
 	sanitized := tmux.ToLoomTmuxName(title)
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer cancel()
-	killCmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t="+sanitized)
+	killCmd := tmux.Command(ctx, "kill-session", "-t="+sanitized)
 	return cmdExec.Run(killCmd)
 }
 
@@ -202,7 +201,7 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec.Executor) error {
 	listCtx, listCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer listCancel()
-	listCmd := exec.CommandContext(listCtx, "tmux", "ls")
+	listCmd := tmux.Command(listCtx, "ls")
 	output, err := cmdExec.Output(listCmd)
 	if err != nil {
 		// No tmux server running — nothing to clean up
@@ -238,7 +237,7 @@ func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec
 		if !claimed {
 			log.For("reconcile").Info("orphan_tmux.kill_begin", "session", sessionName)
 			killCtx, killCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
-			killCmd := exec.CommandContext(killCtx, "tmux", "kill-session", "-t", sessionName)
+			killCmd := tmux.Command(killCtx, "kill-session", "-t", sessionName)
 			if err := cmdExec.Run(killCmd); err != nil {
 				log.For("reconcile").Error("orphan_tmux.kill_failed", "session", sessionName, "err", err)
 			}
