@@ -99,11 +99,13 @@ func TestRealClaude_TeammateLifecycle(t *testing.T) {
 	waitFor(t, 30*time.Second, func() bool { collect(); return len(tracker.Visible()) == 1 })
 	require.Equal(t, []View{{Name: "probe-mate", Description: "probe teammate", Idle: true}}, tracker.Visible())
 
+	before := len(seen)
 	send("Send probe-mate a shutdown request with SendMessage, wait until it has terminated, then say ALLDONE.")
 	waitFor(t, 3*time.Minute, func() bool {
 		collect()
 		return len(tracker.Visible()) == 0
 	})
+	requireShutdownSequence(t, seen[before:], "probe-mate")
 }
 
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
@@ -147,4 +149,45 @@ func requireOrder(t *testing.T, events []Event, want ...string) {
 		got[j] = e.Name
 	}
 	require.Equal(t, len(want), i, "event order %v does not contain %v in order", got, want)
+}
+
+// requireShutdownSequence asserts finding 4 of the design: the teammate is
+// started to handle the shutdown request and stopped, it does not go idle
+// after that final stop, and a later parent Stop lists no running
+// teammates. A teammate's agent_type is its name.
+func requireShutdownSequence(t *testing.T, events []Event, name string) {
+	t.Helper()
+	started, lastStop := false, -1
+	for i, e := range events {
+		if e.Name == EventSubagentStart && e.AgentType == name {
+			started = true
+		}
+		if started && e.Name == EventSubagentStop && e.AgentType == name {
+			lastStop = i
+		}
+	}
+	require.GreaterOrEqual(t, lastStop, 0,
+		"shutdown: no SubagentStart followed by SubagentStop for %s", name)
+
+	emptied := false
+	for _, e := range events[lastStop+1:] {
+		require.False(t, e.Name == EventTeammateIdle && e.TeammateName == name,
+			"shutdown: %s went idle after its final stop", name)
+		if e.Name == EventStop && e.HasTasks && runningTeammates(e.Tasks) == 0 {
+			emptied = true
+		}
+	}
+	require.True(t, emptied,
+		"shutdown: no parent Stop listed zero running teammates after %s stopped", name)
+}
+
+// runningTeammates counts the live teammate entries in a background_tasks list.
+func runningTeammates(tasks []Task) int {
+	n := 0
+	for _, task := range tasks {
+		if task.Type == "teammate" && task.Status == "running" {
+			n++
+		}
+	}
+	return n
 }
