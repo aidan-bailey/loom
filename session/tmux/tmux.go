@@ -201,7 +201,7 @@ func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
-		cmd := exec.CommandContext(ctx, "tmux", "rename-session", "-t", legacy, target)
+		cmd := Command(ctx, "rename-session", "-t", legacy, target)
 		if err := cmdExec.Run(cmd); err != nil {
 			log.For("tmux").Debug("rename_legacy_session_failed", "legacy", legacy, "target", target, "err", err.Error())
 		}
@@ -273,14 +273,14 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 		args = append(args, "-e", e)
 	}
 	args = append(args, t.program)
-	cmd := exec.CommandContext(startCtx, "tmux", args...)
+	cmd := Command(startCtx, args...)
 
 	ptmx, err := t.ptyFactory.Start(cmd)
 	if err != nil {
 		// Cleanup any partially created session if any exists.
 		if t.DoesSessionExist() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-			cleanupCmd := exec.CommandContext(cleanupCtx, "tmux", "kill-session", "-t", t.sanitizedName)
+			cleanupCmd := Command(cleanupCtx, "kill-session", "-t", t.sanitizedName)
 			if cleanupErr := t.cmdExec.Run(cleanupCmd); cleanupErr != nil {
 				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
 			}
@@ -315,7 +315,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 
 	// Set history limit to enable scrollback (default is 2000, we'll use 10000 for more history)
 	histCtx, histCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	historyCmd := exec.CommandContext(histCtx, "tmux", "set-option", "-t", t.sanitizedName, "history-limit", "10000")
+	historyCmd := Command(histCtx, "set-option", "-t", t.sanitizedName, "history-limit", "10000")
 	if err := t.cmdExec.Run(historyCmd); err != nil {
 		log.For("tmux").Warn("history_limit_failed", "session", t.sanitizedName, "err", err)
 	}
@@ -323,7 +323,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 
 	// Enable mouse scrolling for the session
 	mouseCtx, mouseCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	mouseCmd := exec.CommandContext(mouseCtx, "tmux", "set-option", "-t", t.sanitizedName, "mouse", "on")
+	mouseCmd := Command(mouseCtx, "set-option", "-t", t.sanitizedName, "mouse", "on")
 	if err := t.cmdExec.Run(mouseCmd); err != nil {
 		log.For("tmux").Warn("mouse_scroll_failed", "session", t.sanitizedName, "err", err)
 	}
@@ -334,7 +334,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	// would consume a render row and shift content. tmux still owns the
 	// session; only its chrome is hidden.
 	statusCtx, statusCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	statusCmd := exec.CommandContext(statusCtx, "tmux", "set-option", "-t", t.sanitizedName, "status", "off")
+	statusCmd := Command(statusCtx, "set-option", "-t", t.sanitizedName, "status", "off")
 	if err := t.cmdExec.Run(statusCmd); err != nil {
 		log.For("tmux").Warn("status_off_failed", "session", t.sanitizedName, "err", err)
 	}
@@ -345,7 +345,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	// always used it. This binding is server-wide, but claude-squad has always
 	// assumed ownership of Ctrl-Q as its detach key.
 	bindCtx, bindCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	bindCmd := exec.CommandContext(bindCtx, "tmux", "bind-key", "-n", "C-q", "detach-client")
+	bindCmd := Command(bindCtx, "bind-key", "-n", "C-q", "detach-client")
 	if err := t.cmdExec.Run(bindCmd); err != nil {
 		log.For("tmux").Warn("bind_cq_failed", "err", err)
 	}
@@ -469,7 +469,7 @@ func (t *TmuxSession) Restore() error {
 	t.seedHistory = seed
 	t.stateMu.Unlock()
 
-	ptmx, err := t.ptyFactory.Start(exec.Command("tmux", "attach-session", "-t", t.sanitizedName))
+	ptmx, err := t.ptyFactory.Start(Command(context.Background(), "attach-session", "-t", t.sanitizedName))
 	if err != nil {
 		return fmt.Errorf("error opening PTY: %w", err)
 	}
@@ -808,7 +808,7 @@ func (t *TmuxSession) GetContentHash() []byte {
 // owns the real tty for the duration of the attach. Detach is driven by
 // the C-q key binding installed during Start (see bind-key call).
 func (t *TmuxSession) FullScreenAttachCmd() *exec.Cmd {
-	return exec.Command("tmux", "attach-session", "-t", t.sanitizedName)
+	return Command(context.Background(), "attach-session", "-t", t.sanitizedName)
 }
 
 // PausePreview closes the detached preview PTY and waits for its pump to
@@ -874,7 +874,7 @@ func (t *TmuxSession) Close() error {
 
 	killCtx, killCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer killCancel()
-	cmd := exec.CommandContext(killCtx, "tmux", "kill-session", "-t", t.sanitizedName)
+	cmd := Command(killCtx, "kill-session", "-t", t.sanitizedName)
 	if err := t.cmdExec.Run(cmd); err != nil {
 		errs = append(errs, fmt.Errorf("error killing tmux session: %w", err))
 	}
@@ -906,7 +906,7 @@ func (t *TmuxSession) CloseRelatedSession(rawName string) error {
 	name := ToLoomTmuxName(rawName)
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", name)
+	cmd := Command(ctx, "kill-session", "-t", name)
 	return t.cmdExec.Run(cmd)
 }
 
@@ -947,7 +947,7 @@ func (t *TmuxSession) DoesSessionExist() bool {
 	// Using "-t name" does a prefix match, which is wrong. `-t=` does an exact match.
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	existsCmd := exec.CommandContext(ctx, "tmux", "has-session", fmt.Sprintf("-t=%s", t.sanitizedName))
+	existsCmd := Command(ctx, "has-session", fmt.Sprintf("-t=%s", t.sanitizedName))
 	return t.cmdExec.Run(existsCmd) == nil
 }
 
@@ -1046,7 +1046,7 @@ func (t *TmuxSession) CapturePaneContent() (string, error) {
 	// re-wrap and produce extra visual rows, causing the pane to overflow its height.
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-e", "-t", t.sanitizedName)
+	cmd := Command(ctx, "capture-pane", "-p", "-e", "-t", t.sanitizedName)
 	output, err := t.cmdExec.Output(cmd)
 	if err != nil {
 		return "", fmt.Errorf("error capturing pane content: %v", err)
@@ -1063,7 +1063,7 @@ func (t *TmuxSession) CapturePaneContent() (string, error) {
 func (t *TmuxSession) CaptureHistory() (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", t.sanitizedName)
+	cmd := Command(ctx, "capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", t.sanitizedName)
 	output, err := t.cmdExec.Output(cmd)
 	if err != nil {
 		return "", false
@@ -1078,7 +1078,7 @@ func (t *TmuxSession) CaptureHistory() (string, bool) {
 func (t *TmuxSession) captureHistoryRowsOnly() ([]string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-e", "-S", "-", "-E", "-1", "-t", t.sanitizedName)
+	cmd := Command(ctx, "capture-pane", "-p", "-e", "-S", "-", "-E", "-1", "-t", t.sanitizedName)
 	output, err := t.cmdExec.Output(cmd)
 	if err != nil {
 		return nil, false
@@ -1130,7 +1130,7 @@ func (t *TmuxSession) RenderWindow(offset, rows int) (string, bool) {
 func (t *TmuxSession) IsAlternateScreen() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-p", "-t", t.sanitizedName, "#{alternate_on}")
+	cmd := Command(ctx, "display-message", "-p", "-t", t.sanitizedName, "#{alternate_on}")
 	out, err := t.cmdExec.Output(cmd)
 	if err != nil {
 		return false
@@ -1214,7 +1214,7 @@ func CleanupSessions(cmdExec internalexec.Executor) error {
 	// First try to list sessions
 	lsCtx, lsCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer lsCancel()
-	cmd := exec.CommandContext(lsCtx, "tmux", "ls")
+	cmd := Command(lsCtx, "ls")
 	output, err := cmdExec.Output(cmd)
 
 	// If there's an error and it's because no server is running, that's fine
@@ -1235,7 +1235,7 @@ func CleanupSessions(cmdExec internalexec.Executor) error {
 	for _, match := range matches {
 		log.For("tmux").Info("orphan_cleanup", "session", match)
 		killCtx, killCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-		if err := cmdExec.Run(exec.CommandContext(killCtx, "tmux", "kill-session", "-t", match)); err != nil {
+		if err := cmdExec.Run(Command(killCtx, "kill-session", "-t", match)); err != nil {
 			killCancel()
 			return fmt.Errorf("failed to kill tmux session %s: %v", match, err)
 		}

@@ -20,6 +20,9 @@ import (
 func TestMain(m *testing.M) {
 	_ = log.Initialize("", false)
 	defer log.Close()
+	// Argv-exact mock assertions assume the default server; a shell that
+	// exported LOOM_TMUX_SOCKET (e.g. via `loomdev env`) would prepend -L.
+	os.Unsetenv(EnvTmuxSocket)
 	os.Exit(m.Run())
 }
 
