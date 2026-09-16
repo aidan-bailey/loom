@@ -193,6 +193,9 @@ func (a *app) waitCmd() *cobra.Command {
 		Short: "Wait until TEXT appears on the headless loom's screen",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
+			if text == "" {
+				return errors.New("--text must not be empty")
+			}
 			sb, err := a.open()
 			if err != nil {
 				return err

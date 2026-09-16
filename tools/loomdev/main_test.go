@@ -60,6 +60,12 @@ func TestWait_RequiresText(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestWait_RejectsEmptyText(t *testing.T) {
+	_, err := execute(t, "wait", "--sandbox", "demo", "--text", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--text must not be empty")
+}
+
 func TestLs_EmptyBase(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	out, err := execute(t, "ls")
