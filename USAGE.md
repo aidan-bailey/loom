@@ -664,10 +664,11 @@ When `claude_remote_control` is enabled (the default), every Claude session Loom
 Loom shows the subagents and agent-team teammates a Claude session has spawned: a count on its rail card and rows on its overview card. It works by launching Claude with an extra `--settings` file that registers hooks for subagent events; your own hooks keep running alongside them.
 
 - Toggle it with **Track Subagents** under `S` → Claude Preferences. It is on by default, and a change applies the next time a session launches or resumes.
+- Turning it off doesn't clear the rows of sessions already launched with hooks: they keep being tracked until their next launch or resume.
 - Only live agents are shown. A finished subagent disappears; a teammate stays listed as idle until it is shut down.
 - Sessions launched before you enabled it aren't tracked until they are resumed. Sessions whose program already passes `--settings`, and sessions on Windows, are never tracked.
 - Restarting loom keeps the rows: loom replays the events it already collected for sessions that are still running.
-- Event files live in `~/.loom/hooks/`. They are cleared at each launch and removed when you kill the session.
+- Event files live in the `hooks/` folder inside the workspace's loom config folder: `<repo>/.loom/hooks/` for a registered workspace, otherwise `~/.loom/hooks/`. They are cleared at each launch and removed when you kill the session.
 
 ### Branch Prefix
 
