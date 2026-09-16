@@ -1,7 +1,8 @@
 # Subagent Nesting
 
 **Date:** 2026-09-16
-**Status:** Approved design
+**Status:** Approved design (amended 2026-09-16 during planning: restart
+replay, restore-safe launch path, rail priority)
 **Verified against:** Claude Code 2.1.270 (`claude-code-2.1.270/bin/.claude-unwrapped`),
 by live probes on 2026-09-16 (a `claude -p --model haiku` run and two
 interactive haiku sessions on a private tmux server)
@@ -113,6 +114,14 @@ Made with the user during design:
   take the tail's place.
 - **Lifetime:** live agents only (working and idle). Finished plain
   subagents and shut-down teammates disappear.
+- **Loom restarts** (amended during planning): Claude sessions outlive loom,
+  so event history is kept as a compact per-launch log and replayed, rather
+  than deleted once read. A restarted loom rebuilds exactly the rows it
+  showed before.
+- **Rail priority** (amended during planning): the rail's second line
+  normally shows the output tail when the card needs no attention. Live
+  agents take the tail's place, as in the overview, so the count shows up
+  on running sessions (matching the approved rail mockup).
 
 ## Design
 
@@ -133,17 +142,22 @@ mode 0700:
 hooks/<name>/
   settings.json   hook definitions passed to --settings
   launch-id       fresh value written at every launch
-  events/         one file per hook event
+  events/         <stem>.json  new hook event, not yet read
+                  <stem>.ev    compact form of an event already read (kept)
 ```
 
 It deliberately lives outside `worktrees/`: `DiscoverOrphans` walks that tree
 and descends into every directory lacking the `_<hex>` suffix. Workspace
 terminals get a folder too, since the key is not tied to a worktree.
 
-**Injection.** `Instance.applyLoomContext` becomes `Instance.launchProgram`,
-used by all three tmux launch paths (`instance.go` fresh start, 
-`startFreshWithRecovery`, `CrashRestart`). It applies the loom-context flag,
-then `prepareSubagentHooks`, which:
+**Injection.** `Instance.applyLoomContext` becomes
+`Instance.launchProgram(program string, launching bool)`, used by all three
+tmux creation paths. `launching` is true only when the session will actually
+be started: `Start(true)`, `startFreshWithRecovery`, `CrashRestart`. It is
+false for `Start(false)`, which reattaches with `Restore` while the running
+Claude keeps writing to its existing folder, so hooks must be left alone. It
+applies the loom-context flag, then, when launching, `prepareSubagentHooks`,
+which:
 
 1. returns the program unchanged when tracking is disabled, the program is
    not Claude, `runtime.GOOS == "windows"`, the program string already
@@ -179,19 +193,38 @@ f='<dir>/events/'"$(date +%s%N)-$$"; { cat > "$f.tmp" && mv "$f.tmp" "$f.json"; 
 `subagentInterval` (3s), `subagentInFlight` and `lastSubagentScan`, following
 `maybeRosterQuery` exactly: nothing is set when nothing is dispatched, and
 the result message clears the in-flight flag on every delivery, including
-errors. Only Claude instances that have a hooks folder and a live status are
-scanned. For each one, the command:
+errors. Only Claude instances with a live status are scanned; an instance whose
+folder does not exist yields an empty result. Each instance's request
+carries `cold`, which is true until its tracker has applied a result for the
+current launch (after a launch and after a loom restart). For each
+instance, the command:
 
 1. reads `launch-id`;
-2. lists `events/`, deletes `.tmp` files older than one minute, and orders
-   `*.json` files by modification time, then name (`%N` is unsupported on
-   macOS, so the name guarantees uniqueness and mtime gives order);
-3. reads and deletes at most 500 files, oldest first. Files over 1 MiB,
-   unparseable files and unknown event names are deleted with a debug log;
-4. reads metadata for every `SubagentStart` in the batch plus every agent ID
-   the instance reports as still missing metadata. The path is
+2. lists `events/` once, deletes `.tmp` files older than one minute, and
+   splits the rest into `.json` and `.ev` lists;
+3. takes at most 500 `*.json` files, oldest first. For each one it parses
+   the event, writes the compact form to `<stem>.ev` (tmp file then rename),
+   copies the original modification time onto it, and deletes the `.json`.
+   Files over 1 MiB, unparseable files and unknown event names are deleted
+   with a debug log. If writing the `.ev` fails, the event is still returned
+   and the `.json` deleted; it just will not be replayed after a restart;
+4. when `cold`, also reads every `.ev` file from the step-2 listing, which
+   excludes the ones step 3 just wrote, so nothing is applied twice. These
+   files are small and are read once per launch or loom start;
+5. orders all events by modification time, then stem. `%N` is unsupported
+   on macOS, so the stem guarantees uniqueness and mtime gives order;
+6. reads metadata for every `SubagentStart` in the result plus every agent
+   ID the instance reports as still missing metadata. The path is
    `strings.TrimSuffix(transcript_path, ".jsonl") + "/subagents/agent-<id>.meta.json"`;
-5. returns `subagentScanMsg{instance title, launchID, events, meta}`.
+7. returns `subagentScanMsg` with, per instance, `ScanResult{LaunchID,
+   Events, Meta, Replayed}`, where `Replayed` equals the request's `cold`.
+
+The compact form uses the hook payload's own field names, limited to
+`hook_event_name`, `agent_id`, `agent_type`, `teammate_name`,
+`transcript_path` and `background_tasks` (each task reduced to `id`, `type`,
+`status`), so one parser reads both forms. A typical compact event is about
+150 bytes; the folder is emptied at each real launch and removed when the
+instance is killed.
 
 ### 2. Tracking state
 
@@ -257,17 +290,23 @@ func (t *Tracker) Reset()
 
 `View` is `{Name, Description string; Idle bool}`; Stopping is shown as idle.
 
-**Ownership.** `Instance` holds the tracker and its current `hookLaunchID`
-behind `mu`:
+**Ownership.** `Instance` holds the tracker, its current `hookLaunchID` and
+a `subagentWarm` flag behind `mu`:
 
-- `ApplySubagentScan(launchID, events, meta)` does nothing if `launchID`
-  differs from the instance's current value, which drops results from
-  before a relaunch.
+- `ApplySubagentScan(res)` drops a result with an empty `LaunchID`. If the
+  instance has no launch ID yet (it was restored after a loom restart), it
+  adopts `res.LaunchID`. Otherwise a different `LaunchID` means the result
+  predates a relaunch, and it is dropped.
+- A `Replayed` result resets the tracker and applies the full history. A
+  non-replayed result is dropped unless the instance is already warm,
+  which covers a relaunch happening while a warm scan was in flight.
+  Applying either kind marks the instance warm.
 - `Subagents() []subagent.View` returns a copy for rendering.
 - `SubagentsMissingMeta()` is read in `Update` when dispatching a scan.
 
 The tracker is mutated only from `Update` (the scan handler) and from
-`prepareSubagentHooks` during launch, both under `mu`. `Subagents()` returns
+`prepareSubagentHooks` during launch (which sets the new launch ID, clears
+`subagentWarm` and resets the tracker), both under `mu`. `Subagents()` returns
 nil unless the instance is Running, Ready, Prompting or Loading, so a Paused,
 Recoverable or Deleting instance shows no rows without any status-change
 hook. The next launch resets the tracker. None of this is persisted, so no
@@ -279,8 +318,10 @@ hook. The next launch resets the tracker. None of this is persisted, so no
 filled by `BuildCardData` from `inst.Subagents()`. When the list is empty,
 every density renders byte-identically to today.
 
-**Rail (`DensityRail`).** The status line gets a suffix; the overview
-status line does not:
+**Rail (`DensityRail`).** The second line's priority becomes: attention,
+then live agents, then output tail, then status label. When there are live
+agents, the line is the status label plus a suffix, whether or not the card
+needs attention. The overview status line gets no suffix:
 
 | Live agents | Suffix |
 |---|---|
@@ -333,6 +374,8 @@ When unsure, show nothing. A missing row is acceptable; a wrong one is not.
 | Scan | more than 500 files | oldest 500 now, the rest next tick |
 | Scan | folder or `launch-id` unreadable | no result for that instance |
 | Scan | leftover `.tmp` older than 1 minute | delete |
+| Scan | writing the compact `.ev` fails | event still applied; not replayed after a restart |
+| Restore | loom restarted while Claude kept running | folder untouched; the first scan replays the log and the instance adopts the launch ID |
 | Tracker | unknown stop ID, missing metadata, unknown `taskKind` | ignore, hide, treat as Plain |
 | Tracker | `background_tasks` missing or malformed | no reconciliation |
 | App | `launch-id` mismatch | drop the result |
@@ -351,15 +394,22 @@ When unsure, show nothing. A missing row is acceptable; a wrong one is not.
 - **Hook settings:** golden JSON for `settings.json`; the command with a
   folder path containing spaces; each "launch without hooks" condition.
 - **Scan** (temporary folder): mtime-then-name order; 500 cap; oversized,
-  unparseable and unknown files deleted; fresh `.tmp` left alone and stale
-  `.tmp` removed; missing folder; metadata paths derived from
-  `transcript_path`.
-- **Launch:** `--settings` present for the fresh-start, recovery and
-  crash-restart paths; absent when disabled; `Program` never modified.
+  unparseable and unknown files deleted; `.json` converted to `.ev` with its
+  mtime kept; warm scans ignore `.ev`, cold scans replay it; fresh `.tmp`
+  left alone and stale `.tmp` removed; missing folder; metadata paths
+  derived from `transcript_path`; a malformed `background_tasks` survives the
+  compact round trip as "missing".
+- **Restart:** a restored instance adopts the folder's launch ID and a cold
+  replay rebuilds the same rows; `launchProgram(…, false)` leaves the folder
+  untouched; a warm result for a cold instance is dropped.
+- **Launch:** `launchProgram(…, true)` adds `--settings` and prepares the
+  folder; `launchProgram(…, false)` does neither; the recovery helper shared
+  by `startFreshWithRecovery` and `CrashRestart` adds it; absent when
+  disabled; `Program` never modified.
 - **App:** a scan result reaches `inst.Subagents()`; a stale `launch-id` is
   dropped; `subagentInFlight` is cleared on every delivery including errors;
   nothing is armed when there is nothing to scan (matching the roster tests).
-- **UI:** rail suffix variants; overview rows for 0, 1, 2 and 4 agents;
+- **UI:** rail suffix variants; agents replace the rail tail; overview rows for 0, 1, 2 and 4 agents;
   `TestOverview_UniformCardHeight` with subagents; line widths within bounds;
   byte-identical output with no subagents.
 - **Real Claude** (`LOOM_TEST_REAL_CLAUDE=1`, skipped otherwise, never in CI):
