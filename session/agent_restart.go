@@ -84,11 +84,32 @@ func CacheTTL1hEnv(enabled bool, program string) []string {
 	return []string{"ENABLE_PROMPT_CACHING_1H=1"}
 }
 
+// ClaudeFullscreenEnv returns the tmux session environment variable that
+// forces Claude's fullscreen (alternate-screen) renderer. Unconditional
+// for Claude, a no-op (nil) for every other program.
+//
+// Loom cannot scroll Claude's classic inline renderer: it wraps every
+// frame in synchronized output (DEC 2026), so tmux repaints Loom's attach
+// client instead of scrolling it and the pane emulator never accumulates
+// scrollback (TestSyncOutputDefeatsEmulatorScrollback_RealTmux). On the
+// alternate screen Loom forwards the wheel into Claude, which scrolls its
+// own transcript. The env var (not --settings) keeps `/tui default`
+// usable per session: Claude drops CLAUDE_CODE_NO_FLICKER when it
+// relaunches for a renderer switch.
+func ClaudeFullscreenEnv(program string) []string {
+	if !IsClaudeProgram(program) {
+		return nil
+	}
+	return []string{"CLAUDE_CODE_NO_FLICKER=1"}
+}
+
 // InstanceEnv combines every per-session environment variable derived
-// from an instance's launch options (Headroom Proxy, Cache TTL) into
-// the single slice tmux.NewTmuxSession's variadic env parameter needs.
-// Centralized here so the four Instance call sites that construct a
-// TmuxSession don't each repeat the same combination.
+// from an instance's launch options (Headroom Proxy, Cache TTL) plus the
+// always-on Claude fullscreen renderer into the single slice
+// tmux.NewTmuxSession's variadic env parameter needs. Centralized here so
+// the four Instance call sites that construct a TmuxSession don't each
+// repeat the same combination.
 func InstanceEnv(program string, headroomProxy, cacheTTL1h bool) []string {
-	return append(HeadroomProxyEnv(headroomProxy, program), CacheTTL1hEnv(cacheTTL1h, program)...)
+	env := append(HeadroomProxyEnv(headroomProxy, program), CacheTTL1hEnv(cacheTTL1h, program)...)
+	return append(env, ClaudeFullscreenEnv(program)...)
 }

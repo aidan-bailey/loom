@@ -20,7 +20,10 @@ func startTmux(t *testing.T, cols, rows int) (sock, name string, emu Emulator, c
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	sock = fmt.Sprintf("loomvt-%d", os.Getpid())
+	// One server per call: kill-server returns before the old server has
+	// exited, so reusing a socket name across tests (or -count runs) can
+	// hand new-session a dying server ("server exited unexpectedly").
+	sock = fmt.Sprintf("loomvt-%d-%d", os.Getpid(), time.Now().UnixNano())
 	name = fmt.Sprintf("sbspike-%d", time.Now().UnixNano())
 	run := func(args ...string) {
 		out, err := exec.Command("tmux", append([]string{"-L", sock}, args...)...).CombinedOutput()
@@ -113,7 +116,11 @@ func TestScrollbackAccumulation_RealTmux(t *testing.T) {
 	settle()
 
 	// Emit 30 numbered lines through a 10-row screen → ≥20 must scroll off.
-	sendShell(t, sock, name, `for i in $(seq 1 30); do echo "spikeline$i"; done`)
+	// Paced on purpose: tmux caps the scroll it sends a client at one
+	// screenful per write batch (screen-write.c
+	// screen_write_collect_flush_scrolled), so an unpaced burst read in one
+	// batch drops its early lines before they reach the emulator.
+	sendShell(t, sock, name, `for i in $(seq 1 30); do echo "spikeline$i"; sleep 0.05; done`)
 	settleUntil(func() bool { return emu.ScrollbackLen() > 15 })
 
 	got := emu.ScrollbackLen()
@@ -140,6 +147,38 @@ func TestScrollbackAccumulation_RealTmux(t *testing.T) {
 	settle()
 	require.LessOrEqual(t, emu.ScrollbackLen(), before+1,
 		"a client repaint must not push content into scrollback")
+}
+
+// TestSyncOutputDefeatsEmulatorScrollback_RealTmux pins why Loom forces
+// Claude's fullscreen renderer (session.ClaudeFullscreenEnv). Output wrapped
+// in synchronized-update brackets (DEC 2026, which Claude's classic renderer
+// emits around every frame) still scrolls tmux's own history, but tmux
+// delivers it to the attach client as a repaint rather than as scroll
+// sequences, so nothing ever reaches the emulator's scrollback. If this
+// starts failing, tmux (or x/vt) now preserves scroll-off through
+// synchronized updates and the forced fullscreen can be revisited.
+func TestSyncOutputDefeatsEmulatorScrollback_RealTmux(t *testing.T) {
+	sock, name, emu, cleanup := startTmux(t, 80, 10)
+	defer cleanup()
+	settle()
+
+	historySize := func() int {
+		out, err := exec.Command("tmux", "-L", sock, "display", "-p", "-t", name, "#{history_size}").Output()
+		require.NoError(t, err)
+		var n int
+		_, err = fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &n)
+		require.NoError(t, err)
+		return n
+	}
+
+	sendShell(t, sock, name, `for i in $(seq 1 30); do printf '\033[?2026h%s\n\033[?2026l' "syncline$i"; done`)
+	settleUntil(func() bool { return strings.Contains(stripANSI(emu.Render()), "syncline30") })
+	settle()
+
+	require.Contains(t, stripANSI(emu.Render()), "syncline30", "the synchronized output must reach the client")
+	require.Greater(t, historySize(), 15, "tmux itself must keep the scrolled-off lines")
+	require.Zero(t, emu.ScrollbackLen(),
+		"synchronized output reached emulator scrollback; tmux now scrolls clients through sync updates")
 }
 
 // stripANSI removes CSI/OSC escapes so Contains-assertions see plain text.

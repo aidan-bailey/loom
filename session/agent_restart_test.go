@@ -203,12 +203,32 @@ func TestCacheTTL1hEnv_EmptyProgramIsNoOp(t *testing.T) {
 	assert.Nil(t, CacheTTL1hEnv(true, ""))
 }
 
-func TestInstanceEnv_CombinesBothTogglesIndependently(t *testing.T) {
-	assert.Nil(t, InstanceEnv("claude", false, false))
-	assert.Equal(t, []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787"}, InstanceEnv("claude", true, false))
-	assert.Equal(t, []string{"ENABLE_PROMPT_CACHING_1H=1"}, InstanceEnv("claude", false, true))
+func TestClaudeFullscreenEnv_Claude(t *testing.T) {
+	assert.Equal(t, []string{"CLAUDE_CODE_NO_FLICKER=1"}, ClaudeFullscreenEnv("claude"))
 	assert.Equal(t,
-		[]string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787", "ENABLE_PROMPT_CACHING_1H=1"},
+		[]string{"CLAUDE_CODE_NO_FLICKER=1"},
+		ClaudeFullscreenEnv("/etc/profiles/per-user/aidanb/bin/claude --model sonnet"),
+	)
+}
+
+func TestClaudeFullscreenEnv_NonClaudeIsNoOp(t *testing.T) {
+	assert.Nil(t, ClaudeFullscreenEnv("aider --model gemma"))
+	assert.Nil(t, ClaudeFullscreenEnv("codex"))
+	assert.Nil(t, ClaudeFullscreenEnv("zsh"))
+	assert.Nil(t, ClaudeFullscreenEnv(""))
+}
+
+func TestInstanceEnv_CombinesBothTogglesIndependently(t *testing.T) {
+	const fullscreen = "CLAUDE_CODE_NO_FLICKER=1"
+	assert.Equal(t, []string{fullscreen}, InstanceEnv("claude", false, false))
+	assert.Equal(t, []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787", fullscreen}, InstanceEnv("claude", true, false))
+	assert.Equal(t, []string{"ENABLE_PROMPT_CACHING_1H=1", fullscreen}, InstanceEnv("claude", false, true))
+	assert.Equal(t,
+		[]string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787", "ENABLE_PROMPT_CACHING_1H=1", fullscreen},
 		InstanceEnv("claude", true, true),
 	)
+}
+
+func TestInstanceEnv_NonClaudeIsEmpty(t *testing.T) {
+	assert.Empty(t, InstanceEnv("aider --model gemma", true, true))
 }
