@@ -14,8 +14,14 @@ import (
 )
 
 // TestNoRawTmuxExec fails on any exec.Command/exec.CommandContext whose
-// program is the literal "tmux" outside command.go. Raw execs would ignore
-// LOOM_TMUX_SOCKET and follow $TMUX to the host server.
+// program is the literal "tmux" outside command.go, in non-test (*.go, not
+// *_test.go) production source. Raw execs there would ignore
+// LOOM_TMUX_SOCKET and follow $TMUX to the host server. _test.go files are
+// deliberately exempt — the rule's hazard is a shipped binary sweeping a
+// host server it doesn't own; a test's raw tmux calls only ever touch
+// servers/sessions that same test creates and tears down (see e.g.
+// session/reconcile_socket_test.go and ui/preview_test.go), so scoping the
+// scan to production code is the spec's intent, not a gap.
 func TestNoRawTmuxExec(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
