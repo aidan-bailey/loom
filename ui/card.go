@@ -64,6 +64,11 @@ type CardData struct {
 	TailLines           []string
 	StatusAge           time.Duration // 0 = unknown/not applicable
 	Spinner             string        // current spinner frame for Running/Loading
+	// WaitReason is Claude's own account of what a Prompting session is
+	// blocked on ("sandbox request", "dialog open"), verbatim from the
+	// agent roster. Empty when unknown — non-Claude agents, and any status
+	// the pane scraper rather than the roster decided.
+	WaitReason string
 }
 
 // NeedsAttention reports whether this card should carry the Attention
@@ -90,6 +95,7 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 		Branch:              inst.GetBranch(),
 		StatusAge:           inst.StatusAge(),
 		Spinner:             spinnerFrame,
+		WaitReason:          inst.WaitReason(),
 	}
 	if stat := inst.GetDiffStats(); stat != nil && stat.Error == nil && !stat.IsEmpty() {
 		d.HasDiff, d.DiffAdded, d.DiffRemoved = true, stat.Added, stat.Removed
@@ -332,10 +338,18 @@ func (d CardData) statusLabel() string {
 	age := formatAge(d.StatusAge)
 	switch d.Status {
 	case session.Prompting:
-		if age != "" {
-			return "❯ awaiting input · " + age
+		// Claude's own reason for the block ("sandbox request") replaces
+		// the generic phrase rather than joining it: "awaiting input" only
+		// restates what the attention accent already signals, while the
+		// reason is the part that tells the user what to do.
+		phrase := "awaiting input"
+		if reason := strings.TrimSpace(d.WaitReason); reason != "" {
+			phrase = reason
 		}
-		return "❯ awaiting input"
+		if age != "" {
+			return "❯ " + phrase + " · " + age
+		}
+		return "❯ " + phrase
 	case session.Running, session.Loading:
 		return d.Spinner + " working"
 	case session.Ready:

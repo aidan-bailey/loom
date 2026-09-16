@@ -214,6 +214,15 @@ type Instance struct {
 	// "waiting 4m" card labels it feeds).
 	statusChangedAt time.Time
 
+	// waitReason is Claude's own account of what this session is blocked
+	// on ("sandbox request", "dialog open"), taken from the agent
+	// roster's waitingFor. Only ever set while the roster is the one
+	// driving a Prompting status, and cleared the moment it is not, so a
+	// dismissed dialog cannot leave a label behind. Empty for non-Claude
+	// agents and whenever the scraper is deciding. Ephemeral: never
+	// serialized (absent from InstanceData).
+	waitReason string
+
 	// logger is a per-instance slog.Logger pre-tagged with
 	// subsystem=instance and title. Populated by NewInstance and
 	// FromInstanceData; tests that build Instance directly are covered
@@ -1498,6 +1507,22 @@ func (i *Instance) BellPending() bool { return i.bellPending.Load() }
 
 // SetBellPending sets or clears the pending-bell attention flag.
 func (i *Instance) SetBellPending(v bool) { i.bellPending.Store(v) }
+
+// WaitReason returns Claude's reason for blocking, or "" when none is
+// known — the roster is the only source, so a non-Claude agent or a
+// scraper-driven status always yields "".
+func (i *Instance) WaitReason() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.waitReason
+}
+
+// SetWaitReason records (or with "" clears) Claude's reason for blocking.
+func (i *Instance) SetWaitReason(reason string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.waitReason = reason
+}
 
 // PaneTitle returns the agent's OSC-set window title, or ok=false.
 func (i *Instance) PaneTitle() (string, bool) {

@@ -1212,7 +1212,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ladder re-samples because one content hash cannot distinguish
 		// "still working" from "just finished", but the roster says which
 		// it is, and the next health tick refreshes it.
-		target, authoritative := m.rosterStatusFor(msg.instance)
+		target, authoritative := m.adoptRosterStatus(msg.instance)
 		if !authoritative {
 			// Same transition ladder as the old metadata tick: still-changing →
 			// Running; settled with a prompt → Prompting; settled → Ready.
@@ -1382,7 +1382,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// batch as gatherMetadataCmd, so this reads the previous tick's
 			// answer. TransitionTo still validates, so an illegal transition
 			// is rejected rather than forced.
-			if target, authoritative := m.rosterStatusFor(r.instance); authoritative {
+			if target, authoritative := m.adoptRosterStatus(r.instance); authoritative {
 				if err := r.instance.TransitionTo(target); err != nil {
 					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", target.String(), "err", err.Error())
 				}

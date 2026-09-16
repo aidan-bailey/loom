@@ -147,3 +147,71 @@ func TestRosterQueryCmdRunsForClaudeInstances(t *testing.T) {
 
 // errAssertRoster is a sentinel for roster query failures in tests.
 var errAssertRoster = errors.New("roster query failed")
+
+// rosterWithReason builds a one-entry roster carrying an explicit
+// waitingFor reason, which is the payload the card label consumes.
+func rosterWithReason(inst *session.Instance, status session.RosterStatus, reason string) map[string]session.RosterEntry {
+	return map[string]session.RosterEntry{
+		inst.GetWorktreePath(): {Status: status, WaitingFor: reason},
+	}
+}
+
+// TestRosterWaitReasonReachesInstance: Claude names what it is blocked on
+// ("sandbox request", "dialog open"). That reason is the whole point of
+// preferring the roster over the scraper for a Prompting session — it must
+// survive the trip from the query to the instance the card renders.
+func TestRosterWaitReasonReachesInstance(t *testing.T) {
+	inst := startedInstanceWithProgram(t, "reasonwait", "claude", "working...")
+	t.Setenv("LOOM_PANE_RENDERER", "")
+
+	m := homeWithAppState(t)
+	m.list.AddInstance(inst)
+	m.roster = rosterWithReason(inst, session.RosterStatusWaiting, "sandbox request")
+
+	m.Update(statusDetectedMsg{instance: inst, updated: true})
+
+	require.Equal(t, session.Prompting, inst.GetStatus())
+	require.Equal(t, "sandbox request", inst.WaitReason())
+}
+
+// TestRosterWaitReasonClearedWhenNoLongerWaiting: the reason describes a
+// live block. Once Claude reports busy again the card must not keep
+// advertising a dialog the user already dismissed.
+func TestRosterWaitReasonClearedWhenNoLongerWaiting(t *testing.T) {
+	inst := startedInstanceWithProgram(t, "reasoncleared", "claude", "working...")
+	t.Setenv("LOOM_PANE_RENDERER", "")
+
+	m := homeWithAppState(t)
+	m.list.AddInstance(inst)
+	m.roster = rosterWithReason(inst, session.RosterStatusWaiting, "dialog open")
+	m.Update(statusDetectedMsg{instance: inst, updated: true})
+	require.Equal(t, "dialog open", inst.WaitReason(), "precondition")
+
+	m.roster = rosterWithReason(inst, session.RosterStatusBusy, "")
+	m.Update(statusDetectedMsg{instance: inst, updated: true})
+
+	require.Equal(t, session.Running, inst.GetStatus())
+	require.Empty(t, inst.WaitReason(), "a stale reason must not outlive the wait")
+}
+
+// TestRosterWaitReasonClearedWhenRosterGoesAway: a failed or emptied roster
+// leaves status to the scraper, which has no notion of a reason. Keeping the
+// last one would pin a label that nothing is refreshing.
+func TestRosterWaitReasonClearedWhenRosterGoesAway(t *testing.T) {
+	inst := startedInstanceWithProgram(t, "reasondropped", "claude", "working...")
+	t.Setenv("LOOM_PANE_RENDERER", "")
+
+	m := homeWithAppState(t)
+	m.list.AddInstance(inst)
+	m.roster = rosterWithReason(inst, session.RosterStatusWaiting, "input needed")
+	m.Update(statusDetectedMsg{instance: inst, updated: true})
+	require.Equal(t, "input needed", inst.WaitReason(), "precondition")
+
+	m.roster = nil
+	m.Update(statusDetectedMsg{instance: inst, updated: false, hasPrompt: true})
+
+	require.Equal(t, session.Prompting, inst.GetStatus(),
+		"the scraper still sees a prompt on screen")
+	require.Empty(t, inst.WaitReason(),
+		"but only the roster can name a reason, so it must be dropped")
+}

@@ -168,24 +168,50 @@ func (m *home) maybeRosterQuery(active []*session.Instance) tea.Cmd {
 }
 
 // rosterStatusFor returns Claude's authoritative status for inst, if it
-// published one. The bool is false whenever Loom must fall back to the
-// pane-content ladder: a non-Claude agent, an empty or failed roster, no
-// entry for this worktree (the join key is the directory Claude runs in),
-// or a status string this build does not recognize.
+// published one, along with its stated reason for blocking (empty unless
+// the status is Prompting, and even then only when the CLI named one).
+// The bool is false whenever Loom must fall back to the pane-content
+// ladder: a non-Claude agent, an empty or failed roster, no entry for
+// this worktree (the join key is the directory Claude runs in), or a
+// status string this build does not recognize.
 //
 // The join is exact string equality on the path. Claude reports a
 // symlink-resolved cwd, so a Loom config dir reached through a symlink
 // (a dotfiles setup, say) simply produces no match and falls back — a
 // silent degradation to the old behavior, never a wrong status.
-func (m *home) rosterStatusFor(inst *session.Instance) (session.Status, bool) {
+func (m *home) rosterStatusFor(inst *session.Instance) (session.Status, string, bool) {
 	if inst == nil || len(m.roster) == 0 || !session.IsClaudeProgram(inst.Program) {
-		return session.Ready, false
+		return session.Ready, "", false
 	}
 	entry, ok := m.roster[inst.GetWorktreePath()]
 	if !ok {
+		return session.Ready, "", false
+	}
+	status, authoritative := entry.LoomStatus()
+	return status, entry.WaitingFor, authoritative
+}
+
+// adoptRosterStatus is the single place the roster's answer is applied to
+// an instance. It returns what rosterStatusFor decided and, as a side
+// effect, records Claude's reason for blocking on the instance so the card
+// can render it.
+//
+// The reason lives exactly as long as the roster-driven wait: any other
+// outcome clears it. Both status paths (statusDetectedMsg and
+// metadataReadyMsg) must go through here — duplicating the set/clear at
+// each call site is how the two drift apart, which is the lockstep hazard
+// called out in CLAUDE.md.
+func (m *home) adoptRosterStatus(inst *session.Instance) (session.Status, bool) {
+	if inst == nil {
 		return session.Ready, false
 	}
-	return entry.LoomStatus()
+	target, reason, authoritative := m.rosterStatusFor(inst)
+	if authoritative && target == session.Prompting {
+		inst.SetWaitReason(reason)
+	} else {
+		inst.SetWaitReason("")
+	}
+	return target, authoritative
 }
 
 // ratioSaveMsg flushes the throttled split-ratio persistence: resizeSplit
