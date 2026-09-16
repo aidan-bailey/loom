@@ -45,9 +45,9 @@ func newSandbox(t *testing.T, profile string) *devsandbox.Sandbox {
 	return sb
 }
 
-func startLoom(t *testing.T, sb *devsandbox.Sandbox, restart bool) {
+func startLoom(t *testing.T, sb *devsandbox.Sandbox) {
 	t.Helper()
-	require.NoError(t, sb.Start(devsandbox.StartOptions{Restart: restart}))
+	require.NoError(t, sb.Start(devsandbox.StartOptions{}))
 	require.NoError(t, sb.WaitFor(devsandbox.WorkspaceName, uiTimeout))
 }
 
@@ -91,7 +91,7 @@ func TestE2E_SandboxLeavesOtherServersAlone(t *testing.T) {
 	// (and the private server it starts) inherit this $TMUX.
 	t.Setenv("TMUX", strings.TrimSpace(string(path))+",1,0")
 
-	startLoom(t, sb, false) // startup has run the orphan sweep
+	startLoom(t, sb) // startup has run the orphan sweep
 
 	assert.NoError(t, tmux.CommandOnSocket(ctx, decoy, "has-session", "-t=loom_decoy").Run(),
 		"a sandboxed loom must never sweep another server's loom_* sessions")
@@ -99,7 +99,7 @@ func TestE2E_SandboxLeavesOtherServersAlone(t *testing.T) {
 
 func TestE2E_FakeAiderPromptSurfacesAsAwaitingInput(t *testing.T) {
 	sb := newSandbox(t, "fake-aider")
-	startLoom(t, sb, false)
+	startLoom(t, sb)
 	createSession(t, sb, "asker")
 
 	require.NoError(t, sb.SendKeys("a"))
@@ -114,32 +114,15 @@ func TestE2E_FakeAiderPromptSurfacesAsAwaitingInput(t *testing.T) {
 
 func TestE2E_SessionSurvivesRestart(t *testing.T) {
 	sb := newSandbox(t, "")
-	startLoom(t, sb, false)
+	startLoom(t, sb)
 	createSession(t, sb, "keeper")
 
 	require.NoError(t, sb.Stop(10*time.Second))
+	require.False(t, sb.DriverRunning())
 	ctx := context.Background()
-	// Not sb.DriverRunning(): on this tmux build, `display-message -p -t
-	// <target>` for a session that no longer exists at all exits 0 with
-	// empty output instead of erroring, so paneDead() (internal/devsandbox/
-	// driver.go) reads the empty string as "not dead" and DriverRunning()
-	// incorrectly reports true post-Stop (reproduced with raw tmux calls;
-	// see task-8-report.md). has-session correctly errors for a gone
-	// session — the same mechanism internal/devsandbox's own
-	// TestDriver_StopUsesQuitKeyFirst uses (driverExists(), unexported) to
-	// check this exact condition.
-	assert.Error(t, tmux.CommandOnSocket(ctx, sb.Socket(), "has-session", "-t="+devsandbox.DriverSession).Run(),
-		"driver session must be gone after Stop")
 	require.NoError(t, tmux.CommandOnSocket(ctx, sb.Socket(), "has-session", "-t="+tmux.ToLoomTmuxName("keeper")).Run(),
 		"quitting loom must leave the agent session running")
 
-	// Restart:true, not a plain Start(): the same DriverRunning() bug noted
-	// above makes plain Start() a silent no-op after a full Stop() — it
-	// believes a driver is already running and returns early without
-	// creating a new dev-driver session at all (reproduced directly with
-	// `loomdev start` after `loomdev stop`; see task-8-report.md). Restart
-	// forces Start() past that check into the code path that actually
-	// creates the session, regardless of the (wrong) DriverRunning() read.
-	startLoom(t, sb, true)
+	startLoom(t, sb)
 	require.NoError(t, sb.WaitFor("keeper", uiTimeout))
 }

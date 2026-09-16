@@ -127,3 +127,35 @@ func TestDriver_WaitForTimeoutCarriesScreen(t *testing.T) {
 	assert.Equal(t, "never-there", timeout.Text)
 	assert.Contains(t, timeout.Screen, "visible")
 }
+
+// TestDriver_StartAfterStopWithServerKeptAlive pins a regression found
+// while writing e2e_test.go: on at least one tmux build (3.7b),
+// `display-message -p -t <target>` for a session that does not exist on
+// an otherwise-alive server — never created, or fully removed, either
+// way — exits 0 with EMPTY output instead of erroring (an empty-server
+// socket, by contrast, errors outright, so this needs a sibling session
+// to reproduce). Before the fix, paneDead() read that empty string as
+// "not dead" (it only checked for "1"), so DriverRunning() reported true
+// for a driver session that didn't exist, and Start()'s "already
+// running, no-op" branch then silently swallowed the next Start() call —
+// no new driver session was ever created. The "keepalive" sibling here
+// mirrors an agent session surviving a real loom quit and keeps the
+// server alive across the driver's own Stop, so the second, "after Stop"
+// manifestation is covered too — but as written this bug is fundamental
+// enough that it already trips on the very first Start() below, before
+// Stop is even called, since "keepalive" alone is enough to put the
+// server in the "alive but dev-driver absent" state.
+func TestDriver_StartAfterStopWithServerKeptAlive(t *testing.T) {
+	sb := driverSandbox(t)
+	_, err := sb.runTmux("new-session", "-d", "-s", "keepalive", "sleep", "60")
+	require.NoError(t, err)
+
+	require.NoError(t, sb.Start(StartOptions{Command: []string{"sh", "-c", "echo first; exec cat"}}))
+	require.NoError(t, sb.WaitFor("first", 5*time.Second))
+
+	require.NoError(t, sb.Stop(5*time.Second))
+	assert.False(t, sb.DriverRunning(), "driver session was fully removed by Stop")
+
+	require.NoError(t, sb.Start(StartOptions{Command: []string{"sh", "-c", "echo second; exec cat"}}))
+	require.NoError(t, sb.WaitFor("second", 5*time.Second), "plain Start after Stop must actually start a new driver")
+}
