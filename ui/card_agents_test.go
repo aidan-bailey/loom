@@ -82,3 +82,63 @@ func TestBuildCardData_CopiesSubagents(t *testing.T) {
 	d := BuildCardData(inst, false, "", 0)
 	assert.Equal(t, []SubagentRow{{Name: "Explore", Description: "map code"}}, d.Subagents)
 }
+
+func overviewLines(t *testing.T, d CardData, width int) []string {
+	t.Helper()
+	return strings.Split(plain(renderOverviewCard(d, width)), "\n")
+}
+
+func TestOverview_NoAgentsKeepsTail(t *testing.T) {
+	d := CardData{Title: "db", Status: session.Running, TailLines: []string{"one", "two"}}
+	lines := overviewLines(t, d, 50)
+	assert.Contains(t, lines[4], "one")
+	assert.Contains(t, lines[5], "two")
+}
+
+func TestOverview_OneAgentKeepsLastTailLine(t *testing.T) {
+	d := CardData{Title: "db", Status: session.Running, TailLines: []string{"one", "two"},
+		Subagents: []SubagentRow{{Name: "impl-t3", Description: "Implement Task 3"}}}
+	lines := overviewLines(t, d, 50)
+	assert.Contains(t, lines[4], "└ ✻ impl-t3  Implement Task 3")
+	assert.Contains(t, lines[5], "two")
+}
+
+func TestOverview_TwoAgentsAligned(t *testing.T) {
+	d := CardData{Title: "db", Status: session.Running, Subagents: []SubagentRow{
+		{Name: "impl-t3", Description: "Implement Task 3"},
+		{Name: "spec", Description: "Review spec", Idle: true},
+	}}
+	lines := overviewLines(t, d, 50)
+	assert.Contains(t, lines[4], "├ ✻ impl-t3  Implement Task 3")
+	assert.Contains(t, lines[5], "└ ◦ spec     idle")
+	assert.NotContains(t, lines[5], "Review spec", "idle rows show 'idle'")
+}
+
+func TestOverview_ManyAgentsSummarized(t *testing.T) {
+	d := CardData{Title: "db", Status: session.Running, Subagents: []SubagentRow{
+		{Name: "a", Description: "first"},
+		{Name: "b", Description: "second"},
+		{Name: "c", Idle: true},
+		{Name: "d", Idle: true},
+	}}
+	lines := overviewLines(t, d, 50)
+	assert.Contains(t, lines[4], "├ ✻ a  first")
+	assert.Contains(t, lines[5], "└ +3 more · 1 working · 2 idle")
+
+	allIdle := CardData{Title: "db", Status: session.Running, Subagents: []SubagentRow{
+		{Name: "a", Description: "first"}, {Name: "c", Idle: true}, {Name: "d", Idle: true},
+	}}
+	lines = overviewLines(t, allIdle, 50)
+	assert.Contains(t, lines[5], "└ +2 more · 2 idle")
+	assert.NotContains(t, lines[5], "working")
+}
+
+func TestOverview_LongNamesCapped(t *testing.T) {
+	d := CardData{Title: "db", Status: session.Running, Subagents: []SubagentRow{
+		{Name: strings.Repeat("n", 30), Description: "desc"},
+		{Name: "b", Description: "other"},
+	}}
+	lines := overviewLines(t, d, 60)
+	assert.Contains(t, lines[4], strings.Repeat("n", 13)+"…  desc")
+	assert.Contains(t, lines[5], "└ ✻ b"+strings.Repeat(" ", 13)+"  other")
+}

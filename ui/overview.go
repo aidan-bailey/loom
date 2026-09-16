@@ -282,13 +282,7 @@ func renderOverviewCard(d CardData, width int) string {
 
 	rule := lipgloss.NewStyle().Foreground(Rule).Render(strings.Repeat("─", inner))
 
-	tails := make([]string, 0, overviewCardTailLines)
-	for _, l := range d.TailLines {
-		tails = append(tails, dim.Render(truncate(l, inner)))
-	}
-	for len(tails) < overviewCardTailLines {
-		tails = append(tails, "")
-	}
+	tails := overviewTail(d, inner)
 
 	content := strings.Join(append([]string{top, mid, rule}, tails...), "\n")
 	// The selected card gets a thick border so selection is unmistakable

@@ -97,6 +97,13 @@ func TestOverview_UniformCardHeight(t *testing.T) {
 		{Title: strings.Repeat("very-long-title-", 8), Status: session.Running,
 			Branch:  strings.Repeat("user/branch-", 6),
 			HasDiff: true, DiffAdded: 1234, DiffRemoved: 5678},
+		{Title: "one-agent", Status: session.Running, TailLines: []string{"a", "b"},
+			Subagents: []SubagentRow{{Name: "impl", Description: "work"}}},
+		{Title: "two-agents", Status: session.Running, Subagents: []SubagentRow{
+			{Name: "impl", Description: "work"}, {Name: "rev", Idle: true}}},
+		{Title: "many-agents", Status: session.Prompting, Subagents: []SubagentRow{
+			{Name: strings.Repeat("long-name-", 5), Description: strings.Repeat("long description ", 6)},
+			{Name: "b"}, {Name: "c", Idle: true}, {Name: "d", Idle: true}}},
 	}
 	for _, width := range []int{18, 40, 60} { // 18: status wider than inner
 		row := make([]string, 0, len(variants))
