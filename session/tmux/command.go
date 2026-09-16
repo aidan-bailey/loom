@@ -2,8 +2,10 @@ package tmux
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // EnvTmuxSocket names the environment variable that points every loom tmux
@@ -34,4 +36,24 @@ func CommandOnSocket(ctx context.Context, socket string, args ...string) *exec.C
 	}
 	full = append(full, args...)
 	return exec.CommandContext(ctx, "tmux", full...)
+}
+
+// EnclosingSessionName returns the name of the tmux session this process
+// runs inside, asking the server named by $TMUX (pinned to $TMUX_PANE when
+// set). It deliberately ignores LOOM_TMUX_SOCKET — the question is about the
+// enclosing server, not the one loom would manage — which is why it lives in
+// the one file allowed to exec tmux directly.
+func EnclosingSessionName() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	args := []string{"display-message", "-p"}
+	if pane := os.Getenv("TMUX_PANE"); pane != "" {
+		args = append(args, "-t", pane)
+	}
+	args = append(args, "#S")
+	out, err := exec.CommandContext(ctx, "tmux", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("tmux display-message: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }

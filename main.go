@@ -41,6 +41,9 @@ var (
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := nestingCheck(); err != nil {
+				return err
+			}
 			ctx := context.Background()
 			configDir, err := config.GetConfigDir()
 			if err != nil {
@@ -147,6 +150,9 @@ var (
 			"all managed worktrees INCLUDING their branches — unpushed commits on those\n" +
 			"branches are lost. This cannot be undone; it requires --force.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := nestingCheck(); err != nil {
+				return err
+			}
 			if !resetForceFlag {
 				return fmt.Errorf("loom reset deletes all instances, tmux sessions, worktrees AND their branches (unpushed commits are lost); re-run with --force to proceed")
 			}
@@ -216,6 +222,22 @@ var (
 			}
 			fmt.Printf("Log format: %s (env %s)\n", format, log.EnvLogFormat)
 
+			socket := tmux.Socket()
+			if socket == "" {
+				socket = "default (" + tmux.EnvTmuxSocket + " unset)"
+			}
+			fmt.Printf("Tmux socket: %s\n", socket)
+			if globalDir, err := config.GetGlobalConfigDir(); err != nil {
+				fmt.Printf("Global dir: error: %v\n", err)
+			} else {
+				fmt.Printf("Global dir: %s (env %s)\n", globalDir, config.EnvGlobalDir)
+			}
+			if err := nestingCheck(); err != nil {
+				fmt.Printf("Nesting guard: would refuse — %v\n", err)
+			} else {
+				fmt.Println("Nesting guard: ok")
+			}
+
 			return nil
 		},
 	}
@@ -229,6 +251,10 @@ var (
 		},
 	}
 )
+
+// nestingCheck guards the commands whose startup sweeps tmux sessions (the
+// TUI and reset). A package var so tests can stub the environment probe.
+var nestingCheck = tmux.CheckNestingFromEnv
 
 // resolveResetWorkspace resolves the workspace context for the reset
 // subcommand. When --workspace is supplied, the named workspace is
