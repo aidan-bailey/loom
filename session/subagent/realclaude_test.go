@@ -1,0 +1,150 @@
+package subagent
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+// TestRealClaude_TeammateLifecycle repeats the 2026-09-16 probe against a
+// real interactive Claude session on a private tmux server. It spends a
+// few cents of haiku usage and leaves entries in ~/.claude/projects and
+// ~/.claude/teams, so it only runs with LOOM_TEST_REAL_CLAUDE=1 and never
+// in CI. It covers the parts of the hook contract that were observed
+// rather than documented: background_tasks and the teammate event order.
+func TestRealClaude_TeammateLifecycle(t *testing.T) {
+	if os.Getenv("LOOM_TEST_REAL_CLAUDE") != "1" {
+		t.Skip("set LOOM_TEST_REAL_CLAUDE=1 to run against real Claude (costs money)")
+	}
+	for _, bin := range []string{"tmux", "claude", "sh"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not installed", bin)
+		}
+	}
+
+	root := t.TempDir()
+	hooks := filepath.Join(root, "hooks")
+	launchID, err := Prepare(hooks)
+	require.NoError(t, err)
+	work := filepath.Join(root, "work")
+	require.NoError(t, os.MkdirAll(work, 0o700))
+
+	sock := fmt.Sprintf("loomsub-%d", os.Getpid())
+	tm := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-L", sock}, args...)...).CombinedOutput()
+		require.NoError(t, err, string(out))
+		return string(out)
+	}
+	t.Cleanup(func() { _ = exec.Command("tmux", "-L", sock, "kill-server").Run() })
+	screen := func() string { return tm("capture-pane", "-p", "-t", "probe") }
+	send := func(text string) {
+		tm("send-keys", "-t", "probe", "-l", text)
+		time.Sleep(300 * time.Millisecond)
+		tm("send-keys", "-t", "probe", "Enter")
+	}
+
+	tm("new-session", "-d", "-s", "probe", "-x", "160", "-y", "45", "-c", work)
+	tm("send-keys", "-t", "probe", fmt.Sprintf("claude --model haiku --settings '%s'", SettingsPath(hooks)), "Enter")
+
+	// Wait for Claude itself, not a "❯" that a shell prompt may also print.
+	const trustDialog = "trust this folder"
+	waitFor(t, 60*time.Second, func() bool {
+		s := screen()
+		return strings.Contains(s, trustDialog) || strings.Contains(s, "Claude Code")
+	})
+	if s := screen(); strings.Contains(s, trustDialog) {
+		// "No, exit" is always listed; it is the default only for some
+		// folders (those under a temp dir, for one).
+		if strings.Contains(s, "❯ No, exit") {
+			tm("send-keys", "-t", "probe", "Down")
+		}
+		tm("send-keys", "-t", "probe", "Enter")
+	}
+	waitFor(t, 60*time.Second, func() bool {
+		s := screen()
+		return strings.Contains(s, "Claude Code") && !strings.Contains(s, trustDialog)
+	})
+	time.Sleep(2 * time.Second) // let the input box take focus
+
+	tracker := NewTracker()
+	cold := true
+	var seen []Event
+	collect := func() {
+		res, err := Scan(Request{Dir: hooks, Cold: cold, MissingMeta: tracker.MissingMeta()}, time.Now())
+		require.NoError(t, err)
+		require.Equal(t, launchID, res.LaunchID)
+		if res.Replayed {
+			tracker.Reset()
+		}
+		cold = false
+		tracker.Apply(res.Events, res.Meta)
+		seen = append(seen, res.Events...)
+	}
+
+	send("Automated test. Use the Agent tool exactly once with name 'probe-mate', " +
+		"subagent_type general-purpose, description 'probe teammate', " +
+		"prompt 'Reply with the word pong. Use no tools.' Then wait for its reply and say DONE.")
+	waitFor(t, 3*time.Minute, func() bool {
+		collect()
+		return idleThenStop(seen, "probe-mate")
+	})
+	requireOrder(t, seen, EventSubagentStart, EventSubagentStop, EventTeammateIdle, EventStop)
+	waitFor(t, 30*time.Second, func() bool { collect(); return len(tracker.Visible()) == 1 })
+	require.Equal(t, []View{{Name: "probe-mate", Description: "probe teammate", Idle: true}}, tracker.Visible())
+
+	send("Send probe-mate a shutdown request with SendMessage, wait until it has terminated, then say ALLDONE.")
+	waitFor(t, 3*time.Minute, func() bool {
+		collect()
+		return len(tracker.Visible()) == 0
+	})
+}
+
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("condition not met within %s", timeout)
+}
+
+// idleThenStop reports whether a TeammateIdle for name is followed by a
+// parent Stop.
+func idleThenStop(events []Event, name string) bool {
+	idle := false
+	for _, e := range events {
+		if e.Name == EventTeammateIdle && e.TeammateName == name {
+			idle = true
+		}
+		if idle && e.Name == EventStop {
+			return true
+		}
+	}
+	return false
+}
+
+// requireOrder asserts want appears in events as a subsequence.
+func requireOrder(t *testing.T, events []Event, want ...string) {
+	t.Helper()
+	i := 0
+	for _, e := range events {
+		if i < len(want) && e.Name == want[i] {
+			i++
+		}
+	}
+	got := make([]string, len(events))
+	for j, e := range events {
+		got[j] = e.Name
+	}
+	require.Equal(t, len(want), i, "event order %v does not contain %v in order", got, want)
+}
