@@ -1,7 +1,7 @@
 # Dev Sandbox for Developing Loom Inside Loom
 
 **Date:** 2026-09-16
-**Status:** Approved design
+**Status:** Approved design (amended during planning — see "Planning amendments")
 
 ## Problem
 
@@ -320,3 +320,18 @@ tmux session has a loom prefix) and a comment pointing at `loomdev down`.
 5. `internal/devsandbox` + `tools/loomdev` + `flake.nix` `subPackages`.
 6. E2E suite.
 7. Project skill + docs.
+
+## Planning amendments
+
+Discovered while writing `docs/superpowers/plans/2026-09-16-dev-sandbox.md`:
+
+1. **Nix:** `excludedPackages = [ "tools" ]` replaces `subPackages = [ "." ]`; `buildGoModule` uses the same directory list for `checkPhase`, so `subPackages` would drop every other package's tests.
+2. **Config roots:** the global context's `ConfigDir` is `GetGlobalConfigDir()` (not `LOOM_HOME`) and `--workspace toy` reads `repo/.loom/`, so `config.json` and `state.json` are seeded into `global/` and `repo/.loom/`; `home/` only receives startup logs. `default_program` is the profile name `fake`; `branch_prefix` is `dev/`; `state.json` marks every help screen seen so first-run overlays never block the driver.
+3. **Registration:** `Up` writes `global/workspaces.json` through `config.WorkspaceRegistry` (read back via `config.LoadWorkspaceRegistry` in tests) instead of invoking `loom workspace add`.
+4. **CLI:** the sandbox is chosen with a persistent `--sandbox/-s` flag (default: branch leaf) instead of positional names; `keys -l` types literal text; `up` also builds and takes `--default-profile`; `run`/`start` take `--no-build`.
+5. **fakeagent:** adds `trust` and `exit`; prompt texts come from loom's adapter registry; answered prompts clear the screen.
+6. **Driver:** `status off` is set server-wide on the private socket before `new-session` (exact pane size; loom disables it on its own sessions anyway); window-level `remain-on-exit on` applies to the driver window only.
+7. **Shell quoting:** `internal/devsandbox` exports `ShellQuote`; `shellJoin` and `loomdev env` both use it (no duplicated quoting).
+8. **Toy repo completeness:** an existing toy repo counts as complete only when `origin/HEAD` resolves; an incomplete one makes `Up` fail with a hint to run `loomdev down` then `up` (no self-healing).
+9. **Dead-pane capture:** `Screen()` adds a one-line scrollback margin (`capture-pane -S -1`) only when the driver pane is dead, because tmux's remain-on-exit message scrolls a dead pane by one line; live panes are captured exactly as shown.
+10. **Driver liveness:** `#{pane_dead}` is parsed strictly ("1"/"0"); anything else — including the empty output tmux 3.7b returns for a removed session while the server is still alive — means the driver is not running, so `stop` followed by a plain `start` really restarts it.
