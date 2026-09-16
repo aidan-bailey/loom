@@ -20,7 +20,10 @@ func startTmux(t *testing.T, cols, rows int) (sock, name string, emu Emulator, c
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	sock = fmt.Sprintf("loomvt-%d", os.Getpid())
+	// One server per call: kill-server returns before the old server has
+	// exited, so reusing a socket name across tests (or -count runs) can
+	// hand new-session a dying server ("server exited unexpectedly").
+	sock = fmt.Sprintf("loomvt-%d-%d", os.Getpid(), time.Now().UnixNano())
 	name = fmt.Sprintf("sbspike-%d", time.Now().UnixNano())
 	run := func(args ...string) {
 		out, err := exec.Command("tmux", append([]string{"-L", sock}, args...)...).CombinedOutput()
@@ -113,7 +116,11 @@ func TestScrollbackAccumulation_RealTmux(t *testing.T) {
 	settle()
 
 	// Emit 30 numbered lines through a 10-row screen → ≥20 must scroll off.
-	sendShell(t, sock, name, `for i in $(seq 1 30); do echo "spikeline$i"; done`)
+	// Paced on purpose: tmux caps the scroll it sends a client at one
+	// screenful per write batch (screen-write.c
+	// screen_write_collect_flush_scrolled), so an unpaced burst read in one
+	// batch drops its early lines before they reach the emulator.
+	sendShell(t, sock, name, `for i in $(seq 1 30); do echo "spikeline$i"; sleep 0.05; done`)
 	settleUntil(func() bool { return emu.ScrollbackLen() > 15 })
 
 	got := emu.ScrollbackLen()
