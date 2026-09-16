@@ -93,9 +93,47 @@ func TestLaunchProgram_SkipsHooks(t *testing.T) {
 			if inst.ConfigDir != "" {
 				assert.NoDirExists(t, filepath.Join(inst.ConfigDir, "hooks"))
 			}
-			assert.Empty(t, inst.hookLaunchID)
+			assert.Equal(t, noHooksLaunchID, inst.hookLaunchID, "a launch with no hooks still adopts the sentinel, so a stale result can never match")
 		})
 	}
+}
+
+func TestLaunchProgram_UntrackedRelaunchClearsState(t *testing.T) {
+	withTracking(t, true)
+	inst := hooksInstance(t, "claude")
+	inst.launchProgram("claude", true)
+	oldLaunchID := inst.hookLaunchID
+	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: oldLaunchID, Replayed: true,
+		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
+	require.Len(t, inst.Subagents(), 1)
+
+	withTracking(t, false)
+	inst.recoveryLaunch()
+
+	assert.Empty(t, inst.Subagents())
+	assert.False(t, inst.subagentWarm)
+	assert.NoDirExists(t, SubagentHooksDir(inst.ConfigDir, inst.Title))
+	assert.False(t, inst.ApplySubagentScan(subagent.Result{LaunchID: oldLaunchID, Replayed: true,
+		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a2", TranscriptPath: "/p/s2.jsonl"}}}),
+		"a result carrying the previous launch's ID must never be adopted after a relaunch")
+}
+
+func TestLaunchProgram_RelaunchResetsWarmTracker(t *testing.T) {
+	withTracking(t, true)
+	inst := hooksInstance(t, "claude")
+	inst.launchProgram("claude", true)
+	firstID := inst.hookLaunchID
+	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: firstID, Replayed: true,
+		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
+	require.Len(t, inst.Subagents(), 1)
+
+	inst.launchProgram("claude", true)
+
+	assert.Empty(t, inst.Subagents())
+	assert.False(t, inst.subagentWarm)
+	assert.NotEqual(t, firstID, inst.hookLaunchID)
 }
 
 func TestRecoveryLaunch_AddsHooks(t *testing.T) {

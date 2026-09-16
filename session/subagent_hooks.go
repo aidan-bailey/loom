@@ -18,9 +18,18 @@ import (
 
 // subagentTrackingEnabled mirrors config.SubagentTrackingEnabled(). The
 // app sets it at the same points as SetLoomContextEnabled. It only decides
-// whether a launch gets hooks; sessions already launched with hooks keep
-// being scanned, so their rows never go stale when the setting changes.
+// whether a launch gets hooks: a session already launched with hooks keeps
+// being scanned under the old setting only until its next launch, when
+// resetSubagentLaunch clears its state and prepareSubagentHooks re-decides.
 var subagentTrackingEnabled atomic.Bool
+
+// noHooksLaunchID is the hookLaunchID a launch starts with before
+// prepareSubagentHooks runs. subagent.Prepare's launch IDs are 16
+// lowercase hex characters, so this can never collide with a real one: it
+// exists so ApplySubagentScan drops every scan result — from the previous
+// launch's folder, or one already in flight — until a successful Prepare
+// (if any) sets a real ID for the new launch.
+const noHooksLaunchID = "-"
 
 // SetSubagentTrackingEnabled updates the global subagent-tracking toggle.
 func SetSubagentTrackingEnabled(enabled bool) { subagentTrackingEnabled.Store(enabled) }
@@ -53,13 +62,33 @@ func subagentLive(s Status) bool {
 // context flag and, when launching is true, loom's subagent hooks.
 // launching is false only for Start(false), which reattaches to a live
 // session with Restore. That Claude is still writing to its existing
-// hooks folder, and preparing a new one would wipe its history.
+// hooks folder, and preparing a new one would wipe its history. When
+// launching is true, resetSubagentLaunch first clears any state left by
+// the previous launch, so a relaunch that ends up skipping hooks
+// (tracking turned off, program no longer Claude, etc.) never keeps a
+// stale row, a stale launch ID or the old hooks folder around.
 func (i *Instance) launchProgram(program string, launching bool) string {
 	program = loomContextProgram(program, i.ConfigDir, i.IsWorkspaceTerminal)
 	if launching {
+		i.resetSubagentLaunch()
 		program = i.prepareSubagentHooks(program)
 	}
 	return program
+}
+
+// resetSubagentLaunch clears the previous launch's subagent state before a
+// new process starts: the tracker and warm flag, hookLaunchID (set to the
+// sentinel, so no stale scan result can match until prepareSubagentHooks
+// maybe sets a real one), and the old hooks folder on disk. Called only
+// when launching is true, so no old Claude process for this instance can
+// still be writing to that folder.
+func (i *Instance) resetSubagentLaunch() {
+	i.mu.Lock()
+	i.hookLaunchID = noHooksLaunchID
+	i.subagentWarm = false
+	i.subagentTrackerLocked().Reset()
+	i.mu.Unlock()
+	i.removeSubagentHooks()
 }
 
 // recoveryLaunch returns the recovery program (what InstanceEnv keys off)
