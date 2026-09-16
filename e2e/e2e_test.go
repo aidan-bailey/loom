@@ -87,14 +87,36 @@ func TestE2E_SandboxLeavesOtherServersAlone(t *testing.T) {
 	require.NoError(t, tmux.CommandOnSocket(ctx, decoy, "new-session", "-d", "-s", "loom_decoy", "sleep 300").Run())
 	path, err := tmux.CommandOnSocket(ctx, decoy, "display-message", "-p", "-t", "loom_decoy", "#{socket_path}").Output()
 	require.NoError(t, err)
-	// Behave like a shell inside the decoy server: the driver's tmux client
-	// (and the private server it starts) inherit this $TMUX.
-	t.Setenv("TMUX", strings.TrimSpace(string(path))+",1,0")
+	decoySocketPath := strings.TrimSpace(string(path))
 
-	startLoom(t, sb) // startup has run the orphan sweep
+	// Plant an unclaimed loom_ session directly on the sandbox's own private
+	// server. Its removal (checked below) is what proves the orphan sweep
+	// actually ran there — the decoy surviving on its own isn't enough,
+	// since a sweep that ran nowhere at all would also leave the decoy
+	// alone.
+	stray := tmux.CommandOnSocket(ctx, sb.Socket(), "new-session", "-d", "-s", "loom_stray", "sleep 300")
+	stray.Env = sb.Environ()
+	require.NoError(t, stray.Run())
+
+	// tmux rewrites $TMUX/$TMUX_PANE inside every pane to name the pane's
+	// own server, so setting $TMUX on this test process would never reach
+	// the dev loom process — it only ever sees the sandbox's own server.
+	// Instead, run the loom binary itself under `env TMUX=<decoy>,1,0`, so
+	// the process the test cares about actually sees the decoy as its
+	// $TMUX. (With the nesting-guard fix, this is still allowed to start:
+	// LOOM_TMUX_SOCKET names the sandbox's own server, which differs from
+	// the decoy's socket basename.)
+	require.NoError(t, sb.Start(devsandbox.StartOptions{
+		Command: []string{"env", "TMUX=" + decoySocketPath + ",1,0", sb.LoomBin(), "--workspace", devsandbox.WorkspaceName},
+	}))
+	require.NoError(t, sb.WaitFor(devsandbox.WorkspaceName, uiTimeout)) // startup has run the orphan sweep
 
 	assert.NoError(t, tmux.CommandOnSocket(ctx, decoy, "has-session", "-t=loom_decoy").Run(),
 		"a sandboxed loom must never sweep another server's loom_* sessions")
+	require.Eventually(t, func() bool {
+		return tmux.CommandOnSocket(ctx, sb.Socket(), "has-session", "-t=loom_stray").Run() != nil
+	}, uiTimeout, 200*time.Millisecond,
+		"the sandbox's own orphan sweep never removed the unclaimed loom_stray session on its private server")
 }
 
 func TestE2E_FakeAiderPromptSurfacesAsAwaitingInput(t *testing.T) {
@@ -117,7 +139,15 @@ func TestE2E_SessionSurvivesRestart(t *testing.T) {
 	startLoom(t, sb)
 	createSession(t, sb, "keeper")
 
+	stopStart := time.Now()
 	require.NoError(t, sb.Stop(10*time.Second))
+	stopElapsed := time.Since(stopStart)
+	// A clean quit (`q`) ends the program in well under the 10s grace period;
+	// only a stuck program would burn most of the grace before Stop falls
+	// back to kill-session. This proves loom actually quit on its own rather
+	// than being killed out from under an unsaved session.
+	assert.Less(t, stopElapsed, 8*time.Second,
+		"Stop took %s — loom may not have quit cleanly on `q` and instead hit the kill fallback", stopElapsed)
 	require.False(t, sb.DriverRunning())
 	ctx := context.Background()
 	require.NoError(t, tmux.CommandOnSocket(ctx, sb.Socket(), "has-session", "-t="+tmux.ToLoomTmuxName("keeper")).Run(),
@@ -125,4 +155,11 @@ func TestE2E_SessionSurvivesRestart(t *testing.T) {
 
 	startLoom(t, sb)
 	require.NoError(t, sb.WaitFor("keeper", uiTimeout))
+	// Beyond the title being listed, confirm the restored session's agent is
+	// actually alive: the fake agent's own banner ("commands: work N") must
+	// still be reachable, proving the reconciled instance is a live,
+	// selectable session and not just an inert rail entry. The rail's
+	// initial selection (first session) already lands on "keeper" since it
+	// is the only instance, so no extra select keystroke is needed here.
+	require.NoError(t, sb.WaitFor("commands: work N", uiTimeout))
 }
