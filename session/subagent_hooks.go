@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,11 +40,23 @@ func SetSubagentTrackingEnabled(enabled bool) { subagentTrackingEnabled.Store(en
 // the _<hex> suffix.
 func hooksRoot(configDir string) string { return filepath.Join(configDir, "hooks") }
 
-// SubagentHooksDir returns the hooks folder for the instance titled title.
-// It is keyed by tmux session name, so workspace terminals, which have no
-// worktree, get one too.
+// hooksFolderName is the hooks folder name for the instance titled title:
+// its tmux session name, path-escaped so it is always a single path
+// segment. Ordinary titles come out unchanged; "/" becomes "%2F" and "'"
+// becomes "%27". Titles accept any printable text, and ToLoomTmuxName
+// only drops whitespace and "."; unescaped, "fix/login" would nest inside
+// the folder of "fix", which launching or killing "fix" wipes and
+// SweepSubagentHooks deletes as an unclaimed "loom_fix".
+func hooksFolderName(title string) string {
+	return url.PathEscape(tmux.ToLoomTmuxName(title))
+}
+
+// SubagentHooksDir returns the hooks folder for the instance titled title,
+// a direct child of the hooks root. It is keyed by tmux session name (see
+// hooksFolderName), so workspace terminals, which have no worktree, get
+// one too.
 func SubagentHooksDir(configDir, title string) string {
-	return filepath.Join(hooksRoot(configDir), tmux.ToLoomTmuxName(title))
+	return filepath.Join(hooksRoot(configDir), hooksFolderName(title))
 }
 
 // BuildSettingsCommand returns program with Claude's --settings flag
@@ -224,9 +237,11 @@ func SweepSubagentHooks(configDir string, claimedTitles map[string]bool, cmdExec
 	if err != nil {
 		return
 	}
+	// Both sets are keyed by folder name, so they compare against the
+	// directory entries the same way.
 	claimed := make(map[string]bool, len(claimedTitles))
 	for title := range claimedTitles {
-		claimed[tmux.ToLoomTmuxName(title)] = true
+		claimed[hooksFolderName(title)] = true
 	}
 	var unclaimed []string
 	for _, e := range entries {
@@ -246,7 +261,7 @@ func SweepSubagentHooks(configDir string, claimedTitles map[string]bool, cmdExec
 	alive := map[string]bool{}
 	for _, line := range strings.Split(string(out), "\n") {
 		if name := strings.TrimSpace(line); name != "" {
-			alive[name] = true
+			alive[url.PathEscape(name)] = true
 		}
 	}
 	for _, name := range unclaimed {

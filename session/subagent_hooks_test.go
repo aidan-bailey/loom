@@ -37,6 +37,30 @@ func TestSubagentHooksDir(t *testing.T) {
 	assert.Equal(t, filepath.Join("/cfg", "hooks", "loom_hookstest"), SubagentHooksDir("/cfg", "hooks test"))
 }
 
+// A title may contain any printable text. Its folder must still be a
+// direct child of the hooks root, or "fix/login" nests under "fix".
+func TestSubagentHooksDir_SingleSegment(t *testing.T) {
+	root := filepath.Join("/cfg", "hooks")
+	for _, title := range []string{"fix/login", "a/../../b", "it's", "/"} {
+		assert.Equal(t, root, filepath.Dir(SubagentHooksDir("/cfg", title)), title)
+	}
+	assert.Equal(t, filepath.Join(root, "loom_fix%2Flogin"), SubagentHooksDir("/cfg", "fix/login"))
+	assert.Equal(t, filepath.Join(root, "loom_it%27s"), SubagentHooksDir("/cfg", "it's"))
+}
+
+func TestRemoveSubagentHooks_LeavesSlashSiblingAlone(t *testing.T) {
+	cfg := t.TempDir()
+	nested := SubagentHooksDir(cfg, "fix/login")
+	require.NoError(t, os.MkdirAll(nested, 0o700))
+	fix := &Instance{Title: "fix", Program: "claude", ConfigDir: cfg, Status: Running}
+	require.NoError(t, os.MkdirAll(SubagentHooksDir(cfg, fix.Title), 0o700))
+
+	fix.removeSubagentHooks()
+
+	assert.NoDirExists(t, SubagentHooksDir(cfg, fix.Title))
+	assert.DirExists(t, nested, "removing fix's folder must not touch fix/login's")
+}
+
 func TestLaunchProgram_AddsHooksWhenLaunching(t *testing.T) {
 	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
@@ -296,4 +320,20 @@ func TestSweepSubagentHooks(t *testing.T) {
 	assert.DirExists(t, SubagentHooksDir(cfg, "claimed"))
 	assert.DirExists(t, SubagentHooksDir(cfg, "alive"))
 	assert.NoDirExists(t, SubagentHooksDir(cfg, "dead"))
+}
+
+func TestSweepSubagentHooks_SlashTitles(t *testing.T) {
+	cfg := t.TempDir()
+	for _, title := range []string{"fix/login", "other/live", "dead/one"} {
+		require.NoError(t, os.MkdirAll(SubagentHooksDir(cfg, title), 0o700))
+	}
+	ls := cmd_test.MockCmdExec{OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+		return []byte("loom_fix/login\nloom_other/live\n"), nil
+	}}
+
+	SweepSubagentHooks(cfg, map[string]bool{"fix/login": true}, ls)
+
+	assert.DirExists(t, SubagentHooksDir(cfg, "fix/login"), "claimed and alive")
+	assert.DirExists(t, SubagentHooksDir(cfg, "other/live"), "unclaimed but its session is alive")
+	assert.NoDirExists(t, SubagentHooksDir(cfg, "dead/one"), "unclaimed and dead")
 }
