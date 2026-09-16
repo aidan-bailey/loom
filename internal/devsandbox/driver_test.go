@@ -74,6 +74,15 @@ func TestDriver_SizeIsApplied(t *testing.T) {
 	require.NoError(t, sb.WaitFor("30 100", 5*time.Second))
 }
 
+func TestDriver_LiveScreenExcludesScrolledContent(t *testing.T) {
+	sb := driverSandbox(t)
+	require.NoError(t, sb.Start(StartOptions{Height: 5, Command: []string{"sh", "-c", "for i in 1 2 3 4 5 6 7 8; do echo line$i; done; exec cat"}}))
+	require.NoError(t, sb.WaitFor("line8", 5*time.Second))
+	screen, err := sb.Screen(false)
+	require.NoError(t, err)
+	assert.NotContains(t, screen, "line3", "a live pane's Screen must show only the current screen, not scrollback")
+}
+
 func TestDriver_DeadPaneKeptForDiagnosis(t *testing.T) {
 	sb := driverSandbox(t)
 	// The short sleep keeps the exit after remain-on-exit is applied.

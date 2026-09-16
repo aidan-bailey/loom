@@ -68,11 +68,23 @@ func (s *Sandbox) driverExists() bool {
 	return err == nil
 }
 
+// paneDead queries tmux's own pane_dead flag for the driver pane: "1" once
+// its program has exited (remain-on-exit keeps the pane itself around), "0"
+// while it's still running. Shared by DriverRunning and Screen so there's
+// one place that knows the tmux format string.
+func (s *Sandbox) paneDead() (bool, error) {
+	out, err := s.runTmux("display-message", "-p", "-t", DriverSession, "#{pane_dead}")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "1", nil
+}
+
 // DriverRunning reports whether the driver session exists and its program
 // is still alive (a dead pane is kept by remain-on-exit).
 func (s *Sandbox) DriverRunning() bool {
-	out, err := s.runTmux("display-message", "-p", "-t", DriverSession, "#{pane_dead}")
-	return err == nil && strings.TrimSpace(out) == "0"
+	dead, err := s.paneDead()
+	return err == nil && !dead
 }
 
 // Start launches the driver session on the private server. A running
@@ -148,16 +160,17 @@ func (s *Sandbox) SendText(text string) error {
 	return err
 }
 
-// Screen captures the driver pane; ansi keeps colors and attributes. It
-// always includes one line of scrollback above the visible screen: on this
-// tmux, writing the remain-on-exit message unconditionally scrolls the pane
-// up by exactly one line, so a plain capture of a just-died pane loses its
-// last line of output. Grabbing that extra history line keeps a dead pane's
-// last output capturable without affecting a live pane, whose top history
-// line stays put (and therefore equal across successive captures) as long
-// as nothing has scrolled.
+// Screen captures the driver pane; ansi keeps colors and attributes. A live
+// pane is captured exactly as shown, nothing more. Once the pane's program
+// has exited, one extra line of scrollback is included: on this tmux,
+// writing the remain-on-exit message unconditionally scrolls a dead pane up
+// by exactly one line before printing "Pane is dead …", which would
+// otherwise drop the program's last line of output from a plain capture.
 func (s *Sandbox) Screen(ansi bool) (string, error) {
-	args := []string{"capture-pane", "-p", "-t", DriverSession, "-S", "-1"}
+	args := []string{"capture-pane", "-p", "-t", DriverSession}
+	if dead, _ := s.paneDead(); dead {
+		args = append(args, "-S", "-1")
+	}
 	if ansi {
 		args = append(args, "-e")
 	}
