@@ -69,6 +69,9 @@ type CardData struct {
 	// agent roster. Empty when unknown — non-Claude agents, and any status
 	// the pane scraper rather than the roster decided.
 	WaitReason string
+	// Subagents lists the session's live subagents and teammates, working
+	// first. Empty for most cards; see session.Instance.Subagents.
+	Subagents []SubagentRow
 }
 
 // NeedsAttention reports whether this card should carry the Attention
@@ -96,6 +99,9 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 		StatusAge:           inst.StatusAge(),
 		Spinner:             spinnerFrame,
 		WaitReason:          inst.WaitReason(),
+	}
+	for _, v := range inst.Subagents() {
+		d.Subagents = append(d.Subagents, SubagentRow{Name: v.Name, Description: v.Description, Idle: v.Idle})
 	}
 	if stat := inst.GetDiffStats(); stat != nil && stat.Error == nil && !stat.IsEmpty() {
 		d.HasDiff, d.DiffAdded, d.DiffRemoved = true, stat.Added, stat.Removed
@@ -452,12 +458,18 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 		return titleLine
 	}
 
-	// Second line: attention prompt beats tail beats status label.
+	// Second line: attention prompt, then live agents, then tail, then
+	// status label. The agent count is a suffix, so end-truncation drops
+	// it before the status.
 	second := d.statusLabel()
 	secondFg := Dim
-	if d.NeedsAttention() {
+	switch {
+	case d.NeedsAttention():
 		secondFg = Attention
-	} else if len(d.TailLines) > 0 {
+		second += d.agentSummary()
+	case len(d.Subagents) > 0:
+		second += d.agentSummary()
+	case len(d.TailLines) > 0:
 		second = d.TailLines[len(d.TailLines)-1]
 	}
 	secondStyle := lipgloss.NewStyle().Foreground(secondFg)
