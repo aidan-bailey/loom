@@ -186,3 +186,14 @@ func (claudeAdapter) ApplyLoomContextFlag(program, filePath string) string {
 	}
 	return insertAfterCommand(program, flag)
 }
+
+// ApplySettingsFlag inserts "--settings '<path>'" after "claude". The path
+// is single-quoted for the same reason as ApplyLoomContextFlag. An existing
+// --settings flag wins: whether Claude merges two is unverified, so loom
+// adds nothing rather than risk displacing the user's file.
+func (claudeAdapter) ApplySettingsFlag(program, path string) string {
+	if path == "" || len(strings.Fields(program)) == 0 || HasSettingsFlag(program) {
+		return program
+	}
+	return insertAfterCommand(program, "--settings '"+path+"'")
+}

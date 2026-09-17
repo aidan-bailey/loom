@@ -3,6 +3,7 @@ package app
 import (
 	"time"
 
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
@@ -103,6 +104,115 @@ func (m *home) maybeRedetect(sessionName string) tea.Cmd {
 	return tea.Tick(redetectDelay, func(time.Time) tea.Msg {
 		return redetectMsg{session: sessionName}
 	})
+}
+
+// rosterReadyMsg carries one health tick's `claude agents --json` result
+// back to the Update goroutine. err set means the query failed (daemon
+// down, CLI too old, unparseable output); the handler clears the roster so
+// status detection falls back to pane content rather than acting on a
+// snapshot that may be minutes stale.
+type rosterReadyMsg struct {
+	entries map[string]session.RosterEntry
+	err     error
+}
+
+// rosterQueryCmd schedules one roster query covering the whole fleet.
+// Returns nil when no active instance runs Claude, so a fleet of aider or
+// shell sessions never pays for a Claude subprocess. The binary is taken
+// from a live instance's Program rather than assumed to be "claude" on
+// PATH, so absolute paths (a Nix store path, a version-pinned install)
+// resolve to the same CLI the agents were launched with.
+func rosterQueryCmd(active []*session.Instance) tea.Cmd {
+	var program string
+	for _, inst := range active {
+		if session.IsClaudeProgram(inst.Program) {
+			program = inst.Program
+			break
+		}
+	}
+	if program == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		entries, err := session.QueryClaudeRoster(program, internalexec.Default{})
+		return rosterReadyMsg{entries: entries, err: err}
+	}
+}
+
+// rosterInterval is the roster's own polling cadence. It is deliberately
+// NOT the health tick's: that tick fires every 500ms on the snapshot path,
+// and a ~380ms subprocess every 500ms keeps a claude process alive ~76% of
+// the time purely to poll status — on the one path whose capture-pane
+// scraper is fully functional anyway. 3s matches the emulator-path tick,
+// which is the cadence the roster was sized for.
+const rosterInterval = 3 * time.Second
+
+// maybeRosterQuery returns a roster query when one is due: none already in
+// flight, and at least rosterInterval since the last dispatch. The
+// in-flight guard matters because a slow or hung CLI is bounded only by
+// claudeRosterTimeout (5s) — without it, ticks would stack concurrent
+// subprocesses. Returns nil when nothing should run, including when no
+// Claude agent is present; in that case neither the window nor the flag is
+// armed, since no query means no rosterReadyMsg to disarm them. Must be
+// called on the Update goroutine (both fields are unsynchronized).
+func (m *home) maybeRosterQuery(active []*session.Instance) tea.Cmd {
+	if m.rosterInFlight || time.Since(m.lastRosterQuery) < rosterInterval {
+		return nil
+	}
+	cmd := rosterQueryCmd(active)
+	if cmd == nil {
+		return nil
+	}
+	m.rosterInFlight = true
+	m.lastRosterQuery = time.Now()
+	return cmd
+}
+
+// rosterStatusFor returns Claude's authoritative status for inst, if it
+// published one, along with its stated reason for blocking (empty unless
+// the status is Prompting, and even then only when the CLI named one).
+// The bool is false whenever Loom must fall back to the pane-content
+// ladder: a non-Claude agent, an empty or failed roster, no entry for
+// this worktree (the join key is the directory Claude runs in), or a
+// status string this build does not recognize.
+//
+// The join is exact string equality on the path. Claude reports a
+// symlink-resolved cwd, so a Loom config dir reached through a symlink
+// (a dotfiles setup, say) simply produces no match and falls back — a
+// silent degradation to the old behavior, never a wrong status.
+func (m *home) rosterStatusFor(inst *session.Instance) (session.Status, string, bool) {
+	if inst == nil || len(m.roster) == 0 || !session.IsClaudeProgram(inst.Program) {
+		return session.Ready, "", false
+	}
+	entry, ok := m.roster[inst.GetWorktreePath()]
+	if !ok {
+		return session.Ready, "", false
+	}
+	status, authoritative := entry.LoomStatus()
+	return status, entry.WaitingFor, authoritative
+}
+
+// adoptRosterStatus is the single place the roster's answer is applied to
+// an instance. It returns what rosterStatusFor decided and, as a side
+// effect, records Claude's reason for blocking on the instance so the card
+// can render it.
+//
+// The reason lives exactly as long as the roster-driven wait: any other
+// outcome clears it. Both status paths (statusDetectedMsg and
+// metadataReadyMsg) must go through here — duplicating the set/clear at
+// each call site is how the two drift apart, which is the lockstep hazard
+// called out in CLAUDE.md.
+func (m *home) adoptRosterStatus(inst *session.Instance) (session.Status, bool) {
+	if inst == nil {
+		return session.Ready, false
+	}
+	target, reason, authoritative := m.rosterStatusFor(inst)
+	if authoritative && target == session.Prompting {
+		inst.SetWaitReason(reason)
+	} else {
+		inst.SetWaitReason("")
+	}
+	return target, authoritative
 }
 
 // ratioSaveMsg flushes the throttled split-ratio persistence: resizeSplit

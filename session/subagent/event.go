@@ -1,0 +1,124 @@
+// Package subagent tracks the subagents and agent-team teammates a Claude
+// session has spawned, from the Claude Code hook events loom registers at
+// launch. See docs/superpowers/specs/2026-09-16-subagent-nesting-design.md.
+//
+// It has no dependency on tmux, the UI or the app, so every piece can be
+// tested against payloads captured from a real Claude session.
+package subagent
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+)
+
+// Hook event names loom registers.
+const (
+	EventSubagentStart = "SubagentStart"
+	EventSubagentStop  = "SubagentStop"
+	EventTeammateIdle  = "TeammateIdle"
+	EventStop          = "Stop"
+	EventSessionEnd    = "SessionEnd"
+)
+
+// HookEvents lists the registered events in the order settings.json
+// declares them.
+var HookEvents = []string{
+	EventSubagentStart, EventSubagentStop, EventTeammateIdle, EventStop, EventSessionEnd,
+}
+
+// ErrUnknownEvent is returned by ParseEvent for a JSON object whose
+// hook_event_name is not one loom registers.
+var ErrUnknownEvent = errors.New("subagent: unknown hook event")
+
+// Task is one entry of a payload's background_tasks list, reduced to the
+// fields reconciliation reads.
+type Task struct {
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	Status string `json:"status"`
+}
+
+// Event is one hook event. The same shape covers the raw payload Claude
+// writes and the compact form the scan keeps (see Compact).
+type Event struct {
+	Name           string
+	AgentID        string
+	AgentType      string
+	TeammateName   string
+	TranscriptPath string
+	// Tasks is the background_tasks list. HasTasks is false when the field
+	// was absent, null or malformed. Reconciliation must then do nothing:
+	// reading an unusable list as empty would remove every agent.
+	Tasks    []Task
+	HasTasks bool
+}
+
+// wireEvent uses the hook payload's own field names, so ParseEvent reads
+// both forms. background_tasks stays raw so a malformed list downgrades to
+// "missing" instead of failing the whole event.
+type wireEvent struct {
+	Name           string          `json:"hook_event_name"`
+	AgentID        string          `json:"agent_id,omitempty"`
+	AgentType      string          `json:"agent_type,omitempty"`
+	TeammateName   string          `json:"teammate_name,omitempty"`
+	TranscriptPath string          `json:"transcript_path,omitempty"`
+	Tasks          json.RawMessage `json:"background_tasks,omitempty"`
+}
+
+// ParseEvent decodes a raw hook payload or a compact event. It returns an
+// error wrapping ErrUnknownEvent for events loom does not register, and a
+// different error for input that is not a JSON object.
+func ParseEvent(data []byte) (Event, error) {
+	var w wireEvent
+	if err := json.Unmarshal(data, &w); err != nil {
+		return Event{}, fmt.Errorf("subagent: parse event: %w", err)
+	}
+	if !slices.Contains(HookEvents, w.Name) {
+		return Event{}, fmt.Errorf("%w: %q", ErrUnknownEvent, w.Name)
+	}
+	ev := Event{
+		Name:           w.Name,
+		AgentID:        w.AgentID,
+		AgentType:      w.AgentType,
+		TeammateName:   w.TeammateName,
+		TranscriptPath: w.TranscriptPath,
+	}
+	if len(w.Tasks) > 0 && string(w.Tasks) != "null" {
+		var tasks []Task
+		if err := json.Unmarshal(w.Tasks, &tasks); err == nil {
+			if tasks == nil {
+				tasks = []Task{}
+			}
+			ev.Tasks, ev.HasTasks = tasks, true
+		}
+	}
+	return ev, nil
+}
+
+// Compact returns the event as the scan keeps it on disk: the payload's
+// field names, only the fields loom reads, and tasks reduced to
+// id/type/status. ParseEvent reads it back unchanged. A missing task list
+// stays missing and an empty one stays empty.
+func (e Event) Compact() ([]byte, error) {
+	w := wireEvent{
+		Name:           e.Name,
+		AgentID:        e.AgentID,
+		AgentType:      e.AgentType,
+		TeammateName:   e.TeammateName,
+		TranscriptPath: e.TranscriptPath,
+	}
+	if e.HasTasks {
+		tasks := e.Tasks
+		if tasks == nil {
+			tasks = []Task{}
+		}
+		raw, err := json.Marshal(tasks)
+		if err != nil {
+			return nil, fmt.Errorf("subagent: compact tasks: %w", err)
+		}
+		w.Tasks = raw
+	}
+	return json.Marshal(w)
+}

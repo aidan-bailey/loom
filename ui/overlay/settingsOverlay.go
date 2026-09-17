@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/ui"
@@ -16,6 +17,7 @@ type settingsField int
 const (
 	settingsFieldDefaultProgram settingsField = iota
 	settingsFieldBranchPrefix
+	settingsFieldBaseBranch
 	settingsFieldProfiles
 	settingsFieldClaudePreferences
 	settingsFieldTheme
@@ -28,6 +30,8 @@ func (f settingsField) label() string {
 		return "Default Program"
 	case settingsFieldBranchPrefix:
 		return "Branch Prefix"
+	case settingsFieldBaseBranch:
+		return "Base Branch"
 	case settingsFieldProfiles:
 		return "Profiles"
 	case settingsFieldClaudePreferences:
@@ -137,6 +141,8 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 		s.startTextEdit(settingsFieldDefaultProgram, "Default Program", s.cfg.DefaultProgram)
 	case settingsFieldBranchPrefix:
 		s.startTextEdit(settingsFieldBranchPrefix, "Branch Prefix", s.cfg.BranchPrefix)
+	case settingsFieldBaseBranch:
+		s.startTextEdit(settingsFieldBaseBranch, "Base Branch", s.cfg.BaseBranch)
 	case settingsFieldProfiles:
 		s.profiles = NewProfilesManager(s.cfg)
 		s.profiles.SetWidth(s.width)
@@ -211,6 +217,9 @@ func (s *SettingsOverlay) applyTextEdit(field settingsField, value string) bool 
 		return true
 	case settingsFieldBranchPrefix:
 		s.cfg.Mutate(func(c *config.Config) { c.BranchPrefix = value })
+		return true
+	case settingsFieldBaseBranch:
+		s.cfg.Mutate(func(c *config.Config) { c.BaseBranch = strings.TrimSpace(value) })
 		return true
 	}
 	return false
@@ -298,6 +307,12 @@ func (s *SettingsOverlay) valueFor(f settingsField) string {
 		return s.cfg.DefaultProgram
 	case settingsFieldBranchPrefix:
 		return s.cfg.BranchPrefix
+	case settingsFieldBaseBranch:
+		if v := s.cfg.GetBaseBranch(); v != "" {
+			return v
+		}
+		// Empty is the common case and means auto-detect, not "unset".
+		return "(auto)"
 	case settingsFieldProfiles:
 		return fmt.Sprintf("(%d) →", len(s.cfg.Profiles))
 	case settingsFieldClaudePreferences:

@@ -61,6 +61,10 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
 					instance.HeadroomProxy = opts.HeadroomProxy
 					instance.CacheTTL1h = opts.CacheTTL1h
+					// Always recorded, edited or not, so branch composition has a
+					// single source of truth instead of falling back to a re-read
+					// of config.json inside the git package.
+					instance.SetBranchPrefix(opts.BranchPrefix)
 					_ = instance.TransitionTo(session.Loading)
 					m.promptAfterName = false
 					m.state = stateDefault

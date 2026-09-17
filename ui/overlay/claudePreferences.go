@@ -11,9 +11,9 @@ import (
 // ClaudePreferences is the Claude-specific preferences drill-in
 // sub-screen. Structured as its own screen (rather than flat rows on
 // the main settings list) so more Claude-adapter-specific preferences
-// can be added later without growing that list — today it holds seven
-// rows: Remote Control, Permission Mode, Model, Headroom Proxy,
-// Effort, Cache TTL (1h), and Loom Context.
+// can be added later without growing that list — today it holds nine
+// rows: Remote Control, Permission Mode, Model, 1M Context, Headroom Proxy,
+// Effort, Cache TTL (1h), Loom Context, and Track Subagents.
 //
 // authBlocked/authReason mirror session.RemoteControlAuth.Blocked()/
 // Reason, passed as plain values so this package stays decoupled from
@@ -32,8 +32,8 @@ type ClaudePreferences struct {
 
 // claudePrefsRowCount is the number of navigable rows: Remote Control,
 // Permission Mode, Model, 1M Context, Headroom Proxy, Effort, Cache TTL
-// (1h), and Loom Context — eight rows.
-const claudePrefsRowCount = 8
+// (1h), Loom Context, and Track Subagents — nine rows.
+const claudePrefsRowCount = 9
 
 // NewClaudePreferences creates the Claude Preferences sub-screen over cfg.
 func NewClaudePreferences(cfg *config.Config, authBlocked bool, authReason string) *ClaudePreferences {
@@ -109,6 +109,11 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 			c.cfg.Mutate(func(cc *config.Config) {
 				v := !cc.LoomContextEnabled()
 				cc.ClaudeLoomContext = &v
+			})
+		case 8:
+			c.cfg.Mutate(func(cc *config.Config) {
+				v := !cc.SubagentTrackingEnabled()
+				cc.ClaudeSubagentTracking = &v
 			})
 		}
 		return false, true
@@ -256,6 +261,21 @@ func (c *ClaudePreferences) Render() string {
 		loomRow = claudePrefsRowStyle.Render(loomRow)
 	}
 
+	subCheck := "[ ]"
+	if c.cfg.SubagentTrackingEnabled() {
+		subCheck = "[x]"
+	}
+	subCursor := "  "
+	if c.cursor == 8 {
+		subCursor = "> "
+	}
+	subRow := subCursor + "Track Subagents   " + subCheck
+	if c.cursor == 8 {
+		subRow = claudePrefsSelectedStyle.Render(subRow)
+	} else {
+		subRow = claudePrefsRowStyle.Render(subRow)
+	}
+
 	content := claudePrefsTitleStyle.Render("Claude Preferences") + "\n\n" +
 		rcRow + "\n" +
 		pmRow + "\n" +
@@ -264,7 +284,7 @@ func (c *ClaudePreferences) Render() string {
 		hwRow + "\n" +
 		effortRow + "\n" +
 		cacheRow + "\n" +
-		loomRow + "\n\n" +
+		loomRow + "\n" + subRow + "\n\n" +
 		claudePrefsHintStyle.Render("up/down move • enter/space toggle/cycle • esc back")
 
 	border := lipgloss.NewStyle().

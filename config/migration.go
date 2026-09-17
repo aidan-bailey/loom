@@ -21,7 +21,7 @@ const legacyHomeDirName = ".claude-squad"
 //   - Otherwise os.Rename the directory and print a one-line notice
 //     to stderr so the operator knows what happened.
 //
-// When LOOM_HOME or CLAUDE_SQUAD_HOME is set (i.e. the user has
+// When LOOM_HOME, CLAUDE_SQUAD_HOME, or LOOM_GLOBAL_DIR is set (i.e. the user has
 // overridden the default path), migration is skipped — the user has
 // explicitly chosen a location and is assumed to have already placed
 // their state there.
@@ -31,7 +31,7 @@ const legacyHomeDirName = ".claude-squad"
 // dir is still readable and GetConfigDir will honor CLAUDE_SQUAD_HOME
 // as a deprecated fallback if the user points at it explicitly.
 func MigrateLegacyHome() error {
-	if os.Getenv(EnvHome) != "" || os.Getenv(legacyEnvHome) != "" {
+	if os.Getenv(EnvHome) != "" || os.Getenv(legacyEnvHome) != "" || os.Getenv(EnvGlobalDir) != "" {
 		return nil
 	}
 

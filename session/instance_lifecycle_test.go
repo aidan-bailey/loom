@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
 	"os/exec"
@@ -449,6 +450,83 @@ func TestInstance_RestartProceedsPastIdempotencyGuard(t *testing.T) {
 		"Restart must execute Start's tmux flow, not silently no-op")
 	assert.True(t, inst.isStarted(),
 		"Restart should leave the instance in a started state on success")
+}
+
+// recordingPtyFactory is fakePtyFactory that also records the program
+// every `tmux new-session` is started with (its last argument).
+type recordingPtyFactory struct {
+	fakePtyFactory
+	programs *[]string
+}
+
+func (f recordingPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
+	if len(cmd.Args) > 1 && cmd.Args[1] == "new-session" {
+		*f.programs = append(*f.programs, cmd.Args[len(cmd.Args)-1])
+	}
+	return f.fakePtyFactory.Start(cmd)
+}
+
+// TestInstance_RestartIsARealLaunch guards the workspace-terminal
+// auto-restart of a Claude session. Restart used to reuse the dead
+// session object and its old command, so the new Claude process kept
+// the previous launch's tracker, launch ID and hooks folder, and a
+// session restored after a loom restart (built from the bare Program)
+// relaunched with no hooks and no loom context at all.
+func TestInstance_RestartIsARealLaunch(t *testing.T) {
+	withTracking(t, true)
+	configDir := t.TempDir()
+	require.NoError(t, WriteLoomContextFiles(configDir))
+	SetLoomContextEnabled(true)
+	t.Cleanup(func() { SetLoomContextEnabled(false) })
+
+	var hasSessionCalls int
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			if len(c.Args) >= 2 && c.Args[1] == "has-session" {
+				hasSessionCalls++
+				if hasSessionCalls == 1 {
+					return fmt.Errorf("no such session")
+				}
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	var programs []string
+	ptyFactory := recordingPtyFactory{fakePtyFactory: fakePtyFactory{t: t}, programs: &programs}
+
+	inst := &Instance{
+		Title:               "restart-hooks",
+		Path:                t.TempDir(),
+		Program:             "claude",
+		ConfigDir:           configDir,
+		Status:              Running,
+		IsWorkspaceTerminal: true,
+	}
+	// As restored after a loom restart: the session object was built
+	// from the bare Program.
+	inst.setTmuxSession(tmux.NewTmuxSessionWithDeps(inst.Title, inst.Program, ptyFactory, cmdExec))
+	inst.setStarted(true)
+	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "0123456789abcdef", Replayed: true,
+		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
+	require.Len(t, inst.Subagents(), 1)
+	adopted := inst.hookLaunchID
+
+	require.NoError(t, inst.Restart())
+
+	assert.Empty(t, inst.Subagents(), "the dead process's rows must not survive a restart")
+	dir := SubagentHooksDir(inst.ConfigDir, inst.Title)
+	stored, err := os.ReadFile(filepath.Join(dir, "launch-id"))
+	require.NoError(t, err)
+	assert.NotEqual(t, adopted, inst.hookLaunchID)
+	assert.Equal(t, string(stored), inst.hookLaunchID)
+	settings := subagent.SettingsPath(dir)
+	assert.FileExists(t, settings)
+	require.Len(t, programs, 1, "Restart must start exactly one new tmux session")
+	assert.Contains(t, programs[0], "--settings '"+settings+"'")
+	assert.Contains(t, programs[0],
+		"--append-system-prompt-file '"+filepath.Join(configDir, loomContextFileWorkspace)+"'")
 }
 
 // TestInstance_RestartFailureCounter guards the workspace-terminal restart

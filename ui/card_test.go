@@ -184,3 +184,47 @@ func TestSortForOverview_WorkspaceTerminalPinnedFirst(t *testing.T) {
 	order := SortForOverview(items)
 	assert.Equal(t, 0, order[0], "workspace terminal stays pinned at display position 0")
 }
+
+// TestRenderCard_PromptingShowsWaitReason: "awaiting input" only repeats
+// what the gold accent already said. When Claude names the block, the card
+// shows that instead — it is the part the user would otherwise have to
+// attach to discover.
+func TestRenderCard_PromptingShowsWaitReason(t *testing.T) {
+	d := CardData{Title: "db-migration", Index: 1, Status: session.Prompting,
+		WaitReason: "sandbox request", StatusAge: 4 * time.Minute}
+	out := plain(RenderCard(d, DensityRail, 40))
+	assert.Contains(t, out, "sandbox request")
+	assert.Contains(t, out, "4m", "the wait age stays alongside the reason")
+	assert.NotContains(t, out, "awaiting input",
+		"the reason replaces the generic phrase rather than joining it")
+}
+
+// TestRenderCard_PromptingWithoutReasonKeepsGenericLabel: non-Claude agents
+// and a roster-less fallback have no reason to show, and must read exactly
+// as they did before.
+func TestRenderCard_PromptingWithoutReasonKeepsGenericLabel(t *testing.T) {
+	d := CardData{Title: "db-migration", Index: 1, Status: session.Prompting,
+		StatusAge: 4 * time.Minute}
+	out := plain(RenderCard(d, DensityRail, 40))
+	assert.Contains(t, out, "awaiting input")
+}
+
+// TestRenderCard_WaitReasonIgnoredWhenNotPrompting: the reason is only
+// meaningful for a live block; a stale one on a Running card must not paint.
+func TestRenderCard_WaitReasonIgnoredWhenNotPrompting(t *testing.T) {
+	d := CardData{Title: "db-migration", Index: 1, Status: session.Running,
+		WaitReason: "sandbox request"}
+	out := plain(RenderCard(d, DensityRail, 40))
+	assert.NotContains(t, out, "sandbox request")
+}
+
+// TestRenderCard_LongWaitReasonStaysInBounds: reasons come verbatim from
+// the CLI, so an unfamiliar long one must not overflow a narrow rail.
+func TestRenderCard_LongWaitReasonStaysInBounds(t *testing.T) {
+	d := CardData{Title: "db", Index: 1, Status: session.Prompting,
+		WaitReason: strings.Repeat("reason ", 12), StatusAge: time.Minute}
+	out := plain(RenderCard(d, DensityRail, 24))
+	for _, l := range strings.Split(out, "\n") {
+		assert.LessOrEqual(t, ansi.StringWidth(l), 24)
+	}
+}

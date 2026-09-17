@@ -21,6 +21,7 @@ func TestMain(m *testing.M) {
 	// Prevent LOOM_HOME / CLAUDE_SQUAD_HOME from polluting tests
 	os.Unsetenv("LOOM_HOME")
 	os.Unsetenv("CLAUDE_SQUAD_HOME")
+	os.Unsetenv("LOOM_GLOBAL_DIR")
 
 	exitCode := m.Run()
 	log.Close()
@@ -646,4 +647,18 @@ func TestContext1MEnabled(t *testing.T) {
 		}
 		assert.False(t, cfg.Context1MEnabled())
 	})
+}
+
+func TestSubagentTrackingEnabled(t *testing.T) {
+	// nil => enabled (mirrors LoomContextEnabled)
+	c := &Config{}
+	assert.True(t, c.SubagentTrackingEnabled())
+
+	tru := true
+	c.ClaudeSubagentTracking = &tru
+	assert.True(t, c.SubagentTrackingEnabled())
+
+	fls := false
+	c.ClaudeSubagentTracking = &fls
+	assert.False(t, c.SubagentTrackingEnabled())
 }

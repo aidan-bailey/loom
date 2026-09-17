@@ -62,3 +62,6 @@ func (aiderAdapter) ApplyEffortFlag(program, _ string) string {
 func (aiderAdapter) ApplyLoomContextFlag(program, _ string) string {
 	return program
 }
+
+// ApplySettingsFlag is a no-op for aider — it has no settings-file flag.
+func (aiderAdapter) ApplySettingsFlag(program, _ string) string { return program }

@@ -434,31 +434,67 @@ func (s *SplitPane) GotoBottom() {
 	}
 }
 
-// ScrollAgentUp scrolls the agent pane explicitly, ignoring focus/diff.
+// ScrollAgentUp scrolls the agent pane explicitly, ignoring focus/diff
+// (mouse wheel).
+//
+// The explicit scrollers re-render their pane themselves: a scroll only
+// moves the ScrollModel offset, and the displayed text is rebuilt by
+// UpdateContent. The keyboard path gets that refresh for free from
+// handleScriptDone → instanceChanged, but the wheel handler calls nothing
+// else, so without this the pane sat frozen at the old window until the
+// agent's next output event (or a stray keypress) happened to redraw it.
 func (s *SplitPane) ScrollAgentUp() {
 	if err := s.agent.ScrollUp(s.instance); err != nil {
 		log.InfoLog.Printf("split pane failed to scroll agent up: %v", err)
 	}
+	s.rerenderAgentAfterScroll()
 }
 
-// ScrollAgentDown scrolls the agent pane explicitly.
+// ScrollAgentDown scrolls the agent pane explicitly (mouse wheel).
 func (s *SplitPane) ScrollAgentDown() {
 	if err := s.agent.ScrollDown(s.instance); err != nil {
 		log.InfoLog.Printf("split pane failed to scroll agent down: %v", err)
 	}
+	s.rerenderAgentAfterScroll()
 }
 
-// ScrollTerminalUp scrolls the terminal pane explicitly.
+// rerenderAgentAfterScroll applies the agent pane's new offset to its
+// displayed text. Nothing to do without an instance (UpdateContent would
+// only swap in the splash).
+func (s *SplitPane) rerenderAgentAfterScroll() {
+	if s.instance == nil {
+		return
+	}
+	if err := s.agent.UpdateContent(s.instance); err != nil {
+		log.InfoLog.Printf("split pane failed to re-render agent after scroll: %v", err)
+	}
+}
+
+// ScrollTerminalUp scrolls the terminal pane explicitly (mouse wheel).
+// Re-renders for the same reason as ScrollAgentUp.
 func (s *SplitPane) ScrollTerminalUp() {
 	if err := s.terminal.ScrollUp(); err != nil {
 		log.InfoLog.Printf("split pane failed to scroll terminal up: %v", err)
 	}
+	s.rerenderTerminalAfterScroll()
 }
 
-// ScrollTerminalDown scrolls the terminal pane explicitly.
+// ScrollTerminalDown scrolls the terminal pane explicitly (mouse wheel).
 func (s *SplitPane) ScrollTerminalDown() {
 	if err := s.terminal.ScrollDown(); err != nil {
 		log.InfoLog.Printf("split pane failed to scroll terminal down: %v", err)
+	}
+	s.rerenderTerminalAfterScroll()
+}
+
+// rerenderTerminalAfterScroll applies the terminal pane's new offset to its
+// displayed text.
+func (s *SplitPane) rerenderTerminalAfterScroll() {
+	if s.instance == nil {
+		return
+	}
+	if err := s.terminal.UpdateContent(s.instance); err != nil {
+		log.InfoLog.Printf("split pane failed to re-render terminal after scroll: %v", err)
 	}
 }
 

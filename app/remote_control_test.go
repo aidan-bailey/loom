@@ -107,6 +107,7 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 			HeadroomProxy:  false,
 			Effort:         "default",
 			CacheTTL1h:     false,
+			BranchPrefix:   config.DefaultConfig().BranchPrefix,
 		}, got)
 	})
 

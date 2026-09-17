@@ -37,17 +37,7 @@ const (
 // back to ~/.loom otherwise.
 func GetConfigDir() (string, error) {
 	if envDir := log.GetEnvWithLegacy(EnvHome, legacyEnvHome); envDir != "" {
-		if envDir == "~" || strings.HasPrefix(envDir, "~/") {
-			homeDir, err := os.UserHomeDir()
-			if err != nil {
-				return "", fmt.Errorf("failed to expand ~ in %s: %w", EnvHome, err)
-			}
-			envDir = filepath.Join(homeDir, envDir[1:])
-		}
-		if !filepath.IsAbs(envDir) {
-			return "", fmt.Errorf("%s must be an absolute path, got: %s", EnvHome, envDir)
-		}
-		return envDir, nil
+		return resolveEnvDir(EnvHome, envDir)
 	}
 
 	homeDir, err := os.UserHomeDir()
@@ -55,6 +45,22 @@ func GetConfigDir() (string, error) {
 		return "", fmt.Errorf("failed to get config home directory: %w", err)
 	}
 	return filepath.Join(homeDir, ".loom"), nil
+}
+
+// resolveEnvDir expands a leading ~ in dir (the value of env var name) and
+// requires the result to be absolute.
+func resolveEnvDir(name, dir string) (string, error) {
+	if dir == "~" || strings.HasPrefix(dir, "~/") {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to expand ~ in %s: %w", name, err)
+		}
+		dir = filepath.Join(homeDir, dir[1:])
+	}
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("%s must be an absolute path, got: %s", name, dir)
+	}
+	return dir, nil
 }
 
 // Profile is a named shortcut for a program invocation. Profiles let
@@ -88,6 +94,14 @@ type Config struct {
 	DefaultProgram string `json:"default_program"`
 	// BranchPrefix is the prefix used for git branches created by the application.
 	BranchPrefix string `json:"branch_prefix"`
+	// BaseBranch names the branch new session worktrees are cut from.
+	// Empty means auto-detect (origin/HEAD, then main, then master, then
+	// whatever the root repo currently has checked out) — see
+	// git.ResolveBaseCommit. DefaultConfig deliberately leaves it empty:
+	// unlike BranchPrefix there is no sensible universal literal, and
+	// auto-detect is correct for main/master/develop repos alike.
+	// Read through GetBaseBranch.
+	BaseBranch string `json:"base_branch,omitempty"`
 	// Profiles is a list of named program profiles.
 	Profiles []Profile `json:"profiles,omitempty"`
 	// ClaudeRemoteControl controls whether new Claude sessions launch
@@ -102,6 +116,13 @@ type Config struct {
 	// (read via LoomContextEnabled), matching ClaudeRemoteControl. A no-op
 	// for agents other than Claude.
 	ClaudeLoomContext *bool `json:"claude_loom_context,omitempty"`
+	// ClaudeSubagentTracking controls whether new Claude sessions launch
+	// with hooks that report subagent and teammate state, shown as a count
+	// on rail cards and as rows on overview cards (see session/subagent).
+	// nil is treated as enabled (read via SubagentTrackingEnabled),
+	// matching ClaudeLoomContext. Takes effect at the next launch or
+	// resume.
+	ClaudeSubagentTracking *bool `json:"claude_subagent_tracking,omitempty"`
 	// ClaudePermissionMode is the --permission-mode value new Claude
 	// sessions launch with. Unlike ClaudeRemoteControl, DefaultConfig
 	// sets this explicitly to "default" rather than leaving it nil — nil
@@ -227,6 +248,16 @@ func (c *Config) GetBranchPrefix() string {
 	return c.BranchPrefix
 }
 
+// GetBaseBranch returns BaseBranch under a read lock. Locked rather
+// than bare like PermissionMode because worktree setup reads it from a
+// tea.Cmd goroutine (Instance.Start) while the settings overlay writes
+// it from the main goroutine — the same race GetBranchPrefix closes.
+func (c *Config) GetBaseBranch() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.BaseBranch
+}
+
 // GetTheme returns the configured UI theme name under the config lock
 // (the settings overlay mutates Config at runtime).
 func (c *Config) GetTheme() string {
@@ -247,6 +278,13 @@ func (c *Config) RemoteControlEnabled() bool {
 // mirroring RemoteControlEnabled. Read only from the main goroutine.
 func (c *Config) LoomContextEnabled() bool {
 	return c.ClaudeLoomContext == nil || *c.ClaudeLoomContext
+}
+
+// SubagentTrackingEnabled reports whether new Claude sessions should launch
+// with loom's subagent hooks. nil (unset) is treated as enabled, mirroring
+// LoomContextEnabled. Read only from the main goroutine.
+func (c *Config) SubagentTrackingEnabled() bool {
+	return c.ClaudeSubagentTracking == nil || *c.ClaudeSubagentTracking
 }
 
 // PermissionMode returns the configured --permission-mode value,

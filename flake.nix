@@ -59,6 +59,11 @@
             # re-deriving from go.sum through a fixed-output derivation.
             vendorHash = null;
 
+            # tools/ holds dev-only binaries (loomdev, fakeagent). Excluded
+            # rather than using subPackages = [ "." ], which would also drop
+            # every other package's tests from checkPhase.
+            excludedPackages = [ "tools" ];
+
             env.CGO_ENABLED = "0";
 
             ldflags = [

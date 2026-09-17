@@ -217,3 +217,44 @@ measured in lines above the live bottom row (`offset=0` ⇒ bottom row of the
 window is the screen's bottom row). The original plan's unit test
 (`RenderWindow(sbLen, 1)` = oldest line) contradicted this; the test is
 corrected (oldest line = `RenderWindow(total-1, 1)`).
+
+## Amendment 2 (2026-09-16): synchronized output never reaches scrollback
+
+"Scroll works on fresco, not on nesco" traced to the renderer each host's
+Claude used, not to the host. Facts, verified against real tmux 3.7b:
+
+- Claude's classic inline renderer wraps every frame in synchronized-update
+  brackets (`CSI ? 2026 h` … `CSI ? 2026 l`). One captured session pane
+  contained 1817 such frames.
+- For output inside those brackets, tmux still scrolls the pane's own
+  history, but sends the attach client a repaint of the pane instead of
+  DECSTBM/SU scroll sequences. In tmux's source, `screen_write_collect_flush`
+  discards collected output, scroll count included, while the pane is in sync
+  mode, and ending sync (`input.c`) flags the pane for a full redraw. The
+  emulator's scrollback therefore never grows. In one run, 30 lines gave 22
+  scrollback lines unbracketed and 0 bracketed; the bracketed case is pinned by
+  `TestSyncOutputDefeatsEmulatorScrollback_RealTmux`. Changing the client's
+  TERM or `-T sync` made no difference.
+- `AdvanceAndRender` then clamps any offset to the single footer-slack line,
+  so a wheel scroll shows the "scrolled" footer over an unmoved screen.
+
+**Mitigation (adopted):** Loom launches every Claude session with
+`CLAUDE_CODE_NO_FLICKER=1` (`session.ClaudeFullscreenEnv`, always on). On the
+alternate screen, wheel routing forwards the wheel into Claude, which scrolls
+its own transcript. The design above is unchanged for apps that scroll
+normally.
+
+**Known limitations:** any other app that uses synchronized output (in
+either pane) still can't be scrolled. A related gap turned up during
+verification: when one tmux write batch scrolls more than a screenful,
+`screen_write_collect_flush_scrolled` caps the scroll it sends the client at
+the scroll region's height. The extra lines never reach the emulator, and
+how many are lost depends on how tmux's reads split the output. A single
+30-line write into a 10-row pane left 20, 10, then 14 scrollback lines on
+three runs. The same effect made `TestScrollbackAccumulation_RealTmux`
+flaky until its output was paced (it had also been reusing one tmux socket
+name across tests). The general fix is to source scrolled history from
+tmux, which tracks it correctly. That would mean going back to
+capture-pane-based history, but captured off the Update goroutine and
+cached, so it avoids the problems this design replaced. Deferred until a
+second app needs it.

@@ -215,6 +215,11 @@ type home struct {
 	state state
 	// promptAfterName tracks if we should enter prompt mode after naming
 	promptAfterName bool
+	// baseBranchName is the ref new sessions are cut from, resolved in the
+	// background when the prompt flow starts (see git.ResolveBaseCommit) and
+	// used only to label the branch picker's "New branch" row. Empty until
+	// resolved, or when resolution failed — the picker then makes no claim.
+	baseBranchName string
 
 	// pendingLaunchOptions holds the compose-and-start closure for a
 	// not-yet-started instance while stateLaunchOptions is active.
@@ -388,6 +393,26 @@ type home struct {
 	// re-detect chains. Update-goroutine only.
 	redetectPending map[string]bool
 
+	// lastRosterQuery / rosterInFlight throttle the roster poll (see
+	// maybeRosterQuery). The health tick they ride fires every 500ms on the
+	// snapshot path, far too often for a ~380ms subprocess, and without an
+	// in-flight guard a hung CLI would stack concurrent processes.
+	// Update-goroutine only.
+	lastRosterQuery time.Time
+	rosterInFlight  bool
+
+	// lastSubagentScan / subagentInFlight throttle the hook-event scan
+	// (see maybeSubagentScan), in the same way as the roster fields.
+	lastSubagentScan time.Time
+	subagentInFlight bool
+
+	// roster is Claude's own view of its live sessions, keyed by working
+	// directory, refreshed once per health tick (see rosterQueryCmd). It is
+	// authoritative where the pane scraper is inferential, so status events
+	// consult it first and fall back when it has no entry for a session.
+	// Update-goroutine only.
+	roster map[string]session.RosterEntry
+
 	// pendingRatioSaves buffers title→ratio pairs recorded by resizeSplit
 	// until the throttled ratioSaveMsg flushes them into one mutateUIPrefs
 	// write — key-repeat resize would otherwise fsync state.json per
@@ -433,6 +458,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	// classic-path launch (single-tab `loom --workspace`, or bare `loom`)
 	// would never init the flag and the feature would be inert.
 	session.SetLoomContextEnabled(appConfig.LoomContextEnabled())
+	session.SetSubagentTrackingEnabled(appConfig.SubagentTrackingEnabled())
 	if err := session.WriteLoomContextFiles(cfgDir); err != nil {
 		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
 	}
@@ -1162,6 +1188,25 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, statusDetectCmd(inst)
+	case subagentScanMsg:
+		m.handleSubagentScan(msg)
+		return m, nil
+	case rosterReadyMsg:
+		// Disarm before anything else: a result that does not clear this
+		// latches the roster off for the rest of the session.
+		m.rosterInFlight = false
+		if msg.err != nil {
+			// Debug, not warn: a missing daemon or an older CLI without
+			// `agents --json` is a supported configuration, not a fault —
+			// detection simply falls back to pane content. Dropping the
+			// previous roster is deliberate; a stale snapshot would keep
+			// driving transitions long after it stopped being true.
+			log.DebugKV("app.roster.query_failed", "err", msg.err.Error())
+			m.roster = nil
+			return m, nil
+		}
+		m.roster = msg.entries
+		return m, nil
 	case statusDetectedMsg:
 		if !statusEligible(msg.instance) {
 			return m, nil
@@ -1170,19 +1215,28 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			log.WarnKV("app.event.capture_failed", "instance", msg.instance.Title, "err", msg.err.Error())
 			return m, nil
 		}
-		// Same transition ladder as the old metadata tick: still-changing →
-		// Running; settled with a prompt → Prompting; settled → Ready.
-		target := session.Ready
-		if msg.updated {
-			target = session.Running
-		} else if msg.hasPrompt {
-			target = session.Prompting
+		// Claude publishes its own status, so prefer it over the pane
+		// ladder below, which can only infer one from screen text. An
+		// authoritative answer also retires the re-detection chain: the
+		// ladder re-samples because one content hash cannot distinguish
+		// "still working" from "just finished", but the roster says which
+		// it is, and the next health tick refreshes it.
+		target, authoritative := m.adoptRosterStatus(msg.instance)
+		if !authoritative {
+			// Same transition ladder as the old metadata tick: still-changing →
+			// Running; settled with a prompt → Prompting; settled → Ready.
+			target = session.Ready
+			if msg.updated {
+				target = session.Running
+			} else if msg.hasPrompt {
+				target = session.Prompting
+			}
 		}
 		if err := msg.instance.TransitionTo(target); err != nil {
 			log.For("app").Warn("event.transition_failed", "instance", msg.instance.Title, "to", target.String(), "err", err.Error())
 		}
 		m.updateTabBarStatuses()
-		if msg.updated {
+		if !authoritative && msg.updated {
 			// One sample of changed content cannot distinguish "still
 			// working" from "finished a burst and idled" — under the
 			// emulator this was the only sample per burst, so Running
@@ -1301,6 +1355,24 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a background Cmd and returns the results via metadataReadyMsg.
 		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty()))
 
+		// One `claude agents --json` for the whole fleet (~380ms, off the
+		// Update goroutine), on its OWN cadence rather than the tick's —
+		// this tick runs at 500ms on the snapshot path, which would keep a
+		// claude process alive most of the time. Claude reports its own
+		// busy/idle/waiting state, which beats inferring it from pane text
+		// (see rosterStatusFor). nil when not due, already in flight, or no
+		// Claude agent is running.
+		if roster := m.maybeRosterQuery(active); roster != nil {
+			cmds = append(cmds, roster)
+		}
+
+		// Subagent hook events, throttled like the roster (see
+		// maybeSubagentScan). nil when not due, in flight, or no Claude
+		// agent is live.
+		if scan := m.maybeSubagentScan(active); scan != nil {
+			cmds = append(cmds, scan)
+		}
+
 		// Workbench follow scan rides the health tick: cheap stat-walk
 		// of the selected worktree, guarded stale on delivery.
 		if m.viewMode == viewWorkbench {
@@ -1315,10 +1387,25 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive) {
 				continue
 			}
-			// Event-mode instances get their status ladder from quiet
-			// events (statusDetectedMsg); running it here too would fight
-			// that pipeline with stale zero-valued results.
-			if !r.emulatorDriven {
+			// The roster applies on BOTH paths. The exclusion below is
+			// specifically about r.updated/r.hasPrompt, which are zero for
+			// emulator instances (no capture ran) and would fight the event
+			// pipeline; the roster is a real freshly-queried value, so it is
+			// safe here — and it is the only thing that corrects a session
+			// that changes state while emitting no output at all (a long
+			// silent tool call fires no quiet event to sample). It may be up
+			// to one tick stale: rosterQueryCmd is dispatched in the same
+			// batch as gatherMetadataCmd, so this reads the previous tick's
+			// answer. TransitionTo still validates, so an illegal transition
+			// is rejected rather than forced.
+			if target, authoritative := m.adoptRosterStatus(r.instance); authoritative {
+				if err := r.instance.TransitionTo(target); err != nil {
+					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", target.String(), "err", err.Error())
+				}
+			} else if !r.emulatorDriven {
+				// Event-mode instances get their status ladder from quiet
+				// events (statusDetectedMsg); running it here too would fight
+				// that pipeline with stale zero-valued results.
 				if r.updated {
 					if err := r.instance.TransitionTo(session.Running); err != nil {
 						log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Running", "err", err.Error())
@@ -1653,6 +1740,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ti.SetBranchResults(msg.branches, msg.version)
 		}
 		return m, nil
+	case baseBranchResolvedMsg:
+		m.baseBranchName = msg.name
+		// The overlay may already be open (resolution is racing the user
+		// typing a title), so push the label through as well as caching it
+		// for the next newPromptOverlay.
+		if ti := m.textInput(); ti != nil {
+			ti.SetBaseBranchName(msg.name)
+		}
+		return m, nil
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 	case tea.WindowSizeMsg:
@@ -1968,11 +2064,21 @@ func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *
 			summary.review++
 		}
 	}
+	claimed := make(map[string]bool)
+	for _, inst := range list.GetInstances() {
+		claimed[inst.Title] = true
+	}
 	// Records that failed reconcile at load time live only in the storage
 	// cache — surface their count so they don't read as lost sessions.
 	if storage != nil {
 		summary.failed = len(storage.UnrecoveredTitles())
+		// Unrecovered records may come back on the next load; keep their
+		// hooks folders.
+		for _, title := range storage.UnrecoveredTitles() {
+			claimed[title] = true
+		}
 	}
+	session.SweepSubagentHooks(cfgDir, claimed, cmdExec)
 	return summary
 }
 
@@ -2333,6 +2439,13 @@ type branchSearchDebounceMsg struct {
 	version uint64
 }
 
+// baseBranchResolvedMsg carries the resolved base branch name back to
+// Update. Resolution runs off the main goroutine because it shells out to
+// git; the name is display-only, so a failure just leaves it empty.
+type baseBranchResolvedMsg struct {
+	name string
+}
+
 // branchSearchResultMsg carries search results back to Update.
 type branchSearchResultMsg struct {
 	branches []string
@@ -2523,7 +2636,27 @@ func (m *home) handleError(err error) tea.Cmd {
 }
 
 func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
-	return overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig.GetProfiles())
+	ti := overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig.GetProfiles())
+	ti.SetBaseBranchName(m.baseBranchName)
+	return ti
+}
+
+// resolveBaseBranchCmd looks up the ref new sessions will be cut from, for
+// the branch picker's label. The configured value is read here, on the main
+// goroutine, rather than inside the returned Cmd — appConfig is mutable at
+// runtime and Cmd bodies run concurrently with Update.
+func (m *home) resolveBaseBranchCmd() tea.Cmd {
+	repoDir := m.repoPath()
+	configured := m.appConfig.GetBaseBranch()
+	return func() tea.Msg {
+		_, name, err := git.ResolveBaseCommit(repoDir, configured, nil)
+		if err != nil {
+			// Display-only: session creation surfaces the real error later.
+			log.For("app").Debug("base_branch_resolve_failed", "err", err.Error())
+			return nil
+		}
+		return baseBranchResolvedMsg{name: name}
+	}
 }
 
 // cancelPromptOverlay cancels the prompt overlay, cleaning up unstarted instances.
@@ -2608,6 +2741,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	// sync the global enabled flag on every workspace load, before any
 	// Claude session (workspace terminal, crash-restart, resume) launches.
 	session.SetLoomContextEnabled(appConfig.LoomContextEnabled())
+	session.SetSubagentTrackingEnabled(appConfig.SubagentTrackingEnabled())
 	if err := session.WriteLoomContextFiles(wsCtx.ConfigDir); err != nil {
 		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
 	}

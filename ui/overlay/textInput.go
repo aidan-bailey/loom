@@ -298,6 +298,15 @@ func (t *TextInputOverlay) SetBranchResults(branches []string, version uint64) {
 	t.branchPicker.SetResults(branches, version)
 }
 
+// SetBaseBranchName forwards the resolved base branch name to the branch
+// picker for display. No-op when the overlay has no picker.
+func (t *TextInputOverlay) SetBaseBranchName(name string) {
+	if t.branchPicker == nil {
+		return
+	}
+	t.branchPicker.SetBaseBranchName(name)
+}
+
 // IsSubmitted returns whether the form was submitted.
 func (t *TextInputOverlay) IsSubmitted() bool {
 	return t.Submitted

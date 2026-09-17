@@ -58,6 +58,10 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 							selected.Program = applyLaunchOptions(opts, m.rcAuth, selected.Program, selected.Title)
 							selected.HeadroomProxy = opts.HeadroomProxy
 							selected.CacheTTL1h = opts.CacheTTL1h
+							// Always recorded, edited or not, so branch composition has
+							// a single source of truth instead of falling back to a
+							// re-read of config.json inside the git package.
+							selected.SetBranchPrefix(opts.BranchPrefix)
 							_ = selected.TransitionTo(session.Loading)
 							m.state = stateDefault
 							m.menu.SetState(ui.StateDefault)

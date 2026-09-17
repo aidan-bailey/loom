@@ -97,14 +97,15 @@ func TestClaudePreferencesRowNavigationClamps(t *testing.T) {
 	assert.True(t, changed)
 	assert.False(t, cfg.RemoteControlEnabled())
 
-	// Down eight times stays at row 7 (only eight rows): toggles Loom
-	// Context, not any earlier row.
-	for i := 0; i < 8; i++ {
+	// Down nine times stays at row 8 (only nine rows): toggles Track
+	// Subagents, not any earlier row.
+	for i := 0; i < 9; i++ {
 		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	}
 	_, changed = cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, changed)
-	assert.False(t, cfg.LoomContextEnabled())
+	assert.False(t, cfg.SubagentTrackingEnabled())
+	assert.True(t, cfg.LoomContextEnabled(), "row 7 must be untouched")
 }
 
 func TestClaudePreferencesRendersPermissionMode(t *testing.T) {
@@ -201,7 +202,7 @@ func TestClaudePreferences_Context1MRow(t *testing.T) {
 	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
 
 	t.Run("row count", func(t *testing.T) {
-		assert.Equal(t, 8, claudePrefsRowCount)
+		assert.Equal(t, 9, claudePrefsRowCount)
 	})
 
 	t.Run("enter on row 3 toggles Claude1MContext", func(t *testing.T) {
@@ -246,4 +247,22 @@ func TestClaudePreferences_Context1MRow(t *testing.T) {
 		cp := NewClaudePreferences(&config.Config{}, false, "")
 		assert.Contains(t, cp.Render(), "1M Context")
 	})
+}
+
+func TestClaudePreferences_SubagentTrackingToggle(t *testing.T) {
+	cfg := &config.Config{}
+	cp := NewClaudePreferences(cfg, false, "")
+	assert.Contains(t, cp.Render(), "Track Subagents")
+
+	// Row 8 is Track Subagents.
+	for i := 0; i < 8; i++ {
+		cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
+	_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.True(t, changed)
+	assert.False(t, cfg.SubagentTrackingEnabled())
+
+	_, changed = cp.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
+	assert.True(t, changed)
+	assert.True(t, cfg.SubagentTrackingEnabled())
 }

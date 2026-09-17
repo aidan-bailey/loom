@@ -20,6 +20,9 @@ import (
 func TestMain(m *testing.M) {
 	_ = log.Initialize("", false)
 	defer log.Close()
+	// Argv-exact mock assertions assume the default server; a shell that
+	// exported LOOM_TMUX_SOCKET (e.g. via `loomdev env`) would prepend -L.
+	os.Unsetenv(EnvTmuxSocket)
 	os.Exit(m.Run())
 }
 
@@ -55,6 +58,31 @@ func TestSanitizeName(t *testing.T) {
 
 	session = NewTmuxSession("a sd f . . asdf", "program")
 	require.Equal(t, TmuxPrefix+"asdf__asdf", session.sanitizedName)
+}
+
+// TestWithProgram verifies the replacement session keeps the identity,
+// dependencies, env and geometry of the original and swaps only the
+// program and the adapter resolved from it.
+func TestWithProgram(t *testing.T) {
+	ptyFactory := NewMockPtyFactory(t)
+	cmdExec := cmd_test.MockCmdExec{}
+	old := NewTmuxSessionWithDeps("with program", "aider", ptyFactory, cmdExec, "A=1")
+	// No PTY yet, so the resize itself errors; the geometry is recorded.
+	_ = old.SetDetachedSize(120, 40)
+
+	got := old.WithProgram("claude --settings '/h/settings.json'")
+
+	require.NotSame(t, old, got)
+	require.Equal(t, old.sanitizedName, got.sanitizedName)
+	require.Equal(t, "claude --settings '/h/settings.json'", got.program)
+	require.Equal(t, "claude", got.adapter.Name())
+	require.Equal(t, "aider", old.adapter.Name(), "the original is untouched")
+	require.Equal(t, []string{"A=1"}, got.env)
+	require.Same(t, ptyFactory, got.ptyFactory.(*MockPtyFactory))
+	require.Equal(t, cmdExec, got.cmdExec)
+	require.NotNil(t, got.monitor)
+	require.Equal(t, 120, got.lastCols)
+	require.Equal(t, 40, got.lastRows)
 }
 
 // TestFullScreenAttachCmd verifies that the returned exec.Cmd is shaped so

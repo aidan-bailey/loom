@@ -64,6 +64,7 @@ func launchOptionsFromConfig(cfg *config.Config) overlay.LaunchOptions {
 		HeadroomProxy:  cfg.HeadroomProxyEnabled(),
 		Effort:         cfg.Effort(),
 		CacheTTL1h:     cfg.CacheTTL1hEnabled(),
+		BranchPrefix:   cfg.GetBranchPrefix(),
 	}
 }
 

@@ -93,7 +93,7 @@ Loom has three view modes:
 
 ### Left Panel — Session Rail
 
-Each session renders as a live mini-card: its title, a status line with wait age (e.g. `❯ awaiting input · 4m`, `✻ working`, `✓ idle`, `paused · 3d`, `⟲ recoverable`), and a tail of recent agent output. The colored accent bar on the card's left edge encodes state at a glance:
+Each session renders as a live mini-card: its title, a status line with wait age (e.g. `❯ awaiting input · 4m`, `✻ working`, `✓ idle`, `paused · 3d`, `⟲ recoverable`), and a tail of recent agent output. When Claude says why it is waiting, the reason replaces the generic phrase (`❯ sandbox request · 4m`). When a Claude session has live subagents or teammates, the status line replaces the tail and ends with a count, e.g. `✻ working · 3 agents (1 idle)`. The colored accent bar on the card's left edge encodes state at a glance:
 
 | Accent | Meaning |
 |--------|---------|
@@ -106,7 +106,7 @@ Branch name and diff stats moved off the rail — they now live in the agent pan
 
 ### Overview Mode
 
-Press `tab` to switch to overview: a card grid of every session in your open workspaces, one group per workspace (focused workspace first, the rest alphabetical), each group sorted so sessions needing attention come first. Each card shows the title, status with wait age, branch and diff stats, and a live output tail. Only workspaces open in the tab bar appear — use `W` to open more.
+Press `tab` to switch to overview: a card grid of every session in your open workspaces, one group per workspace (focused workspace first, the rest alphabetical), each group sorted so sessions needing attention come first. Each card shows the title, status with wait age, branch and diff stats, and a live output tail. While a Claude session has live subagents, the tail shows them instead: `✻` for working, `◦` for idle, with a `+N more` line when more than two are running. Only workspaces open in the tab bar appear — use `W` to open more.
 
 - `j`/`k` (or `↑`/`↓`) walk the sorted grid across all groups; `enter` returns to focus mode on the selected session (switching workspace tabs if it lives in another group); `esc` returns to focus mode where you left it.
 - `z` collapses/expands the active workspace's group.
@@ -245,8 +245,8 @@ A session moves through these states:
 
 **Ready → Loading → Running** (on creation):
 1. Git worktree created at `~/.loom/worktrees/{name}_{timestamp}`
-2. New branch created: `{branch_prefix}{session_title}` (default prefix: `username/`)
-3. Base commit SHA recorded (used as the baseline for diffs)
+2. New branch created: `{branch_prefix}{session_title}` (default prefix: `username/`). The prefix can be changed for this one session in the Session Launch Options modal.
+3. Base branch resolved (`base_branch`, or auto-detected) and its commit SHA recorded — this is both where the worktree starts and the baseline for diffs
 4. Tmux session launched running the configured program
 5. Agent begins working in the isolated worktree
 
@@ -317,7 +317,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `d` | Toggle diff overlay |
 | `c` | Open the workbench code review for the selected session |
 | `W` | Open workspace picker |
-| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Theme, Profiles, Claude Preferences) |
+| `S` | Open settings (edit config.json: Default Program, Branch Prefix, Base Branch, Theme, Profiles, Claude Preferences) |
 | `{` / `l` | Previous workspace tab |
 | `}` / `;` | Next workspace tab |
 | `?` | Show help screen |
@@ -602,6 +602,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 |-------|------|---------|-------------|
 | `default_program` | string | `"claude"` | Program to run in new sessions. Can be a profile name. |
 | `branch_prefix` | string | `"{username}/"` | Prefix for auto-generated branch names |
+| `base_branch` | string | `""` | Branch new sessions are cut from. Empty auto-detects. |
 | `theme` | string | `"afterglow"` | UI color theme (`"afterglow"` or `"legacy"`) |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
@@ -612,6 +613,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 {
   "default_program": "claude",
   "branch_prefix": "aidanb/",
+  "base_branch": "main",
   "profiles": [
     {
       "name": "aider-gpt4",
@@ -657,17 +659,60 @@ When `claude_remote_control` is enabled (the default), every Claude session Loom
 - **Incompatible auth detected** → when you create a session (`n`/`N`), Loom shows a modal explaining the problem (e.g. "not logged in — run `claude auth login`") and lets you **start the session without remote control** (`y`) or **cancel** (`n`/`esc`). Auto-created workspace terminals skip the flag silently and show a brief info-bar notice.
 - **Auth can't be determined** (older `claude` without `auth status`, or unexpected output) → Loom fails closed: it skips `--remote-control` silently rather than launching a session that would fail.
 
+### Subagent Tracking
+
+Loom shows the subagents and agent-team teammates a Claude session has spawned: a count on its rail card and rows on its overview card. It works by launching Claude with an extra `--settings` file that registers hooks for subagent events; your own hooks keep running alongside them.
+
+- Toggle it with **Track Subagents** under `S` → Claude Preferences. It is on by default, and a change applies the next time a session launches or resumes.
+- Turning it off doesn't clear the rows of sessions already launched with hooks: they keep being tracked until their next launch or resume.
+- Only live agents are shown. A finished subagent disappears; a teammate stays listed as idle until it is shut down.
+- Sessions launched before you enabled it aren't tracked until they are resumed. Sessions whose program already passes `--settings`, and sessions on Windows, are never tracked.
+- Restarting loom keeps the rows: loom replays the events it already collected for sessions that are still running.
+- Event files live in the `hooks/` folder inside the workspace's loom config folder: `<repo>/.loom/hooks/` for a registered workspace, otherwise `~/.loom/hooks/`. They are cleared at each launch and removed when you kill the session.
+
+### Claude Fullscreen Renderer
+
+Every Claude session Loom starts runs Claude's fullscreen renderer (Loom sets `CLAUDE_CODE_NO_FLICKER=1` in the session's environment), regardless of your `/tui` setting. Scrolling the agent pane then scrolls Claude's own transcript. Claude's classic inline renderer can't be scrolled inside Loom: it draws every frame as a synchronized update, which tmux relays to Loom as a full repaint, so no scroll-back ever builds up. Mouse-wheeling over it shows the "scrolled" footer but the content doesn't move.
+
+- Sessions started before this change keep their renderer until Loom restarts their tmux session; run `/tui fullscreen` inside one to switch it now.
+- To use the classic renderer for a single session anyway, run `/tui default` in it.
+- To opt out globally, run `tmux set-environment -g CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN 1`; Claude checks it before `CLAUDE_CODE_NO_FLICKER`. It applies to sessions created afterwards, and agent-pane scrolling won't work in them. Exporting the variable in the shell you start Loom from isn't enough when the tmux server is already running: tmux only copies its `update-environment` variables into new sessions.
+
 ### Branch Prefix
 
 `branch_prefix` is prepended to every auto-generated branch name. The value shown as the default — `{username}/` — is a placeholder for the rendered text: when Loom creates its config, it resolves your OS username and writes the literal value (e.g. `aidanb/`) into `config.json`. There is no runtime token expansion, so editing `branch_prefix` to anything you like (e.g. `"loom/"`, `"wip-"`) works as expected.
 
 The resulting branch for a session titled `fix-auth` with the default prefix would be `aidanb/fix-auth`.
 
+`branch_prefix` sets the default. To use a different prefix for a single session, edit the **Branch Prefix** row in the Session Launch Options modal that appears just before the session starts — press `space` on the row to edit it, `enter` to commit. Clearing it entirely is allowed and produces a bare `fix-auth`. The override applies only to that session and is not written to `config.json`; on `R` (restart with options) the row shows the session's existing branch read-only, since a branch cannot be renamed after the fact.
+
+### Base Branch
+
+`base_branch` names the branch new session worktrees are cut from — and therefore the baseline their diffs are measured against.
+
+Leave it empty (the default) to auto-detect, in this order:
+
+1. `refs/remotes/origin/HEAD` — what the remote declares its default branch to be
+2. `main`
+3. `master`
+4. Whatever the root repo currently has checked out
+
+Set it explicitly (e.g. `"develop"`) to pin one branch. A configured branch is looked up locally first, then as `origin/<branch>`; if it resolves to neither, session creation fails rather than silently starting somewhere else.
+
+Resolution reads local refs only — Loom never fetches for this, so it stays fast and works offline. If your local copy of the base branch is behind the remote, new sessions start from that older commit; `git fetch` (or the `N` flow, which fetches for the branch picker) brings it current.
+
+Because `config.json` lives in each workspace's own `.loom/` directory, `base_branch` is naturally per-repository — a `main` repo and a `master` repo can each hold the right value.
+
+This setting only affects sessions created on a **new** branch. Picking an existing branch in the `N` flow's branch picker starts from that branch instead, and resuming a paused session always returns to its own branch with its original diff baseline intact.
+
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `LOOM_HOME` | Override the config directory (default: `~/.loom`). Must be an absolute path; supports `~` expansion. |
+| `LOOM_TMUX_SOCKET` | Run all of loom's tmux commands against a private server (`tmux -L <name>`). |
+| `LOOM_GLOBAL_DIR` | Override the directory holding `workspaces.json` (default: `~/.loom`). Absolute path; supports `~`. |
+| `LOOM_ALLOW_NESTED` | Set to `1` to start loom inside one of its own tmux sessions anyway (normally refused, because startup cleanup would kill the enclosing loom's sessions). |
 
 ---
 

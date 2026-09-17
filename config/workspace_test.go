@@ -522,3 +522,36 @@ func splitLines(s string) []string {
 	}
 	return lines
 }
+
+func TestGetGlobalConfigDir_EnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvGlobalDir, dir)
+	got, err := GetGlobalConfigDir()
+	require.NoError(t, err)
+	assert.Equal(t, dir, got)
+}
+
+func TestGetGlobalConfigDir_EnvTildeExpands(t *testing.T) {
+	home := withTempHome(t)
+	t.Setenv(EnvGlobalDir, "~/sandbox-global")
+	got, err := GetGlobalConfigDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, "sandbox-global"), got)
+}
+
+func TestGetGlobalConfigDir_EnvRelativeRejected(t *testing.T) {
+	t.Setenv(EnvGlobalDir, "relative/dir")
+	_, err := GetGlobalConfigDir()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), EnvGlobalDir)
+}
+
+func TestWorkspaceRegistry_FollowsGlobalDirOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvGlobalDir, dir)
+	require.NoError(t, SaveWorkspaceRegistry(&WorkspaceRegistry{LastUsed: "sandbox"}))
+	assert.FileExists(t, filepath.Join(dir, "workspaces.json"))
+	reg, err := LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Equal(t, "sandbox", reg.LastUsed)
+}
