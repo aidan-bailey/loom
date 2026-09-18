@@ -8,7 +8,8 @@ Status: approved design, awaiting implementation plan
 Start sessions from GitHub issues, remember which issue a session is
 working on, and show live GitHub state (issue open/closed, PR state,
 CI checks) on rail mini-cards and overview cards. PR/CI state applies
-to every session whose branch has a PR, linked or not.
+to every session whose branch has a PR, linked or not. Every session
+also shows how far its branch is ahead of and behind the base branch.
 
 Everything fails closed: without `gh`, without auth, or offline, loom
 renders exactly as it does today.
@@ -211,6 +212,38 @@ callback using existing roles only (Text, Dim, OK, ErrorColor).
 **Attention.** GitHub state never sets `NeedsAttention` and never
 affects `]`/`[`.
 
+## 5. Parity with the base branch
+
+**Computation.** `GitWorktree.AheadBehind(base string) (ahead, behind
+int, err error)` in `session/git` runs
+`git rev-list --left-right --count <branch>...<base>` in the worktree.
+`base` is the ref `ResolveBaseCommit` already selects for new
+worktrees: configured `BaseBranch`, else `origin/HEAD`, `main`,
+`master`. It runs on the 3s health tick next to diff stats (one local
+subprocess, no network). Workspace terminals, paused and recoverable
+instances are skipped. The result lives on `Instance` as transient
+fields (`ahead`, `behind`, `hasParity`), never serialized.
+
+**Fetch.** The 60s poller Cmd (section 2) runs
+`git fetch origin <base-branch> --quiet` once per open repo before the
+`gh` queries, under `gitNetworkTimeout`. Fetch failure is logged at
+debug and ignored; parity then reflects the last successful fetch. The
+fetch runs even when `gh` is unavailable, so parity works on repos with
+no GitHub remote access. When the resolved base is a local-only ref
+(no `origin/`), no fetch is issued.
+
+**Rendering.** `CardData` gains `Ahead`, `Behind`, `HasParity`.
+Overview cards show `↑N ↓M` on the branch line before the PR badge:
+`↑` in OK, `↓` in Dim; `↑0 ↓0` renders `✓ even` in Dim. Rail cards
+append `↓M` to the status-line token only when `M > 0`. Neither
+surface sets `NeedsAttention`.
+
+**Testing.** `session/git`: mocked runner for count parsing and the
+base fallback chain, and no fetch for local-only bases. `app`: a fetch
+failure does not drop the repo's `gh` snapshot; the fetch still runs
+when `Available=false`. `ui`: width tests extended with the parity
+token; card heights unchanged.
+
 ## Error handling summary
 
 | Condition | Behaviour |
@@ -220,6 +253,8 @@ affects `]`/`[`.
 | `View` fails in picker | Footer error, no instance created |
 | `View` fails for `#123` | Footer error, launch with literal prompt, no link |
 | Unknown check/PR strings | Folded to Pending / Open, never a crash |
+| `git fetch` fails | Debug log; parity keeps last fetched state; `gh` snapshot unaffected |
+| `rev-list` fails (base missing) | `HasParity=false`; no token rendered |
 
 ## Testing
 
@@ -239,7 +274,7 @@ affects `]`/`[`.
 ## Files touched
 
 - new `session/github/{github.go,query.go,issue.go,*_test.go}`
-- `session/git/util.go` (delegate `checkGHCLI`)
+- `session/git/util.go` (delegate `checkGHCLI`), `session/git/worktree_git.go` (`AheadBehind`, fetch helper)
 - `session/instance.go`, `session/storage.go`, `session/storage_migrate.go`
 - `cmd/workspace_migrate.go` + shape test fixture
 - `app/app.go`, `app/events.go`, new `app/state_issue_picker.go`,
@@ -248,4 +283,4 @@ affects `]`/`[`.
 - `script/defaults.lua`
 - new `ui/overlay/issue_picker.go`
 - `ui/card.go`, `ui/overview.go`, `ui/theme.go` (hook only)
-- `CLAUDE.md` keybinding table and a gotcha entry for the poller
+- `CLAUDE.md` keybinding table and a gotcha entry for the poller and fetch
