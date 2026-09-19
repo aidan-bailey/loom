@@ -127,7 +127,7 @@ func TestMergeActionFor_MergesBranchIntoTarget(t *testing.T) {
 
 	cmd := mergeActionFor(target, source)
 	msg := cmd()
-	assert.Nil(t, msg, "successful merge returns nil, matching pushActionFor's convention")
+	assert.Nil(t, msg, "successful merge returns nil")
 
 	targetWT, err := target.GetGitWorktree()
 	require.NoError(t, err)

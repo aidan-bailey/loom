@@ -225,6 +225,12 @@ func (m *home) handleGHReady(msg ghReadyMsg) {
 	m.applyGitHubState()
 }
 
+// baseFor returns the resolved base ref for repo, or "" before the
+// first poll resolved it (parity then stays unknown).
+func (m *home) baseFor(repo string) string {
+	return m.ghBases[repo]
+}
+
 // applyGitHubState joins ghState onto every instance. Cheap and pure,
 // so it also runs when a link is set outside a poll (issue pick).
 func (m *home) applyGitHubState() {

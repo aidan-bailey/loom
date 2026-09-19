@@ -229,3 +229,10 @@ func TestGHPollCmdResolvesPerRepoBaseAndBucketsErrors(t *testing.T) {
 	assert.False(t, bOK, "/b's failed query must not leave a snapshot")
 	require.Error(t, msg.errs["/b"])
 }
+
+func TestBaseFor_ReadsGHBases(t *testing.T) {
+	m := homeWithAppState(t)
+	m.ghBases = map[string]string{"/r": "origin/main"}
+	assert.Equal(t, "origin/main", m.baseFor("/r"))
+	assert.Equal(t, "", m.baseFor("/other"))
+}

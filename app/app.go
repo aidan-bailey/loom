@@ -1375,7 +1375,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Fan out I/O off the update goroutine. A stalled tmux or git process
 		// must not block the UI loop — gatherMetadataCmd runs wg.Wait() inside
 		// a background Cmd and returns the results via metadataReadyMsg.
-		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty()))
+		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty(), m.ghBases))
 
 		// One `claude agents --json` for the whole fleet (~380ms, off the
 		// Update goroutine), on its OWN cadence rather than the tick's —
@@ -2538,7 +2538,7 @@ var tickUpdateMetadataCmd = func() tea.Msg {
 // an idle instance with no pane output does not trigger a git subprocess on
 // every tick. For N active instances with a single active agent, the git
 // fan-out drops from ~N subprocesses per tick to ~1.
-func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, dirty map[string]bool) tea.Cmd {
+func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, dirty map[string]bool, bases map[string]string) tea.Cmd {
 	return func() tea.Msg {
 		results := make([]metadataResult, len(active))
 		var wg sync.WaitGroup
@@ -2561,6 +2561,13 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 				if !r.emulatorDriven {
 					r.updated, r.hasPrompt, r.captureErr = instance.CaptureAndProcessStatus()
 				}
+
+				// Parity must not sit behind ShouldRefreshDiff: that gate
+				// is about session output, but the base branch moves
+				// without any session activity at all — "you are now N
+				// behind main" is exactly the case where tmuxUpdated is
+				// false. One local rev-list, no network.
+				instance.UpdateParity(bases[instance.Path])
 
 				wantFull := instance == selected
 				tmuxUpdated := r.updated || dirty[instance.TmuxSessionName()]

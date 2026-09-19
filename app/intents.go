@@ -289,7 +289,7 @@ func pushActionFor(selected *session.Instance) tea.Cmd {
 		if err = worktree.PushChanges(commitMsg, true); err != nil {
 			return err
 		}
-		return nil
+		return ghRefreshMsg{}
 	}
 }
 
