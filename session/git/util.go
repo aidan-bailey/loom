@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/aidan-bailey/loom/session/github"
 )
 
 // sanitizeBranchName transforms an arbitrary string into a Git branch name friendly string.
@@ -44,20 +46,7 @@ func sanitizeBranchName(s string) string {
 
 // checkGHCLI checks if GitHub CLI is installed and configured.
 func (g *GitWorktree) checkGHCLI() error {
-	// Check if gh is installed
-	if _, err := exec.LookPath("gh"); err != nil {
-		return fmt.Errorf("GitHub CLI (gh) is not installed. Please install it first")
-	}
-
-	// Check if gh is authenticated
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
-	defer cancel()
-	c := exec.CommandContext(ctx, "gh", "auth", "status")
-	if err := g.runner.Run(c); err != nil {
-		return fmt.Errorf("GitHub CLI is not configured. Please run 'gh auth login' first")
-	}
-
-	return nil
+	return github.CheckCLI(g.runner)
 }
 
 // IsGitRepo checks if the given path is within a git repository.
