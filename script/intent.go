@@ -113,6 +113,10 @@ type ToggleFileExplorerIntent struct{}
 // opened — this intent's only job is getting the picker on screen.
 type MergeSessionsIntent struct{}
 
+// NewFromIssueIntent asks the app to open the GitHub issue picker; the
+// chosen issue seeds a new session's title and prompt.
+type NewFromIssueIntent struct{}
+
 func (QuitIntent) intent()               {}
 func (PushSelectedIntent) intent()       {}
 func (KillSelectedIntent) intent()       {}
@@ -129,3 +133,4 @@ func (FullscreenAttachIntent) intent()   {}
 func (QuickInputIntent) intent()         {}
 func (ToggleFileExplorerIntent) intent() {}
 func (MergeSessionsIntent) intent()      {}
+func (NewFromIssueIntent) intent()       {}

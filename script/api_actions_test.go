@@ -292,6 +292,18 @@ func TestCsActionsMergeSelectedEnqueues(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestActionsNewFromIssueEnqueuesIntent(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`cs.bind("I", function() cs.actions.new_from_issue() end)`))
+	e.EndLoad()
+
+	h := dispatchExpectYield(t, e, "I")
+	_, ok := h.enqueued[0].(NewFromIssueIntent)
+	assert.True(t, ok)
+}
+
 func TestCsActionsSyncPrimitivesCallHost(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()

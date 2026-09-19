@@ -27,6 +27,7 @@ const (
 	KeySubmitName
 	KeyStash
 	KeyMerge
+	KeyNewFromIssue
 	KeyResume
 	KeyRestartWithOptions
 	KeyPrompt
@@ -125,6 +126,10 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyMerge: key.NewBinding(
 		key.WithKeys("m"),
 		key.WithHelp("m", "merge session"),
+	),
+	KeyNewFromIssue: key.NewBinding(
+		key.WithKeys("I"),
+		key.WithHelp("I", "new from issue"),
 	),
 	KeyResume: key.NewBinding(
 		key.WithKeys("r"),

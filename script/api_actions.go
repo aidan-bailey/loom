@@ -313,6 +313,10 @@ func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 	actions.RawSetString("merge_selected", L.NewFunction(func(L *lua.LState) int {
 		return enqueue(L, MergeSessionsIntent{})
 	}))
+
+	actions.RawSetString("new_from_issue", L.NewFunction(func(L *lua.LState) int {
+		return enqueue(L, NewFromIssueIntent{})
+	}))
 }
 
 // optBool reads a boolean field from the single table argument at

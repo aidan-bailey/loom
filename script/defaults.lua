@@ -14,6 +14,7 @@ cs.bind("d",    function() cs.actions.toggle_diff() end, { help = "diff" })
 -- Lifecycle
 cs.bind("n", function() cs.actions.new_instance{} end,              { help = "new" })
 cs.bind("N", function() cs.actions.new_instance{prompt=true} end,   { help = "new with prompt" })
+cs.bind("I", function() cs.actions.new_from_issue() end,            { help = "new from issue" })
 cs.bind("D", function() cs.actions.kill_selected{} end,             { help = "kill" })
 cs.bind("p", function() cs.actions.push_selected{} end,             { help = "push branch" })
 cs.bind("s", function() cs.actions.stash_selected{} end,            { help = "stash" })
