@@ -11,6 +11,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/github"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 )
@@ -36,6 +37,17 @@ const (
 	// RailHeaderLines is the section-label header at the top of the rail.
 	RailHeaderLines = 2
 )
+
+// railStatusFloor is how many columns the rail's status phrase keeps
+// before the GitHub token may claim any. The status says what the user
+// must do (see the wait-reason note above); the token is context.
+//
+// Measured against the 20% rail ratio: for the common token (a linked
+// issue plus an open PR) this floor is the binding constraint, and 6
+// rather than 8 is what makes it appear on a ~95-column terminal
+// instead of ~105. For a fully loaded token the token's own length
+// dominates and no floor helps, which is why it is dropped whole.
+const railStatusFloor = 6
 
 // PeerSection summarizes a non-focused workspace slot for the rail
 // footer (live counts from that slot's list; selection stays scoped to
@@ -73,6 +85,13 @@ type CardData struct {
 	// first, with names and descriptions passed through sanitizeCardText.
 	// Empty for most cards; see session.Instance.Subagents.
 	Subagents []SubagentRow
+	// GitHub is the poller's join for this session (issue, PR, checks).
+	// Known=false renders nothing. See app/github.go.
+	GitHub github.State
+	// Ahead/Behind count commits relative to the base branch; HasParity
+	// is false until a count succeeded.
+	Ahead, Behind int
+	HasParity     bool
 }
 
 // NeedsAttention reports whether this card should carry the Attention
@@ -111,6 +130,14 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 	if stat := inst.GetDiffStats(); stat != nil && stat.Error == nil && !stat.IsEmpty() {
 		d.HasDiff, d.DiffAdded, d.DiffRemoved = true, stat.Added, stat.Removed
 	}
+	d.GitHub = inst.GitHubState()
+	d.GitHub.IssueTitle = sanitizeCardText(d.GitHub.IssueTitle)
+	// Before the first poll the join is empty, but the link itself is
+	// known from the instance — show "#12" immediately.
+	if !d.GitHub.Known && inst.IssueNumber() != 0 {
+		d.GitHub.IssueNumber = inst.IssueNumber()
+	}
+	d.Ahead, d.Behind, d.HasParity = inst.Parity()
 	if tailN > 0 {
 		if screen, ok := inst.EmulatorScreen(); ok {
 			d.TailLines = ContentTailLines(screen, tailN)
@@ -497,7 +524,29 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 	if solidBg {
 		secondStyle = secondStyle.Background(Panel)
 	}
-	secondLine := bar + sep + secondStyle.Render(truncate(second, inner))
+	tok := railGitHubToken(d)
+	// spreadLine zeroes its gap but does not shorten an over-wide right
+	// side, so the token must be clamped here or the composed line
+	// overflows the card. It is dropped whole rather than truncated: a
+	// partial "PR ✓" could be the head of "PR ✓✗" (approved, checks
+	// failing), which reverses the meaning rather than abbreviating it.
+	if tok != "" && lipgloss.Width(tok) > inner-railStatusFloor-1 {
+		tok = ""
+	}
+	body := second
+	if tok != "" {
+		body = truncate(second, inner-lipgloss.Width(tok)-1)
+		secondLine := bar + sep + spreadLine(secondStyle.Render(body), tok, inner)
+		if d.finished() && !d.NeedsAttention() {
+			titleLine = bar + sep + titleStyleC.Foreground(Dim).Render(title)
+		}
+		if solidBg {
+			pad := lipgloss.NewStyle().Background(Panel).Width(width)
+			return pad.Render(titleLine) + "\n" + pad.Render(secondLine)
+		}
+		return titleLine + "\n" + secondLine
+	}
+	secondLine := bar + sep + secondStyle.Render(truncate(body, inner))
 
 	if solidBg {
 		// Outer style only right-pads to full width (padding spaces

@@ -14,13 +14,15 @@ import (
 const overviewCardTailLines = 2
 
 // overviewCardHeight is the total line count of one rendered overview
-// card: 3 content lines (title/status, branch/meta, rule) +
-// overviewCardTailLines + 2 border lines. renderOverviewCard
+// card: title, issue-or-extra-tail, branch/meta, rule, 2 tails, and 2
+// border lines. A linked card spends its issue-or-extra-tail line on
+// the issue ("#12 Fix flaky test"); an unlinked card gives that line
+// back to the tail (overviewCardTailLines+1 lines) so every card is
+// exactly this tall regardless of link state. renderOverviewCard
 // guarantees this height — every composed line is truncated to the
-// inner width so lipgloss never wraps, and the tail is padded to
-// exactly overviewCardTailLines (pinned by
+// inner width so lipgloss never wraps (pinned by
 // TestOverview_UniformCardHeight).
-const overviewCardHeight = overviewCardTailLines + 5
+const overviewCardHeight = overviewCardTailLines + 6
 
 // GroupState classifies how an overview group renders.
 type GroupState int
@@ -153,7 +155,7 @@ func (o *Overview) renderGroupGrid(g OverviewGroup, gi int, d OverviewData) stri
 		for pos := start; pos < end; pos++ {
 			idx := g.Order[pos]
 			selected := d.Cursor.Group == gi && d.Cursor.Item == pos
-			cd := BuildCardData(g.Items[idx], selected, d.Spinner, overviewCardTailLines)
+			cd := BuildCardData(g.Items[idx], selected, d.Spinner, overviewCardTailLines+1)
 			cd.Index = DisplayIndex(g.Items, idx)
 			cards = append(cards, renderOverviewCard(cd, cardW))
 		}
@@ -269,22 +271,41 @@ func renderOverviewCard(d CardData, width int) string {
 	top := spreadLine(title, status, inner)
 
 	dim := lipgloss.NewStyle().Foreground(Dim)
-	meta := ""
-	if d.HasDiff {
-		meta = lipgloss.NewStyle().Foreground(OK).Render(fmt.Sprintf("+%d", d.DiffAdded)) + " " +
-			lipgloss.NewStyle().Foreground(ErrorColor).Render(fmt.Sprintf("−%d", d.DiffRemoved))
-		if lipgloss.Width(meta) > inner {
-			// Styled composition, so ANSI-aware truncation.
-			meta = ansi.Truncate(meta, inner, "…")
-		}
+	var right []string
+	if p := parityToken(d); p != "" {
+		right = append(right, p)
 	}
-	mid := spreadLine(dim.Render(truncate(d.Branch, inner-lipgloss.Width(meta)-1)), meta, inner)
+	if b := githubBadge(d.GitHub); b != "" {
+		right = append(right, b)
+	}
+	if d.HasDiff {
+		right = append(right, lipgloss.NewStyle().Foreground(OK).Render(fmt.Sprintf("+%d", d.DiffAdded))+" "+
+			lipgloss.NewStyle().Foreground(ErrorColor).Render(fmt.Sprintf("−%d", d.DiffRemoved)))
+	}
+	meta := strings.Join(right, " ")
+	if lipgloss.Width(meta) > inner {
+		// Styled composition, so ANSI-aware truncation.
+		meta = ansi.Truncate(meta, inner, "…")
+	}
+	branchStyle := dim
+	if d.finished() {
+		meta = dim.Render(ansi.Strip(meta))
+	}
+	mid := spreadLine(branchStyle.Render(truncate(d.Branch, inner-lipgloss.Width(meta)-1)), meta, inner)
 
 	rule := lipgloss.NewStyle().Foreground(Rule).Render(strings.Repeat("─", inner))
 
-	tails := overviewTail(d, inner)
-
-	content := strings.Join(append([]string{top, mid, rule}, tails...), "\n")
+	// A linked card spends one line on the issue; an unlinked card gives
+	// that line to the tail so every card is overviewCardHeight tall.
+	lines := []string{top}
+	tailN := overviewCardTailLines + 1
+	if il := issueLine(d, inner); il != "" {
+		lines = append(lines, il)
+		tailN = overviewCardTailLines
+	}
+	lines = append(lines, mid, rule)
+	lines = append(lines, overviewTailN(d, inner, tailN)...)
+	content := strings.Join(lines, "\n")
 	// The selected card gets a thick border so selection is unmistakable
 	// regardless of which accent color ranks (attention stays gold, but
 	// the border weight marks the cursor). Border height is identical, so

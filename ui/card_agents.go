@@ -51,10 +51,10 @@ const (
 	agentGlyphIdle    = "◦"
 )
 
-// overviewTail fills an overview card's tail slots. With live agents they
-// show agent rows; otherwise the output tail. Always exactly
-// overviewCardTailLines lines, so card height never changes.
-func overviewTail(d CardData, inner int) []string {
+// overviewTailN fills an overview card's tail slots. With live agents
+// they show agent rows; otherwise the output tail. Always exactly want
+// lines, so card height never changes.
+func overviewTailN(d CardData, inner, want int) []string {
 	dim := lipgloss.NewStyle().Foreground(Dim)
 	var lines []string
 	switch n := len(d.Subagents); {
@@ -77,10 +77,10 @@ func overviewTail(d CardData, inner int) []string {
 			agentRow("├", d.Subagents[0], nameColumn(d.Subagents[:1]), inner),
 			moreRow(d.Subagents[1:], inner))
 	}
-	for len(lines) < overviewCardTailLines {
+	for len(lines) < want {
 		lines = append(lines, "")
 	}
-	return lines[:overviewCardTailLines]
+	return lines[:want]
 }
 
 // nameColumn is the width names are padded to: the longest shown, capped.

@@ -8,6 +8,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/github"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 )
@@ -104,6 +105,11 @@ func TestOverview_UniformCardHeight(t *testing.T) {
 		{Title: "many-agents", Status: session.Prompting, Subagents: []SubagentRow{
 			{Name: strings.Repeat("long-name-", 5), Description: strings.Repeat("long description ", 6)},
 			{Name: "b"}, {Name: "c", Idle: true}, {Name: "d", Idle: true}}},
+		{Title: "linked-card", Status: session.Ready, Branch: "u/b", TailLines: []string{"a", "b", "c"},
+			HasParity: true, Ahead: 100, Behind: 2000,
+			GitHub: github.State{Known: true, IssueNumber: 1234, IssueTitle: strings.Repeat("long issue title ", 6),
+				HasPR: true, PRNumber: 9999, PRState: github.PROpen, Review: github.ReviewChangesRequested, Checks: github.ChecksFailing}},
+		{Title: "unlinked-three-tails", Status: session.Running, TailLines: []string{"a", "b", "c", "d"}},
 	}
 	for _, width := range []int{18, 40, 60} { // 18: status wider than inner
 		row := make([]string, 0, len(variants))
