@@ -141,6 +141,94 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	return m.openLaunchOptionsForNew(instance, "")
 }
 
+// issueExpandedMsg is the #n shorthand's result: on success the seeded
+// prompt replaces the token; on error the literal prompt launches
+// unchanged and unlinked.
+type issueExpandedMsg struct {
+	instance *session.Instance
+	// repo is the workspace the prompt was submitted in. The instance is
+	// already bound to its own worktree, so a late result cannot create
+	// it in the wrong place — but openLaunchOptionsForNew would still
+	// open the modal on whichever workspace is focused when this lands,
+	// for an instance in another slot's list.
+	repo           string
+	number         int
+	issue          github.Issue
+	rest           string // user text after the #n token
+	literal        string // original prompt, used when err != nil
+	selectedBranch string
+	err            error
+}
+
+// issueExpandCmd fetches issue n for the shorthand.
+func issueExpandCmd(repo string, n int, inst *session.Instance, rest, literal, selectedBranch string) tea.Cmd {
+	return func() tea.Msg {
+		is, err := github.View(context.Background(), repo, n, internalexec.Default{})
+		return issueExpandedMsg{instance: inst, repo: repo, number: n, issue: is, rest: rest, literal: literal, selectedBranch: selectedBranch, err: err}
+	}
+}
+
+// issueExpandDropped explains a #n expansion that was dropped by a
+// guard. The fetch error is folded into the same string because errBox
+// shows one message at a time — reporting only the guard would assert
+// an expansion that may in fact have failed. The instance is left
+// unstarted with no path back into launch options (r/R only act on
+// Paused/Recoverable status, and n/N always append a new instance), so
+// the message says how to actually get rid of it.
+func issueExpandDropped(msg issueExpandedMsg, title, why string) error {
+	if msg.err != nil {
+		return fmt.Errorf("issue #%d not expanded (%v) and %s; %q left unstarted — discard it with D", msg.number, msg.err, why, title)
+	}
+	return fmt.Errorf("issue #%d not expanded because %s; %q left unstarted — discard it with D", msg.number, why, title)
+}
+
+// handleIssueExpanded finishes the N flow after a #n expansion. The
+// fetch is async and the user stays interactive during it (the prompt
+// overlay is dismissed the moment the shorthand is spotted — see
+// handleStatePromptKey), so this can land while another flow is on
+// screen — whose overlay and pending launch-options closure
+// openLaunchOptionsForNew would silently replace, stranding its
+// instance unstarted. Matches the guard handleIssuePicked uses for the
+// same reason. It can also land after the user switched workspace tabs:
+// inst stays correctly bound to its own repo either way, but
+// openLaunchOptionsForNew would open the modal on whichever workspace
+// is now focused, for an instance living in another slot's list — so
+// that is checked too, same as handleIssuePicked's repo guard.
+//
+// Both guards sit above the msg.err != nil branch below, unlike
+// handleIssuePicked's error check which returns early. Here err!=nil
+// is a degrade-and-continue branch — it still calls
+// openLaunchOptionsForNew with the literal prompt — so if either guard
+// ran after it, a failed fetch could still pop the modal on the wrong
+// workspace or on top of another flow. Keep the guards first.
+func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
+	inst := msg.instance
+	if inst == nil || inst.Started() {
+		return m, nil
+	}
+	if msg.repo != m.repoPath() {
+		return m, m.handleError(issueExpandDropped(msg, inst.Title, "its workspace is no longer focused"))
+	}
+	if m.state != stateDefault {
+		return m, m.handleError(issueExpandDropped(msg, inst.Title, "another session was being created"))
+	}
+	var errCmd tea.Cmd
+	if msg.err != nil {
+		inst.Prompt = msg.literal
+		errCmd = m.handleError(fmt.Errorf("issue #%d not expanded: %w", msg.number, msg.err))
+	} else {
+		inst.Prompt = github.SeedPrompt(msg.issue)
+		if msg.rest != "" {
+			inst.Prompt += "\n" + msg.rest + "\n"
+		}
+		inst.SetIssue(msg.issue.Number)
+		m.lastGHQuery = time.Time{}
+		m.applyGitHubState()
+	}
+	_, cmd := m.openLaunchOptionsForNew(inst, msg.selectedBranch)
+	return m, tea.Batch(cmd, errCmd)
+}
+
 // openLaunchOptionsForNew shows the Session Launch Options modal for an
 // unstarted instance already in the list. Confirming composes the
 // program from the chosen options and starts the instance; cancelling

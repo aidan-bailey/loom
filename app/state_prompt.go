@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
@@ -51,6 +52,16 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					selected.Program = selectedProgram
 				}
 				selected.Prompt = prompt
+
+				// "#123 …" expands into the issue's seeded prompt before the
+				// launch options modal opens. The fetch is async, so the
+				// overlay is dismissed now and the flow resumes in
+				// handleIssueExpanded once it resolves.
+				if n, rest, ok := github.ParseShorthand(prompt); ok && !(m.ghAvailable.checked && !m.ghAvailable.ok) {
+					m.dismissOverlay()
+					m.state = stateDefault
+					return m, issueExpandCmd(m.repoPath(), n, selected, rest, prompt, selectedBranch)
+				}
 
 				m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
 					startTask := overlay.ConfirmationTask{

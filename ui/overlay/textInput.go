@@ -254,6 +254,10 @@ func (t *TextInputOverlay) GetValue() string {
 	return t.textarea.Value()
 }
 
+// SetValue replaces the input text. Used by tests and by any caller
+// that needs to prefill the prompt.
+func (t *TextInputOverlay) SetValue(s string) { t.textarea.SetValue(s) }
+
 // GetSelectedBranch returns the selected branch name from the branch picker.
 // Returns empty string if no branch picker is present or "New branch" is selected.
 func (t *TextInputOverlay) GetSelectedBranch() string {

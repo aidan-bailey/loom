@@ -1234,6 +1234,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case issuePickedMsg:
 		return m.handleIssuePicked(msg)
+	case issueExpandedMsg:
+		return m.handleIssueExpanded(msg)
 	case statusDetectedMsg:
 		if !statusEligible(msg.instance) {
 			return m, nil
