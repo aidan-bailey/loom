@@ -11,6 +11,7 @@ import (
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/session/vt"
 	"github.com/aidan-bailey/loom/ui"
@@ -405,6 +406,21 @@ type home struct {
 	// (see maybeSubagentScan), in the same way as the roster fields.
 	lastSubagentScan time.Time
 	subagentInFlight bool
+
+	// lastGHQuery / ghInFlight throttle the GitHub poller (see
+	// maybeGHQuery in github.go), exactly like the roster pair. Zeroing
+	// lastGHQuery forces the next health tick to poll.
+	lastGHQuery time.Time
+	ghInFlight  bool
+	// ghAvailable caches gh's install/auth check, resolved by the first
+	// poll. Until checked, polls proceed (the poll itself checks).
+	ghAvailable ghAvailability
+	// ghState is the latest GitHub snapshot per open repo path. Replaced
+	// wholesale on every ghReadyMsg; a repo whose query failed is absent.
+	ghState map[string]github.Snapshot
+	// ghBases is the resolved base ref name per repo ("origin/main"),
+	// refreshed by the poll and read by gatherMetadataCmd for parity.
+	ghBases map[string]string
 
 	// roster is Claude's own view of its live sessions, keyed by working
 	// directory, refreshed once per health tick (see rosterQueryCmd). It is
@@ -1207,6 +1223,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.roster = msg.entries
 		return m, nil
+	case ghReadyMsg:
+		m.handleGHReady(msg)
+		return m, nil
+	case ghRefreshMsg:
+		m.lastGHQuery = time.Time{}
+		return m, nil
 	case statusDetectedMsg:
 		if !statusEligible(msg.instance) {
 			return m, nil
@@ -1371,6 +1393,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// agent is live.
 		if scan := m.maybeSubagentScan(active); scan != nil {
 			cmds = append(cmds, scan)
+		}
+
+		// GitHub PR/issue state + base-branch fetch, on the poller's own
+		// 60s cadence (see maybeGHQuery). nil when not due, in flight, or
+		// gh is known unavailable.
+		if poll := m.maybeGHQuery(); poll != nil {
+			cmds = append(cmds, poll)
 		}
 
 		// Workbench follow scan rides the health tick: cheap stat-walk
@@ -2855,6 +2884,10 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitPane.Terminal()),
 		recovery:  recovery,
 	})
+	// Force the next health tick to poll: a newly opened workspace's repo
+	// wasn't in openRepoPaths() until just now, and without this the
+	// poller stays silent on it until the ambient ghInterval next elapses.
+	m.lastGHQuery = time.Time{}
 	return nil
 }
 
