@@ -223,6 +223,10 @@ func (m *home) handleGHReady(msg ghReadyMsg) {
 		m.ghBases = msg.bases
 	}
 	m.applyGitHubState()
+	if p := m.issuePicker(); p != nil {
+		p.SetRows(m.issueRows())
+		p.SetStatus(m.issuePickerStatus())
+	}
 }
 
 // baseFor returns the resolved base ref for repo, or "" before the

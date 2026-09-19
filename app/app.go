@@ -156,6 +156,9 @@ const (
 	// modal is displayed, between title/prompt entry and actually
 	// starting a new instance.
 	stateLaunchOptions
+	// stateIssuePicker is the state when the GitHub issue picker overlay
+	// is displayed (opened by the 'I' key).
+	stateIssuePicker
 )
 
 // viewMode selects the top-level presentation: focus (rail + panes) or
@@ -1229,6 +1232,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ghRefreshMsg:
 		m.lastGHQuery = time.Time{}
 		return m, nil
+	case issuePickedMsg:
+		return m.handleIssuePicked(msg)
 	case statusDetectedMsg:
 		if !statusEligible(msg.instance) {
 			return m, nil
@@ -2170,7 +2175,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnE
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateNew || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker || m.state == stateLaunchOptions {
+	if m.state == statePrompt || m.state == stateNew || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker || m.state == stateLaunchOptions || m.state == stateIssuePicker {
 		return nil, false
 	}
 	// If it maps to a built-in binding, highlight the corresponding menu
@@ -2222,6 +2227,8 @@ func (m *home) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return handleStateMergePickerKey(m, msg)
 	case stateLaunchOptions:
 		return handleStateLaunchOptionsKey(m, msg)
+	case stateIssuePicker:
+		return handleStateIssuePickerKey(m, msg)
 	default:
 		return handleStateDefaultKey(m, msg)
 	}

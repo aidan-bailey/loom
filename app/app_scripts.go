@@ -602,6 +602,8 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 		_, cmd = runToggleFileExplorer(m)
 	case script.MergeSessionsIntent:
 		_, cmd = runMergeSelected(m)
+	case script.NewFromIssueIntent:
+		_, cmd = runNewFromIssue(m)
 	}
 	resumeCmd := func() tea.Msg { return scriptResumeMsg{id: p.id, trace: p.trace} }
 	if cmd == nil {

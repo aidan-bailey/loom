@@ -79,7 +79,7 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.viewMode = viewFocus
 			m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = "" })
 			return m, m.instanceChanged()
-		case "n", "N":
+		case "n", "N", "I":
 			// Creating a session from the grid would collect the title
 			// blind — the inline title entry is a focus-layout
 			// affordance. Drop to focus first (persisted, same as

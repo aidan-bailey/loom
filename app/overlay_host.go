@@ -24,6 +24,7 @@ const (
 	overlaySettings
 	overlayMergePicker
 	overlayLaunchOptions
+	overlayIssuePicker
 )
 
 // setOverlay installs o as the active overlay and records its kind.
@@ -114,6 +115,15 @@ func (m *home) mergePicker() *overlay.MergePicker {
 // when a different overlay is active.
 func (m *home) launchOptionsOverlay() *overlay.SessionLaunchOptions {
 	if o, ok := m.activeOverlay.(*overlay.SessionLaunchOptions); ok {
+		return o
+	}
+	return nil
+}
+
+// issuePicker returns the active IssuePicker, or nil when a different
+// overlay is active.
+func (m *home) issuePicker() *overlay.IssuePicker {
+	if o, ok := m.activeOverlay.(*overlay.IssuePicker); ok {
 		return o
 	}
 	return nil

@@ -2,9 +2,8 @@ package app
 
 import (
 	"fmt"
-	"github.com/aidan-bailey/loom/session"
+
 	"github.com/aidan-bailey/loom/ui"
-	"github.com/aidan-bailey/loom/ui/overlay"
 
 	tea "charm.land/bubbletea/v2"
 	runewidth "github.com/mattn/go-runewidth"
@@ -53,43 +52,9 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 		// Show the Session Launch Options modal, seeded from the global
 		// config, before actually starting. Confirming there runs the
-		// closure stashed below (compose Program with the chosen
-		// overrides, then Start) via handleStateLaunchOptionsKey.
-		m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-			startTask := overlay.ConfirmationTask{
-				Sync: func() {
-					instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
-					instance.HeadroomProxy = opts.HeadroomProxy
-					instance.CacheTTL1h = opts.CacheTTL1h
-					// Always recorded, edited or not, so branch composition has a
-					// single source of truth instead of falling back to a re-read
-					// of config.json inside the git package.
-					instance.SetBranchPrefix(opts.BranchPrefix)
-					_ = instance.TransitionTo(session.Loading)
-					m.promptAfterName = false
-					m.state = stateDefault
-					m.menu.SetState(ui.StateDefault)
-				},
-				Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
-					err := instance.Start(true)
-					return instanceStartedMsg{
-						instance:        instance,
-						err:             err,
-						promptAfterName: false,
-					}
-				}),
-			}
-
-			if m.remoteControlBlocked(effectiveRemoteControl(opts), instance.Program) {
-				return m, m.promptRemoteControlBlocked(startTask)
-			}
-			return m, tea.Batch(startTask.Run(), m.instanceChanged())
-		}
-		m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
-		m.state = stateLaunchOptions
-		m.setOverlay(overlay.NewSessionLaunchOptions(launchOptionsFromConfig(m.appConfig), m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
-		m.menu.SetState(ui.StateNewInstance)
-		return m, tea.RequestWindowSize
+		// closure openLaunchOptionsForNew stashes (compose Program with
+		// the chosen overrides, then Start) via handleStateLaunchOptionsKey.
+		return m.openLaunchOptionsForNew(instance, "")
 	case tea.KeyBackspace:
 		runes := []rune(instance.Title)
 		if len(runes) == 0 {
