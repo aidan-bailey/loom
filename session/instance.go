@@ -5,6 +5,7 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/agent"
 	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/session/vt"
@@ -224,6 +225,19 @@ type Instance struct {
 	// serialized (absent from InstanceData).
 	waitReason string
 
+	// issue is the linked GitHub issue number (0 = none). Persisted as
+	// InstanceData.Issue.
+	issue int
+	// githubState is the poller's join for this session (see
+	// app/github.go). Transient: never serialized; Known=false until the
+	// first successful poll after startup.
+	githubState github.State
+	// ahead/behind count commits relative to the base branch
+	// (git.AheadBehind); hasParity is false until the first successful
+	// count and after any failure. Transient.
+	ahead, behind int
+	hasParity     bool
+
 	// subagents, hookLaunchID and subagentWarm track the agents this
 	// session has spawned, from loom's hook events (see
 	// subagent_hooks.go). hookLaunchID is the hooks folder generation a
@@ -268,6 +282,7 @@ func (i *Instance) Snapshot() InstanceData {
 		HeadroomProxy:       i.HeadroomProxy,
 		CacheTTL1h:          i.CacheTTL1h,
 		IsWorkspaceTerminal: i.IsWorkspaceTerminal,
+		Issue:               i.issue,
 	}
 
 	if i.gitWorktree != nil {
@@ -321,6 +336,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		CacheTTL1h:          data.CacheTTL1h,
 		ConfigDir:           configDir,
 		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
+		issue:               data.Issue,
 		logger:              log.For("instance", "title", data.Title),
 	}
 
@@ -1599,6 +1615,76 @@ func (i *Instance) SetWaitReason(reason string) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.waitReason = reason
+}
+
+// IssueNumber returns the linked GitHub issue, or 0.
+func (i *Instance) IssueNumber() int {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.issue
+}
+
+// SetIssue links this session to a GitHub issue (0 unlinks).
+func (i *Instance) SetIssue(n int) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.issue = n
+}
+
+// GitHubState returns the last joined GitHub state for this session.
+func (i *Instance) GitHubState() github.State {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.githubState
+}
+
+// SetGitHubState records the poller's join result.
+func (i *Instance) SetGitHubState(s github.State) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.githubState = s
+}
+
+// Parity returns commits ahead/behind the base branch; ok is false
+// when no count has succeeded yet.
+func (i *Instance) Parity() (ahead, behind int, ok bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.ahead, i.behind, i.hasParity
+}
+
+func (i *Instance) setParity(ahead, behind int, ok bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.ahead, i.behind, i.hasParity = ahead, behind, ok
+}
+
+// UpdateParity recounts ahead/behind against base (a ref name such as
+// "origin/main"). Skipped — leaving parity unknown — for workspace
+// terminals, unstarted, paused or recoverable instances, and when base
+// is empty. Runs one local git subprocess; call it from the metadata
+// fan-out, never from Update.
+func (i *Instance) UpdateParity(base string) {
+	if base == "" || i.IsWorkspaceTerminal || !i.isStarted() {
+		i.setParity(0, 0, false)
+		return
+	}
+	if s := i.GetStatus(); s == Paused || s == Recoverable {
+		i.setParity(0, 0, false)
+		return
+	}
+	gw := i.getGitWorktree()
+	if gw == nil {
+		i.setParity(0, 0, false)
+		return
+	}
+	ahead, behind, err := git.AheadBehind(gw.GetRepoPath(), gw.GetBranchName(), base, nil)
+	if err != nil {
+		i.getLogger().Debug("parity.failed", "base", base, "err", err.Error())
+		i.setParity(0, 0, false)
+		return
+	}
+	i.setParity(ahead, behind, true)
 }
 
 // PaneTitle returns the agent's OSC-set window title, or ok=false.

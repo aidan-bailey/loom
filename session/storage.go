@@ -22,7 +22,7 @@ var ErrInstanceNotFound = errors.New("instance not found")
 // CurrentSchemaVersion is the schema version written by the current
 // binary. Any on-disk InstanceData with a lower SchemaVersion is routed
 // through storage_migrate.go's Migrate before use.
-const CurrentSchemaVersion = 5
+const CurrentSchemaVersion = 6
 
 // InstanceData represents the serializable data of an Instance.
 //
@@ -47,6 +47,10 @@ type InstanceData struct {
 	Worktree            GitWorktreeData `json:"worktree"`
 	DiffStats           DiffStatsData   `json:"diff_stats"`
 	IsWorkspaceTerminal bool            `json:"is_workspace_terminal"`
+	// Issue is the GitHub issue number this session was started from
+	// (0 = not linked). Set once at creation by the issue picker or the
+	// #n prompt shorthand; read by the GitHub poller join.
+	Issue int `json:"issue,omitempty"`
 }
 
 // GitWorktreeData represents the serializable data of a GitWorktree

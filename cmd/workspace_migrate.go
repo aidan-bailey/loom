@@ -42,6 +42,7 @@ type migrationInstance struct {
 	Worktree            migrationWorktreeData `json:"worktree"`
 	DiffStats           migrationDiffStats    `json:"diff_stats"`
 	IsWorkspaceTerminal bool                  `json:"is_workspace_terminal"`
+	Issue               int                   `json:"issue,omitempty"`
 }
 
 type migrationWorktreeData struct {

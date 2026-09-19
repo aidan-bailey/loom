@@ -17,6 +17,7 @@ func TestMigrate_V0Upgrades(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, CurrentSchemaVersion, data.SchemaVersion)
 	assert.Equal(t, "legacy", data.Title)
+	assert.Equal(t, 0, data.Issue, "a v0 record carries no issue link through the full chain")
 }
 
 // TestMigrate_V1UpgradesDropsAutoYes verifies a v1 record carrying the
@@ -146,4 +147,21 @@ func TestMigrate_V2RecordGetsEmptyStashRef(t *testing.T) {
 	out, err := json.Marshal(data)
 	require.NoError(t, err)
 	assert.NotContains(t, string(out), `"stash_ref"`, "omitempty must drop an empty StashRef")
+}
+
+// v5 records lack the issue field; it must default to 0 and the
+// record stamp to CurrentSchemaVersion.
+func TestMigrate_V5UpgradesAddsIssue(t *testing.T) {
+	raw := []byte(`{"schema_version":5,"title":"t","path":"/p","branch":"b","status":0,"height":1,"width":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","program":"claude","worktree":{},"diff_stats":{},"is_workspace_terminal":false}`)
+	data, err := Migrate(raw)
+	require.NoError(t, err)
+	assert.Equal(t, CurrentSchemaVersion, data.SchemaVersion)
+	assert.Equal(t, 0, data.Issue)
+}
+
+func TestMigrate_V6RoundTripsIssue(t *testing.T) {
+	raw := []byte(`{"schema_version":6,"title":"t","issue":42,"worktree":{},"diff_stats":{}}`)
+	data, err := Migrate(raw)
+	require.NoError(t, err)
+	assert.Equal(t, 42, data.Issue)
 }

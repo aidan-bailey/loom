@@ -43,7 +43,8 @@ func TestMigrationInstance_MirrorsInstanceData_JSON(t *testing.T) {
 			"removed": 2,
 			"content": "x"
 		},
-		"is_workspace_terminal": false
+		"is_workspace_terminal": false,
+		"issue": 42
 	}`
 
 	var mi migrationInstance
