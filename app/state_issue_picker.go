@@ -44,10 +44,18 @@ func (m *home) issueRows() []overlay.IssueRow {
 }
 
 // issuePickerStatus is the picker's status line for the current poll
-// state: "" once a snapshot exists, "loading…" before.
+// state: "" once a snapshot exists, the last error when the repo's poll
+// failed, "loading…" before the first result. The error case matters
+// because a repo with no GitHub remote fails every poll while
+// ghAvailable stays ok, so without it the picker waits forever on a
+// result that will never come.
 func (m *home) issuePickerStatus() string {
-	if _, ok := m.ghState[m.repoPath()]; ok {
+	repo := m.repoPath()
+	if _, ok := m.ghState[repo]; ok {
 		return ""
+	}
+	if err, ok := m.ghErrs[repo]; ok && err != nil {
+		return "gh unavailable: " + err.Error()
 	}
 	return "loading…"
 }

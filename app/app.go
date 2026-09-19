@@ -421,6 +421,12 @@ type home struct {
 	// ghState is the latest GitHub snapshot per open repo path. Replaced
 	// wholesale on every ghReadyMsg; a repo whose query failed is absent.
 	ghState map[string]github.Snapshot
+	// ghErrs is the last poll error per open repo, replaced wholesale
+	// alongside ghState. A repo can fail every poll forever while
+	// ghAvailable stays ok — CheckCLI is not repo-scoped, so a repo with
+	// no GitHub remote never flips availability — and without this the
+	// picker would sit on "loading…" with nothing to show for it.
+	ghErrs map[string]error
 	// ghBases is the resolved base ref name per repo ("origin/main"),
 	// refreshed by the poll and read by gatherMetadataCmd for parity.
 	ghBases map[string]string

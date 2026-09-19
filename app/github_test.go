@@ -236,3 +236,28 @@ func TestBaseFor_ReadsGHBases(t *testing.T) {
 	assert.Equal(t, "origin/main", m.baseFor("/r"))
 	assert.Equal(t, "", m.baseFor("/other"))
 }
+
+// A repo with no GitHub remote fails every poll while CheckCLI keeps
+// succeeding (it is not repo-scoped), so the picker must show why
+// instead of waiting forever on a result that will never come.
+func TestIssuePickerStatus_ReportsPollError(t *testing.T) {
+	m := homeWithAppState(t)
+	repo := m.repoPath()
+	assert.Equal(t, "loading…", m.issuePickerStatus(), "before any poll")
+
+	m.Update(ghReadyMsg{
+		available: ghAvailability{checked: true, ok: true},
+		snapshots: map[string]github.Snapshot{},
+		errs:      map[string]error{repo: errors.New("gh pr list: exit status 1")},
+	})
+	assert.Contains(t, m.issuePickerStatus(), "gh pr list: exit status 1",
+		"a failed poll must say so, not sit on loading")
+
+	// A later success clears it.
+	m.Update(ghReadyMsg{
+		available: ghAvailability{checked: true, ok: true},
+		snapshots: map[string]github.Snapshot{repo: {Issues: map[int]github.Issue{}}},
+		errs:      map[string]error{},
+	})
+	assert.Equal(t, "", m.issuePickerStatus(), "a later success clears the error")
+}

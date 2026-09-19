@@ -219,6 +219,7 @@ func (m *home) handleGHReady(msg ghReadyMsg) {
 		log.For("github").Debug("query_failed", "repo", repo, "err", err.Error())
 	}
 	m.ghState = msg.snapshots
+	m.ghErrs = msg.errs
 	if msg.bases != nil {
 		m.ghBases = msg.bases
 	}

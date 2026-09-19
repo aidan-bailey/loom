@@ -36,6 +36,15 @@ func TestRunNewFromIssue_NoSnapshotShowsLoadingAndForcesPoll(t *testing.T) {
 	assert.Contains(t, m.issuePicker().Render(), "loading")
 }
 
+func TestRunNewFromIssue_ShowsPollErrorInsteadOfLoading(t *testing.T) {
+	m := newTestHomeWithActiveCtx(t)
+	m.ghAvailable = ghAvailability{checked: true, ok: true, checkedAt: time.Now()}
+	m.ghErrs = map[string]error{m.repoPath(): errors.New("no GitHub remote")}
+	_, _ = runNewFromIssue(m)
+	require.Equal(t, stateIssuePicker, m.state)
+	assert.Contains(t, m.issuePicker().Render(), "no GitHub remote")
+}
+
 func TestRunNewFromIssue_UnavailableGHErrors(t *testing.T) {
 	m := newTestHomeWithActiveCtx(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: false, reason: "no gh"}
