@@ -298,6 +298,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `↓` / `j` | Move selection down |
 | `n` | Create new session (name only) |
 | `N` | Create new session with prompt, profile, and branch picker |
+| `I` | Create new session from a GitHub issue (picker; needs `gh` auth) |
 | `Tab` | Toggle overview mode (fleet card grid) |
 | `]` / `[` | Jump to next/previous agent waiting for input (prompting or bell; wraps) |
 | `i` / `Ctrl+A` | Inline attach to agent pane |
