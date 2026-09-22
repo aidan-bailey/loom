@@ -418,8 +418,11 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 // the storage's write latch refuses every save, and the error is shown
 // rather than exiting, so the user can still open a workspace from the
 // picker. The failed workspaces stay in the registry's open list, to be
-// retried on the next launch.
+// retried on the next launch: nothing here rewrites it, and handleQuit
+// skips its global-mode clear (restoreFellBack) unless the user has since
+// changed the open set.
 func (m *home) loadStartupStorageFallback() {
+	m.restoreFellBack = true
 	// Each failed activation re-synced these process-wide flags from its
 	// own workspace's config; put the startup config's values back before
 	// anything below launches a session.

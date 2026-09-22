@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
@@ -140,6 +141,12 @@ type home struct {
 	// orphan sweep) — a test seam so those paths can run without touching
 	// a real tmux server. Always nil in production; read via executor().
 	cmdExec cmd2.Executor
+	// restoreFellBack is set when restoreSavedWorkspaces opened no
+	// workspace and fell back to the startup storage. Those workspaces
+	// were not closed by the user, so handleQuit keeps the registry's
+	// open list for the next launch to retry; enterGlobalMode (an
+	// explicit choice of global mode) clears it.
+	restoreFellBack bool
 
 	// -- State --
 
@@ -1734,6 +1741,10 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 		var firstErr error
 		for _, slot := range m.slots {
 			if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
+				if quitSkipsSave(err) {
+					log.For("app").Warn("quit.save_skipped", "name", slot.wsCtx.Name, "reason", "storage_load_failed", "err", err)
+					continue
+				}
 				log.For("app").Error("workspace.save_failed", "name", slot.wsCtx.Name, "err", err)
 				if firstErr == nil {
 					firstErr = fmt.Errorf("failed to save workspace %s: %w", slot.wsCtx.Name, err)
@@ -1746,15 +1757,27 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 		m.saveOpenWorkspaces()
 	} else {
 		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
-			return m, m.handleError(err)
+			if !quitSkipsSave(err) {
+				return m, m.handleError(err)
+			}
+			log.For("app").Warn("quit.save_skipped", "reason", "storage_load_failed", "err", err)
 		}
-		if m.registry != nil && len(m.registry.OpenWorkspaces) > 0 {
+		if m.registry != nil && len(m.registry.OpenWorkspaces) > 0 && !m.restoreFellBack {
 			if err := m.registry.SetOpenWorkspaces(nil); err != nil {
 				log.For("app").Debug("registry.clear_open_failed", "err", err)
 			}
 		}
 	}
 	return m, tea.Quit
+}
+
+// quitSkipsSave reports whether a save error on quit is the storage's write
+// latch (ErrStorageLoadFailed). The sticky-quit policy exists so the user can
+// fix the cause and retry, but a latched storage is never reloaded by the
+// TUI, so no retry could succeed; its list is also empty by construction
+// (latchedStorageErr), and the unreadable file is left untouched. Quit.
+func quitSkipsSave(err error) bool {
+	return errors.Is(err, session.ErrStorageLoadFailed)
 }
 
 func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnEarly bool) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -122,4 +123,47 @@ func TestHandleStateNewKey_RejectsTitleOfPreservedRecord(t *testing.T) {
 	assert.Equal(t, stateNew, m.state, "stays on title entry so another title can be typed")
 	assert.Nil(t, m.pendingLaunchOptions)
 	assert.Contains(t, m.errBox.String(), `"taken"`)
+}
+
+// latchedStorage returns a Storage whose payload is not a JSON array, loaded
+// so its write latch is engaged (every save refuses with ErrStorageLoadFailed).
+func latchedStorage(t *testing.T) *session.Storage {
+	t.Helper()
+	rec := &recordingInstanceStorage{lastData: json.RawMessage(`{"not":"an array"}`)}
+	storage, err := session.NewStorage(rec, t.TempDir())
+	require.NoError(t, err)
+	_, err = storage.LoadInstanceData()
+	require.Error(t, err)
+	require.True(t, storage.WritesRefused())
+	return storage
+}
+
+// TestNewSession_RefusedWhileStorageLatched: a session created over a latched
+// storage could never be persisted. Refusing up front keeps a latched list
+// provably empty, which is what makes skipping its save lossless
+// (applyWorkspaceToggle, handleQuit).
+func TestNewSession_RefusedWhileStorageLatched(t *testing.T) {
+	cases := map[string]func(m *home) tea.Cmd{
+		"n": func(m *home) tea.Cmd { _, cmd := runNewInstance(m); return cmd },
+		"N": func(m *home) tea.Cmd { _, cmd := runPromptNewInstance(m); return cmd },
+		"issue picked": func(m *home) tea.Cmd {
+			_, cmd := m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 3, Title: "Bug"}})
+			return cmd
+		},
+	}
+	for name, create := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := newTestHomeWithActiveCtx(t)
+			m.storage = latchedStorage(t)
+			m.errBox.SetSize(400, 1)
+			before := m.list.NumInstances()
+
+			cmd := create(m)
+
+			assert.Equal(t, before, m.list.NumInstances(), "nothing may be created")
+			assert.Equal(t, stateDefault, m.state)
+			assert.NotNil(t, cmd)
+			assert.Contains(t, m.errBox.String(), "can't be created")
+		})
+	}
 }

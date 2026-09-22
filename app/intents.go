@@ -110,6 +110,9 @@ func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 		return m, m.handleError(
 			fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
 	}
+	if err := m.latchedStorageErr(); err != nil {
+		return m, m.handleError(err)
+	}
 
 	// Start a background fetch so branches are up to date by the time
 	// the picker opens.
@@ -144,6 +147,9 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 	if m.list.NumInstances() >= GlobalInstanceLimit {
 		return m, m.handleError(
 			fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
+	}
+	if err := m.latchedStorageErr(); err != nil {
+		return m, m.handleError(err)
 	}
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:     "",

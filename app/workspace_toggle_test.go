@@ -98,6 +98,10 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 		storage:   storage,
 		tabBar:    ui.NewWorkspaceTabBar(),
 		errBox:    ui.NewErrBox(),
+		// Keep activation off tmux entirely: a recording executor, and a
+		// workspace whose terminal record already exists (preserved), so
+		// no workspace terminal is created and started.
+		cmdExec: &recordingExec{},
 	}
 
 	// Non-empty desired forces the bug's actual code path:
@@ -105,9 +109,7 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 	// activateWorkspace succeeds is irrelevant for this test — the
 	// invariant under test is "the save call happens unconditionally
 	// before activation."
-	desired := []config.Workspace{
-		{Name: "test-ws", Path: t.TempDir()},
-	}
+	desired := []config.Workspace{preservedTerminalWorkspace(t, "test-ws")}
 	_ = h.applyWorkspaceToggle(desired)
 
 	assert.GreaterOrEqual(t, rec.calls, 1,

@@ -449,6 +449,8 @@ func (m *home) enterGlobalMode() tea.Cmd {
 
 	// Clear registry's open-tab list so the next launch lands in
 	// global mode rather than auto-restoring tabs the user just closed.
+	// An explicit return to global mode also ends restore-fallback mode.
+	m.restoreFellBack = false
 	if m.registry != nil {
 		if err := m.registry.SetOpenWorkspaces(nil); err != nil {
 			log.For("app").Warn("clear_open_workspaces_failed", "err", err)

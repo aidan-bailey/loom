@@ -17,6 +17,7 @@ import (
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -270,4 +271,45 @@ func TestRestoreSavedWorkspaces_AllFail_StartupLoadFailsClosed(t *testing.T) {
 	m.applyWorkspaceToggle([]config.Workspace{preservedTerminalWorkspace(t, "ws-good")})
 	require.Len(t, m.slots, 1, "the user must still be able to open a workspace")
 	assert.Equal(t, "ws-good", m.slots[0].wsCtx.Name)
+}
+
+// TestHandleQuit_LatchedFallbackQuitsAndKeepsOpenWorkspaces: after a
+// fail-closed restore fallback, q used to refuse to quit forever — the
+// latched storage refuses every save and the TUI never reloads it, so the
+// "fix it and retry" rationale of the sticky quit cannot apply. It must
+// quit, leave the unreadable file untouched, and keep the workspaces that
+// failed to restore in the registry's open list so the next launch retries
+// them (they were not closed by the user).
+func TestHandleQuit_LatchedFallbackQuitsAndKeepsOpenWorkspaces(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	m, statePath := restoreModeHome(t, &recordingExec{}, `{"not":"an array"}`)
+	before, err := os.ReadFile(statePath)
+	require.NoError(t, err)
+
+	bad := corruptWorkspaces(t, "ws-bad")[0]
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	require.NoError(t, reg.Add("ws-bad", bad.Path))
+	require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-bad"}))
+	m.registry = reg
+
+	m.restoreSavedWorkspaces(reg.GetOpenWorkspaces())
+	require.Empty(t, m.slots)
+
+	// A cancelled ctx makes handleError's toast Cmd return at once, so the
+	// assertion below can run the Cmd whichever branch handleQuit takes.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m.ctx = ctx
+	_, cmd := m.handleQuit()
+	require.NotNil(t, cmd)
+	assert.IsType(t, tea.QuitMsg{}, cmd(), "q must quit even though nothing can be saved")
+
+	after, err := os.ReadFile(statePath)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "the unreadable state.json must be untouched")
+	fresh, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ws-bad"}, fresh.OpenWorkspaces, "the failed workspace is retried on the next launch")
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"os"
@@ -20,15 +21,30 @@ import (
 
 // TestMain runs before all tests to set up the test environment
 func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+// runTests sets up the package test environment and runs the tests. It
+// returns the exit code rather than exiting so its deferred cleanup runs.
+func runTests(m *testing.M) int {
 	// Initialize the logger before any tests run
 	_ = log.Initialize("", false)
 	defer log.Close()
 
-	// Run all tests
-	exitCode := m.Run()
+	// Point every tmux.Command in this package's tests — and in the loom
+	// code they drive — at a private server, never the developer's default
+	// one, whose live loom_* sessions a stray orphan sweep or kill would
+	// destroy (and where tests used to leave loom_term_* sessions behind).
+	// Tests that want a fresh server of their own layer isolateTmux on top.
+	// Kill the private server afterwards so nothing outlives the run.
+	sock := fmt.Sprintf("loomtest-app-main-%d", os.Getpid())
+	if err := os.Setenv(tmux.EnvTmuxSocket, sock); err != nil {
+		fmt.Fprintf(os.Stderr, "set %s: %v\n", tmux.EnvTmuxSocket, err)
+		return 1
+	}
+	defer func() { _ = tmux.CommandOnSocket(context.Background(), sock, "kill-server").Run() }()
 
-	// Exit with the same code as the tests
-	os.Exit(exitCode)
+	return m.Run()
 }
 
 func TestPersistableInstances_ExcludesRecoverable(t *testing.T) {

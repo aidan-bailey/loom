@@ -115,3 +115,15 @@ func (m *home) preservedTitleErr(title string) error {
 	}
 	return fmt.Errorf("title %q belongs to a saved session this version of loom could not load; choose another", title)
 }
+
+// latchedStorageErr refuses to create a session while the focused storage's
+// write latch is engaged (Storage.WritesRefused): the session could never be
+// persisted. It also keeps a latched list exactly as loaded — empty — which
+// is what makes skipping its save lossless (applyWorkspaceToggle,
+// handleQuit). Returns nil when the storage accepts writes.
+func (m *home) latchedStorageErr() error {
+	if m.storage == nil || !m.storage.WritesRefused() {
+		return nil
+	}
+	return fmt.Errorf("new sessions can't be created here: this workspace's saved sessions could not be read, so nothing can be saved (see loom.log)")
+}

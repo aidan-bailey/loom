@@ -431,8 +431,10 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 		s, err := NewStorage(mock, "")
 		require.NoError(t, err)
 
+		assert.False(t, s.WritesRefused(), "nothing is refused before a load has failed")
 		_, err = s.LoadAndReconcile(noopExec())
 		require.Error(t, err)
+		assert.True(t, s.WritesRefused())
 
 		live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
 		live.setStarted(true)
@@ -492,6 +494,7 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 
 		require.NoError(t, s.DeleteAllInstances(), "reset must work even when the payload is unreadable")
 		assert.Zero(t, s.UndecodableCount())
+		assert.False(t, s.WritesRefused(), "the wipe clears the latch")
 
 		live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
 		live.setStarted(true)

@@ -292,6 +292,17 @@ func (s *Storage) PreservedTitles() []string {
 	return titles
 }
 
+// WritesRefused reports whether the write latch is engaged: the last load
+// could not decode the payload as a whole, so every write returns
+// ErrStorageLoadFailed until a later load succeeds. Callers check it before
+// creating anything new, which could never be persisted — keeping a latched
+// Storage's list to exactly what it loaded (nothing).
+func (s *Storage) WritesRefused() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadErr != nil
+}
+
 // UndecodableCount returns how many persisted records the last successful
 // load could not decode. Like unrecovered records they are preserved on
 // disk but never appear in the live list, so callers surface the count.
