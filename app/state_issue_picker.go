@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -72,7 +71,7 @@ func runNewFromIssue(m *home) (tea.Model, tea.Cmd) {
 	p := overlay.NewIssuePicker(m.issueRows())
 	p.SetStatus(m.issuePickerStatus())
 	if _, ok := m.ghState[m.repoPath()]; !ok {
-		m.lastGHQuery = time.Time{}
+		m.gate(gateGH).expedite()
 	}
 	m.setOverlay(p, overlayIssuePicker)
 	m.state = stateIssuePicker
@@ -151,7 +150,7 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	instance.SetIssue(msg.issue.Number)
 	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
-	m.lastGHQuery = time.Time{}
+	m.gate(gateGH).expedite()
 	m.applyGitHubState()
 	return m.openLaunchOptionsForNew(instance, "")
 }
@@ -237,7 +236,7 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 			inst.Prompt += "\n" + msg.rest + "\n"
 		}
 		inst.SetIssue(msg.issue.Number)
-		m.lastGHQuery = time.Time{}
+		m.gate(gateGH).expedite()
 		m.applyGitHubState()
 	}
 	_, cmd := m.openLaunchOptionsForNew(inst, msg.selectedBranch)

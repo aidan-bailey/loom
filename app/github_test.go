@@ -17,28 +17,28 @@ import (
 func TestGHQueryDispatchesOnFirstCall(t *testing.T) {
 	m := homeWithAppState(t)
 	require.NotNil(t, m.maybeGHQuery())
-	assert.True(t, m.ghInFlight)
+	assert.True(t, m.gate(gateGH).inFlight)
 }
 
 func TestGHQueryThrottledWithinInterval(t *testing.T) {
 	m := homeWithAppState(t)
 	require.NotNil(t, m.maybeGHQuery())
-	m.ghInFlight = false
+	m.gate(gateGH).inFlight = false
 	assert.Nil(t, m.maybeGHQuery())
 }
 
 func TestGHQueryResumesAfterInterval(t *testing.T) {
 	m := homeWithAppState(t)
 	require.NotNil(t, m.maybeGHQuery())
-	m.ghInFlight = false
-	m.lastGHQuery = time.Now().Add(-ghInterval - time.Second)
+	m.gate(gateGH).inFlight = false
+	m.gate(gateGH).last = time.Now().Add(-ghInterval - time.Second)
 	assert.NotNil(t, m.maybeGHQuery())
 }
 
 func TestGHQueryNotStackedWhileInFlight(t *testing.T) {
 	m := homeWithAppState(t)
 	require.NotNil(t, m.maybeGHQuery())
-	m.lastGHQuery = time.Now().Add(-ghInterval - time.Second)
+	m.gate(gateGH).last = time.Now().Add(-ghInterval - time.Second)
 	assert.Nil(t, m.maybeGHQuery())
 }
 
@@ -46,7 +46,7 @@ func TestGHQueryDisabledWhenCLIUnavailable(t *testing.T) {
 	m := homeWithAppState(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: false, reason: "no gh", checkedAt: time.Now()}
 	assert.Nil(t, m.maybeGHQuery(), "a known-unavailable gh must not spawn subprocesses")
-	assert.False(t, m.ghInFlight)
+	assert.False(t, m.gate(gateGH).inFlight)
 }
 
 func TestGHQueryRechecksAfterBackoff(t *testing.T) {
@@ -57,15 +57,15 @@ func TestGHQueryRechecksAfterBackoff(t *testing.T) {
 
 func TestGHReadyClearsInFlightAndReplacesWholesale(t *testing.T) {
 	m := homeWithAppState(t)
-	m.ghInFlight = true
+	m.gate(gateGH).inFlight = true
 	m.ghState = map[string]github.Snapshot{"/old": {}}
 
-	m.Update(ghReadyMsg{
+	m.Update(gatedMsg{kind: gateGH, msg: ghReadyMsg{
 		available: ghAvailability{checked: true, ok: true},
 		snapshots: map[string]github.Snapshot{"/repo": {PRs: map[string]github.PR{}}},
 		errs:      map[string]error{"/old": errors.New("boom")},
-	})
-	assert.False(t, m.ghInFlight)
+	}})
+	assert.False(t, m.gate(gateGH).inFlight)
 	_, hasOld := m.ghState["/old"]
 	assert.False(t, hasOld, "an errored repo is dropped, not retained")
 	_, hasNew := m.ghState["/repo"]
@@ -101,9 +101,9 @@ func TestGHReadyUnknownRepoLeavesStateUnknown(t *testing.T) {
 
 func TestGHRefreshMsgZeroesWindow(t *testing.T) {
 	m := homeWithAppState(t)
-	m.lastGHQuery = time.Now()
+	m.gate(gateGH).last = time.Now()
 	m.Update(ghRefreshMsg{})
-	assert.True(t, m.lastGHQuery.IsZero())
+	assert.True(t, m.gate(gateGH).due(time.Now()), "a refresh makes the next tick poll")
 }
 
 func TestLinkedIssuesCollectsNonZero(t *testing.T) {

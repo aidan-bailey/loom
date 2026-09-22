@@ -9,7 +9,6 @@ import (
 	"github.com/aidan-bailey/loom/ui"
 	"slices"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -162,7 +161,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	// Force the next health tick to poll: a newly opened workspace's repo
 	// wasn't in openRepoPaths() until just now, and without this the
 	// poller stays silent on it until the ambient ghInterval next elapses.
-	m.lastGHQuery = time.Time{}
+	m.gate(gateGH).expedite()
 	return nil
 }
 

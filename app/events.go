@@ -147,25 +147,16 @@ func rosterQueryCmd(active []*session.Instance) tea.Cmd {
 // which is the cadence the roster was sized for.
 const rosterInterval = 3 * time.Second
 
-// maybeRosterQuery returns a roster query when one is due: none already in
-// flight, and at least rosterInterval since the last dispatch. The
-// in-flight guard matters because a slow or hung CLI is bounded only by
-// claudeRosterTimeout (5s) — without it, ticks would stack concurrent
+// maybeRosterQuery returns a roster query when gateRoster is due: none
+// already in flight, and at least rosterInterval since the last dispatch.
+// The in-flight guard matters because a slow or hung CLI is bounded only
+// by claudeRosterTimeout (5s) — without it, ticks would stack concurrent
 // subprocesses. Returns nil when nothing should run, including when no
-// Claude agent is present; in that case neither the window nor the flag is
-// armed, since no query means no rosterReadyMsg to disarm them. Must be
-// called on the Update goroutine (both fields are unsynchronized).
+// Claude agent is present. Must be called on the Update goroutine.
 func (m *home) maybeRosterQuery(active []*session.Instance) tea.Cmd {
-	if m.rosterInFlight || time.Since(m.lastRosterQuery) < rosterInterval {
-		return nil
-	}
-	cmd := rosterQueryCmd(active)
-	if cmd == nil {
-		return nil
-	}
-	m.rosterInFlight = true
-	m.lastRosterQuery = time.Now()
-	return cmd
+	return m.dispatchGated(gateRoster, time.Now(), func() tea.Cmd {
+		return rosterQueryCmd(active)
+	})
 }
 
 // rosterStatusFor returns Claude's authoritative status for inst, if it
@@ -228,23 +219,24 @@ type ratioSaveMsg struct{}
 const ratioSaveDelay = 750 * time.Millisecond
 
 // maybeArmRatioSave arms the one-shot flush tick when resizeSplit has
-// recorded pending ratios and no tick is already in flight (mirrors
-// maybeRedetect's dedupe). This is a THROTTLE, not a trailing-edge
-// debounce: the tick is armed on the first keystroke of a burst and
-// fires ratioSaveDelay later regardless of further keystrokes, so a
-// continuous burst flushes mid-burst every 750ms (bounded write rate)
-// rather than waiting for the burst to end. Called from handleScriptDone
-// — the deferred script action that runs resizeSplit cannot return a
-// tea.Cmd itself, so the tick is armed where Cmds flow. Must be called
-// on the Update goroutine (pendingRatioSaves/ratioSaveArmed are
+// recorded pending ratios and no tick is already in flight (gateRatioSave
+// has no interval, so it only dedupes). This is a THROTTLE, not a
+// trailing-edge debounce: the tick is armed on the first keystroke of a
+// burst and fires ratioSaveDelay later regardless of further keystrokes,
+// so a continuous burst flushes mid-burst every 750ms (bounded write
+// rate) rather than waiting for the burst to end. Called from
+// handleScriptDone — the deferred script action that runs resizeSplit
+// cannot return a tea.Cmd itself, so the tick is armed where Cmds flow.
+// Must be called on the Update goroutine (pendingRatioSaves is
 // unsynchronized).
 func (m *home) maybeArmRatioSave() tea.Cmd {
-	if len(m.pendingRatioSaves) == 0 || m.ratioSaveArmed {
-		return nil
-	}
-	m.ratioSaveArmed = true
-	return tea.Tick(ratioSaveDelay, func(time.Time) tea.Msg {
-		return ratioSaveMsg{}
+	return m.dispatchGated(gateRatioSave, time.Now(), func() tea.Cmd {
+		if len(m.pendingRatioSaves) == 0 {
+			return nil
+		}
+		return tea.Tick(ratioSaveDelay, func(time.Time) tea.Msg {
+			return ratioSaveMsg{}
+		})
 	})
 }
 

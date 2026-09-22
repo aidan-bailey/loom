@@ -332,24 +332,13 @@ type home struct {
 	// re-detect chains. Update-goroutine only.
 	redetectPending map[string]bool
 
-	// lastRosterQuery / rosterInFlight throttle the roster poll (see
-	// maybeRosterQuery). The health tick they ride fires every 500ms on the
-	// snapshot path, far too often for a ~380ms subprocess, and without an
-	// in-flight guard a hung CLI would stack concurrent processes.
+	// gates throttle the background jobs riding the health tick (roster
+	// query, subagent scan, GitHub poll) and dedupe the split-ratio flush
+	// tick, one pollGate per gateKind (see pollgate.go; resolve with
+	// m.gate). Installed with their intervals by newPollGates.
 	// Update-goroutine only.
-	lastRosterQuery time.Time
-	rosterInFlight  bool
+	gates [numGateKinds]pollGate
 
-	// lastSubagentScan / subagentInFlight throttle the hook-event scan
-	// (see maybeSubagentScan), in the same way as the roster fields.
-	lastSubagentScan time.Time
-	subagentInFlight bool
-
-	// lastGHQuery / ghInFlight throttle the GitHub poller (see
-	// maybeGHQuery in github.go), exactly like the roster pair. Zeroing
-	// lastGHQuery forces the next health tick to poll.
-	lastGHQuery time.Time
-	ghInFlight  bool
 	// ghAvailable caches gh's install/auth check, resolved by the first
 	// poll. Until checked, polls proceed (the poll itself checks).
 	ghAvailable ghAvailability
@@ -378,10 +367,9 @@ type home struct {
 	// write — key-repeat resize would otherwise fsync state.json per
 	// keystroke. applyStoredRatio reads it first (pending is newest
 	// truth); saveCurrentSlot/handleQuit flush it synchronously.
-	// ratioSaveArmed dedupes the flush tick (see maybeArmRatioSave).
-	// Update-goroutine only.
+	// The gateRatioSave gate dedupes the flush tick (see
+	// maybeArmRatioSave). Update-goroutine only.
 	pendingRatioSaves map[string]float64
-	ratioSaveArmed    bool
 
 	// hostFocused mirrors the host terminal's focus state (via tea.FocusMsg/
 	// BlurMsg with ReportFocus on). Assumed focused at startup; used to
@@ -741,12 +729,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, statusDetectCmd(inst)
+	case gatedMsg:
+		return m.deliverGated(msg)
 	case ratioSaveMsg:
 		// Throttled flush of resizeSplit's pending ratios — one persisted
 		// write per 750ms window instead of one per keystroke. A flush
-		// that already ran (slot switch, quit) leaves the map empty and
-		// this tick simply disarms.
-		m.ratioSaveArmed = false
+		// that already ran (slot switch, quit) leaves the map empty, so
+		// this is a no-op; the gatedMsg wrapper has disarmed the tick.
 		m.flushPendingRatioSaves()
 		return m, nil
 	case redetectMsg:
@@ -763,9 +752,6 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleSubagentScan(msg)
 		return m, nil
 	case rosterReadyMsg:
-		// Disarm before anything else: a result that does not clear this
-		// latches the roster off for the rest of the session.
-		m.rosterInFlight = false
 		if msg.err != nil {
 			// Debug, not warn: a missing daemon or an older CLI without
 			// `agents --json` is a supported configuration, not a fault —
@@ -782,7 +768,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleGHReady(msg)
 		return m, nil
 	case ghRefreshMsg:
-		m.lastGHQuery = time.Time{}
+		m.gate(gateGH).expedite()
 		return m, nil
 	case issuePickedMsg:
 		return m.handleIssuePicked(msg)

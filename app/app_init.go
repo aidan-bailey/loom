@@ -126,6 +126,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		tabBar:      ui.NewWorkspaceTabBar(),
 		skipScripts: noScripts,
 		hostFocused: true,
+		gates:       newPollGates(),
 	}
 	h.list = ui.NewList(&h.spinner)
 	if wsCtx != nil && wsCtx.Name != "" {

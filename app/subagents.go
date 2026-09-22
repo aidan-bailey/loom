@@ -57,28 +57,18 @@ func subagentScanCmd(active []*session.Instance) tea.Cmd {
 	}
 }
 
-// maybeSubagentScan returns a scan when one is due, following
+// maybeSubagentScan returns a scan when gateSubagent is due, following
 // maybeRosterQuery: none in flight, and at least subagentInterval since
-// the last dispatch. When nothing is dispatched neither field is armed,
-// since no scan means no subagentScanMsg to clear them. Call on the Update
-// goroutine.
+// the last dispatch. Returns nil when not due or nothing wants a scan.
+// Call on the Update goroutine.
 func (m *home) maybeSubagentScan(active []*session.Instance) tea.Cmd {
-	if m.subagentInFlight || time.Since(m.lastSubagentScan) < subagentInterval {
-		return nil
-	}
-	cmd := subagentScanCmd(active)
-	if cmd == nil {
-		return nil
-	}
-	m.subagentInFlight = true
-	m.lastSubagentScan = time.Now()
-	return cmd
+	return m.dispatchGated(gateSubagent, time.Now(), func() tea.Cmd {
+		return subagentScanCmd(active)
+	})
 }
 
-// handleSubagentScan applies a scan. It clears the in-flight flag first: a
-// delivery that did not would stop scanning for the rest of the session.
+// handleSubagentScan applies a scan.
 func (m *home) handleSubagentScan(msg subagentScanMsg) {
-	m.subagentInFlight = false
 	for _, r := range msg.results {
 		if r.err != nil {
 			if errors.Is(r.err, subagent.ErrNoHooks) {

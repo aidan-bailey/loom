@@ -41,6 +41,7 @@ func newTestHome(t *testing.T) *home {
 		errBox:    ui.NewErrBox(),
 		storage:   storage,
 		appState:  state,
+		gates:     newPollGates(),
 	}
 	h.scripts = script.NewEngine(buildReservedKeys())
 	h.scripts.LoadDefaults()

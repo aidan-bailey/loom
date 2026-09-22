@@ -19,7 +19,7 @@ func TestSubagentScanDispatchesForClaude(t *testing.T) {
 	m := homeWithAppState(t)
 
 	require.NotNil(t, m.maybeSubagentScan([]*session.Instance{inst}))
-	require.True(t, m.subagentInFlight)
+	require.True(t, m.gate(gateSubagent).inFlight)
 }
 
 func TestSubagentScanThrottledWithinInterval(t *testing.T) {
@@ -28,10 +28,10 @@ func TestSubagentScanThrottledWithinInterval(t *testing.T) {
 	active := []*session.Instance{inst}
 
 	require.NotNil(t, m.maybeSubagentScan(active))
-	m.subagentInFlight = false
+	m.gate(gateSubagent).inFlight = false
 	require.Nil(t, m.maybeSubagentScan(active))
 
-	m.lastSubagentScan = time.Now().Add(-subagentInterval - time.Second)
+	m.gate(gateSubagent).last = time.Now().Add(-subagentInterval - time.Second)
 	require.NotNil(t, m.maybeSubagentScan(active))
 }
 
@@ -41,7 +41,7 @@ func TestSubagentScanNotStackedWhileInFlight(t *testing.T) {
 	active := []*session.Instance{inst}
 
 	require.NotNil(t, m.maybeSubagentScan(active))
-	m.lastSubagentScan = time.Now().Add(-subagentInterval - time.Second)
+	m.gate(gateSubagent).last = time.Now().Add(-subagentInterval - time.Second)
 	require.Nil(t, m.maybeSubagentScan(active))
 }
 
@@ -52,24 +52,24 @@ func TestSubagentScanNoClaudeDoesNotLatch(t *testing.T) {
 	m := homeWithAppState(t)
 
 	require.Nil(t, m.maybeSubagentScan([]*session.Instance{inst}))
-	require.False(t, m.subagentInFlight)
-	require.True(t, m.lastSubagentScan.IsZero())
+	require.False(t, m.gate(gateSubagent).inFlight)
+	require.True(t, m.gate(gateSubagent).last.IsZero())
 }
 
 func TestSubagentScanMsgClearsInFlightOnEveryDelivery(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "sub-clear", "claude", "x")
 	m := homeWithAppState(t)
 
-	m.subagentInFlight = true
-	m.Update(subagentScanMsg{})
-	require.False(t, m.subagentInFlight)
+	m.gate(gateSubagent).inFlight = true
+	m.Update(gatedMsg{kind: gateSubagent, msg: subagentScanMsg{}})
+	require.False(t, m.gate(gateSubagent).inFlight)
 
-	m.subagentInFlight = true
-	m.Update(subagentScanMsg{results: []subagentScanResult{
+	m.gate(gateSubagent).inFlight = true
+	m.Update(gatedMsg{kind: gateSubagent, msg: subagentScanMsg{results: []subagentScanResult{
 		{instance: inst, err: errors.New("disk on fire")},
 		{instance: inst, err: subagent.ErrNoHooks},
-	}})
-	require.False(t, m.subagentInFlight, "errors must re-arm scanning too")
+	}}})
+	require.False(t, m.gate(gateSubagent).inFlight, "errors must re-arm scanning too")
 }
 
 func explorerResult(launchID string, replayed bool, extra ...subagent.Event) subagent.Result {
@@ -107,10 +107,11 @@ func TestSubagentScanMsgNoHooksForgetsWarmRows(t *testing.T) {
 	m.Update(subagentScanMsg{results: []subagentScanResult{{instance: inst, result: explorerResult("L1", true)}}})
 	require.Len(t, inst.Subagents(), 1)
 
-	m.Update(subagentScanMsg{results: []subagentScanResult{{instance: inst, err: subagent.ErrNoHooks}}})
+	m.gate(gateSubagent).inFlight = true
+	m.Update(gatedMsg{kind: gateSubagent, msg: subagentScanMsg{results: []subagentScanResult{{instance: inst, err: subagent.ErrNoHooks}}}})
 
 	require.Empty(t, inst.Subagents())
-	require.False(t, m.subagentInFlight)
+	require.False(t, m.gate(gateSubagent).inFlight)
 }
 
 func TestSubagentScanCmdEndToEnd(t *testing.T) {
@@ -135,5 +136,5 @@ func TestSubagentScanCmdEndToEnd(t *testing.T) {
 	m.Update(cmd())
 
 	require.Equal(t, []subagent.View{{Name: "Explore", Description: "map code"}}, inst.Subagents())
-	require.False(t, m.subagentInFlight)
+	require.False(t, m.gate(gateSubagent).inFlight, "the gated delivery must disarm the scan")
 }

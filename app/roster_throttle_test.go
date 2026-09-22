@@ -21,7 +21,7 @@ func TestRosterQueryDispatchesOnFirstCall(t *testing.T) {
 
 	require.NotNil(t, m.maybeRosterQuery([]*session.Instance{inst}),
 		"the first tick must dispatch a query")
-	require.True(t, m.rosterInFlight)
+	require.True(t, m.gate(gateRoster).inFlight)
 }
 
 func TestRosterQueryThrottledWithinInterval(t *testing.T) {
@@ -30,7 +30,7 @@ func TestRosterQueryThrottledWithinInterval(t *testing.T) {
 	active := []*session.Instance{inst}
 
 	require.NotNil(t, m.maybeRosterQuery(active))
-	m.rosterInFlight = false // pretend the first query already returned
+	m.gate(gateRoster).inFlight = false // pretend the first query already returned
 
 	require.Nil(t, m.maybeRosterQuery(active),
 		"a second tick inside the interval must not spawn another process")
@@ -42,8 +42,8 @@ func TestRosterQueryResumesAfterInterval(t *testing.T) {
 	active := []*session.Instance{inst}
 
 	require.NotNil(t, m.maybeRosterQuery(active))
-	m.rosterInFlight = false
-	m.lastRosterQuery = time.Now().Add(-rosterInterval - time.Second)
+	m.gate(gateRoster).inFlight = false
+	m.gate(gateRoster).last = time.Now().Add(-rosterInterval - time.Second)
 
 	require.NotNil(t, m.maybeRosterQuery(active),
 		"once the interval has elapsed the query must run again")
@@ -57,7 +57,7 @@ func TestRosterQueryNotStackedWhileInFlight(t *testing.T) {
 	require.NotNil(t, m.maybeRosterQuery(active))
 	// Interval has elapsed, but the previous query has not come back — a
 	// hung CLI must not accumulate concurrent processes.
-	m.lastRosterQuery = time.Now().Add(-rosterInterval - time.Second)
+	m.gate(gateRoster).last = time.Now().Add(-rosterInterval - time.Second)
 
 	require.Nil(t, m.maybeRosterQuery(active),
 		"an outstanding query must suppress the next dispatch")
@@ -65,20 +65,20 @@ func TestRosterQueryNotStackedWhileInFlight(t *testing.T) {
 
 func TestRosterReadyMsgClearsInFlight(t *testing.T) {
 	m := homeWithAppState(t)
-	m.rosterInFlight = true
+	m.gate(gateRoster).inFlight = true
 
-	m.Update(rosterReadyMsg{entries: map[string]session.RosterEntry{}})
+	m.Update(gatedMsg{kind: gateRoster, msg: rosterReadyMsg{entries: map[string]session.RosterEntry{}}})
 
-	require.False(t, m.rosterInFlight, "a delivered result must re-arm the next query")
+	require.False(t, m.gate(gateRoster).inFlight, "a delivered result must re-arm the next query")
 }
 
 func TestRosterReadyMsgClearsInFlightOnError(t *testing.T) {
 	m := homeWithAppState(t)
-	m.rosterInFlight = true
+	m.gate(gateRoster).inFlight = true
 
-	m.Update(rosterReadyMsg{err: errAssertRoster})
+	m.Update(gatedMsg{kind: gateRoster, msg: rosterReadyMsg{err: errAssertRoster}})
 
-	require.False(t, m.rosterInFlight,
+	require.False(t, m.gate(gateRoster).inFlight,
 		"a failed query must re-arm too, or the roster latches off forever")
 }
 
@@ -90,8 +90,8 @@ func TestRosterQueryNoClaudeDoesNotLatchInFlight(t *testing.T) {
 	m := homeWithAppState(t)
 
 	require.Nil(t, m.maybeRosterQuery([]*session.Instance{inst}))
-	require.False(t, m.rosterInFlight,
+	require.False(t, m.gate(gateRoster).inFlight,
 		"no dispatch means no in-flight flag — nothing would ever clear it")
-	require.True(t, m.lastRosterQuery.IsZero(),
+	require.True(t, m.gate(gateRoster).last.IsZero(),
 		"a skipped query must not start the throttle window either")
 }

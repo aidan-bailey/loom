@@ -29,10 +29,10 @@ func TestRunNewFromIssue_OpensPickerFromSnapshot(t *testing.T) {
 func TestRunNewFromIssue_NoSnapshotShowsLoadingAndForcesPoll(t *testing.T) {
 	m := newTestHomeWithActiveCtx(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: true}
-	m.lastGHQuery = time.Now()
+	m.gate(gateGH).last = time.Now()
 	_, _ = runNewFromIssue(m)
 	require.Equal(t, stateIssuePicker, m.state)
-	assert.True(t, m.lastGHQuery.IsZero())
+	assert.True(t, m.gate(gateGH).due(time.Now()))
 	assert.Contains(t, m.issuePicker().Render(), "loading")
 }
 
@@ -78,6 +78,7 @@ func TestIssuePickerEnter_DispatchesView(t *testing.T) {
 func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T) {
 	m := newTestHomeWithActiveCtx(t)
 	before := m.list.NumInstances()
+	m.gate(gateGH).last = time.Now()
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "Fix flaky test", URL: "https://x/12", Body: "do it"}})
 	require.Equal(t, before+1, m.list.NumInstances())
 	inst := m.list.GetInstances()[m.list.NumInstances()-1]
@@ -87,7 +88,7 @@ func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T)
 	assert.Equal(t, stateLaunchOptions, m.state)
 	_, ok := m.activeOverlay.(*overlay.SessionLaunchOptions)
 	assert.True(t, ok)
-	assert.True(t, m.lastGHQuery.IsZero(), "an issue-born session forces the next poll")
+	assert.True(t, m.gate(gateGH).due(time.Now()), "an issue-born session forces the next poll")
 }
 
 func TestIssuePickedMsg_ErrorCreatesNothing(t *testing.T) {

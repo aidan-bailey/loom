@@ -142,34 +142,30 @@ func (m *home) linkedIssues(repo string) []int {
 }
 
 // maybeGHQuery returns a poll Cmd when one is due: gh not known
-// unavailable, none in flight, and ghInterval since the last dispatch.
-// Arms neither field when it dispatches nothing — no Cmd means no
-// ghReadyMsg to disarm them. Update goroutine only.
+// unavailable, and gateGH due (none in flight, and ghInterval since the
+// last dispatch). Update goroutine only.
 func (m *home) maybeGHQuery() tea.Cmd {
 	// A gh that reported unavailable is re-probed on ghRecheckInterval
 	// rather than never again.
 	if m.ghAvailable.checked && !m.ghAvailable.ok && time.Since(m.ghAvailable.checkedAt) < ghRecheckInterval {
 		return nil
 	}
-	if m.ghInFlight || time.Since(m.lastGHQuery) < ghInterval {
-		return nil
-	}
-	repos := m.openRepoPaths()
-	if len(repos) == 0 {
-		return nil
-	}
-	req := ghPollRequest{
-		repos:      repos,
-		linked:     map[string][]int{},
-		configured: m.baseBranchByRepo(),
-		check:      !m.ghAvailable.checked || !m.ghAvailable.ok,
-	}
-	for _, r := range repos {
-		req.linked[r] = m.linkedIssues(r)
-	}
-	m.ghInFlight = true
-	m.lastGHQuery = time.Now()
-	return ghPollCmd(req, internalexec.Default{})
+	return m.dispatchGated(gateGH, time.Now(), func() tea.Cmd {
+		repos := m.openRepoPaths()
+		if len(repos) == 0 {
+			return nil
+		}
+		req := ghPollRequest{
+			repos:      repos,
+			linked:     map[string][]int{},
+			configured: m.baseBranchByRepo(),
+			check:      !m.ghAvailable.checked || !m.ghAvailable.ok,
+		}
+		for _, r := range repos {
+			req.linked[r] = m.linkedIssues(r)
+		}
+		return ghPollCmd(req, internalexec.Default{})
+	})
 }
 
 // ghPollCmd runs one poll: an optional CLI check, then per repo a base
@@ -209,11 +205,9 @@ func ghPollCmd(req ghPollRequest, r internalexec.Executor) tea.Cmd {
 	}
 }
 
-// handleGHReady applies a poll result: disarms the in-flight guard
-// first (a miss latches the poller off), replaces ghState wholesale,
-// and re-joins every instance.
+// handleGHReady applies a poll result: replaces ghState wholesale and
+// re-joins every instance.
 func (m *home) handleGHReady(msg ghReadyMsg) {
-	m.ghInFlight = false
 	m.ghAvailable = msg.available
 	for repo, err := range msg.errs {
 		log.For("github").Debug("query_failed", "repo", repo, "err", err.Error())

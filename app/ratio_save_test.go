@@ -36,7 +36,7 @@ func TestResizeSplit_SurvivesInstanceChanged(t *testing.T) {
 // TestRatioSaveMsg_FlushesAndPrunes drives the throttled flush through
 // Update: pending entries land in persisted SplitRatios in one write,
 // entries for instances no longer in the list are pruned, and the
-// armed flag clears so the next resize burst can re-arm.
+// gate disarms so the next resize burst can re-arm.
 func TestRatioSaveMsg_FlushesAndPrunes(t *testing.T) {
 	m := newTestHome(t)
 	mustAddInstance(t, m, "live")
@@ -47,14 +47,39 @@ func TestRatioSaveMsg_FlushesAndPrunes(t *testing.T) {
 	}))
 
 	m.pendingRatioSaves = map[string]float64{"live": 0.8}
-	m.ratioSaveArmed = true
+	m.gate(gateRatioSave).inFlight = true
 
-	_, _ = m.Update(ratioSaveMsg{})
+	_, _ = m.Update(gatedMsg{kind: gateRatioSave, msg: ratioSaveMsg{}})
 
 	got := m.appState.GetUIPrefs().SplitRatios
 	assert.Equal(t, 0.8, got["live"], "pending ratio must be persisted")
 	_, stale := got["gone"]
 	assert.False(t, stale, "titles absent from the live list must be pruned")
-	assert.False(t, m.ratioSaveArmed, "flush must disarm the throttle tick")
+	assert.False(t, m.gate(gateRatioSave).inFlight, "flush must disarm the throttle tick")
 	assert.Empty(t, m.pendingRatioSaves, "pending map must be drained")
+}
+
+// TestMaybeArmRatioSave_OneTickAndEmptyDeliveryDisarms pins the throttle's
+// shape: nothing pending arms nothing, a pending ratio arms exactly one
+// tick however many resizes follow, and a tick that lands after a
+// synchronous flush (slot switch, quit) found the map empty still
+// disarms, or the next burst would never persist.
+func TestMaybeArmRatioSave_OneTickAndEmptyDeliveryDisarms(t *testing.T) {
+	m := newTestHome(t)
+	mustAddInstance(t, m, "a")
+
+	assert.Nil(t, m.maybeArmRatioSave(), "nothing pending: no tick")
+	assert.False(t, m.gate(gateRatioSave).inFlight, "no tick means nothing armed")
+
+	m.resizeSplit(+0.05)
+	require.NotNil(t, m.maybeArmRatioSave())
+	m.resizeSplit(+0.05)
+	assert.Nil(t, m.maybeArmRatioSave(), "a tick in flight must not be stacked")
+
+	m.flushPendingRatioSaves() // saveCurrentSlot/handleQuit path
+	_, _ = m.Update(gatedMsg{kind: gateRatioSave, msg: ratioSaveMsg{}})
+	assert.False(t, m.gate(gateRatioSave).inFlight)
+
+	m.resizeSplit(+0.05)
+	assert.NotNil(t, m.maybeArmRatioSave(), "the next burst re-arms")
 }
