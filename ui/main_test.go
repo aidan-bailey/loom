@@ -32,8 +32,15 @@ func runTests(m *testing.M) int {
 	// before the private-socket kill-server below so RemoveAll runs after
 	// (not before) it: defers unwind LIFO, and kill-server needs the
 	// socket file's directory to still exist when it runs.
+	//
+	// Names below are kept short and never hard-code a base directory
+	// (os.MkdirTemp("", …) resolves $TMPDIR/os.TempDir(), which may not be
+	// /tmp — e.g. a Nix build sandbox uses TMPDIR=/build): tmux's socket
+	// path is TMUX_TMPDIR/tmux-<uid>/<name>, and sun_path is capped at 108
+	// bytes on Linux, 104 on macOS, where the default $TMPDIR alone can run
+	// ~49 bytes.
 	os.Unsetenv("TMUX")
-	tmuxTmpDir, err := os.MkdirTemp("", "loomtest-ui-tmux-tmpdir-*")
+	tmuxTmpDir, err := os.MkdirTemp("", "lt")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir tmux tmpdir: %v\n", err)
 		return 1
@@ -47,7 +54,7 @@ func runTests(m *testing.M) int {
 	// Point every real tmux.Command in this package's tests at a private
 	// server, never the developer's default one. Kill it afterwards so
 	// nothing outlives the run.
-	sock := fmt.Sprintf("loomtest-ui-main-%d", os.Getpid())
+	sock := fmt.Sprintf("lt-u-%d", os.Getpid())
 	if err := os.Setenv(tmux.EnvTmuxSocket, sock); err != nil {
 		fmt.Fprintf(os.Stderr, "set %s: %v\n", tmux.EnvTmuxSocket, err)
 		return 1

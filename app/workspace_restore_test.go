@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
@@ -59,13 +59,21 @@ func (r *recordingExec) ran(arg string) bool {
 
 var _ cmd2.Executor = (*recordingExec)(nil)
 
+// isolateTmuxCounter gives each isolateTmux call within this process a
+// distinct short suffix. Combined with the pid (distinguishing concurrent
+// test processes), this keeps socket names unique without the 19-digit
+// time.Now().UnixNano() this used to carry — length matters here: tmux's
+// unix socket path is TMUX_TMPDIR/tmux-<uid>/<name>, and sun_path is capped
+// at 108 bytes on Linux, 104 on macOS.
+var isolateTmuxCounter atomic.Int64
+
 // isolateTmux points every tmux.Command in this test at a private, throwaway
 // server. The recording executor already keeps the load paths off tmux; this
 // is the safety belt for code that builds its own executor (Instance.Start),
 // so a regression can never reach the developer's real server.
 func isolateTmux(t *testing.T) {
 	t.Helper()
-	sock := fmt.Sprintf("loomtest-app-%d", time.Now().UnixNano())
+	sock := fmt.Sprintf("lt-%d-%d", os.Getpid(), isolateTmuxCounter.Add(1))
 	t.Setenv(tmux.EnvTmuxSocket, sock)
 	t.Cleanup(func() { _ = tmux.CommandOnSocket(context.Background(), sock, "kill-server").Run() })
 }

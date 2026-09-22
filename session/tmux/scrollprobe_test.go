@@ -41,20 +41,25 @@ func TestCaptureHistoryRealTmux(t *testing.T) {
 	// default resolves to. Scope a private server to just this test: a
 	// fresh socket name, $TMUX cleared so nothing falls through to an
 	// enclosing server, and a short-based TMUX_TMPDIR (not t.TempDir(),
-	// which nests under a long per-test path that can blow the unix
-	// socket path limit) so the socket file itself doesn't live under the
-	// real server's directory. The tmpdir removal is registered before
-	// Start, so the kill-server cleanup below — registered after, and so
-	// run first since t.Cleanup unwinds LIFO — still finds the directory
-	// (and therefore the socket file) in place.
-	tmuxTmpDir, err := os.MkdirTemp("/tmp", "lt")
+	// which nests under a long per-test path) so the socket file itself
+	// doesn't live under the real server's directory. Names are kept short
+	// and os.MkdirTemp("", …) never hard-codes a base directory — it
+	// resolves $TMPDIR/os.TempDir(), which may not be /tmp (e.g. a Nix
+	// build sandbox uses TMPDIR=/build): tmux's socket path is
+	// TMUX_TMPDIR/tmux-<uid>/<name>, and sun_path is capped at 108 bytes on
+	// Linux, 104 on macOS, where the default $TMPDIR alone can run ~49
+	// bytes. The tmpdir removal is registered before Start, so the
+	// kill-server cleanup below — registered after, and so run first since
+	// t.Cleanup unwinds LIFO — still finds the directory (and therefore the
+	// socket file) in place.
+	tmuxTmpDir, err := os.MkdirTemp("", "lt")
 	if err != nil {
 		t.Fatalf("mkdir tmux tmpdir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(tmuxTmpDir) })
 	t.Setenv("TMUX_TMPDIR", tmuxTmpDir)
 	t.Setenv("TMUX", "")
-	sock := fmt.Sprintf("loomtest-caphist-%d", time.Now().UnixNano())
+	sock := fmt.Sprintf("lt-c-%d", os.Getpid())
 	t.Setenv(EnvTmuxSocket, sock)
 	t.Cleanup(func() { _ = CommandOnSocket(context.Background(), sock, "kill-server").Run() })
 
