@@ -43,7 +43,6 @@ type Host interface {
     // Queries
     SelectedInstance() *session.Instance
     Instances() []*session.Instance
-    Workspaces() *config.WorkspaceRegistry
     ConfigDir() string
     RepoPath() string
     DefaultProgram() string

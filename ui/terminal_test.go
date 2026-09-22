@@ -428,3 +428,67 @@ func TestTerminalDetachSessionForInstance(t *testing.T) {
 	require.Len(t, tp.sessions, 1, "non-existent detach should not affect existing sessions")
 	tp.mu.Unlock()
 }
+
+// TestTerminalPane_ProbesRunOffLock pins that the session-resolving
+// methods hold t.mu only for the cache lookup. A has-session probe that
+// never answers must not block String() (the render path) — the script
+// engine calls SendKeysToInstance from its own goroutine, concurrently
+// with View.
+func TestTerminalPane_ProbesRunOffLock(t *testing.T) {
+	calls := map[string]func(*TerminalPane) error{
+		"SendKeysToInstance": func(p *TerminalPane) error { return p.SendKeysToInstance("inst", "x") },
+		"SendKeysRaw":        func(p *TerminalPane) error { return p.SendKeysRaw([]byte("x")) },
+		"SendPrompt":         func(p *TerminalPane) error { return p.SendPrompt("x") },
+		"ForwardMouse":       func(p *TerminalPane) error { return p.ForwardMouse(0, 1, 1, true) },
+		"Paste":              func(p *TerminalPane) error { return p.Paste("x") },
+		"CurrentTmuxSession": func(p *TerminalPane) error {
+			if p.CurrentTmuxSession() != nil {
+				return nil
+			}
+			return fmt.Errorf("no live session")
+		},
+		"ScrollUp": func(p *TerminalPane) error { return p.ScrollUp() },
+		"PageUp":   func(p *TerminalPane) error { return p.PageUp() },
+		"GotoTop":  func(p *TerminalPane) error { return p.GotoTop() },
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			probing := make(chan struct{}, 1)
+			release := make(chan struct{})
+			cmdExec := cmd_test.MockCmdExec{
+				RunFunc: func(c *exec.Cmd) error {
+					if strings.Contains(c.String(), "has-session") {
+						select {
+						case probing <- struct{}{}:
+						default:
+						}
+						<-release
+						return fmt.Errorf("session does not exist")
+					}
+					return nil
+				},
+				OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+			}
+			pane := NewTerminalPane()
+			pane.InjectSessionForTest("inst", newMockTmuxSession(t, "term", cmdExec), t.TempDir())
+
+			done := make(chan error, 1)
+			go func() { done <- call(pane) }()
+			<-probing
+
+			rendered := make(chan struct{})
+			go func() {
+				_ = pane.String()
+				close(rendered)
+			}()
+			select {
+			case <-rendered:
+			case <-time.After(time.Second):
+				close(release)
+				t.Fatalf("String() blocked while %s's has-session probe was in flight", name)
+			}
+			close(release)
+			<-done
+		})
+	}
+}

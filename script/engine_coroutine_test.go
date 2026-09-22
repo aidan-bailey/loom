@@ -11,6 +11,14 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
+// track registers a bare coroutine under id, as runAction does for a
+// yielded handler. Test-only: the slot has no ctx, so ResumeWithHost's
+// ctx rebind is skipped. Tests that need ctx go through Dispatch (see
+// TestResumeWithHostRebindsCtx).
+func (e *Engine) track(id IntentID, co *lua.LState) {
+	e.coroutines[id] = coroutineSlot{co: co}
+}
+
 // TestEngineResumeContinuesCoroutine drives the raw coroutine-tracking
 // machinery without going through cs.await or cs.bind — those layers
 // come in later tasks. A coroutine yields with an IntentID; the host

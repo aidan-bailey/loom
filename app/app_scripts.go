@@ -58,7 +58,6 @@ type scriptResumeMsg struct {
 type scriptHost struct {
 	selected       *session.Instance
 	instances      []*session.Instance
-	registry       *config.WorkspaceRegistry
 	configDir      string
 	repoPath       string
 	defaultProgram string
@@ -84,7 +83,6 @@ type scriptHost struct {
 // hands out its backing array.
 func newScriptHost(m *home) *scriptHost {
 	h := &scriptHost{
-		registry:       m.registry,
 		configDir:      m.configDir(),
 		repoPath:       m.repoPath(),
 		defaultProgram: m.program,
@@ -110,11 +108,6 @@ func (s *scriptHost) SelectedInstance() *session.Instance {
 // Instances implements script.Host.
 func (s *scriptHost) Instances() []*session.Instance {
 	return s.instances
-}
-
-// Workspaces implements script.Host.
-func (s *scriptHost) Workspaces() *config.WorkspaceRegistry {
-	return s.registry
 }
 
 // ConfigDir implements script.Host.

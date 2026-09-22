@@ -11,7 +11,6 @@
 package script
 
 import (
-	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 )
 
@@ -31,9 +30,6 @@ type Host interface {
 	// Instances returns every instance the list tracked when the
 	// dispatch or resume began. Callers must not mutate the slice.
 	Instances() []*session.Instance
-	// Workspaces returns the loaded workspace registry. May be nil if
-	// the registry failed to load at startup.
-	Workspaces() *config.WorkspaceRegistry
 	// ConfigDir returns the resolved workspace config directory for
 	// the currently focused workspace.
 	ConfigDir() string

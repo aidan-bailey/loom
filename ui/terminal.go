@@ -116,13 +116,53 @@ func (t *TerminalPane) setFallbackState(message string) {
 }
 
 // currentSessionLocked returns the live cached session for the current
-// instance, or nil. Caller must hold t.mu.
+// instance, or nil. Caller must hold t.mu, which stays held across the
+// has-session probe: only UpdateContent uses this, on the Update
+// goroutine that also runs View. Off-goroutine paths use lookupSession.
 func (t *TerminalPane) currentSessionLocked() *tmux.TmuxSession {
 	s, ok := t.sessions[t.currentTitle]
 	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
 		return nil
 	}
 	return s.tmuxSession
+}
+
+// lookupSession returns the cached tmux session for title, or nil. It
+// holds t.mu only for the map read: callers run the has-session probe
+// and any write to the session with the lock released, so a slow tmux
+// call never blocks String(). SendKeysToInstance is reached from the
+// script engine's goroutine, concurrently with View.
+func (t *TerminalPane) lookupSession(title string) *tmux.TmuxSession {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s, ok := t.sessions[title]; ok {
+		return s.tmuxSession
+	}
+	return nil
+}
+
+// lookupCurrentSession is lookupSession for the displayed instance,
+// returning its title too for error messages.
+func (t *TerminalPane) lookupCurrentSession() (string, *tmux.TmuxSession) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s, ok := t.sessions[t.currentTitle]; ok {
+		return t.currentTitle, s.tmuxSession
+	}
+	return t.currentTitle, nil
+}
+
+// liveSessionErr reports why ts (from lookupSession) can't take input,
+// or nil when it is alive. Call it without t.mu: the probe is a tmux
+// subprocess.
+func liveSessionErr(title string, ts *tmux.TmuxSession) error {
+	if ts == nil {
+		return fmt.Errorf("no terminal session for %s", title)
+	}
+	if !ts.DoesSessionExist() {
+		return fmt.Errorf("terminal session for %s no longer exists", title)
+	}
+	return nil
 }
 
 // snapshotScrollByLocked applies a lines-from-bottom delta to the legacy
@@ -394,16 +434,11 @@ func (t *TerminalPane) InjectSessionForTest(title string, ts *tmux.TmuxSession, 
 // displayed instance, or nil if none exists or the session is dead. Intended
 // for callers that drive full-screen attach via tea.ExecProcess.
 func (t *TerminalPane) CurrentTmuxSession() *tmux.TmuxSession {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	s, ok := t.sessions[t.currentTitle]
-	if !ok || s.tmuxSession == nil {
+	title, ts := t.lookupCurrentSession()
+	if liveSessionErr(title, ts) != nil {
 		return nil
 	}
-	if !s.tmuxSession.DoesSessionExist() {
-		return nil
-	}
-	return s.tmuxSession
+	return ts
 }
 
 // ShowingFallback reports whether the pane is displaying fallback text
@@ -442,19 +477,10 @@ func (t *TerminalPane) ForwardFocus(in bool) {
 
 // SendPrompt sends text followed by Enter to the current terminal session.
 func (t *TerminalPane) SendPrompt(text string) error {
-	t.mu.Lock()
-	s, ok := t.sessions[t.currentTitle]
-	if !ok || s.tmuxSession == nil {
-		t.mu.Unlock()
-		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	title, ts := t.lookupCurrentSession()
+	if err := liveSessionErr(title, ts); err != nil {
+		return err
 	}
-	if !s.tmuxSession.DoesSessionExist() {
-		t.mu.Unlock()
-		return fmt.Errorf("terminal session for %s no longer exists", t.currentTitle)
-	}
-	ts := s.tmuxSession
-	t.mu.Unlock()
-
 	if err := ts.SendKeys(text); err != nil {
 		return fmt.Errorf("error sending keys to terminal: %w", err)
 	}
@@ -471,19 +497,10 @@ func (t *TerminalPane) SendPrompt(text string) error {
 // session has died — callers (typically scripts) should surface the error
 // rather than silently no-op'ing so the user knows the keystroke didn't land.
 func (t *TerminalPane) SendKeysToInstance(title, text string) error {
-	t.mu.Lock()
-	s, ok := t.sessions[title]
-	if !ok || s.tmuxSession == nil {
-		t.mu.Unlock()
-		return fmt.Errorf("no terminal session for %s", title)
+	ts := t.lookupSession(title)
+	if err := liveSessionErr(title, ts); err != nil {
+		return err
 	}
-	if !s.tmuxSession.DoesSessionExist() {
-		t.mu.Unlock()
-		return fmt.Errorf("terminal session for %s no longer exists", title)
-	}
-	ts := s.tmuxSession
-	t.mu.Unlock()
-
 	if err := ts.SendKeys(text); err != nil {
 		return fmt.Errorf("error sending keys to terminal: %w", err)
 	}
@@ -496,45 +513,28 @@ func (t *TerminalPane) SendKeysToInstance(title, text string) error {
 
 // SendKeysRaw writes raw bytes to the current terminal tmux PTY.
 func (t *TerminalPane) SendKeysRaw(b []byte) error {
-	t.mu.Lock()
-	s, ok := t.sessions[t.currentTitle]
-	if !ok || s.tmuxSession == nil {
-		t.mu.Unlock()
-		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	title, ts := t.lookupCurrentSession()
+	if err := liveSessionErr(title, ts); err != nil {
+		return err
 	}
-	if !s.tmuxSession.DoesSessionExist() {
-		t.mu.Unlock()
-		return fmt.Errorf("terminal session for %s no longer exists", t.currentTitle)
-	}
-	ts := s.tmuxSession
-	t.mu.Unlock()
-
 	return ts.SendKeysRaw(b)
 }
 
 // ForwardMouse forwards one SGR mouse event to the current terminal session.
 func (t *TerminalPane) ForwardMouse(cb, col, row int, press bool) error {
-	t.mu.Lock()
-	s, ok := t.sessions[t.currentTitle]
-	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
-		t.mu.Unlock()
-		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	title, ts := t.lookupCurrentSession()
+	if err := liveSessionErr(title, ts); err != nil {
+		return err
 	}
-	ts := s.tmuxSession
-	t.mu.Unlock()
 	return ts.ForwardMouse(cb, col, row, press)
 }
 
 // Paste sends text to the current terminal session as a bracketed paste.
 func (t *TerminalPane) Paste(text string) error {
-	t.mu.Lock()
-	s, ok := t.sessions[t.currentTitle]
-	if !ok || s.tmuxSession == nil || !s.tmuxSession.DoesSessionExist() {
-		t.mu.Unlock()
-		return fmt.Errorf("no terminal session for %s", t.currentTitle)
+	title, ts := t.lookupCurrentSession()
+	if err := liveSessionErr(title, ts); err != nil {
+		return err
 	}
-	ts := s.tmuxSession
-	t.mu.Unlock()
 	return ts.Paste(text)
 }
 
@@ -680,14 +680,13 @@ func (t *TerminalPane) SelectedText() string {
 	return extractSelection(t.displayedPlain, t.sel)
 }
 
-// emuSourceLocked resolves the current session and whether it is
-// emulator-backed. currentSessionLocked runs a has-session probe (the file's
-// pervasive convention under t.mu) and ScrollbackLen reads only in-process
-// emulator state, so this is safe under the lock. Returns nil when no live
-// session is displayed. Caller must hold t.mu.
-func (t *TerminalPane) emuSourceLocked() (*tmux.TmuxSession, bool) {
-	s := t.currentSessionLocked()
-	if s == nil {
+// emuSource resolves the displayed session and whether it is
+// emulator-backed. Only the cache lookup takes t.mu; the has-session probe
+// runs unlocked and ScrollbackLen reads only in-process emulator state.
+// Returns nil when no live session is displayed. Caller must NOT hold t.mu.
+func (t *TerminalPane) emuSource() (*tmux.TmuxSession, bool) {
+	title, s := t.lookupCurrentSession()
+	if liveSessionErr(title, s) != nil {
 		return nil, false
 	}
 	_, emuOK := s.ScrollbackLen()
@@ -739,9 +738,7 @@ func (t *TerminalPane) snapScroll(s *tmux.TmuxSession, up bool, notches, delta i
 // ScrollUp scrolls one line up into history (or forwards a damped wheel-up to a
 // TUI agent on the alternate screen).
 func (t *TerminalPane) ScrollUp() error {
-	t.mu.Lock()
-	s, emuOK := t.emuSourceLocked()
-	t.mu.Unlock()
+	s, emuOK := t.emuSource()
 	if s == nil {
 		return nil
 	}
@@ -754,9 +751,7 @@ func (t *TerminalPane) ScrollUp() error {
 // ScrollDown scrolls one line down toward the live tail (or forwards a damped
 // wheel-down to a TUI agent).
 func (t *TerminalPane) ScrollDown() error {
-	t.mu.Lock()
-	s, emuOK := t.emuSourceLocked()
-	t.mu.Unlock()
+	s, emuOK := t.emuSource()
 	if s == nil {
 		return nil
 	}
@@ -768,13 +763,13 @@ func (t *TerminalPane) ScrollDown() error {
 
 // PageUp scrolls up by half a pane height (or forwards a burst of wheel-ups).
 func (t *TerminalPane) PageUp() error {
-	t.mu.Lock()
-	s, emuOK := t.emuSourceLocked()
-	half := t.height / 2
-	t.mu.Unlock()
+	s, emuOK := t.emuSource()
 	if s == nil {
 		return nil
 	}
+	t.mu.Lock()
+	half := t.height / 2
+	t.mu.Unlock()
 	if emuOK {
 		return t.routeEmuScroll(s, func() error { return t.scroll.PageUp(s, t.height) })
 	}
@@ -783,13 +778,13 @@ func (t *TerminalPane) PageUp() error {
 
 // PageDown scrolls down by half a pane height (or forwards a burst of wheel-downs).
 func (t *TerminalPane) PageDown() error {
-	t.mu.Lock()
-	s, emuOK := t.emuSourceLocked()
-	half := t.height / 2
-	t.mu.Unlock()
+	s, emuOK := t.emuSource()
 	if s == nil {
 		return nil
 	}
+	t.mu.Lock()
+	half := t.height / 2
+	t.mu.Unlock()
 	if emuOK {
 		return t.routeEmuScroll(s, func() error { return t.scroll.PageDown(s, t.height) })
 	}
@@ -798,18 +793,16 @@ func (t *TerminalPane) PageDown() error {
 
 // GotoTop jumps to the oldest line of history (TUI: a large wheel-up burst).
 func (t *TerminalPane) GotoTop() error {
-	t.mu.Lock()
-	s, emuOK := t.emuSourceLocked()
+	s, emuOK := t.emuSource()
 	if s == nil {
-		t.mu.Unlock()
 		return nil
 	}
 	if emuOK {
+		t.mu.Lock()
 		t.scroll.GotoTop(s) // pure window move, no alt probe (mirrors PreviewPane)
 		t.mu.Unlock()
 		return nil
 	}
-	t.mu.Unlock()
 	if s.IsAlternateScreen() { // subprocess — OUTSIDE t.mu
 		return s.ForwardWheel(true, 30)
 	}

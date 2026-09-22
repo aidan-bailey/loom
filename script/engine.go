@@ -210,12 +210,6 @@ func (e *Engine) Dispatch(ctx context.Context, key string, h Host) (matched bool
 	return true, err
 }
 
-// track registers co under id as a suspended coroutine awaiting a
-// host Resume. Caller holds e.mu.
-func (e *Engine) track(id IntentID, co *lua.LState) {
-	e.coroutines[id] = coroutineSlot{co: co}
-}
-
 // ResumeWithHost is the host-facing entry point for continuing a
 // suspended handler coroutine. It sets curHost for the duration of
 // the resume so any deferred cs.actions the coroutine calls next can
