@@ -2,6 +2,7 @@ package script
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/aidan-bailey/loom/log"
 	"sort"
@@ -31,6 +32,12 @@ type Engine struct {
 	// bindings is what HasAction and Registrations read, without mu.
 	// Rebuilt by publishBindingsLocked on every action-table change.
 	bindings atomic.Pointer[bindingSnapshot]
+
+	// cancel cancels the context set on L (and inherited by every
+	// handler coroutine). gopher-lua checks it before each instruction,
+	// so Shutdown can stop a handler stuck in a Lua loop. Set once in
+	// NewEngine; safe to call from any goroutine.
+	cancel context.CancelFunc
 
 	// curHost is the Host active for the current dispatch. Set in
 	// runAction, cleared on return. Read by cs.notify (standalone) so
@@ -106,12 +113,17 @@ type scriptAction struct {
 func NewEngine(reserved map[string]bool) *Engine {
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 	openSandbox(L)
+	// Must precede any NewThread: handler coroutines inherit a child of
+	// this context. Nothing cancels it before Shutdown or Close.
+	luaCtx, cancel := context.WithCancel(context.Background())
+	L.SetContext(luaCtx)
 
 	e := &Engine{
 		L:          L,
 		actions:    map[string]*scriptAction{},
 		reserved:   reserved,
 		coroutines: map[IntentID]coroutineSlot{},
+		cancel:     cancel,
 	}
 
 	e.publishBindingsLocked()
@@ -124,26 +136,79 @@ func NewEngine(reserved map[string]bool) *Engine {
 	return e
 }
 
-// Close releases the LState. Must be called on shutdown.
+// errEngineClosed is returned by calls that reach the engine after
+// Close, e.g. a dispatch Cmd still in flight when the app shuts down.
+var errEngineClosed = errors.New("script: engine closed")
+
+// Close releases the LState. The app shuts down through Shutdown, which
+// bounds the wait for a running handler; Close waits indefinitely.
 func (e *Engine) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.closeLocked()
+}
+
+// closeLocked is Close minus the lock. Caller holds e.mu.
+func (e *Engine) closeLocked() {
+	e.cancel()
 	if e.L != nil {
 		e.L.Close()
 		e.L = nil
 	}
 }
 
+// Shutdown releases the engine at process exit and returns within
+// timeout even if a handler is still running. It first tries the normal
+// path: drain parked coroutines (so their post-yield work runs) and
+// Close. If that hasn't finished by half the budget, because a handler
+// holds e.mu or a drained coroutine is itself stuck, it cancels the Lua
+// context, which makes Lua raise at its next instruction, and waits out
+// the rest. A handler blocked inside a Go call can't be interrupted:
+// then Shutdown logs engine_busy_at_shutdown and returns without
+// cleaning up, and process exit reclaims everything.
+func (e *Engine) Shutdown(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.cleanupAllCoroutinesLocked()
+		e.closeLocked()
+	}()
+
+	grace := time.NewTimer(timeout / 2)
+	defer grace.Stop()
+	select {
+	case <-done:
+		return
+	case <-grace.C:
+	}
+	e.cancel()
+	rest := time.NewTimer(timeout - timeout/2)
+	defer rest.Stop()
+	select {
+	case <-done:
+	case <-rest.C:
+		log.For("script").Warn("engine_busy_at_shutdown", "timeout_ms", timeout.Milliseconds())
+	}
+}
+
 // CleanupAllCoroutines resumes every tracked coroutine with lua.LNil
 // so any deferred work (defers, finalizers, logging) runs before the
-// LState closes. Call this from the app's shutdown hook after Bubble
-// Tea's main loop returns but before Close(). A coroutine that yields
-// again mid-drain is dropped — cleanup is best-effort, not a full
-// dispatch cycle, since the TUI is already gone and there is no host
-// left to service further intents. Ignored errors are logged.
+// LState closes. Shutdown runs it before closing the engine. A
+// coroutine that yields again mid-drain is dropped — cleanup is
+// best-effort, not a full dispatch cycle, since the TUI is already gone
+// and there is no host left to service further intents. Ignored errors
+// are logged.
 func (e *Engine) CleanupAllCoroutines() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.cleanupAllCoroutinesLocked()
+}
+
+// cleanupAllCoroutinesLocked is CleanupAllCoroutines minus the lock.
+// Caller holds e.mu.
+func (e *Engine) cleanupAllCoroutinesLocked() {
 	if e.L == nil {
 		return
 	}
@@ -205,7 +270,8 @@ func (e *Engine) HasAction(key string) bool {
 // precondition (if any), and on pass runs the action's run function.
 // Returns (matched, err). matched=false means no script owns this
 // key; matched=true err=nil is a success; matched=true err!=nil is a
-// runtime script error the caller should surface.
+// runtime script error the caller should surface. After Close it
+// returns errEngineClosed.
 //
 // ctx carries an optional trace ID (see log.WithTrace) — when
 // present it is emitted on every DebugKV record the handler produces,
@@ -214,6 +280,9 @@ func (e *Engine) Dispatch(ctx context.Context, key string, h Host) (matched bool
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	if e.L == nil {
+		return false, errEngineClosed
+	}
 	act, ok := e.actions[key]
 	if !ok {
 		return false, nil
@@ -287,6 +356,9 @@ func (e *Engine) Resume(id IntentID, value lua.LValue) (lua.LValue, error) {
 // resumeLocked is the body of Resume minus the lock. Callers must
 // already hold e.mu.
 func (e *Engine) resumeLocked(id IntentID, value lua.LValue) (lua.LValue, error) {
+	if e.L == nil {
+		return lua.LNil, errEngineClosed
+	}
 	slot, ok := e.coroutines[id]
 	if !ok {
 		return lua.LNil, fmt.Errorf("script: no coroutine awaiting intent %d", id)

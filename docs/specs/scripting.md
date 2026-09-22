@@ -429,6 +429,7 @@ app/state_default.go: handleStateDefaultKey
 - `h.list.AddInstance` must run on the main goroutine. Scripts queue instances via `Host.QueueInstance`; finalization happens in `handleScriptDone`. Never call `AddInstance` from inside the Lua VM.
 - Intent dispatch (`handleScriptIntent`) also runs on the main goroutine, from inside `Update`.
 - Notices and the instance queue are buffered and surfaced through `scriptDoneMsg` so error-bar updates happen on the main loop.
+- On quit, `Engine.Shutdown` drains parked coroutines and closes the LState within a bound (`scriptShutdownTimeout`). If a handler is still running it cancels the LState's context, which stops a Lua loop at its next instruction. A handler blocked inside a Go call is left for process exit to reclaim.
 
 ## Error Handling
 

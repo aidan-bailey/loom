@@ -12,10 +12,15 @@ import (
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 )
+
+// scriptShutdownTimeout bounds how long quit waits for the script engine
+// to drain and close (see script.Engine.Shutdown).
+const scriptShutdownTimeout = 1500 * time.Millisecond
 
 // Run starts the Bubble Tea program and blocks until the user quits or
 // ctx is cancelled. It wires the home model, installs a shutdown hook
@@ -53,10 +58,12 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 	// would otherwise be violated on process exit — including on the
 	// QuitIntent path where tea.Batch does not sequence scriptResumeMsg
 	// before tea.QuitMsg, so the awaiting coroutine can be stranded.
+	// Bounded: a handler still running (a Lua loop, or slow Go work such
+	// as inst:pause()) must not leave the terminal hanging after the TUI
+	// has torn down.
 	defer func() {
 		if h.scripts != nil {
-			h.scripts.CleanupAllCoroutines()
-			h.scripts.Close()
+			h.scripts.Shutdown(scriptShutdownTimeout)
 		}
 	}()
 	p := tea.NewProgram(h) // alt-screen + mouse mode are set on the tea.View (see View())
