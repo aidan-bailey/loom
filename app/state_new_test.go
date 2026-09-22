@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/aidan-bailey/loom/session"
@@ -87,4 +88,38 @@ func TestNewInstanceFlowRemoteControlBlockedViaModalPromptsConfirm(t *testing.T)
 
 	assert.Equal(t, stateConfirm, m.state)
 	assert.NotNil(t, m.pendingConfirmation.Async)
+}
+
+// preservedTitleStorage returns a loaded Storage whose only record, titled
+// title, was written by a newer loom: preserved on disk, absent from lists.
+func preservedTitleStorage(t *testing.T, title string) *session.Storage {
+	t.Helper()
+	rec := &recordingInstanceStorage{lastData: json.RawMessage(
+		`[{"schema_version":99,"title":"` + title + `"}]`)}
+	storage, err := session.NewStorage(rec, t.TempDir())
+	require.NoError(t, err)
+	_, err = storage.LoadInstanceData()
+	require.NoError(t, err)
+	require.Equal(t, []string{title}, storage.PreservedTitles())
+	return storage
+}
+
+// TestHandleStateNewKey_RejectsTitleOfPreservedRecord: storage never dedupes
+// against records it can't load, so a new session under a preserved
+// record's title would persist a second same-titled record (and share its
+// tmux session name). The title must be refused while the user can still
+// edit it.
+func TestHandleStateNewKey_RejectsTitleOfPreservedRecord(t *testing.T) {
+	m := newPendingTitleEntryHome(t)
+	m.storage = preservedTitleStorage(t, "taken")
+	m.errBox.SetSize(400, 1)
+
+	for _, r := range "taken" {
+		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	assert.Equal(t, stateNew, m.state, "stays on title entry so another title can be typed")
+	assert.Nil(t, m.pendingLaunchOptions)
+	assert.Contains(t, m.errBox.String(), `"taken"`)
 }

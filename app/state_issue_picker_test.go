@@ -99,6 +99,18 @@ func TestIssuePickedMsg_ErrorCreatesNothing(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
+// The issue picker names the session itself (SlugTitle), so it needs the
+// same guard as typed titles: never create over a preserved record's title.
+func TestIssuePickedMsg_RejectsTitleOfPreservedRecord(t *testing.T) {
+	m := newTestHomeWithActiveCtx(t)
+	m.storage = preservedTitleStorage(t, "gh-12-fix")
+	before := m.list.NumInstances()
+	_, cmd := m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "Fix"}})
+	assert.Equal(t, before, m.list.NumInstances(), "no session is created under a preserved title")
+	assert.Equal(t, stateDefault, m.state)
+	assert.NotNil(t, cmd, "and the user is told why")
+}
+
 func TestIssuePickedMsg_RespectsInstanceLimit(t *testing.T) {
 	m := newTestHomeWithActiveCtx(t)
 	for i := 0; i < GlobalInstanceLimit; i++ {

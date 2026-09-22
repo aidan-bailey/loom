@@ -2,11 +2,11 @@ package app
 
 import (
 	"fmt"
-	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
+	"slices"
 	"strings"
 	"time"
 
@@ -50,7 +50,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		return fmt.Errorf("failed to create storage for workspace %s: %w", ws.Name, err)
 	}
 
-	cmdExec := cmd2.MakeExecutor()
+	cmdExec := m.executor()
 	instances, err := storage.LoadAndReconcile(cmdExec)
 	if err != nil {
 		// Fail closed: do NOT proceed to build an empty slot. Continuing
@@ -89,13 +89,16 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		inst.CrashRecovered = false
 	}
 
-	// Auto-create workspace terminal if none exists
-	if !hasWorkspaceTerminal && wsCtx.RepoPath != "" {
-		wtTitle := ws.Name
-		if wtTitle == "" {
-			wtTitle = "Workspace Terminal"
-		}
-
+	// Auto-create workspace terminal if none exists. A record storage
+	// preserves but could not load (after a downgrade every record is
+	// undecodable, the terminal included) may already own the title: then
+	// the terminal exists, just not in this binary's list, and killing its
+	// session plus creating a second same-titled record would clobber it.
+	wtTitle := ws.Name
+	if wtTitle == "" {
+		wtTitle = "Workspace Terminal"
+	}
+	if !hasWorkspaceTerminal && wsCtx.RepoPath != "" && !slices.Contains(storage.PreservedTitles(), wtTitle) {
 		// A prior non-clean exit may have left a tmux session named
 		// loom_<wtTitle> alive without persisting the instance. The
 		// multi-tab restore sweep (CleanupOrphanedSessions in
@@ -389,9 +392,10 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 // PTYs that are already attached elsewhere — the safety constraint
 // documented at the classic-mode-load comment higher up doesn't apply.
 //
-// Fails closed: the global load runs before anything is torn down, and on
-// error the transition is abandoned with workspace mode left exactly as it
-// was (no slot deactivated, no workbench cleanup, no registry change).
+// Fails closed: the global load runs before this function tears anything
+// down, and on error the transition is abandoned with no slot deactivated,
+// storage and list unswapped, and the registry unchanged (the caller has
+// already run saveCurrentSlot, so workbench mode is exited either way).
 // Carrying on with an empty list would let its next save overwrite a
 // possibly-recoverable global state.json — the same rule activateWorkspace
 // and the classic startup path follow.
@@ -405,7 +409,7 @@ func (m *home) enterGlobalMode() tea.Cmd {
 		return m.handleError(fmt.Errorf("failed to construct global storage: %w", err))
 	}
 
-	cmdExec := cmd2.MakeExecutor()
+	cmdExec := m.executor()
 	instances, err := storage.LoadAndReconcile(cmdExec)
 	if err != nil {
 		return m.handleError(fmt.Errorf("failed to load global sessions (staying in workspace mode): %w", err))

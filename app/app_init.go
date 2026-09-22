@@ -11,6 +11,7 @@ import (
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"path/filepath"
+	"slices"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -193,12 +194,14 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			log.For("app").Error("orphan_cleanup_failed", "err", err)
 		}
 
-		// Auto-create workspace terminal if in a workspace context and none exists
-		if !hasWorkspaceTerminal && wsCtx != nil && wsCtx.RepoPath != "" {
-			wtTitle := "Workspace Terminal"
-			if wsCtx.Name != "" {
-				wtTitle = wsCtx.Name
-			}
+		// Auto-create workspace terminal if in a workspace context and none
+		// exists — unless a record storage preserves but could not load
+		// already owns the title (see activateWorkspace).
+		wtTitle := "Workspace Terminal"
+		if wsCtx != nil && wsCtx.Name != "" {
+			wtTitle = wsCtx.Name
+		}
+		if !hasWorkspaceTerminal && wsCtx != nil && wsCtx.RepoPath != "" && !slices.Contains(storage.PreservedTitles(), wtTitle) {
 			wtOpts := launchOptionsFromConfig(appConfig)
 			if h.remoteControlBlocked(effectiveRemoteControl(wtOpts), program) {
 				// Non-interactive startup: fall back silently but leave an
@@ -283,7 +286,8 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 
 // restoreSavedWorkspaces activates all workspaces in `saved` as slots, merging
 // the explicit startup target (if any) into the set, then focuses the
-// appropriate slot. Missing/failed workspaces are dropped silently. The
+// appropriate slot. Missing/failed workspaces are dropped (failures are
+// logged, and any failure skips the server-wide orphan sweep). The
 // registry's OpenWorkspaces list is rewritten to match what actually activated.
 func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	explicit := ""
@@ -307,9 +311,11 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		}
 	}
 
+	var failed []string
 	for _, ws := range desired {
 		if err := m.activateWorkspace(ws); err != nil {
 			log.For("app").Error("workspace.restore_failed", "name", ws.Name, "err", err)
+			failed = append(failed, ws.Name)
 		}
 	}
 
@@ -323,12 +329,20 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	// slot's live instances, Recoverable included, plus the records each
 	// slot's storage preserves outside its list) is complete without a
 	// separate pending-orphans accumulator.
-	claimedTitles := make(map[string]bool)
-	for _, slot := range m.slots {
-		claimTitles(claimedTitles, slot.list, slot.storage)
-	}
-	if err := session.CleanupOrphanedSessions(claimedTitles, cmd2.MakeExecutor()); err != nil {
-		log.For("app").Error("orphan_cleanup_failed", "err", err)
+	//
+	// Fail closed when any workspace failed to load: its titles are
+	// unreadable, so the sweep can't spare them and would kill its live
+	// sessions. Skipping only defers stale-session cleanup to a later run.
+	if len(failed) > 0 {
+		log.For("app").Warn("orphan_cleanup_skipped", "reason", "workspace_load_failed", "workspaces", failed)
+	} else {
+		claimedTitles := make(map[string]bool)
+		for _, slot := range m.slots {
+			claimTitles(claimedTitles, slot.list, slot.storage)
+		}
+		if err := session.CleanupOrphanedSessions(claimedTitles, m.executor()); err != nil {
+			log.For("app").Error("orphan_cleanup_failed", "err", err)
+		}
 	}
 
 	if len(m.slots) == 0 {

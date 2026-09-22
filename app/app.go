@@ -135,6 +135,11 @@ type home struct {
 	appConfig *config.Config
 	// appState stores persistent application state like seen help screens
 	appState config.AppState
+	// cmdExec, when non-nil, replaces cmd2.MakeExecutor() on the workspace
+	// load paths (activateWorkspace, enterGlobalMode, and the restore-time
+	// orphan sweep) — a test seam so those paths can run without touching
+	// a real tmux server. Always nil in production; read via executor().
+	cmdExec cmd2.Executor
 
 	// -- State --
 
@@ -1528,6 +1533,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// executor returns the command executor for the workspace load paths:
+// the injected test seam when set, the production executor otherwise.
+func (m *home) executor() cmd2.Executor {
+	if m.cmdExec != nil {
+		return m.cmdExec
+	}
+	return cmd2.MakeExecutor()
+}
+
 // recoverySummary tallies what a reconcileOrphans pass did, for the
 // non-blocking one-line summary shown to the user.
 type recoverySummary struct {
@@ -1618,7 +1632,7 @@ func claimedWorktreePaths(claimed []*session.Instance, storage *session.Storage)
 		}
 	}
 	if storage != nil {
-		for p := range storage.UnrecoveredWorktreePaths() {
+		for p := range storage.PreservedWorktreePaths() {
 			paths[p] = true
 		}
 	}

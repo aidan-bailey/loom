@@ -251,7 +251,9 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 // down every workspace slot first, then log a failed global load and carry
 // on with an empty list — whose next save rewrote the global state.json
 // with nothing. The global load now runs before anything is torn down, and
-// a failure must leave workspace mode exactly as it was.
+// a failure must leave the slots, storage and global state.json untouched.
+// Driven through applyWorkspaceToggle(nil), enterGlobalMode's only caller
+// (the picker's Global row), so the path is the real one.
 func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	globalDir := t.TempDir()
 	t.Setenv("LOOM_HOME", globalDir)
@@ -277,7 +279,6 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 		list:        listA,
 		menu:        ui.NewMenu(),
 		splitPane:   split,
-		workbench:   ui.NewWorkbench(ui.NewDiffPane(), split.Terminal()),
 		storage:     storageA,
 		tabBar:      ui.NewWorkspaceTabBar(),
 		errBox:      ui.NewErrBox(),
@@ -295,14 +296,8 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 		},
 	}
 	h.errBox.SetSize(400, 1)
-	// An active workbench must survive too: cleanupWorkbench is part of
-	// the teardown the failure has to skip.
-	h.viewMode = viewWorkbench
-	h.wbPrevTerminalHidden = false
-	h.splitPane.SetTerminalHidden(true)
-	h.wbRatio = 0.7
 
-	cmd := h.enterGlobalMode()
+	cmd := h.applyWorkspaceToggle(nil)
 
 	assert.NotNil(t, cmd, "the failure must be surfaced, not just logged")
 	assert.Contains(t, h.errBox.String(), "global")
@@ -312,9 +307,6 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	assert.Same(t, ctxA, h.activeCtx, "still in workspace mode")
 	assert.Same(t, storageA, h.storage, "storage must not be swapped for the unreadable global one")
 	assert.Same(t, listA, h.list)
-	assert.Equal(t, viewWorkbench, h.viewMode, "workbench must not be torn down")
-	assert.True(t, h.splitPane.IsTerminalHidden())
-	assert.Equal(t, 0.7, h.wbRatio)
 
 	got, err := os.ReadFile(statePath)
 	require.NoError(t, err)

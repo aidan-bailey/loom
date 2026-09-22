@@ -131,8 +131,12 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	if m.list.NumInstances() >= GlobalInstanceLimit {
 		return m, m.handleError(fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
 	}
+	title := github.SlugTitle(msg.issue)
+	if err := m.preservedTitleErr(title); err != nil {
+		return m, m.handleError(err)
+	}
 	instance, err := session.NewInstance(session.InstanceOptions{
-		Title:     github.SlugTitle(msg.issue),
+		Title:     title,
 		Path:      m.repoPath(),
 		Program:   m.program,
 		ConfigDir: m.configDir(),

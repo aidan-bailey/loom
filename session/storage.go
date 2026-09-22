@@ -106,12 +106,13 @@ type Storage struct {
 	// delete is not silently undone by the merge.
 	unrecovered []InstanceData
 
-	// undecodable holds the original bytes of records this binary cannot
-	// decode (corrupt, or written by a newer loom — see MigrateAll).
-	// Replaced on every successful load, and appended verbatim to every
-	// write so they survive a downgrade round-trip untouched. Never
-	// deduped against live titles: this binary can't read their titles.
-	undecodable []json.RawMessage
+	// undecodable holds records this binary cannot decode (corrupt, or
+	// written by a newer loom — see MigrateAll): their original bytes plus
+	// the two fields the sweeps and orphan discovery need, parsed once at
+	// load. Replaced on every successful load, and appended verbatim to
+	// every write so they survive a downgrade round-trip untouched. Never
+	// deduped against live titles (callers guard new titles instead).
+	undecodable []undecodableRecord
 	// loadErr is the error from the last load when the payload as a whole
 	// could not be decoded; nil after a successful one. While set, every
 	// write is refused with ErrStorageLoadFailed.
@@ -120,6 +121,35 @@ type Storage struct {
 	// Storage loads first, so undecodable records (and loadErr) are known
 	// before anything is written.
 	loaded bool
+}
+
+// undecodableRecord is one record MigrateAll rejected: raw is written back
+// verbatim; title and worktreePath are decoded best-effort (each on its
+// own, so a garbled title doesn't cost the path) and "" when unreadable.
+type undecodableRecord struct {
+	raw          json.RawMessage
+	title        string
+	worktreePath string
+}
+
+// newUndecodableRecord parses the best-effort metadata of a rejected record.
+func newUndecodableRecord(raw json.RawMessage) undecodableRecord {
+	rec := undecodableRecord{raw: raw}
+	var t struct {
+		Title string `json:"title"`
+	}
+	if json.Unmarshal(raw, &t) == nil {
+		rec.title = t.Title
+	}
+	var w struct {
+		Worktree struct {
+			WorktreePath string `json:"worktree_path"`
+		} `json:"worktree"`
+	}
+	if json.Unmarshal(raw, &w) == nil {
+		rec.worktreePath = w.Worktree.WorktreePath
+	}
+	return rec
 }
 
 // NewStorage creates a new storage instance.
@@ -254,14 +284,10 @@ func (s *Storage) PreservedTitles() []string {
 	for _, d := range s.unrecovered {
 		titles = append(titles, d.Title)
 	}
-	for _, raw := range s.undecodable {
-		var partial struct {
-			Title string `json:"title"`
+	for _, rec := range s.undecodable {
+		if rec.title != "" {
+			titles = append(titles, rec.title)
 		}
-		if err := json.Unmarshal(raw, &partial); err != nil || partial.Title == "" {
-			continue
-		}
-		titles = append(titles, partial.Title)
 	}
 	return titles
 }
@@ -359,7 +385,9 @@ func (s *Storage) writeLocked(data []InstanceData) error {
 		}
 		payload = append(payload, raw)
 	}
-	payload = append(payload, s.undecodable...)
+	for _, rec := range s.undecodable {
+		payload = append(payload, rec.raw)
+	}
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal instances: %w", err)
@@ -406,7 +434,10 @@ func (s *Storage) loadInstanceDataLocked() ([]InstanceData, error) {
 		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
 	}
 	s.loadErr = nil
-	s.undecodable = skipped
+	s.undecodable = make([]undecodableRecord, 0, len(skipped))
+	for _, raw := range skipped {
+		s.undecodable = append(s.undecodable, newUndecodableRecord(raw))
+	}
 	return data, nil
 }
 
@@ -425,14 +456,14 @@ func (s *Storage) DeleteAllInstances() error {
 	return s.state.DeleteAllInstances()
 }
 
-// UnrecoveredWorktreePaths returns the set of worktree paths held by
-// records that are preserved on disk but absent from the live list: the
+// PreservedWorktreePaths returns the set of worktree paths held by records
+// that are preserved on disk but absent from the live list: the
 // unrecovered cache, plus undecodable records (their worktree path decoded
 // best-effort; a record whose path can't be read is skipped). Orphan
 // discovery uses this so a preserved record's worktree is not also
 // surfaced as an orphan candidate, which would let the user re-recover it
 // under a different title and produce a duplicate state.json entry.
-func (s *Storage) UnrecoveredWorktreePaths() map[string]bool {
+func (s *Storage) PreservedWorktreePaths() map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.unrecovered) == 0 && len(s.undecodable) == 0 {
@@ -444,17 +475,9 @@ func (s *Storage) UnrecoveredWorktreePaths() map[string]bool {
 			out[p] = true
 		}
 	}
-	for _, raw := range s.undecodable {
-		var partial struct {
-			Worktree struct {
-				WorktreePath string `json:"worktree_path"`
-			} `json:"worktree"`
-		}
-		if err := json.Unmarshal(raw, &partial); err != nil {
-			continue
-		}
-		if p := partial.Worktree.WorktreePath; p != "" {
-			out[p] = true
+	for _, rec := range s.undecodable {
+		if rec.worktreePath != "" {
+			out[rec.worktreePath] = true
 		}
 	}
 	return out

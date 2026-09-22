@@ -141,7 +141,7 @@ func TestStorage_ConcurrentAccessDoesNotDeadlock(t *testing.T) {
 			wg.Add(3)
 			go func() { defer wg.Done(); _, _ = s.LoadAndReconcile(cmdExec) }()
 			go func() { defer wg.Done(); _ = s.SaveInstances(nil) }()
-			go func() { defer wg.Done(); _ = s.UnrecoveredWorktreePaths() }()
+			go func() { defer wg.Done(); _ = s.PreservedWorktreePaths() }()
 		}
 		wg.Wait()
 		close(done)
@@ -232,7 +232,7 @@ func TestStorage_SaveInstances_LiveWinsOverUnrecoveredOnTitleCollision(t *testin
 	assert.Equal(t, Paused, persisted[0].Status, "live data (Paused) wins, not unrecovered (Running)")
 }
 
-// TestStorage_UnrecoveredWorktreePaths_ReturnsCachedPaths verifies the
+// TestStorage_PreservedWorktreePaths_ReturnsCachedPaths verifies the
 // orphan-recovery cooperation hook: callers that build a "claimed
 // worktree paths" set (to avoid double-surfacing a worktree as both a
 // preserved-but-failed record AND an orphan candidate) can ask Storage
@@ -240,7 +240,7 @@ func TestStorage_SaveInstances_LiveWinsOverUnrecoveredOnTitleCollision(t *testin
 // failure would mean the user sees both a preserved record (via my
 // non-destructive reconcile fix) and an orphan-recovery prompt for the
 // same worktree, and accepting the prompt would duplicate state.
-func TestStorage_UnrecoveredWorktreePaths_ReturnsCachedPaths(t *testing.T) {
+func TestStorage_PreservedWorktreePaths_ReturnsCachedPaths(t *testing.T) {
 	wt := t.TempDir()
 	initial := `[
 		{"title":"","status":0,"program":"claude","is_workspace_terminal":false,"worktree":{"repo_path":"/tmp/r","worktree_path":"` + wt + `","branch_name":"orphan"}},
@@ -255,12 +255,12 @@ func TestStorage_UnrecoveredWorktreePaths_ReturnsCachedPaths(t *testing.T) {
 	require.NoError(t, err)
 
 	// Before LoadAndReconcile, nothing is unrecovered yet.
-	require.Empty(t, s.UnrecoveredWorktreePaths())
+	require.Empty(t, s.PreservedWorktreePaths())
 
 	_, err = s.LoadAndReconcile(cmdExec)
 	require.NoError(t, err)
 
-	got := s.UnrecoveredWorktreePaths()
+	got := s.PreservedWorktreePaths()
 	assert.True(t, got[wt], "the failed record's worktree path must be exposed so orphan discovery can treat it as claimed")
 	assert.False(t, got[wt+"/alive"], "the successfully reconciled record must not appear in unrecovered")
 }
@@ -396,7 +396,7 @@ func TestStorage_UndecodableRecord_WorktreeIsClaimed(t *testing.T) {
 	_, err := s.LoadAndReconcile(noopExec())
 	require.NoError(t, err)
 
-	got := s.UnrecoveredWorktreePaths()
+	got := s.PreservedWorktreePaths()
 	assert.True(t, got["/tmp/wt-future"], "the undecodable record's worktree must be claimed")
 	assert.False(t, got["/tmp/wt-alive"], "a loaded record is claimed by the live list, not by storage")
 }
@@ -513,7 +513,7 @@ func TestStorage_PreservedTitles(t *testing.T) {
 		{"title":"alive","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/wt-alive"}},
 		{"schema_version":99,"title":"future"},
 		{"schema_version":99},
-		{"schema_version":99,"title":{"garbled":true}},
+		{"schema_version":99,"title":{"garbled":true},"worktree":{"worktree_path":"/tmp/wt-garbled"}},
 		{"title":42},
 		"not an object"
 	]`)}
@@ -530,4 +530,55 @@ func TestStorage_PreservedTitles(t *testing.T) {
 
 	assert.ElementsMatch(t, []string{"flaky", "future"}, s.PreservedTitles(),
 		"untitled and unreadable titles are skipped; the loaded record is the live list's to claim")
+	assert.True(t, s.PreservedWorktreePaths()["/tmp/wt-garbled"],
+		"title and worktree path are decoded independently: a garbled title must not cost the path")
+}
+
+// savedTitles decodes just the titles of the last saved payload, in order.
+func savedTitles(t *testing.T, mock *trackingMockStorage) []string {
+	t.Helper()
+	require.NotEmpty(t, mock.saved)
+	var records []struct {
+		Title string `json:"title"`
+	}
+	require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &records))
+	titles := make([]string, 0, len(records))
+	for _, r := range records {
+		titles = append(titles, r.Title)
+	}
+	return titles
+}
+
+// TestStorage_UndecodableSharingALiveTitle_BothKept pins the deliberate
+// no-dedupe rule for undecodable records. Unlike an unrecovered record, an
+// undecodable one is not this binary's to judge: dropping it because a live
+// record shares its title would destroy a newer loom's data. New titles are
+// guarded against preserved ones at creation instead.
+func TestStorage_UndecodableSharingALiveTitle_BothKept(t *testing.T) {
+	mock := &trackingMockStorage{data: json.RawMessage(`[` + futureRecord + `]`)}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+	_, err = s.LoadInstanceData()
+	require.NoError(t, err)
+
+	live := &Instance{Title: "from-the-future", Status: Paused, Program: "claude"}
+	live.setStarted(true)
+	require.NoError(t, s.SaveInstances([]*Instance{live}))
+
+	assert.Equal(t, []string{"from-the-future", "from-the-future"}, savedTitles(t, mock))
+	assertFutureRecordPreserved(t, mock)
+}
+
+// TestStorage_SavePayloadOrder pins the payload layout when both caches are
+// non-empty: live records, then unrecovered, then undecodable verbatim.
+func TestStorage_SavePayloadOrder(t *testing.T) {
+	s, mock := futureStorage(t)
+	instances, err := s.LoadAndReconcile(noopExec())
+	require.NoError(t, err)
+	// Seeded directly (white-box, as in the collision test above): a real
+	// reconcile failure needs an empty title, which would blur the order.
+	s.unrecovered = []InstanceData{{Title: "flaky", Program: "claude"}}
+
+	require.NoError(t, s.SaveInstances(instances))
+	assert.Equal(t, []string{"alive", "flaky", "from-the-future"}, savedTitles(t, mock))
 }

@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/aidan-bailey/loom/ui"
 
@@ -36,6 +37,9 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		if len(instance.Title) == 0 {
 			return m, m.handleError(fmt.Errorf("title cannot be empty"))
+		}
+		if err := m.preservedTitleErr(instance.Title); err != nil {
+			return m, m.handleError(err)
 		}
 
 		// If promptAfterName, show prompt+branch overlay before starting
@@ -97,4 +101,17 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// preservedTitleErr rejects a new session title that belongs to a record
+// the focused storage preserves on disk but could not load (a reconcile
+// failure, or a newer loom's record after a downgrade). Storage never
+// dedupes against such records, so creating the session would persist a
+// second record under the title, and the two would share a tmux session
+// name. Returns nil when the title is free.
+func (m *home) preservedTitleErr(title string) error {
+	if m.storage == nil || !slices.Contains(m.storage.PreservedTitles(), title) {
+		return nil
+	}
+	return fmt.Errorf("title %q belongs to a saved session this version of loom could not load; choose another", title)
 }
