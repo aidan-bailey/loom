@@ -388,19 +388,14 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 // from any tab's, so calling LoadAndReconcile here cannot double-attach
 // PTYs that are already attached elsewhere — the safety constraint
 // documented at the classic-mode-load comment higher up doesn't apply.
+//
+// Fails closed: the global load runs before anything is torn down, and on
+// error the transition is abandoned with workspace mode left exactly as it
+// was (no slot deactivated, no workbench cleanup, no registry change).
+// Carrying on with an empty list would let its next save overwrite a
+// possibly-recoverable global state.json — the same rule activateWorkspace
+// and the classic startup path follow.
 func (m *home) enterGlobalMode() tea.Cmd {
-	// Picker escape hatch (W → deselect-all) reaches here without the
-	// saveCurrentSlot/loadSlot choke points — clean up workbench residue
-	// (wbRatio flush, split-terminal restore) while the workspace slot's
-	// appState is still current, or handleQuit later flushes it into the
-	// wrong (global) state.json.
-	m.cleanupWorkbench()
-	// Deactivate every workspace tab. Each slot persists its own
-	// instances via deactivateWorkspace before being dropped.
-	for i := len(m.slots) - 1; i >= 0; i-- {
-		m.deactivateWorkspace(m.slots[i].wsCtx.Name)
-	}
-
 	// Reconstruct global storage. cfgDir="" is interpreted as ~/.loom
 	// by config.LoadStateFrom / session.NewStorage — same as newHome.
 	appState := config.LoadStateFrom("")
@@ -413,7 +408,19 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	cmdExec := cmd2.MakeExecutor()
 	instances, err := storage.LoadAndReconcile(cmdExec)
 	if err != nil {
-		log.For("app").Error("global_load_reconcile_failed", "err", err)
+		return m.handleError(fmt.Errorf("failed to load global sessions (staying in workspace mode): %w", err))
+	}
+
+	// Picker escape hatch (W → deselect-all) reaches here without the
+	// saveCurrentSlot/loadSlot choke points — clean up workbench residue
+	// (wbRatio flush, split-terminal restore) while the workspace slot's
+	// appState is still current, or handleQuit later flushes it into the
+	// wrong (global) state.json.
+	m.cleanupWorkbench()
+	// Deactivate every workspace tab. Each slot persists its own
+	// instances via deactivateWorkspace before being dropped.
+	for i := len(m.slots) - 1; i >= 0; i-- {
+		m.deactivateWorkspace(m.slots[i].wsCtx.Name)
 	}
 
 	m.storage = storage

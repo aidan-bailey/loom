@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,4 +106,26 @@ func TestSelectedResumableNotWorkspace_AllowsRecoverable(t *testing.T) {
 
 	h := &home{list: list}
 	assert.True(t, selectedResumableNotWorkspace(h), "'r' must be enabled for a Recoverable orphan")
+}
+
+// TestReconcileOrphans_ReportsUndecodableRecords: records this binary
+// cannot decode never reach the list, so like reconcile failures they
+// must be counted in the recovery summary or they read as lost sessions.
+func TestReconcileOrphans_ReportsUndecodableRecords(t *testing.T) {
+	rec := &recordingInstanceStorage{lastData: json.RawMessage(
+		`[{"schema_version":99,"title":"future","worktree":{"worktree_path":"/tmp/wt-future"}}]`)}
+	storage, err := session.NewStorage(rec, t.TempDir())
+	require.NoError(t, err)
+	instances, err := storage.LoadAndReconcile(cmd2.MakeExecutor())
+	require.NoError(t, err)
+	require.Empty(t, instances)
+
+	sp := spinner.New()
+	list := ui.NewList(&sp)
+	h := &home{}
+	summary := h.reconcileOrphans(t.TempDir(), "true", list, storage, cmd2.MakeExecutor())
+
+	assert.Equal(t, 1, summary.undecodable)
+	assert.Zero(t, summary.failed, "undecodable records are not reconcile failures")
+	assert.Contains(t, summary.String(), "could not be read by this version of loom")
 }

@@ -1534,9 +1534,14 @@ type recoverySummary struct {
 	cleaned int // stale worktrees auto-removed
 	review  int // Recoverable entries added to the list
 	failed  int // records that failed reconcile (storage unrecovered cache)
+	// undecodable counts records this binary cannot decode (corrupt, or
+	// written by a newer loom); storage preserves them verbatim.
+	undecodable int
 }
 
-func (s recoverySummary) empty() bool { return s.cleaned == 0 && s.review == 0 && s.failed == 0 }
+func (s recoverySummary) empty() bool {
+	return s.cleaned == 0 && s.review == 0 && s.failed == 0 && s.undecodable == 0
+}
 
 func (s recoverySummary) String() string {
 	plural := func(n int, one, many string) string {
@@ -1561,6 +1566,16 @@ func (s recoverySummary) String() string {
 		// but never appear in the list — without this line they would
 		// look like silently lost sessions.
 		parts = append(parts, fmt.Sprintf("%s failed to load (kept; see loom.log)", plural(s.failed, "session", "sessions")))
+	}
+	if s.undecodable > 0 {
+		// Typically left by a newer loom after a downgrade. Saves write
+		// them back untouched, so the newer binary finds them intact.
+		verb := "were"
+		if s.undecodable == 1 {
+			verb = "was"
+		}
+		parts = append(parts, fmt.Sprintf("%s could not be read by this version of loom and %s preserved unchanged",
+			plural(s.undecodable, "session record", "session records"), verb))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -1588,8 +1603,9 @@ func persistableInstances(instances []*session.Instance) []*session.Instance {
 }
 
 // claimedWorktreePaths returns the set of worktree paths already accounted
-// for: live instances plus storage's unrecovered cache (records that failed
-// reconcile but remain tracked in state.json). Orphan discovery skips these.
+// for: live instances plus the records storage preserves outside the live
+// list (reconcile failures and undecodable records, both still tracked in
+// state.json). Orphan discovery skips these.
 func claimedWorktreePaths(claimed []*session.Instance, storage *session.Storage) map[string]bool {
 	paths := make(map[string]bool, len(claimed))
 	for _, inst := range claimed {
@@ -1645,9 +1661,11 @@ func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *
 		claimed[inst.Title] = true
 	}
 	// Records that failed reconcile at load time live only in the storage
-	// cache — surface their count so they don't read as lost sessions.
+	// cache, and undecodable ones only on disk — surface their counts so
+	// they don't read as lost sessions.
 	if storage != nil {
 		summary.failed = len(storage.UnrecoveredTitles())
+		summary.undecodable = storage.UndecodableCount()
 		// Unrecovered records may come back on the next load; keep their
 		// hooks folders.
 		for _, title := range storage.UnrecoveredTitles() {

@@ -3,6 +3,8 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/aidan-bailey/loom/log"
 )
 
 // Migrate decodes a single raw JSON object representing a stored instance
@@ -71,23 +73,35 @@ func Migrate(raw []byte) (InstanceData, error) {
 }
 
 // MigrateAll applies Migrate to every element of a JSON array of raw
-// instance records. Callers that already have []json.RawMessage should
-// prefer this over decoding twice.
-func MigrateAll(rawArray []byte) ([]InstanceData, error) {
+// instance records.
+//
+// A record that fails Migrate — corrupt, or written by a newer loom with a
+// schema_version above CurrentSchemaVersion (e.g. after a downgrade) — is
+// logged and returned in skipped as its original bytes rather than failing
+// the whole array. Storage writes skipped records back verbatim on every
+// save, so one unreadable record can never take the rest of the list down
+// with it, nor be silently dropped itself. err is returned only when the
+// top-level payload is not a JSON array at all; there are then no
+// individual records to preserve, and Storage refuses to write over it.
+//
+// Empty input returns nil, nil, nil.
+func MigrateAll(rawArray []byte) (records []InstanceData, skipped []json.RawMessage, err error) {
 	if len(rawArray) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var raw []json.RawMessage
 	if err := json.Unmarshal(rawArray, &raw); err != nil {
-		return nil, fmt.Errorf("unmarshal instance array: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal instance array: %w", err)
 	}
-	out := make([]InstanceData, 0, len(raw))
+	records = make([]InstanceData, 0, len(raw))
 	for i, r := range raw {
 		d, err := Migrate(r)
 		if err != nil {
-			return nil, fmt.Errorf("instance %d: %w", i, err)
+			log.For("session").Warn("instance_undecodable", "index", i, "err", err, "action", "preserved_verbatim")
+			skipped = append(skipped, r)
+			continue
 		}
-		out = append(out, d)
+		records = append(records, d)
 	}
-	return out, nil
+	return records, skipped, nil
 }

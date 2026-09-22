@@ -19,6 +19,13 @@ import (
 // with errors.Is to distinguish "already gone" from a real write error.
 var ErrInstanceNotFound = errors.New("instance not found")
 
+// ErrStorageLoadFailed signals that a write was refused because the
+// persisted instance payload could not be decoded as a whole (not a JSON
+// array). Writing anyway would replace records this Storage never saw
+// with whatever the caller holds — usually nothing. The latch clears on
+// the next successful load, or on DeleteAllInstances (the explicit wipe).
+var ErrStorageLoadFailed = errors.New("instance storage could not be read; refusing to overwrite it")
+
 // CurrentSchemaVersion is the schema version written by the current
 // binary. Any on-disk InstanceData with a lower SchemaVersion is routed
 // through storage_migrate.go's Migrate before use.
@@ -98,6 +105,21 @@ type Storage struct {
 	// DeleteAllInstances clear matching entries so a user-initiated
 	// delete is not silently undone by the merge.
 	unrecovered []InstanceData
+
+	// undecodable holds the original bytes of records this binary cannot
+	// decode (corrupt, or written by a newer loom — see MigrateAll).
+	// Replaced on every successful load, and appended verbatim to every
+	// write so they survive a downgrade round-trip untouched. Never
+	// deduped against live titles: this binary can't read their titles.
+	undecodable []json.RawMessage
+	// loadErr is the error from the last load when the payload as a whole
+	// could not be decoded; nil after a successful one. While set, every
+	// write is refused with ErrStorageLoadFailed.
+	loadErr error
+	// loaded reports whether any load has run. A write on a never-loaded
+	// Storage loads first, so undecodable records (and loadErr) are known
+	// before anything is written.
+	loaded bool
 }
 
 // NewStorage creates a new storage instance.
@@ -119,7 +141,10 @@ func NewStorage(state config.InstanceStorage, configDir string) (*Storage, error
 //
 // Unrecovered records from the most recent LoadAndReconcile pass are
 // appended to the payload (deduped by title — a live record always wins)
-// so reconcile failures do not silently delete persisted state.
+// so reconcile failures do not silently delete persisted state. Records
+// this binary cannot decode follow them verbatim (see writeLocked), and
+// the save is refused with ErrStorageLoadFailed while the payload as a
+// whole is unreadable.
 func (s *Storage) SaveInstances(instances []*Instance) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -136,22 +161,17 @@ func (s *Storage) SaveInstances(instances []*Instance) error {
 		}
 		data = append(data, d)
 	}
-
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("failed to marshal instances: %w", err)
-	}
-
-	return s.state.SaveInstances(jsonData)
+	return s.writeLocked(data)
 }
 
-// LoadInstances loads the list of instances from disk
+// LoadInstances loads the list of instances from disk. Records this
+// binary cannot decode are skipped (and preserved on the next write).
 func (s *Storage) LoadInstances() ([]*Instance, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	instancesData, err := MigrateAll(s.state.GetInstances())
+	instancesData, err := s.loadInstanceDataLocked()
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
+		return nil, err
 	}
 
 	instances := make([]*Instance, len(instancesData))
@@ -176,6 +196,10 @@ func (s *Storage) LoadInstances() ([]*Instance, error) {
 // next SaveInstances preserves them on disk. Previously such failures led
 // to permanent data loss: the failed record was silently omitted from the
 // live list, and the next save overwrote state.json with only the survivors.
+// Records that cannot be decoded at all are likewise skipped here and
+// preserved verbatim (UndecodableCount); only a payload that is not a JSON
+// array fails the load, which also latches every write shut until a later
+// load succeeds.
 func (s *Storage) LoadAndReconcile(cmdExec internalexec.Executor) ([]*Instance, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -216,6 +240,15 @@ func (s *Storage) UnrecoveredTitles() []string {
 	return titles
 }
 
+// UndecodableCount returns how many persisted records the last successful
+// load could not decode. Like unrecovered records they are preserved on
+// disk but never appear in the live list, so callers surface the count.
+func (s *Storage) UndecodableCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.undecodable)
+}
+
 // DeleteInstance removes an instance from storage.
 // Operates on raw InstanceData so it does not construct live Instance objects
 // (which would open tmux attach PTYs for every remaining running instance).
@@ -245,7 +278,7 @@ func (s *Storage) DeleteInstance(title string) error {
 	// a follow-up SaveInstances does not resurrect the just-deleted record.
 	s.dropUnrecovered(title)
 
-	return s.saveInstanceData(filtered)
+	return s.writeLocked(filtered)
 }
 
 // UpdateInstance replaces the persisted record for an existing instance.
@@ -273,13 +306,35 @@ func (s *Storage) UpdateInstance(instance *Instance) error {
 		return fmt.Errorf("%w: %s", ErrInstanceNotFound, snap.Title)
 	}
 
-	return s.saveInstanceData(data)
+	return s.writeLocked(data)
 }
 
-// saveInstanceData marshals raw InstanceData and writes it through the
-// underlying state, bypassing the live-Instance serialization path.
-func (s *Storage) saveInstanceData(data []InstanceData) error {
-	jsonData, err := json.Marshal(data)
+// writeLocked is the single choke point for every write of the instance
+// payload (SaveInstances, and the raw-InstanceData path behind
+// DeleteInstance/UpdateInstance, which never builds live Instances). It
+// refuses with ErrStorageLoadFailed when the persisted payload could not
+// be decoded as a whole (loading first if nothing has, so a never-loaded
+// Storage learns that before it writes), then writes data followed by
+// every undecodable record verbatim. Caller must hold s.mu.
+func (s *Storage) writeLocked(data []InstanceData) error {
+	if !s.loaded {
+		if _, err := s.loadInstanceDataLocked(); err != nil {
+			return fmt.Errorf("%w: %w", ErrStorageLoadFailed, err)
+		}
+	}
+	if s.loadErr != nil {
+		return fmt.Errorf("%w: %w", ErrStorageLoadFailed, s.loadErr)
+	}
+	payload := make([]json.RawMessage, 0, len(data)+len(s.undecodable))
+	for _, d := range data {
+		raw, err := json.Marshal(d)
+		if err != nil {
+			return fmt.Errorf("failed to marshal instance %s: %w", d.Title, err)
+		}
+		payload = append(payload, raw)
+	}
+	payload = append(payload, s.undecodable...)
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal instances: %w", err)
 	}
@@ -288,7 +343,8 @@ func (s *Storage) saveInstanceData(data []InstanceData) error {
 
 // LoadInstanceData loads raw serialized instance data without constructing Instance objects.
 // Used by reconciliation to inspect state before deciding how to restore.
-// All records pass through Migrate so callers receive CurrentSchemaVersion data.
+// All records pass through Migrate so callers receive CurrentSchemaVersion data;
+// records that fail it are omitted here and preserved on the next write.
 func (s *Storage) LoadInstanceData() ([]InstanceData, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -296,38 +352,68 @@ func (s *Storage) LoadInstanceData() ([]InstanceData, error) {
 }
 
 // loadInstanceDataLocked is the unlocked core of LoadInstanceData. Callers
-// that already hold s.mu (DeleteInstance, UpdateInstance, LoadAndReconcile)
-// use this to avoid re-entering the non-reentrant mutex.
+// that already hold s.mu (DeleteInstance, UpdateInstance, LoadAndReconcile,
+// writeLocked) use this to avoid re-entering the non-reentrant mutex.
+//
+// Every load refreshes the write-safety state: a payload that is not a JSON
+// array sets loadErr (latching writes shut); a successful load clears it
+// and replaces the undecodable set that writes carry forward.
 func (s *Storage) loadInstanceDataLocked() ([]InstanceData, error) {
-	data, err := MigrateAll(s.state.GetInstances())
+	s.loaded = true
+	data, skipped, err := MigrateAll(s.state.GetInstances())
 	if err != nil {
+		s.loadErr = err
 		return nil, fmt.Errorf("failed to unmarshal instances: %w", err)
 	}
+	s.loadErr = nil
+	s.undecodable = skipped
 	return data, nil
 }
 
-// DeleteAllInstances removes all stored instances
+// DeleteAllInstances removes all stored instances. It is the explicit wipe
+// (`loom reset`), so it is allowed even while a failed load has latched
+// ordinary writes shut, and it drops everything preserved on disk:
+// unrecovered and undecodable records and the latch itself. The next write
+// re-reads the (now empty) backing store first, as on a fresh Storage.
 func (s *Storage) DeleteAllInstances() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.unrecovered = nil
+	s.undecodable = nil
+	s.loadErr = nil
+	s.loaded = false
 	return s.state.DeleteAllInstances()
 }
 
-// UnrecoveredWorktreePaths returns the set of worktree paths currently
-// held in the unrecovered cache. Orphan discovery uses this so a
-// preserved-but-failed record's worktree is not also surfaced as an
-// orphan candidate, which would let the user re-recover it under a
-// different title and produce a duplicate state.json entry.
+// UnrecoveredWorktreePaths returns the set of worktree paths held by
+// records that are preserved on disk but absent from the live list: the
+// unrecovered cache, plus undecodable records (their worktree path decoded
+// best-effort; a record whose path can't be read is skipped). Orphan
+// discovery uses this so a preserved record's worktree is not also
+// surfaced as an orphan candidate, which would let the user re-recover it
+// under a different title and produce a duplicate state.json entry.
 func (s *Storage) UnrecoveredWorktreePaths() map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.unrecovered) == 0 {
+	if len(s.unrecovered) == 0 && len(s.undecodable) == 0 {
 		return nil
 	}
-	out := make(map[string]bool, len(s.unrecovered))
+	out := make(map[string]bool, len(s.unrecovered)+len(s.undecodable))
 	for _, d := range s.unrecovered {
 		if p := d.Worktree.WorktreePath; p != "" {
+			out[p] = true
+		}
+	}
+	for _, raw := range s.undecodable {
+		var partial struct {
+			Worktree struct {
+				WorktreePath string `json:"worktree_path"`
+			} `json:"worktree"`
+		}
+		if err := json.Unmarshal(raw, &partial); err != nil {
+			continue
+		}
+		if p := partial.Worktree.WorktreePath; p != "" {
 			out[p] = true
 		}
 	}

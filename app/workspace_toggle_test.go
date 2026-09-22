@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
@@ -242,4 +244,79 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 	assert.GreaterOrEqual(t, slotRecB.calls, 1, "slot ws-b must be persisted before dropping")
 	assert.Empty(t, h.slots, "all slots dropped after enterGlobalMode")
 	assert.Nil(t, h.activeCtx)
+}
+
+// TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact is the
+// regression guard for the global-list wipe: enterGlobalMode used to tear
+// down every workspace slot first, then log a failed global load and carry
+// on with an empty list — whose next save rewrote the global state.json
+// with nothing. The global load now runs before anything is torn down, and
+// a failure must leave workspace mode exactly as it was.
+func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
+	globalDir := t.TempDir()
+	t.Setenv("LOOM_HOME", globalDir)
+	statePath := filepath.Join(globalDir, config.StateFileName)
+	corrupt := []byte(`{"help_screens_seen":0,"instances":{"not":"an array"}}`)
+	require.NoError(t, os.WriteFile(statePath, corrupt, 0o644))
+
+	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	recA := &recordingInstanceStorage{}
+	storageA, err := session.NewStorage(recA, t.TempDir())
+	require.NoError(t, err)
+	listA := ui.NewList(&s)
+	recB := &recordingInstanceStorage{}
+	storageB, err := session.NewStorage(recB, t.TempDir())
+	require.NoError(t, err)
+
+	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+	ctxA := &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}
+	h := &home{
+		ctx:         context.Background(),
+		state:       stateDefault,
+		appConfig:   config.DefaultConfig(),
+		list:        listA,
+		menu:        ui.NewMenu(),
+		splitPane:   split,
+		workbench:   ui.NewWorkbench(ui.NewDiffPane(), split.Terminal()),
+		storage:     storageA,
+		tabBar:      ui.NewWorkspaceTabBar(),
+		errBox:      ui.NewErrBox(),
+		activeCtx:   ctxA,
+		focusedSlot: 0,
+		slots: []workspaceSlot{
+			{wsCtx: ctxA, storage: storageA, appConfig: config.DefaultConfig(), list: listA, splitPane: split},
+			{
+				wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
+				storage:   storageB,
+				appConfig: config.DefaultConfig(),
+				list:      ui.NewList(&s),
+				splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+			},
+		},
+	}
+	h.errBox.SetSize(400, 1)
+	// An active workbench must survive too: cleanupWorkbench is part of
+	// the teardown the failure has to skip.
+	h.viewMode = viewWorkbench
+	h.wbPrevTerminalHidden = false
+	h.splitPane.SetTerminalHidden(true)
+	h.wbRatio = 0.7
+
+	cmd := h.enterGlobalMode()
+
+	assert.NotNil(t, cmd, "the failure must be surfaced, not just logged")
+	assert.Contains(t, h.errBox.String(), "global")
+	require.Len(t, h.slots, 2, "no workspace slot may be deactivated")
+	assert.Zero(t, recA.calls, "slot ws-a must not be saved/deactivated")
+	assert.Zero(t, recB.calls, "slot ws-b must not be saved/deactivated")
+	assert.Same(t, ctxA, h.activeCtx, "still in workspace mode")
+	assert.Same(t, storageA, h.storage, "storage must not be swapped for the unreadable global one")
+	assert.Same(t, listA, h.list)
+	assert.Equal(t, viewWorkbench, h.viewMode, "workbench must not be torn down")
+	assert.True(t, h.splitPane.IsTerminalHidden())
+	assert.Equal(t, 0.7, h.wbRatio)
+
+	got, err := os.ReadFile(statePath)
+	require.NoError(t, err)
+	assert.Equal(t, corrupt, got, "the global state.json must be untouched")
 }

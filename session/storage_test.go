@@ -1,7 +1,9 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"sync"
 	"testing"
@@ -285,4 +287,190 @@ func TestUpdateInstance_DoesNotConstructLiveInstances(t *testing.T) {
 	err = s.UpdateInstance(target)
 	assert.NoError(t, err)
 	assert.Len(t, mock.saved, 1)
+}
+
+// futureRecord is a record written by a newer loom (schema_version above
+// CurrentSchemaVersion) carrying a field this binary has never heard of.
+// It is the shape a downgrade leaves behind in state.json.
+const futureRecord = `{"schema_version":99,"title":"from-the-future","status":3,"program":"claude","worktree":{"repo_path":"/tmp/r","worktree_path":"/tmp/wt-future","branch_name":"future"},"shiny_new_field":{"nested":[1,2,3]}}`
+
+// futureStorage returns a Storage whose backing store holds one record
+// this binary can decode ("alive", Paused so reconcile no-ops) followed
+// by futureRecord.
+func futureStorage(t *testing.T) (*Storage, *trackingMockStorage) {
+	t.Helper()
+	mock := &trackingMockStorage{data: json.RawMessage(`[
+		{"title":"alive","status":3,"program":"claude","is_workspace_terminal":false,"worktree":{"repo_path":"/tmp/r","worktree_path":"/tmp/wt-alive","branch_name":"alive"}},
+		` + futureRecord + `
+	]`)}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+	return s, mock
+}
+
+// assertFutureRecordPreserved checks the last saved payload still carries
+// futureRecord with JSON identical to the original (modulo whitespace).
+func assertFutureRecordPreserved(t *testing.T, mock *trackingMockStorage) {
+	t.Helper()
+	require.NotEmpty(t, mock.saved, "expected a save")
+	var records []json.RawMessage
+	require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &records))
+	var want bytes.Buffer
+	require.NoError(t, json.Compact(&want, []byte(futureRecord)))
+	for _, r := range records {
+		var got bytes.Buffer
+		require.NoError(t, json.Compact(&got, r))
+		if bytes.Equal(got.Bytes(), want.Bytes()) {
+			return
+		}
+	}
+	t.Fatalf("undecodable record missing or altered in saved payload: %s", mock.saved[len(mock.saved)-1])
+}
+
+func noopExec() cmd_test.MockCmdExec {
+	return cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+}
+
+// TestStorage_UndecodableRecord_SurvivesSave is the regression guard for
+// the downgrade wipe: a record written by a newer loom used to abort the
+// whole load, the caller carried on with an empty list, and the next save
+// rewrote state.json without any records. The record must now be skipped
+// on load and written back verbatim by every save.
+func TestStorage_UndecodableRecord_SurvivesSave(t *testing.T) {
+	s, mock := futureStorage(t)
+
+	instances, err := s.LoadAndReconcile(noopExec())
+	require.NoError(t, err, "one undecodable record must not fail the load")
+	require.Len(t, instances, 1)
+	assert.Equal(t, "alive", instances[0].Title)
+	assert.Equal(t, 1, s.UndecodableCount())
+	assert.Empty(t, s.UnrecoveredTitles(), "undecodable records are not reconcile failures")
+
+	require.NoError(t, s.SaveInstances(instances))
+	assertFutureRecordPreserved(t, mock)
+
+	var persisted []json.RawMessage
+	require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &persisted))
+	assert.Len(t, persisted, 2, "live record + preserved record, no duplicates")
+}
+
+// TestStorage_UndecodableRecord_SurvivesDelete covers the raw-data write
+// path behind DeleteInstance.
+func TestStorage_UndecodableRecord_SurvivesDelete(t *testing.T) {
+	s, mock := futureStorage(t)
+	_, err := s.LoadAndReconcile(noopExec())
+	require.NoError(t, err)
+
+	require.NoError(t, s.DeleteInstance("alive"))
+	assertFutureRecordPreserved(t, mock)
+
+	var persisted []json.RawMessage
+	require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &persisted))
+	assert.Len(t, persisted, 1, "only the preserved record remains")
+}
+
+// TestStorage_UndecodableRecord_SurvivesUpdate covers the raw-data write
+// path behind UpdateInstance.
+func TestStorage_UndecodableRecord_SurvivesUpdate(t *testing.T) {
+	s, mock := futureStorage(t)
+
+	alive := &Instance{Title: "alive", Status: Paused, Program: "aider"}
+	alive.setStarted(true)
+	require.NoError(t, s.UpdateInstance(alive))
+	assertFutureRecordPreserved(t, mock)
+
+	data, err := s.LoadInstanceData()
+	require.NoError(t, err)
+	require.Len(t, data, 1)
+	assert.Equal(t, "aider", data[0].Program, "the update itself landed")
+}
+
+// TestStorage_UndecodableRecord_WorktreeIsClaimed keeps orphan discovery
+// from offering a preserved record's worktree as a Recoverable, which
+// would let the user adopt it under a second, duplicate record.
+func TestStorage_UndecodableRecord_WorktreeIsClaimed(t *testing.T) {
+	s, _ := futureStorage(t)
+	_, err := s.LoadAndReconcile(noopExec())
+	require.NoError(t, err)
+
+	got := s.UnrecoveredWorktreePaths()
+	assert.True(t, got["/tmp/wt-future"], "the undecodable record's worktree must be claimed")
+	assert.False(t, got["/tmp/wt-alive"], "a loaded record is claimed by the live list, not by storage")
+}
+
+// TestStorage_SaveBeforeLoad_KeepsUndecodable guards the never-loaded
+// path: a Storage whose first operation is a save must still learn which
+// records it cannot decode before it writes, or it would drop them.
+func TestStorage_SaveBeforeLoad_KeepsUndecodable(t *testing.T) {
+	mock := &trackingMockStorage{data: json.RawMessage(`[` + futureRecord + `]`)}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+
+	live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
+	live.setStarted(true)
+	require.NoError(t, s.SaveInstances([]*Instance{live}))
+	assertFutureRecordPreserved(t, mock)
+
+	var persisted []json.RawMessage
+	require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &persisted))
+	assert.Len(t, persisted, 2)
+}
+
+// TestStorage_TopLevelCorrupt_RefusesWrites pins the fail-closed save
+// latch: when the payload itself cannot be decoded there is nothing to
+// preserve record by record, so every write must refuse rather than
+// replace it with whatever the caller holds (usually nothing).
+func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
+	const corrupt = `{"not":"an array"}`
+
+	t.Run("after a failed load", func(t *testing.T) {
+		mock := &trackingMockStorage{data: json.RawMessage(corrupt)}
+		s, err := NewStorage(mock, "")
+		require.NoError(t, err)
+
+		_, err = s.LoadAndReconcile(noopExec())
+		require.Error(t, err)
+
+		live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
+		live.setStarted(true)
+		err = s.SaveInstances([]*Instance{live})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrStorageLoadFailed), "got %v", err)
+		assert.Empty(t, mock.saved, "nothing may be written")
+		assert.Equal(t, corrupt, string(mock.data), "backing state must be byte-identical")
+	})
+
+	t.Run("never loaded", func(t *testing.T) {
+		mock := &trackingMockStorage{data: json.RawMessage(corrupt)}
+		s, err := NewStorage(mock, "")
+		require.NoError(t, err)
+
+		err = s.SaveInstances(nil)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrStorageLoadFailed), "got %v", err)
+		assert.Empty(t, mock.saved)
+		assert.Equal(t, corrupt, string(mock.data))
+	})
+
+	t.Run("delete all is the explicit wipe", func(t *testing.T) {
+		mock := &trackingMockStorage{data: json.RawMessage(corrupt)}
+		s, err := NewStorage(mock, "")
+		require.NoError(t, err)
+		_, err = s.LoadAndReconcile(noopExec())
+		require.Error(t, err)
+
+		require.NoError(t, s.DeleteAllInstances(), "reset must work even when the payload is unreadable")
+		assert.Zero(t, s.UndecodableCount())
+
+		live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
+		live.setStarted(true)
+		require.NoError(t, s.SaveInstances([]*Instance{live}), "a wipe clears the latch")
+		var persisted []InstanceData
+		require.NoError(t, json.Unmarshal(mock.saved[len(mock.saved)-1], &persisted))
+		require.Len(t, persisted, 1)
+		assert.Equal(t, "fresh", persisted[0].Title)
+	})
 }

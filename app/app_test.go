@@ -56,6 +56,11 @@ func TestRecoverySummary_String(t *testing.T) {
 	assert.Equal(t, "Recovery: cleaned 2 stale worktrees · 3 sessions need review (in list)",
 		recoverySummary{cleaned: 2, review: 3}.String())
 	assert.Equal(t, "Recovery: 1 session needs review (in list)", recoverySummary{review: 1}.String())
+	assert.False(t, recoverySummary{undecodable: 1}.empty(), "undecodable records alone must still be surfaced")
+	assert.Equal(t, "Recovery: 1 session record could not be read by this version of loom and was preserved unchanged",
+		recoverySummary{undecodable: 1}.String())
+	assert.Equal(t, "Recovery: 1 session failed to load (kept; see loom.log) · 2 session records could not be read by this version of loom and were preserved unchanged",
+		recoverySummary{failed: 1, undecodable: 2}.String())
 }
 
 // TestConfirmationModalStateTransitions tests state transitions without full instance setup

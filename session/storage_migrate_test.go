@@ -91,29 +91,61 @@ func TestMigrate_FutureVersionRejected(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestMigrateAll_EmptyInput returns nil/nil, matching the prior
+// TestMigrateAll_EmptyInput returns nil/nil/nil, matching the prior
 // "empty payload" behaviour of the decode paths.
 func TestMigrateAll_EmptyInput(t *testing.T) {
-	out, err := MigrateAll(nil)
+	out, skipped, err := MigrateAll(nil)
 	assert.NoError(t, err)
 	assert.Nil(t, out)
+	assert.Nil(t, skipped)
 
-	out, err = MigrateAll([]byte{})
+	out, skipped, err = MigrateAll([]byte{})
 	assert.NoError(t, err)
 	assert.Nil(t, out)
+	assert.Nil(t, skipped)
 }
 
 // TestMigrateAll_MixedSchemaVersions round-trips a heterogeneous array
 // where some records carry schema_version and others don't.
 func TestMigrateAll_MixedSchemaVersions(t *testing.T) {
 	raw := []byte(`[{"title":"legacy"},{"schema_version":1,"title":"current"}]`)
-	out, err := MigrateAll(raw)
+	out, skipped, err := MigrateAll(raw)
 	assert.NoError(t, err)
+	assert.Empty(t, skipped)
 	assert.Len(t, out, 2)
 	assert.Equal(t, CurrentSchemaVersion, out[0].SchemaVersion)
 	assert.Equal(t, CurrentSchemaVersion, out[1].SchemaVersion)
 	assert.Equal(t, "legacy", out[0].Title)
 	assert.Equal(t, "current", out[1].Title)
+}
+
+// TestMigrateAll_SkipsUndecodableRecords is the regression guard for the
+// global-list wipe: one record this binary cannot decode (a newer schema
+// after a downgrade, or a corrupt element) used to abort the whole load,
+// and the caller's next save then rewrote the payload without any of the
+// records. Each bad element must now be skipped and handed back as its
+// original bytes so Storage can write it back unchanged.
+func TestMigrateAll_SkipsUndecodableRecords(t *testing.T) {
+	future := `{"schema_version":99,"title":"future","worktree":{"worktree_path":"/wt/future"},"new_field":{"x":[1,2]}}`
+	corrupt := `{"title":42}`
+	raw := []byte(`[{"title":"ok","program":"claude"},` + future + `,` + corrupt + `]`)
+
+	out, skipped, err := MigrateAll(raw)
+	require.NoError(t, err, "an undecodable element must not fail the whole array")
+	require.Len(t, out, 1)
+	assert.Equal(t, "ok", out[0].Title)
+	require.Len(t, skipped, 2)
+	assert.JSONEq(t, future, string(skipped[0]), "skipped records are the original bytes, in order")
+	assert.JSONEq(t, corrupt, string(skipped[1]))
+}
+
+// TestMigrateAll_TopLevelNotArray keeps the one hard failure: a payload
+// that is not an array at all has no elements to preserve individually.
+func TestMigrateAll_TopLevelNotArray(t *testing.T) {
+	out, skipped, err := MigrateAll([]byte(`{"not":"an array"}`))
+	assert.Error(t, err)
+	assert.Nil(t, out)
+	assert.Nil(t, skipped)
 }
 
 // TestMigrate_V2RecordGetsEmptyStashRef verifies a v2 record (predating
