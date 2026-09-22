@@ -13,6 +13,7 @@ import (
 
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -179,4 +180,94 @@ func TestRestoreSavedWorkspaces_SkipsSweepWhenAWorkspaceFailsToLoad(t *testing.T
 		require.Len(t, m.slots, 1, "the good workspace still opens")
 		assert.False(t, rec.ran("ls"), "the sweep must not run while a workspace's titles are unknown")
 	})
+}
+
+// restoreModeHome is a home as newHome leaves it in restore mode: the
+// startup (global) storage — a real state.json holding instancesJSON — is
+// on m.storage but has never been loaded; restoreSavedWorkspaces owns that.
+func restoreModeHome(t *testing.T, exec cmd2.Executor, instancesJSON string) (*home, string) {
+	t.Helper()
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, config.StateFileName)
+	require.NoError(t, os.WriteFile(statePath, []byte(`{"instances":`+instancesJSON+`}`), 0o644))
+	appState := config.LoadStateFrom(dir)
+	storage, err := session.NewStorage(appState, dir)
+	require.NoError(t, err)
+	m := newRestoreHome(exec)
+	m.storage = storage
+	m.appState = appState
+	m.activeCtx = &config.WorkspaceContext{ConfigDir: dir}
+	m.program = "true"
+	m.errBox.SetSize(400, 1)
+	return m, statePath
+}
+
+func corruptWorkspaces(t *testing.T, names ...string) []config.Workspace {
+	t.Helper()
+	out := make([]config.Workspace, 0, len(names))
+	for _, n := range names {
+		out = append(out, writeWorkspaceState(t, n, `{"not":"an array"}`))
+	}
+	return out
+}
+
+func listTitles(m *home) []string {
+	var titles []string
+	for _, inst := range m.list.GetInstances() {
+		titles = append(titles, inst.Title)
+	}
+	return titles
+}
+
+// TestRestoreSavedWorkspaces_AllFail_LoadsStartupStorage: in restore mode
+// newHome never loads the startup storage. When every workspace failed to
+// restore, the user used to land in global mode over that never-loaded
+// storage with an empty list, and the first save (here: quit) replaced its
+// readable records with nothing. The fallback now loads it like classic
+// startup does — minus the orphan sweep, since the failed workspaces'
+// sessions are still unidentifiable.
+func TestRestoreSavedWorkspaces_AllFail_LoadsStartupStorage(t *testing.T) {
+	isolateTmux(t)
+	rec := &recordingExec{}
+	m, statePath := restoreModeHome(t, rec,
+		`[{"title":"keeper","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/wt-keeper"}}]`)
+
+	m.restoreSavedWorkspaces(corruptWorkspaces(t, "ws-bad-1", "ws-bad-2"))
+
+	require.Empty(t, m.slots)
+	assert.Contains(t, listTitles(m), "keeper", "the global list must show its real sessions")
+	assert.False(t, rec.ran("ls"), "the fallback must not run the orphan sweep either")
+
+	_, _ = m.handleQuit()
+	raw, err := os.ReadFile(statePath)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"keeper"`, "quitting must not drop the global record")
+}
+
+// TestRestoreSavedWorkspaces_AllFail_StartupLoadFailsClosed: when the startup
+// storage is unreadable too, the fallback fails closed — the error is shown,
+// nothing is written, and the user can still open a workspace (which saves
+// the global storage first; its refusal must not block the transition, as
+// there is nothing loaded to lose).
+func TestRestoreSavedWorkspaces_AllFail_StartupLoadFailsClosed(t *testing.T) {
+	isolateTmux(t)
+	rec := &recordingExec{}
+	m, statePath := restoreModeHome(t, rec, `{"not":"an array"}`)
+	before, err := os.ReadFile(statePath)
+	require.NoError(t, err)
+
+	m.restoreSavedWorkspaces(corruptWorkspaces(t, "ws-bad"))
+
+	require.Empty(t, m.slots)
+	assert.Empty(t, listTitles(m))
+	assert.Contains(t, m.errBox.String(), "no workspace could be restored")
+
+	_, _ = m.handleQuit()
+	after, err := os.ReadFile(statePath)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "the unreadable startup state.json must be untouched")
+
+	m.applyWorkspaceToggle([]config.Workspace{preservedTerminalWorkspace(t, "ws-good")})
+	require.Len(t, m.slots, 1, "the user must still be able to open a workspace")
+	assert.Equal(t, "ws-good", m.slots[0].wsCtx.Name)
 }

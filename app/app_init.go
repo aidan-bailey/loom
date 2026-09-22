@@ -148,84 +148,11 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	}
 	var startupRecovery recoverySummary
 	if !willRestoreSlots {
-		// LoadAndReconcile centralizes RenameLegacySessions + per-record
-		// reconcile, and on a per-record failure stashes the raw data in
-		// storage.unrecovered so the next SaveInstances preserves it.
-		// The inline loop this replaced silently dropped failures.
-		instances, err := storage.LoadAndReconcile(cmdExec)
+		recovery, err := h.loadStartupStorage(cmdExec, true)
 		if err != nil {
 			return nil, fmt.Errorf("load instances: %w", err)
 		}
-
-		hasWorkspaceTerminal := false
-		for _, instance := range instances {
-			if instance.IsWorkspaceTerminal {
-				hasWorkspaceTerminal = true
-			}
-			h.list.AddInstance(instance)
-		}
-
-		// Restart crash-recovered instances
-		for _, inst := range h.list.GetInstances() {
-			if !inst.CrashRecovered {
-				continue
-			}
-			if err := inst.CrashRestart(); err != nil {
-				log.For("app").Error("crash_recovery.restart_failed", "title", inst.Title, "err", err)
-				if tErr := inst.TransitionTo(session.Paused); tErr != nil {
-					log.For("app").Warn("crash_recovery.transition_failed", "instance", inst.Title, "err", tErr.Error())
-				}
-			}
-			inst.CrashRecovered = false
-		}
-
-		// Discover orphan worktrees (on disk but not in state.json),
-		// auto-clean stale leftovers, and add inline Recoverable entries
-		// for any with unsaved work or a live agent. Runs before
-		// CleanupOrphanedSessions so a live recoverable's tmux (now a
-		// list instance) is exempted by the claimedTitles loop below.
-		startupRecovery = h.reconcileOrphans(cfgDir, program, h.list, storage, cmdExec)
-
-		// Clean up orphaned tmux sessions from previous crashes, sparing
-		// those of records preserved on disk outside the list.
-		claimedTitles := make(map[string]bool)
-		claimTitles(claimedTitles, h.list, storage)
-		if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
-			log.For("app").Error("orphan_cleanup_failed", "err", err)
-		}
-
-		// Auto-create workspace terminal if in a workspace context and none
-		// exists — unless a record storage preserves but could not load
-		// already owns the title (see activateWorkspace).
-		wtTitle := "Workspace Terminal"
-		if wsCtx != nil && wsCtx.Name != "" {
-			wtTitle = wsCtx.Name
-		}
-		if !hasWorkspaceTerminal && wsCtx != nil && wsCtx.RepoPath != "" && !slices.Contains(storage.PreservedTitles(), wtTitle) {
-			wtOpts := launchOptionsFromConfig(appConfig)
-			if h.remoteControlBlocked(effectiveRemoteControl(wtOpts), program) {
-				// Non-interactive startup: fall back silently but leave an
-				// info-style note (clears on the next status update).
-				h.errBox.SetInfo("remote control off: " + h.rcAuth.Reason)
-			}
-			wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
-				Title:               wtTitle,
-				Path:                wsCtx.RepoPath,
-				Program:             applyLaunchOptions(wtOpts, h.rcAuth, program, wtTitle),
-				HeadroomProxy:       wtOpts.HeadroomProxy,
-				CacheTTL1h:          wtOpts.CacheTTL1h,
-				IsWorkspaceTerminal: true,
-				ConfigDir:           cfgDir,
-			})
-			if wtErr != nil {
-				log.For("app").Error("workspace_terminal.create_failed", "err", wtErr)
-			} else {
-				h.list.AddInstance(wtInstance)
-				if err := wtInstance.Start(true); err != nil {
-					log.For("app").Error("workspace_terminal.start_failed", "err", err)
-				}
-			}
-		}
+		startupRecovery = recovery
 	}
 
 	if willRestoreSlots {
@@ -284,11 +211,114 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	return h, nil
 }
 
+// loadStartupStorage loads the startup storage (m.storage, for m.activeCtx)
+// into the focused list with classic-startup semantics: LoadAndReconcile,
+// crash-restart, inline orphan recovery, then the workspace-terminal
+// auto-create for a workspace context. Classic startup runs it directly;
+// restoreSavedWorkspaces runs it as the fallback when no workspace could be
+// restored. sweepTmux adds the server-wide orphan tmux sweep — the fallback
+// passes false, because the workspaces that failed to load still have live
+// sessions whose titles it cannot read. A load error is returned before
+// anything is added to the list; the storage's write latch is then engaged,
+// so nothing can overwrite the unreadable payload.
+func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recoverySummary, error) {
+	storage := m.storage
+	wsCtx := m.activeCtx
+	cfgDir := ""
+	if wsCtx != nil {
+		cfgDir = wsCtx.ConfigDir
+	}
+
+	// LoadAndReconcile centralizes RenameLegacySessions + per-record
+	// reconcile, and on a per-record failure stashes the raw data in
+	// storage.unrecovered so the next SaveInstances preserves it.
+	// The inline loop this replaced silently dropped failures.
+	instances, err := storage.LoadAndReconcile(cmdExec)
+	if err != nil {
+		return recoverySummary{}, err
+	}
+
+	hasWorkspaceTerminal := false
+	for _, instance := range instances {
+		if instance.IsWorkspaceTerminal {
+			hasWorkspaceTerminal = true
+		}
+		m.list.AddInstance(instance)
+	}
+
+	// Restart crash-recovered instances
+	for _, inst := range m.list.GetInstances() {
+		if !inst.CrashRecovered {
+			continue
+		}
+		if err := inst.CrashRestart(); err != nil {
+			log.For("app").Error("crash_recovery.restart_failed", "title", inst.Title, "err", err)
+			if tErr := inst.TransitionTo(session.Paused); tErr != nil {
+				log.For("app").Warn("crash_recovery.transition_failed", "instance", inst.Title, "err", tErr.Error())
+			}
+		}
+		inst.CrashRecovered = false
+	}
+
+	// Discover orphan worktrees (on disk but not in state.json),
+	// auto-clean stale leftovers, and add inline Recoverable entries
+	// for any with unsaved work or a live agent. Runs before
+	// CleanupOrphanedSessions so a live recoverable's tmux (now a
+	// list instance) is exempted by the claimedTitles loop below.
+	recovery := m.reconcileOrphans(cfgDir, m.program, m.list, storage, cmdExec)
+
+	// Clean up orphaned tmux sessions from previous crashes, sparing
+	// those of records preserved on disk outside the list.
+	if sweepTmux {
+		claimedTitles := make(map[string]bool)
+		claimTitles(claimedTitles, m.list, storage)
+		if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
+			log.For("app").Error("orphan_cleanup_failed", "err", err)
+		}
+	}
+
+	// Auto-create workspace terminal if in a workspace context and none
+	// exists — unless a record storage preserves but could not load
+	// already owns the title (see activateWorkspace).
+	wtTitle := "Workspace Terminal"
+	if wsCtx != nil && wsCtx.Name != "" {
+		wtTitle = wsCtx.Name
+	}
+	if !hasWorkspaceTerminal && wsCtx != nil && wsCtx.RepoPath != "" && !slices.Contains(storage.PreservedTitles(), wtTitle) {
+		wtOpts := launchOptionsFromConfig(m.appConfig)
+		if m.remoteControlBlocked(effectiveRemoteControl(wtOpts), m.program) {
+			// Non-interactive startup: fall back silently but leave an
+			// info-style note (clears on the next status update).
+			m.errBox.SetInfo("remote control off: " + m.rcAuth.Reason)
+		}
+		wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
+			Title:               wtTitle,
+			Path:                wsCtx.RepoPath,
+			Program:             applyLaunchOptions(wtOpts, m.rcAuth, m.program, wtTitle),
+			HeadroomProxy:       wtOpts.HeadroomProxy,
+			CacheTTL1h:          wtOpts.CacheTTL1h,
+			IsWorkspaceTerminal: true,
+			ConfigDir:           cfgDir,
+		})
+		if wtErr != nil {
+			log.For("app").Error("workspace_terminal.create_failed", "err", wtErr)
+		} else {
+			m.list.AddInstance(wtInstance)
+			if err := wtInstance.Start(true); err != nil {
+				log.For("app").Error("workspace_terminal.start_failed", "err", err)
+			}
+		}
+	}
+	return recovery, nil
+}
+
 // restoreSavedWorkspaces activates all workspaces in `saved` as slots, merging
 // the explicit startup target (if any) into the set, then focuses the
 // appropriate slot. Missing/failed workspaces are dropped (failures are
-// logged, and any failure skips the server-wide orphan sweep). The
-// registry's OpenWorkspaces list is rewritten to match what actually activated.
+// logged, and any failure skips the server-wide orphan sweep); if none
+// activates, the startup storage is loaded instead
+// (loadStartupStorageFallback). The registry's OpenWorkspaces list is
+// rewritten to match what actually activated.
 func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	explicit := ""
 	if m.activeCtx != nil {
@@ -346,6 +376,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	}
 
 	if len(m.slots) == 0 {
+		m.loadStartupStorageFallback()
 		return
 	}
 
@@ -376,4 +407,32 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 			}
 		}
 	}
+}
+
+// loadStartupStorageFallback runs when no workspace could be restored.
+// newHome deferred loading the startup storage to restoreSavedWorkspaces,
+// so without this the user would land in global mode over a never-loaded
+// storage whose first save (quit, a new session) replaces its readable
+// records with the empty list. Load it like classic startup does, minus
+// the orphan sweep (see loadStartupStorage). On failure it fails closed:
+// the storage's write latch refuses every save, and the error is shown
+// rather than exiting, so the user can still open a workspace from the
+// picker. The failed workspaces stay in the registry's open list, to be
+// retried on the next launch.
+func (m *home) loadStartupStorageFallback() {
+	// Each failed activation re-synced these process-wide flags from its
+	// own workspace's config; put the startup config's values back before
+	// anything below launches a session.
+	if m.appConfig != nil {
+		session.SetLoomContextEnabled(m.appConfig.LoomContextEnabled())
+		session.SetSubagentTrackingEnabled(m.appConfig.SubagentTrackingEnabled())
+	}
+	recovery, err := m.loadStartupStorage(m.executor(), false)
+	if err != nil {
+		// No Cmd path out of startup: the toast expires via
+		// ErrBox.ExpireIfDue on the periodic tick instead.
+		_ = m.handleError(fmt.Errorf("no workspace could be restored, and loading sessions failed (nothing will be saved): %w", err))
+		return
+	}
+	m.showRecoverySummary(recovery)
 }

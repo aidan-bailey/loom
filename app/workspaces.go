@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
@@ -302,7 +303,16 @@ func (m *home) loadSlot(idx int) {
 // the user was just looking at.
 func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	if len(m.slots) == 0 {
-		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
+		err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
+		switch {
+		case errors.Is(err, session.ErrStorageLoadFailed):
+			// The global payload is unreadable (typically the fail-closed
+			// case of loadStartupStorageFallback), so the storage refuses
+			// every write and no save here could ever succeed: blocking
+			// would strand the user in an unwritable global mode. Leave
+			// the file untouched and switch.
+			log.For("app").Warn("global_save_skipped", "reason", "storage_load_failed", "err", err)
+		case err != nil:
 			return m.handleError(fmt.Errorf("failed to save global state before workspace transition: %w", err))
 		}
 	} else {
