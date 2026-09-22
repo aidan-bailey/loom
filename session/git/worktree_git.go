@@ -122,7 +122,7 @@ func (g *GitWorktree) removeWorktree() (string, error) {
 // runGitCommandEnv is runGitCommand with additional environment variables
 // appended onto the process's own environment (e.g. GIT_INDEX_FILE to
 // build a tree against a scratch index without touching the real one).
-// They land after GitCommand's LC_ALL=C, so they win on a duplicate key.
+// They land after GitCommand's locale overrides, so they win on a duplicate key.
 // Pass nil extraEnv to behave exactly like runGitCommand.
 func (g *GitWorktree) runGitCommandEnv(extraEnv []string, path string, args ...string) (string, error) {
 	return g.runGitCommandEnvTimeout(extraEnv, gitTimeout, path, args...)
@@ -191,8 +191,7 @@ func (g *GitWorktree) PushChanges(commitMessage string, open bool) error {
 		// cancel the push before it even dials.
 		fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), gitNetworkTimeout)
 		defer fallbackCancel()
-		gitPushCmd := internalexec.GitCommand(fallbackCtx, "", "push", "-u", "origin", g.branchName)
-		gitPushCmd.Dir = g.worktreePath
+		gitPushCmd := internalexec.GitCommand(fallbackCtx, g.worktreePath, "push", "-u", "origin", g.branchName)
 		if pushOutput, pushErr := g.runner.CombinedOutput(gitPushCmd); pushErr != nil {
 			return fmt.Errorf("failed to push branch: %s (%w)", pushOutput, pushErr)
 		}

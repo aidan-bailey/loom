@@ -3,9 +3,10 @@
 // call sites to os/exec directly. Tests inject fakes; production uses Default.
 //
 // It also owns the constructors for every git and gh subprocess: GitCommand
-// (runs git under LC_ALL=C, so the English stderr callers match on is what
-// git actually prints) and GhCommand (runs gh with prompts and the update
-// notifier disabled). TestNoRawGitGhExec fails on any raw
+// (forces only git's message language to C, so the English stderr callers
+// match on is what git actually prints, while the user's character set and
+// other locale categories reach the hooks and filters git spawns) and
+// GhCommand (runs gh with prompts and the update notifier disabled). TestNoRawGitGhExec fails on any raw
 // exec.Command("git"|"gh", …) in production code outside command.go. tmux
 // has its own constructor, session/tmux.Command, enforced the same way.
 //

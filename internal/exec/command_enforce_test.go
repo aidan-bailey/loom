@@ -16,12 +16,13 @@ import (
 
 // TestNoRawGitGhExec fails on any os/exec Command/CommandContext call whose
 // program is the literal "git" or "gh" outside command.go, in non-test (*.go,
-// not *_test.go) production source. A raw git exec skips LC_ALL=C, so under
-// a non-English locale the stderr its caller matches on (isBranchAbsentErr,
-// isWorktreeAbsentErr, …) is translated and the classification silently
-// flips; a raw gh exec skips the prompt/update-notifier guards. Mirrors
-// session/tmux's TestNoRawTmuxExec, with the same deliberate exemption for
-// _test.go files, whose raw git calls only build and inspect fixtures.
+// not *_test.go) production source. A raw git exec skips GitCommand's
+// LC_MESSAGES=C, so under a non-English locale the stderr its caller matches
+// on (isBranchAbsentErr, isWorktreeAbsentErr, …) is translated and the
+// classification silently flips; a raw gh exec skips the prompt and
+// update-notifier guards. Mirrors session/tmux's TestNoRawTmuxExec, with the
+// same deliberate exemption for _test.go files, whose raw git calls only
+// build and inspect fixtures.
 //
 // The os/exec import is resolved per file, so an aliased import
 // (osexec "os/exec") or a dot import is still caught. Only a literal
