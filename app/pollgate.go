@@ -4,6 +4,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/aidan-bailey/loom/log"
 )
 
 // gateKind names one gated background job. gatedMsg carries a kind rather
@@ -24,9 +26,36 @@ const (
 	numGateKinds
 )
 
+// String names the kind for logs.
+func (k gateKind) String() string {
+	switch k {
+	case gateRoster:
+		return "roster"
+	case gateSubagent:
+		return "subagent"
+	case gateGH:
+		return "github"
+	case gateRatioSave:
+		return "ratio_save"
+	}
+	return "unknown"
+}
+
+// gateIntervals is each job's minimum time between dispatches. It is keyed
+// by kind rather than stored on the gate so a zero-value home — however it
+// was constructed — is throttled exactly like a production one.
+var gateIntervals = [numGateKinds]time.Duration{
+	gateRoster:   rosterInterval,
+	gateSubagent: subagentInterval,
+	gateGH:       ghInterval,
+	// gateRatioSave stays 0: the flush paces itself with its own tick
+	// (ratioSaveDelay), so the gate only keeps one tick in flight.
+}
+
 // pollGate throttles one background job: at most one dispatch in flight,
-// and at least interval between dispatches. It makes the two invariants
-// every such job shares structural rather than a comment at each site:
+// and at least its kind's gateIntervals entry between dispatches. It makes
+// the two invariants every such job shares structural rather than a
+// comment at each site:
 //
 //  1. Arm nothing when nothing is dispatched. dispatchGated arms the gate
 //     only when build returns a Cmd — no Cmd means no result message, so
@@ -36,37 +65,21 @@ const (
 //     before the inner message reaches its handler, so no handler can
 //     forget to.
 //
-// Breaking either latches the job off for the rest of the session.
-// Update-goroutine only.
+// Breaking either latches the job off for the rest of the session. The
+// zero value is a gate that has never dispatched. Update-goroutine only.
 type pollGate struct {
-	// interval is the minimum time between dispatches. Zero means the
-	// gate only dedupes (due whenever nothing is in flight) — which is
-	// also what a gate left at its zero value does, so constructors must
-	// install the real intervals via newPollGates.
-	interval time.Duration
 	last     time.Time
 	inFlight bool
 }
 
-// newPollGates returns every gate with its production interval.
-func newPollGates() [numGateKinds]pollGate {
-	return [numGateKinds]pollGate{
-		gateRoster:   {interval: rosterInterval},
-		gateSubagent: {interval: subagentInterval},
-		gateGH:       {interval: ghInterval},
-		// The ratio flush paces itself with its own tick
-		// (ratioSaveDelay); the gate only keeps one tick in flight.
-		gateRatioSave: {},
-	}
-}
-
 // due reports whether a dispatch may start at now: none in flight, and at
-// least interval since the last dispatch (a zero last is always due).
-func (g *pollGate) due(now time.Time) bool {
+// least interval since the last dispatch (a zero last is always due). A
+// zero interval only dedupes.
+func (g *pollGate) due(now time.Time, interval time.Duration) bool {
 	if g.inFlight {
 		return false
 	}
-	return g.last.IsZero() || now.Sub(g.last) >= g.interval
+	return g.last.IsZero() || now.Sub(g.last) >= interval
 }
 
 // expedite makes the next dispatch due as soon as nothing is in flight.
@@ -79,6 +92,11 @@ func (g *pollGate) expedite() {
 // gate resolves kind to the model's gate for it.
 func (m *home) gate(kind gateKind) *pollGate {
 	return &m.gates[kind]
+}
+
+// gateDue reports whether kind's gate is due at now under its interval.
+func (m *home) gateDue(kind gateKind, now time.Time) bool {
+	return m.gate(kind).due(now, gateIntervals[kind])
 }
 
 // gatedMsg carries a gated Cmd's result back to Update, which disarms the
@@ -97,16 +115,17 @@ type gatedMsg struct {
 // message: a tea.Tick is fine (calling it blocks until the timer fires),
 // but a tea.Batch or tea.Sequence yields a message only the runtime can
 // expand, and wrapped it would reach Update as an unhandled type — the
-// gate would disarm, but the batched Cmds would never run.
+// gate would disarm, but the batched Cmds would never run (deliverGated
+// logs a wrapped tea.BatchMsg).
 func (m *home) dispatchGated(kind gateKind, now time.Time, build func() tea.Cmd) tea.Cmd {
-	g := m.gate(kind)
-	if !g.due(now) {
+	if !m.gateDue(kind, now) {
 		return nil
 	}
 	cmd := build()
 	if cmd == nil {
 		return nil
 	}
+	g := m.gate(kind)
 	g.inFlight = true
 	g.last = now
 	return func() tea.Msg {
@@ -119,7 +138,13 @@ func (m *home) dispatchGated(kind gateKind, now time.Time, build func() tea.Cmd)
 // would have reached unwrapped. A nil inner message still disarms.
 func (m *home) deliverGated(msg gatedMsg) (tea.Model, tea.Cmd) {
 	m.gate(msg.kind).inFlight = false
-	if msg.msg == nil {
+	switch inner := msg.msg.(type) {
+	case nil:
+		return m, nil
+	case tea.BatchMsg:
+		// A builder broke dispatchGated's single-message rule. Update has
+		// no case for a BatchMsg, so its Cmds would silently never run.
+		log.For("app").Error("gated_batch_msg", "kind", msg.kind.String(), "cmds", len(inner))
 		return m, nil
 	}
 	return m.Update(msg.msg)

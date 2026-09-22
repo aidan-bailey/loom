@@ -32,7 +32,7 @@ func TestRunNewFromIssue_NoSnapshotShowsLoadingAndForcesPoll(t *testing.T) {
 	m.gate(gateGH).last = time.Now()
 	_, _ = runNewFromIssue(m)
 	require.Equal(t, stateIssuePicker, m.state)
-	assert.True(t, m.gate(gateGH).due(time.Now()))
+	assert.True(t, m.gateDue(gateGH, time.Now()))
 	assert.Contains(t, m.issuePicker().Render(), "loading")
 }
 
@@ -88,7 +88,7 @@ func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T)
 	assert.Equal(t, stateLaunchOptions, m.state)
 	_, ok := m.activeOverlay.(*overlay.SessionLaunchOptions)
 	assert.True(t, ok)
-	assert.True(t, m.gate(gateGH).due(time.Now()), "an issue-born session forces the next poll")
+	assert.True(t, m.gateDue(gateGH, time.Now()), "an issue-born session forces the next poll")
 }
 
 func TestIssuePickedMsg_ErrorCreatesNothing(t *testing.T) {

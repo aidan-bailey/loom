@@ -335,8 +335,8 @@ type home struct {
 	// gates throttle the background jobs riding the health tick (roster
 	// query, subagent scan, GitHub poll) and dedupe the split-ratio flush
 	// tick, one pollGate per gateKind (see pollgate.go; resolve with
-	// m.gate). Installed with their intervals by newPollGates.
-	// Update-goroutine only.
+	// m.gate). The zero value is ready to use: intervals come from
+	// gateIntervals. Update-goroutine only.
 	gates [numGateKinds]pollGate
 
 	// ghAvailable caches gh's install/auth check, resolved by the first

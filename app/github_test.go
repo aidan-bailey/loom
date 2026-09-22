@@ -103,7 +103,7 @@ func TestGHRefreshMsgZeroesWindow(t *testing.T) {
 	m := homeWithAppState(t)
 	m.gate(gateGH).last = time.Now()
 	m.Update(ghRefreshMsg{})
-	assert.True(t, m.gate(gateGH).due(time.Now()), "a refresh makes the next tick poll")
+	assert.True(t, m.gateDue(gateGH, time.Now()), "a refresh makes the next tick poll")
 }
 
 func TestLinkedIssuesCollectsNonZero(t *testing.T) {
