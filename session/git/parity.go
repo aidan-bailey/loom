@@ -3,9 +3,10 @@ package git
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
+
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 )
 
 // AheadBehind returns how many commits branch has that base lacks
@@ -15,7 +16,7 @@ func AheadBehind(repoPath, branch, base string, runner CommandRunner) (ahead, be
 	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-list", "--left-right", "--count", branch+"..."+base)
+	c := internalexec.GitCommand(ctx, repoPath, "rev-list", "--left-right", "--count", branch+"..."+base)
 	out, err := r.Output(c)
 	if err != nil {
 		return 0, 0, fmt.Errorf("rev-list %s...%s: %w", branch, base, err)
@@ -49,7 +50,7 @@ func FetchRef(repoPath, ref string, runner CommandRunner) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitNetworkTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet", remote, branch)
+	c := internalexec.GitCommand(ctx, repoPath, "fetch", "--quiet", remote, branch)
 	if out, err := r.CombinedOutput(c); err != nil {
 		return fmt.Errorf("fetch %s %s: %s (%w)", remote, branch, strings.TrimSpace(string(out)), err)
 	}
@@ -63,7 +64,7 @@ func FetchRef(repoPath, ref string, runner CommandRunner) error {
 func isRemoteTrackingRef(repoPath, ref string, r CommandRunner) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", "--quiet", "refs/remotes/"+ref)
+	c := internalexec.GitCommand(ctx, repoPath, "rev-parse", "--verify", "--quiet", "refs/remotes/"+ref)
 	_, err := r.Output(c)
 	return err == nil
 }

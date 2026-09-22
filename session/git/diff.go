@@ -3,9 +3,10 @@ package git
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
+
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 )
 
 // ensureUntrackedStaged guards `git add -N .` behind a cached untracked-file
@@ -70,7 +71,7 @@ func CurrentBranch(repoPath string, runner CommandRunner) (string, error) {
 	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := internalexec.GitCommand(ctx, repoPath, "rev-parse", "--abbrev-ref", "HEAD")
 	output, err := r.CombinedOutput(cmd)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse failed: %s (%w)", output, err)
@@ -88,7 +89,7 @@ func DiffUncommitted(repoPath string, runner CommandRunner) *DiffStats {
 
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "--no-pager", "diff", "HEAD")
+	cmd := internalexec.GitCommand(ctx, repoPath, "--no-pager", "diff", "HEAD")
 	output, err := r.CombinedOutput(cmd)
 	if err != nil {
 		stats.Error = fmt.Errorf("git diff failed: %s (%w)", output, err)
@@ -162,7 +163,7 @@ func DiffUncommittedShortStat(repoPath string, runner CommandRunner) *DiffStats 
 	stats := &DiffStats{}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "--no-pager", "diff", "--shortstat", "HEAD")
+	cmd := internalexec.GitCommand(ctx, repoPath, "--no-pager", "diff", "--shortstat", "HEAD")
 	output, err := r.CombinedOutput(cmd)
 	if err != nil {
 		stats.Error = fmt.Errorf("git diff --shortstat failed: %s (%w)", output, err)

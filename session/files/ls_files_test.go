@@ -57,7 +57,7 @@ func TestListInGitRepoIncludesTrackedAndUntracked(t *testing.T) {
 	gitIn(t, dir, "add", ".gitignore")
 	gitIn(t, dir, "commit", "-m", "add ignore")
 
-	result, err := List(dir)
+	result, err := List(dir, nil)
 	require.NoError(t, err)
 	assert.True(t, result.FromGit, "git ls-files should have succeeded")
 	assert.Contains(t, result.Paths, "tracked.go")
@@ -72,7 +72,7 @@ func TestListInNonGitDirFallsBackToWalk(t *testing.T) {
 	writeFile(t, dir, "a.txt", "a")
 	writeFile(t, dir, "nested/b.txt", "b")
 
-	result, err := List(dir)
+	result, err := List(dir, nil)
 	require.NoError(t, err)
 	assert.False(t, result.FromGit, "non-git root should report FromGit=false")
 	assert.Contains(t, result.Paths, "a.txt")
@@ -85,7 +85,7 @@ func TestListSkipsGitDirOnWalkFallback(t *testing.T) {
 	writeFile(t, dir, ".git/HEAD", "ref: refs/heads/main")
 	writeFile(t, dir, ".git/config", "[core]")
 
-	result, err := List(dir)
+	result, err := List(dir, nil)
 	require.NoError(t, err)
 	// Since there's a .git directory, IsGitRepo may or may not return
 	// true depending on git's heuristics — what we verify is that no
@@ -98,11 +98,49 @@ func TestListSkipsGitDirOnWalkFallback(t *testing.T) {
 }
 
 func TestListEmptyRoot(t *testing.T) {
-	_, err := List("")
+	_, err := List("", nil)
 	assert.Error(t, err)
 }
 
 func TestListNonexistentRoot(t *testing.T) {
-	_, err := List(filepath.Join(t.TempDir(), "does-not-exist"))
+	_, err := List(filepath.Join(t.TempDir(), "does-not-exist"), nil)
 	assert.Error(t, err)
+}
+
+// fakeGitRunner answers the repo probe (Run) and ls-files (Output) from
+// canned values and records every command it is handed.
+type fakeGitRunner struct {
+	lsFiles []byte
+	cmds    [][]string
+}
+
+func (f *fakeGitRunner) Run(c *exec.Cmd) error {
+	f.cmds = append(f.cmds, c.Args)
+	return nil
+}
+
+func (f *fakeGitRunner) Output(c *exec.Cmd) ([]byte, error) {
+	f.cmds = append(f.cmds, c.Args)
+	return f.lsFiles, nil
+}
+
+func (f *fakeGitRunner) CombinedOutput(c *exec.Cmd) ([]byte, error) {
+	return f.Output(c)
+}
+
+// TestListRoutesGitThroughInjectedRunner pins that both git subprocesses —
+// the IsGitRepo probe and ls-files — go through the caller's runner rather
+// than straight to os/exec. The root is a plain tempdir, so only the fake
+// can make it look like a repo.
+func TestListRoutesGitThroughInjectedRunner(t *testing.T) {
+	dir := t.TempDir()
+	fake := &fakeGitRunner{lsFiles: []byte("b.go\x00a.go\x00")}
+
+	result, err := List(dir, fake)
+	require.NoError(t, err)
+	assert.True(t, result.FromGit)
+	assert.Equal(t, []string{"a.go", "b.go"}, result.Paths)
+	require.Len(t, fake.cmds, 2)
+	assert.Equal(t, []string{"git", "-C", dir, "rev-parse", "--show-toplevel"}, fake.cmds[0])
+	assert.Equal(t, []string{"git", "-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z"}, fake.cmds[1])
 }

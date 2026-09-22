@@ -5,15 +5,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/aidan-bailey/loom/internal/devsandbox"
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +60,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 
 // moduleRoot returns the top of the loom checkout loomdev runs in.
 func moduleRoot() (string, error) {
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	out, err := internalexec.GitCommand(context.Background(), "", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return "", fmt.Errorf("loomdev must run inside a loom checkout: %w", err)
 	}
@@ -74,7 +75,7 @@ func moduleRoot() (string, error) {
 func (a *app) open() (*devsandbox.Sandbox, error) {
 	name := a.sandbox
 	if name == "" {
-		out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+		out, err := internalexec.GitCommand(context.Background(), "", "rev-parse", "--abbrev-ref", "HEAD").Output()
 		if err != nil {
 			return nil, fmt.Errorf("derive the sandbox name from the branch (or pass --sandbox): %w", err)
 		}

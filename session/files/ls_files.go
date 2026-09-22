@@ -13,12 +13,12 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session/git"
 )
 
@@ -48,7 +48,10 @@ type ListResult struct {
 // An empty root is rejected because the walk fallback would happily
 // enumerate the current working directory, which is almost never what
 // the caller wants.
-func List(root string) (ListResult, error) {
+//
+// runner executes both git subprocesses (the repo probe and ls-files);
+// pass nil for the default subprocess runner.
+func List(root string, runner internalexec.Executor) (ListResult, error) {
 	if root == "" {
 		return ListResult{}, errors.New("files.List: root is empty")
 	}
@@ -56,8 +59,11 @@ func List(root string) (ListResult, error) {
 		return ListResult{}, fmt.Errorf("files.List: stat %q: %w", root, err)
 	}
 
-	if git.IsGitRepo(root, nil) {
-		paths, err := listViaGit(root)
+	if runner == nil {
+		runner = internalexec.Default{}
+	}
+	if git.IsGitRepo(root, runner) {
+		paths, err := listViaGit(root, runner)
 		if err == nil {
 			return ListResult{Root: root, Paths: paths, FromGit: true}, nil
 		}
@@ -76,13 +82,13 @@ func List(root string) (ListResult, error) {
 
 // listViaGit runs git ls-files with NUL separation so paths with
 // embedded whitespace (even newlines) round-trip cleanly.
-func listViaGit(root string) ([]string, error) {
+func listViaGit(root string, runner internalexec.Executor) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "-C", root,
+	cmd := internalexec.GitCommand(ctx, root,
 		"ls-files", "--cached", "--others", "--exclude-standard", "-z")
-	out, err := cmd.Output()
+	out, err := runner.Output(cmd)
 	if err != nil {
 		return nil, err
 	}

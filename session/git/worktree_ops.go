@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aidan-bailey/loom/config"
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -375,7 +375,7 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 		// Use findMainRepoRoot so the path still resolves once the linked
 		// worktree directory is removed below — branch deletion has to
 		// run against the main repo, not the now-gone worktree.
-		repoRoot, err := findMainRepoRoot(worktreePath)
+		repoRoot, err := findMainRepoRoot(worktreePath, r)
 		if err != nil {
 			// Can't determine repo (e.g. .git file missing) — just remove the directory
 			_ = os.RemoveAll(worktreePath)
@@ -391,7 +391,7 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 	var errs []error
 	for repoRoot, worktreePaths := range repoWorktrees {
 		listCtx, listCancel := context.WithTimeout(context.Background(), gitTimeout)
-		listCmd := exec.CommandContext(listCtx, "git", "-C", repoRoot, "worktree", "list", "--porcelain")
+		listCmd := internalexec.GitCommand(listCtx, repoRoot, "worktree", "list", "--porcelain")
 		output, listErr := r.Output(listCmd)
 		listCancel()
 		if listErr != nil {
@@ -422,7 +422,7 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 		}
 
 		pruneCtx, pruneCancel := context.WithTimeout(context.Background(), gitTimeout)
-		pruneCmd := exec.CommandContext(pruneCtx, "git", "-C", repoRoot, "worktree", "prune")
+		pruneCmd := internalexec.GitCommand(pruneCtx, repoRoot, "worktree", "prune")
 		if err := r.Run(pruneCmd); err != nil {
 			errs = append(errs, fmt.Errorf("failed to prune worktrees for %s: %w", repoRoot, err))
 		}
@@ -434,7 +434,7 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 				continue
 			}
 			delCtx, delCancel := context.WithTimeout(context.Background(), gitTimeout)
-			deleteCmd := exec.CommandContext(delCtx, "git", "-C", repoRoot, "branch", "-D", branch)
+			deleteCmd := internalexec.GitCommand(delCtx, repoRoot, "branch", "-D", branch)
 			if err := r.Run(deleteCmd); err != nil {
 				errs = append(errs, fmt.Errorf("failed to delete branch %s: %w", branch, err))
 			}

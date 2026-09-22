@@ -2,6 +2,7 @@ package devsandbox
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 )
 
 // registryFileName mirrors config's unexported workspacesFileName;
@@ -218,12 +220,12 @@ func (s *Sandbox) Build(srcDir string) error {
 // sourceRevision describes srcDir as "<sha>" or "<sha>-dirty", or "unknown"
 // when it is not a git checkout (e.g. a Nix build source).
 func sourceRevision(srcDir string) string {
-	head, err := exec.Command("git", "-C", srcDir, "rev-parse", "--short", "HEAD").Output()
+	head, err := internalexec.GitCommand(context.Background(), srcDir, "rev-parse", "--short", "HEAD").Output()
 	if err != nil {
 		return "unknown"
 	}
 	rev := strings.TrimSpace(string(head))
-	status, err := exec.Command("git", "-C", srcDir, "status", "--porcelain").Output()
+	status, err := internalexec.GitCommand(context.Background(), srcDir, "status", "--porcelain").Output()
 	if err == nil && len(bytes.TrimSpace(status)) > 0 {
 		rev += "-dirty"
 	}

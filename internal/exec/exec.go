@@ -2,8 +2,15 @@
 // rest of the codebase to invoke git, gh, and tmux without binding production
 // call sites to os/exec directly. Tests inject fakes; production uses Default.
 //
-// Kept as a leaf package so both cmd/ and session/git/ can import it without
-// creating a cycle (cmd/ imports session/git/).
+// It also owns the constructors for every git and gh subprocess: GitCommand
+// (runs git under LC_ALL=C, so the English stderr callers match on is what
+// git actually prints) and GhCommand (runs gh with prompts and the update
+// notifier disabled). TestNoRawGitGhExec fails on any raw
+// exec.Command("git"|"gh", …) in production code outside command.go. tmux
+// has its own constructor, session/tmux.Command, enforced the same way.
+//
+// Kept as a leaf package so every layer — cmd/, session/git/, tools/ — can
+// import it without creating a cycle (cmd/ imports session/git/).
 package exec
 
 import (

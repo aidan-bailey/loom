@@ -37,7 +37,7 @@ func CheckCLI(r internalexec.Executor) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
 	defer cancel()
-	if err := runner(r).Run(exec.CommandContext(ctx, "gh", "auth", "status")); err != nil {
+	if err := runner(r).Run(internalexec.GhCommand(ctx, "auth", "status")); err != nil {
 		// The returned message stays clean because it is user-facing.
 		// The cause goes to the log so an expired token and a broken gh
 		// install are distinguishable; Run captures no stderr, so
@@ -51,7 +51,7 @@ func CheckCLI(r internalexec.Executor) error {
 func gh(ctx context.Context, r internalexec.Executor, dir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "gh", args...)
+	c := internalexec.GhCommand(ctx, args...)
 	c.Dir = dir
 	out, err := runner(r).Output(c)
 	if err != nil {

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 )
 
@@ -108,7 +108,7 @@ func resolveRef(repoPath, ref string, runner CommandRunner) (sha string, ok bool
 func runGitOutput(repoPath string, runner CommandRunner, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "git", append([]string{"-C", repoPath}, args...)...)
+	c := internalexec.GitCommand(ctx, repoPath, args...)
 	out, err := runner.Output(c)
 	if err != nil {
 		// Debug, not Warn: absent refs are the expected case on most rungs

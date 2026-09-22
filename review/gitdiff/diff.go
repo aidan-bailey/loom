@@ -7,11 +7,14 @@ package gitdiff
 // session/git, which shells out for worktree lifecycle operations.
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
+
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 )
 
 // ChangeStatus represents the type of change to a file.
@@ -223,7 +226,7 @@ func untrackedFiles(dir string) ([]string, error) {
 
 // gitCommand runs a git command and returns stdout.
 func gitCommand(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := internalexec.GitCommand(context.Background(), dir, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {

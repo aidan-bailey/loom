@@ -2,15 +2,16 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session/agent"
 )
 
@@ -59,7 +60,7 @@ func newFakeAgent(p persona, in io.Reader, out io.Writer, dir string) *fakeAgent
 }
 
 func runGit(dir string, args ...string) error {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := internalexec.GitCommand(context.Background(), dir, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, out)
 	}

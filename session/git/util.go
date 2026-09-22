@@ -3,11 +3,11 @@ package git
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session/github"
 )
 
@@ -55,7 +55,7 @@ func IsGitRepo(path string, runner CommandRunner) bool {
 	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+	c := internalexec.GitCommand(ctx, path, "rev-parse", "--show-toplevel")
 	return r.Run(c) == nil
 }
 
@@ -63,7 +63,7 @@ func findGitRepoRoot(path string, runner CommandRunner) (string, error) {
 	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+	c := internalexec.GitCommand(ctx, path, "rev-parse", "--show-toplevel")
 	out, err := r.Output(c)
 	if err != nil {
 		return "", fmt.Errorf("failed to find Git repository root from path: %s", path)
@@ -75,12 +75,14 @@ func findGitRepoRoot(path string, runner CommandRunner) (string, error) {
 // inside a git checkout — including a linked worktree. Unlike findGitRepoRoot
 // (which returns the local worktree's own top level), this survives after the
 // caller removes the linked worktree directory, because the main repo's path
-// is elsewhere on disk.
-func findMainRepoRoot(path string) (string, error) {
+// is elsewhere on disk. Pass nil for runner to use the default subprocess
+// runner.
+func findMainRepoRoot(path string, runner CommandRunner) (string, error) {
+	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	out, err := cmd.Output()
+	cmd := internalexec.GitCommand(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	out, err := r.Output(cmd)
 	if err != nil {
 		return "", fmt.Errorf("failed to find main Git repository root from path: %s", path)
 	}

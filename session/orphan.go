@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -114,7 +113,7 @@ var probeWorktreeRepo = func(worktreePath string) (repoPath, headSHA string, err
 var probeWorktreeDirty = func(worktreePath string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), orphanProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "status", "--porcelain")
+	cmd := internalexec.GitCommand(ctx, worktreePath, "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return true
@@ -370,7 +369,7 @@ func isGitWorktreeRoot(dir string) bool {
 func findMainRepoForWorktree(worktreePath string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), orphanProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	cmd := internalexec.GitCommand(ctx, worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -393,7 +392,7 @@ func findMainRepoForWorktree(worktreePath string) (string, error) {
 func readWorktreeHEAD(worktreePath string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), orphanProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rev-parse", "HEAD")
+	cmd := internalexec.GitCommand(ctx, worktreePath, "rev-parse", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -417,7 +416,7 @@ func RemoveOrphanWorktree(repoPath, worktreePath string) error {
 	// git.WorktreeRemoveTimeout.
 	ctx, cancel := context.WithTimeout(context.Background(), git.WorktreeRemoveTimeout())
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "remove", "-f", worktreePath)
+	cmd := internalexec.GitCommand(ctx, repoPath, "worktree", "remove", "-f", worktreePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("remove worktree %s: %w (%s)", worktreePath, err, strings.TrimSpace(string(out)))
 	}

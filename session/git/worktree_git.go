@@ -3,11 +3,12 @@ package git
 import (
 	"context"
 	"fmt"
-	"github.com/aidan-bailey/loom/log"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
+
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/log"
 )
 
 // MaxBranchSearchResults is the maximum number of branches returned by SearchBranches.
@@ -53,7 +54,7 @@ func FetchBranches(repoPath string, runner CommandRunner) {
 	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitNetworkTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--prune")
+	c := internalexec.GitCommand(ctx, repoPath, "fetch", "--prune")
 	_ = r.Run(c)
 }
 
@@ -65,7 +66,7 @@ func SearchBranches(repoPath, filter string, runner CommandRunner) ([]string, er
 	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "git", "-C", repoPath, "branch", "-a",
+	c := internalexec.GitCommand(ctx, repoPath, "branch", "-a",
 		"--sort=-committerdate",
 		"--format=%(refname:short)")
 	output, err := r.CombinedOutput(c)
@@ -121,6 +122,7 @@ func (g *GitWorktree) removeWorktree() (string, error) {
 // runGitCommandEnv is runGitCommand with additional environment variables
 // appended onto the process's own environment (e.g. GIT_INDEX_FILE to
 // build a tree against a scratch index without touching the real one).
+// They land after GitCommand's LC_ALL=C, so they win on a duplicate key.
 // Pass nil extraEnv to behave exactly like runGitCommand.
 func (g *GitWorktree) runGitCommandEnv(extraEnv []string, path string, args ...string) (string, error) {
 	return g.runGitCommandEnvTimeout(extraEnv, gitTimeout, path, args...)
@@ -131,11 +133,8 @@ func (g *GitWorktree) runGitCommandEnv(extraEnv []string, path string, args ...s
 func (g *GitWorktree) runGitCommandEnvTimeout(extraEnv []string, timeout time.Duration, path string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	baseArgs := []string{"-C", path}
-	c := exec.CommandContext(ctx, "git", append(baseArgs, args...)...)
-	if len(extraEnv) > 0 {
-		c.Env = append(os.Environ(), extraEnv...)
-	}
+	c := internalexec.GitCommand(ctx, path, args...)
+	c.Env = append(c.Env, extraEnv...)
 
 	t0 := time.Now()
 	output, err := g.runner.CombinedOutput(c)
@@ -184,7 +183,7 @@ func (g *GitWorktree) PushChanges(commitMessage string, open bool) error {
 	// First push the branch to remote to ensure it exists
 	ctx, cancel := context.WithTimeout(context.Background(), gitNetworkTimeout)
 	defer cancel()
-	pushCmd := exec.CommandContext(ctx, "gh", "repo", "sync", "--source", "-b", g.branchName)
+	pushCmd := internalexec.GhCommand(ctx, "repo", "sync", "--source", "-b", g.branchName)
 	pushCmd.Dir = g.worktreePath
 	if err := g.runner.Run(pushCmd); err != nil {
 		// Fallback needs its own deadline: a slow `gh repo sync` above can
@@ -192,7 +191,7 @@ func (g *GitWorktree) PushChanges(commitMessage string, open bool) error {
 		// cancel the push before it even dials.
 		fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), gitNetworkTimeout)
 		defer fallbackCancel()
-		gitPushCmd := exec.CommandContext(fallbackCtx, "git", "push", "-u", "origin", g.branchName)
+		gitPushCmd := internalexec.GitCommand(fallbackCtx, "", "push", "-u", "origin", g.branchName)
 		gitPushCmd.Dir = g.worktreePath
 		if pushOutput, pushErr := g.runner.CombinedOutput(gitPushCmd); pushErr != nil {
 			return fmt.Errorf("failed to push branch: %s (%w)", pushOutput, pushErr)
@@ -202,7 +201,7 @@ func (g *GitWorktree) PushChanges(commitMessage string, open bool) error {
 	// Now sync with remote
 	syncCtx, syncCancel := context.WithTimeout(context.Background(), gitNetworkTimeout)
 	defer syncCancel()
-	syncCmd := exec.CommandContext(syncCtx, "gh", "repo", "sync", "-b", g.branchName)
+	syncCmd := internalexec.GhCommand(syncCtx, "repo", "sync", "-b", g.branchName)
 	syncCmd.Dir = g.worktreePath
 	if output, err := g.runner.CombinedOutput(syncCmd); err != nil {
 		return fmt.Errorf("failed to sync changes: %s (%w)", output, err)
@@ -490,7 +489,7 @@ func (g *GitWorktree) OpenBranchURL() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, "gh", "browse", "--branch", g.branchName)
+	c := internalexec.GhCommand(ctx, "browse", "--branch", g.branchName)
 	c.Dir = g.worktreePath
 	if err := g.runner.Run(c); err != nil {
 		return fmt.Errorf("failed to open branch URL: %w", err)

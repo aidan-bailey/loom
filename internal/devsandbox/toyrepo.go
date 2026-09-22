@@ -1,11 +1,13 @@
 package devsandbox
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	internalexec "github.com/aidan-bailey/loom/internal/exec"
 )
 
 type toyCommit struct {
@@ -86,7 +88,7 @@ func initToyRepo(repoDir, originDir string) error {
 }
 
 func git(dir string, args ...string) error {
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := internalexec.GitCommand(context.Background(), dir, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s: %w\n%s", strings.Join(args, " "), err, out)
 	}

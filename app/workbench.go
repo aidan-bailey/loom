@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/review"
 	gitdiff "github.com/aidan-bailey/loom/review/gitdiff"
@@ -583,7 +584,7 @@ func (m *home) workbenchFilesCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		res, err := files.List(root)
+		res, err := files.List(root, cmd2.MakeExecutor())
 		if err != nil {
 			return wbFilesMsg{title: title, root: root, err: err}
 		}

@@ -652,7 +652,7 @@ func runToggleFileExplorer(m *home) (tea.Model, tea.Cmd) {
 		return m, m.handleError(fmt.Errorf("no repository to explore"))
 	}
 
-	result, err := files.List(root)
+	result, err := files.List(root, cmd2.MakeExecutor())
 	if err != nil {
 		return m, m.handleError(fmt.Errorf("list files: %w", err))
 	}
