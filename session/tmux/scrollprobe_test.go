@@ -1,6 +1,9 @@
 package tmux
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -30,6 +33,30 @@ func TestCaptureHistoryRealTmux(t *testing.T) {
 	// pane, which is what made this test hang for its full timeout and
 	// fail in CI while always passing locally.
 	t.Setenv("TERM", "xterm-256color")
+
+	// The package TestMain deliberately unsets EnvTmuxSocket so other
+	// tests' argv-exact assertions see no -L prefix (see tmux_test.go's
+	// TestMain) — but that means this test, which spawns a genuinely real
+	// tmux session, would otherwise land on whatever server $TMUX or the
+	// default resolves to. Scope a private server to just this test: a
+	// fresh socket name, $TMUX cleared so nothing falls through to an
+	// enclosing server, and a short-based TMUX_TMPDIR (not t.TempDir(),
+	// which nests under a long per-test path that can blow the unix
+	// socket path limit) so the socket file itself doesn't live under the
+	// real server's directory. The tmpdir removal is registered before
+	// Start, so the kill-server cleanup below — registered after, and so
+	// run first since t.Cleanup unwinds LIFO — still finds the directory
+	// (and therefore the socket file) in place.
+	tmuxTmpDir, err := os.MkdirTemp("/tmp", "lt")
+	if err != nil {
+		t.Fatalf("mkdir tmux tmpdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmuxTmpDir) })
+	t.Setenv("TMUX_TMPDIR", tmuxTmpDir)
+	t.Setenv("TMUX", "")
+	sock := fmt.Sprintf("loomtest-caphist-%d", time.Now().UnixNano())
+	t.Setenv(EnvTmuxSocket, sock)
+	t.Cleanup(func() { _ = CommandOnSocket(context.Background(), sock, "kill-server").Run() })
 
 	ts := NewTmuxSession("caphist", "sh")
 	if err := ts.Start(t.TempDir()); err != nil {
