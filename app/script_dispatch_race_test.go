@@ -35,7 +35,7 @@ func TestScriptHost_ConcurrentNavAndRead(t *testing.T) {
 	list.SetSelectedInstance(0)
 
 	h := &home{list: list}
-	host := &scriptHost{m: h}
+	host := newScriptHost(h)
 
 	var wg sync.WaitGroup
 	const n = 2000

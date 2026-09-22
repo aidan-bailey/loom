@@ -25,7 +25,7 @@ func TestToggleOverview_ScriptHostPersistsViewMode(t *testing.T) {
 	require.Equal(t, viewFocus, m.viewMode)
 
 	toggle := func() {
-		host := &scriptHost{m: m}
+		host := newScriptHost(m)
 		host.ToggleOverview()
 		_, _, _, actions := host.drain()
 		require.Len(t, actions, 1, "ToggleOverview must defer exactly one model mutation")

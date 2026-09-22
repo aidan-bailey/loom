@@ -6,7 +6,8 @@
 // The engine is decoupled from the app/ package through the Host
 // interface so that scripts can manipulate live session state without
 // introducing an import cycle. Host is implemented by a small adapter
-// inside app/ that forwards to the *home model.
+// inside app/ that snapshots reads from, and defers writes to, the
+// *home model.
 package script
 
 import (
@@ -17,14 +18,18 @@ import (
 // Host is the facade script userdata uses to touch live TUI state.
 // Every method must be safe to call from a background goroutine — the
 // Engine serializes Lua execution through a mutex but runs the Lua VM
-// itself inside a tea.Cmd goroutine, so any state it touches must be
-// RLock-protected (see session.Instance) or otherwise thread-safe.
+// itself inside a tea.Cmd goroutine, concurrently with the app's
+// Update/View. The app's host therefore answers the query methods from
+// a snapshot taken on the Update goroutine when the dispatch or resume
+// began (a handler never sees later changes, including its own
+// deferred ones) and records mutations for Update to apply. Returned
+// instances are shared: session.Instance locks internally.
 type Host interface {
-	// SelectedInstance returns the currently-focused instance in the
-	// list panel, or nil if the list is empty.
+	// SelectedInstance returns the instance focused in the list panel
+	// when the dispatch or resume began, or nil if the list was empty.
 	SelectedInstance() *session.Instance
-	// Instances returns a snapshot slice of every instance currently
-	// tracked by the list. Callers must not mutate the slice.
+	// Instances returns every instance the list tracked when the
+	// dispatch or resume began. Callers must not mutate the slice.
 	Instances() []*session.Instance
 	// Workspaces returns the loaded workspace registry. May be nil if
 	// the registry failed to load at startup.

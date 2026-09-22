@@ -8,6 +8,7 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/ui"
 	"path/filepath"
 	"sync"
 
@@ -46,11 +47,25 @@ type scriptResumeMsg struct {
 	trace string
 }
 
-// scriptHost adapts *home to the script.Host interface. A fresh
-// instance is allocated per dispatch so pending instances, notices,
-// and references to *home don't leak across script invocations.
+// scriptHost implements script.Host for *home. newScriptHost allocates
+// a fresh one per dispatch and per resume so pending instances,
+// notices, and intents don't leak across script invocations.
+//
+// It deliberately holds no *home: its methods run on the Lua dispatch
+// goroutine, concurrently with Update/View, so reads come from a
+// snapshot taken on the Update goroutine and writes are deferred (see
+// deferModelMutation).
 type scriptHost struct {
-	m *home
+	selected       *session.Instance
+	instances      []*session.Instance
+	registry       *config.WorkspaceRegistry
+	configDir      string
+	repoPath       string
+	defaultProgram string
+	branchPrefix   string
+	// splitPane is the focused slot's pane at snapshot time. Only its
+	// terminal is used, which is fixed at construction and locks itself.
+	splitPane *ui.SplitPane
 
 	mu      sync.Mutex
 	pending []*session.Instance
@@ -63,45 +78,63 @@ type scriptHost struct {
 	actions []func(*home)
 }
 
+// newScriptHost snapshots the model state the script.Host read methods
+// expose. It must run on the Update goroutine (dispatchScript,
+// handleScriptResume); the instance slice is copied because ui.List
+// hands out its backing array.
+func newScriptHost(m *home) *scriptHost {
+	h := &scriptHost{
+		registry:       m.registry,
+		configDir:      m.configDir(),
+		repoPath:       m.repoPath(),
+		defaultProgram: m.program,
+		splitPane:      m.splitPane,
+	}
+	if m.list != nil {
+		h.selected = m.list.GetSelectedInstance()
+		h.instances = append([]*session.Instance(nil), m.list.GetInstances()...)
+	}
+	// Locked accessor: the settings overlay mutates the same *Config
+	// through Config.Mutate.
+	if m.appConfig != nil {
+		h.branchPrefix = m.appConfig.GetBranchPrefix()
+	}
+	return h
+}
+
 // SelectedInstance implements script.Host.
 func (s *scriptHost) SelectedInstance() *session.Instance {
-	return s.m.list.GetSelectedInstance()
+	return s.selected
 }
 
 // Instances implements script.Host.
 func (s *scriptHost) Instances() []*session.Instance {
-	return s.m.list.GetInstances()
+	return s.instances
 }
 
 // Workspaces implements script.Host.
 func (s *scriptHost) Workspaces() *config.WorkspaceRegistry {
-	return s.m.registry
+	return s.registry
 }
 
 // ConfigDir implements script.Host.
 func (s *scriptHost) ConfigDir() string {
-	return s.m.configDir()
+	return s.configDir
 }
 
 // RepoPath implements script.Host.
 func (s *scriptHost) RepoPath() string {
-	return s.m.repoPath()
+	return s.repoPath
 }
 
 // DefaultProgram implements script.Host.
 func (s *scriptHost) DefaultProgram() string {
-	return s.m.program
+	return s.defaultProgram
 }
 
-// BranchPrefix implements script.Host. Reads through the locked
-// accessor because this runs on the Lua dispatch goroutine while the
-// settings overlay can be mutating the same *Config concurrently on
-// the main goroutine — see Config.Mutate's doc comment.
+// BranchPrefix implements script.Host.
 func (s *scriptHost) BranchPrefix() string {
-	if s.m.appConfig != nil {
-		return s.m.appConfig.GetBranchPrefix()
-	}
-	return ""
+	return s.branchPrefix
 }
 
 // QueueInstance stages an instance for finalization on the main
@@ -138,16 +171,14 @@ func (s *scriptHost) Enqueue(intent script.Intent) script.IntentID {
 
 // deferModelMutation records a model mutation to run on the main
 // goroutine in handleScriptDone. The "sync" primitives below (cursor /
-// scroll / diff / workspace navigation) MUST use this rather than touch
-// m.list / m.splitPane / m.slots directly: Engine.Dispatch runs inside a
-// tea.Cmd goroutine that Bubble Tea executes concurrently with Update and
-// View, and ui.List / ui.SplitPane have no internal locking — mutating
-// them here is a data race against the preview/metadata ticks and the
-// render path. Recording the mutation and applying it on the main loop
-// (the same pattern QueueInstance uses for AddInstance) removes the race.
-// A consequence is that a read primitive (selected_instance) observes
-// pre-dispatch state within the same handler; this matches how Intents
-// already defer their effects.
+// scroll / diff / workspace navigation) MUST use this: Engine.Dispatch
+// runs inside a tea.Cmd goroutine that Bubble Tea executes concurrently
+// with Update and View, and ui.List / ui.SplitPane have no internal
+// locking. Recording the mutation and applying it on the main loop (the
+// same pattern QueueInstance uses for AddInstance) removes the race.
+// Reads come from the newScriptHost snapshot, so a handler does not see
+// its own deferred mutations; this matches how Intents already defer
+// their effects.
 func (s *scriptHost) deferModelMutation(fn func(*home)) {
 	s.mu.Lock()
 	s.actions = append(s.actions, fn)
@@ -359,7 +390,10 @@ func (s *scriptHost) SendTerminalKeys(inst *session.Instance, text string) error
 	if inst == nil {
 		return fmt.Errorf("send_terminal_keys: nil instance")
 	}
-	return s.m.splitPane.SendTerminalKeysToInstance(inst.Title, text)
+	if s.splitPane == nil {
+		return fmt.Errorf("send_terminal_keys: no terminal pane")
+	}
+	return s.splitPane.SendTerminalKeysToInstance(inst.Title, text)
 }
 
 // pendingIntent ties a caller-provided intent to the id the script
@@ -463,7 +497,6 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 	if m.scripts == nil {
 		return nil, false
 	}
-	host := &scriptHost{m: m}
 
 	// Peek: run a cheap lookup on the same goroutine to decide
 	// whether a script owns this key. Dispatch itself holds the
@@ -473,11 +506,15 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 		return nil, false
 	}
 
+	// Snapshot here, on Update; the Cmd body below must not touch m.
+	host := newScriptHost(m)
+	engine := m.scripts
+
 	ctx, trace := log.WithTrace(context.Background())
 	log.For("script").Debug("dispatch", "trace", trace, "key", key)
 
 	return func() tea.Msg {
-		_, err := m.scripts.Dispatch(ctx, key, host)
+		_, err := engine.Dispatch(ctx, key, host)
 		pending, notices, intents, actions := host.drain()
 		// Stamp trace on every intent so handleScriptIntent can
 		// log under the same ID. Engine.Dispatch already produced
@@ -613,16 +650,18 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 }
 
 // handleScriptResume wakes the suspended handler coroutine keyed by
-// msg.id. A fresh scriptHost is allocated per resume so any intents
-// the resumed coroutine enqueues on its way to the next yield are
-// drained into a follow-up scriptDoneMsg. The engine resumes with
-// nil internally (callers don't pass Lua values across the app
-// boundary). Errors flow through handleError on the next tick.
+// msg.id. A fresh scriptHost (with a fresh snapshot) is allocated per
+// resume so any intents the resumed coroutine enqueues on its way to
+// the next yield are drained into a follow-up scriptDoneMsg. The
+// engine resumes with nil internally (callers don't pass Lua values
+// across the app boundary). Errors flow through handleError on the
+// next tick.
 func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 	if m.scripts == nil {
 		return nil
 	}
-	host := &scriptHost{m: m}
+	host := newScriptHost(m)
+	engine := m.scripts
 	// Re-seed ctx with the same trace the originating dispatch used.
 	// log.WithTrace reuses an existing ID when the ctx already carries
 	// one, but here we're starting from Background, so seed directly
@@ -635,7 +674,7 @@ func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 		ctx = log.WithValueForTrace(ctx, msg.trace)
 	}
 	return func() tea.Msg {
-		err := m.scripts.ResumeWithHost(ctx, msg.id, host)
+		err := engine.ResumeWithHost(ctx, msg.id, host)
 		pending, notices, intents, actions := host.drain()
 		for i := range intents {
 			intents[i].trace = msg.trace

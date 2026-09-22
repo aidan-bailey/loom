@@ -65,7 +65,7 @@ type Host interface {
 }
 ```
 
-A fresh `scriptHost` is allocated per dispatch so pending instances, notices, and enqueued intents from one script can't leak into another.
+A fresh `scriptHost` is allocated per dispatch so pending instances, notices, and enqueued intents from one script can't leak into another. It holds no `*home`: the queries answer from a snapshot taken on the main goroutine (see [Concurrency](#concurrency)).
 
 ### Script Action
 
@@ -423,7 +423,7 @@ app/state_default.go: handleStateDefaultKey
 **What this means for scripts**:
 - A slow script blocks other scripts but not the TUI.
 - Two keys bound to the same long-running script serialize.
-- Scripts see a consistent view of the host state *between* host method calls, but not *across* the whole dispatch — a script that reads `ctx:instances()` twice may see different results if the main goroutine mutated the list in between.
+- Host reads (`ctx:selected()`, `ctx:instances()`, `ctx:config_dir()`, …) come from a snapshot `newScriptHost` takes on the main goroutine, not from the live model, so they never see later changes — including the handler's own deferred sync primitives and queued instances.
 - `cs.await` is cheap — the coroutine is parked, the mutex released, and no CPU is consumed until `Resume` delivers the value.
 
 **What this means for the app**:
