@@ -240,6 +240,32 @@ func (s *Storage) UnrecoveredTitles() []string {
 	return titles
 }
 
+// PreservedTitles returns the titles of every record preserved on disk but
+// absent from the live list: the unrecovered cache, plus each undecodable
+// record's title, decoded best-effort (a missing, empty or unreadable title
+// is skipped). Title-keyed sweeps — the server-wide orphan tmux sweep and
+// the subagent hooks sweep — must spare these, or a preserved record keeps
+// its JSON but loses its still-running agent (e.g. a newer loom's session
+// after a downgrade, or a record whose reconcile failed transiently).
+func (s *Storage) PreservedTitles() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	titles := make([]string, 0, len(s.unrecovered)+len(s.undecodable))
+	for _, d := range s.unrecovered {
+		titles = append(titles, d.Title)
+	}
+	for _, raw := range s.undecodable {
+		var partial struct {
+			Title string `json:"title"`
+		}
+		if err := json.Unmarshal(raw, &partial); err != nil || partial.Title == "" {
+			continue
+		}
+		titles = append(titles, partial.Title)
+	}
+	return titles
+}
+
 // UndecodableCount returns how many persisted records the last successful
 // load could not decode. Like unrecovered records they are preserved on
 // disk but never appear in the live list, so callers surface the count.
@@ -255,9 +281,9 @@ func (s *Storage) UndecodableCount() int {
 func (s *Storage) DeleteInstance(title string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data, err := s.loadInstanceDataLocked()
+	data, err := s.loadForWriteLocked()
 	if err != nil {
-		return fmt.Errorf("failed to load instances: %w", err)
+		return err
 	}
 
 	found := false
@@ -287,9 +313,9 @@ func (s *Storage) DeleteInstance(title string) error {
 func (s *Storage) UpdateInstance(instance *Instance) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data, err := s.loadInstanceDataLocked()
+	data, err := s.loadForWriteLocked()
 	if err != nil {
-		return fmt.Errorf("failed to load instances: %w", err)
+		return err
 	}
 
 	snap := instance.ToInstanceData()
@@ -318,8 +344,8 @@ func (s *Storage) UpdateInstance(instance *Instance) error {
 // every undecodable record verbatim. Caller must hold s.mu.
 func (s *Storage) writeLocked(data []InstanceData) error {
 	if !s.loaded {
-		if _, err := s.loadInstanceDataLocked(); err != nil {
-			return fmt.Errorf("%w: %w", ErrStorageLoadFailed, err)
+		if _, err := s.loadForWriteLocked(); err != nil {
+			return err
 		}
 	}
 	if s.loadErr != nil {
@@ -341,6 +367,20 @@ func (s *Storage) writeLocked(data []InstanceData) error {
 	return s.state.SaveInstances(jsonData)
 }
 
+// loadForWriteLocked loads the payload on behalf of a write — the
+// read-modify-write in DeleteInstance/UpdateInstance, or writeLocked's
+// first-write load. A load failure there is the write being refused, so
+// it wraps ErrStorageLoadFailed alongside the cause, matching writeLocked's
+// own refusal: every write path's refusal satisfies errors.Is. Caller must
+// hold s.mu.
+func (s *Storage) loadForWriteLocked() ([]InstanceData, error) {
+	data, err := s.loadInstanceDataLocked()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrStorageLoadFailed, err)
+	}
+	return data, nil
+}
+
 // LoadInstanceData loads raw serialized instance data without constructing Instance objects.
 // Used by reconciliation to inspect state before deciding how to restore.
 // All records pass through Migrate so callers receive CurrentSchemaVersion data;
@@ -352,8 +392,8 @@ func (s *Storage) LoadInstanceData() ([]InstanceData, error) {
 }
 
 // loadInstanceDataLocked is the unlocked core of LoadInstanceData. Callers
-// that already hold s.mu (DeleteInstance, UpdateInstance, LoadAndReconcile,
-// writeLocked) use this to avoid re-entering the non-reentrant mutex.
+// that already hold s.mu (LoadInstances, LoadAndReconcile, and every write
+// path via loadForWriteLocked) use this to avoid re-entering the mutex.
 //
 // Every load refreshes the write-safety state: a payload that is not a JSON
 // array sets loadErr (latching writes shut); a successful load clears it

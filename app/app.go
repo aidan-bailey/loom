@@ -1625,6 +1625,26 @@ func claimedWorktreePaths(claimed []*session.Instance, storage *session.Storage)
 	return paths
 }
 
+// claimTitles adds to claimed every session title one workspace owns, for
+// the title-keyed sweeps: the server-wide orphan tmux sweep
+// (CleanupOrphanedSessions) and the subagent hooks sweep. That is each
+// instance in list (Recoverable orphans included) plus each record storage
+// preserves on disk outside the list (Storage.PreservedTitles: reconcile
+// failures and undecodable records, e.g. a newer loom's after a
+// downgrade) — sparing those keeps a preserved record's agent alive for
+// the binary that can load it. storage may be nil.
+func claimTitles(claimed map[string]bool, list *ui.List, storage *session.Storage) {
+	for _, inst := range list.GetInstances() {
+		claimed[inst.Title] = true
+	}
+	if storage == nil {
+		return
+	}
+	for _, title := range storage.PreservedTitles() {
+		claimed[title] = true
+	}
+}
+
 // reconcileOrphans discovers orphaned worktrees for one workspace, auto-cleans
 // stale leftovers, and adds inline Recoverable entries for orphans that need a
 // human decision. It mutates list (adds Recoverable instances) and returns a
@@ -1656,22 +1676,17 @@ func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *
 			summary.review++
 		}
 	}
-	claimed := make(map[string]bool)
-	for _, inst := range list.GetInstances() {
-		claimed[inst.Title] = true
-	}
 	// Records that failed reconcile at load time live only in the storage
 	// cache, and undecodable ones only on disk — surface their counts so
 	// they don't read as lost sessions.
 	if storage != nil {
 		summary.failed = len(storage.UnrecoveredTitles())
 		summary.undecodable = storage.UndecodableCount()
-		// Unrecovered records may come back on the next load; keep their
-		// hooks folders.
-		for _, title := range storage.UnrecoveredTitles() {
-			claimed[title] = true
-		}
 	}
+	// Preserved records may come back on a later load (or under a newer
+	// loom); claimTitles keeps their hooks folders.
+	claimed := make(map[string]bool)
+	claimTitles(claimed, list, storage)
 	session.SweepSubagentHooks(cfgDir, claimed, cmdExec)
 	return summary
 }

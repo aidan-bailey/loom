@@ -455,6 +455,34 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 		assert.Equal(t, corrupt, string(mock.data))
 	})
 
+	// DeleteInstance and UpdateInstance load inside the write; their load
+	// failure is the refusal, so it must carry the sentinel too.
+	t.Run("delete refuses", func(t *testing.T) {
+		mock := &trackingMockStorage{data: json.RawMessage(corrupt)}
+		s, err := NewStorage(mock, "")
+		require.NoError(t, err)
+
+		err = s.DeleteInstance("fresh")
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrStorageLoadFailed), "got %v", err)
+		assert.Empty(t, mock.saved)
+		assert.Equal(t, corrupt, string(mock.data))
+	})
+
+	t.Run("update refuses", func(t *testing.T) {
+		mock := &trackingMockStorage{data: json.RawMessage(corrupt)}
+		s, err := NewStorage(mock, "")
+		require.NoError(t, err)
+
+		live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
+		live.setStarted(true)
+		err = s.UpdateInstance(live)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrStorageLoadFailed), "got %v", err)
+		assert.Empty(t, mock.saved)
+		assert.Equal(t, corrupt, string(mock.data))
+	})
+
 	t.Run("delete all is the explicit wipe", func(t *testing.T) {
 		mock := &trackingMockStorage{data: json.RawMessage(corrupt)}
 		s, err := NewStorage(mock, "")
@@ -473,4 +501,33 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 		require.Len(t, persisted, 1)
 		assert.Equal(t, "fresh", persisted[0].Title)
 	})
+}
+
+// TestStorage_PreservedTitles covers the title set that title-keyed sweeps
+// (the server-wide orphan tmux sweep, the subagent hooks sweep) must spare:
+// reconcile failures plus undecodable records whose title can be read.
+// Without the undecodable half, a downgraded loom killed a newer loom's
+// still-running agents even though their records were preserved.
+func TestStorage_PreservedTitles(t *testing.T) {
+	mock := &trackingMockStorage{data: json.RawMessage(`[
+		{"title":"alive","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/wt-alive"}},
+		{"schema_version":99,"title":"future"},
+		{"schema_version":99},
+		{"schema_version":99,"title":{"garbled":true}},
+		{"title":42},
+		"not an object"
+	]`)}
+	s, err := NewStorage(mock, "")
+	require.NoError(t, err)
+	_, err = s.LoadInstanceData()
+	require.NoError(t, err)
+	require.Equal(t, 5, s.UndecodableCount())
+
+	// Seed a reconcile failure directly (white-box, as in the collision
+	// test above): forcing one through LoadAndReconcile needs an empty
+	// title, which would make the assertion ambiguous.
+	s.unrecovered = []InstanceData{{Title: "flaky"}}
+
+	assert.ElementsMatch(t, []string{"flaky", "future"}, s.PreservedTitles(),
+		"untitled and unreadable titles are skipped; the loaded record is the live list's to claim")
 }

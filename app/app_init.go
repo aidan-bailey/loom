@@ -185,11 +185,10 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		// list instance) is exempted by the claimedTitles loop below.
 		startupRecovery = h.reconcileOrphans(cfgDir, program, h.list, storage, cmdExec)
 
-		// Clean up orphaned tmux sessions from previous crashes
+		// Clean up orphaned tmux sessions from previous crashes, sparing
+		// those of records preserved on disk outside the list.
 		claimedTitles := make(map[string]bool)
-		for _, inst := range h.list.GetInstances() {
-			claimedTitles[inst.Title] = true
-		}
+		claimTitles(claimedTitles, h.list, storage)
 		if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
 			log.For("app").Error("orphan_cleanup_failed", "err", err)
 		}
@@ -321,13 +320,12 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	// slot's activateWorkspace call above already ran reconcileOrphans,
 	// which adds recovered-but-undecided orphans as Recoverable rows
 	// directly into slot.list — so the claimed set here (built from every
-	// slot's live instances, Recoverable included) is complete without a
+	// slot's live instances, Recoverable included, plus the records each
+	// slot's storage preserves outside its list) is complete without a
 	// separate pending-orphans accumulator.
 	claimedTitles := make(map[string]bool)
 	for _, slot := range m.slots {
-		for _, inst := range slot.list.GetInstances() {
-			claimedTitles[inst.Title] = true
-		}
+		claimTitles(claimedTitles, slot.list, slot.storage)
 	}
 	if err := session.CleanupOrphanedSessions(claimedTitles, cmd2.MakeExecutor()); err != nil {
 		log.For("app").Error("orphan_cleanup_failed", "err", err)

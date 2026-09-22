@@ -9,6 +9,7 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/stretchr/testify/assert"
@@ -128,4 +129,70 @@ func TestReconcileOrphans_ReportsUndecodableRecords(t *testing.T) {
 	assert.Equal(t, 1, summary.undecodable)
 	assert.Zero(t, summary.failed, "undecodable records are not reconcile failures")
 	assert.Contains(t, summary.String(), "could not be read by this version of loom")
+}
+
+// futureOnlyStorage returns a loaded Storage whose only record was written
+// by a newer loom, so it is preserved on disk but absent from any list.
+func futureOnlyStorage(t *testing.T) *session.Storage {
+	t.Helper()
+	rec := &recordingInstanceStorage{lastData: json.RawMessage(
+		`[{"schema_version":99,"title":"future","worktree":{"worktree_path":"/tmp/wt-future"}}]`)}
+	storage, err := session.NewStorage(rec, t.TempDir())
+	require.NoError(t, err)
+	instances, err := storage.LoadAndReconcile(cmd2.MakeExecutor())
+	require.NoError(t, err)
+	require.Empty(t, instances)
+	return storage
+}
+
+// TestClaimTitles_IncludesPreservedRecords pins the claimed set both orphan
+// tmux sweep sites (classic startup, multi-tab restore) build per
+// workspace. CleanupOrphanedSessions is server-wide and kills whatever is
+// unclaimed, so a preserved record missing here — e.g. a newer loom's
+// session after a downgrade — would lose its still-running agent.
+func TestClaimTitles_IncludesPreservedRecords(t *testing.T) {
+	storage := futureOnlyStorage(t)
+	live, err := session.FromInstanceData(session.InstanceData{
+		SchemaVersion: session.CurrentSchemaVersion,
+		Title:         "live",
+		Status:        session.Paused,
+		Program:       "claude",
+	}, t.TempDir())
+	require.NoError(t, err)
+	sp := spinner.New()
+	list := ui.NewList(&sp)
+	list.AddInstance(live)
+
+	claimed := map[string]bool{}
+	claimTitles(claimed, list, storage)
+	assert.Equal(t, map[string]bool{"live": true, "future": true}, claimed)
+
+	listOnly := map[string]bool{}
+	claimTitles(listOnly, list, nil)
+	assert.Equal(t, map[string]bool{"live": true}, listOnly, "a nil storage contributes nothing")
+}
+
+// TestReconcileOrphans_KeepsHooksOfPreservedRecords: the hooks sweep in
+// reconcileOrphans deletes every folder no title claims once its tmux
+// session is gone. A preserved record is not in the live list, so unless
+// storage's preserved titles are claimed its hooks folder is deleted.
+func TestReconcileOrphans_KeepsHooksOfPreservedRecords(t *testing.T) {
+	storage := futureOnlyStorage(t)
+	cfgDir := t.TempDir()
+	preserved := session.SubagentHooksDir(cfgDir, "future")
+	stray := session.SubagentHooksDir(cfgDir, "nobody")
+	require.NoError(t, os.MkdirAll(preserved, 0o755))
+	require.NoError(t, os.MkdirAll(stray, 0o755))
+
+	// tmux reports no live sessions, so every unclaimed folder is swept.
+	noSessions := cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	sp := spinner.New()
+	h := &home{}
+	h.reconcileOrphans(cfgDir, "true", ui.NewList(&sp), storage, noSessions)
+
+	assert.DirExists(t, preserved, "a preserved record's hooks folder must survive the sweep")
+	assert.NoDirExists(t, stray, "the sweep itself must still run")
 }
