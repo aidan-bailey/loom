@@ -170,6 +170,8 @@ Even inside the allowed set, these escape hatches are nil'd out after library lo
 | `loadfile`, `dofile` | Pull source from disk outside the loader. |
 | `require` | Module loading via `package` (which is never opened, but defense-in-depth). |
 | `collectgarbage` | Could be used to probe the Go runtime; no legitimate script use. |
+| `setfenv`, `getfenv` | Read or replace another function's environment table, reaching past whatever scope handed it a closure. |
+| `newproxy` | Creates a bare userdata a script can attach its own metatable to, which could otherwise forge a type our Go-side registrations treat as trusted. |
 | `string.dump` | Serializes a function to bytecode, which `gopher-lua` can execute — bypasses our source-only load path. |
 
 Source: `script/sandbox.go`.

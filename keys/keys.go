@@ -84,8 +84,8 @@ func KeyForString(s string) (KeyName, bool) {
 // bindings used by the help panel and menu-bar highlighter. It mirrors
 // the defaults in script/defaults.lua — the Lua table is authoritative
 // for dispatch, this map is for UI rendering only. Keep the two in sync
-// when adding or changing a binding; the migration_parity_test.go guard
-// catches drift.
+// when adding or changing a binding; app/keymap_parity_test.go's
+// TestKeymapParity guard catches drift.
 var GlobalkeyBindings = map[KeyName]key.Binding{
 	KeyUp: key.NewBinding(
 		key.WithKeys("up", "k"),
@@ -191,11 +191,11 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	),
 	KeyDirectAttachAgent: key.NewBinding(
 		key.WithKeys("ctrl+a"),
-		key.WithHelp("ctrl+a", "attach agent"),
+		key.WithHelp("ctrl+a", "interact agent"),
 	),
 	KeyDirectAttachTerminal: key.NewBinding(
 		key.WithKeys("ctrl+t"),
-		key.WithHelp("ctrl+t", "attach terminal"),
+		key.WithHelp("ctrl+t", "interact terminal"),
 	),
 
 	// -- Special keybindings --

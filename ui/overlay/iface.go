@@ -9,12 +9,14 @@ import (
 // app model can hold a single active overlay rather than a handful of
 // optional pointers.
 //
-// The four types that satisfy this interface today are
-// TextInputOverlay, TextOverlay, ConfirmationOverlay, and
-// WorkspacePicker. Each retains its own specialized surface for
-// callers that need richer signals (Submitted/Canceled flags, branch
-// filter introspection, selected workspace). This interface is the
-// common subset required for dispatch.
+// The nine types that satisfy this interface today are
+// ConfirmationOverlay, FileExplorerOverlay, SessionLaunchOptions,
+// MergePicker, WorkspacePicker, TextInputOverlay, IssuePicker,
+// SettingsOverlay, and TextOverlay (see the var _ Overlay assertions
+// below). Each retains its own specialized surface for callers that
+// need richer signals (Submitted/Canceled flags, branch filter
+// introspection, selected workspace). This interface is the common
+// subset required for dispatch.
 type Overlay interface {
 	// View returns the overlay's current visual (matches the Bubble
 	// Tea Model convention so overlays can stand in for a sub-model).
@@ -28,6 +30,25 @@ type Overlay interface {
 	// to ignore dimensions they don't use.
 	SetSize(width, height int)
 }
+
+// Compile-time checks that every overlay implementation still satisfies
+// Overlay. Each of these types is constructed only through its own
+// concrete-typed constructor elsewhere in the app, so nothing else forces
+// the compiler to check the interface — without these, a signature drift
+// on one of the three methods would fail only where the type is used as
+// an Overlay (or not at all, if that call site always passes the
+// concrete type), not at the type's own definition.
+var (
+	_ Overlay = (*ConfirmationOverlay)(nil)
+	_ Overlay = (*FileExplorerOverlay)(nil)
+	_ Overlay = (*SessionLaunchOptions)(nil)
+	_ Overlay = (*MergePicker)(nil)
+	_ Overlay = (*WorkspacePicker)(nil)
+	_ Overlay = (*TextInputOverlay)(nil)
+	_ Overlay = (*IssuePicker)(nil)
+	_ Overlay = (*SettingsOverlay)(nil)
+	_ Overlay = (*TextOverlay)(nil)
+)
 
 // ConfirmationTask bundles the synchronous preparation and the
 // asynchronous body of a confirmed action so the host can schedule

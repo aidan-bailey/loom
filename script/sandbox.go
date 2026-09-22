@@ -34,11 +34,16 @@ func openSandbox(L *lua.LState) {
 		L.Call(1, 0)
 	}
 
-	// Strip escape hatches from the base library. Each of these can
-	// either execute arbitrary source (load/loadstring) or pull in a
-	// file from disk (dofile/loadfile). require pulls modules through
-	// package, which we never open, but nil it anyway for defense in
-	// depth.
+	// Strip escape hatches from the base library. dofile/loadfile pull a
+	// file from disk; load/loadstring execute arbitrary source; require
+	// pulls modules through package, which we never open, but nil it
+	// anyway for defense in depth; collectgarbage exposes GC internals
+	// (count/step/etc.) with no sandboxing use. setfenv/getfenv let a
+	// script read or replace another function's environment table,
+	// reaching past whatever scope handed it a closure; newproxy creates
+	// a bare userdata a script can attach its own metatable to, which
+	// could otherwise be used to forge a type our Go-side registrations
+	// treat as trusted.
 	for _, name := range []string{
 		"dofile",
 		"loadfile",
@@ -46,6 +51,9 @@ func openSandbox(L *lua.LState) {
 		"loadstring",
 		"require",
 		"collectgarbage",
+		"setfenv",
+		"getfenv",
+		"newproxy",
 	} {
 		L.SetGlobal(name, lua.LNil)
 	}

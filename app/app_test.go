@@ -31,12 +31,39 @@ func runTests(m *testing.M) int {
 	_ = log.Initialize("", false)
 	defer log.Close()
 
+	// Belt and suspenders: LOOM_TMUX_SOCKET is the only variable
+	// tmux.Command consults (an explicit -L outranks $TMUX), but any test
+	// that clears it — deliberately or by accident — would otherwise fall
+	// through to $TMUX and land on whatever real server encloses this
+	// process. Unset it so that fallback can't reach a live developer
+	// session, and point TMUX_TMPDIR at a throwaway directory so even a
+	// bare `tmux -L <socket>` (no explicit tmpdir) resolves its socket
+	// file under a directory this run owns and removes on exit. This must
+	// be set up — and its cleanup deferred — before the private-socket kill
+	// below is deferred, so RemoveAll runs after (not before) kill-server:
+	// defers unwind LIFO, and kill-server needs the socket file's directory
+	// to still exist when it runs.
+	os.Unsetenv("TMUX")
+	tmuxTmpDir, err := os.MkdirTemp("", "loomtest-app-tmux-tmpdir-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mkdir tmux tmpdir: %v\n", err)
+		return 1
+	}
+	defer os.RemoveAll(tmuxTmpDir)
+	if err := os.Setenv("TMUX_TMPDIR", tmuxTmpDir); err != nil {
+		fmt.Fprintf(os.Stderr, "set TMUX_TMPDIR: %v\n", err)
+		return 1
+	}
+
 	// Point every tmux.Command in this package's tests — and in the loom
 	// code they drive — at a private server, never the developer's default
 	// one, whose live loom_* sessions a stray orphan sweep or kill would
 	// destroy (and where tests used to leave loom_term_* sessions behind).
 	// Tests that want a fresh server of their own layer isolateTmux on top.
-	// Kill the private server afterwards so nothing outlives the run.
+	// Kill the private server afterwards so nothing outlives the run. The
+	// existing -L cleanups (here and in isolateTmux) still resolve the same
+	// server: tmux derives the socket path from TMUX_TMPDIR + socket name,
+	// and both are fixed for the duration of this process.
 	sock := fmt.Sprintf("loomtest-app-main-%d", os.Getpid())
 	if err := os.Setenv(tmux.EnvTmuxSocket, sock); err != nil {
 		fmt.Fprintf(os.Stderr, "set %s: %v\n", tmux.EnvTmuxSocket, err)
