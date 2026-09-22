@@ -1,20 +1,25 @@
 package script
 
 import (
+	"strings"
+
 	lua "github.com/yuin/gopher-lua"
 )
 
 // openSandbox initializes a fresh LState with an allow-listed set of
-// standard libraries and strips every function that could escape the
-// sandbox. The allow-list is deliberately narrow: scripts get
-// arithmetic, string/table manipulation, and coroutines — nothing
-// else. File I/O, shell access, bytecode loading, and the debug/
-// package libraries are never opened.
+// standard libraries, strips every function that could escape the
+// sandbox, and replaces print so it can't corrupt the TUI. The
+// allow-list is deliberately narrow: scripts get arithmetic,
+// string/table manipulation, and coroutines — nothing else. File I/O,
+// shell access, bytecode loading, and the debug/package libraries are
+// never opened.
 //
 // Per docs/specs/scripting.md §security, this is an allow-list
 // sandbox: new gopher-lua versions cannot widen the surface without
-// an explicit code change here.
-func openSandbox(L *lua.LState) {
+// an explicit code change here. e is used only to route the replaced
+// print's output into the script log (see the end of this function);
+// callers must construct it before calling openSandbox.
+func openSandbox(L *lua.LState, e *Engine) {
 	// Allow-list: base, string, table, math, coroutine.
 	// The signature below matches lua.LState.OpenLibs' internal
 	// format — (lua.LoadLibName, lua.OpenPackage) etc. are skipped.
@@ -64,4 +69,26 @@ func openSandbox(L *lua.LState) {
 	if strLib, ok := L.GetGlobal("string").(*lua.LTable); ok {
 		strLib.RawSetString("dump", lua.LNil)
 	}
+
+	// The base library's print (and _printregs, its lower-level twin)
+	// write straight to process stdout, which would corrupt the TUI's
+	// alt-screen the moment a user script called print("debug"). Replace
+	// it with a Go function that routes to the engine's script log — the
+	// same path cs.log/ctx:log use, which the app drains on a schedule
+	// and forwards to the real logger — at info level. Joins its
+	// arguments with tabs and runs tostring on each (respecting
+	// __tostring metamethods), exactly as Lua's own print does.
+	L.SetGlobal("print", L.NewFunction(func(L *lua.LState) int {
+		top := L.GetTop()
+		var b strings.Builder
+		for i := 1; i <= top; i++ {
+			if i > 1 {
+				b.WriteByte('\t')
+			}
+			b.WriteString(L.ToStringMeta(L.Get(i)).String())
+		}
+		e.logScript("info", b.String())
+		return 0
+	}))
+	L.SetGlobal("_printregs", lua.LNil)
 }

@@ -1,11 +1,15 @@
 package script
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"testing"
 
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestOpenSandbox_StripsEscapeHatches pins the sandbox's allow-list
@@ -17,15 +21,17 @@ import (
 // explicitly nil (io, os, debug, package) are covered too: they read nil
 // simply because we never open those libraries, but a future change that
 // opens one for a legitimate reason must not silently leave it reachable
-// without this test failing.
+// without this test failing. _printregs is base's lower-level twin of
+// print (see TestOpenSandbox_PrintRoutesToScriptLog for print itself) and
+// gets the same nil treatment.
 func TestOpenSandbox_StripsEscapeHatches(t *testing.T) {
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 	defer L.Close()
-	openSandbox(L)
+	openSandbox(L, &Engine{})
 
 	globals := []string{
 		"dofile", "loadfile", "load", "loadstring", "require",
-		"collectgarbage", "setfenv", "getfenv", "newproxy",
+		"collectgarbage", "setfenv", "getfenv", "newproxy", "_printregs",
 		"io", "os", "debug", "package",
 	}
 	for _, name := range globals {
@@ -35,5 +41,39 @@ func TestOpenSandbox_StripsEscapeHatches(t *testing.T) {
 	strLib, ok := L.GetGlobal("string").(*lua.LTable)
 	if assert.True(t, ok, "string library must be open") {
 		assert.Equal(t, lua.LNil, strLib.RawGetString("dump"), "string.dump must be nil after openSandbox")
+	}
+}
+
+// TestOpenSandbox_PrintRoutesToScriptLog pins the print replacement:
+// gopher-lua's base print writes straight to process stdout via fmt.Print,
+// which would corrupt the TUI's alt-screen the moment a user script called
+// print(...). openSandbox must replace it with a function that (a) never
+// touches the real os.Stdout and (b) forwards to the engine's script log —
+// the same path cs.log/ctx:log use — at info level, joining arguments with
+// tabs via tostring exactly as Lua's own print does.
+func TestOpenSandbox_PrintRoutesToScriptLog(t *testing.T) {
+	L := lua.NewState(lua.Options{SkipOpenLibs: true})
+	defer L.Close()
+	e := &Engine{}
+	openSandbox(L, e)
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	origStdout := os.Stdout
+	os.Stdout = w
+	doErr := L.DoString(`print("a", "b", 3)`)
+	os.Stdout = origStdout
+	require.NoError(t, w.Close())
+	require.NoError(t, doErr)
+
+	var captured bytes.Buffer
+	_, err = io.Copy(&captured, r)
+	require.NoError(t, err)
+	assert.Empty(t, captured.String(), "print must not write to process stdout")
+
+	logs := e.DrainLogs()
+	if assert.Len(t, logs, 1, "print must emit exactly one script log entry") {
+		assert.Equal(t, "info", logs[0].Level)
+		assert.Equal(t, "a\tb\t3", logs[0].Message, "print must tab-join tostring'd args, like Lua's own print")
 	}
 }

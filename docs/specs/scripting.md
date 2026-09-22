@@ -152,7 +152,7 @@ Only these five libraries are opened:
 
 | Library | Purpose |
 |---------|---------|
-| `base` | Arithmetic, type introspection, `print`, `tostring`, `error`, `pcall`, etc. |
+| `base` | Arithmetic, type introspection, `print` (replaced — see below), `tostring`, `error`, `pcall`, etc. |
 | `string` | String manipulation, pattern matching (minus `string.dump`). |
 | `table` | Table manipulation. |
 | `math` | Arithmetic and trig. |
@@ -173,8 +173,19 @@ Even inside the allowed set, these escape hatches are nil'd out after library lo
 | `setfenv`, `getfenv` | Read or replace another function's environment table, reaching past whatever scope handed it a closure. |
 | `newproxy` | Creates a bare userdata a script can attach its own metatable to, which could otherwise forge a type our Go-side registrations treat as trusted. |
 | `string.dump` | Serializes a function to bytecode, which `gopher-lua` can execute — bypasses our source-only load path. |
+| `_printregs` | `print`'s lower-level twin; same stdout-corruption risk as `print` (see Replaced Globals), with no legitimate script use, so it is nil'd rather than replaced. |
 
 Source: `script/sandbox.go`.
+
+### Replaced Globals
+
+Unlike the stripped globals above, `print` isn't nil'd — a missing `print` is a worse authoring experience than a working one, and scripts calling it is expected, not an attack. Instead `openSandbox` replaces the base library's `print` with a Go function that:
+
+- never touches the real `os.Stdout`: base's `print` writes straight to it via `fmt.Print`, which would corrupt the TUI's alt-screen the moment a script called `print("debug")`;
+- routes its output through the engine's script log instead — the same buffered path `cs.log`/`ctx:log` use, which the app drains on a schedule and forwards to the real logger — at `info` level;
+- joins its arguments with tabs and runs `tostring` on each (respecting `__tostring` metamethods), matching Lua's own `print` exactly.
+
+Source: `script/sandbox.go`; test: `TestOpenSandbox_PrintRoutesToScriptLog` in `script/sandbox_test.go`.
 
 ### Userdata Boundary
 

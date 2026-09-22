@@ -112,7 +112,6 @@ type scriptAction struct {
 // one are rejected at load time with a warning.
 func NewEngine(reserved map[string]bool) *Engine {
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
-	openSandbox(L)
 	// Must precede any NewThread: handler coroutines inherit a child of
 	// this context. Nothing cancels it before Shutdown or Close.
 	luaCtx, cancel := context.WithCancel(context.Background())
@@ -125,6 +124,11 @@ func NewEngine(reserved map[string]bool) *Engine {
 		coroutines: map[IntentID]coroutineSlot{},
 		cancel:     cancel,
 	}
+
+	// openSandbox needs e to route print's replacement into the script
+	// log, so e must exist first; nothing above touches L before the
+	// sandbox is in place, so no unsandboxed Lua code can run in between.
+	openSandbox(L, e)
 
 	e.publishBindingsLocked()
 
