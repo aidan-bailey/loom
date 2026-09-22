@@ -447,9 +447,11 @@ func TestTerminalPane_ProbesRunOffLock(t *testing.T) {
 			}
 			return fmt.Errorf("no live session")
 		},
-		"ScrollUp": func(p *TerminalPane) error { return p.ScrollUp() },
-		"PageUp":   func(p *TerminalPane) error { return p.PageUp() },
-		"GotoTop":  func(p *TerminalPane) error { return p.GotoTop() },
+		"ScrollUp":   func(p *TerminalPane) error { return p.ScrollUp() },
+		"ScrollDown": func(p *TerminalPane) error { return p.ScrollDown() },
+		"PageUp":     func(p *TerminalPane) error { return p.PageUp() },
+		"PageDown":   func(p *TerminalPane) error { return p.PageDown() },
+		"GotoTop":    func(p *TerminalPane) error { return p.GotoTop() },
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {

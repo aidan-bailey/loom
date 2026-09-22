@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -15,7 +16,9 @@ import (
 // script actions. All Lua work runs under e.mu because *lua.LState is
 // not goroutine-safe. Scripts themselves are invoked from tea.Cmd
 // goroutines in the app layer — the mutex serializes dispatches so a
-// slow script blocks only subsequent script calls, not the TUI.
+// slow script blocks only subsequent script calls, not the TUI. The
+// Update-goroutine queries (HasAction, Registrations) never take mu:
+// they read bindings, which bind/unbind republish.
 type Engine struct {
 	mu       sync.Mutex
 	L        *lua.LState
@@ -24,6 +27,10 @@ type Engine struct {
 	loading  bool            // true only inside Load(); gates cs.register_action
 	curFile  string          // script file currently being compiled (empty outside Load)
 	reserved map[string]bool // raw key strings the built-in map owns
+
+	// bindings is what HasAction and Registrations read, without mu.
+	// Rebuilt by publishBindingsLocked on every action-table change.
+	bindings atomic.Pointer[bindingSnapshot]
 
 	// curHost is the Host active for the current dispatch. Set in
 	// runAction, cleared on return. Read by cs.notify (standalone) so
@@ -68,6 +75,14 @@ type LogEntry struct {
 	Message string
 }
 
+// bindingSnapshot is an immutable copy of the bound keys and their help
+// text. Dispatch holds e.mu for a handler's whole run, so the queries the
+// app makes on its Update goroutine read this instead of waiting.
+type bindingSnapshot struct {
+	keys map[string]struct{}
+	regs []Registration
+}
+
 // Registration describes an action for the help panel. Matches the
 // shape the app layer expects without leaking a scriptAction pointer.
 type Registration struct {
@@ -98,6 +113,8 @@ func NewEngine(reserved map[string]bool) *Engine {
 		reserved:   reserved,
 		coroutines: map[IntentID]coroutineSlot{},
 	}
+
+	e.publishBindingsLocked()
 
 	registerInstanceType(L, e)
 	registerWorktreeType(L)
@@ -177,11 +194,10 @@ func (e *Engine) EndLoad() {
 // HasAction reports whether any script has registered for the given
 // raw key string. The app layer calls this before scheduling a
 // script dispatch Cmd so it can short-circuit unhandled keys without
-// queuing a goroutine.
+// queuing a goroutine. Reads the published snapshot, so it never waits
+// for a running handler.
 func (e *Engine) HasAction(key string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	_, ok := e.actions[key]
+	_, ok := e.bindings.Load().keys[key]
 	return ok
 }
 
@@ -377,6 +393,7 @@ func (e *Engine) bind(act *scriptAction) error {
 		e.order = append(e.order, act.key)
 	}
 	e.actions[act.key] = act
+	e.publishBindingsLocked()
 	return nil
 }
 
@@ -399,20 +416,33 @@ func (e *Engine) unbind(key string) {
 			break
 		}
 	}
+	e.publishBindingsLocked()
+}
+
+// publishBindingsLocked rebuilds the snapshot HasAction and
+// Registrations read. bind and unbind are the only writers of the
+// action table and both call it, so every path (defaults, user
+// scripts, a handler's runtime cs.unbind) republishes. Caller holds
+// e.mu.
+func (e *Engine) publishBindingsLocked() {
+	snap := &bindingSnapshot{
+		keys: make(map[string]struct{}, len(e.order)),
+		regs: make([]Registration, 0, len(e.order)),
+	}
+	for _, key := range e.order {
+		if act, ok := e.actions[key]; ok {
+			snap.keys[key] = struct{}{}
+			snap.regs = append(snap.regs, Registration{Key: act.key, Help: act.help})
+		}
+	}
+	e.bindings.Store(snap)
 }
 
 // Registrations returns a stable, insertion-ordered slice of the
-// currently bound script actions for use by the help panel.
+// currently bound script actions for use by the help panel. It copies
+// the published snapshot, so it never waits for a running handler.
 func (e *Engine) Registrations() []Registration {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	out := make([]Registration, 0, len(e.order))
-	for _, key := range e.order {
-		if act, ok := e.actions[key]; ok {
-			out = append(out, Registration{Key: act.key, Help: act.help})
-		}
-	}
-	return out
+	return append([]Registration(nil), e.bindings.Load().regs...)
 }
 
 // DrainLogs returns and clears the buffered log entries emitted via

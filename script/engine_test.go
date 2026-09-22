@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -356,4 +358,108 @@ func TestSandboxAllowsSafeLibs(t *testing.T) {
 		assert(co ~= nil)
 	`)
 	require.NoError(t, err)
+}
+
+// blockingHost parks the handler inside ConfigDir until release closes,
+// standing in for slow Go-side work (inst:pause(), send_terminal_keys'
+// probe) that runs while Dispatch holds e.mu.
+type blockingHost struct {
+	*fakeHost
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingHost) ConfigDir() string {
+	close(b.entered)
+	<-b.release
+	return ""
+}
+
+// TestBindingQueriesDoNotWaitForRunningHandler pins that HasAction and
+// Registrations answer while a handler is mid-run. The app calls both on
+// the Update goroutine (every keypress, the help screen), so waiting for
+// e.mu there would freeze the UI for as long as the handler runs.
+func TestBindingQueriesDoNotWaitForRunningHandler(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	require.NoError(t, e.LoadFromString("slow.lua",
+		`cs.bind("x", function(ctx) ctx:config_dir() end, {help = "slow"})`))
+
+	h := &blockingHost{fakeHost: &fakeHost{}, entered: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(h.release) }) }
+	defer release()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.Dispatch(context.Background(), "x", h)
+		done <- err
+	}()
+	<-h.entered
+
+	within := func(name string, f func()) {
+		t.Helper()
+		ch := make(chan struct{})
+		go func() {
+			f()
+			close(ch)
+		}()
+		select {
+		case <-ch:
+		case <-time.After(time.Second):
+			release()
+			t.Fatalf("%s blocked while a handler was running", name)
+		}
+	}
+	var has bool
+	var regs []Registration
+	within("HasAction", func() { has = e.HasAction("x") })
+	within("Registrations", func() { regs = e.Registrations() })
+	assert.True(t, has)
+	assert.Equal(t, []Registration{{Key: "x", Help: "slow"}}, regs)
+
+	release()
+	require.NoError(t, <-done)
+}
+
+// TestBindingSnapshotTracksMutations covers every path that changes the
+// action table: the embedded defaults, a user script's cs.unbind of a
+// default plus cs.bind / cs.register_action, and a runtime cs.unbind
+// from inside a handler.
+func TestBindingSnapshotTracksMutations(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	e.LoadDefaults()
+	require.True(t, e.HasAction("q"))
+	require.True(t, hasRegistration(e, "q"))
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "user.lua"), []byte(`
+		cs.unbind("q")
+		cs.bind("X", function() cs.unbind("Y") end, {help = "x"})
+		cs.register_action{key = "Y", help = "y", run = function() end}
+	`), 0o644))
+	e.Load(dir)
+
+	assert.False(t, e.HasAction("q"), "a user unbind of a default must reach HasAction")
+	assert.False(t, hasRegistration(e, "q"), "a user unbind of a default must reach Registrations")
+	assert.True(t, e.HasAction("X"))
+	assert.True(t, e.HasAction("Y"))
+	regs := e.Registrations()
+	assert.Equal(t, Registration{Key: "X", Help: "x"}, regs[len(regs)-2])
+	assert.Equal(t, Registration{Key: "Y", Help: "y"}, regs[len(regs)-1])
+
+	_, err := e.Dispatch(context.Background(), "X", &fakeHost{})
+	require.NoError(t, err)
+	assert.False(t, e.HasAction("Y"), "a runtime cs.unbind must reach HasAction")
+	assert.False(t, hasRegistration(e, "Y"))
+}
+
+func hasRegistration(e *Engine, key string) bool {
+	for _, r := range e.Registrations() {
+		if r.Key == key {
+			return true
+		}
+	}
+	return false
 }

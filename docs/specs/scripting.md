@@ -415,12 +415,12 @@ app/state_default.go: handleStateDefaultKey
 
 `gopher-lua` is not goroutine-safe. The engine guarantees serialized Lua execution through `Engine.mu`:
 
-1. `HasAction` — takes the mutex, cheap map lookup, releases. Called on the main goroutine to decide whether to schedule a dispatch.
+1. `HasAction` / `Registrations` — do **not** take the mutex. They read an immutable snapshot of the bindings (an `atomic.Pointer`) that `bind`/`unbind` republish on every change, so the main goroutine never waits on a running handler when deciding whether to schedule a dispatch or rendering the help screen.
 2. `Dispatch` — takes the mutex, runs the handler inside a coroutine under it, releases when the coroutine yields or returns. Called from a `tea.Cmd` goroutine so the Bubble Tea main loop stays responsive while Lua executes.
-3. `Resume` — takes the mutex, unparks a coroutine, runs until it yields or returns. Called from the main goroutine via a `scriptResumeMsg`.
+3. `ResumeWithHost` — takes the mutex, unparks a coroutine, runs until it yields or returns. Called from the `tea.Cmd` goroutine `handleScriptResume` returns for a `scriptResumeMsg`, like `Dispatch`.
 
 **What this means for scripts**:
-- A slow script blocks other scripts but not the TUI.
+- A slow script blocks other scripts but not the TUI: key lookups and the help screen read the bindings snapshot, not the engine mutex.
 - Two keys bound to the same long-running script serialize.
 - Host reads (`ctx:selected()`, `ctx:instances()`, `ctx:config_dir()`, …) come from a snapshot `newScriptHost` takes on the main goroutine when the dispatch begins, not from the live model, so they never see later changes — including the handler's own deferred sync primitives and queued instances. When a handler resumes after an intent yield, its `ctx` is rebound to the resume's host, so reads after the yield see a fresh snapshot and `ctx:notify`/`ctx:new_instance` reach the resume's `scriptDoneMsg`.
 - `cs.await` is cheap — the coroutine is parked, the mutex released, and no CPU is consumed until `Resume` delivers the value.
