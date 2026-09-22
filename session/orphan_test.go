@@ -5,13 +5,35 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync/atomic"
 	"testing"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/session/tmux"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// isolateOrphanTmuxCounter gives each isolateOrphanTmux call a distinct
+// short socket suffix; combined with the pid this keeps concurrent test
+// processes from colliding (see app/workspace_restore_test.go's
+// isolateTmux for the same pattern and the sun_path length rationale).
+var isolateOrphanTmuxCounter atomic.Int64
+
+// isolateOrphanTmux points the has-session probe DiscoverOrphans and
+// buildOrphanCandidate run — through CheckTmuxAlive, using the real
+// internalexec.Default{} these tests pass since none of them assert on
+// tmux argv — at a private, nonexistent server instead of $TMUX/the
+// default one. The package TestMain deliberately leaves
+// LOOM_TMUX_SOCKET unset (see session_test.go) so reconcile_test.go and
+// instance_lifecycle_test.go's argv-index assertions see no -L prefix,
+// so isolation has to happen per test rather than in TestMain.
+func isolateOrphanTmux(t *testing.T) {
+	t.Helper()
+	t.Setenv(tmux.EnvTmuxSocket, fmt.Sprintf("lt-s-%d-%d", os.Getpid(), isolateOrphanTmuxCounter.Add(1)))
+	t.Setenv("TMUX", "")
+}
 
 func TestHumanizeBranchLeaf(t *testing.T) {
 	cases := []struct {
@@ -152,6 +174,7 @@ func withStubProbe(t *testing.T) {
 // everything else under <configDir>/worktrees/ is returned with
 // metadata populated.
 func TestDiscoverOrphans_FiltersClaimed(t *testing.T) {
+	isolateOrphanTmux(t)
 	withStubProbe(t)
 	cfgDir := t.TempDir()
 	worktreesDir := filepath.Join(cfgDir, "worktrees", "aidanb")
@@ -180,6 +203,7 @@ func TestDiscoverOrphans_FiltersClaimed(t *testing.T) {
 // recovered instance keeps its original display title and tmux session
 // name.
 func TestDiscoverOrphans_PrefersSidecarTitle(t *testing.T) {
+	isolateOrphanTmux(t)
 	withStubProbe(t)
 	cfgDir := t.TempDir()
 	userDir := filepath.Join(cfgDir, "worktrees", "aidanb")
@@ -201,6 +225,7 @@ func TestDiscoverOrphans_PrefersSidecarTitle(t *testing.T) {
 // before the sidecar existed: discovery degrades to the humanized branch
 // leaf rather than failing.
 func TestDiscoverOrphans_FallsBackToHumanizedTitle(t *testing.T) {
+	isolateOrphanTmux(t)
 	withStubProbe(t)
 	cfgDir := t.TempDir()
 	userDir := filepath.Join(cfgDir, "worktrees", "aidanb")
@@ -226,6 +251,7 @@ func TestDiscoverOrphans_NoWorktreesDir(t *testing.T) {
 // (worktrees/<user>/<branch>_<hex>) — branches from different users
 // are independent and all unclaimed should surface.
 func TestDiscoverOrphans_MultipleUsers(t *testing.T) {
+	isolateOrphanTmux(t)
 	withStubProbe(t)
 	cfgDir := t.TempDir()
 	wt := filepath.Join(cfgDir, "worktrees")
@@ -245,6 +271,7 @@ func TestDiscoverOrphans_MultipleUsers(t *testing.T) {
 }
 
 func TestBuildOrphanCandidate_PopulatesDirtyFlag(t *testing.T) {
+	isolateOrphanTmux(t)
 	withStubProbe(t)
 	prevDirty := probeWorktreeDirty
 	probeWorktreeDirty = func(string) bool { return true }
@@ -284,6 +311,7 @@ func TestInstanceDataFromOrphan_BuildsExistingBranchWorktree(t *testing.T) {
 // next to worktree subdirs (e.g. a .DS_Store, a stray log file)
 // don't get classified as orphans.
 func TestDiscoverOrphans_SkipsNonDirectoryEntries(t *testing.T) {
+	isolateOrphanTmux(t)
 	withStubProbe(t)
 	cfgDir := t.TempDir()
 	userDir := filepath.Join(cfgDir, "worktrees", "aidanb")
@@ -302,6 +330,7 @@ func TestDiscoverOrphans_SkipsNonDirectoryEntries(t *testing.T) {
 // loom timestamp convention still come back as orphans (with the raw
 // dir name as branch) so the user can choose to skip them.
 func TestDiscoverOrphans_NonHexSuffixDirRetainsRawName(t *testing.T) {
+	isolateOrphanTmux(t)
 	withStubProbe(t)
 	cfgDir := t.TempDir()
 	userDir := filepath.Join(cfgDir, "worktrees", "aidanb")
@@ -340,6 +369,7 @@ func TestDiscoverOrphans_DropsUnrecoverable(t *testing.T) {
 // recovered BaseCommitSHA flows from the probe through to the
 // candidate, so applyOrphanRecovery's diff-stats baseline isn't empty.
 func TestDiscoverOrphans_PopulatesBaseCommitSHA(t *testing.T) {
+	isolateOrphanTmux(t)
 	prev := probeWorktreeRepo
 	probeWorktreeRepo = func(wt string) (string, string, error) {
 		return "/fake/repo", "abc123def456", nil
