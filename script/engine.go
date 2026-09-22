@@ -56,6 +56,10 @@ type Engine struct {
 // be added without touching every callsite.
 type coroutineSlot struct {
 	co *lua.LState
+	// ctx is the handler's ctx state. ResumeWithHost points it at the
+	// resume host, which the app drains after the resume; the dispatch
+	// host was drained when the handler first yielded.
+	ctx *ctxState
 }
 
 // LogEntry is a single script-emitted log record.
@@ -215,10 +219,12 @@ func (e *Engine) track(id IntentID, co *lua.LState) {
 // ResumeWithHost is the host-facing entry point for continuing a
 // suspended handler coroutine. It sets curHost for the duration of
 // the resume so any deferred cs.actions the coroutine calls next can
-// still reach a live Host. The engine always resumes with lua.LNil —
-// handlers that need a typed value should keep their state in
-// closures rather than in await's return. Errors propagate from the
-// underlying Resume.
+// still reach a live Host, and rebinds the handler's ctx to h so ctx
+// reads after the yield see h's state and ctx side effects (notify,
+// new_instance) reach h rather than the already-drained dispatch
+// host. The engine always resumes with lua.LNil — handlers that need
+// a typed value should keep their state in closures rather than in
+// await's return. Errors propagate from the underlying Resume.
 //
 // curHost swap and the resume itself run under a single critical
 // section so a concurrent Dispatch can't observe the host slot during
@@ -232,6 +238,9 @@ func (e *Engine) ResumeWithHost(ctx context.Context, id IntentID, h Host) error 
 	prevHost := e.curHost
 	e.curHost = h
 	defer func() { e.curHost = prevHost }()
+	if slot, ok := e.coroutines[id]; ok && slot.ctx != nil {
+		slot.ctx.host = h
+	}
 
 	trace := log.TraceID(ctx)
 	log.For("script").Debug("handler.resume", "trace", trace, "intent_id", int(id))
@@ -322,7 +331,7 @@ func (e *Engine) runAction(act *scriptAction, h Host) (err error) {
 		}
 	}()
 
-	ctx := pushCtx(e.L, e, h)
+	ctx, ctxSt := pushCtx(e.L, e, h)
 
 	if act.precondition != nil {
 		e.L.Push(act.precondition)
@@ -351,7 +360,7 @@ func (e *Engine) runAction(act *scriptAction, h Host) (err error) {
 		if !ok {
 			return fmt.Errorf("%s: handler yielded non-numeric intent id %v", act.file, vals[0])
 		}
-		e.coroutines[IntentID(next)] = coroutineSlot{co: co}
+		e.coroutines[IntentID(next)] = coroutineSlot{co: co, ctx: ctxSt}
 		return nil
 	default:
 		return fmt.Errorf("%s: %w", act.file, rerr)

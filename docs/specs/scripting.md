@@ -423,7 +423,7 @@ app/state_default.go: handleStateDefaultKey
 **What this means for scripts**:
 - A slow script blocks other scripts but not the TUI.
 - Two keys bound to the same long-running script serialize.
-- Host reads (`ctx:selected()`, `ctx:instances()`, `ctx:config_dir()`, …) come from a snapshot `newScriptHost` takes on the main goroutine, not from the live model, so they never see later changes — including the handler's own deferred sync primitives and queued instances.
+- Host reads (`ctx:selected()`, `ctx:instances()`, `ctx:config_dir()`, …) come from a snapshot `newScriptHost` takes on the main goroutine when the dispatch begins, not from the live model, so they never see later changes — including the handler's own deferred sync primitives and queued instances. When a handler resumes after an intent yield, its `ctx` is rebound to the resume's host, so reads after the yield see a fresh snapshot and `ctx:notify`/`ctx:new_instance` reach the resume's `scriptDoneMsg`.
 - `cs.await` is cheap — the coroutine is parked, the mutex released, and no CPU is consumed until `Resume` delivers the value.
 
 **What this means for the app**:

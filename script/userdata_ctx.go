@@ -9,8 +9,9 @@ import (
 
 const ctxTypeName = "cs.ctx"
 
-// ctxState bundles the per-dispatch Host plus the Engine pointer so
-// ctx methods can both query live state and queue side effects back
+// ctxState bundles the per-dispatch Host (rebound to the resume host
+// each time a suspended handler resumes) plus the Engine pointer so
+// ctx methods can both query host state and queue side effects back
 // to the engine (e.g. pending log lines).
 type ctxState struct {
 	engine *Engine
@@ -22,14 +23,15 @@ func registerCtxType(L *lua.LState) {
 	L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), ctxMethods))
 }
 
-// pushCtx installs a fresh ctx userdata for the given dispatch. The
-// engine calls this at the top of Dispatch and pops it at the end so
-// that ctxState pointers never outlive a single invocation.
-func pushCtx(L *lua.LState, e *Engine, h Host) lua.LValue {
+// pushCtx creates a fresh ctx userdata for the given dispatch and
+// returns its state too, so the engine can rebind the host when a
+// suspended handler resumes (see coroutineSlot).
+func pushCtx(L *lua.LState, e *Engine, h Host) (lua.LValue, *ctxState) {
+	state := &ctxState{engine: e, host: h}
 	ud := L.NewUserData()
-	ud.Value = &ctxState{engine: e, host: h}
+	ud.Value = state
 	L.SetMetatable(ud, L.GetTypeMetatable(ctxTypeName))
-	return ud
+	return ud, state
 }
 
 func checkCtx(L *lua.LState, n int) *ctxState {
