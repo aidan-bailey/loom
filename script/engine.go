@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/aidan-bailey/loom/log"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,13 +58,19 @@ type Engine struct {
 	// return value plumbing step. Valid only during a Lua callback.
 	lastEnqueued IntentID
 
-	// logs buffers structured log entries emitted via ctx:log() so the
-	// app can drain them on its own schedule. Using the app's log
-	// package directly from script land would bypass the TUI's
-	// error-bar surfacing, which is why ctx:notify() exists as a
-	// separate channel.
+	// logs is a small, bounded capture of the most recent script-emitted
+	// log entries (ctx:log/cs.log/print), for tests only — logScript's
+	// real destination is the structured logger (log.For("script")),
+	// which is where these entries actually end up in production. Nothing
+	// production calls DrainLogs; capped at maxBufferedScriptLogs so it
+	// can never grow without bound over a long-lived engine.
 	logs []LogEntry
 }
+
+// maxBufferedScriptLogs bounds the logs slice DrainLogs reads. Only the
+// most recent entries are kept; older ones are dropped as new ones
+// arrive.
+const maxBufferedScriptLogs = 64
 
 // coroutineSlot holds a suspended handler thread. Stored as a struct
 // rather than a bare *lua.LState so later fields (e.g. deadline) can
@@ -521,9 +528,17 @@ func (e *Engine) Registrations() []Registration {
 	return append([]Registration(nil), e.bindings.Load().regs...)
 }
 
-// DrainLogs returns and clears the buffered log entries emitted via
-// ctx:log() since the last drain. The app layer calls this on a
-// schedule to forward messages to the log package.
+// DrainLogs returns and clears the bounded test capture of recent
+// script-emitted log entries (see the logs field doc). It is NOT how
+// these entries reach loom.log or the TUI — logScript writes straight to
+// the structured logger for that, synchronously, every time. Nothing in
+// production calls DrainLogs; it exists so tests can assert what a
+// script logged without standing up a real logger sink. Do not call it
+// from the app's Update loop: it takes e.mu, which a running handler can
+// hold for the length of its dispatch, and calling it from Update would
+// block the UI on that handler exactly the way the engine's other
+// Update-goroutine queries (HasAction, Registrations) are designed to
+// avoid.
 func (e *Engine) DrainLogs() []LogEntry {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -535,11 +550,41 @@ func (e *Engine) DrainLogs() []LogEntry {
 	return out
 }
 
-// logScript buffers a script log entry. Called under the engine
-// mutex because every code path that reaches it is already inside a
-// Lua callback on the engine thread.
+// logScript is the single sink for every script-emitted log line —
+// ctx:log, cs.log, cs.notify's host-less fallback, and the sandboxed
+// print replacement all funnel through here. It writes straight to
+// log.For("script") at the level requested (case-insensitively matching
+// info/warn/warning/error/err/debug; anything else, including an empty
+// or unrecognized string, logs at info), tagging the record with the
+// source file when Load knows one (e.curFile, empty outside a Load
+// call). The structured logger is goroutine-safe and cheap, so calling
+// it here — under e.mu, since every caller already reached this from
+// inside a Lua callback on the engine thread — is fine; it does not
+// block on the app or the TUI the way routing through a Cmd would.
+//
+// It also appends to the bounded capture DrainLogs reads (see the logs
+// field doc) purely so tests can assert on what was logged.
 func (e *Engine) logScript(level, msg string) {
+	logger := log.For("script")
+	var attrs []any
+	if e.curFile != "" {
+		attrs = []any{"file", e.curFile}
+	}
+	switch strings.ToLower(level) {
+	case "warn", "warning":
+		logger.Warn(msg, attrs...)
+	case "error", "err":
+		logger.Error(msg, attrs...)
+	case "debug":
+		logger.Debug(msg, attrs...)
+	default:
+		logger.Info(msg, attrs...)
+	}
+
 	e.logs = append(e.logs, LogEntry{Level: level, Message: msg})
+	if len(e.logs) > maxBufferedScriptLogs {
+		e.logs = e.logs[len(e.logs)-maxBufferedScriptLogs:]
+	}
 }
 
 // actionKeys returns the current action keys in a deterministic

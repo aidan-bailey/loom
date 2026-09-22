@@ -74,10 +74,10 @@ func openSandbox(L *lua.LState, e *Engine) {
 	// write straight to process stdout, which would corrupt the TUI's
 	// alt-screen the moment a user script called print("debug"). Replace
 	// it with a Go function that routes to the engine's script log — the
-	// same path cs.log/ctx:log use, which the app drains on a schedule
-	// and forwards to the real logger — at info level. Joins its
-	// arguments with tabs and runs tostring on each (respecting
-	// __tostring metamethods), exactly as Lua's own print does.
+	// same sink cs.log/ctx:log use (Engine.logScript), which writes
+	// straight to log.For("script") — at info level. Joins its arguments
+	// with tabs and runs tostring on each (respecting __tostring
+	// metamethods), exactly as Lua's own print does.
 	L.SetGlobal("print", L.NewFunction(func(L *lua.LState) int {
 		top := L.GetTop()
 		var b strings.Builder

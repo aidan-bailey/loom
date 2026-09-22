@@ -2,7 +2,9 @@ package script
 
 import (
 	"bytes"
+	"github.com/aidan-bailey/loom/log"
 	"io"
+	"log/slog"
 	"os"
 	"testing"
 
@@ -49,9 +51,17 @@ func TestOpenSandbox_StripsEscapeHatches(t *testing.T) {
 // which would corrupt the TUI's alt-screen the moment a user script called
 // print(...). openSandbox must replace it with a function that (a) never
 // touches the real os.Stdout and (b) forwards to the engine's script log —
-// the same path cs.log/ctx:log use — at info level, joining arguments with
-// tabs via tostring exactly as Lua's own print does.
+// the same sink cs.log/ctx:log use (Engine.logScript), which writes
+// straight to log.For("script") — at info level, joining arguments with
+// tabs via tostring exactly as Lua's own print does. Checks both ends of
+// that sink: the test-only bounded capture DrainLogs reads, and the real
+// structured logger production actually reads from.
 func TestOpenSandbox_PrintRoutesToScriptLog(t *testing.T) {
+	var logBuf bytes.Buffer
+	prevStructured := log.Structured
+	log.Structured = slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(func() { log.Structured = prevStructured })
+
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 	defer L.Close()
 	e := &Engine{}
@@ -61,8 +71,8 @@ func TestOpenSandbox_PrintRoutesToScriptLog(t *testing.T) {
 	require.NoError(t, err)
 	origStdout := os.Stdout
 	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
 	doErr := L.DoString(`print("a", "b", 3)`)
-	os.Stdout = origStdout
 	require.NoError(t, w.Close())
 	require.NoError(t, doErr)
 
@@ -76,4 +86,8 @@ func TestOpenSandbox_PrintRoutesToScriptLog(t *testing.T) {
 		assert.Equal(t, "info", logs[0].Level)
 		assert.Equal(t, "a\tb\t3", logs[0].Message, "print must tab-join tostring'd args, like Lua's own print")
 	}
+
+	out := logBuf.String()
+	assert.Contains(t, out, "subsystem=script", "print must reach the structured logger, tagged with the script subsystem")
+	assert.Contains(t, out, `level=INFO msg="a\tb\t3"`, "print must reach the structured logger at info level with the tab-joined message")
 }

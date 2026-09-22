@@ -134,9 +134,9 @@ func ctxNewInstance(L *lua.LState) int {
 	return 1
 }
 
-// ctxLog routes script log output through the engine's buffered log
-// channel so messages appear in the app's logs/ directory alongside
-// loom's own log records.
+// ctxLog routes script log output through the engine's logScript sink
+// (log.For("script")) so messages appear in the app's logs/ directory
+// alongside loom's own log records.
 func ctxLog(L *lua.LState) int {
 	c := checkCtx(L, 1)
 	level := L.CheckString(2)

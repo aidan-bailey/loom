@@ -27,7 +27,7 @@ type Engine struct {
     curHost      Host            // Host active for the current dispatch
     lastEnqueued IntentID        // most recent intent id for bare cs.await()
     pending      map[IntentID]*lua.LState // parked coroutines awaiting a resume
-    logs         []LogEntry      // buffered ctx:log / cs.log output
+    logs         []LogEntry      // bounded test capture; real sink is log.For("script")
 }
 ```
 
@@ -182,7 +182,7 @@ Source: `script/sandbox.go`.
 Unlike the stripped globals above, `print` isn't nil'd — a missing `print` is a worse authoring experience than a working one, and scripts calling it is expected, not an attack. Instead `openSandbox` replaces the base library's `print` with a Go function that:
 
 - never touches the real `os.Stdout`: base's `print` writes straight to it via `fmt.Print`, which would corrupt the TUI's alt-screen the moment a script called `print("debug")`;
-- routes its output through the engine's script log instead — the same buffered path `cs.log`/`ctx:log` use, which the app drains on a schedule and forwards to the real logger — at `info` level;
+- routes its output through the engine's script log instead — the same sink `cs.log`/`ctx:log` use, which writes straight to `log.For("script")` — at `info` level;
 - joins its arguments with tabs and runs `tostring` on each (respecting `__tostring` metamethods), matching Lua's own `print` exactly.
 
 Source: `script/sandbox.go`; test: `TestOpenSandbox_PrintRoutesToScriptLog` in `script/sandbox_test.go`.
@@ -208,7 +208,7 @@ Installed as a global at engine construction (`script/api.go`).
 | `cs.register_action` | `{key, help, precondition?, run}` → void | Table-form alias for `cs.bind`. Retained for back-compat and for handlers that want an explicit `precondition` — the precondition is evaluated before `run`, and a falsy return skips the action silently. |
 | `cs.actions.*` | various | Catalog of host primitives — see [cs.actions catalog](#csactions-catalog). |
 | `cs.await` | `(id?)` → any | Suspend the current coroutine until `Engine.Resume` delivers a value for `id`. Without an argument, waits on the most recently enqueued intent. See [Intent Lifecycle](#intent-lifecycle). |
-| `cs.log` | `(level: string, msg: string)` → void | Buffer a log entry. Drained by the app into the main log file. `level` is free-form (`"info"`, `"warn"`, `"error"` are conventional). |
+| `cs.log` | `(level: string, msg: string)` → void | Write a log entry straight to `log.For("script")` (main log file), tagged with the source file when known. `level` is matched case-insensitively against `info`/`warn`/`warning`/`error`/`err`/`debug`; anything else logs at info. |
 | `cs.notify` | `(msg: string)` → void | Send a transient message to the error/info bar. When called at load time, downgrades to a log entry. |
 | `cs.now` | `()` → number | Unix time in seconds. |
 | `cs.sprintf` | `(fmt, ...)` → string | Alias for `string.format`. Forgiving — non-string args are `tostring`'d before substitution. |
@@ -455,7 +455,7 @@ app/state_default.go: handleStateDefaultKey
 | Host method returns an error (e.g. `inst:send_keys` on a dead tmux session) | The userdata method raises a Lua error, which becomes a dispatch error via the above. |
 | Intent precondition fails (e.g. `kill_selected` with nothing selected) | Intent is silently dropped in `handleScriptIntent`. The coroutine is resumed anyway so `cs.await` returns cleanly; handlers can observe the no-op by checking state via `ctx` after the await. |
 
-Script log output via `cs.log` / `ctx:log` is buffered and drained asynchronously by the app — no dispatch-time coupling to the log subsystem.
+Script log output via `cs.log` / `ctx:log` writes straight to `log.For("script")` inside the same call, under `e.mu` — no separate drain step, and no coupling to the app's Update loop (the app never calls into the engine's log path).
 
 ## Example Scripts
 

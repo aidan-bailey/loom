@@ -16,7 +16,7 @@ import (
 // API surface:
 //
 //	cs.register_action{key=..., help=..., precondition=fn, run=fn}
-//	cs.log(level, msg)     -- buffered, drained by app
+//	cs.log(level, msg)     -- written straight to log.For("script")
 //	cs.notify(msg)         -- routed to error/info bar
 //	cs.now()               -- unix time in seconds (number)
 //	cs.version()           -- app version string (informational)

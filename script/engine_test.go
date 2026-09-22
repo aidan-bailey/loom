@@ -1,8 +1,10 @@
 package script
 
 import (
+	"bytes"
 	"context"
 	"github.com/aidan-bailey/loom/log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,8 +254,12 @@ func TestEngineRegistrationsOrdered(t *testing.T) {
 	assert.Equal(t, "ctrl+c", regs[2].Key)
 }
 
-// TestEngineLogBuffer covers ctx:log() and DrainLogs(). The buffer
-// must survive multiple dispatches and drain cleanly on each read.
+// TestEngineLogBuffer covers ctx:log() and DrainLogs(). DrainLogs backs
+// only a small bounded test capture now — logScript's real destination
+// is the structured logger, exercised separately by
+// TestLogScript_ReachesStructuredLogger — but the capture must still
+// survive multiple dispatches and drain cleanly on each read, since
+// tests rely on it to assert what a script logged.
 func TestEngineLogBuffer(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()
@@ -277,6 +283,34 @@ func TestEngineLogBuffer(t *testing.T) {
 
 	// Second drain empty.
 	assert.Nil(t, e.DrainLogs())
+}
+
+// TestLogScript_ReachesStructuredLogger pins the actual production sink
+// (nothing calls DrainLogs outside tests): cs.log/ctx:log must reach
+// log.For("script") — i.e. log.Structured — synchronously, tagged with
+// the source file when Load knows one, and an unrecognized level must
+// fall back to info rather than being dropped or panicking.
+func TestLogScript_ReachesStructuredLogger(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Structured
+	log.Structured = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(func() { log.Structured = prev })
+
+	e := NewEngine(nil)
+	defer e.Close()
+
+	require.NoError(t, e.LoadFromString("logtest.lua", `
+		cs.log("warn", "from cs.log")
+		cs.log("bogus-level", "from unknown level")
+	`))
+
+	out := buf.String()
+	assert.Contains(t, out, "subsystem=script", "must be tagged with the script subsystem")
+	assert.Contains(t, out, "from cs.log", "message must reach the structured logger")
+	assert.Contains(t, out, "file=logtest.lua", "must be tagged with the source file Load knows")
+	assert.Contains(t, out, `level=WARN`, "warn must map to the WARN level")
+	assert.Contains(t, out, "from unknown level", "an unrecognized level must still be logged")
+	assert.Contains(t, out, `level=INFO msg="from unknown level"`, "an unrecognized level must fall back to info")
 }
 
 // TestLoaderWalksDirectory exercises Load() against a real directory
