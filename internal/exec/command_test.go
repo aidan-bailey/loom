@@ -2,7 +2,9 @@ package exec
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -113,17 +115,27 @@ func TestGitCommand_CallerEnvSurvives(t *testing.T) {
 
 // TestGitCommand_ChildProcessesKeepCharset runs a real git and has it spawn
 // a shell (a `!` alias, standing in for a hook or filter) that prints its
-// environment: the child must see the user's LC_ALL spread over LC_CTYPE,
-// with only LC_MESSAGES forced. The values need not be installed locales —
-// they are only passed through.
+// locale variables: the child must see the user's LC_ALL spread over
+// LC_CTYPE, with only LC_MESSAGES forced. The values need not be installed
+// locales — they are only passed through.
+//
+// The user's system and global git config are masked (a malformed
+// ~/.gitconfig would otherwise fail the run) and repo discovery stops at
+// the tempdir. The alias greps its output down to LC_*/LANG* so a failing
+// assertion prints locale variables, never the rest of the environment
+// (tokens, API keys).
 func TestGitCommand_ChildProcessesKeepCharset(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
+	dir := t.TempDir()
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 	t.Setenv("LC_ALL", "de_DE.UTF-8")
 	t.Setenv("LANGUAGE", "de")
 
-	c := GitCommand(context.Background(), t.TempDir(), "-c", "alias.envdump=!env", "envdump")
+	c := GitCommand(context.Background(), dir, "-c", "alias.localedump=!env | grep -E '^(LC_|LANG)' || true", "localedump")
 	out, err := c.Output()
 	require.NoError(t, err)
 
