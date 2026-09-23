@@ -196,3 +196,48 @@ func TestDroppedSlot_StaleProbeDoesNotReattach(t *testing.T) {
 	}})
 	assert.False(t, live.PtmxAlive(), "a dropped instance must not be re-attached")
 }
+
+// attachedTerminal is a terminal-pane shell session with its attach client
+// open (a fake PTY); no tmux server is contacted.
+func attachedTerminal(t *testing.T, title string) *tmux.TmuxSession {
+	t.Helper()
+	ts := tmux.NewTmuxSessionWithDeps(tmux.TerminalSessionName(title), "sh", fakePtyFactory{t: t}, aliveCmdExecForTest())
+	require.NoError(t, ts.Restore())
+	require.True(t, ts.PtmxAlive(), "fixture: the terminal's attach client is open")
+	return ts
+}
+
+// TestDroppedSlot_ReleasesTerminalPaneClients: a dropped slot's terminal
+// pane kept an attach client open on every loom_term_* shell it had shown.
+// The release detaches them (the shells keep running), except in the pane
+// enterGlobalMode carries into the global slot, which stays in use.
+func TestDroppedSlot_ReleasesTerminalPaneClients(t *testing.T) {
+	isolateTmux(t)
+
+	t.Run("closing a tab", func(t *testing.T) {
+		m := fleetHome(t)
+		m.ctx = cancelledCtx()
+		term := attachedTerminal(t, "b1")
+		m.slots[1].splitPane.Terminal().InjectSessionForTest("b1", term, t.TempDir())
+
+		cmd := m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}})
+		assert.True(t, term.PtmxAlive(), "released on the Update goroutine; must wait for the Cmd")
+		drainCmd(cmd)
+		assert.False(t, term.PtmxAlive(), "the closed tab's terminal client must be detached")
+	})
+
+	t.Run("entering global mode spares the carried pane", func(t *testing.T) {
+		t.Setenv("LOOM_HOME", t.TempDir())
+		m := fleetHome(t)
+		m.ctx = cancelledCtx()
+		carriedPane := m.splitPane
+		carried, dropped := attachedTerminal(t, "f1"), attachedTerminal(t, "b1")
+		m.slots[0].splitPane.Terminal().InjectSessionForTest("f1", carried, t.TempDir())
+		m.slots[1].splitPane.Terminal().InjectSessionForTest("b1", dropped, t.TempDir())
+
+		drainCmd(m.applyWorkspaceToggle(nil))
+		require.Same(t, carriedPane, m.splitPane, "the global slot carries the focused tab's panes")
+		assert.False(t, dropped.PtmxAlive(), "the other tab's terminal client must be detached")
+		assert.True(t, carried.PtmxAlive(), "the carried pane is still in use")
+	})
+}

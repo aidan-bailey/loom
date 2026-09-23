@@ -240,16 +240,32 @@ func (m *home) deactivateWorkspace(name string) (tea.Cmd, error) {
 	return releaseSlotCmd(slot), nil
 }
 
-// releaseSlotCmd returns a Cmd that releases the preview attach clients
-// of slot's instances (releaseInstancesCmd). Every site that drops a slot
-// from the model returns it: activateWorkspace (the classic slot),
-// deactivateWorkspace (the closed tab) and enterGlobalMode (every tab, or
-// the previous global slot). nil when nothing is attached.
+// releaseSlotCmd returns a Cmd that releases the attach clients a dropped
+// slot holds: its instances' preview clients (releaseInstancesCmd) and the
+// ones its terminal pane keeps on each loom_term_* shell it has shown (the
+// shells keep running). Every site that drops a slot from the model
+// returns it: activateWorkspace (the classic slot), deactivateWorkspace
+// (the closed tab) and enterGlobalMode (every tab, or the previous global
+// slot — except for the panes it carries into the new global slot, whose
+// terminals stay in use). nil when nothing is attached.
 func releaseSlotCmd(slot *workspaceSlot) tea.Cmd {
-	if slot == nil || slot.list == nil {
+	if slot == nil {
 		return nil
 	}
-	return releaseInstancesCmd(slot.list.GetInstances())
+	var cmds []tea.Cmd
+	if slot.list != nil {
+		cmds = append(cmds, releaseInstancesCmd(slot.list.GetInstances()))
+	}
+	if slot.splitPane != nil {
+		var terms []attachedClient
+		for _, ts := range slot.splitPane.Terminal().DetachAll() {
+			if ts.PtmxAlive() {
+				terms = append(terms, attachedClient{name: ts.SessionName(), ts: ts})
+			}
+		}
+		cmds = append(cmds, releaseClientsCmd(terms))
+	}
+	return tea.Batch(cmds...)
 }
 
 // releaseInstancesCmd returns a Cmd that closes loom's preview attach
@@ -274,26 +290,36 @@ func releaseSlotCmd(slot *workspaceSlot) tea.Cmd {
 // The terminal pane's own loom_term_* sessions belong to the pane, not
 // the instance, and are left alone.
 func releaseInstancesCmd(insts []*session.Instance) tea.Cmd {
-	type attached struct {
-		title string
-		ts    *tmux.TmuxSession
-	}
-	var release []attached
+	var release []attachedClient
 	for _, inst := range insts {
 		if !inst.Started() || inst.Paused() {
 			continue
 		}
 		if ts := inst.TmuxSession(); ts != nil && ts.PtmxAlive() {
-			release = append(release, attached{inst.Title, ts})
+			release = append(release, attachedClient{name: inst.Title, ts: ts})
 		}
 	}
-	if len(release) == 0 {
+	return releaseClientsCmd(release)
+}
+
+// attachedClient is a tmux session whose attach client a release closes;
+// name labels it in logs.
+type attachedClient struct {
+	name string
+	ts   *tmux.TmuxSession
+}
+
+// releaseClientsCmd returns a Cmd that closes each client's attach PTY
+// (PausePreview) off the Update goroutine — see releaseInstancesCmd for
+// why it must — or nil when there are none.
+func releaseClientsCmd(clients []attachedClient) tea.Cmd {
+	if len(clients) == 0 {
 		return nil
 	}
 	return func() tea.Msg {
-		for _, a := range release {
-			if err := a.ts.PausePreview(); err != nil {
-				log.For("app").Warn("slot_release.preview_close_failed", "instance", a.title, "err", err)
+		for _, c := range clients {
+			if err := c.ts.PausePreview(); err != nil {
+				log.For("app").Warn("slot_release.preview_close_failed", "session", c.name, "err", err)
 			}
 		}
 		return nil
@@ -621,8 +647,9 @@ func (m *home) enterGlobalMode() tea.Cmd {
 		global.list.AddInstance(inst)
 	}
 	// Everything loaded so far is dropped: every tab, or — global mode
-	// re-entered from global mode — the previous global slot.
-	dropped := m.openSlots()
+	// re-entered from global mode — the previous global slot. The focused
+	// one's panes live on in the global slot.
+	dropped, carried := m.openSlots(), m.workspaceSlot
 	m.slots = nil
 	m.focusedSlot = 0
 	m.workspaceSlot = global
@@ -651,6 +678,10 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	// so none of them keeps a dropped instance, then release the drops.
 	cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged()}
 	for _, slot := range dropped {
+		if slot == carried {
+			cmds = append(cmds, releaseInstancesCmd(slot.list.GetInstances()))
+			continue
+		}
 		cmds = append(cmds, releaseSlotCmd(slot))
 	}
 	return tea.Batch(cmds...)

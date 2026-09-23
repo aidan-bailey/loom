@@ -556,6 +556,29 @@ func (t *TerminalPane) Close() {
 	t.fallbackText = ""
 }
 
+// DetachAll empties the session cache and returns the cached tmux
+// sessions, for a caller dropping this pane to release their attach
+// clients (PausePreview) off the Update goroutine. Unlike Close, nothing
+// is killed: the shells keep running for the next pane that shows them.
+// Pure bookkeeping — no blocking I/O — so it is safe to call from Update.
+func (t *TerminalPane) DetachAll() []*tmux.TmuxSession {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []*tmux.TmuxSession
+	for _, s := range t.sessions {
+		if s.tmuxSession != nil {
+			out = append(out, s.tmuxSession)
+		}
+	}
+	t.sessions = make(map[string]*terminalSession)
+	t.currentTitle = ""
+	t.content = ""
+	t.fallback = false
+	t.fallbackText = ""
+	t.src = nil
+	return out
+}
+
 // DetachSessionForInstance removes the cached terminal entry for the given title
 // and returns the extracted tmux session so the caller can Close() it off the
 // update goroutine. Returns nil if no session was cached. This is pure state

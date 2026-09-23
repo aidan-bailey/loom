@@ -494,3 +494,30 @@ func TestTerminalPane_ProbesRunOffLock(t *testing.T) {
 		})
 	}
 }
+
+// TestTerminalPane_DetachAllHandsOverWithoutKilling: DetachAll empties the
+// cache and returns the sessions for the caller to release, without
+// closing (killing) any of them.
+func TestTerminalPane_DetachAllHandsOverWithoutKilling(t *testing.T) {
+	killed := false
+	cmdExec := mockCmdExec("", true)
+	run := cmdExec.RunFunc
+	cmdExec.RunFunc = func(c *exec.Cmd) error {
+		if strings.Contains(strings.Join(c.Args, " "), "kill-session") {
+			killed = true
+		}
+		return run(c)
+	}
+	pane := NewTerminalPane()
+	a, b := newMockTmuxSession(t, "term-a", cmdExec), newMockTmuxSession(t, "term-b", cmdExec)
+	pane.InjectSessionForTest("a", a, t.TempDir())
+	pane.InjectSessionForTest("b", b, t.TempDir())
+
+	got := pane.DetachAll()
+
+	require.ElementsMatch(t, []*tmux.TmuxSession{a, b}, got)
+	require.Nil(t, pane.DetachSessionForInstance("a"), "the cache is empty")
+	require.Nil(t, pane.CurrentTmuxSession())
+	require.False(t, killed, "DetachAll must not kill the shells")
+	require.Empty(t, pane.DetachAll())
+}
