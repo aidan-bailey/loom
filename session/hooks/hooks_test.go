@@ -32,8 +32,9 @@ func TestSettingsJSON_Golden(t *testing.T) {
 	}
 	want := "{\n  \"hooks\": {\n" +
 		strings.Join([]string{
-			entry("SessionEnd"), entry("Stop"), entry("SubagentStart"),
-			entry("SubagentStop"), entry("TeammateIdle"),
+			entry("Notification"), entry("PermissionRequest"), entry("SessionEnd"),
+			entry("SessionStart"), entry("Stop"), entry("SubagentStart"),
+			entry("SubagentStop"), entry("TeammateIdle"), entry("UserPromptSubmit"),
 		}, ",\n") +
 		"\n  }\n}\n"
 	assert.Equal(t, want, string(got))
