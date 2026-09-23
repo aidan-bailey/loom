@@ -53,9 +53,9 @@ func TestRunRestartWithOptionsSelected_ConfirmRecomposesProgramAndResumes(t *tes
 	require.NotNil(t, pending)
 	_, cmd := pending(overlay.LaunchOptions{PermissionMode: "default", Model: "opus", Effort: "default"})
 
-	assert.Contains(t, inst.Program, "--model 'opus'")
-	assert.False(t, inst.HeadroomProxy, "toggling Headroom Proxy off during restart must update the instance field")
-	assert.False(t, inst.CacheTTL1h, "toggling Cache TTL off during restart must update the instance field")
+	assert.Contains(t, inst.Program(), "--model 'opus'")
+	assert.False(t, inst.HeadroomProxy(), "toggling Headroom Proxy off during restart must update the instance field")
+	assert.False(t, inst.CacheTTL1h(), "toggling Cache TTL off during restart must update the instance field")
 	assert.Equal(t, stateDefault, m.state)
 	assert.Equal(t, session.Loading, inst.GetStatus())
 	require.NotNil(t, cmd) // the Resume Cmd — not invoked here, just asserting it's returned
@@ -110,13 +110,13 @@ func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFail
 
 func TestRunRestartWithOptionsSelected_CancelLeavesInstanceUntouched(t *testing.T) {
 	m, inst := newPausedInstanceHome(t)
-	originalProgram := inst.Program
+	originalProgram := inst.Program()
 	runRestartWithOptionsSelected(m)
 
 	_, _ = m.cancelLaunchOptions()
 
 	assert.Equal(t, session.Paused, inst.GetStatus())
-	assert.Equal(t, originalProgram, inst.Program)
+	assert.Equal(t, originalProgram, inst.Program())
 	assert.Equal(t, stateDefault, m.state)
 	assert.Nil(t, m.launchOptionsOverlay())
 }
@@ -140,7 +140,7 @@ func TestRunRestartWithOptionsSelected_BlockedRemoteControlPromptsConfirm(t *tes
 func TestRunRestartWithOptionsSelected_BlockedRemoteControlCancelLeavesInstanceUntouched(t *testing.T) {
 	m, inst := newPausedInstanceHome(t)
 	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
-	originalProgram := inst.Program
+	originalProgram := inst.Program()
 	runRestartWithOptionsSelected(m)
 
 	pending := m.pendingLaunchOptions
@@ -157,6 +157,6 @@ func TestRunRestartWithOptionsSelected_BlockedRemoteControlCancelLeavesInstanceU
 	handleStateConfirmKey(m, tea.KeyPressMsg{Code: 'n', Text: "n"})
 
 	assert.Equal(t, session.Paused, inst.GetStatus())
-	assert.Equal(t, originalProgram, inst.Program)
+	assert.Equal(t, originalProgram, inst.Program())
 	assert.Equal(t, stateDefault, m.state)
 }

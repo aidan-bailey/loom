@@ -120,7 +120,7 @@ func instancePath(L *lua.LState) int {
 
 func instanceProgram(L *lua.LState) int {
 	inst := checkInstance(L, 1)
-	L.Push(lua.LString(inst.Program))
+	L.Push(lua.LString(inst.Program()))
 	return 1
 }
 

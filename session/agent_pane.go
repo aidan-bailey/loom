@@ -313,7 +313,9 @@ func (p AgentPane) CheckAndHandleTrustPrompt() bool {
 	// The adapter registry tells us whether this program has a trust
 	// prompt to dismiss; the default fallback returns TrustPromptNone,
 	// which short-circuits here so unknown programs get no handling.
-	if defaultRegistry.Lookup(i.Program).TrustPromptResponse() == agent.TrustPromptNone {
+	// Program() locks: pane probes run off the Update goroutine, where
+	// the setters run.
+	if defaultRegistry.Lookup(i.Program()).TrustPromptResponse() == agent.TrustPromptNone {
 		return false
 	}
 	return ts.CheckAndHandleTrustPrompt()
@@ -340,7 +342,9 @@ func (p AgentPane) CaptureAndProcessStatus() (updated bool, hasPrompt bool, err 
 	// pane updates. Supported agents flow through CaptureAndProcess,
 	// which handles both trust dismissal and prompt detection in one
 	// CapturePaneContent call.
-	ad := defaultRegistry.Lookup(i.Program)
+	// Program() locks: this runs on status-detection Cmd goroutines
+	// (statusDetectCmd, the metadata fan-out).
+	ad := defaultRegistry.Lookup(i.Program())
 	if ad.Name() == "default" {
 		updated, hasPrompt = ts.HasUpdated()
 		return updated, hasPrompt, nil

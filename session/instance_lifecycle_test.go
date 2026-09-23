@@ -432,7 +432,7 @@ func TestInstance_RestartProceedsPastIdempotencyGuard(t *testing.T) {
 	inst := &Instance{
 		Title:               "restart-test",
 		Path:                t.TempDir(),
-		Program:             "true",
+		program:             "true",
 		Status:              Running,
 		IsWorkspaceTerminal: true,
 	}
@@ -470,7 +470,7 @@ func (f recordingPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
 // auto-restart of a Claude session. Restart used to reuse the dead
 // session object and its old command, so the new Claude process kept
 // the previous launch's tracker, launch ID and hooks folder, and a
-// session restored after a loom restart (built from the bare Program)
+// session restored after a loom restart (built from the bare program)
 // relaunched with no hooks and no loom context at all.
 func TestInstance_RestartIsARealLaunch(t *testing.T) {
 	withTracking(t, true)
@@ -498,14 +498,14 @@ func TestInstance_RestartIsARealLaunch(t *testing.T) {
 	inst := &Instance{
 		Title:               "restart-hooks",
 		Path:                t.TempDir(),
-		Program:             "claude",
+		program:             "claude",
 		ConfigDir:           configDir,
 		Status:              Running,
 		IsWorkspaceTerminal: true,
 	}
 	// As restored after a loom restart: the session object was built
-	// from the bare Program.
-	inst.setTmuxSession(tmux.NewTmuxSessionWithDeps(inst.Title, inst.Program, ptyFactory, cmdExec))
+	// from the bare program.
+	inst.setTmuxSession(tmux.NewTmuxSessionWithDeps(inst.Title, inst.Program(), ptyFactory, cmdExec))
 	inst.setStarted(true)
 	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "0123456789abcdef", Replayed: true,
 		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},

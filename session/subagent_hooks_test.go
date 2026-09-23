@@ -26,7 +26,7 @@ func withTracking(t *testing.T, enabled bool) {
 
 func hooksInstance(t *testing.T, program string) *Instance {
 	t.Helper()
-	return &Instance{Title: "hooks test", Program: program, ConfigDir: t.TempDir(), Status: Running}
+	return &Instance{Title: "hooks test", program: program, ConfigDir: t.TempDir(), Status: Running}
 }
 
 func settingsFlag(inst *Instance) string {
@@ -52,7 +52,7 @@ func TestRemoveSubagentHooks_LeavesSlashSiblingAlone(t *testing.T) {
 	cfg := t.TempDir()
 	nested := SubagentHooksDir(cfg, "fix/login")
 	require.NoError(t, os.MkdirAll(nested, 0o700))
-	fix := &Instance{Title: "fix", Program: "claude", ConfigDir: cfg, Status: Running}
+	fix := &Instance{Title: "fix", program: "claude", ConfigDir: cfg, Status: Running}
 	require.NoError(t, os.MkdirAll(SubagentHooksDir(cfg, fix.Title), 0o700))
 
 	fix.removeSubagentHooks()
@@ -68,7 +68,7 @@ func TestLaunchProgram_AddsHooksWhenLaunching(t *testing.T) {
 	got := inst.launchProgram("claude", true)
 
 	assert.Contains(t, got, settingsFlag(inst))
-	assert.Equal(t, "claude", inst.Program, "Program is never rewritten")
+	assert.Equal(t, "claude", inst.Program(), "program is never rewritten")
 	dir := SubagentHooksDir(inst.ConfigDir, inst.Title)
 	stored, err := os.ReadFile(filepath.Join(dir, "launch-id"))
 	require.NoError(t, err)
@@ -163,11 +163,14 @@ func TestLaunchProgram_RelaunchResetsWarmTracker(t *testing.T) {
 func TestRecoveryLaunch_AddsHooks(t *testing.T) {
 	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
+	inst.SetLaunchOptions("claude", true, true)
 
-	program, launch := inst.recoveryLaunch()
+	launch, env := inst.recoveryLaunch()
 
-	assert.Equal(t, "claude --continue", program)
-	assert.NotContains(t, program, "--settings", "InstanceEnv sees the bare recovery program")
+	assert.Equal(t, InstanceEnv("claude --continue", true, true), env,
+		"the env keys off the bare recovery program and the instance's launch toggles")
+	assert.Contains(t, env, "ANTHROPIC_BASE_URL="+HeadroomProxyURL)
+	assert.Contains(t, env, "ENABLE_PROMPT_CACHING_1H=1")
 	assert.Contains(t, launch, settingsFlag(inst))
 	assert.Contains(t, launch, "--continue")
 }
@@ -214,7 +217,7 @@ func TestSubagents_EndToEndAndRestart(t *testing.T) {
 	assert.Equal(t, want, inst.Subagents())
 
 	// A new loom process restores the same instance with empty memory.
-	restored := &Instance{Title: inst.Title, Program: "claude", ConfigDir: inst.ConfigDir, Status: Running}
+	restored := &Instance{Title: inst.Title, program: "claude", ConfigDir: inst.ConfigDir, Status: Running}
 	req, ok := restored.SubagentScanRequest()
 	require.True(t, ok)
 	assert.True(t, req.Cold)
@@ -335,7 +338,7 @@ func TestSubagentScanRequest(t *testing.T) {
 func TestKill_RemovesHooksFolder(t *testing.T) {
 	withTracking(t, true)
 	inst := newTestStartedInstance(t)
-	inst.Program = "claude"
+	inst.SetProgram("claude")
 	inst.ConfigDir = t.TempDir()
 	inst.launchProgram("claude", true)
 	dir := SubagentHooksDir(inst.ConfigDir, inst.Title)

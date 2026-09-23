@@ -92,11 +92,11 @@ func TestSaveInstances_PersistsWhileKilling(t *testing.T) {
 
 	// Simulate the kill window: status=Deleting was set by preAction, then
 	// Kill() flipped started=false while tmux teardown is still running.
-	killing := &Instance{Title: "Killing", Status: Deleting, Program: "claude"}
+	killing := &Instance{Title: "Killing", Status: Deleting, program: "claude"}
 	killing.setStarted(false)
 
 	// Another instance is in normal Running state alongside it.
-	running := &Instance{Title: "Running", Status: Running, Program: "claude"}
+	running := &Instance{Title: "Running", Status: Running, program: "claude"}
 	running.setStarted(true)
 
 	err = s.SaveInstances([]*Instance{killing, running})
@@ -222,7 +222,7 @@ func TestStorage_SaveInstances_LiveWinsOverUnrecoveredOnTitleCollision(t *testin
 		{Title: "shared", Path: wt, Program: "claude", Status: Running},
 	}
 
-	live := &Instance{Title: "shared", Status: Paused, Program: "claude"}
+	live := &Instance{Title: "shared", Status: Paused, program: "claude"}
 	live.setStarted(true)
 
 	require.NoError(t, s.SaveInstances([]*Instance{live}))
@@ -281,7 +281,7 @@ func TestUpdateInstance_DoesNotConstructLiveInstances(t *testing.T) {
 	// Build a fresh Instance that has Title "Target" but nothing else real —
 	// we only need Snapshot()/ToInstanceData() to report the title so the
 	// update-by-title path can locate it.
-	target := &Instance{Title: "Target", Status: Paused, Program: "claude"}
+	target := &Instance{Title: "Target", Status: Paused, program: "claude"}
 	target.setStarted(true)
 
 	err = s.UpdateInstance(target)
@@ -377,7 +377,7 @@ func TestStorage_UndecodableRecord_SurvivesDelete(t *testing.T) {
 func TestStorage_UndecodableRecord_SurvivesUpdate(t *testing.T) {
 	s, mock := futureStorage(t)
 
-	alive := &Instance{Title: "alive", Status: Paused, Program: "aider"}
+	alive := &Instance{Title: "alive", Status: Paused, program: "aider"}
 	alive.setStarted(true)
 	require.NoError(t, s.UpdateInstance(alive))
 	assertFutureRecordPreserved(t, mock)
@@ -409,7 +409,7 @@ func TestStorage_SaveBeforeLoad_KeepsUndecodable(t *testing.T) {
 	s, err := NewStorage(mock, "")
 	require.NoError(t, err)
 
-	live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
+	live := &Instance{Title: "fresh", Status: Paused, program: "claude"}
 	live.setStarted(true)
 	require.NoError(t, s.SaveInstances([]*Instance{live}))
 	assertFutureRecordPreserved(t, mock)
@@ -436,7 +436,7 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, s.WritesRefused())
 
-		live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
+		live := &Instance{Title: "fresh", Status: Paused, program: "claude"}
 		live.setStarted(true)
 		err = s.SaveInstances([]*Instance{live})
 		require.Error(t, err)
@@ -476,7 +476,7 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 		s, err := NewStorage(mock, "")
 		require.NoError(t, err)
 
-		live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
+		live := &Instance{Title: "fresh", Status: Paused, program: "claude"}
 		live.setStarted(true)
 		err = s.UpdateInstance(live)
 		require.Error(t, err)
@@ -496,7 +496,7 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 		assert.Zero(t, s.UndecodableCount())
 		assert.False(t, s.WritesRefused(), "the wipe clears the latch")
 
-		live := &Instance{Title: "fresh", Status: Paused, Program: "claude"}
+		live := &Instance{Title: "fresh", Status: Paused, program: "claude"}
 		live.setStarted(true)
 		require.NoError(t, s.SaveInstances([]*Instance{live}), "a wipe clears the latch")
 		var persisted []InstanceData
@@ -564,7 +564,7 @@ func TestStorage_UndecodableSharingALiveTitle_BothKept(t *testing.T) {
 	_, err = s.LoadInstanceData()
 	require.NoError(t, err)
 
-	live := &Instance{Title: "from-the-future", Status: Paused, Program: "claude"}
+	live := &Instance{Title: "from-the-future", Status: Paused, program: "claude"}
 	live.setStarted(true)
 	require.NoError(t, s.SaveInstances([]*Instance{live}))
 

@@ -413,12 +413,12 @@ func runResumeOrRecover(m *home) (tea.Model, tea.Cmd) {
 // (pendingLaunchOptionsCancel, not the creation flow's pop-and-kill).
 func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	opts, base := ParseLaunchOptions(selected.Program)
-	// HeadroomProxy/CacheTTL1h are never baked into Program (see
+	opts, base := ParseLaunchOptions(selected.Program())
+	// HeadroomProxy/CacheTTL1h are never baked into the program (see
 	// session.HeadroomProxyEnv/CacheTTL1hEnv) — ParseLaunchOptions can't
-	// recover them, so seed them from the instance's own fields instead.
-	opts.HeadroomProxy = selected.HeadroomProxy
-	opts.CacheTTL1h = selected.CacheTTL1h
+	// recover them, so seed them from the instance's own settings instead.
+	opts.HeadroomProxy = selected.HeadroomProxy()
+	opts.CacheTTL1h = selected.CacheTTL1h()
 
 	m.pendingLaunchOptions = func(newOpts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
 		resumeTitle := selected.Title
@@ -427,9 +427,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 		saveFunc := snapshotSaveFunc(m)
 		resumeTask := overlay.ConfirmationTask{
 			Sync: func() {
-				selected.Program = applyLaunchOptions(newOpts, m.rcAuth, base, selected.Title)
-				selected.HeadroomProxy = newOpts.HeadroomProxy
-				selected.CacheTTL1h = newOpts.CacheTTL1h
+				selected.SetLaunchOptions(applyLaunchOptions(newOpts, m.rcAuth, base, selected.Title), newOpts.HeadroomProxy, newOpts.CacheTTL1h)
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
 				if err := selected.TransitionTo(session.Loading); err != nil {
@@ -453,7 +451,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 				return resumeDoneMsg{}
 			}),
 		}
-		if m.remoteControlBlocked(effectiveRemoteControl(newOpts), selected.Program) {
+		if m.remoteControlBlocked(effectiveRemoteControl(newOpts), selected.Program()) {
 			return m, m.promptRestartRemoteControlBlocked(resumeTask)
 		}
 		return m, tea.Batch(resumeTask.Run(), m.instanceChanged())

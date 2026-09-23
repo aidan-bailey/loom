@@ -56,13 +56,13 @@ func TestFromInstanceData_PreservesHeadroomProxy(t *testing.T) {
 
 	inst, err := FromInstanceData(data, t.TempDir())
 	assert.NoError(t, err)
-	assert.True(t, inst.HeadroomProxy)
+	assert.True(t, inst.HeadroomProxy())
 }
 
 // TestSnapshot_IncludesHeadroomProxy asserts Snapshot carries
 // HeadroomProxy through to InstanceData, mirroring how Program does.
 func TestSnapshot_IncludesHeadroomProxy(t *testing.T) {
-	inst := &Instance{Title: "hp-ws", Status: Paused, Program: "claude", HeadroomProxy: true}
+	inst := &Instance{Title: "hp-ws", Status: Paused, program: "claude", headroomProxy: true}
 	data := inst.Snapshot()
 	assert.True(t, data.HeadroomProxy)
 }
@@ -81,13 +81,13 @@ func TestFromInstanceData_PreservesCacheTTL1h(t *testing.T) {
 
 	inst, err := FromInstanceData(data, t.TempDir())
 	assert.NoError(t, err)
-	assert.True(t, inst.CacheTTL1h)
+	assert.True(t, inst.CacheTTL1h())
 }
 
 // TestSnapshot_IncludesCacheTTL1h asserts Snapshot carries CacheTTL1h
 // through to InstanceData, mirroring TestSnapshot_IncludesHeadroomProxy.
 func TestSnapshot_IncludesCacheTTL1h(t *testing.T) {
-	inst := &Instance{Title: "cache-ws", Status: Paused, Program: "claude", CacheTTL1h: true}
+	inst := &Instance{Title: "cache-ws", Status: Paused, program: "claude", cacheTTL1h: true}
 	data := inst.Snapshot()
 	assert.True(t, data.CacheTTL1h)
 }

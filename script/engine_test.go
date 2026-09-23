@@ -55,6 +55,37 @@ func TestEngineRegistersAndDispatches(t *testing.T) {
 	assert.Equal(t, []string{"hi from script"}, h.notices)
 }
 
+// TestCtxNewInstancePassesPromptThroughConstructor pins ctx:new_instance's
+// options reaching the queued instance: prompt and program go through
+// session.InstanceOptions, and instance:program() reads the same value
+// back through the locked getter.
+func TestCtxNewInstancePassesPromptThroughConstructor(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	require.NoError(t, e.LoadFromString("new.lua", `
+		cs.register_action{
+			key = "ctrl+n",
+			run = function(ctx)
+				local inst = ctx:new_instance{title = "scripted", program = "aider", prompt = "fix the build"}
+				ctx:notify(inst:program())
+				ctx:new_instance{title = "no-prompt"}
+			end,
+		}
+	`))
+
+	h := &fakeHost{repoPath: t.TempDir(), defaultProgram: "claude"}
+	matched, err := e.Dispatch(context.Background(), "ctrl+n", h)
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.Len(t, h.queuedInstances, 2)
+
+	assert.Equal(t, "fix the build", h.queuedInstances[0].Prompt())
+	assert.Equal(t, "aider", h.queuedInstances[0].Program())
+	assert.Equal(t, []string{"aider"}, h.notices, "instance:program() reads the constructor's program")
+	assert.Empty(t, h.queuedInstances[1].Prompt(), "prompt is optional")
+	assert.Equal(t, "claude", h.queuedInstances[1].Program(), "program defaults to the host's")
+}
+
 // TestEngineNotifyStandaloneRoutesToHost confirms cs.notify (the
 // no-ctx form) reaches the live Host during a dispatch, matching
 // ctx:notify's behavior. Before curHost was threaded through Engine,

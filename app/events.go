@@ -123,8 +123,8 @@ type rosterReadyMsg struct {
 func rosterQueryCmd(active []*session.Instance) tea.Cmd {
 	var program string
 	for _, inst := range active {
-		if session.IsClaudeProgram(inst.Program) {
-			program = inst.Program
+		if p := inst.Program(); session.IsClaudeProgram(p) {
+			program = p
 			break
 		}
 	}
@@ -170,7 +170,7 @@ func (m *home) maybeRosterQuery(active []*session.Instance) tea.Cmd {
 // (a dotfiles setup, say) simply produces no match and falls back — a
 // silent degradation to the old behavior, never a wrong status.
 func (m *home) rosterStatusFor(inst *session.Instance) (session.Status, string, bool) {
-	if inst == nil || len(m.roster) == 0 || !session.IsClaudeProgram(inst.Program) {
+	if inst == nil || len(m.roster) == 0 || !session.IsClaudeProgram(inst.Program()) {
 		return session.Ready, "", false
 	}
 	entry, ok := m.roster[inst.GetWorktreePath()]

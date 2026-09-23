@@ -111,7 +111,7 @@ func TestReconcileInstance_WsTerminal_DeadTmux(t *testing.T) {
 
 	instance, err := ReconcileAndRestore(data, "", cmdExec)
 	assert.NoError(t, err)
-	assert.True(t, instance.CrashRecovered)
+	assert.True(t, instance.CrashRecovered())
 }
 
 func TestCleanupOrphanedSessions(t *testing.T) {

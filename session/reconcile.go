@@ -158,7 +158,7 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 		if err != nil {
 			return nil, err
 		}
-		instance.CrashRecovered = true
+		instance.crashRecovered = true // unpublished: no lock needed
 		return instance, nil
 
 	case ActionMarkPaused:
@@ -180,7 +180,7 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 		if err != nil {
 			return nil, err
 		}
-		instance.CrashRecovered = true
+		instance.crashRecovered = true // unpublished: no lock needed
 		return instance, nil
 
 	default:
@@ -192,7 +192,7 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 // detached (no live PTY) state: it sets started=true and creates a
 // TmuxSession object but does not connect. Despite the name it backs
 // several non-paused actions too (ActionRestart, ActionRestartWsTerminal)
-// — in those cases the caller sets CrashRecovered=true and a later
+// — in those cases the caller sets crashRecovered=true and a later
 // CrashRestart spawns the real session.
 func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, error) {
 	// Delegate to the canonical rehydrator — this used to be a hand-rolled
@@ -209,7 +209,8 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 	// ActionRestart/ActionRestartWsTerminal rehydrate Running records.
 	instance.setStarted(true)
 	if instance.getTmuxSession() == nil {
-		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program, InstanceEnv(instance.Program, instance.HeadroomProxy, instance.CacheTTL1h)...))
+		// Unpublished, like FromInstanceData: the launch fields are read directly.
+		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(instance.program, instance.headroomProxy, instance.cacheTTL1h)...))
 	}
 	return instance, nil
 }

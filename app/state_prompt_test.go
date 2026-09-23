@@ -59,9 +59,9 @@ func TestPromptFlowEndToEndComposesRealClosure(t *testing.T) {
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: ' ', Text: " "})
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	assert.Contains(t, instance.Program, "--model 'sonnet'")
+	assert.Contains(t, instance.Program(), "--model 'sonnet'")
 	assert.Equal(t, stateDefault, m.state)
-	assert.Equal(t, "do the thing", instance.Prompt)
+	assert.Equal(t, "do the thing", instance.Prompt())
 	assert.Nil(t, m.pendingLaunchOptions)
 }
 

@@ -137,8 +137,8 @@ func applyLaunchOptions(opts overlay.LaunchOptions, auth session.RemoteControlAu
 // opts.HeadroomProxy and opts.CacheTTL1h are left at their zero value
 // (false) — unlike the other four options, neither is ever baked into
 // Program (see session.HeadroomProxyEnv/CacheTTL1hEnv); callers must
-// seed/apply them from Instance.HeadroomProxy/CacheTTL1h directly
-// instead.
+// seed them from Instance.HeadroomProxy()/CacheTTL1h() and apply them
+// through Instance.SetLaunchOptions instead.
 func ParseLaunchOptions(program string) (opts overlay.LaunchOptions, baseProgram string) {
 	parts := strings.Fields(program)
 	if len(parts) == 0 {

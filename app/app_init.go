@@ -261,7 +261,7 @@ func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recove
 
 	// Restart crash-recovered instances
 	for _, inst := range m.list.GetInstances() {
-		if !inst.CrashRecovered {
+		if !inst.CrashRecovered() {
 			continue
 		}
 		if err := inst.CrashRestart(); err != nil {
@@ -270,7 +270,7 @@ func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recove
 				log.For("app").Warn("crash_recovery.transition_failed", "instance", inst.Title, "err", tErr.Error())
 			}
 		}
-		inst.CrashRecovered = false
+		inst.SetCrashRecovered(false)
 	}
 
 	// Discover orphan worktrees (on disk but not in state.json),

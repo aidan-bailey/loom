@@ -190,7 +190,7 @@ func (h helpTypeInstanceStart) toContent() string {
 		descStyle.Render(fmt.Sprintf("• Git branch: %s (isolated worktree)",
 			lipgloss.NewStyle().Bold(true).Render(h.instance.GetBranch()))),
 		descStyle.Render(fmt.Sprintf("• %s running in background tmux session",
-			lipgloss.NewStyle().Bold(true).Render(h.instance.Program))),
+			lipgloss.NewStyle().Bold(true).Render(h.instance.Program()))),
 		"",
 		headerStyle.Render("Managing:"),
 		renderHelpSection(instanceStartManagingEntries, 7),

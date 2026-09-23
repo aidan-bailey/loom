@@ -99,7 +99,7 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 
 	// Restart crash-recovered instances.
 	for _, inst := range instances {
-		if !inst.CrashRecovered {
+		if !inst.CrashRecovered() {
 			continue
 		}
 		if err := inst.CrashRestart(); err != nil {
@@ -108,7 +108,7 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 				log.For("app").Warn("crash_recovery.transition_failed", "instance", inst.Title, "err", tErr)
 			}
 		}
-		inst.CrashRecovered = false
+		inst.SetCrashRecovered(false)
 	}
 
 	// Auto-create workspace terminal if none exists. A record storage

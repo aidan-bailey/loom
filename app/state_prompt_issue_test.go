@@ -46,8 +46,8 @@ func TestIssueExpandedMsg_SeedsPromptAndLinks(t *testing.T) {
 	m.Update(issueExpandedMsg{instance: inst, repo: m.repoPath(), rest: "and tidy tests",
 		issue: github.Issue{Number: 12, Title: "Fix", URL: "https://x/12", Body: "b"}})
 	assert.Equal(t, 12, inst.IssueNumber())
-	assert.Contains(t, inst.Prompt, "# Fix")
-	assert.Contains(t, inst.Prompt, "\n\nand tidy tests")
+	assert.Contains(t, inst.Prompt(), "# Fix")
+	assert.Contains(t, inst.Prompt(), "\n\nand tidy tests")
 	assert.Equal(t, stateLaunchOptions, m.state)
 }
 
@@ -59,7 +59,7 @@ func TestIssueExpandedMsg_FailureLaunchesLiteral(t *testing.T) {
 	m.state = stateDefault
 	_, cmd := m.Update(issueExpandedMsg{instance: inst, repo: m.repoPath(), number: 12, literal: "#12 and tidy tests", err: errors.New("nope")})
 	assert.Equal(t, 0, inst.IssueNumber())
-	assert.Equal(t, "#12 and tidy tests", inst.Prompt)
+	assert.Equal(t, "#12 and tidy tests", inst.Prompt())
 	assert.Equal(t, stateLaunchOptions, m.state, "a bad number never blocks the session")
 	assert.NotNil(t, cmd, "the footer error still surfaces")
 }

@@ -84,7 +84,7 @@ func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T)
 	inst := m.list.GetInstances()[m.list.NumInstances()-1]
 	assert.Equal(t, "gh-12-fix-flaky-test", inst.Title)
 	assert.Equal(t, 12, inst.IssueNumber())
-	assert.Contains(t, inst.Prompt, "# Fix flaky test")
+	assert.Contains(t, inst.Prompt(), "# Fix flaky test")
 	assert.Equal(t, stateLaunchOptions, m.state)
 	_, ok := m.activeOverlay.(*overlay.SessionLaunchOptions)
 	assert.True(t, ok)

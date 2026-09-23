@@ -75,7 +75,7 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 	m, recA, recB := ownerTestHome(t)
 	owner := m.workspaceSlot
 	starting := startingInstance(t, owner, "new-one")
-	starting.Prompt = "do the thing"
+	starting.SetPrompt("do the thing")
 	require.NoError(t, starting.TransitionTo(session.Running))
 	m.switchWorkspaceSlot(1)
 	m.errBox.SetSize(400, 1)
@@ -88,7 +88,7 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 	assert.Contains(t, string(recA.lastData), "new-one")
 	assert.Zero(t, recB.calls, "the focused workspace's storage is not touched")
 	assert.Same(t, starting, owner.list.GetSelectedInstance(), "selected in its own workspace")
-	assert.Empty(t, starting.Prompt, "the pending prompt belongs to the instance and is sent anyway")
+	assert.Empty(t, starting.Prompt(), "the pending prompt belongs to the instance and is sent anyway")
 	assert.Contains(t, m.errBox.String(), "new-one")
 }
 

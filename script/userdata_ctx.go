@@ -121,6 +121,7 @@ func ctxNewInstance(L *lua.LState) int {
 		Title:     title,
 		Path:      path,
 		Program:   program,
+		Prompt:    prompt,
 		Branch:    branch,
 		ConfigDir: c.host.ConfigDir(),
 	})
@@ -128,7 +129,6 @@ func ctxNewInstance(L *lua.LState) int {
 		L.RaiseError("new_instance: %s", err.Error())
 		return 0
 	}
-	inst.Prompt = prompt
 	c.host.QueueInstance(inst)
 	L.Push(pushInstance(L, inst))
 	return 1

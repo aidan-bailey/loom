@@ -194,11 +194,11 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 		}
 	}
 
-	if inst.Prompt != "" {
-		if err := inst.Pane().SendPrompt(inst.Prompt); err != nil {
+	if prompt := inst.Prompt(); prompt != "" {
+		if err := inst.Pane().SendPrompt(prompt); err != nil {
 			log.For("app").Error("send_prompt_failed", "err", err)
 		}
-		inst.Prompt = ""
+		inst.SetPrompt("")
 	}
 
 	switch {

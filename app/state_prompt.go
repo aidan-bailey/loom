@@ -54,9 +54,9 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					selected.SetSelectedBranch(selectedBranch)
 				}
 				if selectedProgram != "" {
-					selected.Program = selectedProgram
+					selected.SetProgram(selectedProgram)
 				}
-				selected.Prompt = prompt
+				selected.SetPrompt(prompt)
 
 				// "#123 …" expands into the issue's seeded prompt before the
 				// launch options modal opens. The fetch is async, so the
@@ -76,9 +76,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					startTask := overlay.ConfirmationTask{
 						Sync: func() {
 							m.pendingNew = nil // the start owns it now
-							selected.Program = applyLaunchOptions(opts, m.rcAuth, selected.Program, selected.Title)
-							selected.HeadroomProxy = opts.HeadroomProxy
-							selected.CacheTTL1h = opts.CacheTTL1h
+							selected.SetLaunchOptions(applyLaunchOptions(opts, m.rcAuth, selected.Program(), selected.Title), opts.HeadroomProxy, opts.CacheTTL1h)
 							// Always recorded, edited or not, so branch composition has
 							// a single source of truth instead of falling back to a
 							// re-read of config.json inside the git package.
@@ -98,7 +96,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 						}),
 					}
 
-					if m.remoteControlBlocked(effectiveRemoteControl(opts), selected.Program) {
+					if m.remoteControlBlocked(effectiveRemoteControl(opts), selected.Program()) {
 						return m, m.promptRemoteControlBlocked(startTask)
 					}
 					return m, tea.Batch(startTask.Run(), m.instanceChanged())

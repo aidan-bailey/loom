@@ -141,12 +141,12 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 		Title:     title,
 		Path:      m.repoPath(),
 		Program:   m.program,
+		Prompt:    github.SeedPrompt(msg.issue),
 		ConfigDir: m.configDir(),
 	})
 	if err != nil {
 		return m, m.handleError(err)
 	}
-	instance.Prompt = github.SeedPrompt(msg.issue)
 	instance.SetIssue(msg.issue.Number)
 	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
@@ -233,13 +233,14 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 	}
 	var errCmd tea.Cmd
 	if msg.err != nil {
-		inst.Prompt = msg.literal
+		inst.SetPrompt(msg.literal)
 		errCmd = m.handleError(fmt.Errorf("issue #%d not expanded: %w", msg.number, msg.err))
 	} else {
-		inst.Prompt = github.SeedPrompt(msg.issue)
+		prompt := github.SeedPrompt(msg.issue)
 		if msg.rest != "" {
-			inst.Prompt += "\n" + msg.rest + "\n"
+			prompt += "\n" + msg.rest + "\n"
 		}
+		inst.SetPrompt(prompt)
 		inst.SetIssue(msg.issue.Number)
 		m.gate(gateGH).expedite()
 		m.applyGitHubState()
@@ -260,9 +261,7 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 		startTask := overlay.ConfirmationTask{
 			Sync: func() {
 				m.pendingNew = nil // the start owns it now
-				instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
-				instance.HeadroomProxy = opts.HeadroomProxy
-				instance.CacheTTL1h = opts.CacheTTL1h
+				instance.SetLaunchOptions(applyLaunchOptions(opts, m.rcAuth, instance.Program(), instance.Title), opts.HeadroomProxy, opts.CacheTTL1h)
 				// Always recorded, edited or not, so branch composition has a
 				// single source of truth instead of falling back to a re-read
 				// of config.json inside the git package.
@@ -282,7 +281,7 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 				}
 			}),
 		}
-		if m.remoteControlBlocked(effectiveRemoteControl(opts), instance.Program) {
+		if m.remoteControlBlocked(effectiveRemoteControl(opts), instance.Program()) {
 			return m, m.promptRemoteControlBlocked(startTask)
 		}
 		return m, tea.Batch(startTask.Run(), m.instanceChanged())

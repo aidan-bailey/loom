@@ -103,12 +103,14 @@ func (i *Instance) resetSubagentLaunch() {
 	i.removeSubagentHooks()
 }
 
-// recoveryLaunch returns the recovery program (what InstanceEnv keys off)
-// and the full launch command. startFreshWithRecovery and CrashRestart
-// always start a new Claude process.
-func (i *Instance) recoveryLaunch() (program, launch string) {
-	program = BuildRecoveryCommand(i.Program)
-	return program, i.launchProgram(program, true)
+// recoveryLaunch returns the full launch command and the tmux session env
+// for a recovery launch. The env keys off the recovery program (the bare
+// program rewritten by BuildRecoveryCommand), not the full command.
+// startFreshWithRecovery and CrashRestart always start a new Claude process.
+func (i *Instance) recoveryLaunch() (launch string, env []string) {
+	program, headroomProxy, cacheTTL1h := i.launchSpec()
+	program = BuildRecoveryCommand(program)
+	return i.launchProgram(program, true), InstanceEnv(program, headroomProxy, cacheTTL1h)
 }
 
 // prepareSubagentHooks readies a fresh hooks folder and returns program
@@ -157,7 +159,8 @@ func (i *Instance) subagentTrackerLocked() *subagent.Tracker {
 // or a status in which no agent can be running. Call it on the Update
 // goroutine; the returned request is safe to hand to a tea.Cmd.
 func (i *Instance) SubagentScanRequest() (subagent.Request, bool) {
-	if i.ConfigDir == "" || !IsClaudeProgram(i.Program) {
+	// Update goroutine only, like the setters, so i.program needs no lock.
+	if i.ConfigDir == "" || !IsClaudeProgram(i.program) {
 		return subagent.Request{}, false
 	}
 	i.mu.Lock()

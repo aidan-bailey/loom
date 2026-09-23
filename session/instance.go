@@ -105,10 +105,15 @@ func IsAllowedTransition(from, to Status) bool {
 // governed by allowedTransitions; use TransitionTo for every status write.
 //
 // Field access rules: mu guards Status, diffStats, Branch, tmuxSession,
-// gitWorktree, and the started/starting flags. External callers must go
-// through the exported accessors (GetStatus, GetBranch, GetDiffStats,
-// Snapshot, TmuxSession) or the unexported get*/set* helpers — never read
-// or write those fields directly. Holding mu across I/O is forbidden.
+// gitWorktree, the started/starting flags, and the launch fields (program,
+// headroomProxy, cacheTTL1h, prompt, crashRecovered). External callers must
+// go through the exported accessors (GetStatus, GetBranch, GetDiffStats,
+// Snapshot, TmuxSession, Program/SetProgram, SetLaunchOptions, Prompt/
+// SetPrompt, …) or the unexported get*/set* helpers — never read or write
+// those fields directly. Holding mu across I/O is forbidden, and so is
+// calling a locking accessor while holding it: sync.RWMutex is not
+// reentrant, so session code that already holds mu reads the private
+// fields instead.
 //
 // Lifecycle entry points: NewInstance creates a blank instance (call
 // Start(true) to materialize worktree + tmux). FromInstanceData rehydrates
@@ -123,21 +128,23 @@ type Instance struct {
 	Branch string
 	// Status is the status of the instance.
 	Status Status
-	// Program is the program to run in the instance.
-	Program string
-	// HeadroomProxy controls whether this instance's tmux session gets
+	// program is the program to run in the instance. Read it with
+	// Program(); set it with SetProgram or SetLaunchOptions.
+	program string
+	// headroomProxy controls whether this instance's tmux session gets
 	// ANTHROPIC_BASE_URL pointed at Headroom's proxy (see
-	// session.HeadroomProxyEnv). A no-op unless Program resolves to
-	// Claude. Set once before Start() (same convention as Program) and
-	// persisted so pause/resume and crash recovery — which construct a
-	// brand new TmuxSession for the same instance — still apply it.
-	HeadroomProxy bool
-	// CacheTTL1h controls whether this instance's tmux session gets
+	// session.HeadroomProxyEnv). A no-op unless program resolves to
+	// Claude. Set once before a launch (via SetLaunchOptions, alongside
+	// program) and persisted so pause/resume and crash recovery — which
+	// construct a brand new TmuxSession for the same instance — still
+	// apply it.
+	headroomProxy bool
+	// cacheTTL1h controls whether this instance's tmux session gets
 	// ENABLE_PROMPT_CACHING_1H=1, extending Claude's prompt cache from
 	// the default 5-minute TTL to 1 hour (see session.CacheTTL1hEnv). A
-	// no-op unless Program resolves to Claude. Same set-once/persisted
-	// convention as HeadroomProxy.
-	CacheTTL1h bool
+	// no-op unless program resolves to Claude. Same set-once/persisted
+	// convention as headroomProxy.
+	cacheTTL1h bool
 	// Height is the height of the instance.
 	Height int
 	// Width is the width of the instance.
@@ -146,15 +153,16 @@ type Instance struct {
 	CreatedAt time.Time
 	// UpdatedAt is the time the instance was last updated.
 	UpdatedAt time.Time
-	// Prompt is the initial prompt to pass to the instance on startup
-	Prompt string
+	// prompt is the initial prompt the start-completion handler sends to
+	// the agent once Start succeeds (then clears). Never serialized.
+	prompt string
 	// ConfigDir is the workspace config directory for worktree resolution.
 	ConfigDir string
 	// IsWorkspaceTerminal is true if this instance operates in the root repo without a worktree.
 	IsWorkspaceTerminal bool
-	// CrashRecovered is a runtime-only flag set when this instance was restored
+	// crashRecovered is a runtime-only flag set when this instance was restored
 	// after a crash. Used to trigger agent-aware restart (e.g. --continue).
-	CrashRecovered bool
+	crashRecovered bool
 
 	// DiffStats stores the current git diff statistics
 	diffStats *git.DiffStats
@@ -200,8 +208,9 @@ type Instance struct {
 	// mu guards concurrent access to fields that can be read from
 	// tick-fanout goroutines (Status, statusChangedAt, diffStats,
 	// Branch) and from lifecycle Cmd goroutines (tmuxSession,
-	// gitWorktree, started). Held for writes; RLock for reads. Do not
-	// hold across I/O.
+	// gitWorktree, started, and the launch fields program/headroomProxy/
+	// cacheTTL1h, which Start/Resume/CrashRestart read via launchSpec).
+	// Held for writes; RLock for reads. Do not hold across I/O.
 	//
 	// Every accessor on Instance goes through TransitionTo/GetStatus,
 	// StatusAge, GetBranch, GetDiffStats, Snapshot, or the unexported
@@ -276,9 +285,9 @@ func (i *Instance) Snapshot() InstanceData {
 		Width:               i.Width,
 		CreatedAt:           i.CreatedAt,
 		UpdatedAt:           time.Now(),
-		Program:             i.Program,
-		HeadroomProxy:       i.HeadroomProxy,
-		CacheTTL1h:          i.CacheTTL1h,
+		Program:             i.program,
+		HeadroomProxy:       i.headroomProxy,
+		CacheTTL1h:          i.cacheTTL1h,
 		IsWorkspaceTerminal: i.IsWorkspaceTerminal,
 		Issue:               i.issue,
 	}
@@ -329,9 +338,9 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		Width:               data.Width,
 		CreatedAt:           data.CreatedAt,
 		UpdatedAt:           data.UpdatedAt,
-		Program:             data.Program,
-		HeadroomProxy:       data.HeadroomProxy,
-		CacheTTL1h:          data.CacheTTL1h,
+		program:             data.Program,
+		headroomProxy:       data.HeadroomProxy,
+		cacheTTL1h:          data.CacheTTL1h,
 		ConfigDir:           configDir,
 		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
 		issue:               data.Issue,
@@ -370,7 +379,9 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 	// silently no-ops and the row never leaves the list.
 	if instance.Paused() || instance.GetStatus() == Recoverable {
 		instance.setStarted(true)
-		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.Program, InstanceEnv(instance.Program, instance.HeadroomProxy, instance.CacheTTL1h)...))
+		// Unpublished: nothing else can see instance yet, so the
+		// launch fields are read directly.
+		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(instance.program, instance.headroomProxy, instance.cacheTTL1h)...))
 	}
 
 	return instance, nil
@@ -395,6 +406,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 func (i *Instance) Restart() error {
 	i.mu.Lock()
 	old := i.tmuxSession
+	program := i.program // under mu: Program() would self-deadlock here
 	i.started = false
 	i.starting = false
 	i.mu.Unlock()
@@ -403,7 +415,7 @@ func (i *Instance) Restart() error {
 		if err := old.Close(); err != nil {
 			i.getLogger().Debug("instance.restart.close_old_failed", "err", err.Error())
 		}
-		i.setTmuxSession(old.WithProgram(i.launchProgram(i.Program, true)))
+		i.setTmuxSession(old.WithProgram(i.launchProgram(program, true)))
 	}
 	return i.Start(true)
 }
@@ -427,8 +439,9 @@ func (i *Instance) EnsureRunning() error {
 	return i.Start(false)
 }
 
-// InstanceOptions collects the arguments for NewInstance. All fields
-// except IsWorkspaceTerminal, WsCtx, and ExecutorOverride are required.
+// InstanceOptions collects the arguments for NewInstance. Title, Path,
+// Program, and ConfigDir are expected; the launch toggles, Prompt, Branch,
+// and IsWorkspaceTerminal are optional.
 type InstanceOptions struct {
 	// Title is the title of the instance.
 	Title string
@@ -442,6 +455,9 @@ type InstanceOptions struct {
 	// CacheTTL1h controls whether this instance's tmux session gets
 	// ENABLE_PROMPT_CACHING_1H=1. See Instance.CacheTTL1h.
 	CacheTTL1h bool
+	// Prompt is the initial prompt sent to the agent once the instance
+	// has started (optional). See Instance.Prompt.
+	Prompt string
 	// Branch is an existing branch name to start the session on (empty = new branch from HEAD)
 	Branch string
 	// ConfigDir is the workspace config directory for worktree resolution.
@@ -468,9 +484,10 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		Title:               opts.Title,
 		Status:              Ready,
 		Path:                absPath,
-		Program:             opts.Program,
-		HeadroomProxy:       opts.HeadroomProxy,
-		CacheTTL1h:          opts.CacheTTL1h,
+		program:             opts.Program,
+		headroomProxy:       opts.HeadroomProxy,
+		cacheTTL1h:          opts.CacheTTL1h,
+		prompt:              opts.Prompt,
 		Height:              0,
 		Width:               0,
 		CreatedAt:           t,
@@ -626,6 +643,95 @@ func (i *Instance) BranchPrefixOverride() *string {
 	return i.branchPrefix
 }
 
+// Program returns the agent command this instance launches (the bare
+// program, before loom's context flag and subagent hooks are added).
+func (i *Instance) Program() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.program
+}
+
+// SetProgram replaces the agent command. It takes effect at the next
+// launch (Start, Resume, CrashRestart, Restart); a running session keeps
+// the command it was started with.
+func (i *Instance) SetProgram(program string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.program = program
+}
+
+// HeadroomProxy reports whether launches point ANTHROPIC_BASE_URL at
+// Headroom's proxy (see HeadroomProxyEnv). Set via SetLaunchOptions.
+func (i *Instance) HeadroomProxy() bool {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.headroomProxy
+}
+
+// CacheTTL1h reports whether launches set ENABLE_PROMPT_CACHING_1H=1 (see
+// CacheTTL1hEnv). Set via SetLaunchOptions.
+func (i *Instance) CacheTTL1h() bool {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.cacheTTL1h
+}
+
+// SetLaunchOptions sets the program and both launch-env toggles under one
+// lock, so no reader (Snapshot, a launch in a Cmd goroutine) can observe a
+// program from one confirmation paired with toggles from another. Like
+// SetProgram, it takes effect at the next launch.
+func (i *Instance) SetLaunchOptions(program string, headroomProxy, cacheTTL1h bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.program = program
+	i.headroomProxy = headroomProxy
+	i.cacheTTL1h = cacheTTL1h
+}
+
+// launchSpec snapshots the launch fields under one read lock. The launch
+// paths (Start, Resume's fresh-session fallback, CrashRestart) run on
+// tea.Cmd goroutines and read these once per launch; taking them here
+// orders those reads against the setters on the Update goroutine. Must not
+// be called with i.mu held.
+func (i *Instance) launchSpec() (program string, headroomProxy, cacheTTL1h bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.program, i.headroomProxy, i.cacheTTL1h
+}
+
+// Prompt returns the initial prompt still waiting to be sent to the agent,
+// or "" when there is none (or it has already been sent).
+func (i *Instance) Prompt() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.prompt
+}
+
+// SetPrompt sets the initial prompt sent once the instance has started.
+// Pass "" to clear it after sending.
+func (i *Instance) SetPrompt(prompt string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.prompt = prompt
+}
+
+// CrashRecovered reports whether this instance was restored after a crash
+// and still needs CrashRestart (an agent-aware relaunch, e.g. --continue).
+// Runtime-only: never serialized.
+func (i *Instance) CrashRecovered() bool {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.crashRecovered
+}
+
+// SetCrashRecovered sets the crash-recovered flag; the app clears it once
+// it has attempted CrashRestart.
+func (i *Instance) SetCrashRecovered(v bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.crashRecovered = v
+}
+
 // Start brings the instance online: sets up the worktree, spawns the
 // tmux session, and transitions Ready → Loading → Running. Pass
 // firstTimeSetup=true when the instance is newly created (initial
@@ -678,9 +784,10 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		// and, only when this Start actually launches (firstTimeSetup),
 		// the subagent hooks. Start(false) reattaches with Restore, and
 		// that Claude keeps writing to its existing hooks folder.
-		// InstanceEnv still keys off the bare i.Program.
-		launchProgram := i.launchProgram(i.Program, firstTimeSetup)
-		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(i.Program, i.HeadroomProxy, i.CacheTTL1h)...)
+		// InstanceEnv still keys off the bare program.
+		program, headroomProxy, cacheTTL1h := i.launchSpec()
+		launchProgram := i.launchProgram(program, firstTimeSetup)
+		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(program, headroomProxy, cacheTTL1h)...)
 	}
 	i.setTmuxSession(ts)
 
@@ -1152,8 +1259,8 @@ func (i *Instance) finishResume(saveState func() error, ts *tmux.TmuxSession, gw
 // The program is rewritten via BuildRecoveryCommand so supported agents resume
 // their prior conversation (e.g. `claude --continue`).
 func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
-	program, launchProgram := i.recoveryLaunch()
-	ts := tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(program, i.HeadroomProxy, i.CacheTTL1h)...)
+	launchProgram, env := i.recoveryLaunch()
+	ts := tmux.NewTmuxSession(i.Title, launchProgram, env...)
 	if err := ts.Start(gw.GetWorktreePath()); err != nil {
 		if cleanupErr := gw.Cleanup(); cleanupErr != nil {
 			err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
@@ -1169,8 +1276,8 @@ func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 // (for workspace terminals). The program is modified with --continue for
 // supported agents.
 func (i *Instance) CrashRestart() error {
-	program, launchProgram := i.recoveryLaunch()
-	ts := tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(program, i.HeadroomProxy, i.CacheTTL1h)...)
+	launchProgram, env := i.recoveryLaunch()
+	ts := tmux.NewTmuxSession(i.Title, launchProgram, env...)
 
 	var workDir string
 	if i.IsWorkspaceTerminal {

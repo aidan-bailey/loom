@@ -15,8 +15,8 @@ import (
 // newPendingLaunchOptionsHome builds a *home with one not-yet-started
 // instance in the list, the Session Launch Options modal open, and
 // m.pendingLaunchOptions wired the same way state_new.go's Enter
-// branch wires it — capturing instance.Program/Title so confirming
-// composes and stashes the result on instance.Program without actually
+// branch wires it — capturing instance.Program()/Title so confirming
+// composes and stashes the result via instance.SetLaunchOptions without actually
 // invoking Start() (which would need a real git worktree + tmux).
 func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*home, *session.Instance) {
 	t.Helper()
@@ -33,8 +33,7 @@ func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*
 	m.pendingNew = instance
 
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-		instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
-		instance.HeadroomProxy = opts.HeadroomProxy
+		instance.SetLaunchOptions(applyLaunchOptions(opts, m.rcAuth, instance.Program(), instance.Title), opts.HeadroomProxy, opts.CacheTTL1h)
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
 		return m, nil
@@ -52,7 +51,7 @@ func TestHandleStateLaunchOptionsKeyConfirmComposesAndClearsPending(t *testing.T
 
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	assert.Equal(t, "claude --permission-mode acceptEdits", instance.Program)
+	assert.Equal(t, "claude --permission-mode acceptEdits", instance.Program())
 	assert.Equal(t, stateDefault, m.state)
 	assert.Nil(t, m.pendingLaunchOptions)
 }
@@ -62,7 +61,7 @@ func TestHandleStateLaunchOptionsKeyConfirmSetsHeadroomProxy(t *testing.T) {
 
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	assert.True(t, instance.HeadroomProxy)
+	assert.True(t, instance.HeadroomProxy())
 }
 
 func TestHandleStateLaunchOptionsKeyTogglesBeforeConfirm(t *testing.T) {
@@ -74,7 +73,7 @@ func TestHandleStateLaunchOptionsKeyTogglesBeforeConfirm(t *testing.T) {
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: ' ', Text: " "})
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	assert.Equal(t, "claude --model 'sonnet'", instance.Program)
+	assert.Equal(t, "claude --model 'sonnet'", instance.Program())
 }
 
 func TestHandleStateLaunchOptionsKeyEscCancelsAndKillsPendingInstance(t *testing.T) {
