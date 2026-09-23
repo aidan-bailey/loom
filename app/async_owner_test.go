@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
@@ -180,4 +181,44 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		assert.Equal(t, session.Recoverable, placeholder.GetStatus(), "the placeholder is back to Recoverable for a retry")
 		assert.Equal(t, session.Loading, bystander.GetStatus(), "the namesake is untouched")
 	})
+}
+
+// TestResumeDone_AfterOwnerDropped: the owner tab was closed while a
+// resume ran. releaseSlotCmd skipped the instance (nothing was attached
+// yet), and the finished resume attached a preview client that nothing
+// displays — so the completion must release it.
+func TestResumeDone_AfterOwnerDropped(t *testing.T) {
+	isolateTmux(t)
+	m, _, recB := ownerTestHome(t)
+	owner := m.workspaceSlot
+	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
+	recB.calls = 0
+	resumed := liveInstance(t, "resumed")
+	owner.list.AddInstance(resumed)
+
+	_, cmd := m.Update(resumeDoneMsg{instance: resumed, slot: owner})
+
+	assert.Nil(t, m.list.GetInstanceByTitle("resumed"), "not filed under the focused workspace")
+	assert.Zero(t, recB.calls)
+	assertReleased(t, m, cmd, resumed)
+}
+
+// TestResumeDone_OwnerReopened: the owner was closed and its workspace
+// reopened mid-resume. The reopened slot reconciled the record into a
+// Paused twin; a resumed session that survived the reopen takes its place.
+func TestResumeDone_OwnerReopened(t *testing.T) {
+	isolateTmux(t)
+	wtPath := filepath.Join(t.TempDir(), "res-wt")
+	m, owner, twin, _, recC := reopenedHome(t, "res", wtPath, deadCmdExecForTest())
+	resumed := startedWorktreeInstance(t, "res", wtPath, newFakeTmuxServer())
+	owner.list.AddInstance(resumed)
+
+	_, cmd := m.Update(resumeDoneMsg{instance: resumed, slot: owner})
+	drainCmd(cmd)
+
+	reopened := m.slots[1]
+	assert.Same(t, resumed, reopened.list.GetInstanceByTitle("res"))
+	assert.NotContains(t, reopened.list.GetInstances(), twin)
+	assert.GreaterOrEqual(t, recC.calls, 1, "the reopened slot is saved")
+	assert.True(t, resumed.Pane().PtmxAlive(), "displayed again, so its preview stays")
 }

@@ -386,11 +386,12 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	}
 	saveFunc := snapshotSaveFunc(m)
 	resumeTitle := selected.Title
+	owner := m.startOwner(selected) // stamped for resumeDoneMsg
 	resumeCmd := func() tea.Msg {
 		if err := selected.Resume(saveFunc); err != nil {
 			return transitionFailedMsg{inst: selected, title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
 		}
-		return resumeDoneMsg{}
+		return resumeDoneMsg{instance: selected, slot: owner}
 	}
 	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), resumeCmd)
 }
@@ -425,6 +426,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 		// Snapshot here, on the main goroutine — Async below runs on a
 		// Cmd goroutine and must not touch the unlocked ui.List.
 		saveFunc := snapshotSaveFunc(m)
+		owner := m.startOwner(selected) // stamped for resumeDoneMsg
 		resumeTask := overlay.ConfirmationTask{
 			Sync: func() {
 				selected.SetLaunchOptions(applyLaunchOptions(newOpts, m.rcAuth, base, selected.Title), newOpts.HeadroomProxy, newOpts.CacheTTL1h)
@@ -448,7 +450,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 				if err := selected.Resume(saveFunc); err != nil {
 					return transitionFailedMsg{inst: selected, title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
 				}
-				return resumeDoneMsg{}
+				return resumeDoneMsg{instance: selected, slot: owner}
 			}),
 		}
 		if m.remoteControlBlocked(effectiveRemoteControl(newOpts), selected.Program()) {

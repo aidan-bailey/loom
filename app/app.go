@@ -1369,7 +1369,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// result was logged inside backgroundKillCmd.
 		return m, nil
 	case resumeDoneMsg:
-		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
+		return m, m.handleResumeDone(msg)
 	case showHelpScreenMsg:
 		m.menu.SetState(ui.StateDefault)
 		return m.showHelpScreen(msg.helpType, nil)
@@ -1931,8 +1931,13 @@ type pauseInstanceMsg struct {
 type backgroundCleanupDoneMsg struct{}
 
 // resumeDoneMsg is returned by the Resume Cmd on success. Failures come
-// through transitionFailedMsg.
-type resumeDoneMsg struct{}
+// through transitionFailedMsg. instance and slot are stamped at dispatch,
+// like instanceStartedMsg: the resume runs for seconds, and its owner may
+// be closed meanwhile.
+type resumeDoneMsg struct {
+	instance *session.Instance
+	slot     *workspaceSlot
+}
 
 // showHelpScreenMsg asks Update to open a help overlay. Emitted from
 // tea.Cmd closures, which run off the main goroutine and therefore must

@@ -11,13 +11,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// Async lifecycle completions (start, recover) run for seconds with the UI
-// live: by the time their message arrives the user may have switched
-// workspace, or closed the one the instance belongs to. Their handlers
-// therefore act on the slot that owns the instance — stamped into the
-// message at dispatch — and on the instance by identity, never on the
-// focused slot's list, storage or selection. (Kill, pause, resume and
-// transition failures already carry the instance and act by identity.)
+// Async lifecycle completions (start, recover, resume) run for seconds with
+// the UI live: by the time their message arrives the user may have
+// switched workspace, or closed the one the instance belongs to. Their
+// handlers therefore act on the slot that owns the instance — stamped into
+// the message at dispatch — and on the instance by identity, never on the
+// focused slot's list, storage or selection. (Kill, pause and transition
+// failures carry the instance and act by identity; a killed or paused
+// instance has no attach client left for a closed owner to leak.)
 //
 // Nor do they move the focused slot's selection while another flow is on
 // screen (m.state != stateDefault): a creation flow, an inline attach or
@@ -41,6 +42,20 @@ func (m *home) dropPendingNew() tea.Cmd {
 		slot.list.RemoveInstance(inst)
 	}
 	return backgroundKillCmd(inst)
+}
+
+// adoptIntoReopened swaps inst in for its reopened twin (reopenedTwin) and
+// returns the reopened slot, or nil when inst's tmux session did not
+// survive the reopen: a session already up when the reopen reconciled the
+// Loading record was killed there (ActionKillAndPause), so the twin's
+// record is the truth and inst stays with its closed owner. The probe runs
+// a tmux subprocess, but only on this rare path.
+func (m *home) adoptIntoReopened(twin *session.Instance, reopened *workspaceSlot, inst *session.Instance) *workspaceSlot {
+	if !inst.Pane().TmuxAlive() {
+		return nil
+	}
+	reopened.list.ReplaceInstance(twin, inst)
+	return reopened
 }
 
 // reopenedTwin finds, for an instance whose owner slot was dropped while
@@ -154,8 +169,9 @@ func (m *home) saveSlot(slot *workspaceSlot) error {
 //     started, and an owner closed meanwhile gets its preview client
 //     released (releaseInstancesCmd).
 //   - Owner closed and its workspace reopened meanwhile: the reopened
-//     slot loaded the record as a never-started twin, which the instance
-//     replaces on success; on failure the twin's record owns the worktree
+//     slot reconciled the record into a Paused twin, which the instance
+//     replaces on success if its tmux session survived the reopen
+//     (adoptIntoReopened); on failure the twin's record owns the worktree
 //     and branch, so nothing is killed and only the preview goes.
 func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 	inst := msg.instance
@@ -165,8 +181,9 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 			if msg.err != nil {
 				return tea.Batch(m.handleError(msg.err), releaseInstancesCmd([]*session.Instance{inst}))
 			}
-			reopened.list.ReplaceInstance(twin, inst)
-			owner = reopened
+			if adopted := m.adoptIntoReopened(twin, reopened, inst); adopted != nil {
+				owner = adopted
+			}
 		}
 	}
 	loaded := m.slotLoaded(owner)
@@ -226,6 +243,34 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 	}
 
 	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release)
+}
+
+// handleResumeDone finishes a resume. The owner may have been closed while
+// it ran: releaseSlotCmd skipped the instance then (nothing was attached
+// yet), and the resume has since attached a preview client that nothing
+// displays. An instance no loaded slot holds is therefore swapped into a
+// reopened copy of its workspace when there is one and its session
+// survived the reopen (adoptIntoReopened), and otherwise has its preview
+// client released.
+func (m *home) handleResumeDone(msg resumeDoneMsg) tea.Cmd {
+	cmds := []tea.Cmd{tea.RequestWindowSize}
+	if inst := msg.instance; inst != nil && m.slotHolding(inst) == nil {
+		var adopted *workspaceSlot
+		if msg.slot != nil {
+			if twin, reopened := m.reopenedTwin(msg.slot, inst); twin != nil {
+				adopted = m.adoptIntoReopened(twin, reopened, inst)
+			}
+		}
+		if adopted != nil {
+			if err := m.saveSlot(adopted); err != nil {
+				cmds = append(cmds, m.handleError(err))
+			}
+			m.errBox.SetInfo(fmt.Sprintf("%s resumed in %s", inst.Title, slotLabel(adopted)))
+		} else {
+			cmds = append(cmds, releaseInstancesCmd([]*session.Instance{inst}))
+		}
+	}
+	return tea.Batch(append(cmds, m.instanceChanged())...)
 }
 
 // handleRecoverDone puts the adopted instance in its placeholder's row in

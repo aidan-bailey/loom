@@ -7,10 +7,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -98,30 +100,79 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	assert.NotContains(t, m.list.GetInstances(), pending)
 }
 
+// fakeTmuxServer is a scripted tmux server: has-session answers from a set
+// of live session names, and kill-session removes one and is recorded.
+// Enough for reconcile, liveness probes and Kill; nothing real is touched.
+type fakeTmuxServer struct {
+	mu    sync.Mutex
+	live  map[string]bool
+	kills []string
+}
+
+func newFakeTmuxServer(liveTitles ...string) *fakeTmuxServer {
+	f := &fakeTmuxServer{live: map[string]bool{}}
+	for _, title := range liveTitles {
+		f.live[tmux.ToLoomTmuxName(title)] = true
+	}
+	return f
+}
+
+func (f *fakeTmuxServer) exec() cmd_test.MockCmdExec {
+	return cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			name := tmuxTarget(c.Args)
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			switch {
+			case slices.Contains(c.Args, "has-session"):
+				if !f.live[name] {
+					return exec.ErrNotFound
+				}
+			case slices.Contains(c.Args, "kill-session"):
+				f.kills = append(f.kills, name)
+				delete(f.live, name)
+			}
+			return nil
+		},
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+}
+
+// killed reports whether anything ran kill-session on title's session.
+func (f *fakeTmuxServer) killed(title string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.kills, tmux.ToLoomTmuxName(title))
+}
+
+// tmuxTarget extracts a tmux command's -t target.
+func tmuxTarget(args []string) string {
+	for i, a := range args {
+		if v, ok := strings.CutPrefix(a, "-t="); ok {
+			return v
+		}
+		if a == "-t" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
 // startedWorktreeInstance is a started, Running session with a git worktree
 // record at wtPath and its preview client attached (a fake PTY) — what a
-// start leaves behind. No tmux server is touched; killed reports whether
-// anything ran tmux kill-session for it (Kill does, first thing).
-func startedWorktreeInstance(t *testing.T, title, wtPath string) (inst *session.Instance, killed func() bool) {
+// start leaves behind — whose tmux session lives on srv.
+func startedWorktreeInstance(t *testing.T, title, wtPath string, srv *fakeTmuxServer) *session.Instance {
 	t.Helper()
-	var mu sync.Mutex
-	kills := 0
-	ex := aliveCmdExecForTest()
-	ex.RunFunc = func(c *exec.Cmd) error {
-		if slices.Contains(c.Args, "kill-session") {
-			mu.Lock()
-			kills++
-			mu.Unlock()
-		}
-		return nil
-	}
+	srv.mu.Lock()
+	srv.live[tmux.ToLoomTmuxName(title)] = true
+	srv.mu.Unlock()
 	inst, err := session.FromInstanceData(worktreeRecord(title, wtPath, session.Paused), t.TempDir())
 	require.NoError(t, err)
-	inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps(title, "claude", fakePtyFactory{t: t}, ex))
+	inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps(title, "claude", fakePtyFactory{t: t}, srv.exec()))
 	require.NoError(t, inst.TransitionTo(session.Running))
 	require.NoError(t, inst.Pane().RepairPtmx())
 	require.True(t, inst.Pane().PtmxAlive())
-	return inst, func() bool { mu.Lock(); defer mu.Unlock(); return kills > 0 }
+	return inst
 }
 
 func worktreeRecord(title, wtPath string, status session.Status) session.InstanceData {
@@ -131,35 +182,43 @@ func worktreeRecord(title, wtPath string, status session.Status) session.Instanc
 	}
 }
 
+// reopenedHome closes fleetHome's "afocus" tab and reopens the workspace as
+// a new slot whose list holds the reconciled copy of a Loading record for
+// title at twinWorktree — built through the real ReconcileAndRestore path
+// against reopenExec, the tmux server as the reopen saw it. Returns the
+// closed owner, the twin, and recorders for the owner's and the reopened
+// slot's storage.
+func reopenedHome(t *testing.T, title, twinWorktree string, reopenExec cmd_test.MockCmdExec) (m *home, owner *workspaceSlot, twin *session.Instance, recA, recC *recordingInstanceStorage) {
+	t.Helper()
+	m, recA, _ = ownerTestHome(t)
+	owner = m.workspaceSlot
+	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
+	reopened := fleetSlot(t, "afocus")
+	recC = &recordingInstanceStorage{}
+	var err error
+	reopened.storage, err = session.NewStorage(recC, t.TempDir())
+	require.NoError(t, err)
+	twin, err = session.ReconcileAndRestore(worktreeRecord(title, twinWorktree, session.Loading), t.TempDir(), reopenExec)
+	require.NoError(t, err)
+	require.True(t, twin.Paused(), "fixture: a reconciled Loading record comes back Paused")
+	reopened.list.AddInstance(twin)
+	m.slots = append(m.slots, reopened)
+	recA.calls = 0
+	return m, owner, twin, recA, recC
+}
+
 // TestInstanceStarted_OwnerReopened: the owner was closed and the same
 // workspace reopened while the start ran. The reopened slot reconciled the
-// start's Loading record into a twin — through the real path, which with
-// the tmux session not yet up marks it Paused (started, no attach client).
+// start's Loading record into a twin (Paused, unattached) — marking it
+// paused if the tmux session wasn't up yet, killing the session first if
+// it was.
 func TestInstanceStarted_OwnerReopened(t *testing.T) {
 	isolateTmux(t)
 	wtPath := filepath.Join(t.TempDir(), "late-wt")
-	setup := func(t *testing.T, twinWorktree string) (m *home, owner *workspaceSlot, twin *session.Instance, recA, recC *recordingInstanceStorage) {
-		t.Helper()
-		m, recA, _ = ownerTestHome(t)
-		owner = m.workspaceSlot
-		drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
-		reopened := fleetSlot(t, "afocus")
-		recC = &recordingInstanceStorage{}
-		var err error
-		reopened.storage, err = session.NewStorage(recC, t.TempDir())
-		require.NoError(t, err)
-		twin, err = session.ReconcileAndRestore(worktreeRecord("late", twinWorktree, session.Loading), t.TempDir(), deadCmdExecForTest())
-		require.NoError(t, err)
-		require.True(t, twin.Paused(), "fixture: a reconciled Loading record comes back Paused")
-		reopened.list.AddInstance(twin)
-		m.slots = append(m.slots, reopened)
-		recA.calls = 0
-		return m, owner, twin, recA, recC
-	}
 
 	t.Run("success takes the twin's place", func(t *testing.T) {
-		m, owner, twin, recA, recC := setup(t, wtPath)
-		started, _ := startedWorktreeInstance(t, "late", wtPath)
+		m, owner, twin, recA, recC := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
+		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
 		owner.list.AddInstance(started)
 
 		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
@@ -174,21 +233,22 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 	})
 
 	t.Run("failure leaves the twin's worktree and branch alone", func(t *testing.T) {
-		m, owner, twin, _, _ := setup(t, wtPath)
-		started, killed := startedWorktreeInstance(t, "late", wtPath)
+		m, owner, twin, _, _ := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
+		srv := newFakeTmuxServer()
+		started := startedWorktreeInstance(t, "late", wtPath, srv)
 		owner.list.AddInstance(started)
 
 		_, cmd := m.Update(instanceStartedMsg{instance: started, err: errors.New("boom"), slot: owner})
 		drainCmd(cmd)
 
-		assert.False(t, killed(), "not killed: the reopened record owns its worktree and branch")
+		assert.False(t, srv.killed("late"), "not killed: the reopened record owns its worktree and branch")
 		assert.False(t, started.Pane().PtmxAlive(), "only its preview client is released")
 		assert.Same(t, twin, m.slots[1].list.GetInstanceByTitle("late"))
 	})
 
 	t.Run("a namesake with another worktree is not a twin", func(t *testing.T) {
-		m, owner, namesake, _, recC := setup(t, filepath.Join(t.TempDir(), "other-wt"))
-		started, _ := startedWorktreeInstance(t, "late", wtPath)
+		m, owner, namesake, _, recC := reopenedHome(t, "late", filepath.Join(t.TempDir(), "other-wt"), deadCmdExecForTest())
+		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
 		owner.list.AddInstance(started)
 
 		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
@@ -197,6 +257,23 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		assert.Same(t, namesake, m.slots[1].list.GetInstanceByTitle("late"), "an unrelated same-titled session is untouched")
 		assert.Zero(t, recC.calls)
 		assert.False(t, started.Pane().PtmxAlive(), "the start stays with its closed owner, so its preview is released")
+	})
+
+	t.Run("a session the reopen killed is not adopted", func(t *testing.T) {
+		// The start's session was already up when the reopen reconciled
+		// the Loading record: ActionKillAndPause killed it.
+		srv := newFakeTmuxServer()
+		started := startedWorktreeInstance(t, "late", wtPath, srv)
+		m, owner, twin, _, recC := reopenedHome(t, "late", wtPath, srv.exec())
+		require.True(t, srv.killed("late"), "fixture: reconcile killed the live session")
+		owner.list.AddInstance(started)
+
+		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
+		drainCmd(cmd)
+
+		assert.Same(t, twin, m.slots[1].list.GetInstanceByTitle("late"), "the twin stays: its record is the live truth")
+		assert.Zero(t, recC.calls)
+		assert.False(t, started.Pane().PtmxAlive(), "the dead start's preview client is released")
 	})
 }
 
