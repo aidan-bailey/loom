@@ -61,3 +61,18 @@ func TestList_PrependedWorkspaceTerminalKeepsSelection(t *testing.T) {
 	empty.AddInstance(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
 	assert.Equal(t, 0, empty.SelectedIdx())
 }
+
+// TestList_PrependedWorkspaceTerminalKeepsSelectionVisible: the prepend
+// shifts the selection down a row, which can push it past the bottom of
+// the visible window, so AddInstance must scroll to it as removeAt does.
+func TestList_PrependedWorkspaceTerminalKeepsSelectionVisible(t *testing.T) {
+	l := newPageNavList(5) // 3 rows visible
+	l.SetSelectedInstance(4)
+	selected := l.GetSelectedInstance()
+	l.AddInstance(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
+
+	assert.Same(t, selected, l.GetSelectedInstance())
+	assert.GreaterOrEqual(t, l.SelectedIdx(), l.scrollOffset)
+	assert.Less(t, l.SelectedIdx(), l.scrollOffset+l.maxVisibleItems(),
+		"the selected row must stay inside the visible window")
+}
