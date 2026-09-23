@@ -156,7 +156,8 @@ type home struct {
 	// next launch sweep (kill) them. saveOpenWorkspaces keeps them in the
 	// persisted list and the picker shows them selected, until one is
 	// opened (activateWorkspace) or deselected in the picker
-	// (applyWorkspaceToggle); returning to global mode clears them all.
+	// (applyWorkspaceToggle); returning to global mode clears them all, as
+	// does a Global commit made from global mode (stayInGlobalMode).
 	restoreFailed []string
 
 	// -- State --
@@ -1356,13 +1357,22 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// it, log and leave the status as-is rather than masking a real bug.
 		// The message carries the instance pointer: like killInstanceMsg, the
 		// focused m.list may have been swapped since the op started.
+		var release tea.Cmd
 		if msg.inst != nil {
+			// A resume attaches its preview client before its checkpoint
+			// save, so a failed save lands here with the client open. If
+			// the owner was closed meanwhile, releaseSlotCmd ran before the
+			// attach and nothing displays the instance now: release it —
+			// before the revert, as releaseInstancesCmd skips Paused.
+			if m.slotHolding(msg.inst) == nil {
+				release = releaseInstancesCmd([]*session.Instance{msg.inst})
+			}
 			if terr := msg.inst.TransitionTo(msg.previousStatus); terr != nil {
 				log.For("app").Warn("revert_transition_failed", "err", terr)
 			}
 		}
 		log.For("app").Error("op_failed", "op", msg.op, "title", msg.title, "err", msg.err)
-		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged())
+		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), release)
 	case pauseInstanceMsg:
 		// Terminal session was already closed inside pauseAction off the update
 		// goroutine. Nothing I/O-blocking to do here.

@@ -424,3 +424,69 @@ func TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected(t *testing.
 	assert.Equal(t, []string{"ws-good"}, openList())
 	assert.False(t, m.pickerActiveNames()["ws-bad"])
 }
+
+// TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces: committing
+// the picker with nothing selected while already in global mode rebuilt
+// the global slot from disk — a second attach client on every live session
+// (then a release), crash restarts and orphan recovery all over again —
+// and on a latched global storage failed with "staying in workspace mode",
+// so a workspace that failed to restore could never be deselected. There
+// is nothing to switch: the commit only closes the failed workspaces.
+func TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		global  string
+		latched bool
+	}{
+		{name: "loaded global storage", global: `[]`},
+		{name: "latched global storage", global: `{"not":"an array"}`, latched: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateTmux(t)
+			rec := &recordingExec{}
+			m, _ := restoreModeHome(t, rec, tc.global)
+			// The startup context is the global one: a reload would read
+			// the same directory.
+			t.Setenv(config.EnvGlobalDir, m.wsCtx.ConfigDir)
+			bad := corruptWorkspaces(t, "ws-bad")[0]
+			reg, err := config.LoadWorkspaceRegistry()
+			require.NoError(t, err)
+			require.NoError(t, reg.Add("ws-bad", bad.Path))
+			require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-bad"}))
+			m.registry = reg
+			m.ctx = cancelledCtx()
+
+			m.restoreSavedWorkspaces(reg.GetOpenWorkspaces())
+			require.Empty(t, m.slots)
+			require.True(t, m.pickerActiveNames()["ws-bad"], "fixture: the failed workspace is still open")
+			require.Equal(t, tc.latched, m.storage.WritesRefused())
+			var live *session.Instance
+			if !tc.latched { // a latched list stays empty (latchedStorageErr)
+				live = liveInstance(t, "g-live")
+				m.list.AddInstance(live)
+				pointAt(m, live)
+			}
+			slot, list, storage := m.workspaceSlot, m.list, m.storage
+			rec.args = nil
+			m.errBox.Clear()
+
+			drainCmd(m.applyWorkspaceToggle(nil))
+
+			assert.Empty(t, m.restoreFailed)
+			assert.False(t, m.pickerActiveNames()["ws-bad"], "the failed workspace is closed")
+			fresh, err := config.LoadWorkspaceRegistry()
+			require.NoError(t, err)
+			assert.Empty(t, fresh.OpenWorkspaces, "and gone from the registry's open list")
+			assert.NotContains(t, m.errBox.String(), "staying in workspace mode")
+			assert.Same(t, slot, m.workspaceSlot, "no reload: the global slot stays")
+			assert.Same(t, list, m.list)
+			assert.Same(t, storage, m.storage)
+			assert.Empty(t, rec.args, "no reload: no reconcile, orphan discovery or hooks sweep")
+			if live != nil {
+				assert.Contains(t, m.list.GetInstances(), live)
+				assert.True(t, live.Pane().PtmxAlive(), "the same instance stays attached")
+			}
+			require.NoError(t, m.checkSlotInvariant())
+		})
+	}
+}

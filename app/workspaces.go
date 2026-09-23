@@ -263,7 +263,7 @@ func (m *home) deactivateWorkspace(name string) (tea.Cmd, error) {
 // ones its terminal pane keeps on each loom_term_* shell it has shown (the
 // shells keep running). Every site that drops a slot from the model
 // returns it: activateWorkspace (the classic slot), deactivateWorkspace
-// (the closed tab) and enterGlobalMode (every tab, or the previous global
+// (the closed tab) and enterGlobalMode (every tab, or a classic workspace
 // slot — except for the panes it carries into the new global slot, whose
 // terminals stay in use). nil when nothing is attached.
 func releaseSlotCmd(slot *workspaceSlot) tea.Cmd {
@@ -488,13 +488,20 @@ func (m *home) loadSlot(idx int) {
 // Activates new workspaces first so that if activation fails, the old
 // workspace is still available.
 //
-// Global-mode persistence: when entering this function with len(m.slots)
-// == 0, the focused slot is the global one (~/.loom state). The first tab
-// to open drops it, and with it any in-flight changes the user hadn't
+// An empty desired list from global mode switches nothing: see
+// stayInGlobalMode.
+//
+// Classic-slot persistence: when entering this function with len(m.slots)
+// == 0, the focused slot is the classic one (global, or the startup
+// workspace). The first tab to open — or enterGlobalMode's fresh global
+// slot — drops it, and with it any in-flight changes the user hadn't
 // quit-flushed yet. Persist it before the transition so the reverse
 // direction (enterGlobalMode) reads back what the user was just looking
 // at.
 func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
+	if len(desired) == 0 && m.inGlobalMode() {
+		return m.stayInGlobalMode()
+	}
 	if len(m.slots) == 0 {
 		err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
 		switch {
@@ -597,8 +604,36 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// enterGlobalMode transitions from workspace-tab or classic mode back to
-// global (no-workspace) mode. Builds a fresh
+// inGlobalMode reports whether the focused slot is the global slot: no tab
+// is open, and the classic slot's context names no workspace — the global
+// context classic startup and enterGlobalMode give it (a nil context, in
+// bare test homes, counts too). A classic slot for a named workspace
+// (`loom --workspace`, or launched inside one) is not: leaving it for
+// global mode is a real transition.
+func (m *home) inGlobalMode() bool {
+	return len(m.slots) == 0 && (m.wsCtx == nil || m.wsCtx.Name == "")
+}
+
+// stayInGlobalMode applies a picker commit with nothing selected (the
+// Global row, or every workspace unchecked) made from global mode. The
+// focused slot already is the global slot, so nothing is rebuilt: a reload
+// would attach a second client to every live session (then release the
+// first), crash-restart and orphan-recover all over again, and on a
+// latched global storage fail with nothing to fall back to — leaving the
+// workspaces that failed to restore, the only thing such a commit can
+// change, impossible to deselect. It closes those (restoreFailed) and
+// persists the now-empty open list, after the teardown every picker
+// commit runs on the focused slot (leaveFocusedSlot).
+func (m *home) stayInGlobalMode() tea.Cmd {
+	m.leaveFocusedSlot()
+	m.restoreFailed = nil
+	m.saveOpenWorkspaces()
+	return tea.RequestWindowSize
+}
+
+// enterGlobalMode transitions from workspace-tab mode, or from a classic
+// workspace slot, to global (no-workspace) mode; from global mode itself
+// applyWorkspaceToggle runs stayInGlobalMode instead. Builds a fresh
 // global slot for config.GlobalWorkspaceContext — the context classic
 // global startup uses, so both resolve the same directory
 // (LOOM_GLOBAL_DIR, else ~/.loom; never LOOM_HOME) and the slot carries
@@ -680,16 +715,16 @@ func (m *home) enterGlobalMode() tea.Cmd {
 		return m.handleError(fmt.Errorf("failed to load global sessions (staying in workspace mode): %w", err))
 	}
 
-	// Picker escape hatch (W → Global row) from global mode reaches here
-	// with no leaveFocusedSlot of its own — clean up workbench residue
-	// (wbRatio flush, split-terminal restore) and flush pending ratios
-	// while the departing slot's appState is still current, or handleQuit
-	// later flushes them into the new global state.json.
+	// Picker escape hatch (W → Global row) from a classic workspace slot
+	// reaches here with no leaveFocusedSlot of its own — clean up workbench
+	// residue (wbRatio flush, split-terminal restore) and flush pending
+	// ratios while the departing slot's appState is still current, or
+	// handleQuit later flushes them into the new global state.json.
 	m.leaveFocusedSlot()
 
 	// Everything loaded so far is dropped: every tab, or — global mode
-	// re-entered from global mode — the previous global slot. The focused
-	// one's panes live on in the global slot.
+	// entered from a classic workspace slot — that slot. The focused one's
+	// panes live on in the global slot.
 	dropped, carried := m.openSlots(), m.workspaceSlot
 	m.slots = nil
 	m.focusedSlot = 0

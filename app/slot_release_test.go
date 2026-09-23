@@ -145,9 +145,10 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		assertReleased(t, m, cmd, live)
 	})
 
-	t.Run("global mode re-entered from global mode", func(t *testing.T) {
+	t.Run("global mode entered from a classic workspace slot", func(t *testing.T) {
 		t.Setenv(config.EnvGlobalDir, t.TempDir())
 		m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
+		m.wsCtx.Name = "ws-classic" // launched inside a workspace, no tabs
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "g-live")
 		m.list.AddInstance(live)

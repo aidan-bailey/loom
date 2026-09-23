@@ -222,3 +222,42 @@ func TestResumeDone_OwnerReopened(t *testing.T) {
 	assert.GreaterOrEqual(t, recC.calls, 1, "the reopened slot is saved")
 	assert.True(t, resumed.Pane().PtmxAlive(), "displayed again, so its preview stays")
 }
+
+// TestResumeFailed_AfterOwnerDroppedReleasesPreview: a resume attaches its
+// preview client before its checkpoint save, and a failing save comes back
+// as transitionFailedMsg, which reverted the instance to Paused but left
+// that client open. With the owner closed meanwhile, nothing displays the
+// instance, so the client leaked until exit.
+func TestResumeFailed_AfterOwnerDroppedReleasesPreview(t *testing.T) {
+	isolateTmux(t)
+	failedResume := func(inst *session.Instance) transitionFailedMsg {
+		return transitionFailedMsg{inst: inst, title: inst.Title, op: "resume", previousStatus: session.Paused,
+			err: errors.New("resume checkpoint save: disk full")}
+	}
+
+	t.Run("owner closed", func(t *testing.T) {
+		m, _, _ := ownerTestHome(t)
+		owner := m.workspaceSlot
+		drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
+		// finishResume leaves it Running, preview attached, when the save fails.
+		resumed := liveInstance(t, "resumed")
+		owner.list.AddInstance(resumed)
+
+		_, cmd := m.Update(failedResume(resumed))
+
+		assert.Equal(t, session.Paused, resumed.GetStatus(), "reverted, so the user can retry")
+		assertReleased(t, m, cmd, resumed)
+	})
+
+	t.Run("control: owner loaded, the preview stays", func(t *testing.T) {
+		m, _, _ := ownerTestHome(t)
+		resumed := liveInstance(t, "resumed")
+		m.list.AddInstance(resumed)
+
+		_, cmd := m.Update(failedResume(resumed))
+		drainCmd(cmd)
+
+		assert.Equal(t, session.Paused, resumed.GetStatus())
+		assert.True(t, resumed.Pane().PtmxAlive(), "a displayed instance keeps its preview")
+	})
+}

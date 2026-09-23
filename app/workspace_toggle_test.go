@@ -33,11 +33,13 @@ func (r *recordingInstanceStorage) SaveInstances(data json.RawMessage) error {
 func (r *recordingInstanceStorage) GetInstances() json.RawMessage { return r.lastData }
 func (r *recordingInstanceStorage) DeleteAllInstances() error     { return nil }
 
-// TestApplyWorkspaceToggle_GlobalToGlobalPersists is the smaller of
-// the two leak-fix tests. Empty desired triggers enterGlobalMode after
-// the leak-fix's preemptive save, so the only SaveInstances call that
-// hits the test recorder is the one the bug was missing.
-func TestApplyWorkspaceToggle_GlobalToGlobalPersists(t *testing.T) {
+// TestApplyWorkspaceToggle_ClassicToGlobalPersists is the smaller of
+// the two leak-fix tests. From a classic workspace slot, empty desired
+// triggers enterGlobalMode (which replaces the slot) after the leak-fix's
+// preemptive save, so the only SaveInstances call that hits the test
+// recorder is the one the bug was missing. (From global mode there is no
+// transition: see TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces.)
+func TestApplyWorkspaceToggle_ClassicToGlobalPersists(t *testing.T) {
 	// LOOM_GLOBAL_DIR redirects enterGlobalMode's reconstruction of
 	// global storage away from the real ~/.loom — tests must not write
 	// to the user's home dir.
@@ -56,19 +58,22 @@ func TestApplyWorkspaceToggle_GlobalToGlobalPersists(t *testing.T) {
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 			storage:   storage,
+			wsCtx:     &config.WorkspaceContext{Name: "classic-ws", ConfigDir: t.TempDir()},
 		},
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
 		tabBar: ui.NewWorkspaceTabBar(),
 		errBox: ui.NewErrBox(),
-		// registry = nil, slots = nil — global mode.,
+		// registry = nil, slots = nil — classic mode.,
 	}
 
 	require.Equal(t, 0, rec.calls, "no save calls before invoke")
 
-	// Empty desired triggers global → global with enterGlobalMode.
+	// Empty desired triggers classic → global with enterGlobalMode.
 	_ = h.applyWorkspaceToggle(nil)
+	require.NotNil(t, h.wsCtx)
+	require.Empty(t, h.wsCtx.Name, "fixture: the transition ran")
 
 	assert.GreaterOrEqual(t, rec.calls, 1,
 		"global storage must be saved at least once during transition (leak-fix regression)")

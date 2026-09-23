@@ -18,7 +18,10 @@ import (
 // the message at dispatch — and on the instance by identity, never on the
 // focused slot's list, storage or selection. (Kill, pause and transition
 // failures carry the instance and act by identity; a killed or paused
-// instance has no attach client left for a closed owner to leak.)
+// instance has no attach client left for a closed owner to leak, and a
+// resume that failed after attaching — its checkpoint save — has its
+// client released by the transitionFailedMsg handler when no loaded slot
+// holds it.)
 //
 // Nor do they move the focused slot's selection while another flow is on
 // screen (m.state != stateDefault): a creation flow, an inline attach or
