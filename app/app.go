@@ -712,19 +712,28 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// agents repaint, and that output must not relabel a waiting
 			// prompt as Running — quiet-time detection owns leaving
 			// Prompting once the prompt is actually gone.
+			// A Claude session whose hooks or roster reported a status is
+			// exempt too: the report owns the status, and output alone
+			// says nothing new.
 			st := inst.GetStatus()
-			if st == session.Ready {
+			if _, _, reported := inst.ClaudeStatus(); st == session.Ready && !reported {
 				if err := inst.TransitionTo(session.Running); err != nil {
 					log.For("app").Warn("event.transition_failed", "instance", inst.Title, "to", "Running", "err", err.Error())
 				}
 				m.updateTabBarStatuses()
+			}
+			var cmds []tea.Cmd
+			// Answering a permission prompt makes output (the dialog goes
+			// away) but fires no hook; the roster reports busy at once.
+			if st == session.Prompting && session.IsClaudeProgram(inst.Program()) {
+				cmds = append(cmds, m.maybeRosterQuerySoon())
 			}
 			if selected != nil && inst == selected {
 				if err := m.splitPane.UpdateAgent(selected); err != nil {
 					return m, m.handleError(err)
 				}
 			}
-			return m, nil
+			return m, tea.Batch(cmds...)
 		}
 		// Not an agent session — the terminal pane's current session renders;
 		// dirty events from cached-but-hidden terminal sessions are dropped.
@@ -773,14 +782,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// Debug, not warn: a missing daemon or an older CLI without
 			// `agents --json` is a supported configuration, not a fault —
-			// detection simply falls back to pane content. Dropping the
-			// previous roster is deliberate; a stale snapshot would keep
-			// driving transitions long after it stopped being true.
+			// detection simply falls back to hooks and pane content.
+			// Dropping the previous roster is deliberate; a stale snapshot
+			// would keep driving transitions long after it stopped being
+			// true, which is also why observeRoster voids every
+			// roster-sourced status below.
 			log.DebugKV("app.roster.query_failed", "err", msg.err.Error())
 			m.roster = nil
-			return m, nil
+		} else {
+			m.roster = msg.entries
 		}
-		m.roster = msg.entries
+		m.observeRoster(msg.at)
 		return m, nil
 	case ghReadyMsg:
 		m.handleGHReady(msg)
@@ -800,13 +812,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			log.WarnKV("app.event.capture_failed", "instance", msg.instance.Title, "err", msg.err.Error())
 			return m, nil
 		}
-		// Claude publishes its own status, so prefer it over the pane
-		// ladder below, which can only infer one from screen text. An
-		// authoritative answer also retires the re-detection chain: the
-		// ladder re-samples because one content hash cannot distinguish
-		// "still working" from "just finished", but the roster says which
-		// it is, and the next health tick refreshes it.
-		target, authoritative := m.adoptRosterStatus(msg.instance)
+		// Claude reports its own status, through its hooks and the roster,
+		// so prefer it over the pane ladder below, which can only infer one
+		// from screen text. A reported status also retires the
+		// re-detection chain: the ladder re-samples because one content
+		// hash cannot distinguish "still working" from "just finished",
+		// but the report says which it is.
+		target, authoritative := m.adoptClaudeStatus(msg.instance)
 		if !authoritative {
 			// Same transition ladder as the old metadata tick: still-changing →
 			// Running; settled with a prompt → Prompting; settled → Ready.
@@ -952,18 +964,16 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive) {
 				continue
 			}
-			// The roster applies on BOTH paths. The exclusion below is
-			// specifically about r.updated/r.hasPrompt, which are zero for
-			// emulator instances (no capture ran) and would fight the event
-			// pipeline; the roster is a real freshly-queried value, so it is
-			// safe here — and it is the only thing that corrects a session
-			// that changes state while emitting no output at all (a long
-			// silent tool call fires no quiet event to sample). It may be up
-			// to one tick stale: rosterQueryCmd is dispatched in the same
-			// batch as gatherMetadataCmd, so this reads the previous tick's
-			// answer. TransitionTo still validates, so an illegal transition
-			// is rejected rather than forced.
-			if target, authoritative := m.adoptRosterStatus(r.instance); authoritative {
+			// Claude's reported status applies on BOTH paths. The exclusion
+			// below is specifically about r.updated/r.hasPrompt, which are
+			// zero for emulator instances (no capture ran) and would fight
+			// the event pipeline. Hook scans and roster answers already
+			// moved the instance when they landed (applyClaudeStatus);
+			// applying the report here again covers a move TransitionTo
+			// refused then, and keeps the snapshot path in lockstep with
+			// the event path. TransitionTo still validates, so an illegal
+			// transition is rejected rather than forced.
+			if target, authoritative := m.adoptClaudeStatus(r.instance); authoritative {
 				if err := r.instance.TransitionTo(target); err != nil {
 					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", target.String(), "err", err.Error())
 				}

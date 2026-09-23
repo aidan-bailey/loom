@@ -4,6 +4,7 @@ import (
 	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
@@ -112,6 +113,11 @@ func (m *home) maybeRedetect(sessionName string) tea.Cmd {
 type rosterReadyMsg struct {
 	entries map[string]session.RosterEntry
 	err     error
+	// at is when the query started, which is when its answer was true.
+	// Each instance's observation is stamped with it (see
+	// session.Instance.ObserveRoster), so an answer from before a hook
+	// event loses to that event however late it lands.
+	at time.Time
 }
 
 // rosterQueryCmd schedules one roster query covering the whole fleet.
@@ -132,8 +138,9 @@ func rosterQueryCmd(active []*session.Instance) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
+		at := time.Now()
 		entries, err := session.QueryClaudeRoster(program, internalexec.Default{})
-		return rosterReadyMsg{entries: entries, err: err}
+		return rosterReadyMsg{entries: entries, err: err, at: at}
 	}
 }
 
@@ -157,11 +164,10 @@ func (m *home) maybeRosterQuery(active []*session.Instance) tea.Cmd {
 	})
 }
 
-// rosterStatusFor returns Claude's authoritative status for inst, if it
-// published one, along with its stated reason for blocking (empty unless
+// rosterStatusFor returns the roster's answer for inst from m.roster, if
+// it has one, along with Claude's stated reason for blocking (empty unless
 // the status is Prompting, and even then only when the CLI named one).
-// The bool is false whenever Loom must fall back to the pane-content
-// ladder: a non-Claude agent, an empty or failed roster, no entry for
+// The bool is false when the roster has no opinion: a non-Claude agent, an empty or failed roster, no entry for
 // this worktree (the join key is the directory Claude runs in), or a
 // status string this build does not recognize.
 //
@@ -181,27 +187,85 @@ func (m *home) rosterStatusFor(inst *session.Instance) (session.Status, string, 
 	return status, entry.WaitingFor, authoritative
 }
 
-// adoptRosterStatus is the single place the roster's answer is applied to
-// an instance. It returns what rosterStatusFor decided and, as a side
-// effect, records Claude's reason for blocking on the instance so the card
-// can render it.
+// adoptClaudeStatus is the single place a Claude session's reported status
+// is applied to an instance. It returns the instance's merged hook and
+// roster observation (see session.Instance.ClaudeStatus) and, as a side
+// effect, records Claude's reason for blocking so the card can render it.
 //
-// The reason lives exactly as long as the roster-driven wait: any other
+// The reason lives exactly as long as the reported wait: any other
 // outcome clears it. Both status paths (statusDetectedMsg and
-// metadataReadyMsg) must go through here — duplicating the set/clear at
-// each call site is how the two drift apart, which is the lockstep hazard
-// called out in CLAUDE.md.
-func (m *home) adoptRosterStatus(inst *session.Instance) (session.Status, bool) {
+// metadataReadyMsg) must go through here, and so must applyClaudeStatus;
+// duplicating the set/clear at each call site is how they drift apart,
+// which is the lockstep hazard called out in CLAUDE.md.
+func (m *home) adoptClaudeStatus(inst *session.Instance) (session.Status, bool) {
 	if inst == nil {
 		return session.Ready, false
 	}
-	target, reason, authoritative := m.rosterStatusFor(inst)
-	if authoritative && target == session.Prompting {
+	status, reason, ok := inst.ClaudeStatus()
+	if ok && status == session.Prompting {
 		inst.SetWaitReason(reason)
 	} else {
 		inst.SetWaitReason("")
 	}
-	return target, authoritative
+	return status, ok
+}
+
+// applyClaudeStatus moves inst to the status its hooks or the roster last
+// reported, for a change that arrived outside the two status paths: a hook
+// scan or a roster answer. It does nothing for an instance the status
+// pipelines may not drive (statusEligible), and clears a stale wait reason
+// when neither source has an opinion.
+func (m *home) applyClaudeStatus(inst *session.Instance) {
+	if !statusEligible(inst) {
+		return
+	}
+	target, ok := m.adoptClaudeStatus(inst)
+	if !ok {
+		return
+	}
+	if err := inst.TransitionTo(target); err != nil {
+		log.For("app").Warn("claude_status.transition_failed", "instance", inst.Title, "to", target.String(), "err", err.Error())
+	}
+}
+
+// observeRoster offers the roster in m.roster to every active Claude
+// instance, stamped with at, and moves any whose status changed. An
+// instance the roster has no opinion on (a failed query leaves m.roster
+// nil) loses a roster-sourced status but keeps a hook-sourced one.
+func (m *home) observeRoster(at time.Time) {
+	changed := false
+	for _, inst := range m.activeInstances() {
+		if !session.IsClaudeProgram(inst.Program()) {
+			continue
+		}
+		status, reason, ok := m.rosterStatusFor(inst)
+		if inst.ObserveRoster(status, reason, ok, at) {
+			changed = true
+			m.applyClaudeStatus(inst)
+		}
+	}
+	if changed {
+		m.updateTabBarStatuses()
+	}
+}
+
+// promptingRosterSpacing bounds how often a Prompting session's output
+// can trigger a roster query (see paneDirtyMsg). Answering a prompt makes
+// output but fires no hook, and the roster reports busy at once.
+const promptingRosterSpacing = 500 * time.Millisecond
+
+// maybeRosterQuerySoon dispatches a roster query ahead of the roster's own
+// cadence, but at most once per promptingRosterSpacing and never while one
+// is in flight. A request() would not do: a Prompting session the roster
+// has no opinion on would then query back to back for as long as it
+// produces output.
+func (m *home) maybeRosterQuerySoon() tea.Cmd {
+	g := m.gate(gateRoster)
+	if !g.due(time.Now(), promptingRosterSpacing) {
+		return nil
+	}
+	g.expedite()
+	return m.maybeRosterQuery(m.activeInstances())
 }
 
 // ratioSaveMsg flushes the throttled split-ratio persistence: resizeSplit

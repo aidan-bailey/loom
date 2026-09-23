@@ -28,7 +28,7 @@ func TestRosterOverridesScrapedStatus(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
-	m.roster = rosterFor(inst, session.RosterStatusWaiting)
+	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
 
@@ -46,7 +46,7 @@ func TestRosterBusyMapsToRunning(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
-	m.roster = rosterFor(inst, session.RosterStatusBusy)
+	deliverRoster(m, rosterFor(inst, session.RosterStatusBusy))
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: false})
 
@@ -63,7 +63,6 @@ func TestRosterAbsentFallsBackToScraper(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
-	m.roster = nil
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
 
@@ -79,7 +78,7 @@ func TestRosterUnknownStatusFallsBack(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
-	m.roster = rosterFor(inst, session.RosterStatusUnknown)
+	deliverRoster(m, rosterFor(inst, session.RosterStatusUnknown))
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
 
@@ -96,7 +95,7 @@ func TestRosterIgnoredForNonClaudeInstance(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
-	m.roster = rosterFor(inst, session.RosterStatusWaiting)
+	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
 
@@ -166,7 +165,7 @@ func TestRosterWaitReasonReachesInstance(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
-	m.roster = rosterWithReason(inst, session.RosterStatusWaiting, "sandbox request")
+	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "sandbox request"))
 
 	m.Update(statusDetectedMsg{instance: inst, updated: true})
 
@@ -183,11 +182,11 @@ func TestRosterWaitReasonClearedWhenNoLongerWaiting(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
-	m.roster = rosterWithReason(inst, session.RosterStatusWaiting, "dialog open")
+	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "dialog open"))
 	m.Update(statusDetectedMsg{instance: inst, updated: true})
 	require.Equal(t, "dialog open", inst.WaitReason(), "precondition")
 
-	m.roster = rosterWithReason(inst, session.RosterStatusBusy, "")
+	deliverRoster(m, rosterWithReason(inst, session.RosterStatusBusy, ""))
 	m.Update(statusDetectedMsg{instance: inst, updated: true})
 
 	require.Equal(t, session.Running, inst.GetStatus())
@@ -203,11 +202,11 @@ func TestRosterWaitReasonClearedWhenRosterGoesAway(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
-	m.roster = rosterWithReason(inst, session.RosterStatusWaiting, "input needed")
+	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "input needed"))
 	m.Update(statusDetectedMsg{instance: inst, updated: true})
 	require.Equal(t, "input needed", inst.WaitReason(), "precondition")
 
-	m.roster = nil
+	failRoster(m)
 	m.Update(statusDetectedMsg{instance: inst, updated: false, hasPrompt: true})
 
 	require.Equal(t, session.Prompting, inst.GetStatus(),
