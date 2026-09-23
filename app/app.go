@@ -134,7 +134,10 @@ type home struct {
 	// (len(m.slots) > 0) it IS m.slots[m.focusedSlot]; in classic/global
 	// mode (no tabs) it is the classic slot, which is not in m.slots.
 	// Never nil after newHome. Only loadSlot and enterGlobalMode
-	// reassign it.
+	// reassign it, and every m.slots mutation restores the invariant
+	// before returning (activateWorkspace focuses the first tab opened
+	// from classic mode; deactivateWorkspace refocuses when it closes the
+	// focused tab and never closes the last one).
 	*workspaceSlot
 
 	// -- Storage and Configuration --
@@ -874,19 +877,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// because time passed with no other activity.
 		m.errBox.ExpireIfDue(time.Now())
 
-		// Collect instances from all workspace slots (focused uses m.list).
-		var allInstances []*session.Instance
-		if len(m.slots) > 0 {
-			for i, slot := range m.slots {
-				if i == m.focusedSlot {
-					allInstances = append(allInstances, m.list.GetInstances()...)
-				} else {
-					allInstances = append(allInstances, slot.list.GetInstances()...)
-				}
-			}
-		} else {
-			allInstances = m.list.GetInstances()
-		}
+		// Collect instances from every loaded workspace slot.
+		allInstances := m.allInstances()
 
 		// Filter to active instances.
 		selected := m.list.GetSelectedInstance()
@@ -1473,14 +1465,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Focus the just-registered slot so the user sees its
 		// instances immediately. activateWorkspace appends to the
 		// end, so the new slot is at len-1 (not 0 — the prior
-		// loadSlot(0) would have surfaced an unrelated tab).
-		// Flush any pending split-ratio save for the outgoing slot
-		// before loadSlot swaps the active workspace context.
-		m.flushPendingRatioSaves()
-		m.focusedSlot = len(m.slots) - 1
-		m.loadSlot(m.focusedSlot)
+		// loadSlot(0) would have surfaced an unrelated tab). loadSlot
+		// flushes the outgoing slot's pending split-ratio saves.
+		m.loadSlot(len(m.slots) - 1)
 		m.updateTabBarStatuses()
-		m.showRecoverySummary(m.slots[m.focusedSlot].recovery)
+		m.showRecoverySummary(m.recovery)
 
 		return m, tea.RequestWindowSize
 	case instanceStartedMsg:
@@ -2345,26 +2334,21 @@ func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
 }
 
 // repoPath returns the git repository path for the current context.
-// When a workspace is active it returns the workspace's registered path;
-// otherwise it falls back to the process working directory.
+// When a workspace tab is focused it returns the workspace's registered
+// path; otherwise (classic/global mode, even with a startup workspace
+// context) it falls back to the process working directory.
 func (m *home) repoPath() string {
-	if len(m.slots) > 0 && m.focusedSlot >= 0 && m.focusedSlot < len(m.slots) {
-		if p := m.slots[m.focusedSlot].wsCtx.RepoPath; p != "" {
-			return p
-		}
+	if len(m.slots) > 0 && m.wsCtx.RepoPath != "" {
+		return m.wsCtx.RepoPath
 	}
 	cwd, _ := os.Getwd()
 	return cwd
 }
 
-// configDir returns the config directory for the focused workspace slot.
-// Mirrors repoPath() so both functions stay consistent if focusedSlot moves
-// out of sync with wsCtx. Returns empty string when no workspace is
-// active (triggers fallback to GetConfigDir).
+// configDir returns the config directory for the focused slot. Returns
+// empty string when it has no workspace context (global mode; triggers
+// fallback to GetConfigDir).
 func (m *home) configDir() string {
-	if len(m.slots) > 0 && m.focusedSlot >= 0 && m.focusedSlot < len(m.slots) {
-		return m.slots[m.focusedSlot].wsCtx.ConfigDir
-	}
 	if m.wsCtx != nil {
 		return m.wsCtx.ConfigDir
 	}

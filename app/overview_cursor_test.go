@@ -82,4 +82,5 @@ func TestFocusCursorSlot_Focuses(t *testing.T) {
 	assert.Equal(t, 1, m.focusedSlot, "focus moved to cursor slot")
 	assert.Same(t, m.slots[1], m.workspaceSlot, "cursor slot is the focused slot")
 	assert.Equal(t, 0, m.list.SelectedIdx(), "cursor instance selected")
+	require.NoError(t, m.checkSlotInvariant())
 }

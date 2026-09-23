@@ -179,6 +179,7 @@ func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 		"in-progress markdown edit must be canceled")
 	assert.Same(t, m.slots[1].workbench, m.workbench,
 		"target slot's workbench must be live after the switch")
+	require.NoError(t, m.checkSlotInvariant())
 }
 
 // TestWorkbench_WheelOverRightPanelScrollsMarkdown pins the mouse-wheel

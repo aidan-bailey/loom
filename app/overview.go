@@ -34,7 +34,7 @@ func (m *home) jumpWaiting(dir int) {
 		}
 		for step := 1; step <= n; step++ {
 			p := order[((start+dir*step)%n+n)%n]
-			inst := m.slotList(p.slot).GetInstances()[p.inst]
+			inst := m.slots[p.slot].list.GetInstances()[p.inst]
 			if inst.GetStatus() == session.Prompting || inst.BellPending() {
 				m.overviewCursor = overviewCursor{slot: p.slot, inst: p.inst}
 				return
@@ -58,7 +58,7 @@ func (m *home) jumpWaiting(dir int) {
 		}
 	} else {
 		for _, si := range m.fleetSlotOrder() {
-			items := m.slotList(si).GetInstances()
+			items := m.slots[si].list.GetInstances()
 			for _, idx := range ui.SortForOverview(items) {
 				if items[idx].GetStatus() == session.Deleting {
 					continue
@@ -86,11 +86,9 @@ func (m *home) jumpWaiting(dir int) {
 	for step := 1; step <= n; step++ {
 		i := ((start+dir*step)%n + n) % n
 		p := order[i]
-		var list *ui.List
-		if len(m.slots) == 0 {
-			list = m.list
-		} else {
-			list = m.slotList(p.slot)
+		list := m.list // classic/global mode: the only list
+		if len(m.slots) > 0 {
+			list = m.slots[p.slot].list
 		}
 		inst := list.GetInstances()[p.inst]
 		if inst.GetStatus() == session.Prompting || inst.BellPending() {
@@ -114,15 +112,6 @@ func (m *home) enterOverview() {
 // fleetPos is one selectable card in fleet display order.
 type fleetPos struct{ slot, inst int }
 
-// slotList resolves the live list for a slot index: the focused slot's
-// list is hoisted onto m.list, every other slot keeps its own.
-func (m *home) slotList(si int) *ui.List {
-	if si == m.focusedSlot {
-		return m.list
-	}
-	return m.slots[si].list
-}
-
 // fleetOrder flattens all loaded, non-collapsed slots into a single
 // display-ordered, attention-sorted list of selectable positions,
 // skipping Deleting instances. Mirrors overviewData's grouping so cursor
@@ -133,7 +122,7 @@ func (m *home) fleetOrder() []fleetPos {
 		if m.overview.IsCollapsed(m.slotGroupName(m.slots[si])) {
 			continue
 		}
-		items := m.slotList(si).GetInstances()
+		items := m.slots[si].list.GetInstances()
 		for _, idx := range ui.SortForOverview(items) {
 			if items[idx].GetStatus() == session.Deleting {
 				continue
@@ -304,7 +293,7 @@ func (m *home) overviewData() ui.OverviewData {
 	groups := make([]ui.OverviewGroup, 0, len(slotOrder))
 	for _, si := range slotOrder {
 		slot := m.slots[si]
-		g := overviewGroupFor(m.slotGroupName(slot), m.slotList(si).GetInstances())
+		g := overviewGroupFor(m.slotGroupName(slot), slot.list.GetInstances())
 		// Translate the domain cursor (slot,inst) → render cursor
 		// (group,item) when this is the cursor's slot.
 		if si == m.overviewCursor.slot {

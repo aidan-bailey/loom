@@ -28,9 +28,12 @@ func handleStateWorkspaceKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			if err := m.activateWorkspace(*selected); err != nil {
 				return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 			}
-			m.loadSlot(0)
+			// Focus the new tab (the last one). From classic mode
+			// activateWorkspace already has; loadSlot flushes the
+			// departing slot's pending split ratios either way.
+			m.loadSlot(len(m.slots) - 1)
 			m.updateTabBarStatuses()
-			m.showRecoverySummary(m.slots[0].recovery)
+			m.showRecoverySummary(m.recovery)
 			if m.registry != nil {
 				_ = m.registry.UpdateLastUsed(selected.Name)
 			}

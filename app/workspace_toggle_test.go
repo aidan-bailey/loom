@@ -307,6 +307,7 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	assert.Same(t, ctxA, h.wsCtx, "still in workspace mode")
 	assert.Same(t, storageA, h.storage, "storage must not be swapped for the unreadable global one")
 	assert.Same(t, listA, h.list)
+	require.NoError(t, h.checkSlotInvariant())
 
 	got, err := os.ReadFile(statePath)
 	require.NoError(t, err)

@@ -28,4 +28,5 @@ func TestJumpWaiting_CrossesToPeerWorkspace(t *testing.T) {
 	m.jumpWaiting(1)
 	assert.Equal(t, 1, m.focusedSlot, "focus crossed to the peer workspace")
 	assert.Equal(t, "p-wait", m.list.GetSelectedInstance().Title)
+	require.NoError(t, m.checkSlotInvariant())
 }

@@ -41,19 +41,12 @@ func (m *home) instanceForSession(name string) *session.Instance {
 		}
 		return nil
 	}
-	if len(m.slots) > 0 {
-		for i, slot := range m.slots {
-			l := slot.list
-			if i == m.focusedSlot {
-				l = m.list
-			}
-			if inst := check(l); inst != nil {
-				return inst
-			}
+	for _, slot := range m.openSlots() {
+		if inst := check(slot.list); inst != nil {
+			return inst
 		}
-		return nil
 	}
-	return check(m.list)
+	return nil
 }
 
 // statusDetectedMsg carries one instance's settled-content detection result

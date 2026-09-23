@@ -118,11 +118,8 @@ func (m *home) baseBranchByRepo() map[string]string {
 // allInstances returns every instance across open slots (or the
 // classic list).
 func (m *home) allInstances() []*session.Instance {
-	if len(m.slots) == 0 {
-		return m.list.GetInstances()
-	}
 	var out []*session.Instance
-	for _, s := range m.slots {
+	for _, s := range m.openSlots() {
 		if s.list != nil {
 			out = append(out, s.list.GetInstances()...)
 		}

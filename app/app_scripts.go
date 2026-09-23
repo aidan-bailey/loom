@@ -10,6 +10,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
@@ -17,16 +18,19 @@ import (
 
 // scriptDoneMsg is dispatched when a script action finishes (success
 // or failure). pendingInstances carries any instances the script
-// created via ctx:new_instance{} so Update can finalize them into
-// h.list on the main goroutine. pendingIntents carries the Intents a
-// handler enqueued (via cs.await(cs.actions.foo())) before yielding
-// — handleScriptDone dispatches each one and the matching runXYZ
-// schedules a scriptResumeMsg when done.
+// created via ctx:new_instance{} so Update can finalize them into the
+// dispatch slot's list on the main goroutine. pendingIntents carries
+// the Intents a handler enqueued (via cs.await(cs.actions.foo()))
+// before yielding — handleScriptDone dispatches each one and the
+// matching runXYZ schedules a scriptResumeMsg when done.
 //
 // trace is the correlation ID minted at key-dispatch time; propagating
 // it through the message lets every downstream log record (intent
 // dispatch, script.error, coroutine resume) share one grep-able
 // identifier.
+//
+// slot is the slot that was focused when the host snapshot was taken
+// (see scriptHost.slot): the one pendingInstances were built for.
 type scriptDoneMsg struct {
 	err              error
 	pendingInstances []*session.Instance
@@ -35,6 +39,7 @@ type scriptDoneMsg struct {
 	pendingIntents   []pendingIntent
 	trace            string
 	key              string
+	slot             *workspaceSlot
 }
 
 // scriptResumeMsg feeds a value back into a suspended handler
@@ -65,6 +70,11 @@ type scriptHost struct {
 	// splitPane is the focused slot's pane at snapshot time. Only its
 	// terminal is used, which is fixed at construction and locks itself.
 	splitPane *ui.SplitPane
+	// slot is the focused slot at snapshot time, whose ConfigDir and repo
+	// path ctx:new_instance builds from. Identity only: carried into
+	// scriptDoneMsg and compared on the Update goroutine, never
+	// dereferenced by the host.
+	slot *workspaceSlot
 
 	mu      sync.Mutex
 	pending []*session.Instance
@@ -87,6 +97,7 @@ func newScriptHost(m *home) *scriptHost {
 		repoPath:       m.repoPath(),
 		defaultProgram: m.program,
 		splitPane:      m.splitPane,
+		slot:           m.workspaceSlot,
 	}
 	if m.list != nil {
 		h.selected = m.list.GetSelectedInstance()
@@ -524,6 +535,7 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 			pendingIntents:   intents,
 			trace:            trace,
 			key:              key,
+			slot:             host.slot,
 		}
 	}, true
 }
@@ -679,33 +691,55 @@ func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 			notices:          notices,
 			pendingIntents:   intents,
 			trace:            msg.trace,
+			slot:             host.slot,
 		}
 	}
 }
 
 // handleScriptDone processes a scriptDoneMsg: finalizes any pending
-// instances into the list, routes a failure through handleError, and
-// surfaces script notices via errBox so users see them inline. The
-// ordering keeps instance adoption prior to error display so that,
-// e.g., a script that creates an instance and then errors still
-// leaves the new session visible. instanceChanged fires unconditionally
-// on dispatch so sync primitives (CursorUp/Down/ToggleDiff) that used
-// to trigger a refresh in the legacy runXYZ now still do.
+// instances into the list of the slot they were built for (or drops
+// them with a notice if the user switched workspace mid-dispatch),
+// routes a failure through handleError, and surfaces script notices via
+// errBox so users see them inline. The ordering keeps instance adoption
+// prior to error display so that, e.g., a script that creates an
+// instance and then errors still leaves the new session visible.
+// instanceChanged fires unconditionally on dispatch so sync primitives
+// (CursorUp/Down/ToggleDiff) that used to trigger a refresh in the
+// legacy runXYZ now still do.
 func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
+	// Pending instances were built from the snapshot of the slot focused
+	// at dispatch (its ConfigDir and repo path). If the user switched
+	// workspace while the script ran, adding them to the slot focused now
+	// would file one workspace's session under another, so they are
+	// dropped with a notice (like handleIssuePicked's repo guard). Decide
+	// before the deferred actions run: one of them may be the script's own
+	// workspace switch, after which the instance still belongs to — and
+	// is added to — the slot it was built for.
+	adopt := msg.slot != nil && msg.slot == m.workspaceSlot
 	// Apply deferred model mutations from the script "sync" primitives
 	// (cursor/scroll/diff/workspace navigation) first, on the main
 	// goroutine. They were recorded — not executed — during dispatch to
-	// avoid racing Update/View; see scriptHost.deferModelMutation.
+	// avoid racing Update/View; see scriptHost.deferModelMutation. They
+	// act on whichever slot is focused now.
 	for _, act := range msg.pendingActions {
 		act(m)
 	}
-	for _, inst := range msg.pendingInstances {
-		m.list.AddInstance(inst)
+	var cmds []tea.Cmd
+	if adopt {
+		for _, inst := range msg.pendingInstances {
+			msg.slot.list.AddInstance(inst)
+		}
+	} else if len(msg.pendingInstances) > 0 {
+		titles := make([]string, len(msg.pendingInstances))
+		for i, inst := range msg.pendingInstances {
+			titles[i] = inst.Title
+		}
+		log.For("script").Warn("pending_instances_dropped", "trace", msg.trace, "titles", titles)
+		cmds = append(cmds, m.handleError(fmt.Errorf("workspace changed while a script ran; not creating %s here", strings.Join(titles, ", "))))
 	}
 	// Notices surface through the error bar so they auto-clear on
 	// the same 3s schedule as real errors. ErrBox has no info-style
 	// channel yet; adding one is deferred to a follow-up change.
-	var cmds []tea.Cmd
 	// Throttled split-ratio persistence: resizeSplit (run just above as a
 	// deferred action) only records pending ratios in-memory — a deferred
 	// action can't return a tea.Cmd, so the flush tick is armed here where
