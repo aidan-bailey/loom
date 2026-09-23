@@ -34,6 +34,10 @@ func (aiderAdapter) ApplyRecoveryFlag(program string) string {
 	return program
 }
 
+// ApplyResumeFlag is a no-op for aider — it cannot resume a named
+// conversation.
+func (aiderAdapter) ApplyResumeFlag(program, _ string) string { return program }
+
 // ApplyRemoteControlFlag is a no-op for aider — it has no remote-control mode.
 func (aiderAdapter) ApplyRemoteControlFlag(program, _ string) string {
 	return program

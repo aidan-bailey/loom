@@ -1499,8 +1499,9 @@ var newRecoverySession = tmux.NewTmuxSession
 
 // startFreshWithRecovery creates a brand-new tmux session for an instance
 // whose previous session no longer exists (normal after crash or kill-server).
-// The program is rewritten via BuildRecoveryCommand so supported agents resume
-// their prior conversation (e.g. `claude --continue`).
+// The program is rewritten via BuildResumeCommand so Claude resumes its
+// prior conversation (`claude --resume <id>`, or `--continue` when none is
+// recorded).
 //
 // A failed start leaves the worktree alone. It is never scratch here: it
 // is the tree the agent exited from, one a live session was using, or a
@@ -1519,8 +1520,8 @@ func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 
 // CrashRestart starts a new tmux session for a crash-recovered instance.
 // The worktree already exists (for regular instances) or is unnecessary
-// (for workspace terminals). The program is modified with --continue for
-// supported agents.
+// (for workspace terminals). The program is modified with --resume <id>
+// (or --continue) for Claude, via BuildResumeCommand.
 //
 // Like Resume, it relaunches only into an intact worktree. Reconcile
 // picks this path because the directory exists, but a gutted one has no

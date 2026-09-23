@@ -1,6 +1,9 @@
 package session
 
 import (
+	"os"
+	"regexp"
+
 	"github.com/aidan-bailey/loom/session/agent"
 )
 
@@ -15,6 +18,25 @@ var defaultRegistry = agent.DefaultRegistry()
 // are returned unchanged.
 func BuildRecoveryCommand(program string) string {
 	return defaultRegistry.Lookup(program).ApplyRecoveryFlag(program)
+}
+
+// claudeSessionIDRe matches the UUIDs Claude uses as session IDs. The ID
+// is inserted into a shell command, so anything else is refused.
+var claudeSessionIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// BuildResumeCommand rewrites program to resume the recorded conversation:
+// --resume <sessionID> when the ID is a well-formed Claude session ID and
+// its transcript still exists, else BuildRecoveryCommand's --continue.
+// The transcript check matters because Claude deletes transcripts after
+// cleanupPeriodDays (30 by default), and --resume on a missing one exits
+// at once, which the health tick would read as the agent dying again.
+func BuildResumeCommand(program, sessionID, transcriptPath string) string {
+	if claudeSessionIDRe.MatchString(sessionID) && transcriptPath != "" {
+		if _, err := os.Stat(transcriptPath); err == nil {
+			return defaultRegistry.Lookup(program).ApplyResumeFlag(program, sessionID)
+		}
+	}
+	return BuildRecoveryCommand(program)
 }
 
 // BuildRemoteControlCommand modifies a program command string to launch

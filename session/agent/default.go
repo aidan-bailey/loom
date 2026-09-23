@@ -27,6 +27,10 @@ func (defaultAdapter) PendingPromptPattern() string { return "" }
 // ApplyRecoveryFlag implements Adapter.
 func (defaultAdapter) ApplyRecoveryFlag(program string) string { return program }
 
+// ApplyResumeFlag implements Adapter. The fallback adapter never modifies
+// the program.
+func (defaultAdapter) ApplyResumeFlag(program, _ string) string { return program }
+
 // ApplyRemoteControlFlag implements Adapter. The fallback adapter never
 // modifies the program string, so unknown agents get no remote-control flag.
 func (defaultAdapter) ApplyRemoteControlFlag(program, _ string) string { return program }

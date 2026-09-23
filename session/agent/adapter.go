@@ -56,6 +56,13 @@ type Adapter interface {
 	// already present, the input is returned unchanged. Returns the
 	// input unchanged if the adapter does not support recovery.
 	ApplyRecoveryFlag(program string) string
+	// ApplyResumeFlag returns the program string with the agent's flag for
+	// resuming the named conversation (e.g. "claude --resume <id>").
+	// Returns the input unchanged when it already carries --continue or
+	// --resume, when sessionID is empty, and for agents that cannot resume
+	// a named conversation. sessionID must already be validated: it is
+	// inserted into a shell command.
+	ApplyResumeFlag(program, sessionID string) string
 	// ApplyRemoteControlFlag returns the program string with the agent's
 	// remote-control flag appended (e.g. "claude --remote-control foo"),
 	// using sessionName to name the remote session where the agent

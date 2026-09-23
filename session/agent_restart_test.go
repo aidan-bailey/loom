@@ -1,9 +1,12 @@
 package session
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildRecoveryCommand_Claude(t *testing.T) {
@@ -231,4 +234,21 @@ func TestInstanceEnv_CombinesBothTogglesIndependently(t *testing.T) {
 
 func TestInstanceEnv_NonClaudeIsEmpty(t *testing.T) {
 	assert.Empty(t, InstanceEnv("aider --model gemma", true, true))
+}
+
+func TestBuildResumeCommand(t *testing.T) {
+	const id = "8c634184-0fe5-4b62-b437-8f364eeeefcc"
+	transcript := filepath.Join(t.TempDir(), id+".jsonl")
+	require.NoError(t, os.WriteFile(transcript, []byte("{}\n"), 0o600))
+	missing := filepath.Join(t.TempDir(), "gone.jsonl")
+
+	assert.Equal(t, "claude --resume "+id, BuildResumeCommand("claude", id, transcript))
+	assert.Equal(t, "claude --continue", BuildResumeCommand("claude", id, missing),
+		"Claude deletes old transcripts, and --resume on a missing one exits at once")
+	assert.Equal(t, "claude --continue", BuildResumeCommand("claude", "", transcript))
+	assert.Equal(t, "claude --continue", BuildResumeCommand("claude", id, ""))
+	assert.Equal(t, "claude --continue", BuildResumeCommand("claude", "x; rm -rf ~", transcript),
+		"the ID goes into a shell command: only a UUID is accepted")
+	assert.Equal(t, "claude --continue --model sonnet", BuildResumeCommand("claude --continue --model sonnet", id, transcript))
+	assert.Equal(t, "aider", BuildResumeCommand("aider", id, transcript))
 }

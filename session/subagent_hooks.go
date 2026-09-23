@@ -114,11 +114,13 @@ func (i *Instance) resetHookLaunch() {
 
 // recoveryLaunch returns the full launch command and the tmux session env
 // for a recovery launch. The env keys off the recovery program (the bare
-// program rewritten by BuildRecoveryCommand), not the full command.
+// program rewritten by BuildResumeCommand: --resume <id> for the recorded
+// conversation, else --continue), not the full command.
 // startFreshWithRecovery and CrashRestart always start a new Claude process.
 func (i *Instance) recoveryLaunch() (launch string, env []string) {
 	program, headroomProxy, cacheTTL1h := i.launchSpec()
-	program = BuildRecoveryCommand(program)
+	sessionID, transcriptPath := i.ClaudeSession()
+	program = BuildResumeCommand(program, sessionID, transcriptPath)
 	return i.launchProgram(program, true), InstanceEnv(program, headroomProxy, cacheTTL1h)
 }
 

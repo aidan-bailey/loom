@@ -410,3 +410,21 @@ func TestSubagents_HiddenWhenTrackingOff(t *testing.T) {
 	withTracking(t, true)
 	assert.Len(t, inst.Subagents(), 1, "the tracker kept running, so the rows return at once")
 }
+
+func TestRecoveryLaunch_ResumesRecordedConversation(t *testing.T) {
+	inst := hooksInstance(t, "claude")
+	const id = "8c634184-0fe5-4b62-b437-8f364eeeefcc"
+	transcript := filepath.Join(t.TempDir(), id+".jsonl")
+	require.NoError(t, os.WriteFile(transcript, nil, 0o600))
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true, Events: []hooks.Event{
+		{Name: hooks.EventSessionStart, Source: "startup", SessionID: id, TranscriptPath: transcript, At: time.Now()},
+	}}))
+
+	launch, env := inst.recoveryLaunch()
+
+	assert.Contains(t, launch, "--resume "+id)
+	assert.NotContains(t, launch, "--continue")
+	assert.Equal(t, InstanceEnv("claude --resume "+id, false, false), env)
+	got, _ := inst.ClaudeSession()
+	assert.Equal(t, id, got, "the relaunch's reset keeps the ID until its own SessionStart replaces it")
+}

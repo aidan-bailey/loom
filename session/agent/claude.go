@@ -52,6 +52,22 @@ func (claudeAdapter) ApplyRecoveryFlag(program string) string {
 	return insertAfterCommand(program, "--continue")
 }
 
+// ApplyResumeFlag inserts "--resume <sessionID>" after "claude". Returns
+// program unchanged if --continue or --resume is already present, or if
+// program or sessionID is empty.
+func (claudeAdapter) ApplyResumeFlag(program, sessionID string) string {
+	parts := strings.Fields(program)
+	if len(parts) == 0 || sessionID == "" {
+		return program
+	}
+	for _, p := range parts[1:] {
+		if p == "--continue" || p == "--resume" || strings.HasPrefix(p, "--resume=") {
+			return program
+		}
+	}
+	return insertAfterCommand(program, "--resume "+sessionID)
+}
+
 // remoteControlNameRe matches every run of characters that are not safe
 // in a bare shell token. `tmux new-session` runs the program string
 // through the shell, so a --remote-control session name derived from a

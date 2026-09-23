@@ -274,3 +274,16 @@ func TestHasSettingsFlag(t *testing.T) {
 	assert.False(t, HasSettingsFlag("--settings"), "the command token itself is not a flag")
 	assert.False(t, HasSettingsFlag(""))
 }
+
+func TestApplyResumeFlag(t *testing.T) {
+	const id = "8c634184-0fe5-4b62-b437-8f364eeeefcc"
+	c := Claude()
+	assert.Equal(t, "claude --resume "+id+" --model sonnet", c.ApplyResumeFlag("claude --model sonnet", id))
+	assert.Equal(t, "/usr/bin/claude --resume "+id, c.ApplyResumeFlag("/usr/bin/claude", id))
+	assert.Equal(t, "claude --continue", c.ApplyResumeFlag("claude --continue", id), "the user's own recovery flag wins")
+	assert.Equal(t, "claude --resume other", c.ApplyResumeFlag("claude --resume other", id))
+	assert.Equal(t, "claude", c.ApplyResumeFlag("claude", ""))
+	for _, ad := range []Adapter{Aider(), Gemini(), Default()} {
+		assert.Equal(t, "x --flag", ad.ApplyResumeFlag("x --flag", id), ad.Name())
+	}
+}

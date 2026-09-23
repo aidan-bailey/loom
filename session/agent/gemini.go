@@ -33,6 +33,10 @@ func (geminiAdapter) ApplyRecoveryFlag(program string) string {
 	return program
 }
 
+// ApplyResumeFlag is a no-op for gemini — it cannot resume a named
+// conversation.
+func (geminiAdapter) ApplyResumeFlag(program, _ string) string { return program }
+
 // ApplyRemoteControlFlag is a no-op for gemini — it has no remote-control mode.
 func (geminiAdapter) ApplyRemoteControlFlag(program, _ string) string {
 	return program
