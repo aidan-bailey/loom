@@ -2,8 +2,11 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -128,26 +131,59 @@ func (g *GitWorktree) runGitCommandEnv(extraEnv []string, path string, args ...s
 	return g.runGitCommandEnvTimeout(extraEnv, gitTimeout, path, args...)
 }
 
-// runGitCommandEnvTimeout is the single implementation behind every
-// runGitCommand* variant: env overlay plus an explicit deadline.
+// runGitCommandEnvTimeout is runGitCore with stdout and stderr combined,
+// the form every runGitCommand* variant returns.
 func (g *GitWorktree) runGitCommandEnvTimeout(extraEnv []string, timeout time.Duration, path string, args ...string) (string, error) {
+	return g.runGitCore(extraEnv, timeout, false, path, args...)
+}
+
+// runGitStdout is runGitCommand for callers that parse the output: it
+// returns stdout alone, so nothing git writes to stderr (a warning, a
+// GIT_TRACE line) can be mistaken for the answer. Stderr still reaches
+// the error on failure.
+func (g *GitWorktree) runGitStdout(path string, args ...string) (string, error) {
+	return g.runGitCore(nil, gitTimeout, true, path, args...)
+}
+
+// ErrTimeout marks a git command killed at its deadline: git never
+// answered, which says nothing about the state it was asked about.
+var ErrTimeout = errors.New("git did not answer in time")
+
+// IsTimeout reports whether err comes from a git command that timed out.
+func IsTimeout(err error) bool { return errors.Is(err, ErrTimeout) }
+
+// runGitCore is the single implementation behind every git runner here:
+// env overlay, explicit deadline, and combined or stdout-only output.
+func (g *GitWorktree) runGitCore(extraEnv []string, timeout time.Duration, stdoutOnly bool, path string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	c := internalexec.GitCommand(ctx, path, args...)
 	c.Env = append(c.Env, extraEnv...)
 
 	t0 := time.Now()
-	output, err := g.runner.CombinedOutput(c)
+	var output []byte
+	var err error
+	if stdoutOnly {
+		output, err = g.runner.Output(c)
+	} else {
+		output, err = g.runner.CombinedOutput(c)
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		log.For("git").Debug("git.cmd.timeout", "cmd", strings.Join(args, " "), "path", path, "timeout_ms", timeout.Milliseconds())
-		return "", fmt.Errorf("git command timed out after %s: git %s", timeout, strings.Join(args, " "))
+		return "", fmt.Errorf("git command timed out after %s: git %s: %w", timeout, strings.Join(args, " "), ErrTimeout)
 	}
 	if err != nil {
+		if stdoutOnly {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				output = exitErr.Stderr
+			}
+		}
 		// Debug because many callers intentionally ignore "branch not found" /
 		// "worktree doesn't exist" errors. Elevating to Warn would spam. Callers
 		// that want Warn/Error semantics do so at their layer.
 		log.For("git").Debug("git.cmd.failed", "cmd", strings.Join(args, " "), "path", path, "duration_ms", time.Since(t0).Milliseconds(), "err", err.Error(), "output", strings.TrimSpace(string(output)))
-		return "", fmt.Errorf("git command failed: %s (%w)", output, err)
+		return "", fmt.Errorf("git command failed: %s (%w)", strings.TrimSpace(string(output)), err)
 	}
 	if gitOkEvery.ShouldLog() {
 		log.For("git").Debug("git.cmd.ok", "cmd", strings.Join(args, " "), "path", path, "duration_ms", time.Since(t0).Milliseconds())
@@ -379,21 +415,21 @@ func (g *GitWorktree) StashOnDisk(sha string) (bool, error) {
 }
 
 // StashListed reports whether the stash commit sha is still an entry in
-// `git stash list`, returning its current stash@{N} name when it is.
+// `git stash list`, returning its current stash@{N} name when it is (a
+// position that shifts as other sessions stash; see DropStash). One
+// listing supplies every entry's commit, so no per-entry lookup can fail
+// quietly: when the list cannot be read the answer is an error, never
+// "not listed" — callers forget a stash that is not listed.
 func (g *GitWorktree) StashListed(sha string) (string, error) {
 	if sha == "" {
 		return "", nil
 	}
-	list, err := g.runGitCommand(g.repoPath, "stash", "list", "--format=%gd")
+	out, err := g.runGitStdout(g.repoPath, "stash", "list", "--format=%gd %H")
 	if err != nil {
 		return "", fmt.Errorf("failed to list stash: %w", err)
 	}
-	for _, ref := range strings.Fields(list) {
-		out, err := g.runGitCommand(g.repoPath, "rev-parse", ref)
-		if err != nil {
-			continue
-		}
-		if strings.TrimSpace(out) == sha {
+	for _, line := range strings.Split(out, "\n") {
+		if ref, hash, ok := strings.Cut(strings.TrimSpace(line), " "); ok && hash == sha {
 			return ref, nil
 		}
 	}
@@ -469,33 +505,70 @@ func (g *GitWorktree) unstageNewlyAddedFiles() error {
 	return nil
 }
 
-// DropStash removes the stash-list entry matching sha, if present.
-// No-op if sha is empty or no longer found (already dropped, or never
-// stored). Resolves each entry's own commit hash via `git rev-parse`
-// rather than assuming stack position, for the same reason ApplyStash
-// does — refs/stash is shared across every worktree of this repo, so
-// "top of stack" could belong to a different worktree by now. Runs
-// against repoPath rather than worktreePath since refs/stash is a
-// repo-level concept and the worktree directory may not exist at call
-// time (e.g. after Kill has already removed it).
+// DropStash removes the stash-list entry for commit sha, if present. A
+// no-op if sha is empty or no longer listed (already dropped, or never
+// stored). Runs against repoPath rather than worktreePath since refs/stash
+// is a repo-level concept and the worktree directory may not exist at
+// call time (e.g. after Kill has already removed it).
 //
-// Narrow TOCTOU: the loop resolves stash@{N} -> sha, then reuses that
-// same stash@{N} name in the "stash drop" call below rather than the
-// resolved sha, so a concurrent push from another worktree that lands
-// between the two could shift what stash@{N} refers to. Left as-is
-// deliberately — git serializes stash ref updates, so the window is a
-// single process's gap between two subprocess calls, and worst case is
-// a failed/no-op drop (caught by the caller's own list scan on any
-// retry), not data loss.
+// `git stash drop` only takes a position, stash@{N}, and refs/stash is
+// shared by every worktree of the repository: another session pushing or
+// dropping between the lookup and the drop shifts the stack, and the drop
+// then deletes that session's entry — its only copy of the work. So the
+// drop is verified against the commit git reports it removed. A wrong
+// entry is stored straight back (at the top of the stack; its content and
+// message are kept, its position is not) and the lookup retried.
 func (g *GitWorktree) DropStash(sha string) error {
-	ref, err := g.StashListed(sha)
-	if err != nil || ref == "" {
+	for attempt := 0; attempt < maxStashDropAttempts; attempt++ {
+		ref, err := g.StashListed(sha)
+		if err != nil || ref == "" {
+			return err
+		}
+		out, err := g.runGitStdout(g.repoPath, "stash", "drop", ref)
+		if err != nil {
+			return fmt.Errorf("failed to drop stash %s: %w", ref, err)
+		}
+		dropped := droppedStashSHA(out)
+		if dropped == sha {
+			return nil
+		}
+		if dropped == "" {
+			return fmt.Errorf("`git stash drop %s` did not say which stash it removed (%q); check `git -C %s stash list --format='%%gd %%H'` against stash %s", ref, strings.TrimSpace(out), g.repoPath, sha)
+		}
+		log.For("git").Warn("stash.drop_hit_other_entry", "want", sha, "dropped", dropped, "ref", ref)
+		if err := g.restoreStashEntry(dropped); err != nil {
+			return fmt.Errorf("the stack moved while dropping stash %s, so `git stash drop %s` removed another entry, %s, and storing it back failed — restore it with `git -C %s stash store %s`: %w", sha, ref, dropped, g.repoPath, dropped, err)
+		}
+	}
+	return fmt.Errorf("the stash stack kept moving while dropping stash %s; left it in place", sha)
+}
+
+// maxStashDropAttempts bounds DropStash's retries when the shared stash
+// stack keeps moving under it.
+const maxStashDropAttempts = 5
+
+// droppedStashRe matches `git stash drop`'s report, "Dropped <ref> (<sha>)".
+// GitCommand forces git's messages to English, so the wording is stable.
+var droppedStashRe = regexp.MustCompile(`Dropped .* \(([0-9a-f]{40,64})\)`)
+
+// droppedStashSHA returns the commit `git stash drop` reported removing,
+// or "" if the output does not say.
+func droppedStashSHA(out string) string {
+	if m := droppedStashRe.FindStringSubmatch(out); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// restoreStashEntry puts a stash commit back on the stash list, under the
+// message its commit carries (for a stash, what `git stash list` shows).
+func (g *GitWorktree) restoreStashEntry(sha string) error {
+	msg, err := g.runGitStdout(g.repoPath, "log", "-1", "--format=%s", sha)
+	if err != nil {
 		return err
 	}
-	if _, err := g.runGitCommand(g.repoPath, "stash", "drop", ref); err != nil {
-		return fmt.Errorf("failed to drop stash %s: %w", ref, err)
-	}
-	return nil
+	_, err = g.runGitCommand(g.repoPath, "stash", "store", "-m", strings.TrimSpace(msg), sha)
+	return err
 }
 
 // Merge runs `git merge <sourceBranch>` in the worktree's directory,

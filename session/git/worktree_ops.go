@@ -168,13 +168,19 @@ func (s TreeState) String() string {
 }
 
 // InspectTree classifies what is on disk at the worktree path. The error
-// accompanies TreeUnverified and says why the tree could not be confirmed.
+// accompanies TreeUnverified and says why the tree could not be confirmed;
+// IsTimeout tells a git that never answered apart from one that rejected
+// the tree.
 //
 // The .git check comes first and is load-bearing, not an optimization:
 // worktrees can live inside the repo they belong to (a workspace keeps
 // them under <repo>/.loom/worktrees), so git run from a directory that
-// lost its .git walks up and answers for the enclosing repo. That is also
-// why a successful rev-parse must report this path as its top level.
+// lost its .git walks up and answers for the enclosing repo. An intact
+// verdict lets Resume launch an agent into the tree, so git must also
+// report the path as its own top level and as a linked worktree of this
+// session's repository (not an unrelated repo, the main checkout, or a
+// submodule), and the worktree must not still be locked "initializing" by
+// a `git worktree add` that never finished.
 func (g *GitWorktree) InspectTree() (TreeState, error) {
 	fi, err := os.Stat(g.worktreePath)
 	switch {
@@ -194,29 +200,51 @@ func (g *GitWorktree) InspectTree() (TreeState, error) {
 		return TreeUnverified, fmt.Errorf("stat %s/.git: %w", g.worktreePath, err)
 	}
 
-	out, err := g.runGitCommand(g.worktreePath, "rev-parse", "--is-inside-work-tree", "--show-toplevel")
+	out, err := g.runGitStdout(g.worktreePath, "rev-parse", "--path-format=absolute",
+		"--is-inside-work-tree", "--show-toplevel", "--git-dir", "--git-common-dir")
 	if err != nil {
 		return TreeUnverified, err
 	}
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 2 || strings.TrimSpace(lines[0]) != "true" {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 4 || lines[0] != "true" {
 		return TreeUnverified, fmt.Errorf("git does not consider %s a working tree: %q", g.worktreePath, strings.TrimSpace(out))
 	}
-	if !samePath(strings.TrimSpace(lines[1]), g.worktreePath) {
-		return TreeUnverified, fmt.Errorf("git resolves %s to the working tree at %s, not its own", g.worktreePath, strings.TrimSpace(lines[1]))
+	top, gitDir, commonDir := lines[1], lines[2], lines[3]
+	if !sameFile(top, g.worktreePath) {
+		return TreeUnverified, fmt.Errorf("git resolves %s to the working tree at %s, not its own", g.worktreePath, top)
+	}
+
+	repoCommon, err := g.runGitStdout(g.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return TreeUnverified, fmt.Errorf("resolve the git dir of repository %s: %w", g.repoPath, err)
+	}
+	if !sameFile(commonDir, strings.TrimSpace(repoCommon)) {
+		return TreeUnverified, fmt.Errorf("%s belongs to the repository at %s, not %s", g.worktreePath, commonDir, g.repoPath)
+	}
+	if sameFile(gitDir, commonDir) {
+		return TreeUnverified, fmt.Errorf("%s is the main checkout of %s, not a linked worktree", g.worktreePath, g.repoPath)
+	}
+	// `git worktree add` holds this lock until its checkout completes.
+	// Loom's git runs with English messages, so the reason is literal.
+	if reason, err := os.ReadFile(filepath.Join(gitDir, "locked")); err == nil && strings.TrimSpace(string(reason)) == "initializing" {
+		return TreeUnverified, fmt.Errorf("%s is still locked \"initializing\": the `git worktree add` that created it never finished", g.worktreePath)
 	}
 	return TreeIntact, nil
 }
 
-// samePath reports whether a and b name the same directory once symlinks
-// are resolved (git prints the resolved path; a stored path may not be).
-func samePath(a, b string) bool {
-	ra, errA := filepath.EvalSymlinks(a)
-	rb, errB := filepath.EvalSymlinks(b)
-	if errA != nil || errB != nil {
-		return filepath.Clean(a) == filepath.Clean(b)
+// sameFile reports whether a and b name the same file or directory: the
+// stored path may reach it through symlinks or a bind mount, or differ in
+// case on a case-insensitive filesystem, where comparing strings would not.
+func sameFile(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
 	}
-	return ra == rb
+	fb, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(fa, fb)
 }
 
 // clearWorktreePath frees worktreePath so a subsequent `git worktree add`
