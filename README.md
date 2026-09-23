@@ -45,7 +45,7 @@ Available Commands:
   completion  Generate the autocompletion script for the specified shell
   debug       Print debug information like config paths
   help        Help about any command
-  reset       Reset all stored instances
+  reset       Delete a workspace's instances, tmux sessions, worktrees, and their branches (destructive)
   version     Print the version number of loom
   workspace   Manage workspaces
 

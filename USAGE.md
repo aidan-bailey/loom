@@ -556,7 +556,7 @@ loom [command]
 |---------|-------------|
 | `version` | Print version number |
 | `debug` | Print config paths and loaded configuration |
-| `reset` | Reset all instances, cleanup tmux sessions and worktrees |
+| `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**. Stops before removing worktrees if the tmux cleanup fails. |
 | `workspace` | Manage workspaces (see below) |
 
 ### Workspace Subcommands

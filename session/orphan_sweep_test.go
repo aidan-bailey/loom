@@ -1,15 +1,19 @@
 package session
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,7 +57,8 @@ func listing(pairs ...string) string {
 func sweep(t *testing.T, claimed map[string]bool, scope SweepScope, list string) []string {
 	t.Helper()
 	srv := &sweepServer{listing: list}
-	require.NoError(t, CleanupOrphanedSessions(claimed, scope, srv.executor()))
+	_, err := CleanupOrphanedSessions(claimed, scope, srv.executor())
+	require.NoError(t, err)
 	return srv.killed
 }
 
@@ -84,7 +89,9 @@ func TestCleanupOrphanedSessions_KillsUnclaimedUnderOwnedRoots(t *testing.T) {
 		"loom_oldterminal", mine.RepoPath, // a workspace terminal runs at the repo root
 	)}
 
-	require.NoError(t, CleanupOrphanedSessions(map[string]bool{}, ownedScope(mine), srv.executor()))
+	res, err := CleanupOrphanedSessions(map[string]bool{}, ownedScope(mine), srv.executor())
+	require.NoError(t, err)
+	assert.Equal(t, SweepResult{Killed: 5}, res)
 
 	assert.Equal(t, []string{"ls", "-F", "#{session_name}\t#{session_path}"}, srv.list[len(srv.list)-3:],
 		"the sweep reads each session's start directory")
@@ -229,15 +236,70 @@ func TestCleanupOrphanedSessions_FilesystemRootOwnsNothing(t *testing.T) {
 	assert.Empty(t, killed)
 }
 
+// TestCleanupOrphanedSessions_NoTmux: no server means nothing to sweep.
+// Any other listing failure is an error — the sweep cannot say which of
+// the workspace's sessions still run, and `loom reset` must not go on to
+// delete their worktrees — and it kills nothing.
 func TestCleanupOrphanedSessions_NoTmux(t *testing.T) {
 	mine := workspaceAt(t, filepath.Join(t.TempDir(), "mine"))
-	srv := &sweepServer{listErr: &exec.ExitError{}}
-	assert.NoError(t, CleanupOrphanedSessions(nil, ownedScope(mine), srv.executor()))
+	srv := &sweepServer{listErr: errors.New("no server running on /tmp/tmux-1000/default")}
+	_, err := CleanupOrphanedSessions(nil, ownedScope(mine), srv.executor())
+	assert.NoError(t, err)
 	assert.Empty(t, srv.killed)
 
-	srv = &sweepServer{listing: "loom_x\t" + mine.RepoPath + "\n", listErr: errors.New("timed out")}
-	assert.NoError(t, CleanupOrphanedSessions(nil, ownedScope(mine), srv.executor()))
-	assert.Empty(t, srv.killed, "a failed list kills nothing")
+	for _, listErr := range []error{errors.New("signal: killed"), &exec.ExitError{}} {
+		srv = &sweepServer{listing: "loom_x\t" + mine.RepoPath + "\n", listErr: listErr}
+		_, err = CleanupOrphanedSessions(nil, ownedScope(mine), srv.executor())
+		assert.Error(t, err, "a listing that failed (%v) is not an empty server", listErr)
+		assert.Empty(t, srv.killed, "a failed list kills nothing")
+	}
+}
+
+// TestCleanupOrphanedSessions_KillFailuresAreErrors: a kill that failed
+// leaves the session's agent running; the sweep says so, with counts, and
+// still tries the rest.
+func TestCleanupOrphanedSessions_KillFailuresAreErrors(t *testing.T) {
+	mine := workspaceAt(t, filepath.Join(t.TempDir(), "mine"))
+	wt := filepath.Join(mine.ConfigDir, "worktrees")
+	srv := &sweepServer{listing: listing(
+		"loom_stuck", filepath.Join(wt, "stuck"),
+		"loom_gone", filepath.Join(wt, "gone"),
+		"loom_foreign", t.TempDir(),
+		"loom_v1.2", filepath.Join(wt, "v12"),
+	)}
+	ex := srv.executor()
+	run := ex.RunFunc
+	ex.RunFunc = func(c *exec.Cmd) error {
+		if slices.Contains(c.Args, "=loom_stuck") {
+			_ = run(c)
+			return errors.New("exit status 1")
+		}
+		return run(c)
+	}
+
+	res, err := CleanupOrphanedSessions(nil, ownedScope(mine), ex)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "loom_stuck")
+	assert.Equal(t, SweepResult{Killed: 1, Unowned: 1, Untargetable: 1, Failed: 1}, res)
+	assert.ElementsMatch(t, []string{"=loom_stuck", "=loom_gone"}, srv.killed, "the other kills still run")
+}
+
+// TestCleanupOrphanedSessions_LogsSummary: skipped sessions were visible
+// only at debug level; every sweep now logs its counts at info.
+func TestCleanupOrphanedSessions_LogsSummary(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Structured
+	log.Structured = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	t.Cleanup(func() { log.Structured = prev })
+	mine := workspaceAt(t, filepath.Join(t.TempDir(), "mine"))
+
+	sweep(t, nil, ownedScope(mine), listing(
+		"loom_stale", filepath.Join(mine.ConfigDir, "worktrees", "stale"),
+		"loom_foreign", t.TempDir(),
+	))
+
+	assert.Contains(t, buf.String(), "msg=orphan_tmux.sweep_done subsystem=reconcile killed=1 unowned=1 untargetable=0 failed=0")
 }
 
 func TestNewSweepScope(t *testing.T) {

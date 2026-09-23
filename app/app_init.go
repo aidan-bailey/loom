@@ -311,7 +311,7 @@ func (m *home) loadSlotStorage(slot *workspaceSlot, cfgDir string, cmdExec cmd2.
 			owned.RepoPath = wsCtx.RepoPath
 		}
 		scope := session.NewSweepScope([]*config.WorkspaceContext{owned}, m.registry)
-		if err := session.CleanupOrphanedSessions(claimedTitles, scope, cmdExec); err != nil {
+		if _, err := session.CleanupOrphanedSessions(claimedTitles, scope, cmdExec); err != nil {
 			log.For("app").Error("orphan_cleanup_failed", "err", err)
 		}
 	}
@@ -431,7 +431,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 			owned = append(owned, slot.wsCtx)
 		}
 		scope := session.NewSweepScope(owned, m.registry)
-		if err := session.CleanupOrphanedSessions(claimedTitles, scope, m.executor()); err != nil {
+		if _, err := session.CleanupOrphanedSessions(claimedTitles, scope, m.executor()); err != nil {
 			log.For("app").Error("orphan_cleanup_failed", "err", err)
 		}
 	}

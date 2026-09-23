@@ -150,13 +150,14 @@ var (
 			"(those started in its repo or worktrees directory), and removes all its managed\n" +
 			"worktrees INCLUDING their branches — unpushed commits on those branches are\n" +
 			"lost. Without --workspace it resets the global workspace. Sessions of other\n" +
-			"workspaces are left running. This cannot be undone; it requires --force.",
+			"workspaces are left running. If the tmux cleanup fails, reset stops before\n" +
+			"removing any worktree. This cannot be undone; it requires --force.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := nestingCheck(); err != nil {
 				return err
 			}
 			if !resetForceFlag {
-				return fmt.Errorf("loom reset deletes all instances, tmux sessions, worktrees AND their branches (unpushed commits are lost); re-run with --force to proceed")
+				return fmt.Errorf("loom reset deletes the workspace's instances, kills its tmux sessions (only those started in its repo or worktrees directory), and removes its worktrees AND their branches (unpushed commits are lost); re-run with --force to proceed")
 			}
 			// Resolve target workspace explicitly — per
 			// docs/specs/workspaces.md §3, empty-string fallbacks are
@@ -191,10 +192,15 @@ var (
 				registry = nil
 			}
 			scope := session.NewSweepScope([]*config.WorkspaceContext{wsCtx}, registry)
-			if err := session.CleanupOrphanedSessions(nil, scope, cmd2.MakeExecutor()); err != nil {
-				return fmt.Errorf("failed to cleanup tmux sessions: %w", err)
+			swept, err := session.CleanupOrphanedSessions(nil, scope, resetExecutor())
+			if err != nil {
+				// Some of this workspace's sessions may still be running,
+				// with agents inside the worktrees removed below: stop here.
+				return fmt.Errorf("tmux cleanup failed (%d killed, %d kills failed); worktrees and branches were NOT removed, since an agent may still be running in one — re-run once tmux answers: %w",
+					swept.Killed, swept.Failed, err)
 			}
-			fmt.Println("Tmux sessions have been cleaned up")
+			fmt.Printf("Tmux sessions have been cleaned up: %d killed, %d left running (started outside this workspace), %d left running (name tmux cannot target exactly)\n",
+				swept.Killed, swept.Unowned, swept.Untargetable)
 
 			if err := git.CleanupWorktrees(wsCtx.ConfigDir, nil); err != nil {
 				return fmt.Errorf("failed to cleanup worktrees: %w", err)
@@ -273,6 +279,10 @@ var nestingCheck = tmux.CheckNestingFromEnv
 // used; otherwise the global context is returned. Per
 // docs/specs/workspaces.md §3, every subsystem needs a concrete
 // ConfigDir.
+// resetExecutor runs reset's tmux commands. A var so tests can make the
+// sweep fail without a real tmux.
+var resetExecutor = cmd2.MakeExecutor
+
 func resolveResetWorkspace() (*config.WorkspaceContext, error) {
 	if resetWorkspaceFlag != "" {
 		registry, err := config.LoadWorkspaceRegistry()

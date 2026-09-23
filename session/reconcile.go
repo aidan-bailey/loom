@@ -430,6 +430,21 @@ func pathWithin(p, root string) bool {
 	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
+// SweepResult counts what one orphan sweep (CleanupOrphanedSessions) did
+// with the unclaimed loom sessions it found.
+type SweepResult struct {
+	// Killed sessions were started under an owned root.
+	Killed int
+	// Unowned sessions were left running: started outside every owned
+	// root, or with a start directory that could not be read.
+	Unowned int
+	// Untargetable sessions were left running: their names hold ':' or
+	// '.', so no target names them exactly.
+	Untargetable int
+	// Failed sessions were owned, but killing them failed.
+	Failed int
+}
+
 // CleanupOrphanedSessions kills the loom tmux sessions (either prefix, so
 // upgrades from claude-squad don't leave zombie panes behind) that no
 // title in claimedTitles owns and whose working directory scope owns.
@@ -440,17 +455,31 @@ func pathWithin(p, root string) bool {
 // owned root is left alone, and so is one whose name tmux cannot target
 // exactly (tmux.ExactlyTargetable). Kills are by exact name
 // (tmux.SessionTarget).
-func CleanupOrphanedSessions(claimedTitles map[string]bool, scope SweepScope, cmdExec internalexec.Executor) error {
+//
+// No server running means nothing to sweep. Any other listing failure (a
+// timeout on a loaded server, say) is an error, as is every failed kill:
+// either way some of scope's sessions may still be running, and `loom
+// reset` must not go on to delete the worktrees under them. Startup
+// callers log the error and carry on. Every sweep logs an
+// orphan_tmux.sweep_done summary at info level.
+func CleanupOrphanedSessions(claimedTitles map[string]bool, scope SweepScope, cmdExec internalexec.Executor) (SweepResult, error) {
+	var res SweepResult
+	lg := log.For("reconcile")
 	listCtx, listCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer listCancel()
 	// "ls" is list-sessions; app tests recognize the sweep by it.
 	output, err := cmdExec.Output(tmux.Command(listCtx, "ls", "-F", sweepListFormat))
 	if err != nil {
-		// No tmux server running — nothing to clean up
-		return nil
+		if isNoTmuxServer(err) {
+			lg.Info("orphan_tmux.sweep_done", "killed", 0, "unowned", 0, "untargetable", 0, "failed", 0, "no_server", true)
+			return res, nil
+		}
+		lg.Error("orphan_tmux.list_failed", "err", err)
+		return res, fmt.Errorf("list tmux sessions: %w", err)
 	}
 
 	roots := scope.resolve()
+	var killErrs []error
 	for _, line := range strings.Split(string(output), "\n") {
 		sessionName, dir, _ := strings.Cut(line, "\t")
 		if !(strings.HasPrefix(sessionName, tmux.TmuxPrefix) || strings.HasPrefix(sessionName, tmux.LegacyTmuxPrefix)) {
@@ -459,25 +488,32 @@ func CleanupOrphanedSessions(claimedTitles map[string]bool, scope SweepScope, cm
 		if sessionClaimed(sessionName, claimedTitles) {
 			continue
 		}
+		if !roots.owns(dir) {
+			res.Unowned++
+			lg.Debug("orphan_tmux.skip_unowned", "session", sessionName, "dir", dir)
+			continue
+		}
 		// A name holding ':' or '.' (made by a loom that did not map them
 		// out) has no exact target: kill-session -t=loom_feat:0 kills
 		// loom_feat.
 		if !tmux.ExactlyTargetable(sessionName) {
-			log.For("reconcile").Warn("orphan_tmux.skip_untargetable", "session", sessionName, "dir", dir)
+			res.Untargetable++
+			lg.Warn("orphan_tmux.skip_untargetable", "session", sessionName, "dir", dir)
 			continue
 		}
-		if !roots.owns(dir) {
-			log.For("reconcile").Debug("orphan_tmux.skip_unowned", "session", sessionName, "dir", dir)
-			continue
-		}
-		log.For("reconcile").Info("orphan_tmux.kill_begin", "session", sessionName, "dir", dir)
+		lg.Info("orphan_tmux.kill_begin", "session", sessionName, "dir", dir)
 		killCtx, killCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 		if err := cmdExec.Run(tmux.Command(killCtx, "kill-session", "-t", tmux.SessionTarget(sessionName))); err != nil {
-			log.For("reconcile").Error("orphan_tmux.kill_failed", "session", sessionName, "err", err)
+			res.Failed++
+			lg.Error("orphan_tmux.kill_failed", "session", sessionName, "err", err)
+			killErrs = append(killErrs, fmt.Errorf("kill tmux session %s: %w", sessionName, err))
+		} else {
+			res.Killed++
 		}
 		killCancel()
 	}
-	return nil
+	lg.Info("orphan_tmux.sweep_done", "killed", res.Killed, "unowned", res.Unowned, "untargetable", res.Untargetable, "failed", res.Failed)
+	return res, errors.Join(killErrs...)
 }
 
 // sessionClaimed reports whether a claimed title owns the tmux session

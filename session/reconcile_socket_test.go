@@ -45,7 +45,8 @@ func TestCleanupOrphanedSessions_PrivateSocketSparesEnclosingServer(t *testing.T
 	t.Setenv("TMUX", strings.TrimSpace(string(out))+",1,0")
 	t.Setenv(tmux.EnvTmuxSocket, private)
 
-	require.NoError(t, CleanupOrphanedSessions(map[string]bool{}, ownedScope(mine), internalexec.Default{}))
+	_, err = CleanupOrphanedSessions(map[string]bool{}, ownedScope(mine), internalexec.Default{})
+	require.NoError(t, err)
 
 	assert.NoError(t, tmux.CommandOnSocket(ctx, host, "has-session", "-t=loom_decoy").Run(),
 		"the enclosing server's loom_* session must survive a sweep aimed at the private socket")
@@ -96,7 +97,8 @@ func TestCleanupOrphanedSessions_RealTmuxKillsOnlyOwnedSessions(t *testing.T) {
 	scope := NewSweepScope([]*config.WorkspaceContext{mine}, &config.WorkspaceRegistry{Workspaces: []config.Workspace{
 		{Name: "mine", Path: mine.RepoPath}, {Name: "theirs", Path: theirs.RepoPath},
 	}})
-	require.NoError(t, CleanupOrphanedSessions(map[string]bool{}, scope, internalexec.Default{}))
+	_, err := CleanupOrphanedSessions(map[string]bool{}, scope, internalexec.Default{})
+	require.NoError(t, err)
 
 	alive := func(name string) bool {
 		return tmux.CommandOnSocket(ctx, sock, "has-session", "-t="+name).Run() == nil

@@ -2,13 +2,18 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
@@ -117,4 +122,98 @@ func TestDebugCmd_ReportsIsolationKnobs(t *testing.T) {
 	assert.Contains(t, out, "Tmux socket: loomdev-probe")
 	assert.Contains(t, out, "Global dir: "+os.Getenv(config.EnvGlobalDir))
 	assert.Contains(t, out, "Nesting guard: ok")
+}
+
+// resetTmux is a fake tmux for reset: the sweep's "ls" answers listing (or
+// listErr), and every kill-session is recorded and answered with killErr.
+type resetTmux struct {
+	listing string
+	listErr error
+	killErr error
+	killed  []string
+}
+
+func (r *resetTmux) Run(c *exec.Cmd) error {
+	if slices.Contains(c.Args, "kill-session") {
+		r.killed = append(r.killed, c.Args[len(c.Args)-1])
+		return r.killErr
+	}
+	return nil
+}
+func (r *resetTmux) Output(c *exec.Cmd) ([]byte, error)         { return []byte(r.listing), r.listErr }
+func (r *resetTmux) CombinedOutput(c *exec.Cmd) ([]byte, error) { return r.Output(c) }
+
+func stubResetTmux(t *testing.T, fake *resetTmux) {
+	t.Helper()
+	orig := resetExecutor
+	resetExecutor = func() cmd2.Executor { return fake }
+	t.Cleanup(func() { resetExecutor = orig })
+}
+
+// globalWorktree lays out a worktree directory under the global config
+// dir, which a global reset removes.
+func globalWorktree(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(os.Getenv(config.EnvGlobalDir), "worktrees", name)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "work.txt"), []byte("agent output\n"), 0o644))
+	return dir
+}
+
+// TestResetCmd_StopsBeforeWorktreesWhenSweepFails is the regression for
+// c7c7b3d's sweep, which swallowed every error: a loaded tmux that timed
+// out on "ls" (or a kill that failed) left this workspace's agents
+// running, and reset then deleted the worktrees and branches under them.
+func TestResetCmd_StopsBeforeWorktreesWhenSweepFails(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tmux *resetTmux
+	}{
+		{"listing timed out", &resetTmux{listErr: errors.New("signal: killed")}},
+		{"a kill failed", &resetTmux{killErr: errors.New("exit status 1")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateLoomEnv(t)
+			stubNesting(t, nil)
+			t.Cleanup(func() { resetForceFlag = false })
+			wt := globalWorktree(t, "busy_18d7")
+			if tc.tmux.listErr == nil {
+				tc.tmux.listing = "loom_busy\t" + wt + "\n"
+			}
+			stubResetTmux(t, tc.tmux)
+
+			var err error
+			out := captureStdout(t, func() {
+				rootCmd.SetArgs([]string{"reset", "--force"})
+				err = rootCmd.Execute()
+			})
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "NOT removed")
+			assert.FileExists(t, filepath.Join(wt, "work.txt"), "the worktree an agent may still use must survive")
+			assert.NotContains(t, out, "Worktrees have been cleaned up")
+		})
+	}
+}
+
+// TestResetCmd_ReportsSweepCounts: reset says what it killed and what it
+// left running, since sessions outside the workspace are spared.
+func TestResetCmd_ReportsSweepCounts(t *testing.T) {
+	isolateLoomEnv(t)
+	stubNesting(t, nil)
+	t.Cleanup(func() { resetForceFlag = false })
+	wt := globalWorktree(t, "stale_18d7")
+	fake := &resetTmux{listing: "loom_stale\t" + wt + "\n" +
+		"loom_elsewhere\t" + t.TempDir() + "\n"}
+	stubResetTmux(t, fake)
+
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"reset", "--force"})
+		require.NoError(t, rootCmd.Execute())
+	})
+
+	assert.Equal(t, []string{"=loom_stale"}, fake.killed)
+	assert.Contains(t, out, "1 killed, 1 left running (started outside this workspace)")
+	assert.Contains(t, out, "Worktrees have been cleaned up")
+	assert.NoDirExists(t, wt)
 }
