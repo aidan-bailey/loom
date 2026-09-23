@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -217,30 +218,34 @@ func TestInspectTree_TimeoutIsReportedAsSuch(t *testing.T) {
 	assert.True(t, IsTimeout(err), "a git that never answered must be reported as a timeout: %v", err)
 }
 
-// TestStashListed_EntryLookupFailureIsNotAbsence: StashListed decides
+// TestStashListed_LookupFailureIsNeverAbsence: StashListed decides
 // whether a stash is still wanted, and "not listed" makes callers forget
-// it. A failed lookup must never read as absence.
-func TestStashListed_EntryLookupFailureIsNotAbsence(t *testing.T) {
+// it (Resume) or skip dropping it (DropStash). Its one lookup is the
+// `git stash list` call: when that fails — here, killed at its deadline —
+// the answer is an error, and DropStash acts on nothing.
+func TestStashListed_LookupFailureIsNeverAbsence(t *testing.T) {
 	gw := newStashTestRepo(t)
 	dir := gw.GetWorktreePath()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v2\n"), 0644))
 	sha, err := gw.StashChanges("ours")
 	require.NoError(t, err)
 
-	failEntryLookups := hookRunner{before: func(c *exec.Cmd) error {
-		for _, a := range c.Args {
-			if strings.HasPrefix(a, "stash@{") && slices.Contains(c.Args, "rev-parse") {
-				return errors.New("git command timed out")
-			}
+	failList := hookRunner{before: func(c *exec.Cmd) error {
+		if slices.Contains(c.Args, "stash") && slices.Contains(c.Args, "list") {
+			return fmt.Errorf("git command timed out after 8s: git stash list: %w", ErrTimeout)
 		}
 		return nil
 	}}
-	gwR := NewGitWorktreeFromStorageWithRunner(dir, dir, "stash-test", "main", "", true, dir, failEntryLookups)
+	gwR := NewGitWorktreeFromStorageWithRunner(dir, dir, "stash-test", "main", "", true, dir, failList)
 
 	ref, err := gwR.StashListed(sha)
+	require.Error(t, err, "an unreadable list is not an absent entry")
+	assert.Empty(t, ref)
+	assert.True(t, IsTimeout(err))
 
-	require.NoError(t, err)
-	assert.Equal(t, "stash@{0}", ref)
+	require.Error(t, gwR.DropStash(sha), "DropStash must not read the failure as \"already dropped\"")
+	assert.Contains(t, strings.Fields(gitOut(t, dir, "stash", "list", "--format=%H")), sha,
+		"the entry is untouched")
 }
 
 // TestStashListed_ListFailureIsAnError: when the list itself cannot be

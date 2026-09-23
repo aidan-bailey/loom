@@ -40,6 +40,15 @@ var gitWorktreeRemoveTimeout = 5 * time.Minute
 // budget and reintroduce the half-removed-worktree failure.
 func WorktreeRemoveTimeout() time.Duration { return gitWorktreeRemoveTimeout }
 
+// gitWorktreeAddTimeout bounds `git worktree add`, which checks out the
+// whole tree and so scales with its size exactly as a remove does. Under
+// the 8s tick budget a slow checkout of a large repo was killed half-way,
+// leaving the new worktree locked "initializing": a tree InspectTree
+// cannot vouch for, and, once moved aside, a registry entry that blocked
+// every later `worktree add` at that path. Add runs from Start and Resume
+// in a tea.Cmd goroutine, never on the tick.
+var gitWorktreeAddTimeout = 5 * time.Minute
+
 // gitNetworkTimeout applies to commands that talk to a remote (push/sync/fetch).
 const gitNetworkTimeout = 30 * time.Second
 
@@ -120,6 +129,13 @@ func (g *GitWorktree) runGitCommandTimeout(timeout time.Duration, path string, a
 // runGitCommand so none of them inherit the tick budget.
 func (g *GitWorktree) removeWorktree() (string, error) {
 	return g.runGitCommandTimeout(gitWorktreeRemoveTimeout, g.repoPath, "worktree", "remove", "-f", g.worktreePath)
+}
+
+// addWorktree runs `git worktree add <args>` from the repository under the
+// add-specific deadline (see gitWorktreeAddTimeout). Every add site goes
+// through here.
+func (g *GitWorktree) addWorktree(args ...string) (string, error) {
+	return g.runGitCommandTimeout(gitWorktreeAddTimeout, g.repoPath, append([]string{"worktree", "add"}, args...)...)
 }
 
 // runGitCommandEnv is runGitCommand with additional environment variables

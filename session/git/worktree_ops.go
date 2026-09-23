@@ -34,7 +34,7 @@ func isWorktreeAbsentErr(err error) bool {
 }
 
 // isBranchAbsentErr reports whether a `git branch -D` failure was
-// simply "branch doesn't exist" — expected during pre-setup cleanup.
+// simply "branch doesn't exist" — expected during cleanup.
 func isBranchAbsentErr(err error) bool {
 	if err == nil {
 		return false
@@ -210,7 +210,9 @@ func (g *GitWorktree) InspectTree() (TreeState, error) {
 		return TreeUnverified, fmt.Errorf("git does not consider %s a working tree: %q", g.worktreePath, strings.TrimSpace(out))
 	}
 	top, gitDir, commonDir := lines[1], lines[2], lines[3]
-	if !sameFile(top, g.worktreePath) {
+	if same, err := sameFile(top, g.worktreePath); err != nil {
+		return TreeUnverified, fmt.Errorf("compare %s with the working tree git reports: %w", g.worktreePath, err)
+	} else if !same {
 		return TreeUnverified, fmt.Errorf("git resolves %s to the working tree at %s, not its own", g.worktreePath, top)
 	}
 
@@ -218,10 +220,14 @@ func (g *GitWorktree) InspectTree() (TreeState, error) {
 	if err != nil {
 		return TreeUnverified, fmt.Errorf("resolve the git dir of repository %s: %w", g.repoPath, err)
 	}
-	if !sameFile(commonDir, strings.TrimSpace(repoCommon)) {
+	if same, err := sameFile(commonDir, strings.TrimSpace(repoCommon)); err != nil {
+		return TreeUnverified, fmt.Errorf("compare the git dir of %s with that of repository %s: %w", g.worktreePath, g.repoPath, err)
+	} else if !same {
 		return TreeUnverified, fmt.Errorf("%s belongs to the repository at %s, not %s", g.worktreePath, commonDir, g.repoPath)
 	}
-	if sameFile(gitDir, commonDir) {
+	if same, err := sameFile(gitDir, commonDir); err != nil {
+		return TreeUnverified, fmt.Errorf("compare the git dirs of %s: %w", g.worktreePath, err)
+	} else if same {
 		return TreeUnverified, fmt.Errorf("%s is the main checkout of %s, not a linked worktree", g.worktreePath, g.repoPath)
 	}
 	// `git worktree add` holds this lock until its checkout completes.
@@ -235,16 +241,19 @@ func (g *GitWorktree) InspectTree() (TreeState, error) {
 // sameFile reports whether a and b name the same file or directory: the
 // stored path may reach it through symlinks or a bind mount, or differ in
 // case on a case-insensitive filesystem, where comparing strings would not.
-func sameFile(a, b string) bool {
+// A path that cannot be stat'ed is an error, not a mismatch: InspectTree
+// would otherwise report a permission problem or a vanished directory as
+// the tree belonging to some other repository.
+func sameFile(a, b string) (bool, error) {
 	fa, err := os.Stat(a)
 	if err != nil {
-		return false
+		return false, err
 	}
 	fb, err := os.Stat(b)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return os.SameFile(fa, fb)
+	return os.SameFile(fa, fb), nil
 }
 
 // clearWorktreePath frees worktreePath so a subsequent `git worktree add`
@@ -259,7 +268,19 @@ func sameFile(a, b string) bool {
 // Merely logging that failure and pressing on makes `worktree add` die
 // with a cryptic "already exists", and because nothing self-heals the
 // state, every later resume of that session fails the same way forever.
+//
+// A `worktree add` killed mid-checkout leaves its registry entry locked
+// "initializing", and a lock blocks all of this: `remove -f` refuses a
+// locked tree, prune skips it, and `worktree add` refuses the path ("a
+// missing but locked worktree"), which is what kept a moved-aside tree
+// from ever being rebuilt. So the entry is unlocked first — but only when
+// nothing live is left at the path (absent, or no .git). A tree that still
+// has its .git may hold work, and its lock is what stops the single -f
+// below from deleting it.
 func (g *GitWorktree) clearWorktreePath() error {
+	if _, err := os.Stat(filepath.Join(g.worktreePath, ".git")); err != nil {
+		g.unlockWorktree()
+	}
 	if _, err := g.removeWorktree(); err != nil && !isWorktreeAbsentErr(err) {
 		log.WarnKV("git.worktree_cleanup_failed", "path", g.worktreePath, "err", err.Error())
 	}
@@ -294,6 +315,20 @@ func (g *GitWorktree) clearWorktreePath() error {
 	}
 	log.WarnKV("git.worktree_leftover_preserved", "path", g.worktreePath, "moved_to", orphaned)
 	return nil
+}
+
+// unlockWorktree unlocks the registry entry for this worktree's path.
+// Best-effort: "not locked" and "not a working tree" (no entry at all)
+// are the common, expected answers.
+func (g *GitWorktree) unlockWorktree() {
+	_, err := g.runGitCommand(g.repoPath, "worktree", "unlock", g.worktreePath)
+	switch {
+	case err == nil:
+		log.WarnKV("git.worktree_unlocked", "path", g.worktreePath)
+	case strings.Contains(err.Error(), "is not locked"), isWorktreeAbsentErr(err):
+	default:
+		log.WarnKV("git.worktree_unlock_failed", "path", g.worktreePath, "err", err.Error())
+	}
 }
 
 // freeOrphanPath returns an unused sibling path to park a leftover
@@ -332,13 +367,13 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 			return fmt.Errorf("%w: %s", ErrBranchGone, g.branchName)
 		}
 		// Create a local tracking branch via worktree add -b
-		if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, fmt.Sprintf("origin/%s", g.branchName)); err != nil {
+		if _, err := g.addWorktree("-b", g.branchName, g.worktreePath, fmt.Sprintf("origin/%s", g.branchName)); err != nil {
 			return fmt.Errorf("failed to create worktree from remote branch %s: %w", g.branchName, err)
 		}
 		g.setBranchCreated()
 	} else {
 		// Create a new worktree from the existing local branch
-		if _, err := g.runGitCommand(g.repoPath, "worktree", "add", g.worktreePath, g.branchName); err != nil {
+		if _, err := g.addWorktree(g.worktreePath, g.branchName); err != nil {
 			return fmt.Errorf("failed to create worktree from branch %s: %w", g.branchName, err)
 		}
 	}
@@ -378,12 +413,10 @@ func (g *GitWorktree) setupNewWorktree() error {
 		return err
 	}
 
-	// Clean up any existing branch using git CLI (much faster than go-git PlainOpen).
-	// Absent-branch is expected; anything else (e.g. branch is checked
-	// out elsewhere) is operator-visible territory.
-	if _, err := g.runGitCommand(g.repoPath, "branch", "-D", g.branchName); err != nil && !isBranchAbsentErr(err) {
-		log.WarnKV("git.branch_cleanup_failed", "branch", g.branchName, "err", err.Error())
-	}
+	// No `branch -D` here: Setup only takes this path after show-ref said
+	// the branch does not exist, so a delete could only ever remove one
+	// created since — a concurrent session's. `worktree add -b` below
+	// refuses an existing branch instead.
 
 	// The configured base is read here rather than cached on the struct so
 	// every constructor — including NewGitWorktreeFromStorage, which does no
@@ -401,7 +434,7 @@ func (g *GitWorktree) setupNewWorktree() error {
 	// silently become every new session's starting point. Pinning a commit
 	// (not a branch name) also keeps the new worktree free of any uncommitted
 	// changes sitting in the main checkout.
-	if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, baseSHA); err != nil {
+	if _, err := g.addWorktree("-b", g.branchName, g.worktreePath, baseSHA); err != nil {
 		return fmt.Errorf("failed to create worktree from %s (%s): %w", baseName, baseSHA, err)
 	}
 	g.setBranchCreated()
@@ -452,8 +485,8 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 	// Delete the branch using git CLI, unless the caller keeps it
 	if deleteBranch {
 		if _, err := g.runGitCommand(g.repoPath, "branch", "-D", g.branchName); err != nil {
-			// Only log if it's not a "branch not found" error
-			if !strings.Contains(err.Error(), "not found") {
+			// An absent branch is already what we want.
+			if !isBranchAbsentErr(err) {
 				errs = append(errs, fmt.Errorf("failed to remove branch %s: %w", g.branchName, err))
 			}
 		}
