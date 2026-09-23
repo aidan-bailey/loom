@@ -177,6 +177,12 @@ func TestSyncOutputDefeatsEmulatorScrollback_RealTmux(t *testing.T) {
 
 	require.Contains(t, stripANSI(emu.Render()), "syncline30", "the synchronized output must reach the client")
 	require.Greater(t, historySize(), 15, "tmux itself must keep the scrolled-off lines")
+	// The repaint behaviour this pins was observed on tmux 3.7b; tmux 3.6a
+	// (nixpkgs, Ubuntu CI) still scrolls clients through synchronized
+	// updates, so the premise, and this canary, only apply from 3.7 on.
+	if major, minor, ok := tmuxVersion(t, sock); ok && (major < 3 || (major == 3 && minor < 7)) {
+		t.Skipf("tmux %d.%d scrolls clients through synchronized updates (%d emulator scrollback lines); the repaint behaviour this pins starts at 3.7", major, minor, emu.ScrollbackLen())
+	}
 	require.Zero(t, emu.ScrollbackLen(),
 		"synchronized output reached emulator scrollback; tmux now scrolls clients through sync updates")
 }
@@ -206,4 +212,22 @@ func stripANSI(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// tmuxVersion parses `tmux -V` ("tmux 3.7b", "tmux next-3.8") into its
+// major and minor numbers. ok is false when the output doesn't parse.
+func tmuxVersion(t *testing.T, sock string) (major, minor int, ok bool) {
+	t.Helper()
+	out, err := exec.Command("tmux", "-L", sock, "-V").Output()
+	if err != nil {
+		return 0, 0, false
+	}
+	v := strings.TrimSpace(string(out))
+	if i := strings.LastIndexAny(v, " -"); i >= 0 {
+		v = v[i+1:]
+	}
+	if _, err := fmt.Sscanf(v, "%d.%d", &major, &minor); err != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
 }

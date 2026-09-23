@@ -158,6 +158,10 @@ func TestView_ParsesBody(t *testing.T) {
 }
 
 func TestCheckCLI_AuthFailure(t *testing.T) {
+	// CheckCLI looks gh up on PATH before it reaches the injected runner.
+	if _, err := exec.LookPath("gh"); err != nil {
+		t.Skip("gh not installed")
+	}
 	ex := &scriptedExec{errs: map[string]error{"auth status": errors.New("not logged in")}}
 	err := CheckCLI(ex)
 	require.Error(t, err)

@@ -59,7 +59,12 @@ func newClone(t *testing.T, defaultBranch string, extraBranches ...string) strin
 	}
 	runGit(t, tmp, "clone", "--bare", src, "origin.git")
 	runGit(t, tmp, "clone", "origin.git", "clone")
-	return filepath.Join(tmp, "clone")
+	clone := filepath.Join(tmp, "clone")
+	// A clone doesn't inherit src's local config, and CI has no global
+	// identity, so tests that commit in the clone need their own.
+	runGit(t, clone, "config", "user.email", "test@example.com")
+	runGit(t, clone, "config", "user.name", "Test")
+	return clone
 }
 
 func TestResolveBaseCommit_ConfiguredLocalBranch(t *testing.T) {

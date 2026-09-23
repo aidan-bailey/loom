@@ -61,8 +61,10 @@
 
             # tools/ holds dev-only binaries (loomdev, fakeagent). Excluded
             # rather than using subPackages = [ "." ], which would also drop
-            # every other package's tests from checkPhase.
-            excludedPackages = [ "tools" ];
+            # every other package's tests from checkPhase. e2e/ is all
+            # `//go:build e2e`: checkPhase tests each package dir explicitly,
+            # and a dir whose files are all tagged out fails to build.
+            excludedPackages = [ "tools" "e2e" ];
 
             env.CGO_ENABLED = "0";
 
@@ -77,6 +79,7 @@
             # session/tmux (TestCaptureHistoryRealTmux); without it that test
             # skips. git is needed by the worktree-backed tests.
             nativeCheckInputs = [
+              pkgs.gh
               pkgs.git
               pkgs.tmux
             ];
