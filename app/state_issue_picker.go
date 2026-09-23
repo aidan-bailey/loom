@@ -250,6 +250,7 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 // to instanceStartedMsg for the N flow's branch picker.
 func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranch string) (tea.Model, tea.Cmd) {
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
+		owner := m.workspaceSlot // stamped for instanceStartedMsg
 		startTask := overlay.ConfirmationTask{
 			Sync: func() {
 				instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
@@ -271,6 +272,7 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 					err:             err,
 					promptAfterName: false,
 					selectedBranch:  selectedBranch,
+					slot:            owner,
 				}
 			}),
 		}

@@ -64,6 +64,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 
 				m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
+					owner := m.workspaceSlot // stamped for instanceStartedMsg
 					startTask := overlay.ConfirmationTask{
 						Sync: func() {
 							selected.Program = applyLaunchOptions(opts, m.rcAuth, selected.Program, selected.Title)
@@ -84,6 +85,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 								err:             err,
 								promptAfterName: false,
 								selectedBranch:  selectedBranch,
+								slot:            owner,
 							}
 						}),
 					}

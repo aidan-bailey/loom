@@ -199,6 +199,11 @@ func runKillSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 	previousStatus := selected.GetStatus()
 	title := selected.Title
+	// The owning slot's pane and storage, captured here on the Update
+	// goroutine: killAction runs for seconds in a Cmd, and reading m.* there
+	// would race loadSlot and, after a workspace switch, reach another
+	// workspace's pane and storage.
+	splitPane, storage := m.splitPane, m.storage
 
 	preAction := func() {
 		if err := selected.TransitionTo(session.Deleting); err != nil {
@@ -227,7 +232,7 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 			}
 		}
 
-		if ts := m.splitPane.DetachTerminalForInstance(title); ts != nil {
+		if ts := splitPane.DetachTerminalForInstance(title); ts != nil {
 			if err := ts.Close(); err != nil {
 				log.For("app").Error("kill.terminal_close_failed", "title", title, "err", err)
 			}
@@ -257,7 +262,7 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 		// killInstanceMsg regardless so the UI matches reality.
 		// ErrInstanceNotFound just means storage already agreed, so it's a
 		// debug-level note rather than an error.
-		if err := m.storage.DeleteInstance(selected.Title); err != nil {
+		if err := storage.DeleteInstance(selected.Title); err != nil {
 			if errors.Is(err, session.ErrInstanceNotFound) {
 				log.For("app").Debug("kill.storage_already_absent", "title", title)
 			} else {
@@ -351,8 +356,9 @@ func pauseActionFor(m *home, selected *session.Instance) tea.Cmd {
 	previousStatus := selected.GetStatus()
 	pauseTitle := selected.Title
 	saveFunc := snapshotSaveFunc(m)
+	splitPane := m.splitPane // the owning slot's, captured on Update (see killActionFor)
 	return func() tea.Msg {
-		if ts := m.splitPane.DetachTerminalForInstance(pauseTitle); ts != nil {
+		if ts := splitPane.DetachTerminalForInstance(pauseTitle); ts != nil {
 			if err := ts.Close(); err != nil {
 				log.For("app").Error("pause.terminal_close_failed", "title", pauseTitle, "err", err)
 			}
@@ -486,12 +492,13 @@ func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	owner := m.workspaceSlot
 	recoverCmd := func() tea.Msg {
 		inst, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
 		if err != nil {
-			return recoverDoneMsg{oldTitle: oldTitle, err: err}
+			return recoverDoneMsg{oldTitle: oldTitle, err: err, placeholder: selected, slot: owner}
 		}
-		return recoverDoneMsg{oldTitle: oldTitle, recovered: inst}
+		return recoverDoneMsg{oldTitle: oldTitle, recovered: inst, placeholder: selected, slot: owner}
 	}
 	return m, tea.Batch(recoverCmd, m.instanceChanged())
 }

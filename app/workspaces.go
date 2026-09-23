@@ -314,17 +314,6 @@ func (m *home) removeInstanceEverywhere(inst *session.Instance) {
 	}
 }
 
-// holdsInstance reports whether inst is in a loaded slot's list — false
-// once its slot has been dropped.
-func (m *home) holdsInstance(inst *session.Instance) bool {
-	for _, slot := range m.openSlots() {
-		if slices.Contains(slot.list.GetInstances(), inst) {
-			return true
-		}
-	}
-	return false
-}
-
 // openSlots returns every loaded workspace slot: the open tabs, or in
 // classic/global mode the classic slot alone. The focused slot is always
 // among them.

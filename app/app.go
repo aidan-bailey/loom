@@ -1364,35 +1364,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.menu.SetState(ui.StateDefault)
 		return m.showHelpScreen(msg.helpType, nil)
 	case recoverDoneMsg:
-		if msg.err != nil {
-			// Put the row back into Recoverable so the user can retry r
-			// (runRecoverSelected flipped it to Loading for the spinner).
-			for _, inst := range m.list.GetInstances() {
-				if inst.Title == msg.oldTitle {
-					if terr := inst.TransitionTo(session.Recoverable); terr != nil {
-						log.For("app").Warn("recover.revert_failed", "title", msg.oldTitle, "err", terr)
-					}
-					break
-				}
-			}
-			return m, m.handleError(fmt.Errorf("recover %s: %w", msg.oldTitle, msg.err))
-		}
-		m.list.RemoveInstanceByTitle(msg.oldTitle)
-		m.list.AddInstance(msg.recovered)
-		m.list.SelectInstance(msg.recovered)
-		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
-			log.For("app").Error("recover.save_failed", "title", msg.recovered.Title, "err", err)
-		}
-		// Recovery is otherwise invisible when fast — confirm it, and be
-		// explicit about the degraded case where both the tmux session and
-		// worktree were already gone and adoption could only mark the
-		// record Paused (resume rebuilds the worktree from the branch).
-		if msg.recovered.GetStatus() == session.Paused {
-			m.errBox.SetInfo(fmt.Sprintf("Recovered '%s' as paused — its session and worktree were gone; branch preserved, press r to resume", msg.recovered.Title))
-		} else {
-			m.errBox.SetInfo(fmt.Sprintf("Recovered session '%s'", msg.recovered.Title))
-		}
-		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
+		return m, m.handleRecoverDone(msg)
 	case startFullScreenAttachMsg:
 		// Resolve the tmux session for the requested pane.
 		var ts *tmux.TmuxSession
@@ -1477,39 +1449,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// when this was the first tab.
 		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release)
 	case instanceStartedMsg:
-		// Select the instance that just started (or failed)
-		m.list.SelectInstance(msg.instance)
-
-		if msg.err != nil {
-			popped := m.list.PopSelectedForKill()
-			return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), backgroundKillCmd(popped))
-		}
-
-		// Save after successful start
-		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
-			return m, m.handleError(err)
-		}
-
-		if msg.promptAfterName {
-			m.state = statePrompt
-			m.menu.SetState(ui.StatePrompt)
-			m.setOverlay(m.newPromptOverlay(), overlayTextInput)
-		} else {
-			// If instance has a prompt (set from Shift+N flow), send it now
-			if msg.instance.Prompt != "" {
-				if err := msg.instance.SendPrompt(msg.instance.Prompt); err != nil {
-					log.For("app").Error("send_prompt_failed", "err", err)
-				}
-				msg.instance.Prompt = ""
-			}
-			// Auto-focus agent pane and capture input
-			m.setPaneFocus(ui.FocusAgent)
-			m.splitPane.SetInlineAttach(true)
-			m.state = stateInlineAttach
-			m.menu.SetState(ui.StateInlineAttach)
-		}
-
-		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
+		return m, m.handleInstanceStarted(msg)
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -1989,11 +1929,16 @@ type showHelpScreenMsg struct {
 
 // recoverDoneMsg is returned after a Recoverable orphan is adopted into a
 // live instance off the UI goroutine. The handler swaps the inline
-// placeholder for the recovered instance and persists.
+// placeholder for the recovered instance and persists. placeholder and
+// slot are stamped at dispatch: the recover runs for seconds with the UI
+// live, so by delivery the focused slot may be another workspace, which
+// can even hold a same-titled row.
 type recoverDoneMsg struct {
-	oldTitle  string
-	recovered *session.Instance
-	err       error
+	oldTitle    string
+	recovered   *session.Instance
+	err         error
+	placeholder *session.Instance
+	slot        *workspaceSlot
 }
 
 // fullScreenAttachTarget picks which tmux session (agent vs terminal) a
@@ -2052,11 +1997,16 @@ type workspaceRegisteredMsg struct {
 	dir string
 }
 
+// instanceStartedMsg reports an async Start. slot is the slot that owns
+// instance, stamped at dispatch: the start runs for seconds with the UI
+// live, so by delivery the focused slot may be another workspace (or the
+// owner may be closed).
 type instanceStartedMsg struct {
 	instance        *session.Instance
 	err             error
 	promptAfterName bool
 	selectedBranch  string
+	slot            *workspaceSlot
 }
 
 // branchSearchDebounceMsg fires after the debounce interval to trigger a search.
@@ -2190,7 +2140,7 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 // as running), or is no longer in any loaded slot. Must run on the Update
 // goroutine.
 func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool) (alive bool) {
-	if !m.holdsInstance(inst) {
+	if m.slotHolding(inst) == nil {
 		// The probe was taken before inst's slot was dropped. Its attach
 		// client has been (or is being) released by releaseSlotCmd, which
 		// reads as a dead PTY: RepairPtmx here would re-attach an
