@@ -233,3 +233,34 @@ func TestProductionGatedCmdsYieldOneMessage(t *testing.T) {
 		assert.IsType(t, ratioSaveMsg{}, msg)
 	})
 }
+
+func TestPollGateRequest(t *testing.T) {
+	now := time.Now()
+	g := pollGate{last: now}
+	g.request()
+	assert.True(t, g.due(now, time.Hour), "a request makes an idle gate due at once")
+	assert.False(t, g.pending, "nothing in flight: the caller's own dispatch is the follow-up")
+
+	g.inFlight = true
+	g.request()
+	g.request()
+	assert.True(t, g.pending, "requests during a flight collapse into one follow-up")
+}
+
+func TestDeliverGatedRedispatchesPendingOnce(t *testing.T) {
+	inst := startedInstanceWithProgram(t, "gate-redispatch", "claude", "x")
+	m := homeWithAppState(t)
+	m.list.AddInstance(inst)
+	require.NotNil(t, m.maybeRosterQuery(m.activeInstances()))
+	m.gate(gateRoster).request()
+
+	_, cmd := m.Update(gatedMsg{kind: gateRoster, msg: rosterReadyMsg{}})
+
+	require.NotNil(t, cmd, "the pending request dispatches again as soon as the flight lands")
+	assert.True(t, m.gate(gateRoster).inFlight)
+	assert.False(t, m.gate(gateRoster).pending)
+
+	_, cmd = m.Update(gatedMsg{kind: gateRoster, msg: rosterReadyMsg{}})
+	assert.Nil(t, cmd, "no request, no follow-up")
+	assert.False(t, m.gate(gateRoster).inFlight)
+}

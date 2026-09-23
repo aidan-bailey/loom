@@ -127,6 +127,26 @@ func (m *home) allInstances() []*session.Instance {
 	return out
 }
 
+// activeInstances returns the loaded instances the background jobs may
+// touch: started and not paused. Recoverable placeholders are ephemeral
+// orphan-review rows: they report Started() (so recover/discard can reach
+// their handles) but must never be driven by a background job, since
+// RepairPtmx would attach a PTY and TransitionTo(Running) would promote a
+// never-confirmed orphan past the explicit recover flow. Loading rows are
+// likewise owned by an in-flight Start/Resume/Recover: probing them
+// mid-setup reads a dead tmux session and force-flips them to Paused
+// under the op. Deleting rows are being torn down.
+func (m *home) activeInstances() []*session.Instance {
+	var active []*session.Instance
+	for _, inst := range m.allInstances() {
+		st := inst.GetStatus()
+		if inst.Started() && !inst.Paused() && st != session.Deleting && st != session.Recoverable && st != session.Loading {
+			active = append(active, inst)
+		}
+	}
+	return active
+}
+
 // linkedIssues lists the non-zero issue numbers of instances in repo.
 func (m *home) linkedIssues(repo string) []int {
 	var out []int

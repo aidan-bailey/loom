@@ -70,6 +70,9 @@ var gateIntervals = [numGateKinds]time.Duration{
 type pollGate struct {
 	last     time.Time
 	inFlight bool
+	// pending records a request() made while a dispatch was in flight;
+	// deliverGated dispatches once more when that flight lands.
+	pending bool
 }
 
 // due reports whether a dispatch may start at now: none in flight, and at
@@ -87,6 +90,20 @@ func (g *pollGate) due(now time.Time, interval time.Duration) bool {
 // and the following tick dispatches immediately.
 func (g *pollGate) expedite() {
 	g.last = time.Time{}
+}
+
+// request asks for the job to run as soon as possible: it is due at once,
+// and a request made while a dispatch is in flight is kept, so
+// deliverGated dispatches once more after that flight lands. The caller
+// still makes its own maybe… call, which dispatches at once when nothing
+// is in flight. Requests during one flight collapse into one follow-up.
+// For triggers that must not wait for the next health tick: a pane going
+// quiet, or a status change the roster should confirm.
+func (g *pollGate) request() {
+	g.expedite()
+	if g.inFlight {
+		g.pending = true
+	}
 }
 
 // gate resolves kind to the model's gate for it.
@@ -135,17 +152,38 @@ func (m *home) dispatchGated(kind gateKind, now time.Time, build func() tea.Cmd)
 
 // deliverGated disarms msg's gate before anything else, then routes the
 // inner message back through Update so it reaches the same handler it
-// would have reached unwrapped. A nil inner message still disarms.
+// would have reached unwrapped. A nil inner message still disarms. A
+// request() made during the flight dispatches the job once more, after
+// the inner message is handled.
 func (m *home) deliverGated(msg gatedMsg) (tea.Model, tea.Cmd) {
-	m.gate(msg.kind).inFlight = false
+	g := m.gate(msg.kind)
+	g.inFlight = false
+	again := g.pending
+	g.pending = false
+	var cmd tea.Cmd
 	switch inner := msg.msg.(type) {
 	case nil:
-		return m, nil
 	case tea.BatchMsg:
 		// A builder broke dispatchGated's single-message rule. Update has
 		// no case for a BatchMsg, so its Cmds would silently never run.
 		log.For("app").Error("gated_batch_msg", "kind", msg.kind.String(), "cmds", len(inner))
-		return m, nil
+	default:
+		_, cmd = m.Update(msg.msg)
 	}
-	return m.Update(msg.msg)
+	if again {
+		cmd = tea.Batch(cmd, m.redispatch(msg.kind))
+	}
+	return m, cmd
+}
+
+// redispatch runs kind's job again for a request() made mid-flight. Only
+// the jobs that request() have an entry.
+func (m *home) redispatch(kind gateKind) tea.Cmd {
+	switch kind {
+	case gateRoster:
+		return m.maybeRosterQuery(m.activeInstances())
+	case gateHookScan:
+		return m.maybeHookScan(m.activeInstances())
+	}
+	return nil
 }

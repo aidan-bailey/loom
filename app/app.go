@@ -891,26 +891,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// because time passed with no other activity.
 		m.errBox.ExpireIfDue(time.Now())
 
-		// Collect instances from every loaded workspace slot.
-		allInstances := m.allInstances()
-
-		// Filter to active instances.
+		// Active instances from every loaded workspace slot (see
+		// activeInstances for what is skipped and why).
 		selected := m.list.GetSelectedInstance()
-		var active []*session.Instance
-		for _, inst := range allInstances {
-			status := inst.GetStatus()
-			// Recoverable placeholders are ephemeral orphan-review rows:
-			// they report Started() (so recover/discard can reach their
-			// handles) but must never be driven by the tick — RepairPtmx
-			// would attach a PTY and TransitionTo(Running) would promote a
-			// never-confirmed orphan past the explicit recover flow.
-			// Loading rows are likewise owned by an in-flight
-			// Start/Resume/Recover: probing them mid-setup reads a dead
-			// tmux session and force-flips them to Paused under the op.
-			if inst.Started() && !inst.Paused() && status != session.Deleting && status != session.Recoverable && status != session.Loading {
-				active = append(active, inst)
-			}
-		}
+		active := m.activeInstances()
 
 		// Inline-attach liveness backstop (the preview tick used to check
 		// this every 100ms in event mode; ptyDeadMsg is the fast path now,
