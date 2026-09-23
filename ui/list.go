@@ -252,48 +252,12 @@ func (l *List) Down() {
 	l.ensureSelectedVisible()
 }
 
-// PopSelectedForKill removes the currently selected instance from the list
-// and returns it so the caller can run the blocking Kill() (tmux + worktree
-// cleanup) off the Bubble Tea update goroutine. Returns nil when the list is
-// empty or the selected item is a workspace terminal (which cannot be killed).
-//
-// Only in-memory bookkeeping happens here: slice pop and selectedIdx
-// adjustment. No subprocesses are spawned.
-func (l *List) PopSelectedForKill() *session.Instance {
-	if len(l.items) == 0 {
-		return nil
-	}
-	targetInstance := l.items[l.selectedIdx]
-	if targetInstance.IsWorkspaceTerminal {
-		return nil
-	}
-
-	// If you delete the last one in the list, select the previous one.
-	if l.selectedIdx == len(l.items)-1 {
-		defer l.Up()
-	}
-
-	// Since there's items after this, the selectedIdx can stay the same.
-	l.items = append(l.items[:l.selectedIdx], l.items[l.selectedIdx+1:]...)
-	return targetInstance
-}
-
-// RemoveInstanceByTitle removes an instance from the list by title.
-// Unlike Kill(), this does not perform I/O (no tmux/worktree cleanup) —
-// the caller is responsible for that. This is safe to call from the main
-// event loop after a Cmd goroutine has already performed I/O cleanup.
-func (l *List) RemoveInstanceByTitle(title string) {
-	idx := l.findByTitle(title)
-	if idx < 0 {
-		return
-	}
-	l.removeAt(idx)
-}
-
 // RemoveInstance removes the given instance by pointer identity, no-oping
-// when this list does not contain it. Identity (not title) matters: two
-// workspaces can hold same-titled instances, and kill-completion messages
-// are resolved against every slot's list, not just the focused one.
+// when this list does not contain it. It is the list's only removal:
+// identity, never the selection or a title, since two workspaces can hold
+// same-titled instances, and completions resolve against every slot's
+// list, not just the focused one. Only in-memory bookkeeping happens here;
+// the caller runs any Kill (tmux, worktree) off the Update goroutine.
 func (l *List) RemoveInstance(inst *session.Instance) {
 	for i, item := range l.items {
 		if item == inst {

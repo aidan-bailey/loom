@@ -19,11 +19,11 @@ func TestList_RemoveKeepsSelectionOnItsRow(t *testing.T) {
 		l.RemoveInstance(l.items[1])
 		assert.Same(t, selected, l.GetSelectedInstance())
 	})
-	t.Run("an earlier row, by title", func(t *testing.T) {
+	t.Run("the first row", func(t *testing.T) {
 		l := newPageNavList(5)
 		selected := l.items[3]
 		l.SetSelectedInstance(3)
-		l.RemoveInstanceByTitle(l.items[0].Title)
+		l.RemoveInstance(l.items[0])
 		assert.Same(t, selected, l.GetSelectedInstance())
 	})
 	t.Run("a later row", func(t *testing.T) {

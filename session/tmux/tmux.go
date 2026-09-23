@@ -75,7 +75,7 @@ type TmuxSession struct {
 	program       string
 	// adapter is the agent adapter resolved from program at construction.
 	// It owns the trust-prompt and pending-prompt patterns used by
-	// CheckAndHandleTrustPrompt / CaptureAndProcess / HasUpdated.
+	// CaptureAndProcess (via handleTrustPrompt) and HasUpdated.
 	adapter agent.Adapter
 	// env holds "KEY=VALUE" entries applied to the tmux session via
 	// `new-session -e` — e.g. ANTHROPIC_BASE_URL when Headroom Proxy is
@@ -383,16 +383,6 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	}
 
 	return nil
-}
-
-// CheckAndHandleTrustPrompt checks the pane content once for a trust prompt and dismisses it if found.
-// Returns true if the prompt was found and handled.
-func (t *TmuxSession) CheckAndHandleTrustPrompt() bool {
-	content, err := t.statusContent()
-	if err != nil {
-		return false
-	}
-	return t.handleTrustPrompt(content)
 }
 
 // handleTrustPrompt scans content for the adapter's trust-prompt

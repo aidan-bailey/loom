@@ -50,7 +50,7 @@ func selectTitle(t *testing.T, m *home, title string) *session.Instance {
 }
 
 // TestInstanceStarted_FailureAfterSwitchKillsOnlyTheFailedInstance: a failed
-// start used to PopSelectedForKill the focused list — after a tab switch,
+// start used to pop the focused list's selection for kill — after a tab switch,
 // an unrelated session in another workspace, whose kill then deleted its
 // worktree and branch — and leave the failed instance behind.
 func TestInstanceStarted_FailureAfterSwitchKillsOnlyTheFailedInstance(t *testing.T) {
