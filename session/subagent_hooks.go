@@ -43,9 +43,10 @@ func hooksRoot(configDir string) string { return filepath.Join(configDir, "hooks
 // its tmux session name, path-escaped so it is always a single path
 // segment. Ordinary titles come out unchanged; "/" becomes "%2F" and "'"
 // becomes "%27". Titles accept any printable text, and ToLoomTmuxName
-// only drops whitespace and "."; unescaped, "fix/login" would nest inside
-// the folder of "fix", which launching or killing "fix" wipes and
-// SweepSubagentHooks deletes as an unclaimed "loom_fix".
+// only drops whitespace and maps ":" and "." to "_"; unescaped,
+// "fix/login" would nest inside the folder of "fix", which launching or
+// killing "fix" wipes and SweepSubagentHooks deletes as an unclaimed
+// "loom_fix".
 func hooksFolderName(title string) string {
 	return url.PathEscape(tmux.ToLoomTmuxName(title))
 }

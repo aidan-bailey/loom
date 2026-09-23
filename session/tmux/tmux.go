@@ -145,21 +145,31 @@ const LegacyTmuxPrefix = "claudesquad_"
 
 var whiteSpaceRegex = regexp.MustCompile(`\s+`)
 
+// targetSeparators maps the characters tmux's target syntax splits on
+// (session:window.pane) to '_'. tmux creates a session named
+// "loom_fix:login" literally, but no target can name it exactly:
+// "=loom_fix:login" means window "login" of "loom_fix". Such a session
+// could not be probed, attached or killed.
+var targetSeparators = strings.NewReplacer(":", "_", ".", "_")
+
+// sessionNameSuffix is the part of a session name derived from title:
+// whitespace dropped, target separators mapped to '_'.
+func sessionNameSuffix(title string) string {
+	return targetSeparators.Replace(whiteSpaceRegex.ReplaceAllString(title, ""))
+}
+
 // ToLoomTmuxName returns the canonical tmux session name for a given
-// instance title under the current prefix.
+// instance title under the current prefix. The result never holds ':' or
+// '.', so SessionTarget and PaneTarget can always name it exactly.
 func ToLoomTmuxName(str string) string {
-	str = whiteSpaceRegex.ReplaceAllString(str, "")
-	str = strings.ReplaceAll(str, ".", "_") // tmux replaces all . with _
-	return fmt.Sprintf("%s%s", TmuxPrefix, str)
+	return TmuxPrefix + sessionNameSuffix(str)
 }
 
 // ToLegacyTmuxName returns the pre-rename tmux session name for a
 // given instance title. Used only by RenameLegacySessions at startup;
 // no production code path should depend on this name otherwise.
 func ToLegacyTmuxName(str string) string {
-	str = whiteSpaceRegex.ReplaceAllString(str, "")
-	str = strings.ReplaceAll(str, ".", "_")
-	return fmt.Sprintf("%s%s", LegacyTmuxPrefix, str)
+	return LegacyTmuxPrefix + sessionNameSuffix(str)
 }
 
 // terminalSessionPrefix distinguishes a terminal pane's tmux session from
