@@ -872,7 +872,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 func (i *Instance) failedStartCleanup(ts *tmux.TmuxSession, gw *git.GitWorktree, startErr error) error {
 	if !errors.Is(startErr, tmux.ErrSessionExists) && ts.SessionLiveness() != tmux.LivenessDead {
 		i.getLogger().Warn("instance.start.cleanup_skipped", "worktree", gw.GetWorktreePath(), "err", startErr.Error())
-		return fmt.Errorf("failed to start new session, and its agent may still be running: tmux %s could not be confirmed gone, so the worktree %s and branch %s were left in place (check `tmux ls`; kill this session with D once it is gone): %w",
+		return fmt.Errorf("failed to start new session, and its agent may still be running: tmux session %s could not be confirmed gone, so the worktree %s and branch %s were left in place (check `tmux ls`; the next workspace load offers the worktree for recovery, or cleans it up once nothing runs in it): %w",
 			ts.SessionName(), gw.GetWorktreePath(), gw.GetBranchName(), startErr)
 	}
 	if cleanupErr := gw.CleanupFailedStart(); cleanupErr != nil {
