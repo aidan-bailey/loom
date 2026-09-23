@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
@@ -90,10 +91,12 @@ func (i *Instance) launchProgram(program string, launching bool) string {
 	return program
 }
 
-// resetHookLaunch clears the previous launch's subagent state before a
-// new process starts: the tracker and warm flag, hookLaunchID (set to the
-// sentinel, so no stale scan result can match until prepareHooks
-// maybe sets a real one), and the old hooks folder on disk. Called only
+// resetHookLaunch clears the previous launch's hook state before a new
+// process starts: the tracker and warm flag, the Claude status and last
+// message (the conversation ID is kept for the relaunch to resume),
+// hookLaunchID (set to the sentinel, so no stale scan result can match
+// until prepareHooks maybe sets a real one), and the old hooks folder on
+// disk. Called only
 // when launching is true, so no old Claude process for this instance can
 // still be writing to that folder.
 func (i *Instance) resetHookLaunch() {
@@ -101,6 +104,7 @@ func (i *Instance) resetHookLaunch() {
 	i.hookLaunchID = noHooksLaunchID
 	i.subagentWarm = false
 	i.subagentTrackerLocked().Reset()
+	i.claude.newLaunch(time.Now())
 	i.mu.Unlock()
 	i.removeSubagentHooks()
 }
@@ -177,11 +181,13 @@ func (i *Instance) NextHookScan() (HookScanRequest, bool) {
 	}, true
 }
 
-// ApplyHookScan applies one scan result and reports whether it was
-// applied. A result for another launch is dropped. An instance restored
-// after a loom restart has no launch ID yet and adopts the result's. A
-// replayed result rebuilds the tracker from scratch, and an incremental
-// one is only applied once the tracker is warm.
+// ApplyHookScan applies one scan result to the subagent tracker and the
+// Claude state, and reports whether it was applied. A result for another
+// launch is dropped. An instance restored after a loom restart has no
+// launch ID yet and adopts the result's. A replayed result rebuilds the
+// tracker and the last message from scratch; the status observation needs
+// no reset, since replayed events are never newer than it. An incremental
+// result is only applied once the tracker is warm.
 func (i *Instance) ApplyHookScan(res HookScanResult) bool {
 	if res.LaunchID == "" {
 		return false
@@ -197,10 +203,14 @@ func (i *Instance) ApplyHookScan(res HookScanResult) bool {
 	tracker := i.subagentTrackerLocked()
 	if res.Replayed {
 		tracker.Reset()
+		i.claude.lastMessage, i.claude.lastMsgValid = "", false
 	} else if !i.subagentWarm {
 		return false
 	}
 	tracker.Apply(res.Events, res.Meta)
+	for _, ev := range res.Events {
+		i.claude.applyEvent(ev)
+	}
 	i.subagentWarm = true
 	return true
 }
@@ -213,7 +223,9 @@ func (i *Instance) ApplyHookScan(res HookScanResult) bool {
 // for an instance restored after a loom restart ("", nothing adopted yet)
 // or launched without hooks (noHooksLaunchID), ErrNoHooks is the normal
 // state. hookLaunchID itself is kept, so a folder written by another
-// launch is still never adopted. Call it on the Update goroutine.
+// launch is still never adopted. The Claude status the hooks reported and
+// the last message go with the rows; a roster-sourced status stays. Call it
+// on the Update goroutine.
 func (i *Instance) ForgetSubagentsWithoutHooks() {
 	i.mu.Lock()
 	if i.hookLaunchID == "" || i.hookLaunchID == noHooksLaunchID {
@@ -223,6 +235,7 @@ func (i *Instance) ForgetSubagentsWithoutHooks() {
 	wasWarm := i.subagentWarm
 	i.subagentWarm = false
 	i.subagentTrackerLocked().Reset()
+	i.claude.folderGone(time.Now())
 	i.mu.Unlock()
 	if wasWarm {
 		i.getLogger().Debug("subagent_hooks.folder_gone", "action", "tracked agents dropped")

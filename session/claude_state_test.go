@@ -226,3 +226,74 @@ func TestClaudeState_ProbeReplay(t *testing.T) {
 		"the failed resume's SessionEnd carries another ID and must not replace this one")
 	assert.Equal(t, "/home/user/.claude/projects/-probe-work/487f460e-49ff-4961-a883-6b2c290c9aec.jsonl", s.transcriptPath)
 }
+
+func TestApplyHookScan_DrivesClaudeState(t *testing.T) {
+	inst := hooksInstance(t, "claude")
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true, Events: []hooks.Event{
+		{Name: hooks.EventSessionStart, Source: "startup", SessionID: "s1", TranscriptPath: "/t/s1.jsonl", At: t0},
+		{Name: hooks.EventUserPromptSubmit, At: t0.Add(time.Second)},
+		{Name: hooks.EventStop, HasTasks: true, LastAssistantMessage: "done", At: t0.Add(2 * time.Second)},
+	}}))
+
+	st, _, ok := inst.ClaudeStatus()
+	require.True(t, ok)
+	assert.Equal(t, Ready, st)
+	msg, valid := inst.LastMessage()
+	assert.Equal(t, "done", msg)
+	assert.True(t, valid)
+	id, transcript := inst.ClaudeSession()
+	assert.Equal(t, "s1", id)
+	assert.Equal(t, "/t/s1.jsonl", transcript)
+
+	assert.True(t, inst.ObserveRoster(Running, "", true, t0.Add(3*time.Second)))
+	st, _, _ = inst.ClaudeStatus()
+	assert.Equal(t, Running, st)
+	assert.True(t, inst.ObserveRoster(Ready, "", false, t0.Add(4*time.Second)), "silence voids the roster's own status")
+	_, _, ok = inst.ClaudeStatus()
+	assert.False(t, ok)
+}
+
+func TestResetHookLaunch_KeepsConversationClearsStatus(t *testing.T) {
+	inst := hooksInstance(t, "claude")
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true, Events: []hooks.Event{
+		{Name: hooks.EventSessionStart, Source: "startup", SessionID: "s1", TranscriptPath: "/t/s1.jsonl", At: t0},
+		{Name: hooks.EventStop, LastAssistantMessage: "done", At: t0.Add(time.Second)},
+	}}))
+
+	inst.resetHookLaunch()
+
+	_, _, ok := inst.ClaudeStatus()
+	assert.False(t, ok)
+	_, valid := inst.LastMessage()
+	assert.False(t, valid)
+	id, _ := inst.ClaudeSession()
+	assert.Equal(t, "s1", id, "the relaunch resumes this conversation, so the reset keeps it")
+	assert.False(t, inst.ObserveRoster(Running, "", true, time.Now().Add(-time.Minute)),
+		"a roster answer from before the relaunch must not revive the old process's status")
+}
+
+func TestForgetSubagentsWithoutHooks_ClearsHookState(t *testing.T) {
+	inst := hooksInstance(t, "claude")
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "0123456789abcdef", Replayed: true, Events: []hooks.Event{
+		{Name: hooks.EventStop, LastAssistantMessage: "done", At: time.Now().Add(-time.Minute)},
+	}}))
+
+	inst.ForgetSubagentsWithoutHooks()
+
+	_, _, ok := inst.ClaudeStatus()
+	assert.False(t, ok, "nothing refreshes a hook observation once its folder is gone")
+	_, valid := inst.LastMessage()
+	assert.False(t, valid)
+}
+
+func TestHooksLaunched(t *testing.T) {
+	assert.False(t, hooksInstance(t, "aider").HooksLaunched())
+	inst := hooksInstance(t, "claude")
+	assert.True(t, inst.HooksLaunched(), "a restored instance that has not adopted an ID yet counts")
+	inst.hookLaunchID = noHooksLaunchID
+	assert.False(t, inst.HooksLaunched())
+	inst.hookLaunchID = "0123456789abcdef"
+	assert.True(t, inst.HooksLaunched())
+	inst.ConfigDir = ""
+	assert.False(t, inst.HooksLaunched())
+}

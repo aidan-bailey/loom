@@ -255,6 +255,12 @@ type Instance struct {
 	hookLaunchID string
 	subagentWarm bool
 
+	// claude is what Claude's hooks and the agent roster report about this
+	// session: its status, the conversation to resume and its last
+	// message (see claude_state.go). Guarded by mu. sessionID and
+	// transcriptPath are persisted (InstanceData v7); the rest is not.
+	claude claudeState
+
 	// logger is a per-instance slog.Logger pre-tagged with
 	// subsystem=instance and title. Populated by NewInstance and
 	// FromInstanceData; tests that build Instance directly are covered

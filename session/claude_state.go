@@ -171,3 +171,74 @@ func runningSubagent(tasks []hooks.Task) bool {
 	}
 	return false
 }
+
+// newLaunch forgets what the previous process reported, keeping the
+// conversation it names: the relaunch resumes it, and the new process's
+// SessionStart replaces it. The no-opinion observation is stamped now, so
+// a roster answer from before the relaunch cannot revive the old status.
+func (s *claudeState) newLaunch(now time.Time) {
+	s.obs = observation{at: now, source: obsHook}
+	s.lastMessage, s.lastMsgValid = "", false
+}
+
+// folderGone drops what the hooks reported once their folder vanished
+// mid-run: nothing will refresh a hook observation. A roster observation
+// stands, since the roster still answers for the session.
+func (s *claudeState) folderGone(now time.Time) {
+	if s.obs.source == obsHook && s.obs.valid {
+		s.obs = observation{at: now, source: obsHook}
+	}
+	s.lastMessage, s.lastMsgValid = "", false
+}
+
+// ClaudeStatus returns the status Claude's hooks or the roster last
+// reported for this session, with the wait reason when Prompting. ok is
+// false when neither has an opinion, and the status ladder decides.
+func (i *Instance) ClaudeStatus() (status Status, reason string, ok bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.claude.status()
+}
+
+// ObserveRoster offers the roster's answer for this session, observed at
+// at (when the query started). ok false means the roster had no opinion.
+// Reports whether the status or wait reason changed. Call it on the Update
+// goroutine.
+func (i *Instance) ObserveRoster(status Status, reason string, ok bool, at time.Time) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if !ok {
+		return i.claude.rosterSilent(at)
+	}
+	return i.claude.offer(observation{status: status, reason: reason, at: at, source: obsRoster, valid: true})
+}
+
+// LastMessage returns Claude's last message from its latest Stop, and
+// whether it is still current (no prompt or permission request since).
+func (i *Instance) LastMessage() (string, bool) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.claude.lastMessage, i.claude.lastMsgValid
+}
+
+// ClaudeSession returns the conversation a relaunch should resume: the
+// session ID and transcript path from the latest parent SessionStart.
+func (i *Instance) ClaudeSession() (sessionID, transcriptPath string) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.claude.sessionID, i.claude.transcriptPath
+}
+
+// HooksLaunched reports whether this session's current launch registered
+// loom's hooks, so a scan can find its events: a Claude program with a
+// config dir whose launch did not fall back to noHooksLaunchID. A
+// restored instance that has not adopted its folder's ID yet (empty ID)
+// counts.
+func (i *Instance) HooksLaunched() bool {
+	if i.ConfigDir == "" || !IsClaudeProgram(i.Program()) {
+		return false
+	}
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.hookLaunchID != noHooksLaunchID
+}
