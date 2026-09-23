@@ -1432,7 +1432,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, tea.RequestWindowSize, m.instanceChanged())
 		return m, tea.Batch(cmds...)
-	case workspaceRegisteredMsg:
+	case registerWorkspaceMsg:
+		// The registry has no lock, so the Add runs here on Update, never
+		// in the confirmation's Cmd.
+		if err := m.registry.Add(msg.name, msg.dir); err != nil {
+			return m, m.handleError(fmt.Errorf("failed to register workspace: %w", err))
+		}
 		ws := m.registry.FindByPath(msg.dir)
 		if ws == nil {
 			return m, m.handleError(fmt.Errorf("workspace not found after registration"))
@@ -2002,9 +2007,13 @@ func startAttachCmd(inst *session.Instance, target fullScreenAttachTarget) tea.C
 	}
 }
 
-// workspaceRegisteredMsg is sent after a pending directory is registered as a workspace.
-type workspaceRegisteredMsg struct {
-	dir string
+// registerWorkspaceMsg asks Update to register a pending directory as
+// workspace name and open it. The startup confirmation's Cmd returns it
+// instead of calling registry.Add itself: the registry has no lock, and
+// Update reads and writes it.
+type registerWorkspaceMsg struct {
+	name string
+	dir  string
 }
 
 // instanceStartedMsg reports an async Start. slot is the slot that owns

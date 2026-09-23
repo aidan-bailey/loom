@@ -324,3 +324,58 @@ func TestHandleQuit_LatchedFallbackQuitsAndKeepsOpenWorkspaces(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ws-bad"}, fresh.OpenWorkspaces, "the failed workspace is retried on the next launch")
 }
+
+// TestRegisterPendingDir_RegistryWriteRunsOnUpdate: confirming the startup
+// "Register '<dir>' as workspace?" prompt used to run registry.Add inside the
+// confirmation's Cmd, off the Update goroutine. The registry has no lock and
+// Update reads and writes it (quit, tab switches), so the Cmd may only carry
+// the request back; Update performs the Add and then activates the slot.
+func TestRegisterPendingDir_RegistryWriteRunsOnUpdate(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv("LOOM_HOME", t.TempDir())
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+
+	dir := t.TempDir()
+	name := filepath.Base(dir)
+	// A preserved workspace-terminal record under the workspace's name keeps
+	// activation from starting a real terminal.
+	rec, err := json.Marshal(map[string]any{
+		"schema_version":        99,
+		"title":                 name,
+		"program":               "claude",
+		"is_workspace_terminal": true,
+		"worktree":              map[string]any{},
+	})
+	require.NoError(t, err)
+	cfgDir := config.WorkspaceConfigDir(&config.Workspace{Name: name, Path: dir})
+	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, config.StateFileName),
+		[]byte(`{"instances":[`+string(rec)+`]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, config.ConfigFileName),
+		[]byte(`{"default_program":"true"}`), 0o644))
+
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	cfg := config.DefaultConfig()
+	off := false
+	cfg.ClaudeRemoteControl = &off // no claude auth probe
+	m, err := newHome(context.Background(), &config.WorkspaceContext{ConfigDir: t.TempDir()}, reg, cfg, "true", dir, true)
+	require.NoError(t, err)
+	require.Equal(t, stateConfirm, m.state, "a pending dir opens the registration prompt")
+	m.cmdExec = &recordingExec{}
+
+	cmd := m.pendingConfirmation.Run()
+	require.NotNil(t, cmd)
+	msg := cmd()
+	assert.Empty(t, reg.Workspaces, "the confirmation Cmd must not write the registry")
+	onDisk, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Empty(t, onDisk.Workspaces, "nor register the workspace on disk")
+
+	m.Update(msg)
+	ws := reg.FindByPath(dir)
+	require.NotNil(t, ws, "Update registers the workspace")
+	assert.Equal(t, name, ws.Name)
+	assert.Equal(t, []string{name}, m.slotNames(), "and opens it as the focused tab")
+	require.NoError(t, m.checkSlotInvariant())
+}

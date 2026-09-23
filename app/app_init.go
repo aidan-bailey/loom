@@ -187,11 +187,11 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			confirm.SetWidth(60)
 			h.state = stateConfirm
 			h.pendingConfirmation = overlay.ConfirmationTask{
+				// Only the request crosses the Cmd: the registry has no
+				// lock and Update reads and writes it, so Update runs the
+				// Add when registerWorkspaceMsg lands.
 				Async: func() tea.Msg {
-					if err := h.registry.Add(name, pendingDir); err != nil {
-						return fmt.Errorf("failed to register workspace: %w", err)
-					}
-					return workspaceRegisteredMsg{dir: pendingDir}
+					return registerWorkspaceMsg{name: name, dir: pendingDir}
 				},
 			}
 			confirm.OnCancel = func() {
