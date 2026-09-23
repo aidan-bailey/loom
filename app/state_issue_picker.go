@@ -220,6 +220,11 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 	if inst == nil || inst.Started() {
 		return m, nil
 	}
+	if m.slotHolding(inst) == nil {
+		// Deleted (D) while the fetch ran: reopening the flow would re-arm
+		// pendingNew for an instance no list holds.
+		return m, m.handleError(fmt.Errorf("issue #%d not expanded: %q was deleted meanwhile", msg.number, inst.Title))
+	}
 	if msg.repo != m.repoPath() {
 		return m, m.handleError(issueExpandDropped(msg, inst.Title, "its workspace is no longer focused"))
 	}
@@ -251,7 +256,7 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranch string) (tea.Model, tea.Cmd) {
 	m.pendingNew = instance
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-		owner := m.workspaceSlot // stamped for instanceStartedMsg
+		owner := m.startOwner(instance) // stamped for instanceStartedMsg
 		startTask := overlay.ConfirmationTask{
 			Sync: func() {
 				m.pendingNew = nil // the start owns it now

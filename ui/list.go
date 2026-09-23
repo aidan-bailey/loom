@@ -434,8 +434,12 @@ func (l *List) Bottom() {
 
 // AddInstance adds a new instance to the list.
 func (l *List) AddInstance(instance *session.Instance) {
-	// Workspace terminals are always pinned at index 0
+	// Workspace terminals are always pinned at index 0; the selection
+	// stays on its row.
 	if instance.IsWorkspaceTerminal {
+		if len(l.items) > 0 {
+			l.selectedIdx++
+		}
 		l.items = append([]*session.Instance{instance}, l.items...)
 	} else {
 		l.items = append(l.items, instance)

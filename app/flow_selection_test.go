@@ -3,12 +3,17 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
+	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,30 +98,68 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	assert.NotContains(t, m.list.GetInstances(), pending)
 }
 
+// startedWorktreeInstance is a started, Running session with a git worktree
+// record at wtPath and its preview client attached (a fake PTY) — what a
+// start leaves behind. No tmux server is touched; killed reports whether
+// anything ran tmux kill-session for it (Kill does, first thing).
+func startedWorktreeInstance(t *testing.T, title, wtPath string) (inst *session.Instance, killed func() bool) {
+	t.Helper()
+	var mu sync.Mutex
+	kills := 0
+	ex := aliveCmdExecForTest()
+	ex.RunFunc = func(c *exec.Cmd) error {
+		if slices.Contains(c.Args, "kill-session") {
+			mu.Lock()
+			kills++
+			mu.Unlock()
+		}
+		return nil
+	}
+	inst, err := session.FromInstanceData(worktreeRecord(title, wtPath, session.Paused), t.TempDir())
+	require.NoError(t, err)
+	inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps(title, "claude", fakePtyFactory{t: t}, ex))
+	require.NoError(t, inst.TransitionTo(session.Running))
+	require.NoError(t, inst.RepairPtmx())
+	require.True(t, inst.PtmxAlive())
+	return inst, func() bool { mu.Lock(); defer mu.Unlock(); return kills > 0 }
+}
+
+func worktreeRecord(title, wtPath string, status session.Status) session.InstanceData {
+	return session.InstanceData{
+		Title: title, Status: status, Program: "claude", Branch: "loom/" + title,
+		Worktree: session.GitWorktreeData{RepoPath: filepath.Dir(wtPath), WorktreePath: wtPath, BranchName: "loom/" + title, SessionName: title},
+	}
+}
+
 // TestInstanceStarted_OwnerReopened: the owner was closed and the same
-// workspace reopened while the start ran. The reopened slot loaded the
-// record as a never-started twin.
+// workspace reopened while the start ran. The reopened slot reconciled the
+// start's Loading record into a twin — through the real path, which with
+// the tmux session not yet up marks it Paused (started, no attach client).
 func TestInstanceStarted_OwnerReopened(t *testing.T) {
 	isolateTmux(t)
-	setup := func(t *testing.T) (m *home, owner *workspaceSlot, twin *session.Instance, recA, recC *recordingInstanceStorage) {
+	wtPath := filepath.Join(t.TempDir(), "late-wt")
+	setup := func(t *testing.T, twinWorktree string) (m *home, owner *workspaceSlot, twin *session.Instance, recA, recC *recordingInstanceStorage) {
 		t.Helper()
 		m, recA, _ = ownerTestHome(t)
 		owner = m.workspaceSlot
 		drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
-		reopened := fleetSlot(t, "afocus", "late")
+		reopened := fleetSlot(t, "afocus")
 		recC = &recordingInstanceStorage{}
 		var err error
 		reopened.storage, err = session.NewStorage(recC, t.TempDir())
 		require.NoError(t, err)
+		twin, err = session.ReconcileAndRestore(worktreeRecord("late", twinWorktree, session.Loading), t.TempDir(), deadCmdExecForTest())
+		require.NoError(t, err)
+		require.True(t, twin.Paused(), "fixture: a reconciled Loading record comes back Paused")
+		reopened.list.AddInstance(twin)
 		m.slots = append(m.slots, reopened)
-		twin = reopened.list.GetInstanceByTitle("late")
 		recA.calls = 0
 		return m, owner, twin, recA, recC
 	}
 
 	t.Run("success takes the twin's place", func(t *testing.T) {
-		m, owner, twin, recA, recC := setup(t)
-		started := liveInstance(t, "late")
+		m, owner, twin, recA, recC := setup(t, wtPath)
+		started, _ := startedWorktreeInstance(t, "late", wtPath)
 		owner.list.AddInstance(started)
 
 		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
@@ -131,17 +174,97 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 	})
 
 	t.Run("failure leaves the twin's worktree and branch alone", func(t *testing.T) {
-		m, owner, twin, _, _ := setup(t)
-		started := liveInstance(t, "late")
+		m, owner, twin, _, _ := setup(t, wtPath)
+		started, killed := startedWorktreeInstance(t, "late", wtPath)
 		owner.list.AddInstance(started)
 
 		_, cmd := m.Update(instanceStartedMsg{instance: started, err: errors.New("boom"), slot: owner})
 		drainCmd(cmd)
 
-		assert.True(t, started.Started(), "not killed: the reopened record owns its resources")
+		assert.False(t, killed(), "not killed: the reopened record owns its worktree and branch")
 		assert.False(t, started.PtmxAlive(), "only its preview client is released")
 		assert.Same(t, twin, m.slots[1].list.GetInstanceByTitle("late"))
 	})
+
+	t.Run("a namesake with another worktree is not a twin", func(t *testing.T) {
+		m, owner, namesake, _, recC := setup(t, filepath.Join(t.TempDir(), "other-wt"))
+		started, _ := startedWorktreeInstance(t, "late", wtPath)
+		owner.list.AddInstance(started)
+
+		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
+		drainCmd(cmd)
+
+		assert.Same(t, namesake, m.slots[1].list.GetInstanceByTitle("late"), "an unrelated same-titled session is untouched")
+		assert.Zero(t, recC.calls)
+		assert.False(t, started.PtmxAlive(), "the start stays with its closed owner, so its preview is released")
+	})
+}
+
+// TestScriptWorkspaceSwitchDuringNaming_IsIgnored: deferred script actions
+// apply whenever their message lands, in any state. A script that runs
+// new_instance (which parks the handler until the naming flow has opened)
+// and then switches workspace used to move focus while the naming overlay
+// was open, so the new session was started — and stamped — against the
+// wrong workspace.
+func TestScriptWorkspaceSwitchDuringNaming_IsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "switch.lua"), []byte(`
+cs.bind("Z", function(ctx)
+  cs.actions.new_instance() -- deferred: parks until the intent ran
+  cs.actions.workspace_next()
+end)
+`), 0o644))
+	m, _, _ := ownerTestHome(t)
+	initScriptsIn(m, dir, false)
+	owner := m.workspaceSlot
+
+	cmd, ok := m.dispatchScript("Z")
+	require.True(t, ok)
+	pumpScript(t, m, cmd)
+
+	require.Equal(t, stateNew, m.state, "the intent opened the naming flow")
+	require.NotNil(t, m.pendingNew)
+	assert.Same(t, owner, m.workspaceSlot, "focus must not move while naming is open")
+	assert.Contains(t, m.list.GetInstances(), m.pendingNew)
+}
+
+// pumpScript feeds a script's Cmds and their script messages back through
+// Update until the dispatch and every resume have run.
+func pumpScript(t *testing.T, m *home, cmd tea.Cmd) {
+	t.Helper()
+	queue := []tea.Cmd{cmd}
+	for steps := 0; len(queue) > 0; steps++ {
+		require.Less(t, steps, 100, "script pump did not settle")
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		case scriptDoneMsg, scriptResumeMsg:
+			_, next := m.Update(msg)
+			queue = append(queue, next)
+		}
+	}
+}
+
+// TestIssueExpanded_ForDeletedInstanceIsDropped: after the #n dispatch
+// the instance is back in the list, unstarted, for up to ~20s; D can kill
+// it meanwhile. The expansion then re-armed the creation flow for an
+// instance no list holds.
+func TestIssueExpanded_ForDeletedInstanceIsDropped(t *testing.T) {
+	m := newTestHome(t)
+	m.errBox.SetSize(400, 1)
+	gone, err := session.NewInstance(session.InstanceOptions{Title: "gone", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+
+	_, _ = m.Update(issueExpandedMsg{instance: gone, repo: m.repoPath(), number: 5})
+
+	assert.Equal(t, stateDefault, m.state, "no launch options for a deleted instance")
+	assert.Nil(t, m.pendingNew)
+	assert.Contains(t, m.errBox.String(), "#5")
 }
 
 // TestKillAction_UsesTheDispatchSlotsStorage: killAction runs for seconds
@@ -219,4 +342,31 @@ func TestCreationCancelPaths_KillThePendingInstanceByIdentity(t *testing.T) {
 			assert.Nil(t, m.pendingNew)
 		})
 	}
+}
+
+// TestStartOwner_ResolvesByIdentity: the start is stamped with the slot
+// that holds the instance, not whichever slot is focused at confirm time.
+func TestStartOwner_ResolvesByIdentity(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	peer := m.slots[1]
+	inst := startingInstance(t, peer, "in-peer")
+	assert.Same(t, peer, m.startOwner(inst))
+
+	loose, err := session.NewInstance(session.InstanceOptions{Title: "loose", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	assert.Same(t, m.workspaceSlot, m.startOwner(loose), "an instance no slot holds falls back to the focused slot")
+}
+
+// TestDropPendingNew_NeverKillsAStartedInstance is a belt: a started
+// instance is not pending, and a cancel must not kill a live session.
+func TestDropPendingNew_NeverKillsAStartedInstance(t *testing.T) {
+	isolateTmux(t)
+	m, _, _ := ownerTestHome(t)
+	live := liveInstance(t, "live")
+	m.list.AddInstance(live)
+	m.pendingNew = live
+
+	assert.Nil(t, m.dropPendingNew())
+	assert.Contains(t, m.list.GetInstances(), live)
+	assert.Nil(t, m.pendingNew)
 }

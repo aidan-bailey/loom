@@ -189,14 +189,30 @@ func (s *scriptHost) deferModelMutation(fn func(*home)) {
 	s.mu.Unlock()
 }
 
+// deferFocusMutation is deferModelMutation for the primitives that move
+// the selection or the focused slot: cursor and list navigation,
+// workspace switches, waiting-jumps and the overview toggle. They apply
+// only in stateDefault. The message can land after an awaited intent
+// opened a flow, or after the user did; creation flows, inline attach
+// and the prompt overlay act on the selection and the focused slot, so
+// moving either under them would retarget the flow.
+func (s *scriptHost) deferFocusMutation(fn func(*home)) {
+	s.deferModelMutation(func(m *home) {
+		if m.state != stateDefault {
+			return
+		}
+		fn(m)
+	})
+}
+
 // CursorUp implements script.Host.
 func (s *scriptHost) CursorUp() {
-	s.deferModelMutation(func(m *home) { m.moveCursor(-1) })
+	s.deferFocusMutation(func(m *home) { m.moveCursor(-1) })
 }
 
 // CursorDown implements script.Host.
 func (s *scriptHost) CursorDown() {
-	s.deferModelMutation(func(m *home) { m.moveCursor(1) })
+	s.deferFocusMutation(func(m *home) { m.moveCursor(1) })
 }
 
 // ToggleDiff implements script.Host.
@@ -206,12 +222,12 @@ func (s *scriptHost) ToggleDiff() {
 
 // WorkspacePrev implements script.Host.
 func (s *scriptHost) WorkspacePrev() {
-	s.deferModelMutation(func(m *home) { m.switchWorkspaceSlot(-1) })
+	s.deferFocusMutation(func(m *home) { m.switchWorkspaceSlot(-1) })
 }
 
 // WorkspaceNext implements script.Host.
 func (s *scriptHost) WorkspaceNext() {
-	s.deferModelMutation(func(m *home) { m.switchWorkspaceSlot(1) })
+	s.deferFocusMutation(func(m *home) { m.switchWorkspaceSlot(1) })
 }
 
 // switchWorkspaceSlot rotates the focused workspace slot by delta (-1 prev,
@@ -306,32 +322,32 @@ func (s *scriptHost) ResetTerminalScroll() {
 
 // ListPageUp implements script.Host.
 func (s *scriptHost) ListPageUp() {
-	s.deferModelMutation(func(m *home) { m.list.PageUp() })
+	s.deferFocusMutation(func(m *home) { m.list.PageUp() })
 }
 
 // ListPageDown implements script.Host.
 func (s *scriptHost) ListPageDown() {
-	s.deferModelMutation(func(m *home) { m.list.PageDown() })
+	s.deferFocusMutation(func(m *home) { m.list.PageDown() })
 }
 
 // ListTop implements script.Host.
 func (s *scriptHost) ListTop() {
-	s.deferModelMutation(func(m *home) { m.list.Top() })
+	s.deferFocusMutation(func(m *home) { m.list.Top() })
 }
 
 // ListBottom implements script.Host.
 func (s *scriptHost) ListBottom() {
-	s.deferModelMutation(func(m *home) { m.list.Bottom() })
+	s.deferFocusMutation(func(m *home) { m.list.Bottom() })
 }
 
 // NextWaiting implements script.Host.
 func (s *scriptHost) NextWaiting() {
-	s.deferModelMutation(func(m *home) { m.jumpWaiting(1) })
+	s.deferFocusMutation(func(m *home) { m.jumpWaiting(1) })
 }
 
 // PrevWaiting implements script.Host.
 func (s *scriptHost) PrevWaiting() {
-	s.deferModelMutation(func(m *home) { m.jumpWaiting(-1) })
+	s.deferFocusMutation(func(m *home) { m.jumpWaiting(-1) })
 }
 
 // ToggleRail implements script.Host. Persists the flag and re-runs the
@@ -364,7 +380,7 @@ func (s *scriptHost) ToggleTerminalPane() {
 
 // ToggleOverview implements script.Host.
 func (s *scriptHost) ToggleOverview() {
-	s.deferModelMutation(func(m *home) {
+	s.deferFocusMutation(func(m *home) {
 		if m.viewMode == viewOverview {
 			m.viewMode = viewFocus
 		} else {

@@ -72,7 +72,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 
 				m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-					owner := m.workspaceSlot // stamped for instanceStartedMsg
+					owner := m.startOwner(selected) // stamped for instanceStartedMsg
 					startTask := overlay.ConfirmationTask{
 						Sync: func() {
 							m.pendingNew = nil // the start owns it now

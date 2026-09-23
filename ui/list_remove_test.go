@@ -3,6 +3,7 @@ package ui
 import (
 	"testing"
 
+	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -44,4 +45,19 @@ func TestList_RemoveKeepsSelectionOnItsRow(t *testing.T) {
 		assert.Equal(t, 0, l.SelectedIdx())
 		assert.Nil(t, l.GetSelectedInstance())
 	})
+}
+
+// TestList_PrependedWorkspaceTerminalKeepsSelection: workspace terminals
+// are pinned at index 0, which used to shift the selection onto the row
+// above it.
+func TestList_PrependedWorkspaceTerminalKeepsSelection(t *testing.T) {
+	l := newPageNavList(3)
+	selected := l.items[1]
+	l.SetSelectedInstance(1)
+	l.AddInstance(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
+	assert.Same(t, selected, l.GetSelectedInstance())
+
+	empty := newPageNavList(0)
+	empty.AddInstance(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
+	assert.Equal(t, 0, empty.SelectedIdx())
 }

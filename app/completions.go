@@ -32,7 +32,9 @@ import (
 func (m *home) dropPendingNew() tea.Cmd {
 	inst := m.pendingNew
 	m.pendingNew = nil
-	if inst == nil {
+	if inst == nil || inst.Started() {
+		// A started instance is no longer pending (its start cleared
+		// pendingNew first); never kill a live session from a cancel.
 		return nil
 	}
 	if slot := m.slotHolding(inst); slot != nil {
@@ -43,15 +45,30 @@ func (m *home) dropPendingNew() tea.Cmd {
 
 // reopenedTwin finds, for an instance whose owner slot was dropped while
 // it started, the copy a reopened slot of the same workspace loaded from
-// the record the start left behind: a same-titled instance, never
-// started and with no attach client, in a loaded slot of that workspace.
-// nil when there is none.
+// the record the start left behind. Reconcile turns that Loading record
+// into a Paused instance with no attach client (ActionMarkPaused, or
+// ActionKillAndPause if the session was already up), so the twin is
+// matched on the record's identity: the same title, worktree path and
+// (when both are known) branch — which rules out an unrelated
+// same-titled session — plus Paused and unattached. nil when there is
+// none.
 func (m *home) reopenedTwin(owner *workspaceSlot, inst *session.Instance) (*session.Instance, *workspaceSlot) {
+	wt := inst.GetWorktreePath()
+	if wt == "" {
+		return nil, nil
+	}
 	for _, s := range m.openSlots() {
 		if slotLabel(s) != slotLabel(owner) {
 			continue
 		}
-		if twin := s.list.GetInstanceByTitle(inst.Title); twin != nil && twin != inst && !twin.Started() && !twin.PtmxAlive() {
+		twin := s.list.GetInstanceByTitle(inst.Title)
+		if twin == nil || twin == inst || twin.GetWorktreePath() != wt {
+			continue
+		}
+		if b1, b2 := twin.GetBranch(), inst.GetBranch(); b1 != "" && b2 != "" && b1 != b2 {
+			continue
+		}
+		if twin.Paused() && !twin.PtmxAlive() {
 			return twin, s
 		}
 	}
@@ -80,6 +97,18 @@ func (m *home) slotHolding(inst *session.Instance) *workspaceSlot {
 		}
 	}
 	return nil
+}
+
+// startOwner is the slot an instance about to start belongs to, for
+// stamping instanceStartedMsg: the loaded slot holding it, or the focused
+// slot if none does. Resolved by identity, not assumed to be the focused
+// slot — deferred script actions can change focus while a creation flow
+// is open.
+func (m *home) startOwner(inst *session.Instance) *workspaceSlot {
+	if slot := m.slotHolding(inst); slot != nil {
+		return slot
+	}
+	return m.workspaceSlot
 }
 
 // slotLoaded reports whether slot is still part of the model: an open tab,
@@ -182,9 +211,10 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 		// A background slot's selection drives no open flow.
 		owner.list.SelectInstance(inst)
 		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", inst.Title, slotLabel(owner)))
-	case m.state != stateDefault:
+	case m.state != stateDefault || !slices.Contains(m.list.GetInstances(), inst):
 		// Another flow owns the screen and acts on the selection; leave
-		// both alone.
+		// both alone. (The second test is a belt: the owner is stamped by
+		// identity, so a focused owner holds inst.)
 		m.errBox.SetInfo(fmt.Sprintf("%s started", inst.Title))
 	default:
 		m.list.SelectInstance(inst)
