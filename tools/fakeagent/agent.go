@@ -53,6 +53,8 @@ type fakeAgent struct {
 	sleep func(time.Duration)
 	git   func(dir string, args ...string) error
 	edits int
+	// hooks fires loom's hooks the way Claude does; nil without --settings.
+	hooks *hookEmitter
 }
 
 func newFakeAgent(p persona, in io.Reader, out io.Writer, dir string) *fakeAgent {
@@ -70,10 +72,12 @@ func runGit(dir string, args ...string) error {
 // run executes stdin commands until exit, crash, or EOF and returns the
 // process exit code.
 func (a *fakeAgent) run() int {
+	a.hooks.sessionStart()
 	fmt.Fprintf(a.out, "fakeagent: %s persona\n%s\n", a.p.name, usage)
 	for {
 		fmt.Fprint(a.out, "> ")
 		if !a.in.Scan() {
+			a.hooks.emit("SessionEnd", map[string]any{"reason": "other"})
 			return 0
 		}
 		if code, done := a.exec(strings.TrimSpace(a.in.Text())); done {
@@ -85,10 +89,26 @@ func (a *fakeAgent) run() int {
 func (a *fakeAgent) exec(line string) (code int, done bool) {
 	cmd, arg, _ := strings.Cut(line, " ")
 	switch cmd {
+	case "", "crash":
+	case "exit":
+		a.hooks.emit("SessionEnd", map[string]any{"reason": "prompt_input_exit"})
+	default:
+		// Every other line is a prompt: Claude fires UserPromptSubmit when
+		// it arrives and Stop when the turn ends. The Stop's message is
+		// never printed, so a card showing it proves it came from a hook.
+		a.hooks.emit("UserPromptSubmit", map[string]any{"prompt": line})
+		defer a.hooks.emit("Stop", map[string]any{
+			"last_assistant_message": "fakeagent finished: " + line,
+			"background_tasks":       []any{},
+			"stop_hook_active":       false,
+		})
+	}
+	switch cmd {
 	case "":
 	case "work":
 		a.work(arg)
 	case "ask":
+		a.hooks.emit("PermissionRequest", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "true"}})
 		a.await(a.p.pendingPrompt, "answered")
 	case "trust":
 		a.await(a.p.trustPrompt, "trusted")

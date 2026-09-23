@@ -170,3 +170,31 @@ func TestE2E_SessionSurvivesRestart(t *testing.T) {
 	// is the only instance, so no extra select keystroke is needed here.
 	require.NoError(t, sb.WaitFor("commands: work N", uiTimeout))
 }
+
+// sendToAgent types text into the focused session through the quick input
+// bar and sends it.
+func sendToAgent(t *testing.T, sb *devsandbox.Sandbox, text string) {
+	t.Helper()
+	require.NoError(t, sb.SendKeys("a"))
+	// "a" is Lua-dispatched (see createSession); wait for the quick input
+	// bar's own footer before typing into it.
+	require.NoError(t, sb.WaitFor("Enter to send to agent", uiTimeout))
+	require.NoError(t, sb.SendText(text))
+	require.NoError(t, sb.SendKeys("Enter"))
+}
+
+// The fake claude persona fires loom's hooks the way Claude does, and
+// answers the roster query with no sessions, so this status is entirely
+// hook-driven: a wait reason only a PermissionRequest supplies, then
+// Claude's last message on the stopped card, which the pane never shows.
+func TestE2E_FakeClaudeHooksDriveStatus(t *testing.T) {
+	sb := newSandbox(t, "fake-claude")
+	startLoom(t, sb)
+	createSession(t, sb, "hooked")
+
+	sendToAgent(t, sb, "ask")
+	require.NoError(t, sb.WaitFor("permission: Bash", uiTimeout))
+
+	sendToAgent(t, sb, "y")
+	require.NoError(t, sb.WaitFor("fakeagent finished: ask", uiTimeout))
+}
