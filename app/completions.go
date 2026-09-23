@@ -274,6 +274,9 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 // client released.
 func (m *home) handleResumeDone(msg resumeDoneMsg) tea.Cmd {
 	cmds := []tea.Cmd{tea.RequestWindowSize}
+	if msg.notice != nil {
+		cmds = append(cmds, m.handleError(msg.notice))
+	}
 	if inst := msg.instance; inst != nil && m.slotHolding(inst) == nil {
 		var adopted *workspaceSlot
 		if msg.slot != nil {

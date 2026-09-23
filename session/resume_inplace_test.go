@@ -25,11 +25,13 @@ import (
 // (an answered probe, so liveness reads Dead rather than Unknown) until a
 // new-session has been issued; every new-session is recorded, not run.
 type fakeTmuxServer struct {
-	mu        sync.Mutex
-	created   bool
-	failStart bool       // make every new-session fail
-	launches  [][]string // argv of every new-session
-	runs      [][]string // argv of every other command
+	mu         sync.Mutex
+	created    bool
+	failStart  bool       // make every new-session fail
+	failAttach bool       // make every attach-session (Restore) fail
+	failKill   bool       // make every kill-session fail
+	launches   [][]string // argv of every new-session
+	runs       [][]string // argv of every other command
 	// probe, when set, answers has-session instead of the created flag.
 	probe func() error
 }
@@ -45,6 +47,14 @@ func (f *fakeTmuxServer) Start(cmd *exec.Cmd) (*os.File, error) {
 		}
 		f.created = true
 	}
+	if slices.Contains(cmd.Args, "attach-session") {
+		f.mu.Lock()
+		fail := f.failAttach
+		f.mu.Unlock()
+		if fail {
+			return nil, errors.New("fake tmux: attach-session failed")
+		}
+	}
 	return os.OpenFile(os.DevNull, os.O_RDWR, 0)
 }
 
@@ -57,8 +67,11 @@ func (f *fakeTmuxServer) runner() cmd_test.MockCmdExec {
 		RunFunc: func(c *exec.Cmd) error {
 			f.mu.Lock()
 			f.runs = append(f.runs, slices.Clone(c.Args))
-			probe, created := f.probe, f.created
+			probe, created, failKill := f.probe, f.created, f.failKill
 			f.mu.Unlock()
+			if failKill && slices.Contains(c.Args, "kill-session") {
+				return errors.New("fake tmux: server not responding")
+			}
 			if slices.Contains(c.Args, "has-session") {
 				if probe != nil {
 					return probe()
@@ -354,7 +367,7 @@ func TestResume_InPlaceRefusesDivergentStash(t *testing.T) {
 	// The user keeps the worktree as it is and drops the stash.
 	gitIn(t, gw.GetRepoPath(), "stash", "drop", "stash@{0}")
 
-	require.NoError(t, resumeLikeApp(t, inst))
+	requireStashForgotten(t, resumeLikeApp(t, inst), sha)
 	assert.Equal(t, "newer edit\n", readFile(t, filepath.Join(dir, "README.md")))
 	assert.Empty(t, gw.GetStashRef())
 	assert.Equal(t, Running, inst.GetStatus())
@@ -394,15 +407,28 @@ func TestCrashRestart_RelaunchesIntactWorktree(t *testing.T) {
 
 // resumeLikeApp resumes the way the app does: runResumeSelected moves the
 // instance to Loading before Resume runs, and transitionFailedMsg reverts
-// it to Paused when Resume fails.
+// it to Paused when Resume fails. A Notice alone is a success (the app
+// shows it and keeps the instance running); it is returned for the test
+// to check.
 func resumeLikeApp(t *testing.T, inst *Instance) error {
 	t.Helper()
 	require.NoError(t, inst.TransitionTo(Loading))
 	err := inst.Resume(nil)
-	if err != nil {
+	if _, notice := OnlyNotice(err); err != nil && !notice {
 		require.NoError(t, inst.TransitionTo(Paused))
 	}
 	return err
+}
+
+// requireStashForgotten asserts err is only the notice that Resume forgot
+// the unlisted stash sha, naming it and how to recover it.
+func requireStashForgotten(t *testing.T, err error, sha string) {
+	t.Helper()
+	n, ok := OnlyNotice(err)
+	require.True(t, ok, "a forgotten stash must be reported, as a notice: %v", err)
+	assert.Contains(t, n.Error(), sha, "the notice names the stash")
+	assert.Contains(t, n.Error(), "stash apply "+sha)
+	assert.Contains(t, n.Error(), "fsck --unreachable | grep commit")
 }
 
 // TestResume_DroppedStashIsNeverReapplied follows the refusal's advice to
@@ -425,7 +451,7 @@ func TestResume_DroppedStashIsNeverReapplied(t *testing.T) {
 	gitIn(t, dir, "-c", "user.email=a@b", "-c", "user.name=n", "commit", "-am", "keep the worktree")
 	gitIn(t, gw.GetRepoPath(), "stash", "drop", "stash@{0}")
 
-	require.NoError(t, resumeLikeApp(t, inst))
+	requireStashForgotten(t, resumeLikeApp(t, inst), sha)
 
 	assert.Equal(t, "newer edit\n", readFile(t, filepath.Join(dir, "README.md")))
 	assert.Empty(t, gitIn(t, dir, "status", "--porcelain"), "the dropped stash must not be applied")
@@ -500,18 +526,29 @@ func TestUnverifiedTreeError(t *testing.T) {
 	assert.Contains(t, rejected.Error(), "move it aside")
 	assert.Contains(t, rejected.Error(), "/wt")
 	assert.NotContains(t, rejected.Error(), "less busy")
+
+	// The mv is a command the user pastes: the path is shell-quoted.
+	quoted := unverifiedTreeError("/a b/it's", errors.New("locked \"initializing\""))
+	assert.Contains(t, quoted.Error(), `mv '/a b/it'\''s' '/a b/it'\''s.bak'`)
 }
 
 // TestResume_RelaunchReleasesTheDeadSession: the dead session object still
 // holds its attach client, emulator and output pump. Relaunching must close
 // it first, as Restart does — by exact name, since tmux prefix-matches a
-// bare -t and the session is gone.
+// bare -t and the session is gone. Killing the tmux session by name alone
+// would pass a kill-session check while leaking all three, so the old
+// object is attached (on the fake PTY) first and checked afterwards.
 func TestResume_RelaunchReleasesTheDeadSession(t *testing.T) {
 	inst, srv := newTickPausedInstance(t)
 	old := inst.getTmuxSession()
+	require.NoError(t, old.Restore(), "attach the old session object, as the health tick left it")
+	require.True(t, old.PtmxAlive(), "precondition: it holds an attach client")
+	require.True(t, old.HasEmulator(), "precondition: and an emulator")
 
 	require.NoError(t, resumeLikeApp(t, inst))
 
+	assert.False(t, old.PtmxAlive(), "the dead session's attach client must be released")
+	assert.False(t, old.HasEmulator(), "and its emulator")
 	assert.True(t, srv.ran("kill-session", "-t", tmux.SessionTarget(tmux.ToLoomTmuxName(inst.Title))),
 		"the dead session must be closed, by exact name")
 	assert.NotSame(t, old, inst.getTmuxSession())
@@ -519,32 +556,49 @@ func TestResume_RelaunchReleasesTheDeadSession(t *testing.T) {
 
 // TestResume_UnansweredProbeWhileFinishingRefuses: finishResume probes the
 // session again. If tmux does not answer, it must neither close the old
-// session (it may be live) nor start a second one; refuse, retryably.
+// session (it may be live) nor start a second one; refuse, retryably —
+// whichever path led there: a reattach (Resume's own probe said alive), a
+// relaunch in place or a rebuild (it said dead, and the session may have
+// come back since).
 func TestResume_UnansweredProbeWhileFinishingRefuses(t *testing.T) {
-	if testing.Short() {
-		t.Skip("waits out the tmux liveness probe timeout")
-	}
-	inst, srv := newTickPausedInstance(t)
-	var probes int
-	srv.mu.Lock()
-	srv.probe = func() error {
-		srv.mu.Lock()
-		probes++
-		n := probes
-		srv.mu.Unlock()
-		if n == 1 {
-			return nil // Resume's own probe: alive, so it reattaches
-		}
-		time.Sleep(5300 * time.Millisecond) // outlive the probe deadline → Unknown
-		return errors.New("signal: killed")
-	}
-	srv.mu.Unlock()
+	for _, tc := range []struct {
+		name  string
+		first error                       // Resume's own probe
+		setup func(*testing.T, *Instance) // what is on disk
+	}{
+		{"reattach", nil, func(*testing.T, *Instance) {}},
+		{"relaunch in place", errors.New("can't find session"), func(*testing.T, *Instance) {}},
+		{"rebuild", errors.New("can't find session"), func(t *testing.T, inst *Instance) {
+			gw := inst.getGitWorktree()
+			gitIn(t, gw.GetRepoPath(), "worktree", "remove", "--force", gw.GetWorktreePath())
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(tmux.SetLivenessProbeTimeoutForTest(20 * time.Millisecond))
+			inst, srv := newTickPausedInstance(t)
+			tc.setup(t, inst)
+			var probes int
+			srv.mu.Lock()
+			srv.probe = func() error {
+				srv.mu.Lock()
+				probes++
+				n := probes
+				srv.mu.Unlock()
+				if n == 1 {
+					return tc.first
+				}
+				time.Sleep(60 * time.Millisecond) // outlive the probe deadline → Unknown
+				return errors.New("signal: killed")
+			}
+			srv.mu.Unlock()
 
-	err := resumeLikeApp(t, inst)
+			err := resumeLikeApp(t, inst)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "did not answer")
-	assert.False(t, srv.ran("kill-session"), "a session that may be live must not be killed")
-	assert.Empty(t, srv.launchArgs(), "no second session may be started")
-	assert.Equal(t, Paused, inst.GetStatus())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "did not answer")
+			assert.False(t, srv.ran("kill-session"), "a session that may be live must not be killed")
+			assert.Empty(t, srv.launchArgs(), "no second session may be started")
+			assert.Equal(t, Paused, inst.GetStatus())
+		})
+	}
 }

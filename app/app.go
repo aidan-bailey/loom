@@ -1349,6 +1349,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// global-mode transition) — remove it from whichever list holds it,
 		// by identity, or the row stays Deleting until restart.
 		m.removeInstanceEverywhere(msg.inst)
+		if msg.notice != nil {
+			return m, tea.Batch(m.handleError(msg.notice), m.instanceChanged())
+		}
 		return m, m.instanceChanged()
 	case transitionFailedMsg:
 		// Revert instance status on failed background op (kill/pause/resume).
@@ -1915,6 +1918,9 @@ type killInstanceMsg struct {
 	// start and completion, so a title lookup against m.list can miss.
 	inst  *session.Instance
 	title string
+	// notice, when set, is what the kill could not finish but the user
+	// must see (a stash entry it could not drop; see session.Notice).
+	notice error
 }
 
 // transitionFailedMsg is returned when a background status-transitioning
@@ -1950,6 +1956,9 @@ type backgroundCleanupDoneMsg struct{}
 type resumeDoneMsg struct {
 	instance *session.Instance
 	slot     *workspaceSlot
+	// notice, when set, is what the resume found that the user must see
+	// (a stash it forgot or could not drop; see session.Notice).
+	notice error
 }
 
 // showHelpScreenMsg asks Update to open a help overlay. Emitted from

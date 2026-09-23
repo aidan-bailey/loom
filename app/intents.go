@@ -240,19 +240,29 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 			}
 		}
 
+		// A notice is what the kill could not finish but the user must see
+		// (a stash entry it could not drop); it reaches them whatever else
+		// happened. A notice alone means the kill itself succeeded.
+		var notice error
 		if err := selected.Kill(); err != nil {
-			log.For("app").Error("kill.instance_kill_failed", "title", title, "err", err)
-			// A discarded orphan whose cleanup failed must NOT vanish from
-			// the list: the worktree is still on disk and would silently
-			// reappear on the next workspace load. Keep the row, revert to
-			// Recoverable, and show the error so the user can retry D.
-			if previousStatus == session.Recoverable {
-				return transitionFailedMsg{
-					inst:           selected,
-					title:          title,
-					op:             "discard",
-					previousStatus: previousStatus,
-					err:            fmt.Errorf("discard %s: %w", title, err),
+			if n, ok := session.NoticeIn(err); ok {
+				notice = n
+			}
+			if _, only := session.OnlyNotice(err); !only {
+				log.For("app").Error("kill.instance_kill_failed", "title", title, "err", err)
+				// A discarded orphan whose cleanup failed must NOT vanish
+				// from the list: the worktree is still on disk and would
+				// silently reappear on the next workspace load. Keep the
+				// row, revert to Recoverable, and show the error (notices
+				// included) so the user can retry D.
+				if previousStatus == session.Recoverable {
+					return transitionFailedMsg{
+						inst:           selected,
+						title:          title,
+						op:             "discard",
+						previousStatus: previousStatus,
+						err:            fmt.Errorf("discard %s: %w", title, err),
+					}
 				}
 			}
 		}
@@ -272,7 +282,7 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 			}
 		}
 
-		return killInstanceMsg{inst: selected, title: title}
+		return killInstanceMsg{inst: selected, title: title, notice: notice}
 	}
 
 	return preAction, killAction
@@ -388,12 +398,22 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	resumeTitle := selected.Title
 	owner := m.startOwner(selected) // stamped for resumeDoneMsg
 	resumeCmd := func() tea.Msg {
-		if err := selected.Resume(saveFunc); err != nil {
-			return transitionFailedMsg{inst: selected, title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
-		}
-		return resumeDoneMsg{instance: selected, slot: owner}
+		return resumeResult(selected, resumeTitle, owner, selected.Resume(saveFunc))
 	}
 	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), resumeCmd)
+}
+
+// resumeResult turns Resume's error into its completion message. A Notice
+// alone means the resume succeeded with something to report, which the
+// done handler shows; anything else failed.
+func resumeResult(inst *session.Instance, title string, owner *workspaceSlot, err error) tea.Msg {
+	if n, ok := session.OnlyNotice(err); ok {
+		return resumeDoneMsg{instance: inst, slot: owner, notice: n}
+	}
+	if err != nil {
+		return transitionFailedMsg{inst: inst, title: title, op: "resume", previousStatus: session.Paused, err: err}
+	}
+	return resumeDoneMsg{instance: inst, slot: owner}
 }
 
 // runResumeOrRecover routes the 'r' key: Recoverable orphans are adopted
@@ -447,10 +467,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 				if selected.GetStatus() != session.Loading {
 					return nil
 				}
-				if err := selected.Resume(saveFunc); err != nil {
-					return transitionFailedMsg{inst: selected, title: resumeTitle, op: "resume", previousStatus: session.Paused, err: err}
-				}
-				return resumeDoneMsg{instance: selected, slot: owner}
+				return resumeResult(selected, resumeTitle, owner, selected.Resume(saveFunc))
 			}),
 		}
 		if m.remoteControlBlocked(effectiveRemoteControl(newOpts), selected.Program()) {

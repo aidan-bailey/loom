@@ -847,13 +847,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 
 		// Create new session
 		if err := ts.Start(gw.GetWorktreePath()); err != nil {
-			// Remove the worktree Setup just made — the agent never ran in
-			// it. The branch goes too only if Setup created it: a reused
-			// title checks out the branch an earlier session left behind.
-			if cleanupErr := gw.CleanupFailedStart(); cleanupErr != nil {
-				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
-			}
-			setupErr = fmt.Errorf("failed to start new session: %w", err)
+			setupErr = i.failedStartCleanup(ts, gw, err)
 			return setupErr
 		}
 	}
@@ -863,7 +857,34 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 	return nil
 }
 
-// Kill terminates the instance and cleans up all resources
+// failedStartCleanup undoes the worktree Setup just made for a session
+// whose ts.Start failed, and returns Start's error. The branch goes too
+// only if Setup created it: a reused title checks out the branch an
+// earlier session left behind.
+//
+// Only once the agent is known not to be running in it. A refused name
+// (ErrSessionExists) launched nothing; any other failure may come after
+// the agent was launched — the existence poll reads an unanswered probe
+// as "not yet" under load, and the cleanup Close can fail too — so the
+// session must then be confirmed Dead, as Pause requires before it removes
+// a worktree. Deleting the tree under a live agent would orphan it,
+// writing into a directory git has unlinked.
+func (i *Instance) failedStartCleanup(ts *tmux.TmuxSession, gw *git.GitWorktree, startErr error) error {
+	if !errors.Is(startErr, tmux.ErrSessionExists) && ts.SessionLiveness() != tmux.LivenessDead {
+		i.getLogger().Warn("instance.start.cleanup_skipped", "worktree", gw.GetWorktreePath(), "err", startErr.Error())
+		return fmt.Errorf("failed to start new session, and its agent may still be running: tmux %s could not be confirmed gone, so the worktree %s and branch %s were left in place (check `tmux ls`; kill this session with D once it is gone): %w",
+			ts.SessionName(), gw.GetWorktreePath(), gw.GetBranchName(), startErr)
+	}
+	if cleanupErr := gw.CleanupFailedStart(); cleanupErr != nil {
+		startErr = fmt.Errorf("%v (cleanup error: %v)", startErr, cleanupErr)
+	}
+	return fmt.Errorf("failed to start new session: %w", startErr)
+}
+
+// Kill terminates the instance and cleans up all resources. A stash entry
+// it cannot drop does not fail the kill (everything else is gone): Kill
+// then returns a Notice carrying DropStash's error, which says what is
+// left on the stash list.
 func (i *Instance) Kill() (err error) {
 	lg := i.getLogger()
 	t0 := time.Now()
@@ -894,6 +915,7 @@ func (i *Instance) Kill() (err error) {
 	i.mu.Unlock()
 
 	var errs []error
+	var notices []error
 
 	// Always try to cleanup both resources, even if one fails
 	// Clean up tmux session first since it's using the git worktree
@@ -923,6 +945,7 @@ func (i *Instance) Kill() (err error) {
 		if sha := gitWT.GetStashRef(); sha != "" {
 			if err := gitWT.DropStash(sha); err != nil {
 				log.For("session").Warn("kill.stash_drop_failed", "err", err.Error())
+				notices = append(notices, fmt.Errorf("killed %s, but could not drop its paused stash %s from `git stash list`: %w", i.Title, sha, err))
 			}
 		}
 		if err := gitWT.Cleanup(); err != nil {
@@ -939,9 +962,9 @@ func (i *Instance) Kill() (err error) {
 		i.tmuxSession = tmuxSess
 		i.gitWorktree = gitWT
 		i.mu.Unlock()
-		return err
+		return errors.Join(err, NewNotice(notices...))
 	}
-	return nil
+	return NewNotice(notices...)
 }
 
 // combineErrors combines multiple errors into a single error. Uses
@@ -1111,6 +1134,7 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 			if sha != "" {
 				if err := gw.DropStash(sha); err != nil {
 					log.For("session").Warn("pause_abort_drop_stash_failed", "stash", sha, "err", err)
+					errs = append(errs, fmt.Errorf("could not drop the abandoned pause stash %s from `git stash list` (the worktree still holds its changes, so the entry is a stale copy to drop by hand): %w", sha, err))
 				}
 				gw.SetStashRef("")
 				if saveState != nil {
@@ -1173,6 +1197,10 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 // restored either way. If saveState is non-nil, it is called after the
 // instance is Running, providing a checkpoint that reduces the crash
 // inconsistency window.
+//
+// A resume that succeeded but forgot a stash no longer in `git stash
+// list`, or restored one it then could not drop, returns a Notice saying
+// so (see OnlyNotice); a failed one includes those notices in its error.
 func (i *Instance) Resume(saveState func() error) (err error) {
 	lg := i.getLogger()
 	t0 := time.Now()
@@ -1229,14 +1257,15 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		return i.finishResume(saveState, ts, gw)
 	case resumeRelaunchInPlace:
 		lg.Info("instance.resume.relaunch_in_place", "worktree", gw.GetWorktreePath())
-		if err := restoreStashInPlace(gw); err != nil {
+		note, err := restoreStashInPlace(gw)
+		if err != nil {
 			return err
 		}
 		// A rebuild records a missing base commit in Setup; so must this.
 		if err := gw.EnsureBaseCommit(); err != nil {
 			lg.Warn("instance.resume.base_commit_failed", "worktree", gw.GetWorktreePath(), "err", err.Error())
 		}
-		return i.finishResume(saveState, ts, gw)
+		return withNotices(i.finishResume(saveState, ts, gw), note)
 	case resumeRefuse:
 		if live == tmux.LivenessUnknown {
 			return fmt.Errorf("cannot tell whether this session's agent is still running (tmux did not answer in time); leaving the worktree untouched — retry once the machine is less busy")
@@ -1245,12 +1274,30 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	}
 	lg.Debug("instance.resume.rebuild", "worktree", gw.GetWorktreePath(), "tree", tree.String())
 
+	// A pending stash no longer in `git stash list` was dropped by the
+	// user (or by an apply whose cleared reference was never saved): it is
+	// no longer wanted, and re-applying it would resurrect discarded work.
+	// Settle that before anything on disk changes, as the in-place path
+	// does, and fail closed when the list cannot be read.
+	var notes []error
+	sha := gw.GetStashRef()
+	if sha != "" {
+		ref, err := gw.StashListed(sha)
+		if err != nil {
+			return fmt.Errorf("cannot tell whether stash %s is still wanted; nothing was changed: %w", sha, err)
+		}
+		if ref == "" {
+			notes = append(notes, forgetUnlistedStash(gw, sha))
+			sha = ""
+		}
+	}
+
 	// Setup git worktree
 	if err := gw.Setup(); err != nil {
 		if errors.Is(err, git.ErrBranchGone) {
-			return fmt.Errorf("branch %q was deleted externally — kill this instance (D) to clean up: %w", gw.GetBranchName(), err)
+			return withNotices(fmt.Errorf("branch %q was deleted externally — kill this instance (D) to clean up: %w", gw.GetBranchName(), err), notes...)
 		}
-		return fmt.Errorf("failed to setup git worktree: %w", err)
+		return withNotices(fmt.Errorf("failed to setup git worktree: %w", err), notes...)
 	}
 
 	// Restore any changes stashed by Pause. A failed apply (e.g. a
@@ -1258,18 +1305,43 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	// mirrors git's own refusal to drop a stash that didn't apply
 	// cleanly. StashRef stays set so the entry (and any conflict
 	// markers left in the worktree) remain available for the user to
-	// resolve manually.
-	if sha := gw.GetStashRef(); sha != "" {
+	// resolve manually. An apply whose entry then could not be dropped
+	// did restore the work: forget the reference, and pass the drop's
+	// error on as a notice.
+	if sha != "" {
 		if err := gw.ApplyStash(sha); err != nil {
-			// Name the stash so the user can act on it — it is preserved
-			// (visible in `git stash list`) and this error is the only
-			// place they ever hear about it.
-			return fmt.Errorf("failed to restore stashed changes (kept as stash %.12s — resolve in the worktree or apply manually via git stash): %w", sha, err)
+			if !errors.Is(err, git.ErrStashNotDropped) {
+				// Name the stash so the user can act on it — it is preserved
+				// (visible in `git stash list`) and this error is the only
+				// place they ever hear about it.
+				return withNotices(fmt.Errorf("failed to restore stashed changes (kept as stash %s — resolve in the worktree or apply manually via git stash): %w", sha, err), notes...)
+			}
+			notes = append(notes, err)
 		}
 		gw.SetStashRef("")
 	}
 
-	return i.finishResume(saveState, ts, gw)
+	return withNotices(i.finishResume(saveState, ts, gw), notes...)
+}
+
+// withNotices returns err with notes joined in, or, when err is nil, the
+// notes as a Notice (nil when there are none).
+func withNotices(err error, notes ...error) error {
+	if err != nil {
+		return errors.Join(err, NewNotice(notes...))
+	}
+	return NewNotice(notes...)
+}
+
+// forgetUnlistedStash clears gw's pending stash sha, which is no longer in
+// `git stash list`, and returns the notice the user must see: the stash
+// may be the only copy of work, and after this loom no longer knows it.
+func forgetUnlistedStash(gw *git.GitWorktree, sha string) error {
+	log.For("session").Warn("resume.pending_stash_gone", "stash", sha, "worktree", gw.GetWorktreePath())
+	gw.SetStashRef("")
+	repo := gw.GetRepoPath()
+	return fmt.Errorf("stash %s from this session's pause is no longer in `git stash list`, so loom did not re-apply it and has forgotten it. If it holds work you still need, apply it by its SHA before git garbage-collects it: `git -C %s stash apply %s` (compare `git -C %s stash list`; `git -C %s fsck --unreachable | grep commit` finds other dropped stashes)",
+		sha, shellQuote(gw.GetWorktreePath()), sha, shellQuote(repo), shellQuote(repo))
 }
 
 // unverifiedTreeError is Resume's refusal for a worktree InspectTree could
@@ -1281,8 +1353,15 @@ func unverifiedTreeError(path string, err error) error {
 	if git.IsTimeout(err) {
 		return fmt.Errorf("git did not answer in time while checking the worktree at %s; leaving it untouched — retry once the machine is less busy: %w", path, err)
 	}
-	return fmt.Errorf("loom cannot verify %s as this session's worktree, so it may hold work loom cannot see; nothing was changed. If it holds nothing you need, move it aside (`mv %s %s.bak`) and resume again: the worktree is then rebuilt from the branch: %w",
-		path, path, path, err)
+	return fmt.Errorf("loom cannot verify %s as this session's worktree, so it may hold work loom cannot see; nothing was changed. If it holds nothing you need, move it aside (`mv %s %s`) and resume again: the worktree is then rebuilt from the branch: %w",
+		path, shellQuote(path), shellQuote(path+".bak"), err)
+}
+
+// shellQuote quotes s for a POSIX shell, so a path in a command the user
+// is told to run survives spaces and quotes: s goes in single quotes, and
+// each single quote in it is closed, backslash-escaped and reopened.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // restoreStashInPlace handles a pending StashRef when Resume relaunches in
@@ -1296,7 +1375,8 @@ func unverifiedTreeError(path string, err error) error {
 //     refusal below, or an apply whose cleared reference was never saved)
 //     no longer wants it applied. Forget it, whatever state the tree is
 //     in — its commit may survive until gc, but applying it would
-//     resurrect discarded work.
+//     resurrect discarded work — and say so in the returned notice, since
+//     on a clean tree it may be the only copy.
 //   - Clean worktree: nothing on disk can be overwritten, so apply the
 //     stash exactly as the rebuild path does.
 //   - Worktree already matches the stash: the work is on disk; applying
@@ -1307,47 +1387,52 @@ func unverifiedTreeError(path string, err error) error {
 //     staged ones and can leave conflict markers in them. Refuse, and
 //     leave both untouched until the user reconciles them and drops the
 //     entry.
-func restoreStashInPlace(gw *git.GitWorktree) error {
+//
+// note is what the user must hear even though the restore went ahead: a
+// forgotten stash, or a stash entry that could not be dropped.
+func restoreStashInPlace(gw *git.GitWorktree) (note, err error) {
 	sha := gw.GetStashRef()
 	if sha == "" {
-		return nil
+		return nil, nil
 	}
 	lg := log.For("session")
 	ref, err := gw.StashListed(sha)
 	if err != nil {
-		return fmt.Errorf("cannot tell whether stash %s is still wanted; leaving the worktree untouched: %w", sha, err)
+		return nil, fmt.Errorf("cannot tell whether stash %s is still wanted; leaving the worktree untouched: %w", sha, err)
 	}
 	if ref == "" {
-		lg.Info("resume.pending_stash_gone", "stash", sha, "worktree", gw.GetWorktreePath())
-		gw.SetStashRef("")
-		return nil
+		return forgetUnlistedStash(gw, sha), nil
 	}
 	dirty, err := gw.IsDirty()
 	if err != nil {
-		return fmt.Errorf("cannot check the worktree for changes before restoring stash %s; leaving both untouched: %w", sha, err)
+		return nil, fmt.Errorf("cannot check the worktree for changes before restoring stash %s; leaving both untouched: %w", sha, err)
 	}
 	if !dirty {
 		if err := gw.ApplyStash(sha); err != nil {
-			return fmt.Errorf("failed to restore stashed changes (kept as stash %s — resolve in the worktree or apply manually via git stash): %w", sha, err)
+			if !errors.Is(err, git.ErrStashNotDropped) {
+				return nil, fmt.Errorf("failed to restore stashed changes (kept as stash %s — resolve in the worktree or apply manually via git stash): %w", sha, err)
+			}
+			note = err // restored; only the entry is left
 		}
 		gw.SetStashRef("")
-		return nil
+		return note, nil
 	}
 	onDisk, err := gw.StashOnDisk(sha)
 	if err != nil {
-		return fmt.Errorf("cannot compare the worktree with stash %s; leaving both untouched: %w", sha, err)
+		return nil, fmt.Errorf("cannot compare the worktree with stash %s; leaving both untouched: %w", sha, err)
 	}
 	if onDisk {
 		lg.Info("resume.stash_already_on_disk", "stash", sha, "worktree", gw.GetWorktreePath())
 		gw.SetStashRef("")
 		if err := gw.DropStash(sha); err != nil {
 			lg.Warn("resume.drop_redundant_stash_failed", "stash", sha, "err", err.Error())
+			note = fmt.Errorf("the worktree already holds stash %s's changes, but its now redundant entry could not be dropped from `git stash list`: %w", sha, err)
 		}
-		return nil
+		return note, nil
 	}
 	wt := gw.GetWorktreePath()
-	return fmt.Errorf("the worktree at %s has uncommitted changes that differ from stash %s, left by an interrupted pause or restore; loom will not merge them. Compare them with `git -C %s stash show -p %s`, then either apply it yourself or keep the worktree as it is. Either way, drop that entry — find it by its SHA with `git -C %s stash list --format='%%gd %%H'`, since its stash@{N} position shifts as other sessions stash — and resume again",
-		wt, sha, wt, sha, gw.GetRepoPath())
+	return nil, fmt.Errorf("the worktree at %s has uncommitted changes that differ from stash %s, left by an interrupted pause or restore; loom will not merge them. Compare them with `git -C %s stash show -p %s`, then either apply it yourself or keep the worktree as it is. Either way, drop that entry — find it by its SHA with `git -C %s stash list --format='%%gd %%H'`, since its stash@{N} position shifts as other sessions stash — and resume again",
+		wt, sha, shellQuote(wt), sha, shellQuote(gw.GetRepoPath()))
 }
 
 // finishResume reattaches (or relaunches) the tmux session and marks the

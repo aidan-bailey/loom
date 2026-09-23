@@ -31,8 +31,40 @@ func registerInstanceType(L *lua.LState, e *Engine) {
 		}
 		return 0
 	}))
+	idx.RawSetString("resume", L.NewFunction(noticeAware(e, "resume", func(inst *session.Instance) error {
+		// Scripts can't persist on their own (the engine doesn't have
+		// access to storage), so pass a no-op. The app-level action
+		// path owns persistence.
+		return inst.Resume(func() error { return nil })
+	})))
+	idx.RawSetString("kill", L.NewFunction(noticeAware(e, "kill", (*session.Instance).Kill)))
 	L.SetField(mt, "__index", idx)
 	L.SetField(mt, "__tostring", L.NewFunction(instanceToString))
+}
+
+// noticeAware wraps an Instance operation for Lua. A failure raises a Lua
+// error, as before; a session.Notice alone means the operation succeeded
+// with something the user must see (a forgotten or undropped stash), so
+// it goes to the host's error/info bar instead of failing the script, or
+// to the script log when no dispatch is running.
+func noticeAware(e *Engine, name string, op func(*session.Instance) error) lua.LGFunction {
+	return func(L *lua.LState) int {
+		inst := checkInstance(L, 1)
+		err := op(inst)
+		if n, ok := session.OnlyNotice(err); ok {
+			msg := fmt.Sprintf("%s %s: %s", name, inst.Title, n.Error())
+			if e.curHost != nil {
+				e.curHost.Notify(msg)
+			} else {
+				e.logScript("warn", msg)
+			}
+			return 0
+		}
+		if err != nil {
+			L.RaiseError("%s: %s", name, err.Error())
+		}
+		return 0
+	}
 }
 
 // pushInstance wraps a *session.Instance as Lua userdata with the
@@ -73,8 +105,6 @@ var instanceMethods = map[string]lua.LGFunction{
 	"send_prompt": instanceSendPrompt,
 	"tap_enter":   instanceTapEnter,
 	"pause":       instancePause,
-	"resume":      instanceResume,
-	"kill":        instanceKill,
 	"worktree":    instanceWorktree,
 }
 
@@ -196,22 +226,6 @@ func instancePause(L *lua.LState) int {
 	// a no-op. The app-level action path owns persistence.
 	if err := inst.Pause(func() error { return nil }); err != nil {
 		L.RaiseError("pause: %s", err.Error())
-	}
-	return 0
-}
-
-func instanceResume(L *lua.LState) int {
-	inst := checkInstance(L, 1)
-	if err := inst.Resume(func() error { return nil }); err != nil {
-		L.RaiseError("resume: %s", err.Error())
-	}
-	return 0
-}
-
-func instanceKill(L *lua.LState) int {
-	inst := checkInstance(L, 1)
-	if err := inst.Kill(); err != nil {
-		L.RaiseError("kill: %s", err.Error())
 	}
 	return 0
 }

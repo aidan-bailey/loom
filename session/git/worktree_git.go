@@ -471,12 +471,14 @@ func (g *GitWorktree) StashListed(sha string) (string, error) {
 // since the restore itself already succeeded and the file is still
 // present (just staged) either way.
 //
-// On a clean apply, the matching stash-list entry is dropped
-// (also best-effort, logged not returned, for the same reason). On
-// conflict, the stash entry is left in place — mirroring `git stash
-// pop`'s own safety behavior — and the error is returned so the
-// caller does not clear its reference to it; neither the unstage nor
-// the drop step runs in that case.
+// On a clean apply, the matching stash-list entry is dropped. A drop
+// that fails returns an error wrapping ErrStashNotDropped: the work is
+// restored, so the caller clears its reference, but what the drop left
+// behind (its own entry, or another session's entry it removed and could
+// not store back) is the user's to hear about. On conflict, the stash
+// entry is left in place — mirroring `git stash pop`'s own safety
+// behavior — and a plain error is returned so the caller does not clear
+// its reference to it; neither the unstage nor the drop step runs then.
 func (g *GitWorktree) ApplyStash(sha string) error {
 	if sha == "" {
 		return nil
@@ -489,9 +491,15 @@ func (g *GitWorktree) ApplyStash(sha string) error {
 	}
 	if err := g.DropStash(sha); err != nil {
 		log.For("git").Warn("stash.drop_after_apply_failed", "err", err.Error())
+		return fmt.Errorf("%w: stash %s: %w", ErrStashNotDropped, sha, err)
 	}
 	return nil
 }
+
+// ErrStashNotDropped marks an ApplyStash whose apply succeeded but whose
+// drop of the stash-list entry afterwards did not. The work is in the
+// worktree; the wrapped error says what is left on the stash list.
+var ErrStashNotDropped = errors.New("stashed changes restored, but the stash entry could not be dropped")
 
 // unstageNewlyAddedFiles unstages every path present in the index but
 // absent from HEAD's tree, turning files ApplyStash just staged as
@@ -552,8 +560,15 @@ func (g *GitWorktree) DropStash(sha string) error {
 			return fmt.Errorf("`git stash drop %s` did not say which stash it removed (%q); check `git -C %s stash list --format='%%gd %%H'` against stash %s", ref, strings.TrimSpace(out), g.repoPath, sha)
 		}
 		log.For("git").Warn("stash.drop_hit_other_entry", "want", sha, "dropped", dropped, "ref", ref)
-		if err := g.restoreStashEntry(dropped); err != nil {
-			return fmt.Errorf("the stack moved while dropping stash %s, so `git stash drop %s` removed another entry, %s, and storing it back failed — restore it with `git -C %s stash store %s`: %w", sha, ref, dropped, g.repoPath, dropped, err)
+		// That entry may be another session's only copy of its work: try
+		// twice before handing it to the user.
+		err = g.restoreStashEntry(dropped)
+		if err != nil {
+			log.For("git").Warn("stash.store_back_retry", "sha", dropped, "err", err.Error())
+			err = g.restoreStashEntry(dropped)
+		}
+		if err != nil {
+			return fmt.Errorf("the stash stack moved while dropping stash %s, so `git stash drop %s` removed another entry, %s, and storing it back failed twice — restore it with `git -C %s stash store %s`: %w", sha, ref, dropped, g.repoPath, dropped, err)
 		}
 	}
 	return fmt.Errorf("the stash stack kept moving while dropping stash %s; left it in place", sha)

@@ -278,8 +278,17 @@ func newSanitizedTmuxSession(sanitizedName string, program string, ptyFactory Pt
 	}
 }
 
+// ErrSessionExists is Start's refusal to create a session whose name is
+// already taken. Nothing was launched: the caller's workdir was never
+// handed to a program.
+var ErrSessionExists = errors.New("tmux session already exists")
+
 // Start creates and starts a new tmux session, then attaches to it. Program is the command to run in
-// the session (ex. claude). workdir is the git worktree directory.
+// the session (ex. claude). workdir is the git worktree directory. A
+// session of the same name that is already alive is refused with
+// ErrSessionExists before anything is launched; any other error may come
+// after the program was launched, so the caller must not assume it is not
+// running in workdir (see SessionLiveness).
 func (t *TmuxSession) Start(workDir string) (err error) {
 	t0 := time.Now()
 	log.For("tmux").Debug("start.begin", "session", t.sanitizedName, "program", t.program, "workdir", workDir)
@@ -293,7 +302,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 
 	// Check if the session already exists
 	if t.DoesSessionExist() {
-		return fmt.Errorf("tmux session already exists: %s", t.sanitizedName)
+		return fmt.Errorf("%w: %s", ErrSessionExists, t.sanitizedName)
 	}
 
 	// Create a new detached tmux session and start claude in it.
@@ -990,6 +999,17 @@ const (
 // livenessProbeTimeout bounds the has-session probe. A var, not the shared
 // tmuxTimeout const, so tests can shorten it.
 var livenessProbeTimeout = tmuxTimeout
+
+// SetLivenessProbeTimeoutForTest shortens (or lengthens) the has-session
+// probe's deadline, so a test can make a probe go unanswered without
+// waiting out the real 5s, and returns a func restoring the previous one.
+// Test-only: the name and doc comment are guardrails, nothing about the
+// function enforces test-only use. Not safe to call while probes run.
+func SetLivenessProbeTimeoutForTest(d time.Duration) (restore func()) {
+	prev := livenessProbeTimeout
+	livenessProbeTimeout = d
+	return func() { livenessProbeTimeout = prev }
+}
 
 // SessionLiveness probes whether the tmux session exists, distinguishing
 // "tmux said no" from "tmux never answered". The distinction matters: the
