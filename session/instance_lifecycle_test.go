@@ -346,7 +346,8 @@ func TestInstance_PauseClosesTerminalPaneSession(t *testing.T) {
 	inst.getTmuxSession().SetCmdExecForTest(cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
 			if len(c.Args) >= 3 && c.Args[1] == "kill-session" {
-				killedSessions = append(killedSessions, c.Args[len(c.Args)-1])
+				// Killed by exact match: -t=<name>.
+				killedSessions = append(killedSessions, strings.TrimPrefix(c.Args[len(c.Args)-1], "-t="))
 			}
 			return nil
 		},
@@ -371,7 +372,8 @@ func TestInstance_KillClosesTerminalPaneSession(t *testing.T) {
 	inst.getTmuxSession().SetCmdExecForTest(cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
 			if len(c.Args) >= 3 && c.Args[1] == "kill-session" {
-				killedSessions = append(killedSessions, c.Args[len(c.Args)-1])
+				// Killed by exact match: -t=<name>.
+				killedSessions = append(killedSessions, strings.TrimPrefix(c.Args[len(c.Args)-1], "-t="))
 			}
 			return nil
 		},

@@ -303,7 +303,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 		// Cleanup any partially created session if any exists.
 		if t.DoesSessionExist() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-			cleanupCmd := Command(cleanupCtx, "kill-session", "-t", t.sanitizedName)
+			cleanupCmd := Command(cleanupCtx, "kill-session", "-t="+t.sanitizedName)
 			if cleanupErr := t.cmdExec.Run(cleanupCmd); cleanupErr != nil {
 				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
 			}
@@ -885,9 +885,13 @@ func (t *TmuxSession) Close() error {
 		_ = emu.Close()
 	}
 
+	// Exact match (-t=): a bare -t falls back to a prefix match when no
+	// session has exactly this name, and Close runs on sessions that may
+	// already be dead — closing "api" after its agent exited would kill a
+	// live "api-v2".
 	killCtx, killCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer killCancel()
-	cmd := Command(killCtx, "kill-session", "-t", t.sanitizedName)
+	cmd := Command(killCtx, "kill-session", "-t="+t.sanitizedName)
 	if err := t.cmdExec.Run(cmd); err != nil {
 		errs = append(errs, fmt.Errorf("error killing tmux session: %w", err))
 	}
@@ -919,7 +923,7 @@ func (t *TmuxSession) CloseRelatedSession(rawName string) error {
 	name := ToLoomTmuxName(rawName)
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := Command(ctx, "kill-session", "-t", name)
+	cmd := Command(ctx, "kill-session", "-t="+name) // exact match, as in Close
 	return t.cmdExec.Run(cmd)
 }
 
