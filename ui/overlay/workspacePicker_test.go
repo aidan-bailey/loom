@@ -179,3 +179,33 @@ func TestWorkspacePickerMidSessionGlobalRow(t *testing.T) {
 		assert.Empty(t, p.GetActiveWorkspaces())
 	})
 }
+
+// TestWorkspacePickerFailedToLoadWarning: a workspace that failed to
+// restore stays checked so its live sessions survive the next launch's
+// orphan sweep. Unchecking it (or picking Global) closes it, and the next
+// launch then ends those sessions, so the picker says so.
+func TestWorkspacePickerFailedToLoadWarning(t *testing.T) {
+	workspaces := []config.Workspace{
+		{Name: "alpha", Path: "/a"},
+		{Name: "beta", Path: "/b"},
+	}
+	active := map[string]bool{"alpha": true, "beta": true}
+
+	t.Run("marked rows and a warning", func(t *testing.T) {
+		p := NewWorkspacePicker(workspaces, active, true)
+		p.MarkFailedToLoad("beta")
+		p.SetWidth(200)
+		output := p.Render()
+		assert.Contains(t, output, "beta (failed to load)")
+		assert.NotContains(t, output, "alpha (failed to load)")
+		assert.Contains(t, output, "live sessions")
+	})
+
+	t.Run("no warning without failed workspaces", func(t *testing.T) {
+		p := NewWorkspacePicker(workspaces, active, true)
+		p.SetWidth(200)
+		output := p.Render()
+		assert.NotContains(t, output, "failed to load")
+		assert.NotContains(t, output, "live sessions")
+	})
+}

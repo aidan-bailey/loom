@@ -288,7 +288,14 @@ func (m *home) loadSlotStorage(slot *workspaceSlot, cfgDir string, cmdExec cmd2.
 	// for any with unsaved work or a live agent. Runs before
 	// CleanupOrphanedSessions so a live recoverable's tmux (now a
 	// list instance) is exempted by the claimedTitles loop below.
-	recovery := m.reconcileOrphans(cfgDir, m.program, slot.list, storage, cmdExec)
+	// Placeholders get the program of the config this slot loaded, as
+	// activateWorkspace's do — not m.program, the process's startup program,
+	// which for enterGlobalMode's slot may be another workspace's.
+	program := m.program
+	if slot.appConfig != nil {
+		program = slot.appConfig.GetProgram()
+	}
+	recovery := m.reconcileOrphans(cfgDir, program, slot.list, storage, cmdExec)
 
 	// Clean up orphaned tmux sessions from previous crashes, sparing
 	// those of records preserved on disk outside the list.

@@ -605,7 +605,12 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 	// allowGlobal=true gives the user a single-keystroke return to global
 	// mode without quitting. Required to round-trip the global ↔
 	// workspace transition that applyWorkspaceToggle now handles.
-	m.setOverlay(overlay.NewWorkspacePicker(registry.Workspaces, activeNames, true), overlayWorkspacePicker)
+	picker := overlay.NewWorkspacePicker(registry.Workspaces, activeNames, true)
+	// Restore failures stay checked so their live sessions survive; the
+	// picker warns that closing one gives them up to the next launch's
+	// orphan sweep.
+	picker.MarkFailedToLoad(m.restoreFailed...)
+	m.setOverlay(picker, overlayWorkspacePicker)
 	m.state = stateWorkspace
 	return m, nil
 }

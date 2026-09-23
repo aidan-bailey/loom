@@ -29,6 +29,9 @@ type WorkspacePicker struct {
 	// the Global row (always present in startup mode, gated by
 	// allowGlobal in mid-session mode).
 	totalItems int
+	// failedToLoad names the open workspaces that failed to load (see
+	// MarkFailedToLoad).
+	failedToLoad map[string]bool
 }
 
 // NewWorkspacePicker creates a workspace picker overlay for toggling active workspaces.
@@ -115,6 +118,17 @@ func (w *WorkspacePicker) HandleKeyPress(msg tea.KeyPressMsg) (bool, bool) {
 	return false, false
 }
 
+// anyFailedToLoad reports whether any listed workspace is marked failed to
+// load.
+func (w *WorkspacePicker) anyFailedToLoad() bool {
+	for _, ws := range w.workspaces {
+		if w.failedToLoad[ws.Name] {
+			return true
+		}
+	}
+	return false
+}
+
 // IsStartup returns whether this is a startup picker.
 func (w *WorkspacePicker) IsStartup() bool {
 	return w.isStartup
@@ -199,6 +213,9 @@ func (w *WorkspacePicker) Render() string {
 				check = "[x]"
 			}
 			line := fmt.Sprintf("%s%s %s", cursor, check, ws.Name)
+			if w.failedToLoad[ws.Name] {
+				line += " (failed to load)"
+			}
 			path := fmt.Sprintf("      %s", ws.Path)
 			if i == w.cursor {
 				content += selectedStyle.Render(line) + "\n"
@@ -231,6 +248,11 @@ func (w *WorkspacePicker) Render() string {
 		}
 	}
 
+	if !w.isStartup && w.anyFailedToLoad() {
+		warnStyle := lipgloss.NewStyle().Foreground(ui.ErrorColor)
+		content += "\n" + warnStyle.Render("! closing a workspace that failed to load (unchecking it, or Global) lets the next launch end its live sessions")
+	}
+
 	helpStyle := lipgloss.NewStyle().Foreground(ui.Faint)
 	if w.isStartup {
 		content += "\n" + helpStyle.Render("enter select • esc global")
@@ -250,4 +272,18 @@ func (w *WorkspacePicker) Render() string {
 // SetWidth sets the width of the overlay.
 func (w *WorkspacePicker) SetWidth(width int) {
 	w.width = width
+}
+
+// MarkFailedToLoad flags names as workspaces that are open but failed to
+// load (the caller's restore failures). They render labelled, with a
+// footer warning: closing one — unchecking it, or picking Global — drops
+// it from the open list, and the next launch's orphan sweep then ends its
+// live sessions, which only its staying open spares.
+func (w *WorkspacePicker) MarkFailedToLoad(names ...string) {
+	if w.failedToLoad == nil {
+		w.failedToLoad = make(map[string]bool, len(names))
+	}
+	for _, n := range names {
+		w.failedToLoad[n] = true
+	}
 }

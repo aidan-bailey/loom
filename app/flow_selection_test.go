@@ -248,6 +248,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 
 	t.Run("a namesake with another worktree is not a twin", func(t *testing.T) {
 		m, owner, namesake, _, recC := reopenedHome(t, "late", filepath.Join(t.TempDir(), "other-wt"), deadCmdExecForTest())
+		m.errBox.SetSize(400, 1)
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
 		owner.list.AddInstance(started)
 
@@ -257,6 +258,10 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		assert.Same(t, namesake, m.slots[1].list.GetInstanceByTitle("late"), "an unrelated same-titled session is untouched")
 		assert.Zero(t, recC.calls)
 		assert.False(t, started.Pane().PtmxAlive(), "the start stays with its closed owner, so its preview is released")
+		// The notice used to say the workspace is no longer open, while
+		// its reopened tab sat right there.
+		assert.NotContains(t, m.errBox.String(), "no longer open")
+		assert.Contains(t, m.errBox.String(), "reopened")
 	})
 
 	t.Run("a session the reopen killed is not adopted", func(t *testing.T) {

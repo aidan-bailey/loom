@@ -367,6 +367,41 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 	assert.Contains(t, string(raw), "in-global", "global mode saves back to the global dir")
 }
 
+// TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram: the shared
+// loader gave Recoverable orphan placeholders m.program — the program the
+// process started with, possibly a workspace's — rather than the program
+// of the config the slot loaded, as activateWorkspace does. Recovering one
+// then relaunched it with another workspace's agent.
+func TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram(t *testing.T) {
+	isolateTmux(t)
+	globalDir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, globalDir)
+	require.NoError(t, os.WriteFile(filepath.Join(globalDir, config.ConfigFileName),
+		[]byte(`{"default_program":"global-agent"}`), 0o644))
+	// A dirty orphan worktree under the global dir: surfaced as Recoverable.
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "f"), []byte("x"), 0o644))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-qm", "init")
+	orphan := filepath.Join(globalDir, "worktrees", "u", "dirty_18be000000000002")
+	runGit(t, repo, "worktree", "add", "-b", "u/dirty", orphan)
+	require.NoError(t, os.WriteFile(filepath.Join(orphan, "UNSAVED.txt"), []byte("wip"), 0o644))
+
+	m := fleetHome(t)
+	m.ctx = cancelledCtx()
+	m.errBox = ui.NewErrBox()
+	m.program = "startup-agent"
+
+	drainCmd(m.applyWorkspaceToggle(nil))
+
+	require.Empty(t, m.slots)
+	placeholder := m.list.GetInstanceByTitle("dirty")
+	require.NotNil(t, placeholder, "fixture: the orphan surfaces inline")
+	require.Equal(t, session.Recoverable, placeholder.GetStatus())
+	assert.Equal(t, "global-agent", placeholder.Program())
+}
+
 // TestEnterGlobalMode_LoadsLikeStartup: enterGlobalMode ran only
 // LoadAndReconcile — no crash restarts, no inline orphan recovery and no
 // recovery summary — unlike every other workspace-load path. Here the

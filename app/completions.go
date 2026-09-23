@@ -135,6 +135,27 @@ func (m *home) slotLoaded(slot *workspaceSlot) bool {
 	return slot != nil && slices.Contains(m.openSlots(), slot)
 }
 
+// reopened reports whether slot's workspace is open in a loaded slot other
+// than slot itself: for a slot that is no longer loaded, whether the user
+// has reopened its workspace since.
+func (m *home) reopened(slot *workspaceSlot) bool {
+	for _, s := range m.openSlots() {
+		if s != slot && slotLabel(s) == slotLabel(slot) {
+			return true
+		}
+	}
+	return false
+}
+
+// closedOwnerNote describes, for a completion's notice, an owner slot that
+// was closed while the operation ran.
+func (m *home) closedOwnerNote(slot *workspaceSlot) string {
+	if m.reopened(slot) {
+		return "which was closed and reopened meanwhile"
+	}
+	return "which is no longer open"
+}
+
 // slotLabel names slot's workspace for notices ("global" for none).
 func slotLabel(slot *workspaceSlot) string {
 	if slot.wsCtx == nil || slot.wsCtx.Name == "" {
@@ -148,13 +169,9 @@ func slotLabel(slot *workspaceSlot) string {
 // same workspace: such a slot reloaded state.json into its own, newer
 // copy, which a save from the dropped slot's stale one would overwrite.
 func (m *home) saveSlot(slot *workspaceSlot) error {
-	if !m.slotLoaded(slot) {
-		for _, s := range m.openSlots() {
-			if slotLabel(s) == slotLabel(slot) {
-				log.For("app").Warn("closed_slot_save_skipped", "workspace", slotLabel(slot), "reason", "workspace_reopened")
-				return nil
-			}
-		}
+	if !m.slotLoaded(slot) && m.reopened(slot) {
+		log.For("app").Warn("closed_slot_save_skipped", "workspace", slotLabel(slot), "reason", "workspace_reopened")
+		return nil
 	}
 	return slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances()))
 }
@@ -226,7 +243,7 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 		// Unknown owner (unstamped, and no loaded slot holds it): only
 		// the persistence-free parts above apply.
 	case !loaded:
-		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, which is no longer open", inst.Title, slotLabel(owner)))
+		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", inst.Title, slotLabel(owner), m.closedOwnerNote(owner)))
 	case owner != m.workspaceSlot:
 		// A background slot's selection drives no open flow.
 		owner.list.SelectInstance(inst)
@@ -324,7 +341,7 @@ func (m *home) handleRecoverDone(msg recoverDoneMsg) tea.Cmd {
 	if owner != nil && owner != m.workspaceSlot {
 		where = " in " + slotLabel(owner)
 		if !loaded {
-			where += ", which is no longer open"
+			where += ", " + m.closedOwnerNote(owner)
 		}
 	}
 	if msg.recovered.GetStatus() == session.Paused {

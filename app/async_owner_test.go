@@ -123,8 +123,11 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	started := liveInstance(t, "late")
 	owner.list.AddInstance(started)
 
+	m.errBox.SetSize(400, 1)
+
 	_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
 
+	assert.Contains(t, m.errBox.String(), "afocus, which is no longer open")
 	assert.Equal(t, stateDefault, m.state)
 	assert.Nil(t, m.list.GetInstanceByTitle("late"), "not filed under the focused workspace")
 	assert.GreaterOrEqual(t, recA.calls, 1, "the closed owner's record is saved")

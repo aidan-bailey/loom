@@ -411,6 +411,13 @@ func TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected(t *testing.
 	require.Equal(t, []string{"ws-good"}, m.slotNames())
 	assert.ElementsMatch(t, []string{"ws-good", "ws-bad"}, openList(), "restore keeps the failed workspace open")
 	assert.True(t, m.pickerActiveNames()["ws-bad"], "the picker shows it still selected")
+	_, _ = runOpenWorkspacePicker(m)
+	require.NotNil(t, m.workspacePicker())
+	m.workspacePicker().SetWidth(200)
+	assert.Contains(t, m.workspacePicker().Render(), "ws-bad (failed to load)",
+		"and warns that closing it condemns its live sessions")
+	m.dismissOverlay()
+	m.state = stateDefault
 
 	// A picker commit that keeps it selected retries it; it fails again.
 	_ = m.applyWorkspaceToggle([]config.Workspace{good, bad})
