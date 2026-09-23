@@ -107,7 +107,9 @@ func (d CardData) NeedsAttention() bool {
 // tail; 0 skips the screen read entirely (DensityLine callers). The
 // tail comes from AgentPane.EmulatorScreen — in-memory only, so calling
 // this per visible card per frame forks no subprocesses; snapshot-path
-// instances simply render their status label instead of a tail.
+// instances simply render their status label instead of a tail. When
+// Claude's last message is current and the session is not working, the
+// tail is the end of that message instead, on either path.
 func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, tailN int) CardData {
 	d := CardData{
 		Title:               inst.Title,
@@ -139,7 +141,12 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 	}
 	d.Ahead, d.Behind, d.HasParity = inst.Parity()
 	if tailN > 0 {
-		if screen, ok := inst.Pane().EmulatorScreen(); ok {
+		if msg, current := inst.LastMessage(); current && msg != "" &&
+			d.Status != session.Running && d.Status != session.Loading {
+			// What Claude said it did, or is asking, says more than the
+			// screen's tail once the session stops.
+			d.TailLines = MessageTailLines(msg, tailN)
+		} else if screen, ok := inst.Pane().EmulatorScreen(); ok {
 			d.TailLines = ContentTailLines(screen, tailN)
 		}
 	}
@@ -173,6 +180,33 @@ func TailLines(screen string, n int) []string {
 		out = append(out, sanitizeTailLine(l))
 	}
 	return out
+}
+
+// MessageTailLines returns the last n lines of a message Claude wrote, for
+// a card's tail: blank and code-fence lines are dropped, a heading's
+// leading #s trimmed, and every line sanitized, since the text is
+// model-written. Returns nil when nothing is left or n < 1.
+func MessageTailLines(msg string, n int) []string {
+	if n < 1 {
+		return nil
+	}
+	var lines []string
+	for _, l := range strings.Split(msg, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "```") {
+			continue
+		}
+		if h := strings.TrimLeft(t, "#"); h != t && (h == "" || h[0] == ' ') {
+			t = strings.TrimSpace(h)
+		}
+		if t = strings.TrimSpace(sanitizeCardText(t)); t != "" {
+			lines = append(lines, t)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines
 }
 
 // sanitizeTailLine strips ANSI styling and normalizes C0 controls the
