@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 	"unicode/utf8"
 )
 
@@ -79,6 +80,10 @@ type Event struct {
 	Message          string
 	// LastAssistantMessage is kept for Stop only.
 	LastAssistantMessage string
+	// At is when the hook ran. Scan sets it from the file's name or
+	// modification time; ParseEvent and Compact leave it alone, since it
+	// is never part of a payload.
+	At time.Time
 }
 
 // wireEvent uses the hook payload's own field names, so ParseEvent reads

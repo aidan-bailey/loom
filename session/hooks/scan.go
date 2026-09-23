@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,7 @@ type eventFile struct {
 	path string
 	stem string
 	mod  time.Time
+	at   time.Time
 	size int64
 }
 
@@ -54,7 +56,7 @@ type stampedEvent struct {
 }
 
 func byTimeThenStem(a, b eventFile) int {
-	if c := a.mod.Compare(b.mod); c != 0 {
+	if c := a.at.Compare(b.at); c != 0 {
 		return c
 	}
 	return strings.Compare(a.stem, b.stem)
@@ -64,7 +66,8 @@ func byTimeThenStem(a, b eventFile) int {
 // maxNewPerScan, oldest first) are parsed and replaced by compact .ev
 // files that keep their original modification time. A cold scan also
 // replays every .ev file that existed before this scan. Events are
-// returned ordered by modification time, then file stem.
+// returned ordered by when their hooks ran (see eventTime), then file
+// stem, each with At set.
 // Scan only touches the filesystem, so it is safe to run from a tea.Cmd.
 func Scan(req Request, now time.Time) (Result, error) {
 	idBytes, err := os.ReadFile(launchIDPath(req.Dir))
@@ -103,6 +106,7 @@ func Scan(req Request, now time.Time) (Result, error) {
 			continue // removed since ReadDir
 		}
 		f := eventFile{path: filepath.Join(dir, name), stem: stem, mod: info.ModTime(), size: info.Size()}
+		f.at = eventTime(f.stem, f.mod)
 		switch kind {
 		case entryTmp:
 			if now.Sub(f.mod) > staleTmpAge {
@@ -134,7 +138,9 @@ func Scan(req Request, now time.Time) (Result, error) {
 
 	events := make([]Event, len(stamped))
 	for i, s := range stamped {
-		events[i] = s.ev
+		ev := s.ev
+		ev.At = s.at
+		events[i] = ev
 	}
 	return Result{
 		LaunchID: launchID,
@@ -232,4 +238,21 @@ func writeCompact(f eventFile, ev Event) error {
 		return err
 	}
 	return nil
+}
+
+// minPlausibleNanos is 2001-09-09 in Unix nanoseconds. A smaller name
+// prefix is not a `date +%s%N` timestamp: macOS date prints a literal N,
+// so its prefix does not parse, and anything else is seconds or junk.
+const minPlausibleNanos = 1_000_000_000_000_000_000
+
+// eventTime is when the hook that wrote a file ran: the <unix-nanos>
+// prefix of its <unix-nanos>-<pid> stem, or mod when the prefix is not a
+// plausible nanosecond timestamp. A kept .ev file keeps both its stem and
+// its original modification time, so a replay gets the same answer.
+func eventTime(stem string, mod time.Time) time.Time {
+	prefix, _, _ := strings.Cut(stem, "-")
+	if n, err := strconv.ParseInt(prefix, 10, 64); err == nil && n >= minPlausibleNanos {
+		return time.Unix(0, n)
+	}
+	return mod
 }

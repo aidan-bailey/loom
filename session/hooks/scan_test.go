@@ -172,3 +172,39 @@ func TestScan_MalformedTasksReplayAsMissing(t *testing.T) {
 	require.Len(t, cold.Events, 1)
 	assert.False(t, cold.Events[0].HasTasks)
 }
+
+func TestEventTime(t *testing.T) {
+	mod := base
+	assert.True(t, time.Unix(0, 1790179911178279565).Equal(eventTime("1790179911178279565-2237570", mod)))
+	assert.True(t, mod.Equal(eventTime("1790179911N-2237570", mod)), "macOS date prints a literal N")
+	assert.True(t, mod.Equal(eventTime("1790179911-2237570", mod)), "a seconds prefix is not nanoseconds")
+	assert.True(t, mod.Equal(eventTime("a", mod)))
+}
+
+func TestScan_StampsEventsFromTheirNames(t *testing.T) {
+	dir, _ := prepared(t)
+	// The modification times disagree with the names on purpose: the name wins.
+	writeRaw(t, dir, "1790179911000000002-1", startPayload("second"), base)
+	writeRaw(t, dir, "1790179911000000001-1", startPayload("first"), base.Add(time.Second))
+
+	res, err := Scan(Request{Dir: dir}, base)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"first", "second"}, ids(res.Events))
+	assert.True(t, res.Events[0].At.Equal(time.Unix(0, 1790179911000000001)))
+
+	cold, err := Scan(Request{Dir: dir, Cold: true}, base)
+	require.NoError(t, err)
+	require.Len(t, cold.Events, 2)
+	assert.True(t, cold.Events[0].At.Equal(time.Unix(0, 1790179911000000001)),
+		"a replay recomputes At from the kept file's name")
+}
+
+func TestScan_StampsFromModTimeWithoutNanos(t *testing.T) {
+	dir, _ := prepared(t)
+	writeRaw(t, dir, "a", startPayload("one"), base)
+
+	res, err := Scan(Request{Dir: dir}, base)
+	require.NoError(t, err)
+	require.Len(t, res.Events, 1)
+	assert.True(t, res.Events[0].At.Equal(base))
+}
