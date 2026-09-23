@@ -111,7 +111,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 
 			// Regular flow: instance already running, just send prompt
-			if err := selected.SendPrompt(prompt); err != nil {
+			if err := selected.Pane().SendPrompt(prompt); err != nil {
 				return m, m.handleError(err)
 			}
 		}

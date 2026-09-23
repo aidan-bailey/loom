@@ -58,11 +58,11 @@ func (l *List) SetSize(width, height int) {
 // width and height.
 func (l *List) SetSessionPreviewSize(width, height int) (err error) {
 	for i, item := range l.items {
-		if !item.Started() || item.Paused() || !item.TmuxAlive() {
+		if !item.Started() || item.Paused() || !item.Pane().TmuxAlive() {
 			continue
 		}
 
-		if innerErr := item.SetPreviewSize(width, height); innerErr != nil {
+		if innerErr := item.Pane().SetPreviewSize(width, height); innerErr != nil {
 			err = errors.Join(
 				err, fmt.Errorf("could not set preview size for instance %d: %v", i, innerErr))
 		}

@@ -17,7 +17,7 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 	}
 
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+	if selected == nil || selected.Paused() || !selected.Pane().TmuxAlive() {
 		m.quickInputBar = nil
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
@@ -33,7 +33,7 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 		case ui.QuickInputTargetTerminal:
 			err = m.splitPane.SendTerminalPrompt(text)
 		case ui.QuickInputTargetAgent:
-			err = selected.SendPrompt(text)
+			err = selected.Pane().SendPrompt(text)
 		}
 		m.quickInputBar = nil
 		m.state = stateDefault

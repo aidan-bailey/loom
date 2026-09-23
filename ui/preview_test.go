@@ -333,7 +333,7 @@ func TestPreviewPane_TUIAgentForwardsWheel(t *testing.T) {
 	require.NoError(t, p.ScrollUp(setup.instance))
 	require.NoError(t, p.PageUp(setup.instance))
 
-	require.True(t, setup.instance.IsAlternateScreen(), "alt-screen TUI agent must be detected")
+	require.True(t, setup.instance.Pane().IsAlternateScreen(), "alt-screen TUI agent must be detected")
 	require.False(t, p.IsScrolling(), "TUI agent: Loom stays at the live tail, no offset window")
 	require.Equal(t, 0, p.snapFallback.offset, "offset model must not be engaged for a TUI agent")
 }

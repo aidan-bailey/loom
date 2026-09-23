@@ -119,8 +119,8 @@ func startedWorktreeInstance(t *testing.T, title, wtPath string) (inst *session.
 	require.NoError(t, err)
 	inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps(title, "claude", fakePtyFactory{t: t}, ex))
 	require.NoError(t, inst.TransitionTo(session.Running))
-	require.NoError(t, inst.RepairPtmx())
-	require.True(t, inst.PtmxAlive())
+	require.NoError(t, inst.Pane().RepairPtmx())
+	require.True(t, inst.Pane().PtmxAlive())
 	return inst, func() bool { mu.Lock(); defer mu.Unlock(); return kills > 0 }
 }
 
@@ -170,7 +170,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		assert.NotContains(t, reopened.list.GetInstances(), twin)
 		assert.GreaterOrEqual(t, recC.calls, 1, "the reopened slot is saved")
 		assert.Zero(t, recA.calls, "the closed owner's stale copy is not")
-		assert.True(t, started.PtmxAlive(), "it is displayed again, so its preview stays")
+		assert.True(t, started.Pane().PtmxAlive(), "it is displayed again, so its preview stays")
 	})
 
 	t.Run("failure leaves the twin's worktree and branch alone", func(t *testing.T) {
@@ -182,7 +182,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		drainCmd(cmd)
 
 		assert.False(t, killed(), "not killed: the reopened record owns its worktree and branch")
-		assert.False(t, started.PtmxAlive(), "only its preview client is released")
+		assert.False(t, started.Pane().PtmxAlive(), "only its preview client is released")
 		assert.Same(t, twin, m.slots[1].list.GetInstanceByTitle("late"))
 	})
 
@@ -196,7 +196,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 
 		assert.Same(t, namesake, m.slots[1].list.GetInstanceByTitle("late"), "an unrelated same-titled session is untouched")
 		assert.Zero(t, recC.calls)
-		assert.False(t, started.PtmxAlive(), "the start stays with its closed owner, so its preview is released")
+		assert.False(t, started.Pane().PtmxAlive(), "the start stays with its closed owner, so its preview is released")
 	})
 }
 

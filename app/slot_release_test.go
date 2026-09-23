@@ -26,8 +26,8 @@ func liveInstance(t *testing.T, title string) *session.Instance {
 	require.NoError(t, err)
 	inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps(title, "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
 	require.NoError(t, inst.TransitionTo(session.Running))
-	require.NoError(t, inst.RepairPtmx())
-	require.True(t, inst.PtmxAlive(), "fixture: the preview PTY is attached")
+	require.NoError(t, inst.Pane().RepairPtmx())
+	require.True(t, inst.Pane().PtmxAlive(), "fixture: the preview PTY is attached")
 	return inst
 }
 
@@ -70,12 +70,12 @@ func pointAt(m *home, inst *session.Instance) {
 func assertReleased(t *testing.T, m *home, cmd tea.Cmd, dropped ...*session.Instance) {
 	t.Helper()
 	for _, inst := range dropped {
-		assert.True(t, inst.PtmxAlive(), "%s: released on the Update goroutine; must wait for the Cmd", inst.Title)
+		assert.True(t, inst.Pane().PtmxAlive(), "%s: released on the Update goroutine; must wait for the Cmd", inst.Title)
 	}
 	drainCmd(cmd)
 	refs := referencedInstances(m)
 	for _, inst := range dropped {
-		assert.False(t, inst.PtmxAlive(), "%s: preview PTY still attached after the drop", inst.Title)
+		assert.False(t, inst.Pane().PtmxAlive(), "%s: preview PTY still attached after the drop", inst.Title)
 		assert.NotContains(t, refs, inst, "%s: still reachable from the model", inst.Title)
 	}
 	require.NoError(t, m.checkSlotInvariant())
@@ -173,9 +173,9 @@ func TestReleaseInstancesCmd_OnlyAttachedLiveInstances(t *testing.T) {
 	live := liveInstance(t, "live")
 	cmd := releaseInstancesCmd([]*session.Instance{unstarted, paused, live})
 	require.NotNil(t, cmd)
-	assert.True(t, live.PtmxAlive(), "building the Cmd must not release anything")
+	assert.True(t, live.Pane().PtmxAlive(), "building the Cmd must not release anything")
 	assert.Nil(t, cmd(), "the release reports nothing back to Update")
-	assert.False(t, live.PtmxAlive())
+	assert.False(t, live.Pane().PtmxAlive())
 }
 
 // TestDroppedSlot_StaleProbeDoesNotReattach: a metadata probe taken before
@@ -189,12 +189,12 @@ func TestDroppedSlot_StaleProbeDoesNotReattach(t *testing.T) {
 	live := liveInstance(t, "b-live")
 	m.slots[1].list.AddInstance(live)
 	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}}))
-	require.False(t, live.PtmxAlive())
+	require.False(t, live.Pane().PtmxAlive())
 
 	_, _ = m.Update(metadataReadyMsg{results: []metadataResult{
 		{instance: live, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
 	}})
-	assert.False(t, live.PtmxAlive(), "a dropped instance must not be re-attached")
+	assert.False(t, live.Pane().PtmxAlive(), "a dropped instance must not be re-attached")
 }
 
 // attachedTerminal is a terminal-pane shell session with its attach client

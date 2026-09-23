@@ -664,7 +664,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var currentHash []byte
 			var currentTitle string
 			if selected != nil {
-				currentHash = selected.GetContentHash()
+				currentHash = selected.Pane().GetContentHash()
 				currentTitle = selected.Title
 			}
 
@@ -824,7 +824,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// latched on idle agents (and masked visible prompts, since
 			// updated wins over hasPrompt). Re-sample until a detection
 			// sees unchanged content and settles to Ready/Prompting.
-			return m, m.maybeRedetect(msg.instance.TmuxSessionName())
+			return m, m.maybeRedetect(msg.instance.Pane().TmuxSessionName())
 		}
 		return m, nil
 	case ptyDeadMsg:
@@ -1809,12 +1809,12 @@ func (m *home) instanceChanged() tea.Cmd {
 		// loses focus, the new one gains it (host focus permitting).
 		if m.hostFocused && m.splitPane.GetFocusedPane() == ui.FocusAgent {
 			if prev := m.list.GetInstanceByTitle(m.lastFocusTitle); prev != nil {
-				prev.ForwardFocus(false)
+				prev.Pane().ForwardFocus(false)
 			}
 		}
 		m.lastFocusTitle = newFocusTitle
 		if m.hostFocused && selected != nil && m.splitPane.GetFocusedPane() == ui.FocusAgent {
-			selected.ForwardFocus(true)
+			selected.Pane().ForwardFocus(true)
 		}
 	}
 
@@ -2105,17 +2105,17 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 				r := &results[idx]
 				r.instance = instance
 
-				r.tmuxLive = instance.TmuxLiveness()
+				r.tmuxLive = instance.Pane().TmuxLiveness()
 				if r.tmuxLive != tmux.LivenessAlive {
 					return
 				}
-				r.ptmxAlive = instance.PtmxAlive()
+				r.ptmxAlive = instance.Pane().PtmxAlive()
 
 				// Event-mode instances get status from quiet events; the
 				// subprocess scan only remains for the snapshot path.
-				r.emulatorDriven = instance.HasEmulator()
+				r.emulatorDriven = instance.Pane().HasEmulator()
 				if !r.emulatorDriven {
-					r.updated, r.hasPrompt, r.captureErr = instance.CaptureAndProcessStatus()
+					r.updated, r.hasPrompt, r.captureErr = instance.Pane().CaptureAndProcessStatus()
 				}
 
 				// Parity must not sit behind ShouldRefreshDiff: that gate
@@ -2126,7 +2126,7 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 				instance.UpdateParity(bases[instance.Path])
 
 				wantFull := instance == selected
-				tmuxUpdated := r.updated || dirty[instance.TmuxSessionName()]
+				tmuxUpdated := r.updated || dirty[instance.Pane().TmuxSessionName()]
 				if !instance.ShouldRefreshDiff(tmuxUpdated, wantFull) {
 					return
 				}
@@ -2206,7 +2206,7 @@ func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptm
 		// else ever retries this, so self-heal here — same shape as
 		// the workspace-terminal restart above, but at the PTY layer.
 		log.For("app").Warn("tick.ptmx_dead_repairing", "title", inst.Title)
-		if err := inst.RepairPtmx(); err != nil {
+		if err := inst.Pane().RepairPtmx(); err != nil {
 			log.For("app").Error("tick.ptmx_repair_failed", "title", inst.Title, "err", err)
 		}
 	}
@@ -2420,7 +2420,7 @@ func (m *home) forwardFocus(in bool) {
 	}
 	switch m.splitPane.GetFocusedPane() {
 	case ui.FocusAgent:
-		selected.ForwardFocus(in)
+		selected.Pane().ForwardFocus(in)
 	case ui.FocusTerminal:
 		m.splitPane.ForwardTerminalFocus(in)
 	}
@@ -2451,7 +2451,7 @@ func (m *home) windowTitle() string {
 	if sel == nil {
 		return "loom"
 	}
-	if t, ok := sel.PaneTitle(); ok {
+	if t, ok := sel.Pane().PaneTitle(); ok {
 		return t + " — loom"
 	}
 	return "loom — " + sel.Title

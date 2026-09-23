@@ -35,7 +35,7 @@ func (m *home) instanceForSession(name string) *session.Instance {
 	}
 	check := func(l *ui.List) *session.Instance {
 		for _, inst := range l.GetInstances() {
-			if inst.TmuxSessionName() == name {
+			if inst.Pane().TmuxSessionName() == name {
 				return inst
 			}
 		}
@@ -68,7 +68,7 @@ type statusDetectedMsg struct {
 
 func statusDetectCmd(inst *session.Instance) tea.Cmd {
 	return func() tea.Msg {
-		updated, hasPrompt, err := inst.CaptureAndProcessStatus()
+		updated, hasPrompt, err := inst.Pane().CaptureAndProcessStatus()
 		return statusDetectedMsg{instance: inst, updated: updated, hasPrompt: hasPrompt, err: err}
 	}
 }
@@ -250,7 +250,7 @@ type deadVerifiedMsg struct {
 
 func verifyDeadCmd(inst *session.Instance) tea.Cmd {
 	return func() tea.Msg {
-		return deadVerifiedMsg{instance: inst, tmuxLive: inst.TmuxLiveness(), ptmxAlive: inst.PtmxAlive()}
+		return deadVerifiedMsg{instance: inst, tmuxLive: inst.Pane().TmuxLiveness(), ptmxAlive: inst.Pane().PtmxAlive()}
 	}
 }
 

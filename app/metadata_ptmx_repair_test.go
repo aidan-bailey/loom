@@ -28,8 +28,8 @@ func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
 
 	ts := tmux.NewTmuxSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())
 	inst.SetTmuxSession(ts)
-	require.False(t, inst.PtmxAlive(), "fixture precondition: ptmx must start dead")
-	require.True(t, inst.TmuxAlive(), "fixture precondition: tmux session must read alive")
+	require.False(t, inst.Pane().PtmxAlive(), "fixture precondition: ptmx must start dead")
+	require.True(t, inst.Pane().TmuxAlive(), "fixture precondition: tmux session must read alive")
 
 	return m, inst
 }
@@ -45,7 +45,7 @@ func TestMetadataReadyMsg_RepairsDeadPtmx(t *testing.T) {
 		{instance: inst, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
 	}})
 
-	require.True(t, inst.PtmxAlive(), "metadata tick should have repaired the dead ptmx")
+	require.True(t, inst.Pane().PtmxAlive(), "metadata tick should have repaired the dead ptmx")
 }
 
 // TestMetadataReadyMsg_SkipsRepairDuringFullScreenAttach guards against a
@@ -60,5 +60,5 @@ func TestMetadataReadyMsg_SkipsRepairDuringFullScreenAttach(t *testing.T) {
 		{instance: inst, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
 	}})
 
-	require.False(t, inst.PtmxAlive(), "repair must not run for the instance currently mid full-screen attach")
+	require.False(t, inst.Pane().PtmxAlive(), "repair must not run for the instance currently mid full-screen attach")
 }

@@ -440,7 +440,7 @@ func (m *home) sendReviewCmd() tea.Cmd {
 	if sel == nil || rv == nil {
 		return nil
 	}
-	if sel.Paused() || !sel.TmuxAlive() {
+	if sel.Paused() || !sel.Pane().TmuxAlive() {
 		m.errBox.SetInfo("agent is not running — resume the session first")
 		return nil
 	}
@@ -453,7 +453,7 @@ func (m *home) sendReviewCmd() tea.Cmd {
 	msg := fmt.Sprintf("Send %d review comment(s) to %s?", rv.CommentCount(), title)
 	return m.confirmTask(msg, overlay.ConfirmationTask{
 		Sync: func() {
-			if err := sel.SendPrompt(prompt); err != nil {
+			if err := sel.Pane().SendPrompt(prompt); err != nil {
 				m.errBox.SetError(err)
 			}
 		},

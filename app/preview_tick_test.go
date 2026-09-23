@@ -144,9 +144,9 @@ func TestPreviewTickRerendersScrolledAgent(t *testing.T) {
 	// Make the preview-tick hash short-circuit fire: populate the content hash,
 	// then pin lastPreview* to the current title + hash so the tick treats the
 	// live content as unchanged.
-	_, _ = inst.HasUpdated()
+	_, _ = inst.Pane().HasUpdated()
 	m.lastPreviewTitle = inst.Title
-	m.lastPreviewHash = inst.GetContentHash()
+	m.lastPreviewHash = inst.Pane().GetContentHash()
 	require.NotNil(t, m.lastPreviewHash, "need a non-nil content hash to hit the short-circuit branch")
 
 	before := historyCaptures

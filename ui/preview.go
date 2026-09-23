@@ -149,7 +149,7 @@ func (p *PreviewPane) setFallbackState(message string) {
 
 // liveTail sets the pane content to the live (offset 0) emulator screen.
 func (p *PreviewPane) liveTail(instance *session.Instance) error {
-	content, err := instance.Preview()
+	content, err := instance.Pane().Preview()
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func (p *PreviewPane) updateContentSnapshotScrolled(instance *session.Instance, 
 	// Scrolled: window into tmux's authoritative buffer (scrollback + visible).
 	// The in-process emulator only mirrors the visible screen, so windowed
 	// history must come from tmux, not emu.Scrollback().
-	hist, ok := instance.CaptureHistory()
+	hist, ok := instance.Pane().CaptureHistory()
 	if !ok {
 		p.snapFallback.offset = 0
 		return p.liveTail(instance)
@@ -427,8 +427,8 @@ func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
 		return p.scroll.ScrollUp(src)
 	}
 	// Snapshot path: probe tmux directly (rare path, no TTL cache).
-	if instance != nil && instance.IsAlternateScreen() {
-		return instance.ForwardWheel(true, 1)
+	if instance != nil && instance.Pane().IsAlternateScreen() {
+		return instance.Pane().ForwardWheel(true, 1)
 	}
 	p.snapshotScrollBy(instance, +1)
 	return nil
@@ -439,8 +439,8 @@ func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
 	if src, ok := p.emulatorScroll(instance); ok {
 		return p.scroll.ScrollDown(src)
 	}
-	if instance != nil && instance.IsAlternateScreen() {
-		return instance.ForwardWheel(false, 1)
+	if instance != nil && instance.Pane().IsAlternateScreen() {
+		return instance.Pane().ForwardWheel(false, 1)
 	}
 	p.snapshotScrollBy(instance, -1)
 	return nil
@@ -451,8 +451,8 @@ func (p *PreviewPane) PageUp(instance *session.Instance) error {
 	if src, ok := p.emulatorScroll(instance); ok {
 		return p.scroll.PageUp(src, p.height)
 	}
-	if instance != nil && instance.IsAlternateScreen() {
-		return instance.ForwardWheel(true, agentPageNotches)
+	if instance != nil && instance.Pane().IsAlternateScreen() {
+		return instance.Pane().ForwardWheel(true, agentPageNotches)
 	}
 	p.snapshotScrollBy(instance, +(p.height / 2))
 	return nil
@@ -463,8 +463,8 @@ func (p *PreviewPane) PageDown(instance *session.Instance) error {
 	if src, ok := p.emulatorScroll(instance); ok {
 		return p.scroll.PageDown(src, p.height)
 	}
-	if instance != nil && instance.IsAlternateScreen() {
-		return instance.ForwardWheel(false, agentPageNotches)
+	if instance != nil && instance.Pane().IsAlternateScreen() {
+		return instance.Pane().ForwardWheel(false, agentPageNotches)
 	}
 	p.snapshotScrollBy(instance, -(p.height / 2))
 	return nil
@@ -476,8 +476,8 @@ func (p *PreviewPane) GotoTop(instance *session.Instance) error {
 		p.scroll.GotoTop(src)
 		return nil
 	}
-	if instance != nil && instance.IsAlternateScreen() {
-		return instance.ForwardWheel(true, 30)
+	if instance != nil && instance.Pane().IsAlternateScreen() {
+		return instance.Pane().ForwardWheel(true, 30)
 	}
 	p.snapshotScrollBy(instance, scrollToTopOffset)
 	return nil
@@ -489,8 +489,8 @@ func (p *PreviewPane) GotoBottom(instance *session.Instance) error {
 		p.scroll.Reset()
 		return nil
 	}
-	if instance != nil && instance.IsAlternateScreen() {
-		return instance.ForwardWheel(false, 30)
+	if instance != nil && instance.Pane().IsAlternateScreen() {
+		return instance.Pane().ForwardWheel(false, 30)
 	}
 	p.snapFallback = snapshotScroll{}
 	p.newLinesBelowRender = 0

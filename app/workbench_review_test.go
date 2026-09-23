@@ -401,7 +401,7 @@ func TestWorkbenchReview_ScrollIgnoredWhileModalOpen(t *testing.T) {
 }
 
 // aliveTmuxSessionForTest builds a TmuxSession whose DoesSessionExist
-// (and thus Instance.TmuxAlive) reports true without touching a real
+// (and thus Instance.Pane().TmuxAlive) reports true without touching a real
 // tmux server — mirrors addReadyInstance's fixture in
 // app_scripts_dispatch_test.go.
 func aliveTmuxSessionForTest(t *testing.T, name string) *tmux.TmuxSession {
@@ -444,7 +444,7 @@ func TestWorkbenchReview_SendOpensConfirm(t *testing.T) {
 	sel := m.list.GetSelectedInstance()
 	require.NotNil(t, sel)
 	sel.SetTmuxSession(aliveTmuxSessionForTest(t, "a"))
-	require.True(t, sel.TmuxAlive(), "fixture precondition")
+	require.True(t, sel.Pane().TmuxAlive(), "fixture precondition")
 
 	root := sel.GetWorktreePath()
 	require.NoError(t, review.Save(root, &review.ReviewState{

@@ -105,7 +105,7 @@ func (d CardData) NeedsAttention() bool {
 // BuildCardData snapshots inst into a CardData. spinnerFrame is the
 // current spinner view (pass "" when unavailable). tailN caps the live
 // tail; 0 skips the screen read entirely (DensityLine callers). The
-// tail comes from Instance.EmulatorScreen — in-memory only, so calling
+// tail comes from AgentPane.EmulatorScreen — in-memory only, so calling
 // this per visible card per frame forks no subprocesses; snapshot-path
 // instances simply render their status label instead of a tail.
 func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, tailN int) CardData {
@@ -139,7 +139,7 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 	}
 	d.Ahead, d.Behind, d.HasParity = inst.Parity()
 	if tailN > 0 {
-		if screen, ok := inst.EmulatorScreen(); ok {
+		if screen, ok := inst.Pane().EmulatorScreen(); ok {
 			d.TailLines = ContentTailLines(screen, tailN)
 		}
 	}

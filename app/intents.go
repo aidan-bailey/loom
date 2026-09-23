@@ -76,7 +76,7 @@ func selectedPausedNotWorkspace(m *home) bool {
 // exist, have a live tmux pane, and not be mid-lifecycle.
 func selectedReadyForInput(m *home) bool {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+	if selected == nil || selected.Paused() || !selected.Pane().TmuxAlive() {
 		return false
 	}
 	s := selected.GetStatus()

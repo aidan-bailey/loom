@@ -68,7 +68,7 @@ func (m *home) reopenedTwin(owner *workspaceSlot, inst *session.Instance) (*sess
 		if b1, b2 := twin.GetBranch(), inst.GetBranch(); b1 != "" && b2 != "" && b1 != b2 {
 			continue
 		}
-		if twin.Paused() && !twin.PtmxAlive() {
+		if twin.Paused() && !twin.Pane().PtmxAlive() {
 			return twin, s
 		}
 	}
@@ -195,7 +195,7 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 	}
 
 	if inst.Prompt != "" {
-		if err := inst.SendPrompt(inst.Prompt); err != nil {
+		if err := inst.Pane().SendPrompt(inst.Prompt); err != nil {
 			log.For("app").Error("send_prompt_failed", "err", err)
 		}
 		inst.Prompt = ""

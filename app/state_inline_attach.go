@@ -39,7 +39,7 @@ func focusedPaneAlive(m *home, selected *session.Instance) bool {
 	if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
 		return m.splitPane.TerminalTmuxSession() != nil
 	}
-	return selected.TmuxAlive()
+	return selected.Pane().TmuxAlive()
 }
 
 // handleStateInlineAttachKey forwards raw key bytes to the focused tmux pane
@@ -71,7 +71,7 @@ func handleStateInlineAttachKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
 			err = m.splitPane.SendTerminalKeysRaw(b)
 		} else {
-			err = selected.SendKeysRaw(b)
+			err = selected.Pane().SendKeysRaw(b)
 		}
 		if err != nil {
 			log.For("app").Error("inline_attach.send_failed", "err", err)

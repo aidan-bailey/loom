@@ -27,7 +27,7 @@ func TestApplyLiveness_UnknownDoesNotPause(t *testing.T) {
 	assert.True(t, alive, "an inconclusive probe must leave the instance treated as running")
 	assert.Equal(t, session.Running, inst.GetStatus(),
 		"an instance must never be paused on a probe that got no answer")
-	assert.False(t, inst.PtmxAlive(),
+	assert.False(t, inst.Pane().PtmxAlive(),
 		"an inconclusive probe must not trigger ptmx repair either")
 }
 

@@ -107,7 +107,7 @@ func TestStatusDetectionConvergesToReadyAfterSettle(t *testing.T) {
 
 	// First quiet after the burst: content changed since the previous sample,
 	// so detection concludes Running — and must arm a re-detection.
-	_, cmd := m.Update(paneQuietMsg{session: inst.TmuxSessionName()})
+	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd)
 	msg := cmd()
 	detected, ok := msg.(statusDetectedMsg)
@@ -142,7 +142,7 @@ func TestStatusDetectionSurfacesPromptAfterSettle(t *testing.T) {
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
 
-	_, cmd := m.Update(paneQuietMsg{session: inst.TmuxSessionName()})
+	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd)
 	msg := cmd()
 	detected, ok := msg.(statusDetectedMsg)
@@ -175,7 +175,7 @@ func TestDirtyDoesNotDemotePrompting(t *testing.T) {
 	m.splitPane.SetInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Prompting))
 
-	_, _ = m.Update(paneDirtyMsg{session: inst.TmuxSessionName()})
+	_, _ = m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
 	require.Equal(t, session.Prompting, inst.GetStatus(),
 		"a focus/selection repaint must not relabel a waiting prompt as Running")
 }
@@ -193,7 +193,7 @@ func TestDirtyPromotesReadyToRunning(t *testing.T) {
 	m.splitPane.SetInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Ready))
 
-	_, _ = m.Update(paneDirtyMsg{session: inst.TmuxSessionName()})
+	_, _ = m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
 	require.Equal(t, session.Running, inst.GetStatus())
 }
 
@@ -210,7 +210,7 @@ func TestQuietDuringLoadingSchedulesRedetect(t *testing.T) {
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
 
-	_, cmd := m.Update(paneQuietMsg{session: inst.TmuxSessionName()})
+	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd, "quiet during Loading must arm a re-check, not drop")
 
 	// Start flow completes while the re-check is pending.

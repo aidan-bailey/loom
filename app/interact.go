@@ -64,7 +64,7 @@ func (m *home) interactMouseRelease() tea.Cmd {
 // TUI agent registers a click on its own UI.
 func (m *home) forwardClickToFocused(pane, row, col int) {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+	if selected == nil || selected.Paused() || !selected.Pane().TmuxAlive() {
 		return
 	}
 	if pane != m.splitPane.GetFocusedPane() {
@@ -74,20 +74,20 @@ func (m *home) forwardClickToFocused(pane, row, col int) {
 		_ = m.splitPane.ForwardTerminalMouse(0, col+1, row+1, true)
 		_ = m.splitPane.ForwardTerminalMouse(0, col+1, row+1, false)
 	} else {
-		_ = selected.ForwardMouse(0, col+1, row+1, true)
-		_ = selected.ForwardMouse(0, col+1, row+1, false)
+		_ = selected.Pane().ForwardMouse(0, col+1, row+1, true)
+		_ = selected.Pane().ForwardMouse(0, col+1, row+1, false)
 	}
 }
 
 // pasteToFocused sends pasted text into the focused pane as a bracketed paste.
 func (m *home) pasteToFocused(text string) {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !selected.TmuxAlive() {
+	if selected == nil || selected.Paused() || !selected.Pane().TmuxAlive() {
 		return
 	}
 	if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
 		_ = m.splitPane.PasteTerminal(text)
 	} else {
-		_ = selected.Paste(text)
+		_ = selected.Pane().Paste(text)
 	}
 }

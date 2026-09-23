@@ -155,7 +155,7 @@ func instanceDiffStats(L *lua.LState) int {
 
 func instancePreview(L *lua.LState) int {
 	inst := checkInstance(L, 1)
-	out, err := inst.Preview()
+	out, err := inst.Pane().Preview()
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -168,7 +168,7 @@ func instancePreview(L *lua.LState) int {
 func instanceSendKeys(L *lua.LState) int {
 	inst := checkInstance(L, 1)
 	keys := L.CheckString(2)
-	if err := inst.SendKeys(keys); err != nil {
+	if err := inst.Pane().SendKeys(keys); err != nil {
 		L.RaiseError("send_keys: %s", err.Error())
 	}
 	return 0
@@ -177,7 +177,7 @@ func instanceSendKeys(L *lua.LState) int {
 func instanceSendPrompt(L *lua.LState) int {
 	inst := checkInstance(L, 1)
 	prompt := L.CheckString(2)
-	if err := inst.SendPrompt(prompt); err != nil {
+	if err := inst.Pane().SendPrompt(prompt); err != nil {
 		L.RaiseError("send_prompt: %s", err.Error())
 	}
 	return 0
@@ -185,7 +185,7 @@ func instanceSendPrompt(L *lua.LState) int {
 
 func instanceTapEnter(L *lua.LState) int {
 	inst := checkInstance(L, 1)
-	inst.TapEnter()
+	inst.Pane().TapEnter()
 	return 0
 }
 

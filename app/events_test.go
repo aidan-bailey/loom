@@ -19,7 +19,7 @@ func TestPaneDirtyRerendersScrolledAgent(t *testing.T) {
 	// capture-pane mock; the event path needs the emulator flag ON so the
 	// previewTick guard doesn't matter and dirty routing engages.
 	t.Setenv("LOOM_PANE_RENDERER", "")
-	require.NotEmpty(t, inst.TmuxSessionName())
+	require.NotEmpty(t, inst.Pane().TmuxSessionName())
 
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
@@ -35,7 +35,7 @@ func TestPaneDirtyRerendersScrolledAgent(t *testing.T) {
 	require.True(t, m.splitPane.IsAgentInScrollMode())
 
 	before := historyCaptures
-	_, _ = m.Update(paneDirtyMsg{session: inst.TmuxSessionName()})
+	_, _ = m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
 	require.Greater(t, historyCaptures, before,
 		"a dirty event must re-render a scrolled agent pane")
 	require.True(t, m.splitPane.IsAgentInScrollMode())
@@ -54,7 +54,7 @@ func TestPaneQuietRunsStatusDetection(t *testing.T) {
 
 	// Quiet handler returns a statusDetectCmd; run it and feed the result
 	// message back through Update, as the Bubble Tea runtime would.
-	_, cmd := m.Update(paneQuietMsg{session: inst.TmuxSessionName()})
+	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd, "quiet on a live agent session must schedule detection")
 	msg := cmd()
 	detected, ok := msg.(statusDetectedMsg)
@@ -82,7 +82,7 @@ func TestPtyDeadVerifiesBeforePausing(t *testing.T) {
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
 
-	_, cmd := m.Update(ptyDeadMsg{session: inst.TmuxSessionName()})
+	_, cmd := m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd, "dead event on a live instance must schedule verification")
 	msg := cmd()
 	verified, ok := msg.(deadVerifiedMsg)
@@ -107,10 +107,10 @@ func TestBellBadgesUnselectedInstance(t *testing.T) {
 	m.list.AddInstance(inst1) // first add is auto-selected
 	m.list.AddInstance(inst2)
 
-	_, _ = m.Update(bellMsg{session: inst2.TmuxSessionName()})
+	_, _ = m.Update(bellMsg{session: inst2.Pane().TmuxSessionName()})
 	require.True(t, inst2.BellPending(), "bell on unselected instance must badge it")
 
-	_, _ = m.Update(bellMsg{session: inst1.TmuxSessionName()})
+	_, _ = m.Update(bellMsg{session: inst1.Pane().TmuxSessionName()})
 	require.False(t, inst1.BellPending(), "bell on the selected instance is not badged")
 
 	m.list.SetSelectedInstance(1) // select inst2
