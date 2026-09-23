@@ -327,11 +327,13 @@ func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recove
 
 // restoreSavedWorkspaces activates all workspaces in `saved` as slots, merging
 // the explicit startup target (if any) into the set, then focuses the
-// appropriate slot. Missing/failed workspaces are dropped (failures are
-// logged, and any failure skips the server-wide orphan sweep); if none
+// appropriate slot. Missing/failed workspaces are not opened (failures
+// are logged, and any failure skips the server-wide orphan sweep); if none
 // activates, the startup storage is loaded instead
 // (loadStartupStorageFallback). The registry's OpenWorkspaces list is
-// rewritten to match what actually activated.
+// rewritten to what activated plus the saved workspaces that failed
+// (restoreFailed): those keep their place so a later launch retries them
+// rather than sweeping their live sessions.
 func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	explicit := ""
 	if m.wsCtx != nil {
@@ -360,6 +362,10 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		if err != nil {
 			log.For("app").Error("workspace.restore_failed", "name", ws.Name, "err", err)
 			failed = append(failed, ws.Name)
+			if slices.ContainsFunc(saved, func(s config.Workspace) bool { return s.Name == ws.Name }) {
+				// Was open: keep it open, to be retried (restoreFailed).
+				m.restoreFailed = append(m.restoreFailed, ws.Name)
+			}
 		}
 		// The first tab drops the classic slot, which this path never
 		// loaded, so release is nil in practice. Were it not, running it
@@ -419,9 +425,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	m.showRecoverySummary(m.slots[focused].recovery)
 
 	if m.registry != nil {
-		if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
-			log.For("app").Debug("registry.set_open_failed", "err", err)
-		}
+		m.saveOpenWorkspaces()
 		if name := m.slots[focused].wsCtx.Name; name != "" {
 			if err := m.registry.UpdateLastUsed(name); err != nil {
 				log.For("app").Debug("registry.update_last_used_failed", "workspace", name, "err", err)
@@ -439,11 +443,8 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 // the storage's write latch refuses every save, and the error is shown
 // rather than exiting, so the user can still open a workspace from the
 // picker. The failed workspaces stay in the registry's open list, to be
-// retried on the next launch: nothing here rewrites it, and handleQuit
-// skips its global-mode clear (restoreFellBack) unless the user has since
-// changed the open set.
+// retried on the next launch (see restoreFailed).
 func (m *home) loadStartupStorageFallback() {
-	m.restoreFellBack = true
 	// Each failed activation re-synced these process-wide flags from its
 	// own workspace's config; put the startup config's values back before
 	// anything below launches a session.

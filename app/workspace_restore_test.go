@@ -379,3 +379,48 @@ func TestRegisterPendingDir_RegistryWriteRunsOnUpdate(t *testing.T) {
 	assert.Equal(t, []string{name}, m.slotNames(), "and opens it as the focused tab")
 	require.NoError(t, m.checkSlotInvariant())
 }
+
+// TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected: a
+// workspace that failed to restore skipped this launch's orphan sweep,
+// but restore rewrote the registry's open list without it, and so did the
+// next picker commit or quit. The next launch then never loaded it, ran
+// the sweep, and killed its live agents. It must stay in the open list
+// until it is opened or explicitly deselected.
+func TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	good := preservedTerminalWorkspace(t, "ws-good")
+	bad := corruptWorkspaces(t, "ws-bad")[0]
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	require.NoError(t, reg.Add("ws-good", good.Path))
+	require.NoError(t, reg.Add("ws-bad", bad.Path))
+	require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-good", "ws-bad"}))
+
+	m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
+	m.registry = reg
+	m.ctx = cancelledCtx()
+	openList := func() []string {
+		t.Helper()
+		fresh, err := config.LoadWorkspaceRegistry()
+		require.NoError(t, err)
+		return fresh.OpenWorkspaces
+	}
+
+	m.restoreSavedWorkspaces(reg.GetOpenWorkspaces())
+	require.Equal(t, []string{"ws-good"}, m.slotNames())
+	assert.ElementsMatch(t, []string{"ws-good", "ws-bad"}, openList(), "restore keeps the failed workspace open")
+	assert.True(t, m.pickerActiveNames()["ws-bad"], "the picker shows it still selected")
+
+	// A picker commit that keeps it selected retries it; it fails again.
+	_ = m.applyWorkspaceToggle([]config.Workspace{good, bad})
+	assert.ElementsMatch(t, []string{"ws-good", "ws-bad"}, openList(), "a picker commit keeps it open")
+
+	_, _ = m.handleQuit()
+	assert.ElementsMatch(t, []string{"ws-good", "ws-bad"}, openList(), "quit keeps it open")
+
+	// Deselecting it in the picker is the explicit close.
+	_ = m.applyWorkspaceToggle([]config.Workspace{good})
+	assert.Equal(t, []string{"ws-good"}, openList())
+	assert.False(t, m.pickerActiveNames()["ws-bad"])
+}

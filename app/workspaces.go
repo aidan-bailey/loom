@@ -180,6 +180,8 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitPane.Terminal()),
 		recovery:  recovery,
 	})
+	// Opened at last: no longer a restore failure to retry.
+	m.restoreFailed = slices.DeleteFunc(m.restoreFailed, func(n string) bool { return n == ws.Name })
 	var release tea.Cmd
 	if len(m.slots) == 1 {
 		// Leaving classic mode: the classic slot is not in m.slots, so the
@@ -501,6 +503,8 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	for _, ws := range desired {
 		desiredNames[ws.Name] = true
 	}
+	// A failed-to-restore workspace left unchecked was explicitly closed.
+	m.restoreFailed = slices.DeleteFunc(m.restoreFailed, func(n string) bool { return !desiredNames[n] })
 
 	var activationErrors []string
 	var deactivationErrors []string
@@ -656,8 +660,9 @@ func (m *home) enterGlobalMode() tea.Cmd {
 
 	// Clear registry's open-tab list so the next launch lands in
 	// global mode rather than auto-restoring tabs the user just closed.
-	// An explicit return to global mode also ends restore-fallback mode.
-	m.restoreFellBack = false
+	// An explicit return to global mode closes the workspaces that failed
+	// to restore too.
+	m.restoreFailed = nil
 	if m.registry != nil {
 		if err := m.registry.SetOpenWorkspaces(nil); err != nil {
 			log.For("app").Warn("clear_open_workspaces_failed", "err", err)
@@ -748,14 +753,28 @@ func (m *home) refreshPeerSections() {
 }
 
 // saveOpenWorkspaces persists the current ordered list of open workspace tabs
-// to the registry so they can be restored on next launch.
+// (plus any still to be retried; see restoreFailed) to the registry so they
+// can be restored on next launch.
 func (m *home) saveOpenWorkspaces() {
 	if m.registry == nil {
 		return
 	}
-	if err := m.registry.SetOpenWorkspaces(m.slotNames()); err != nil {
+	if err := m.registry.SetOpenWorkspaces(m.openWorkspaceNames()); err != nil {
 		log.For("app").Error("persist_open_workspaces_failed", "err", err)
 	}
+}
+
+// openWorkspaceNames is the open set saveOpenWorkspaces persists and the
+// picker shows selected: the open tabs, then the workspaces that failed
+// to restore (restoreFailed) and are to be retried.
+func (m *home) openWorkspaceNames() []string {
+	names := m.slotNames()
+	for _, name := range m.restoreFailed {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // persistFocusedWorkspace writes the currently focused slot's name to

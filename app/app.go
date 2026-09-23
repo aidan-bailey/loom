@@ -149,12 +149,15 @@ type home struct {
 	// orphan sweep) — a test seam so those paths can run without touching
 	// a real tmux server. Always nil in production; read via executor().
 	cmdExec cmd2.Executor
-	// restoreFellBack is set when restoreSavedWorkspaces opened no
-	// workspace and fell back to the startup storage. Those workspaces
-	// were not closed by the user, so handleQuit keeps the registry's
-	// open list for the next launch to retry; enterGlobalMode (an
-	// explicit choice of global mode) clears it.
-	restoreFellBack bool
+	// restoreFailed names the workspaces the registry's open list held but
+	// restoreSavedWorkspaces could not open. The user never closed them,
+	// and their live sessions were spared only because that launch skipped
+	// the orphan sweep — dropping them from the open list would let the
+	// next launch sweep (kill) them. saveOpenWorkspaces keeps them in the
+	// persisted list and the picker shows them selected, until one is
+	// opened (activateWorkspace) or deselected in the picker
+	// (applyWorkspaceToggle); returning to global mode clears them all.
+	restoreFailed []string
 
 	// -- State --
 
@@ -1695,10 +1698,10 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 			}
 			log.For("app").Warn("quit.save_skipped", "reason", "storage_load_failed", "err", err)
 		}
-		if m.registry != nil && len(m.registry.OpenWorkspaces) > 0 && !m.restoreFellBack {
-			if err := m.registry.SetOpenWorkspaces(nil); err != nil {
-				log.For("app").Debug("registry.clear_open_failed", "err", err)
-			}
+		// Classic/global mode has no open tabs: this clears the list,
+		// except for workspaces that failed to restore (restoreFailed).
+		if m.registry != nil && len(m.registry.OpenWorkspaces) > 0 {
+			m.saveOpenWorkspaces()
 		}
 	}
 	return m, tea.Quit

@@ -611,10 +611,12 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 }
 
 // pickerActiveNames returns the set of workspace names shown pre-checked
-// in the workspace picker: the open (tab) slots.
+// in the workspace picker: the open (tab) slots, plus the ones that failed
+// to restore — still open as far as the user is concerned, so leaving one
+// checked retries it and unchecking it is the explicit close.
 func (m *home) pickerActiveNames() map[string]bool {
 	active := make(map[string]bool, len(m.slots))
-	for _, name := range m.slotNames() {
+	for _, name := range m.openWorkspaceNames() {
 		active[name] = true
 	}
 	return active
