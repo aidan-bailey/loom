@@ -25,7 +25,8 @@ func handleStateWorkspaceKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.dismissOverlay()
 		m.state = stateDefault
 		if selected != nil {
-			if err := m.activateWorkspace(*selected); err != nil {
+			release, err := m.activateWorkspace(*selected)
+			if err != nil {
 				return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 			}
 			// Focus the new tab (the last one). From classic mode
@@ -38,6 +39,10 @@ func handleStateWorkspaceKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 				_ = m.registry.UpdateLastUsed(selected.Name)
 			}
 			m.saveOpenWorkspaces()
+			// instanceChanged repoints the panes and menu at the new
+			// slot's selection; release drops the classic slot's attach
+			// clients.
+			return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release)
 		}
 		// else: Global selected, keep current (global) state.
 		return m, tea.RequestWindowSize

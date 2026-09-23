@@ -139,7 +139,8 @@ func TestActivateWorkspace_PreservedTerminalIsNotReplaced(t *testing.T) {
 	rec := &recordingExec{}
 	m := newRestoreHome(rec)
 
-	require.NoError(t, m.activateWorkspace(ws))
+	_, err := m.activateWorkspace(ws)
+	require.NoError(t, err)
 	require.Len(t, m.slots, 1)
 	slot := m.slots[0]
 

@@ -97,6 +97,9 @@ func (m *Menu) SetState(state MenuState) {
 	m.updateOptions()
 }
 
+// Instance returns the instance the menu was last pointed at (nil for none).
+func (m *Menu) Instance() *session.Instance { return m.instance }
+
 // SetInstance updates the current instance and refreshes menu options
 func (m *Menu) SetInstance(instance *session.Instance) {
 	m.instance = instance

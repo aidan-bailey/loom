@@ -105,6 +105,9 @@ func (s *SplitPane) SetInstance(instance *session.Instance) {
 	s.instance = instance
 }
 
+// Instance returns the instance set by SetInstance (nil for none).
+func (s *SplitPane) Instance() *session.Instance { return s.instance }
+
 // SetSize recomputes the agent/terminal split (per AgentRatio, or all
 // agent when the terminal is hidden) for the given container dimensions
 // and propagates widths to every child pane, including the diff overlay

@@ -1455,7 +1455,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ws == nil {
 			return m, m.handleError(fmt.Errorf("workspace not found after registration"))
 		}
-		if err := m.activateWorkspace(*ws); err != nil {
+		release, err := m.activateWorkspace(*ws)
+		if err != nil {
 			return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 		}
 		if err := m.registry.UpdateLastUsed(ws.Name); err != nil {
@@ -1471,7 +1472,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateTabBarStatuses()
 		m.showRecoverySummary(m.recovery)
 
-		return m, tea.RequestWindowSize
+		// instanceChanged repoints the panes and menu at the new slot's
+		// selection; release drops the classic slot's attach clients
+		// when this was the first tab.
+		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release)
 	case instanceStartedMsg:
 		// Select the instance that just started (or failed)
 		m.list.SelectInstance(msg.instance)
@@ -2183,8 +2187,17 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 // pause (or restart a workspace terminal, with the existing circuit
 // breaker); live tmux but dead attach PTY → RepairPtmx self-heal. Returns
 // false when the instance was found dead (so callers can stop treating it
-// as running). Must run on the Update goroutine.
+// as running), or is no longer in any loaded slot. Must run on the Update
+// goroutine.
 func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool) (alive bool) {
+	if !m.holdsInstance(inst) {
+		// The probe was taken before inst's slot was dropped. Its attach
+		// client has been (or is being) released by releaseSlotCmd, which
+		// reads as a dead PTY: RepairPtmx here would re-attach an
+		// instance nothing displays, and a workspace-terminal restart
+		// would relaunch one. Drop the result.
+		return false
+	}
 	if tmuxLive == tmux.LivenessUnknown {
 		// The probe never got an answer, which says nothing about the
 		// session — under load it is simply what a starved subprocess

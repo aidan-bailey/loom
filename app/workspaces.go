@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 	"slices"
 	"strings"
@@ -49,7 +50,12 @@ type workspaceSlot struct {
 // classic/global mode takes focus at once (see the invariant on
 // home.workspaceSlot); later ones open in the background, and callers
 // that want to show one focus it with loadSlot.
-func (m *home) activateWorkspace(ws config.Workspace) error {
+//
+// Focusing the first tab drops the classic slot; the returned Cmd
+// releases its instances' preview attach clients (releaseSlotCmd) and is
+// nil otherwise. Callers must return it (or, before the program runs,
+// run it).
+func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 	wsCtx := config.WorkspaceContextFor(&ws)
 	state := config.LoadStateFrom(wsCtx.ConfigDir)
 	appConfig := config.LoadConfigFrom(wsCtx.ConfigDir)
@@ -63,7 +69,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 	}
 	storage, err := session.NewStorage(state, wsCtx.ConfigDir)
 	if err != nil {
-		return fmt.Errorf("failed to create storage for workspace %s: %w", ws.Name, err)
+		return nil, fmt.Errorf("failed to create storage for workspace %s: %w", ws.Name, err)
 	}
 
 	cmdExec := m.executor()
@@ -76,7 +82,7 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		// the survivors — silent per-workspace data loss. The classic
 		// startup path already fails closed this way; mirror it. The slot
 		// is simply not opened, leaving state.json on disk untouched.
-		return fmt.Errorf("load instances for workspace %s: %w", ws.Name, err)
+		return nil, fmt.Errorf("load instances for workspace %s: %w", ws.Name, err)
 	}
 	// Orphan discovery runs here so every workspace-load path (startup
 	// picker, mid-session toggle, restore, registration) surfaces
@@ -174,17 +180,21 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitPane.Terminal()),
 		recovery:  recovery,
 	})
+	var release tea.Cmd
 	if len(m.slots) == 1 {
 		// Leaving classic mode: the classic slot is not in m.slots, so the
 		// invariant needs the new tab focused before we return. loadSlot
-		// runs the classic slot's workbench cleanup and ratio flush first.
+		// runs the classic slot's workbench cleanup and ratio flush first;
+		// the slot is then dropped, so its attach clients go too.
+		classic := m.workspaceSlot
 		m.loadSlot(0)
+		release = releaseSlotCmd(classic)
 	}
 	// Force the next health tick to poll: a newly opened workspace's repo
 	// wasn't in openRepoPaths() until just now, and without this the
 	// poller stays silent on it until the ambient ghInterval next elapses.
 	m.gate(gateGH).expedite()
-	return nil
+	return release, nil
 }
 
 // deactivateWorkspace saves and closes a workspace tab by name.
@@ -198,19 +208,23 @@ func (m *home) activateWorkspace(ws config.Workspace) error {
 // index (or the new last tab). The last open tab is never closed here:
 // leaving no tab means leaving workspace mode, and only enterGlobalMode
 // builds the slot that must take focus then.
-func (m *home) deactivateWorkspace(name string) error {
+//
+// The returned Cmd releases the closed slot's preview attach clients
+// (releaseSlotCmd; nil when none is attached) and must be returned to
+// the runtime.
+func (m *home) deactivateWorkspace(name string) (tea.Cmd, error) {
 	idx := slices.IndexFunc(m.slots, func(s *workspaceSlot) bool { return s.wsCtx.Name == name })
 	if idx == -1 {
-		return nil
+		return nil, nil
 	}
 	if len(m.slots) == 1 {
-		return fmt.Errorf("cannot close %s, the last open workspace: return to global mode instead", name)
+		return nil, fmt.Errorf("cannot close %s, the last open workspace: return to global mode instead", name)
 	}
 
 	slot := m.slots[idx]
 	if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
 		log.For("app").Error("workspace.save_failed", "name", name, "err", err)
-		return fmt.Errorf("failed to save workspace %s: %w", name, err)
+		return nil, fmt.Errorf("failed to save workspace %s: %w", name, err)
 	}
 
 	wasFocused := idx == m.focusedSlot
@@ -223,7 +237,67 @@ func (m *home) deactivateWorkspace(name string) error {
 	case idx < m.focusedSlot:
 		m.focusedSlot--
 	}
-	return nil
+	return releaseSlotCmd(slot), nil
+}
+
+// releaseSlotCmd returns a Cmd that releases the preview attach clients
+// of slot's instances (releaseInstancesCmd). Every site that drops a slot
+// from the model returns it: activateWorkspace (the classic slot),
+// deactivateWorkspace (the closed tab) and enterGlobalMode (every tab, or
+// the previous global slot). nil when nothing is attached.
+func releaseSlotCmd(slot *workspaceSlot) tea.Cmd {
+	if slot == nil || slot.list == nil {
+		return nil
+	}
+	return releaseInstancesCmd(slot.list.GetInstances())
+}
+
+// releaseInstancesCmd returns a Cmd that closes loom's preview attach
+// client — PTY, output pump and emulator — for each started, non-paused
+// instance in insts that has one, leaving the tmux sessions running. The
+// instances are being dropped from the model, and must not keep theirs:
+// reloading the same workspace attaches a second client to each live
+// session (LoadAndReconcile → EnsureRunning), and the stale one keeps
+// pumping output, emitting pane events and fighting over the window
+// size. nil when nothing is attached.
+//
+// The instances are snapshotted here, on the Update goroutine. By the
+// time the Cmd runs they must be unreachable from the model — the drop
+// sites' callers repoint the panes and menu with instanceChanged before
+// returning — and a health-probe result still in flight for one is
+// dropped by applyLiveness, so nothing re-attaches them (RepairPtmx)
+// afterwards. The release runs in the Cmd, off Update:
+// PausePreview waits — up to the pump-exit timeout, per session — for the
+// output pump to exit, and the pump delivers pane events through
+// tea.Program.Send, which blocks until Update returns. PausePreview is
+// serialized by the session's stateMu against a concurrent kill/pause.
+// The terminal pane's own loom_term_* sessions belong to the pane, not
+// the instance, and are left alone.
+func releaseInstancesCmd(insts []*session.Instance) tea.Cmd {
+	type attached struct {
+		title string
+		ts    *tmux.TmuxSession
+	}
+	var release []attached
+	for _, inst := range insts {
+		if !inst.Started() || inst.Paused() {
+			continue
+		}
+		if ts := inst.TmuxSession(); ts != nil && ts.PtmxAlive() {
+			release = append(release, attached{inst.Title, ts})
+		}
+	}
+	if len(release) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		for _, a := range release {
+			if err := a.ts.PausePreview(); err != nil {
+				log.For("app").Warn("slot_release.preview_close_failed", "instance", a.title, "err", err)
+			}
+		}
+		return nil
+	}
 }
 
 // removeInstanceEverywhere removes inst (by identity) from every loaded
@@ -238,6 +312,17 @@ func (m *home) removeInstanceEverywhere(inst *session.Instance) {
 	for _, slot := range m.openSlots() {
 		slot.list.RemoveInstance(inst)
 	}
+}
+
+// holdsInstance reports whether inst is in a loaded slot's list — false
+// once its slot has been dropped.
+func (m *home) holdsInstance(inst *session.Instance) bool {
+	for _, slot := range m.openSlots() {
+		if slices.Contains(slot.list.GetInstances(), inst) {
+			return true
+		}
+	}
+	return false
 }
 
 // openSlots returns every loaded workspace slot: the open tabs, or in
@@ -392,6 +477,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 
 	var activationErrors []string
 	var deactivationErrors []string
+	var releases []tea.Cmd
 
 	// 1. Activate new workspaces first (safe — adds to slots without removing).
 	currentNames := make(map[string]bool, len(m.slots))
@@ -400,10 +486,12 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	}
 	for _, ws := range desired {
 		if !currentNames[ws.Name] {
-			if err := m.activateWorkspace(ws); err != nil {
+			release, err := m.activateWorkspace(ws)
+			if err != nil {
 				activationErrors = append(activationErrors,
 					fmt.Sprintf("%s: %v", ws.Name, err))
 			}
+			releases = append(releases, release)
 		}
 	}
 
@@ -415,10 +503,12 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	if slices.ContainsFunc(m.slots, func(s *workspaceSlot) bool { return desiredNames[s.wsCtx.Name] }) {
 		for i := len(m.slots) - 1; i >= 0; i-- {
 			if !desiredNames[m.slots[i].wsCtx.Name] {
-				if err := m.deactivateWorkspace(m.slots[i].wsCtx.Name); err != nil {
+				release, err := m.deactivateWorkspace(m.slots[i].wsCtx.Name)
+				if err != nil {
 					deactivationErrors = append(deactivationErrors,
 						fmt.Sprintf("%s: %v", m.slots[i].wsCtx.Name, err))
 				}
+				releases = append(releases, release)
 			}
 		}
 	}
@@ -433,6 +523,10 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		m.showRecoverySummary(m.slots[m.focusedSlot].recovery)
 	}
 
+	// Point the panes and menu at the (possibly new) selection, so none
+	// of them keeps a dropped instance, then release the dropped slots.
+	cmds := append([]tea.Cmd{tea.RequestWindowSize, m.instanceChanged()}, releases...)
+
 	// 4. Surface activation/deactivation errors to the user.
 	var msgs []string
 	if len(activationErrors) > 0 {
@@ -444,10 +538,9 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 			strings.Join(deactivationErrors, "; ")))
 	}
 	if len(msgs) > 0 {
-		return tea.Batch(tea.RequestWindowSize,
-			m.handleError(fmt.Errorf("%s", strings.Join(msgs, "; "))))
+		cmds = append(cmds, m.handleError(fmt.Errorf("%s", strings.Join(msgs, "; "))))
 	}
-	return tea.RequestWindowSize
+	return tea.Batch(cmds...)
 }
 
 // enterGlobalMode transitions from workspace-tab mode back to global
@@ -496,14 +589,9 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	for _, slot := range m.slots {
 		if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
 			log.For("app").Error("workspace.save_failed", "name", slot.wsCtx.Name, "err", err)
-			for _, inst := range instances {
-				if ts := inst.TmuxSession(); ts != nil {
-					if perr := ts.PausePreview(); perr != nil {
-						log.For("app").Warn("global_preview_release_failed", "instance", inst.Title, "err", perr)
-					}
-				}
-			}
-			return m.handleError(fmt.Errorf("failed to save workspace %s (staying in workspace mode): %w", slot.wsCtx.Name, err))
+			return tea.Batch(
+				m.handleError(fmt.Errorf("failed to save workspace %s (staying in workspace mode): %w", slot.wsCtx.Name, err)),
+				releaseInstancesCmd(instances))
 		}
 	}
 
@@ -528,6 +616,9 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	for _, inst := range instances {
 		global.list.AddInstance(inst)
 	}
+	// Everything loaded so far is dropped: every tab, or — global mode
+	// re-entered from global mode — the previous global slot.
+	dropped := m.openSlots()
 	m.slots = nil
 	m.focusedSlot = 0
 	m.workspaceSlot = global
@@ -552,7 +643,13 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	// now-zero-height tab bar.
 	m.applyUIPrefs()
 
-	return tea.RequestWindowSize
+	// Point the carried-over panes and the menu at the global selection,
+	// so none of them keeps a dropped instance, then release the drops.
+	cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged()}
+	for _, slot := range dropped {
+		cmds = append(cmds, releaseSlotCmd(slot))
+	}
+	return tea.Batch(cmds...)
 }
 
 // sessionToTabStatus maps a session.Status to the corresponding ui.TabStatus.

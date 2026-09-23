@@ -356,9 +356,17 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 
 	var failed []string
 	for _, ws := range desired {
-		if err := m.activateWorkspace(ws); err != nil {
+		release, err := m.activateWorkspace(ws)
+		if err != nil {
 			log.For("app").Error("workspace.restore_failed", "name", ws.Name, "err", err)
 			failed = append(failed, ws.Name)
+		}
+		// The first tab drops the classic slot, which this path never
+		// loaded, so release is nil in practice. Were it not, running it
+		// here is safe: the program is not running yet (Run installs the
+		// pane notifier after newHome), so no pump can block on Send.
+		if release != nil {
+			release()
 		}
 	}
 

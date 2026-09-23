@@ -47,7 +47,8 @@ func TestSlotInvariant_HoldsAcrossSlotLifecycle(t *testing.T) {
 	classic := m.workspaceSlot
 
 	for _, name := range []string{"ws-a", "ws-b", "ws-c"} {
-		require.NoError(t, m.activateWorkspace(preservedTerminalWorkspace(t, name)))
+		_, err := m.activateWorkspace(preservedTerminalWorkspace(t, name))
+		require.NoError(t, err)
 		require.NoError(t, m.checkSlotInvariant(), "after activating %s", name)
 	}
 	require.Len(t, m.slots, 3)
@@ -59,18 +60,21 @@ func TestSlotInvariant_HoldsAcrossSlotLifecycle(t *testing.T) {
 	require.Equal(t, "ws-b", focusedName(m))
 
 	// Closing the focused tab refocuses the tab that slid into its index.
-	require.NoError(t, m.deactivateWorkspace("ws-b"))
+	_, err := m.deactivateWorkspace("ws-b")
+	require.NoError(t, err)
 	require.NoError(t, m.checkSlotInvariant(), "after closing the focused tab")
 	assert.Equal(t, []string{"ws-a", "ws-c"}, m.slotNames())
 	assert.Equal(t, "ws-c", focusedName(m))
 
 	// Closing a tab left of focus shifts the index, not the focus.
-	require.NoError(t, m.deactivateWorkspace("ws-a"))
+	_, err = m.deactivateWorkspace("ws-a")
+	require.NoError(t, err)
 	require.NoError(t, m.checkSlotInvariant(), "after closing a tab left of focus")
 	assert.Equal(t, "ws-c", focusedName(m))
 
 	// The last tab only closes through global mode.
-	require.Error(t, m.deactivateWorkspace("ws-c"))
+	_, err = m.deactivateWorkspace("ws-c")
+	require.Error(t, err)
 	require.NoError(t, m.checkSlotInvariant(), "after refusing to close the last tab")
 	require.Len(t, m.slots, 1)
 
