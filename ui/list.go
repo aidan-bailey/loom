@@ -320,10 +320,18 @@ func (l *List) findByTitle(title string) int {
 	return -1
 }
 
+// removeAt removes the row at idx, keeping the selection on its row: a
+// removal above it shifts the index down with it (inline attach looks the
+// selection up per key, so a silent shift would redirect typing). A
+// removed selected row hands the selection to the row that slides into
+// its place, or to the new last row.
 func (l *List) removeAt(idx int) {
 	l.items = append(l.items[:idx], l.items[idx+1:]...)
-	if l.selectedIdx >= len(l.items) && l.selectedIdx > 0 {
+	if idx < l.selectedIdx {
 		l.selectedIdx--
+	}
+	if l.selectedIdx >= len(l.items) {
+		l.selectedIdx = max(len(l.items)-1, 0)
 	}
 	l.ensureSelectedVisible()
 }
