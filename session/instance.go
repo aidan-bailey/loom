@@ -1144,9 +1144,13 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	return nil
 }
 
-// Resume recreates the worktree and restarts the tmux session.
-// If saveState is non-nil, it is called after the instance is Running,
-// providing a checkpoint that reduces the crash inconsistency window.
+// Resume brings a Paused instance back to Running. It recreates the
+// worktree from the branch only when the worktree is absent or gutted;
+// an intact one is kept as it is and the agent relaunched in it, and a
+// live session is reattached (see decideResume). Stashed changes are
+// restored either way. If saveState is non-nil, it is called after the
+// instance is Running, providing a checkpoint that reduces the crash
+// inconsistency window.
 func (i *Instance) Resume(saveState func() error) (err error) {
 	lg := i.getLogger()
 	t0 := time.Now()
@@ -1176,23 +1180,45 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		return fmt.Errorf("cannot resume: branch is checked out, please switch to a different branch")
 	}
 
+	// Setup (below) removes and re-adds the worktree directory, so it
+	// may only run when nothing on disk can be lost (see decideResume).
+	//
 	// A live tmux session means this instance was never really paused:
 	// Pause always kills the session before touching the worktree, so a
 	// surviving one implies loom itself died while the agent was running.
 	// That agent is still executing with its cwd inside the worktree, so
-	// rebuilding it here — Setup removes and re-adds the directory —
-	// would delete the tree out from under a live process. It would keep
-	// running, orphaned, writing into a directory git had unlinked, which
-	// both leaks the process and races `worktree remove` into leaving a
-	// half-removed worktree behind. Reattach to what is already there.
-	_, wtErr := os.Stat(gw.GetWorktreePath())
-	switch decideResume(ts.SessionLiveness(), wtErr == nil) {
+	// rebuilding it here would delete the tree out from under a live
+	// process. It would keep running, orphaned, writing into a directory
+	// git had unlinked, which both leaks the process and races
+	// `worktree remove` into leaving a half-removed worktree behind.
+	// Reattach to what is already there.
+	//
+	// A dead session over an intact worktree is the other way to arrive
+	// here unpaused: the agent exited or crashed on its own and the health
+	// tick only marked the instance Paused. Nothing was stashed, so the
+	// worktree holds the only copy of any uncommitted work, and the
+	// `git worktree remove -f` a rebuild starts with would delete it.
+	// Relaunch the agent in the tree as it stands.
+	live := ts.SessionLiveness()
+	tree, treeErr := gw.InspectTree()
+	switch decideResume(live, tree) {
 	case resumeReattach:
 		lg.Debug("instance.resume.reattach_live_session", "worktree", gw.GetWorktreePath())
 		return i.finishResume(saveState, ts, gw)
+	case resumeRelaunchInPlace:
+		lg.Info("instance.resume.relaunch_in_place", "worktree", gw.GetWorktreePath())
+		if err := restoreStashInPlace(gw); err != nil {
+			return err
+		}
+		return i.finishResume(saveState, ts, gw)
 	case resumeRefuse:
-		return fmt.Errorf("cannot tell whether this session's agent is still running (tmux did not answer in time); leaving the worktree untouched — retry once the machine is less busy")
+		if live == tmux.LivenessUnknown {
+			return fmt.Errorf("cannot tell whether this session's agent is still running (tmux did not answer in time); leaving the worktree untouched — retry once the machine is less busy")
+		}
+		return fmt.Errorf("cannot confirm the worktree at %s is intact, so it may hold uncommitted work; leaving it untouched — retry once the machine is less busy, or check it with `git -C %s status`: %w",
+			gw.GetWorktreePath(), gw.GetWorktreePath(), treeErr)
 	}
+	lg.Debug("instance.resume.rebuild", "worktree", gw.GetWorktreePath(), "tree", tree.String())
 
 	// Setup git worktree
 	if err := gw.Setup(); err != nil {
@@ -1221,10 +1247,73 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	return i.finishResume(saveState, ts, gw)
 }
 
-// finishResume reattaches (or rebuilds) the tmux session and marks the
-// instance Running. Shared by both Resume paths: the normal one, which
-// has just recreated the worktree, and the live-session one, which
-// deliberately left the worktree alone.
+// restoreStashInPlace handles a pending StashRef when Resume relaunches in
+// an existing worktree rather than a freshly rebuilt one. Pause's stash
+// never modifies the worktree, so the reference can be pending here only
+// if something interrupted the pause before the tree was removed (the
+// stashed work is then still on disk), or a rebuild was interrupted
+// before, or failed while, applying the stash.
+//
+//   - Clean worktree: nothing on disk can be overwritten, so apply the
+//     stash exactly as the rebuild path does.
+//   - Worktree already matches the stash: the work is on disk; applying
+//     it again is redundant. Forget the reference and drop the duplicate
+//     entry.
+//   - Worktree dirty and different: applying is not safe. `git stash
+//     apply` refuses to overwrite unstaged changes, but merges into
+//     staged ones and can leave conflict markers in them. Refuse, and
+//     leave both untouched for the user to reconcile — unless the user
+//     already has: once the entry is gone from `git stash list`, the
+//     worktree is taken as authoritative.
+func restoreStashInPlace(gw *git.GitWorktree) error {
+	sha := gw.GetStashRef()
+	if sha == "" {
+		return nil
+	}
+	lg := log.For("session")
+	dirty, err := gw.IsDirty()
+	if err != nil {
+		return fmt.Errorf("cannot check the worktree for changes before restoring stash %.12s; leaving both untouched: %w", sha, err)
+	}
+	if !dirty {
+		if err := gw.ApplyStash(sha); err != nil {
+			return fmt.Errorf("failed to restore stashed changes (kept as stash %.12s — resolve in the worktree or apply manually via git stash): %w", sha, err)
+		}
+		gw.SetStashRef("")
+		return nil
+	}
+	// Checked before comparing: an entry already dropped (by the user, or
+	// by an ApplyStash whose cleared reference was never saved) may have
+	// been garbage-collected, and could no longer be compared at all.
+	ref, err := gw.StashListed(sha)
+	if err != nil {
+		return fmt.Errorf("cannot look up stash %.12s; leaving the worktree untouched: %w", sha, err)
+	}
+	if ref == "" {
+		lg.Info("resume.pending_stash_gone", "stash", sha, "worktree", gw.GetWorktreePath())
+		gw.SetStashRef("")
+		return nil
+	}
+	onDisk, err := gw.StashOnDisk(sha)
+	if err != nil {
+		return fmt.Errorf("cannot compare the worktree with stash %.12s; leaving both untouched: %w", sha, err)
+	}
+	if onDisk {
+		lg.Info("resume.stash_already_on_disk", "stash", sha, "worktree", gw.GetWorktreePath())
+		gw.SetStashRef("")
+		if err := gw.DropStash(sha); err != nil {
+			lg.Warn("resume.drop_redundant_stash_failed", "stash", sha, "err", err.Error())
+		}
+		return nil
+	}
+	return fmt.Errorf("the worktree at %s has uncommitted changes that differ from %s (%.12s), left by an interrupted pause or restore; loom will not merge them. Compare with `git -C %s stash show -p %s`, then either apply it yourself or keep the worktree as it is — and drop the stash either way (`git -C %s stash drop %s`) — and resume again",
+		gw.GetWorktreePath(), ref, sha, gw.GetWorktreePath(), ref, gw.GetRepoPath(), ref)
+}
+
+// finishResume reattaches (or relaunches) the tmux session and marks the
+// instance Running. Shared by every Resume path: the rebuild, which has
+// just recreated the worktree, and the reattach and relaunch-in-place
+// paths, which deliberately left the worktree alone.
 func (i *Instance) finishResume(saveState func() error, ts *tmux.TmuxSession, gw *git.GitWorktree) error {
 	// Check if tmux session still exists from pause, otherwise create new one
 	if ts.DoesSessionExist() {
@@ -1254,17 +1343,26 @@ func (i *Instance) finishResume(saveState func() error, ts *tmux.TmuxSession, gw
 	return nil
 }
 
+// newRecoverySession builds the tmux session a recovery launch
+// (startFreshWithRecovery, CrashRestart) starts. A var so tests can
+// substitute a session with fake PTY/exec dependencies: a real one would
+// run tmux against whatever server the test process can reach.
+var newRecoverySession = tmux.NewTmuxSession
+
 // startFreshWithRecovery creates a brand-new tmux session for an instance
 // whose previous session no longer exists (normal after crash or kill-server).
 // The program is rewritten via BuildRecoveryCommand so supported agents resume
 // their prior conversation (e.g. `claude --continue`).
+//
+// A failed start leaves the worktree alone. It is never scratch here: it
+// is the tree the agent exited from, one a live session was using, or a
+// rebuild with any stashed work already applied (and dropped from the
+// stash list). Cleaning it up would also delete the session's branch.
+// The instance stays Paused, and the next resume relaunches in place.
 func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 	launchProgram, env := i.recoveryLaunch()
-	ts := tmux.NewTmuxSession(i.Title, launchProgram, env...)
+	ts := newRecoverySession(i.Title, launchProgram, env...)
 	if err := ts.Start(gw.GetWorktreePath()); err != nil {
-		if cleanupErr := gw.Cleanup(); cleanupErr != nil {
-			err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
-		}
 		return fmt.Errorf("failed to start new session: %w", err)
 	}
 	i.setTmuxSession(ts)
@@ -1275,10 +1373,14 @@ func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 // The worktree already exists (for regular instances) or is unnecessary
 // (for workspace terminals). The program is modified with --continue for
 // supported agents.
+//
+// Like Resume, it relaunches only into an intact worktree. Reconcile
+// picks this path because the directory exists, but a gutted one has no
+// .git, so git run inside it would answer for whatever repo encloses it
+// (the workspace's own, when worktrees live under <repo>/.loom). Callers
+// mark a failed restart Paused, and Resume then rebuilds a gutted tree
+// with its leftovers moved aside.
 func (i *Instance) CrashRestart() error {
-	launchProgram, env := i.recoveryLaunch()
-	ts := tmux.NewTmuxSession(i.Title, launchProgram, env...)
-
 	var workDir string
 	if i.IsWorkspaceTerminal {
 		workDir = i.Path
@@ -1287,8 +1389,17 @@ func (i *Instance) CrashRestart() error {
 		if gw == nil {
 			return fmt.Errorf("no git worktree for crash restart of %q", i.Title)
 		}
+		if tree, err := gw.InspectTree(); tree != git.TreeIntact {
+			if err == nil {
+				err = fmt.Errorf("worktree is %s", tree)
+			}
+			return fmt.Errorf("crash restart of %q: worktree %s is not an intact working tree: %w", i.Title, gw.GetWorktreePath(), err)
+		}
 		workDir = gw.GetWorktreePath()
 	}
+
+	launchProgram, env := i.recoveryLaunch()
+	ts := newRecoverySession(i.Title, launchProgram, env...)
 
 	if err := ts.Start(workDir); err != nil {
 		return fmt.Errorf("crash restart failed for %q: %w", i.Title, err)

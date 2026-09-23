@@ -292,15 +292,11 @@ func (g *GitWorktree) StashChanges(message string) (string, error) {
 	}
 	head = strings.TrimSpace(head)
 
-	tmpIndex, err := os.CreateTemp("", "loom-stash-index-*")
+	env, cleanup, err := scratchIndexEnv()
 	if err != nil {
 		return "", fmt.Errorf("failed to create scratch index for stash: %w", err)
 	}
-	tmpIndexPath := tmpIndex.Name()
-	tmpIndex.Close()
-	os.Remove(tmpIndexPath) // git creates it fresh; the path just needs to be reserved and unique.
-	defer os.Remove(tmpIndexPath)
-	env := []string{"GIT_INDEX_FILE=" + tmpIndexPath}
+	defer cleanup()
 
 	if _, err := g.runGitCommandEnv(env, g.worktreePath, "read-tree", head); err != nil {
 		return "", fmt.Errorf("failed to seed scratch index for stash: %w", err)
@@ -335,6 +331,73 @@ func (g *GitWorktree) StashChanges(message string) (string, error) {
 		return "", fmt.Errorf("failed to store stash: %w", err)
 	}
 	return sha, nil
+}
+
+// scratchIndexEnv reserves a unique path for a throwaway index and
+// returns the GIT_INDEX_FILE overlay pointing at it, so plumbing can
+// stage and write trees without touching the worktree's real index.
+// cleanup removes whatever git left at the path.
+func scratchIndexEnv() (env []string, cleanup func(), err error) {
+	tmpIndex, err := os.CreateTemp("", "loom-stash-index-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	path := tmpIndex.Name()
+	tmpIndex.Close()
+	os.Remove(path) // git creates it fresh; the path just needs to be reserved and unique.
+	return []string{"GIT_INDEX_FILE=" + path}, func() { os.Remove(path) }, nil
+}
+
+// StashOnDisk reports whether the worktree already holds exactly what the
+// stash commit sha would restore: its tracked and untracked (not ignored)
+// content, snapshotted the way StashChanges builds a stash, matches the
+// stash's tree. StashChanges leaves the worktree as it found it, so a
+// pause interrupted after stashing — or a restore that applied the stash
+// but never cleared its reference — leaves a worktree for which this is
+// true, and applying the stash again would be redundant.
+func (g *GitWorktree) StashOnDisk(sha string) (bool, error) {
+	stashTree, err := g.runGitCommand(g.worktreePath, "rev-parse", "--verify", sha+"^{tree}")
+	if err != nil {
+		return false, fmt.Errorf("failed to resolve stash %.12s: %w", sha, err)
+	}
+	env, cleanup, err := scratchIndexEnv()
+	if err != nil {
+		return false, fmt.Errorf("failed to create scratch index: %w", err)
+	}
+	defer cleanup()
+	if _, err := g.runGitCommandEnv(env, g.worktreePath, "read-tree", "HEAD"); err != nil {
+		return false, fmt.Errorf("failed to seed scratch index: %w", err)
+	}
+	if _, err := g.runGitCommandEnv(env, g.worktreePath, "add", "-A"); err != nil {
+		return false, fmt.Errorf("failed to snapshot worktree: %w", err)
+	}
+	diskTree, err := g.runGitCommandEnv(env, g.worktreePath, "write-tree")
+	if err != nil {
+		return false, fmt.Errorf("failed to write worktree snapshot: %w", err)
+	}
+	return strings.TrimSpace(diskTree) == strings.TrimSpace(stashTree), nil
+}
+
+// StashListed reports whether the stash commit sha is still an entry in
+// `git stash list`, returning its current stash@{N} name when it is.
+func (g *GitWorktree) StashListed(sha string) (string, error) {
+	if sha == "" {
+		return "", nil
+	}
+	list, err := g.runGitCommand(g.repoPath, "stash", "list", "--format=%gd")
+	if err != nil {
+		return "", fmt.Errorf("failed to list stash: %w", err)
+	}
+	for _, ref := range strings.Fields(list) {
+		out, err := g.runGitCommand(g.repoPath, "rev-parse", ref)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(out) == sha {
+			return ref, nil
+		}
+	}
+	return "", nil
 }
 
 // ApplyStash applies the stash commit sha onto the worktree, targeting
@@ -425,24 +488,12 @@ func (g *GitWorktree) unstageNewlyAddedFiles() error {
 // a failed/no-op drop (caught by the caller's own list scan on any
 // retry), not data loss.
 func (g *GitWorktree) DropStash(sha string) error {
-	if sha == "" {
-		return nil
+	ref, err := g.StashListed(sha)
+	if err != nil || ref == "" {
+		return err
 	}
-	list, err := g.runGitCommand(g.repoPath, "stash", "list", "--format=%gd")
-	if err != nil {
-		return fmt.Errorf("failed to list stash: %w", err)
-	}
-	for _, ref := range strings.Fields(list) {
-		out, err := g.runGitCommand(g.repoPath, "rev-parse", ref)
-		if err != nil {
-			continue
-		}
-		if strings.TrimSpace(out) == sha {
-			if _, err := g.runGitCommand(g.repoPath, "stash", "drop", ref); err != nil {
-				return fmt.Errorf("failed to drop stash %s: %w", ref, err)
-			}
-			return nil
-		}
+	if _, err := g.runGitCommand(g.repoPath, "stash", "drop", ref); err != nil {
+		return fmt.Errorf("failed to drop stash %s: %w", ref, err)
 	}
 	return nil
 }

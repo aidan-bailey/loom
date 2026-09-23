@@ -131,6 +131,94 @@ func (g *GitWorktree) Setup() (err error) {
 	return err
 }
 
+// TreeState is what InspectTree found at a worktree's path.
+type TreeState int
+
+const (
+	// TreeAbsent means nothing is on disk at the path.
+	TreeAbsent TreeState = iota
+	// TreeGutted means the path is on disk but has no .git entry: git has
+	// already let go of it (typically a half-finished `worktree remove`).
+	// Only leftovers remain, which clearWorktreePath moves aside rather
+	// than deletes.
+	TreeGutted
+	// TreeIntact means git recognizes the path as a working tree of its
+	// own. Whatever it holds, committed or not, is live work.
+	TreeIntact
+	// TreeUnverified means the path has a .git entry but git could not
+	// confirm it as a working tree rooted there (an error, a timeout, or
+	// a .git git does not accept). Nothing is known about what it holds.
+	TreeUnverified
+)
+
+// String implements fmt.Stringer for logs and errors.
+func (s TreeState) String() string {
+	switch s {
+	case TreeAbsent:
+		return "absent"
+	case TreeGutted:
+		return "gutted"
+	case TreeIntact:
+		return "intact"
+	case TreeUnverified:
+		return "unverified"
+	default:
+		return fmt.Sprintf("TreeState(%d)", int(s))
+	}
+}
+
+// InspectTree classifies what is on disk at the worktree path. The error
+// accompanies TreeUnverified and says why the tree could not be confirmed.
+//
+// The .git check comes first and is load-bearing, not an optimization:
+// worktrees can live inside the repo they belong to (a workspace keeps
+// them under <repo>/.loom/worktrees), so git run from a directory that
+// lost its .git walks up and answers for the enclosing repo. That is also
+// why a successful rev-parse must report this path as its top level.
+func (g *GitWorktree) InspectTree() (TreeState, error) {
+	fi, err := os.Stat(g.worktreePath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return TreeAbsent, nil
+	case err != nil:
+		return TreeUnverified, fmt.Errorf("stat worktree %s: %w", g.worktreePath, err)
+	case !fi.IsDir():
+		return TreeGutted, nil
+	}
+
+	// os.Stat, like clearWorktreePath's own check, so the two agree on
+	// which trees count as gutted.
+	if _, err := os.Stat(filepath.Join(g.worktreePath, ".git")); errors.Is(err, os.ErrNotExist) {
+		return TreeGutted, nil
+	} else if err != nil {
+		return TreeUnverified, fmt.Errorf("stat %s/.git: %w", g.worktreePath, err)
+	}
+
+	out, err := g.runGitCommand(g.worktreePath, "rev-parse", "--is-inside-work-tree", "--show-toplevel")
+	if err != nil {
+		return TreeUnverified, err
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 || strings.TrimSpace(lines[0]) != "true" {
+		return TreeUnverified, fmt.Errorf("git does not consider %s a working tree: %q", g.worktreePath, strings.TrimSpace(out))
+	}
+	if !samePath(strings.TrimSpace(lines[1]), g.worktreePath) {
+		return TreeUnverified, fmt.Errorf("git resolves %s to the working tree at %s, not its own", g.worktreePath, strings.TrimSpace(lines[1]))
+	}
+	return TreeIntact, nil
+}
+
+// samePath reports whether a and b name the same directory once symlinks
+// are resolved (git prints the resolved path; a stored path may not be).
+func samePath(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ra == rb
+}
+
 // clearWorktreePath frees worktreePath so a subsequent `git worktree add`
 // can use it.
 //

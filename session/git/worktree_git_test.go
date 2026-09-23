@@ -218,3 +218,53 @@ func TestStashDoesNotInterfereAcrossWorktrees(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "a-changes\n", string(contentA), "A must restore its own changes, not B's")
 }
+
+// TestStashOnDisk: a stash is on disk when the worktree's tracked and
+// untracked content matches the stash exactly — the state an interrupted
+// pause leaves, since StashChanges never touches the worktree.
+func TestStashOnDisk(t *testing.T) {
+	gw := newStashTestRepo(t)
+	dir := gw.GetWorktreePath()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v2\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new\n"), 0644))
+	sha, err := gw.StashChanges("test")
+	require.NoError(t, err)
+
+	onDisk, err := gw.StashOnDisk(sha)
+	require.NoError(t, err)
+	assert.True(t, onDisk, "the worktree still holds exactly what was stashed")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v3\n"), 0644))
+	onDisk, err = gw.StashOnDisk(sha)
+	require.NoError(t, err)
+	assert.False(t, onDisk, "a later edit makes the worktree differ from the stash")
+
+	require.NoError(t, exec.Command("git", "-C", dir, "checkout", "--", ".").Run())
+	require.NoError(t, os.Remove(filepath.Join(dir, "new.txt")))
+	onDisk, err = gw.StashOnDisk(sha)
+	require.NoError(t, err)
+	assert.False(t, onDisk, "a clean worktree does not hold the stash")
+
+	status, err := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
+	require.NoError(t, err)
+	assert.Empty(t, strings.TrimSpace(string(status)), "StashOnDisk must not touch the real index")
+}
+
+// TestStashListed finds a stash by commit, not stack position, and
+// reports it gone once dropped.
+func TestStashListed(t *testing.T) {
+	gw := newStashTestRepo(t)
+	dir := gw.GetWorktreePath()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v2\n"), 0644))
+	sha, err := gw.StashChanges("test")
+	require.NoError(t, err)
+
+	ref, err := gw.StashListed(sha)
+	require.NoError(t, err)
+	assert.Equal(t, "stash@{0}", ref)
+
+	require.NoError(t, gw.DropStash(sha))
+	ref, err = gw.StashListed(sha)
+	require.NoError(t, err)
+	assert.Empty(t, ref)
+}

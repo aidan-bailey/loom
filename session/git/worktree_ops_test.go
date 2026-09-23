@@ -278,3 +278,80 @@ func TestSetup_PreservesGuttedWorktreeContents(t *testing.T) {
 	assert.Equal(t, "work that was never committed\n", string(body),
 		"uncommitted work must survive recovery verbatim")
 }
+
+// TestInspectTree classifies what Resume and CrashRestart may do with a
+// worktree path. Rebuilding runs `git worktree remove -f`, so only a path
+// with nothing git can vouch for (absent or gutted) may be rebuilt, and
+// anything git cannot confirm must be left alone.
+func TestInspectTree(t *testing.T) {
+	inspect := func(t *testing.T, repoDir, path string) (TreeState, error) {
+		t.Helper()
+		return NewGitWorktreeFromStorage(repoDir, path, "sess", "b", "", true, "").InspectTree()
+	}
+
+	t.Run("absent", func(t *testing.T) {
+		_, repoDir, worktreePath, _ := setupTestRepoWithWorktree(t)
+		state, err := inspect(t, repoDir, worktreePath+"-missing")
+		require.NoError(t, err)
+		assert.Equal(t, TreeAbsent, state)
+	})
+
+	t.Run("intact, dirty", func(t *testing.T) {
+		_, repoDir, worktreePath, _ := setupTestRepoWithWorktree(t)
+		require.NoError(t, os.WriteFile(filepath.Join(worktreePath, "notes.txt"), []byte("x"), 0644))
+		state, err := inspect(t, repoDir, worktreePath)
+		require.NoError(t, err)
+		assert.Equal(t, TreeIntact, state)
+	})
+
+	t.Run("gutted", func(t *testing.T) {
+		_, repoDir, worktreePath, _ := setupTestRepoWithWorktree(t)
+		require.NoError(t, os.Remove(filepath.Join(worktreePath, ".git")))
+		state, err := inspect(t, repoDir, worktreePath)
+		require.NoError(t, err)
+		assert.Equal(t, TreeGutted, state)
+	})
+
+	t.Run("gutted inside the repo it belongs to", func(t *testing.T) {
+		// A workspace keeps its worktrees under <repo>/.loom/worktrees, so
+		// git run in a gutted one answers for the enclosing repo. It must
+		// still read as gutted, never as intact.
+		_, repoDir, _, _ := setupTestRepoWithWorktree(t)
+		nested := filepath.Join(repoDir, ".loom", "worktrees", "nested")
+		require.NoError(t, os.MkdirAll(filepath.Dir(nested), 0755))
+		runGit(t, repoDir, "worktree", "add", "-b", "nested-branch", nested)
+		require.NoError(t, os.Remove(filepath.Join(nested, ".git")))
+		require.NoError(t, exec.Command("git", "-C", nested, "rev-parse", "--is-inside-work-tree").Run(),
+			"precondition: git in the gutted tree answers for the enclosing repo")
+
+		state, err := inspect(t, repoDir, nested)
+		require.NoError(t, err)
+		assert.Equal(t, TreeGutted, state)
+	})
+
+	t.Run("a .git git rejects is unverified", func(t *testing.T) {
+		_, repoDir, worktreePath, _ := setupTestRepoWithWorktree(t)
+		require.NoError(t, os.WriteFile(filepath.Join(worktreePath, ".git"), []byte("gitdir: /nonexistent/loom-test\n"), 0644))
+		state, err := inspect(t, repoDir, worktreePath)
+		assert.Error(t, err)
+		assert.Equal(t, TreeUnverified, state)
+	})
+
+	t.Run("a .git that resolves to another tree is unverified", func(t *testing.T) {
+		_, repoDir, _, _ := setupTestRepoWithWorktree(t)
+		nested := filepath.Join(repoDir, "sub")
+		require.NoError(t, os.MkdirAll(filepath.Join(nested, ".git"), 0755)) // not a git dir: discovery walks up
+		state, err := inspect(t, repoDir, nested)
+		assert.Error(t, err)
+		assert.Equal(t, TreeUnverified, state)
+	})
+
+	t.Run("a file is gutted", func(t *testing.T) {
+		_, repoDir, worktreePath, _ := setupTestRepoWithWorktree(t)
+		file := worktreePath + "-file"
+		require.NoError(t, os.WriteFile(file, []byte("x"), 0644))
+		state, err := inspect(t, repoDir, file)
+		require.NoError(t, err)
+		assert.Equal(t, TreeGutted, state)
+	})
+}
