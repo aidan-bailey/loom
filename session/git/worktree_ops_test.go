@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/aidan-bailey/loom/log"
 	"os"
 	"os/exec"
@@ -14,9 +15,18 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+// runTests returns the exit code rather than exiting, so its deferred
+// cleanup runs.
+func runTests(m *testing.M) int {
 	_ = log.Initialize("", false)
 	defer log.Close()
-	os.Exit(m.Run())
+	// An empty ConfigDir resolves the worktrees dir (and a new worktree's
+	// config) under LOOM_HOME: keep it off the developer's ~/.loom.
+	defer testenv.MustIsolateLoomDirs()()
+	return m.Run()
 }
 
 func runGit(t *testing.T, dir string, args ...string) {

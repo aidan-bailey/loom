@@ -3,6 +3,7 @@ package tmux
 import (
 	"fmt"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
+	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/aidan-bailey/loom/log"
 	"math/rand"
 	"os"
@@ -18,12 +19,19 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+// runTests returns the exit code rather than exiting, so its deferred
+// cleanup runs.
+func runTests(m *testing.M) int {
 	_ = log.Initialize("", false)
 	defer log.Close()
+	defer testenv.MustIsolateLoomDirs()()
 	// Argv-exact mock assertions assume the default server; a shell that
 	// exported LOOM_TMUX_SOCKET (e.g. via `loomdev env`) would prepend -L.
 	os.Unsetenv(EnvTmuxSocket)
-	os.Exit(m.Run())
+	return m.Run()
 }
 
 type MockPtyFactory struct {

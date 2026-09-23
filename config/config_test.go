@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/aidan-bailey/loom/log"
 	"os"
 	"path/filepath"
@@ -18,14 +19,52 @@ func TestMain(m *testing.M) {
 	// Initialize the logger before any tests run
 	_ = log.Initialize("", false)
 
-	// Prevent LOOM_HOME / CLAUDE_SQUAD_HOME from polluting tests
+	// These tests exercise directory resolution itself, the default
+	// included ($HOME/.loom once LOOM_HOME, CLAUDE_SQUAD_HOME and
+	// LOOM_GLOBAL_DIR are unset), so unlike every other package's
+	// TestMain this one leaves those unset and isolates HOME instead: a
+	// test that sets nothing resolves <throwaway home>/.loom, never the
+	// developer's real ~/.loom. Tests that need their own directories set
+	// them with (t.)Setenv, and restoring HOME restores the throwaway.
+	home, err := os.MkdirTemp("", "loom-config-home")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mkdir throwaway home: %v\n", err)
+		os.Exit(1)
+	}
+	os.Setenv("HOME", home)
 	os.Unsetenv("LOOM_HOME")
 	os.Unsetenv("CLAUDE_SQUAD_HOME")
 	os.Unsetenv("LOOM_GLOBAL_DIR")
 
 	exitCode := m.Run()
+	os.RemoveAll(home)
 	log.Close()
 	os.Exit(exitCode)
+}
+
+// TestTestenvNamesMatchConfig guards internal/testenv, which every other
+// package's TestMain uses to isolate these directories but which cannot
+// import config (these tests import it): its variable names must be the
+// ones config resolves.
+func TestTestenvNamesMatchConfig(t *testing.T) {
+	assert.Equal(t, EnvHome, testenv.EnvHome)
+	assert.Equal(t, EnvGlobalDir, testenv.EnvGlobalDir)
+}
+
+// TestDefaultDirsResolveUnderThrowawayHome pins TestMain's isolation: with
+// nothing set, both dirs resolve under the throwaway HOME, not the
+// developer's.
+func TestDefaultDirsResolveUnderThrowawayHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	want := filepath.Join(home, ".loom")
+	got, err := GetConfigDir()
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	got, err = GetGlobalConfigDir()
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	assert.True(t, strings.HasPrefix(want, os.TempDir()), "HOME %q must be TestMain's throwaway", home)
 }
 
 func TestGetClaudeCommand(t *testing.T) {
@@ -124,9 +163,11 @@ func TestGetConfigDir(t *testing.T) {
 
 		configDir, err := GetConfigDir()
 
+		// Computed, never touched: HOME is TestMain's throwaway.
+		home, homeErr := os.UserHomeDir()
+		require.NoError(t, homeErr)
 		assert.NoError(t, err)
-		assert.NotEmpty(t, configDir)
-		assert.True(t, strings.HasSuffix(configDir, ".loom"))
+		assert.Equal(t, filepath.Join(home, ".loom"), configDir)
 		assert.True(t, filepath.IsAbs(configDir))
 	})
 

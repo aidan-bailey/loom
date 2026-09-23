@@ -3,6 +3,7 @@ package script
 import (
 	"bytes"
 	"context"
+	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/aidan-bailey/loom/log"
 	"log/slog"
 	"os"
@@ -19,10 +20,15 @@ import (
 // TestMain initializes the package-level loggers before tests run.
 // The engine logs collision / parse errors through log.For("script"),
 // which returns a no-op until log.Initialize populates log.Structured.
-// Mirrors the pattern used in config_test.go.
+// Mirrors the pattern used in config_test.go. The loom config dirs point
+// at throwaway directories so nothing a script test resolves (a new
+// instance's config dir, the workspace registry) reaches the developer's
+// ~/.loom.
 func TestMain(m *testing.M) {
 	_ = log.Initialize("", false)
+	cleanup := testenv.MustIsolateLoomDirs()
 	exit := m.Run()
+	cleanup()
 	log.Close()
 	os.Exit(exit)
 }

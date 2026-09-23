@@ -246,6 +246,7 @@ All stored in `~/.loom/`:
 - Test setup pattern: `TestMain` initializes logging, runs tests, calls `os.Exit`
 - Tests use temp directories for file I/O isolation
 - `app` tests never touch the developer's default tmux server: `TestMain` (`app/app_test.go`) points `LOOM_TMUX_SOCKET` at a private server and kills it afterwards; `isolateTmux` gives a test its own fresh server, and `home.cmdExec` swaps the workspace load paths' executor for a recorder
+- No test touches the developer's real `~/.loom`. Every package whose tests can reach `config` (directly or through another loom package) has a `TestMain` calling `internal/testenv.IsolateLoomDirs`/`MustIsolateLoomDirs`, which points `LOOM_HOME` and `LOOM_GLOBAL_DIR` at a throwaway dir for the whole binary; a test needing its own dirs still `t.Setenv`s over them. `TestEveryConfigReachingPackageIsolatesLoomDirs` (`internal/testenv`) walks the module's import graph and fails on a config-reaching package without one — a new package's first test needs a `TestMain` (copy any `testmain_test.go`). `config` is the one exception: its tests exercise default resolution, so its `TestMain` leaves those vars unset and points `HOME` at a throwaway instead (assert "default is ~/.loom" by computing `os.UserHomeDir()`, never by touching it)
 
 ## Code Conventions
 

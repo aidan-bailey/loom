@@ -21,7 +21,10 @@ func TestGetGlobalConfigDir(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotEqual(t, customDir, globalDir)
 		assert.True(t, filepath.IsAbs(globalDir))
-		assert.Contains(t, globalDir, ".loom")
+		// Computed, never touched: HOME is TestMain's throwaway.
+		home, homeErr := os.UserHomeDir()
+		require.NoError(t, homeErr)
+		assert.Equal(t, filepath.Join(home, ".loom"), globalDir)
 	})
 }
 

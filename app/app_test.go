@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"charm.land/bubbles/v2/spinner"
@@ -60,21 +60,12 @@ func runTests(m *testing.M) int {
 	// &config.WorkspaceRegistry{} fleetHome installs — and a nil workspace
 	// context resolves LOOM_HOME. Tests that read or seed those directories
 	// set their own with t.Setenv; this is the default for the rest.
-	loomDir, err := os.MkdirTemp("", "loom-app-test")
+	loomCleanup, err := testenv.IsolateLoomDirs()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "mkdir loom dir: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
-	defer os.RemoveAll(loomDir)
-	for name, dir := range map[string]string{
-		"LOOM_HOME":         filepath.Join(loomDir, "home"),
-		config.EnvGlobalDir: filepath.Join(loomDir, "global"),
-	} {
-		if err := os.Setenv(name, dir); err != nil {
-			fmt.Fprintf(os.Stderr, "set %s: %v\n", name, err)
-			return 1
-		}
-	}
+	defer loomCleanup()
 
 	tmuxTmpDir, err := os.MkdirTemp("", "lt")
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/aidan-bailey/loom/session/tmux"
 )
 
@@ -40,6 +41,16 @@ func runTests(m *testing.M) int {
 	// bytes on Linux, 104 on macOS, where the default $TMPDIR alone can run
 	// ~49 bytes.
 	os.Unsetenv("TMUX")
+
+	// Keep every config-dir resolution (LOOM_HOME, LOOM_GLOBAL_DIR) off
+	// the developer's real ~/.loom; tests needing their own set t.Setenv.
+	loomCleanup, err := testenv.IsolateLoomDirs()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
+	defer loomCleanup()
+
 	tmuxTmpDir, err := os.MkdirTemp("", "lt")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir tmux tmpdir: %v\n", err)
