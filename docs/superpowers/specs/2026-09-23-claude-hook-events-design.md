@@ -1,12 +1,15 @@
 # Claude Hook Events: Status, Resume and Last Message
 
 **Date:** 2026-09-23
-**Status:** Approved design
-**Sourced from:** the Claude Code hooks reference (code.claude.com/docs/en/hooks,
-read 2026-09-23) and loom's own subagent-nesting findings
-(`2026-09-16-subagent-nesting-design.md`). Installed CLI: Claude Code
-2.1.280. The payload facts below have **not** been probed live yet; see
-[Assumptions to probe](#assumptions-to-probe), which gates planning.
+**Status:** Approved design (amended 2026-09-23 after the live probe: no
+`hookGrace`, hook events trigger roster queries, `Stop` with a running
+subagent is Running, session ID from `SessionStart` only)
+**Verified against:** Claude Code 2.1.280, by a live probe on 2026-09-23 (an
+interactive haiku session on a private tmux server, hooks registered for
+every event below, and two `claude agents --json` pollers sampling every
+~50ms). Payload facts not observed live come from the hooks reference
+(code.claude.com/docs/en/hooks) and loom's subagent-nesting findings
+(`2026-09-16-subagent-nesting-design.md`).
 
 ## Problem
 
@@ -76,13 +79,56 @@ command's network request; that prompt reports only through the
 
 After the user approves a permission prompt, the next event is
 `PostToolUse`, when the tool finishes. A long tool run therefore shows no
-hook evidence of work for its whole duration.
+hook evidence of work for its whole duration. The roster reports `busy`
+at once (probe: the first sample after the approval keystroke).
 
 ### Subagents run inside the parent process
 
 From the subagent-nesting findings: subagents and teammates run in their
 parent's process and report through `SubagentStart` / `SubagentStop` /
-`TeammateIdle`. A subagent's permission prompt appears in the parent's UI.
+`TeammateIdle`. A subagent's permission prompt appears in the parent's UI,
+and its `PermissionRequest` carries the subagent's `agent_id` (probe).
+
+### `Stop` ends a turn, not the work
+
+Probe: the parent's `Stop` fired mid-work twice.
+
+- **Background subagent.** Claude launched the subagent in the background
+  and ended the parent's turn (`last_assistant_message: "Agent launched.
+  Waiting for completion..."`). That `Stop`'s `background_tasks` listed
+  `{"type":"subagent","status":"running"}`. When the subagent finished,
+  Claude resumed the parent with a `UserPromptSubmit` whose `prompt` starts
+  with `<task-notification>`.
+- **Teammate.** The lead stopped with "Waiting for probe-mate's reply...",
+  then picked up the reply and stopped again 1.27s later with **no event in
+  between**. Both `Stop`s list the teammate as `running`, including the
+  final one after the teammate had gone idle, so teammate entries cannot
+  tell the two apart.
+
+The roster stayed `busy` through both intermediate `Stop`s and reported
+`idle` only at the real end.
+
+### The roster leads the hooks
+
+At every change the probe measured, the roster had already moved when the
+hook's timestamp was taken: `busy` 60–63ms before `UserPromptSubmit`,
+`waiting` ("permission prompt") 86ms before `PermissionRequest`, `idle` 0–70ms
+before `Stop`. Claude updates its published status first and then runs the
+hook, whose `date` runs in a newly started shell. A roster answer stamped
+after a hook event therefore always reflects that event. One
+`claude agents --json` call took 100–111ms (five timed runs), not the
+~380ms the comments in `session/claude_roster.go` cite.
+
+### Session lifecycle events
+
+- `/clear` sends `SessionEnd` (`reason: "clear"`) for the old session, then,
+  31ms later, `SessionStart` (`source: "clear"`) with a new `session_id`. The
+  new transcript exists at once.
+- `claude --resume <id>` sends `SessionStart` (`source: "resume"`) with the
+  **same** `session_id`.
+- `claude --resume <unknown id>` prints "No conversation found with session
+  ID: …", exits 1, and sends only a `SessionEnd` carrying the unknown ID.
+- `/exit` sends `SessionEnd` (`reason: "prompt_input_exit"`).
 
 ## Decisions
 
@@ -92,7 +138,10 @@ parent's process and report through `SubagentStart` / `SubagentStop` /
    stamped with the time it was observed. Rejected: hooks only trigger a
    roster query (status would still depend entirely on the roster), and
    hooks only with no roster (the prompt-answered gap would need
-   screen-based patching).
+   screen-based patching). Amended after the probe: there is no grace
+   window, and a status event also triggers a roster query, which corrects
+   intermediate `Stop`s and answered prompts within about 100–200ms whenever
+   the roster works.
 4. **Cards replace the tail with Claude's last message when stopped**, in
    both the rail and the overview, within the validity window in §6.
 5. **Hooks are installed on every Claude launch that can take them.**
@@ -175,13 +224,22 @@ the parent's UI whichever agent raised it.
 | `PermissionRequest` | Prompting, reason `permission: <tool_name>` | invalidate `lastMessage` |
 | `Notification` permission_prompt / elicitation_dialog / elicitation_url_dialog | Prompting, reason = `message` | |
 | `Notification`, any other type | none | |
-| `Stop` | Ready | set `lastMessage`, mark valid |
-| `SessionEnd` | clear `obs` (no opinion) | |
+| `Stop` whose `background_tasks` has an entry with `type: "subagent"` and `status: "running"` | Running | set `lastMessage`, mark valid |
+| `Stop`, otherwise (including a missing or malformed `background_tasks`) | Ready | set `lastMessage`, mark valid |
+| `SessionEnd` | no opinion, at the event's `at` | |
 
-If a launch has no parent `SessionStart`, the latest parent event's
-`session_id` is used. `PreToolUse` and `PostToolUse` are not registered: they
-fire on every tool call, and `PostToolUse` includes the tool's whole output,
-which the hook would write to disk.
+Only `SessionStart` sets `sessionID` and `transcriptPath`; no other event
+does. A failed `--resume <unknown id>` sends a `SessionEnd` carrying the
+unknown ID, so taking the ID from any other event would record it. Teammate
+and `shell` entries in `background_tasks` never make a `Stop` Running:
+teammates stay listed as `running` while idle, and a background shell (a dev
+server, a `tail -f`) runs while Claude waits for input. A missing task list
+reads as Ready here, unlike the subagent tracker, which must do nothing with
+one: a wrong Ready is corrected by the roster query the event triggers (§4),
+while a wrong Running would stay until the next event. `PreToolUse` and
+`PostToolUse` are not registered: they fire on every tool call, and
+`PostToolUse` includes the tool's whole output, which the hook would write
+to disk.
 
 **Roster observations** are stamped with `at` taken inside
 `rosterQueryCmd`'s Cmd immediately before the subprocess starts, carried on
@@ -190,12 +248,18 @@ which the hook would write to disk.
 holds.
 
 **Merge rule.** A new observation replaces the current one when its `at` is
-newer, except that a roster observation replaces a *hook* observation only
-when it is at least `hookGrace` (1s) newer. That keeps a roster query started
-just after `Stop`, before Claude updates the status it publishes, from
-flipping the card back to Running for a full roster interval. A roster
-answer with no opinion (no entry, ambiguous cwd, unknown status, failed
-query) proposes nothing and leaves the current observation alone.
+newer, whichever source either came from. There is no grace window: the
+roster leads the hooks (see Findings), so a roster answer stamped after a
+hook event already reflects it, and one stamped before is older and
+dropped. The comparison uses `at` whether or not the current observation
+is valid: `SessionEnd` stores a no-opinion observation at its own `at`, so
+a roster answer stamped before it and delivered after is still dropped.
+
+A roster answer with no opinion for an instance (no entry, ambiguous cwd,
+unknown status, or a failed query) leaves a hook observation alone and
+turns a roster observation into no opinion at the query's `at`. The second
+half keeps today's rule that a failed query clears the roster: a
+roster-sourced status must not outlive the roster that produced it.
 
 When `claudeState` holds no valid observation, the screen ladder decides, as
 today. When it does, `maybeRedetect` is suppressed, as the roster already
@@ -205,29 +269,49 @@ lifetime rule as `adoptRosterStatus` today, and both status paths
 
 ### 4. Delivery
 
-One gate, `gateHookScan`, with its interval lowered from 3s to 250ms. A
-single gate keeps the in-flight guard: `Scan` converts `.json` to `.ev` by
-rename, so two overlapping scans of one folder must never run. Triggers:
+**Trailing requests on `pollGate`.** `expedite()` only resets the interval:
+a trigger that lands while a job is in flight waits for the next health
+tick, up to 3s on the emulator path. Here that in-flight job started
+*before* the event, so the merge rule discards its answer. `pollGate` gains
+`request()`: expedite plus a `pending` mark. After `deliverGated` has routed
+the inner message, a gate still marked pending is cleared and the job is
+dispatched again at once through `m.redispatch(kind)`, which maps a kind to
+its `maybe…` dispatcher on the Update goroutine. The in-flight guard is
+unchanged, so jobs never overlap, and repeated requests during one flight
+collapse into a single follow-up.
 
-1. `paneDirtyMsg` for a hooked Claude instance: one whose launch ID is not
-   the `noHooksLaunchID` sentinel. A restored instance that has not yet
-   adopted its folder's ID (empty launch ID) counts as hooked. The spinner keeps output
-   flowing while Claude works, so `UserPromptSubmit` is read within about
-   250ms.
-2. `paneQuietMsg`. `Stop` and `PermissionRequest` arrive as output settles,
-   so they are read about 0.5–0.6s after the event.
-3. The health tick, as the backstop.
+**Hook scans.** One gate, `gateHookScan` (renamed from `gateSubagent`), with
+its interval lowered from 3s to 250ms. A single gate keeps the in-flight
+guard: `Scan` converts `.json` to `.ev` by rename, so two overlapping scans
+of one folder must never run. A hooked instance is one whose launch ID is
+not the `noHooksLaunchID` sentinel; a restored instance that has not yet
+adopted its folder's ID (empty launch ID) counts as hooked.
 
-A trigger the gate refuses sets `m.hookScanPending`. When a scan result
-lands, the handler checks it and, if set, returns a `tea.Tick` for the rest
-of the interval. That tick delivers a message which re-dispatches through
-the gate, so the last event of a burst is never left for the backstop. The
-tick is a single-message Cmd, as `dispatchGated` requires. A warm scan is one
-`readdir` per instance and skips retained `.ev` files by name.
+| Trigger | Call | Why |
+|---|---|---|
+| `paneDirtyMsg` for a hooked instance | `maybeHookScan` (interval honoured) | the spinner keeps output flowing while Claude works, so `UserPromptSubmit` is read within about 250ms |
+| `paneQuietMsg` for a hooked instance | `request(gateHookScan)` | `Stop` and `PermissionRequest` arrive as output settles; the request guarantees a scan after the quiet even when one is in flight or the interval has not elapsed, so they are read about 0.5–0.6s after the event |
+| health tick | `maybeHookScan` | backstop |
 
-**Known gap.** Answering a prompt produces no event. With a working roster,
-Prompting becomes Running within about one roster interval (3s). Without
-one, the card stays Prompting until the next hook event.
+A warm scan is one `readdir` per instance and skips retained `.ev` files by
+name.
+
+**Roster queries.** The roster keeps its 3s cadence on the health tick and
+gains two triggers:
+
+| Trigger | Call | Why |
+|---|---|---|
+| a hook scan result that changed any instance's observation | `request(gateRoster)` | the answer, stamped after the event, confirms or corrects it: an intermediate `Stop` (a teammate reply the lead is about to pick up) becomes Running again about 100–200ms later |
+| `paneDirtyMsg` for an instance whose status is Prompting | `maybeRosterQuery` under `promptingRosterSpacing` (500ms) instead of the 3s interval | on approval the dialog disappears, which is output; the roster reports `busy` and the card becomes Running without waiting for the next hook |
+
+The Prompting trigger uses a spacing, not `request()`: a Prompting instance
+whose roster answer never changes it (no entry, failed query) would
+otherwise run back-to-back queries for as long as it produces output. At
+~100ms per call this adds a few queries per turn.
+
+**Remaining gaps, with no working roster.** An answered prompt stays
+Prompting until the next hook event, and a lead that resumes after a
+teammate reply with no event shows Ready until its next `Stop`.
 
 ### 5. Exact resume
 
@@ -304,23 +388,39 @@ card builder.
 
 ## Testing
 
-- **`session/hooks`:** `ParseEvent` for each new event from captured
-  payloads; `At` from the filename and from modification time; `Compact`
+- **`session/hooks`:** `ParseEvent` for each new event from the probe's
+  captured payloads, kept as fixtures under
+  `session/hooks/testdata/probe-2.1.280/` with home and scratch paths
+  scrubbed; `At` from the filename and from modification time; `Compact`
   round trip including the 4 KB cap; the moved tests pass unchanged.
-- **`claudeState` (table tests):** newest wins; `hookGrace` both ways; a
-  roster answer with no opinion changes nothing; `SessionEnd` clears; the
-  `agent_id` filter and the `PermissionRequest` exception; compact
-  `SessionStart` records the ID but no status; `lastMessage` validity
-  window; `sessionID` follows `/clear`; replay rebuilds the same state as
-  incremental application.
+- **`claudeState` (table tests):** newest wins across sources in both
+  directions; a roster answer with no opinion leaves a hook observation
+  alone and voids a roster one; `SessionEnd` gives no opinion and still
+  drops an older roster answer delivered after it; the `agent_id` filter and the `PermissionRequest` exception;
+  `Stop` with a running `subagent` task is Running, with only teammate or
+  `shell` tasks is Ready, with a missing list is Ready; compact
+  `SessionStart` records the ID but no status; only `SessionStart` sets the
+  ID (a `SessionEnd` carrying another ID changes nothing); `lastMessage`
+  validity window; `sessionID` follows `/clear`; the probe's event
+  sequences (plain turn, permission prompt, background subagent, teammate,
+  `/clear`, resume) replayed in order give the expected status after each
+  event; replay rebuilds the same state as incremental application.
 - **`BuildRecoveryCommand`:** resume with the transcript present; continue
   when it is missing, the ID is empty or malformed; user-supplied
   `--continue` / `--resume` left alone.
-- **`app`:** dirty, quiet and backstop triggers through `gateHookScan`; the
-  pending trailing tick; both status paths call `adoptClaudeStatus`
-  (extending `app/roster_status_test.go`); regression: a roster query started
-  before `Stop` and delivered after it does not flip the card to Running;
-  `maybeRedetect` is suppressed while a hook observation is valid.
+- **`app/pollgate`:** `request()` during a flight re-dispatches exactly once
+  after delivery; several requests during one flight collapse into one; a
+  request while idle dispatches at once even inside the interval; a
+  delivery with nothing pending re-dispatches nothing.
+- **`app`:** dirty (interval honoured), quiet (`request`) and backstop
+  triggers through `gateHookScan`; a scan that changed an observation
+  requests a roster query; dirty on a Prompting instance queries the roster
+  no more often than `promptingRosterSpacing`; both status paths call
+  `adoptClaudeStatus` (extending `app/roster_status_test.go`); regression:
+  a roster query started before `Stop` and delivered after it does not flip
+  the card to Running; regression: an intermediate `Stop` followed by a
+  newer `busy` roster answer shows Running; `maybeRedetect` is suppressed
+  while a hook observation is valid.
 - **`ui`:** `BuildCardData` uses `LastMessage` on Ready, the live tail on
   Running and on `PermissionRequest` Prompting; fence and heading handling;
   sanitization.
@@ -332,16 +432,19 @@ card builder.
   `last_assistant_message`). An e2e test drives status transitions through
   hooks with no roster.
 - **Opt-in real-Claude contract test (`LOOM_TEST_REAL_CLAUDE=1`):** extended
-  to assert each item under [Assumptions to probe](#assumptions-to-probe),
-  so a CLI change that breaks one fails loudly.
+  to assert each [probe result](#probe-results), including that the roster
+  has already moved when a `Stop` and a `PermissionRequest` are stamped, so
+  a CLI change that breaks one fails loudly.
 - `CC=clang CGO_ENABLED=1 go test -race ./...`.
 
 ## Documentation
 
 - CLAUDE.md: the "Claude's roster outranks the pane scraper" gotcha becomes
-  "Claude status: hooks and roster, newest observation wins", covering
-  `hookGrace`, the parent-only rule, the delivery triggers and the known
-  prompt-answered gap. The `session/subagent/` bullet points at
+  "Claude status: hooks and roster, newest observation wins", covering why
+  there is no grace window (the roster leads the hooks), `Stop` meaning end
+  of turn, the parent-only rule, the delivery and roster triggers, and the
+  gaps that remain without a roster. The roster comments' ~380ms figure
+  becomes the measured ~100ms. The `session/subagent/` bullet points at
   `session/hooks`. The `claude_subagent_tracking` description changes per §8.
   Schema v7 fields are noted under Persistent State.
 - USAGE.md: the Track Subagents setting's new meaning.
@@ -362,33 +465,31 @@ card builder.
   firing order from the docs. The contract test pins them, but it is opt-in
   and costs money, so a break may surface first in use. Every rule fails to
   "no opinion", so the worst case is today's behaviour.
-- **`hookGrace` sizing.** 1s is a guess at how far Claude's published status
-  lags its hooks. Too short brings back the post-`Stop` flicker; too long
-  delays the roster's correction of a stale hook observation.
-- **Stale Prompting without a roster.** Covered in §4; accepted for this spec.
+- **The roster stops leading the hooks.** Newest-wins with no grace window
+  relies on Claude publishing its status before it runs the hook. If a
+  future CLI reversed that, a roster answer stamped just after `Stop` could
+  report `busy` and hold a finished session at Running until the next
+  roster query (at most 3s later). The contract test asserts the ordering.
+- **Gaps without a roster.** Covered in §4; accepted for this spec.
 - **Scan rate.** Dirty-triggered scans run up to four times a second while
   any session works. A warm scan is one `readdir` per hooked instance, but a
   fleet of many sessions should be measured before merge.
 
-## Assumptions to probe
+## Probe results
 
-Verify on Claude Code 2.1.280 in a live interactive session on a private
-tmux server (the subagent-nesting probe method) **before writing the plan**.
-If any fails, amend this spec first.
+Probed on Claude Code 2.1.280, 2026-09-23. The 34 captured payloads are the
+fixtures named under Testing.
 
-1. `PermissionRequest` fires in interactive mode as the dialog appears, with
-   `tool_name`, and without `agent_id` for the parent's own tool calls.
-2. A subagent's permission prompt raises a `PermissionRequest` in the
-   parent's folder (with or without `agent_id`).
-3. `Stop` carries `last_assistant_message`.
-4. `SessionStart` fires at startup with `source: "startup"`, and `/clear`
-   produces a new `SessionStart` (`source: "clear"`) with a new
-   `session_id`.
-5. `claude --resume <id>` fires `SessionStart` with `source: "resume"`;
-   record whether the `session_id` stays the same.
-6. `UserPromptSubmit` fires for every interactive prompt, without
-   `agent_id`.
-7. Teammates and subagents never write parent-level `Stop`,
-   `UserPromptSubmit` or `SessionStart` events without an `agent_id`.
-8. The lag between a `Stop` hook and the roster reporting `idle` (sizes
-   `hookGrace`).
+| # | Assumption | Result |
+|---|---|---|
+| 1 | `PermissionRequest` fires as the dialog appears, with `tool_name`, without `agent_id` for the parent's own tools | Holds. The matching `Notification` came 6.0s later with the generic message "Claude needs your permission" |
+| 2 | A subagent's permission prompt raises a `PermissionRequest` in the parent's folder | Holds, carrying the subagent's `agent_id` |
+| 3 | `Stop` carries `last_assistant_message` | Holds |
+| 4 | `SessionStart` at startup; `/clear` gives a new `session_id` | Holds; `/clear` also sends `SessionEnd` (`reason: "clear"`) first |
+| 5 | `--resume <id>` sends `SessionStart` (`source: "resume"`) | Holds, with the same `session_id`; an unknown ID sends only `SessionEnd` |
+| 6 | `UserPromptSubmit` fires for every prompt, without `agent_id` | Holds; it also fires when a background subagent's result resumes the parent |
+| 7 | Subagents and teammates write no parent-level events without `agent_id` | Holds |
+| 8 | The roster lags `Stop` (to size a grace window) | Does not hold: the roster leads every hook measured by 0–90ms, so the grace window was removed |
+
+The probe also found that `Stop` fires mid-work (see Findings), which
+changed the `Stop` mapping and added the roster triggers.
