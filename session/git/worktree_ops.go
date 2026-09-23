@@ -335,6 +335,7 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 		if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, fmt.Sprintf("origin/%s", g.branchName)); err != nil {
 			return fmt.Errorf("failed to create worktree from remote branch %s: %w", g.branchName, err)
 		}
+		g.setBranchCreated()
 	} else {
 		// Create a new worktree from the existing local branch
 		if _, err := g.runGitCommand(g.repoPath, "worktree", "add", g.worktreePath, g.branchName); err != nil {
@@ -391,14 +392,30 @@ func (g *GitWorktree) setupNewWorktree() error {
 	if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, baseSHA); err != nil {
 		return fmt.Errorf("failed to create worktree from %s (%s): %w", baseName, baseSHA, err)
 	}
+	g.setBranchCreated()
 
 	return nil
 }
 
 // Cleanup removes the worktree and associated branch
-func (g *GitWorktree) Cleanup() (err error) {
+func (g *GitWorktree) Cleanup() error {
+	return g.cleanup(!g.isExistingBranch)
+}
+
+// CleanupFailedStart undoes a Setup whose session then failed to start: it
+// removes the worktree Setup just created, but deletes the branch only if
+// Setup created it too. Setup also checks out a branch that already
+// existed — one left behind by an earlier session with the same title,
+// whose commits may be unmerged — and that one is kept.
+func (g *GitWorktree) CleanupFailedStart() error {
+	return g.cleanup(!g.isExistingBranch && g.createdBranch())
+}
+
+// cleanup removes the worktree, prunes, drops the title sidecar and, when
+// deleteBranch is set, deletes the branch.
+func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 	t0 := time.Now()
-	log.For("git").Debug("worktree.cleanup.begin", "branch", g.branchName, "path", g.worktreePath)
+	log.For("git").Debug("worktree.cleanup.begin", "branch", g.branchName, "path", g.worktreePath, "delete_branch", deleteBranch)
 	defer func() {
 		args := []any{"branch", g.branchName, "duration_ms", time.Since(t0).Milliseconds()}
 		if err != nil {
@@ -420,8 +437,8 @@ func (g *GitWorktree) Cleanup() (err error) {
 		errs = append(errs, fmt.Errorf("failed to check worktree path: %w", err))
 	}
 
-	// Delete the branch using git CLI, but skip if this is a pre-existing branch
-	if !g.isExistingBranch {
+	// Delete the branch using git CLI, unless the caller keeps it
+	if deleteBranch {
 		if _, err := g.runGitCommand(g.repoPath, "branch", "-D", g.branchName); err != nil {
 			// Only log if it's not a "branch not found" error
 			if !strings.Contains(err.Error(), "not found") {

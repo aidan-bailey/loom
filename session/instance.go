@@ -847,8 +847,10 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 
 		// Create new session
 		if err := ts.Start(gw.GetWorktreePath()); err != nil {
-			// Cleanup git worktree if tmux session creation fails
-			if cleanupErr := gw.Cleanup(); cleanupErr != nil {
+			// Remove the worktree Setup just made — the agent never ran in
+			// it. The branch goes too only if Setup created it: a reused
+			// title checks out the branch an earlier session left behind.
+			if cleanupErr := gw.CleanupFailedStart(); cleanupErr != nil {
 				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
 			}
 			setupErr = fmt.Errorf("failed to start new session: %w", err)

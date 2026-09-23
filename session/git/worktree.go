@@ -51,6 +51,12 @@ type GitWorktree struct {
 	// isExistingBranch is true if the branch existed before the session was created.
 	// When true, the branch will not be deleted on cleanup.
 	isExistingBranch bool
+	// branchCreated records that this GitWorktree's own Setup created the
+	// branch (guarded by refMu). Only such a branch may be deleted when
+	// the session then fails to start: Setup also checks out a branch
+	// left behind by an earlier session with the same title, whose
+	// commits were never this session's. Never persisted.
+	branchCreated bool
 	// stashRef is the commit SHA of the stash Pause created for this
 	// worktree's uncommitted changes, or "" if none is pending. Set by
 	// Instance.Pause (via StashChanges), cleared by Instance.Resume
@@ -290,6 +296,18 @@ func (g *GitWorktree) setBaseCommitSHA(sha string) {
 	g.refMu.Lock()
 	defer g.refMu.Unlock()
 	g.baseCommitSHA = sha
+}
+
+func (g *GitWorktree) setBranchCreated() {
+	g.refMu.Lock()
+	defer g.refMu.Unlock()
+	g.branchCreated = true
+}
+
+func (g *GitWorktree) createdBranch() bool {
+	g.refMu.Lock()
+	defer g.refMu.Unlock()
+	return g.branchCreated
 }
 
 // GetStashRef returns the pending stash commit SHA, or "" if none.
