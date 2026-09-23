@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session/agent"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/session/vt"
 )
@@ -295,30 +294,6 @@ func (p AgentPane) GetContentHash() []byte {
 		return nil
 	}
 	return ts.GetContentHash()
-}
-
-// CheckAndHandleTrustPrompt detects and dismisses an agent-specific
-// trust prompt (e.g., Claude's folder-trust dialog) when the agent
-// adapter declares a TrustPromptResponse. Returns true when a prompt
-// was detected and dismissed. No-op for unknown programs.
-func (p AgentPane) CheckAndHandleTrustPrompt() bool {
-	i := p.i
-	if !i.isStarted() {
-		return false
-	}
-	ts := i.getTmuxSession()
-	if ts == nil {
-		return false
-	}
-	// The adapter registry tells us whether this program has a trust
-	// prompt to dismiss; the default fallback returns TrustPromptNone,
-	// which short-circuits here so unknown programs get no handling.
-	// Program() locks: pane probes run off the Update goroutine, where
-	// the setters run.
-	if defaultRegistry.Lookup(i.Program()).TrustPromptResponse() == agent.TrustPromptNone {
-		return false
-	}
-	return ts.CheckAndHandleTrustPrompt()
 }
 
 // CaptureAndProcessStatus captures tmux pane content once and checks for
