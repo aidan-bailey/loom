@@ -84,12 +84,35 @@ func runDetection(t *testing.T, m *home, trigger tea.Msg) tea.Cmd {
 	t.Helper()
 	_, cmd := m.Update(trigger)
 	require.NotNil(t, cmd, "trigger %T must schedule status detection", trigger)
-	msg := cmd()
-	detected, ok := msg.(statusDetectedMsg)
-	require.True(t, ok, "detection cmd must return statusDetectedMsg, got %T", msg)
+	detected := detectionFrom(t, cmd)
 	require.NoError(t, detected.err)
 	_, follow := m.Update(detected)
 	return follow
+}
+
+// detectionFrom runs a quiet or redetect handler's command the way the
+// runtime would, expanding a batch, and returns the status detection it
+// scheduled. For a hooked Claude session the quiet handler also schedules
+// a hook scan, so its command can be a batch.
+func detectionFrom(t *testing.T, cmd tea.Cmd) statusDetectedMsg {
+	t.Helper()
+	require.NotNil(t, cmd)
+	pending := []tea.Cmd{cmd}
+	for len(pending) > 0 {
+		c := pending[0]
+		pending = pending[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case tea.BatchMsg:
+			pending = append(pending, msg...)
+		case statusDetectedMsg:
+			return msg
+		}
+	}
+	t.Fatal("command scheduled no status detection")
+	return statusDetectedMsg{}
 }
 
 // TestStatusDetectionConvergesToReadyAfterSettle is the regression guard for
@@ -108,10 +131,7 @@ func TestStatusDetectionConvergesToReadyAfterSettle(t *testing.T) {
 	// First quiet after the burst: content changed since the previous sample,
 	// so detection concludes Running — and must arm a re-detection.
 	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
-	require.NotNil(t, cmd)
-	msg := cmd()
-	detected, ok := msg.(statusDetectedMsg)
-	require.True(t, ok, "expected statusDetectedMsg, got %T", msg)
+	detected := detectionFrom(t, cmd)
 	require.True(t, detected.updated, "first sample after a burst hashes new content")
 	_, follow := m.Update(detected)
 	require.Equal(t, session.Running, inst.GetStatus())
@@ -143,10 +163,7 @@ func TestStatusDetectionSurfacesPromptAfterSettle(t *testing.T) {
 	m.list.AddInstance(inst)
 
 	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
-	require.NotNil(t, cmd)
-	msg := cmd()
-	detected, ok := msg.(statusDetectedMsg)
-	require.True(t, ok, "expected statusDetectedMsg, got %T", msg)
+	detected := detectionFrom(t, cmd)
 	require.True(t, detected.updated)
 	require.True(t, detected.hasPrompt, "claude adapter must detect the permission prompt")
 	_, follow := m.Update(detected)

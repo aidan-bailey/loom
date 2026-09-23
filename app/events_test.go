@@ -56,9 +56,7 @@ func TestPaneQuietRunsStatusDetection(t *testing.T) {
 	// message back through Update, as the Bubble Tea runtime would.
 	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd, "quiet on a live agent session must schedule detection")
-	msg := cmd()
-	detected, ok := msg.(statusDetectedMsg)
-	require.True(t, ok, "detection cmd must return statusDetectedMsg, got %T", msg)
+	detected := detectionFrom(t, cmd)
 	_, _ = m.Update(detected)
 	// The mock capture returns non-prompt content and the first hash counts
 	// as an update → instance lands in Running.

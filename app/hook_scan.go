@@ -11,10 +11,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// hookScanInterval is the hook-event scan cadence, matching rosterInterval:
-// the snapshot-path health tick fires every 500ms, far more often than
-// hook events need collecting.
-const hookScanInterval = 3 * time.Second
+// hookScanInterval is the minimum time between hook scans. Scans are
+// triggered by pane output and quiet as well as the health tick, so an
+// event is read within about this long; a warm scan is one readdir per
+// hooked instance.
+const hookScanInterval = 250 * time.Millisecond
 
 // hookScanResult is one instance's scan outcome.
 type hookScanResult struct {
@@ -67,20 +68,36 @@ func (m *home) maybeHookScan(active []*session.Instance) tea.Cmd {
 	})
 }
 
-// handleHookScan applies a scan.
-func (m *home) handleHookScan(msg hookScanMsg) {
+// handleHookScan applies a scan. An instance whose Claude status changed
+// moves to it at once, and any change also asks the roster to confirm:
+// its answer, stamped after the event, corrects a Stop that ended a turn
+// but not the work (a lead about to pick up a teammate's reply).
+func (m *home) handleHookScan(msg hookScanMsg) tea.Cmd {
+	changed := false
 	for _, r := range msg.results {
 		if r.err != nil {
 			if errors.Is(r.err, hooks.ErrNoHooks) {
 				// The normal state of a session launched without
-				// tracking. For a tracked launch the folder vanished
+				// hooks. For a hooked launch the folder vanished
 				// mid-run, and its rows would otherwise stay frozen.
 				r.instance.ForgetSubagentsWithoutHooks()
 			} else {
-				log.DebugKV("app.subagent.scan_failed", "instance", r.instance.Title, "err", r.err.Error())
+				log.DebugKV("app.hook_scan.failed", "instance", r.instance.Title, "err", r.err.Error())
 			}
 			continue
 		}
+		st0, why0, ok0 := r.instance.ClaudeStatus()
 		r.instance.ApplyHookScan(r.result)
+		st1, why1, ok1 := r.instance.ClaudeStatus()
+		if st0 != st1 || why0 != why1 || ok0 != ok1 {
+			changed = true
+			m.applyClaudeStatus(r.instance)
+		}
 	}
+	if !changed {
+		return nil
+	}
+	m.updateTabBarStatuses()
+	m.gate(gateRoster).request()
+	return m.maybeRosterQuery(m.activeInstances())
 }

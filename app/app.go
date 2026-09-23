@@ -728,6 +728,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if st == session.Prompting && session.IsClaudeProgram(inst.Program()) {
 				cmds = append(cmds, m.maybeRosterQuerySoon())
 			}
+			// While Claude works, its spinner keeps output flowing, so this
+			// reads a UserPromptSubmit within hookScanInterval.
+			if inst.HooksLaunched() {
+				cmds = append(cmds, m.maybeHookScan(m.activeInstances()))
+			}
 			if selected != nil && inst == selected {
 				if err := m.splitPane.UpdateAgent(selected); err != nil {
 					return m, m.handleError(err)
@@ -745,17 +750,25 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case paneQuietMsg:
 		inst := m.instanceForSession(msg.session)
+		var scan tea.Cmd
+		if inst != nil && inst.HooksLaunched() {
+			// Stop and PermissionRequest arrive as output settles. This is
+			// often a burst's last output, so it must scan even inside
+			// hookScanInterval or while a scan is in flight: request().
+			m.gate(gateHookScan).request()
+			scan = m.maybeHookScan(m.activeInstances())
+		}
 		if !statusEligible(inst) {
 			// A quiet that lands mid-Start (Loading) is this burst's only
 			// settle signal — quiet never re-fires without new output, so
 			// dropping it would leave the unconditional Running set by
 			// Start/Resume uncorrected. Re-check after the start resolves.
 			if inst != nil && inst.GetStatus() == session.Loading {
-				return m, m.maybeRedetect(msg.session)
+				return m, tea.Batch(scan, m.maybeRedetect(msg.session))
 			}
-			return m, nil
+			return m, scan
 		}
-		return m, statusDetectCmd(inst)
+		return m, tea.Batch(scan, statusDetectCmd(inst))
 	case gatedMsg:
 		return m.deliverGated(msg)
 	case ratioSaveMsg:
@@ -776,8 +789,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, statusDetectCmd(inst)
 	case hookScanMsg:
-		m.handleHookScan(msg)
-		return m, nil
+		return m, m.handleHookScan(msg)
 	case rosterReadyMsg:
 		if msg.err != nil {
 			// Debug, not warn: a missing daemon or an older CLI without
@@ -936,8 +948,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, roster)
 		}
 
-		// Subagent hook events, throttled like the roster (see
-		// maybeHookScan). nil when not due, in flight, or no Claude
+		// Hook events: the backstop behind the output and quiet triggers
+		// (see maybeHookScan). nil when not due, in flight, or no Claude
 		// agent is live.
 		if scan := m.maybeHookScan(active); scan != nil {
 			cmds = append(cmds, scan)

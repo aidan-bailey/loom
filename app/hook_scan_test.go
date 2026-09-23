@@ -12,6 +12,7 @@ import (
 	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/subagent"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,4 +139,58 @@ func TestSubagentScanCmdEndToEnd(t *testing.T) {
 
 	require.Equal(t, []subagent.View{{Name: "Explore", Description: "map code"}}, inst.Subagents())
 	require.False(t, m.gate(gateHookScan).inFlight, "the gated delivery must disarm the scan")
+}
+
+func TestHookScanOnOutputHonoursInterval(t *testing.T) {
+	inst := startedInstanceWithProgram(t, "scan-dirty", "claude", "x")
+	m := homeWithAppState(t)
+	m.list.AddInstance(inst)
+	m.splitPane.SetSize(100, 40)
+	m.splitPane.SetInstance(inst)
+	require.True(t, inst.HooksLaunched())
+
+	m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
+	require.True(t, m.gate(gateHookScan).inFlight, "output on a hooked session scans")
+
+	m.gate(gateHookScan).inFlight = false
+	m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
+	assert.False(t, m.gate(gateHookScan).inFlight, "a second scan inside hookScanInterval is not dispatched")
+}
+
+func TestHookScanOnQuietIgnoresInterval(t *testing.T) {
+	inst := startedInstanceWithProgram(t, "scan-quiet", "claude", "x")
+	m := homeWithAppState(t)
+	m.list.AddInstance(inst)
+	require.NotNil(t, m.maybeHookScan(m.activeInstances()))
+
+	m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
+	assert.True(t, m.gate(gateHookScan).pending, "a quiet during a scan asks for one more")
+
+	m.gate(gateHookScan).inFlight, m.gate(gateHookScan).pending = false, false
+	m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
+	assert.True(t, m.gate(gateHookScan).inFlight, "a quiet scans even inside hookScanInterval")
+}
+
+func TestHookScanStatusChangeMovesInstanceAndAsksRoster(t *testing.T) {
+	inst := startedInstanceWithProgram(t, "scan-status", "claude", "x")
+	m := homeWithAppState(t)
+	m.list.AddInstance(inst)
+	// The test instance starts on a mock tmux session, so no launch
+	// prepared its folder; it adopts this one's launch ID, as a restored
+	// instance would.
+	dir := session.SubagentHooksDir(inst.ConfigDir, inst.Title)
+	_, err := hooks.Prepare(dir)
+	require.NoError(t, err)
+	name := fmt.Sprintf("%d-1.json", time.Now().UnixNano())
+	require.NoError(t, os.WriteFile(filepath.Join(hooks.EventsDir(dir), name),
+		[]byte(`{"hook_event_name":"PermissionRequest","tool_name":"Bash"}`), 0o600))
+
+	cmd := m.maybeHookScan(m.activeInstances())
+	require.NotNil(t, cmd)
+	_, follow := m.Update(cmd())
+
+	assert.Equal(t, session.Prompting, inst.GetStatus())
+	assert.Equal(t, "permission: Bash", inst.WaitReason())
+	require.NotNil(t, follow, "a status change asks the roster to confirm")
+	assert.True(t, m.gate(gateRoster).inFlight)
 }
