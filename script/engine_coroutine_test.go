@@ -97,3 +97,64 @@ func TestResumeWithHostRebindsCtx(t *testing.T) {
 	require.Len(t, resumeHost.queuedInstances, 1)
 	assert.Equal(t, "made-after", resumeHost.queuedInstances[0].Title)
 }
+
+// stashedThread returns the coroutine a handler saved in a Lua global
+// via coroutine.running().
+func stashedThread(t *testing.T, e *Engine, name string) *lua.LState {
+	t.Helper()
+	co, ok := e.L.GetGlobal(name).(*lua.LState)
+	require.True(t, ok, "the handler must stash its coroutine in %s", name)
+	return co
+}
+
+// TestDroppedCoroutineCancelsItsContext: NewThread derives each handler
+// coroutine's context from the engine's, which only Shutdown cancels.
+// gopher-lua cancels it when the coroutine finishes or errors, but not
+// when the engine drops one that yielded something other than an intent
+// id, so the engine must call the cancel func NewThread returned or the
+// child context stays registered on the parent until shutdown.
+func TestDroppedCoroutineCancelsItsContext(t *testing.T) {
+	t.Run("dispatch", func(t *testing.T) {
+		e := NewEngine(nil)
+		defer e.Close()
+		require.NoError(t, e.LoadFromString("bad.lua", `
+			cs.bind("x", function()
+				_G.co = coroutine.running()
+				coroutine.yield("not-an-id")
+			end)
+		`))
+
+		_, err := e.Dispatch(context.Background(), "x", &fakeHost{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-numeric intent id")
+		assert.Empty(t, e.coroutines)
+		assert.ErrorIs(t, stashedThread(t, e, "co").Context().Err(), context.Canceled,
+			"a coroutine dropped at dispatch must have its context cancelled")
+	})
+
+	t.Run("resume", func(t *testing.T) {
+		e := NewEngine(nil)
+		defer e.Close()
+		require.NoError(t, e.LoadFromString("bad.lua", `
+			cs.bind("x", function()
+				_G.co = coroutine.running()
+				cs.actions.show_help()
+				coroutine.yield("not-an-id")
+			end)
+		`))
+
+		h := &fakeHost{}
+		_, err := e.Dispatch(context.Background(), "x", h)
+		require.NoError(t, err)
+		require.Len(t, h.enqueuedIDs, 1)
+		co := stashedThread(t, e, "co")
+		require.NoError(t, co.Context().Err(), "a parked coroutine keeps a live context")
+
+		err = e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], &fakeHost{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-numeric intent id")
+		assert.Empty(t, e.coroutines)
+		assert.ErrorIs(t, co.Context().Err(), context.Canceled,
+			"a coroutine dropped at resume must have its context cancelled")
+	})
+}

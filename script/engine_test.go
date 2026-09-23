@@ -344,6 +344,53 @@ func TestLogScript_ReachesStructuredLogger(t *testing.T) {
 	assert.Contains(t, out, `level=INFO msg="from unknown level"`, "an unrecognized level must fall back to info")
 }
 
+// logLineContaining returns the first line of out that contains msg, or
+// "" when none does.
+func logLineContaining(out, msg string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, msg) {
+			return line
+		}
+	}
+	return ""
+}
+
+// TestLogScript_RuntimeLinesCarryTheActionFile: curFile names only the
+// file being compiled, so a line a handler logs while it runs, at
+// dispatch or after a resume, must take its file from the action that
+// is running instead.
+func TestLogScript_RuntimeLinesCarryTheActionFile(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Structured
+	log.Structured = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(func() { log.Structured = prev })
+
+	e := NewEngine(nil)
+	defer e.Close()
+	require.NoError(t, e.LoadFromString("runtime.lua", `
+		cs.bind("x", function(ctx)
+			cs.log("info", "logged at dispatch")
+			cs.actions.show_help()
+			ctx:log("info", "logged after resume")
+		end)
+	`))
+
+	h := &fakeHost{}
+	_, err := e.Dispatch(context.Background(), "x", h)
+	require.NoError(t, err)
+	require.Len(t, h.enqueuedIDs, 1)
+	require.NoError(t, e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], &fakeHost{}))
+
+	out := buf.String()
+	assert.Contains(t, logLineContaining(out, "logged at dispatch"), "file=runtime.lua")
+	assert.Contains(t, logLineContaining(out, "logged after resume"), "file=runtime.lua")
+
+	buf.Reset()
+	require.NoError(t, e.L.DoString(`cs.log("info", "logged outside any action")`))
+	assert.NotContains(t, logLineContaining(buf.String(), "logged outside any action"), "file=",
+		"the action file must not outlive its dispatch")
+}
+
 // TestLoaderWalksDirectory exercises Load() against a real directory
 // with a mix of valid, broken, and non-lua files. Broken files must
 // not prevent valid ones from loading.

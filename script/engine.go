@@ -30,6 +30,18 @@ type Engine struct {
 	curFile  string          // script file currently being compiled (empty outside Load)
 	reserved map[string]bool // raw key strings the built-in map owns
 
+	// curActionFile is the source file of the handler running now, set
+	// for the length of runAction/resumeLocked (and a shutdown drain) so
+	// runtime log lines name their file. Separate from curFile, which
+	// means "being compiled"; logScript prefers curFile.
+	curActionFile string
+
+	// inFlight names the handler holding e.mu, recorded when Dispatch or
+	// ResumeWithHost (or a shutdown drain) starts running one and
+	// cleared when it returns. Atomic because Shutdown reads it without
+	// e.mu, which the stuck handler holds, to name it in its warning.
+	inFlight atomic.Pointer[inFlightAction]
+
 	// bindings is what HasAction and Registrations read, without mu.
 	// Rebuilt by publishBindingsLocked on every action-table change.
 	bindings atomic.Pointer[bindingSnapshot]
@@ -53,9 +65,9 @@ type Engine struct {
 	coroutines map[IntentID]coroutineSlot
 
 	// lastEnqueued records the most recent IntentID the active Lua
-	// callback enqueued via the host. cs.await consumes it so scripts
-	// can write `cs.await(cs.actions.quit())` without a separate id
-	// return value plumbing step. Valid only during a Lua callback.
+	// callback enqueued via the host. A bare cs.await() consumes it, so
+	// a primitive that enqueues without yielding can be awaited without
+	// returning its id to the script. Valid only during a Lua callback.
 	lastEnqueued IntentID
 
 	// logs is a small, bounded capture of the most recent script-emitted
@@ -77,10 +89,47 @@ const maxBufferedScriptLogs = 64
 // be added without touching every callsite.
 type coroutineSlot struct {
 	co *lua.LState
+	// cancel cancels co's context, a child of the engine's that
+	// NewThread derived. gopher-lua cancels it itself when the coroutine
+	// finishes or errors; a coroutine the engine drops while it is still
+	// suspended must be cancelled through drop, or the child stays
+	// registered on the engine's context until Shutdown. Nil for slots
+	// tests build by hand.
+	cancel context.CancelFunc
 	// ctx is the handler's ctx state. ResumeWithHost points it at the
 	// resume host, which the app drains after the resume; the dispatch
 	// host was drained when the handler first yielded.
 	ctx *ctxState
+	// key and file identify the handler, for runtime log lines and
+	// Shutdown's busy warning after a resume.
+	key, file string
+}
+
+// drop releases a coroutine the engine abandons without finishing it.
+func (s coroutineSlot) drop() {
+	if s.cancel != nil {
+		s.cancel()
+	}
+}
+
+// inFlightAction names a running handler for Shutdown's busy warning.
+type inFlightAction struct {
+	key, file string
+}
+
+// markInFlight records key/file as the handler holding e.mu and returns
+// the func that clears the record. Caller holds e.mu.
+func (e *Engine) markInFlight(key, file string) (unmark func()) {
+	e.inFlight.Store(&inFlightAction{key: key, file: file})
+	return func() { e.inFlight.Store(nil) }
+}
+
+// enterActionFile sets curActionFile for a handler run and returns the
+// func that restores the previous value. Caller holds e.mu.
+func (e *Engine) enterActionFile(file string) (restore func()) {
+	prev := e.curActionFile
+	e.curActionFile = file
+	return func() { e.curActionFile = prev }
 }
 
 // LogEntry is a single script-emitted log record.
@@ -175,8 +224,9 @@ func (e *Engine) closeLocked() {
 // holds e.mu or a drained coroutine is itself stuck, it cancels the Lua
 // context, which makes Lua raise at its next instruction, and waits out
 // the rest. A handler blocked inside a Go call can't be interrupted:
-// then Shutdown logs engine_busy_at_shutdown and returns without
-// cleaning up, and process exit reclaims everything.
+// then Shutdown logs engine_busy_at_shutdown, naming the stuck
+// handler's key and file (inFlight), and returns without cleaning up,
+// and process exit reclaims everything.
 func (e *Engine) Shutdown(timeout time.Duration) {
 	done := make(chan struct{})
 	go func() {
@@ -200,7 +250,11 @@ func (e *Engine) Shutdown(timeout time.Duration) {
 	select {
 	case <-done:
 	case <-rest.C:
-		log.For("script").Warn("engine_busy_at_shutdown", "timeout_ms", timeout.Milliseconds())
+		attrs := []any{"timeout_ms", timeout.Milliseconds()}
+		if busy := e.inFlight.Load(); busy != nil {
+			attrs = append(attrs, "key", busy.key, "file", busy.file)
+		}
+		log.For("script").Warn("engine_busy_at_shutdown", attrs...)
 	}
 }
 
@@ -225,12 +279,17 @@ func (e *Engine) cleanupAllCoroutinesLocked() {
 	}
 	for id, slot := range e.coroutines {
 		delete(e.coroutines, id)
+		unmark := e.markInFlight(slot.key, slot.file)
+		restoreFile := e.enterActionFile(slot.file)
 		st, rerr, _ := e.L.Resume(slot.co, nil, lua.LNil)
+		restoreFile()
+		unmark()
 		if rerr != nil {
 			log.For("script").Warn("cleanup_resume_failed", "intent_id", int(id), "err", rerr)
 		}
 		if st == lua.ResumeYield {
 			log.For("script").Warn("cleanup_resume_yielded_again", "intent_id", int(id))
+			slot.drop()
 		}
 	}
 }
@@ -298,6 +357,7 @@ func (e *Engine) Dispatch(ctx context.Context, key string, h Host) (matched bool
 	if !ok {
 		return false, nil
 	}
+	defer e.markInFlight(key, act.file)()
 	trace := log.TraceID(ctx)
 	start := time.Now()
 	log.For("script").Debug("handler.begin", "trace", trace, "key", key, "file", act.file)
@@ -328,8 +388,11 @@ func (e *Engine) ResumeWithHost(ctx context.Context, id IntentID, h Host) error 
 	prevHost := e.curHost
 	e.curHost = h
 	defer func() { e.curHost = prevHost }()
-	if slot, ok := e.coroutines[id]; ok && slot.ctx != nil {
-		slot.ctx.host = h
+	if slot, ok := e.coroutines[id]; ok {
+		if slot.ctx != nil {
+			slot.ctx.host = h
+		}
+		defer e.markInFlight(slot.key, slot.file)()
 	}
 
 	trace := log.TraceID(ctx)
@@ -380,6 +443,7 @@ func (e *Engine) resumeLocked(id IntentID, value lua.LValue) (lua.LValue, error)
 	// resume leaves a fresh value behind for cs.await to consume.
 	e.lastEnqueued = 0
 
+	defer e.enterActionFile(slot.file)()
 	st, rerr, vals := e.L.Resume(slot.co, nil, value)
 	switch st {
 	case lua.ResumeOK:
@@ -391,10 +455,12 @@ func (e *Engine) resumeLocked(id IntentID, value lua.LValue) (lua.LValue, error)
 		// The coroutine awaited another intent. The yielded value is
 		// the id to re-track under.
 		if len(vals) == 0 {
+			slot.drop()
 			return lua.LNil, fmt.Errorf("script: coroutine yielded without an intent id")
 		}
 		next, ok := vals[0].(lua.LNumber)
 		if !ok {
+			slot.drop()
 			return lua.LNil, fmt.Errorf("script: coroutine yielded non-numeric intent id %v", vals[0])
 		}
 		e.coroutines[IntentID(next)] = slot
@@ -416,6 +482,7 @@ func (e *Engine) resumeLocked(id IntentID, value lua.LValue) (lua.LValue, error)
 // posts back. Panics and Lua errors are wrapped with the source file.
 func (e *Engine) runAction(act *scriptAction, h Host) (err error) {
 	e.curHost = h
+	defer e.enterActionFile(act.file)()
 	defer func() {
 		e.curHost = nil
 		if r := recover(); r != nil {
@@ -439,7 +506,8 @@ func (e *Engine) runAction(act *scriptAction, h Host) (err error) {
 		}
 	}
 
-	co, _ := e.L.NewThread()
+	co, cancel := e.L.NewThread()
+	slot := coroutineSlot{co: co, cancel: cancel, ctx: ctxSt, key: act.key, file: act.file}
 	e.lastEnqueued = 0
 	st, rerr, vals := e.L.Resume(co, act.run, ctx)
 	switch st {
@@ -447,13 +515,15 @@ func (e *Engine) runAction(act *scriptAction, h Host) (err error) {
 		return nil
 	case lua.ResumeYield:
 		if len(vals) == 0 {
+			slot.drop()
 			return fmt.Errorf("%s: handler yielded without an intent id", act.file)
 		}
 		next, ok := vals[0].(lua.LNumber)
 		if !ok {
+			slot.drop()
 			return fmt.Errorf("%s: handler yielded non-numeric intent id %v", act.file, vals[0])
 		}
-		e.coroutines[IntentID(next)] = coroutineSlot{co: co, ctx: ctxSt}
+		e.coroutines[IntentID(next)] = slot
 		return nil
 	default:
 		return fmt.Errorf("%s: %w", act.file, rerr)
@@ -556,8 +626,9 @@ func (e *Engine) DrainLogs() []LogEntry {
 // log.For("script") at the level requested (case-insensitively matching
 // info/warn/warning/error/err/debug; anything else, including an empty
 // or unrecognized string, logs at info), tagging the record with the
-// source file when Load knows one (e.curFile, empty outside a Load
-// call). The structured logger is goroutine-safe and cheap, so calling
+// source file: the one being compiled (e.curFile, set only inside a
+// Load call) or else the one whose handler is running (e.curActionFile,
+// set for a dispatch or resume). The structured logger is goroutine-safe and cheap, so calling
 // it here — under e.mu, since every caller already reached this from
 // inside a Lua callback on the engine thread — is fine; it does not
 // block on the app or the TUI the way routing through a Cmd would.
@@ -569,6 +640,8 @@ func (e *Engine) logScript(level, msg string) {
 	var attrs []any
 	if e.curFile != "" {
 		attrs = []any{"file", e.curFile}
+	} else if e.curActionFile != "" {
+		attrs = []any{"file", e.curActionFile}
 	}
 	switch strings.ToLower(level) {
 	case "warn", "warning":

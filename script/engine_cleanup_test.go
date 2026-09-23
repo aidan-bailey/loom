@@ -1,10 +1,14 @@
 package script
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/aidan-bailey/loom/log"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -118,6 +122,11 @@ func TestShutdown_StopsRunawayHandler(t *testing.T) {
 // rather than hang quit. Once the call returns, the cancelled context
 // ends the handler at its next Lua instruction.
 func TestShutdown_GivesUpOnHandlerBlockedInGo(t *testing.T) {
+	var buf bytes.Buffer
+	prev := log.Structured
+	log.Structured = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(func() { log.Structured = prev })
+
 	e := NewEngine(nil)
 	defer e.Close()
 	require.NoError(t, e.LoadFromString("slow.lua",
@@ -139,6 +148,10 @@ func TestShutdown_GivesUpOnHandlerBlockedInGo(t *testing.T) {
 	shutdownWithin(t, e, 400*time.Millisecond, time.Second)
 	assert.GreaterOrEqual(t, time.Since(start), 400*time.Millisecond,
 		"Shutdown must wait out its bound for a busy handler before giving up")
+	warning := logLineContaining(buf.String(), "engine_busy_at_shutdown")
+	require.NotEmpty(t, warning, "giving up must log engine_busy_at_shutdown")
+	assert.Contains(t, warning, "key=x", "the warning must name the key of the stuck handler")
+	assert.Contains(t, warning, "file=slow.lua", "the warning must name the stuck handler's file")
 
 	release()
 	select {
@@ -171,4 +184,34 @@ func TestShutdown_IdleEngineDrainsAndCloses(t *testing.T) {
 	assert.Equal(t, 1, resumed, "post-yield work must run on shutdown")
 	assert.Empty(t, e.coroutines)
 	assert.Nil(t, e.L)
+}
+
+// TestInFlight_TracksDispatchAndResume: the record Shutdown's warning
+// reads names the handler holding the engine, whether it got there by
+// Dispatch or by ResumeWithHost, and is cleared when that call returns.
+func TestInFlight_TracksDispatchAndResume(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	require.NoError(t, e.LoadFromString("resume.lua",
+		`cs.bind("x", function(ctx) cs.actions.show_help(); ctx:config_dir() end)`))
+
+	h := &fakeHost{}
+	_, err := e.Dispatch(context.Background(), "x", h)
+	require.NoError(t, err)
+	require.Len(t, h.enqueuedIDs, 1)
+	assert.Nil(t, e.inFlight.Load(), "a returned Dispatch leaves nothing in flight")
+
+	bh := &blockingHost{fakeHost: &fakeHost{}, entered: make(chan struct{}), release: make(chan struct{})}
+	resumed := make(chan error, 1)
+	go func() { resumed <- e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], bh) }()
+	<-bh.entered
+
+	busy := e.inFlight.Load()
+	require.NotNil(t, busy, "a resume blocked in Go must be recorded as in flight")
+	assert.Equal(t, "x", busy.key)
+	assert.Equal(t, "resume.lua", busy.file)
+
+	close(bh.release)
+	require.NoError(t, <-resumed)
+	assert.Nil(t, e.inFlight.Load(), "a returned resume leaves nothing in flight")
 }
