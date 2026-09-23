@@ -47,14 +47,11 @@ func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 		listB.AddInstance(inst)
 	}
 
-	h := &home{
-		list:        listA,
-		focusedSlot: 0,
-		slots: []workspaceSlot{
-			{wsCtx: &config.WorkspaceContext{Name: "ws-a"}, list: listA},
-			{wsCtx: &config.WorkspaceContext{Name: "ws-b"}, list: listB},
-		},
-	}
+	h := &home{}
+	focusSlots(h, 0,
+		&workspaceSlot{wsCtx: &config.WorkspaceContext{Name: "ws-a"}, list: listA},
+		&workspaceSlot{wsCtx: &config.WorkspaceContext{Name: "ws-b"}, list: listB},
+	)
 
 	h.refreshPeerSections()
 
@@ -70,13 +67,8 @@ func TestRefreshPeerSections_SingleSlotClears(t *testing.T) {
 	listA := ui.NewList(&s)
 	listA.SetPeerSections([]ui.PeerSection{{Name: "stale", Idle: 1}})
 
-	h := &home{
-		list:        listA,
-		focusedSlot: 0,
-		slots: []workspaceSlot{
-			{wsCtx: &config.WorkspaceContext{Name: "ws-a"}, list: listA},
-		},
-	}
+	h := &home{}
+	focusSlots(h, 0, &workspaceSlot{wsCtx: &config.WorkspaceContext{Name: "ws-a"}, list: listA})
 
 	h.refreshPeerSections()
 

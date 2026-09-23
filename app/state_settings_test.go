@@ -13,11 +13,11 @@ import (
 )
 
 // newTestHomeWithActiveCtx extends newTestHome with a resolved
-// activeCtx, since handleStateSettingsKey needs ConfigDir to persist.
+// wsCtx, since handleStateSettingsKey needs ConfigDir to persist.
 func newTestHomeWithActiveCtx(t *testing.T) *home {
 	t.Helper()
 	m := newTestHome(t)
-	m.activeCtx = &config.WorkspaceContext{ConfigDir: t.TempDir()}
+	m.wsCtx = &config.WorkspaceContext{ConfigDir: t.TempDir()}
 	m.program = m.appConfig.DefaultProgram
 	return m
 }
@@ -64,7 +64,7 @@ func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 	}
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // submit
 
-	reloaded := config.LoadConfigFrom(m.activeCtx.ConfigDir)
+	reloaded := config.LoadConfigFrom(m.wsCtx.ConfigDir)
 	require.NotNil(t, reloaded)
 	assert.Equal(t, "team/", reloaded.BranchPrefix, "the edit must be persisted immediately, not only in memory")
 }

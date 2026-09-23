@@ -19,14 +19,11 @@ func TestJumpWaiting_CrossesToPeerWorkspace(t *testing.T) {
 	peer.list.AddInstance(waiter)
 
 	m := &home{
-		spinner:     spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		focusedSlot: 0, registry: &config.WorkspaceRegistry{},
-		tabBar: ui.NewWorkspaceTabBar(), overview: ui.NewOverview(),
-		slots:     []workspaceSlot{focus, peer},
-		list:      focus.list,
-		splitPane: focus.splitPane, storage: focus.storage,
-		appConfig: focus.appConfig, appState: focus.appState,
+		spinner:  spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		registry: &config.WorkspaceRegistry{},
+		tabBar:   ui.NewWorkspaceTabBar(), overview: ui.NewOverview(),
 	}
+	focusSlots(m, 0, focus, peer)
 	// The only waiting agent is in the non-focused peer workspace.
 	m.jumpWaiting(1)
 	assert.Equal(t, 1, m.focusedSlot, "focus crossed to the peer workspace")

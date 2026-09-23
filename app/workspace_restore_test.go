@@ -113,14 +113,16 @@ func preservedTerminalWorkspace(t *testing.T, name string) config.Workspace {
 // executor they build replaced by exec.
 func newRestoreHome(exec cmd2.Executor) *home {
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		tabBar:    ui.NewWorkspaceTabBar(),
-		errBox:    ui.NewErrBox(),
-		cmdExec:   exec,
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		},
+		ctx:     context.Background(),
+		state:   stateDefault,
+		menu:    ui.NewMenu(),
+		tabBar:  ui.NewWorkspaceTabBar(),
+		errBox:  ui.NewErrBox(),
+		cmdExec: exec,
 	}
 	h.list = ui.NewList(&h.spinner)
 	return h
@@ -205,7 +207,7 @@ func restoreModeHome(t *testing.T, exec cmd2.Executor, instancesJSON string) (*h
 	m := newRestoreHome(exec)
 	m.storage = storage
 	m.appState = appState
-	m.activeCtx = &config.WorkspaceContext{ConfigDir: dir}
+	m.wsCtx = &config.WorkspaceContext{ConfigDir: dir}
 	m.program = "true"
 	m.errBox.SetSize(400, 1)
 	return m, statePath

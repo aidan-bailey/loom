@@ -105,7 +105,7 @@ func TestSelectedResumableNotWorkspace_AllowsRecoverable(t *testing.T) {
 	list.AddInstance(inst)
 	list.SelectInstance(inst)
 
-	h := &home{list: list}
+	h := &home{workspaceSlot: &workspaceSlot{list: list}}
 	assert.True(t, selectedResumableNotWorkspace(h), "'r' must be enabled for a Recoverable orphan")
 }
 

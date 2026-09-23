@@ -212,7 +212,7 @@ func (m *home) switchWorkspaceSlot(delta int) {
 	if len(m.slots) <= 1 {
 		return
 	}
-	m.saveCurrentSlot()
+	m.leaveFocusedSlot()
 	newIdx := (m.focusedSlot + delta + len(m.slots)) % len(m.slots)
 	m.loadSlot(newIdx)
 	m.updateTabBarStatuses()

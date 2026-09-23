@@ -95,7 +95,7 @@ func (m *home) jumpWaiting(dir int) {
 		inst := list.GetInstances()[p.inst]
 		if inst.GetStatus() == session.Prompting || inst.BellPending() {
 			if len(m.slots) != 0 && p.slot != m.focusedSlot {
-				m.saveCurrentSlot()
+				m.leaveFocusedSlot()
 				m.loadSlot(p.slot)
 			}
 			m.list.SetSelectedInstance(p.inst)
@@ -182,7 +182,7 @@ func (m *home) focusCursorSlot() {
 		return
 	}
 	if c.slot != m.focusedSlot {
-		m.saveCurrentSlot()
+		m.leaveFocusedSlot()
 		m.loadSlot(c.slot)
 	}
 	if c.inst >= 0 && c.inst < len(m.list.GetInstances()) {
@@ -193,7 +193,7 @@ func (m *home) focusCursorSlot() {
 // peerSectionFor summarizes one non-focused slot's instance statuses
 // into a PeerSection for refreshPeerSections (rail). Main-goroutine
 // only.
-func (m *home) peerSectionFor(slot workspaceSlot) ui.PeerSection {
+func (m *home) peerSectionFor(slot *workspaceSlot) ui.PeerSection {
 	p := ui.PeerSection{Name: slot.wsCtx.Name}
 	for _, inst := range slot.list.GetInstances() {
 		st := inst.GetStatus()
@@ -211,12 +211,12 @@ func (m *home) peerSectionFor(slot workspaceSlot) ui.PeerSection {
 }
 
 // overviewGroupName is the label for the active group in overview mode:
-// the workspace name, or "global" in classic/global mode (activeCtx nil
+// the workspace name, or "global" in classic/global mode (wsCtx nil
 // or unnamed) so the header never renders empty and `z` still has a
 // stable collapse key.
 func (m *home) overviewGroupName() string {
-	if m.activeCtx != nil && m.activeCtx.Name != "" {
-		return m.activeCtx.Name
+	if m.wsCtx != nil && m.wsCtx.Name != "" {
+		return m.wsCtx.Name
 	}
 	return "global"
 }
@@ -242,7 +242,7 @@ func (m *home) fleetSlotOrder() []int {
 
 // slotGroupName is the display name for a slot's overview group,
 // falling back to "global" for the unnamed classic slot.
-func (m *home) slotGroupName(slot workspaceSlot) string {
+func (m *home) slotGroupName(slot *workspaceSlot) string {
 	if slot.wsCtx != nil && slot.wsCtx.Name != "" {
 		return slot.wsCtx.Name
 	}

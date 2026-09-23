@@ -51,16 +51,18 @@ func TestApplyWorkspaceToggle_GlobalToGlobalPersists(t *testing.T) {
 	list := ui.NewList(&s)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		storage:   storage,
-		tabBar:    ui.NewWorkspaceTabBar(),
-		errBox:    ui.NewErrBox(),
-		// registry = nil, slots = nil — global mode.
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+			storage:   storage,
+		},
+		ctx:    context.Background(),
+		state:  stateDefault,
+		menu:   ui.NewMenu(),
+		tabBar: ui.NewWorkspaceTabBar(),
+		errBox: ui.NewErrBox(),
+		// registry = nil, slots = nil — global mode.,
 	}
 
 	require.Equal(t, 0, rec.calls, "no save calls before invoke")
@@ -89,15 +91,17 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 	list := ui.NewList(&s)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		storage:   storage,
-		tabBar:    ui.NewWorkspaceTabBar(),
-		errBox:    ui.NewErrBox(),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+			storage:   storage,
+		},
+		ctx:    context.Background(),
+		state:  stateDefault,
+		menu:   ui.NewMenu(),
+		tabBar: ui.NewWorkspaceTabBar(),
+		errBox: ui.NewErrBox(),
 		// Keep activation off tmux entirely: a recording executor, and a
 		// workspace whose terminal record already exists (preserved), so
 		// no workspace terminal is created and started.
@@ -127,29 +131,31 @@ func TestEnterGlobalMode_ClearsActiveCtxAndSlots(t *testing.T) {
 	list := ui.NewList(&s)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		tabBar:    ui.NewWorkspaceTabBar(),
-		errBox:    ui.NewErrBox(),
-		activeCtx: &config.WorkspaceContext{Name: "stale-ws"},
-		// registry = nil so the SetOpenWorkspaces side effect is skipped.
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+			wsCtx:     &config.WorkspaceContext{Name: "stale-ws"},
+		},
+		ctx:    context.Background(),
+		state:  stateDefault,
+		menu:   ui.NewMenu(),
+		tabBar: ui.NewWorkspaceTabBar(),
+		errBox: ui.NewErrBox(),
+		// registry = nil so the SetOpenWorkspaces side effect is skipped.,
 	}
 
 	h.enterGlobalMode()
 
 	assert.Empty(t, h.slots, "slots must be cleared")
-	assert.Nil(t, h.activeCtx, "activeCtx must be nil in global mode")
+	assert.Nil(t, h.wsCtx, "wsCtx must be nil in global mode")
 	assert.NotNil(t, h.storage, "storage must be reconstructed for global cfgDir")
 	assert.NotNil(t, h.list, "list must be reset to a fresh ui.List")
 }
 
 // TestEnterGlobalMode_CleansUpWorkbench guards the picker escape hatch
 // (W → deselect-all) that reaches enterGlobalMode without passing the
-// saveCurrentSlot/loadSlot choke points: workbench residue (wbRatio,
+// leaveFocusedSlot/loadSlot choke points: workbench residue (wbRatio,
 // force-hidden split terminal) must be cleaned up before the slots are
 // dropped, or handleQuit later flushes the stale ratio into the wrong
 // (global) state.json.
@@ -161,16 +167,18 @@ func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
 	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: split,
-		workbench: ui.NewWorkbench(ui.NewDiffPane(), split.Terminal()),
-		tabBar:    ui.NewWorkspaceTabBar(),
-		errBox:    ui.NewErrBox(),
-		activeCtx: &config.WorkspaceContext{Name: "stale-ws"},
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: split,
+			workbench: ui.NewWorkbench(ui.NewDiffPane(), split.Terminal()),
+			wsCtx:     &config.WorkspaceContext{Name: "stale-ws"},
+		},
+		ctx:    context.Background(),
+		state:  stateDefault,
+		menu:   ui.NewMenu(),
+		tabBar: ui.NewWorkspaceTabBar(),
+		errBox: ui.NewErrBox(),
 	}
 	// Simulate an active workbench: terminal force-hidden, non-default ratio.
 	h.viewMode = viewWorkbench
@@ -212,40 +220,36 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 	slotBRecListings := ui.NewList(&s)
 
 	h := &home{
-		ctx:         context.Background(),
-		state:       stateDefault,
-		appConfig:   config.DefaultConfig(),
-		list:        slotARecListings,
-		menu:        ui.NewMenu(),
-		splitPane:   ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		tabBar:      ui.NewWorkspaceTabBar(),
-		errBox:      ui.NewErrBox(),
-		activeCtx:   &config.WorkspaceContext{Name: "ws-a"},
-		focusedSlot: 0,
-		slots: []workspaceSlot{
-			{
-				wsCtx:     &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()},
-				storage:   storageA,
-				appConfig: config.DefaultConfig(),
-				list:      slotARecListings,
-				splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-			},
-			{
-				wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
-				storage:   storageB,
-				appConfig: config.DefaultConfig(),
-				list:      slotBRecListings,
-				splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-			},
-		},
+		ctx:    context.Background(),
+		state:  stateDefault,
+		menu:   ui.NewMenu(),
+		tabBar: ui.NewWorkspaceTabBar(),
+		errBox: ui.NewErrBox(),
 	}
+	focusSlots(h, 0,
+		&workspaceSlot{
+			wsCtx:     &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()},
+			storage:   storageA,
+			appConfig: config.DefaultConfig(),
+			list:      slotARecListings,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		},
+		&workspaceSlot{
+			wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
+			storage:   storageB,
+			appConfig: config.DefaultConfig(),
+			list:      slotBRecListings,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		},
+	)
 
 	h.enterGlobalMode()
 
 	assert.GreaterOrEqual(t, slotRecA.calls, 1, "slot ws-a must be persisted before dropping")
 	assert.GreaterOrEqual(t, slotRecB.calls, 1, "slot ws-b must be persisted before dropping")
 	assert.Empty(t, h.slots, "all slots dropped after enterGlobalMode")
-	assert.Nil(t, h.activeCtx)
+	assert.Nil(t, h.wsCtx)
+	require.NoError(t, h.checkSlotInvariant())
 }
 
 // TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact is the
@@ -275,28 +279,22 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	ctxA := &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}
 	h := &home{
-		ctx:         context.Background(),
-		state:       stateDefault,
-		appConfig:   config.DefaultConfig(),
-		list:        listA,
-		menu:        ui.NewMenu(),
-		splitPane:   split,
-		storage:     storageA,
-		tabBar:      ui.NewWorkspaceTabBar(),
-		errBox:      ui.NewErrBox(),
-		activeCtx:   ctxA,
-		focusedSlot: 0,
-		slots: []workspaceSlot{
-			{wsCtx: ctxA, storage: storageA, appConfig: config.DefaultConfig(), list: listA, splitPane: split},
-			{
-				wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
-				storage:   storageB,
-				appConfig: config.DefaultConfig(),
-				list:      ui.NewList(&s),
-				splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-			},
-		},
+		ctx:    context.Background(),
+		state:  stateDefault,
+		menu:   ui.NewMenu(),
+		tabBar: ui.NewWorkspaceTabBar(),
+		errBox: ui.NewErrBox(),
 	}
+	focusSlots(h, 0,
+		&workspaceSlot{wsCtx: ctxA, storage: storageA, appConfig: config.DefaultConfig(), list: listA, splitPane: split},
+		&workspaceSlot{
+			wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
+			storage:   storageB,
+			appConfig: config.DefaultConfig(),
+			list:      ui.NewList(&s),
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		},
+	)
 	h.errBox.SetSize(400, 1)
 
 	cmd := h.applyWorkspaceToggle(nil)
@@ -306,7 +304,7 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	require.Len(t, h.slots, 2, "no workspace slot may be deactivated")
 	assert.Zero(t, recA.calls, "slot ws-a must not be saved/deactivated")
 	assert.Zero(t, recB.calls, "slot ws-b must not be saved/deactivated")
-	assert.Same(t, ctxA, h.activeCtx, "still in workspace mode")
+	assert.Same(t, ctxA, h.wsCtx, "still in workspace mode")
 	assert.Same(t, storageA, h.storage, "storage must not be swapped for the unreadable global one")
 	assert.Same(t, listA, h.list)
 

@@ -69,10 +69,10 @@ func newSnapshotTestInstance(t *testing.T, title string) *session.Instance {
 
 // TestScriptHost_ReadsDoNotRaceUpdate runs a user script's read-heavy
 // handler in the dispatch Cmd goroutine while this goroutine plays the
-// part of Update: mutating the list and swapping m.list, m.splitPane and
-// m.activeCtx the way loadSlot does. The host's reads must come from a
-// snapshot taken in dispatchScript, not from the live model. Must pass
-// under `go test -race`.
+// part of Update: mutating the list, swapping the embedded focused slot
+// the way loadSlot does, and rewriting the focused slot's wsCtx. The
+// host's reads must come from a snapshot taken in dispatchScript, not
+// from the live model. Must pass under `go test -race`.
 func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 	m := newSnapshotTestHome(t)
 
@@ -83,6 +83,8 @@ func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 	ctxA := &config.WorkspaceContext{ConfigDir: t.TempDir()}
 	ctxB := &config.WorkspaceContext{ConfigDir: t.TempDir()}
 	extra := newSnapshotTestInstance(t, "extra")
+	slotA := m.workspaceSlot
+	slotB := &workspaceSlot{list: altList, splitPane: altSplit, appConfig: config.DefaultConfig()}
 
 	cmd, ok := m.dispatchScript("X")
 	require.True(t, ok)
@@ -98,12 +100,12 @@ func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 			m.list.AddInstance(extra)
 			m.list.SetSelectedInstance(i % 4)
 			m.list.RemoveInstance(extra)
-			m.list, altList = altList, m.list
-			m.splitPane, altSplit = altSplit, m.splitPane
 			if i%2 == 0 {
-				m.activeCtx = ctxA
+				m.workspaceSlot = slotB
+				m.wsCtx = ctxB
 			} else {
-				m.activeCtx = ctxB
+				m.workspaceSlot = slotA
+				m.wsCtx = ctxA
 			}
 		}
 	}

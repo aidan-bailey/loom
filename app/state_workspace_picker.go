@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"github.com/aidan-bailey/loom/config"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -26,8 +25,6 @@ func handleStateWorkspaceKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.dismissOverlay()
 		m.state = stateDefault
 		if selected != nil {
-			wsCtx := config.WorkspaceContextFor(selected)
-			m.activeCtx = wsCtx
 			if err := m.activateWorkspace(*selected); err != nil {
 				return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 			}

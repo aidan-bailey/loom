@@ -30,8 +30,8 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// config dir — otherwise the change lives only in memory and
 		// silently vanishes on restart.
 		dir := ""
-		if m.activeCtx != nil {
-			dir = m.activeCtx.ConfigDir
+		if m.wsCtx != nil {
+			dir = m.wsCtx.ConfigDir
 		} else if globalDir, err := config.GetConfigDir(); err == nil {
 			dir = globalDir
 		}

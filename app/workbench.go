@@ -78,7 +78,7 @@ func (m *home) enterWorkbench() tea.Cmd {
 // cancels any in-progress markdown edit, restores the split terminal to
 // its pre-entry setting, and lands in focus mode. Idempotent — no-op
 // unless currently in workbench mode. Shared by exitWorkbench (explicit
-// esc/tab) and the slot-switch choke points saveCurrentSlot/loadSlot:
+// esc/tab) and the slot-switch choke points leaveFocusedSlot/loadSlot:
 // workbench mode does not survive an implicit workspace switch (v1
 // design decision — a half-cleaned workbench is worse than landing in
 // the target workspace's focus mode).

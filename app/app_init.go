@@ -107,26 +107,32 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		return nil, fmt.Errorf("initialize storage: %w", err)
 	}
 
+	// The classic slot: the startup context's state, focused until (and
+	// unless) a workspace tab opens. On the restore path its storage is
+	// never loaded unless no workspace activates (loadStartupStorageFallback).
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	h := &home{
-		ctx:         ctx,
-		activeCtx:   wsCtx,
+		ctx: ctx,
+		workspaceSlot: &workspaceSlot{
+			wsCtx:     wsCtx,
+			storage:   storage,
+			appConfig: appConfig,
+			appState:  appState,
+			splitPane: sp,
+			workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
+		},
 		registry:    registry,
 		spinner:     spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		menu:        ui.NewMenu(),
-		splitPane:   sp,
-		workbench:   ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 		overview:    ui.NewOverview(),
 		errBox:      ui.NewErrBox(),
-		storage:     storage,
-		appConfig:   appConfig,
 		program:     program,
 		state:       stateDefault,
-		appState:    appState,
 		tabBar:      ui.NewWorkspaceTabBar(),
 		skipScripts: noScripts,
 		hostFocused: true,
 	}
+	// Built after h so the list can point at h.spinner.
 	h.list = ui.NewList(&h.spinner)
 	if wsCtx != nil && wsCtx.Name != "" {
 		h.list.SetWorkspaceName(wsCtx.Name)
@@ -218,7 +224,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	return h, nil
 }
 
-// loadStartupStorage loads the startup storage (m.storage, for m.activeCtx)
+// loadStartupStorage loads the startup storage (m.storage, for m.wsCtx)
 // into the focused list with classic-startup semantics: LoadAndReconcile,
 // crash-restart, inline orphan recovery, then the workspace-terminal
 // auto-create for a workspace context. Classic startup runs it directly;
@@ -230,7 +236,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 // so nothing can overwrite the unreadable payload.
 func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recoverySummary, error) {
 	storage := m.storage
-	wsCtx := m.activeCtx
+	wsCtx := m.wsCtx
 	cfgDir := ""
 	if wsCtx != nil {
 		cfgDir = wsCtx.ConfigDir
@@ -328,8 +334,8 @@ func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recove
 // rewritten to match what actually activated.
 func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	explicit := ""
-	if m.activeCtx != nil {
-		explicit = m.activeCtx.Name
+	if m.wsCtx != nil {
+		explicit = m.wsCtx.Name
 	}
 
 	desired := saved

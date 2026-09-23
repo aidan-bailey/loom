@@ -12,9 +12,10 @@ import (
 )
 
 // fleetSlot builds a fully-wired workspaceSlot (tempdir storage/state,
-// own list + splitPane) so loadSlot/saveCurrentSlot never nil-deref.
+// own list, splitPane and workbench) so loadSlot/leaveFocusedSlot never
+// nil-deref.
 // Shared across the fleet nav/teardown tests.
-func fleetSlot(t *testing.T, name string, titles ...string) workspaceSlot {
+func fleetSlot(t *testing.T, name string, titles ...string) *workspaceSlot {
 	t.Helper()
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	list := ui.NewList(&s)
@@ -25,10 +26,12 @@ func fleetSlot(t *testing.T, name string, titles ...string) workspaceSlot {
 	st := config.LoadStateFrom(dir)
 	stor, err := session.NewStorage(st, dir)
 	require.NoError(t, err)
-	return workspaceSlot{
+	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+	return &workspaceSlot{
 		wsCtx:     &config.WorkspaceContext{Name: name, ConfigDir: dir},
 		list:      list,
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		splitPane: sp,
+		workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 		storage:   stor,
 		appConfig: config.DefaultConfig(),
 		appState:  st,
@@ -36,27 +39,20 @@ func fleetSlot(t *testing.T, name string, titles ...string) workspaceSlot {
 }
 
 // fleetHome wires a focused slot ("afocus", f1/f2) and a non-focused
-// peer ("bpeer", b1), with home's active fields hoisted from the focused
-// slot.
+// peer ("bpeer", b1).
 func fleetHome(t *testing.T) *home {
 	t.Helper()
 	focus := fleetSlot(t, "afocus", "f1", "f2")
 	peer := fleetSlot(t, "bpeer", "b1")
 	m := &home{
-		spinner:     spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		viewMode:    viewOverview,
-		focusedSlot: 0,
-		overview:    ui.NewOverview(), // fleetOrder() reads m.overview.IsCollapsed
-		tabBar:      ui.NewWorkspaceTabBar(),
-		menu:        ui.NewMenu(),
-		registry:    &config.WorkspaceRegistry{},
-		slots:       []workspaceSlot{focus, peer},
-		list:        focus.list,
-		splitPane:   focus.splitPane,
-		storage:     focus.storage,
-		appConfig:   focus.appConfig,
-		appState:    focus.appState,
+		spinner:  spinner.New(spinner.WithSpinner(spinner.MiniDot)),
+		viewMode: viewOverview,
+		overview: ui.NewOverview(), // fleetOrder() reads m.overview.IsCollapsed
+		tabBar:   ui.NewWorkspaceTabBar(),
+		menu:     ui.NewMenu(),
+		registry: &config.WorkspaceRegistry{},
 	}
+	focusSlots(m, 0, focus, peer)
 	m.seedOverviewCursor()
 	return m
 }
@@ -84,6 +80,6 @@ func TestFocusCursorSlot_Focuses(t *testing.T) {
 
 	m.focusCursorSlot()
 	assert.Equal(t, 1, m.focusedSlot, "focus moved to cursor slot")
-	assert.Equal(t, m.slots[1].list, m.list, "focused list hoisted")
+	assert.Same(t, m.slots[1], m.workspaceSlot, "cursor slot is the focused slot")
 	assert.Equal(t, 0, m.list.SelectedIdx(), "cursor instance selected")
 }

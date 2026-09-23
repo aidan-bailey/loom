@@ -30,17 +30,19 @@ func newTestHome(t *testing.T) *home {
 	require.NoError(t, err)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		overview:  ui.NewOverview(),
-		tabBar:    ui.NewWorkspaceTabBar(),
-		errBox:    ui.NewErrBox(),
-		storage:   storage,
-		appState:  state,
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+			storage:   storage,
+			appState:  state,
+		},
+		ctx:      context.Background(),
+		state:    stateDefault,
+		menu:     ui.NewMenu(),
+		overview: ui.NewOverview(),
+		tabBar:   ui.NewWorkspaceTabBar(),
+		errBox:   ui.NewErrBox(),
 	}
 	h.scripts = script.NewEngine(buildReservedKeys())
 	h.scripts.LoadDefaults()

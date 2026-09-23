@@ -117,9 +117,11 @@ func TestRecoverySummary_String(t *testing.T) {
 func TestConfirmationModalStateTransitions(t *testing.T) {
 	// Create a minimal home struct for testing state transitions
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+		},
+		ctx:   context.Background(),
+		state: stateDefault,
 	}
 
 	t.Run("shows confirmation on D press", func(t *testing.T) {
@@ -200,12 +202,14 @@ func TestConfirmationModalKeyHandling(t *testing.T) {
 
 	// Create enough of home struct to test handleKeyPress in confirmation state
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateConfirm,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		},
+		ctx:   context.Background(),
+		state: stateConfirm,
+		menu:  ui.NewMenu(),
 	}
 	h.setOverlay(overlay.NewConfirmationOverlay("Kill session?"), overlayConfirmation)
 
@@ -332,11 +336,13 @@ func TestConfirmationFlowSimulation(t *testing.T) {
 	list.SetSelectedInstance(0)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+		},
+		ctx:   context.Background(),
+		state: stateDefault,
+		menu:  ui.NewMenu(),
 	}
 
 	// Simulate what happens when D is pressed
@@ -361,9 +367,11 @@ func TestConfirmationFlowSimulation(t *testing.T) {
 // TestConfirmActionWithDifferentTypes tests that confirmAction works with different action types
 func TestConfirmActionWithDifferentTypes(t *testing.T) {
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+		},
+		ctx:   context.Background(),
+		state: stateDefault,
 	}
 
 	t.Run("works with simple action returning nil", func(t *testing.T) {
@@ -454,9 +462,11 @@ func TestConfirmActionWithDifferentTypes(t *testing.T) {
 // TestMultipleConfirmationsDontInterfere tests that multiple confirmations don't interfere with each other
 func TestMultipleConfirmationsDontInterfere(t *testing.T) {
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+		},
+		ctx:   context.Background(),
+		state: stateDefault,
 	}
 
 	// First confirmation
@@ -555,13 +565,15 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 	require.NoError(t, err)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		splitPane: splitPane,
-		menu:      menu,
-		storage:   storage,
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: splitPane,
+			storage:   storage,
+		},
+		ctx:   context.Background(),
+		state: stateDefault,
+		menu:  menu,
 	}
 
 	// Simulate instanceStartedMsg (no prompt, no error)
@@ -580,9 +592,11 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 // TestConfirmationModalVisualAppearance tests that confirmation modal has distinct visual appearance
 func TestConfirmationModalVisualAppearance(t *testing.T) {
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+		},
+		ctx:   context.Background(),
+		state: stateDefault,
 	}
 
 	// Create a test confirmation overlay
@@ -627,12 +641,14 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	list.SetSelectedInstance(0)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		},
+		ctx:   context.Background(),
+		state: stateDefault,
+		menu:  ui.NewMenu(),
 	}
 
 	// Set up a task like the kill handler does
@@ -669,13 +685,15 @@ func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
 	list.AddInstance(instance)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		errBox:    ui.NewErrBox(),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		},
+		ctx:    context.Background(),
+		state:  stateDefault,
+		menu:   ui.NewMenu(),
+		errBox: ui.NewErrBox(),
 	}
 
 	msg := transitionFailedMsg{
@@ -722,12 +740,14 @@ func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 	list := ui.NewList(&s)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+		},
+		ctx:   context.Background(),
+		state: stateDefault,
+		menu:  ui.NewMenu(),
 	}
 
 	syncCalled := false
@@ -765,15 +785,17 @@ func TestHandleQuitStaysInTUIOnSaveError(t *testing.T) {
 	list.AddInstance(inst)
 
 	h := &home{
-		ctx:       context.Background(),
-		state:     stateDefault,
-		appConfig: config.DefaultConfig(),
-		list:      list,
-		menu:      ui.NewMenu(),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		storage:   storage,
-		appState:  state,
-		errBox:    ui.NewErrBox(),
+		workspaceSlot: &workspaceSlot{
+			appConfig: config.DefaultConfig(),
+			list:      list,
+			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+			storage:   storage,
+			appState:  state,
+		},
+		ctx:    context.Background(),
+		state:  stateDefault,
+		menu:   ui.NewMenu(),
+		errBox: ui.NewErrBox(),
 	}
 
 	// Make the config dir read-only so the next SaveInstances fails.
@@ -809,7 +831,7 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 	list.AddInstance(inst)
 
 	wsCtx := &config.WorkspaceContext{Name: "test-ws", ConfigDir: cfgDir}
-	slot := workspaceSlot{
+	slot := &workspaceSlot{
 		wsCtx:     wsCtx,
 		storage:   storage,
 		appConfig: config.DefaultConfig(),
@@ -819,19 +841,12 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 	}
 
 	h := &home{
-		ctx:         context.Background(),
-		state:       stateDefault,
-		appConfig:   config.DefaultConfig(),
-		list:        list,
-		menu:        ui.NewMenu(),
-		splitPane:   ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		storage:     storage,
-		appState:    state,
-		errBox:      ui.NewErrBox(),
-		slots:       []workspaceSlot{slot},
-		focusedSlot: 0,
-		activeCtx:   wsCtx,
+		ctx:    context.Background(),
+		state:  stateDefault,
+		menu:   ui.NewMenu(),
+		errBox: ui.NewErrBox(),
 	}
+	focusSlots(h, 0, slot)
 
 	require.NoError(t, os.Chmod(cfgDir, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(cfgDir, 0o700) })

@@ -126,16 +126,21 @@ type overviewCursor struct {
 type home struct {
 	ctx context.Context
 
+	// *workspaceSlot is the focused workspace slot, embedded so its
+	// per-workspace state (m.wsCtx, m.storage, m.appConfig, m.appState,
+	// m.list, m.splitPane, m.workbench) reads and writes straight through
+	// to the one slot that owns it — there is no copy on home to keep in
+	// sync. Invariant (checkSlotInvariant): with workspace tabs open
+	// (len(m.slots) > 0) it IS m.slots[m.focusedSlot]; in classic/global
+	// mode (no tabs) it is the classic slot, which is not in m.slots.
+	// Never nil after newHome. Only loadSlot and enterGlobalMode
+	// reassign it.
+	*workspaceSlot
+
 	// -- Storage and Configuration --
 
 	program string
 
-	// storage is the interface for saving/loading data to/from the app's state
-	storage *session.Storage
-	// appConfig stores persistent application configuration
-	appConfig *config.Config
-	// appState stores persistent application state like seen help screens
-	appState config.AppState
 	// cmdExec, when non-nil, replaces cmd2.MakeExecutor() on the workspace
 	// load paths (activateWorkspace, enterGlobalMode, and the restore-time
 	// orphan sweep) — a test seam so those paths can run without touching
@@ -192,22 +197,17 @@ type home struct {
 
 	// -- UI Components --
 
-	// list displays the list of instances
-	list *ui.List
 	// menu displays the bottom menu
 	menu *ui.Menu
-	// splitPane displays the agent and terminal panes with diff overlay
-	splitPane *ui.SplitPane
 	// viewMode selects focus (rail + panes) or overview (fleet card
 	// grid). Restored from config.UIPrefs.ViewMode at startup.
 	viewMode viewMode
 	// overview renders the fleet-triage card grid when viewMode is
 	// viewOverview.
 	overview *ui.Overview
-	// workbench renders the right content panel when viewMode is
-	// viewWorkbench; the left half is m.splitPane with its terminal
-	// hidden (wbPrevTerminalHidden restores the user's setting on exit).
-	workbench            *ui.Workbench
+	// wbPrevTerminalHidden is the user's split-terminal setting from
+	// before workbench entry (the workbench force-hides it); restored on
+	// exit by cleanupWorkbench.
 	wbPrevTerminalHidden bool
 	// wbLeftWidth is the workbench's agent-column width in screen
 	// cells, cached for mouse-wheel routing (like listWidth).
@@ -267,13 +267,14 @@ type home struct {
 
 	// -- Workspace slots --
 
-	// activeCtx is the WorkspaceContext for the currently focused workspace.
-	activeCtx *config.WorkspaceContext
 	// registry is the loaded workspace registry, retained for the picker flow.
 	registry *config.WorkspaceRegistry
-	// slots holds per-workspace state for all active workspaces
-	slots []workspaceSlot
-	// focusedSlot is the index into slots for the currently displayed workspace
+	// slots holds per-workspace state for every open workspace tab, in
+	// tab order. Empty in classic/global mode. The focused one is also
+	// embedded as m.workspaceSlot (see the invariant there).
+	slots []*workspaceSlot
+	// focusedSlot is the index into slots for the currently displayed
+	// workspace; meaningless (0) when slots is empty.
 	focusedSlot int
 	// tabBar renders workspace tabs at the top of the TUI
 	tabBar *ui.WorkspaceTabBar
@@ -366,7 +367,7 @@ type home struct {
 	// until the throttled ratioSaveMsg flushes them into one mutateUIPrefs
 	// write — key-repeat resize would otherwise fsync state.json per
 	// keystroke. applyStoredRatio reads it first (pending is newest
-	// truth); saveCurrentSlot/handleQuit flush it synchronously.
+	// truth); leaveFocusedSlot/handleQuit flush it synchronously.
 	// The gateRatioSave gate dedupes the flush tick (see
 	// maybeArmRatioSave). Update-goroutine only.
 	pendingRatioSaves map[string]float64
@@ -536,7 +537,7 @@ func (m *home) resizeSplit(delta float64) {
 // title→ratio map into one persisted mutateUIPrefs write, pruning
 // SplitRatios entries whose instances are no longer in the
 // (per-workspace) list so killed sessions don't leak entries forever.
-// Callers: the throttled ratioSaveMsg tick, saveCurrentSlot (pending
+// Callers: the throttled ratioSaveMsg tick, leaveFocusedSlot (pending
 // entries must land in the CURRENT slot's state.json before a slot
 // swap — workspaces can share instance titles like "main"), and
 // handleQuit (so the last resize survives exit). No-op when nothing is
@@ -1465,8 +1466,6 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err := m.activateWorkspace(*ws); err != nil {
 			return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 		}
-		m.activeCtx = config.WorkspaceContextFor(ws)
-
 		if err := m.registry.UpdateLastUsed(ws.Name); err != nil {
 			log.For("app").Debug("registry.update_last_used_failed", "workspace", ws.Name, "err", err)
 		}
@@ -1717,13 +1716,13 @@ func (m *home) showRecoverySummary(s recoverySummary) {
 // bug this function comment now documents has been fixed.
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	// Persist any not-yet-flushed split resize before exit (the throttle
-	// tick may still be in flight; covers the single-slot path too, where
-	// saveCurrentSlot below is a no-op). The workbench ratio flushes the
-	// same way — it is only written on workbench exit otherwise.
+	// tick may still be in flight; covers the classic path too, which
+	// runs no leaveFocusedSlot). The workbench ratio flushes the same
+	// way — it is only written on workbench exit otherwise.
 	m.flushPendingRatioSaves()
 	m.flushWorkbenchRatio()
 	if len(m.slots) > 0 {
-		m.saveCurrentSlot()
+		m.leaveFocusedSlot()
 		var firstErr error
 		for _, slot := range m.slots {
 			if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
@@ -2360,14 +2359,14 @@ func (m *home) repoPath() string {
 
 // configDir returns the config directory for the focused workspace slot.
 // Mirrors repoPath() so both functions stay consistent if focusedSlot moves
-// out of sync with activeCtx. Returns empty string when no workspace is
+// out of sync with wsCtx. Returns empty string when no workspace is
 // active (triggers fallback to GetConfigDir).
 func (m *home) configDir() string {
 	if len(m.slots) > 0 && m.focusedSlot >= 0 && m.focusedSlot < len(m.slots) {
 		return m.slots[m.focusedSlot].wsCtx.ConfigDir
 	}
-	if m.activeCtx != nil {
-		return m.activeCtx.ConfigDir
+	if m.wsCtx != nil {
+		return m.wsCtx.ConfigDir
 	}
 	return ""
 }

@@ -131,7 +131,7 @@ func TestWorkbench_NonWhitelistedKeysNoOp(t *testing.T) {
 // does not survive an implicit workspace slot switch: the departing
 // slot's terminal-hidden setting is restored, any in-progress markdown
 // edit is canceled, and the mode drops out of workbench — the exact
-// saveCurrentSlot → loadSlot sequence every switch path (workspace nav
+// leaveFocusedSlot → loadSlot sequence every switch path (workspace nav
 // keys, picker toggle, cross-workspace jumps) runs.
 func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 	m := newWorkbenchTestHome(t)
@@ -142,28 +142,17 @@ func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 	require.NoError(t, err)
 	listB := ui.NewList(&m.spinner)
 	splitB := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
-	m.slots = []workspaceSlot{
-		{
-			wsCtx:     &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()},
-			storage:   m.storage,
-			appConfig: m.appConfig,
-			appState:  m.appState,
-			list:      m.list,
-			splitPane: m.splitPane,
-			workbench: m.workbench,
-		},
-		{
-			wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
-			storage:   storageB,
-			appConfig: config.DefaultConfig(),
-			appState:  stateB,
-			list:      listB,
-			splitPane: splitB,
-			workbench: ui.NewWorkbench(ui.NewDiffPane(), splitB.Terminal()),
-		},
-	}
-	m.focusedSlot = 0
-	m.activeCtx = m.slots[0].wsCtx
+	// The test home's own slot becomes tab ws-a, focused.
+	m.wsCtx = &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}
+	focusSlots(m, 0, m.workspaceSlot, &workspaceSlot{
+		wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
+		storage:   storageB,
+		appConfig: config.DefaultConfig(),
+		appState:  stateB,
+		list:      listB,
+		splitPane: splitB,
+		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitB.Terminal()),
+	})
 
 	departingSplit := m.splitPane
 	departingWb := m.workbench
@@ -179,7 +168,7 @@ func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 	require.True(t, departingWb.Markdown.Editing())
 
 	// The choke-point sequence every implicit switch path runs.
-	m.saveCurrentSlot()
+	m.leaveFocusedSlot()
 	m.loadSlot(1)
 
 	assert.NotEqual(t, viewWorkbench, m.viewMode,

@@ -76,7 +76,7 @@ func TestMaybeArmRatioSave_OneTickAndEmptyDeliveryDisarms(t *testing.T) {
 	m.resizeSplit(+0.05)
 	assert.Nil(t, m.maybeArmRatioSave(), "a tick in flight must not be stacked")
 
-	m.flushPendingRatioSaves() // saveCurrentSlot/handleQuit path
+	m.flushPendingRatioSaves() // leaveFocusedSlot/handleQuit path
 	_, _ = m.Update(gatedMsg{kind: gateRatioSave, msg: ratioSaveMsg{}})
 	assert.False(t, m.gate(gateRatioSave).inFlight)
 
