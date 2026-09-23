@@ -135,8 +135,13 @@ func newTestPausableInstanceWithExec(t *testing.T, cmdExec cmd_test.MockCmdExec)
 	worktreePath := filepath.Join(configDir, "worktrees", branchName+"_fixture")
 	require.NoError(t, os.MkdirAll(filepath.Dir(worktreePath), 0755))
 	runInRepo("git", "worktree", "add", "-b", branchName, worktreePath)
+	// A real base commit, as Start records one, so diff and resume paths
+	// see what a started session carries.
+	baseOut, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	baseSHA := strings.TrimSpace(string(baseOut))
 
-	gw := git.NewGitWorktreeFromStorage(repoDir, worktreePath, "pause-test", branchName, "", true, configDir)
+	gw := git.NewGitWorktreeFromStorage(repoDir, worktreePath, "pause-test", branchName, baseSHA, true, configDir)
 
 	ptyFactory := fakePtyFactory{t: t}
 	ts := tmux.NewTmuxSessionWithDeps("pause-test", "true", ptyFactory, cmdExec)

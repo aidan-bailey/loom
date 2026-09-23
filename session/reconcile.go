@@ -100,8 +100,11 @@ func DetermineRecoveryAction(status Status, tmuxAlive, worktreeExists, isWorkspa
 	// We must NOT Restore (attaching would treat a half-built session as
 	// healthy and emit bogus diffs against an empty base) or Restart with
 	// --continue (the agent never started a conversation). Kill any live
-	// session so a later Resume rebuilds from scratch; otherwise mark
-	// paused. The branch and worktree are preserved on disk regardless.
+	// session and mark it paused, leaving the branch and worktree on disk
+	// for Resume, which decides from the tree itself (decideResume): an
+	// intact one is relaunched in place (recording a missing base commit),
+	// an absent or gutted one rebuilt, and one git cannot vouch for — such
+	// as a `worktree add` still locked "initializing" — refused.
 	if status == Loading {
 		if tmuxAlive {
 			return ActionKillAndPause

@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session/git"
@@ -27,6 +29,9 @@ type fakeTmuxServer struct {
 	created   bool
 	failStart bool       // make every new-session fail
 	launches  [][]string // argv of every new-session
+	runs      [][]string // argv of every other command
+	// probe, when set, answers has-session instead of the created flag.
+	probe func() error
 }
 
 // Start implements tmux.PtyFactory.
@@ -50,10 +55,15 @@ func (f *fakeTmuxServer) Close() {}
 func (f *fakeTmuxServer) runner() cmd_test.MockCmdExec {
 	return cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
+			f.mu.Lock()
+			f.runs = append(f.runs, slices.Clone(c.Args))
+			probe, created := f.probe, f.created
+			f.mu.Unlock()
 			if slices.Contains(c.Args, "has-session") {
-				f.mu.Lock()
-				defer f.mu.Unlock()
-				if !f.created {
+				if probe != nil {
+					return probe()
+				}
+				if !created {
 					return errors.New("can't find session")
 				}
 			}
@@ -61,6 +71,18 @@ func (f *fakeTmuxServer) runner() cmd_test.MockCmdExec {
 		},
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
+}
+
+// ran reports whether any command's argv contained all of args.
+func (f *fakeTmuxServer) ran(args ...string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, argv := range f.runs {
+		if !slices.ContainsFunc(args, func(a string) bool { return !slices.Contains(argv, a) }) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeTmuxServer) launchArgs() [][]string {
@@ -92,6 +114,22 @@ func newTickPausedInstance(t *testing.T) (*Instance, *fakeTmuxServer) {
 	return inst, srv
 }
 
+// newCrashRecoveredInstance is the record ReconcileAndRestore hands to
+// CrashRestart: persisted Running, its tmux session gone, worktree on disk.
+func newCrashRecoveredInstance(t *testing.T) (*Instance, *fakeTmuxServer) {
+	t.Helper()
+	srv := &fakeTmuxServer{}
+	inst := newTestPausableInstanceWithExec(t, srv.runner())
+	inst.program = "claude"
+	orig := newRecoverySession
+	newRecoverySession = func(name, program string, env ...string) *tmux.TmuxSession {
+		return tmux.NewTmuxSessionWithDeps(name, program, srv, srv.runner(), env...)
+	}
+	t.Cleanup(func() { newRecoverySession = orig })
+	require.Equal(t, Running, inst.GetStatus())
+	return inst, srv
+}
+
 // TestResume_AgentExitedKeepsUncommittedWork is the regression guard for
 // the resume data-loss bug. An agent that exits on its own leaves the
 // instance marked Paused by the health tick with its worktree — and any
@@ -108,7 +146,7 @@ func TestResume_AgentExitedKeepsUncommittedWork(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("tracked edit\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("never committed\n"), 0644))
 
-	require.NoError(t, inst.Resume(nil))
+	require.NoError(t, resumeLikeApp(t, inst))
 
 	tracked, err := os.ReadFile(filepath.Join(dir, "README.md"))
 	require.NoError(t, err)
@@ -161,7 +199,7 @@ func TestResume_AbsentWorktreeStillRebuilds(t *testing.T) {
 	gitIn(t, gw.GetRepoPath(), "worktree", "remove", "--force", dir)
 	require.NoDirExists(t, dir)
 
-	require.NoError(t, inst.Resume(nil))
+	require.NoError(t, resumeLikeApp(t, inst))
 
 	assert.FileExists(t, filepath.Join(dir, ".git"), "resume must recreate the worktree")
 	assert.Equal(t, "pause-test-branch", gitIn(t, dir, "rev-parse", "--abbrev-ref", "HEAD"))
@@ -181,7 +219,7 @@ func TestResume_GuttedWorktreeIsSetAsideAndRebuilt(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(dir, ".git")))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "stranded.txt"), []byte("stranded\n"), 0644))
 
-	require.NoError(t, inst.Resume(nil))
+	require.NoError(t, resumeLikeApp(t, inst))
 
 	assert.FileExists(t, filepath.Join(dir, ".git"), "the gutted worktree must be rebuilt")
 	matches, err := filepath.Glob(dir + ".orphaned*")
@@ -203,10 +241,11 @@ func TestResume_UnverifiedWorktreeRefuses(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /nonexistent/loom-test\n"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("keep me\n"), 0644))
 
-	err = inst.Resume(nil)
+	err = resumeLikeApp(t, inst)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot confirm the worktree")
+	assert.Contains(t, err.Error(), "move it aside", "a permanent rejection must say how to proceed")
+	assert.NotContains(t, err.Error(), "less busy", "a permanent rejection is not a timeout")
 	assert.Equal(t, "keep me\n", readFile(t, filepath.Join(dir, "notes.txt")))
 	assert.Equal(t, "gitdir: /nonexistent/loom-test\n", readFile(t, filepath.Join(dir, ".git")))
 	assert.Empty(t, srv.launchArgs(), "nothing may be launched into an unverified worktree")
@@ -228,7 +267,7 @@ func TestResume_InPlaceStartFailureKeepsWorktreeAndBranch(t *testing.T) {
 	inst.setGitWorktree(gw)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("never committed\n"), 0644))
 
-	require.Error(t, inst.Resume(nil))
+	require.Error(t, resumeLikeApp(t, inst))
 
 	assert.Equal(t, "never committed\n", readFile(t, filepath.Join(dir, "notes.txt")))
 	assert.NotEmpty(t, gitIn(t, gw.GetRepoPath(), "branch", "--list", "pause-test-branch"),
@@ -251,7 +290,7 @@ func TestResume_InPlaceAppliesPendingStashOntoCleanTree(t *testing.T) {
 	gitIn(t, dir, "checkout", "--", ".")
 	gitIn(t, dir, "clean", "-fd")
 
-	require.NoError(t, inst.Resume(nil))
+	require.NoError(t, resumeLikeApp(t, inst))
 
 	assert.Equal(t, "stashed edit\n", readFile(t, filepath.Join(dir, "README.md")))
 	assert.Equal(t, "stashed new\n", readFile(t, filepath.Join(dir, "new.txt")))
@@ -274,7 +313,7 @@ func TestResume_InPlaceStashAlreadyOnDisk(t *testing.T) {
 	require.NoError(t, err)
 	gw.SetStashRef(sha)
 
-	require.NoError(t, inst.Resume(nil))
+	require.NoError(t, resumeLikeApp(t, inst))
 
 	assert.Equal(t, "tracked edit\n", readFile(t, filepath.Join(dir, "README.md")))
 	assert.Equal(t, "never committed\n", readFile(t, filepath.Join(dir, "notes.txt")))
@@ -326,7 +365,7 @@ func TestResume_InPlaceRefusesDivergentStash(t *testing.T) {
 // no .git, so git in it answers for the enclosing repo. CrashRestart must
 // refuse it rather than launch an agent there.
 func TestCrashRestart_RefusesGuttedWorktree(t *testing.T) {
-	inst, srv := newTickPausedInstance(t)
+	inst, srv := newCrashRecoveredInstance(t)
 	gw, err := inst.GetGitWorktree()
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(filepath.Join(gw.GetWorktreePath(), ".git")))
@@ -336,13 +375,12 @@ func TestCrashRestart_RefusesGuttedWorktree(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not an intact working tree")
 	assert.Empty(t, srv.launchArgs(), "no agent may be launched into a gutted worktree")
-	assert.Equal(t, Paused, inst.GetStatus())
 }
 
 // TestCrashRestart_RelaunchesIntactWorktree keeps the normal crash
 // recovery working: an intact worktree gets a fresh agent in place.
 func TestCrashRestart_RelaunchesIntactWorktree(t *testing.T) {
-	inst, srv := newTickPausedInstance(t)
+	inst, srv := newCrashRecoveredInstance(t)
 	gw, err := inst.GetGitWorktree()
 	require.NoError(t, err)
 
@@ -432,4 +470,81 @@ func TestPause_AbortDropsItsStash(t *testing.T) {
 	assert.Equal(t, "tracked edit\n", readFile(t, filepath.Join(dir, "README.md")), "the worktree keeps the work")
 	assert.Equal(t, "never committed\n", readFile(t, filepath.Join(dir, "notes.txt")))
 	assert.Equal(t, Running, inst.GetStatus())
+}
+
+// TestResume_InPlaceRecordsMissingBaseCommit: a session whose start was
+// interrupted is persisted without a base commit. Rebuilding records one;
+// relaunching in place must too, or the session never gets diff stats.
+func TestResume_InPlaceRecordsMissingBaseCommit(t *testing.T) {
+	inst, _ := newTickPausedInstance(t)
+	fixture, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+	gw := git.NewGitWorktreeFromStorage(fixture.GetRepoPath(), fixture.GetWorktreePath(), "pause-test", "pause-test-branch", "", true, "")
+	inst.setGitWorktree(gw)
+
+	require.NoError(t, resumeLikeApp(t, inst))
+
+	assert.Equal(t, gitIn(t, gw.GetWorktreePath(), "rev-parse", "HEAD"), gw.GetBaseCommitSHA())
+}
+
+// TestUnverifiedTreeError tells the user what to do, which depends on why
+// the tree could not be verified: a git that never answered is worth a
+// retry; a tree git rejects will be rejected again, so say how to get past it.
+func TestUnverifiedTreeError(t *testing.T) {
+	timeout := unverifiedTreeError("/wt", fmt.Errorf("git command timed out after 8s: git rev-parse: %w", git.ErrTimeout))
+	assert.Contains(t, timeout.Error(), "retry")
+	assert.NotContains(t, timeout.Error(), "move it aside")
+	assert.ErrorIs(t, timeout, git.ErrTimeout)
+
+	rejected := unverifiedTreeError("/wt", errors.New("fatal: not a git repository: /gone/.git/worktrees/wt"))
+	assert.Contains(t, rejected.Error(), "move it aside")
+	assert.Contains(t, rejected.Error(), "/wt")
+	assert.NotContains(t, rejected.Error(), "less busy")
+}
+
+// TestResume_RelaunchReleasesTheDeadSession: the dead session object still
+// holds its attach client, emulator and output pump. Relaunching must close
+// it first, as Restart does — by exact name, since tmux prefix-matches a
+// bare -t and the session is gone.
+func TestResume_RelaunchReleasesTheDeadSession(t *testing.T) {
+	inst, srv := newTickPausedInstance(t)
+	old := inst.getTmuxSession()
+
+	require.NoError(t, resumeLikeApp(t, inst))
+
+	assert.True(t, srv.ran("kill-session", "-t="+tmux.ToLoomTmuxName(inst.Title)),
+		"the dead session must be closed, by exact name")
+	assert.NotSame(t, old, inst.getTmuxSession())
+}
+
+// TestResume_UnansweredProbeWhileFinishingRefuses: finishResume probes the
+// session again. If tmux does not answer, it must neither close the old
+// session (it may be live) nor start a second one; refuse, retryably.
+func TestResume_UnansweredProbeWhileFinishingRefuses(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the tmux liveness probe timeout")
+	}
+	inst, srv := newTickPausedInstance(t)
+	var probes int
+	srv.mu.Lock()
+	srv.probe = func() error {
+		srv.mu.Lock()
+		probes++
+		n := probes
+		srv.mu.Unlock()
+		if n == 1 {
+			return nil // Resume's own probe: alive, so it reattaches
+		}
+		time.Sleep(5300 * time.Millisecond) // outlive the probe deadline → Unknown
+		return errors.New("signal: killed")
+	}
+	srv.mu.Unlock()
+
+	err := resumeLikeApp(t, inst)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not answer")
+	assert.False(t, srv.ran("kill-session"), "a session that may be live must not be killed")
+	assert.Empty(t, srv.launchArgs(), "no second session may be started")
+	assert.Equal(t, Paused, inst.GetStatus())
 }

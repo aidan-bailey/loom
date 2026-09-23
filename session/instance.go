@@ -992,7 +992,9 @@ func (i *Instance) SetTitle(title string) error {
 }
 
 // Paused reports whether the instance is currently in the Paused state
-// (worktree removed, branch preserved; can be resumed with Resume).
+// (can be resumed with Resume). A real Pause removed the worktree, but an
+// agent that exited on its own is marked Paused with its worktree still on
+// disk; see decideResume.
 func (i *Instance) Paused() bool {
 	return i.GetStatus() == Paused
 }
@@ -1230,13 +1232,16 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		if err := restoreStashInPlace(gw); err != nil {
 			return err
 		}
+		// A rebuild records a missing base commit in Setup; so must this.
+		if err := gw.EnsureBaseCommit(); err != nil {
+			lg.Warn("instance.resume.base_commit_failed", "worktree", gw.GetWorktreePath(), "err", err.Error())
+		}
 		return i.finishResume(saveState, ts, gw)
 	case resumeRefuse:
 		if live == tmux.LivenessUnknown {
 			return fmt.Errorf("cannot tell whether this session's agent is still running (tmux did not answer in time); leaving the worktree untouched — retry once the machine is less busy")
 		}
-		return fmt.Errorf("cannot confirm the worktree at %s is intact, so it may hold uncommitted work; leaving it untouched — retry once the machine is less busy, or check it with `git -C %s status`: %w",
-			gw.GetWorktreePath(), gw.GetWorktreePath(), treeErr)
+		return unverifiedTreeError(gw.GetWorktreePath(), treeErr)
 	}
 	lg.Debug("instance.resume.rebuild", "worktree", gw.GetWorktreePath(), "tree", tree.String())
 
@@ -1265,6 +1270,19 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	}
 
 	return i.finishResume(saveState, ts, gw)
+}
+
+// unverifiedTreeError is Resume's refusal for a worktree InspectTree could
+// not vouch for. What the user should do depends on why: a git that never
+// answered is worth retrying, while a tree git rejects (a .git pointing at
+// a deleted admin dir, another repository, an unfinished `worktree add`)
+// will be rejected again — say how to get past it instead.
+func unverifiedTreeError(path string, err error) error {
+	if git.IsTimeout(err) {
+		return fmt.Errorf("git did not answer in time while checking the worktree at %s; leaving it untouched — retry once the machine is less busy: %w", path, err)
+	}
+	return fmt.Errorf("loom cannot verify %s as this session's worktree, so it may hold work loom cannot see; nothing was changed. If it holds nothing you need, move it aside (`mv %s %s.bak`) and resume again: the worktree is then rebuilt from the branch: %w",
+		path, path, path, err)
 }
 
 // restoreStashInPlace handles a pending StashRef when Resume relaunches in
@@ -1337,8 +1355,8 @@ func restoreStashInPlace(gw *git.GitWorktree) error {
 // just recreated the worktree, and the reattach and relaunch-in-place
 // paths, which deliberately left the worktree alone.
 func (i *Instance) finishResume(saveState func() error, ts *tmux.TmuxSession, gw *git.GitWorktree) error {
-	// Check if tmux session still exists from pause, otherwise create new one
-	if ts.DoesSessionExist() {
+	switch ts.SessionLiveness() {
+	case tmux.LivenessAlive:
 		// Session exists, just restore PTY connection to it
 		if err := ts.Restore(); err != nil {
 			// Kill the broken session before creating a new one,
@@ -1350,10 +1368,23 @@ func (i *Instance) finishResume(saveState func() error, ts *tmux.TmuxSession, gw
 				return err
 			}
 		}
-	} else {
+	case tmux.LivenessDead:
+		// The dead session object may still hold an attach client, an
+		// emulator and an output pump; release them before replacing it,
+		// as Restart does. Close kills by exact name, so this cannot reach
+		// another session — and it must run before the new session under
+		// the same name exists.
+		if err := ts.Close(); err != nil {
+			log.For("session").Debug("resume_close_dead_session", "err", err.Error())
+		}
 		if err := i.startFreshWithRecovery(gw); err != nil {
 			return err
 		}
+	default:
+		// No answer: the session may be live. Closing it could kill a
+		// running agent, and starting another under its name would
+		// collide with it. Leave both; the resume can be retried.
+		return fmt.Errorf("cannot tell whether this session's tmux session is running (tmux did not answer in time); nothing was started — retry once the machine is less busy")
 	}
 
 	_ = i.TransitionTo(Running)
