@@ -10,8 +10,9 @@
 //     output to a subsystem.
 //   - Legacy (*log.Logger): [InfoLog], [WarningLog], [ErrorLog] plus
 //     the Infof/Warnf/Errorf helpers. Retained for callers not yet
-//     migrated; routed through the same writer and gated by the
-//     same level.
+//     migrated: 15 InfoLog.Printf sites, all in ui/split_pane.go (the
+//     helpers have no callers outside this package). Routed through
+//     the same writer and gated by the same level.
 //
 // Both families respect LOOM_LOG_LEVEL (debug|info|warn|error) and
 // the --log-level CLI flag. Debug records are emitted only through

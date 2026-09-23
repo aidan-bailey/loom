@@ -24,9 +24,11 @@ type Engine struct {
     loading      bool            // true only inside Load()/LoadDefaults()
     curFile      string          // script file currently being compiled
     reserved     map[string]bool // raw key strings owned by built-ins
+    curActionFile string         // source file of the handler running now (runtime log lines)
+    inFlight     atomic.Pointer[inFlightAction] // key/file of the handler holding mu, for Shutdown's warning
     curHost      Host            // Host active for the current dispatch
     lastEnqueued IntentID        // most recent intent id for bare cs.await()
-    pending      map[IntentID]*lua.LState // parked coroutines awaiting a resume
+    coroutines   map[IntentID]coroutineSlot // parked coroutines awaiting a resume
     logs         []LogEntry      // bounded test capture; real sink is log.For("script")
 }
 ```
@@ -83,7 +85,9 @@ type scriptAction struct {
 
 ### Context (`ctx`)
 
-A userdata value handed to handlers. Lives for the duration of a single call, then is discarded. `ctx` exposes methods that forward to the `Host` interface.
+A userdata value handed to handlers. It lives for one handler run: the dispatch, plus any resumes after the handler yields on an intent (each resume rebinds it to that resume's host). `ctx` exposes methods that forward to the `Host` interface.
+
+Don't keep a `ctx` across dispatches. A `ctx` saved in a Lua global and reused from a later dispatch still points at the host of the run that created it, which the app has already drained, so whatever it writes (`ctx:notify`, `ctx:new_instance`, …) is dropped and its reads come from that old snapshot. Use the `ctx` each handler receives.
 
 ```lua
 cs.bind("ctrl+shift+p", function(ctx)
@@ -207,11 +211,11 @@ Installed as a global at engine construction (`script/api.go`).
 | `cs.unbind` | `(key)` → void | Remove a binding. **Load-time only.** Silent no-op for reserved keys. |
 | `cs.register_action` | `{key, help, precondition?, run}` → void | Table-form alias for `cs.bind`. Retained for back-compat and for handlers that want an explicit `precondition` — the precondition is evaluated before `run`, and a falsy return skips the action silently. |
 | `cs.actions.*` | various | Catalog of host primitives — see [cs.actions catalog](#csactions-catalog). |
-| `cs.await` | `(id?)` → any | Suspend the current coroutine until `Engine.Resume` delivers a value for `id`. Without an argument, waits on the most recently enqueued intent. See [Intent Lifecycle](#intent-lifecycle). |
-| `cs.log` | `(level: string, msg: string)` → void | Write a log entry straight to `log.For("script")` (main log file), tagged with the source file when known. `level` is matched case-insensitively against `info`/`warn`/`warning`/`error`/`err`/`debug`; anything else logs at info. |
+| `cs.await` | `(id?)` → any | Suspend the current coroutine until `Engine.Resume` delivers a value for `id`. Without an argument, waits on the most recently enqueued intent. A `nil` argument returns `nil` at once: deferred `cs.actions.*` primitives already wait on their own, so `cs.await(cs.actions.X())` receives the action's `nil` return after the intent has run. See [Intent Lifecycle](#intent-lifecycle). |
+| `cs.log` | `(level: string, msg: string)` → void | Write a log entry straight to `log.For("script")` (main log file), tagged with the source file: the one being loaded, or else the one whose handler is running. `level` is matched case-insensitively against `info`/`warn`/`warning`/`error`/`err`/`debug`; anything else logs at info. |
 | `cs.notify` | `(msg: string)` → void | Send a transient message to the error/info bar. When called at load time, downgrades to a log entry. |
 | `cs.now` | `()` → number | Unix time in seconds. |
-| `cs.sprintf` | `(fmt, ...)` → string | Alias for `string.format`. Forgiving — non-string args are `tostring`'d before substitution. |
+| `cs.sprintf` | `(fmt, ...)` → string | Alias for `string.format`: it calls the real `string.format`, so every verb behaves as it does there. |
 
 ### `cs.actions` Catalog
 
@@ -345,15 +349,17 @@ A `precondition` that returns falsy silently skips the handler. A precondition t
 Deferred primitives route through a 6-step enqueue → yield → Cmd → runXYZ → resume → continue lifecycle so Lua handlers can await overlay results or multi-step flows on the main goroutine without blocking.
 
 1. **Enqueue.** A handler calls e.g. `cs.actions.push_selected{}`. The primitive calls `host.Enqueue(intent)`, which stores the intent on the `scriptHost` and returns a monotonically increasing `IntentID`.
-2. **Yield.** The primitive calls `L.Yield(id)`. The coroutine suspends; `runAction` catches the yield and parks the coroutine in `engine.pending[id]`.
+2. **Yield.** The primitive calls `L.Yield(id)`. The coroutine suspends; `runAction` catches the yield and parks the coroutine in `engine.coroutines[id]`.
 3. **Cmd.** When `Engine.Dispatch` returns from `runAction`, `dispatchScript` drains the `scriptHost` via `host.drain()` and returns the collected intents inside `scriptDoneMsg.pendingIntents`.
 4. **runXYZ.** `app.Update` receives the `scriptDoneMsg` and walks each `pendingIntent`. `handleScriptIntent` checks preconditions (moved here from the retired `ActionRegistry`) and calls the matching `runXYZ` helper in `app/intents.go`. Each helper returns the same `tea.Cmd` it did pre-migration (e.g. `runSubmitSelected` opens the push-confirm overlay).
-5. **Resume.** `handleScriptIntent` batches a `scriptResumeMsg{id}` with that `tea.Cmd`. When the message fires, `Engine.Resume(id, nil)` unparks the coroutine; any `cs.await(id)` call resumes with the delivered value.
+5. **Resume.** `handleScriptIntent` batches a `scriptResumeMsg{id}` with that `tea.Cmd`. When the message fires, `Engine.ResumeWithHost(ctx, id, host)` unparks the coroutine with `nil`: the primitive's call returns `nil`, and a `cs.await(id)` parked by hand returns `nil` as well.
 6. **Continue.** The coroutine runs to completion or yields again on another deferred primitive, repeating the loop.
+
+Intent actions yield on their own, so a bare `cs.actions.push_selected{}` also waits, and the code after it runs only after the resume. Wrapping the call in `cs.await` is optional: the resumed action returns `nil`, and `cs.await(nil)` returns at once.
 
 ```
 Lua: cs.bind("p", function()
-       cs.await(cs.actions.push_selected{})  -- yields here
+       cs.await(cs.actions.push_selected{})  -- the action yields here
        cs.notify("pushed")                   -- runs after resume
      end)
 
@@ -376,9 +382,9 @@ Step:       [1 Enqueue][2 Yield]──┐
                      [6 cs.notify("pushed")] runs
 ```
 
-Source: `script/api_actions.go` (steps 1-2), `app/app_scripts.go#dispatchScript` and `#handleScriptDone` (step 3), `app/app_scripts.go#handleScriptIntent` + `app/intents.go` (step 4), `script/engine.go#Resume` (step 5).
+Source: `script/api_actions.go` (steps 1-2), `app/app_scripts.go#dispatchScript` and `#handleScriptDone` (step 3), `app/app_scripts.go#handleScriptIntent` + `app/intents.go` (step 4), `script/engine.go#ResumeWithHost` (step 5).
 
-**Forgotten `cs.await`**: Even if a handler enqueues a deferred primitive without calling `cs.await`, the primitive still yields — the coroutine is simply abandoned in `engine.pending` rather than racing ahead. Lua state remains consistent; the coroutine is collected when the LState is.
+**No `cs.await` needed**: a handler that calls a deferred primitive without `cs.await` behaves the same as one that wraps it — the primitive yields, the coroutine is parked in `engine.coroutines`, and it resumes after the intent runs. A coroutine that yields anything other than an intent id (e.g. a raw `coroutine.yield()`) is dropped with an error from the dispatch or resume, and its context is cancelled.
 
 ## Dispatch Flow
 
@@ -442,7 +448,7 @@ app/state_default.go: handleStateDefaultKey
 - `h.list.AddInstance` must run on the main goroutine. Scripts queue instances via `Host.QueueInstance`; finalization happens in `handleScriptDone`. Never call `AddInstance` from inside the Lua VM.
 - Intent dispatch (`handleScriptIntent`) also runs on the main goroutine, from inside `Update`.
 - Notices and the instance queue are buffered and surfaced through `scriptDoneMsg` so error-bar updates happen on the main loop.
-- On quit, `Engine.Shutdown` drains parked coroutines and closes the LState within a bound (`scriptShutdownTimeout`). If a handler is still running it cancels the LState's context, which stops a Lua loop at its next instruction. A handler blocked inside a Go call is left for process exit to reclaim.
+- On quit, `Engine.Shutdown` drains parked coroutines and closes the LState within a bound (`scriptShutdownTimeout`). If a handler is still running it cancels the LState's context, which stops a Lua loop at its next instruction. A handler blocked inside a Go call is left for process exit to reclaim, and the `engine_busy_at_shutdown` warning names its key and file.
 
 ## Error Handling
 
@@ -455,7 +461,7 @@ app/state_default.go: handleStateDefaultKey
 | Host method returns an error (e.g. `inst:send_keys` on a dead tmux session) | The userdata method raises a Lua error, which becomes a dispatch error via the above. |
 | Intent precondition fails (e.g. `kill_selected` with nothing selected) | Intent is silently dropped in `handleScriptIntent`. The coroutine is resumed anyway so `cs.await` returns cleanly; handlers can observe the no-op by checking state via `ctx` after the await. |
 
-Script log output via `cs.log` / `ctx:log` writes straight to `log.For("script")` inside the same call, under `e.mu` — no separate drain step, and no coupling to the app's Update loop (the app never calls into the engine's log path).
+Script log output via `cs.log` / `ctx:log` writes straight to `log.For("script")` inside the same call, under `e.mu` — no separate drain step, and no coupling to the app's Update loop (the app never calls into the engine's log path). Each line carries a `file` attribute: the file being loaded, or at runtime the file that bound the running handler.
 
 ## Example Scripts
 

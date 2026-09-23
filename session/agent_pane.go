@@ -11,10 +11,12 @@ import (
 
 // AgentPane is the I/O and probe surface of an instance's agent pane:
 // screen and scroll-back reads, keystrokes, paste and forwarded mouse/focus
-// events, content/status probes, and tmux/PTY liveness. Every method keeps
-// exactly the guard it had as an Instance method (instance started, not
-// paused, tmux session attached), so on an instance with no live pane it is
-// the same no-op, zero value or error as before.
+// events, content/status probes, and tmux/PTY liveness. Each method keeps
+// the guard it had as an Instance method: started and not paused for
+// screen/input (SendKeysRaw and SendPrompt check only started), started
+// for the status probes, and only "has a tmux session" for the liveness
+// probes and HasEmulator. So on an instance with no live pane each is the
+// same no-op, zero value or error as before.
 //
 // It is a cheap value wrapper around the *Instance: take one with
 // inst.Pane() at the call site rather than storing it. Instance itself keeps

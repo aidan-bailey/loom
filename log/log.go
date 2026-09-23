@@ -15,15 +15,16 @@ import (
 
 // EnvLogFormat selects the output format for the structured logger.
 // "json" → JSON lines; anything else → plain text. Legacy *log.Logger
-// vars (InfoLog/WarningLog/ErrorLog) always emit plain text for
-// source-compatibility with the ~117 existing .Printf call sites.
+// vars (InfoLog/WarningLog/ErrorLog) always emit plain text; 15 .Printf
+// call sites remain, all log.InfoLog in ui/split_pane.go.
 const EnvLogFormat = "LOOM_LOG_FORMAT"
 
 // EnvLogLevel gates the minimum log level for both the Structured
 // logger and the legacy *log.Logger vars (InfoLog / WarningLog /
 // ErrorLog). Values: "debug", "info" (default), "warn", "error".
 // Legacy records below the gate are silently dropped at the writer
-// layer so no change to the ~90 *.Printf call sites is required.
+// layer, so the remaining legacy .Printf call sites (15, all
+// log.InfoLog in ui/split_pane.go) need no change.
 // `SetLevel` lets tests and future runtime toggles update the gate
 // after Initialize.
 const EnvLogLevel = "LOOM_LOG_LEVEL"
@@ -68,8 +69,10 @@ func GetEnvWithLegacy(current, legacy string) string {
 }
 
 // WarningLog, InfoLog, and ErrorLog are the legacy *log.Logger
-// package-level vars used by pre-Structured call sites (about 90
-// Printf invocations). They share the log file with Structured and
+// package-level vars used by pre-Structured call sites: 15 Printf
+// invocations remain, all InfoLog in ui/split_pane.go's scroll and
+// page paths, and the Infof/Warnf/Errorf helpers below have no callers
+// outside this package. They share the log file with Structured and
 // are gated by LOOM_LOG_LEVEL via the levelWriter shim so a legacy
 // Printf at INFO tier is silently dropped under LOOM_LOG_LEVEL=warn.
 // Nil until Initialize has been called.
