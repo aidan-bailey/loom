@@ -115,3 +115,35 @@ func TestAwait_NoArg_NoEnqueuePending_RaisesError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no intent has been enqueued")
 }
+
+// TestAwait_WrappingIntentAction_ContinuesAfterResume pins the documented
+// cs.await(cs.actions.X()) form. Intent actions yield on their own and
+// the host resumes with nil, so the wrapped action returns nil into
+// cs.await's argument. cs.await must take that as "already awaited" and
+// return, rather than raising on a non-number and killing the rest of
+// the handler after the resume.
+func TestAwait_WrappingIntentAction_ContinuesAfterResume(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+
+	e.BeginLoad("t.lua")
+	require.NoError(t, e.L.DoString(`
+		cs.bind("x", function(ctx)
+			cs.await(cs.actions.show_help())
+			ctx:notify("after")
+		end)
+	`))
+	e.EndLoad()
+
+	dispatchHost := &fakeHost{}
+	_, err := e.Dispatch(context.Background(), "x", dispatchHost)
+	require.NoError(t, err)
+	require.Len(t, dispatchHost.enqueuedIDs, 1, "show_help must yield on its intent")
+	assert.Empty(t, dispatchHost.notices, "the notice comes after the await")
+
+	resumeHost := &fakeHost{}
+	require.NoError(t, e.ResumeWithHost(context.Background(), dispatchHost.enqueuedIDs[0], resumeHost))
+	assert.Equal(t, []string{"after"}, resumeHost.notices,
+		"code after cs.await must run once the host resumes the handler")
+	assert.Empty(t, e.coroutines, "the handler finished, so nothing stays parked")
+}

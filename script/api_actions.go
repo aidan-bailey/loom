@@ -14,9 +14,12 @@ import lua "github.com/yuin/gopher-lua"
 //     resume back in. Any UI work that opens an overlay or produces a
 //     tea.Cmd goes through this path (added in Tasks 7-9).
 //
-// Deferred variants installed here always call L.Yield so a handler
-// that forgets cs.await still suspends cleanly — the yielded
-// coroutine is simply abandoned rather than running synchronously.
+// Deferred variants installed here always call L.Yield, so a bare call
+// already waits: the handler stays parked until the host resumes it
+// once the intent completes, and code after the call runs then.
+// Wrapping the call in cs.await (cs.await(cs.actions.quit())) is
+// equivalent, since the resumed action returns nil and cs.await(nil)
+// returns at once.
 func installActions(L *lua.LState, e *Engine) {
 	actions := L.NewTable()
 

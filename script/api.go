@@ -160,10 +160,17 @@ func apiNow(L *lua.LState) int {
 
 // apiAwait suspends the current coroutine until Engine.Resume delivers
 // a value for the paired IntentID. The caller can pass either an
-// explicit id (returned by a cs.actions.* primitive) or no argument
-// at all — the latter is sugar for "await the most recently enqueued
-// intent on this dispatch" (see e.lastEnqueued, populated in
-// installDeferredActions and cleared at dispatch/resume boundaries).
+// explicit numeric id or no argument at all — the latter is sugar for
+// "await the most recently enqueued intent on this dispatch" (see
+// e.lastEnqueued, populated in installDeferredActions and cleared at
+// dispatch/resume boundaries).
+//
+// An explicit nil argument means the wait already happened: every
+// cs.actions.* intent action yields on its own and the host resumes it
+// with nil, so the documented cs.await(cs.actions.push_selected{})
+// arrives here as cs.await(nil) after the intent completed. It returns
+// nil straight away rather than raising on a non-number, which would
+// kill the rest of the handler.
 //
 // cs.await must be called from inside a coroutine. The engine arranges
 // for every bound handler to run inside one (see runAction), so in
@@ -178,6 +185,10 @@ func apiAwait(e *Engine) lua.LGFunction {
 	return func(L *lua.LState) int {
 		var id lua.LNumber
 		if L.GetTop() >= 1 {
+			if L.Get(1) == lua.LNil {
+				L.Push(lua.LNil)
+				return 1
+			}
 			id = L.CheckNumber(1)
 		} else {
 			if e.lastEnqueued == 0 {
