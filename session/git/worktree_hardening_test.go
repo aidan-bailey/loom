@@ -200,3 +200,29 @@ func TestInspectTree_StatFailureIsNotAnotherRepository(t *testing.T) {
 	assert.NotContains(t, err.Error(), "belongs to the repository")
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
+
+// TestSetup_UnreadableTreeKeepsItsLock: the unlock is for a path git has
+// provably let go of. A .git that cannot be stat'ed is unknown, not
+// absent, so its lock stays.
+func TestSetup_UnreadableTreeKeepsItsLock(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads through the permission bits")
+	}
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+	lockInitializing(t, worktreePath)
+	lockFile := filepath.Join(adminDir(t, worktreePath), "locked")
+	require.NoError(t, os.Chmod(worktreePath, 0o000))
+	t.Cleanup(func() {
+		// Setup may have moved the tree aside; TempDir cleanup needs
+		// every copy readable again.
+		moved, _ := filepath.Glob(worktreePath + "*")
+		for _, p := range moved {
+			_ = os.Chmod(p, 0o755)
+		}
+	})
+
+	gw := NewGitWorktreeFromStorage(repoDir, worktreePath, "sess", branchName, "", true, configDir)
+	_ = gw.Setup()
+
+	assert.FileExists(t, lockFile, "an unreadable tree is not known to be gone")
+}

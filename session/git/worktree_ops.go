@@ -7,6 +7,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -274,11 +275,11 @@ func sameFile(a, b string) (bool, error) {
 // locked tree, prune skips it, and `worktree add` refuses the path ("a
 // missing but locked worktree"), which is what kept a moved-aside tree
 // from ever being rebuilt. So the entry is unlocked first — but only when
-// nothing live is left at the path (absent, or no .git). A tree that still
-// has its .git may hold work, and its lock is what stops the single -f
-// below from deleting it.
+// nothing live is provably left at the path (nothingLiveAt). A tree that
+// still has its .git, or one that cannot be read, may hold work, and its
+// lock is what stops the single -f below from deleting it.
 func (g *GitWorktree) clearWorktreePath() error {
-	if _, err := os.Stat(filepath.Join(g.worktreePath, ".git")); err != nil {
+	if nothingLiveAt(g.worktreePath) {
 		g.unlockWorktree()
 	}
 	if _, err := g.removeWorktree(); err != nil && !isWorktreeAbsentErr(err) {
@@ -315,6 +316,23 @@ func (g *GitWorktree) clearWorktreePath() error {
 	}
 	log.WarnKV("git.worktree_leftover_preserved", "path", g.worktreePath, "moved_to", orphaned)
 	return nil
+}
+
+// nothingLiveAt reports whether path provably holds no working tree: it
+// does not exist, is not a directory, or has no .git entry. A path or
+// .git that cannot be stat'ed is unknown, not absent, and reports false.
+func nothingLiveAt(path string) bool {
+	fi, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return true
+	case err != nil:
+		return false
+	case !fi.IsDir():
+		return true
+	}
+	_, err = os.Stat(filepath.Join(path, ".git"))
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // unlockWorktree unlocks the registry entry for this worktree's path.
