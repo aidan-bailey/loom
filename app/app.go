@@ -2260,16 +2260,8 @@ func (m *home) cancelPromptOverlay() tea.Cmd {
 	}
 	m.dismissOverlay()
 	m.state = stateDefault
-	return tea.Batch(
-		tea.Sequence(
-			tea.RequestWindowSize,
-			func() tea.Msg {
-				m.menu.SetState(ui.StateDefault)
-				return nil
-			},
-		),
-		killCmd,
-	)
+	m.menu.SetState(ui.StateDefault)
+	return tea.Batch(tea.RequestWindowSize, killCmd)
 }
 
 // confirmTask shows a confirmation modal with the supplied task

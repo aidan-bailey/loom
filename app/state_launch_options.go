@@ -68,17 +68,14 @@ func (m *home) cancelLaunchOptions() (tea.Model, tea.Cmd) {
 func (m *home) killPendingLaunchOptionsCancel() (tea.Model, tea.Cmd) {
 	popped := m.list.PopSelectedForKill()
 	m.state = stateDefault
+	// Before instanceChanged, whose menu refresh leaves the new-instance
+	// menu state alone.
+	m.menu.SetState(ui.StateDefault)
 	return m, tea.Batch(
 		// instanceChanged's returned Cmd surfaces pane-update errors;
 		// discarding it would silently swallow them.
 		m.instanceChanged(),
-		tea.Sequence(
-			tea.RequestWindowSize,
-			func() tea.Msg {
-				m.menu.SetState(ui.StateDefault)
-				return nil
-			},
-		),
+		tea.RequestWindowSize,
 		backgroundKillCmd(popped),
 	)
 }

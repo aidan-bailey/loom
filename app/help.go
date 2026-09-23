@@ -309,16 +309,8 @@ func (m *home) handleHelpState(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.state == stateHelp {
 			m.state = stateDefault
 		}
-		return m, tea.Batch(
-			dismissCmd,
-			tea.Sequence(
-				tea.RequestWindowSize,
-				func() tea.Msg {
-					m.menu.SetState(ui.StateDefault)
-					return nil
-				},
-			),
-		)
+		m.menu.SetState(ui.StateDefault)
+		return m, tea.Batch(dismissCmd, tea.RequestWindowSize)
 	}
 
 	return m, nil
