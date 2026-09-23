@@ -38,10 +38,10 @@ func (r *recordingInstanceStorage) DeleteAllInstances() error     { return nil }
 // the leak-fix's preemptive save, so the only SaveInstances call that
 // hits the test recorder is the one the bug was missing.
 func TestApplyWorkspaceToggle_GlobalToGlobalPersists(t *testing.T) {
-	// LOOM_HOME redirects enterGlobalMode's reconstruction of global
-	// storage away from the real ~/.loom — tests must not write to
-	// the user's home dir.
-	t.Setenv("LOOM_HOME", t.TempDir())
+	// LOOM_GLOBAL_DIR redirects enterGlobalMode's reconstruction of
+	// global storage away from the real ~/.loom — tests must not write
+	// to the user's home dir.
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
 
 	rec := &recordingInstanceStorage{}
 	storage, err := session.NewStorage(rec, t.TempDir())
@@ -120,12 +120,13 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 		"global m.list must be saved before activateWorkspace runs (leak-fix regression — pre-fix this was 0)")
 }
 
-// TestEnterGlobalMode_ClearsWsCtxAndSlots verifies the post-
+// TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots verifies the post-
 // conditions of enterGlobalMode: workspace tabs are gone, the active
-// context flips to nil (signaling global mode), and storage points at
-// the global config dir.
-func TestEnterGlobalMode_ClearsWsCtxAndSlots(t *testing.T) {
-	t.Setenv("LOOM_HOME", t.TempDir())
+// context is the global one (no name, no repo path), and storage points
+// at the global config dir.
+func TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots(t *testing.T) {
+	globalDir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, globalDir)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	list := ui.NewList(&s)
@@ -148,7 +149,8 @@ func TestEnterGlobalMode_ClearsWsCtxAndSlots(t *testing.T) {
 	h.enterGlobalMode()
 
 	assert.Empty(t, h.slots, "slots must be cleared")
-	assert.Nil(t, h.wsCtx, "wsCtx must be nil in global mode")
+	require.NotNil(t, h.wsCtx, "the global slot carries the global context")
+	assert.Equal(t, config.WorkspaceContext{ConfigDir: globalDir}, *h.wsCtx)
 	assert.NotNil(t, h.storage, "storage must be reconstructed for global cfgDir")
 	assert.NotNil(t, h.list, "list must be reset to a fresh ui.List")
 }
@@ -160,7 +162,7 @@ func TestEnterGlobalMode_ClearsWsCtxAndSlots(t *testing.T) {
 // dropped, or handleQuit later flushes the stale ratio into the wrong
 // (global) state.json.
 func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
-	t.Setenv("LOOM_HOME", t.TempDir())
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	list := ui.NewList(&s)
@@ -203,7 +205,8 @@ func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
 // enterGlobalMode at all; this test guards against regressing to a
 // version that drops slots without persisting.
 func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
-	t.Setenv("LOOM_HOME", t.TempDir())
+	globalDir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, globalDir)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
@@ -248,7 +251,8 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 	assert.GreaterOrEqual(t, slotRecA.calls, 1, "slot ws-a must be persisted before dropping")
 	assert.GreaterOrEqual(t, slotRecB.calls, 1, "slot ws-b must be persisted before dropping")
 	assert.Empty(t, h.slots, "all slots dropped after enterGlobalMode")
-	assert.Nil(t, h.wsCtx)
+	require.NotNil(t, h.wsCtx)
+	assert.Equal(t, globalDir, h.wsCtx.ConfigDir)
 	require.NoError(t, h.checkSlotInvariant())
 }
 
@@ -258,11 +262,13 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 // on with an empty list — whose next save rewrote the global state.json
 // with nothing. The global load now runs before anything is torn down, and
 // a failure must leave the slots, storage and global state.json untouched.
-// Driven through applyWorkspaceToggle(nil), enterGlobalMode's only caller
-// (the picker's Global row), so the path is the real one.
+// (The tabs are saved first — before the load, whose side effects an
+// abort couldn't undo — which closes nothing and costs nothing.) Driven
+// through applyWorkspaceToggle(nil), enterGlobalMode's only caller (the
+// picker's Global row), so the path is the real one.
 func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	globalDir := t.TempDir()
-	t.Setenv("LOOM_HOME", globalDir)
+	t.Setenv(config.EnvGlobalDir, globalDir)
 	statePath := filepath.Join(globalDir, config.StateFileName)
 	corrupt := []byte(`{"help_screens_seen":0,"instances":{"not":"an array"}}`)
 	require.NoError(t, os.WriteFile(statePath, corrupt, 0o644))
@@ -302,8 +308,6 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	assert.NotNil(t, cmd, "the failure must be surfaced, not just logged")
 	assert.Contains(t, h.errBox.String(), "global")
 	require.Len(t, h.slots, 2, "no workspace slot may be deactivated")
-	assert.Zero(t, recA.calls, "slot ws-a must not be saved/deactivated")
-	assert.Zero(t, recB.calls, "slot ws-b must not be saved/deactivated")
 	assert.Same(t, ctxA, h.wsCtx, "still in workspace mode")
 	assert.Same(t, storageA, h.storage, "storage must not be swapped for the unreadable global one")
 	assert.Same(t, listA, h.list)
@@ -314,6 +318,50 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	assert.Equal(t, corrupt, got, "the global state.json must be untouched")
 }
 
+// TestEnterGlobalMode_LoadsTheGlobalDir: startup's global context is
+// config.GlobalWorkspaceContext (LOOM_GLOBAL_DIR), but enterGlobalMode
+// resolved config.GetConfigDir (LOOM_HOME), so where the two differ — the
+// loomdev sandbox — W → Global loaded, and wrote loom-context files and
+// swept hooks and orphans in, another directory than startup's. The global
+// slot also had a nil context, so sessions created in it got ConfigDir ""
+// and no subagent hooks.
+func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
+	isolateTmux(t)
+	globalDir, loomHome := t.TempDir(), t.TempDir()
+	t.Setenv(config.EnvGlobalDir, globalDir)
+	t.Setenv("LOOM_HOME", loomHome)
+	paused := func(title string) []byte {
+		return []byte(`{"instances":[{"title":"` + title + `","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/loom-test-` + title + `"}}]}`)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(globalDir, config.StateFileName), paused("in-global"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(loomHome, config.StateFileName), paused("in-loom-home"), 0o644))
+	m := fleetHome(t)
+	m.ctx = cancelledCtx()
+	m.errBox = ui.NewErrBox()
+	m.cmdExec = &recordingExec{}
+
+	drainCmd(m.applyWorkspaceToggle(nil))
+
+	require.Empty(t, m.slots)
+	require.NoError(t, m.checkSlotInvariant())
+	assert.NotNil(t, m.list.GetInstanceByTitle("in-global"), "global mode shows the global dir's sessions")
+	assert.Nil(t, m.list.GetInstanceByTitle("in-loom-home"))
+	for _, inst := range m.list.GetInstances() {
+		assert.False(t, inst.IsWorkspaceTerminal, "global mode has no repo, so no workspace terminal")
+	}
+	require.NotNil(t, m.wsCtx, "the global slot carries the global context")
+	assert.Equal(t, config.WorkspaceContext{ConfigDir: globalDir}, *m.wsCtx)
+	assert.Equal(t, globalDir, m.configDir(), "sessions created in global mode get the global config dir")
+	entries, err := os.ReadDir(loomHome)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "nothing is written to LOOM_HOME")
+
+	require.NoError(t, m.storage.SaveInstances(persistableInstances(m.list.GetInstances())))
+	raw, err := os.ReadFile(filepath.Join(globalDir, config.StateFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "in-global", "global mode saves back to the global dir")
+}
+
 // TestEnterGlobalMode_LoadsLikeStartup: enterGlobalMode ran only
 // LoadAndReconcile — no crash restarts, no inline orphan recovery and no
 // recovery summary — unlike every other workspace-load path. Here the
@@ -321,7 +369,7 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 // loader reports it, as it does on every other path.
 func TestEnterGlobalMode_LoadsLikeStartup(t *testing.T) {
 	globalDir := t.TempDir()
-	t.Setenv("LOOM_HOME", globalDir)
+	t.Setenv(config.EnvGlobalDir, globalDir)
 	require.NoError(t, os.WriteFile(filepath.Join(globalDir, config.StateFileName),
 		[]byte(`{"instances":[{"schema_version":99,"title":"from-the-future","program":"claude","worktree":{}}]}`), 0o644))
 	m := fleetHome(t)

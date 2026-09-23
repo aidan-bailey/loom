@@ -2324,9 +2324,11 @@ func (m *home) repoPath() string {
 	return cwd
 }
 
-// configDir returns the config directory for the focused slot. Returns
-// empty string when it has no workspace context (global mode; triggers
-// fallback to GetConfigDir).
+// configDir returns the config directory for the focused slot — in global
+// mode the global dir, which the global slot's context carries like any
+// other slot's (so sessions created there get subagent hooks). Returns
+// empty string only for a nil context (bare test homes), which callers
+// resolve to config.GetConfigDir.
 func (m *home) configDir() string {
 	if m.wsCtx != nil {
 		return m.wsCtx.ConfigDir

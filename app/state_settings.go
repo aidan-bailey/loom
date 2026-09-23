@@ -26,9 +26,11 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if changed {
-		// In global mode (no active workspace) fall back to the global
-		// config dir — otherwise the change lives only in memory and
-		// silently vanishes on restart.
+		// Save beside the config the focused slot loaded: its context's
+		// dir, the global dir in global mode. A nil context (bare test
+		// homes) loaded from the default dir, so save there — otherwise
+		// the change lives only in memory and silently vanishes on
+		// restart.
 		dir := ""
 		if m.wsCtx != nil {
 			dir = m.wsCtx.ConfigDir

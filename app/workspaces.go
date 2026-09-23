@@ -20,9 +20,11 @@ import (
 // the rest resolve to the focused slot's own fields, and every other open
 // slot is reached through m.slots. Slots are always handled by pointer.
 type workspaceSlot struct {
-	// wsCtx is the workspace's context (name, repo path, config dir).
-	// Nil only for the global slot enterGlobalMode builds; the classic
-	// slot newHome builds carries the startup context.
+	// wsCtx is the workspace's context (name, repo path, config dir). The
+	// classic slot newHome builds carries the startup context; the global
+	// slot enterGlobalMode builds carries config.GlobalWorkspaceContext,
+	// the same one classic global startup gets — no name, no repo path.
+	// Nil only in bare test homes (and a Run caller passing nil).
 	wsCtx *config.WorkspaceContext
 	// storage saves/loads this workspace's instances.
 	storage *session.Storage
@@ -595,13 +597,15 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// enterGlobalMode transitions from workspace-tab mode back to global
-// (no-workspace) mode. Builds a fresh global slot — storage, state and
-// list loaded from scratch by the same loader as classic startup
-// (loadSlotStorage: reconcile, crash restarts, inline orphan recovery),
-// minus the server-wide tmux sweep, which would kill the closing tabs'
-// sessions — rather than keeping the classic slot around for the round
-// trip.
+// enterGlobalMode transitions from workspace-tab or classic mode back to
+// global (no-workspace) mode. Builds a fresh
+// global slot for config.GlobalWorkspaceContext — the context classic
+// global startup uses, so both resolve the same directory
+// (LOOM_GLOBAL_DIR, else ~/.loom; never LOOM_HOME) and the slot carries
+// that context like the startup one does — loaded by the same loader as
+// classic startup (loadSlotStorage: reconcile, crash restarts, inline
+// orphan recovery), minus the server-wide tmux sweep, which would kill the
+// closing tabs' sessions.
 //
 // Tmux note: closing the tabs doesn't kill their tmux sessions. Session
 // names are loom_<title>, keyed by title alone, so a global instance whose
@@ -613,22 +617,39 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 // Fails closed, with nothing switched: no tab closed, storage and list
 // unswapped, and the registry unchanged (workbench mode may already have
 // been exited — applyWorkspaceToggle runs leaveFocusedSlot first). That
-// covers two failures:
-//   - The global load, which runs before anything is torn down. Carrying
-//     on with an empty list would let its next save overwrite a
+// covers two failures, checked in this order:
+//   - Saving any open tab. Every tab is saved before the global state is
+//     even read: the load has side effects (it relaunches crash-recovered
+//     agents, writes the loom-context files, auto-cleans orphan worktrees
+//     and sweeps hooks folders), so an abort after it would leave global
+//     agents running that nothing displays. The saves have none beyond
+//     the tabs' own state.json and are idempotent, so a later abort (the
+//     load) costs nothing. Every tab is also saved before any is closed,
+//     so a failure can't leave a half-switched home (an open tab that is
+//     no longer the focused slot).
+//   - The global load, which still runs before anything is torn down.
+//     Carrying on with an empty list would let its next save overwrite a
 //     possibly-recoverable global state.json — the same rule
 //     activateWorkspace and the classic startup path follow.
-//   - Saving any open tab. Every tab is saved before any is closed, so a
-//     failure can't leave a half-switched home (an open tab that is no
-//     longer the focused slot).
 func (m *home) enterGlobalMode() tea.Cmd {
-	// Reconstruct global storage in the global config dir (~/.loom, or
-	// LOOM_HOME) — resolved up front, since orphan discovery and the
-	// hooks sweep need the directory itself.
-	cfgDir, err := config.GetConfigDir()
+	// Persist every workspace tab before touching global state. A tab
+	// whose save fails keeps its unpersisted state reachable only while
+	// open, so abort — with nothing global loaded yet.
+	for _, slot := range m.slots {
+		if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
+			log.For("app").Error("workspace.save_failed", "name", slot.wsCtx.Name, "err", err)
+			return m.handleError(fmt.Errorf("failed to save workspace %s (staying in workspace mode): %w", slot.wsCtx.Name, err))
+		}
+	}
+
+	// Reconstruct global storage in the global config dir — resolved up
+	// front, since orphan discovery and the hooks sweep need the directory
+	// itself.
+	globalCtx, err := config.GlobalWorkspaceContext()
 	if err != nil {
 		return m.handleError(fmt.Errorf("failed to resolve the global config dir: %w", err))
 	}
+	cfgDir := globalCtx.ConfigDir
 	appState := config.LoadStateFrom(cfgDir)
 	appConfig := config.LoadConfigFrom(cfgDir)
 	storage, err := session.NewStorage(appState, cfgDir)
@@ -641,6 +662,7 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	// the closed tab no longer uses them. It is only focused once every
 	// check below has passed.
 	global := &workspaceSlot{
+		wsCtx:     globalCtx,
 		storage:   storage,
 		appConfig: appConfig,
 		appState:  appState,
@@ -656,21 +678,6 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	if err != nil {
 		applySessionConfig(m.appConfig, "")
 		return m.handleError(fmt.Errorf("failed to load global sessions (staying in workspace mode): %w", err))
-	}
-
-	// Persist every workspace tab before closing any of them. A tab whose
-	// save fails keeps its unpersisted state reachable only while open, so
-	// abort; the global instances just loaded are dropped, releasing the
-	// preview PTYs LoadAndReconcile attached so a retry does not stack a
-	// second attach client on each live session.
-	for _, slot := range m.slots {
-		if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
-			log.For("app").Error("workspace.save_failed", "name", slot.wsCtx.Name, "err", err)
-			applySessionConfig(m.appConfig, "")
-			return tea.Batch(
-				m.handleError(fmt.Errorf("failed to save workspace %s (staying in workspace mode): %w", slot.wsCtx.Name, err)),
-				releaseInstancesCmd(global.list.GetInstances()))
-		}
 	}
 
 	// Picker escape hatch (W → Global row) from global mode reaches here

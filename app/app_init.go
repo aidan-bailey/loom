@@ -302,7 +302,9 @@ func (m *home) loadSlotStorage(slot *workspaceSlot, cfgDir string, cmdExec cmd2.
 
 	// Auto-create workspace terminal if in a workspace context and none
 	// exists — unless a record storage preserves but could not load
-	// already owns the title (see activateWorkspace).
+	// already owns the title (see activateWorkspace). The global context
+	// (startup's, or enterGlobalMode's slot) has no repo path, so global
+	// mode never gets one.
 	wtTitle := "Workspace Terminal"
 	if wsCtx != nil && wsCtx.Name != "" {
 		wtTitle = wsCtx.Name

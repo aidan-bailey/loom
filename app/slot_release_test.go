@@ -120,7 +120,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 	})
 
 	t.Run("entering global mode drops every tab", func(t *testing.T) {
-		t.Setenv("LOOM_HOME", t.TempDir())
+		t.Setenv(config.EnvGlobalDir, t.TempDir())
 		m := fleetHome(t)
 		m.ctx = cancelledCtx()
 		focused, peer := liveInstance(t, "a-live"), liveInstance(t, "b-live")
@@ -146,7 +146,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 	})
 
 	t.Run("global mode re-entered from global mode", func(t *testing.T) {
-		t.Setenv("LOOM_HOME", t.TempDir())
+		t.Setenv(config.EnvGlobalDir, t.TempDir())
 		m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "g-live")
@@ -231,7 +231,7 @@ func TestDroppedSlot_ReleasesTerminalPaneClients(t *testing.T) {
 
 	t.Run("entering global mode keeps only the carried pane's clients global can show", func(t *testing.T) {
 		globalDir := t.TempDir()
-		t.Setenv("LOOM_HOME", globalDir)
+		t.Setenv(config.EnvGlobalDir, globalDir)
 		// The global list holds a paused "shared" session.
 		require.NoError(t, os.WriteFile(filepath.Join(globalDir, config.StateFileName),
 			[]byte(`{"instances":[{"title":"shared","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/loom-test-shared"}}]}`), 0o644))

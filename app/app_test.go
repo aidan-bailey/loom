@@ -11,6 +11,7 @@ import (
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"charm.land/bubbles/v2/spinner"
@@ -51,6 +52,30 @@ func runTests(m *testing.M) int {
 	// bytes on Linux, 104 on macOS, where the default $TMPDIR alone can run
 	// ~49 bytes.
 	os.Unsetenv("TMUX")
+
+	// Keep every config-dir resolution off the developer's real ~/.loom.
+	// enterGlobalMode loads config.GlobalWorkspaceContext (LOOM_GLOBAL_DIR);
+	// the registry writes workspaces.json there too — SetOpenWorkspaces
+	// reloads and saves the on-disk registry even through the bare
+	// &config.WorkspaceRegistry{} fleetHome installs — and a nil workspace
+	// context resolves LOOM_HOME. Tests that read or seed those directories
+	// set their own with t.Setenv; this is the default for the rest.
+	loomDir, err := os.MkdirTemp("", "loom-app-test")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mkdir loom dir: %v\n", err)
+		return 1
+	}
+	defer os.RemoveAll(loomDir)
+	for name, dir := range map[string]string{
+		"LOOM_HOME":         filepath.Join(loomDir, "home"),
+		config.EnvGlobalDir: filepath.Join(loomDir, "global"),
+	} {
+		if err := os.Setenv(name, dir); err != nil {
+			fmt.Fprintf(os.Stderr, "set %s: %v\n", name, err)
+			return 1
+		}
+	}
+
 	tmuxTmpDir, err := os.MkdirTemp("", "lt")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir tmux tmpdir: %v\n", err)
