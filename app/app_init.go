@@ -225,22 +225,32 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 }
 
 // loadStartupStorage loads the startup storage (m.storage, for m.wsCtx)
-// into the focused list with classic-startup semantics: LoadAndReconcile,
-// crash-restart, inline orphan recovery, then the workspace-terminal
-// auto-create for a workspace context. Classic startup runs it directly;
-// restoreSavedWorkspaces runs it as the fallback when no workspace could be
-// restored. sweepTmux adds the server-wide orphan tmux sweep — the fallback
-// passes false, because the workspaces that failed to load still have live
-// sessions whose titles it cannot read. A load error is returned before
-// anything is added to the list; the storage's write latch is then engaged,
-// so nothing can overwrite the unreadable payload.
+// into the focused list with classic-startup semantics (loadSlotStorage).
+// Classic startup runs it directly; restoreSavedWorkspaces runs it as the
+// fallback when no workspace could be restored. sweepTmux adds the
+// server-wide orphan tmux sweep — the fallback passes false, because the
+// workspaces that failed to load still have live sessions whose titles it
+// cannot read.
 func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recoverySummary, error) {
-	storage := m.storage
-	wsCtx := m.wsCtx
 	cfgDir := ""
-	if wsCtx != nil {
-		cfgDir = wsCtx.ConfigDir
+	if m.wsCtx != nil {
+		cfgDir = m.wsCtx.ConfigDir
 	}
+	return m.loadSlotStorage(m.workspaceSlot, cfgDir, cmdExec, sweepTmux)
+}
+
+// loadSlotStorage loads slot's storage into slot's (empty) list with
+// startup semantics: LoadAndReconcile, crash-restart, inline orphan
+// recovery, then the workspace-terminal auto-create for a workspace
+// context. cfgDir is the directory slot's storage lives in. sweepTmux adds
+// the server-wide orphan tmux sweep (see loadStartupStorage). A load error
+// is returned before anything is added to the list; the storage's write
+// latch is then engaged, so nothing can overwrite the unreadable payload.
+// Used by startup (the focused classic slot) and enterGlobalMode (the
+// global slot it is about to focus).
+func (m *home) loadSlotStorage(slot *workspaceSlot, cfgDir string, cmdExec cmd2.Executor, sweepTmux bool) (recoverySummary, error) {
+	storage := slot.storage
+	wsCtx := slot.wsCtx
 
 	// LoadAndReconcile centralizes RenameLegacySessions + per-record
 	// reconcile, and on a per-record failure stashes the raw data in
@@ -256,11 +266,11 @@ func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recove
 		if instance.IsWorkspaceTerminal {
 			hasWorkspaceTerminal = true
 		}
-		m.list.AddInstance(instance)
+		slot.list.AddInstance(instance)
 	}
 
 	// Restart crash-recovered instances
-	for _, inst := range m.list.GetInstances() {
+	for _, inst := range slot.list.GetInstances() {
 		if !inst.CrashRecovered() {
 			continue
 		}
@@ -278,13 +288,13 @@ func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recove
 	// for any with unsaved work or a live agent. Runs before
 	// CleanupOrphanedSessions so a live recoverable's tmux (now a
 	// list instance) is exempted by the claimedTitles loop below.
-	recovery := m.reconcileOrphans(cfgDir, m.program, m.list, storage, cmdExec)
+	recovery := m.reconcileOrphans(cfgDir, m.program, slot.list, storage, cmdExec)
 
 	// Clean up orphaned tmux sessions from previous crashes, sparing
 	// those of records preserved on disk outside the list.
 	if sweepTmux {
 		claimedTitles := make(map[string]bool)
-		claimTitles(claimedTitles, m.list, storage)
+		claimTitles(claimedTitles, slot.list, storage)
 		if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
 			log.For("app").Error("orphan_cleanup_failed", "err", err)
 		}
@@ -298,7 +308,7 @@ func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recove
 		wtTitle = wsCtx.Name
 	}
 	if !hasWorkspaceTerminal && wsCtx != nil && wsCtx.RepoPath != "" && !slices.Contains(storage.PreservedTitles(), wtTitle) {
-		wtOpts := launchOptionsFromConfig(m.appConfig)
+		wtOpts := launchOptionsFromConfig(slot.appConfig)
 		if m.remoteControlBlocked(effectiveRemoteControl(wtOpts), m.program) {
 			// Non-interactive startup: fall back silently but leave an
 			// info-style note (clears on the next status update).
@@ -316,7 +326,7 @@ func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recove
 		if wtErr != nil {
 			log.For("app").Error("workspace_terminal.create_failed", "err", wtErr)
 		} else {
-			m.list.AddInstance(wtInstance)
+			slot.list.AddInstance(wtInstance)
 			if err := wtInstance.Start(true); err != nil {
 				log.For("app").Error("workspace_terminal.start_failed", "err", err)
 			}

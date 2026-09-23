@@ -313,3 +313,24 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, corrupt, got, "the global state.json must be untouched")
 }
+
+// TestEnterGlobalMode_LoadsLikeStartup: enterGlobalMode ran only
+// LoadAndReconcile — no crash restarts, no inline orphan recovery and no
+// recovery summary — unlike every other workspace-load path. Here the
+// global payload holds a record this binary can't decode; the startup
+// loader reports it, as it does on every other path.
+func TestEnterGlobalMode_LoadsLikeStartup(t *testing.T) {
+	globalDir := t.TempDir()
+	t.Setenv("LOOM_HOME", globalDir)
+	require.NoError(t, os.WriteFile(filepath.Join(globalDir, config.StateFileName),
+		[]byte(`{"instances":[{"schema_version":99,"title":"from-the-future","program":"claude","worktree":{}}]}`), 0o644))
+	m := fleetHome(t)
+	m.ctx = cancelledCtx()
+	m.errBox = ui.NewErrBox()
+	m.errBox.SetSize(400, 1)
+
+	drainCmd(m.applyWorkspaceToggle(nil))
+
+	require.Empty(t, m.slots)
+	assert.Contains(t, m.errBox.String(), "could not be read by this version", "the global load reports its recovery summary")
+}

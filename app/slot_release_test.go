@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -209,8 +211,9 @@ func attachedTerminal(t *testing.T, title string) *tmux.TmuxSession {
 
 // TestDroppedSlot_ReleasesTerminalPaneClients: a dropped slot's terminal
 // pane kept an attach client open on every loom_term_* shell it had shown.
-// The release detaches them (the shells keep running), except in the pane
-// enterGlobalMode carries into the global slot, which stays in use.
+// The release detaches them (the shells keep running). The pane
+// enterGlobalMode carries into the global slot keeps only the clients of
+// sessions the global list holds.
 func TestDroppedSlot_ReleasesTerminalPaneClients(t *testing.T) {
 	isolateTmux(t)
 
@@ -226,18 +229,25 @@ func TestDroppedSlot_ReleasesTerminalPaneClients(t *testing.T) {
 		assert.False(t, term.PtmxAlive(), "the closed tab's terminal client must be detached")
 	})
 
-	t.Run("entering global mode spares the carried pane", func(t *testing.T) {
-		t.Setenv("LOOM_HOME", t.TempDir())
+	t.Run("entering global mode keeps only the carried pane's clients global can show", func(t *testing.T) {
+		globalDir := t.TempDir()
+		t.Setenv("LOOM_HOME", globalDir)
+		// The global list holds a paused "shared" session.
+		require.NoError(t, os.WriteFile(filepath.Join(globalDir, config.StateFileName),
+			[]byte(`{"instances":[{"title":"shared","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/loom-test-shared"}}]}`), 0o644))
 		m := fleetHome(t)
 		m.ctx = cancelledCtx()
 		carriedPane := m.splitPane
-		carried, dropped := attachedTerminal(t, "f1"), attachedTerminal(t, "b1")
-		m.slots[0].splitPane.Terminal().InjectSessionForTest("f1", carried, t.TempDir())
+		stale, shared, dropped := attachedTerminal(t, "f1"), attachedTerminal(t, "shared"), attachedTerminal(t, "b1")
+		m.slots[0].splitPane.Terminal().InjectSessionForTest("f1", stale, t.TempDir())
+		m.slots[0].splitPane.Terminal().InjectSessionForTest("shared", shared, t.TempDir())
 		m.slots[1].splitPane.Terminal().InjectSessionForTest("b1", dropped, t.TempDir())
 
 		drainCmd(m.applyWorkspaceToggle(nil))
 		require.Same(t, carriedPane, m.splitPane, "the global slot carries the focused tab's panes")
+		require.NotNil(t, m.list.GetInstanceByTitle("shared"))
 		assert.False(t, dropped.PtmxAlive(), "the other tab's terminal client must be detached")
-		assert.True(t, carried.PtmxAlive(), "the carried pane is still in use")
+		assert.False(t, stale.PtmxAlive(), "the carried pane's client for a closed session must be detached")
+		assert.True(t, shared.PtmxAlive(), "a terminal the global list can show again stays")
 	})
 }

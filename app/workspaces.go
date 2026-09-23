@@ -45,6 +45,24 @@ type workspaceSlot struct {
 	recovery recoverySummary
 }
 
+// applySessionConfig syncs the process-wide session flags (loom-context
+// injection, subagent tracking) from cfg and, when cfgDir is non-empty,
+// rewrites that config dir's loom-context prompt files — the per-load
+// setup every Claude session launched afterwards relies on.
+func applySessionConfig(cfg *config.Config, cfgDir string) {
+	if cfg == nil {
+		return
+	}
+	session.SetLoomContextEnabled(cfg.LoomContextEnabled())
+	session.SetSubagentTrackingEnabled(cfg.SubagentTrackingEnabled())
+	if cfgDir == "" {
+		return
+	}
+	if err := session.WriteLoomContextFiles(cfgDir); err != nil {
+		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
+	}
+}
+
 // activateWorkspace loads a workspace's state, config, instances and UI
 // components, appending a new slot to m.slots. The first tab opened from
 // classic/global mode takes focus at once (see the invariant on
@@ -62,11 +80,7 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 	// Loom-context injection: keep the config-dir prompt files current and
 	// sync the global enabled flag on every workspace load, before any
 	// Claude session (workspace terminal, crash-restart, resume) launches.
-	session.SetLoomContextEnabled(appConfig.LoomContextEnabled())
-	session.SetSubagentTrackingEnabled(appConfig.SubagentTrackingEnabled())
-	if err := session.WriteLoomContextFiles(wsCtx.ConfigDir); err != nil {
-		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
-	}
+	applySessionConfig(appConfig, wsCtx.ConfigDir)
 	storage, err := session.NewStorage(state, wsCtx.ConfigDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage for workspace %s: %w", ws.Name, err)
@@ -259,15 +273,20 @@ func releaseSlotCmd(slot *workspaceSlot) tea.Cmd {
 		cmds = append(cmds, releaseInstancesCmd(slot.list.GetInstances()))
 	}
 	if slot.splitPane != nil {
-		var terms []attachedClient
-		for _, ts := range slot.splitPane.Terminal().DetachAll() {
-			if ts.PtmxAlive() {
-				terms = append(terms, attachedClient{name: ts.SessionName(), ts: ts})
-			}
-		}
-		cmds = append(cmds, releaseClientsCmd(terms))
+		cmds = append(cmds, releaseClientsCmd(attachedClients(slot.splitPane.Terminal().DetachAll())))
 	}
 	return tea.Batch(cmds...)
+}
+
+// attachedClients keeps the sessions whose attach client is open.
+func attachedClients(sessions []*tmux.TmuxSession) []attachedClient {
+	var out []attachedClient
+	for _, ts := range sessions {
+		if ts.PtmxAlive() {
+			out = append(out, attachedClient{name: ts.SessionName(), ts: ts})
+		}
+	}
+	return out
 }
 
 // releaseInstancesCmd returns a Cmd that closes loom's preview attach
@@ -578,15 +597,18 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 
 // enterGlobalMode transitions from workspace-tab mode back to global
 // (no-workspace) mode. Builds a fresh global slot — storage, state and
-// list reloaded from scratch via the same path as newHome — rather than
-// keeping the classic slot around for the round trip.
+// list loaded from scratch by the same loader as classic startup
+// (loadSlotStorage: reconcile, crash restarts, inline orphan recovery),
+// minus the server-wide tmux sweep, which would kill the closing tabs'
+// sessions — rather than keeping the classic slot around for the round
+// trip.
 //
 // Tmux note: closing the tabs doesn't kill their tmux sessions. Session
 // names are loom_<title>, keyed by title alone, so a global instance whose
-// title matches one in a closing tab shares its tmux session, and
-// LoadAndReconcile attaches a second client to it while the tab's is
-// still attached. The overlap is brief: the release Cmds returned below
-// detach every dropped instance's client.
+// title matches one in a closing tab shares its tmux session, and the load
+// attaches a second client to it while the tab's is still attached. The
+// overlap is brief: the release Cmds returned below detach every dropped
+// instance's client.
 //
 // Fails closed, with nothing switched: no tab closed, storage and list
 // unswapped, and the registry unchanged (workbench mode may already have
@@ -600,18 +622,39 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 //     failure can't leave a half-switched home (an open tab that is no
 //     longer the focused slot).
 func (m *home) enterGlobalMode() tea.Cmd {
-	// Reconstruct global storage. cfgDir="" is interpreted as ~/.loom
-	// by config.LoadStateFrom / session.NewStorage — same as newHome.
-	appState := config.LoadStateFrom("")
-	appConfig := config.LoadConfigFrom("")
-	storage, err := session.NewStorage(appState, "")
+	// Reconstruct global storage in the global config dir (~/.loom, or
+	// LOOM_HOME) — resolved up front, since orphan discovery and the
+	// hooks sweep need the directory itself.
+	cfgDir, err := config.GetConfigDir()
+	if err != nil {
+		return m.handleError(fmt.Errorf("failed to resolve the global config dir: %w", err))
+	}
+	appState := config.LoadStateFrom(cfgDir)
+	appConfig := config.LoadConfigFrom(cfgDir)
+	storage, err := session.NewStorage(appState, cfgDir)
 	if err != nil {
 		return m.handleError(fmt.Errorf("failed to construct global storage: %w", err))
 	}
 
-	cmdExec := m.executor()
-	instances, err := storage.LoadAndReconcile(cmdExec)
+	// The global slot is built fresh, but keeps the departing slot's
+	// splitPane and workbench: the panes are sized and wired already, and
+	// the closed tab no longer uses them. It is only focused once every
+	// check below has passed.
+	global := &workspaceSlot{
+		storage:   storage,
+		appConfig: appConfig,
+		appState:  appState,
+		list:      ui.NewList(&m.spinner),
+		splitPane: m.splitPane,
+		workbench: m.workbench,
+	}
+	// Sessions the load (re)starts launch under the global config's
+	// settings, like activateWorkspace's; an abort puts the focused
+	// slot's back.
+	applySessionConfig(appConfig, cfgDir)
+	recovery, err := m.loadSlotStorage(global, cfgDir, m.executor(), false)
 	if err != nil {
+		applySessionConfig(m.appConfig, "")
 		return m.handleError(fmt.Errorf("failed to load global sessions (staying in workspace mode): %w", err))
 	}
 
@@ -623,9 +666,10 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	for _, slot := range m.slots {
 		if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
 			log.For("app").Error("workspace.save_failed", "name", slot.wsCtx.Name, "err", err)
+			applySessionConfig(m.appConfig, "")
 			return tea.Batch(
 				m.handleError(fmt.Errorf("failed to save workspace %s (staying in workspace mode): %w", slot.wsCtx.Name, err)),
-				releaseInstancesCmd(instances))
+				releaseInstancesCmd(global.list.GetInstances()))
 		}
 	}
 
@@ -636,20 +680,6 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	// later flushes them into the new global state.json.
 	m.leaveFocusedSlot()
 
-	// The global slot is built fresh, but keeps the departing slot's
-	// splitPane and workbench: the panes are sized and wired already, and
-	// the closed tab no longer uses them.
-	global := &workspaceSlot{
-		storage:   storage,
-		appConfig: appConfig,
-		appState:  appState,
-		list:      ui.NewList(&m.spinner),
-		splitPane: m.splitPane,
-		workbench: m.workbench,
-	}
-	for _, inst := range instances {
-		global.list.AddInstance(inst)
-	}
 	// Everything loaded so far is dropped: every tab, or — global mode
 	// re-entered from global mode — the previous global slot. The focused
 	// one's panes live on in the global slot.
@@ -679,9 +709,19 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	// now-zero-height tab bar.
 	m.applyUIPrefs()
 
+	// The carried terminal pane still caches clients for the closed tab's
+	// shells; keep only those the global list can show again.
+	keep := make(map[string]bool)
+	for _, inst := range m.list.GetInstances() {
+		keep[inst.Title] = true
+	}
+	staleTerminals := releaseClientsCmd(attachedClients(m.splitPane.Terminal().DetachExcept(keep)))
+
+	m.showRecoverySummary(recovery)
+
 	// Point the carried-over panes and the menu at the global selection,
 	// so none of them keeps a dropped instance, then release the drops.
-	cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged()}
+	cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged(), staleTerminals}
 	for _, slot := range dropped {
 		if slot == carried {
 			cmds = append(cmds, releaseInstancesCmd(slot.list.GetInstances()))

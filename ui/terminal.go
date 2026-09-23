@@ -562,20 +562,32 @@ func (t *TerminalPane) Close() {
 // is killed: the shells keep running for the next pane that shows them.
 // Pure bookkeeping — no blocking I/O — so it is safe to call from Update.
 func (t *TerminalPane) DetachAll() []*tmux.TmuxSession {
+	return t.DetachExcept(nil)
+}
+
+// DetachExcept is DetachAll for the cache entries whose instance titles
+// are not in keep: a pane that stays in use hands over only the sessions
+// its new owner can't show.
+func (t *TerminalPane) DetachExcept(keep map[string]bool) []*tmux.TmuxSession {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var out []*tmux.TmuxSession
-	for _, s := range t.sessions {
+	for title, s := range t.sessions {
+		if keep[title] {
+			continue
+		}
 		if s.tmuxSession != nil {
 			out = append(out, s.tmuxSession)
 		}
+		delete(t.sessions, title)
 	}
-	t.sessions = make(map[string]*terminalSession)
-	t.currentTitle = ""
-	t.content = ""
-	t.fallback = false
-	t.fallbackText = ""
-	t.src = nil
+	if _, ok := t.sessions[t.currentTitle]; !ok {
+		t.currentTitle = ""
+		t.content = ""
+		t.fallback = false
+		t.fallbackText = ""
+		t.src = nil
+	}
 	return out
 }
 

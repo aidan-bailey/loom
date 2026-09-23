@@ -277,9 +277,13 @@ func (m *home) handleResumeDone(msg resumeDoneMsg) tea.Cmd {
 // the slot that owns it, by identity (see the note above) — in place, so
 // the list order and the selection's row are unchanged. It is selected
 // only where that can't retarget an open flow. A failure reverts the
-// placeholder to Recoverable so the user can retry r. An owner closed
-// meanwhile still records the adoption, and gets the adopted instance's
-// preview client released.
+// placeholder to Recoverable so the user can retry r. The adopted
+// instance of an owner closed meanwhile has its preview client released;
+// its adoption is saved to the closed owner's storage unless the
+// workspace has since been reopened (saveSlot skips a stale copy then).
+// In that case nothing is lost: the adopted session keeps running on its
+// worktree, which the reopened slot's orphan discovery re-offers as
+// Recoverable, so r there adopts it again.
 func (m *home) handleRecoverDone(msg recoverDoneMsg) tea.Cmd {
 	owner := m.owningSlot(msg.slot, msg.placeholder)
 	if msg.err != nil {
