@@ -11,19 +11,27 @@ import (
 )
 
 // handleStateNewKey runs while the title-entry overlay is active. The
-// instance is already appended to the list (in a pre-started form);
-// Enter finalizes it and kicks off Start, Esc/ctrl+c pops it back out.
+// instance is already appended to the list (in a pre-started form) and
+// held as m.pendingNew; Enter finalizes it and kicks off Start,
+// Esc/ctrl+c removes and kills it (dropPendingNew).
 func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle quit commands first. Don't handle q because the user might want to type that.
 	if msg.String() == "ctrl+c" {
 		m.state = stateDefault
 		m.promptAfterName = false
 		m.menu.SetState(ui.StateDefault)
-		popped := m.list.PopSelectedForKill()
-		return m, tea.Batch(tea.RequestWindowSize, backgroundKillCmd(popped))
+		kill := m.dropPendingNew()
+		return m, tea.Batch(m.instanceChanged(), tea.RequestWindowSize, kill)
 	}
 
-	instance := m.list.GetInstances()[m.list.NumInstances()-1]
+	// The instance being named — by identity, never the selection or the
+	// list's last row, which a completion landing mid-flow can change.
+	instance := m.pendingNew
+	if instance == nil {
+		m.state = stateDefault
+		m.menu.SetState(ui.StateDefault)
+		return m, nil
+	}
 	switch msg.Code {
 	// Start the instance (enable previews etc) and go back to the main menu state.
 	case tea.KeyEnter:
@@ -64,7 +72,7 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.handleError(err)
 		}
 	case tea.KeyEsc:
-		popped := m.list.PopSelectedForKill()
+		kill := m.dropPendingNew()
 		m.state = stateDefault
 		// Before instanceChanged, whose menu refresh leaves the
 		// new-instance menu state alone.
@@ -75,7 +83,7 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// discarding it would silently swallow them.
 			m.instanceChanged(),
 			tea.RequestWindowSize,
-			backgroundKillCmd(popped),
+			kill,
 		)
 	default:
 		// Printable text (was tea.KeyRunes in v1).

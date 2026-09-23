@@ -186,6 +186,16 @@ type home struct {
 	// cancel untouched. nil outside the stateLaunchOptions window.
 	pendingLaunchOptionsCancel func() (tea.Model, tea.Cmd)
 
+	// pendingNew is the not-yet-started instance an open creation flow
+	// (naming, prompt, launch options, the remote-control confirm) has
+	// appended to the focused list. The flow edits it, and its cancel
+	// paths remove and kill it (dropPendingNew) by identity: the
+	// selection and the list's last row are not reliable, since a
+	// completion or removal can land mid-flow. Set when a flow appends
+	// or re-opens it (openLaunchOptionsForNew), cleared when its start is
+	// dispatched or the flow is cancelled. nil outside creation flows.
+	pendingNew *session.Instance
+
 	// keySent is used to manage underlining menu items
 	keySent bool
 
@@ -2002,11 +2012,10 @@ type workspaceRegisteredMsg struct {
 // live, so by delivery the focused slot may be another workspace (or the
 // owner may be closed).
 type instanceStartedMsg struct {
-	instance        *session.Instance
-	err             error
-	promptAfterName bool
-	selectedBranch  string
-	slot            *workspaceSlot
+	instance       *session.Instance
+	err            error
+	selectedBranch string
+	slot           *workspaceSlot
 }
 
 // branchSearchDebounceMsg fires after the debounce interval to trigger a search.
@@ -2251,13 +2260,11 @@ func (m *home) resolveBaseBranchCmd() tea.Cmd {
 	}
 }
 
-// cancelPromptOverlay cancels the prompt overlay, cleaning up unstarted instances.
+// cancelPromptOverlay cancels the prompt overlay, cleaning up the pending
+// instance of a creation flow (none when the overlay was prompting a
+// running session).
 func (m *home) cancelPromptOverlay() tea.Cmd {
-	selected := m.list.GetSelectedInstance()
-	var killCmd tea.Cmd
-	if selected != nil && !selected.Started() {
-		killCmd = backgroundKillCmd(m.list.PopSelectedForKill())
-	}
+	killCmd := m.dropPendingNew()
 	m.dismissOverlay()
 	m.state = stateDefault
 	m.menu.SetState(ui.StateDefault)

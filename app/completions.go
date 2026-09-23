@@ -18,6 +18,45 @@ import (
 // message at dispatch — and on the instance by identity, never on the
 // focused slot's list, storage or selection. (Kill, pause, resume and
 // transition failures already carry the instance and act by identity.)
+//
+// Nor do they move the focused slot's selection while another flow is on
+// screen (m.state != stateDefault): a creation flow, an inline attach or
+// a prompt acts on the selection, so moving it would retarget the flow.
+
+// dropPendingNew removes the open creation flow's pending instance from
+// its list, by identity, and returns a Cmd that kills it off the Update
+// goroutine; nil when no creation flow is open. Every creation-flow
+// cancel path goes through it. Killing "the selection" or "the last row"
+// instead could reach an unrelated session once a completion or removal
+// had moved either mid-flow.
+func (m *home) dropPendingNew() tea.Cmd {
+	inst := m.pendingNew
+	m.pendingNew = nil
+	if inst == nil {
+		return nil
+	}
+	if slot := m.slotHolding(inst); slot != nil {
+		slot.list.RemoveInstance(inst)
+	}
+	return backgroundKillCmd(inst)
+}
+
+// reopenedTwin finds, for an instance whose owner slot was dropped while
+// it started, the copy a reopened slot of the same workspace loaded from
+// the record the start left behind: a same-titled instance, never
+// started and with no attach client, in a loaded slot of that workspace.
+// nil when there is none.
+func (m *home) reopenedTwin(owner *workspaceSlot, inst *session.Instance) (*session.Instance, *workspaceSlot) {
+	for _, s := range m.openSlots() {
+		if slotLabel(s) != slotLabel(owner) {
+			continue
+		}
+		if twin := s.list.GetInstanceByTitle(inst.Title); twin != nil && twin != inst && !twin.Started() && !twin.PtmxAlive() {
+			return twin, s
+		}
+	}
+	return nil, nil
+}
 
 // owningSlot resolves the slot an async completion belongs to: the slot
 // stamped at dispatch, or — for an unstamped message — the loaded slot
@@ -82,12 +121,25 @@ func (m *home) saveSlot(slot *workspaceSlot) error {
 //   - Success: the owner is saved and the pending prompt (N flow) sent —
 //     both belong to the instance, wherever it lives. Only when the owner
 //     is the focused slot and no other flow is on screen does the UI
-//     follow (select, then the prompt overlay or inline attach); a
-//     background owner just selects it and says so, and an owner closed
-//     meanwhile gets its preview client released (releaseInstancesCmd).
+//     follow (select, inline attach); otherwise a notice says where it
+//     started, and an owner closed meanwhile gets its preview client
+//     released (releaseInstancesCmd).
+//   - Owner closed and its workspace reopened meanwhile: the reopened
+//     slot loaded the record as a never-started twin, which the instance
+//     replaces on success; on failure the twin's record owns the worktree
+//     and branch, so nothing is killed and only the preview goes.
 func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 	inst := msg.instance
 	owner := m.owningSlot(msg.slot, inst)
+	if owner != nil && !m.slotLoaded(owner) {
+		if twin, reopened := m.reopenedTwin(owner, inst); twin != nil {
+			if msg.err != nil {
+				return tea.Batch(m.handleError(msg.err), releaseInstancesCmd([]*session.Instance{inst}))
+			}
+			reopened.list.ReplaceInstance(twin, inst)
+			owner = reopened
+		}
+	}
 	loaded := m.slotLoaded(owner)
 
 	if msg.err != nil {
@@ -113,7 +165,7 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 		}
 	}
 
-	if !msg.promptAfterName && inst.Prompt != "" {
+	if inst.Prompt != "" {
 		if err := inst.SendPrompt(inst.Prompt); err != nil {
 			log.For("app").Error("send_prompt_failed", "err", err)
 		}
@@ -127,36 +179,32 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 	case !loaded:
 		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, which is no longer open", inst.Title, slotLabel(owner)))
 	case owner != m.workspaceSlot:
+		// A background slot's selection drives no open flow.
 		owner.list.SelectInstance(inst)
 		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", inst.Title, slotLabel(owner)))
+	case m.state != stateDefault:
+		// Another flow owns the screen and acts on the selection; leave
+		// both alone.
+		m.errBox.SetInfo(fmt.Sprintf("%s started", inst.Title))
 	default:
 		m.list.SelectInstance(inst)
-		if m.state != stateDefault {
-			// Another flow (an overlay, an inline attach) owns the
-			// screen now; don't yank it away.
-			break
-		}
-		if msg.promptAfterName {
-			m.state = statePrompt
-			m.menu.SetState(ui.StatePrompt)
-			m.setOverlay(m.newPromptOverlay(), overlayTextInput)
-		} else {
-			// Auto-focus agent pane and capture input
-			m.setPaneFocus(ui.FocusAgent)
-			m.splitPane.SetInlineAttach(true)
-			m.state = stateInlineAttach
-			m.menu.SetState(ui.StateInlineAttach)
-		}
+		// Auto-focus agent pane and capture input
+		m.setPaneFocus(ui.FocusAgent)
+		m.splitPane.SetInlineAttach(true)
+		m.state = stateInlineAttach
+		m.menu.SetState(ui.StateInlineAttach)
 	}
 
 	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release)
 }
 
-// handleRecoverDone swaps a recovered orphan's placeholder for the
-// adopted instance in the slot that owns it, by identity (see the note
-// above). A failure reverts the placeholder to Recoverable so the user
-// can retry r. An owner closed meanwhile still records the adoption, and
-// gets the adopted instance's preview client released.
+// handleRecoverDone puts the adopted instance in its placeholder's row in
+// the slot that owns it, by identity (see the note above) — in place, so
+// the list order and the selection's row are unchanged. It is selected
+// only where that can't retarget an open flow. A failure reverts the
+// placeholder to Recoverable so the user can retry r. An owner closed
+// meanwhile still records the adoption, and gets the adopted instance's
+// preview client released.
 func (m *home) handleRecoverDone(msg recoverDoneMsg) tea.Cmd {
 	owner := m.owningSlot(msg.slot, msg.placeholder)
 	if msg.err != nil {
@@ -176,9 +224,12 @@ func (m *home) handleRecoverDone(msg recoverDoneMsg) tea.Cmd {
 		release = releaseInstancesCmd([]*session.Instance{msg.recovered})
 	}
 	if owner != nil {
-		owner.list.RemoveInstance(msg.placeholder)
-		owner.list.AddInstance(msg.recovered)
-		owner.list.SelectInstance(msg.recovered)
+		if !owner.list.ReplaceInstance(msg.placeholder, msg.recovered) {
+			owner.list.AddInstance(msg.recovered)
+		}
+		if owner != m.workspaceSlot || m.state == stateDefault {
+			owner.list.SelectInstance(msg.recovered)
+		}
 		if err := m.saveSlot(owner); err != nil {
 			log.For("app").Error("recover.save_failed", "title", msg.recovered.Title, "err", err)
 		}

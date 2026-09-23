@@ -29,6 +29,7 @@ func newPendingTitleEntryHome(t *testing.T) *home {
 	require.NoError(t, err)
 	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+	m.pendingNew = instance
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)
 	return m

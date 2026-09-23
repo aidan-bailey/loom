@@ -578,9 +578,8 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 
 	// Simulate instanceStartedMsg (no prompt, no error)
 	msg := instanceStartedMsg{
-		instance:        instance,
-		err:             nil,
-		promptAfterName: false,
+		instance: instance,
+		err:      nil,
 	}
 	model, _ := h.Update(msg)
 	homeModel := model.(*home)

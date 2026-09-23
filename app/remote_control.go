@@ -234,9 +234,8 @@ func (m *home) promptRemoteControlBlocked(startWithoutRC overlay.ConfirmationTas
 	co.OnCancel = func() {
 		// Swap in an abort task so cancel tears the pending instance down
 		// (async, like the Esc path) instead of starting it.
-		popped := m.list.PopSelectedForKill()
 		m.menu.SetState(ui.StateDefault)
-		m.pendingConfirmation = overlay.ConfirmationTask{Async: backgroundKillCmd(popped)}
+		m.pendingConfirmation = overlay.ConfirmationTask{Async: m.dropPendingNew()}
 	}
 	m.setOverlay(co, overlayConfirmation)
 	return nil

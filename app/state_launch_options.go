@@ -62,11 +62,11 @@ func (m *home) cancelLaunchOptions() (tea.Model, tea.Cmd) {
 }
 
 // killPendingLaunchOptionsCancel is the creation flow's
-// pendingLaunchOptionsCancel: pop and kill the pending, not-yet-started
-// instance and return to stateDefault — the same shape as
-// handleStateNewKey's Esc/ctrl+c handling.
+// pendingLaunchOptionsCancel: remove and kill the pending, not-yet-started
+// instance (dropPendingNew) and return to stateDefault — the same shape
+// as handleStateNewKey's Esc/ctrl+c handling.
 func (m *home) killPendingLaunchOptionsCancel() (tea.Model, tea.Cmd) {
-	popped := m.list.PopSelectedForKill()
+	kill := m.dropPendingNew()
 	m.state = stateDefault
 	// Before instanceChanged, whose menu refresh leaves the new-instance
 	// menu state alone.
@@ -76,6 +76,6 @@ func (m *home) killPendingLaunchOptionsCancel() (tea.Model, tea.Cmd) {
 		// discarding it would silently swallow them.
 		m.instanceChanged(),
 		tea.RequestWindowSize,
-		backgroundKillCmd(popped),
+		kill,
 	)
 }

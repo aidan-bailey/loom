@@ -303,6 +303,19 @@ func (l *List) RemoveInstance(inst *session.Instance) {
 	}
 }
 
+// ReplaceInstance puts replacement in old's row (old found by identity),
+// so the list order and the selection's row are unchanged. Reports
+// whether old was in the list.
+func (l *List) ReplaceInstance(old, replacement *session.Instance) bool {
+	for i, item := range l.items {
+		if item == old {
+			l.items[i] = replacement
+			return true
+		}
+	}
+	return false
+}
+
 // GetInstanceByTitle returns the instance with the given title, or nil.
 func (l *List) GetInstanceByTitle(title string) *session.Instance {
 	if idx := l.findByTitle(title); idx >= 0 {

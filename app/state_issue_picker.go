@@ -249,10 +249,12 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 // pops it (killPendingLaunchOptionsCancel). selectedBranch is threaded
 // to instanceStartedMsg for the N flow's branch picker.
 func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranch string) (tea.Model, tea.Cmd) {
+	m.pendingNew = instance
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
 		owner := m.workspaceSlot // stamped for instanceStartedMsg
 		startTask := overlay.ConfirmationTask{
 			Sync: func() {
+				m.pendingNew = nil // the start owns it now
 				instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)
 				instance.HeadroomProxy = opts.HeadroomProxy
 				instance.CacheTTL1h = opts.CacheTTL1h
@@ -268,11 +270,10 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 			Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
 				err := instance.Start(true)
 				return instanceStartedMsg{
-					instance:        instance,
-					err:             err,
-					promptAfterName: false,
-					selectedBranch:  selectedBranch,
-					slot:            owner,
+					instance:       instance,
+					err:            err,
+					selectedBranch: selectedBranch,
+					slot:           owner,
 				}
 			}),
 		}

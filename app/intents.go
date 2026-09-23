@@ -134,6 +134,7 @@ func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 
 	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+	m.pendingNew = instance
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)
 	m.promptAfterName = true
@@ -163,6 +164,7 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 
 	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+	m.pendingNew = instance
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)
 

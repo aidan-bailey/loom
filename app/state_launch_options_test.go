@@ -30,6 +30,7 @@ func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*
 	require.NoError(t, err)
 	m.list.AddInstance(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+	m.pendingNew = instance
 
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
 		instance.Program = applyLaunchOptions(opts, m.rcAuth, instance.Program, instance.Title)

@@ -28,7 +28,12 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	shouldClose, branchFilterChanged := ti.HandleKeyPress(msg)
 
 	if shouldClose {
-		selected := m.list.GetSelectedInstance()
+		// A creation flow's prompt targets its pending instance; otherwise
+		// the overlay was opened to prompt the selected, running session.
+		selected := m.pendingNew
+		if selected == nil {
+			selected = m.list.GetSelectedInstance()
+		}
 		if selected == nil {
 			return m, nil
 		}
@@ -60,6 +65,9 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				if n, rest, ok := github.ParseShorthand(prompt); ok && !(m.ghAvailable.checked && !m.ghAvailable.ok) {
 					m.dismissOverlay()
 					m.state = stateDefault
+					// The flow is suspended until the expansion lands;
+					// openLaunchOptionsForNew re-arms pendingNew then.
+					m.pendingNew = nil
 					return m, issueExpandCmd(m.repoPath(), n, selected, rest, prompt, selectedBranch)
 				}
 
@@ -67,6 +75,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					owner := m.workspaceSlot // stamped for instanceStartedMsg
 					startTask := overlay.ConfirmationTask{
 						Sync: func() {
+							m.pendingNew = nil // the start owns it now
 							selected.Program = applyLaunchOptions(opts, m.rcAuth, selected.Program, selected.Title)
 							selected.HeadroomProxy = opts.HeadroomProxy
 							selected.CacheTTL1h = opts.CacheTTL1h
@@ -81,11 +90,10 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 						Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
 							err := selected.Start(true)
 							return instanceStartedMsg{
-								instance:        selected,
-								err:             err,
-								promptAfterName: false,
-								selectedBranch:  selectedBranch,
-								slot:            owner,
+								instance:       selected,
+								err:            err,
+								selectedBranch: selectedBranch,
+								slot:           owner,
 							}
 						}),
 					}
