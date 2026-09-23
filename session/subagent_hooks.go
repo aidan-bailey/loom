@@ -12,6 +12,7 @@ import (
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/agent"
+	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/aidan-bailey/loom/session/tmux"
 )
@@ -20,13 +21,13 @@ import (
 // app sets it at the same points as SetLoomContextEnabled. It only decides
 // whether a launch gets hooks: a session already launched with hooks keeps
 // being scanned under the old setting only until its next launch, when
-// resetSubagentLaunch clears its state and prepareSubagentHooks re-decides.
+// resetHookLaunch clears its state and prepareHooks re-decides.
 var subagentTrackingEnabled atomic.Bool
 
 // noHooksLaunchID is the hookLaunchID a launch starts with before
-// prepareSubagentHooks runs. subagent.Prepare's launch IDs are 16
+// prepareHooks runs. hooks.Prepare's launch IDs are 16
 // lowercase hex characters, so this can never collide with a real one: it
-// exists so ApplySubagentScan drops every scan result — from the previous
+// exists so ApplyHookScan drops every scan result — from the previous
 // launch's folder, or one already in flight — until a successful Prepare
 // (if any) sets a real ID for the new launch.
 const noHooksLaunchID = "-"
@@ -76,26 +77,26 @@ func subagentLive(s Status) bool {
 // launching is false only for Start(false), which reattaches to a live
 // session with Restore. That Claude is still writing to its existing
 // hooks folder, and preparing a new one would wipe its history. When
-// launching is true, resetSubagentLaunch first clears any state left by
+// launching is true, resetHookLaunch first clears any state left by
 // the previous launch, so a relaunch that ends up skipping hooks
 // (tracking turned off, program no longer Claude, etc.) never keeps a
 // stale row, a stale launch ID or the old hooks folder around.
 func (i *Instance) launchProgram(program string, launching bool) string {
 	program = loomContextProgram(program, i.ConfigDir, i.IsWorkspaceTerminal)
 	if launching {
-		i.resetSubagentLaunch()
-		program = i.prepareSubagentHooks(program)
+		i.resetHookLaunch()
+		program = i.prepareHooks(program)
 	}
 	return program
 }
 
-// resetSubagentLaunch clears the previous launch's subagent state before a
+// resetHookLaunch clears the previous launch's subagent state before a
 // new process starts: the tracker and warm flag, hookLaunchID (set to the
-// sentinel, so no stale scan result can match until prepareSubagentHooks
+// sentinel, so no stale scan result can match until prepareHooks
 // maybe sets a real one), and the old hooks folder on disk. Called only
 // when launching is true, so no old Claude process for this instance can
 // still be writing to that folder.
-func (i *Instance) resetSubagentLaunch() {
+func (i *Instance) resetHookLaunch() {
 	i.mu.Lock()
 	i.hookLaunchID = noHooksLaunchID
 	i.subagentWarm = false
@@ -114,12 +115,12 @@ func (i *Instance) recoveryLaunch() (launch string, env []string) {
 	return i.launchProgram(program, true), InstanceEnv(program, headroomProxy, cacheTTL1h)
 }
 
-// prepareSubagentHooks readies a fresh hooks folder and returns program
+// prepareHooks readies a fresh hooks folder and returns program
 // with --settings added. On any failure it returns program unchanged, so
 // the session still launches, just untracked. It also adopts the new
 // launch ID and resets the tracker, so scan results from before this
 // launch are dropped.
-func (i *Instance) prepareSubagentHooks(program string) string {
+func (i *Instance) prepareHooks(program string) string {
 	if !subagentTrackingEnabled.Load() || i.ConfigDir == "" ||
 		runtime.GOOS == "windows" || !IsClaudeProgram(program) {
 		return program
@@ -129,11 +130,11 @@ func (i *Instance) prepareSubagentHooks(program string) string {
 		return program
 	}
 	dir := SubagentHooksDir(i.ConfigDir, i.Title)
-	if !subagent.SafePath(dir) {
+	if !hooks.SafePath(dir) {
 		i.getLogger().Debug("subagent_hooks.skipped", "reason", "single quote in hooks folder path")
 		return program
 	}
-	launchID, err := subagent.Prepare(dir)
+	launchID, err := hooks.Prepare(dir)
 	if err != nil {
 		i.getLogger().Warn("subagent_hooks.prepare_failed", "err", err.Error())
 		return program
@@ -143,7 +144,7 @@ func (i *Instance) prepareSubagentHooks(program string) string {
 	i.subagentWarm = false
 	i.subagentTrackerLocked().Reset()
 	i.mu.Unlock()
-	return BuildSettingsCommand(program, subagent.SettingsPath(dir))
+	return BuildSettingsCommand(program, hooks.SettingsPath(dir))
 }
 
 // subagentTrackerLocked returns the tracker, creating it on first use.
@@ -155,33 +156,33 @@ func (i *Instance) subagentTrackerLocked() *subagent.Tracker {
 	return i.subagents
 }
 
-// SubagentScanRequest describes the scan this instance needs, or returns
+// NextHookScan describes the scan this instance needs, or returns
 // false when it should not be scanned: a non-Claude agent, no config dir,
 // or a status in which no agent can be running. Call it on the Update
 // goroutine; the returned request is safe to hand to a tea.Cmd.
-func (i *Instance) SubagentScanRequest() (subagent.Request, bool) {
+func (i *Instance) NextHookScan() (HookScanRequest, bool) {
 	// Update goroutine only, like the setters, so i.program needs no lock.
 	if i.ConfigDir == "" || !IsClaudeProgram(i.program) {
-		return subagent.Request{}, false
+		return HookScanRequest{}, false
 	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if !subagentLive(i.Status) {
-		return subagent.Request{}, false
+		return HookScanRequest{}, false
 	}
-	return subagent.Request{
+	return HookScanRequest{
 		Dir:         SubagentHooksDir(i.ConfigDir, i.Title),
 		Cold:        !i.subagentWarm,
 		MissingMeta: i.subagentTrackerLocked().MissingMeta(),
 	}, true
 }
 
-// ApplySubagentScan applies one scan result and reports whether it was
+// ApplyHookScan applies one scan result and reports whether it was
 // applied. A result for another launch is dropped. An instance restored
 // after a loom restart has no launch ID yet and adopts the result's. A
 // replayed result rebuilds the tracker from scratch, and an incremental
 // one is only applied once the tracker is warm.
-func (i *Instance) ApplySubagentScan(res subagent.Result) bool {
+func (i *Instance) ApplyHookScan(res HookScanResult) bool {
 	if res.LaunchID == "" {
 		return false
 	}
@@ -206,7 +207,7 @@ func (i *Instance) ApplySubagentScan(res subagent.Result) bool {
 
 // ForgetSubagentsWithoutHooks drops the tracked agents of a launch whose
 // hooks folder has disappeared, which a scan reports as
-// subagent.ErrNoHooks: the folder was deleted by hand, or by another loom
+// hooks.ErrNoHooks: the folder was deleted by hand, or by another loom
 // process's sweep. Without it the last rows would stay on screen until
 // the next launch. It acts only when hookLaunchID is a real launch ID:
 // for an instance restored after a loom restart ("", nothing adopted yet)

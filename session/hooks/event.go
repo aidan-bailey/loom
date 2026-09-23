@@ -1,10 +1,14 @@
-// Package subagent tracks the subagents and agent-team teammates a Claude
-// session has spawned, from the Claude Code hook events loom registers at
-// launch. See docs/superpowers/specs/2026-09-16-subagent-nesting-design.md.
+// Package hooks is loom's side of the Claude Code hooks it registers at
+// launch: the per-instance folder layout, the settings file and hook
+// command, and the scan that turns the files the hooks write into Events.
+// It does not interpret them: session/subagent tracks subagents from them,
+// and session derives the session's status, ID and last message. See
+// docs/superpowers/specs/2026-09-16-subagent-nesting-design.md and
+// docs/superpowers/specs/2026-09-23-claude-hook-events-design.md.
 //
 // It has no dependency on tmux, the UI or the app, so every piece can be
 // tested against payloads captured from a real Claude session.
-package subagent
+package hooks
 
 import (
 	"encoding/json"
@@ -30,7 +34,7 @@ var HookEvents = []string{
 
 // ErrUnknownEvent is returned by ParseEvent for a JSON object whose
 // hook_event_name is not one loom registers.
-var ErrUnknownEvent = errors.New("subagent: unknown hook event")
+var ErrUnknownEvent = errors.New("hooks: unknown hook event")
 
 // Task is one entry of a payload's background_tasks list, reduced to the
 // fields reconciliation reads.
@@ -73,7 +77,7 @@ type wireEvent struct {
 func ParseEvent(data []byte) (Event, error) {
 	var w wireEvent
 	if err := json.Unmarshal(data, &w); err != nil {
-		return Event{}, fmt.Errorf("subagent: parse event: %w", err)
+		return Event{}, fmt.Errorf("hooks: parse event: %w", err)
 	}
 	if !slices.Contains(HookEvents, w.Name) {
 		return Event{}, fmt.Errorf("%w: %q", ErrUnknownEvent, w.Name)
@@ -116,7 +120,7 @@ func (e Event) Compact() ([]byte, error) {
 		}
 		raw, err := json.Marshal(tasks)
 		if err != nil {
-			return nil, fmt.Errorf("subagent: compact tasks: %w", err)
+			return nil, fmt.Errorf("hooks: compact tasks: %w", err)
 		}
 		w.Tasks = raw
 	}

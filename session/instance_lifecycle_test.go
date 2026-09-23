@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
@@ -514,8 +515,8 @@ func TestInstance_RestartIsARealLaunch(t *testing.T) {
 	// from the bare program.
 	inst.setTmuxSession(tmux.NewTmuxSessionWithDeps(inst.Title, inst.Program(), ptyFactory, cmdExec))
 	inst.setStarted(true)
-	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "0123456789abcdef", Replayed: true,
-		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "0123456789abcdef", Replayed: true,
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
 	require.Len(t, inst.Subagents(), 1)
 	adopted := inst.hookLaunchID
@@ -528,7 +529,7 @@ func TestInstance_RestartIsARealLaunch(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, adopted, inst.hookLaunchID)
 	assert.Equal(t, string(stored), inst.hookLaunchID)
-	settings := subagent.SettingsPath(dir)
+	settings := hooks.SettingsPath(dir)
 	assert.FileExists(t, settings)
 	require.Len(t, programs, 1, "Restart must start exactly one new tmux session")
 	assert.Contains(t, programs[0], "--settings '"+settings+"'")

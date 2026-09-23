@@ -1,4 +1,4 @@
-package subagent
+package hooks
 
 import (
 	"errors"

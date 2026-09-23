@@ -1,8 +1,16 @@
+// Package subagent tracks the subagents and agent-team teammates a Claude
+// session has spawned, from the hook events session/hooks collects. See
+// docs/superpowers/specs/2026-09-16-subagent-nesting-design.md.
+//
+// It has no dependency on tmux, the UI or the app, so every piece can be
+// tested against payloads captured from a real Claude session.
 package subagent
 
 import (
 	"cmp"
 	"slices"
+
+	"github.com/aidan-bailey/loom/session/hooks"
 )
 
 // kind distinguishes plain subagents, which end when they stop, from
@@ -69,7 +77,7 @@ func (t *Tracker) Reset() { t.agents = map[string]*agent{} }
 // since the last call, keyed by agent ID. They are applied to known agents
 // first, so an agent that started and stopped within one batch already
 // has its kind when its SubagentStop is processed.
-func (t *Tracker) Apply(events []Event, meta map[string]Meta) {
+func (t *Tracker) Apply(events []hooks.Event, meta map[string]Meta) {
 	for id, m := range meta {
 		if a, ok := t.agents[id]; ok {
 			t.applyMeta(a, m)
@@ -78,20 +86,20 @@ func (t *Tracker) Apply(events []Event, meta map[string]Meta) {
 	for _, ev := range events {
 		t.seq++
 		switch ev.Name {
-		case EventSubagentStart:
+		case hooks.EventSubagentStart:
 			t.start(ev, meta)
-		case EventSubagentStop:
+		case hooks.EventSubagentStop:
 			t.stop(ev.AgentID)
-		case EventTeammateIdle:
+		case hooks.EventTeammateIdle:
 			t.idle(ev.TeammateName)
-		case EventStop:
+		case hooks.EventStop:
 			// Only the parent's Stop reconciles: no foreground subagent can
 			// be running when the parent's turn ends, while a SubagentStop
 			// list may omit a parallel foreground agent.
 			if ev.HasTasks {
 				t.reconcile(ev.Tasks)
 			}
-		case EventSessionEnd:
+		case hooks.EventSessionEnd:
 			t.Reset()
 		}
 	}
@@ -117,7 +125,7 @@ func (t *Tracker) applyMeta(a *agent, m Meta) {
 
 // start creates or re-tasks an agent. Rows are only ever created here, so
 // Claude's internal helpers, which stop without starting, never appear.
-func (t *Tracker) start(ev Event, meta map[string]Meta) {
+func (t *Tracker) start(ev hooks.Event, meta map[string]Meta) {
 	if ev.AgentID == "" {
 		return
 	}
@@ -169,7 +177,7 @@ func (t *Tracker) idle(name string) {
 // matched, so only their count is used: extras are removed, Stopping ones
 // first, then the most recently stopped. Agents of unknown kind are left
 // alone; they are hidden and only exist until their sidecar is read.
-func (t *Tracker) reconcile(tasks []Task) {
+func (t *Tracker) reconcile(tasks []hooks.Task) {
 	liveSubagents := map[string]bool{}
 	liveTeammates := 0
 	for _, task := range tasks {

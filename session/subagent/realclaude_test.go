@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,8 +30,8 @@ func TestRealClaude_TeammateLifecycle(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	hooks := filepath.Join(root, "hooks")
-	launchID, err := Prepare(hooks)
+	hooksDir := filepath.Join(root, "hooks")
+	launchID, err := hooks.Prepare(hooksDir)
 	require.NoError(t, err)
 	work := filepath.Join(root, "work")
 	require.NoError(t, os.MkdirAll(work, 0o700))
@@ -51,7 +52,7 @@ func TestRealClaude_TeammateLifecycle(t *testing.T) {
 	}
 
 	tm("new-session", "-d", "-s", "probe", "-x", "160", "-y", "45", "-c", work)
-	tm("send-keys", "-t", "probe", fmt.Sprintf("claude --model haiku --settings '%s'", SettingsPath(hooks)), "Enter")
+	tm("send-keys", "-t", "probe", fmt.Sprintf("claude --model haiku --settings '%s'", hooks.SettingsPath(hooksDir)), "Enter")
 
 	// Wait for Claude itself, not a "❯" that a shell prompt may also print.
 	const trustDialog = "trust this folder"
@@ -75,16 +76,16 @@ func TestRealClaude_TeammateLifecycle(t *testing.T) {
 
 	tracker := NewTracker()
 	cold := true
-	var seen []Event
+	var seen []hooks.Event
 	collect := func() {
-		res, err := Scan(Request{Dir: hooks, Cold: cold, MissingMeta: tracker.MissingMeta()}, time.Now())
+		res, err := hooks.Scan(hooks.Request{Dir: hooksDir, Cold: cold}, time.Now())
 		require.NoError(t, err)
 		require.Equal(t, launchID, res.LaunchID)
 		if res.Replayed {
 			tracker.Reset()
 		}
 		cold = false
-		tracker.Apply(res.Events, res.Meta)
+		tracker.Apply(res.Events, ReadMeta(res.Events, tracker.MissingMeta()))
 		seen = append(seen, res.Events...)
 	}
 
@@ -95,7 +96,7 @@ func TestRealClaude_TeammateLifecycle(t *testing.T) {
 		collect()
 		return idleThenStop(seen, "probe-mate")
 	})
-	requireOrder(t, seen, EventSubagentStart, EventSubagentStop, EventTeammateIdle, EventStop)
+	requireOrder(t, seen, hooks.EventSubagentStart, hooks.EventSubagentStop, hooks.EventTeammateIdle, hooks.EventStop)
 	waitFor(t, 30*time.Second, func() bool { collect(); return len(tracker.Visible()) == 1 })
 	require.Equal(t, []View{{Name: "probe-mate", Description: "probe teammate", Idle: true}}, tracker.Visible())
 
@@ -122,13 +123,13 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 
 // idleThenStop reports whether a TeammateIdle for name is followed by a
 // parent Stop.
-func idleThenStop(events []Event, name string) bool {
+func idleThenStop(events []hooks.Event, name string) bool {
 	idle := false
 	for _, e := range events {
-		if e.Name == EventTeammateIdle && e.TeammateName == name {
+		if e.Name == hooks.EventTeammateIdle && e.TeammateName == name {
 			idle = true
 		}
-		if idle && e.Name == EventStop {
+		if idle && e.Name == hooks.EventStop {
 			return true
 		}
 	}
@@ -136,7 +137,7 @@ func idleThenStop(events []Event, name string) bool {
 }
 
 // requireOrder asserts want appears in events as a subsequence.
-func requireOrder(t *testing.T, events []Event, want ...string) {
+func requireOrder(t *testing.T, events []hooks.Event, want ...string) {
 	t.Helper()
 	i := 0
 	for _, e := range events {
@@ -155,14 +156,14 @@ func requireOrder(t *testing.T, events []Event, want ...string) {
 // started to handle the shutdown request and stopped, it does not go idle
 // after that final stop, and a later parent Stop lists no running
 // teammates. A teammate's agent_type is its name.
-func requireShutdownSequence(t *testing.T, events []Event, name string) {
+func requireShutdownSequence(t *testing.T, events []hooks.Event, name string) {
 	t.Helper()
 	started, lastStop := false, -1
 	for i, e := range events {
-		if e.Name == EventSubagentStart && e.AgentType == name {
+		if e.Name == hooks.EventSubagentStart && e.AgentType == name {
 			started = true
 		}
-		if started && e.Name == EventSubagentStop && e.AgentType == name {
+		if started && e.Name == hooks.EventSubagentStop && e.AgentType == name {
 			lastStop = i
 		}
 	}
@@ -171,9 +172,9 @@ func requireShutdownSequence(t *testing.T, events []Event, name string) {
 
 	emptied := false
 	for _, e := range events[lastStop+1:] {
-		require.False(t, e.Name == EventTeammateIdle && e.TeammateName == name,
+		require.False(t, e.Name == hooks.EventTeammateIdle && e.TeammateName == name,
 			"shutdown: %s went idle after its final stop", name)
-		if e.Name == EventStop && e.HasTasks && runningTeammates(e.Tasks) == 0 {
+		if e.Name == hooks.EventStop && e.HasTasks && runningTeammates(e.Tasks) == 0 {
 			emptied = true
 		}
 	}
@@ -182,7 +183,7 @@ func requireShutdownSequence(t *testing.T, events []Event, name string) {
 }
 
 // runningTeammates counts the live teammate entries in a background_tasks list.
-func runningTeammates(tasks []Task) int {
+func runningTeammates(tasks []hooks.Task) int {
 	n := 0
 	for _, task := range tasks {
 		if task.Type == "teammate" && task.Status == "running" {

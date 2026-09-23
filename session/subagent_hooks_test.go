@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/subagent"
 
 	"github.com/stretchr/testify/assert"
@@ -30,7 +31,7 @@ func hooksInstance(t *testing.T, program string) *Instance {
 }
 
 func settingsFlag(inst *Instance) string {
-	return "--settings '" + subagent.SettingsPath(SubagentHooksDir(inst.ConfigDir, inst.Title)) + "'"
+	return "--settings '" + hooks.SettingsPath(SubagentHooksDir(inst.ConfigDir, inst.Title)) + "'"
 }
 
 func TestSubagentHooksDir(t *testing.T) {
@@ -81,7 +82,7 @@ func TestLaunchProgram_ReattachLeavesFolderAlone(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
 	launchID := inst.hookLaunchID
-	kept := filepath.Join(subagent.EventsDir(SubagentHooksDir(inst.ConfigDir, inst.Title)), "1-1.ev")
+	kept := filepath.Join(hooks.EventsDir(SubagentHooksDir(inst.ConfigDir, inst.Title)), "1-1.ev")
 	require.NoError(t, os.WriteFile(kept, []byte("{}"), 0o600))
 
 	got := inst.launchProgram("claude", false)
@@ -127,8 +128,8 @@ func TestLaunchProgram_UntrackedRelaunchClearsState(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
 	oldLaunchID := inst.hookLaunchID
-	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: oldLaunchID, Replayed: true,
-		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: oldLaunchID, Replayed: true,
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
 	require.Len(t, inst.Subagents(), 1)
 
@@ -138,8 +139,8 @@ func TestLaunchProgram_UntrackedRelaunchClearsState(t *testing.T) {
 	assert.Empty(t, inst.Subagents())
 	assert.False(t, inst.subagentWarm)
 	assert.NoDirExists(t, SubagentHooksDir(inst.ConfigDir, inst.Title))
-	assert.False(t, inst.ApplySubagentScan(subagent.Result{LaunchID: oldLaunchID, Replayed: true,
-		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a2", TranscriptPath: "/p/s2.jsonl"}}}),
+	assert.False(t, inst.ApplyHookScan(HookScanResult{LaunchID: oldLaunchID, Replayed: true,
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a2", TranscriptPath: "/p/s2.jsonl"}}}),
 		"a result carrying the previous launch's ID must never be adopted after a relaunch")
 }
 
@@ -148,8 +149,8 @@ func TestLaunchProgram_RelaunchResetsWarmTracker(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
 	firstID := inst.hookLaunchID
-	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: firstID, Replayed: true,
-		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: firstID, Replayed: true,
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
 	require.Len(t, inst.Subagents(), 1)
 
@@ -178,7 +179,7 @@ func TestRecoveryLaunch_AddsHooks(t *testing.T) {
 // writeHookEvent drops a raw payload the way the hook command does.
 func writeHookEvent(t *testing.T, inst *Instance, stem, payload string, mod time.Time) {
 	t.Helper()
-	path := filepath.Join(subagent.EventsDir(SubagentHooksDir(inst.ConfigDir, inst.Title)), stem+".json")
+	path := filepath.Join(hooks.EventsDir(SubagentHooksDir(inst.ConfigDir, inst.Title)), stem+".json")
 	require.NoError(t, os.WriteFile(path, []byte(payload), 0o600))
 	require.NoError(t, os.Chtimes(path, mod, mod))
 }
@@ -195,11 +196,11 @@ func fakeTranscript(t *testing.T, agentID, meta string) string {
 
 func scanAndApply(t *testing.T, inst *Instance) bool {
 	t.Helper()
-	req, ok := inst.SubagentScanRequest()
+	req, ok := inst.NextHookScan()
 	require.True(t, ok)
-	res, err := subagent.Scan(req, time.Now())
+	res, err := ScanHooks(req, time.Now())
 	require.NoError(t, err)
-	return inst.ApplySubagentScan(res)
+	return inst.ApplyHookScan(res)
 }
 
 func TestSubagents_EndToEndAndRestart(t *testing.T) {
@@ -218,14 +219,14 @@ func TestSubagents_EndToEndAndRestart(t *testing.T) {
 
 	// A new loom process restores the same instance with empty memory.
 	restored := &Instance{Title: inst.Title, program: "claude", ConfigDir: inst.ConfigDir, Status: Running}
-	req, ok := restored.SubagentScanRequest()
+	req, ok := restored.NextHookScan()
 	require.True(t, ok)
 	assert.True(t, req.Cold)
 	require.True(t, scanAndApply(t, restored))
 	assert.Equal(t, inst.hookLaunchID, restored.hookLaunchID, "restored instance adopts the folder's launch ID")
 	assert.Equal(t, want, restored.Subagents())
 
-	req, _ = restored.SubagentScanRequest()
+	req, _ = restored.NextHookScan()
 	assert.False(t, req.Cold)
 }
 
@@ -233,18 +234,18 @@ func TestApplySubagentScan_Gates(t *testing.T) {
 	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
-	start := subagent.Event{Name: subagent.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}
+	start := hooks.Event{Name: hooks.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}
 	meta := map[string]subagent.Meta{"a1": {AgentType: "Explore", Description: "d"}}
 
-	assert.False(t, inst.ApplySubagentScan(subagent.Result{}), "empty launch ID")
-	assert.False(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "other", Replayed: true,
-		Events: []subagent.Event{start}, Meta: meta}), "another launch")
-	assert.False(t, inst.ApplySubagentScan(subagent.Result{LaunchID: inst.hookLaunchID,
-		Events: []subagent.Event{start}, Meta: meta}), "incremental result for a cold tracker")
+	assert.False(t, inst.ApplyHookScan(HookScanResult{}), "empty launch ID")
+	assert.False(t, inst.ApplyHookScan(HookScanResult{LaunchID: "other", Replayed: true,
+		Events: []hooks.Event{start}, Meta: meta}), "another launch")
+	assert.False(t, inst.ApplyHookScan(HookScanResult{LaunchID: inst.hookLaunchID,
+		Events: []hooks.Event{start}, Meta: meta}), "incremental result for a cold tracker")
 	assert.Empty(t, inst.Subagents())
 
-	assert.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: inst.hookLaunchID, Replayed: true,
-		Events: []subagent.Event{start}, Meta: meta}))
+	assert.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: inst.hookLaunchID, Replayed: true,
+		Events: []hooks.Event{start}, Meta: meta}))
 	assert.Len(t, inst.Subagents(), 1)
 }
 
@@ -262,10 +263,10 @@ func TestForgetSubagentsWithoutHooks(t *testing.T) {
 	launchID := inst.hookLaunchID
 
 	require.NoError(t, os.RemoveAll(SubagentHooksDir(inst.ConfigDir, inst.Title)))
-	req, ok := inst.SubagentScanRequest()
+	req, ok := inst.NextHookScan()
 	require.True(t, ok)
-	_, err := subagent.Scan(req, time.Now())
-	require.ErrorIs(t, err, subagent.ErrNoHooks)
+	_, err := ScanHooks(req, time.Now())
+	require.ErrorIs(t, err, hooks.ErrNoHooks)
 
 	inst.ForgetSubagentsWithoutHooks()
 
@@ -281,8 +282,8 @@ func TestForgetSubagentsWithoutHooks(t *testing.T) {
 func TestForgetSubagentsWithoutHooks_NoRealLaunchIDUntouched(t *testing.T) {
 	for _, id := range []string{"", noHooksLaunchID} {
 		inst := hooksInstance(t, "claude")
-		require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "L", Replayed: true,
-			Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+		require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true,
+			Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
 			Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
 		inst.hookLaunchID = id
 
@@ -296,8 +297,8 @@ func TestForgetSubagentsWithoutHooks_NoRealLaunchIDUntouched(t *testing.T) {
 
 func TestSubagents_HiddenWhenNotLive(t *testing.T) {
 	inst := hooksInstance(t, "claude")
-	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "L", Replayed: true,
-		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true,
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
 	for _, st := range []Status{Paused, Recoverable, Deleting} {
 		inst.Status = st
@@ -309,28 +310,28 @@ func TestSubagents_HiddenWhenNotLive(t *testing.T) {
 
 func TestSubagentScanRequest(t *testing.T) {
 	aider := hooksInstance(t, "aider")
-	_, ok := aider.SubagentScanRequest()
+	_, ok := aider.NextHookScan()
 	assert.False(t, ok)
 
 	paused := hooksInstance(t, "claude")
 	paused.Status = Paused
-	_, ok = paused.SubagentScanRequest()
+	_, ok = paused.NextHookScan()
 	assert.False(t, ok)
 
 	noDir := hooksInstance(t, "claude")
 	noDir.ConfigDir = ""
-	_, ok = noDir.SubagentScanRequest()
+	_, ok = noDir.NextHookScan()
 	assert.False(t, ok)
 
 	inst := hooksInstance(t, "claude")
-	req, ok := inst.SubagentScanRequest()
+	req, ok := inst.NextHookScan()
 	require.True(t, ok)
 	assert.Equal(t, SubagentHooksDir(inst.ConfigDir, inst.Title), req.Dir)
 	assert.True(t, req.Cold)
 
-	require.True(t, inst.ApplySubagentScan(subagent.Result{LaunchID: "L", Replayed: true,
-		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}}}))
-	req, _ = inst.SubagentScanRequest()
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true,
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}}}))
+	req, _ = inst.NextHookScan()
 	assert.False(t, req.Cold)
 	assert.Equal(t, []subagent.MetaRef{{AgentID: "a1", Path: "/p/s/subagents/agent-a1.meta.json"}}, req.MissingMeta)
 }

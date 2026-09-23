@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/subagent"
 
 	"github.com/charmbracelet/x/ansi"
@@ -74,9 +75,9 @@ func TestRenderCard_RailCountCutBeforeStatus(t *testing.T) {
 func TestBuildCardData_CopiesSubagents(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "cd", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
-	require.True(t, inst.ApplySubagentScan(subagent.Result{
+	require.True(t, inst.ApplyHookScan(session.HookScanResult{
 		LaunchID: "L", Replayed: true,
-		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}},
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}},
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore", Description: "map code"}},
 	}))
 
@@ -97,9 +98,9 @@ func TestBuildCardData_SanitizesAgentText(t *testing.T) {
 	const osc52 = "\x1b]52;c;aGk=\x07pwn\nnext"
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "cd", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
-	require.True(t, inst.ApplySubagentScan(subagent.Result{
+	require.True(t, inst.ApplyHookScan(session.HookScanResult{
 		LaunchID: "L", Replayed: true,
-		Events: []subagent.Event{{Name: subagent.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}},
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}},
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore", Name: "\x1b[31mred", Description: osc52}},
 	}))
 	inst.SetWaitReason(osc52)

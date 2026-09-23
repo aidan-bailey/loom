@@ -766,8 +766,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, statusDetectCmd(inst)
-	case subagentScanMsg:
-		m.handleSubagentScan(msg)
+	case hookScanMsg:
+		m.handleHookScan(msg)
 		return m, nil
 	case rosterReadyMsg:
 		if msg.err != nil {
@@ -941,9 +941,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Subagent hook events, throttled like the roster (see
-		// maybeSubagentScan). nil when not due, in flight, or no Claude
+		// maybeHookScan). nil when not due, in flight, or no Claude
 		// agent is live.
-		if scan := m.maybeSubagentScan(active); scan != nil {
+		if scan := m.maybeHookScan(active); scan != nil {
 			cmds = append(cmds, scan)
 		}
 

@@ -1,4 +1,4 @@
-package subagent
+package hooks
 
 import (
 	"bytes"
@@ -69,7 +69,7 @@ func SettingsJSON(eventsDir string) ([]byte, error) {
 	enc.SetEscapeHTML(false) // keep the command's > readable
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(doc); err != nil {
-		return nil, fmt.Errorf("subagent: encode settings: %w", err)
+		return nil, fmt.Errorf("hooks: encode settings: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -81,27 +81,27 @@ func SettingsJSON(eventsDir string) ([]byte, error) {
 // without its settings.
 func Prepare(dir string) (string, error) {
 	if !SafePath(dir) {
-		return "", fmt.Errorf("subagent: hooks folder %q contains a single quote", dir)
+		return "", fmt.Errorf("hooks: hooks folder %q contains a single quote", dir)
 	}
 	if err := os.RemoveAll(dir); err != nil {
-		return "", fmt.Errorf("subagent: clear hooks folder: %w", err)
+		return "", fmt.Errorf("hooks: clear hooks folder: %w", err)
 	}
 	if err := os.MkdirAll(EventsDir(dir), 0o700); err != nil {
-		return "", fmt.Errorf("subagent: create hooks folder: %w", err)
+		return "", fmt.Errorf("hooks: create hooks folder: %w", err)
 	}
 	settings, err := SettingsJSON(EventsDir(dir))
 	if err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(SettingsPath(dir), settings, 0o600); err != nil {
-		return "", fmt.Errorf("subagent: write settings: %w", err)
+		return "", fmt.Errorf("hooks: write settings: %w", err)
 	}
 	id, err := newLaunchID()
 	if err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(launchIDPath(dir), []byte(id), 0o600); err != nil {
-		return "", fmt.Errorf("subagent: write launch-id: %w", err)
+		return "", fmt.Errorf("hooks: write launch-id: %w", err)
 	}
 	return id, nil
 }
@@ -109,7 +109,7 @@ func Prepare(dir string) (string, error) {
 func newLaunchID() (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("subagent: launch id: %w", err)
+		return "", fmt.Errorf("hooks: launch id: %w", err)
 	}
 	return hex.EncodeToString(b[:]), nil
 }

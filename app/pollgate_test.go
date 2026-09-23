@@ -21,7 +21,7 @@ func resultCmd(n int) tea.Cmd {
 
 func TestGateIntervalsUseEachJobsInterval(t *testing.T) {
 	assert.Equal(t, rosterInterval, gateIntervals[gateRoster])
-	assert.Equal(t, subagentInterval, gateIntervals[gateSubagent])
+	assert.Equal(t, hookScanInterval, gateIntervals[gateHookScan])
 	assert.Equal(t, ghInterval, gateIntervals[gateGH])
 	assert.Zero(t, gateIntervals[gateRatioSave], "the ratio flush paces itself with its own tick")
 }
@@ -116,25 +116,25 @@ func TestDispatchGatedWrapsATickOnceItFires(t *testing.T) {
 func TestDispatchGatedSkipsBuildWhenNotDue(t *testing.T) {
 	m := &home{}
 	now := time.Now()
-	require.NotNil(t, m.dispatchGated(gateSubagent, now, func() tea.Cmd { return resultCmd(1) }))
+	require.NotNil(t, m.dispatchGated(gateHookScan, now, func() tea.Cmd { return resultCmd(1) }))
 
 	called := false
 	build := func() tea.Cmd { called = true; return resultCmd(2) }
 
-	assert.Nil(t, m.dispatchGated(gateSubagent, now.Add(subagentInterval), build),
+	assert.Nil(t, m.dispatchGated(gateHookScan, now.Add(hookScanInterval), build),
 		"in flight, even with the interval elapsed")
-	m.gate(gateSubagent).inFlight = false
-	assert.Nil(t, m.dispatchGated(gateSubagent, now.Add(subagentInterval/2), build),
+	m.gate(gateHookScan).inFlight = false
+	assert.Nil(t, m.dispatchGated(gateHookScan, now.Add(hookScanInterval/2), build),
 		"delivered, but inside the interval")
 	assert.False(t, called, "build must not run when the gate is not due: it reads model state and may be costly")
 
-	assert.NotNil(t, m.dispatchGated(gateSubagent, now.Add(subagentInterval), build))
+	assert.NotNil(t, m.dispatchGated(gateHookScan, now.Add(hookScanInterval), build))
 	assert.True(t, called)
 }
 
 func TestGatedDeliveryDisarmsFirst(t *testing.T) {
 	m := homeWithAppState(t)
-	for _, kind := range []gateKind{gateRoster, gateSubagent, gateGH, gateRatioSave} {
+	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateRatioSave} {
 		m.gate(kind).inFlight = true
 		// An inner message no case handles, and a nil one, disarm all the
 		// same: disarming belongs to the wrapper, not the handler.
@@ -212,8 +212,8 @@ func TestProductionGatedCmdsYieldOneMessage(t *testing.T) {
 	t.Run("subagent", func(t *testing.T) {
 		m := homeWithAppState(t)
 		inst := startedInstanceWithProgram(t, "one-msg-sub", "claude", "x")
-		msg := inner(t, m.maybeSubagentScan([]*session.Instance{inst}), gateSubagent)
-		assert.IsType(t, subagentScanMsg{}, msg)
+		msg := inner(t, m.maybeHookScan([]*session.Instance{inst}), gateHookScan)
+		assert.IsType(t, hookScanMsg{}, msg)
 	})
 
 	t.Run("github", func(t *testing.T) {

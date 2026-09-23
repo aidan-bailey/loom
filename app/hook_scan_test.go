@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/subagent"
 
 	"github.com/stretchr/testify/require"
@@ -18,8 +19,8 @@ func TestSubagentScanDispatchesForClaude(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "sub-first", "claude", "x")
 	m := homeWithAppState(t)
 
-	require.NotNil(t, m.maybeSubagentScan([]*session.Instance{inst}))
-	require.True(t, m.gate(gateSubagent).inFlight)
+	require.NotNil(t, m.maybeHookScan([]*session.Instance{inst}))
+	require.True(t, m.gate(gateHookScan).inFlight)
 }
 
 func TestSubagentScanThrottledWithinInterval(t *testing.T) {
@@ -27,12 +28,12 @@ func TestSubagentScanThrottledWithinInterval(t *testing.T) {
 	m := homeWithAppState(t)
 	active := []*session.Instance{inst}
 
-	require.NotNil(t, m.maybeSubagentScan(active))
-	m.gate(gateSubagent).inFlight = false
-	require.Nil(t, m.maybeSubagentScan(active))
+	require.NotNil(t, m.maybeHookScan(active))
+	m.gate(gateHookScan).inFlight = false
+	require.Nil(t, m.maybeHookScan(active))
 
-	m.gate(gateSubagent).last = time.Now().Add(-subagentInterval - time.Second)
-	require.NotNil(t, m.maybeSubagentScan(active))
+	m.gate(gateHookScan).last = time.Now().Add(-hookScanInterval - time.Second)
+	require.NotNil(t, m.maybeHookScan(active))
 }
 
 func TestSubagentScanNotStackedWhileInFlight(t *testing.T) {
@@ -40,9 +41,9 @@ func TestSubagentScanNotStackedWhileInFlight(t *testing.T) {
 	m := homeWithAppState(t)
 	active := []*session.Instance{inst}
 
-	require.NotNil(t, m.maybeSubagentScan(active))
-	m.gate(gateSubagent).last = time.Now().Add(-subagentInterval - time.Second)
-	require.Nil(t, m.maybeSubagentScan(active))
+	require.NotNil(t, m.maybeHookScan(active))
+	m.gate(gateHookScan).last = time.Now().Add(-hookScanInterval - time.Second)
+	require.Nil(t, m.maybeHookScan(active))
 }
 
 // Same deadlock guard as the roster: no dispatch must arm nothing, or no
@@ -51,32 +52,32 @@ func TestSubagentScanNoClaudeDoesNotLatch(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "sub-aider", "aider", "x")
 	m := homeWithAppState(t)
 
-	require.Nil(t, m.maybeSubagentScan([]*session.Instance{inst}))
-	require.False(t, m.gate(gateSubagent).inFlight)
-	require.True(t, m.gate(gateSubagent).last.IsZero())
+	require.Nil(t, m.maybeHookScan([]*session.Instance{inst}))
+	require.False(t, m.gate(gateHookScan).inFlight)
+	require.True(t, m.gate(gateHookScan).last.IsZero())
 }
 
 func TestSubagentScanMsgClearsInFlightOnEveryDelivery(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "sub-clear", "claude", "x")
 	m := homeWithAppState(t)
 
-	m.gate(gateSubagent).inFlight = true
-	m.Update(gatedMsg{kind: gateSubagent, msg: subagentScanMsg{}})
-	require.False(t, m.gate(gateSubagent).inFlight)
+	m.gate(gateHookScan).inFlight = true
+	m.Update(gatedMsg{kind: gateHookScan, msg: hookScanMsg{}})
+	require.False(t, m.gate(gateHookScan).inFlight)
 
-	m.gate(gateSubagent).inFlight = true
-	m.Update(gatedMsg{kind: gateSubagent, msg: subagentScanMsg{results: []subagentScanResult{
+	m.gate(gateHookScan).inFlight = true
+	m.Update(gatedMsg{kind: gateHookScan, msg: hookScanMsg{results: []hookScanResult{
 		{instance: inst, err: errors.New("disk on fire")},
-		{instance: inst, err: subagent.ErrNoHooks},
+		{instance: inst, err: hooks.ErrNoHooks},
 	}}})
-	require.False(t, m.gate(gateSubagent).inFlight, "errors must re-arm scanning too")
+	require.False(t, m.gate(gateHookScan).inFlight, "errors must re-arm scanning too")
 }
 
-func explorerResult(launchID string, replayed bool, extra ...subagent.Event) subagent.Result {
-	events := append([]subagent.Event{{
-		Name: subagent.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl",
+func explorerResult(launchID string, replayed bool, extra ...hooks.Event) session.HookScanResult {
+	events := append([]hooks.Event{{
+		Name: hooks.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl",
 	}}, extra...)
-	return subagent.Result{
+	return session.HookScanResult{
 		LaunchID: launchID,
 		Replayed: replayed,
 		Events:   events,
@@ -89,12 +90,12 @@ func TestSubagentScanMsgAppliesAndGatesByLaunch(t *testing.T) {
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
 
-	m.Update(subagentScanMsg{results: []subagentScanResult{{instance: inst, result: explorerResult("L1", true)}}})
+	m.Update(hookScanMsg{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
 	require.Equal(t, []subagent.View{{Name: "Explore", Description: "map code"}}, inst.Subagents())
 
 	// A result from another launch, even one that would clear everything, is dropped.
-	m.Update(subagentScanMsg{results: []subagentScanResult{{instance: inst, result: explorerResult("L2", true,
-		subagent.Event{Name: subagent.EventSessionEnd})}}})
+	m.Update(hookScanMsg{results: []hookScanResult{{instance: inst, result: explorerResult("L2", true,
+		hooks.Event{Name: hooks.EventSessionEnd})}}})
 	require.Len(t, inst.Subagents(), 1)
 }
 
@@ -104,14 +105,14 @@ func TestSubagentScanMsgNoHooksForgetsWarmRows(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "sub-gone", "claude", "x")
 	m := homeWithAppState(t)
 	m.list.AddInstance(inst)
-	m.Update(subagentScanMsg{results: []subagentScanResult{{instance: inst, result: explorerResult("L1", true)}}})
+	m.Update(hookScanMsg{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
 	require.Len(t, inst.Subagents(), 1)
 
-	m.gate(gateSubagent).inFlight = true
-	m.Update(gatedMsg{kind: gateSubagent, msg: subagentScanMsg{results: []subagentScanResult{{instance: inst, err: subagent.ErrNoHooks}}}})
+	m.gate(gateHookScan).inFlight = true
+	m.Update(gatedMsg{kind: gateHookScan, msg: hookScanMsg{results: []hookScanResult{{instance: inst, err: hooks.ErrNoHooks}}}})
 
 	require.Empty(t, inst.Subagents())
-	require.False(t, m.gate(gateSubagent).inFlight)
+	require.False(t, m.gate(gateHookScan).inFlight)
 }
 
 func TestSubagentScanCmdEndToEnd(t *testing.T) {
@@ -120,7 +121,7 @@ func TestSubagentScanCmdEndToEnd(t *testing.T) {
 	m.list.AddInstance(inst)
 
 	dir := session.SubagentHooksDir(inst.ConfigDir, inst.Title)
-	_, err := subagent.Prepare(dir)
+	_, err := hooks.Prepare(dir)
 	require.NoError(t, err)
 	root := t.TempDir()
 	sub := filepath.Join(root, "sess", "subagents")
@@ -129,12 +130,12 @@ func TestSubagentScanCmdEndToEnd(t *testing.T) {
 		[]byte(`{"agentType":"Explore","description":"map code"}`), 0o600))
 	payload := fmt.Sprintf(`{"hook_event_name":"SubagentStart","agent_id":"a1","agent_type":"Explore","transcript_path":%q}`,
 		filepath.Join(root, "sess.jsonl"))
-	require.NoError(t, os.WriteFile(filepath.Join(subagent.EventsDir(dir), "1-1.json"), []byte(payload), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(hooks.EventsDir(dir), "1-1.json"), []byte(payload), 0o600))
 
-	cmd := m.maybeSubagentScan([]*session.Instance{inst})
+	cmd := m.maybeHookScan([]*session.Instance{inst})
 	require.NotNil(t, cmd)
 	m.Update(cmd())
 
 	require.Equal(t, []subagent.View{{Name: "Explore", Description: "map code"}}, inst.Subagents())
-	require.False(t, m.gate(gateSubagent).inFlight, "the gated delivery must disarm the scan")
+	require.False(t, m.gate(gateHookScan).inFlight, "the gated delivery must disarm the scan")
 }

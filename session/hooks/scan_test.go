@@ -1,4 +1,4 @@
-package subagent
+package hooks
 
 import (
 	"errors"
@@ -159,34 +159,6 @@ func TestScan_StaleTmp(t *testing.T) {
 	assert.Empty(t, res.Events)
 	assert.NoFileExists(t, stale)
 	assert.FileExists(t, fresh)
-}
-
-func TestScan_ReadsMetaForStartsAndMissing(t *testing.T) {
-	dir, _ := prepared(t)
-	root := t.TempDir()
-	transcriptPath := filepath.Join(root, "sess.jsonl")
-	subagents := filepath.Join(root, "sess", "subagents")
-	require.NoError(t, os.MkdirAll(subagents, 0o700))
-	writeMeta := func(id, desc string) {
-		require.NoError(t, os.WriteFile(filepath.Join(subagents, "agent-"+id+".meta.json"),
-			[]byte(fmt.Sprintf(`{"agentType":"Explore","description":%q}`, desc)), 0o600))
-	}
-	writeMeta("a1", "from start")
-	writeMeta("a2", "from retry")
-
-	writeRaw(t, dir, "e", fmt.Sprintf(
-		`{"hook_event_name":"SubagentStart","agent_id":"a1","agent_type":"Explore","transcript_path":%q}`,
-		transcriptPath), base)
-
-	res, err := Scan(Request{Dir: dir, MissingMeta: []MetaRef{
-		{AgentID: "a2", Path: filepath.Join(subagents, "agent-a2.meta.json")},
-		{AgentID: "a3", Path: filepath.Join(subagents, "agent-a3.meta.json")},
-	}}, base)
-	require.NoError(t, err)
-	assert.Equal(t, map[string]Meta{
-		"a1": {AgentType: "Explore", Description: "from start"},
-		"a2": {AgentType: "Explore", Description: "from retry"},
-	}, res.Meta)
 }
 
 func TestScan_MalformedTasksReplayAsMissing(t *testing.T) {

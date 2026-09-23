@@ -16,8 +16,8 @@ type gateKind int
 const (
 	// gateRoster throttles the `claude agents --json` query (maybeRosterQuery).
 	gateRoster gateKind = iota
-	// gateSubagent throttles the hook-event scan (maybeSubagentScan).
-	gateSubagent
+	// gateHookScan throttles the hook-event scan (maybeHookScan).
+	gateHookScan
 	// gateGH throttles the GitHub poll (maybeGHQuery).
 	gateGH
 	// gateRatioSave dedupes the split-ratio flush tick (maybeArmRatioSave).
@@ -31,8 +31,8 @@ func (k gateKind) String() string {
 	switch k {
 	case gateRoster:
 		return "roster"
-	case gateSubagent:
-		return "subagent"
+	case gateHookScan:
+		return "hook_scan"
 	case gateGH:
 		return "github"
 	case gateRatioSave:
@@ -46,7 +46,7 @@ func (k gateKind) String() string {
 // was constructed — is throttled exactly like a production one.
 var gateIntervals = [numGateKinds]time.Duration{
 	gateRoster:   rosterInterval,
-	gateSubagent: subagentInterval,
+	gateHookScan: hookScanInterval,
 	gateGH:       ghInterval,
 	// gateRatioSave stays 0: the flush paces itself with its own tick
 	// (ratioSaveDelay), so the gate only keeps one tick in flight.
