@@ -197,3 +197,17 @@ func TestMigrate_V6RoundTripsIssue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 42, data.Issue)
 }
+
+// TestMigrate_V6UpgradesAddsClaudeSession verifies a v6 record migrates to
+// v7 with no conversation recorded: the empty strings mean "resume with
+// --continue", which is what a v6 loom did.
+func TestMigrate_V6UpgradesAddsClaudeSession(t *testing.T) {
+	raw := []byte(`{"schema_version":6,"title":"t","program":"claude","issue":3}`)
+
+	data, err := Migrate(raw)
+	require.NoError(t, err)
+	assert.Equal(t, 7, data.SchemaVersion)
+	assert.Empty(t, data.ClaudeSessionID)
+	assert.Empty(t, data.ClaudeTranscriptPath)
+	assert.Equal(t, 3, data.Issue)
+}

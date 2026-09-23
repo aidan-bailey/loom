@@ -297,3 +297,24 @@ func TestHooksLaunched(t *testing.T) {
 	inst.ConfigDir = ""
 	assert.False(t, inst.HooksLaunched())
 }
+
+func TestClaudeSession_PersistsThroughInstanceData(t *testing.T) {
+	data := InstanceData{
+		SchemaVersion:        CurrentSchemaVersion,
+		Title:                "persisted",
+		Program:              "claude",
+		Status:               Paused,
+		IsWorkspaceTerminal:  true,
+		ClaudeSessionID:      "8c634184-0fe5-4b62-b437-8f364eeeefcc",
+		ClaudeTranscriptPath: "/t/8c634184-0fe5-4b62-b437-8f364eeeefcc.jsonl",
+	}
+	inst, err := FromInstanceData(data, t.TempDir())
+	require.NoError(t, err)
+
+	id, transcript := inst.ClaudeSession()
+	assert.Equal(t, data.ClaudeSessionID, id)
+	assert.Equal(t, data.ClaudeTranscriptPath, transcript)
+	again := inst.Snapshot()
+	assert.Equal(t, data.ClaudeSessionID, again.ClaudeSessionID)
+	assert.Equal(t, data.ClaudeTranscriptPath, again.ClaudeTranscriptPath)
+}

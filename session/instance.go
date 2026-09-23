@@ -296,6 +296,9 @@ func (i *Instance) Snapshot() InstanceData {
 		CacheTTL1h:          i.cacheTTL1h,
 		IsWorkspaceTerminal: i.IsWorkspaceTerminal,
 		Issue:               i.issue,
+
+		ClaudeSessionID:      i.claude.sessionID,
+		ClaudeTranscriptPath: i.claude.transcriptPath,
 	}
 
 	if i.gitWorktree != nil {
@@ -350,6 +353,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		ConfigDir:           configDir,
 		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
 		issue:               data.Issue,
+		claude:              claudeState{sessionID: data.ClaudeSessionID, transcriptPath: data.ClaudeTranscriptPath},
 		logger:              log.For("instance", "title", data.Title),
 	}
 
