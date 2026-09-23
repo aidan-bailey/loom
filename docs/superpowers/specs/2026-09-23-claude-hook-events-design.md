@@ -3,7 +3,11 @@
 **Date:** 2026-09-23
 **Status:** Approved design (amended 2026-09-23 after the live probe: no
 `hookGrace`, hook events trigger roster queries, `Stop` with a running
-subagent is Running, session ID from `SessionStart` only)
+subagent is Running, session ID from `SessionStart` only; and while
+planning: the sidecar read stays in `session/subagent`, resume goes through
+a new `BuildResumeCommand`, reason precedence, and the dirty-promotion
+exemption)
+**Plan:** `docs/superpowers/plans/2026-09-23-claude-hook-events.md`
 **Verified against:** Claude Code 2.1.280, by a live probe on 2026-09-23 (an
 interactive haiku session on a private tmux server, hooks registered for
 every event below, and two `claude agents --json` pollers sampling every
@@ -157,12 +161,15 @@ after a hook event therefore always reflects that event. One
   and `Event` with `ParseEvent`/`Compact`. No tmux, UI or app dependency.
   `HookEvents` gains `SessionStart`, `UserPromptSubmit`, `PermissionRequest`
   and `Notification`.
-- **`session/subagent` (smaller).** `Tracker` and `Meta` only, consuming
-  `hooks.Event`. No behaviour change. `realclaude_test.go` moves with the
-  code it exercises.
-- **`session`.** A `claudeState` on `Instance` (§2), updated by
-  `ApplySubagentScan`, renamed `ApplyHookScan`. `SubagentScanRequest` becomes
-  `HookScanRequest`.
+- **`session/subagent` (smaller).** `Tracker` and `Meta`, consuming
+  `hooks.Event`, plus `ReadMeta`: the sidecar read `Scan` used to do stays
+  here, because sidecars are a subagent concept and `hooks` cannot import
+  `subagent` without a cycle. No behaviour change. `realclaude_test.go`
+  stays here too; it exercises the tracker.
+- **`session`.** `HookScanRequest`/`HookScanResult` and `ScanHooks`
+  (`hooks.Scan`, then `subagent.ReadMeta`) in `hook_scan.go`. A
+  `claudeState` on `Instance` (§2), updated by `ApplySubagentScan`, renamed
+  `ApplyHookScan`. `SubagentScanRequest` becomes `NextHookScan`.
 - **`app`.** `adoptRosterStatus` becomes `adoptClaudeStatus` (§3). The scan
   gate `gateSubagent` becomes `gateHookScan` (§4).
 
@@ -175,7 +182,7 @@ after a hook event therefore always reflects that event. One
 | `Source` | `source` (SessionStart) |
 | `ToolName` | `tool_name` (PermissionRequest) |
 | `NotificationType`, `Message` | `notification_type`, `message` (Notification) |
-| `LastAssistantMessage` | `last_assistant_message` (Stop), capped at 4 KB |
+| `LastAssistantMessage` | `last_assistant_message` (Stop), capped at 4 KB keeping the end, which is what a card shows |
 
 `Compact` writes the new fields using the payload's own names, so
 `ParseEvent` reads both forms as today. `At` is not serialized: a replay
@@ -205,10 +212,14 @@ type claudeState struct {
 
 The fields live under `i.mu`, with locking accessors, following the existing
 launch-field pattern. `ApplyHookScan` folds events in order: a replayed
-result resets `obs` and `lastMessage` first, then applies the full history;
-an incremental result applies on top. `sessionID` and `transcriptPath` are
-never reset by a replay, since a replay can only replace them with the same
-or newer values.
+result resets `lastMessage` first, then applies the full history; an
+incremental result applies on top. `obs` needs no reset on a replay, since
+replayed events are never newer than it (newest wins). `sessionID` and
+`transcriptPath` are never reset by a replay, since a replay can only
+replace them with the same or newer values. A new launch
+(`resetHookLaunch`) sets `obs` to no-opinion stamped *now*, so a roster
+answer from before the relaunch cannot revive the old process's status; a
+vanished hooks folder does the same to a hook-sourced `obs` only.
 
 ### 3. Events to observations, and the merge rule
 
@@ -261,9 +272,18 @@ turns a roster observation into no opinion at the query's `at`. The second
 half keeps today's rule that a failed query clears the roster: a
 roster-sourced status must not outlive the roster that produced it.
 
+**Reasons.** A roster observation with the same status as a current hook
+observation keeps the hook's reason: the hook names the tool
+(`permission: Bash`), the roster only the kind of wait (`permission
+prompt`). A `Notification` that arrives while the session is already
+Prompting keeps the current reason too; it is the delayed, generic twin of
+the `PermissionRequest`.
+
 When `claudeState` holds no valid observation, the screen ladder decides, as
 today. When it does, `maybeRedetect` is suppressed, as the roster already
-does. `adoptClaudeStatus` sets or clears `Instance.WaitReason` with the same
+does, and `paneDirtyMsg`'s Ready→Running promotion is skipped: the report
+owns the status, and output alone (a repaint on a focus change) says
+nothing new. `adoptClaudeStatus` sets or clears `Instance.WaitReason` with the same
 lifetime rule as `adoptRosterStatus` today, and both status paths
 (`statusDetectedMsg`, `metadataReadyMsg`) keep calling the one choke point.
 
@@ -324,7 +344,9 @@ writes through its own mirror, would drop them. Values are written at the
 existing save points, with no new write path. A crash before the next save
 falls back to `--continue`.
 
-**Relaunch.** `BuildRecoveryCommand(program, sessionID, transcriptPath)`:
+**Relaunch.** A new `BuildResumeCommand(program, sessionID, transcriptPath)`
+beside `BuildRecoveryCommand`, which keeps producing `--continue`; the
+adapter gains `ApplyResumeFlag` (a no-op for non-Claude agents):
 
 1. If `program` already carries `--continue` or `--resume`, return it
    unchanged (as today).
@@ -352,8 +374,9 @@ and `lastMessage` at each new launch but **not** `sessionID` or
 comes mid-turn, when the stored message belongs to the previous turn, and
 the live tail shows the dialog the user must answer.
 
-- `CardData` gains `LastMessage []string`. `BuildCardData` uses it in place
-  of `TailLines` when it is valid and the status is not Running.
+- `BuildCardData` fills `TailLines` from the message (`MessageTailLines`)
+  instead of the screen when the message is valid and the status is not
+  Running or Loading, so the renderers need no change.
 - Lines are the message's last non-empty lines: as many as the overview
   card's existing tail (`overviewCardTailLines`), and the last one in the
   rail. Code fence lines (```` ``` ````) are
@@ -383,8 +406,8 @@ roster.
 in the Claude Preferences overlay, but no longer decides whether hooks are
 installed. With it off, hooks are still installed and scanned for status,
 session ID and last message; the tracker still runs, and its rows are not
-shown. `Config.SubagentTrackingEnabled()` moves from the launch path to the
-card builder.
+shown: `Instance.Subagents` returns nil while it is off, so the setting
+applies at once.
 
 ## Testing
 
@@ -426,11 +449,12 @@ card builder.
   sanitization.
 - **Storage:** v6 → v7 migration; shape fixture; the migrate mirror keeps
   the new fields.
-- **`tools/fakeagent`:** the claude persona reads the events directory from
-  `--settings` and writes events in the real payload shape (`SessionStart`,
-  `UserPromptSubmit`, `PermissionRequest` on its pending prompt, `Stop` with
-  `last_assistant_message`). An e2e test drives status transitions through
-  hooks with no roster.
+- **`tools/fakeagent`:** the claude persona reads `--settings` and runs the
+  hook commands it registers with payloads in the real shape
+  (`SessionStart`, `UserPromptSubmit`, `PermissionRequest` on its pending
+  prompt, `Stop` with `last_assistant_message`, `SessionEnd`), honours
+  `--resume`, and answers `claude agents --json` with `[]`. An e2e test
+  drives status transitions through hooks with no roster opinion.
 - **Opt-in real-Claude contract test (`LOOM_TEST_REAL_CLAUDE=1`):** extended
   to assert each [probe result](#probe-results), including that the roster
   has already moved when a `Stop` and a `PermissionRequest` are stamped, so
