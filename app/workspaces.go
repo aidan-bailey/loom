@@ -144,9 +144,16 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 		// activated — but the workspace-terminal Start below happens now,
 		// during activation, and would fail with "session already exists"
 		// against that orphan. Kill it here first so Start gets a clean
-		// name; the later sweep handles any other stragglers.
-		if err := session.KillTmuxSessionByTitle(wtTitle, cmdExec); err != nil {
-			log.For("app").Debug("workspace_terminal.orphan_kill", "workspace", ws.Name, "err", err.Error())
+		// name; the later sweep handles any other stragglers. Only if it
+		// is this workspace's, by the sweep's own ownership test: the
+		// tmux server is shared, and another loom's session (a workspace
+		// elsewhere with the same name) can carry this title. Anything
+		// else is left running, and Start then fails on the name.
+		scope := session.NewSweepScope([]*config.WorkspaceContext{wsCtx}, m.registry)
+		if killed, err := session.KillOwnedTmuxSession(wtTitle, scope, cmdExec); err != nil {
+			log.For("app").Warn("workspace_terminal.orphan_kill_skipped", "workspace", ws.Name, "err", err.Error())
+		} else if killed {
+			log.For("app").Info("workspace_terminal.orphan_killed", "workspace", ws.Name, "title", wtTitle)
 		}
 
 		wtOpts := launchOptionsFromConfig(appConfig)

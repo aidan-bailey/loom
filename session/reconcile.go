@@ -2,8 +2,10 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -48,7 +50,7 @@ func CheckTmuxAlive(sessionTitle string, cmdExec internalexec.Executor) bool {
 	sanitized := tmux.ToLoomTmuxName(sessionTitle)
 	for attempt := 0; attempt < 2; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
-		existsCmd := tmux.Command(ctx, "has-session", "-t="+sanitized)
+		existsCmd := tmux.Command(ctx, "has-session", "-t", tmux.SessionTarget(sanitized))
 		err := cmdExec.Run(existsCmd)
 		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
@@ -71,8 +73,65 @@ func KillTmuxSessionByTitle(title string, cmdExec internalexec.Executor) error {
 	sanitized := tmux.ToLoomTmuxName(title)
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer cancel()
-	killCmd := tmux.Command(ctx, "kill-session", "-t="+sanitized)
+	killCmd := tmux.Command(ctx, "kill-session", "-t", tmux.SessionTarget(sanitized))
 	return cmdExec.Run(killCmd)
+}
+
+// KillOwnedTmuxSession kills the tmux session of the instance titled title,
+// but only when its start directory lies in a root scope owns, by the same
+// test the orphan sweep applies (see CleanupOrphanedSessions). The server
+// is shared: another loom's session can carry the same title, and killing
+// it on the strength of the name alone would take down that loom's agent.
+// It fails closed: a listing that cannot be read, or a session starting
+// anywhere scope does not own, is an error and nothing is killed. It
+// reports whether it killed a session; no such session (or no server) is
+// (false, nil).
+func KillOwnedTmuxSession(title string, scope SweepScope, cmdExec internalexec.Executor) (bool, error) {
+	name := tmux.ToLoomTmuxName(title)
+	listCtx, listCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
+	output, err := cmdExec.Output(tmux.Command(listCtx, "ls", "-F", sweepListFormat))
+	listCancel()
+	if err != nil {
+		if isNoTmuxServer(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("list tmux sessions to check who owns %s: %w", name, err)
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		sessionName, dir, _ := strings.Cut(line, "\t")
+		if sessionName != name {
+			continue
+		}
+		if !scope.resolve().owns(dir) {
+			return false, fmt.Errorf("tmux session %s was started in %q, outside this workspace; leaving it running", name, dir)
+		}
+		killCtx, killCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
+		defer killCancel()
+		if err := cmdExec.Run(tmux.Command(killCtx, "kill-session", "-t", tmux.SessionTarget(name))); err != nil {
+			return false, fmt.Errorf("kill tmux session %s: %w", name, err)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// isNoTmuxServer reports whether err, from a tmux command, says no server
+// is running: there is nothing on it to list or kill. tmux prints "no
+// server running on <socket>" for a dead socket and "error connecting to
+// <socket> (No such file or directory)" when there is none; its messages
+// are not translated. Anything else (a timeout, a permission error) means
+// the server's state is unknown.
+func isNoTmuxServer(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		msg += " " + string(exitErr.Stderr)
+	}
+	return strings.Contains(msg, "no server running on") ||
+		(strings.Contains(msg, "error connecting to") && strings.Contains(msg, "No such file or directory"))
 }
 
 // CheckWorktreeExists checks if the worktree directory exists on disk.
@@ -378,7 +437,9 @@ func pathWithin(p, root string) bool {
 // this rule answers was a second loom's startup sweep killing all 20
 // sessions on the server, the first loom's live agents included. It fails
 // closed: a session whose directory is empty, unreadable or outside every
-// owned root is left alone. Kills are by exact name (-t=).
+// owned root is left alone, and so is one whose name tmux cannot target
+// exactly (tmux.ExactlyTargetable). Kills are by exact name
+// (tmux.SessionTarget).
 func CleanupOrphanedSessions(claimedTitles map[string]bool, scope SweepScope, cmdExec internalexec.Executor) error {
 	listCtx, listCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer listCancel()
@@ -398,13 +459,20 @@ func CleanupOrphanedSessions(claimedTitles map[string]bool, scope SweepScope, cm
 		if sessionClaimed(sessionName, claimedTitles) {
 			continue
 		}
+		// A name holding ':' or '.' (made by a loom that did not map them
+		// out) has no exact target: kill-session -t=loom_feat:0 kills
+		// loom_feat.
+		if !tmux.ExactlyTargetable(sessionName) {
+			log.For("reconcile").Warn("orphan_tmux.skip_untargetable", "session", sessionName, "dir", dir)
+			continue
+		}
 		if !roots.owns(dir) {
 			log.For("reconcile").Debug("orphan_tmux.skip_unowned", "session", sessionName, "dir", dir)
 			continue
 		}
 		log.For("reconcile").Info("orphan_tmux.kill_begin", "session", sessionName, "dir", dir)
 		killCtx, killCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
-		if err := cmdExec.Run(tmux.Command(killCtx, "kill-session", "-t="+sessionName)); err != nil {
+		if err := cmdExec.Run(tmux.Command(killCtx, "kill-session", "-t", tmux.SessionTarget(sessionName))); err != nil {
 			log.For("reconcile").Error("orphan_tmux.kill_failed", "session", sessionName, "err", err)
 		}
 		killCancel()

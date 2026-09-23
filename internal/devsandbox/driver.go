@@ -64,7 +64,7 @@ func (s *Sandbox) runTmux(args ...string) (string, error) {
 }
 
 func (s *Sandbox) driverExists() bool {
-	_, err := s.runTmux("has-session", "-t="+DriverSession)
+	_, err := s.runTmux("has-session", "-t", tmux.SessionTarget(DriverSession))
 	return err == nil
 }
 
@@ -77,7 +77,7 @@ func (s *Sandbox) driverExists() bool {
 // erroring, so any output other than exactly "1" or "0" (including empty)
 // is treated as the driver session not existing, not as "not dead".
 func (s *Sandbox) paneDead() (bool, error) {
-	out, err := s.runTmux("display-message", "-p", "-t", DriverSession, "#{pane_dead}")
+	out, err := s.runTmux("display-message", "-p", "-t", tmux.PaneTarget(DriverSession), "#{pane_dead}")
 	if err != nil {
 		return false, err
 	}
@@ -112,7 +112,7 @@ func (s *Sandbox) Start(opts StartOptions) error {
 			return err
 		}
 	} else if s.driverExists() {
-		if _, err := s.runTmux("kill-session", "-t="+DriverSession); err != nil {
+		if _, err := s.runTmux("kill-session", "-t", tmux.SessionTarget(DriverSession)); err != nil {
 			return err
 		}
 	}
@@ -137,7 +137,7 @@ func (s *Sandbox) Start(opts StartOptions) error {
 		args = append(args, "-e", e)
 	}
 	args = append(args, shellJoin(argv),
-		";", "set-option", "-w", "-t", DriverSession, "remain-on-exit", "on")
+		";", "set-option", "-w", "-t", tmux.PaneTarget(DriverSession), "remain-on-exit", "on")
 	_, err := s.runTmux(args...)
 	return err
 }
@@ -155,7 +155,7 @@ func (s *Sandbox) Stop(grace time.Duration) error {
 			time.Sleep(pollInterval)
 		}
 	}
-	if _, err := s.runTmux("kill-session", "-t="+DriverSession); err != nil && s.driverExists() {
+	if _, err := s.runTmux("kill-session", "-t", tmux.SessionTarget(DriverSession)); err != nil && s.driverExists() {
 		return err
 	}
 	return nil
@@ -164,13 +164,13 @@ func (s *Sandbox) Stop(grace time.Duration) error {
 // SendKeys sends tmux key names (e.g. "n", "Enter", "Escape", "C-c") to the
 // driver pane. A word tmux does not recognize is typed as characters.
 func (s *Sandbox) SendKeys(keys ...string) error {
-	_, err := s.runTmux(append([]string{"send-keys", "-t", DriverSession}, keys...)...)
+	_, err := s.runTmux(append([]string{"send-keys", "-t", tmux.PaneTarget(DriverSession)}, keys...)...)
 	return err
 }
 
 // SendText types text literally, with no key-name interpretation.
 func (s *Sandbox) SendText(text string) error {
-	_, err := s.runTmux("send-keys", "-t", DriverSession, "-l", text)
+	_, err := s.runTmux("send-keys", "-t", tmux.PaneTarget(DriverSession), "-l", text)
 	return err
 }
 
@@ -181,7 +181,7 @@ func (s *Sandbox) SendText(text string) error {
 // by exactly one line before printing "Pane is dead …", which would
 // otherwise drop the program's last line of output from a plain capture.
 func (s *Sandbox) Screen(ansi bool) (string, error) {
-	args := []string{"capture-pane", "-p", "-t", DriverSession}
+	args := []string{"capture-pane", "-p", "-t", tmux.PaneTarget(DriverSession)}
 	if dead, _ := s.paneDead(); dead {
 		args = append(args, "-S", "-1")
 	}

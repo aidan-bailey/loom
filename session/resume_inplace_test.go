@@ -512,7 +512,7 @@ func TestResume_RelaunchReleasesTheDeadSession(t *testing.T) {
 
 	require.NoError(t, resumeLikeApp(t, inst))
 
-	assert.True(t, srv.ran("kill-session", "-t="+tmux.ToLoomTmuxName(inst.Title)),
+	assert.True(t, srv.ran("kill-session", "-t", tmux.SessionTarget(tmux.ToLoomTmuxName(inst.Title))),
 		"the dead session must be closed, by exact name")
 	assert.NotSame(t, old, inst.getTmuxSession())
 }

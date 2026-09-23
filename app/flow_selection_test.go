@@ -145,14 +145,13 @@ func (f *fakeTmuxServer) killed(title string) bool {
 	return slices.Contains(f.kills, tmux.ToLoomTmuxName(title))
 }
 
-// tmuxTarget extracts a tmux command's -t target.
+// tmuxTarget extracts the session name a tmux command's -t names: loom
+// passes "-t", tmux.SessionTarget(name) ("=name") or tmux.PaneTarget(name)
+// ("=name:").
 func tmuxTarget(args []string) string {
 	for i, a := range args {
-		if v, ok := strings.CutPrefix(a, "-t="); ok {
-			return v
-		}
 		if a == "-t" && i+1 < len(args) {
-			return args[i+1]
+			return strings.TrimSuffix(strings.TrimPrefix(args[i+1], "="), ":")
 		}
 	}
 	return ""

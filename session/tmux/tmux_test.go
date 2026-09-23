@@ -94,12 +94,13 @@ func TestWithProgram(t *testing.T) {
 }
 
 // TestFullScreenAttachCmd verifies that the returned exec.Cmd is shaped so
-// tea.ExecProcess can hand the terminal to `tmux attach-session -t <name>`.
+// tea.ExecProcess can hand the terminal to `tmux attach-session -t =<name>`
+// (exact: see SessionTarget).
 func TestFullScreenAttachCmd(t *testing.T) {
 	session := NewTmuxSession("attach-shape", "program")
 	cmd := session.FullScreenAttachCmd()
 	require.Equal(t,
-		[]string{"tmux", "attach-session", "-t", TmuxPrefix + "attach-shape"},
+		[]string{"tmux", "attach-session", "-t", "=" + TmuxPrefix + "attach-shape"},
 		cmd.Args,
 	)
 }
@@ -365,7 +366,7 @@ func TestStartTmuxSession(t *testing.T) {
 	require.Equal(t, 2, len(ptyFactory.cmds))
 	require.Equal(t, fmt.Sprintf("tmux new-session -d -s loom_test-session -c %s claude", workdir),
 		cmd2.ToString(ptyFactory.cmds[0]))
-	require.Equal(t, "tmux attach-session -t loom_test-session",
+	require.Equal(t, "tmux attach-session -t =loom_test-session",
 		cmd2.ToString(ptyFactory.cmds[1]))
 
 	require.Equal(t, 2, len(ptyFactory.files))

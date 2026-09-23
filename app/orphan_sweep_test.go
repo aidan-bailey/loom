@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -73,7 +74,7 @@ func TestOrphanSweep_SparesWorkspacesThisProcessDidNotLoad(t *testing.T) {
 		"loom_ws-theirs\t" + theirs.Path,
 		"loom_global-agent\t" + filepath.Join(globalDir, "worktrees", "global-agent"),
 	}, "\n") + "\n"
-	want := []string{"-t=loom_mine-stale"}
+	want := []string{"=loom_mine-stale"}
 
 	t.Run("multi-tab restore", func(t *testing.T) {
 		rec := &listingExec{listing: listing}
@@ -102,4 +103,39 @@ func TestOrphanSweep_SparesWorkspacesThisProcessDidNotLoad(t *testing.T) {
 		require.True(t, rec.ran("ls"), "the sweep must run")
 		assert.Equal(t, want, rec.killed())
 	})
+}
+
+// TestActivateWorkspace_TerminalOrphanKillIsOwnershipGated: before
+// auto-creating a workspace terminal, activation clears a leftover session
+// under its title (the workspace's name). The tmux server is shared, so a
+// session of that name another loom started elsewhere — a same-named
+// workspace in another checkout — must survive; only one this workspace's
+// roots own is killed, by exact name.
+func TestActivateWorkspace_TerminalOrphanKillIsOwnershipGated(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dir  func(ws config.Workspace) string
+		want []string
+	}{
+		{"started in this workspace: killed", func(ws config.Workspace) string { return ws.Path }, []string{"=loom_ws-term"}},
+		{"started elsewhere: spared", func(config.Workspace) string { return t.TempDir() }, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateTmux(t)
+			ws := writeWorkspaceState(t, "ws-term", `[]`)
+			// A program that stays up, so the terminal's real Start (on
+			// isolateTmux's private server) is quick.
+			require.NoError(t, os.WriteFile(filepath.Join(config.WorkspaceConfigDir(&ws), config.ConfigFileName),
+				[]byte(`{"default_program":"sleep 30"}`), 0o644))
+			rec := &listingExec{listing: "loom_ws-term-v2\t" + ws.Path + "\n" +
+				"loom_ws-term\t" + tc.dir(ws) + "\n"}
+			m := newRestoreHome(rec)
+			m.registry = &config.WorkspaceRegistry{}
+
+			_, err := m.activateWorkspace(ws)
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.want, rec.killed())
+		})
+	}
 }

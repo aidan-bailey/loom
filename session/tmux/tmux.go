@@ -212,7 +212,7 @@ func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
-		cmd := Command(ctx, "rename-session", "-t", legacy, target)
+		cmd := Command(ctx, "rename-session", "-t", SessionTarget(legacy), target)
 		if err := cmdExec.Run(cmd); err != nil {
 			log.For("tmux").Debug("rename_legacy_session_failed", "legacy", legacy, "target", target, "err", err.Error())
 		}
@@ -313,7 +313,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 		// Cleanup any partially created session if any exists.
 		if t.DoesSessionExist() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-			cleanupCmd := Command(cleanupCtx, "kill-session", "-t="+t.sanitizedName)
+			cleanupCmd := Command(cleanupCtx, "kill-session", "-t", SessionTarget(t.sanitizedName))
 			if cleanupErr := t.cmdExec.Run(cleanupCmd); cleanupErr != nil {
 				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
 			}
@@ -348,7 +348,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 
 	// Set history limit to enable scrollback (default is 2000, we'll use 10000 for more history)
 	histCtx, histCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	historyCmd := Command(histCtx, "set-option", "-t", t.sanitizedName, "history-limit", "10000")
+	historyCmd := Command(histCtx, "set-option", "-t", PaneTarget(t.sanitizedName), "history-limit", "10000")
 	if err := t.cmdExec.Run(historyCmd); err != nil {
 		log.For("tmux").Warn("history_limit_failed", "session", t.sanitizedName, "err", err)
 	}
@@ -356,7 +356,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 
 	// Enable mouse scrolling for the session
 	mouseCtx, mouseCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	mouseCmd := Command(mouseCtx, "set-option", "-t", t.sanitizedName, "mouse", "on")
+	mouseCmd := Command(mouseCtx, "set-option", "-t", PaneTarget(t.sanitizedName), "mouse", "on")
 	if err := t.cmdExec.Run(mouseCmd); err != nil {
 		log.For("tmux").Warn("mouse_scroll_failed", "session", t.sanitizedName, "err", err)
 	}
@@ -367,7 +367,7 @@ func (t *TmuxSession) Start(workDir string) (err error) {
 	// would consume a render row and shift content. tmux still owns the
 	// session; only its chrome is hidden.
 	statusCtx, statusCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	statusCmd := Command(statusCtx, "set-option", "-t", t.sanitizedName, "status", "off")
+	statusCmd := Command(statusCtx, "set-option", "-t", PaneTarget(t.sanitizedName), "status", "off")
 	if err := t.cmdExec.Run(statusCmd); err != nil {
 		log.For("tmux").Warn("status_off_failed", "session", t.sanitizedName, "err", err)
 	}
@@ -492,7 +492,12 @@ func (t *TmuxSession) Restore() error {
 	t.seedHistory = seed
 	t.stateMu.Unlock()
 
-	ptmx, err := t.ptyFactory.Start(Command(context.Background(), "attach-session", "-t", t.sanitizedName))
+	// Exact (see SessionTarget): the session may have died since the caller
+	// last looked, and a prefix match would attach this preview — and
+	// every keystroke, paste and prompt later written to it — to another
+	// agent's session. A missing session makes the attach client exit at
+	// once; the pump then reports the session dead.
+	ptmx, err := t.ptyFactory.Start(Command(context.Background(), "attach-session", "-t", SessionTarget(t.sanitizedName)))
 	if err != nil {
 		return fmt.Errorf("error opening PTY: %w", err)
 	}
@@ -831,7 +836,7 @@ func (t *TmuxSession) GetContentHash() []byte {
 // owns the real tty for the duration of the attach. Detach is driven by
 // the C-q key binding installed during Start (see bind-key call).
 func (t *TmuxSession) FullScreenAttachCmd() *exec.Cmd {
-	return Command(context.Background(), "attach-session", "-t", t.sanitizedName)
+	return Command(context.Background(), "attach-session", "-t", SessionTarget(t.sanitizedName))
 }
 
 // PausePreview closes the detached preview PTY and waits for its pump to
@@ -895,13 +900,12 @@ func (t *TmuxSession) Close() error {
 		_ = emu.Close()
 	}
 
-	// Exact match (-t=): a bare -t falls back to a prefix match when no
-	// session has exactly this name, and Close runs on sessions that may
-	// already be dead — closing "api" after its agent exited would kill a
-	// live "api-v2".
+	// Exact (see SessionTarget): Close runs on sessions that may already
+	// be dead, and a prefix match would make closing "api" after its
+	// agent exited kill a live "api-v2".
 	killCtx, killCancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer killCancel()
-	cmd := Command(killCtx, "kill-session", "-t="+t.sanitizedName)
+	cmd := Command(killCtx, "kill-session", "-t", SessionTarget(t.sanitizedName))
 	if err := t.cmdExec.Run(cmd); err != nil {
 		errs = append(errs, fmt.Errorf("error killing tmux session: %w", err))
 	}
@@ -933,7 +937,7 @@ func (t *TmuxSession) CloseRelatedSession(rawName string) error {
 	name := ToLoomTmuxName(rawName)
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := Command(ctx, "kill-session", "-t="+name) // exact match, as in Close
+	cmd := Command(ctx, "kill-session", "-t", SessionTarget(name)) // exact, as in Close
 	return t.cmdExec.Run(cmd)
 }
 
@@ -994,10 +998,11 @@ var livenessProbeTimeout = tmuxTimeout
 // plain false is what let one loaded machine mark every running session
 // Paused at once.
 func (t *TmuxSession) SessionLiveness() Liveness {
-	// Using "-t name" does a prefix match, which is wrong. `-t=` does an exact match.
+	// Exact (see SessionTarget): a prefix match would report a dead
+	// session alive while any sibling whose name it prefixes runs.
 	ctx, cancel := context.WithTimeout(context.Background(), livenessProbeTimeout)
 	defer cancel()
-	existsCmd := Command(ctx, "has-session", fmt.Sprintf("-t=%s", t.sanitizedName))
+	existsCmd := Command(ctx, "has-session", "-t", SessionTarget(t.sanitizedName))
 	if err := t.cmdExec.Run(existsCmd); err != nil {
 		// Killed at the deadline: tmux never answered, so we learned
 		// nothing. Reporting death here would be an assertion the probe
@@ -1117,7 +1122,7 @@ func (t *TmuxSession) CapturePaneContent() (string, error) {
 	// re-wrap and produce extra visual rows, causing the pane to overflow its height.
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := Command(ctx, "capture-pane", "-p", "-e", "-t", t.sanitizedName)
+	cmd := Command(ctx, "capture-pane", "-p", "-e", "-t", PaneTarget(t.sanitizedName))
 	output, err := t.cmdExec.Output(cmd)
 	if err != nil {
 		return "", fmt.Errorf("error capturing pane content: %v", err)
@@ -1133,7 +1138,7 @@ func (t *TmuxSession) CapturePaneContent() (string, error) {
 func (t *TmuxSession) CaptureHistory() (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := Command(ctx, "capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", t.sanitizedName)
+	cmd := Command(ctx, "capture-pane", "-p", "-e", "-S", "-", "-E", "-", "-t", PaneTarget(t.sanitizedName))
 	output, err := t.cmdExec.Output(cmd)
 	if err != nil {
 		return "", false
@@ -1148,7 +1153,7 @@ func (t *TmuxSession) CaptureHistory() (string, bool) {
 func (t *TmuxSession) captureHistoryRowsOnly() ([]string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := Command(ctx, "capture-pane", "-p", "-e", "-S", "-", "-E", "-1", "-t", t.sanitizedName)
+	cmd := Command(ctx, "capture-pane", "-p", "-e", "-S", "-", "-E", "-1", "-t", PaneTarget(t.sanitizedName))
 	output, err := t.cmdExec.Output(cmd)
 	if err != nil {
 		return nil, false
@@ -1200,7 +1205,8 @@ func (t *TmuxSession) RenderWindow(offset, rows int) (string, bool) {
 func (t *TmuxSession) IsAlternateScreen() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	cmd := Command(ctx, "display-message", "-p", "-t", t.sanitizedName, "#{alternate_on}")
+	// A missing session prints empty formats (exit 0), which reads as false.
+	cmd := Command(ctx, "display-message", "-p", "-t", PaneTarget(t.sanitizedName), "#{alternate_on}")
 	out, err := t.cmdExec.Output(cmd)
 	if err != nil {
 		return false

@@ -89,7 +89,7 @@ func TestCleanupOrphanedSessions_KillsUnclaimedUnderOwnedRoots(t *testing.T) {
 	assert.Equal(t, []string{"ls", "-F", "#{session_name}\t#{session_path}"}, srv.list[len(srv.list)-3:],
 		"the sweep reads each session's start directory")
 	assert.ElementsMatch(t, []string{
-		"-t=loom_stale", "-t=loom_term_stale", "-t=loom_gone", "-t=claudesquad_legacy", "-t=loom_oldterminal",
+		"=loom_stale", "=loom_term_stale", "=loom_gone", "=claudesquad_legacy", "=loom_oldterminal",
 	}, srv.killed, "unclaimed sessions under an owned root are killed, by exact name")
 }
 
@@ -112,7 +112,7 @@ func TestCleanupOrphanedSessions_SparesAnotherWorkspacesSessions(t *testing.T) {
 		"loom_mine-stale", filepath.Join(mine.ConfigDir, "worktrees", "stale"),
 	))
 
-	assert.Equal(t, []string{"-t=loom_mine-stale"}, killed,
+	assert.Equal(t, []string{"=loom_mine-stale"}, killed,
 		"only the session started under this process's own workspace may die")
 }
 
@@ -141,7 +141,7 @@ func TestCleanupOrphanedSessions_SiblingPrefixIsNotInside(t *testing.T) {
 		"loom_own", repo,
 	))
 
-	assert.Equal(t, []string{"-t=loom_own"}, killed, "/a/repo must not own /a/repo2 or /a")
+	assert.Equal(t, []string{"=loom_own"}, killed, "/a/repo must not own /a/repo2 or /a")
 }
 
 func TestCleanupOrphanedSessions_SymlinksCompareByTarget(t *testing.T) {
@@ -163,14 +163,14 @@ func TestCleanupOrphanedSessions_SymlinksCompareByTarget(t *testing.T) {
 			"loom_a", filepath.Join(mine.ConfigDir, "worktrees", "a"),
 			"loom_deleted", filepath.Join(mine.ConfigDir, "worktrees", "deleted"),
 		))
-		assert.ElementsMatch(t, []string{"-t=loom_a", "-t=loom_deleted"}, killed)
+		assert.ElementsMatch(t, []string{"=loom_a", "=loom_deleted"}, killed)
 	})
 
 	t.Run("session dir spelled through a symlink", func(t *testing.T) {
 		killed := sweep(t, map[string]bool{}, ownedScope(mine), listing(
 			"loom_b", viaLink(filepath.Join(mine.ConfigDir, "worktrees", "b")),
 		))
-		assert.Equal(t, []string{"-t=loom_b"}, killed)
+		assert.Equal(t, []string{"=loom_b"}, killed)
 	})
 
 	t.Run("a symlink out of an owned root is outside it", func(t *testing.T) {
@@ -198,7 +198,7 @@ func TestCleanupOrphanedSessions_ClaimedAndPreservedTitlesAreSpared(t *testing.T
 		"other_session", filepath.Join(wt, "other"), // not loom's at all
 	))
 
-	assert.Equal(t, []string{"-t=loom_stray"}, killed)
+	assert.Equal(t, []string{"=loom_stray"}, killed)
 }
 
 // TestCleanupOrphanedSessions_NestedForeignWorkspaceWins: a workspace
@@ -219,7 +219,7 @@ func TestCleanupOrphanedSessions_NestedForeignWorkspaceWins(t *testing.T) {
 		"loom_outer-sub", filepath.Join(outer.RepoPath, "libs"),
 	))
 
-	assert.ElementsMatch(t, []string{"-t=loom_outer-stale", "-t=loom_outer-sub"}, killed)
+	assert.ElementsMatch(t, []string{"=loom_outer-stale", "=loom_outer-sub"}, killed)
 }
 
 func TestCleanupOrphanedSessions_FilesystemRootOwnsNothing(t *testing.T) {
