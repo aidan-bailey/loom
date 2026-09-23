@@ -230,7 +230,7 @@ func TestSubagents_EndToEndAndRestart(t *testing.T) {
 	assert.False(t, req.Cold)
 }
 
-func TestApplySubagentScan_Gates(t *testing.T) {
+func TestApplyHookScan_Gates(t *testing.T) {
 	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
@@ -308,7 +308,7 @@ func TestSubagents_HiddenWhenNotLive(t *testing.T) {
 	assert.Len(t, inst.Subagents(), 1)
 }
 
-func TestSubagentScanRequest(t *testing.T) {
+func TestNextHookScan(t *testing.T) {
 	aider := hooksInstance(t, "aider")
 	_, ok := aider.NextHookScan()
 	assert.False(t, ok)

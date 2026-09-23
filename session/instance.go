@@ -224,12 +224,12 @@ type Instance struct {
 	statusChangedAt time.Time
 
 	// waitReason is Claude's own account of what this session is blocked
-	// on ("sandbox request", "dialog open"), taken from the agent
-	// roster's waitingFor. Only ever set while the roster is the one
-	// driving a Prompting status, and cleared the moment it is not, so a
-	// dismissed dialog cannot leave a label behind. Empty for non-Claude
-	// agents and whenever the scraper is deciding. Ephemeral: never
-	// serialized (absent from InstanceData).
+	// on ("permission: Bash" from a PermissionRequest hook, "sandbox
+	// request" from the roster's waitingFor). Only ever set while Claude's
+	// report drives a Prompting status (adoptClaudeStatus), and cleared
+	// the moment it does not, so a dismissed dialog cannot leave a label
+	// behind. Empty for non-Claude agents and whenever the scraper is
+	// deciding. Ephemeral: never serialized (absent from InstanceData).
 	waitReason string
 
 	// issue is the linked GitHub issue number (0 = none). Persisted as

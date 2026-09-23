@@ -85,7 +85,8 @@ func (e claudeRosterEntry) isInteractive() bool {
 
 // claudeRosterTimeout bounds the `claude agents --json` subprocess so a
 // hung CLI cannot stall the health tick. Measured cost of a real call is
-// ~380ms; this is generous headroom, not a target.
+// ~100ms on Claude Code 2.1.280 (~380ms on older builds); this is
+// generous headroom, not a target.
 const claudeRosterTimeout = 5 * time.Second
 
 // QueryClaudeRoster runs `claude agents --json` and returns the live

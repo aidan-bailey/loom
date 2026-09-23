@@ -3865,7 +3865,7 @@ Expected: `ok` for both. The `testenv` package checks that every package reachin
 
 - [ ] **Step 7: Run the e2e suite**
 
-Run: `go test -tags e2e ./e2e/... -run 'TestE2E_FakeClaudeHooksDriveStatus|TestE2E_FakeAiderPromptSurfacesAsAwaitingInput' -v 2>&1 | tail -20`
+Run: `CGO_ENABLED=0 go test -tags e2e ./e2e/... -run 'TestE2E_FakeClaudeHooksDriveStatus|TestE2E_FakeAiderPromptSurfacesAsAwaitingInput' -v 2>&1 | tail -20`
 Expected: both `PASS`. It needs `tmux`, `git` and `go` on `PATH`, and builds a sandboxed loom on a private tmux server, so it never touches your own sessions. On failure the test log prints the sandbox's last screen and log tail.
 
 - [ ] **Step 8: Commit**
@@ -4323,7 +4323,7 @@ Expected: no output. `claudeState` is only touched under `Instance.mu`, and scan
 
 - [ ] **Step 4: End to end**
 
-Run: `go test -tags e2e ./e2e/... 2>&1 | tail -5`
+Run: `CGO_ENABLED=0 go test -tags e2e ./e2e/... 2>&1 | tail -5`
 Expected: `ok`.
 
 - [ ] **Step 5: See it in the real TUI (optional, recommended)**

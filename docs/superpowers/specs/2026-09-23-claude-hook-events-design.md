@@ -133,6 +133,12 @@ after a hook event therefore always reflects that event. One
 - `claude --resume <unknown id>` prints "No conversation found with session
   ID: …", exits 1, and sends only a `SessionEnd` carrying the unknown ID.
 - `/exit` sends `SessionEnd` (`reason: "prompt_input_exit"`).
+- The transcript at `SessionStart`'s `transcript_path` is written with the
+  first message, not at startup (found by the contract test). Before then
+  `BuildResumeCommand` falls back to `--continue`, which is right: there is
+  no conversation to resume.
+- Claude runs a read-only Bash command such as `true` without a permission
+  prompt; one that writes a file (`date > probe.txt`) prompts.
 
 ## Decisions
 

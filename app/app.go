@@ -937,7 +937,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a background Cmd and returns the results via metadataReadyMsg.
 		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty(), m.ghBases))
 
-		// One `claude agents --json` for the whole fleet (~380ms, off the
+		// One `claude agents --json` for the whole fleet (~100ms, off the
 		// Update goroutine), on its OWN cadence rather than the tick's —
 		// this tick runs at 500ms on the snapshot path, which would keep a
 		// claude process alive most of the time. Claude reports its own

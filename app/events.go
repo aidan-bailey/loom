@@ -146,10 +146,11 @@ func rosterQueryCmd(active []*session.Instance) tea.Cmd {
 
 // rosterInterval is the roster's own polling cadence. It is deliberately
 // NOT the health tick's: that tick fires every 500ms on the snapshot path,
-// and a ~380ms subprocess every 500ms keeps a claude process alive ~76% of
+// and a subprocess every 500ms would keep a claude process alive much of
 // the time purely to poll status — on the one path whose capture-pane
 // scraper is fully functional anyway. 3s matches the emulator-path tick,
-// which is the cadence the roster was sized for.
+// which is the cadence the roster was sized for. Events that need a
+// sooner answer ask for one (handleHookScan, maybeRosterQuerySoon).
 const rosterInterval = 3 * time.Second
 
 // maybeRosterQuery returns a roster query when gateRoster is due: none

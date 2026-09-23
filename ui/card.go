@@ -77,9 +77,9 @@ type CardData struct {
 	StatusAge           time.Duration // 0 = unknown/not applicable
 	Spinner             string        // current spinner frame for Running/Loading
 	// WaitReason is Claude's own account of what a Prompting session is
-	// blocked on ("sandbox request", "dialog open"), from the agent roster
-	// via sanitizeCardText. Empty when unknown — non-Claude agents, and any
-	// status the pane scraper rather than the roster decided.
+	// blocked on ("permission: Bash", "sandbox request"), from its hooks
+	// or the agent roster, via sanitizeCardText. Empty when unknown —
+	// non-Claude agents, and any status the pane scraper decided.
 	WaitReason string
 	// Subagents lists the session's live subagents and teammates, working
 	// first, with names and descriptions passed through sanitizeCardText.

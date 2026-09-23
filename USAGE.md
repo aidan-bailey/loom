@@ -93,7 +93,7 @@ Loom has three view modes:
 
 ### Left Panel — Session Rail
 
-Each session renders as a live mini-card: its title, a status line with wait age (e.g. `❯ awaiting input · 4m`, `✻ working`, `✓ idle`, `paused · 3d`, `⟲ recoverable`), and a tail of recent agent output. When Claude says why it is waiting, the reason replaces the generic phrase (`❯ sandbox request · 4m`). When a Claude session has live subagents or teammates, the status line replaces the tail and ends with a count, e.g. `✻ working · 3 agents (1 idle)`. The colored accent bar on the card's left edge encodes state at a glance:
+Each session renders as a live mini-card: its title, a status line with wait age (e.g. `❯ awaiting input · 4m`, `✻ working`, `✓ idle`, `paused · 3d`, `⟲ recoverable`), and a tail of recent agent output. When Claude says why it is waiting, the reason replaces the generic phrase (`❯ sandbox request · 4m`). When a Claude session stops, the tail shows the end of Claude's last message instead of the screen. When a Claude session has live subagents or teammates, the status line replaces the tail and ends with a count, e.g. `✻ working · 3 agents (1 idle)`. The colored accent bar on the card's left edge encodes state at a glance:
 
 | Accent | Meaning |
 |--------|---------|
@@ -662,12 +662,11 @@ When `claude_remote_control` is enabled (the default), every Claude session Loom
 
 ### Subagent Tracking
 
-Loom shows the subagents and agent-team teammates a Claude session has spawned: a count on its rail card and rows on its overview card. It works by launching Claude with an extra `--settings` file that registers hooks for subagent events; your own hooks keep running alongside them.
+Loom shows the subagents and agent-team teammates a Claude session has spawned: a count on its rail card and rows on its overview card. It works through an extra `--settings` file loom launches every Claude session with, which registers hooks; your own hooks keep running alongside them. The same hooks report the session's status, the conversation a crash relaunch resumes, and Claude's last message.
 
-- Toggle it with **Track Subagents** under `S` → Claude Preferences. It is on by default, and a change applies the next time a session launches or resumes.
-- Turning it off doesn't clear the rows of sessions already launched with hooks: they keep being tracked until their next launch or resume.
+- Toggle the rows with **Track Subagents** under `S` → Claude Preferences. It is on by default and applies at once; the hooks stay installed either way, so turning it back on shows the current agents.
 - Only live agents are shown. A finished subagent disappears; a teammate stays listed as idle until it is shut down.
-- Sessions launched before you enabled it aren't tracked until they are resumed. Sessions whose program already passes `--settings`, and sessions on Windows, are never tracked.
+- Sessions whose program already passes `--settings`, and sessions on Windows, get no hooks: they show no subagent rows, and their status comes from Claude's session list and the screen.
 - Restarting loom keeps the rows: loom replays the events it already collected for sessions that are still running.
 - Event files live in the `hooks/` folder inside the workspace's loom config folder: `<repo>/.loom/hooks/` for a registered workspace, otherwise `~/.loom/hooks/`. They are cleared at each launch and removed when you kill the session.
 
