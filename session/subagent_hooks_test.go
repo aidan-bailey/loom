@@ -20,7 +20,7 @@ import (
 
 func withTracking(t *testing.T, enabled bool) {
 	t.Helper()
-	prev := subagentTrackingEnabled.Load()
+	prev := !subagentRowsHidden.Load()
 	SetSubagentTrackingEnabled(enabled)
 	t.Cleanup(func() { SetSubagentTrackingEnabled(prev) })
 }
@@ -99,7 +99,6 @@ func TestLaunchProgram_SkipsHooks(t *testing.T) {
 		program string
 		noDir   bool
 	}{
-		{"disabled", false, "claude", false},
 		{"non-claude", true, "aider", false},
 		{"user settings", true, "claude --settings /mine.json", false},
 		{"no config dir", true, "claude", true},
@@ -133,7 +132,8 @@ func TestLaunchProgram_UntrackedRelaunchClearsState(t *testing.T) {
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
 	require.Len(t, inst.Subagents(), 1)
 
-	withTracking(t, false)
+	// A user-supplied --settings is one of the launches that skip loom's hooks.
+	inst.SetProgram("claude --settings /mine.json")
 	inst.recoveryLaunch()
 
 	assert.Empty(t, inst.Subagents())
@@ -386,4 +386,27 @@ func TestSweepSubagentHooks_SlashTitles(t *testing.T) {
 	assert.DirExists(t, SubagentHooksDir(cfg, "fix/login"), "claimed and alive")
 	assert.DirExists(t, SubagentHooksDir(cfg, "other/live"), "unclaimed but its session is alive")
 	assert.NoDirExists(t, SubagentHooksDir(cfg, "dead/one"), "unclaimed and dead")
+}
+
+func TestLaunchProgram_HooksInstalledWithTrackingOff(t *testing.T) {
+	withTracking(t, false)
+	inst := hooksInstance(t, "claude")
+
+	got := inst.launchProgram("claude", true)
+
+	assert.Contains(t, got, settingsFlag(inst), "hooks carry status and the session ID, not only subagent rows")
+}
+
+func TestSubagents_HiddenWhenTrackingOff(t *testing.T) {
+	withTracking(t, true)
+	inst := hooksInstance(t, "claude")
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true,
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
+		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
+	require.Len(t, inst.Subagents(), 1)
+
+	withTracking(t, false)
+	assert.Nil(t, inst.Subagents())
+	withTracking(t, true)
+	assert.Len(t, inst.Subagents(), 1, "the tracker kept running, so the rows return at once")
 }

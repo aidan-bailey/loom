@@ -116,12 +116,13 @@ type Config struct {
 	// (read via LoomContextEnabled), matching ClaudeRemoteControl. A no-op
 	// for agents other than Claude.
 	ClaudeLoomContext *bool `json:"claude_loom_context,omitempty"`
-	// ClaudeSubagentTracking controls whether new Claude sessions launch
-	// with hooks that report subagent and teammate state, shown as a count
-	// on rail cards and as rows on overview cards (see session/subagent).
-	// nil is treated as enabled (read via SubagentTrackingEnabled),
-	// matching ClaudeLoomContext. Takes effect at the next launch or
-	// resume.
+	// ClaudeSubagentTracking controls whether the subagents and teammates
+	// loom's hooks track are shown, as a count on rail cards and as rows
+	// on overview cards (see session/subagent). Every Claude launch gets
+	// the hooks regardless, since they also carry status, the session ID
+	// and the last message. nil is treated as enabled (read via
+	// SubagentTrackingEnabled), matching ClaudeLoomContext. Takes effect
+	// at once.
 	ClaudeSubagentTracking *bool `json:"claude_subagent_tracking,omitempty"`
 	// ClaudePermissionMode is the --permission-mode value new Claude
 	// sessions launch with. Unlike ClaudeRemoteControl, DefaultConfig
@@ -280,8 +281,8 @@ func (c *Config) LoomContextEnabled() bool {
 	return c.ClaudeLoomContext == nil || *c.ClaudeLoomContext
 }
 
-// SubagentTrackingEnabled reports whether new Claude sessions should launch
-// with loom's subagent hooks. nil (unset) is treated as enabled, mirroring
+// SubagentTrackingEnabled reports whether the subagents loom's hooks track
+// are shown. nil (unset) is treated as enabled, mirroring
 // LoomContextEnabled. Read only from the main goroutine.
 func (c *Config) SubagentTrackingEnabled() bool {
 	return c.ClaudeSubagentTracking == nil || *c.ClaudeSubagentTracking

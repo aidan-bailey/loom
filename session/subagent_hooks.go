@@ -18,12 +18,15 @@ import (
 	"github.com/aidan-bailey/loom/session/tmux"
 )
 
-// subagentTrackingEnabled mirrors config.SubagentTrackingEnabled(). The
-// app sets it at the same points as SetLoomContextEnabled. It only decides
-// whether a launch gets hooks: a session already launched with hooks keeps
-// being scanned under the old setting only until its next launch, when
-// resetHookLaunch clears its state and prepareHooks re-decides.
-var subagentTrackingEnabled atomic.Bool
+// subagentRowsHidden is the inverse of config.SubagentTrackingEnabled(),
+// so its zero value matches the config's default (nil means enabled). The
+// app sets it through SetSubagentTrackingEnabled at the same points as
+// SetLoomContextEnabled. It only decides whether Subagents returns the
+// tracked rows: every Claude launch gets hooks, because they also carry
+// the session's status, ID and last message, and the tracker keeps
+// running with the setting off, so turning it back on shows the current
+// agents at once.
+var subagentRowsHidden atomic.Bool
 
 // noHooksLaunchID is the hookLaunchID a launch starts with before
 // prepareHooks runs. hooks.Prepare's launch IDs are 16
@@ -34,7 +37,7 @@ var subagentTrackingEnabled atomic.Bool
 const noHooksLaunchID = "-"
 
 // SetSubagentTrackingEnabled updates the global subagent-tracking toggle.
-func SetSubagentTrackingEnabled(enabled bool) { subagentTrackingEnabled.Store(enabled) }
+func SetSubagentTrackingEnabled(enabled bool) { subagentRowsHidden.Store(!enabled) }
 
 // hooksRoot holds every instance's hooks folder. It is deliberately outside
 // worktrees/: DiscoverOrphans descends into any directory there that lacks
@@ -125,8 +128,7 @@ func (i *Instance) recoveryLaunch() (launch string, env []string) {
 // launch ID and resets the tracker, so scan results from before this
 // launch are dropped.
 func (i *Instance) prepareHooks(program string) string {
-	if !subagentTrackingEnabled.Load() || i.ConfigDir == "" ||
-		runtime.GOOS == "windows" || !IsClaudeProgram(program) {
+	if i.ConfigDir == "" || runtime.GOOS == "windows" || !IsClaudeProgram(program) {
 		return program
 	}
 	if agent.HasSettingsFlag(program) {
@@ -243,12 +245,12 @@ func (i *Instance) ForgetSubagentsWithoutHooks() {
 }
 
 // Subagents returns the live agents to render, or nil when nothing is
-// tracked or the instance is in a status where no agent can be running
-// (Paused, Recoverable, Deleting).
+// tracked, when the instance is in a status where no agent can be running
+// (Paused, Recoverable, Deleting), or when subagent tracking is turned off.
 func (i *Instance) Subagents() []subagent.View {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
-	if i.subagents == nil || !subagentLive(i.Status) {
+	if i.subagents == nil || !subagentLive(i.Status) || subagentRowsHidden.Load() {
 		return nil
 	}
 	return i.subagents.Visible()
