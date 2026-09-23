@@ -120,11 +120,11 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 		"global m.list must be saved before activateWorkspace runs (leak-fix regression — pre-fix this was 0)")
 }
 
-// TestEnterGlobalMode_ClearsActiveCtxAndSlots verifies the post-
+// TestEnterGlobalMode_ClearsWsCtxAndSlots verifies the post-
 // conditions of enterGlobalMode: workspace tabs are gone, the active
 // context flips to nil (signaling global mode), and storage points at
 // the global config dir.
-func TestEnterGlobalMode_ClearsActiveCtxAndSlots(t *testing.T) {
+func TestEnterGlobalMode_ClearsWsCtxAndSlots(t *testing.T) {
 	t.Setenv("LOOM_HOME", t.TempDir())
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))

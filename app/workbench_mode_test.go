@@ -130,9 +130,9 @@ func TestWorkbench_NonWhitelistedKeysNoOp(t *testing.T) {
 // TestWorkbench_SlotSwitchCleansUp pins the v1 rule that workbench mode
 // does not survive an implicit workspace slot switch: the departing
 // slot's terminal-hidden setting is restored, any in-progress markdown
-// edit is canceled, and the mode drops out of workbench — the exact
-// leaveFocusedSlot → loadSlot sequence every switch path (workspace nav
-// keys, picker toggle, cross-workspace jumps) runs.
+// edit is canceled, and the mode drops out of workbench — at loadSlot,
+// the choke point every switch path (workspace nav keys, picker toggle,
+// cross-workspace jumps) goes through.
 func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 	m := newWorkbenchTestHome(t)
 	mustAddInstance(t, m, "a")
@@ -167,8 +167,7 @@ func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 	require.True(t, departingWb.Markdown.StartEdit())
 	require.True(t, departingWb.Markdown.Editing())
 
-	// The choke-point sequence every implicit switch path runs.
-	m.leaveFocusedSlot()
+	// The choke point every implicit switch path runs.
 	m.loadSlot(1)
 
 	assert.NotEqual(t, viewWorkbench, m.viewMode,

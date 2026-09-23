@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTestHomeWithActiveCtx extends newTestHome with a resolved
+// newTestHomeWithWsCtx extends newTestHome with a resolved
 // wsCtx, since handleStateSettingsKey needs ConfigDir to persist.
-func newTestHomeWithActiveCtx(t *testing.T) *home {
+func newTestHomeWithWsCtx(t *testing.T) *home {
 	t.Helper()
 	m := newTestHome(t)
 	m.wsCtx = &config.WorkspaceContext{ConfigDir: t.TempDir()}
@@ -23,7 +23,7 @@ func newTestHomeWithActiveCtx(t *testing.T) *home {
 }
 
 func TestHandleStateSettingsKeyRefreshesProgramShadow(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	so := overlay.NewSettingsOverlay(m.appConfig, false, "")
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
@@ -48,7 +48,7 @@ func TestHandleStateSettingsKeyRefreshesProgramShadow(t *testing.T) {
 }
 
 func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	so := overlay.NewSettingsOverlay(m.appConfig, false, "")
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
@@ -70,7 +70,7 @@ func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 }
 
 func TestSettingsDrillsIntoClaudePreferences(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
 	_, _ = runOpenSettings(m)
 

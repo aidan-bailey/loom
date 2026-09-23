@@ -41,7 +41,12 @@ func (m *home) instanceForSession(name string) *session.Instance {
 		}
 		return nil
 	}
-	for _, slot := range m.openSlots() {
+	// Runs on every pane event: check classic mode's one list directly
+	// rather than through openSlots, which allocates there.
+	if len(m.slots) == 0 {
+		return check(m.list)
+	}
+	for _, slot := range m.slots {
 		if inst := check(slot.list); inst != nil {
 			return inst
 		}

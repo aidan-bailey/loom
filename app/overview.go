@@ -9,9 +9,8 @@ import (
 
 // jumpWaiting moves selection to the next/prev agent needing attention
 // (Prompting or bell), across all open workspaces, wrapping. When the
-// target is in another slot it saves the current slot, focuses the
-// target's, and selects there. No-op when none wait. Main-goroutine
-// only.
+// target is in another slot it focuses that slot (loadSlot) and selects
+// there. No-op when none wait. Main-goroutine only.
 func (m *home) jumpWaiting(dir int) {
 	// Overview mode with slots: `]`/`[` move the overview cursor to the
 	// next waiting card — no focus switch, no OpenWorkspaces write.
@@ -93,7 +92,6 @@ func (m *home) jumpWaiting(dir int) {
 		inst := list.GetInstances()[p.inst]
 		if inst.GetStatus() == session.Prompting || inst.BellPending() {
 			if len(m.slots) != 0 && p.slot != m.focusedSlot {
-				m.leaveFocusedSlot()
 				m.loadSlot(p.slot)
 			}
 			m.list.SetSelectedInstance(p.inst)
@@ -171,7 +169,6 @@ func (m *home) focusCursorSlot() {
 		return
 	}
 	if c.slot != m.focusedSlot {
-		m.leaveFocusedSlot()
 		m.loadSlot(c.slot)
 	}
 	if c.inst >= 0 && c.inst < len(m.list.GetInstances()) {

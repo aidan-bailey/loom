@@ -153,7 +153,7 @@ func TestNewSession_RefusedWhileStorageLatched(t *testing.T) {
 	}
 	for name, create := range cases {
 		t.Run(name, func(t *testing.T) {
-			m := newTestHomeWithActiveCtx(t)
+			m := newTestHomeWithWsCtx(t)
 			m.storage = latchedStorage(t)
 			m.errBox.SetSize(400, 1)
 			before := m.list.NumInstances()

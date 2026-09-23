@@ -14,7 +14,7 @@ import (
 )
 
 func TestRunNewFromIssue_OpensPickerFromSnapshot(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: true}
 	m.ghState = map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{
 		12: {Number: 12, Title: "Fix"}, 13: {Number: 13, Title: "Closed one", Closed: true},
@@ -27,7 +27,7 @@ func TestRunNewFromIssue_OpensPickerFromSnapshot(t *testing.T) {
 }
 
 func TestRunNewFromIssue_NoSnapshotShowsLoadingAndForcesPoll(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: true}
 	m.gate(gateGH).last = time.Now()
 	_, _ = runNewFromIssue(m)
@@ -37,7 +37,7 @@ func TestRunNewFromIssue_NoSnapshotShowsLoadingAndForcesPoll(t *testing.T) {
 }
 
 func TestRunNewFromIssue_ShowsPollErrorInsteadOfLoading(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: true, checkedAt: time.Now()}
 	m.ghErrs = map[string]error{m.repoPath(): errors.New("no GitHub remote")}
 	_, _ = runNewFromIssue(m)
@@ -46,7 +46,7 @@ func TestRunNewFromIssue_ShowsPollErrorInsteadOfLoading(t *testing.T) {
 }
 
 func TestRunNewFromIssue_UnavailableGHErrors(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: false, reason: "no gh"}
 	_, cmd := runNewFromIssue(m)
 	assert.Equal(t, stateDefault, m.state)
@@ -54,7 +54,7 @@ func TestRunNewFromIssue_UnavailableGHErrors(t *testing.T) {
 }
 
 func TestGHReadyRefreshesOpenPicker(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: true}
 	_, _ = runNewFromIssue(m)
 	m.Update(ghReadyMsg{
@@ -65,7 +65,7 @@ func TestGHReadyRefreshesOpenPicker(t *testing.T) {
 }
 
 func TestIssuePickerEnter_DispatchesView(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: true}
 	m.ghState = map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{12: {Number: 12, Title: "Fix"}}}}
 	_, _ = runNewFromIssue(m)
@@ -76,7 +76,7 @@ func TestIssuePickerEnter_DispatchesView(t *testing.T) {
 }
 
 func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	before := m.list.NumInstances()
 	m.gate(gateGH).last = time.Now()
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "Fix flaky test", URL: "https://x/12", Body: "do it"}})
@@ -92,7 +92,7 @@ func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T)
 }
 
 func TestIssuePickedMsg_ErrorCreatesNothing(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	before := m.list.NumInstances()
 	_, cmd := m.Update(issuePickedMsg{err: errors.New("boom")})
 	assert.Equal(t, before, m.list.NumInstances())
@@ -103,7 +103,7 @@ func TestIssuePickedMsg_ErrorCreatesNothing(t *testing.T) {
 // The issue picker names the session itself (SlugTitle), so it needs the
 // same guard as typed titles: never create over a preserved record's title.
 func TestIssuePickedMsg_RejectsTitleOfPreservedRecord(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.storage = preservedTitleStorage(t, "gh-12-fix")
 	before := m.list.NumInstances()
 	_, cmd := m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "Fix"}})
@@ -113,7 +113,7 @@ func TestIssuePickedMsg_RejectsTitleOfPreservedRecord(t *testing.T) {
 }
 
 func TestIssuePickedMsg_RespectsInstanceLimit(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	for i := 0; i < GlobalInstanceLimit; i++ {
 		inst, err := session.NewInstance(session.InstanceOptions{Title: "x", Path: t.TempDir(), Program: "claude"})
 		require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestIssuePickedMsg_RespectsInstanceLimit(t *testing.T) {
 // result that lands under a different repo must not create a session
 // there: its title, prompt and issue link all describe another repo.
 func TestIssuePickedMsg_WrongRepoCreatesNothing(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	before := m.list.NumInstances()
 	_, cmd := m.Update(issuePickedMsg{repo: "/somewhere/else", issue: github.Issue{Number: 12, Title: "Fix"}})
 	assert.Equal(t, before, m.list.NumInstances(), "a result from another workspace creates nothing")
@@ -138,7 +138,7 @@ func TestIssuePickedMsg_WrongRepoCreatesNothing(t *testing.T) {
 // options modal would replace whatever overlay and pending closure are
 // already there — stranding that instance unstarted.
 func TestIssuePickedMsg_DoesNotClobberAnotherFlow(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "First"}})
 	require.Equal(t, stateLaunchOptions, m.state)
 	first := m.list.NumInstances()

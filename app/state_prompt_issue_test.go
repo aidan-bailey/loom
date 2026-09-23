@@ -21,7 +21,7 @@ func promptOverlayForNewInstance(t *testing.T, m *home) {
 }
 
 func TestPromptShorthand_DispatchesExpansion(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: true}
 	promptOverlayForNewInstance(t, m)
 	ti := m.textInput()
@@ -38,7 +38,7 @@ func TestPromptShorthand_DispatchesExpansion(t *testing.T) {
 }
 
 func TestIssueExpandedMsg_SeedsPromptAndLinks(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
 	inst := m.list.GetInstances()[m.list.NumInstances()-1]
 	m.dismissOverlay()
@@ -52,7 +52,7 @@ func TestIssueExpandedMsg_SeedsPromptAndLinks(t *testing.T) {
 }
 
 func TestIssueExpandedMsg_FailureLaunchesLiteral(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
 	inst := m.list.GetInstances()[m.list.NumInstances()-1]
 	m.dismissOverlay()
@@ -68,7 +68,7 @@ func TestIssueExpandedMsg_FailureLaunchesLiteral(t *testing.T) {
 // would replace whatever overlay is already there. Matches the guard on the
 // picker path.
 func TestIssueExpandedMsg_DoesNotClobberAnotherFlow(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
 	inst := m.list.GetInstances()[m.list.NumInstances()-1]
 	m.dismissOverlay()
@@ -85,7 +85,7 @@ func TestIssueExpandedMsg_DoesNotClobberAnotherFlow(t *testing.T) {
 // create it in the wrong place — but it would still open the launch
 // options modal on whichever workspace is focused when it lands.
 func TestIssueExpandedMsg_WrongRepoDoesNotOpenHere(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
 	inst := m.list.GetInstances()[m.list.NumInstances()-1]
 	m.dismissOverlay()
@@ -102,7 +102,7 @@ func TestIssueExpandedMsg_WrongRepoDoesNotOpenHere(t *testing.T) {
 // expansion happened — errBox shows one message, so the fetch error has
 // to be folded in rather than dropped.
 func TestIssueExpandedMsg_DroppedResultReportsFetchError(t *testing.T) {
-	m := newTestHomeWithActiveCtx(t)
+	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
 	inst := m.list.GetInstances()[m.list.NumInstances()-1]
 	m.dismissOverlay()

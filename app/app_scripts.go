@@ -215,15 +215,14 @@ func (s *scriptHost) WorkspaceNext() {
 }
 
 // switchWorkspaceSlot rotates the focused workspace slot by delta (-1 prev,
-// +1 next), saving the current slot and loading the new one. No-op with one
-// slot. Runs on the main goroutine via deferModelMutation, so the whole-slot
-// pointer swap (m.list/m.splitPane/m.storage/m.focusedSlot) does not race the
-// render loop.
+// +1 next) via loadSlot. No-op with one slot. Runs on the main goroutine
+// via deferModelMutation, so the embedded focused-slot swap (m.list,
+// m.splitPane, m.storage, … and m.focusedSlot) does not race the render
+// loop.
 func (m *home) switchWorkspaceSlot(delta int) {
 	if len(m.slots) <= 1 {
 		return
 	}
-	m.leaveFocusedSlot()
 	newIdx := (m.focusedSlot + delta + len(m.slots)) % len(m.slots)
 	m.loadSlot(newIdx)
 	m.updateTabBarStatuses()

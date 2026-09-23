@@ -394,17 +394,29 @@ func (m *home) leaveFocusedSlot() {
 // loadSlot focuses slot idx: it becomes the embedded m.workspaceSlot, and
 // the tab bar, layout and UI prefs follow it. It is the focus-change
 // choke point, and runs leaveFocusedSlot's teardown on the departing
-// slot first so that no path can skip it.
+// slot first so that no path can skip it. Loading the slot that is
+// already focused only refreshes the tab bar and peer sections.
 func (m *home) loadSlot(idx int) {
 	if idx < 0 || idx >= len(m.slots) {
+		return
+	}
+	if slot := m.slots[idx]; slot == m.workspaceSlot {
+		// Nothing departs, only the tab set around the slot may have
+		// changed: activateWorkspace focused the first tab and the caller
+		// now focuses it again, a toggle whose deactivation already
+		// refocused ends by re-focusing, or tabs came and went beside it.
+		// Skip the teardown and the layout pass below (it loops tmux
+		// SetDetachedSize); the tab bar keeps its height with tabs open.
+		m.focusedSlot = idx
+		m.tabBar.SetWorkspaces(m.slotNames(), idx)
+		m.refreshPeerSections()
 		return
 	}
 	// Departing-slot teardown (idempotent where leaveFocusedSlot already
 	// ran): the workbench cleanup and the pending split-ratio flush must
 	// land on the slot being left, and m.* resolves to it until the swap
-	// below. The startup picker, workspace registration and
-	// activateWorkspace's first-tab focus reach here with no teardown of
-	// their own.
+	// below. Focus-changing callers rely on this rather than running the
+	// teardown themselves.
 	m.leaveFocusedSlot()
 	slot := m.slots[idx]
 	m.focusedSlot = idx
@@ -439,11 +451,11 @@ func (m *home) loadSlot(idx int) {
 // workspace is still available.
 //
 // Global-mode persistence: when entering this function with len(m.slots)
-// == 0, m.list and m.storage are pointing at the global ~/.loom state.
-// loadSlot would otherwise overwrite both without saving, dropping any
-// in-flight changes the user hadn't quit-flushed yet. Persist before the
-// transition so the reverse direction (enterGlobalMode) reads back what
-// the user was just looking at.
+// == 0, the focused slot is the global one (~/.loom state). The first tab
+// to open drops it, and with it any in-flight changes the user hadn't
+// quit-flushed yet. Persist it before the transition so the reverse
+// direction (enterGlobalMode) reads back what the user was just looking
+// at.
 func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	if len(m.slots) == 0 {
 		err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
@@ -513,8 +525,10 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		}
 	}
 
-	// 3. Re-focus the focused slot (activation and deactivation keep it
-	// valid) so the tab bar, peer sections and layout reflect the new set.
+	// 3. Re-focus the focused slot so the tab bar and peer sections
+	// reflect the new set. Activation and deactivation have already
+	// focused the right slot (running any layout pass), so this is
+	// loadSlot's cheap already-focused path.
 	m.loadSlot(m.focusedSlot)
 
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
@@ -548,11 +562,12 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 // list reloaded from scratch via the same path as newHome — rather than
 // keeping the classic slot around for the round trip.
 //
-// Tmux note: closing the tabs doesn't kill their tmux sessions, and
-// global instances live in a tmux-name namespace disjoint from any tab's,
-// so calling LoadAndReconcile here cannot double-attach PTYs that are
-// already attached elsewhere — the safety constraint documented at the
-// classic-mode-load comment higher up doesn't apply.
+// Tmux note: closing the tabs doesn't kill their tmux sessions. Session
+// names are loom_<title>, keyed by title alone, so a global instance whose
+// title matches one in a closing tab shares its tmux session, and
+// LoadAndReconcile attaches a second client to it while the tab's is
+// still attached. The overlap is brief: the release Cmds returned below
+// detach every dropped instance's client.
 //
 // Fails closed, with nothing switched: no tab closed, storage and list
 // unswapped, and the registry unchanged (workbench mode may already have
