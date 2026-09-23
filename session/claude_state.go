@@ -1,6 +1,10 @@
 package session
 
-import "time"
+import (
+	"time"
+
+	"github.com/aidan-bailey/loom/session/hooks"
+)
 
 // obsSource says which source produced an observation. The zero value is
 // no source: nothing has been observed yet.
@@ -83,4 +87,87 @@ func (s *claudeState) status() (Status, string, bool) {
 		return Ready, "", false
 	}
 	return s.obs.status, s.obs.reason, true
+}
+
+// waitingNotifications are the Notification types that mean Claude is
+// waiting on the user. They fire only after about six seconds without a
+// keystroke, so PermissionRequest drives Prompting; these cover the
+// prompts it misses (a sandboxed command's network request, elicitation
+// dialogs).
+var waitingNotifications = map[string]bool{
+	"permission_prompt":      true,
+	"elicitation_dialog":     true,
+	"elicitation_url_dialog": true,
+}
+
+// applyEvent folds one hook event into s and reports whether the status
+// or wait reason changed. Only parent events (no agent_id) count, except
+// PermissionRequest: a subagent's prompt appears in the parent's UI.
+func (s *claudeState) applyEvent(ev hooks.Event) bool {
+	if ev.AgentID != "" && ev.Name != hooks.EventPermissionRequest {
+		return false
+	}
+	switch ev.Name {
+	case hooks.EventSessionStart:
+		// Only SessionStart names the conversation: a failed --resume of an
+		// unknown ID sends a SessionEnd carrying that ID.
+		if ev.SessionID != "" {
+			s.sessionID, s.transcriptPath = ev.SessionID, ev.TranscriptPath
+		}
+		switch ev.Source {
+		case "startup", "resume", "clear":
+			return s.offer(observation{status: Ready, at: ev.At, source: obsHook, valid: true})
+		}
+		// compact, or a source this build does not know: compaction can run
+		// mid-turn, so it says nothing about the status.
+		return false
+	case hooks.EventUserPromptSubmit:
+		s.lastMsgValid = false
+		return s.offer(observation{status: Running, at: ev.At, source: obsHook, valid: true})
+	case hooks.EventPermissionRequest:
+		s.lastMsgValid = false
+		reason := "permission"
+		if ev.ToolName != "" {
+			reason = "permission: " + ev.ToolName
+		}
+		return s.offer(observation{status: Prompting, reason: reason, at: ev.At, source: obsHook, valid: true})
+	case hooks.EventNotification:
+		if !waitingNotifications[ev.NotificationType] {
+			return false
+		}
+		// It arrives about six seconds after the PermissionRequest for the
+		// same prompt, with a generic message; keep the specific reason.
+		reason := ev.Message
+		if s.obs.valid && s.obs.status == Prompting && s.obs.reason != "" {
+			reason = s.obs.reason
+		}
+		return s.offer(observation{status: Prompting, reason: reason, at: ev.At, source: obsHook, valid: true})
+	case hooks.EventStop:
+		s.lastMessage, s.lastMsgValid = ev.LastAssistantMessage, true
+		// Stop ends a turn, not the work: with a background subagent still
+		// running, Claude resumes the parent when it reports back.
+		status := Ready
+		if runningSubagent(ev.Tasks) {
+			status = Running
+		}
+		return s.offer(observation{status: status, at: ev.At, source: obsHook, valid: true})
+	case hooks.EventSessionEnd:
+		return s.offer(observation{at: ev.At, source: obsHook})
+	}
+	return false
+}
+
+// runningSubagent reports whether a Stop's background_tasks lists a
+// running plain subagent. Teammate and shell tasks don't count: an idle
+// teammate stays listed as running, and a background shell runs while
+// Claude waits for input. A missing list reads as none: a wrong Ready is
+// corrected by the roster query the event triggers, while a wrong Running
+// would stay until the next event.
+func runningSubagent(tasks []hooks.Task) bool {
+	for _, t := range tasks {
+		if t.Type == "subagent" && t.Status == "running" {
+			return true
+		}
+	}
+	return false
 }
