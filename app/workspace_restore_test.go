@@ -168,9 +168,10 @@ func TestActivateWorkspace_PreservedTerminalIsNotReplaced(t *testing.T) {
 }
 
 // TestRestoreSavedWorkspaces_SkipsSweepWhenAWorkspaceFailsToLoad: the
-// restore-time orphan sweep is server-wide and spares only the titles it can
-// see. A workspace whose load failed contributes none — they can't be read —
-// so sweeping would kill that workspace's live sessions. Fail closed: skip.
+// restore-time orphan sweep spares only the titles it can see (within the
+// roots it owns). A workspace whose load failed contributes none — they
+// can't be read — so sweeping could kill that workspace's live sessions.
+// Fail closed: skip.
 func TestRestoreSavedWorkspaces_SkipsSweepWhenAWorkspaceFailsToLoad(t *testing.T) {
 	isolateTmux(t)
 

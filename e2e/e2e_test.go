@@ -90,13 +90,18 @@ func TestE2E_SandboxLeavesOtherServersAlone(t *testing.T) {
 	decoySocketPath := strings.TrimSpace(string(path))
 
 	// Plant an unclaimed loom_ session directly on the sandbox's own private
-	// server. Its removal (checked below) is what proves the orphan sweep
-	// actually ran there — the decoy surviving on its own isn't enough,
-	// since a sweep that ran nowhere at all would also leave the decoy
-	// alone.
-	stray := tmux.CommandOnSocket(ctx, sb.Socket(), "new-session", "-d", "-s", "loom_stray", "sleep 300")
+	// server, started in the sandbox workspace's repo. Its removal (checked
+	// below) is what proves the orphan sweep actually ran there — the decoy
+	// surviving on its own isn't enough, since a sweep that ran nowhere at
+	// all would also leave the decoy alone.
+	stray := tmux.CommandOnSocket(ctx, sb.Socket(), "new-session", "-d", "-s", "loom_stray", "-c", sb.RepoDir(), "sleep 300")
 	stray.Env = sb.Environ()
 	require.NoError(t, stray.Run())
+	// And one on the same server that another loom owns: started outside
+	// every root the sandboxed loom loads. The sweep must leave it alone.
+	foreign := tmux.CommandOnSocket(ctx, sb.Socket(), "new-session", "-d", "-s", "loom_foreign", "-c", t.TempDir(), "sleep 300")
+	foreign.Env = sb.Environ()
+	require.NoError(t, foreign.Run())
 
 	// tmux rewrites $TMUX/$TMUX_PANE inside every pane to name the pane's
 	// own server, so setting $TMUX on this test process would never reach
@@ -117,6 +122,8 @@ func TestE2E_SandboxLeavesOtherServersAlone(t *testing.T) {
 		return tmux.CommandOnSocket(ctx, sb.Socket(), "has-session", "-t=loom_stray").Run() != nil
 	}, uiTimeout, 200*time.Millisecond,
 		"the sandbox's own orphan sweep never removed the unclaimed loom_stray session on its private server")
+	assert.NoError(t, tmux.CommandOnSocket(ctx, sb.Socket(), "has-session", "-t=loom_foreign").Run(),
+		"the sweep must spare a session started outside the workspaces it loaded")
 }
 
 func TestE2E_FakeAiderPromptSurfacesAsAwaitingInput(t *testing.T) {

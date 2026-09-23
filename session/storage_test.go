@@ -507,7 +507,7 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 }
 
 // TestStorage_PreservedTitles covers the title set that title-keyed sweeps
-// (the server-wide orphan tmux sweep, the subagent hooks sweep) must spare:
+// (the orphan tmux sweep, the subagent hooks sweep) must spare:
 // reconcile failures plus undecodable records whose title can be read.
 // Without the undecodable half, a downgraded loom killed a newer loom's
 // still-running agents even though their records were preserved.

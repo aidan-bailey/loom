@@ -639,8 +639,8 @@ func (m *home) stayInGlobalMode() tea.Cmd {
 // (LOOM_GLOBAL_DIR, else ~/.loom; never LOOM_HOME) and the slot carries
 // that context like the startup one does — loaded by the same loader as
 // classic startup (loadSlotStorage: reconcile, crash restarts, inline
-// orphan recovery), minus the server-wide tmux sweep, which would kill the
-// closing tabs' sessions.
+// orphan recovery), minus the orphan tmux sweep: the closing tabs'
+// sessions are unclaimed here.
 //
 // Tmux note: closing the tabs doesn't kill their tmux sessions. Session
 // names are loom_<title>, keyed by title alone, so a global instance whose

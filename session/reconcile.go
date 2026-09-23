@@ -3,12 +3,15 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aidan-bailey/loom/config"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
-	"os"
-	"strings"
-	"time"
 )
 
 // reconcileTmuxTimeout bounds one has-session probe attempt. A var, not a
@@ -218,57 +221,211 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 	return instance, nil
 }
 
-// CleanupOrphanedSessions kills any tmux sessions with the loom or
-// legacy claude-squad prefix that are not claimed by a loaded instance.
-// Legacy-prefixed sessions are swept too so upgrades from claude-squad
-// don't leave zombie panes behind.
-func CleanupOrphanedSessions(claimedTitles map[string]bool, cmdExec internalexec.Executor) error {
+// sweepListFormat is what the orphan sweep asks tmux for: each session's
+// name and working directory. session_path is the directory new-session
+// was started in (-c, which loom always passes); unlike pane_current_path
+// it does not follow a cd in the pane, so a terminal-pane shell that cd'd
+// into another workspace still reads as the session's own, and it is
+// still reported after the directory is deleted.
+const sweepListFormat = "#{session_name}\t#{session_path}"
+
+// SweepScope bounds the orphan tmux sweep (CleanupOrphanedSessions) to
+// sessions this process can prove it owns. The tmux server is shared by
+// every loom process on it, so a loom_* session missing from this
+// process's lists is not evidence of an orphan: it may be the live agent
+// of another running loom, in a workspace this process never loaded.
+// Every loom session starts in a directory loom chose: its worktree, or
+// the repo root for a workspace terminal (and that terminal's pane). The
+// sweep kills an unclaimed session only when the most specific root
+// holding that directory is Owned.
+type SweepScope struct {
+	// Owned holds the roots (WorkspaceSweepRoots) of every workspace
+	// whose sessions the sweep covers.
+	Owned []string
+	// Foreign holds the roots of every other known workspace. They
+	// matter only nested inside an owned root (a submodule, or a linked
+	// worktree registered as its own workspace): a session there belongs
+	// to the inner workspace, and its own loom sweeps it.
+	Foreign []string
+}
+
+// WorkspaceSweepRoots returns the directories a workspace's sessions start
+// in: repoPath (its workspace terminal; the global context has none, so it
+// passes "") and configDir's worktrees directory (every other session). An
+// empty configDir means the default config dir, as for worktree creation.
+func WorkspaceSweepRoots(repoPath, configDir string) []string {
+	var roots []string
+	if repoPath != "" {
+		roots = append(roots, repoPath)
+	}
+	if configDir == "" {
+		dir, err := config.GetConfigDir()
+		if err != nil {
+			log.For("reconcile").Warn("orphan_tmux.config_dir_unresolved", "err", err)
+			return roots
+		}
+		configDir = dir
+	}
+	return append(roots, filepath.Join(configDir, "worktrees"))
+}
+
+// NewSweepScope returns the scope of a sweep covering the workspaces in
+// owned (a nil entry owns nothing; an empty ConfigDir means the default
+// config dir). Every workspace in registry (nil allowed) and the global
+// config dir's worktrees are foreign; the ones owned also lists stay owned.
+func NewSweepScope(owned []*config.WorkspaceContext, registry *config.WorkspaceRegistry) SweepScope {
+	var s SweepScope
+	for _, c := range owned {
+		if c == nil {
+			continue
+		}
+		s.Owned = append(s.Owned, WorkspaceSweepRoots(c.RepoPath, c.ConfigDir)...)
+	}
+	if registry != nil {
+		for i := range registry.Workspaces {
+			ws := &registry.Workspaces[i]
+			if ws.Path == "" {
+				continue
+			}
+			s.Foreign = append(s.Foreign, WorkspaceSweepRoots(ws.Path, config.WorkspaceConfigDir(ws))...)
+		}
+	}
+	if dir, err := config.GetGlobalConfigDir(); err == nil {
+		s.Foreign = append(s.Foreign, filepath.Join(dir, "worktrees"))
+	}
+	return s
+}
+
+// resolvedScope is a SweepScope with every root canonicalized.
+type resolvedScope struct{ owned, foreign []string }
+
+func (s SweepScope) resolve() resolvedScope {
+	return resolvedScope{owned: canonicalRoots(s.Owned), foreign: canonicalRoots(s.Foreign)}
+}
+
+// canonicalRoots canonicalizes roots, dropping any that is empty, relative
+// or a filesystem root (which would own every session on the machine).
+func canonicalRoots(roots []string) []string {
+	out := make([]string, 0, len(roots))
+	for _, r := range roots {
+		c := canonicalPath(r)
+		if c == "" || filepath.Dir(c) == c {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// owns reports whether dir lies inside an owned root with no foreign root
+// nested deeper that also holds it. An empty or relative dir is owned by
+// nothing.
+func (r resolvedScope) owns(dir string) bool {
+	d := canonicalPath(dir)
+	if d == "" {
+		return false
+	}
+	best, owned := -1, false
+	for _, root := range r.owned {
+		if pathWithin(d, root) && len(root) > best {
+			best, owned = len(root), true
+		}
+	}
+	for _, root := range r.foreign {
+		// Strictly deeper only: a foreign root equal to an owned one is
+		// the same workspace, which the registry lists too.
+		if pathWithin(d, root) && len(root) > best {
+			best, owned = len(root), false
+		}
+	}
+	return owned
+}
+
+// canonicalPath resolves p's symlinks, so two spellings of one directory
+// compare equal. A path that no longer exists (a deleted worktree)
+// resolves through its nearest existing ancestor. Returns "" for an empty
+// or relative path.
+func canonicalPath(p string) string {
+	if p == "" || !filepath.IsAbs(p) {
+		return ""
+	}
+	p = filepath.Clean(p)
+	rest := ""
+	for {
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return filepath.Join(p, rest)
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+		p = parent
+	}
+}
+
+// pathWithin reports whether p is root or lies beneath it. Both must be
+// canonical, and root must not be a filesystem root: a component-wise
+// check, so /a/repo does not hold /a/repo2.
+func pathWithin(p, root string) bool {
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// CleanupOrphanedSessions kills the loom tmux sessions (either prefix, so
+// upgrades from claude-squad don't leave zombie panes behind) that no
+// title in claimedTitles owns and whose working directory scope owns.
+// Unclaimed is not enough: the tmux server is shared, and the incident
+// this rule answers was a second loom's startup sweep killing all 20
+// sessions on the server, the first loom's live agents included. It fails
+// closed: a session whose directory is empty, unreadable or outside every
+// owned root is left alone. Kills are by exact name (-t=).
+func CleanupOrphanedSessions(claimedTitles map[string]bool, scope SweepScope, cmdExec internalexec.Executor) error {
 	listCtx, listCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	defer listCancel()
-	listCmd := tmux.Command(listCtx, "ls")
-	output, err := cmdExec.Output(listCmd)
+	// "ls" is list-sessions; app tests recognize the sweep by it.
+	output, err := cmdExec.Output(tmux.Command(listCtx, "ls", "-F", sweepListFormat))
 	if err != nil {
 		// No tmux server running — nothing to clean up
 		return nil
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if !(strings.HasPrefix(line, tmux.TmuxPrefix) || strings.HasPrefix(line, tmux.LegacyTmuxPrefix)) {
+	roots := scope.resolve()
+	for _, line := range strings.Split(string(output), "\n") {
+		sessionName, dir, _ := strings.Cut(line, "\t")
+		if !(strings.HasPrefix(sessionName, tmux.TmuxPrefix) || strings.HasPrefix(sessionName, tmux.LegacyTmuxPrefix)) {
 			continue
 		}
-		colonIdx := strings.Index(line, ":")
-		if colonIdx < 0 {
+		if sessionClaimed(sessionName, claimedTitles) {
 			continue
 		}
-		sessionName := line[:colonIdx]
-
-		// Check if any claimed instance owns this session — either its agent
-		// session (either prefix) or its separate terminal-pane session
-		// (loom_term_<title>, see tmux.TerminalSessionName). Every instance
-		// has both; missing the terminal-pane form here would make every
-		// instance's terminal pane look orphaned on every sweep.
-		claimed := false
-		for title := range claimedTitles {
-			if tmux.ToLoomTmuxName(title) == sessionName ||
-				tmux.ToLegacyTmuxName(title) == sessionName ||
-				tmux.ToLoomTmuxName(tmux.TerminalSessionName(title)) == sessionName {
-				claimed = true
-				break
-			}
+		if !roots.owns(dir) {
+			log.For("reconcile").Debug("orphan_tmux.skip_unowned", "session", sessionName, "dir", dir)
+			continue
 		}
-
-		if !claimed {
-			log.For("reconcile").Info("orphan_tmux.kill_begin", "session", sessionName)
-			killCtx, killCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
-			killCmd := tmux.Command(killCtx, "kill-session", "-t", sessionName)
-			if err := cmdExec.Run(killCmd); err != nil {
-				log.For("reconcile").Error("orphan_tmux.kill_failed", "session", sessionName, "err", err)
-			}
-			killCancel()
+		log.For("reconcile").Info("orphan_tmux.kill_begin", "session", sessionName, "dir", dir)
+		killCtx, killCancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
+		if err := cmdExec.Run(tmux.Command(killCtx, "kill-session", "-t="+sessionName)); err != nil {
+			log.For("reconcile").Error("orphan_tmux.kill_failed", "session", sessionName, "err", err)
 		}
+		killCancel()
 	}
 	return nil
+}
+
+// sessionClaimed reports whether a claimed title owns the tmux session
+// sessionName — either its agent session (either prefix) or its separate
+// terminal-pane session (loom_term_<title>, see tmux.TerminalSessionName).
+// Every instance has both; missing the terminal-pane form would make every
+// instance's terminal pane look orphaned on every sweep.
+func sessionClaimed(sessionName string, claimedTitles map[string]bool) bool {
+	for title := range claimedTitles {
+		if tmux.ToLoomTmuxName(title) == sessionName ||
+			tmux.ToLegacyTmuxName(title) == sessionName ||
+			tmux.ToLoomTmuxName(tmux.TerminalSessionName(title)) == sessionName {
+			return true
+		}
+	}
+	return false
 }
 
 // logRecoveryAction logs the recovery action taken for an instance.

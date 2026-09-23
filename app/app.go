@@ -1593,13 +1593,13 @@ func claimedWorktreePaths(claimed []*session.Instance, storage *session.Storage)
 }
 
 // claimTitles adds to claimed every session title one workspace owns, for
-// the title-keyed sweeps: the server-wide orphan tmux sweep
-// (CleanupOrphanedSessions) and the subagent hooks sweep. That is each
-// instance in list (Recoverable orphans included) plus each record storage
-// preserves on disk outside the list (Storage.PreservedTitles: reconcile
-// failures and undecodable records, e.g. a newer loom's after a
-// downgrade) — sparing those keeps a preserved record's agent alive for
-// the binary that can load it. storage may be nil.
+// the title-keyed sweeps: the orphan tmux sweep (CleanupOrphanedSessions,
+// which also spares sessions started outside the roots it owns) and the
+// subagent hooks sweep. That is each instance in list (Recoverable orphans
+// included) plus each record storage preserves on disk outside the list
+// (Storage.PreservedTitles: reconcile failures and undecodable records,
+// e.g. a newer loom's after a downgrade) — sparing those keeps a preserved
+// record's agent alive for the binary that can load it. storage may be nil.
 func claimTitles(claimed map[string]bool, list *ui.List, storage *session.Storage) {
 	for _, inst := range list.GetInstances() {
 		claimed[inst.Title] = true

@@ -147,9 +147,9 @@ func futureOnlyStorage(t *testing.T) *session.Storage {
 
 // TestClaimTitles_IncludesPreservedRecords pins the claimed set both orphan
 // tmux sweep sites (classic startup, multi-tab restore) build per
-// workspace. CleanupOrphanedSessions is server-wide and kills whatever is
-// unclaimed, so a preserved record missing here — e.g. a newer loom's
-// session after a downgrade — would lose its still-running agent.
+// workspace. CleanupOrphanedSessions kills whatever is unclaimed under the
+// workspace's own roots, so a preserved record missing here — e.g. a newer
+// loom's session after a downgrade — would lose its still-running agent.
 func TestClaimTitles_IncludesPreservedRecords(t *testing.T) {
 	storage := futureOnlyStorage(t)
 	live, err := session.FromInstanceData(session.InstanceData{

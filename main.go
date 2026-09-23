@@ -145,10 +145,12 @@ var (
 
 	resetCmd = &cobra.Command{
 		Use:   "reset",
-		Short: "Delete all instances, tmux sessions, worktrees, and their branches (destructive)",
-		Long: "Reset deletes all stored instances, kills every Loom tmux session, and removes\n" +
-			"all managed worktrees INCLUDING their branches — unpushed commits on those\n" +
-			"branches are lost. This cannot be undone; it requires --force.",
+		Short: "Delete a workspace's instances, tmux sessions, worktrees, and their branches (destructive)",
+		Long: "Reset deletes the workspace's stored instances, kills its Loom tmux sessions\n" +
+			"(those started in its repo or worktrees directory), and removes all its managed\n" +
+			"worktrees INCLUDING their branches — unpushed commits on those branches are\n" +
+			"lost. Without --workspace it resets the global workspace. Sessions of other\n" +
+			"workspaces are left running. This cannot be undone; it requires --force.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := nestingCheck(); err != nil {
 				return err
@@ -179,7 +181,17 @@ var (
 			}
 			fmt.Println("Storage has been reset successfully")
 
-			if err := tmux.CleanupSessions(cmd2.MakeExecutor()); err != nil {
+			// Only this workspace's sessions: the tmux server is shared by
+			// every loom process and workspace, and this reset deletes only
+			// this workspace's records and worktrees. The records are gone,
+			// so nothing is claimed.
+			registry, regErr := config.LoadWorkspaceRegistry()
+			if regErr != nil {
+				fmt.Fprintf(os.Stderr, "loom: reading workspace registry: %v (workspaces nested in this one are not told apart)\n", regErr)
+				registry = nil
+			}
+			scope := session.NewSweepScope([]*config.WorkspaceContext{wsCtx}, registry)
+			if err := session.CleanupOrphanedSessions(nil, scope, cmd2.MakeExecutor()); err != nil {
 				return fmt.Errorf("failed to cleanup tmux sessions: %w", err)
 			}
 			fmt.Println("Tmux sessions have been cleaned up")

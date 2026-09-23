@@ -190,7 +190,7 @@ func TerminalSessionName(title string) string {
 // but a genuine collision — both claudesquad_<t> and loom_<t> exist, so
 // tmux refuses the rename — would otherwise leave the legacy session
 // alive and unrenamed, which the orphan sweep (CleanupOrphanedSessions)
-// then kills. The log makes that diagnosable.
+// may then kill. The log makes that diagnosable.
 func RenameLegacySessions(titles []string, cmdExec internalexec.Executor) {
 	if len(titles) == 0 {
 		return
@@ -1263,43 +1263,6 @@ func (t *TmuxSession) Paste(text string) error {
 	}
 	if _, err := ptmx.Write([]byte("\x1b[200~" + text + "\x1b[201~")); err != nil {
 		return fmt.Errorf("paste: %w", err)
-	}
-	return nil
-}
-
-// CleanupSessions kills all Loom-owned tmux sessions — both the current
-// loom_ prefix and the legacy claudesquad_ prefix, so `loom reset` also
-// clears sessions created before the rename.
-func CleanupSessions(cmdExec internalexec.Executor) error {
-	// First try to list sessions
-	lsCtx, lsCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	defer lsCancel()
-	cmd := Command(lsCtx, "ls")
-	output, err := cmdExec.Output(cmd)
-
-	// If there's an error and it's because no server is running, that's fine
-	// Exit code 1 typically means no sessions exist
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return nil // No sessions to clean up
-		}
-		return fmt.Errorf("failed to list tmux sessions: %v", err)
-	}
-
-	re := regexp.MustCompile(fmt.Sprintf(`(?m)^(?:%s|%s).*:`, TmuxPrefix, LegacyTmuxPrefix))
-	matches := re.FindAllString(string(output), -1)
-	for i, match := range matches {
-		matches[i] = match[:strings.Index(match, ":")]
-	}
-
-	for _, match := range matches {
-		log.For("tmux").Info("orphan_cleanup", "session", match)
-		killCtx, killCancel := context.WithTimeout(context.Background(), tmuxTimeout)
-		if err := cmdExec.Run(Command(killCtx, "kill-session", "-t", match)); err != nil {
-			killCancel()
-			return fmt.Errorf("failed to kill tmux session %s: %v", match, err)
-		}
-		killCancel()
 	}
 	return nil
 }

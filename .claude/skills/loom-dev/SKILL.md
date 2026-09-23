@@ -5,10 +5,11 @@ description: Launch, drive, and screenshot a dev build of loom safely from insid
 
 # Loom dev sandbox
 
-Loom's startup orphan sweep kills every unclaimed `loom_*` tmux session on
-the server it talks to. Inside a loom pane that is the host's server, so the
-binary refuses to start there (nesting guard). Use the sandbox instead: a
-private tmux socket, a private registry, and a toy workspace named `toy`.
+Loom's startup orphan sweep kills unclaimed `loom_*` tmux sessions on the
+server it talks to (those started under the workspaces it loads). Inside a
+loom pane that is the host's server, so the binary refuses to start there
+(nesting guard). Use the sandbox instead: a private tmux socket, a private
+registry, and a toy workspace named `toy`.
 
 Run everything from the repo root as `go run ./tools/loomdev <cmd>`. The
 sandbox is named after the current branch's leaf; `--sandbox NAME` (`-s`)

@@ -228,9 +228,9 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 // into the focused list with classic-startup semantics (loadSlotStorage).
 // Classic startup runs it directly; restoreSavedWorkspaces runs it as the
 // fallback when no workspace could be restored. sweepTmux adds the
-// server-wide orphan tmux sweep — the fallback passes false, because the
-// workspaces that failed to load still have live sessions whose titles it
-// cannot read.
+// orphan tmux sweep — the fallback passes false, because the workspaces
+// that failed to load still have live sessions whose titles it cannot
+// read.
 func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recoverySummary, error) {
 	cfgDir := ""
 	if m.wsCtx != nil {
@@ -243,7 +243,8 @@ func (m *home) loadStartupStorage(cmdExec cmd2.Executor, sweepTmux bool) (recove
 // startup semantics: LoadAndReconcile, crash-restart, inline orphan
 // recovery, then the workspace-terminal auto-create for a workspace
 // context. cfgDir is the directory slot's storage lives in. sweepTmux adds
-// the server-wide orphan tmux sweep (see loadStartupStorage). A load error
+// the orphan tmux sweep, scoped to the sessions started under the slot's
+// repo or cfgDir's worktrees (see loadStartupStorage). A load error
 // is returned before anything is added to the list; the storage's write
 // latch is then engaged, so nothing can overwrite the unreadable payload.
 // Used by startup (the focused classic slot) and enterGlobalMode (the
@@ -298,11 +299,19 @@ func (m *home) loadSlotStorage(slot *workspaceSlot, cfgDir string, cmdExec cmd2.
 	recovery := m.reconcileOrphans(cfgDir, program, slot.list, storage, cmdExec)
 
 	// Clean up orphaned tmux sessions from previous crashes, sparing
-	// those of records preserved on disk outside the list.
+	// those of records preserved on disk outside the list. Only sessions
+	// started under this slot's repo or worktrees dir are candidates: the
+	// server is shared, and another running loom's sessions are unclaimed
+	// here too.
 	if sweepTmux {
 		claimedTitles := make(map[string]bool)
 		claimTitles(claimedTitles, slot.list, storage)
-		if err := session.CleanupOrphanedSessions(claimedTitles, cmdExec); err != nil {
+		owned := &config.WorkspaceContext{ConfigDir: cfgDir}
+		if wsCtx != nil {
+			owned.RepoPath = wsCtx.RepoPath
+		}
+		scope := session.NewSweepScope([]*config.WorkspaceContext{owned}, m.registry)
+		if err := session.CleanupOrphanedSessions(claimedTitles, scope, cmdExec); err != nil {
 			log.For("app").Error("orphan_cleanup_failed", "err", err)
 		}
 	}
@@ -347,7 +356,7 @@ func (m *home) loadSlotStorage(slot *workspaceSlot, cfgDir string, cmdExec cmd2.
 // restoreSavedWorkspaces activates all workspaces in `saved` as slots, merging
 // the explicit startup target (if any) into the set, then focuses the
 // appropriate slot. Missing/failed workspaces are not opened (failures
-// are logged, and any failure skips the server-wide orphan sweep); if none
+// are logged, and any failure skips the orphan tmux sweep); if none
 // activates, the startup storage is loaded instead
 // (loadStartupStorageFallback). The registry's OpenWorkspaces list is
 // rewritten to what activated plus the saved workspaces that failed
@@ -404,7 +413,10 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	// directly into slot.list — so the claimed set here (built from every
 	// slot's live instances, Recoverable included, plus the records each
 	// slot's storage preserves outside its list) is complete without a
-	// separate pending-orphans accumulator.
+	// separate pending-orphans accumulator. The sweep only considers
+	// sessions started under an open slot's repo or worktrees dir: those
+	// of workspaces this process did not open may belong to another
+	// running loom.
 	//
 	// Fail closed when any workspace failed to load: its titles are
 	// unreadable, so the sweep can't spare them and would kill its live
@@ -413,10 +425,13 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		log.For("app").Warn("orphan_cleanup_skipped", "reason", "workspace_load_failed", "workspaces", failed)
 	} else {
 		claimedTitles := make(map[string]bool)
+		owned := make([]*config.WorkspaceContext, 0, len(m.slots))
 		for _, slot := range m.slots {
 			claimTitles(claimedTitles, slot.list, slot.storage)
+			owned = append(owned, slot.wsCtx)
 		}
-		if err := session.CleanupOrphanedSessions(claimedTitles, m.executor()); err != nil {
+		scope := session.NewSweepScope(owned, m.registry)
+		if err := session.CleanupOrphanedSessions(claimedTitles, scope, m.executor()); err != nil {
 			log.For("app").Error("orphan_cleanup_failed", "err", err)
 		}
 	}

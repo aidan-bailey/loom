@@ -273,8 +273,8 @@ func (s *Storage) UnrecoveredTitles() []string {
 // PreservedTitles returns the titles of every record preserved on disk but
 // absent from the live list: the unrecovered cache, plus each undecodable
 // record's title, decoded best-effort (a missing, empty or unreadable title
-// is skipped). Title-keyed sweeps — the server-wide orphan tmux sweep and
-// the subagent hooks sweep — must spare these, or a preserved record keeps
+// is skipped). Title-keyed sweeps — the orphan tmux sweep and the
+// subagent hooks sweep — must spare these, or a preserved record keeps
 // its JSON but loses its still-running agent (e.g. a newer loom's session
 // after a downgrade, or a record whose reconcile failed transiently).
 func (s *Storage) PreservedTitles() []string {
