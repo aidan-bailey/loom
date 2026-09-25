@@ -846,6 +846,16 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleAccountsRefreshed(msg)
 	case usageReadyMsg:
 		return m, m.handleUsageReady(msg)
+	case accountLoginDoneMsg:
+		// tea.ExecProcess has returned the terminal. Re-read the auth of the
+		// account that just logged in (and the default's, which the
+		// refresh covers when that is the one) and probe its usage.
+		var cmds []tea.Cmd
+		if msg.err != nil {
+			cmds = append(cmds, m.handleError(fmt.Errorf("claude auth login for %s: %w", msg.name, msg.err)))
+		}
+		cmds = append(cmds, tea.RequestWindowSize, m.accountsRefreshCmd(msg.name == account.DefaultName), m.requestUsageProbe())
+		return m, tea.Batch(cmds...)
 	case ghRefreshMsg:
 		m.gate(gateGH).expedite()
 		return m, nil

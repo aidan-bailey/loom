@@ -24,6 +24,10 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if err := so.TakeError(); err != nil {
 		return m, m.handleError(err)
 	}
+	var cmds []tea.Cmd
+	if req, ok := so.TakeAccountRequest(); ok {
+		cmds = append(cmds, m.handleAccountRequest(req))
+	}
 
 	if changed {
 		// Save beside the config the focused slot loaded: its context's
@@ -53,5 +57,5 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.dismissOverlay()
 		m.state = stateDefault
 	}
-	return m, nil
+	return m, tea.Batch(cmds...)
 }

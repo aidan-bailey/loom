@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -155,13 +156,17 @@ func (m *home) accountStatuses() []ui.AccountStatus {
 // that shows it. Returns tea.RequestWindowSize when the strip appeared or
 // disappeared, since that changes the content height.
 //
-// An open Launch Options modal follows only while its Account row shows
+// An open Settings overlay's Accounts rows always follow. An open Launch
+// Options modal follows only while its Account row shows
 // (a Claude launch that was given accounts) and the registry loaded: a
 // failed load lists no accounts, and refreshing would hide the row and
 // reset the choice to the default account, where keeping the stale one
 // makes a named account's launch fail closed instead.
 func (m *home) refreshAccountViews() tea.Cmd {
 	statuses := m.accountStatuses()
+	if so := m.settingsOverlay(); so != nil {
+		so.SetAccountRows(m.accountRows(statuses))
+	}
 	if lo := m.launchOptionsOverlay(); lo != nil && lo.AccountsShown() && m.accountsLoaded() {
 		lo.SetAccounts(m.accountChoices(statuses))
 	}
@@ -332,4 +337,115 @@ func (m *home) topChromeHeight() int {
 		h += m.accountStrip.Height()
 	}
 	return h
+}
+
+// accountRows formats the Accounts screen's rows.
+func (m *home) accountRows(statuses []ui.AccountStatus) []overlay.AccountRow {
+	now := time.Now()
+	rows := make([]overlay.AccountRow, 0, len(statuses))
+	for _, s := range statuses {
+		id := m.rcAuthFor(s.Name).Identity
+		row := overlay.AccountRow{Name: s.Name, Email: id.Email, Plan: id.Plan, Usage: ui.AccountUsageText(s, now), IsDefault: s.IsDefault}
+		var warns []string
+		if s.LoggedOut {
+			warns = append(warns, "logged out")
+		}
+		if rep, ok := m.accountSync[s.Name]; ok && len(rep.Diverged) > 0 {
+			warns = append(warns, "not shared: "+strings.Join(rep.Diverged, ", "))
+		}
+		row.Warning = strings.Join(warns, "; ")
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// accountUsers counts the sessions on acct: every loaded slot's live
+// instances plus the stored records of every workspace (open or not).
+func (m *home) accountUsers(acct string) (int, error) {
+	n := 0
+	for _, inst := range m.allInstances() {
+		if inst.Account() == acct {
+			n++
+		}
+	}
+	dirs, err := account.KnownStateDirs()
+	if err != nil {
+		return n, err
+	}
+	stored, err := account.CountUsers(dirs, acct)
+	return n + stored, err
+}
+
+// afterAccountsChanged republishes the registry and refreshes every view.
+func (m *home) afterAccountsChanged() tea.Cmd {
+	m.publishAccounts()
+	return tea.Batch(m.refreshAccountViews(), m.requestUsageProbe())
+}
+
+// accountLoginDoneMsg is returned when `claude auth login` hands the
+// terminal back.
+type accountLoginDoneMsg struct {
+	name string
+	err  error
+}
+
+// accountLoginCmd suspends the TUI and runs `claude auth login` as acct in
+// the real terminal (it is a browser flow), like $EDITOR in the file
+// explorer.
+func (m *home) accountLoginCmd(acct string) tea.Cmd {
+	program := m.claudeProgram()
+	if program == "" {
+		program = "claude"
+	}
+	env, err := m.accounts.Env(acct)
+	if err != nil {
+		return m.handleError(err)
+	}
+	return tea.ExecProcess(account.LoginCmd(program, env), func(err error) tea.Msg {
+		return accountLoginDoneMsg{name: acct, err: err}
+	})
+}
+
+// handleAccountRequest carries out one Accounts-screen action, on the
+// registry as it is on disk now.
+func (m *home) handleAccountRequest(req overlay.AccountRequest) tea.Cmd {
+	if m.accounts == nil {
+		return m.handleError(errors.New("the account registry is unavailable"))
+	}
+	m.reloadAccounts()
+	m.ensureAccountMaps()
+	switch req.Kind {
+	case overlay.AccountRequestAdd:
+		acct, rep, err := m.accounts.Create(req.Name, m.mainConfigDir())
+		if err != nil {
+			return m.handleError(err)
+		}
+		m.accountSync[acct.Name] = rep
+		return tea.Batch(m.afterAccountsChanged(), m.accountLoginCmd(acct.Name))
+	case overlay.AccountRequestLogin:
+		return m.accountLoginCmd(req.Name)
+	case overlay.AccountRequestSetDefault:
+		if err := m.accounts.SetDefault(req.Name); err != nil {
+			return m.handleError(err)
+		}
+		return m.afterAccountsChanged()
+	case overlay.AccountRequestRemove:
+		n, err := m.accountUsers(req.Name)
+		if err != nil {
+			return m.handleError(fmt.Errorf("can't tell whether sessions use %s, so it was kept: %w", req.Name, err))
+		}
+		if n > 0 {
+			return m.handleError(fmt.Errorf("%d session(s) use %s: kill them or relaunch them on another account (R) first", n, req.Name))
+		}
+		// Never forced from here: an account dir holding real, unshared
+		// entries is kept, and Remove's error names them.
+		if _, err := m.accounts.Remove(req.Name, false); err != nil {
+			return m.handleError(err)
+		}
+		delete(m.accountAuth, req.Name)
+		delete(m.accountSync, req.Name)
+		delete(m.usage, req.Name)
+		return m.afterAccountsChanged()
+	}
+	return nil
 }

@@ -654,10 +654,12 @@ func runOpenSettings(m *home) (tea.Model, tea.Cmd) {
 	if m.appConfig == nil {
 		return m, m.handleError(fmt.Errorf("no configuration loaded"))
 	}
+	m.reloadAccounts()
 	so := overlay.NewSettingsOverlay(m.appConfig, m.rcAuth.Blocked(), m.rcAuth.Reason)
+	so.SetAccountRows(m.accountRows(m.accountStatuses()))
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
-	return m, nil
+	return m, m.requestUsageProbe()
 }
 
 // -- File explorer --
