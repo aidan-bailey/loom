@@ -262,34 +262,29 @@ func TestAccountRemove_ForceYesRemovesInUseAndReportsOverride(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// --- Prompt for a non-owned dir (item 3) ---
+// --- A hand-edited registry pointing an account outside AccountsDir ---
 
-func TestAccountRemove_PromptDiffersForANonOwnedDir(t *testing.T) {
+// TestAccountRemove_RefusesWhenTheRegistryHoldsAForeignDir used to cover a
+// "non-owned dir" prompt (item 3): remove would show a different message
+// and only unregister, never delete, an account whose stored dir loom did
+// not create. account.LoadRegistry now refuses to load such an entry at
+// all — the stored dir is also what would be launched as
+// CLAUDE_CONFIG_DIR, so catching it only at removal time was not enough —
+// so every account command now fails closed on a hand-edited accounts.json
+// like this, before the "non-owned dir" branch (still exercised directly
+// against an in-memory account.Registry in account/link_test.go) is ever
+// reached.
+func TestAccountRemove_RefusesWhenTheRegistryHoldsAForeignDir(t *testing.T) {
 	global := isolateAccounts(t)
 	outside := t.TempDir()
 	data := fmt.Sprintf(`{"accounts":[{"name":"byo","dir":%q}]}`, outside)
 	require.NoError(t, os.WriteFile(filepath.Join(global, "accounts.json"), []byte(data), 0o644))
 
-	out, err := runAccount(t, "\n", "remove", "byo")
+	_, err := runAccount(t, "\n", "remove", "byo")
 
-	require.NoError(t, err)
-	assert.Contains(t, out, "not loom's")
-	assert.Contains(t, out, outside)
-	assert.NotContains(t, out, "delete "+outside, "an unowned dir must never be offered for deletion")
+	require.Error(t, err)
 	_, statErr := os.Stat(outside)
 	assert.NoError(t, statErr, "a dir loom does not own must never be at risk from this command")
-	_, ok := account.LoadRegistry(global).Get("byo")
-	assert.True(t, ok, "declining the prompt must keep it registered")
-
-	out, err = runAccount(t, "y\n", "remove", "byo")
-
-	require.NoError(t, err)
-	assert.Contains(t, out, "left")
-	assert.Contains(t, out, "loom did not create it")
-	_, statErr = os.Stat(outside)
-	assert.NoError(t, statErr, "loom only deletes dirs it created")
-	_, ok = account.LoadRegistry(global).Get("byo")
-	assert.False(t, ok)
 }
 
 // --- Login (item 4) ---

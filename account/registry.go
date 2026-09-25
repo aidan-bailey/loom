@@ -73,7 +73,7 @@ func LoadRegistry(globalDir string) *Registry {
 		r.loadErr = fmt.Errorf("parse %s: %w", r.path, err)
 		return r
 	}
-	if err := validateAccounts(r.Accounts); err != nil {
+	if err := validateAccounts(r.Accounts, r.AccountsDir()); err != nil {
 		r.DefaultAccount, r.Accounts = "", nil
 		r.loadErr = fmt.Errorf("validate %s: %w", r.path, err)
 	}
@@ -82,11 +82,17 @@ func LoadRegistry(globalDir string) *Registry {
 
 // validateAccounts rejects a loaded accounts list this package would never
 // have written itself: an invalid or reserved name, a name registered
-// twice, or a dir that isn't an absolute path. LoadRegistry treats a
-// registry failing this the same as one that failed to parse — latched,
-// not silently pruned, so a corrupt or hand-edited file is never
-// overwritten with a partial view of it.
-func validateAccounts(accounts []Account) error {
+// twice, a dir that isn't an absolute path, or a dir that isn't exactly
+// <accountsDir>/<name>. That last check means adopting an account whose
+// dir loom did not itself create — a hand-edited "bring your own
+// directory" entry — is out of scope: such a dir would still be handed to
+// the claude CLI as CLAUDE_CONFIG_DIR on every launch, so refusing it only
+// at delete time (Remove's own ownership check, which stays as a defence
+// for a Registry built directly rather than loaded) is not enough.
+// LoadRegistry treats a registry failing this the same as one that failed
+// to parse — latched, not silently pruned, so a corrupt or hand-edited
+// file is never overwritten with a partial view of it.
+func validateAccounts(accounts []Account, accountsDir string) error {
 	seen := make(map[string]bool, len(accounts))
 	for _, a := range accounts {
 		if err := ValidName(a.Name); err != nil {
@@ -98,6 +104,9 @@ func validateAccounts(accounts []Account) error {
 		seen[a.Name] = true
 		if a.Dir == "" || !filepath.IsAbs(a.Dir) {
 			return fmt.Errorf("account %q: dir %q must be an absolute path", a.Name, a.Dir)
+		}
+		if want := filepath.Join(accountsDir, a.Name); a.Dir != want {
+			return fmt.Errorf("account %q: dir %q is not %q", a.Name, a.Dir, want)
 		}
 	}
 	return nil

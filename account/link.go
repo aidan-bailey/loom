@@ -249,21 +249,34 @@ func Unshared(acctDir string) ([]string, error) {
 }
 
 // OwnedDir returns the config dir name is registered under together with
-// whether Remove would actually delete it: only when the account's
-// stored Dir agrees with the canonical <AccountsDir>/name, recomputed
-// here rather than trusted from the stored field — a hand-edited or
-// corrupt registry could point Dir anywhere. The returned dir is always
-// the account's stored Dir (equal to the canonical one exactly when
-// owned is true), so a caller can show it either way: "delete <dir>"
-// when owned, "<dir> is not loom's" when not. "" and false when name is
-// not registered.
+// whether Remove would actually delete it: only when the account's stored
+// Dir agrees with the canonical <AccountsDir>/name, recomputed here rather
+// than trusted from the stored field — a hand-edited or corrupt registry
+// could point Dir anywhere.
+//
+// When owned, the returned dir is the canonical path itself — never the
+// stored field, even when filepath.Clean(stored) == canonical as a plain
+// string comparison. A stored value can still resolve somewhere else
+// entirely once the kernel gets it: "<AccountsDir>/lnk/../name" cleans
+// lexically to the canonical path, but if "lnk" is a symlink the kernel
+// resolves it first and only then applies "..", landing wherever the
+// symlink points instead. So Remove and Unshared must only ever act on
+// this return value, never on Get's raw Account.Dir — that is the whole
+// point of routing them through OwnedDir at all.
+//
+// When not owned, the stored Dir is returned as-is, for display only
+// ("<dir> is not loom's"); nothing may write to or delete it. "" and
+// false when name is not registered.
 func (r *Registry) OwnedDir(name string) (string, bool) {
 	acct, ok := r.Get(name)
 	if !ok {
 		return "", false
 	}
 	want := filepath.Join(r.AccountsDir(), name)
-	return acct.Dir, ValidName(name) == nil && filepath.Clean(acct.Dir) == want
+	if ValidName(name) == nil && filepath.Clean(acct.Dir) == want {
+		return want, true
+	}
+	return acct.Dir, false
 }
 
 // Remove unregisters name. When OwnedDir reports it owns its config dir,

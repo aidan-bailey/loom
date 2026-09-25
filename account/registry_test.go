@@ -22,8 +22,9 @@ func TestLoadRegistry_MissingFileIsEmpty(t *testing.T) {
 func TestRegistry_UpdateRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	r := LoadRegistry(dir)
+	dirFor := filepath.Join(r.AccountsDir(), "max-2")
 	require.NoError(t, r.update(func(f *Registry) error {
-		f.Accounts = append(f.Accounts, Account{Name: "max-2", Dir: "/a/max-2"})
+		f.Accounts = append(f.Accounts, Account{Name: "max-2", Dir: dirFor})
 		return nil
 	}))
 	require.NoError(t, r.SetDefault("max-2"))
@@ -32,21 +33,21 @@ func TestRegistry_UpdateRoundTrips(t *testing.T) {
 	require.NoError(t, again.LoadErr())
 	assert.Equal(t, "max-2", again.Default())
 	assert.Equal(t, []string{DefaultName, "max-2"}, again.Names())
-	assert.Equal(t, map[string]string{"max-2": "/a/max-2"}, again.Dirs())
+	assert.Equal(t, map[string]string{"max-2": dirFor}, again.Dirs())
 	env, err := again.Env("max-2")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"CLAUDE_CONFIG_DIR=/a/max-2"}, env)
+	assert.Equal(t, []string{"CLAUDE_CONFIG_DIR=" + dirFor}, env)
 }
 
 func TestRegistry_UpdateMergesAConcurrentWriter(t *testing.T) {
 	dir := t.TempDir()
 	a, b := LoadRegistry(dir), LoadRegistry(dir)
 	require.NoError(t, a.update(func(f *Registry) error {
-		f.Accounts = append(f.Accounts, Account{Name: "one", Dir: "/1"})
+		f.Accounts = append(f.Accounts, Account{Name: "one", Dir: filepath.Join(a.AccountsDir(), "one")})
 		return nil
 	}))
 	require.NoError(t, b.update(func(f *Registry) error {
-		f.Accounts = append(f.Accounts, Account{Name: "two", Dir: "/2"})
+		f.Accounts = append(f.Accounts, Account{Name: "two", Dir: filepath.Join(b.AccountsDir(), "two")})
 		return nil
 	}))
 	assert.Equal(t, []string{DefaultName, "one", "two"}, LoadRegistry(dir).Names())
@@ -138,6 +139,7 @@ func TestLoadRegistry_RejectsInvalidStoredEntries(t *testing.T) {
 		{"duplicate name", `{"accounts":[{"name":"max-2","dir":"/a"},{"name":"max-2","dir":"/b"}]}`},
 		{"relative dir", `{"accounts":[{"name":"max-2","dir":"a/b"}]}`},
 		{"empty dir", `{"accounts":[{"name":"max-2","dir":""}]}`},
+		{"foreign dir", `{"accounts":[{"name":"max-2","dir":"/definitely/not/loom-owned"}]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,7 +159,7 @@ func TestRegistry_ReloadPicksUpAConcurrentWrite(t *testing.T) {
 	dir := t.TempDir()
 	a, b := LoadRegistry(dir), LoadRegistry(dir)
 	require.NoError(t, b.update(func(f *Registry) error {
-		f.Accounts = append(f.Accounts, Account{Name: "max-2", Dir: "/a/max-2"})
+		f.Accounts = append(f.Accounts, Account{Name: "max-2", Dir: filepath.Join(b.AccountsDir(), "max-2")})
 		return nil
 	}))
 	assert.Equal(t, []string{DefaultName}, a.Names(), "a hasn't reloaded yet")

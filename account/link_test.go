@@ -278,13 +278,16 @@ func TestRemove_ClearsTheDefaultAndRefusesDefaultAccount(t *testing.T) {
 	assert.Equal(t, DefaultName, LoadRegistry(global).Default())
 }
 
+// TestRemove_OutsideAccountsDirOnlyUnregisters keeps Remove's own
+// ownership defence tested for a Registry built directly in memory,
+// bypassing LoadRegistry's validation. Adopting a foreign dir through the
+// loader itself is refused outright — see
+// TestLoadRegistry_RejectsInvalidStoredEntries's "foreign dir" case — so
+// this can no longer happen via a Registry a real `loom account` run or
+// the TUI would ever hold; the in-memory defence is what is left to test.
 func TestRemove_OutsideAccountsDirOnlyUnregisters(t *testing.T) {
 	global, outside := t.TempDir(), t.TempDir()
-	r := LoadRegistry(global)
-	require.NoError(t, r.update(func(f *Registry) error {
-		f.Accounts = append(f.Accounts, Account{Name: "byo", Dir: outside})
-		return nil
-	}))
+	r := &Registry{path: filepath.Join(global, "accounts.json"), Accounts: []Account{{Name: "byo", Dir: outside}}}
 
 	deleted, err := r.Remove("byo", false)
 
@@ -333,6 +336,36 @@ func TestRemove_NeverDeletesOutsideItsOwnAccountDir(t *testing.T) {
 			assert.NoError(t, statErr, "the accounts dir itself must survive")
 		})
 	}
+
+	// A fifth way the stored Dir can disguise itself as owned, and the
+	// one that actually got through: filepath.Clean simplifies
+	// "lnk/../max-2" lexically to "max-2", so filepath.Clean(acct.Dir) ==
+	// want passes even though the *kernel* resolves "lnk" to its real
+	// symlink target first and only then applies "..", landing somewhere
+	// else entirely. OwnedDir must hand Remove the canonical path itself
+	// once it decides "owned" — never the stored string, even when the
+	// stored string looks identical to the canonical one after Clean.
+	t.Run("lnk-dotdot", func(t *testing.T) {
+		victim := t.TempDir()
+		sub := filepath.Join(victim, "sub")
+		require.NoError(t, os.MkdirAll(sub, 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Join(victim, "max-2"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(victim, "max-2", "precious"), []byte("keep"), 0o600))
+		require.NoError(t, os.Symlink(sub, filepath.Join(accountsDir, "lnk")))
+		// Raw concatenation, not filepath.Join, which would clean away
+		// the "lnk/.." itself before it's even stored — the same reason
+		// "parent-escape" above avoids it.
+		dir := filepath.Join(accountsDir, "lnk") + string(filepath.Separator) + ".." + string(filepath.Separator) + "max-2"
+		require.Equal(t, filepath.Join(accountsDir, "max-2"), filepath.Clean(dir), "sanity: Clean must make this look owned")
+
+		r := &Registry{path: filepath.Join(global, "accounts.json"), Accounts: []Account{{Name: "max-2", Dir: dir}}}
+
+		_, err := r.Remove("max-2", true)
+
+		require.NoError(t, err)
+		_, statErr := os.Stat(filepath.Join(victim, "max-2", "precious"))
+		assert.NoError(t, statErr, "must never delete through a symlink+.. that only *looks* like the canonical path after Clean")
+	})
 }
 
 // TestRemove_GuardsAgainstAnInvalidNameEvenIfConstructedDirectly checks the
