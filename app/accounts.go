@@ -394,14 +394,34 @@ func (m *home) syncMainDir(mainDir string) string {
 	return mainDir
 }
 
+// extraAccountAuth points an extra account's blocked remote-control reason
+// at the login that fixes it: the CLI's reason says `claude auth login`,
+// which logs in the default account instead. The cause is read from the
+// identity, not the reason's wording. A block by a credential in loom's
+// environment (override) keeps its reason, since no login changes it.
+func extraAccountAuth(name string, a session.RemoteControlAuth, override bool) session.RemoteControlAuth {
+	if !a.Blocked() || override {
+		return a
+	}
+	fix := fmt.Sprintf("Run `loom account login %s`, or Settings → Accounts → l.", name)
+	switch {
+	case !a.Identity.LoggedIn:
+		a.Reason = "not logged in to Claude. " + fix
+	case a.Identity.AuthMethod != "claude.ai":
+		a.Reason = "authenticated with a non-claude.ai account; remote control needs a claude.ai login. " + fix
+	}
+	return a
+}
+
 // handleAccountsRefreshed stores a refresh's results and redraws the views.
 func (m *home) handleAccountsRefreshed(msg accountsRefreshedMsg) tea.Cmd {
 	m.ensureAccountMaps()
 	if msg.defaultAuth != nil {
 		m.rcAuth = *msg.defaultAuth
 	}
+	_, override := account.ActiveCredentialOverride()
 	for name, a := range msg.auth {
-		m.accountAuth[name] = a
+		m.accountAuth[name] = extraAccountAuth(name, a, override)
 	}
 	for name, rep := range msg.sync {
 		m.accountSync[name] = rep
