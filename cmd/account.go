@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -18,7 +21,16 @@ import (
 
 var (
 	accountNoLogin bool
-	accountForce   bool
+	// accountForce overrides remove's in-use and unshared-files refusals
+	// (and reports what it overrode). It does NOT imply accountYes — a
+	// forced removal still asks for confirmation unless --yes is given
+	// too, so --force alone can't be a single accidental keystroke away
+	// from deleting a session's only account.
+	accountForce bool
+	// accountYes skips remove's confirmation prompt only; the in-use and
+	// unshared-files refusals still apply unless accountForce also
+	// overrides them.
+	accountYes bool
 
 	// accountExec runs the claude CLI for the account commands; a var so
 	// tests answer it without a real claude.
@@ -62,9 +74,27 @@ func defaultMainConfigDir(program string) string {
 	return account.MainDir(id)
 }
 
+// validMainDir rejects a main config dir before add or sync link anything
+// against it: accountMainDir can return "" (an unreachable or logged-out
+// `claude auth status`), and account.ValidateMainDir catches the same
+// unsafe cases Create would otherwise only reject after Sync had already
+// started populating a new account's dir.
+func validMainDir(main string, reg *account.Registry) error {
+	if main == "" {
+		return fmt.Errorf("cannot locate your main Claude config dir")
+	}
+	return account.ValidateMainDir(main, reg.AccountsDir())
+}
+
 func runAccountLogin(program string, env []string) error {
 	c := account.LoginCmd(program, env)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	// The login flow is claude's own interactive prompt in the foreground
+	// terminal; a Ctrl-C during it should reach that child process, not
+	// abort loom's own RunE mid-flow (which, during `add`, would skip the
+	// "created but not logged in" report below).
+	signal.Ignore(os.Interrupt)
+	defer signal.Reset(os.Interrupt)
 	return c.Run()
 }
 
@@ -92,6 +122,60 @@ func dash(s string) string {
 	return s
 }
 
+// resolvedOrClean resolves path's symlinks when possible, else falls back
+// to a plain Clean — good enough for accountFromEnv below, where a
+// resolution failure just means the compared dir does not exist, which is
+// already "not inside AccountsDir".
+func resolvedOrClean(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
+}
+
+// accountFromEnv reports the account name this process's own
+// CLAUDE_CONFIG_DIR already selects, when it resolves (symlinks included)
+// inside reg.AccountsDir(). "" and false when CLAUDE_CONFIG_DIR is unset
+// or points elsewhere.
+func accountFromEnv(reg *account.Registry) (string, bool) {
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if dir == "" {
+		return "", false
+	}
+	accountsDir, got := resolvedOrClean(reg.AccountsDir()), resolvedOrClean(dir)
+	rel, err := filepath.Rel(accountsDir, got)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return "", false
+	}
+	name, _, _ := strings.Cut(rel, string(filepath.Separator))
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+// guardAgainstAccountEnv refuses an operation that targets the default
+// account or the main config dir when this process's own
+// CLAUDE_CONFIG_DIR already resolves inside one of the accounts it
+// manages: the shell loom is running in is itself running AS that
+// account, and treating its inherited env as "the default" would
+// silently act on the wrong identity — log the wrong account in as
+// default, list or sync it as if it were the main login. targetsDefault
+// is false for a command that already names its own account explicitly
+// (use, remove, a login of a specific extra account), which read that
+// account's own CLAUDE_CONFIG_DIR override rather than the inherited one
+// and so are unaffected.
+func guardAgainstAccountEnv(reg *account.Registry, targetsDefault bool) error {
+	if !targetsDefault {
+		return nil
+	}
+	name, ok := accountFromEnv(reg)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("CLAUDE_CONFIG_DIR points at account %q (this shell runs as that account); run loom account from a shell without it", name)
+}
+
 var accountAddCmd = &cobra.Command{
 	Use:   "add <name>",
 	Short: "Create an account, share your Claude setup with it, and log it in",
@@ -102,10 +186,13 @@ var accountAddCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := guardAgainstAccountEnv(reg, true); err != nil {
+			return err
+		}
 		program := claudeProgram()
 		main := accountMainDir(program)
-		if main == "" {
-			return fmt.Errorf("cannot locate your main Claude config dir")
+		if err := validMainDir(main, reg); err != nil {
+			return err
 		}
 		acct, rep, err := reg.Create(args[0], main)
 		if err != nil {
@@ -119,7 +206,11 @@ var accountAddCmd = &cobra.Command{
 			fmt.Fprintf(out, "Log in later with: loom account login %s\n", acct.Name)
 			return nil
 		}
-		return loginAndReport(out, program, acct.Name, account.EnvFor(acct.Dir))
+		if err := loginAndReport(out, program, acct.Name, account.EnvFor(acct.Dir)); err != nil {
+			fmt.Fprintf(out, "%s was created; finish with: loom account login %s\n", acct.Name, acct.Name)
+			return err
+		}
+		return nil
 	},
 }
 
@@ -132,12 +223,80 @@ var accountLoginCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		env, err := reg.Env(args[0])
+		name := args[0]
+		targetsDefault := name == "" || name == account.DefaultName
+		if err := guardAgainstAccountEnv(reg, targetsDefault); err != nil {
+			return err
+		}
+		env, err := reg.Env(name)
 		if err != nil {
 			return err
 		}
-		return loginAndReport(cmd.OutOrStdout(), claudeProgram(), args[0], env)
+		if !targetsDefault {
+			if a, ok := reg.Get(name); ok {
+				if _, statErr := os.Stat(a.Dir); statErr != nil {
+					return fmt.Errorf("account %q's config dir %s is missing; run: loom account remove %s, then: loom account add %s",
+						name, a.Dir, name, name)
+				}
+			}
+		}
+		return loginAndReport(cmd.OutOrStdout(), claudeProgram(), name, env)
 	},
+}
+
+// accountRow is one line of `list`'s table, filled by a probeAccountRow
+// goroutine and printed in Names() order once every row is ready.
+type accountRow struct {
+	name string
+	mark string
+	id   account.Identity
+	u    account.Usage
+	note string
+}
+
+// probeAccountRow runs one account's AuthStatus and (when logged in)
+// ProbeUsage. Safe to run concurrently across accounts: reg is only read
+// (Get/Env/Default), never written, for the lifetime of the list command,
+// and accountExec's fakes in tests are themselves read-only.
+func probeAccountRow(program string, reg *account.Registry, main, name string) accountRow {
+	row := accountRow{name: name}
+	if name == reg.Default() {
+		row.mark = "*"
+	}
+	env, _ := reg.Env(name)
+	id, err := account.AuthStatus(program, env, accountExec)
+	row.id = id
+	if err != nil {
+		row.note = err.Error()
+		return row
+	}
+	if !id.LoggedIn {
+		row.note = "logged out"
+		return row
+	}
+	cwd := main
+	if a, ok := reg.Get(name); ok {
+		cwd = a.Dir
+	} else if name == account.DefaultName && main == "" {
+		// The default account's usage probe needs somewhere to run that
+		// isn't an arbitrary directory (ProbeUsage's cwd becomes a
+		// project entry in Claude's own config) — without a known main
+		// dir there is nowhere safe to point it, so skip the probe
+		// rather than running it in whatever directory `loom account
+		// list` happens to be invoked from.
+		row.note = "no main config dir found"
+		return row
+	}
+	u, err := account.ProbeUsage(program, env, cwd, accountExec)
+	if err != nil {
+		row.note = err.Error()
+		return row
+	}
+	row.u = u
+	if !u.Available {
+		row.note = "no plan limits"
+	}
+	return row
 }
 
 var accountListCmd = &cobra.Command{
@@ -149,38 +308,29 @@ var accountListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := guardAgainstAccountEnv(reg, true); err != nil {
+			return err
+		}
 		program := claudeProgram()
 		main := accountMainDir(program)
+		names := reg.Names()
+		rows := make([]accountRow, len(names))
+		var wg sync.WaitGroup
+		for i, name := range names {
+			wg.Add(1)
+			go func(i int, name string) {
+				defer wg.Done()
+				rows[i] = probeAccountRow(program, reg, main, name)
+			}(i, name)
+		}
+		wg.Wait()
+
 		now := time.Now()
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "\tNAME\tEMAIL\tPLAN\t5H\t7D\tNOTE")
-		for _, name := range reg.Names() {
-			env, _ := reg.Env(name)
-			cwd := main
-			if a, ok := reg.Get(name); ok {
-				cwd = a.Dir
-			}
-			mark := ""
-			if name == reg.Default() {
-				mark = "*"
-			}
-			var u account.Usage
-			note := ""
-			id, err := account.AuthStatus(program, env, accountExec)
-			switch {
-			case err != nil:
-				note = err.Error()
-			case !id.LoggedIn:
-				note = "logged out"
-			default:
-				if u, err = account.ProbeUsage(program, env, cwd, accountExec); err != nil {
-					note = err.Error()
-				} else if !u.Available {
-					note = "no plan limits"
-				}
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", mark, name, dash(id.Email), dash(id.Plan),
-				dash(u.FiveHour.Text(now)), dash(u.SevenDay.Text(now)), note)
+		for _, row := range rows {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.mark, row.name, dash(row.id.Email), dash(row.id.Plan),
+				dash(row.u.FiveHour.Text(now)), dash(row.u.SevenDay.Text(now)), row.note)
 		}
 		return w.Flush()
 	},
@@ -213,7 +363,13 @@ var accountSyncCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := guardAgainstAccountEnv(reg, true); err != nil {
+			return err
+		}
 		main := accountMainDir(claudeProgram())
+		if err := validMainDir(main, reg); err != nil {
+			return err
+		}
 		for _, a := range reg.Accounts {
 			rep, err := account.Sync(a.Dir, main)
 			if err != nil {
@@ -228,6 +384,16 @@ var accountSyncCmd = &cobra.Command{
 	},
 }
 
+// accountUserCount counts the stored sessions using name across every
+// config dir loom knows about (account.KnownStateDirs).
+func accountUserCount(name string) (int, error) {
+	dirs, err := account.KnownStateDirs()
+	if err != nil {
+		return 0, err
+	}
+	return account.CountUsers(dirs, name)
+}
+
 var accountRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
 	Short: "Remove an account and delete its config dir",
@@ -238,37 +404,59 @@ var accountRemoveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		acct, ok := reg.Get(name)
-		if !ok {
+		if _, ok := reg.Get(name); !ok {
 			return fmt.Errorf("account %q is not registered", name)
 		}
-		if !accountForce {
-			dirs, err := account.KnownStateDirs()
-			if err != nil {
-				return fmt.Errorf("can't tell whether sessions use %s: %w (--force removes it anyway)", name, err)
+
+		// In-use check: --force overrides it (and says so); nothing but
+		// --force does, so --yes alone still refuses.
+		n, cerr := accountUserCount(name)
+		switch {
+		case cerr != nil && !accountForce:
+			return fmt.Errorf("can't tell whether sessions use %s: %w (--force removes it anyway)", name, cerr)
+		case cerr == nil && n > 0 && !accountForce:
+			return fmt.Errorf("%d session(s) use %s: kill them or relaunch them on another account first (or use --force)", n, name)
+		case cerr == nil && n > 0:
+			fmt.Fprintf(out, "--force: overriding %d session(s) using %s\n", n, name)
+		}
+
+		// Unshared-files check: run (and, if it refuses, report) before
+		// the confirmation prompt, so the user is never asked to confirm
+		// a removal that then turns out to be refused anyway.
+		dir, owned := reg.OwnedDir(name)
+		if owned {
+			unshared, uerr := account.Unshared(dir)
+			switch {
+			case uerr != nil && !accountForce:
+				return fmt.Errorf("account %q: checking for unshared files: %w", name, uerr)
+			case uerr == nil && len(unshared) > 0 && !accountForce:
+				return &account.UnsharedError{Name: name, Entries: unshared}
+			case uerr == nil && len(unshared) > 0:
+				fmt.Fprintf(out, "--force: overriding unshared files: %s\n", strings.Join(unshared, ", "))
 			}
-			n, err := account.CountUsers(dirs, name)
-			if err != nil {
-				return fmt.Errorf("can't tell whether sessions use %s: %w (--force removes it anyway)", name, err)
+		}
+
+		if !accountYes {
+			if owned {
+				fmt.Fprintf(out, "Remove account %q and delete %s? [y/N] ", name, dir)
+			} else {
+				fmt.Fprintf(out, "Remove account %q? Its dir %s is not loom's and will be left in place. [y/N] ", name, dir)
 			}
-			if n > 0 {
-				return fmt.Errorf("%d session(s) use %s: kill them or relaunch them on another account first (or use --force)", n, name)
-			}
-			fmt.Fprintf(out, "Remove account %q and delete %s? [y/N] ", name, acct.Dir)
 			line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 			if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
 				fmt.Fprintln(out, "Aborted.")
 				return nil
 			}
 		}
+
 		deleted, err := reg.Remove(name, accountForce)
 		if err != nil {
 			return err
 		}
 		if deleted {
-			fmt.Fprintf(out, "Removed %s and deleted %s\n", name, acct.Dir)
+			fmt.Fprintf(out, "Removed %s and deleted %s\n", name, dir)
 		} else {
-			fmt.Fprintf(out, "Removed %s (left %s in place: loom did not create it)\n", name, acct.Dir)
+			fmt.Fprintf(out, "Removed %s (left %s in place: loom did not create it)\n", name, dir)
 		}
 		return nil
 	},
@@ -276,6 +464,7 @@ var accountRemoveCmd = &cobra.Command{
 
 func init() {
 	accountAddCmd.Flags().BoolVar(&accountNoLogin, "no-login", false, "Create the account without logging it in")
-	accountRemoveCmd.Flags().BoolVar(&accountForce, "force", false, "Skip the confirmation and the in-use check")
+	accountRemoveCmd.Flags().BoolVar(&accountForce, "force", false, "Override the in-use and unshared-files refusals (reports what it overrode)")
+	accountRemoveCmd.Flags().BoolVarP(&accountYes, "yes", "y", false, "Skip the confirmation prompt")
 	AccountCmd.AddCommand(accountAddCmd, accountLoginCmd, accountListCmd, accountUseCmd, accountSyncCmd, accountRemoveCmd)
 }
