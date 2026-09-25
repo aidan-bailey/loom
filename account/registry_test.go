@@ -109,6 +109,19 @@ func TestUnavailable_NilErrIsStillLatched(t *testing.T) {
 	assert.ErrorIs(t, r.SetDefault(DefaultName), ErrRegistryLoadFailed)
 }
 
+// TestUnavailable_ReloadKeepsItsOwnError: an Unavailable registry has no
+// file to reload, but why it is unavailable is still the error to show.
+func TestUnavailable_ReloadKeepsItsOwnError(t *testing.T) {
+	orig := errors.New("no home directory")
+	r := Unavailable(orig)
+
+	err := r.Reload()
+
+	assert.ErrorIs(t, err, orig)
+	assert.ErrorIs(t, r.LoadErr(), orig)
+	assert.ErrorIs(t, r.SetDefault(DefaultName), ErrRegistryLoadFailed, "still latched")
+}
+
 func TestLoadRegistry_RejectsInvalidStoredEntries(t *testing.T) {
 	cases := []struct {
 		name string

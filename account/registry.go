@@ -124,10 +124,13 @@ func (r *Registry) LoadErr() error { return r.loadErr }
 // clears LoadErr; on failure it latches LoadErr exactly as LoadRegistry
 // would and returns it, so a Reload that raced a corrupt write leaves the
 // registry refusing further writes rather than silently keeping the old
-// in-memory state.
+// in-memory state. A registry with no file (Unavailable) has nothing to
+// reload and keeps the error that made it unavailable.
 func (r *Registry) Reload() error {
 	if r.path == "" {
-		r.loadErr = errors.New("account registry has no file location to reload")
+		if r.loadErr == nil {
+			r.loadErr = errors.New("account registry has no file location to reload")
+		}
 		return r.loadErr
 	}
 	fresh := LoadRegistry(filepath.Dir(r.path))
