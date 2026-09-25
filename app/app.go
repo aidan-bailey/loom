@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aidan-bailey/loom/account"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/keys"
@@ -247,6 +248,21 @@ type home struct {
 	// --remote-control, detected once at startup (see remote_control.go).
 	// Global to the machine's login, so one probe covers every workspace.
 	rcAuth session.RemoteControlAuth
+	// accounts is the Claude account registry (account/), loaded from the
+	// global config dir at startup. Update-goroutine only: launches read the
+	// published dir map (session.SetAccountDirs) instead.
+	accounts *account.Registry
+	// accountAuth is each extra account's remote-control auth, with the
+	// identity `claude auth status` reported, filled by accountsRefreshedMsg.
+	// The default account's lives in rcAuth.
+	accountAuth map[string]session.RemoteControlAuth
+	// accountSync is each extra account's last link report.
+	accountSync map[string]account.SyncReport
+	// usage is each account's latest probe state (usage.go).
+	usage map[string]accountUsage
+	// accountStrip is the usage strip above the tab bar; empty (height 0)
+	// until an extra account exists.
+	accountStrip *ui.AccountStrip
 	// global spinner instance. we plumb this down to where it's needed
 	spinner spinner.Model
 	// activeOverlay is the currently displayed modal (nil when no overlay
@@ -607,6 +623,7 @@ func (m *home) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.spinner.Tick,
 		tickUpdateMetadataCmd,
+		m.accountsRefreshCmd(false),
 	}
 	// Event mode renders on paneDirtyMsg; the timer poll only survives for
 	// the snapshot/Windows path, which has no emulator to emit events.
@@ -809,6 +826,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ghReadyMsg:
 		m.handleGHReady(msg)
 		return m, nil
+	case accountsRefreshedMsg:
+		return m, m.handleAccountsRefreshed(msg)
 	case ghRefreshMsg:
 		m.gate(gateGH).expedite()
 		return m, nil

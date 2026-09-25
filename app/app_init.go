@@ -153,10 +153,13 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	willRestoreSlots := len(savedOpen) > 0 && pendingDir == ""
 
 	cmdExec := cmd2.MakeExecutor()
+	h.initAccounts()
 	// Probe Claude auth once up front (before any workspace terminal is
 	// created) so remote-control launch decisions are synchronous and
 	// startup terminals aren't stripped of the flag by fail-closed timing.
-	if appConfig != nil && appConfig.RemoteControlEnabled() {
+	// The identity it reads also locates the main config dir extra
+	// accounts link to, so it runs whenever one is registered too.
+	if appConfig != nil && (appConfig.RemoteControlEnabled() || h.hasExtraAccounts()) {
 		h.rcAuth = session.DetectClaudeRemoteControlAuth(program, cmdExec)
 	}
 	var startupRecovery recoverySummary
