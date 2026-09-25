@@ -47,12 +47,6 @@ func (a RemoteControlAuth) OK() bool { return a.State == RemoteControlAuthOK }
 // with remote control.
 func (a RemoteControlAuth) Blocked() bool { return a.State == RemoteControlAuthBlocked }
 
-// remoteControlOverrideEnv lists environment variables that force API-key /
-// bearer-token auth, overriding an interactive login. Their presence means
-// remote control cannot connect — this is the "auth token instead of login"
-// case.
-var remoteControlOverrideEnv = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
-
 // IsClaudeProgram reports whether program launches the Claude Code agent
 // (matching by binary basename, so absolute paths and trailing flags still
 // resolve). Used to scope remote-control behavior to Claude sessions.
@@ -86,7 +80,7 @@ func DetectClaudeRemoteControlAuthEnv(program string, env []string, runner inter
 		id = account.Identity{}
 	}
 
-	for _, name := range remoteControlOverrideEnv {
+	for _, name := range account.CredentialOverrides {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
 			return RemoteControlAuth{
 				State:    RemoteControlAuthBlocked,

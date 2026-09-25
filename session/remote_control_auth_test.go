@@ -30,7 +30,7 @@ func (f *fakeAuthExecutor) CombinedOutput(c *exec.Cmd) ([]byte, error) { return 
 // cases aren't short-circuited to Blocked.
 func clearOverrideEnv(t *testing.T) {
 	t.Helper()
-	for _, env := range remoteControlOverrideEnv {
+	for _, env := range account.CredentialOverrides {
 		t.Setenv(env, "")
 	}
 }
@@ -85,7 +85,7 @@ func TestDetectClaudeRemoteControlAuth(t *testing.T) {
 // config dir, "logged out", email and plan from rcAuth.Identity even when
 // remote control itself is blocked.
 func TestDetectClaudeRemoteControlAuth_EnvOverride(t *testing.T) {
-	for _, env := range remoteControlOverrideEnv {
+	for _, env := range account.CredentialOverrides {
 		t.Run(env, func(t *testing.T) {
 			clearOverrideEnv(t)
 			t.Setenv(env, "sk-secret")
