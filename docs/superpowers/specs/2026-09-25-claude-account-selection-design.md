@@ -141,9 +141,10 @@ injected `internalexec.Executor`, in the style of `session/github`.
   error is surfaced once, and it latches every write shut until a later load
   succeeds, as `session.Storage` does, so a corrupt file is never overwritten.
 - `ValidName(name)`: `[a-z0-9-]+`, not `default`.
-- `MainDir(auth)`: the main config dir, taken from `claude auth status`'s
-  `configDirectory` for the default account (so a `CLAUDE_CONFIG_DIR` in the
-  user's own environment is respected), falling back to `~/.claude`.
+- `MainDir(id Identity)`: the main config dir, taken from `claude auth
+  status`'s `configDirectory` for the default account, else
+  `$CLAUDE_CONFIG_DIR` (so a config dir set in the user's own environment is
+  respected), else `~/.claude`.
 - `Create(name)`: makes `<globalDir>/accounts/<name>/` and runs `Sync`.
 - `Sync(acct, mainDir) → SyncReport`: for every top-level entry of `mainDir`
   not on the deny-list, create a symlink in the account dir if nothing is
@@ -191,9 +192,12 @@ run.
   that moment. A missing account fails the launch with `account "max-2" no
   longer exists — press R to relaunch on another account`. `Restore`
   (reattach) resolves nothing: the env is already in the tmux session.
-- The registry reaches `session` as a resolver function (`func(name string)
-  (dir string, ok bool)`) set on the instance by `app`, so `session` does not
-  import `account`.
+- The registry reaches `session` as a published name → dir map
+  (`session.SetAccountDirs`, an atomic pointer), which `app` republishes
+  after every registry change. Launches read it on lifecycle goroutines, so
+  it cannot live on the Update-goroutine-only registry. `session` imports
+  `account` (for `DefaultName` and `AuthStatus`), which is safe because
+  `account` imports nothing from `session`.
 - A logged-out account needs no check from Loom: Claude shows its own login
   prompt in the pane.
 
