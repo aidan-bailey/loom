@@ -105,6 +105,28 @@ func TestCreate_MakesALinkedDirAndRegistersIt(t *testing.T) {
 	assert.Equal(t, acct, got)
 }
 
+// TestCreate_BootstrapsMainProjectsDirSoAccountsShareResumeHistory covers
+// a fresh install: mainDir has no projects/ yet (Claude creates it lazily,
+// on the first session). Without bootstrapping it, the first account ever
+// created would never get it linked, so its transcripts would stay local
+// to that one account and resuming its sessions under a different account
+// could never find them.
+func TestCreate_BootstrapsMainProjectsDirSoAccountsShareResumeHistory(t *testing.T) {
+	global, main := t.TempDir(), t.TempDir()
+	r := LoadRegistry(global)
+
+	acct, rep, err := r.Create("max-2", main)
+
+	require.NoError(t, err)
+	assert.Contains(t, rep.Linked, "projects")
+	fi, err := os.Stat(filepath.Join(main, "projects"))
+	require.NoError(t, err)
+	assert.True(t, fi.IsDir())
+	target, err := os.Readlink(filepath.Join(acct.Dir, "projects"))
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(main, "projects"), target)
+}
+
 func TestCreate_RejectsInvalidAndDuplicateNames(t *testing.T) {
 	r, main := LoadRegistry(t.TempDir()), mainDirWith(t)
 	_, _, err := r.Create("Bad Name", main)

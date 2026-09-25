@@ -161,9 +161,13 @@ func TestAccountsRefresh_SkipsSyncForAnUnsafeMainDir(t *testing.T) {
 			require.True(t, ok)
 
 			assert.NotContains(t, msg.sync, "max-2", "not synced")
-			entries, err := os.ReadDir(acct.Dir)
-			require.NoError(t, err)
-			assert.Empty(t, entries, "nothing linked into the account")
+			// account.Create's own bootstrap already linked "projects"
+			// from the safe main dir withAccounts created it against;
+			// what must not appear is settings.json, written directly
+			// into the *unsafe* main dir above and only reachable if the
+			// refresh's guard failed to skip syncing against it.
+			_, statErr := os.Lstat(filepath.Join(acct.Dir, "settings.json"))
+			assert.True(t, os.IsNotExist(statErr), "the unsafe main dir must never be linked into the account")
 		})
 	}
 }

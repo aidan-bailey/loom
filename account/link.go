@@ -184,6 +184,22 @@ func (r *Registry) Create(name, mainDir string) (Account, SyncReport, error) {
 		}
 		return Account{}, SyncReport{}, fmt.Errorf("create %s: %w", acct.Dir, err)
 	}
+	// Claude only creates projects/ lazily, on a config dir's first
+	// session, so a fresh install's main dir may not have it yet.
+	// Without it here, the first account ever created would never get it
+	// linked: its transcripts would stay local to that one account, and
+	// resuming one of its sessions under a different account could never
+	// find the conversation. Only when mainDir itself already exists:
+	// MkdirAll would otherwise happily conjure a missing mainDir into
+	// existence too, masking what should be a clean "no such main dir"
+	// failure from Sync below.
+	if fi, statErr := os.Stat(mainDir); statErr == nil && fi.IsDir() {
+		mainProjects := filepath.Join(mainDir, "projects")
+		if err := os.MkdirAll(mainProjects, 0o700); err != nil {
+			_ = os.RemoveAll(acct.Dir)
+			return Account{}, SyncReport{}, fmt.Errorf("create %s: %w", mainProjects, err)
+		}
+	}
 	rep, err := Sync(acct.Dir, mainDir)
 	if err == nil {
 		err = r.update(func(fresh *Registry) error {
