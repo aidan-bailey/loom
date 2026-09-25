@@ -209,12 +209,19 @@ func parseModelValue(tok string) (model string, context1M bool) {
 	return tok, false
 }
 
-// remoteControlBlocked reports whether a launch of program should be
-// interrupted to tell the user remote control can't work: the toggle is
-// on (rcEnabled — either the global config or a per-instance override),
-// the program is Claude, and auth was clearly determined incompatible.
+// remoteControlBlocked is remoteControlBlockedOn for the default account
+// (workspace terminals, which always run on it).
 func (m *home) remoteControlBlocked(rcEnabled bool, program string) bool {
-	return rcEnabled && session.IsClaudeProgram(program) && m.rcAuth.Blocked()
+	return m.remoteControlBlockedOn("", rcEnabled, program)
+}
+
+// remoteControlBlockedOn reports whether a launch of program on account
+// acct should be interrupted to tell the user remote control can't work:
+// the toggle is on (rcEnabled — either the global config or a
+// per-instance override), the program is Claude, and acct's auth was
+// clearly determined incompatible.
+func (m *home) remoteControlBlockedOn(acct string, rcEnabled bool, program string) bool {
+	return rcEnabled && session.IsClaudeProgram(program) && m.rcAuthFor(acct).Blocked()
 }
 
 // promptRemoteControlBlocked shows the "remote control unavailable" modal for
@@ -222,12 +229,12 @@ func (m *home) remoteControlBlocked(rcEnabled bool, program string) bool {
 // launches the session with no --remote-control flag; cancel (n/esc) aborts
 // creation, popping and killing the pending instance the way Esc does. Both
 // branches route their Cmd through pendingConfirmation so state_confirm.go
-// dispatches it.
-func (m *home) promptRemoteControlBlocked(startWithoutRC overlay.ConfirmationTask) tea.Cmd {
+// dispatches it. reason is the launching account's auth reason.
+func (m *home) promptRemoteControlBlocked(startWithoutRC overlay.ConfirmationTask, reason string) tea.Cmd {
 	m.state = stateConfirm
 	m.pendingConfirmation = startWithoutRC
 
-	msg := "Remote control unavailable: " + m.rcAuth.Reason +
+	msg := "Remote control unavailable: " + reason +
 		"\n\nStart this session without remote control?"
 	co := overlay.NewConfirmationOverlay(msg)
 	co.SetWidth(60)
@@ -255,10 +262,11 @@ func (m *home) promptRemoteControlBlocked(startWithoutRC overlay.ConfirmationTas
 // reports closed=true (confirm AND cancel alike), so OnCancel must
 // neutralize pendingConfirmation to a zero-value ConfirmationTask —
 // otherwise cancel would still execute resumeWithoutRC's Sync/Async.
-func (m *home) promptRestartRemoteControlBlocked(resumeWithoutRC overlay.ConfirmationTask) tea.Cmd {
+// reason is the launching account's auth reason.
+func (m *home) promptRestartRemoteControlBlocked(resumeWithoutRC overlay.ConfirmationTask, reason string) tea.Cmd {
 	m.state = stateConfirm
 	m.pendingConfirmation = resumeWithoutRC
-	msg := "Remote control unavailable: " + m.rcAuth.Reason + "\n\nResume this session without remote control?"
+	msg := "Remote control unavailable: " + reason + "\n\nResume this session without remote control?"
 	co := overlay.NewConfirmationOverlay(msg)
 	co.SetWidth(60)
 	co.OnCancel = func() {

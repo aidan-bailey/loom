@@ -261,7 +261,7 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 		startTask := overlay.ConfirmationTask{
 			Sync: func() {
 				m.pendingNew = nil // the start owns it now
-				instance.SetLaunchOptions(applyLaunchOptions(opts, m.rcAuth, instance.Program(), instance.Title), opts.HeadroomProxy, opts.CacheTTL1h)
+				m.applyChosenLaunch(instance, opts, instance.Program())
 				// Always recorded, edited or not, so branch composition has a
 				// single source of truth instead of falling back to a re-read
 				// of config.json inside the git package.
@@ -281,14 +281,14 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 				}
 			}),
 		}
-		if m.remoteControlBlocked(effectiveRemoteControl(opts), instance.Program()) {
-			return m, m.promptRemoteControlBlocked(startTask)
+		if m.remoteControlBlockedOn(opts.Account, effectiveRemoteControl(opts), instance.Program()) {
+			return m, m.promptRemoteControlBlocked(startTask, m.rcAuthFor(opts.Account).Reason)
 		}
 		return m, tea.Batch(startTask.Run(), m.instanceChanged())
 	}
 	m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions
-	m.setOverlay(overlay.NewSessionLaunchOptions(launchOptionsFromConfig(m.appConfig), m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
+	m.setOverlay(m.newLaunchOptionsOverlay(launchOptionsFromConfig(m.appConfig), instance.Program()), overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
-	return m, tea.RequestWindowSize
+	return m, tea.Batch(tea.RequestWindowSize, m.requestUsageProbe())
 }

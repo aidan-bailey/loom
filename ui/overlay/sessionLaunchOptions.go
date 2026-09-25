@@ -144,6 +144,11 @@ func (l *SessionLaunchOptions) SetAccounts(choices []AccountChoice) {
 
 func (l *SessionLaunchOptions) accountRowShown() bool { return len(l.accounts) >= 2 }
 
+// AccountsShown reports whether the Account row is showing, so the caller
+// refreshes only a modal that was given accounts (a Claude launch) and
+// never adds the row to one that wasn't.
+func (l *SessionLaunchOptions) AccountsShown() bool { return l.accountRowShown() }
+
 func (l *SessionLaunchOptions) accountIndex() int {
 	for i, c := range l.accounts {
 		if c.Name == l.opts.Account {

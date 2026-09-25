@@ -440,6 +440,9 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	// recover them, so seed them from the instance's own settings instead.
 	opts.HeadroomProxy = selected.HeadroomProxy()
 	opts.CacheTTL1h = selected.CacheTTL1h()
+	// The account never reaches the program either; seed it from the
+	// instance so R preselects the session's own account.
+	opts.Account = accountOrDefault(selected.Account())
 
 	m.pendingLaunchOptions = func(newOpts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
 		resumeTitle := selected.Title
@@ -449,7 +452,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 		owner := m.startOwner(selected) // stamped for resumeDoneMsg
 		resumeTask := overlay.ConfirmationTask{
 			Sync: func() {
-				selected.SetLaunchOptions(applyLaunchOptions(newOpts, m.rcAuth, base, selected.Title), newOpts.HeadroomProxy, newOpts.CacheTTL1h)
+				m.applyChosenLaunch(selected, newOpts, base)
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
 				if err := selected.TransitionTo(session.Loading); err != nil {
@@ -470,8 +473,8 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 				return resumeResult(selected, resumeTitle, owner, selected.Resume(saveFunc))
 			}),
 		}
-		if m.remoteControlBlocked(effectiveRemoteControl(newOpts), selected.Program()) {
-			return m, m.promptRestartRemoteControlBlocked(resumeTask)
+		if m.remoteControlBlockedOn(newOpts.Account, effectiveRemoteControl(newOpts), selected.Program()) {
+			return m, m.promptRestartRemoteControlBlocked(resumeTask, m.rcAuthFor(newOpts.Account).Reason)
 		}
 		return m, tea.Batch(resumeTask.Run(), m.instanceChanged())
 	}
@@ -481,13 +484,13 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.state = stateLaunchOptions
-	lo := overlay.NewSessionLaunchOptions(opts, m.rcAuth.Blocked(), m.rcAuth.Reason)
+	lo := m.newLaunchOptionsOverlay(opts, base)
 	// The branch already exists, so the prefix row shows it read-only rather
 	// than implying a rename that restarting cannot perform.
 	lo.SetBranchPrefixLocked(selected.GetBranch())
 	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
-	return m, tea.RequestWindowSize
+	return m, tea.Batch(tea.RequestWindowSize, m.requestUsageProbe())
 }
 
 // runRecoverSelected adopts the selected Recoverable orphan: it serializes

@@ -76,7 +76,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					startTask := overlay.ConfirmationTask{
 						Sync: func() {
 							m.pendingNew = nil // the start owns it now
-							selected.SetLaunchOptions(applyLaunchOptions(opts, m.rcAuth, selected.Program(), selected.Title), opts.HeadroomProxy, opts.CacheTTL1h)
+							m.applyChosenLaunch(selected, opts, selected.Program())
 							// Always recorded, edited or not, so branch composition has
 							// a single source of truth instead of falling back to a
 							// re-read of config.json inside the git package.
@@ -96,16 +96,16 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 						}),
 					}
 
-					if m.remoteControlBlocked(effectiveRemoteControl(opts), selected.Program()) {
-						return m, m.promptRemoteControlBlocked(startTask)
+					if m.remoteControlBlockedOn(opts.Account, effectiveRemoteControl(opts), selected.Program()) {
+						return m, m.promptRemoteControlBlocked(startTask, m.rcAuthFor(opts.Account).Reason)
 					}
 					return m, tea.Batch(startTask.Run(), m.instanceChanged())
 				}
 				m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 				m.state = stateLaunchOptions
-				m.setOverlay(overlay.NewSessionLaunchOptions(launchOptionsFromConfig(m.appConfig), m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
+				m.setOverlay(m.newLaunchOptionsOverlay(launchOptionsFromConfig(m.appConfig), selected.Program()), overlayLaunchOptions)
 				m.menu.SetState(ui.StateNewInstance)
-				return m, tea.RequestWindowSize
+				return m, tea.Batch(tea.RequestWindowSize, m.requestUsageProbe())
 			}
 
 			// Regular flow: instance already running, just send prompt

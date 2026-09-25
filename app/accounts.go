@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
+	"github.com/aidan-bailey/loom/ui/overlay"
 )
 
 // accountUsage is one account's probe state: the last good sample and the
@@ -152,8 +154,17 @@ func (m *home) accountStatuses() []ui.AccountStatus {
 // refreshAccountViews pushes the current account state into every view
 // that shows it. Returns tea.RequestWindowSize when the strip appeared or
 // disappeared, since that changes the content height.
+//
+// An open Launch Options modal follows only while its Account row shows
+// (a Claude launch that was given accounts) and the registry loaded: a
+// failed load lists no accounts, and refreshing would hide the row and
+// reset the choice to the default account, where keeping the stale one
+// makes a named account's launch fail closed instead.
 func (m *home) refreshAccountViews() tea.Cmd {
 	statuses := m.accountStatuses()
+	if lo := m.launchOptionsOverlay(); lo != nil && lo.AccountsShown() && m.accountsLoaded() {
+		lo.SetAccounts(m.accountChoices(statuses))
+	}
 	if m.accountStrip == nil {
 		return nil
 	}
@@ -233,4 +244,81 @@ func (m *home) handleAccountsRefreshed(msg accountsRefreshedMsg) tea.Cmd {
 		log.For("account").Warn("sync.failed", "account", name, "err", err.Error())
 	}
 	return m.refreshAccountViews()
+}
+
+// accountsLoaded reports whether the registry exists and loaded, so its
+// account list can be trusted to be complete.
+func (m *home) accountsLoaded() bool { return m.accounts != nil && m.accounts.LoadErr() == nil }
+
+// accountChoices are the Launch Options Account row's options, default
+// first; nil (the row hidden) without an extra account.
+func (m *home) accountChoices(statuses []ui.AccountStatus) []overlay.AccountChoice {
+	if !m.hasExtraAccounts() {
+		return nil
+	}
+	now := time.Now()
+	out := make([]overlay.AccountChoice, 0, len(statuses))
+	for _, s := range statuses {
+		a := m.rcAuthFor(s.Name)
+		out = append(out, overlay.AccountChoice{
+			Name:      s.Name,
+			Summary:   ui.AccountUsageText(s, now),
+			RCBlocked: a.Blocked(),
+			RCReason:  a.Reason,
+		})
+	}
+	return out
+}
+
+// newLaunchOptionsOverlay builds the Session Launch Options modal for opts,
+// launching program. The registry is re-read first. A Claude launch gets
+// the Account row when an extra account exists, and an empty or
+// unregistered opts.Account becomes the registry default, so R on a
+// session whose account was removed can't relaunch as it again. A registry
+// that failed to load keeps a named opts.Account: it lists no accounts, so
+// the row is hidden, and rewriting the account would move the session to
+// another subscription the user never saw chosen; kept, its launch fails
+// closed (session.RegistryLoadError). Any other program records no account
+// and gets no row.
+func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program string) *overlay.SessionLaunchOptions {
+	m.reloadAccounts()
+	claude := session.IsClaudeProgram(program)
+	switch {
+	case !claude || m.accounts == nil:
+		opts.Account = ""
+	case opts.Account == "":
+		opts.Account = m.accounts.Default()
+	case opts.Account == account.DefaultName || !m.accountsLoaded():
+		// Kept: the default, or a registry that can't tell whether the
+		// account still exists.
+	default:
+		if _, ok := m.accounts.Get(opts.Account); !ok {
+			opts.Account = m.accounts.Default()
+		}
+	}
+	auth := m.rcAuthFor(opts.Account)
+	lo := overlay.NewSessionLaunchOptions(opts, auth.Blocked(), auth.Reason)
+	// Without choices the row stays hidden; SetAccounts(nil) would also
+	// blank the account resolved above.
+	if choices := m.accountChoices(m.accountStatuses()); claude && choices != nil {
+		lo.SetAccounts(choices)
+	}
+	return lo
+}
+
+// applyChosenLaunch records the chosen launch options on inst: the program
+// composed from base with the chosen account's remote-control auth, the env
+// toggles, and the account itself.
+func (m *home) applyChosenLaunch(inst *session.Instance, opts overlay.LaunchOptions, base string) {
+	inst.SetLaunchOptions(applyLaunchOptions(opts, m.rcAuthFor(opts.Account), base, inst.Title), opts.HeadroomProxy, opts.CacheTTL1h)
+	inst.SetAccount(opts.Account)
+}
+
+// accountOrDefault maps an instance's stored account ("" = default) to the
+// name the Account row shows.
+func accountOrDefault(name string) string {
+	if name == "" {
+		return account.DefaultName
+	}
+	return name
 }

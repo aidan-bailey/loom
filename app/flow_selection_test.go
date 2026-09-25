@@ -405,7 +405,7 @@ func TestCreationCancelPaths_KillThePendingInstanceByIdentity(t *testing.T) {
 		{"launch options cancelled", toLaunchOptions, func(m *home) { _, _ = m.cancelLaunchOptions() }},
 		{"prompt overlay cancelled", toPrompt, func(m *home) { _ = m.cancelPromptOverlay() }},
 		{"remote-control confirm cancelled", toLaunchOptions, func(m *home) {
-			_ = m.promptRemoteControlBlocked(overlay.ConfirmationTask{})
+			_ = m.promptRemoteControlBlocked(overlay.ConfirmationTask{}, "")
 			m.confirmation().OnCancel()
 			drainCmd(m.pendingConfirmation.Async)
 		}},
