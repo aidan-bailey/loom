@@ -395,6 +395,11 @@ type home struct {
 	// consult it first and fall back when it has no entry for a session.
 	// Update-goroutine only.
 	roster map[string]session.RosterEntry
+	// rosterByAccount is each extra account's roster, keyed by account then
+	// working directory: `claude agents --json` lists only its own config
+	// dir's sessions, so each account is queried as itself. The default
+	// account's stays in roster. Update-goroutine only.
+	rosterByAccount map[string]map[string]session.RosterEntry
 
 	// pendingRatioSaves buffers title→ratio pairs recorded by resizeSplit
 	// until the throttled ratioSaveMsg flushes them into one mutateUIPrefs
@@ -821,6 +826,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.roster = msg.entries
 		}
+		// Another account's failed query clears only its own entries: the
+		// map is replaced wholesale and a failed account is absent from it.
+		for name, err := range msg.extraErrs {
+			log.DebugKV("app.roster.query_failed", "account", name, "err", err.Error())
+		}
+		m.rosterByAccount = msg.extra
 		m.observeRoster(msg.at)
 		return m, nil
 	case ghReadyMsg:

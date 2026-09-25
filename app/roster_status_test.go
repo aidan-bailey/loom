@@ -133,7 +133,7 @@ func TestRosterReadyMsgErrorClearsEntries(t *testing.T) {
 // the Claude CLI on every tick for a fleet that contains no Claude agents.
 func TestRosterQueryCmdSkipsWhenNoClaudeInstances(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "aideronly", "aider", "x")
-	require.Nil(t, rosterQueryCmd([]*session.Instance{inst}))
+	require.Nil(t, rosterQueryCmd([]*session.Instance{inst}, nil))
 }
 
 // TestRosterQueryCmdRunsForClaudeInstances: with at least one Claude agent
@@ -141,7 +141,7 @@ func TestRosterQueryCmdSkipsWhenNoClaudeInstances(t *testing.T) {
 func TestRosterQueryCmdRunsForClaudeInstances(t *testing.T) {
 	aider := startedInstanceWithProgram(t, "mixed-aider", "aider", "x")
 	claude := startedInstanceWithProgram(t, "mixed-claude", "claude", "x")
-	require.NotNil(t, rosterQueryCmd([]*session.Instance{aider, claude}))
+	require.NotNil(t, rosterQueryCmd([]*session.Instance{aider, claude}, nil))
 }
 
 // errAssertRoster is a sentinel for roster query failures in tests.

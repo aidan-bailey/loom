@@ -1,8 +1,10 @@
 package app
 
 import (
+	"sync"
 	"time"
 
+	"github.com/aidan-bailey/loom/account"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
@@ -113,6 +115,10 @@ func (m *home) maybeRedetect(sessionName string) tea.Cmd {
 type rosterReadyMsg struct {
 	entries map[string]session.RosterEntry
 	err     error
+	// extra holds each non-default account's roster and extraErrs its
+	// failed queries; entries/err stay the default account's.
+	extra     map[string]map[string]session.RosterEntry
+	extraErrs map[string]error
 	// at is when the query started, which is when its answer was true.
 	// Each instance's observation is stamped with it (see
 	// session.Instance.ObserveRoster), so an answer from before a hook
@@ -120,27 +126,67 @@ type rosterReadyMsg struct {
 	at time.Time
 }
 
-// rosterQueryCmd schedules one roster query covering the whole fleet.
+// rosterQueryCmd schedules the roster queries covering the whole fleet: one
+// per account in use, since `claude agents --json` lists only the sessions
+// of the config dir it runs under (dirs maps extra accounts to theirs).
 // Returns nil when no active instance runs Claude, so a fleet of aider or
 // shell sessions never pays for a Claude subprocess. The binary is taken
 // from a live instance's Program rather than assumed to be "claude" on
 // PATH, so absolute paths (a Nix store path, a version-pinned install)
-// resolve to the same CLI the agents were launched with.
-func rosterQueryCmd(active []*session.Instance) tea.Cmd {
+// resolve to the same CLI the agents were launched with. The queries run in
+// parallel inside the one Cmd, which still returns a single message.
+func rosterQueryCmd(active []*session.Instance, dirs map[string]string) tea.Cmd {
 	var program string
+	accounts := map[string]bool{}
 	for _, inst := range active {
-		if p := inst.Program(); session.IsClaudeProgram(p) {
-			program = p
-			break
+		p := inst.Program()
+		if !session.IsClaudeProgram(p) {
+			continue
 		}
+		if program == "" {
+			program = p
+		}
+		accounts[inst.Account()] = true
 	}
 	if program == "" {
 		return nil
 	}
 	return func() tea.Msg {
-		at := time.Now()
-		entries, err := session.QueryClaudeRoster(program, internalexec.Default{})
-		return rosterReadyMsg{entries: entries, err: err, at: at}
+		msg := rosterReadyMsg{at: time.Now()}
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for name := range accounts {
+			var env []string
+			if name != "" {
+				dir, ok := dirs[name]
+				if !ok {
+					continue // a removed account: its instances get no opinion
+				}
+				env = account.EnvFor(dir)
+			}
+			wg.Add(1)
+			go func(name string, env []string) {
+				defer wg.Done()
+				entries, err := session.QueryClaudeRosterEnv(program, env, internalexec.Default{})
+				mu.Lock()
+				defer mu.Unlock()
+				if name == "" {
+					msg.entries, msg.err = entries, err
+					return
+				}
+				if msg.extra == nil {
+					msg.extra = map[string]map[string]session.RosterEntry{}
+					msg.extraErrs = map[string]error{}
+				}
+				if err != nil {
+					msg.extraErrs[name] = err
+				} else {
+					msg.extra[name] = entries
+				}
+			}(name, env)
+		}
+		wg.Wait()
+		return msg
 	}
 }
 
@@ -161,7 +207,7 @@ const rosterInterval = 3 * time.Second
 // Claude agent is present. Must be called on the Update goroutine.
 func (m *home) maybeRosterQuery(active []*session.Instance) tea.Cmd {
 	return m.dispatchGated(gateRoster, time.Now(), func() tea.Cmd {
-		return rosterQueryCmd(active)
+		return rosterQueryCmd(active, m.accountDirs())
 	})
 }
 
@@ -170,17 +216,25 @@ func (m *home) maybeRosterQuery(active []*session.Instance) tea.Cmd {
 // the status is Prompting, and even then only when the CLI named one).
 // The bool is false when the roster has no opinion: a non-Claude agent, an empty or failed roster, no entry for
 // this worktree (the join key is the directory Claude runs in), or a
-// status string this build does not recognize.
+// status string this build does not recognize. An extra account's session
+// is joined against that account's roster only.
 //
 // The join is exact string equality on the path. Claude reports a
 // symlink-resolved cwd, so a Loom config dir reached through a symlink
 // (a dotfiles setup, say) simply produces no match and falls back — a
 // silent degradation to the old behavior, never a wrong status.
 func (m *home) rosterStatusFor(inst *session.Instance) (session.Status, string, bool) {
-	if inst == nil || len(m.roster) == 0 || !session.IsClaudeProgram(inst.Program()) {
+	if inst == nil || !session.IsClaudeProgram(inst.Program()) {
 		return session.Ready, "", false
 	}
-	entry, ok := m.roster[inst.GetWorktreePath()]
+	roster := m.roster
+	if acct := inst.Account(); acct != "" {
+		roster = m.rosterByAccount[acct]
+	}
+	if len(roster) == 0 {
+		return session.Ready, "", false
+	}
+	entry, ok := roster[inst.GetWorktreePath()]
 	if !ok {
 		return session.Ready, "", false
 	}
