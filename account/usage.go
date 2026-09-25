@@ -37,8 +37,12 @@ func (w *Window) Text(now time.Time) string {
 
 // Usage is one account's plan usage, from ProbeUsage.
 type Usage struct {
-	// Available is false when plan limits do not apply (API key, Bedrock,
-	// Vertex); the windows are then nil.
+	// Available is false when plan limits do not apply — API key, Bedrock
+	// or Vertex auth — or when the account is logged out entirely:
+	// get_usage reports the identical shape for both (no plan, no
+	// windows), so a false Available alone does not tell them apart.
+	// Callers that need to distinguish "no limits" from "logged out" use
+	// AuthStatus's LoggedIn instead. The windows are nil either way.
 	Available bool
 	// Plan is the subscription ("pro", "max", …); empty for API-key auth.
 	Plan string
@@ -49,8 +53,10 @@ type Usage struct {
 }
 
 // usageTimeout bounds one probe. It measured ~1.4s on 2.1.281, but the
-// usage endpoint is a network call, so this is a network budget.
-const usageTimeout = 15 * time.Second
+// usage endpoint is a network call, so this is a network budget. A var,
+// not a const, so a test can shrink it to exercise the timeout path
+// without waiting out the real budget.
+var usageTimeout = 15 * time.Second
 
 const usageRequestID = "loom-usage"
 
@@ -70,29 +76,38 @@ const usageRequest = `{"type":"control_request","request_id":"` + usageRequestID
 // a minute old, so polling does not hammer the usage endpoint.
 // --setting-sources "" keeps user and project settings, and the plugin
 // hooks they enable, out of the probe (auth is read from the config dir
-// regardless); --no-session-persistence writes no transcript. cwd is where
+// regardless); --strict-mcp-config keeps configured MCP servers from
+// starting; --no-session-persistence writes no transcript. cwd is where
 // the probe runs: pass the account's config dir so no project entry is
-// recorded for an arbitrary directory.
+// recorded for an arbitrary directory. program is run as-is: the caller
+// must have already gated it on the Claude adapter.
 func ProbeUsage(program string, env []string, cwd string, r internalexec.Executor) (Usage, error) {
 	bin := Binary(program)
 	if bin == "" {
 		return Usage{}, errors.New("no claude program configured")
+	}
+	if err := checkAccountDir(env); err != nil {
+		return Usage{}, err
 	}
 	at := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
 	defer cancel()
 	c := withEnv(exec.CommandContext(ctx, bin,
 		"-p", "--input-format", "stream-json", "--output-format", "stream-json",
-		"--verbose", "--no-session-persistence", "--setting-sources", ""), env)
+		"--verbose", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config"), env)
 	c.Dir = cwd
 	c.Stdin = strings.NewReader(usageRequest)
+	c.WaitDelay = execWaitDelay
 	out, err := runner(r).Output(c)
+	if err != nil && ctx.Err() != nil {
+		return Usage{}, fmt.Errorf("claude usage probe: timed out after %s", usageTimeout)
+	}
 	u, derr := decodeUsage(out)
 	if derr != nil {
 		if err != nil {
-			return Usage{}, fmt.Errorf("claude usage probe: %w (%v)", err, derr)
+			return Usage{}, fmt.Errorf("claude usage probe: %w: %w", exitErrorWithStderr(err), derr)
 		}
-		return Usage{}, derr
+		return Usage{}, fmt.Errorf("claude usage probe: %w", derr)
 	}
 	u.At = at
 	return u, nil
@@ -124,7 +139,11 @@ type rawWindow struct {
 	ResetsAt    *string  `json:"resets_at"`
 }
 
-var errNoUsageResponse = errors.New("claude usage probe: no get_usage response")
+// errNoUsageResponse and decodeUsage's other errors carry no "claude usage
+// probe:" prefix of their own — ProbeUsage, their one caller, adds it once
+// at the top level, so wrapping an exec failure together with a decode
+// failure never repeats it.
+var errNoUsageResponse = errors.New("no get_usage response")
 
 // decodeUsage finds loom's control_response among the stream-json lines
 // (hook events and the like may precede it) and decodes its windows.
@@ -138,11 +157,11 @@ func decodeUsage(out []byte) (Usage, error) {
 			continue
 		}
 		if line.Response.Subtype != "success" {
-			return Usage{}, fmt.Errorf("claude usage probe: get_usage failed: %s", line.Response.Error)
+			return Usage{}, fmt.Errorf("get_usage failed: %s", line.Response.Error)
 		}
 		var p usagePayload
 		if err := json.Unmarshal(line.Response.Response, &p); err != nil {
-			return Usage{}, fmt.Errorf("claude usage probe: decode response: %w", err)
+			return Usage{}, fmt.Errorf("decode response: %w", err)
 		}
 		u := Usage{Available: p.RateLimitsAvailable}
 		if p.SubscriptionType != nil {
@@ -153,6 +172,9 @@ func decodeUsage(out []byte) (Usage, error) {
 			u.SevenDay = p.RateLimits.SevenDay.window()
 		}
 		return u, nil
+	}
+	if err := sc.Err(); err != nil {
+		return Usage{}, fmt.Errorf("scan output: %w", err)
 	}
 	return Usage{}, errNoUsageResponse
 }

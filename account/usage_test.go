@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,26 +69,65 @@ func TestDecodeUsage_NoResponse(t *testing.T) {
 	assert.ErrorIs(t, err, errNoUsageResponse)
 }
 
+func TestDecodeUsage_LoggedOutAccountSameShapeAsNoLimits(t *testing.T) {
+	// A logged-out account's get_usage still answers success, with the
+	// same shape as API-key/Bedrock/Vertex auth: no plan, no windows.
+	// decodeUsage cannot and does not try to tell the two apart — callers
+	// use AuthStatus's LoggedIn for that (see Usage.Available's doc).
+	out := `{"type":"control_response","response":{"subtype":"success","request_id":"loom-usage","response":{"subscription_type":null,"rate_limits_available":false,"rate_limits":null}}}`
+	u, err := decodeUsage([]byte(out))
+	require.NoError(t, err)
+	assert.False(t, u.Available)
+	assert.Empty(t, u.Plan)
+	assert.Nil(t, u.FiveHour)
+	assert.Nil(t, u.SevenDay)
+}
+
 func TestProbeUsage_RunsAHeadlessControlRequest(t *testing.T) {
+	dir := t.TempDir()
 	f := &recordingExec{out: fixture(t)}
 	before := time.Now()
 
-	u, err := ProbeUsage("claude --model opus", EnvFor("/acct/max-2"), "/acct/max-2", f)
+	u, err := ProbeUsage("claude --model opus", EnvFor(dir), dir, f)
 
 	require.NoError(t, err)
 	assert.False(t, u.At.Before(before), "At is when the probe started")
 	assert.Equal(t, []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json",
-		"--verbose", "--no-session-persistence", "--setting-sources", ""}, f.cmd.Args)
-	assert.Equal(t, "/acct/max-2", f.cmd.Dir)
+		"--verbose", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config"}, f.cmd.Args)
+	assert.Equal(t, dir, f.cmd.Dir)
 	assert.Equal(t, usageRequest, f.stdin)
-	dir, _ := envValue(f.cmd.Env, "CLAUDE_CONFIG_DIR")
-	assert.Equal(t, "/acct/max-2", dir)
+	got, _ := envValue(f.cmd.Env, "CLAUDE_CONFIG_DIR")
+	assert.Equal(t, dir, got)
+	assert.Equal(t, execWaitDelay, f.cmd.WaitDelay, "bounds a grandchild holding stdout open past the context deadline")
 }
 
 func TestProbeUsage_ExitWithoutResponseFails(t *testing.T) {
 	_, err := ProbeUsage("claude", nil, "", &recordingExec{err: errors.New("exit status 1")})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exit status 1")
+	assert.Equal(t, 1, strings.Count(err.Error(), "claude usage probe:"), "the prefix must not be duplicated")
+}
+
+func TestProbeUsage_RefusesAMissingAccountDir(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "gone")
+	f := &recordingExec{out: fixture(t)}
+
+	_, err := ProbeUsage("claude", EnvFor(gone), "", f)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAccountDirMissing)
+	assert.Nil(t, f.cmd, "must not run claude against a dir the CLI would recreate fresh")
+}
+
+func TestProbeUsage_TimeoutIsReportedClearly(t *testing.T) {
+	orig := usageTimeout
+	usageTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { usageTimeout = orig })
+
+	_, err := ProbeUsage("claude", nil, "", &sleepingExec{sleep: 60 * time.Millisecond, err: errors.New("signal: killed")})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out after 10ms")
 }
 
 func TestWindowText(t *testing.T) {
