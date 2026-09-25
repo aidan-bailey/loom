@@ -345,6 +345,15 @@ func (i *Instance) ToInstanceData() InstanceData {
 // must invoke EnsureRunning to attach the PTY. configDir is injected for
 // workspace-scoped worktree resolution.
 func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
+	// Normalized the same way SetAccount normalizes it on write: "" and
+	// account.DefaultName both mean the default account. SetAccount never
+	// persists the literal "default" itself, but a hand-edited state.json
+	// or a future writer could, and Instance.Account()'s "" means default"
+	// invariant must hold regardless of what is on disk.
+	acctName := data.Account
+	if acctName == account.DefaultName {
+		acctName = ""
+	}
 	instance := &Instance{
 		Title:               data.Title,
 		Path:                data.Path,
@@ -360,7 +369,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		ConfigDir:           configDir,
 		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
 		issue:               data.Issue,
-		account:             data.Account,
+		account:             acctName,
 		claude:              claudeState{sessionID: data.ClaudeSessionID, transcriptPath: data.ClaudeTranscriptPath},
 		logger:              log.For("instance", "title", data.Title),
 	}

@@ -29,6 +29,20 @@ func TestInstanceAccount_SurvivesSnapshotAndRestore(t *testing.T) {
 	assert.Equal(t, "max-2", restored.Account())
 }
 
+// TestFromInstanceData_NormalizesDefaultAccountName pins that a record
+// whose Account field literally holds "default" — a hand-edited
+// state.json, say, since SetAccount itself never persists that literal —
+// decodes the same as one with Account == "": Instance.Account() keeps
+// its "" means default" invariant regardless of what's on disk.
+func TestFromInstanceData_NormalizesDefaultAccountName(t *testing.T) {
+	data := InstanceData{Title: "acct-normalize", Program: "claude", Account: account.DefaultName}
+
+	restored, err := FromInstanceData(data, t.TempDir())
+
+	require.NoError(t, err)
+	assert.Equal(t, "", restored.Account())
+}
+
 // withAccountDirs publishes dirs for one test, with no registry load error.
 func withAccountDirs(t *testing.T, dirs map[string]string) {
 	t.Helper()
