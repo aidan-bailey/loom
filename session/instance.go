@@ -758,6 +758,15 @@ func (i *Instance) launchEnv(launching bool) (LaunchEnv, error) {
 		return env, err
 	}
 	env.ClaudeConfigDir = dir
+	if launching && dir != "" && IsClaudeProgram(env.Program) {
+		// A CLI `claude auth login` leaves onboarding unmarked, and the
+		// interactive CLI would then run its onboarding (login screen
+		// included) on an already logged-in account. Best effort: at
+		// worst Claude shows its own onboarding.
+		if _, err := account.EnsureOnboarded(dir); err != nil {
+			log.For("account").Warn("onboarding.mark_failed", "account", name, "err", err.Error())
+		}
+	}
 	return env, nil
 }
 

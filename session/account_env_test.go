@@ -265,3 +265,39 @@ func TestStart_MissingAccountFailsBeforeAnySetup(t *testing.T) {
 	require.True(t, errors.As(err, &missing))
 	assert.False(t, inst.Started(), "the failed start releases its reservation")
 }
+
+// An account logged in from the CLI (`claude auth login`) has no
+// hasCompletedOnboarding, so its first interactive session ran Claude's
+// onboarding and asked to log in again. A launch marks it; a mere
+// session-object build (launching=false) touches nothing.
+func TestLaunchEnv_MarksAnAccountsOnboardingWhenLaunching(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, ".claude.json")
+	require.NoError(t, os.WriteFile(cfg, []byte(`{"oauthAccount":{"emailAddress":"a@b"}}`), 0o600))
+	withAccountDirs(t, map[string]string{"max-2": dir})
+	inst := &Instance{program: "claude"}
+	inst.SetAccount("max-2")
+
+	_, err := inst.launchEnv(false)
+	require.NoError(t, err)
+	data, _ := os.ReadFile(cfg)
+	assert.NotContains(t, string(data), "hasCompletedOnboarding", "building a detached session object launches nothing")
+
+	_, err = inst.launchEnv(true)
+	require.NoError(t, err)
+	data, _ = os.ReadFile(cfg)
+	assert.Contains(t, string(data), `"hasCompletedOnboarding": true`)
+}
+
+func TestLaunchEnv_OnboardingFailureDoesNotBlockTheLaunch(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(`not json`), 0o600))
+	withAccountDirs(t, map[string]string{"max-2": dir})
+	inst := &Instance{program: "claude"}
+	inst.SetAccount("max-2")
+
+	env, err := inst.launchEnv(true)
+
+	require.NoError(t, err, "Claude still launches; at worst it shows its own onboarding")
+	assert.Equal(t, dir, env.ClaudeConfigDir)
+}
