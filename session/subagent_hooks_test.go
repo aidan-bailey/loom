@@ -134,7 +134,7 @@ func TestLaunchProgram_UntrackedRelaunchClearsState(t *testing.T) {
 
 	// A user-supplied --settings is one of the launches that skip loom's hooks.
 	inst.SetProgram("claude --settings /mine.json")
-	inst.recoveryLaunch()
+	_, _, _ = inst.recoveryLaunch()
 
 	assert.Empty(t, inst.Subagents())
 	assert.False(t, inst.subagentWarm)
@@ -166,7 +166,8 @@ func TestRecoveryLaunch_AddsHooks(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 	inst.SetLaunchOptions("claude", true, true)
 
-	launch, env := inst.recoveryLaunch()
+	launch, env, err := inst.recoveryLaunch()
+	require.NoError(t, err)
 
 	assert.Equal(t, InstanceEnv(LaunchEnv{Program: "claude --continue", HeadroomProxy: true, CacheTTL1h: true}), env,
 		"the env keys off the bare recovery program and the instance's launch toggles")
@@ -420,7 +421,8 @@ func TestRecoveryLaunch_ResumesRecordedConversation(t *testing.T) {
 		{Name: hooks.EventSessionStart, Source: "startup", SessionID: id, TranscriptPath: transcript, At: time.Now()},
 	}}))
 
-	launch, env := inst.recoveryLaunch()
+	launch, env, err := inst.recoveryLaunch()
+	require.NoError(t, err)
 
 	assert.Contains(t, launch, "--resume "+id)
 	assert.NotContains(t, launch, "--continue")

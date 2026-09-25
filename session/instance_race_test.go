@@ -131,7 +131,8 @@ func TestInstance_LaunchFieldAccessors(t *testing.T) {
 	assert.Equal(t, "claude --model 'opus'", inst.Program())
 	assert.False(t, inst.HeadroomProxy())
 	assert.True(t, inst.CacheTTL1h())
-	program, hp, ttl := inst.launchSpec()
+	le, _ := inst.launchEnv(false)
+	program, hp, ttl := le.Program, le.HeadroomProxy, le.CacheTTL1h
 	assert.Equal(t, "claude --model 'opus'", program)
 	assert.False(t, hp)
 	assert.True(t, ttl)
@@ -175,7 +176,8 @@ func TestInstance_ConcurrentLaunchOptions(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
-			program, hp, ttl := inst.launchSpec()
+			le, _ := inst.launchEnv(false)
+			program, hp, ttl := le.Program, le.HeadroomProxy, le.CacheTTL1h
 			if program != "" {
 				on := program == "claude"
 				assert.Equal(t, on, hp, "torn launch options: %q with headroomProxy=%v", program, hp)

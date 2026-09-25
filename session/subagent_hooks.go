@@ -116,12 +116,16 @@ func (i *Instance) resetHookLaunch() {
 // for a recovery launch. The env keys off the recovery program (the bare
 // program rewritten by BuildResumeCommand: --resume <id> for the recorded
 // conversation, else --continue), not the full command.
-// startFreshWithRecovery and CrashRestart always start a new Claude process.
-func (i *Instance) recoveryLaunch() (launch string, env []string) {
-	program, headroomProxy, cacheTTL1h := i.launchSpec()
+// startFreshWithRecovery and CrashRestart always start a new Claude
+// process, so an unregistered account fails the launch here.
+func (i *Instance) recoveryLaunch() (launch string, env []string, err error) {
+	le, err := i.launchEnv(true)
+	if err != nil {
+		return "", nil, err
+	}
 	sessionID, transcriptPath := i.ClaudeSession()
-	program = BuildResumeCommand(program, sessionID, transcriptPath)
-	return i.launchProgram(program, true), InstanceEnv(LaunchEnv{Program: program, HeadroomProxy: headroomProxy, CacheTTL1h: cacheTTL1h})
+	le.Program = BuildResumeCommand(le.Program, sessionID, transcriptPath)
+	return i.launchProgram(le.Program, true), InstanceEnv(le), nil
 }
 
 // prepareHooks readies a fresh hooks folder and returns program

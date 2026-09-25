@@ -399,7 +399,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		instance.setStarted(true)
 		// Unpublished: nothing else can see instance yet, so the
 		// launch fields are read directly.
-		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(LaunchEnv{Program: instance.program, HeadroomProxy: instance.headroomProxy, CacheTTL1h: instance.cacheTTL1h})...))
+		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(LaunchEnv{Program: instance.program, HeadroomProxy: instance.headroomProxy, CacheTTL1h: instance.cacheTTL1h, ClaudeConfigDir: bestEffortAccountDir(instance.account)})...))
 	}
 
 	return instance, nil
@@ -725,15 +725,21 @@ func (i *Instance) SetAccount(name string) {
 	i.account = name
 }
 
-// launchSpec snapshots the launch fields under one read lock. The launch
-// paths (Start, Resume's fresh-session fallback, CrashRestart) run on
-// tea.Cmd goroutines and read these once per launch; taking them here
-// orders those reads against the setters on the Update goroutine. Must not
-// be called with i.mu held.
-func (i *Instance) launchSpec() (program string, headroomProxy, cacheTTL1h bool) {
+// launchEnv snapshots the launch fields under one lock, so a concurrent
+// SetLaunchOptions can't tear them, and resolves the account's config dir.
+// When launching, an unregistered account on a Claude program is an error
+// (*MissingAccountError); otherwise it just yields no config dir.
+func (i *Instance) launchEnv(launching bool) (LaunchEnv, error) {
 	i.mu.RLock()
-	defer i.mu.RUnlock()
-	return i.program, i.headroomProxy, i.cacheTTL1h
+	env := LaunchEnv{Program: i.program, HeadroomProxy: i.headroomProxy, CacheTTL1h: i.cacheTTL1h}
+	name := i.account
+	i.mu.RUnlock()
+	dir, err := accountDir(name)
+	if err != nil && launching && IsClaudeProgram(env.Program) {
+		return env, err
+	}
+	env.ClaudeConfigDir = dir
+	return env, nil
 }
 
 // Prompt returns the initial prompt still waiting to be sent to the agent,
@@ -822,9 +828,13 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		// the subagent hooks. Start(false) reattaches with Restore, and
 		// that Claude keeps writing to its existing hooks folder.
 		// InstanceEnv still keys off the bare program.
-		program, headroomProxy, cacheTTL1h := i.launchSpec()
-		launchProgram := i.launchProgram(program, firstTimeSetup)
-		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(LaunchEnv{Program: program, HeadroomProxy: headroomProxy, CacheTTL1h: cacheTTL1h})...)
+		env, envErr := i.launchEnv(firstTimeSetup)
+		if envErr != nil {
+			setupErr = envErr
+			return setupErr
+		}
+		launchProgram := i.launchProgram(env.Program, firstTimeSetup)
+		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(env)...)
 	}
 	i.setTmuxSession(ts)
 
@@ -1536,7 +1546,10 @@ var newRecoverySession = tmux.NewTmuxSession
 // stash list). Cleaning it up would also delete the session's branch.
 // The instance stays Paused, and the next resume relaunches in place.
 func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
-	launchProgram, env := i.recoveryLaunch()
+	launchProgram, env, err := i.recoveryLaunch()
+	if err != nil {
+		return err
+	}
 	ts := newRecoverySession(i.Title, launchProgram, env...)
 	if err := ts.Start(gw.GetWorktreePath()); err != nil {
 		return fmt.Errorf("failed to start new session: %w", err)
@@ -1574,7 +1587,10 @@ func (i *Instance) CrashRestart() error {
 		workDir = gw.GetWorktreePath()
 	}
 
-	launchProgram, env := i.recoveryLaunch()
+	launchProgram, env, launchErr := i.recoveryLaunch()
+	if launchErr != nil {
+		return launchErr
+	}
 	ts := newRecoverySession(i.Title, launchProgram, env...)
 
 	if err := ts.Start(workDir); err != nil {
