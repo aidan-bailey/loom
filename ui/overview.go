@@ -272,6 +272,9 @@ func renderOverviewCard(d CardData, width int) string {
 
 	dim := lipgloss.NewStyle().Foreground(Dim)
 	var right []string
+	if d.Account != "" {
+		right = append(right, dim.Render("@"+d.Account))
+	}
 	if p := parityToken(d); p != "" {
 		right = append(right, p)
 	}

@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"charm.land/lipgloss/v2"
+	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/charmbracelet/x/ansi"
@@ -48,6 +49,41 @@ const (
 // instead of ~105. For a fully loaded token the token's own length
 // dominates and no floor helps, which is why it is dropped whole.
 const railStatusFloor = 6
+
+// showAccounts turns account badges on. app sets it (SetShowAccounts)
+// while an extra account is registered. Main goroutine only.
+var showAccounts bool
+
+// SetShowAccounts turns account badges on or off.
+func SetShowAccounts(on bool) { showAccounts = on }
+
+// ShowAccounts reports whether account badges are on.
+func ShowAccounts() bool { return showAccounts }
+
+// accountLabel is inst's account badge text: its account's name
+// (account.DefaultName for the default account), or "" when badges are off
+// or inst is not a Claude session.
+func accountLabel(inst *session.Instance) string {
+	if !showAccounts || inst == nil || !session.IsClaudeProgram(inst.Program()) {
+		return ""
+	}
+	if name := inst.Account(); name != "" {
+		return name
+	}
+	return account.DefaultName
+}
+
+// accountToken is the rail's dim "@name" badge, "" without an account.
+func accountToken(d CardData, solidBg bool) string {
+	if d.Account == "" {
+		return ""
+	}
+	st := lipgloss.NewStyle().Foreground(Dim)
+	if solidBg {
+		st = st.Background(Panel)
+	}
+	return st.Render("@" + d.Account)
+}
 
 // PeerSection summarizes a non-focused workspace slot for the rail
 // footer (live counts from that slot's list; selection stays scoped to
@@ -92,6 +128,9 @@ type CardData struct {
 	// is false until a count succeeded.
 	Ahead, Behind int
 	HasParity     bool
+	// Account is the Claude account badge ("max-2", "default"); empty when
+	// badges are off (no extra account) or the session isn't Claude.
+	Account string
 }
 
 // NeedsAttention reports whether this card should carry the Attention
@@ -121,6 +160,7 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 		StatusAge:           inst.StatusAge(),
 		Spinner:             spinnerFrame,
 		WaitReason:          sanitizeCardText(inst.WaitReason()),
+		Account:             accountLabel(inst),
 	}
 	for _, v := range inst.Subagents() {
 		d.Subagents = append(d.Subagents, SubagentRow{
@@ -533,8 +573,25 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 
 	prefix := fmt.Sprintf("%d. ", d.Index)
 	inner := width - 2 // bar + space
-	title := truncate(prefix+d.Title, inner)
-	titleLine := bar + sep + titleStyleC.Render(title)
+	// The account badge rides the title line's right edge. Like the GitHub
+	// token it is dropped whole when it would squeeze the title below the
+	// status floor.
+	acct := accountToken(d, solidBg)
+	if acct != "" && lipgloss.Width(acct) > inner-railStatusFloor-1 {
+		acct = ""
+	}
+	titleW := inner
+	if acct != "" {
+		titleW = inner - lipgloss.Width(acct) - 1
+	}
+	title := truncate(prefix+d.Title, titleW)
+	composeTitle := func(st lipgloss.Style) string {
+		if acct == "" {
+			return bar + sep + st.Render(title)
+		}
+		return bar + sep + spreadLine(st.Render(title), acct, inner)
+	}
+	titleLine := composeTitle(titleStyleC)
 
 	if density == DensityLine {
 		return titleLine
@@ -572,7 +629,7 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 		body = truncate(second, inner-lipgloss.Width(tok)-1)
 		secondLine := bar + sep + spreadLine(secondStyle.Render(body), tok, inner)
 		if d.finished() && !d.NeedsAttention() {
-			titleLine = bar + sep + titleStyleC.Foreground(Dim).Render(title)
+			titleLine = composeTitle(titleStyleC.Foreground(Dim))
 		}
 		if solidBg {
 			pad := lipgloss.NewStyle().Background(Panel).Width(width)

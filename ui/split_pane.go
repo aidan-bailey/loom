@@ -657,6 +657,9 @@ func (s *SplitPane) String() string {
 func (s *SplitPane) agentPaneTitle() string {
 	base := "Agent"
 	if s.instance != nil && s.instance.Started() {
+		if lbl := accountLabel(s.instance); lbl != "" {
+			base += " · @" + lbl
+		}
 		if br := s.instance.GetBranch(); br != "" {
 			base += " · " + br
 		}
