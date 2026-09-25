@@ -38,13 +38,16 @@ func SetAccountDirs(dirs map[string]string, registryErr error) {
 
 // MissingAccountError is a launch refused because the instance's account
 // is not registered. A launch never falls back to the default account:
-// that would bill the wrong subscription. The text is context-neutral —
-// it is also returned by a brand-new Start, which removes the instance on
-// failure rather than leaving it to relaunch with R.
+// that would bill the wrong subscription. The text names R because that
+// is how the user actually recovers an existing session (relaunch with
+// options, choosing a different account); it also fires on a brand-new
+// Start, which removes the instance on failure instead — the wording
+// stays accurate there too, since "pick another account" still applies
+// and the parenthetical only claims R for an existing session.
 type MissingAccountError struct{ Name string }
 
 func (e *MissingAccountError) Error() string {
-	return fmt.Sprintf("account %q is not registered any more — choose another account in Session Launch Options", e.Name)
+	return fmt.Sprintf("account %q is not registered any more — pick another account (R on an existing session)", e.Name)
 }
 
 // AccountDirMissingError is a launch refused because a registered

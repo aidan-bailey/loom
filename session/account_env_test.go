@@ -100,7 +100,8 @@ func TestAccountDir(t *testing.T) {
 	var missing *MissingAccountError
 	require.True(t, errors.As(err, &missing))
 	assert.Equal(t, "gone", missing.Name)
-	assert.Contains(t, err.Error(), "Session Launch Options")
+	assert.Contains(t, err.Error(), "R on an existing session",
+		"the text must name the key that relaunches an existing session on a different account")
 }
 
 // TestAccountDir_MissingDirFailsClosed pins that a registered account
