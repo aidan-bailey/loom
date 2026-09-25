@@ -269,6 +269,9 @@ type home struct {
 	// acts only when the state differs (see maybeReloadAccounts).
 	accountsStamp accountsFileStamp
 	accountsSeen  string
+	// syncRefusalLogged is the last reason syncMainDir refused the main
+	// config dir, so each reason is logged once.
+	syncRefusalLogged string
 	// refreshDefaultAuth asks the next accounts refresh to reread the
 	// default account's auth too; kept until one dispatches, so a request
 	// made while another refresh is in flight is not lost.

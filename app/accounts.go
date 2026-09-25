@@ -308,8 +308,9 @@ type accountsRefreshedMsg struct {
 }
 
 // accountsRefreshCmd re-links every extra account against the main config
-// dir and re-reads its auth (and the default account's too when
-// withDefault). Its inputs are copied here; the Cmd touches no model state.
+// dir, when that dir is safe to link from (syncMainDir), and re-reads its
+// auth (and the default account's too when withDefault). Its inputs are
+// copied here; the Cmd touches no model state.
 func (m *home) accountsRefreshCmd(withDefault bool) tea.Cmd {
 	var accts []account.Account
 	if m.accounts != nil {
@@ -318,7 +319,7 @@ func (m *home) accountsRefreshCmd(withDefault bool) tea.Cmd {
 	if len(accts) == 0 && !withDefault {
 		return nil
 	}
-	program, mainDir := m.claudeProgram(), m.mainConfigDir()
+	program, syncDir := m.claudeProgram(), m.syncMainDir(m.mainConfigDir())
 	return func() tea.Msg {
 		r := internalexec.Default{}
 		msg := accountsRefreshedMsg{
@@ -331,8 +332,8 @@ func (m *home) accountsRefreshCmd(withDefault bool) tea.Cmd {
 			msg.defaultAuth = &a
 		}
 		for _, a := range accts {
-			if mainDir != "" {
-				if rep, err := account.Sync(a.Dir, mainDir); err != nil {
+			if syncDir != "" {
+				if rep, err := account.Sync(a.Dir, syncDir); err != nil {
 					msg.errs[a.Name] = err
 				} else {
 					msg.sync[a.Name] = rep
@@ -371,6 +372,26 @@ func (m *home) maybeAccountsRefresh() tea.Cmd {
 		}
 		return cmd
 	})
+}
+
+// syncMainDir is mainDir when accounts may be linked against it, else ""
+// (no Sync). account.ValidateMainDir refuses a dir holding the accounts
+// tree, which would link it into every account, and one inside it, as a
+// nested loom running as an account would report. The refusal is logged
+// once per reason, not on every refresh.
+func (m *home) syncMainDir(mainDir string) string {
+	if mainDir == "" || m.accounts == nil {
+		return ""
+	}
+	if err := account.ValidateMainDir(mainDir, m.accounts.AccountsDir()); err != nil {
+		if msg := err.Error(); msg != m.syncRefusalLogged {
+			m.syncRefusalLogged = msg
+			log.For("account").Warn("sync.main_dir_refused", "main_dir", mainDir, "err", msg)
+		}
+		return ""
+	}
+	m.syncRefusalLogged = ""
+	return mainDir
 }
 
 // handleAccountsRefreshed stores a refresh's results and redraws the views.

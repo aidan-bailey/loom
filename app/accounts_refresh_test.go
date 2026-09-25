@@ -1,6 +1,8 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -130,4 +132,50 @@ func TestAccountLoginDone_RereadsTheAuth(t *testing.T) {
 
 	assert.True(t, m.gate(gateAccountsRefresh).pending)
 	assert.True(t, m.refreshDefaultAuth)
+}
+
+// TestAccountsRefresh_SkipsSyncForAnUnsafeMainDir: a main dir that holds
+// the accounts tree would link "accounts" itself into every account, and
+// one inside it (a nested loom running as an account) would link an
+// account into its siblings.
+func TestAccountsRefresh_SkipsSyncForAnUnsafeMainDir(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		main func(m *home) string
+	}{
+		{"contains the accounts dir", func(m *home) string { return filepath.Dir(m.accounts.AccountsDir()) }},
+		{"inside the accounts dir", func(m *home) string {
+			a, _ := m.accounts.Get("max-3")
+			return a.Dir
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestHome(t)
+			withAccounts(t, m, "max-2", "max-3")
+			acct, _ := m.accounts.Get("max-2")
+			main := tc.main(m)
+			require.NoError(t, os.WriteFile(filepath.Join(main, "settings.json"), []byte("{}"), 0o644))
+			m.rcAuth.Identity.ConfigDir = main
+
+			msg, ok := m.accountsRefreshCmd(false)().(accountsRefreshedMsg)
+			require.True(t, ok)
+
+			assert.NotContains(t, msg.sync, "max-2", "not synced")
+			entries, err := os.ReadDir(acct.Dir)
+			require.NoError(t, err)
+			assert.Empty(t, entries, "nothing linked into the account")
+		})
+	}
+}
+
+func TestAccountsRefresh_SyncsAgainstASafeMainDir(t *testing.T) {
+	m := newTestHome(t)
+	main := withAccounts(t, m, "max-2")
+	require.NoError(t, os.WriteFile(filepath.Join(main, "settings.json"), []byte("{}"), 0o644))
+	m.rcAuth.Identity.ConfigDir = main
+
+	msg, ok := m.accountsRefreshCmd(false)().(accountsRefreshedMsg)
+	require.True(t, ok)
+
+	assert.Equal(t, []string{"settings.json"}, msg.sync["max-2"].Linked)
 }
