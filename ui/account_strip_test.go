@@ -111,3 +111,55 @@ func TestAccountStrip_NarrowDropsTheWeekThenTruncates(t *testing.T) {
 	assert.LessOrEqual(t, lipgloss.Width(out), 12)
 	assert.False(t, strings.Contains(out, "\n"))
 }
+
+func twoAccounts() []AccountStatus {
+	return []AccountStatus{
+		{Name: account.DefaultName, IsDefault: true, Usage: probed(64, 40)},
+		{Name: "max-2", Usage: probed(12, 31)},
+	}
+}
+
+// TestAccountStrip_AWarningLeadsTheRow: a credential in loom's environment
+// voids every account's selection; the strip says so first.
+func TestAccountStrip_AWarningLeadsTheRow(t *testing.T) {
+	s := NewAccountStrip()
+	s.SetWidth(160)
+	s.SetAccounts(twoAccounts())
+	s.SetWarning("$CLAUDE_CODE_OAUTH_TOKEN set: all accounts use it")
+
+	out := ansi.Strip(s.render(stripNow))
+
+	assert.Contains(t, out, "⚠ $CLAUDE_CODE_OAUTH_TOKEN set: all accounts use it")
+	assert.Contains(t, out, "max-2")
+	assert.Less(t, strings.Index(out, "⚠"), strings.Index(out, "*default"))
+	assert.Equal(t, 1, s.Height(), "still one row")
+}
+
+// TestAccountStrip_NarrowCutsUsageBeforeTheWarning: the warning is the one
+// thing the row must still say when space runs out.
+func TestAccountStrip_NarrowCutsUsageBeforeTheWarning(t *testing.T) {
+	s := NewAccountStrip()
+	s.SetAccounts(twoAccounts())
+	s.SetWarning("$CLAUDE_CODE_OAUTH_TOKEN set: all accounts use it")
+	s.SetWidth(64)
+
+	out := s.render(stripNow)
+
+	assert.LessOrEqual(t, lipgloss.Width(out), 64)
+	assert.Contains(t, ansi.Strip(out), "⚠ $CLAUDE_CODE_OAUTH_TOKEN set: all accounts use it")
+	assert.False(t, strings.Contains(out, "\n"))
+}
+
+func TestAccountStrip_AWarningNeverShowsTheStripAlone(t *testing.T) {
+	s := NewAccountStrip()
+	s.SetWidth(120)
+	s.SetAccounts([]AccountStatus{{Name: account.DefaultName, IsDefault: true}})
+	s.SetWarning("$ANTHROPIC_API_KEY set: all accounts use it")
+	assert.Equal(t, 0, s.Height())
+	assert.Equal(t, "", s.render(stripNow))
+}
+
+func TestAccountStripStyles_TheWarningIsAnErrorNotAttention(t *testing.T) {
+	assert.Equal(t, ErrorColor, stripAlertStyle.GetForeground())
+	assert.NotEqual(t, Attention, stripAlertStyle.GetForeground())
+}
