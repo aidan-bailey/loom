@@ -86,6 +86,8 @@ type SettingsOverlay struct {
 	claudePrefs *ClaudePreferences
 	accounts    *AccountsManager
 	accountRows []AccountRow
+	// accountNotice is the Accounts screen's notice (SetAccountNotice).
+	accountNotice string
 
 	lastErr error
 }
@@ -187,6 +189,7 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 		return false, true
 	case settingsFieldAccounts:
 		s.accounts = NewAccountsManager(s.accountRows)
+		s.accounts.SetNotice(s.accountNotice)
 		s.accounts.SetWidth(s.width)
 		s.mode = settingsAccountsSub
 	}
@@ -255,6 +258,16 @@ func (s *SettingsOverlay) SetAccountRows(rows []AccountRow) {
 	s.accountRows = rows
 	if s.accounts != nil {
 		s.accounts.SetRows(rows)
+	}
+}
+
+// SetAccountNotice supplies the Accounts screen's screen-wide notice
+// (AccountsManager.SetNotice), updating the screen if it is open; ""
+// clears it.
+func (s *SettingsOverlay) SetAccountNotice(msg string) {
+	s.accountNotice = msg
+	if s.accounts != nil {
+		s.accounts.SetNotice(msg)
 	}
 }
 

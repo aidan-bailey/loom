@@ -230,6 +230,36 @@ func TestSettingsOverlay_OpensAccountsAndPassesRequestsThrough(t *testing.T) {
 	assert.Equal(t, AccountRequest{Kind: AccountRequestSetDefault, Name: "max-2"}, req)
 }
 
+// openAccounts opens s's Accounts screen.
+func openAccounts(t *testing.T, s *SettingsOverlay) {
+	t.Helper()
+	s.cursor = int(settingsFieldAccounts)
+	s.activateRow()
+	require.NotNil(t, s.accounts)
+}
+
+func TestSettingsOverlay_AnAccountNoticeSeedsTheAccountsScreen(t *testing.T) {
+	s := NewSettingsOverlay(newTestSettingsCfg(), false, "")
+	s.SetAccountRows(accountRows())
+	s.SetAccountNotice("$ANTHROPIC_API_KEY set: all accounts use it")
+
+	openAccounts(t, s)
+
+	assert.Contains(t, ansi.Strip(s.Render()), "⚠ $ANTHROPIC_API_KEY set: all accounts use it")
+}
+
+func TestSettingsOverlay_AnAccountNoticeReachesAnOpenAccountsScreen(t *testing.T) {
+	s := NewSettingsOverlay(newTestSettingsCfg(), false, "")
+	s.SetAccountRows(accountRows())
+	openAccounts(t, s)
+
+	s.SetAccountNotice("$ANTHROPIC_API_KEY set: all accounts use it")
+	assert.Contains(t, ansi.Strip(s.Render()), "⚠ $ANTHROPIC_API_KEY set")
+
+	s.SetAccountNotice("")
+	assert.NotContains(t, ansi.Strip(s.Render()), "⚠")
+}
+
 // TestAccountsManager_ANoticeLeadsTheRows: a credential in loom's
 // environment voids every row's login; the screen says so before them.
 func TestAccountsManager_ANoticeLeadsTheRows(t *testing.T) {
