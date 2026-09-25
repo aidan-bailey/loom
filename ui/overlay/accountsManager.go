@@ -69,6 +69,8 @@ type AccountsManager struct {
 	// elsewhere, e.g. a CLI remove) can reorder or shrink rows, and a
 	// position-based target would then fire against the wrong account.
 	removeTarget string
+	// notice is a screen-wide warning shown above the rows (SetNotice).
+	notice string
 }
 
 // accountsPlanWidth is the fixed width of the row's Plan column; plan
@@ -158,6 +160,11 @@ func (a *AccountsManager) indexOf(name string) int {
 	}
 	return -1
 }
+
+// SetNotice sets a warning that concerns every row, such as a credential
+// in loom's environment that every account runs as, shown marked "⚠"
+// above the rows; "" clears it.
+func (a *AccountsManager) SetNotice(msg string) { a.notice = msg }
 
 // SetWidth propagates the available width to any embedded text input.
 func (a *AccountsManager) SetWidth(w int) {
@@ -256,7 +263,8 @@ func (a *AccountsManager) HandleKeyPress(msg tea.KeyPressMsg) (closed bool) {
 
 var (
 	accountsTitleStyle, accountsSelectedStyle, accountsNormalStyle,
-	accountsHintStyle, accountsWarnStyle, accountsEmailStyle lipgloss.Style
+	accountsHintStyle, accountsWarnStyle, accountsEmailStyle,
+	accountsNoticeStyle lipgloss.Style
 )
 
 func init() { ui.RegisterThemeHook(rebuildAccountsManagerStyles) }
@@ -268,6 +276,9 @@ func rebuildAccountsManagerStyles() {
 	accountsHintStyle = lipgloss.NewStyle().Foreground(ui.Faint)
 	accountsWarnStyle = lipgloss.NewStyle().Foreground(ui.ErrorColor)
 	accountsEmailStyle = lipgloss.NewStyle().Foreground(ui.Dim)
+	// An error that voids every row, not a request for input: ErrorColor,
+	// never Attention.
+	accountsNoticeStyle = lipgloss.NewStyle().Foreground(ui.ErrorColor).Bold(true)
 }
 
 // shortenUsage fits a formatted usage string (ui.AccountUsageText's
@@ -302,6 +313,11 @@ func (a *AccountsManager) Render() string {
 		return a.input.Render()
 	}
 	content := accountsTitleStyle.Render("Accounts") + "\n\n"
+	if a.notice != "" {
+		// Wrapped to the content width: it must be read whole, and a line
+		// wider than that would widen the box.
+		content += accountsNoticeStyle.Width(a.contentWidth()).Render("⚠ "+a.notice) + "\n\n"
+	}
 	if len(a.rows) == 0 {
 		content += accountsNormalStyle.Render("No accounts — press 'a' to add one") + "\n"
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/aidan-bailey/loom/ui"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -227,4 +228,37 @@ func TestSettingsOverlay_OpensAccountsAndPassesRequestsThrough(t *testing.T) {
 	req, ok := s.TakeAccountRequest()
 	require.True(t, ok)
 	assert.Equal(t, AccountRequest{Kind: AccountRequestSetDefault, Name: "max-2"}, req)
+}
+
+// TestAccountsManager_ANoticeLeadsTheRows: a credential in loom's
+// environment voids every row's login; the screen says so before them.
+func TestAccountsManager_ANoticeLeadsTheRows(t *testing.T) {
+	a := NewAccountsManager(accountRows())
+	a.SetNotice("$CLAUDE_CODE_OAUTH_TOKEN set: all accounts use it")
+
+	out := ansi.Strip(a.Render())
+
+	assert.Contains(t, out, "⚠ $CLAUDE_CODE_OAUTH_TOKEN set")
+	assert.Less(t, strings.Index(out, "⚠"), strings.Index(out, "* default"))
+
+	a.SetNotice("")
+	assert.NotContains(t, ansi.Strip(a.Render()), "⚠")
+}
+
+// TestAccountsManager_ANoticeWrapsInsideTheBox: a long notice wraps within
+// the content width rather than widening the box.
+func TestAccountsManager_ANoticeWrapsInsideTheBox(t *testing.T) {
+	a := NewAccountsManager(accountRows())
+	a.SetWidth(60)
+	a.SetNotice("$CLAUDE_CODE_OAUTH_TOKEN set: every account runs and bills as that credential, not its own login")
+
+	for _, line := range strings.Split(a.Render(), "\n") {
+		assert.LessOrEqual(t, ansi.StringWidth(line), 60, "line %q", ansi.Strip(line))
+	}
+	assert.Contains(t, ansi.Strip(a.Render()), "credential")
+}
+
+func TestAccountsManagerStyles_TheNoticeIsAnErrorNotAttention(t *testing.T) {
+	assert.Equal(t, ui.ErrorColor, accountsNoticeStyle.GetForeground())
+	assert.NotEqual(t, ui.Attention, accountsNoticeStyle.GetForeground())
 }
