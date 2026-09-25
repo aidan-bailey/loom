@@ -501,21 +501,18 @@ func (m *home) topChromeHeight() int {
 	return h
 }
 
-// accountRows formats the Accounts screen's rows.
+// accountRows formats the Accounts screen's rows. A logged-out account
+// says so in its usage column (ui.AccountUsageText), so the warning line
+// carries only what the row can't show.
 func (m *home) accountRows(statuses []ui.AccountStatus) []overlay.AccountRow {
 	now := time.Now()
 	rows := make([]overlay.AccountRow, 0, len(statuses))
 	for _, s := range statuses {
 		id := m.rcAuthFor(s.Name).Identity
 		row := overlay.AccountRow{Name: s.Name, Email: id.Email, Plan: id.Plan, Usage: ui.AccountUsageText(s, now), IsDefault: s.IsDefault}
-		var warns []string
-		if s.LoggedOut {
-			warns = append(warns, "logged out")
-		}
 		if rep, ok := m.accountSync[s.Name]; ok && len(rep.Diverged) > 0 {
-			warns = append(warns, "not shared: "+strings.Join(rep.Diverged, ", "))
+			row.Warning = "not shared: " + strings.Join(rep.Diverged, ", ")
 		}
-		row.Warning = strings.Join(warns, "; ")
 		rows = append(rows, row)
 	}
 	return rows

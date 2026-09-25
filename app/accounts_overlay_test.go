@@ -126,3 +126,20 @@ func TestRunOpenSettings_ListsTheAccounts(t *testing.T) {
 	require.NotNil(t, so)
 	assert.Contains(t, so.Render(), "Accounts")
 }
+
+// TestAccountRows_LoggedOutIsSaidOnce: the usage column already says
+// "logged out"; the warning line is for what the row can't show.
+func TestAccountRows_LoggedOutIsSaidOnce(t *testing.T) {
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+	acct, _ := m.accounts.Get("max-2")
+	m.accountAuth = map[string]session.RemoteControlAuth{"max-2": {Identity: account.Identity{ConfigDir: acct.Dir, LoggedIn: false}}}
+	m.ensureAccountMaps()
+	m.accountSync["max-2"] = account.SyncReport{Diverged: []string{"settings.json"}}
+
+	rows := m.accountRows(m.accountStatuses())
+
+	require.Len(t, rows, 2)
+	assert.Equal(t, "logged out", rows[1].Usage)
+	assert.Equal(t, "not shared: settings.json", rows[1].Warning)
+}
