@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
@@ -206,4 +208,53 @@ func TestInitAccounts_ACredentialOverrideWarnsFromTheStart(t *testing.T) {
 	m.accountStrip.SetWidth(200)
 
 	assert.Contains(t, ansi.Strip(m.accountStrip.String()), "⚠ $ANTHROPIC_API_KEY set: all accounts use it")
+}
+
+// openAccountsScreen opens Settings and its Accounts screen by keys.
+func openAccountsScreen(t *testing.T, m *home) {
+	t.Helper()
+	runOpenSettings(m)
+	require.NotNil(t, m.settingsOverlay())
+	for i := 0; i < 20; i++ {
+		handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyDown}) // clamps at Accounts, the last row
+	}
+	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Contains(t, m.settingsOverlay().Render(), "x remove", "the Accounts screen is open")
+}
+
+func TestAccountsScreen_ACredentialOverrideIsNoticed(t *testing.T) {
+	noCredentialOverride(t)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+
+	openAccountsScreen(t, m)
+
+	assert.Contains(t, ansi.Strip(m.settingsOverlay().Render()), "⚠ $CLAUDE_CODE_OAUTH_TOKEN set")
+}
+
+func TestAccountsScreen_TheNoticeFollowsARefresh(t *testing.T) {
+	noCredentialOverride(t)
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+	openAccountsScreen(t, m)
+	require.NotContains(t, ansi.Strip(m.settingsOverlay().Render()), "⚠")
+
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "tok")
+	m.refreshAccountViews()
+
+	assert.Contains(t, ansi.Strip(m.settingsOverlay().Render()), "⚠ $ANTHROPIC_AUTH_TOKEN set")
+}
+
+// TestAccountsScreen_NoNoticeWithoutAnExtraAccount: with default alone,
+// there is no account selection for the credential to void.
+func TestAccountsScreen_NoNoticeWithoutAnExtraAccount(t *testing.T) {
+	noCredentialOverride(t)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+	m := newTestHome(t)
+	withAccounts(t, m)
+
+	openAccountsScreen(t, m)
+
+	assert.NotContains(t, ansi.Strip(m.settingsOverlay().Render()), "⚠")
 }

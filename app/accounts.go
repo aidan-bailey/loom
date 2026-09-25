@@ -64,6 +64,16 @@ func credentialOverrideWarning() string {
 	return ""
 }
 
+// accountsScreenNotice is the Accounts screen's notice: the credential
+// override warning while an extra account exists, since with default
+// alone there is no account choice for it to void.
+func (m *home) accountsScreenNotice() string {
+	if !m.hasExtraAccounts() {
+		return ""
+	}
+	return credentialOverrideWarning()
+}
+
 // warnIfRunningAsAccount says, once at startup, that loom itself runs as an
 // extra account: its own $CLAUDE_CONFIG_DIR lies inside the accounts dir
 // (it was started from an account session's pane, say). The default
@@ -321,6 +331,7 @@ func (m *home) refreshAccountViews() tea.Cmd {
 	statuses := m.accountStatuses()
 	if so := m.settingsOverlay(); so != nil {
 		so.SetAccountRows(m.accountRows(statuses))
+		so.SetAccountNotice(m.accountsScreenNotice())
 	}
 	if lo := m.launchOptionsOverlay(); lo != nil && lo.AccountsShown() && m.accountsLoaded() {
 		choices := m.accountChoices(statuses)

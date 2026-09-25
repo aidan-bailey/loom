@@ -657,6 +657,7 @@ func runOpenSettings(m *home) (tea.Model, tea.Cmd) {
 	reloaded := m.reloadAccounts()
 	so := overlay.NewSettingsOverlay(m.appConfig, m.rcAuth.Blocked(), m.rcAuth.Reason)
 	so.SetAccountRows(m.accountRows(m.accountStatuses()))
+	so.SetAccountNotice(m.accountsScreenNotice())
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 	return m, tea.Batch(reloaded, m.requestUsageProbe())
