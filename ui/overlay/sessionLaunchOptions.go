@@ -118,11 +118,27 @@ func (l *SessionLaunchOptions) Options() LaunchOptions { return l.opts }
 
 // SetAccounts supplies the Account row's choices, default first. Fewer
 // than two hides the row. An Account the choices don't include (removed,
-// or never set) falls to the first choice.
+// or never set) falls to the first choice. If the row was showing and
+// just disappeared (an account was removed elsewhere, dropping the
+// count below two) while the cursor sat on it, the cursor is pulled back
+// onto the new last row so it can't point past the list, and the
+// selection it held — no longer choosable — resets to the first
+// remaining choice, or "" if none are left.
 func (l *SessionLaunchOptions) SetAccounts(choices []AccountChoice) {
 	l.accounts = choices
-	if l.accountRowShown() && l.accountIndex() < 0 {
+	if l.accountRowShown() {
+		if l.accountIndex() < 0 {
+			l.opts.Account = choices[0].Name
+		}
+		return
+	}
+	if l.cursor >= l.rowCount() {
+		l.cursor = l.rowCount() - 1
+	}
+	if len(choices) > 0 {
 		l.opts.Account = choices[0].Name
+	} else {
+		l.opts.Account = ""
 	}
 }
 

@@ -321,6 +321,34 @@ func TestSessionLaunchOptions_UnknownAccountFallsToTheFirstChoice(t *testing.T) 
 	assert.Equal(t, "default", lo.Options().Account)
 }
 
+// TestSessionLaunchOptions_AccountRowVanishesUnderTheCursor reproduces an
+// account being removed elsewhere while the modal is open with the
+// cursor resting on the Account row: the row disappears (fewer than two
+// choices left), so the cursor must not keep pointing past the row list.
+func TestSessionLaunchOptions_AccountRowVanishesUnderTheCursor(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "max-2"}, false, "")
+	lo.SetAccounts(accountChoices()) // [default, max-2]
+	toAccountRow(lo)
+	require.Equal(t, sessionLaunchOptionsAccountRow, lo.cursor)
+
+	lo.SetAccounts([]AccountChoice{{Name: "default"}}) // max-2 removed elsewhere
+	assert.Equal(t, sessionLaunchOptionsBranchPrefixRow, lo.cursor, "cursor must not point past the row list")
+	assert.Equal(t, "default", lo.Options().Account, "the vanished selection resets to the first remaining choice")
+}
+
+// TestSessionLaunchOptions_AccountRowVanishesWithNoChoicesLeft covers the
+// same case with every extra account gone: Account resets to "" rather
+// than keeping a name no choice offers.
+func TestSessionLaunchOptions_AccountRowVanishesWithNoChoicesLeft(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "max-2"}, false, "")
+	lo.SetAccounts(accountChoices())
+	toAccountRow(lo)
+
+	lo.SetAccounts(nil)
+	assert.Equal(t, sessionLaunchOptionsBranchPrefixRow, lo.cursor)
+	assert.Equal(t, "", lo.Options().Account)
+}
+
 // TestSessionLaunchOptionsEditingRendersEditorAlone pins the house pattern
 // SettingsOverlay.Render uses: the nested TextInputOverlay draws its own
 // complete bordered box, so it must replace the modal rather than be nested
