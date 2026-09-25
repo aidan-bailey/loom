@@ -119,6 +119,20 @@ func TestWithProgramEnv(t *testing.T) {
 	require.Equal(t, 40, got.lastRows)
 }
 
+// TestEnv_ReturnsACloneNotTheInternalSlice pins that a caller mutating the
+// slice Env() returns cannot corrupt the session's own env — Env() is
+// documented read-only, and returning the internal slice directly would
+// let a caller (a test, or future code) reorder or overwrite entries that
+// Start still reads via t.env.
+func TestEnv_ReturnsACloneNotTheInternalSlice(t *testing.T) {
+	session := NewTmuxSessionWithDeps("env-clone", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{}, "CLAUDE_CONFIG_DIR=/acct/max-2")
+
+	got := session.Env()
+	got[0] = "TAMPERED=1"
+
+	require.Equal(t, []string{"CLAUDE_CONFIG_DIR=/acct/max-2"}, session.Env(), "mutating the returned slice must not affect the session")
+}
+
 // TestFullScreenAttachCmd verifies that the returned exec.Cmd is shaped so
 // tea.ExecProcess can hand the terminal to `tmux attach-session -t =<name>`
 // (exact: see SessionTarget).

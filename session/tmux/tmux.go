@@ -1061,13 +1061,14 @@ func (t *TmuxSession) SessionName() string {
 	return t.sanitizedName
 }
 
-// Env returns the tmux session environment this session was constructed
-// with — the "KEY=VALUE" entries applied via `new-session -e` (see
-// NewTmuxSession). Read-only: env is set once at construction (or by
+// Env returns a clone of the tmux session environment this session was
+// constructed with — the "KEY=VALUE" entries applied via `new-session -e`
+// (see NewTmuxSession). Read-only: env is set once at construction (or by
 // WithProgram/WithProgramEnv building a new session) and never mutated
-// afterward.
+// afterward; the clone means a caller mutating the result cannot corrupt
+// it.
 func (t *TmuxSession) Env() []string {
-	return t.env
+	return slices.Clone(t.env)
 }
 
 // HasEmulator reports whether this session renders through the in-process
