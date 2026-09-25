@@ -89,8 +89,10 @@ func TestAccountsManager_RendersRows(t *testing.T) {
 
 // TestAccountsManager_RowsFitOnOneLineAtDefaultWidth pins the width
 // budget: border + padding eat 6 columns of the default 60 (matching
-// every other Settings sub-screen), so the row/email/usage columns must
-// be compact enough that nothing wraps.
+// every other Settings sub-screen), so nothing wraps. Email now renders
+// on its own indented line under the row (see
+// TestAccountsManager_UsageAndNamesSurviveTightWidths for why), so it is
+// checked separately from Usage rather than sharing a line with it.
 func TestAccountsManager_RowsFitOnOneLineAtDefaultWidth(t *testing.T) {
 	a := NewAccountsManager(accountRows())
 	require.Equal(t, 60, a.width, "default width matches the other Settings sub-screens")
@@ -102,14 +104,47 @@ func TestAccountsManager_RowsFitOnOneLineAtDefaultWidth(t *testing.T) {
 	assert.Contains(t, stripped, "you+2@example.com")
 	assert.Contains(t, stripped, "5h 12% · 7d 31%")
 	assert.Contains(t, stripped, "not shared: settings.json")
-	// Not wrapped: each of those lives on its own single line.
-	found := 0
-	for _, line := range strings.Split(stripped, "\n") {
-		if strings.Contains(line, "you+2@example.com") && strings.Contains(line, "5h 12% · 7d 31%") {
-			found++
+	// None of those three strings is itself split across two lines.
+	for _, want := range []string{"you+2@example.com", "5h 12% · 7d 31%", "not shared: settings.json"} {
+		found := 0
+		for _, line := range strings.Split(stripped, "\n") {
+			if strings.Contains(line, want) {
+				found++
+			}
+		}
+		assert.Equal(t, 1, found, "%q must appear intact on exactly one line", want)
+	}
+}
+
+// TestAccountsManager_UsageAndNamesSurviveTightWidths reproduces the
+// misleading-truncation bug: the Accounts overlay opens at width 60 (app
+// never resizes it before the first render) and an 80-column terminal's
+// 60%-wide overlay gives 48, and at both widths a percentage must never
+// be cut mid-digit (100% must never render as if it read 10%), and two
+// similarly named accounts — exactly what this screen exists to tell
+// apart before logging in or setting the default — must both show their
+// full name rather than an identical-looking truncated prefix.
+func TestAccountsManager_UsageAndNamesSurviveTightWidths(t *testing.T) {
+	rows := []AccountRow{
+		{Name: "work-sub-1", Email: "a@example.com", Plan: "max", Usage: "5h 100% · 7d 100%", IsDefault: true},
+		{Name: "work-sub-2", Email: "b@example.com", Plan: "max", Usage: "5h 12% · 7d 31% · 9m ago"},
+	}
+	for _, w := range []int{48, 60} {
+		a := NewAccountsManager(rows)
+		a.SetWidth(w)
+		out := ansi.Strip(a.Render())
+
+		assert.Contains(t, out, "work-sub-1", "width %d: name must not be cut when it fits the cap", w)
+		assert.Contains(t, out, "work-sub-2", "width %d: name must not be cut when it fits the cap", w)
+
+		assert.Contains(t, out, "5h 100%", "width %d: the 5-hour figure must survive intact", w)
+		assert.Contains(t, out, "5h 12%", "width %d: the 5-hour figure must survive intact", w)
+		assert.NotContains(t, out, "10…", "width %d: 100% must never be clipped to read as 10%", w)
+
+		for _, line := range strings.Split(out, "\n") {
+			assert.LessOrEqual(t, len([]rune(line)), w, "width %d", w)
 		}
 	}
-	assert.Equal(t, 1, found, "the max-2 row's email and usage must share one unwrapped line")
 }
 
 // TestAccountsManager_RemoveTargetsByIdentityNotPosition reproduces the

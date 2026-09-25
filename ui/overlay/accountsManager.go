@@ -71,17 +71,17 @@ type AccountsManager struct {
 	removeTarget string
 }
 
-// Compact column widths for the Accounts screen's rows. Border + padding
-// eat 6 columns of whatever width the screen is given (border.go/
-// settingsOverlay's default sub-screen width is 60, matching every other
-// Settings drill-in), so an unbounded email or usage string would wrap
-// the box onto a second line — Usage is the whole point of this screen,
-// so it is never truncated; Name and Email are, with an ellipsis.
-const (
-	accountsNameWidth  = 8
-	accountsEmailWidth = 18
-	accountsPlanWidth  = 5
-)
+// accountsPlanWidth is the fixed width of the row's Plan column; plan
+// names ("max", "pro", "free", …) are always short.
+const accountsPlanWidth = 5
+
+// accountsNameWidthCap bounds the Name column. It normally grows to fit
+// the longest registered name (see nameWidth) — this is the screen used
+// to tell apart accounts named, say, "work-sub-1" and "work-sub-2" when
+// choosing which to log in or make default, so a name that fits under
+// the cap is never cut — but a single very long name must not blow up
+// the whole layout, hence the cap.
+const accountsNameWidthCap = 16
 
 // NewAccountsManager creates the Accounts screen over rows.
 func NewAccountsManager(rows []AccountRow) *AccountsManager {
@@ -98,6 +98,23 @@ func (a *AccountsManager) contentWidth() int {
 	w := a.width - 6
 	if w < 20 {
 		w = 20
+	}
+	return w
+}
+
+// nameWidth is the row Name column's width: the longest currently
+// registered name, capped at accountsNameWidthCap. Sizing to content
+// rather than a fixed column means a name that fits under the cap is
+// never truncated.
+func (a *AccountsManager) nameWidth() int {
+	w := 1
+	for _, r := range a.rows {
+		if n := lipgloss.Width(r.Name); n > w {
+			w = n
+		}
+	}
+	if w > accountsNameWidthCap {
+		w = accountsNameWidthCap
 	}
 	return w
 }
@@ -239,7 +256,7 @@ func (a *AccountsManager) HandleKeyPress(msg tea.KeyPressMsg) (closed bool) {
 
 var (
 	accountsTitleStyle, accountsSelectedStyle, accountsNormalStyle,
-	accountsHintStyle, accountsWarnStyle lipgloss.Style
+	accountsHintStyle, accountsWarnStyle, accountsEmailStyle lipgloss.Style
 )
 
 func init() { ui.RegisterThemeHook(rebuildAccountsManagerStyles) }
@@ -250,6 +267,33 @@ func rebuildAccountsManagerStyles() {
 	accountsNormalStyle = lipgloss.NewStyle().Foreground(ui.Text)
 	accountsHintStyle = lipgloss.NewStyle().Foreground(ui.Faint)
 	accountsWarnStyle = lipgloss.NewStyle().Foreground(ui.ErrorColor)
+	accountsEmailStyle = lipgloss.NewStyle().Foreground(ui.Dim)
+}
+
+// shortenUsage fits a formatted usage string (ui.AccountUsageText's
+// output — "5h X% · 7d Y%", optionally with a " · Nm ago" staleness
+// suffix, or a single word like "n/a"/"logged out"/"—") into maxWidth
+// cells. It never clips a percentage or a word mid-character: it drops
+// whole segments instead, weekly (7d) first and the staleness suffix
+// next — the same priority AccountStrip's compact form uses for the
+// weekly part — before falling back to a hard clamp for a width so
+// narrow no real screen this modal renders at would produce it.
+func shortenUsage(usage string, maxWidth int) string {
+	if lipgloss.Width(usage) <= maxWidth {
+		return usage
+	}
+	parts := strings.Split(usage, " · ")
+	if len(parts) >= 2 && strings.HasPrefix(parts[1], "7d ") {
+		reduced := append(append([]string{}, parts[:1]...), parts[2:]...)
+		if candidate := strings.Join(reduced, " · "); lipgloss.Width(candidate) <= maxWidth {
+			return candidate
+		}
+		parts = reduced
+	}
+	if lipgloss.Width(parts[0]) <= maxWidth {
+		return parts[0]
+	}
+	return truncateRight(usage, maxWidth)
 }
 
 // Render renders whichever mode is active.
@@ -262,6 +306,12 @@ func (a *AccountsManager) Render() string {
 		content += accountsNormalStyle.Render("No accounts — press 'a' to add one") + "\n"
 	}
 	cw := a.contentWidth()
+	nw := a.nameWidth()
+	// 6 fixed columns (2-cell cursor + 2-cell default mark + the row's
+	// two separating spaces) plus the Name and Plan columns; whatever's
+	// left is what Usage gets, shortened to fit rather than clipped
+	// mid-number.
+	usageBudget := cw - 6 - nw - accountsPlanWidth
 	for i, r := range a.rows {
 		cursor := "  "
 		if i == a.cursor {
@@ -271,15 +321,20 @@ func (a *AccountsManager) Render() string {
 		if r.IsDefault {
 			mark = "* "
 		}
-		row := fmt.Sprintf("%s%s%-*s %-*s %-*s %s", cursor, mark,
-			accountsNameWidth, truncateRight(r.Name, accountsNameWidth),
-			accountsEmailWidth, truncateRight(r.Email, accountsEmailWidth),
+		// The Name column is sized (nameWidth) to the longest registered
+		// name up to accountsNameWidthCap, so truncateRight only actually
+		// cuts a name past that cap — this is the screen used to tell
+		// apart similarly named accounts when picking one, so a name
+		// that fits must never be shortened. Plan values are always
+		// short; Usage — the screen's whole reason for existing — is
+		// shortened whole-segment-at-a-time (shortenUsage), never
+		// mid-number.
+		row := fmt.Sprintf("%s%s%-*s %-*s %s", cursor, mark,
+			nw, truncateRight(r.Name, nw),
 			accountsPlanWidth, truncateRight(r.Plan, accountsPlanWidth),
-			r.Usage)
-		// Belt and braces: the column widths above are sized to fit
-		// Usage in full at the narrowest width this screen is ever
-		// given (60), but a safety clamp means a row can never wrap the
-		// box regardless of what app sends as Usage.
+			shortenUsage(r.Usage, usageBudget))
+		// Belt and braces: sized to fit above, but a safety clamp means
+		// the row can never wrap the box regardless of what app sends.
 		row = truncateRight(row, cw)
 		if i == a.cursor {
 			content += accountsSelectedStyle.Render(row)
@@ -287,9 +342,12 @@ func (a *AccountsManager) Render() string {
 			content += accountsNormalStyle.Render(row)
 		}
 		content += "\n"
-		// The warning gets its own indented line rather than riding the
-		// row: "not shared: settings.json" alongside a full row would
-		// itself overflow the same width budget.
+		// Email and a warning each get their own indented line rather
+		// than riding the row: either one could alone overflow the same
+		// width budget the row already spends on Name/Plan/Usage.
+		if r.Email != "" {
+			content += "    " + accountsEmailStyle.Render(truncateRight(r.Email, cw-4)) + "\n"
+		}
 		if r.Warning != "" {
 			content += "    " + accountsWarnStyle.Render(truncateRight(r.Warning, cw-4)) + "\n"
 		}
