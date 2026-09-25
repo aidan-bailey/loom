@@ -548,10 +548,19 @@ on whichever has headroom.
    it has actually stopped.
 
 Removing an account (`loom account remove`, or `x` in **Settings →
-Accounts**) is refused while any session uses it; `--force` also skips
-that check and the confirmation. User-scope MCP servers
+Accounts**) is refused while any session uses it, or while its config dir
+holds files that aren't shared with your main setup (something written
+directly into the account rather than through `sync`). `-y`/`--yes` skips
+only the confirmation prompt; `--force` is what overrides either refusal,
+and it prints what it overrode. User-scope MCP servers
 (`claude mcp add --scope user`) live in each account's own `.claude.json`
 and are not shared.
+
+`loom account add`/`list`/`sync`, and a bare `login`, refuse when run from
+a shell whose own environment already points at an account's config dir
+(inside an account's own agent pane, say) — run them from an ordinary
+shell instead; `loom account login <name>` for a specific account is
+unaffected.
 
 **Known limitations**: the terminal pane (the shell below the agent pane)
 always runs on the default account, whichever account the agent is on; an
