@@ -460,6 +460,37 @@ func TestInstance_RestartProceedsPastIdempotencyGuard(t *testing.T) {
 		"Restart should leave the instance in a started state on success")
 }
 
+// TestInstance_StartFailsClosedEvenWithAPresetSession pins that Start's
+// account check runs unconditionally, not only when it also has to build
+// a fresh tmux session (ts == nil). Restart pre-builds ts with
+// WithProgramEnv and then calls Start(true) to launch it — if the account
+// check lived only inside the ts == nil branch, a preset session would
+// silently bypass it and launch on a gone account.
+func TestInstance_StartFailsClosedEvenWithAPresetSession(t *testing.T) {
+	withAccountDirs(t, nil)
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	ts := tmux.NewTmuxSessionWithDeps("preset-session", "claude", fakePtyFactory{t: t}, cmdExec)
+
+	inst := &Instance{
+		Title:               "preset-session",
+		Path:                t.TempDir(),
+		program:             "claude",
+		Status:              Ready,
+		IsWorkspaceTerminal: true,
+	}
+	inst.setTmuxSession(ts)
+	inst.SetAccount("gone")
+
+	err := inst.Start(true)
+
+	var missing *MissingAccountError
+	require.True(t, errors.As(err, &missing), "a preset tmux session must not bypass the account check")
+	assert.False(t, inst.Started())
+}
+
 // recordingPtyFactory is fakePtyFactory that also records the program
 // every `tmux new-session` is started with (its last argument).
 type recordingPtyFactory struct {

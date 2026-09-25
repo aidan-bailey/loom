@@ -821,6 +821,17 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		}
 	}()
 
+	// Resolved before the ts == nil branch below, and unconditionally: a
+	// caller that pre-builds ts itself (Restart, via WithProgramEnv) still
+	// goes through Start to launch it, and the account must be checked
+	// every time Start actually launches (firstTimeSetup), not only when
+	// Start also has to construct the session object.
+	env, envErr := i.launchEnv(firstTimeSetup)
+	if envErr != nil {
+		setupErr = envErr
+		return setupErr
+	}
+
 	ts := i.getTmuxSession()
 	if ts == nil {
 		// Create new tmux session. launchProgram adds loom's context flag
@@ -828,11 +839,6 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		// the subagent hooks. Start(false) reattaches with Restore, and
 		// that Claude keeps writing to its existing hooks folder.
 		// InstanceEnv still keys off the bare program.
-		env, envErr := i.launchEnv(firstTimeSetup)
-		if envErr != nil {
-			setupErr = envErr
-			return setupErr
-		}
 		launchProgram := i.launchProgram(env.Program, firstTimeSetup)
 		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(env)...)
 	}
