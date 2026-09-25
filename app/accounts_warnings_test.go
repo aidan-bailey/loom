@@ -1,10 +1,13 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,4 +91,80 @@ func TestAccountsRefreshed_AnOKAuthIsUntouched(t *testing.T) {
 
 	require.True(t, m.rcAuthFor("max-2").OK())
 	assert.Empty(t, m.rcAuthFor("max-2").Reason)
+}
+
+// globalAccounts registers names in a registry at a fresh LOOM_GLOBAL_DIR,
+// where initAccounts finds it, and undoes initAccounts' publication at
+// cleanup. Returns the registry.
+func globalAccounts(t *testing.T, names ...string) *account.Registry {
+	t.Helper()
+	global := t.TempDir()
+	t.Setenv("LOOM_GLOBAL_DIR", global)
+	reg := account.LoadRegistry(global)
+	main := t.TempDir()
+	for _, n := range names {
+		_, _, err := reg.Create(n, main)
+		require.NoError(t, err)
+	}
+	t.Cleanup(func() {
+		session.SetAccountDirs(nil, nil)
+		ui.SetShowAccounts(false)
+	})
+	return reg
+}
+
+// TestInitAccounts_WarnsWhenLoomRunsAsAnAccount: started from an account's
+// pane, loom's own CLAUDE_CONFIG_DIR is that account's, so "default"
+// describes it rather than the main login.
+func TestInitAccounts_WarnsWhenLoomRunsAsAnAccount(t *testing.T) {
+	noCredentialOverride(t)
+	reg := globalAccounts(t, "max-2")
+	acct, _ := reg.Get("max-2")
+	t.Setenv("CLAUDE_CONFIG_DIR", acct.Dir)
+	m := newTestHome(t)
+
+	m.initAccounts()
+
+	toast := m.errBox.String()
+	assert.Contains(t, toast, `account "max-2"`)
+	assert.Contains(t, toast, "CLAUDE_CONFIG_DIR")
+
+	m.errBox.Clear()
+	require.NoError(t, reg.SetDefault("max-2"))
+	m.maybeReloadAccounts()
+	assert.NotContains(t, m.errBox.String(), "CLAUDE_CONFIG_DIR", "said once, at startup")
+}
+
+func TestInitAccounts_NoRunningAsWarningFromTheMainDir(t *testing.T) {
+	noCredentialOverride(t)
+	globalAccounts(t, "max-2")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	m := newTestHome(t)
+
+	m.initAccounts()
+
+	assert.NotContains(t, m.errBox.String(), "CLAUDE_CONFIG_DIR")
+}
+
+// TestAccountsRefresh_RunningAsAnAccountSkipsSync: with no identity read,
+// the main dir falls back to $CLAUDE_CONFIG_DIR, here an account's own;
+// linking against it would spread that account into its siblings.
+func TestAccountsRefresh_RunningAsAnAccountSkipsSync(t *testing.T) {
+	noCredentialOverride(t)
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2", "max-3")
+	self, _ := m.accounts.Get("max-3")
+	require.NoError(t, os.WriteFile(filepath.Join(self.Dir, "settings.json"), []byte("{}"), 0o644))
+	t.Setenv("CLAUDE_CONFIG_DIR", self.Dir)
+	m.rcAuth = session.RemoteControlAuth{}
+
+	msg, ok := m.accountsRefreshCmd(false)().(accountsRefreshedMsg)
+	require.True(t, ok)
+
+	assert.Empty(t, msg.sync, "nothing synced")
+	// Create already linked "projects" from the real main dir; the
+	// running account's own settings.json must not follow it.
+	other, _ := m.accounts.Get("max-2")
+	_, err := os.Lstat(filepath.Join(other.Dir, "settings.json"))
+	assert.True(t, os.IsNotExist(err), "an account is never linked into its sibling")
 }

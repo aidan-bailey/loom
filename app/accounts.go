@@ -43,6 +43,30 @@ func (m *home) initAccounts() {
 		m.errBox.SetError(fmt.Errorf("accounts: %w", err))
 	}
 	m.adoptAccounts(reg)
+	m.warnIfRunningAsAccount()
+}
+
+// warnIfRunningAsAccount says, once at startup, that loom itself runs as an
+// extra account: its own $CLAUDE_CONFIG_DIR lies inside the accounts dir
+// (it was started from an account session's pane, say). The default
+// account's auth, usage and roster, which run with loom's environment,
+// then describe that account rather than the main login. Sync already
+// refuses to link against it (syncMainDir).
+func (m *home) warnIfRunningAsAccount() {
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if dir == "" || m.accounts == nil || m.accounts.Path() == "" {
+		return
+	}
+	rel, err := filepath.Rel(canonicalDir(m.accounts.AccountsDir()), canonicalDir(dir))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return
+	}
+	who := "inside the accounts dir"
+	if rel != "." {
+		who = fmt.Sprintf("as account %q", strings.SplitN(rel, string(filepath.Separator), 2)[0])
+	}
+	log.For("account").Warn("registry.running_as_account", "claude_config_dir", dir)
+	m.errBox.SetError(fmt.Errorf("loom is running %s ($CLAUDE_CONFIG_DIR is %s): \"default\" shows that account's login, usage and sessions, not your main login's", who, dir))
 }
 
 // adoptAccounts installs reg as the registry and publishes it, recording
