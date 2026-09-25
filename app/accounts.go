@@ -44,6 +44,24 @@ func (m *home) initAccounts() {
 	}
 	m.adoptAccounts(reg)
 	m.warnIfRunningAsAccount()
+	if name, ok := account.ActiveCredentialOverride(); ok && m.hasExtraAccounts() {
+		log.For("account").Warn("registry.credential_override", "env", name)
+	}
+	// Fill the strip now rather than when the first probe lands. Its
+	// relayout Cmd is not needed: the first WindowSizeMsg is still to come.
+	m.refreshAccountViews()
+}
+
+// credentialOverrideWarning is what the strip and the Accounts screen say
+// while a credential in loom's environment overrides every account
+// (account.ActiveCredentialOverride): every account session runs and bills
+// as it, and the usage probes, which inherit loom's environment, show its
+// usage under every account's name. "" otherwise.
+func credentialOverrideWarning() string {
+	if name, ok := account.ActiveCredentialOverride(); ok {
+		return "$" + name + " set: all accounts use it"
+	}
+	return ""
 }
 
 // warnIfRunningAsAccount says, once at startup, that loom itself runs as an
@@ -287,8 +305,9 @@ func (m *home) accountStatuses() []ui.AccountStatus {
 }
 
 // refreshAccountViews pushes the current account state into every view
-// that shows it. Returns tea.RequestWindowSize when the strip appeared or
-// disappeared, since that changes the content height.
+// that shows it, with the credential override warning read afresh
+// (credentialOverrideWarning). Returns tea.RequestWindowSize when the
+// strip appeared or disappeared, since that changes the content height.
 //
 // An open Settings overlay's Accounts rows always follow. An open Launch
 // Options modal follows only while its Account row shows
@@ -314,6 +333,7 @@ func (m *home) refreshAccountViews() tea.Cmd {
 		return nil
 	}
 	before := m.accountStrip.Height()
+	m.accountStrip.SetWarning(credentialOverrideWarning())
 	m.accountStrip.SetAccounts(statuses)
 	if m.accountStrip.Height() != before {
 		return tea.RequestWindowSize

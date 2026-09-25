@@ -8,6 +8,7 @@ import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -167,4 +168,42 @@ func TestAccountsRefresh_RunningAsAnAccountSkipsSync(t *testing.T) {
 	other, _ := m.accounts.Get("max-2")
 	_, err := os.Lstat(filepath.Join(other.Dir, "settings.json"))
 	assert.True(t, os.IsNotExist(err), "an account is never linked into its sibling")
+}
+
+// TestRefreshAccountViews_ACredentialOverrideWarnsOnTheStrip: with one in
+// loom's environment every account runs and bills as it, and the probes
+// show its usage under every name.
+func TestRefreshAccountViews_ACredentialOverrideWarnsOnTheStrip(t *testing.T) {
+	noCredentialOverride(t)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+	m.accountStrip.SetWidth(200)
+
+	m.refreshAccountViews()
+
+	assert.Contains(t, ansi.Strip(m.accountStrip.String()), "⚠ $CLAUDE_CODE_OAUTH_TOKEN set: all accounts use it")
+}
+
+func TestRefreshAccountViews_NoOverrideNoWarning(t *testing.T) {
+	noCredentialOverride(t)
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+	m.accountStrip.SetWidth(200)
+
+	m.refreshAccountViews()
+
+	assert.NotContains(t, ansi.Strip(m.accountStrip.String()), "⚠")
+}
+
+func TestInitAccounts_ACredentialOverrideWarnsFromTheStart(t *testing.T) {
+	noCredentialOverride(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	globalAccounts(t, "max-2")
+	m := newTestHome(t)
+
+	m.initAccounts()
+	m.accountStrip.SetWidth(200)
+
+	assert.Contains(t, ansi.Strip(m.accountStrip.String()), "⚠ $ANTHROPIC_API_KEY set: all accounts use it")
 }
