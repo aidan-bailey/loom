@@ -21,6 +21,7 @@ const (
 	settingsFieldProfiles
 	settingsFieldClaudePreferences
 	settingsFieldTheme
+	settingsFieldAccounts
 	settingsFieldCount
 )
 
@@ -38,6 +39,8 @@ func (f settingsField) label() string {
 		return "Claude Preferences"
 	case settingsFieldTheme:
 		return "Theme"
+	case settingsFieldAccounts:
+		return "Accounts"
 	}
 	return ""
 }
@@ -53,6 +56,7 @@ const (
 	settingsEditingText
 	settingsProfilesSub
 	settingsClaudePrefsSub
+	settingsAccountsSub
 )
 
 // SettingsOverlay is the config.json editor: a vertical list of scalar
@@ -80,6 +84,8 @@ type SettingsOverlay struct {
 
 	profiles    *ProfilesManager
 	claudePrefs *ClaudePreferences
+	accounts    *AccountsManager
+	accountRows []AccountRow
 
 	lastErr error
 }
@@ -112,6 +118,12 @@ func (s *SettingsOverlay) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed b
 			s.claudePrefs = nil
 		}
 		return false, ch
+	case settingsAccountsSub:
+		if s.accounts.HandleKeyPress(msg) {
+			s.mode = settingsBrowsing
+			s.accounts = nil
+		}
+		return false, false
 	}
 
 	switch msg.String() {
@@ -173,6 +185,10 @@ func (s *SettingsOverlay) activateRow() (closed, changed bool) {
 		s.cfg.Mutate(func(c *config.Config) { c.Theme = next })
 		ui.ApplyTheme(next)
 		return false, true
+	case settingsFieldAccounts:
+		s.accounts = NewAccountsManager(s.accountRows)
+		s.accounts.SetWidth(s.width)
+		s.mode = settingsAccountsSub
 	}
 	return false, false
 }
@@ -233,6 +249,24 @@ func (s *SettingsOverlay) TakeError() error {
 	return err
 }
 
+// SetAccountRows supplies the Accounts screen's rows (app refreshes them as
+// probes land), updating the screen if it is open.
+func (s *SettingsOverlay) SetAccountRows(rows []AccountRow) {
+	s.accountRows = rows
+	if s.accounts != nil {
+		s.accounts.SetRows(rows)
+	}
+}
+
+// TakeAccountRequest returns and clears the Accounts screen's pending
+// request. Callers poll it after HandleKeyPress, like TakeError.
+func (s *SettingsOverlay) TakeAccountRequest() (AccountRequest, bool) {
+	if s.accounts == nil {
+		return AccountRequest{}, false
+	}
+	return s.accounts.TakeRequest()
+}
+
 // HandleKey satisfies the Overlay interface. State handlers that need
 // the changed signal call HandleKeyPress directly instead (mirrors
 // WorkspacePicker.HandleKey/HandleKeyPress).
@@ -275,6 +309,8 @@ func (s *SettingsOverlay) Render() string {
 		return s.profiles.Render()
 	case settingsClaudePrefsSub:
 		return s.claudePrefs.Render()
+	case settingsAccountsSub:
+		return s.accounts.Render()
 	}
 
 	content := settingsTitleStyle.Render("Settings") + "\n\n"
@@ -322,6 +358,8 @@ func (s *SettingsOverlay) valueFor(f settingsField) string {
 			return v
 		}
 		return ui.DefaultThemeName
+	case settingsFieldAccounts:
+		return fmt.Sprintf("(%d) →", max(len(s.accountRows)-1, 0))
 	}
 	return ""
 }
