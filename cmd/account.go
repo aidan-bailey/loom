@@ -14,7 +14,7 @@ import (
 
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
-	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/agent"
 
 	"github.com/spf13/cobra"
 )
@@ -61,7 +61,7 @@ func loadAccountRegistry() (*account.Registry, error) {
 // config's program when it is Claude (so a pinned or Nix path is honored),
 // else "claude" on PATH.
 func claudeProgram() string {
-	if p := config.LoadConfigFromGlobal().GetProgram(); session.IsClaudeProgram(p) {
+	if p := config.LoadConfigFromGlobal().GetProgram(); isClaudeProgram(p) {
 		return p
 	}
 	return "claude"
@@ -467,4 +467,12 @@ func init() {
 	accountRemoveCmd.Flags().BoolVar(&accountForce, "force", false, "Override the in-use and unshared-files refusals (reports what it overrode)")
 	accountRemoveCmd.Flags().BoolVarP(&accountYes, "yes", "y", false, "Skip the confirmation prompt")
 	AccountCmd.AddCommand(accountAddCmd, accountLoginCmd, accountListCmd, accountUseCmd, accountSyncCmd, accountRemoveCmd)
+}
+
+// isClaudeProgram reports whether program launches Claude Code, through the
+// same adapter registry session.IsClaudeProgram uses. cmd must not import
+// session: session/tmux's tests import cmd/cmd_test, which imports cmd, and
+// session imports session/tmux, so that would be an import cycle.
+func isClaudeProgram(program string) bool {
+	return agent.DefaultRegistry().Lookup(program).Name() == "claude"
 }
