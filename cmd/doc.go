@@ -1,5 +1,5 @@
-// Package cmd holds the `loom workspace` Cobra subcommands and the
-// subprocess seam the rest of Loom shells out through.
+// Package cmd holds the `loom workspace` and `loom account` Cobra
+// subcommands and the subprocess seam the rest of Loom shells out through.
 //
 // Most of the package is the workspace CLI. [WorkspaceCmd], which main.go
 // adds to the root command, groups add, list, remove, use, rename and
@@ -9,6 +9,9 @@
 // migrate decodes records into its own typed mirror of
 // session.InstanceData; workspace_migrate_shape_test.go guards that mirror
 // against schema drift.
+//
+// [AccountCmd] (account.go) groups add, login, list, use, sync and remove
+// over the Claude account registry in the account package.
 //
 // The subprocess seam is [Executor], re-exported from internal/exec so
 // callers that shell out (git operations, tmux calls, the claude command

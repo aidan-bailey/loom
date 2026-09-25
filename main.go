@@ -325,6 +325,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resetCmd)
 	rootCmd.AddCommand(cmd2.WorkspaceCmd)
+	rootCmd.AddCommand(cmd2.AccountCmd)
 }
 
 func main() {
