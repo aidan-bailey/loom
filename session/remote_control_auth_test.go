@@ -78,16 +78,23 @@ func TestDetectClaudeRemoteControlAuth(t *testing.T) {
 	}
 }
 
+// TestDetectClaudeRemoteControlAuth_EnvOverride pins that an override env
+// var still blocks remote control, and that the identity auth status
+// reported is attached to the Blocked result regardless — later phases
+// (the usage strip, Launch Options, the Accounts overlay) show the main
+// config dir, "logged out", email and plan from rcAuth.Identity even when
+// remote control itself is blocked.
 func TestDetectClaudeRemoteControlAuth_EnvOverride(t *testing.T) {
 	for _, env := range remoteControlOverrideEnv {
 		t.Run(env, func(t *testing.T) {
 			clearOverrideEnv(t)
 			t.Setenv(env, "sk-secret")
-			fake := &fakeAuthExecutor{out: []byte(`{"loggedIn":true,"authMethod":"claude.ai"}`)}
+			fake := &fakeAuthExecutor{out: []byte(`{"loggedIn":true,"authMethod":"claude.ai","email":"you@example.com"}`)}
 			got := DetectClaudeRemoteControlAuth("claude", fake)
 			assert.Equal(t, RemoteControlAuthBlocked, got.State)
 			assert.Contains(t, got.Reason, env)
-			assert.False(t, fake.called, "env override should short-circuit before running auth status")
+			assert.True(t, fake.called, "identity is still read even though the override blocks remote control")
+			assert.Equal(t, "you@example.com", got.Identity.Email, "the override blocks remote control but must not drop the identity")
 		})
 	}
 }

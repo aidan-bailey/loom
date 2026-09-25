@@ -69,26 +69,34 @@ func DetectClaudeRemoteControlAuth(program string, runner internalexec.Executor)
 // DetectClaudeRemoteControlAuthEnv determines whether the Claude account
 // selected by env (nil: the default account) can establish a
 // --remote-control session, and carries the identity `claude auth status`
-// reported. It is a no-op (Unknown) for non-Claude programs. Remote control
-// requires a claude.ai OAuth login; API keys, Console accounts, and
-// inference-scoped tokens are rejected by Claude, so this reports Blocked
-// for them.
+// reported — read before the override check below, and attached to every
+// Blocked result including one from an override, so callers that show the
+// account's identity (the usage strip, Launch Options, the Accounts
+// overlay) still have it even when remote control itself is blocked. It
+// is a no-op (Unknown) for non-Claude programs. Remote control requires a
+// claude.ai OAuth login; API keys, Console accounts, and inference-scoped
+// tokens are rejected by Claude, so this reports Blocked for them.
 func DetectClaudeRemoteControlAuthEnv(program string, env []string, runner internalexec.Executor) RemoteControlAuth {
 	if !IsClaudeProgram(program) {
 		return RemoteControlAuth{State: RemoteControlAuthUnknown}
 	}
 
+	id, statusErr := account.AuthStatus(program, env, runner)
+	if statusErr != nil {
+		id = account.Identity{}
+	}
+
 	for _, name := range remoteControlOverrideEnv {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
 			return RemoteControlAuth{
-				State:  RemoteControlAuthBlocked,
-				Reason: name + " is set — remote control needs a claude.ai login. Unset it, or run `claude auth login`.",
+				State:    RemoteControlAuthBlocked,
+				Reason:   name + " is set — remote control needs a claude.ai login. Unset it, or run `claude auth login`.",
+				Identity: id,
 			}
 		}
 	}
 
-	id, err := account.AuthStatus(program, env, runner)
-	if err != nil {
+	if statusErr != nil {
 		// Subcommand missing, no output, or unparseable — can't tell.
 		return RemoteControlAuth{State: RemoteControlAuthUnknown}
 	}
