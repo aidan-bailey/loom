@@ -3,8 +3,10 @@ package session
 import (
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
+	"github.com/aidan-bailey/loom/account"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -204,11 +206,12 @@ func (f *envRecordingExec) Output(c *exec.Cmd) ([]byte, error) {
 func (f *envRecordingExec) CombinedOutput(c *exec.Cmd) ([]byte, error) { return f.Output(c) }
 
 func TestQueryClaudeRosterEnv_RunsAsTheAccount(t *testing.T) {
+	dir := t.TempDir()
 	f := &envRecordingExec{out: []byte(rosterJSON)}
-	got, err := QueryClaudeRosterEnv("claude", []string{"CLAUDE_CONFIG_DIR=/acct/max-2"}, f)
+	got, err := QueryClaudeRosterEnv("claude", account.EnvFor(dir), f)
 	require.NoError(t, err)
 	assert.Len(t, got, 3)
-	assert.Contains(t, f.env, "CLAUDE_CONFIG_DIR=/acct/max-2")
+	assert.Contains(t, f.env, "CLAUDE_CONFIG_DIR="+dir)
 }
 
 func TestQueryClaudeRoster_InheritsLoomsEnv(t *testing.T) {
@@ -216,4 +219,15 @@ func TestQueryClaudeRoster_InheritsLoomsEnv(t *testing.T) {
 	_, err := QueryClaudeRoster("claude", f)
 	require.NoError(t, err)
 	assert.Nil(t, f.env)
+}
+
+func TestQueryClaudeRosterEnv_RefusesAMissingAccountDir(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "gone")
+	f := &envRecordingExec{out: []byte(rosterJSON)}
+
+	_, err := QueryClaudeRosterEnv("claude", account.EnvFor(gone), f)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, account.ErrAccountDirMissing)
+	assert.Nil(t, f.env, "must not run claude against a dir the CLI would recreate fresh")
 }

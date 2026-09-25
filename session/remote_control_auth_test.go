@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/aidan-bailey/loom/account"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -93,12 +94,13 @@ func TestDetectClaudeRemoteControlAuth_EnvOverride(t *testing.T) {
 
 func TestDetectClaudeRemoteControlAuthEnv_CarriesTheIdentity(t *testing.T) {
 	clearOverrideEnv(t)
+	dir := t.TempDir()
 	f := &envRecordingExec{out: []byte(`{"loggedIn":true,"authMethod":"claude.ai","email":"you@example.com","subscriptionType":"max","configDirectory":"/acct/max-2"}`)}
 
-	got := DetectClaudeRemoteControlAuthEnv("claude", []string{"CLAUDE_CONFIG_DIR=/acct/max-2"}, f)
+	got := DetectClaudeRemoteControlAuthEnv("claude", account.EnvFor(dir), f)
 
 	assert.True(t, got.OK())
 	assert.Equal(t, "you@example.com", got.Identity.Email)
 	assert.Equal(t, "/acct/max-2", got.Identity.ConfigDir)
-	assert.Contains(t, f.env, "CLAUDE_CONFIG_DIR=/acct/max-2")
+	assert.Contains(t, f.env, "CLAUDE_CONFIG_DIR="+dir)
 }

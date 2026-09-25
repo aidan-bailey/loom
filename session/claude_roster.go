@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/aidan-bailey/loom/account"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 )
@@ -102,23 +101,20 @@ func QueryClaudeRoster(program string, runner internalexec.Executor) (map[string
 // account (env = its CLAUDE_CONFIG_DIR).
 //
 // Returns an empty map and no error for non-Claude programs — callers can
-// invoke it unconditionally. A missing subcommand, a hung CLI, or output
-// this build cannot parse is an error: the caller logs it and keeps using
-// pane-content detection.
+// invoke it unconditionally. A missing subcommand, a hung CLI, an
+// account.ErrAccountDirMissing config dir, or output this build cannot
+// parse is an error: the caller logs it and keeps using pane-content
+// detection.
 func QueryClaudeRosterEnv(program string, env []string, runner internalexec.Executor) (map[string]RosterEntry, error) {
 	if !IsClaudeProgram(program) {
-		return nil, nil
-	}
-	fields := strings.Fields(program)
-	if len(fields) == 0 {
 		return nil, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), claudeRosterTimeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, fields[0], "agents", "--json")
-	if env != nil {
-		c.Env = append(os.Environ(), env...)
+	c, err := account.Command(ctx, program, env, "agents", "--json")
+	if err != nil {
+		return nil, err
 	}
 	out, err := runner.Output(c)
 	if err != nil && len(out) == 0 {
