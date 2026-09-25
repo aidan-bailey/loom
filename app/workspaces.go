@@ -187,7 +187,7 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 	if m.lastWidth > 0 && m.lastHeight > 0 {
 		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
 		paneWidth := m.lastWidth - listWidth
-		contentHeight := m.lastHeight - m.tabBar.Height() - 2
+		contentHeight := m.lastHeight - m.topChromeHeight() - 2
 		list.SetSize(listWidth, contentHeight)
 		splitPane.SetSize(paneWidth, contentHeight)
 	}
@@ -479,7 +479,7 @@ func (m *home) loadSlot(idx int) {
 	if m.appState == nil && m.lastWidth > 0 && m.lastHeight > 0 {
 		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
 		paneWidth := m.lastWidth - listWidth
-		contentHeight := m.lastHeight - m.tabBar.Height() - 2
+		contentHeight := m.lastHeight - m.topChromeHeight() - 2
 		m.list.SetSize(listWidth, contentHeight)
 		m.splitPane.SetSize(paneWidth, contentHeight)
 	}

@@ -16,7 +16,7 @@ func (m *home) interactMouseClick(mouse tea.Mouse) {
 	m.splitPane.ClearSelections()
 	m.dragging = false
 	m.interactLeftDown = false
-	if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok && pane == m.splitPane.GetFocusedPane() {
+	if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.topChromeHeight()); ok && pane == m.splitPane.GetFocusedPane() {
 		m.dragPane = pane
 		m.interactAnchorRow, m.interactAnchorCol = row, col
 		m.interactLeftDown = true
@@ -29,7 +29,7 @@ func (m *home) interactMouseMotion(mouse tea.Mouse) {
 	if !m.interactLeftDown {
 		return
 	}
-	if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok && pane == m.dragPane {
+	if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.topChromeHeight()); ok && pane == m.dragPane {
 		if !m.dragging {
 			m.splitPane.BeginSelection(m.dragPane, m.interactAnchorRow, m.interactAnchorCol)
 			m.dragging = true

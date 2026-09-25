@@ -322,3 +322,14 @@ func accountOrDefault(name string) string {
 	}
 	return name
 }
+
+// topChromeHeight is the rows above the content: the account strip (when
+// shown) plus the workspace tab bar. Every content-height and mouse/cursor
+// offset goes through it, so both rows stay accounted for.
+func (m *home) topChromeHeight() int {
+	h := m.tabBar.Height()
+	if m.accountStrip != nil {
+		h += m.accountStrip.Height()
+	}
+	return h
+}

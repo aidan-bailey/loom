@@ -438,6 +438,9 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	m.lastWidth = msg.Width
 	m.lastHeight = msg.Height
 	m.tabBar.SetWidth(msg.Width)
+	if m.accountStrip != nil {
+		m.accountStrip.SetWidth(msg.Width)
+	}
 
 	// Workbench mode has no rail: zero the list width (mirroring the
 	// railHidden path) so the cached m.listWidth mouse anchor is correct.
@@ -448,8 +451,9 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	}
 	paneWidth := msg.Width - listWidth
 
-	// Content gets all height minus tab bar, status line (1), and error box (1).
-	contentHeight := msg.Height - m.tabBar.Height() - 2
+	// Content gets all height minus the top chrome (account strip + tab
+	// bar), status line (1), and error box (1).
+	contentHeight := msg.Height - m.topChromeHeight() - 2
 
 	m.errBox.SetSize(int(float32(msg.Width)*ui.PreviewWidthPercent), 1)
 
@@ -478,8 +482,8 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 	// ratio/hidden-terminal layout.
 	m.listWidth = listWidth
 	// Screen-Y inclusive end of the agent's bottom border:
-	//   tabBar + 1 (agent top border) + content + 1 (agent bottom border) - 1
-	m.agentBottomY = m.tabBar.Height() + 1 + m.splitPane.AgentContentHeight()
+	//   top chrome + 1 (agent top border) + content + 1 (agent bottom border) - 1
+	m.agentBottomY = m.topChromeHeight() + 1 + m.splitPane.AgentContentHeight()
 
 	if m.activeOverlay != nil {
 		if m.activeOverlayKind == overlayFileExplorer {
@@ -1286,7 +1290,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.listWidth > 0 && mouse.X < m.listWidth {
 			return m, nil // left list panel — not a content selection
 		}
-		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok {
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.topChromeHeight()); ok {
 			m.setPaneFocus(pane)
 			m.splitPane.BeginSelection(pane, row, col)
 			m.dragging = true
@@ -1309,7 +1313,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.dragging {
 			return m, nil
 		}
-		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.tabBar.Height()); ok && pane == m.dragPane {
+		if pane, row, col, ok := m.splitPane.HitTest(mouse.X-m.listWidth, mouse.Y-m.topChromeHeight()); ok && pane == m.dragPane {
 			m.splitPane.ExtendSelection(m.dragPane, row, col)
 		}
 		return m, nil
@@ -2444,6 +2448,13 @@ func (m *home) View() tea.View {
 	}
 
 	sections := []string{}
+	if m.accountStrip != nil {
+		if strip := m.accountStrip.String(); strip != "" {
+			// Padded to the full width: the sections are joined centered,
+			// which would otherwise float the shorter strip mid-row.
+			sections = append(sections, lipgloss.PlaceHorizontal(m.lastWidth, lipgloss.Left, strip))
+		}
+	}
 	if tabBarStr := m.tabBar.String(); tabBarStr != "" {
 		sections = append(sections, tabBarStr)
 	}
@@ -2574,8 +2585,8 @@ func (m *home) attachCursor(v *tea.View) {
 		return
 	}
 	// Same screen↔split mapping the mouse path uses:
-	// HitTest(mouse.X - m.listWidth, mouse.Y - m.tabBar.Height()).
-	c := tea.NewCursor(xOff+lx, m.tabBar.Height()+ly)
+	// HitTest(mouse.X - m.listWidth, mouse.Y - m.topChromeHeight()).
+	c := tea.NewCursor(xOff+lx, m.topChromeHeight()+ly)
 	c.Blink = cur.Blink
 	switch cur.Shape {
 	case vt.CursorShapeUnderline:
