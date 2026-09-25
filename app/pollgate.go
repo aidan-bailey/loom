@@ -22,6 +22,8 @@ const (
 	gateGH
 	// gateRatioSave dedupes the split-ratio flush tick (maybeArmRatioSave).
 	gateRatioSave
+	// gateUsage throttles the account usage probes (maybeUsageProbe).
+	gateUsage
 
 	numGateKinds
 )
@@ -37,6 +39,8 @@ func (k gateKind) String() string {
 		return "github"
 	case gateRatioSave:
 		return "ratio_save"
+	case gateUsage:
+		return "usage"
 	}
 	return "unknown"
 }
@@ -48,6 +52,7 @@ var gateIntervals = [numGateKinds]time.Duration{
 	gateRoster:   rosterInterval,
 	gateHookScan: hookScanInterval,
 	gateGH:       ghInterval,
+	gateUsage:    usageInterval,
 	// gateRatioSave stays 0: the flush paces itself with its own tick
 	// (ratioSaveDelay), so the gate only keeps one tick in flight.
 }
@@ -184,6 +189,8 @@ func (m *home) redispatch(kind gateKind) tea.Cmd {
 		return m.maybeRosterQuery(m.activeInstances())
 	case gateHookScan:
 		return m.maybeHookScan(m.activeInstances())
+	case gateUsage:
+		return m.maybeUsageProbe()
 	}
 	return nil
 }

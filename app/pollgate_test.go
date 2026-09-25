@@ -23,6 +23,7 @@ func TestGateIntervalsUseEachJobsInterval(t *testing.T) {
 	assert.Equal(t, rosterInterval, gateIntervals[gateRoster])
 	assert.Equal(t, hookScanInterval, gateIntervals[gateHookScan])
 	assert.Equal(t, ghInterval, gateIntervals[gateGH])
+	assert.Equal(t, usageInterval, gateIntervals[gateUsage])
 	assert.Zero(t, gateIntervals[gateRatioSave], "the ratio flush paces itself with its own tick")
 }
 
@@ -134,7 +135,7 @@ func TestDispatchGatedSkipsBuildWhenNotDue(t *testing.T) {
 
 func TestGatedDeliveryDisarmsFirst(t *testing.T) {
 	m := homeWithAppState(t)
-	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateRatioSave} {
+	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateRatioSave, gateUsage} {
 		m.gate(kind).inFlight = true
 		// An inner message no case handles, and a nil one, disarm all the
 		// same: disarming belongs to the wrapper, not the handler.
@@ -223,6 +224,15 @@ func TestProductionGatedCmdsYieldOneMessage(t *testing.T) {
 			return ghPollCmd(req, &ghFakeExec{})
 		}), gateGH)
 		assert.IsType(t, ghReadyMsg{}, msg)
+	})
+
+	t.Run("usage", func(t *testing.T) {
+		m := homeWithAppState(t)
+		m.program = "/nonexistent/loom-test/claude"
+		main := withAccounts(t, m, "max-2")
+		m.rcAuth.Identity.ConfigDir = main
+		msg := inner(t, m.maybeUsageProbe(), gateUsage)
+		assert.IsType(t, usageReadyMsg{}, msg)
 	})
 
 	t.Run("ratio_save", func(t *testing.T) {

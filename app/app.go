@@ -367,10 +367,10 @@ type home struct {
 	redetectPending map[string]bool
 
 	// gates throttle the background jobs riding the health tick (roster
-	// query, subagent scan, GitHub poll) and dedupe the split-ratio flush
-	// tick, one pollGate per gateKind (see pollgate.go; resolve with
-	// m.gate). The zero value is ready to use: intervals come from
-	// gateIntervals. Update-goroutine only.
+	// query, subagent scan, GitHub poll, account usage probe) and dedupe
+	// the split-ratio flush tick, one pollGate per gateKind (see
+	// pollgate.go; resolve with m.gate). The zero value is ready to use:
+	// intervals come from gateIntervals. Update-goroutine only.
 	gates [numGateKinds]pollGate
 
 	// ghAvailable caches gh's install/auth check, resolved by the first
@@ -629,6 +629,7 @@ func (m *home) Init() tea.Cmd {
 		m.spinner.Tick,
 		tickUpdateMetadataCmd,
 		m.accountsRefreshCmd(false),
+		m.maybeUsageProbe(),
 	}
 	// Event mode renders on paneDirtyMsg; the timer poll only survives for
 	// the snapshot/Windows path, which has no emulator to emit events.
@@ -839,6 +840,8 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case accountsRefreshedMsg:
 		return m, m.handleAccountsRefreshed(msg)
+	case usageReadyMsg:
+		return m, m.handleUsageReady(msg)
 	case ghRefreshMsg:
 		m.gate(gateGH).expedite()
 		return m, nil
@@ -990,6 +993,13 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// gh is known unavailable.
 		if poll := m.maybeGHQuery(); poll != nil {
 			cmds = append(cmds, poll)
+		}
+
+		// Account plan usage, on its own 2-minute cadence (see
+		// maybeUsageProbe). nil when not due, in flight, or no extra
+		// account is registered.
+		if usage := m.maybeUsageProbe(); usage != nil {
+			cmds = append(cmds, usage)
 		}
 
 		// Workbench follow scan rides the health tick: cheap stat-walk
