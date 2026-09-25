@@ -1815,7 +1815,7 @@ func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnE
 		m.keySent = false
 		return nil, false
 	}
-	if m.state == statePrompt || m.state == stateNew || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker || m.state == stateLaunchOptions || m.state == stateIssuePicker {
+	if m.state == statePrompt || m.state == stateNew || m.state == stateHelp || m.state == stateConfirm || m.state == stateWorkspace || m.state == stateQuickInteract || m.state == stateInlineAttach || m.state == stateFileExplorer || m.state == stateMergePicker || m.state == stateLaunchOptions || m.state == stateIssuePicker || m.state == stateSettings {
 		return nil, false
 	}
 	// If it maps to a built-in binding, highlight the corresponding menu
