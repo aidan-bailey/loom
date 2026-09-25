@@ -43,6 +43,41 @@ func TestFromInstanceData_NormalizesDefaultAccountName(t *testing.T) {
 	assert.Equal(t, "", restored.Account())
 }
 
+// TestFromInstanceData_CarriesTheAccountsConfigDirOncePublished pins that
+// a Paused record's rehydrated tmux session object carries the account's
+// CLAUDE_CONFIG_DIR — this is what a resume or a crash-recovery relaunch
+// starts from best-effort (bestEffortAccountDir), not a session built
+// with no account env at all.
+func TestFromInstanceData_CarriesTheAccountsConfigDirOncePublished(t *testing.T) {
+	dir := t.TempDir()
+	withAccountDirs(t, map[string]string{"max-2": dir})
+	data := InstanceData{Title: "acct-paused", Program: "claude", Status: Paused, Account: "max-2"}
+
+	inst, err := FromInstanceData(data, t.TempDir())
+
+	require.NoError(t, err)
+	require.NotNil(t, inst.TmuxSession())
+	assert.Contains(t, inst.TmuxSession().Env(), "CLAUDE_CONFIG_DIR="+dir)
+}
+
+// TestFromInstanceDataPaused_CarriesTheAccountsConfigDirOncePublished is
+// TestFromInstanceData_CarriesTheAccountsConfigDirOncePublished for the
+// fromInstanceDataPaused variant reconcile.go uses for restart paths
+// (ActionRestart/ActionRestartWsTerminal), which builds its own detached
+// TmuxSession when FromInstanceData did not (a non-Paused, non-Recoverable
+// record).
+func TestFromInstanceDataPaused_CarriesTheAccountsConfigDirOncePublished(t *testing.T) {
+	dir := t.TempDir()
+	withAccountDirs(t, map[string]string{"max-2": dir})
+	data := InstanceData{Title: "acct-restart", Program: "claude", Status: Running, Account: "max-2"}
+
+	inst, err := fromInstanceDataPaused(data, t.TempDir())
+
+	require.NoError(t, err)
+	require.NotNil(t, inst.TmuxSession())
+	assert.Contains(t, inst.TmuxSession().Env(), "CLAUDE_CONFIG_DIR="+dir)
+}
+
 // withAccountDirs publishes dirs for one test, with no registry load error.
 func withAccountDirs(t *testing.T, dirs map[string]string) {
 	t.Helper()

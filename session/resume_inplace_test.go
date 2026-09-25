@@ -430,6 +430,23 @@ func TestCrashRestart_RelaunchesIntactWorktree(t *testing.T) {
 	assert.Equal(t, Running, inst.GetStatus())
 }
 
+// TestCrashRestart_FailsClosedOnAMissingAccount: CrashRestart always
+// starts a new Claude process (recoveryLaunch), so an account that no
+// longer resolves must refuse the launch — an intact worktree is no
+// reason to relaunch on the wrong (or a nonexistent) account.
+func TestCrashRestart_FailsClosedOnAMissingAccount(t *testing.T) {
+	withAccountDirs(t, nil)
+	inst, srv := newCrashRecoveredInstance(t)
+	inst.SetAccount("gone")
+
+	err := inst.CrashRestart()
+
+	var missing *MissingAccountError
+	require.True(t, errors.As(err, &missing))
+	assert.Empty(t, srv.launchArgs(), "no agent may be launched on an unresolvable account")
+	assert.Equal(t, Running, inst.GetStatus(), "a refused crash restart must not touch the instance's status")
+}
+
 // resumeLikeApp resumes the way the app does: runResumeSelected moves the
 // instance to Loading before Resume runs, and transitionFailedMsg reverts
 // it to Paused when Resume fails. A Notice alone is a success (the app
