@@ -221,3 +221,22 @@ func TestAccountRequest_LoginProceedsOnAnIntactAccount(t *testing.T) {
 	assert.NotNil(t, cmd)
 	assert.NotContains(t, m.errBox.String(), "max-2")
 }
+
+// TestAccountRequest_AddRefusesAnUnsafeMainDir: Create runs
+// account.ValidateMainDir first, so an Add against a main dir holding the
+// accounts tree says why and leaves nothing behind.
+func TestAccountRequest_AddRefusesAnUnsafeMainDir(t *testing.T) {
+	m := newTestHome(t)
+	withAccounts(t, m)
+	m.rcAuth.Identity = account.Identity{LoggedIn: true, ConfigDir: filepath.Dir(m.accounts.AccountsDir())}
+
+	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestAdd, Name: "max-3"})
+
+	toast := m.errBox.String()
+	assert.Contains(t, toast, "main config dir")
+	assert.Contains(t, toast, "refusing to link")
+	_, ok := m.accounts.Get("max-3")
+	assert.False(t, ok, "not registered")
+	_, err := os.Stat(filepath.Join(m.accounts.AccountsDir(), "max-3"))
+	assert.True(t, os.IsNotExist(err), "no account dir made")
+}
