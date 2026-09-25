@@ -123,6 +123,8 @@ func TestAccountDir_MissingDirFailsClosed(t *testing.T) {
 	assert.ErrorIs(t, err, account.ErrAccountDirMissing)
 	var missingAcct *MissingAccountError
 	assert.False(t, errors.As(err, &missingAcct), "a dir-missing error must not be mistaken for an unregistered account")
+	assert.Contains(t, err.Error(), "loom account remove max-2", "the recovery differs from an unregistered account: clear the stale registration first")
+	assert.Contains(t, err.Error(), "R on an existing session")
 }
 
 // TestAccountDir_RegistryLoadFailureIsDistinctFromUnregistered pins that a

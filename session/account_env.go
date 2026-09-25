@@ -55,14 +55,17 @@ func (e *MissingAccountError) Error() string {
 // say). Distinct from MissingAccountError: the account is still
 // registered, but relaunching Claude against a missing CLAUDE_CONFIG_DIR
 // would have the CLI silently create a fresh, logged-out identity there
-// instead of loom reporting the account's state gone.
+// instead of loom reporting the account's state gone. The recovery is
+// also distinct: the stale registration itself needs clearing (`loom
+// account remove`) before the name can be reused, not just a different
+// account picked for this launch.
 type AccountDirMissingError struct {
 	Name string
 	Dir  string
 }
 
 func (e *AccountDirMissingError) Error() string {
-	return fmt.Sprintf("account %q's config directory is missing (%s) — choose another account in Session Launch Options", e.Name, e.Dir)
+	return fmt.Sprintf("account %q's config dir %s is missing — run `loom account remove %s` and add it again, or pick another account (R on an existing session)", e.Name, e.Dir, e.Name)
 }
 
 // Unwrap lets callers use errors.Is(err, account.ErrAccountDirMissing)
