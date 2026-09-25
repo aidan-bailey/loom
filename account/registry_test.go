@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,10 +89,10 @@ func TestRegistry_SetDefaultRejectsUnknown(t *testing.T) {
 }
 
 func TestValidName(t *testing.T) {
-	for _, ok := range []string{"max-2", "work", "a1", "0"} {
+	for _, ok := range []string{"max-2", "work", "a1", "0", strings.Repeat("a", 32)} {
 		assert.NoError(t, ValidName(ok), ok)
 	}
-	for _, bad := range []string{"", "default", "Max", "-x", "a/b", "a b", "a.b", ".."} {
+	for _, bad := range []string{"", "default", "Max", "-x", "a/b", "a b", "a.b", "..", strings.Repeat("a", 33)} {
 		assert.Error(t, ValidName(bad), bad)
 	}
 }
@@ -99,5 +100,62 @@ func TestValidName(t *testing.T) {
 func TestUnavailableRefusesWrites(t *testing.T) {
 	r := Unavailable(errors.New("no home"))
 	require.Error(t, r.LoadErr())
+	assert.ErrorIs(t, r.SetDefault(DefaultName), ErrRegistryLoadFailed)
+}
+
+func TestUnavailable_NilErrIsStillLatched(t *testing.T) {
+	r := Unavailable(nil)
+	require.Error(t, r.LoadErr())
+	assert.ErrorIs(t, r.SetDefault(DefaultName), ErrRegistryLoadFailed)
+}
+
+func TestLoadRegistry_RejectsInvalidStoredEntries(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+	}{
+		{"invalid name", `{"accounts":[{"name":"Bad Name","dir":"/a"}]}`},
+		{"reserved name", `{"accounts":[{"name":"default","dir":"/a"}]}`},
+		{"duplicate name", `{"accounts":[{"name":"max-2","dir":"/a"},{"name":"max-2","dir":"/b"}]}`},
+		{"relative dir", `{"accounts":[{"name":"max-2","dir":"a/b"}]}`},
+		{"empty dir", `{"accounts":[{"name":"max-2","dir":""}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "accounts.json"), []byte(tc.json), 0o644))
+
+			r := LoadRegistry(dir)
+
+			require.Error(t, r.LoadErr())
+			assert.False(t, r.HasExtra())
+			assert.ErrorIs(t, r.SetDefault(DefaultName), ErrRegistryLoadFailed)
+		})
+	}
+}
+
+func TestRegistry_ReloadPicksUpAConcurrentWrite(t *testing.T) {
+	dir := t.TempDir()
+	a, b := LoadRegistry(dir), LoadRegistry(dir)
+	require.NoError(t, b.update(func(f *Registry) error {
+		f.Accounts = append(f.Accounts, Account{Name: "max-2", Dir: "/a/max-2"})
+		return nil
+	}))
+	assert.Equal(t, []string{DefaultName}, a.Names(), "a hasn't reloaded yet")
+
+	require.NoError(t, a.Reload())
+
+	assert.Equal(t, []string{DefaultName, "max-2"}, a.Names())
+}
+
+func TestRegistry_ReloadLatchesOnACorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	r := LoadRegistry(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "accounts.json"), []byte("not json"), 0o644))
+
+	err := r.Reload()
+
+	require.Error(t, err)
+	assert.Equal(t, err, r.LoadErr())
 	assert.ErrorIs(t, r.SetDefault(DefaultName), ErrRegistryLoadFailed)
 }

@@ -71,18 +71,69 @@ func LoadRegistry(globalDir string) *Registry {
 	if err := json.Unmarshal(data, r); err != nil {
 		r.DefaultAccount, r.Accounts = "", nil
 		r.loadErr = fmt.Errorf("parse %s: %w", r.path, err)
+		return r
+	}
+	if err := validateAccounts(r.Accounts); err != nil {
+		r.DefaultAccount, r.Accounts = "", nil
+		r.loadErr = fmt.Errorf("validate %s: %w", r.path, err)
 	}
 	return r
 }
 
+// validateAccounts rejects a loaded accounts list this package would never
+// have written itself: an invalid or reserved name, a name registered
+// twice, or a dir that isn't an absolute path. LoadRegistry treats a
+// registry failing this the same as one that failed to parse — latched,
+// not silently pruned, so a corrupt or hand-edited file is never
+// overwritten with a partial view of it.
+func validateAccounts(accounts []Account) error {
+	seen := make(map[string]bool, len(accounts))
+	for _, a := range accounts {
+		if err := ValidName(a.Name); err != nil {
+			return fmt.Errorf("account %q: %w", a.Name, err)
+		}
+		if seen[a.Name] {
+			return fmt.Errorf("account %q is registered twice", a.Name)
+		}
+		seen[a.Name] = true
+		if a.Dir == "" || !filepath.IsAbs(a.Dir) {
+			return fmt.Errorf("account %q: dir %q must be an absolute path", a.Name, a.Dir)
+		}
+	}
+	return nil
+}
+
 // Unavailable is a registry that could not even be located (no global
-// config dir). It holds no accounts and refuses every write.
+// config dir). It holds no accounts and refuses every write. err is never
+// nil in the returned registry's LoadErr, even when the caller passed nil.
 func Unavailable(err error) *Registry {
+	if err == nil {
+		err = errors.New("account registry unavailable")
+	}
 	return &Registry{loadErr: err}
 }
 
 // LoadErr reports why the registry failed to load, or nil.
 func (r *Registry) LoadErr() error { return r.loadErr }
+
+// Reload re-reads the registry's file into the receiver, replacing its
+// accounts and default with whatever is on disk now. A long-lived holder
+// (the TUI, which loads its registry once at workspace activation) should
+// call this before acting on stale data, so it sees writes a concurrent
+// `loom account` run or another loom process made since. On success it
+// clears LoadErr; on failure it latches LoadErr exactly as LoadRegistry
+// would and returns it, so a Reload that raced a corrupt write leaves the
+// registry refusing further writes rather than silently keeping the old
+// in-memory state.
+func (r *Registry) Reload() error {
+	if r.path == "" {
+		r.loadErr = errors.New("account registry has no file location to reload")
+		return r.loadErr
+	}
+	fresh := LoadRegistry(filepath.Dir(r.path))
+	r.DefaultAccount, r.Accounts, r.loadErr = fresh.DefaultAccount, fresh.Accounts, fresh.loadErr
+	return r.loadErr
+}
 
 // AccountsDir is where Create makes account dirs: <globalDir>/accounts.
 func (r *Registry) AccountsDir() string {
@@ -163,12 +214,20 @@ func (r *Registry) SetDefault(name string) error {
 
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
+// maxNameLen bounds an account name: it becomes a directory name and
+// appears in badges and the launch options row, where an unbounded name
+// would overflow the layout.
+const maxNameLen = 32
+
 // ValidName checks an account name: lowercase letters, digits and dashes,
-// not starting with a dash, and not DefaultName. The name becomes a
-// directory name and appears in badges.
+// not starting with a dash, at most maxNameLen characters, and not
+// DefaultName. The name becomes a directory name and appears in badges.
 func ValidName(name string) error {
 	if name == DefaultName {
 		return fmt.Errorf("%q is reserved for the account Claude uses without loom", DefaultName)
+	}
+	if len(name) > maxNameLen {
+		return fmt.Errorf("invalid account name %q: longer than %d characters", name, maxNameLen)
 	}
 	if !validName.MatchString(name) {
 		return fmt.Errorf("invalid account name %q: use lowercase letters, digits and dashes", name)

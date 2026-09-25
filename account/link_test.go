@@ -128,6 +128,40 @@ func TestCreate_FailureLeavesNothingBehind(t *testing.T) {
 	assert.False(t, LoadRegistry(global).HasExtra())
 }
 
+func TestCreate_UpdateFailureCleansUpTheDir(t *testing.T) {
+	global, main := t.TempDir(), mainDirWith(t)
+	r := LoadRegistry(global)
+	// Corrupt the on-disk registry after r's own load, so Sync succeeds
+	// but the update step (which reloads from disk before writing) fails.
+	require.NoError(t, os.MkdirAll(global, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(global, "accounts.json"), []byte("not json"), 0o644))
+
+	_, _, err := r.Create("max-2", main)
+
+	require.Error(t, err)
+	assert.True(t, notExist(t, filepath.Join(global, "accounts", "max-2")), "the dir Sync populated must not survive a failed registration")
+}
+
+func TestCreate_RejectsARelativeMainDir(t *testing.T) {
+	r := LoadRegistry(t.TempDir())
+	_, _, err := r.Create("max-2", "relative/path")
+	assert.Error(t, err)
+}
+
+func TestCreate_RejectsAMainDirInsideAccountsDir(t *testing.T) {
+	global := t.TempDir()
+	r := LoadRegistry(global)
+	require.NoError(t, os.MkdirAll(r.AccountsDir(), 0o755))
+
+	_, _, err := r.Create("max-2", r.AccountsDir())
+	assert.Error(t, err)
+
+	nested := filepath.Join(r.AccountsDir(), "other-account")
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	_, _, err = r.Create("max-2", nested)
+	assert.Error(t, err)
+}
+
 func TestRemove_DeletesLinksButNeverTheirTargets(t *testing.T) {
 	global, main := t.TempDir(), mainDirWith(t)
 	r := LoadRegistry(global)
@@ -135,7 +169,7 @@ func TestRemove_DeletesLinksButNeverTheirTargets(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(acct.Dir, ".credentials.json"), []byte("secret"), 0o600))
 
-	deleted, err := r.Remove("max-2")
+	deleted, err := r.Remove("max-2", false)
 
 	require.NoError(t, err)
 	assert.True(t, deleted)
@@ -153,9 +187,9 @@ func TestRemove_ClearsTheDefaultAndRefusesDefaultAccount(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, r.SetDefault("max-2"))
 
-	_, err = r.Remove(DefaultName)
+	_, err = r.Remove(DefaultName, false)
 	assert.Error(t, err)
-	_, err = r.Remove("max-2")
+	_, err = r.Remove("max-2", false)
 	require.NoError(t, err)
 	assert.Equal(t, DefaultName, LoadRegistry(global).Default())
 }
@@ -168,10 +202,171 @@ func TestRemove_OutsideAccountsDirOnlyUnregisters(t *testing.T) {
 		return nil
 	}))
 
-	deleted, err := r.Remove("byo")
+	deleted, err := r.Remove("byo", false)
 
 	require.NoError(t, err)
 	assert.False(t, deleted)
 	_, err = os.Stat(outside)
 	assert.NoError(t, err, "loom only deletes dirs it created")
+}
+
+// TestRemove_NeverDeletesOutsideItsOwnAccountDir reproduces three ways a
+// hand-edited or corrupt registry's stored Dir could point Remove at
+// something other than the account's own <AccountsDir>/<name>: a parent
+// escape, a bare-prefix collision from a missing trailing separator, and a
+// path reaching through the account's own symlinks into the main dir's
+// real content. Remove must recompute the trusted path from name and
+// AccountsDir(), never delete based on the stored Dir, and refuse
+// (unregister only) whenever they disagree.
+func TestRemove_NeverDeletesOutsideItsOwnAccountDir(t *testing.T) {
+	global := t.TempDir()
+	accountsDir := filepath.Join(global, "accounts")
+	require.NoError(t, os.MkdirAll(accountsDir, 0o755))
+	sentinel := filepath.Join(global, "sentinel.txt")
+	require.NoError(t, os.WriteFile(sentinel, []byte("keep"), 0o600))
+
+	cases := map[string]string{
+		// Raw string concatenation, not filepath.Join: a stored Dir field
+		// is whatever string was in the JSON, with no Go-side cleaning. A
+		// naive prefix check on the uncleaned string ("<accountsDir>/..")
+		// still matches the "<accountsDir>/" prefix even though it
+		// resolves to accountsDir's own parent.
+		"parent-escape":  accountsDir + string(filepath.Separator) + "..",
+		"trailing-slash": accountsDir + string(filepath.Separator),
+		"through-a-link": filepath.Join(accountsDir, "max-2", "projects", "myproj"),
+	}
+	for label, dir := range cases {
+		t.Run(label, func(t *testing.T) {
+			r := &Registry{path: filepath.Join(global, "accounts.json"), Accounts: []Account{{Name: "max-2", Dir: dir}}}
+
+			deleted, err := r.Remove("max-2", true)
+
+			require.NoError(t, err)
+			assert.False(t, deleted, "must not claim to have deleted an untrusted dir")
+			_, statErr := os.Stat(sentinel)
+			assert.NoError(t, statErr, "must never touch anything outside the account's own dir")
+			_, statErr = os.Stat(accountsDir)
+			assert.NoError(t, statErr, "the accounts dir itself must survive")
+		})
+	}
+}
+
+// TestRemove_GuardsAgainstAnInvalidNameEvenIfConstructedDirectly checks the
+// ValidName(name) half of the ownership guard directly: LoadRegistry now
+// refuses to load an entry named "..", but Remove must not rely on that —
+// a Registry can still be built in-process without going through the
+// loader.
+func TestRemove_GuardsAgainstAnInvalidNameEvenIfConstructedDirectly(t *testing.T) {
+	global := t.TempDir()
+	r := &Registry{path: filepath.Join(global, "accounts.json"), Accounts: []Account{{Name: "..", Dir: filepath.Join(global, "accounts", "..")}}}
+
+	deleted, err := r.Remove("..", true)
+
+	require.NoError(t, err)
+	assert.False(t, deleted)
+}
+
+func TestRemove_RefusesWhenAccountHoldsUnsharedFiles(t *testing.T) {
+	global, main := t.TempDir(), mainDirWith(t)
+	r := LoadRegistry(global)
+	acct, _, err := r.Create("max-2", main)
+	require.NoError(t, err)
+	// Replace the settings.json link with a real file: diverged content
+	// that exists nowhere but this account.
+	require.NoError(t, os.Remove(filepath.Join(acct.Dir, "settings.json")))
+	require.NoError(t, os.WriteFile(filepath.Join(acct.Dir, "settings.json"), []byte("mine"), 0o600))
+
+	deleted, err := r.Remove("max-2", false)
+
+	var uerr *UnsharedError
+	require.ErrorAs(t, err, &uerr)
+	assert.Equal(t, "max-2", uerr.Name)
+	assert.Contains(t, uerr.Entries, "settings.json")
+	assert.Contains(t, err.Error(), "settings.json")
+	assert.Contains(t, err.Error(), "--force")
+	assert.False(t, deleted)
+	_, statErr := os.Stat(acct.Dir)
+	assert.NoError(t, statErr, "a refused removal must leave the account intact")
+	_, ok := LoadRegistry(global).Get("max-2")
+	assert.True(t, ok, "a refused removal must leave it registered")
+}
+
+func TestRemove_ForceDeletesDespiteUnsharedFiles(t *testing.T) {
+	global, main := t.TempDir(), mainDirWith(t)
+	r := LoadRegistry(global)
+	acct, _, err := r.Create("max-2", main)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(acct.Dir, "settings.json")))
+	require.NoError(t, os.WriteFile(filepath.Join(acct.Dir, "settings.json"), []byte("mine"), 0o600))
+
+	deleted, err := r.Remove("max-2", true)
+
+	require.NoError(t, err)
+	assert.True(t, deleted)
+	assert.True(t, notExist(t, acct.Dir))
+	assert.False(t, LoadRegistry(global).HasExtra())
+}
+
+func TestUnshared_EmptyRightAfterCreate(t *testing.T) {
+	main, acct := mainDirWith(t), t.TempDir()
+	_, err := Sync(acct, main)
+	require.NoError(t, err)
+
+	list, err := Unshared(acct)
+
+	require.NoError(t, err)
+	assert.Empty(t, list)
+}
+
+func TestUnshared_ListsDivergedAndAccountOnlyRealEntries(t *testing.T) {
+	main, acct := mainDirWith(t), t.TempDir()
+	_, err := Sync(acct, main)
+	require.NoError(t, err)
+	// A diverged file: real content replacing the link.
+	require.NoError(t, os.Remove(filepath.Join(acct, "settings.json")))
+	require.NoError(t, os.WriteFile(filepath.Join(acct, "settings.json"), []byte("mine"), 0o600))
+	// A dir Claude created in the account before main ever had one of that
+	// name, so Sync never linked it.
+	require.NoError(t, os.Mkdir(filepath.Join(acct, "agents"), 0o755))
+	// Per-account state (deny-listed) must never be reported as unshared.
+	require.NoError(t, os.WriteFile(filepath.Join(acct, ".credentials.json"), []byte("secret"), 0o600))
+
+	list, err := Unshared(acct)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"agents", "settings.json"}, list)
+}
+
+func TestUnshared_MissingDirIsEmpty(t *testing.T) {
+	list, err := Unshared(filepath.Join(t.TempDir(), "gone"))
+	require.NoError(t, err)
+	assert.Empty(t, list)
+}
+
+func TestSync_ExcludesRuntimeLogAndJobState(t *testing.T) {
+	main, acct := t.TempDir(), t.TempDir()
+	for _, f := range []string{"daemon.log", "stats-cache.json", ".last-cleanup"} {
+		require.NoError(t, os.WriteFile(filepath.Join(main, f), []byte("x"), 0o600))
+	}
+	require.NoError(t, os.Mkdir(filepath.Join(main, "jobs"), 0o755))
+
+	rep, err := Sync(acct, main)
+
+	require.NoError(t, err)
+	assert.Empty(t, rep.Linked)
+	for _, name := range []string{"daemon.log", "stats-cache.json", ".last-cleanup", "jobs"} {
+		assert.True(t, notExist(t, filepath.Join(acct, name)), "%s must stay per account", name)
+	}
+}
+
+func TestSync_ExcludesCredentialsAndClaudeJsonVariants(t *testing.T) {
+	main, acct := t.TempDir(), t.TempDir()
+	for _, f := range []string{".credentials.json", ".credentials.json.bak", ".claude.json", ".claude.json.backup"} {
+		require.NoError(t, os.WriteFile(filepath.Join(main, f), []byte("x"), 0o600))
+	}
+
+	rep, err := Sync(acct, main)
+
+	require.NoError(t, err)
+	assert.Empty(t, rep.Linked)
 }
