@@ -24,6 +24,9 @@ const (
 	gateRatioSave
 	// gateUsage throttles the account usage probes (maybeUsageProbe).
 	gateUsage
+	// gateAccountsRefresh keeps one account auth refresh in flight
+	// (maybeAccountsRefresh).
+	gateAccountsRefresh
 
 	numGateKinds
 )
@@ -41,6 +44,8 @@ func (k gateKind) String() string {
 		return "ratio_save"
 	case gateUsage:
 		return "usage"
+	case gateAccountsRefresh:
+		return "accounts_refresh"
 	}
 	return "unknown"
 }
@@ -55,6 +60,8 @@ var gateIntervals = [numGateKinds]time.Duration{
 	gateUsage:    usageInterval,
 	// gateRatioSave stays 0: the flush paces itself with its own tick
 	// (ratioSaveDelay), so the gate only keeps one tick in flight.
+	// gateAccountsRefresh stays 0 too: refreshes run on events (an account
+	// appeared, a login, a probe losing access), never on a cadence.
 }
 
 // pollGate throttles one background job: at most one dispatch in flight,
@@ -191,6 +198,8 @@ func (m *home) redispatch(kind gateKind) tea.Cmd {
 		return m.maybeHookScan(m.activeInstances())
 	case gateUsage:
 		return m.maybeUsageProbe()
+	case gateAccountsRefresh:
+		return m.maybeAccountsRefresh()
 	}
 	return nil
 }

@@ -91,9 +91,19 @@ func (m *home) requestUsageProbe() tea.Cmd {
 // handleUsageReady stores a probe round. A failed probe keeps the account's
 // last good sample and records the error, which the views show as a dimmed,
 // aged value; usage never drives a status, so stale beats blank here.
+//
+// A probe that finds no plan access where there was some (lostAccess)
+// rereads the account's auth: an expired login probes as not available,
+// the same as API-key auth, and only `claude auth status` can tell the
+// strip to say "logged out" rather than "n/a".
 func (m *home) handleUsageReady(msg usageReadyMsg) tea.Cmd {
 	m.ensureAccountMaps()
+	reread, rereadDefault := false, false
 	for name, u := range msg.results {
+		if m.lostAccess(name, u) {
+			reread = true
+			rereadDefault = rereadDefault || name == account.DefaultName
+		}
 		m.usage[name] = accountUsage{last: u}
 	}
 	for name, err := range msg.errs {
@@ -102,5 +112,24 @@ func (m *home) handleUsageReady(msg usageReadyMsg) tea.Cmd {
 		m.usage[name] = cur
 		log.For("account").Debug("usage.probe_failed", "account", name, "err", err.Error())
 	}
-	return m.refreshAccountViews()
+	cmds := []tea.Cmd{m.refreshAccountViews()}
+	if reread {
+		cmds = append(cmds, m.requestAccountsRefresh(rereadDefault))
+	}
+	return tea.Batch(cmds...)
+}
+
+// lostAccess reports that u, name's new probe, has no plan access where
+// the account had some: its previous sample was available, or this is its
+// first sample and its auth says it is logged in. An account that stays
+// without access (API-key auth) triggers nothing after the first time.
+func (m *home) lostAccess(name string, u account.Usage) bool {
+	if u.Available {
+		return false
+	}
+	prev := m.usage[name].last
+	if prev.At.IsZero() {
+		return m.rcAuthFor(name).Identity.LoggedIn
+	}
+	return prev.Available
 }

@@ -188,6 +188,14 @@ func (m *home) accountsChanged(prevErr error) tea.Cmd {
 	} else {
 		log.For("account").Info("registry.changed", "accounts", strings.Join(m.accounts.Names(), ","), "default", m.accounts.Default())
 	}
+	// An account another terminal added has no auth read yet: Unknown means
+	// no remote control, no identity and no "logged out" until it is.
+	for _, a := range m.accounts.Accounts {
+		if _, ok := m.accountAuth[a.Name]; !ok {
+			cmds = append(cmds, m.requestAccountsRefresh(false))
+			break
+		}
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -329,6 +337,33 @@ func (m *home) accountsRefreshCmd(withDefault bool) tea.Cmd {
 		}
 		return msg
 	}
+}
+
+// requestAccountsRefresh asks for an accounts refresh (accountsRefreshCmd):
+// now when none is in flight, else once more when the running one lands.
+// withDefault also rereads the default account's auth.
+func (m *home) requestAccountsRefresh(withDefault bool) tea.Cmd {
+	if withDefault {
+		m.refreshDefaultAuth = true
+	}
+	m.gate(gateAccountsRefresh).request()
+	return m.maybeAccountsRefresh()
+}
+
+// maybeAccountsRefresh dispatches an accounts refresh unless one is in
+// flight. It rereads the default account too when asked to, or when its
+// identity is unknown while extra accounts exist: startup skips reading it
+// when remote control is off and no extra account was registered yet, yet
+// the accounts link to the config dir it names and the views show it.
+func (m *home) maybeAccountsRefresh() tea.Cmd {
+	return m.dispatchGated(gateAccountsRefresh, time.Now(), func() tea.Cmd {
+		withDefault := m.refreshDefaultAuth || (m.hasExtraAccounts() && m.rcAuth.Identity.ConfigDir == "")
+		cmd := m.accountsRefreshCmd(withDefault)
+		if cmd != nil {
+			m.refreshDefaultAuth = false
+		}
+		return cmd
+	})
 }
 
 // handleAccountsRefreshed stores a refresh's results and redraws the views.

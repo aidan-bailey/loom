@@ -25,6 +25,7 @@ func TestGateIntervalsUseEachJobsInterval(t *testing.T) {
 	assert.Equal(t, ghInterval, gateIntervals[gateGH])
 	assert.Equal(t, usageInterval, gateIntervals[gateUsage])
 	assert.Zero(t, gateIntervals[gateRatioSave], "the ratio flush paces itself with its own tick")
+	assert.Zero(t, gateIntervals[gateAccountsRefresh], "account refreshes run on events, not a cadence")
 }
 
 func TestPollGateDueRespectsIntervalAndInFlight(t *testing.T) {
@@ -135,7 +136,7 @@ func TestDispatchGatedSkipsBuildWhenNotDue(t *testing.T) {
 
 func TestGatedDeliveryDisarmsFirst(t *testing.T) {
 	m := homeWithAppState(t)
-	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateRatioSave, gateUsage} {
+	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateRatioSave, gateUsage, gateAccountsRefresh} {
 		m.gate(kind).inFlight = true
 		// An inner message no case handles, and a nil one, disarm all the
 		// same: disarming belongs to the wrapper, not the handler.
@@ -233,6 +234,15 @@ func TestProductionGatedCmdsYieldOneMessage(t *testing.T) {
 		m.rcAuth.Identity.ConfigDir = main
 		msg := inner(t, m.maybeUsageProbe(), gateUsage)
 		assert.IsType(t, usageReadyMsg{}, msg)
+	})
+
+	t.Run("accounts_refresh", func(t *testing.T) {
+		t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // account.MainDir's fallback
+		m := homeWithAppState(t)
+		m.program = "/nonexistent/loom-test/claude"
+		withAccounts(t, m, "max-2")
+		msg := inner(t, m.requestAccountsRefresh(true), gateAccountsRefresh)
+		assert.IsType(t, accountsRefreshedMsg{}, msg)
 	})
 
 	t.Run("ratio_save", func(t *testing.T) {

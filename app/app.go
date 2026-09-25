@@ -269,6 +269,10 @@ type home struct {
 	// acts only when the state differs (see maybeReloadAccounts).
 	accountsStamp accountsFileStamp
 	accountsSeen  string
+	// refreshDefaultAuth asks the next accounts refresh to reread the
+	// default account's auth too; kept until one dispatches, so a request
+	// made while another refresh is in flight is not lost.
+	refreshDefaultAuth bool
 	// global spinner instance. we plumb this down to where it's needed
 	spinner spinner.Model
 	// activeOverlay is the currently displayed modal (nil when no overlay
@@ -638,7 +642,7 @@ func (m *home) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.spinner.Tick,
 		tickUpdateMetadataCmd,
-		m.accountsRefreshCmd(false),
+		m.maybeAccountsRefresh(),
 		m.maybeUsageProbe(),
 	}
 	// Event mode renders on paneDirtyMsg; the timer poll only survives for
@@ -860,7 +864,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			cmds = append(cmds, m.handleError(fmt.Errorf("claude auth login for %s: %w", msg.name, msg.err)))
 		}
-		cmds = append(cmds, tea.RequestWindowSize, m.accountsRefreshCmd(msg.name == account.DefaultName), m.requestUsageProbe())
+		cmds = append(cmds, tea.RequestWindowSize, m.requestAccountsRefresh(msg.name == account.DefaultName), m.requestUsageProbe())
 		return m, tea.Batch(cmds...)
 	case ghRefreshMsg:
 		m.gate(gateGH).expedite()
