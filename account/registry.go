@@ -105,7 +105,19 @@ func validateAccounts(accounts []Account, accountsDir string) error {
 		if a.Dir == "" || !filepath.IsAbs(a.Dir) {
 			return fmt.Errorf("account %q: dir %q must be an absolute path", a.Name, a.Dir)
 		}
-		if want := filepath.Join(accountsDir, a.Name); a.Dir != want {
+		// Resolved, not a byte comparison: a.Dir was written under
+		// whatever spelling of the global dir was in effect on some past
+		// run, and accountsDir here reflects only this run's (a
+		// respelled LOOM_GLOBAL_DIR, or $HOME going through a symlink
+		// that isn't always resolved the same way before reaching here).
+		// Two spellings of the same real directory must not latch the
+		// registry. resolvedOrClean (link.go) still catches a genuine
+		// escape: a stored "<accountsDir>/lnk/../name" resolves through
+		// the kernel to wherever the "lnk" symlink actually points, a
+		// real location distinct from accountsDir's own resolved form,
+		// not merely a different spelling of it.
+		want := filepath.Join(accountsDir, a.Name)
+		if resolvedOrClean(a.Dir) != resolvedOrClean(want) {
 			return fmt.Errorf("account %q: dir %q is not %q", a.Name, a.Dir, want)
 		}
 	}

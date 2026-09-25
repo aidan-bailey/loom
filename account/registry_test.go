@@ -2,6 +2,7 @@ package account
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,6 +154,63 @@ func TestLoadRegistry_RejectsInvalidStoredEntries(t *testing.T) {
 			assert.ErrorIs(t, r.SetDefault(DefaultName), ErrRegistryLoadFailed)
 		})
 	}
+}
+
+// TestLoadRegistry_ToleratesADifferentlySpelledGlobalDirAcrossRuns: an
+// account's stored Dir was written under one spelling of the global dir
+// (here, reached through a symlink); a later LoadRegistry call given a
+// differently-spelled but equivalent global dir (the symlink's resolved
+// target) must not latch the registry just because the two spellings
+// differ as strings — an exact byte comparison would refuse every launch
+// after a respelled LOOM_GLOBAL_DIR or a symlinked $HOME, until someone
+// hand-edited accounts.json back into agreement.
+func TestLoadRegistry_ToleratesADifferentlySpelledGlobalDirAcrossRuns(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.MkdirAll(real, 0o755))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(real, link))
+
+	// Written under the symlinked spelling.
+	r := LoadRegistry(link)
+	main := mainDirWith(t)
+	acct, _, err := r.Create("max-2", main)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(link, "accounts", "max-2"), acct.Dir, "stored exactly as written")
+
+	// Loaded again under the resolved spelling.
+	again := LoadRegistry(real)
+
+	require.NoError(t, again.LoadErr())
+	got, ok := again.Get("max-2")
+	require.True(t, ok)
+	assert.Equal(t, acct.Dir, got.Dir, "the stored field itself is untouched, only accepted")
+}
+
+// TestLoadRegistry_RejectsALnkDotDotDisguisedDir keeps the Critical fix
+// (OwnedDir returning the canonical path, never the stored one — see
+// link.go) backed up at load time too: a stored dir like
+// "<AccountsDir>/lnk/../name", where "lnk" is a real symlink to somewhere
+// else, must still latch the registry even now that dir comparison
+// tolerates symlinked *ancestors* of an equivalent spelling — this one
+// resolves to a genuinely different, real location, not an equivalent one.
+func TestLoadRegistry_RejectsALnkDotDotDisguisedDir(t *testing.T) {
+	dir := t.TempDir()
+	accountsDir := filepath.Join(dir, "accounts")
+	require.NoError(t, os.MkdirAll(accountsDir, 0o755))
+	victim := t.TempDir()
+	sub := filepath.Join(victim, "sub")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(victim, "max-2"), 0o755))
+	require.NoError(t, os.Symlink(sub, filepath.Join(accountsDir, "lnk")))
+	escaped := filepath.Join(accountsDir, "lnk") + string(filepath.Separator) + ".." + string(filepath.Separator) + "max-2"
+	data := fmt.Sprintf(`{"accounts":[{"name":"max-2","dir":%q}]}`, escaped)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "accounts.json"), []byte(data), 0o644))
+
+	r := LoadRegistry(dir)
+
+	require.Error(t, r.LoadErr())
+	assert.False(t, r.HasExtra())
 }
 
 func TestRegistry_ReloadPicksUpAConcurrentWrite(t *testing.T) {

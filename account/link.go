@@ -91,19 +91,29 @@ func Sync(acctDir, mainDir string) (SyncReport, error) {
 
 // resolvedOrClean resolves path's symlinks, so a symlink chain cannot
 // disguise "the same place" as "somewhere else" to within's string
-// comparison. path itself often does not exist yet — AccountsDir, on the
-// first Create — in which case EvalSymlinks can't resolve it directly; a
-// plain Clean fallback would then skip symlink resolution entirely,
-// missing a symlinked ancestor earlier in the path (this machine's own
-// $HOME, say). So instead this climbs to the nearest existing ancestor,
-// resolves that, and re-appends the missing tail. Only a path with no
-// existing ancestor at all (nothing below the filesystem root) falls back
-// to a plain Clean, which should not happen on a real filesystem.
+// comparison. It tries the raw, uncleaned path first — EvalSymlinks walks
+// a path component by component, resolving each symlink before applying
+// any ".." that follows it, exactly like the kernel; pre-cleaning first
+// (as an earlier version of this function did) would lexically cancel a
+// "lnk/.." pair before EvalSymlinks ever saw "lnk" was a symlink at all,
+// silently defeating the very check this function exists for.
+//
+// path itself often does not exist yet — AccountsDir, on the first Create
+// — in which case EvalSymlinks can't resolve it directly; a plain Clean
+// fallback would then skip symlink resolution entirely, missing a
+// symlinked ancestor earlier in the path (this machine's own $HOME, say).
+// So instead this climbs to the nearest existing ancestor, resolves that,
+// and re-appends the missing tail — Clean only from here on, since by
+// this point the raw path has already proven it doesn't fully exist, so
+// there is no longer a real symlink chain across it left to disguise.
+// Only a path with no existing ancestor at all (nothing below the
+// filesystem root) falls back to a plain Clean, which should not happen
+// on a real filesystem.
 func resolvedOrClean(path string) string {
-	cleaned := filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		return resolved
 	}
+	cleaned := filepath.Clean(path)
 	var missing []string
 	dir := cleaned
 	for {
