@@ -50,6 +50,20 @@ const (
 // dominates and no floor helps, which is why it is dropped whole.
 const railStatusFloor = 6
 
+// railAccountBadgeMaxWidth caps the title line's "@name" badge. The cap,
+// not the badge's actual (name-dependent) width, is what the show/hide
+// decision in RenderCard reserves room for — see railAccountBadgeMinTitle.
+const railAccountBadgeMaxWidth = 10
+
+// railAccountBadgeMinTitle is how many cells the title must keep, after
+// its "N. " prefix, for the account badge to show at all. RenderCard
+// checks this against railAccountBadgeMaxWidth rather than the badge's
+// actual width, so the decision depends only on the card's width, never
+// on which particular account name happens to be shorter or longer —
+// every card on the rail must drop (or keep) its badge the same way at a
+// given width.
+const railAccountBadgeMinTitle = 12
+
 // showAccounts turns account badges on. app sets it (SetShowAccounts)
 // while an extra account is registered. Main goroutine only.
 var showAccounts bool
@@ -74,6 +88,9 @@ func accountLabel(inst *session.Instance) string {
 }
 
 // accountToken is the rail's dim "@name" badge, "" without an account.
+// The raw label is capped to railAccountBadgeMaxWidth before styling, so
+// a long account name never grows the badge past what RenderCard's
+// show/hide decision reserved room for.
 func accountToken(d CardData, solidBg bool) string {
 	if d.Account == "" {
 		return ""
@@ -82,7 +99,7 @@ func accountToken(d CardData, solidBg bool) string {
 	if solidBg {
 		st = st.Background(Panel)
 	}
-	return st.Render("@" + d.Account)
+	return st.Render(truncate("@"+d.Account, railAccountBadgeMaxWidth))
 }
 
 // PeerSection summarizes a non-focused workspace slot for the rail
@@ -521,6 +538,27 @@ func formatAge(d time.Duration) string {
 	}
 }
 
+// spreadLineBg is spreadLine, except the gap between l and r carries the
+// Panel background when filled is true. A selected rail card paints a
+// solid Panel background by having every styled run set it individually
+// (see the solidBg note on RenderCard); spreadLine's gap is plain
+// spaces, which without this would leave an unpainted seam between a
+// right-aligned badge/token and the text to its left — a striped look.
+func spreadLineBg(l, r string, width int, filled bool) string {
+	if !filled {
+		return spreadLine(l, r, width)
+	}
+	gap := width - lipgloss.Width(l) - lipgloss.Width(r)
+	if gap < 0 {
+		gap = 0
+	}
+	pad := ""
+	if gap > 0 {
+		pad = lipgloss.NewStyle().Background(Panel).Render(strings.Repeat(" ", gap))
+	}
+	return l + pad + r
+}
+
 // truncate cuts s to at most width cells, appending an ellipsis when
 // content is dropped (runewidth.Truncate reserves the tail's width
 // itself, so the full budget is passed through).
@@ -573,11 +611,12 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 
 	prefix := fmt.Sprintf("%d. ", d.Index)
 	inner := width - 2 // bar + space
-	// The account badge rides the title line's right edge. Like the GitHub
-	// token it is dropped whole when it would squeeze the title below the
-	// status floor.
+	// The account badge rides the title line's right edge. The decision
+	// to show it reserves railAccountBadgeMaxWidth — the badge's cap, not
+	// its actual width — so a short account name can't sneak the badge
+	// onto a card too narrow for a long one; see railAccountBadgeMinTitle.
 	acct := accountToken(d, solidBg)
-	if acct != "" && lipgloss.Width(acct) > inner-railStatusFloor-1 {
+	if acct != "" && inner-lipgloss.Width(prefix)-railAccountBadgeMaxWidth-1 < railAccountBadgeMinTitle {
 		acct = ""
 	}
 	titleW := inner
@@ -589,7 +628,7 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 		if acct == "" {
 			return bar + sep + st.Render(title)
 		}
-		return bar + sep + spreadLine(st.Render(title), acct, inner)
+		return bar + sep + spreadLineBg(st.Render(title), acct, inner, solidBg)
 	}
 	titleLine := composeTitle(titleStyleC)
 
@@ -627,7 +666,7 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 	body := second
 	if tok != "" {
 		body = truncate(second, inner-lipgloss.Width(tok)-1)
-		secondLine := bar + sep + spreadLine(secondStyle.Render(body), tok, inner)
+		secondLine := bar + sep + spreadLineBg(secondStyle.Render(body), tok, inner, solidBg)
 		if d.finished() && !d.NeedsAttention() {
 			titleLine = composeTitle(titleStyleC.Foreground(Dim))
 		}

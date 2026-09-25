@@ -272,9 +272,6 @@ func renderOverviewCard(d CardData, width int) string {
 
 	dim := lipgloss.NewStyle().Foreground(Dim)
 	var right []string
-	if d.Account != "" {
-		right = append(right, dim.Render("@"+d.Account))
-	}
 	if p := parityToken(d); p != "" {
 		right = append(right, p)
 	}
@@ -284,6 +281,12 @@ func renderOverviewCard(d CardData, width int) string {
 	if d.HasDiff {
 		right = append(right, lipgloss.NewStyle().Foreground(OK).Render(fmt.Sprintf("+%d", d.DiffAdded))+" "+
 			lipgloss.NewStyle().Foreground(ErrorColor).Render(fmt.Sprintf("−%d", d.DiffRemoved)))
+	}
+	// Last: ansi.Truncate below trims the meta line from the right, so
+	// the account badge — the least critical of these — is the first
+	// thing dropped when the line is too wide for the card.
+	if d.Account != "" {
+		right = append(right, dim.Render("@"+d.Account))
 	}
 	meta := strings.Join(right, " ")
 	if lipgloss.Width(meta) > inner {
