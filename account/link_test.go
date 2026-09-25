@@ -486,3 +486,54 @@ func TestUnshared_IgnoresAnAccountsOwnSecurityWarningsState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, list)
 }
+
+// TestValidateMainDir_MatchesWhatCreateRejects exercises the extracted
+// guard directly with the same cases Create's own tests cover (relative,
+// inside AccountsDir, containing AccountsDir), plus the accepting case, so
+// a caller resolving mainDir itself (the CLI, before Create ever runs) can
+// rely on identical checks.
+func TestValidateMainDir_MatchesWhatCreateRejects(t *testing.T) {
+	global := t.TempDir()
+	r := LoadRegistry(global)
+	require.NoError(t, os.MkdirAll(r.AccountsDir(), 0o755))
+
+	assert.Error(t, ValidateMainDir("relative/path", r.AccountsDir()))
+	assert.Error(t, ValidateMainDir(r.AccountsDir(), r.AccountsDir()), "inside AccountsDir")
+	assert.Error(t, ValidateMainDir(global, r.AccountsDir()), "AccountsDir's own parent")
+	assert.NoError(t, ValidateMainDir(mainDirWith(t), r.AccountsDir()))
+}
+
+func TestOwnedDir_TrueForACreatedAccount(t *testing.T) {
+	global, main := t.TempDir(), mainDirWith(t)
+	r := LoadRegistry(global)
+	acct, _, err := r.Create("max-2", main)
+	require.NoError(t, err)
+
+	dir, owned := r.OwnedDir("max-2")
+
+	assert.True(t, owned)
+	assert.Equal(t, acct.Dir, dir)
+}
+
+func TestOwnedDir_FalseForADirOutsideAccountsDir(t *testing.T) {
+	global, outside := t.TempDir(), t.TempDir()
+	r := LoadRegistry(global)
+	require.NoError(t, r.update(func(f *Registry) error {
+		f.Accounts = append(f.Accounts, Account{Name: "byo", Dir: outside})
+		return nil
+	}))
+
+	dir, owned := r.OwnedDir("byo")
+
+	assert.False(t, owned)
+	assert.Equal(t, outside, dir, "still reports the account's real dir, just not as one Remove would delete")
+}
+
+func TestOwnedDir_FalseWhenNotRegistered(t *testing.T) {
+	r := LoadRegistry(t.TempDir())
+
+	dir, owned := r.OwnedDir("nope")
+
+	assert.False(t, owned)
+	assert.Empty(t, dir)
+}

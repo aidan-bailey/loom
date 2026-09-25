@@ -134,11 +134,33 @@ func within(base, target string) bool {
 	return target == base || strings.HasPrefix(target, base+string(filepath.Separator))
 }
 
+// ValidateMainDir checks that mainDir is safe to link accounts from: an
+// absolute path that, once symlinks are resolved, neither lies inside
+// accountsDir (a nested loom running as an account, pointed at its own
+// accounts dir by mistake) nor contains it (mainDir is AccountsDir's own
+// parent or an ancestor further up, which would have Sync link
+// "accounts" itself — the dir a Create using it is about to populate —
+// into every account made under it). Create runs this before touching
+// anything; callers resolving mainDir themselves (the CLI's add and
+// sync, which read it from `claude auth status`) should too, since that
+// resolution can fail closed to "" or point somewhere unsafe.
+func ValidateMainDir(mainDir, accountsDir string) error {
+	if !filepath.IsAbs(mainDir) {
+		return fmt.Errorf("main config dir %q must be an absolute path", mainDir)
+	}
+	if within(accountsDir, mainDir) {
+		return fmt.Errorf("main config dir %s is inside %s; refusing to link an account's own accounts tree", mainDir, accountsDir)
+	}
+	if within(mainDir, accountsDir) {
+		return fmt.Errorf("main config dir %s contains %s; refusing to link the accounts tree into every account", mainDir, accountsDir)
+	}
+	return nil
+}
+
 // Create registers a new account called name: it makes the account's
 // config dir under AccountsDir, links mainDir's shared entries into it,
-// and records it. The dir must not exist yet. mainDir must be an absolute
-// path neither inside nor containing AccountsDir. Logging in is the
-// caller's next step.
+// and records it. The dir must not exist yet. mainDir is checked by
+// ValidateMainDir. Logging in is the caller's next step.
 func (r *Registry) Create(name, mainDir string) (Account, SyncReport, error) {
 	if err := ValidName(name); err != nil {
 		return Account{}, SyncReport{}, err
@@ -146,14 +168,8 @@ func (r *Registry) Create(name, mainDir string) (Account, SyncReport, error) {
 	if r.loadErr != nil {
 		return Account{}, SyncReport{}, fmt.Errorf("%w: %v", ErrRegistryLoadFailed, r.loadErr)
 	}
-	if !filepath.IsAbs(mainDir) {
-		return Account{}, SyncReport{}, fmt.Errorf("main config dir %q must be an absolute path", mainDir)
-	}
-	if within(r.AccountsDir(), mainDir) {
-		return Account{}, SyncReport{}, fmt.Errorf("main config dir %s is inside %s; refusing to link an account's own accounts tree", mainDir, r.AccountsDir())
-	}
-	if within(mainDir, r.AccountsDir()) {
-		return Account{}, SyncReport{}, fmt.Errorf("main config dir %s contains %s; refusing to link the accounts tree into every account", mainDir, r.AccountsDir())
+	if err := ValidateMainDir(mainDir, r.AccountsDir()); err != nil {
+		return Account{}, SyncReport{}, err
 	}
 	if _, ok := r.Get(name); ok {
 		return Account{}, SyncReport{}, fmt.Errorf("account %q already exists", name)
@@ -232,12 +248,28 @@ func Unshared(acctDir string) ([]string, error) {
 	return out, nil
 }
 
-// Remove unregisters name. When it owns the config dir it names — the
-// account is registered under exactly <AccountsDir>/name, recomputed here
-// rather than trusted from the stored Dir field, which a hand-edited or
-// corrupt registry could point anywhere — it also deletes that dir: the
-// account's credentials and state plus links into the main dir. RemoveAll
-// deletes the links themselves, never what they point at.
+// OwnedDir returns the config dir name is registered under together with
+// whether Remove would actually delete it: only when the account's
+// stored Dir agrees with the canonical <AccountsDir>/name, recomputed
+// here rather than trusted from the stored field — a hand-edited or
+// corrupt registry could point Dir anywhere. The returned dir is always
+// the account's stored Dir (equal to the canonical one exactly when
+// owned is true), so a caller can show it either way: "delete <dir>"
+// when owned, "<dir> is not loom's" when not. "" and false when name is
+// not registered.
+func (r *Registry) OwnedDir(name string) (string, bool) {
+	acct, ok := r.Get(name)
+	if !ok {
+		return "", false
+	}
+	want := filepath.Join(r.AccountsDir(), name)
+	return acct.Dir, ValidName(name) == nil && filepath.Clean(acct.Dir) == want
+}
+
+// Remove unregisters name. When OwnedDir reports it owns its config dir,
+// it also deletes that dir: the account's credentials and state plus
+// links into the main dir. RemoveAll deletes the links themselves, never
+// what they point at.
 //
 // A dir the account does not own (outside AccountsDir, or a stored Dir
 // disagreeing with <AccountsDir>/name) is unregistered but never deleted;
@@ -251,15 +283,13 @@ func (r *Registry) Remove(name string, force bool) (deleted bool, err error) {
 	if name == DefaultName {
 		return false, fmt.Errorf("the %q account cannot be removed", DefaultName)
 	}
-	acct, ok := r.Get(name)
-	if !ok {
+	if _, ok := r.Get(name); !ok {
 		return false, fmt.Errorf("account %q is not registered", name)
 	}
-	want := filepath.Join(r.AccountsDir(), name)
-	owned := ValidName(name) == nil && filepath.Clean(acct.Dir) == want
+	dir, owned := r.OwnedDir(name)
 
 	if owned && !force {
-		unshared, uerr := Unshared(want)
+		unshared, uerr := Unshared(dir)
 		if uerr != nil {
 			return false, fmt.Errorf("account %q: checking for unshared files: %w", name, uerr)
 		}
@@ -286,8 +316,8 @@ func (r *Registry) Remove(name string, force bool) (deleted bool, err error) {
 	if !owned {
 		return false, nil
 	}
-	if err := os.RemoveAll(want); err != nil {
-		return false, fmt.Errorf("account %q unregistered, but deleting %s failed: %w", name, want, err)
+	if err := os.RemoveAll(dir); err != nil {
+		return false, fmt.Errorf("account %q unregistered, but deleting %s failed: %w", name, dir, err)
 	}
 	return true, nil
 }
