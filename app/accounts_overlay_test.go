@@ -80,7 +80,11 @@ func TestAccountRequest_RemoveKeepsAnAccountHoldingUnsharedFiles(t *testing.T) {
 	assert.True(t, ok, "kept: its settings.json is not shared")
 	_, err := os.Stat(settings)
 	assert.NoError(t, err, "nothing deleted")
-	assert.Contains(t, m.errBox.String(), "--force", "the toast is Remove's own refusal")
+	toast := m.errBox.String()
+	assert.Contains(t, toast, "settings.json", "names what it kept")
+	assert.Contains(t, toast, "to remove it anyway run `loom account remove --force max-2`",
+		"this screen can't force; the CLI can")
+	assert.NotContains(t, toast, "or remove with --force")
 }
 
 // TestAccountRequest_ReloadsTheRegistryFirst: an account another terminal

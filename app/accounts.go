@@ -647,8 +647,15 @@ func (m *home) carryOutAccountRequest(req overlay.AccountRequest) tea.Cmd {
 			return m.handleError(fmt.Errorf("%d session(s) use %s: kill them or relaunch them on another account (R) first", n, req.Name))
 		}
 		// Never forced from here: an account dir holding real, unshared
-		// entries is kept, and Remove's error names them.
+		// entries is kept, and the toast names them and the CLI command
+		// that can force it (Remove's own text offers a --force this
+		// screen doesn't have).
 		if _, err := m.accounts.Remove(req.Name, false); err != nil {
+			var unshared *account.UnsharedError
+			if errors.As(err, &unshared) {
+				err = fmt.Errorf("account %q holds files that are not shared with your main config: %s; to remove it anyway run `loom account remove --force %s`",
+					unshared.Name, strings.Join(unshared.Entries, ", "), unshared.Name)
+			}
 			return m.handleError(err)
 		}
 		delete(m.accountAuth, req.Name)
