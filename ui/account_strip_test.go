@@ -69,6 +69,32 @@ func TestAccountStrip_RendersEveryAccount(t *testing.T) {
 	assert.Contains(t, out, "max-3  logged out")
 }
 
+// TestAccountStripStyles_ElevatedSeverityIsNotHighlight pins the color
+// fix: Highlight reads as Attention (needs input), which is reserved for
+// that one signal, so a usage number that merely crossed 80% must not
+// use it.
+func TestAccountStripStyles_ElevatedSeverityIsNotHighlight(t *testing.T) {
+	assert.Equal(t, Text, stripWarnStyle.GetForeground(), "≥80% must use Text, not Highlight")
+	assert.True(t, stripWarnStyle.GetBold())
+	assert.Equal(t, ErrorColor, stripErrStyle.GetForeground(), "≥95% stays ErrorColor")
+}
+
+// TestAccountStrip_SeverityStylesRenderCorrectly pins compose()'s choice
+// of style per severity bucket at render time.
+func TestAccountStrip_SeverityStylesRenderCorrectly(t *testing.T) {
+	s := NewAccountStrip()
+	s.SetWidth(120)
+	elevated := probed(85, 10) // >=80%, <95%
+	critical := probed(97, 10) // >=95%
+	s.SetAccounts([]AccountStatus{
+		{Name: account.DefaultName, IsDefault: true, Usage: elevated},
+		{Name: "max-2", Usage: critical},
+	})
+	out := s.render(stripNow)
+	assert.Contains(t, out, stripWarnStyle.Render("5h 85% · 7d 10%"))
+	assert.Contains(t, out, stripErrStyle.Render("5h 97% · 7d 10%"))
+}
+
 func TestAccountStrip_NarrowDropsTheWeekThenTruncates(t *testing.T) {
 	s := NewAccountStrip()
 	s.SetAccounts([]AccountStatus{

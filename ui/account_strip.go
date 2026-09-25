@@ -19,7 +19,11 @@ func rebuildAccountStripStyles() {
 	stripNameStyle = lipgloss.NewStyle().Foreground(Text)
 	stripDefaultStyle = lipgloss.NewStyle().Foreground(Text).Bold(true)
 	stripUsageStyle = lipgloss.NewStyle().Foreground(Dim)
-	stripWarnStyle = lipgloss.NewStyle().Foreground(Highlight)
+	// Highlight reads as Attention (needs input) at a glance, and Attention
+	// itself is reserved for that one signal — neither belongs on a usage
+	// number that needs no action yet. Bold Text draws the eye without
+	// claiming either.
+	stripWarnStyle = lipgloss.NewStyle().Foreground(Text).Bold(true)
 	stripErrStyle = lipgloss.NewStyle().Foreground(ErrorColor)
 	stripStaleStyle = lipgloss.NewStyle().Foreground(Faint)
 }
