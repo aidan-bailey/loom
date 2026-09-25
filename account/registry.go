@@ -76,22 +76,25 @@ func LoadRegistry(globalDir string) *Registry {
 	if err := validateAccounts(r.Accounts, r.AccountsDir()); err != nil {
 		r.DefaultAccount, r.Accounts = "", nil
 		r.loadErr = fmt.Errorf("validate %s: %w", r.path, err)
+		return r
 	}
+	canonicalizeDirs(r.Accounts, r.AccountsDir())
 	return r
 }
 
 // validateAccounts rejects a loaded accounts list this package would never
 // have written itself: an invalid or reserved name, a name registered
-// twice, a dir that isn't an absolute path, or a dir that isn't exactly
-// <accountsDir>/<name>. That last check means adopting an account whose
-// dir loom did not itself create — a hand-edited "bring your own
-// directory" entry — is out of scope: such a dir would still be handed to
-// the claude CLI as CLAUDE_CONFIG_DIR on every launch, so refusing it only
-// at delete time (Remove's own ownership check, which stays as a defence
-// for a Registry built directly rather than loaded) is not enough.
-// LoadRegistry treats a registry failing this the same as one that failed
-// to parse — latched, not silently pruned, so a corrupt or hand-edited
-// file is never overwritten with a partial view of it.
+// twice, a dir that isn't an absolute path, a dir that isn't already in
+// lexically clean form, or a dir that doesn't resolve to
+// <accountsDir>/<name>. Adopting an account whose dir loom did not itself
+// create — a hand-edited "bring your own directory" entry — is out of
+// scope: such a dir would still be handed to the claude CLI as
+// CLAUDE_CONFIG_DIR on every launch, so refusing it only at delete time
+// (Remove's own ownership check, which stays as a defence for a Registry
+// built directly rather than loaded) is not enough. LoadRegistry treats a
+// registry failing this the same as one that failed to parse — latched,
+// not silently pruned, so a corrupt or hand-edited file is never
+// overwritten with a partial view of it.
 func validateAccounts(accounts []Account, accountsDir string) error {
 	seen := make(map[string]bool, len(accounts))
 	for _, a := range accounts {
@@ -105,23 +108,54 @@ func validateAccounts(accounts []Account, accountsDir string) error {
 		if a.Dir == "" || !filepath.IsAbs(a.Dir) {
 			return fmt.Errorf("account %q: dir %q must be an absolute path", a.Name, a.Dir)
 		}
+		// Reject an unclean spelling outright, before it ever reaches
+		// resolvedOrClean below. A stored "<accountsDir>/lnk/../name"
+		// whose kernel target doesn't fully exist (not yet created, a
+		// symlink loop, or a dangling link) makes resolvedOrClean's raw
+		// EvalSymlinks attempt fail, falling back to a Clean-based climb
+		// that would otherwise cancel the "lnk/.." pair lexically —
+		// silently discarding the fact that "lnk" is a real symlink at
+		// all, and accepting the disguise. A stored Dir this package
+		// itself ever wrote (via Create, or canonicalized below on a
+		// prior load) is always already clean, so this rejects nothing
+		// legitimate.
+		if a.Dir != filepath.Clean(a.Dir) {
+			return fmt.Errorf("account %q: dir %q is not in canonical form", a.Name, a.Dir)
+		}
 		// Resolved, not a byte comparison: a.Dir was written under
 		// whatever spelling of the global dir was in effect on some past
 		// run, and accountsDir here reflects only this run's (a
 		// respelled LOOM_GLOBAL_DIR, or $HOME going through a symlink
 		// that isn't always resolved the same way before reaching here).
 		// Two spellings of the same real directory must not latch the
-		// registry. resolvedOrClean (link.go) still catches a genuine
-		// escape: a stored "<accountsDir>/lnk/../name" resolves through
-		// the kernel to wherever the "lnk" symlink actually points, a
-		// real location distinct from accountsDir's own resolved form,
-		// not merely a different spelling of it.
+		// registry. Safe from the disguise above now that a.Dir is
+		// already known clean: resolvedOrClean's raw EvalSymlinks
+		// attempt is the only path a clean, dot-free string can take.
 		want := filepath.Join(accountsDir, a.Name)
 		if resolvedOrClean(a.Dir) != resolvedOrClean(want) {
 			return fmt.Errorf("account %q: dir %q is not %q", a.Name, a.Dir, want)
 		}
 	}
 	return nil
+}
+
+// canonicalizeDirs replaces every account's Dir with the canonical
+// <accountsDir>/<name>, in place — called only after validateAccounts has
+// confirmed every stored Dir already resolves there, so this never turns
+// a rejected entry into an accepted one. From here on, every consumer
+// (Dirs, Env, Get, OwnedDir, a launch, a Sync, an auth or usage probe, the
+// roster join, …) sees only the canonical spelling, never whatever string
+// happened to be on disk. This closes the window a purely load-time check
+// would leave open: a stored dir that was a genuine, accepted respelling
+// of a symlinked prefix at load time could still be retargeted before a
+// later operation that reuses the in-memory value without reloading (a
+// plain resume, a crash restart) — canonicalizing means that operation
+// was never going to depend on the symlink still resolving the same way
+// in the first place.
+func canonicalizeDirs(accounts []Account, accountsDir string) {
+	for i := range accounts {
+		accounts[i].Dir = filepath.Join(accountsDir, accounts[i].Name)
+	}
 }
 
 // Unavailable is a registry that could not even be located (no global

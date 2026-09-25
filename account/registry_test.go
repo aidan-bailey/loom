@@ -130,22 +130,71 @@ func TestUnavailable_ReloadKeepsItsOwnError(t *testing.T) {
 	assert.ErrorIs(t, r.SetDefault(DefaultName), ErrRegistryLoadFailed, "still latched")
 }
 
+// TestLoadRegistry_RejectsInvalidStoredEntries covers both static shape
+// checks (json, no filesystem needed) and cases needing real symlinks on
+// disk (setup, given the case's own temp dir — used as the global dir —
+// to build both the filesystem fixture and the accounts.json payload).
+// The dotdot-through-a-symlink cases specifically exercise
+// resolvedOrClean's not-yet-existing-path fallback: the escaped path's
+// kernel target isn't fully resolvable (not yet created, a self-loop, or
+// a dangling link), so the raw EvalSymlinks attempt fails and, before the
+// a.Dir != filepath.Clean(a.Dir) check existed, the fallback's own Clean
+// step silently cancelled the "lnk/.." pair, accepting the disguise.
 func TestLoadRegistry_RejectsInvalidStoredEntries(t *testing.T) {
 	cases := []struct {
-		name string
-		json string
+		name  string
+		json  string                                // used when setup is nil
+		setup func(t *testing.T, dir string) string // returns the json payload; dir is the case's own temp dir
 	}{
-		{"invalid name", `{"accounts":[{"name":"Bad Name","dir":"/a"}]}`},
-		{"reserved name", `{"accounts":[{"name":"default","dir":"/a"}]}`},
-		{"duplicate name", `{"accounts":[{"name":"max-2","dir":"/a"},{"name":"max-2","dir":"/b"}]}`},
-		{"relative dir", `{"accounts":[{"name":"max-2","dir":"a/b"}]}`},
-		{"empty dir", `{"accounts":[{"name":"max-2","dir":""}]}`},
-		{"foreign dir", `{"accounts":[{"name":"max-2","dir":"/definitely/not/loom-owned"}]}`},
+		{name: "invalid name", json: `{"accounts":[{"name":"Bad Name","dir":"/a"}]}`},
+		{name: "reserved name", json: `{"accounts":[{"name":"default","dir":"/a"}]}`},
+		{name: "duplicate name", json: `{"accounts":[{"name":"max-2","dir":"/a"},{"name":"max-2","dir":"/b"}]}`},
+		{name: "relative dir", json: `{"accounts":[{"name":"max-2","dir":"a/b"}]}`},
+		{name: "empty dir", json: `{"accounts":[{"name":"max-2","dir":""}]}`},
+		{name: "foreign dir", json: `{"accounts":[{"name":"max-2","dir":"/definitely/not/loom-owned"}]}`},
+		{name: "unclean dir (dot segment and trailing slash)", json: `{"accounts":[{"name":"max-2","dir":"/a/./max-2/"}]}`},
+		{
+			name: "dotdot through a symlink whose target does not exist yet",
+			setup: func(t *testing.T, dir string) string {
+				accountsDir := filepath.Join(dir, "accounts")
+				require.NoError(t, os.MkdirAll(accountsDir, 0o755))
+				target := t.TempDir() // real, but has no "max-2" entry (yet)
+				require.NoError(t, os.Symlink(target, filepath.Join(accountsDir, "lnk")))
+				escaped := filepath.Join(accountsDir, "lnk") + string(filepath.Separator) + ".." + string(filepath.Separator) + "max-2"
+				return fmt.Sprintf(`{"accounts":[{"name":"max-2","dir":%q}]}`, escaped)
+			},
+		},
+		{
+			name: "dotdot through a symlink loop",
+			setup: func(t *testing.T, dir string) string {
+				accountsDir := filepath.Join(dir, "accounts")
+				require.NoError(t, os.MkdirAll(accountsDir, 0o755))
+				loop := filepath.Join(accountsDir, "loop")
+				require.NoError(t, os.Symlink(loop, loop))
+				escaped := loop + string(filepath.Separator) + ".." + string(filepath.Separator) + "max-2"
+				return fmt.Sprintf(`{"accounts":[{"name":"max-2","dir":%q}]}`, escaped)
+			},
+		},
+		{
+			name: "dotdot through a dangling symlink",
+			setup: func(t *testing.T, dir string) string {
+				accountsDir := filepath.Join(dir, "accounts")
+				require.NoError(t, os.MkdirAll(accountsDir, 0o755))
+				dang := filepath.Join(accountsDir, "dang")
+				require.NoError(t, os.Symlink(filepath.Join(dir, "nope-does-not-exist"), dang))
+				escaped := dang + string(filepath.Separator) + ".." + string(filepath.Separator) + "max-2"
+				return fmt.Sprintf(`{"accounts":[{"name":"max-2","dir":%q}]}`, escaped)
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "accounts.json"), []byte(tc.json), 0o644))
+			payload := tc.json
+			if tc.setup != nil {
+				payload = tc.setup(t, dir)
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "accounts.json"), []byte(payload), 0o644))
 
 			r := LoadRegistry(dir)
 
@@ -163,7 +212,11 @@ func TestLoadRegistry_RejectsInvalidStoredEntries(t *testing.T) {
 // target) must not latch the registry just because the two spellings
 // differ as strings — an exact byte comparison would refuse every launch
 // after a respelled LOOM_GLOBAL_DIR or a symlinked $HOME, until someone
-// hand-edited accounts.json back into agreement.
+// hand-edited accounts.json back into agreement. And once accepted, the
+// account's Dir is canonicalized to *this* load's own spelling — never
+// left as whatever was on disk — so a later operation that reuses the
+// in-memory value without reloading (a plain resume, a crash restart)
+// never depends on a symlinked prefix still resolving the same way.
 func TestLoadRegistry_ToleratesADifferentlySpelledGlobalDirAcrossRuns(t *testing.T) {
 	root := t.TempDir()
 	real := filepath.Join(root, "real")
@@ -184,7 +237,37 @@ func TestLoadRegistry_ToleratesADifferentlySpelledGlobalDirAcrossRuns(t *testing
 	require.NoError(t, again.LoadErr())
 	got, ok := again.Get("max-2")
 	require.True(t, ok)
-	assert.Equal(t, acct.Dir, got.Dir, "the stored field itself is untouched, only accepted")
+	assert.Equal(t, filepath.Join(real, "accounts", "max-2"), got.Dir,
+		"canonicalized to this load's own spelling, not whatever was stored")
+}
+
+// TestRegistry_UpdatePersistsTheCanonicalSpelling: update() already
+// rewrites the whole file on every call (marshal the reloaded-and-mutated
+// copy, atomic write) — canonicalizeDirs adds no new write path, it only
+// changes what ends up in that one existing rewrite. An update for an
+// unrelated reason (SetDefault, here) on a registry loaded through a
+// differently-spelled global dir persists the *canonical* spelling to
+// disk, self-healing the drift rather than preserving the old one.
+func TestRegistry_UpdatePersistsTheCanonicalSpelling(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.MkdirAll(real, 0o755))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(real, link))
+
+	r := LoadRegistry(link)
+	main := mainDirWith(t)
+	_, _, err := r.Create("max-2", main)
+	require.NoError(t, err)
+
+	again := LoadRegistry(real)
+	require.NoError(t, again.LoadErr())
+	require.NoError(t, again.SetDefault("max-2"))
+
+	data, err := os.ReadFile(filepath.Join(real, "accounts.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), filepath.Join(real, "accounts", "max-2"))
+	assert.NotContains(t, string(data), link, "the old symlinked spelling must not remain on disk after a write")
 }
 
 // TestLoadRegistry_RejectsALnkDotDotDisguisedDir keeps the Critical fix
