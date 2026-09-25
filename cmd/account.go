@@ -58,11 +58,29 @@ func loadAccountRegistry() (*account.Registry, error) {
 	return reg, reg.LoadErr()
 }
 
-// claudeProgram is the Claude CLI the account commands run: the global
-// config's program when it is Claude (so a pinned or Nix path is honored),
-// else "claude" on PATH.
+// claudeProgram is the Claude CLI the account commands run: the program
+// configured in the global config dir when it is Claude (so a pinned or
+// Nix path is honored), else "claude" on PATH.
+//
+// "The global config dir" is config.GetGlobalConfigDir() (LOOM_GLOBAL_DIR,
+// default ~/.loom) — the same directory loadAccountRegistry reads the
+// account registry from, and the one config.GlobalWorkspaceContext hands
+// the TUI's classic/global-mode startup (main.go) and `loom debug`, both of
+// which then config.LoadConfigFrom(wsCtx.ConfigDir) from it. It is
+// deliberately NOT config.LoadConfigFromGlobal(), which reads
+// config.GetConfigDir() (LOOM_HOME): LOOM_HOME is a distinct, independently
+// overridable variable, and production classic-mode startup never reads
+// config.json from it — only workspace mode does, from a workspace's own
+// config dir, which these account commands have no notion of. Reading
+// LOOM_HOME here would silently ignore the configured program (pinned
+// path, Nix store path, profile) whenever the two vars differ, falling
+// back to a bare "claude" on PATH without any indication why.
 func claudeProgram() string {
-	if p := config.LoadConfigFromGlobal().GetProgram(); isClaudeProgram(p) {
+	globalDir, err := config.GetGlobalConfigDir()
+	if err != nil {
+		return "claude"
+	}
+	if p := config.LoadConfigFrom(globalDir).GetProgram(); isClaudeProgram(p) {
 		return p
 	}
 	return "claude"
@@ -169,6 +187,20 @@ func accountFromEnv(reg *account.Registry) (string, bool) {
 	return name, true
 }
 
+// warnCredentialOverride prints a warning to out when a credential env var
+// overrides every account's own login (account.ActiveCredentialOverride):
+// claude checks CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN
+// before ever reading a config dir's stored credentials, so with one set in
+// loom's own environment every account it launches — regardless of which
+// config dir CLAUDE_CONFIG_DIR points it at — silently runs (and bills) as
+// that one credential instead of its own login: account selection has no
+// effect. Non-fatal: the caller still runs normally afterward.
+func warnCredentialOverride(out io.Writer) {
+	if name, ok := account.ActiveCredentialOverride(); ok {
+		fmt.Fprintf(out, "warning: $%s is set — every account runs as that credential, so account selection has no effect; unset it to use accounts\n", name)
+	}
+}
+
 // guardAgainstAccountEnv refuses an operation that targets the default
 // account or the main config dir when this process's own
 // CLAUDE_CONFIG_DIR already resolves inside one of the accounts it
@@ -197,6 +229,7 @@ var accountAddCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		out := cmd.OutOrStdout()
+		warnCredentialOverride(out)
 		reg, err := loadAccountRegistry()
 		if err != nil {
 			return err
@@ -234,6 +267,8 @@ var accountLoginCmd = &cobra.Command{
 	Short: `Log an account in to Claude ("default" is your main login)`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		out := cmd.OutOrStdout()
+		warnCredentialOverride(out)
 		reg, err := loadAccountRegistry()
 		if err != nil {
 			return err
@@ -258,7 +293,7 @@ var accountLoginCmd = &cobra.Command{
 				}
 			}
 		}
-		return loginAndReport(cmd.OutOrStdout(), claudeProgram(), name, env)
+		return loginAndReport(out, claudeProgram(), name, env)
 	},
 }
 
@@ -322,6 +357,8 @@ var accountListCmd = &cobra.Command{
 	Short: "List accounts with their login and plan usage",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		out := cmd.OutOrStdout()
+		warnCredentialOverride(out)
 		reg, err := loadAccountRegistry()
 		if err != nil {
 			return err
@@ -344,7 +381,7 @@ var accountListCmd = &cobra.Command{
 		wg.Wait()
 
 		now := time.Now()
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "\tNAME\tEMAIL\tPLAN\t5H\t7D\tNOTE")
 		for _, row := range rows {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.mark, row.name, dash(row.id.Email), dash(row.id.Plan),

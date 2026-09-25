@@ -49,6 +49,13 @@ func isolateAccounts(t *testing.T) string {
 	// tests. Tests exercising guardAgainstAccountEnv (item 7) set their
 	// own value with t.Setenv, which layers cleanly over this.
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	// Likewise for the credential-override vars: a developer's own
+	// ANTHROPIC_API_KEY (say, set for other tools) must not make every
+	// test here print an unexpected warning line. Tests exercising
+	// warnCredentialOverride set their own value with t.Setenv.
+	for _, v := range account.CredentialOverrides {
+		t.Setenv(v, "")
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(main, "CLAUDE.md"), []byte("x"), 0o600))
 	origMain, origLogin, origExec := accountMainDir, accountLogin, accountExec
 	accountMainDir = func(string) string { return main }
@@ -512,4 +519,91 @@ func TestAccountCmds_NamedAccountOpsStillWorkUnderAccountEnv(t *testing.T) {
 
 	_, err = runAccount(t, "y\n", "remove", "max-2")
 	require.NoError(t, err)
+}
+
+// --- Credential override warning (fix round part 2, item 1) ---
+
+func TestAccountList_WarnsWhenACredentialOverrideIsSet(t *testing.T) {
+	isolateAccounts(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+
+	out, err := runAccount(t, "", "list")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "warning: $ANTHROPIC_API_KEY is set")
+	assert.Contains(t, out, "NAME", "list must still print its table despite the warning")
+}
+
+func TestAccountAdd_WarnsWhenACredentialOverrideIsSet(t *testing.T) {
+	isolateAccounts(t)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+
+	out, err := runAccount(t, "", "add", "max-2", "--no-login")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "warning: $CLAUDE_CODE_OAUTH_TOKEN is set")
+	assert.Contains(t, out, "Created")
+}
+
+func TestAccountLogin_WarnsWhenACredentialOverrideIsSet(t *testing.T) {
+	isolateAccounts(t)
+	_, err := runAccount(t, "", "add", "max-2", "--no-login")
+	require.NoError(t, err)
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "tok")
+
+	out, err := runAccount(t, "", "login", "max-2")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "warning: $ANTHROPIC_AUTH_TOKEN is set")
+	assert.Contains(t, out, "Logged in max-2")
+}
+
+func TestAccountList_NoWarningWhenNoCredentialOverrideIsSet(t *testing.T) {
+	isolateAccounts(t)
+
+	out, err := runAccount(t, "", "list")
+
+	require.NoError(t, err)
+	assert.NotContains(t, out, "warning:")
+}
+
+// --- claudeProgram reads the global config dir, not LOOM_HOME (part 2, item 2) ---
+
+// TestClaudeProgram_PrefersTheGlobalConfigDirOverLoomHome is a direct unit
+// test of the fix: config.GetGlobalConfigDir() (LOOM_GLOBAL_DIR) is where
+// the account registry and the TUI's classic/global context both read
+// config.json from, not config.GetConfigDir() (LOOM_HOME) — a distinct
+// var that can be set to something else entirely (a workspace-mode
+// developer setup, say). The two dirs here hold different programs so a
+// regression (reading LOOM_HOME) is unambiguous, not just "returns
+// something".
+func TestClaudeProgram_PrefersTheGlobalConfigDirOverLoomHome(t *testing.T) {
+	global, home := t.TempDir(), t.TempDir()
+	t.Setenv("LOOM_GLOBAL_DIR", global)
+	t.Setenv("LOOM_HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(global, "config.json"),
+		[]byte(`{"default_program":"/opt/claude-custom/claude --model opus"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "config.json"),
+		[]byte(`{"default_program":"/opt/wrong/claude"}`), 0o644))
+
+	assert.Equal(t, "/opt/claude-custom/claude --model opus", claudeProgram())
+}
+
+// TestAccountList_UsesTheProgramConfiguredInTheGlobalDir exercises the
+// same fix through the CLI: isolateAccounts (like every test in this
+// file) already points LOOM_HOME at a directory distinct from
+// LOOM_GLOBAL_DIR, which is exactly the configuration the review found
+// broken — a config.json written under the global dir must be the one
+// `list` resolves the Claude program from.
+func TestAccountList_UsesTheProgramConfiguredInTheGlobalDir(t *testing.T) {
+	global := isolateAccounts(t)
+	require.NoError(t, os.WriteFile(filepath.Join(global, "config.json"),
+		[]byte(`{"default_program":"/opt/claude-custom/claude --model opus"}`), 0o644))
+	var gotProgram string
+	accountMainDir = func(p string) string { gotProgram = p; return "" }
+
+	_, err := runAccount(t, "", "list")
+
+	require.NoError(t, err)
+	assert.Equal(t, "/opt/claude-custom/claude --model opus", gotProgram)
 }
