@@ -192,3 +192,32 @@ func TestAccountUsers_CountsAnUnloadedWorkspacesSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
 }
+
+// TestAccountRequest_LoginRefusesAMissingAccountDir: claude would recreate
+// the dir bare, unlinked from the main config; remove and re-add links it.
+func TestAccountRequest_LoginRefusesAMissingAccountDir(t *testing.T) {
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+	acct, ok := m.accounts.Get("max-2")
+	require.True(t, ok)
+	require.NoError(t, os.RemoveAll(acct.Dir))
+
+	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestLogin, Name: "max-2"})
+
+	toast := m.errBox.String()
+	assert.Contains(t, toast, "max-2")
+	assert.Contains(t, toast, "loom account remove max-2")
+	assert.Contains(t, toast, "add it again")
+	_, err := os.Stat(acct.Dir)
+	assert.True(t, os.IsNotExist(err), "nothing launched, nothing recreated")
+}
+
+func TestAccountRequest_LoginProceedsOnAnIntactAccount(t *testing.T) {
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+
+	cmd := m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestLogin, Name: "max-2"})
+
+	assert.NotNil(t, cmd)
+	assert.NotContains(t, m.errBox.String(), "max-2")
+}

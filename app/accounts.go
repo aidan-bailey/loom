@@ -597,7 +597,10 @@ type accountLoginDoneMsg struct {
 
 // accountLoginCmd suspends the TUI and runs `claude auth login` as acct in
 // the real terminal (it is a browser flow), like $EDITOR in the file
-// explorer.
+// explorer. A registered account whose config dir is gone is refused, as
+// `loom account login` refuses it: claude would recreate the dir bare,
+// without the links to the main config that removing and re-adding it
+// restores.
 func (m *home) accountLoginCmd(acct string) tea.Cmd {
 	program := m.claudeProgram()
 	if program == "" {
@@ -606,6 +609,13 @@ func (m *home) accountLoginCmd(acct string) tea.Cmd {
 	env, err := m.accounts.Env(acct)
 	if err != nil {
 		return m.handleError(err)
+	}
+	if a, ok := m.accounts.Get(acct); ok {
+		if _, err := os.Stat(a.Dir); os.IsNotExist(err) {
+			return m.handleError(fmt.Errorf("account %q's config dir %s is missing; run `loom account remove %s`, then add it again", acct, a.Dir, acct))
+		} else if err != nil {
+			return m.handleError(fmt.Errorf("account %q: %w", acct, err))
+		}
 	}
 	return tea.ExecProcess(account.LoginCmd(program, env), func(err error) tea.Msg {
 		return accountLoginDoneMsg{name: acct, err: err}
