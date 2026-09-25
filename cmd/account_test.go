@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -293,10 +295,11 @@ func TestAccountRemove_PromptDiffersForANonOwnedDir(t *testing.T) {
 // --- Login (item 4) ---
 
 func TestRunAccountLogin_ReturnsTheChildsResult(t *testing.T) {
-	// Exercises the signal.Ignore/signal.Reset wrapping around the child
-	// without depending on real signal delivery timing: `true`/`false`
-	// ignore the "auth login" args LoginCmd appends and just report their
-	// own exit status, which must still come through unaffected.
+	// Exercises the signal.Notify/signal.Stop wrapping (runWithChildSignals)
+	// around the child without depending on real signal delivery timing:
+	// `true`/`false` ignore the "auth login" args LoginCmd appends and just
+	// report their own exit status, which must still come through
+	// unaffected.
 	if _, err := exec.LookPath("true"); err != nil {
 		t.Skip("no `true` binary on PATH")
 	}
@@ -306,6 +309,40 @@ func TestRunAccountLogin_ReturnsTheChildsResult(t *testing.T) {
 		t.Skip("no `false` binary on PATH")
 	}
 	assert.Error(t, runAccountLogin("false", nil))
+}
+
+// TestRunWithChildSignals_DoesNotLeakSignalIgnoreIntoTheChild is the fix
+// for the review finding that signal.Ignore(os.Interrupt) sets SIG_IGN at
+// the OS level, which (unlike a caught signal) survives exec: the login
+// child would start with SIGINT permanently ignored, so Ctrl-C would
+// reach neither loom nor claude. runWithChildSignals catches the signal
+// (signal.Notify) instead, which POSIX resets to its default disposition
+// across exec. /proc/self/status's SigIgn is a per-process bitmask, one
+// bit per signal (bit N-1 for signal N; SIGINT is signal 2, so bit 1,
+// value 0x2) — asserting it clear in a real child is a direct check of
+// the OS-level disposition the reviewer verified was leaking.
+func TestRunWithChildSignals_DoesNotLeakSignalIgnoreIntoTheChild(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc/self/status's SigIgn is Linux-specific")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no /bin/sh")
+	}
+	if _, err := exec.LookPath("grep"); err != nil {
+		t.Skip("no grep")
+	}
+
+	var out bytes.Buffer
+	c := exec.Command(sh, "-c", "grep SigIgn /proc/self/status")
+	c.Stdout = &out
+	require.NoError(t, runWithChildSignals(c))
+
+	line := strings.TrimSpace(out.String())
+	require.True(t, strings.HasPrefix(line, "SigIgn:"), "unexpected /proc/self/status line: %q", line)
+	mask, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(line, "SigIgn:")), 16, 64)
+	require.NoError(t, err)
+	assert.Zero(t, mask&0x2, "SIGINT (bit 2) must not be ignored in the login child")
 }
 
 func TestAccountAdd_FailedLoginKeepsTheAccountAndSaysHowToFinish(t *testing.T) {
@@ -348,6 +385,32 @@ func TestAccountLogin_RefusesWhenTheAccountDirIsMissing(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "loom account remove max-2")
 	assert.Contains(t, err.Error(), "loom account add max-2")
+}
+
+// TestAccountLogin_NamesAnUnexpectedStatError is the review's second fix:
+// a stat failure that is not "not exist" (here, a parent dir with its
+// execute bit stripped, so the account dir can't even be reached) must be
+// reported as what it is, not misreported as the account's dir having
+// been removed — the "remove, then add" advice would be actively wrong
+// for a transient permissions problem.
+func TestAccountLogin_NamesAnUnexpectedStatError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	global := isolateAccounts(t)
+	_, err := runAccount(t, "", "add", "max-2", "--no-login")
+	require.NoError(t, err)
+	acct, ok := account.LoadRegistry(global).Get("max-2")
+	require.True(t, ok)
+	parent := filepath.Dir(acct.Dir)
+	require.NoError(t, os.Chmod(parent, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+
+	_, err = runAccount(t, "", "login", "max-2")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "checking its config dir")
+	assert.NotContains(t, err.Error(), "loom account remove", `a real stat error must not be misreported as "missing"`)
 }
 
 // --- list (item 5) ---

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -86,16 +87,30 @@ func validMainDir(main string, reg *account.Registry) error {
 	return account.ValidateMainDir(main, reg.AccountsDir())
 }
 
+// runWithChildSignals runs c the way a foreground, interactive child
+// should: SIGINT is caught, not ignored, here in loom, so the same Ctrl-C
+// the terminal delivers to c doesn't also abort loom's own RunE mid-flow
+// (during `add`, that would skip the "created but not logged in" report
+// below) — the signal lands in ch instead of loom's default (process-
+// terminating) handling and is otherwise never acted on. Catching rather
+// than ignoring matters for the child too: a signal.Ignore'd disposition
+// is SIG_IGN at the OS level, which survives exec into the child (and any
+// children after it) — the login process would inherit SIGINT
+// permanently ignored, so Ctrl-C would reach neither loom nor claude. A
+// caught signal has no such leak: POSIX resets it to its default
+// disposition across exec, so c starts with ordinary SIGINT handling of
+// its own.
+func runWithChildSignals(c *exec.Cmd) error {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt)
+	defer signal.Stop(ch)
+	return c.Run()
+}
+
 func runAccountLogin(program string, env []string) error {
 	c := account.LoginCmd(program, env)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-	// The login flow is claude's own interactive prompt in the foreground
-	// terminal; a Ctrl-C during it should reach that child process, not
-	// abort loom's own RunE mid-flow (which, during `add`, would skip the
-	// "created but not logged in" report below).
-	signal.Ignore(os.Interrupt)
-	defer signal.Reset(os.Interrupt)
-	return c.Run()
+	return runWithChildSignals(c)
 }
 
 // loginAndReport runs the login, then says who the account is now.
@@ -235,8 +250,11 @@ var accountLoginCmd = &cobra.Command{
 		if !targetsDefault {
 			if a, ok := reg.Get(name); ok {
 				if _, statErr := os.Stat(a.Dir); statErr != nil {
-					return fmt.Errorf("account %q's config dir %s is missing; run: loom account remove %s, then: loom account add %s",
-						name, a.Dir, name, name)
+					if os.IsNotExist(statErr) {
+						return fmt.Errorf("account %q's config dir %s is missing; run: loom account remove %s, then: loom account add %s",
+							name, a.Dir, name, name)
+					}
+					return fmt.Errorf("account %q: checking its config dir: %w", name, statErr)
 				}
 			}
 		}
