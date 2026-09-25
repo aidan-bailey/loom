@@ -2,7 +2,6 @@ package app
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -38,21 +37,6 @@ func TestUsageProbe_DispatchesOnceAndThrottles(t *testing.T) {
 	require.NotNil(t, m.maybeUsageProbe())
 	assert.True(t, m.gate(gateUsage).inFlight)
 	assert.Nil(t, m.maybeUsageProbe(), "one probe in flight at a time")
-}
-
-// TestUsageProbe_ReloadsTheRegistryFirst: an account another terminal
-// removed is not probed (its dir is gone), and the removal is published.
-func TestUsageProbe_ReloadsTheRegistryFirst(t *testing.T) {
-	m := homeWithAppState(t)
-	m.program = "claude"
-	withAccounts(t, m, "max-2")
-	other := account.LoadRegistry(filepath.Dir(m.accounts.AccountsDir()))
-	_, err := other.Remove("max-2", false)
-	require.NoError(t, err)
-
-	assert.Nil(t, m.maybeUsageProbe(), "no extra account left: nothing to probe")
-	assert.False(t, m.hasExtraAccounts())
-	assert.False(t, ui.ShowAccounts())
 }
 
 func TestUsageReady_KeepsTheLastGoodSampleOnError(t *testing.T) {

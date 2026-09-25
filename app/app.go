@@ -263,6 +263,12 @@ type home struct {
 	// accountStrip is the usage strip above the tab bar; empty (height 0)
 	// until an extra account exists.
 	accountStrip *ui.AccountStrip
+	// accountsStamp is the accounts.json version the registry was last read
+	// (or written) at, and accountsSeen the state it held then; the health
+	// tick rereads the file only when its stat differs from the stamp, and
+	// acts only when the state differs (see maybeReloadAccounts).
+	accountsStamp accountsFileStamp
+	accountsSeen  string
 	// global spinner instance. we plumb this down to where it's needed
 	spinner spinner.Model
 	// activeOverlay is the currently displayed modal (nil when no overlay
@@ -1007,6 +1013,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// gh is known unavailable.
 		if poll := m.maybeGHQuery(); poll != nil {
 			cmds = append(cmds, poll)
+		}
+
+		// accounts.json, which another loom or a `loom account` run may have
+		// changed: one stat per tick, a reread only when it moved.
+		if reload := m.maybeReloadAccounts(); reload != nil {
+			cmds = append(cmds, reload)
 		}
 
 		// Account plan usage, on its own 2-minute cadence (see

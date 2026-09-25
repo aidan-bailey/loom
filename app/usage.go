@@ -60,12 +60,12 @@ func usageProbeCmd(program, mainDir string, targets []usageTarget, r internalexe
 }
 
 // maybeUsageProbe returns a probe round when gateUsage is due, an extra
-// account exists, and a Claude CLI is configured. The registry is re-read
-// first, so an account another terminal added or removed is probed (or
-// not) accordingly. Update goroutine only.
+// account exists, and a Claude CLI is configured. It reads the registry as
+// the health tick last reloaded it (maybeReloadAccounts): a builder that
+// returns nil leaves the gate due, so it runs again on the very next tick.
+// Update goroutine only.
 func (m *home) maybeUsageProbe() tea.Cmd {
 	return m.dispatchGated(gateUsage, time.Now(), func() tea.Cmd {
-		m.reloadAccounts()
 		if !m.hasExtraAccounts() {
 			return nil
 		}

@@ -19,7 +19,7 @@ func bareOpts(acct string) overlay.LaunchOptions {
 func TestNewLaunchOptionsOverlay_NoAccountRowWithoutExtras(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m)
-	lo := m.newLaunchOptionsOverlay(bareOpts(""), "claude")
+	lo, _ := m.newLaunchOptionsOverlay(bareOpts(""), "claude")
 	assert.NotContains(t, lo.Render(), "Account")
 }
 
@@ -28,7 +28,7 @@ func TestNewLaunchOptionsOverlay_PreselectsTheRegistryDefault(t *testing.T) {
 	withAccounts(t, m, "max-2")
 	require.NoError(t, m.accounts.SetDefault("max-2"))
 
-	lo := m.newLaunchOptionsOverlay(bareOpts(""), "claude")
+	lo, _ := m.newLaunchOptionsOverlay(bareOpts(""), "claude")
 
 	assert.Equal(t, "max-2", lo.Options().Account)
 	assert.Contains(t, lo.Render(), "Account")
@@ -37,7 +37,7 @@ func TestNewLaunchOptionsOverlay_PreselectsTheRegistryDefault(t *testing.T) {
 func TestNewLaunchOptionsOverlay_AnUnknownAccountFallsBackToTheDefault(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m)
-	lo := m.newLaunchOptionsOverlay(bareOpts("gone"), "claude")
+	lo, _ := m.newLaunchOptionsOverlay(bareOpts("gone"), "claude")
 	assert.Equal(t, account.DefaultName, lo.Options().Account,
 		"R on a session whose account was removed must not relaunch as it again")
 }
@@ -50,7 +50,7 @@ func TestNewLaunchOptionsOverlay_NoAccountRowForANonClaudeProgram(t *testing.T) 
 	withAccounts(t, m, "max-2")
 	require.NoError(t, m.accounts.SetDefault("max-2"))
 
-	lo := m.newLaunchOptionsOverlay(bareOpts("max-2"), "aider")
+	lo, _ := m.newLaunchOptionsOverlay(bareOpts("max-2"), "aider")
 
 	assert.NotContains(t, lo.Render(), "Account")
 	assert.False(t, lo.AccountsShown())
@@ -67,7 +67,7 @@ func TestNewLaunchOptionsOverlay_AnUnloadableRegistryKeepsTheSessionsAccount(t *
 	withAccounts(t, m)
 	m.accounts = account.Unavailable(errors.New("accounts.json is corrupt"))
 
-	lo := m.newLaunchOptionsOverlay(bareOpts("max-2"), "claude")
+	lo, _ := m.newLaunchOptionsOverlay(bareOpts("max-2"), "claude")
 
 	assert.False(t, lo.AccountsShown())
 	assert.Equal(t, "max-2", lo.Options().Account)
@@ -76,7 +76,7 @@ func TestNewLaunchOptionsOverlay_AnUnloadableRegistryKeepsTheSessionsAccount(t *
 func TestRefreshAccountViews_LeavesANonClaudeModalAlone(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	lo := m.newLaunchOptionsOverlay(bareOpts(""), "aider")
+	lo, _ := m.newLaunchOptionsOverlay(bareOpts(""), "aider")
 	m.setOverlay(lo, overlayLaunchOptions)
 
 	m.refreshAccountViews()
@@ -91,7 +91,7 @@ func TestRefreshAccountViews_LeavesANonClaudeModalAlone(t *testing.T) {
 func TestRefreshAccountViews_KeepsTheModalsChoiceWhenTheRegistryFailsToLoad(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	lo := m.newLaunchOptionsOverlay(bareOpts("max-2"), "claude")
+	lo, _ := m.newLaunchOptionsOverlay(bareOpts("max-2"), "claude")
 	m.setOverlay(lo, overlayLaunchOptions)
 	require.Equal(t, "max-2", lo.Options().Account)
 
@@ -105,7 +105,7 @@ func TestRefreshAccountViews_KeepsTheModalsChoiceWhenTheRegistryFailsToLoad(t *t
 func TestRefreshAccountViews_FollowsAnOpenClaudeModal(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	lo := m.newLaunchOptionsOverlay(bareOpts("max-2"), "claude")
+	lo, _ := m.newLaunchOptionsOverlay(bareOpts("max-2"), "claude")
 	m.setOverlay(lo, overlayLaunchOptions)
 	require.NotContains(t, lo.Render(), "12%")
 

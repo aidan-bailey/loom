@@ -288,7 +288,8 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 	}
 	m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions
-	m.setOverlay(m.newLaunchOptionsOverlay(launchOptionsFromConfig(m.appConfig), instance.Program()), overlayLaunchOptions)
+	lo, reloaded := m.newLaunchOptionsOverlay(launchOptionsFromConfig(m.appConfig), instance.Program())
+	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
-	return m, tea.Batch(tea.RequestWindowSize, m.requestUsageProbe())
+	return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())
 }

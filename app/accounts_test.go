@@ -22,11 +22,10 @@ func withAccounts(t *testing.T, m *home, names ...string) string {
 		_, _, err := reg.Create(n, main)
 		require.NoError(t, err)
 	}
-	m.accounts = reg
 	if m.accountStrip == nil {
 		m.accountStrip = ui.NewAccountStrip()
 	}
-	m.publishAccounts()
+	m.adoptAccounts(reg)
 	t.Cleanup(func() {
 		session.SetAccountDirs(nil, nil)
 		ui.SetShowAccounts(false)

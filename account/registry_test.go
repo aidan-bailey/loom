@@ -109,6 +109,12 @@ func TestUnavailable_NilErrIsStillLatched(t *testing.T) {
 	assert.ErrorIs(t, r.SetDefault(DefaultName), ErrRegistryLoadFailed)
 }
 
+func TestRegistry_Path(t *testing.T) {
+	dir := t.TempDir()
+	assert.Equal(t, filepath.Join(dir, "accounts.json"), LoadRegistry(dir).Path())
+	assert.Equal(t, "", Unavailable(nil).Path(), "no file to stat")
+}
+
 // TestUnavailable_ReloadKeepsItsOwnError: an Unavailable registry has no
 // file to reload, but why it is unavailable is still the error to show.
 func TestUnavailable_ReloadKeepsItsOwnError(t *testing.T) {

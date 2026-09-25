@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -30,16 +31,86 @@ type accountUsage struct {
 func (m *home) initAccounts() {
 	m.ensureAccountMaps()
 	m.accountStrip = ui.NewAccountStrip()
+	var reg *account.Registry
 	if globalDir, err := config.GetGlobalConfigDir(); err != nil {
-		m.accounts = account.Unavailable(err)
+		reg = account.Unavailable(err)
 	} else {
-		m.accounts = account.LoadRegistry(globalDir)
+		reg = account.LoadRegistry(globalDir)
 	}
-	if err := m.accounts.LoadErr(); err != nil {
+	if err := reg.LoadErr(); err != nil {
 		log.For("account").Error("registry.load_failed", "err", err.Error())
 		m.errBox.SetError(fmt.Errorf("accounts: %w", err))
 	}
+	m.adoptAccounts(reg)
+}
+
+// adoptAccounts installs reg as the registry and publishes it, recording
+// the file version and state it holds as seen (noteAccountsState).
+func (m *home) adoptAccounts(reg *account.Registry) {
+	m.accounts = reg
+	m.noteAccountsState()
 	m.publishAccounts()
+}
+
+// accountsFileStamp is one stat of accounts.json: enough to tell that the
+// file changed without reading it. The zero value (taken false) matches no
+// stat, so a registry never stamped is read on the first check.
+type accountsFileStamp struct {
+	taken   bool
+	exists  bool
+	size    int64
+	modTime int64
+	statErr string
+}
+
+func statAccountsFile(path string) accountsFileStamp {
+	fi, err := os.Stat(path)
+	switch {
+	case err == nil:
+		return accountsFileStamp{taken: true, exists: true, size: fi.Size(), modTime: fi.ModTime().UnixNano()}
+	case os.IsNotExist(err):
+		return accountsFileStamp{taken: true}
+	default:
+		return accountsFileStamp{taken: true, statErr: err.Error()}
+	}
+}
+
+// accountsSignature is what a reload compares to tell whether anything
+// changed: the default, every account's name and dir, and the load error.
+func accountsSignature(r *account.Registry) string {
+	var b strings.Builder
+	b.WriteString(r.Default())
+	for _, a := range r.Accounts {
+		b.WriteString("\x00" + a.Name + "=" + a.Dir)
+	}
+	if err := r.LoadErr(); err != nil {
+		b.WriteString("\x00error=" + err.Error())
+	}
+	return b.String()
+}
+
+// noteAccountsState records accounts.json's current version and the
+// registry's state as seen: after a load, and after this process wrote the
+// file itself, so neither reads as a change on the next check.
+func (m *home) noteAccountsState() {
+	if p := m.accounts.Path(); p != "" {
+		m.accountsStamp = statAccountsFile(p)
+	}
+	m.accountsSeen = accountsSignature(m.accounts)
+}
+
+// maybeReloadAccounts is the health tick's check for a change another loom
+// or a `loom account` run made to accounts.json: one stat, and a reload
+// only when the file's size or modification time moved. A registry with no
+// file (Unavailable) does nothing.
+func (m *home) maybeReloadAccounts() tea.Cmd {
+	if m.accounts == nil || m.accounts.Path() == "" {
+		return nil
+	}
+	if statAccountsFile(m.accounts.Path()) == m.accountsStamp {
+		return nil
+	}
+	return m.reloadAccounts()
 }
 
 func (m *home) ensureAccountMaps() {
@@ -78,16 +149,46 @@ func (m *home) publishAccounts() {
 }
 
 // reloadAccounts re-reads accounts.json, which another loom or a `loom
-// account` command may have changed, and republishes it. Called before
-// every action that reads the registry: probes, pickers, Settings.
-func (m *home) reloadAccounts() {
+// account` command may have changed, and handles any change
+// (accountsChanged). The health tick calls it when the file changed
+// (maybeReloadAccounts); the user-paced actions that read the registry —
+// Launch Options, Settings, account requests — call it first regardless.
+func (m *home) reloadAccounts() tea.Cmd {
 	if m.accounts == nil {
-		return
+		return nil
 	}
-	if err := m.accounts.Reload(); err != nil {
-		log.For("account").Warn("registry.reload_failed", "err", err.Error())
+	prevErr := m.accounts.LoadErr()
+	if p := m.accounts.Path(); p != "" {
+		// Stat before reading: a write landing in between then reads as a
+		// change on the next check instead of being missed.
+		m.accountsStamp = statAccountsFile(p)
 	}
+	_ = m.accounts.Reload() // a failure is latched in LoadErr
+	return m.accountsChanged(prevErr)
+}
+
+// accountsChanged handles a reload. When the registry holds what it did
+// last time it does nothing; otherwise it republishes, refreshes the views
+// and logs the change once, and shows a load error that has just appeared
+// (prevErr is the error before the reload) once, not on every reload that
+// still fails.
+func (m *home) accountsChanged(prevErr error) tea.Cmd {
+	sig := accountsSignature(m.accounts)
+	if sig == m.accountsSeen {
+		return nil
+	}
+	m.accountsSeen = sig
 	m.publishAccounts()
+	cmds := []tea.Cmd{m.refreshAccountViews()}
+	if err := m.accounts.LoadErr(); err != nil {
+		log.For("account").Warn("registry.reload_failed", "err", err.Error())
+		if prevErr == nil {
+			cmds = append(cmds, m.handleError(fmt.Errorf("accounts: %w", err)))
+		}
+	} else {
+		log.For("account").Info("registry.changed", "accounts", strings.Join(m.accounts.Names(), ","), "default", m.accounts.Default())
+	}
+	return tea.Batch(cmds...)
 }
 
 // rcAuthFor returns acct's remote-control auth: the startup probe for the
@@ -276,7 +377,8 @@ func (m *home) accountChoices(statuses []ui.AccountStatus) []overlay.AccountChoi
 }
 
 // newLaunchOptionsOverlay builds the Session Launch Options modal for opts,
-// launching program. The registry is re-read first. A Claude launch gets
+// launching program, and the Cmd of re-reading the registry, which it does
+// first (reloadAccounts). A Claude launch gets
 // the Account row when an extra account exists, and an empty or
 // unregistered opts.Account becomes the registry default, so R on a
 // session whose account was removed can't relaunch as it again. A registry
@@ -285,8 +387,8 @@ func (m *home) accountChoices(statuses []ui.AccountStatus) []overlay.AccountChoi
 // another subscription the user never saw chosen; kept, its launch fails
 // closed (session.RegistryLoadError). Any other program records no account
 // and gets no row.
-func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program string) *overlay.SessionLaunchOptions {
-	m.reloadAccounts()
+func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program string) (*overlay.SessionLaunchOptions, tea.Cmd) {
+	reloaded := m.reloadAccounts()
 	claude := session.IsClaudeProgram(program)
 	switch {
 	case !claude || m.accounts == nil:
@@ -308,7 +410,7 @@ func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program strin
 	if choices := m.accountChoices(m.accountStatuses()); claude && choices != nil {
 		lo.SetAccounts(choices)
 	}
-	return lo
+	return lo, reloaded
 }
 
 // applyChosenLaunch records the chosen launch options on inst: the program
@@ -376,8 +478,10 @@ func (m *home) accountUsers(acct string) (int, error) {
 	return n + stored, err
 }
 
-// afterAccountsChanged republishes the registry and refreshes every view.
+// afterAccountsChanged republishes the registry after this process wrote
+// it, records the written state as seen, and refreshes every view.
 func (m *home) afterAccountsChanged() tea.Cmd {
+	m.noteAccountsState()
 	m.publishAccounts()
 	return tea.Batch(m.refreshAccountViews(), m.requestUsageProbe())
 }
@@ -412,7 +516,10 @@ func (m *home) handleAccountRequest(req overlay.AccountRequest) tea.Cmd {
 	if m.accounts == nil {
 		return m.handleError(errors.New("the account registry is unavailable"))
 	}
-	m.reloadAccounts()
+	return tea.Batch(m.reloadAccounts(), m.carryOutAccountRequest(req))
+}
+
+func (m *home) carryOutAccountRequest(req overlay.AccountRequest) tea.Cmd {
 	m.ensureAccountMaps()
 	switch req.Kind {
 	case overlay.AccountRequestAdd:

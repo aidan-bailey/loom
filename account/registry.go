@@ -116,6 +116,10 @@ func Unavailable(err error) *Registry {
 // LoadErr reports why the registry failed to load, or nil.
 func (r *Registry) LoadErr() error { return r.loadErr }
 
+// Path is the registry's accounts.json, which a long-lived holder can stat
+// to tell whether a Reload is due; "" for an Unavailable registry.
+func (r *Registry) Path() string { return r.path }
+
 // Reload re-reads the registry's file into the receiver, replacing its
 // accounts and default with whatever is on disk now. A long-lived holder
 // (the TUI, which loads its registry once at workspace activation) should

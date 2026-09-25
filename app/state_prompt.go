@@ -103,9 +103,10 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 				m.state = stateLaunchOptions
-				m.setOverlay(m.newLaunchOptionsOverlay(launchOptionsFromConfig(m.appConfig), selected.Program()), overlayLaunchOptions)
+				lo, reloaded := m.newLaunchOptionsOverlay(launchOptionsFromConfig(m.appConfig), selected.Program())
+				m.setOverlay(lo, overlayLaunchOptions)
 				m.menu.SetState(ui.StateNewInstance)
-				return m, tea.Batch(tea.RequestWindowSize, m.requestUsageProbe())
+				return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())
 			}
 
 			// Regular flow: instance already running, just send prompt

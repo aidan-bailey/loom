@@ -484,13 +484,13 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.state = stateLaunchOptions
-	lo := m.newLaunchOptionsOverlay(opts, base)
+	lo, reloaded := m.newLaunchOptionsOverlay(opts, base)
 	// The branch already exists, so the prefix row shows it read-only rather
 	// than implying a rename that restarting cannot perform.
 	lo.SetBranchPrefixLocked(selected.GetBranch())
 	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
-	return m, tea.Batch(tea.RequestWindowSize, m.requestUsageProbe())
+	return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())
 }
 
 // runRecoverSelected adopts the selected Recoverable orphan: it serializes
@@ -654,12 +654,12 @@ func runOpenSettings(m *home) (tea.Model, tea.Cmd) {
 	if m.appConfig == nil {
 		return m, m.handleError(fmt.Errorf("no configuration loaded"))
 	}
-	m.reloadAccounts()
+	reloaded := m.reloadAccounts()
 	so := overlay.NewSettingsOverlay(m.appConfig, m.rcAuth.Blocked(), m.rcAuth.Reason)
 	so.SetAccountRows(m.accountRows(m.accountStatuses()))
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
-	return m, m.requestUsageProbe()
+	return m, tea.Batch(reloaded, m.requestUsageProbe())
 }
 
 // -- File explorer --
