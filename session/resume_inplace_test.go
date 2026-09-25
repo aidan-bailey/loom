@@ -245,6 +245,28 @@ func TestResume_MissingAccountFailsBeforeAnySideEffect(t *testing.T) {
 	assert.Equal(t, Paused, inst.GetStatus())
 }
 
+// TestResume_ReattachesLiveSessionDespiteAnUnregisteredAccount pins that
+// the account check does not block reattaching to an already-live
+// session: that path launches nothing, so an account removed with
+// --force (or an accounts.json that has since gone corrupt) must not
+// strand an otherwise-reachable agent. Only the paths that actually
+// launch or rebuild (relaunch-in-place, rebuild) fail closed on it.
+func TestResume_ReattachesLiveSessionDespiteAnUnregisteredAccount(t *testing.T) {
+	withAccountDirs(t, nil)
+	inst, srv := newTickPausedInstance(t)
+	inst.SetAccount("gone")
+	srv.mu.Lock()
+	srv.created = true // the agent's session is alive after all
+	srv.mu.Unlock()
+	require.Equal(t, tmux.LivenessAlive, inst.getTmuxSession().SessionLiveness(),
+		"precondition: this exercises the reattach path")
+
+	require.NoError(t, resumeLikeApp(t, inst))
+
+	assert.Empty(t, srv.launchArgs(), "reattach must not launch a new session")
+	assert.Equal(t, Running, inst.GetStatus())
+}
+
 // TestResume_GuttedWorktreeIsSetAsideAndRebuilt keeps the gutted case on
 // the existing recovery path: a directory git has let go of (no .git) is
 // rebuilt, and its leftovers — possibly uncommitted work git can no

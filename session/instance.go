@@ -1285,15 +1285,6 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		lg.Debug("instance.resume.end", args...)
 	}()
 
-	// Resolved before anything below rebuilds the worktree or touches a
-	// stash: a resume refused over an unresolvable account must change
-	// nothing on disk. finishResume's own launch paths (startFreshWithRecovery,
-	// CrashRestart) resolve it again at the moment they actually launch —
-	// this is the fail-closed guard for everything before that point.
-	if _, envErr := i.launchEnv(true); envErr != nil {
-		return envErr
-	}
-
 	if i.IsWorkspaceTerminal {
 		return fmt.Errorf("cannot resume workspace terminal")
 	}
@@ -1332,7 +1323,25 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	// Relaunch the agent in the tree as it stands.
 	live := ts.SessionLiveness()
 	tree, treeErr := gw.InspectTree()
-	switch decideResume(live, tree) {
+	action := decideResume(live, tree)
+
+	// Resolved before anything below rebuilds the worktree or touches a
+	// stash: a resume refused over an unresolvable account must change
+	// nothing on disk. Reattaching to an already-live session launches
+	// nothing, so it is let through regardless — an account removed with
+	// --force, or an accounts.json that has since gone corrupt, must not
+	// strand an otherwise-reachable agent. finishResume's own launch
+	// paths (startFreshWithRecovery, CrashRestart) resolve the account
+	// again at the moment they actually launch, which covers the rare
+	// case where reattach itself falls back to a fresh launch (a dead
+	// Restore).
+	if action != resumeReattach {
+		if _, envErr := i.launchEnv(true); envErr != nil {
+			return envErr
+		}
+	}
+
+	switch action {
 	case resumeReattach:
 		lg.Debug("instance.resume.reattach_live_session", "worktree", gw.GetWorktreePath())
 		return i.finishResume(saveState, ts, gw)
