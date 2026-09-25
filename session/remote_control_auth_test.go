@@ -90,3 +90,15 @@ func TestDetectClaudeRemoteControlAuth_EnvOverride(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectClaudeRemoteControlAuthEnv_CarriesTheIdentity(t *testing.T) {
+	clearOverrideEnv(t)
+	f := &envRecordingExec{out: []byte(`{"loggedIn":true,"authMethod":"claude.ai","email":"you@example.com","subscriptionType":"max","configDirectory":"/acct/max-2"}`)}
+
+	got := DetectClaudeRemoteControlAuthEnv("claude", []string{"CLAUDE_CONFIG_DIR=/acct/max-2"}, f)
+
+	assert.True(t, got.OK())
+	assert.Equal(t, "you@example.com", got.Identity.Email)
+	assert.Equal(t, "/acct/max-2", got.Identity.ConfigDir)
+	assert.Contains(t, f.env, "CLAUDE_CONFIG_DIR=/acct/max-2")
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -89,20 +90,22 @@ func (e claudeRosterEntry) isInteractive() bool {
 // generous headroom, not a target.
 const claudeRosterTimeout = 5 * time.Second
 
-// QueryClaudeRoster runs `claude agents --json` and returns the live
-// sessions keyed by working directory, which is how Loom joins them to
-// instances (an instance's GetWorktreePath is the cwd Claude was launched
-// in). The CLI lists every live session on the machine — ordinary
-// interactive ones, not just `--bg` ones — so Loom's own tmux-hosted
-// agents appear in it. Only interactive sessions are returned: a Loom
-// instance is always one, and background sessions publish `state`
-// rather than the `status` this package reads.
+// QueryClaudeRoster is QueryClaudeRosterEnv for the default account.
+func QueryClaudeRoster(program string, runner internalexec.Executor) (map[string]RosterEntry, error) {
+	return QueryClaudeRosterEnv(program, nil, runner)
+}
+
+// QueryClaudeRosterEnv runs `claude agents --json` with env appended to
+// loom's own environment (nil: inherit unchanged) and returns its entries
+// keyed by cwd. The roster lists only the sessions of the config dir the
+// CLI runs under, so each account's sessions need a query run as that
+// account (env = its CLAUDE_CONFIG_DIR).
 //
 // Returns an empty map and no error for non-Claude programs — callers can
 // invoke it unconditionally. A missing subcommand, a hung CLI, or output
 // this build cannot parse is an error: the caller logs it and keeps using
 // pane-content detection.
-func QueryClaudeRoster(program string, runner internalexec.Executor) (map[string]RosterEntry, error) {
+func QueryClaudeRosterEnv(program string, env []string, runner internalexec.Executor) (map[string]RosterEntry, error) {
 	if !IsClaudeProgram(program) {
 		return nil, nil
 	}
@@ -113,7 +116,11 @@ func QueryClaudeRoster(program string, runner internalexec.Executor) (map[string
 
 	ctx, cancel := context.WithTimeout(context.Background(), claudeRosterTimeout)
 	defer cancel()
-	out, err := runner.Output(exec.CommandContext(ctx, fields[0], "agents", "--json"))
+	c := exec.CommandContext(ctx, fields[0], "agents", "--json")
+	if env != nil {
+		c.Env = append(os.Environ(), env...)
+	}
+	out, err := runner.Output(c)
 	if err != nil && len(out) == 0 {
 		return nil, fmt.Errorf("claude agents --json: %w", err)
 	}

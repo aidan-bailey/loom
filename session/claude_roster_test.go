@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeRosterExecutor returns canned output/err for `agents --json` and
@@ -187,4 +188,32 @@ func TestQueryClaudeRoster_UnknownStatusStringYieldsNoOpinion(t *testing.T) {
 	assert.Equal(t, RosterStatusUnknown, got["/w/x"].Status)
 	_, ok := got["/w/x"].LoomStatus()
 	assert.False(t, ok, "an unrecognized status string must not drive a transition")
+}
+
+// envRecordingExec records the env of the command it runs.
+type envRecordingExec struct {
+	out []byte
+	env []string
+}
+
+func (f *envRecordingExec) Run(c *exec.Cmd) error { f.env = c.Env; return nil }
+func (f *envRecordingExec) Output(c *exec.Cmd) ([]byte, error) {
+	f.env = c.Env
+	return f.out, nil
+}
+func (f *envRecordingExec) CombinedOutput(c *exec.Cmd) ([]byte, error) { return f.Output(c) }
+
+func TestQueryClaudeRosterEnv_RunsAsTheAccount(t *testing.T) {
+	f := &envRecordingExec{out: []byte(rosterJSON)}
+	got, err := QueryClaudeRosterEnv("claude", []string{"CLAUDE_CONFIG_DIR=/acct/max-2"}, f)
+	require.NoError(t, err)
+	assert.Len(t, got, 3)
+	assert.Contains(t, f.env, "CLAUDE_CONFIG_DIR=/acct/max-2")
+}
+
+func TestQueryClaudeRoster_InheritsLoomsEnv(t *testing.T) {
+	f := &envRecordingExec{out: []byte(rosterJSON)}
+	_, err := QueryClaudeRoster("claude", f)
+	require.NoError(t, err)
+	assert.Nil(t, f.env)
 }
