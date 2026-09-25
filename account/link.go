@@ -34,11 +34,16 @@ var sharedDenyList = map[string]bool{
 
 // shared reports whether main-dir entry name is linked into account dirs.
 // Besides the deny-list, .claude.json's and .credentials.json's siblings
-// (their backups and atomic-write temp files) stay per account too.
+// (their backups and atomic-write temp files) stay per account too, and so
+// does security_warnings_state_<uuid>.json: Claude writes one per session,
+// so the main dir accumulates several, and an account that ran any
+// session has its own — a real file, not a link, so Unshared must not
+// report it as content the account holds independently.
 func shared(name string) bool {
 	return !sharedDenyList[name] &&
 		!strings.HasPrefix(name, ".claude.json") &&
-		!strings.HasPrefix(name, ".credentials.json")
+		!strings.HasPrefix(name, ".credentials.json") &&
+		!strings.HasPrefix(name, "security_warnings_state_")
 }
 
 // SyncReport is what one Sync did. Both lists are sorted.
@@ -84,19 +89,35 @@ func Sync(acctDir, mainDir string) (SyncReport, error) {
 	return rep, nil
 }
 
-// within reports whether target is base itself or nested inside it, after
-// cleaning both. Used to refuse a main dir that is really an account's own
-// tree (a nested loom running as an account, pointed at its own accounts
-// dir by mistake).
+// resolvedOrClean resolves path's symlinks, so a symlink chain cannot
+// disguise "the same place" as "somewhere else" to within's string
+// comparison. A path that does not exist yet — the account dir Create is
+// about to make, most often — has nothing to resolve, so this falls back
+// to a plain Clean.
+func resolvedOrClean(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
+}
+
+// within reports whether target is base itself or nested inside it, once
+// both are resolved. Used both ways round: to refuse a main dir that is
+// really an account's own tree (a nested loom running as an account,
+// pointed at its own accounts dir by mistake), and to refuse a main dir
+// that contains AccountsDir — its own parent or an ancestor further up —
+// which would have Sync link "accounts" itself into every account made
+// under it.
 func within(base, target string) bool {
-	base, target = filepath.Clean(base), filepath.Clean(target)
+	base, target = resolvedOrClean(base), resolvedOrClean(target)
 	return target == base || strings.HasPrefix(target, base+string(filepath.Separator))
 }
 
 // Create registers a new account called name: it makes the account's
 // config dir under AccountsDir, links mainDir's shared entries into it,
 // and records it. The dir must not exist yet. mainDir must be an absolute
-// path outside AccountsDir. Logging in is the caller's next step.
+// path neither inside nor containing AccountsDir. Logging in is the
+// caller's next step.
 func (r *Registry) Create(name, mainDir string) (Account, SyncReport, error) {
 	if err := ValidName(name); err != nil {
 		return Account{}, SyncReport{}, err
@@ -109,6 +130,9 @@ func (r *Registry) Create(name, mainDir string) (Account, SyncReport, error) {
 	}
 	if within(r.AccountsDir(), mainDir) {
 		return Account{}, SyncReport{}, fmt.Errorf("main config dir %s is inside %s; refusing to link an account's own accounts tree", mainDir, r.AccountsDir())
+	}
+	if within(mainDir, r.AccountsDir()) {
+		return Account{}, SyncReport{}, fmt.Errorf("main config dir %s contains %s; refusing to link the accounts tree into every account", mainDir, r.AccountsDir())
 	}
 	if _, ok := r.Get(name); ok {
 		return Account{}, SyncReport{}, fmt.Errorf("account %q already exists", name)

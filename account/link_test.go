@@ -162,6 +162,49 @@ func TestCreate_RejectsAMainDirInsideAccountsDir(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestCreate_RejectsAMainDirContainingAccountsDir covers the reverse
+// direction: a mainDir that is AccountsDir's own parent (or an ancestor
+// further up) would have Sync link "accounts" itself — the dir Create is
+// about to populate — into every account it makes.
+func TestCreate_RejectsAMainDirContainingAccountsDir(t *testing.T) {
+	global := t.TempDir()
+	r := LoadRegistry(global)
+
+	_, _, err := r.Create("max-2", global)
+	assert.Error(t, err, "mainDir == globalDir, AccountsDir's own parent")
+
+	_, _, err = r.Create("max-2", filepath.Dir(global))
+	assert.Error(t, err, "mainDir an ancestor further up")
+}
+
+func TestWithin_ResolvesASymlinkDisguisingContainment(t *testing.T) {
+	global := t.TempDir()
+	accountsDir := filepath.Join(global, "accounts")
+	require.NoError(t, os.MkdirAll(filepath.Join(accountsDir, "max-2"), 0o755))
+
+	// A path elsewhere that merely symlinks into accountsDir: its raw
+	// string shares no prefix with accountsDir, but it resolves to a path
+	// inside it.
+	elsewhere := t.TempDir()
+	disguised := filepath.Join(elsewhere, "looks-unrelated")
+	require.NoError(t, os.Symlink(accountsDir, disguised))
+
+	assert.True(t, within(accountsDir, disguised))
+}
+
+func TestWithin_UnrelatedPathsAreNotWithin(t *testing.T) {
+	base := t.TempDir()
+	other := t.TempDir()
+	assert.False(t, within(base, other))
+}
+
+func TestWithin_FallsBackToCleanForAPathThatDoesNotExistYet(t *testing.T) {
+	base := t.TempDir()
+	notYetCreated := filepath.Join(base, "accounts", "max-2")
+	assert.True(t, within(filepath.Join(base, "accounts"), notYetCreated))
+	assert.False(t, within(filepath.Join(base, "accounts"), filepath.Join(base, "other")))
+}
+
 func TestRemove_DeletesLinksButNeverTheirTargets(t *testing.T) {
 	global, main := t.TempDir(), mainDirWith(t)
 	r := LoadRegistry(global)
@@ -369,4 +412,36 @@ func TestSync_ExcludesCredentialsAndClaudeJsonVariants(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Empty(t, rep.Linked)
+}
+
+// TestSync_ExcludesPerSessionSecurityWarningsState covers a false positive
+// found in practice: Claude writes a security_warnings_state_<uuid>.json
+// per session, so the main dir accumulates several. Linking them would
+// make Sync try to relink a growing, unstable set on every run, and
+// Unshared would report an account's own copy (written directly under it,
+// never through a link) as content that would be lost on removal, refusing
+// every account that ever ran a session.
+func TestSync_ExcludesPerSessionSecurityWarningsState(t *testing.T) {
+	main, acct := t.TempDir(), t.TempDir()
+	for _, id := range []string{"11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"} {
+		require.NoError(t, os.WriteFile(filepath.Join(main, "security_warnings_state_"+id+".json"), []byte("x"), 0o600))
+	}
+
+	rep, err := Sync(acct, main)
+
+	require.NoError(t, err)
+	assert.Empty(t, rep.Linked)
+	for _, id := range []string{"11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"} {
+		assert.True(t, notExist(t, filepath.Join(acct, "security_warnings_state_"+id+".json")))
+	}
+}
+
+func TestUnshared_IgnoresAnAccountsOwnSecurityWarningsState(t *testing.T) {
+	acct := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(acct, "security_warnings_state_33333333-3333-3333-3333-333333333333.json"), []byte("x"), 0o600))
+
+	list, err := Unshared(acct)
+
+	require.NoError(t, err)
+	assert.Empty(t, list)
 }
