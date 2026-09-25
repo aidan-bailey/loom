@@ -270,14 +270,20 @@ func (m *home) accountStatuses() []ui.AccountStatus {
 // (a Claude launch that was given accounts) and the registry loaded: a
 // failed load lists no accounts, and refreshing would hide the row and
 // reset the choice to the default account, where keeping the stale one
-// makes a named account's launch fail closed instead.
+// makes a named account's launch fail closed instead. When the modal's
+// selected account is gone the selection moves to the first choice, and
+// the modal says so (removedAccountNotice).
 func (m *home) refreshAccountViews() tea.Cmd {
 	statuses := m.accountStatuses()
 	if so := m.settingsOverlay(); so != nil {
 		so.SetAccountRows(m.accountRows(statuses))
 	}
 	if lo := m.launchOptionsOverlay(); lo != nil && lo.AccountsShown() && m.accountsLoaded() {
-		lo.SetAccounts(m.accountChoices(statuses))
+		choices := m.accountChoices(statuses)
+		if sel := lo.Options().Account; sel != "" && len(choices) > 0 && !hasAccountChoice(choices, sel) {
+			lo.SetAccountNotice(removedAccountNotice(sel, choices[0].Name))
+		}
+		lo.SetAccounts(choices)
 	}
 	if m.accountStrip == nil {
 		return nil
@@ -392,11 +398,8 @@ func (m *home) handleAccountsRefreshed(msg accountsRefreshedMsg) tea.Cmd {
 func (m *home) accountsLoaded() bool { return m.accounts != nil && m.accounts.LoadErr() == nil }
 
 // accountChoices are the Launch Options Account row's options, default
-// first; nil (the row hidden) without an extra account.
+// first. Default alone hides the row unless a notice shows it.
 func (m *home) accountChoices(statuses []ui.AccountStatus) []overlay.AccountChoice {
-	if !m.hasExtraAccounts() {
-		return nil
-	}
 	now := time.Now()
 	out := make([]overlay.AccountChoice, 0, len(statuses))
 	for _, s := range statuses {
@@ -411,12 +414,30 @@ func (m *home) accountChoices(statuses []ui.AccountStatus) []overlay.AccountChoi
 	return out
 }
 
+func hasAccountChoice(choices []overlay.AccountChoice, name string) bool {
+	for _, c := range choices {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// removedAccountNotice is the Account row's notice for a session whose
+// account was removed: it runs on another one, which the user sees before
+// confirming.
+func removedAccountNotice(removed, now string) string {
+	return fmt.Sprintf("%s was removed — this session will run on %s", removed, now)
+}
+
 // newLaunchOptionsOverlay builds the Session Launch Options modal for opts,
 // launching program, and the Cmd of re-reading the registry, which it does
 // first (reloadAccounts). A Claude launch gets
 // the Account row when an extra account exists, and an empty or
 // unregistered opts.Account becomes the registry default, so R on a
-// session whose account was removed can't relaunch as it again. A registry
+// session whose account was removed can't relaunch as it again; the row
+// then shows, even with default the only choice left, with a notice
+// naming the switch (removedAccountNotice). A registry
 // that failed to load keeps a named opts.Account: it lists no accounts, so
 // the row is hidden, and rewriting the account would move the session to
 // another subscription the user never saw chosen; kept, its launch fails
@@ -425,6 +446,7 @@ func (m *home) accountChoices(statuses []ui.AccountStatus) []overlay.AccountChoi
 func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program string) (*overlay.SessionLaunchOptions, tea.Cmd) {
 	reloaded := m.reloadAccounts()
 	claude := session.IsClaudeProgram(program)
+	notice := ""
 	switch {
 	case !claude || m.accounts == nil:
 		opts.Account = ""
@@ -435,15 +457,18 @@ func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program strin
 		// account still exists.
 	default:
 		if _, ok := m.accounts.Get(opts.Account); !ok {
+			removed := opts.Account
 			opts.Account = m.accounts.Default()
+			notice = removedAccountNotice(removed, opts.Account)
 		}
 	}
 	auth := m.rcAuthFor(opts.Account)
 	lo := overlay.NewSessionLaunchOptions(opts, auth.Blocked(), auth.Reason)
-	// Without choices the row stays hidden; SetAccounts(nil) would also
-	// blank the account resolved above.
-	if choices := m.accountChoices(m.accountStatuses()); claude && choices != nil {
-		lo.SetAccounts(choices)
+	// Otherwise the row stays hidden: a registry that failed to load lists
+	// default alone, and SetAccounts would move the kept account onto it.
+	if claude && (m.hasExtraAccounts() || notice != "") {
+		lo.SetAccountNotice(notice)
+		lo.SetAccounts(m.accountChoices(m.accountStatuses()))
 	}
 	return lo, reloaded
 }

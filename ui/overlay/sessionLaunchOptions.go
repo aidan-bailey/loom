@@ -76,8 +76,13 @@ type SessionLaunchOptions struct {
 	// "" when it is not known.
 	lockedBranch string
 	// accounts are the Account row's options; the row shows only with two
-	// or more (an extra account exists).
+	// or more (an extra account exists), or with one while accountNotice
+	// is set.
 	accounts []AccountChoice
+	// accountNotice explains a preselected account the user did not pick
+	// (the session's own account was removed), rendered under the Account
+	// row; "" for none. See SetAccountNotice.
+	accountNotice string
 }
 
 // sessionLaunchOptionsRowCount is the number of navigable rows: Remote
@@ -142,7 +147,21 @@ func (l *SessionLaunchOptions) SetAccounts(choices []AccountChoice) {
 	}
 }
 
-func (l *SessionLaunchOptions) accountRowShown() bool { return len(l.accounts) >= 2 }
+func (l *SessionLaunchOptions) accountRowShown() bool {
+	return len(l.accounts) >= 2 || (l.accountNotice != "" && len(l.accounts) >= 1)
+}
+
+// SetAccountNotice sets the line shown under the Account row, which
+// explains a preselection the user did not make, such as "max-2 was
+// removed — this session will run on default"; "" clears it. While set,
+// the row shows even with a single choice, so that choice is visible
+// before the launch is confirmed. Choosing another account retires it.
+func (l *SessionLaunchOptions) SetAccountNotice(msg string) {
+	l.accountNotice = msg
+	if l.cursor >= l.rowCount() {
+		l.cursor = l.rowCount() - 1
+	}
+}
 
 // AccountsShown reports whether the Account row is showing, so the caller
 // refreshes only a modal that was given accounts (a Claude launch) and
@@ -244,7 +263,11 @@ func (l *SessionLaunchOptions) toggleCursor() {
 		l.editing.SetSize(l.width, 3)
 	case sessionLaunchOptionsAccountRow:
 		if l.accountRowShown() {
-			l.opts.Account = l.accounts[(l.accountIndex()+1)%len(l.accounts)].Name
+			next := l.accounts[(l.accountIndex()+1)%len(l.accounts)].Name
+			if next != l.opts.Account {
+				l.accountNotice = "" // the user chose; the notice no longer applies
+			}
+			l.opts.Account = next
 		}
 	}
 }
@@ -271,7 +294,7 @@ func (l *SessionLaunchOptions) handleEditingKey(msg tea.KeyPressMsg) {
 var (
 	sessionLaunchOptionsTitleStyle, sessionLaunchOptionsRowStyle,
 	sessionLaunchOptionsSelectedStyle, sessionLaunchOptionsHintStyle,
-	sessionLaunchOptionsBlockedText lipgloss.Style
+	sessionLaunchOptionsBlockedText, sessionLaunchOptionsNoticeStyle lipgloss.Style
 )
 
 func init() { ui.RegisterThemeHook(rebuildSessionLaunchOptionsStyles) }
@@ -282,6 +305,7 @@ func rebuildSessionLaunchOptionsStyles() {
 	sessionLaunchOptionsSelectedStyle = lipgloss.NewStyle().Foreground(ui.Accent).Bold(true)
 	sessionLaunchOptionsHintStyle = lipgloss.NewStyle().Foreground(ui.Faint)
 	sessionLaunchOptionsBlockedText = lipgloss.NewStyle().Foreground(ui.ErrorColor)
+	sessionLaunchOptionsNoticeStyle = lipgloss.NewStyle().Foreground(ui.Info)
 }
 
 // Render renders the modal.
@@ -339,6 +363,9 @@ func (l *SessionLaunchOptions) Render() string {
 		row(sessionLaunchOptionsBranchPrefixRow, "Branch Prefix     ", l.branchPrefixValue()) + "\n"
 	if l.accountRowShown() {
 		content += row(sessionLaunchOptionsAccountRow, "Account           ", l.accountValue()) + "\n"
+		if l.accountNotice != "" {
+			content += l.renderAccountNotice() + "\n"
+		}
 	}
 	content += "\n" + sessionLaunchOptionsHintStyle.Render(l.hint())
 
@@ -378,6 +405,21 @@ func (l *SessionLaunchOptions) accountValue() string {
 		return "< " + c.Name + " >"
 	}
 	return "< " + c.Name + " >  " + c.Summary
+}
+
+// sessionLaunchOptionsNoticeIndent sets the notice in under the rows'
+// cursor column.
+const sessionLaunchOptionsNoticeIndent = 4
+
+// renderAccountNotice renders the notice indented under the Account row,
+// wrapped to the modal's content width (its width less the border and
+// padding) so a long account name wraps with the indent kept.
+func (l *SessionLaunchOptions) renderAccountNotice() string {
+	style := sessionLaunchOptionsNoticeStyle.PaddingLeft(sessionLaunchOptionsNoticeIndent)
+	if w := l.width - 6; w > sessionLaunchOptionsNoticeIndent+10 {
+		style = style.Width(w)
+	}
+	return style.Render(l.accountNotice)
 }
 
 // hint tailors the key legend to the focused row, since Branch Prefix is the

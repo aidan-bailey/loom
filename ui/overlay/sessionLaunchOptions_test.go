@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -347,6 +348,69 @@ func TestSessionLaunchOptions_AccountRowVanishesWithNoChoicesLeft(t *testing.T) 
 	lo.SetAccounts(nil)
 	assert.Equal(t, sessionLaunchOptionsBranchPrefixRow, lo.cursor)
 	assert.Equal(t, "", lo.Options().Account)
+}
+
+// TestSessionLaunchOptions_ANoticeShowsTheRowWithOneChoice: a session whose
+// account was removed relaunches on another one; with a notice the row
+// shows that even when only the default is left to choose.
+func TestSessionLaunchOptions_ANoticeShowsTheRowWithOneChoice(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "default"}, false, "")
+	lo.SetWidth(100) // wide enough that the notice doesn't wrap
+	lo.SetAccountNotice("max-2 was removed — this session will run on default")
+	lo.SetAccounts([]AccountChoice{{Name: "default", Summary: "5h 64%"}})
+
+	assert.True(t, lo.AccountsShown())
+	out := lo.Render()
+	assert.Contains(t, out, "Account")
+	assert.Contains(t, out, "max-2 was removed")
+	assert.Contains(t, out, "run on default")
+	assert.Equal(t, "default", lo.Options().Account)
+	toAccountRow(lo)
+	assert.Equal(t, sessionLaunchOptionsAccountRow, lo.cursor, "the row is reachable")
+}
+
+// TestSessionLaunchOptions_ANoticeRendersUnderTheAccountRow: the notice
+// explains the row, so it follows it.
+func TestSessionLaunchOptions_ANoticeRendersUnderTheAccountRow(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "default"}, false, "")
+	lo.SetWidth(60)
+	lo.SetAccountNotice("max-2 was removed")
+	lo.SetAccounts(accountChoices())
+
+	out := lo.Render()
+	assert.Greater(t, strings.Index(out, "max-2 was removed"), strings.Index(out, "Account"))
+}
+
+// TestSessionLaunchOptions_ChoosingAnotherAccountRetiresTheNotice: the
+// notice describes the preselection; once the user picks, it no longer
+// applies.
+func TestSessionLaunchOptions_ChoosingAnotherAccountRetiresTheNotice(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "default"}, false, "")
+	lo.SetAccountNotice("max-3 was removed — this session will run on default")
+	lo.SetAccounts(accountChoices())
+	toAccountRow(lo)
+
+	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "}) // → max-2
+
+	assert.Equal(t, "max-2", lo.Options().Account)
+	assert.NotContains(t, lo.Render(), "was removed")
+	assert.True(t, lo.AccountsShown(), "two choices still show the row")
+}
+
+// TestSessionLaunchOptions_ClearingTheNoticeHidesASingleChoiceRow: without
+// the notice one choice is no choice, and the cursor must not be left on
+// the vanished row.
+func TestSessionLaunchOptions_ClearingTheNoticeHidesASingleChoiceRow(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "default"}, false, "")
+	lo.SetAccountNotice("max-2 was removed")
+	lo.SetAccounts([]AccountChoice{{Name: "default"}})
+	toAccountRow(lo)
+	require.Equal(t, sessionLaunchOptionsAccountRow, lo.cursor)
+
+	lo.SetAccountNotice("")
+
+	assert.False(t, lo.AccountsShown())
+	assert.Equal(t, sessionLaunchOptionsBranchPrefixRow, lo.cursor)
 }
 
 // TestSessionLaunchOptionsEditingRendersEditorAlone pins the house pattern

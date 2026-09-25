@@ -116,6 +116,85 @@ func TestRefreshAccountViews_FollowsAnOpenClaudeModal(t *testing.T) {
 	assert.Contains(t, lo.Render(), "12%")
 }
 
+// openRestartOn opens R's modal on a session that runs on acct.
+func openRestartOn(t *testing.T, m *home, acct string) *overlay.SessionLaunchOptions {
+	t.Helper()
+	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-removed", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	inst.SetAccount(acct)
+	m.list.AddInstance(inst)
+	runRestartWithOptionsSelected(m)
+	lo := m.launchOptionsOverlay()
+	require.NotNil(t, lo)
+	lo.SetWidth(120) // the notice unwrapped
+	return lo
+}
+
+// TestRestartWithOptions_ARemovedAccountWithNoneLeftShowsTheSwitch: the
+// session can only run on default now; the row shows that, with why,
+// rather than hiding and switching subscriptions unseen.
+func TestRestartWithOptions_ARemovedAccountWithNoneLeftShowsTheSwitch(t *testing.T) {
+	m := newTestHome(t)
+	withAccounts(t, m)
+
+	lo := openRestartOn(t, m, "max-2")
+
+	assert.True(t, lo.AccountsShown())
+	assert.Equal(t, account.DefaultName, lo.Options().Account)
+	assert.Contains(t, lo.Render(), "max-2 was removed — this session will run on default")
+}
+
+func TestRestartWithOptions_ARemovedAccountWithOthersLeftShowsTheSwitch(t *testing.T) {
+	m := newTestHome(t)
+	withAccounts(t, m, "max-3")
+	require.NoError(t, m.accounts.SetDefault("max-3"))
+
+	lo := openRestartOn(t, m, "max-2")
+
+	assert.True(t, lo.AccountsShown())
+	assert.Equal(t, "max-3", lo.Options().Account)
+	assert.Contains(t, lo.Render(), "max-2 was removed — this session will run on max-3")
+}
+
+func TestRestartWithOptions_ARegisteredAccountHasNoNotice(t *testing.T) {
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+
+	lo := openRestartOn(t, m, "max-2")
+
+	assert.NotContains(t, lo.Render(), "was removed")
+}
+
+// TestRefreshAccountViews_TheOpenModalsAccountRemovedShowsTheSwitch: the
+// selected account vanishing under an open modal moves the selection;
+// the modal says so.
+func TestRefreshAccountViews_TheOpenModalsAccountRemovedShowsTheSwitch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		accounts []string
+	}{
+		{"others left", []string{"max-2", "max-3"}},
+		{"none left", []string{"max-2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestHome(t)
+			withAccounts(t, m, tc.accounts...)
+			lo, _ := m.newLaunchOptionsOverlay(bareOpts("max-2"), "claude")
+			lo.SetWidth(120)
+			m.setOverlay(lo, overlayLaunchOptions)
+			require.NotContains(t, lo.Render(), "was removed")
+
+			_, err := otherTerminal(t, m).Remove("max-2", false)
+			require.NoError(t, err)
+			m.maybeReloadAccounts()
+
+			assert.True(t, lo.AccountsShown())
+			assert.Equal(t, account.DefaultName, lo.Options().Account)
+			assert.Contains(t, lo.Render(), "max-2 was removed — this session will run on default")
+		})
+	}
+}
+
 func TestApplyChosenLaunch_RecordsTheAccount(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
