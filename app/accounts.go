@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -519,20 +520,64 @@ func (m *home) accountRows(statuses []ui.AccountStatus) []overlay.AccountRow {
 }
 
 // accountUsers counts the sessions on acct: every loaded slot's live
-// instances plus the stored records of every workspace (open or not).
+// instances, plus the stored records of every config dir whose sessions
+// aren't all loaded. A slot's own state.json holds the same sessions as its
+// live list, so it is skipped — unless the slot's storage failed to load or
+// keeps records it could not load, which only the file then shows (an
+// overcount there beats missing a session).
 func (m *home) accountUsers(acct string) (int, error) {
 	n := 0
-	for _, inst := range m.allInstances() {
-		if inst.Account() == acct {
-			n++
+	covered := map[string]bool{}
+	for _, s := range m.openSlots() {
+		if s.list != nil {
+			for _, inst := range s.list.GetInstances() {
+				if inst.Account() == acct {
+					n++
+				}
+			}
+		}
+		if dir := slotStateDir(s); dir != "" && s.storage != nil &&
+			!s.storage.WritesRefused() && len(s.storage.PreservedTitles()) == 0 {
+			covered[canonicalDir(dir)] = true
 		}
 	}
 	dirs, err := account.KnownStateDirs()
 	if err != nil {
 		return n, err
 	}
-	stored, err := account.CountUsers(dirs, acct)
+	var uncovered []string
+	for _, d := range dirs {
+		if !covered[canonicalDir(d)] {
+			uncovered = append(uncovered, d)
+		}
+	}
+	stored, err := account.CountUsers(uncovered, acct)
 	return n + stored, err
+}
+
+// slotStateDir is the config dir holding s's state.json: its context's,
+// the default one for an empty context dir, "" when s has no context.
+func slotStateDir(s *workspaceSlot) string {
+	if s.wsCtx == nil {
+		return ""
+	}
+	if s.wsCtx.ConfigDir != "" {
+		return s.wsCtx.ConfigDir
+	}
+	dir, err := config.GetConfigDir()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+// canonicalDir resolves dir's symlinks when it can, so two spellings of one
+// directory compare equal.
+func canonicalDir(dir string) string {
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		return r
+	}
+	return filepath.Clean(dir)
 }
 
 // afterAccountsChanged republishes the registry after this process wrote

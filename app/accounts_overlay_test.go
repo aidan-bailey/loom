@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"github.com/stretchr/testify/assert"
@@ -142,4 +143,48 @@ func TestAccountRows_LoggedOutIsSaidOnce(t *testing.T) {
 	require.Len(t, rows, 2)
 	assert.Equal(t, "logged out", rows[1].Usage)
 	assert.Equal(t, "not shared: settings.json", rows[1].Warning)
+}
+
+// TestAccountRequest_RemoveCountsALoadedSessionOnce: a loaded slot's own
+// state.json holds the same sessions as its live list.
+func TestAccountRequest_RemoveCountsALoadedSessionOnce(t *testing.T) {
+	global := t.TempDir()
+	t.Setenv("LOOM_GLOBAL_DIR", global)
+	t.Setenv("LOOM_HOME", global)
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+	m.wsCtx = &config.WorkspaceContext{ConfigDir: global}
+	inst, err := session.NewInstance(session.InstanceOptions{Title: "on-max-2", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	inst.SetAccount("max-2")
+	m.list.AddInstance(inst)
+	require.NoError(t, os.WriteFile(filepath.Join(global, "state.json"),
+		[]byte(`{"instances":[{"title":"on-max-2","account":"max-2"}]}`), 0o644))
+
+	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestRemove, Name: "max-2"})
+
+	assert.Contains(t, m.errBox.String(), "1 session(s) use max-2")
+	_, ok := m.accounts.Get("max-2")
+	assert.True(t, ok)
+}
+
+// TestAccountUsers_CountsAnUnloadedWorkspacesSessions: a workspace that is
+// not open has only its state.json to go by.
+func TestAccountUsers_CountsAnUnloadedWorkspacesSessions(t *testing.T) {
+	global, repo := t.TempDir(), t.TempDir()
+	t.Setenv("LOOM_GLOBAL_DIR", global)
+	t.Setenv("LOOM_HOME", global)
+	require.NoError(t, os.WriteFile(filepath.Join(global, "workspaces.json"),
+		[]byte(`{"workspaces":[{"name":"r","path":"`+repo+`"}]}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".loom"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".loom", "state.json"),
+		[]byte(`{"instances":[{"title":"x","account":"max-2"},{"title":"y","account":"max-2"}]}`), 0o644))
+	m := newTestHome(t)
+	withAccounts(t, m, "max-2")
+	m.wsCtx = &config.WorkspaceContext{ConfigDir: global}
+
+	n, err := m.accountUsers("max-2")
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
 }
