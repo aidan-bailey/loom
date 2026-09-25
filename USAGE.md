@@ -523,6 +523,43 @@ it. If re-apply conflicts, the session returns to paused, the stash is
 preserved, and the error names the stash SHA so you can resolve it
 manually in the worktree.
 
+### Run Sessions on Several Claude Accounts
+
+If you have more than one Claude subscription, loom can put each session
+on whichever has headroom.
+
+1. Add an account: `loom account add max-2` (or `a` in **Settings →
+   Accounts**). Loom creates `~/.loom/accounts/max-2`, links your main
+   Claude config dir into it (everything but credentials and runtime
+   state — settings, `CLAUDE.md`, skills, plugins, transcripts and memory
+   stay shared), and opens `claude auth login` for it.
+2. Once a second account exists, a usage strip appears above the tabs:
+   each account's 5-hour and weekly plan usage, refreshed every two
+   minutes.
+3. When you create a session, the **Account** row in Session Launch
+   Options (Claude sessions only) picks where it runs, preselected to the
+   default account; change the default with `loom account use` or
+   `enter` in **Settings → Accounts**. Cards, the overview grid and the
+   agent pane title show `@account`.
+4. To move a session that hit its limit, pause it and press `R`: choose
+   another account and the conversation resumes there under it. If its
+   tmux session is still alive, `R` just reattaches to it on whichever
+   account it's already running under — pick another account only after
+   it has actually stopped.
+
+Removing an account (`loom account remove`, or `x` in **Settings →
+Accounts**) is refused while any session uses it; `--force` also skips
+that check and the confirmation. User-scope MCP servers
+(`claude mcp add --scope user`) live in each account's own `.claude.json`
+and are not shared.
+
+**Known limitations**: the terminal pane (the shell below the agent pane)
+always runs on the default account, whichever account the agent is on; an
+orphaned worktree recovered from disk (`r` on a `⟲` entry) always comes
+back on the default account, since nothing on disk records which one it
+used; and, as above, `R` on a still-live session reattaches on its old
+account rather than switching.
+
 ### Work Across Multiple Workspaces
 
 ```
