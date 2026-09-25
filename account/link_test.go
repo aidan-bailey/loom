@@ -205,6 +205,47 @@ func TestWithin_FallsBackToCleanForAPathThatDoesNotExistYet(t *testing.T) {
 	assert.False(t, within(filepath.Join(base, "accounts"), filepath.Join(base, "other")))
 }
 
+// TestWithin_ResolvesASymlinkedAncestorOfANotYetExistingPath covers a gap
+// in the not-yet-existing fallback: falling straight back to Clean skips
+// symlink resolution entirely, so a symlinked ancestor earlier in the path
+// (this machine's own $HOME, say — /home/aidanb/Source is itself a
+// symlink here) was never followed for a path that doesn't exist in full.
+// within must instead resolve the nearest existing ancestor and re-append
+// the missing tail.
+func TestWithin_ResolvesASymlinkedAncestorOfANotYetExistingPath(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.MkdirAll(real, 0o755))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(real, link))
+
+	// "link/deep/accounts" doesn't exist at all (not even "deep" under
+	// link), but link itself resolves to real, so real contains it.
+	notYetCreated := filepath.Join(link, "deep", "accounts")
+	assert.True(t, within(real, notYetCreated))
+	assert.False(t, within(real+"-other", notYetCreated))
+}
+
+// TestCreate_RejectsAMainDirContainingAccountsDirThroughASymlinkedAncestor
+// is the end-to-end version: AccountsDir's own parent (the global dir) is
+// reached only through a symlink and AccountsDir itself does not exist
+// yet on the first Create, exactly the case a plain Clean fallback missed.
+func TestCreate_RejectsAMainDirContainingAccountsDirThroughASymlinkedAncestor(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.MkdirAll(real, 0o755))
+	global := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(real, global))
+	r := LoadRegistry(global)
+
+	// mainDir is the resolved target global's symlink points to, so it
+	// contains AccountsDir even though AccountsDir's own parent path is a
+	// symlink and AccountsDir does not exist on disk yet.
+	_, _, err := r.Create("max-2", real)
+
+	assert.Error(t, err)
+}
+
 func TestRemove_DeletesLinksButNeverTheirTargets(t *testing.T) {
 	global, main := t.TempDir(), mainDirWith(t)
 	r := LoadRegistry(global)

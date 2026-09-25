@@ -91,14 +91,35 @@ func Sync(acctDir, mainDir string) (SyncReport, error) {
 
 // resolvedOrClean resolves path's symlinks, so a symlink chain cannot
 // disguise "the same place" as "somewhere else" to within's string
-// comparison. A path that does not exist yet — the account dir Create is
-// about to make, most often — has nothing to resolve, so this falls back
-// to a plain Clean.
+// comparison. path itself often does not exist yet — AccountsDir, on the
+// first Create — in which case EvalSymlinks can't resolve it directly; a
+// plain Clean fallback would then skip symlink resolution entirely,
+// missing a symlinked ancestor earlier in the path (this machine's own
+// $HOME, say). So instead this climbs to the nearest existing ancestor,
+// resolves that, and re-appends the missing tail. Only a path with no
+// existing ancestor at all (nothing below the filesystem root) falls back
+// to a plain Clean, which should not happen on a real filesystem.
 func resolvedOrClean(path string) string {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+	cleaned := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
 		return resolved
 	}
-	return filepath.Clean(path)
+	var missing []string
+	dir := cleaned
+	for {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return cleaned
+		}
+		missing = append(missing, filepath.Base(dir))
+		dir = parent
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			for i, j := 0, len(missing)-1; i < j; i, j = i+1, j-1 {
+				missing[i], missing[j] = missing[j], missing[i]
+			}
+			return filepath.Join(append([]string{resolved}, missing...)...)
+		}
+	}
 }
 
 // within reports whether target is base itself or nested inside it, once
