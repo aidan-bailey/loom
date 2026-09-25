@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSessionLaunchOptionsTogglesRemoteControl(t *testing.T) {
@@ -259,6 +260,65 @@ func TestSessionLaunchOptionsBranchPrefixLockedOnRestart(t *testing.T) {
 	assert.True(t, closed, "enter still starts the session when no edit is in progress")
 	assert.True(t, confirmed)
 	assert.Contains(t, lo.Render(), "aidanb/existing-session")
+}
+
+func accountChoices() []AccountChoice {
+	return []AccountChoice{
+		{Name: "default", Summary: "5h 64% · 7d 40%"},
+		{Name: "max-2", Summary: "5h 12% · 7d 31%", RCBlocked: true, RCReason: "not logged in"},
+	}
+}
+
+// toAccountRow moves the cursor to the Account row (the last one).
+func toAccountRow(lo *SessionLaunchOptions) {
+	for i := 0; i < sessionLaunchOptionsAccountRow; i++ {
+		lo.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	}
+}
+
+func TestSessionLaunchOptions_NoAccountRowWithoutChoices(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{}, false, "")
+	lo.SetAccounts([]AccountChoice{{Name: "default"}})
+	assert.NotContains(t, lo.Render(), "Account")
+	toAccountRow(lo)
+	assert.Equal(t, sessionLaunchOptionsBranchPrefixRow, lo.cursor, "the cursor stops at Branch Prefix")
+}
+
+func TestSessionLaunchOptions_AccountRowCycles(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "default"}, false, "")
+	lo.SetAccounts(accountChoices())
+	toAccountRow(lo)
+	require.Equal(t, sessionLaunchOptionsAccountRow, lo.cursor)
+
+	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
+	assert.Equal(t, "max-2", lo.Options().Account)
+	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
+	assert.Equal(t, "default", lo.Options().Account)
+}
+
+func TestSessionLaunchOptions_AccountRowShowsUsage(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "max-2"}, false, "")
+	lo.SetAccounts(accountChoices())
+	out := lo.Render()
+	assert.Contains(t, out, "Account")
+	assert.Contains(t, out, "max-2")
+	assert.Contains(t, out, "5h 12% · 7d 31%")
+}
+
+func TestSessionLaunchOptions_BlockedHintFollowsTheSelectedAccount(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "default"}, false, "")
+	lo.SetAccounts(accountChoices())
+	assert.NotContains(t, lo.Render(), "not logged in")
+
+	toAccountRow(lo)
+	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "}) // → max-2
+	assert.Contains(t, lo.Render(), "not logged in")
+}
+
+func TestSessionLaunchOptions_UnknownAccountFallsToTheFirstChoice(t *testing.T) {
+	lo := NewSessionLaunchOptions(LaunchOptions{Account: "gone"}, false, "")
+	lo.SetAccounts(accountChoices())
+	assert.Equal(t, "default", lo.Options().Account)
 }
 
 // TestSessionLaunchOptionsEditingRendersEditorAlone pins the house pattern

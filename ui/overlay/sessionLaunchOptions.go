@@ -30,6 +30,22 @@ type LaunchOptions struct {
 	// SetBranchPrefix), so ParseLaunchOptions cannot recover it and the
 	// restart path seeds it from the instance instead.
 	BranchPrefix string
+	// Account is the Claude account to launch under (account.DefaultName
+	// for the default). Like BranchPrefix it never reaches the command
+	// line: app records it on the instance (session.Instance.SetAccount),
+	// and a launch turns it into CLAUDE_CONFIG_DIR.
+	Account string
+}
+
+// AccountChoice is one option on the Account row.
+type AccountChoice struct {
+	Name string
+	// Summary is the account's usage, e.g. "5h 12% · 7d 31%".
+	Summary string
+	// RCBlocked/RCReason mirror the account's own remote-control auth, so
+	// the Remote Control row's blocked hint follows the selected account.
+	RCBlocked bool
+	RCReason  string
 }
 
 // SessionLaunchOptions is the per-instance "Session Launch Options"
@@ -59,6 +75,9 @@ type SessionLaunchOptions struct {
 	// lockedBranch is the already-created branch shown on a locked row, or
 	// "" when it is not known.
 	lockedBranch string
+	// accounts are the Account row's options; the row shows only with two
+	// or more (an extra account exists).
+	accounts []AccountChoice
 }
 
 // sessionLaunchOptionsRowCount is the number of navigable rows: Remote
@@ -70,6 +89,11 @@ const sessionLaunchOptionsRowCount = 8
 // Prefix row — the only text-entry row, so several call sites need it by
 // name rather than by position.
 const sessionLaunchOptionsBranchPrefixRow = 7
+
+// sessionLaunchOptionsAccountRow is the cursor index of the Account row. It
+// is appended after Branch Prefix, and only while SetAccounts has given two
+// or more choices, so no other row moves when it appears.
+const sessionLaunchOptionsAccountRow = sessionLaunchOptionsRowCount
 
 // NewSessionLaunchOptions creates the modal seeded with initial
 // (typically the global config's current values).
@@ -91,6 +115,47 @@ func (l *SessionLaunchOptions) SetWidth(w int) { l.width = w }
 
 // Options returns the current (possibly edited) launch options.
 func (l *SessionLaunchOptions) Options() LaunchOptions { return l.opts }
+
+// SetAccounts supplies the Account row's choices, default first. Fewer
+// than two hides the row. An Account the choices don't include (removed,
+// or never set) falls to the first choice.
+func (l *SessionLaunchOptions) SetAccounts(choices []AccountChoice) {
+	l.accounts = choices
+	if l.accountRowShown() && l.accountIndex() < 0 {
+		l.opts.Account = choices[0].Name
+	}
+}
+
+func (l *SessionLaunchOptions) accountRowShown() bool { return len(l.accounts) >= 2 }
+
+func (l *SessionLaunchOptions) accountIndex() int {
+	for i, c := range l.accounts {
+		if c.Name == l.opts.Account {
+			return i
+		}
+	}
+	return -1
+}
+
+// rowCount is the number of navigable rows, the Account row included when
+// it shows.
+func (l *SessionLaunchOptions) rowCount() int {
+	if l.accountRowShown() {
+		return sessionLaunchOptionsRowCount + 1
+	}
+	return sessionLaunchOptionsRowCount
+}
+
+// blocked is the Remote Control row's auth state: the selected account's
+// when the Account row shows, else the one the modal was built with.
+func (l *SessionLaunchOptions) blocked() (bool, string) {
+	if l.accountRowShown() {
+		if i := l.accountIndex(); i >= 0 {
+			return l.accounts[i].RCBlocked, l.accounts[i].RCReason
+		}
+	}
+	return l.authBlocked, l.authReason
+}
 
 // HandleKeyPress processes one key press. closed reports whether the
 // modal should close (either canceled or confirmed); confirmed
@@ -114,7 +179,7 @@ func (l *SessionLaunchOptions) HandleKeyPress(msg tea.KeyPressMsg) (closed, conf
 		}
 		return false, false
 	case "down", "j":
-		if l.cursor < sessionLaunchOptionsRowCount-1 {
+		if l.cursor < l.rowCount()-1 {
 			l.cursor++
 		}
 		return false, false
@@ -156,6 +221,10 @@ func (l *SessionLaunchOptions) toggleCursor() {
 		}
 		l.editing = NewTextInputOverlay("Branch Prefix", l.opts.BranchPrefix)
 		l.editing.SetSize(l.width, 3)
+	case sessionLaunchOptionsAccountRow:
+		if l.accountRowShown() {
+			l.opts.Account = l.accounts[(l.accountIndex()+1)%len(l.accounts)].Name
+		}
 	}
 }
 
@@ -210,8 +279,10 @@ func (l *SessionLaunchOptions) Render() string {
 			cursor = "> "
 		}
 		line := cursor + label + value
-		if idx == 0 && l.authBlocked {
-			line += "  " + sessionLaunchOptionsBlockedText.Render("(blocked: "+l.authReason+")")
+		if idx == 0 {
+			if blocked, reason := l.blocked(); blocked {
+				line += "  " + sessionLaunchOptionsBlockedText.Render("(blocked: "+reason+")")
+			}
 		}
 		if l.cursor == idx {
 			return sessionLaunchOptionsSelectedStyle.Render(line)
@@ -244,8 +315,11 @@ func (l *SessionLaunchOptions) Render() string {
 		row(4, "Headroom Proxy    ", hwCheck) + "\n" +
 		row(5, "Effort            ", "< "+l.opts.Effort+" >") + "\n" +
 		row(6, "Cache TTL (1h)    ", cacheCheck) + "\n" +
-		row(sessionLaunchOptionsBranchPrefixRow, "Branch Prefix     ", l.branchPrefixValue()) + "\n\n" +
-		sessionLaunchOptionsHintStyle.Render(l.hint())
+		row(sessionLaunchOptionsBranchPrefixRow, "Branch Prefix     ", l.branchPrefixValue()) + "\n"
+	if l.accountRowShown() {
+		content += row(sessionLaunchOptionsAccountRow, "Account           ", l.accountValue()) + "\n"
+	}
+	content += "\n" + sessionLaunchOptionsHintStyle.Render(l.hint())
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -269,6 +343,20 @@ func (l *SessionLaunchOptions) branchPrefixValue() string {
 		return sessionLaunchOptionsHintStyle.Render("(none)")
 	}
 	return l.opts.BranchPrefix
+}
+
+// accountValue renders the Account row's right-hand side: the selected
+// account and its usage summary. Plain text: the row style wraps it.
+func (l *SessionLaunchOptions) accountValue() string {
+	i := l.accountIndex()
+	if i < 0 {
+		return "< " + l.opts.Account + " >"
+	}
+	c := l.accounts[i]
+	if c.Summary == "" {
+		return "< " + c.Name + " >"
+	}
+	return "< " + c.Name + " >  " + c.Summary
 }
 
 // hint tailors the key legend to the focused row, since Branch Prefix is the
