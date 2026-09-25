@@ -275,10 +275,23 @@ func (s *SettingsOverlay) HandleKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	return closed, nil
 }
 
-// SetSize satisfies the Overlay interface.
+// SetSize satisfies the Overlay interface. A resize while a sub-screen is
+// open (the window changed, or the overlay was just opened) must reach
+// it too — otherwise it keeps rendering at whatever width it was created
+// with, which for Accounts specifically must track the real width to
+// stay wrap-free (see AccountsManager.contentWidth).
 func (s *SettingsOverlay) SetSize(width, height int) {
 	s.width = width
 	s.height = height
+	if s.profiles != nil {
+		s.profiles.SetWidth(width)
+	}
+	if s.claudePrefs != nil {
+		s.claudePrefs.SetWidth(width)
+	}
+	if s.accounts != nil {
+		s.accounts.SetWidth(width)
+	}
 }
 
 // View satisfies the Overlay interface.

@@ -1,9 +1,11 @@
 package overlay
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,6 +85,97 @@ func TestAccountsManager_RendersRows(t *testing.T) {
 	assert.Contains(t, out, "you+2@example.com")
 	assert.Contains(t, out, "5h 12% · 7d 31%")
 	assert.Contains(t, out, "not shared: settings.json")
+}
+
+// TestAccountsManager_RowsFitOnOneLineAtDefaultWidth pins the width
+// budget: border + padding eat 6 columns of the default 60 (matching
+// every other Settings sub-screen), so the row/email/usage columns must
+// be compact enough that nothing wraps.
+func TestAccountsManager_RowsFitOnOneLineAtDefaultWidth(t *testing.T) {
+	a := NewAccountsManager(accountRows())
+	require.Equal(t, 60, a.width, "default width matches the other Settings sub-screens")
+	out := a.Render()
+	for _, line := range strings.Split(out, "\n") {
+		assert.LessOrEqual(t, len([]rune(ansi.Strip(line))), 60)
+	}
+	stripped := ansi.Strip(out)
+	assert.Contains(t, stripped, "you+2@example.com")
+	assert.Contains(t, stripped, "5h 12% · 7d 31%")
+	assert.Contains(t, stripped, "not shared: settings.json")
+	// Not wrapped: each of those lives on its own single line.
+	found := 0
+	for _, line := range strings.Split(stripped, "\n") {
+		if strings.Contains(line, "you+2@example.com") && strings.Contains(line, "5h 12% · 7d 31%") {
+			found++
+		}
+	}
+	assert.Equal(t, 1, found, "the max-2 row's email and usage must share one unwrapped line")
+}
+
+// TestAccountsManager_RemoveTargetsByIdentityNotPosition reproduces the
+// bug where "x" captured a row position rather than an account identity:
+// a SetRows refresh between "x" and "y" (e.g. the registry reloaded after
+// a CLI remove) can shift a different account into the confirmed row.
+func TestAccountsManager_RemoveTargetsByIdentityNotPosition(t *testing.T) {
+	a := NewAccountsManager([]AccountRow{
+		{Name: "default", IsDefault: true},
+		{Name: "max-2"},
+		{Name: "max-3"},
+	})
+	press(a, "j", "x") // select max-2, ask to remove it
+	assert.Contains(t, a.Render(), `Remove account "max-2"`)
+
+	// max-2 was removed elsewhere (e.g. the CLI); max-3 has shifted into
+	// its old row.
+	a.SetRows([]AccountRow{
+		{Name: "default", IsDefault: true},
+		{Name: "max-3"},
+	})
+	assert.NotContains(t, a.Render(), "Remove account", "a vanished target cancels the pending confirmation")
+
+	press(a, "y")
+	_, ok := a.TakeRequest()
+	assert.False(t, ok, "y must not fire against whatever now occupies the old row")
+}
+
+// TestAccountsManager_SetRowsKeepsCursorOnTheSameAccount pins the
+// companion fix: a refresh must not silently move the cursor onto a
+// different account by position, or "enter" could set the wrong default.
+func TestAccountsManager_SetRowsKeepsCursorOnTheSameAccount(t *testing.T) {
+	a := NewAccountsManager([]AccountRow{
+		{Name: "default", IsDefault: true},
+		{Name: "max-2"},
+		{Name: "max-3"},
+	})
+	press(a, "j", "j") // cursor on max-3 (index 2)
+
+	// max-2 removed elsewhere: max-3 shifts to index 1.
+	a.SetRows([]AccountRow{
+		{Name: "default", IsDefault: true},
+		{Name: "max-3"},
+	})
+
+	press(a, "enter")
+	req, ok := a.TakeRequest()
+	require.True(t, ok)
+	assert.Equal(t, AccountRequest{Kind: AccountRequestSetDefault, Name: "max-3"}, req,
+		"the cursor must follow max-3 by identity, not stay pinned to its old index")
+}
+
+// TestSettingsOverlay_SetSizePropagatesToOpenAccountsScreen pins the
+// resize-forwarding fix: without it, the Accounts sub-screen keeps
+// rendering at whatever width it was opened with, so a terminal resize
+// (or a narrower real overlay width than the 60 default) never reaches
+// its wrap-avoidance budget.
+func TestSettingsOverlay_SetSizePropagatesToOpenAccountsScreen(t *testing.T) {
+	s := NewSettingsOverlay(newTestSettingsCfg(), false, "")
+	s.SetAccountRows(accountRows())
+	s.cursor = int(settingsFieldAccounts)
+	s.activateRow()
+	require.NotNil(t, s.accounts)
+
+	s.SetSize(90, 20)
+	assert.Equal(t, 90, s.accounts.width)
 }
 
 func TestSettingsOverlay_OpensAccountsAndPassesRequestsThrough(t *testing.T) {
