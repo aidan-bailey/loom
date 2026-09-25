@@ -46,6 +46,7 @@ type migrationInstance struct {
 
 	ClaudeSessionID      string `json:"claude_session_id,omitempty"`
 	ClaudeTranscriptPath string `json:"claude_transcript_path,omitempty"`
+	Account              string `json:"account,omitempty"`
 }
 
 type migrationWorktreeData struct {

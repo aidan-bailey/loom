@@ -29,7 +29,7 @@ var ErrStorageLoadFailed = errors.New("instance storage could not be read; refus
 // CurrentSchemaVersion is the schema version written by the current
 // binary. Any on-disk InstanceData with a lower SchemaVersion is routed
 // through storage_migrate.go's Migrate before use.
-const CurrentSchemaVersion = 7
+const CurrentSchemaVersion = 8
 
 // InstanceData represents the serializable data of an Instance.
 //
@@ -64,6 +64,9 @@ type InstanceData struct {
 	// one is seen, which means --continue. Added in schema v7.
 	ClaudeSessionID      string `json:"claude_session_id,omitempty"`
 	ClaudeTranscriptPath string `json:"claude_transcript_path,omitempty"`
+	// Account is the Claude account the session runs on ("" = default),
+	// resolved to a CLAUDE_CONFIG_DIR at every launch. Added in schema v8.
+	Account string `json:"account,omitempty"`
 }
 
 // GitWorktreeData represents the serializable data of a GitWorktree

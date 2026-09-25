@@ -46,7 +46,8 @@ func TestMigrationInstance_MirrorsInstanceData_JSON(t *testing.T) {
 		"is_workspace_terminal": false,
 		"issue": 42,
 		"claude_session_id": "8c634184-0fe5-4b62-b437-8f364eeeefcc",
-		"claude_transcript_path": "/home/u/.claude/projects/-wt/8c634184-0fe5-4b62-b437-8f364eeeefcc.jsonl"
+		"claude_transcript_path": "/home/u/.claude/projects/-wt/8c634184-0fe5-4b62-b437-8f364eeeefcc.jsonl",
+		"account": "max-2"
 	}`
 
 	var mi migrationInstance

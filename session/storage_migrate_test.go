@@ -198,16 +198,24 @@ func TestMigrate_V6RoundTripsIssue(t *testing.T) {
 	assert.Equal(t, 42, data.Issue)
 }
 
-// TestMigrate_V6UpgradesAddsClaudeSession verifies a v6 record migrates to
-// v7 with no conversation recorded: the empty strings mean "resume with
-// --continue", which is what a v6 loom did.
+// TestMigrate_V6UpgradesAddsClaudeSession verifies a v6 record migrates all
+// the way to CurrentSchemaVersion with no conversation recorded: the empty
+// strings mean "resume with --continue", which is what a v6 loom did.
 func TestMigrate_V6UpgradesAddsClaudeSession(t *testing.T) {
 	raw := []byte(`{"schema_version":6,"title":"t","program":"claude","issue":3}`)
 
 	data, err := Migrate(raw)
 	require.NoError(t, err)
-	assert.Equal(t, 7, data.SchemaVersion)
+	assert.Equal(t, CurrentSchemaVersion, data.SchemaVersion)
 	assert.Empty(t, data.ClaudeSessionID)
 	assert.Empty(t, data.ClaudeTranscriptPath)
 	assert.Equal(t, 3, data.Issue)
+}
+
+func TestMigrate_V7UpgradesToTheDefaultAccount(t *testing.T) {
+	raw := []byte(`{"schema_version":7,"title":"t","path":"/p","branch":"b","status":0,"height":1,"width":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","program":"claude","worktree":{},"diff_stats":{},"is_workspace_terminal":false}`)
+	data, err := Migrate(raw)
+	require.NoError(t, err)
+	assert.Equal(t, CurrentSchemaVersion, data.SchemaVersion)
+	assert.Equal(t, "", data.Account, "absent means the default account")
 }

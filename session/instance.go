@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/github"
@@ -145,6 +146,11 @@ type Instance struct {
 	// no-op unless program resolves to Claude. Same set-once/persisted
 	// convention as headroomProxy.
 	cacheTTL1h bool
+	// account is the Claude account this instance launches under: a
+	// registered account's name, or "" for the default account. Every real
+	// launch resolves it to a CLAUDE_CONFIG_DIR (see launchEnv). Set with
+	// SetAccount alongside SetLaunchOptions; persisted (InstanceData v8).
+	account string
 	// Height is the height of the instance.
 	Height int
 	// Width is the width of the instance.
@@ -209,7 +215,7 @@ type Instance struct {
 	// tick-fanout goroutines (Status, statusChangedAt, diffStats,
 	// Branch) and from lifecycle Cmd goroutines (tmuxSession,
 	// gitWorktree, started, and the launch fields program/headroomProxy/
-	// cacheTTL1h, which Start/Resume/CrashRestart read via launchSpec).
+	// cacheTTL1h/account, which Start/Resume/CrashRestart read via launchEnv).
 	// Held for writes; RLock for reads. Do not hold across I/O.
 	//
 	// Every accessor on Instance goes through TransitionTo/GetStatus,
@@ -296,6 +302,7 @@ func (i *Instance) Snapshot() InstanceData {
 		CacheTTL1h:          i.cacheTTL1h,
 		IsWorkspaceTerminal: i.IsWorkspaceTerminal,
 		Issue:               i.issue,
+		Account:             i.account,
 
 		ClaudeSessionID:      i.claude.sessionID,
 		ClaudeTranscriptPath: i.claude.transcriptPath,
@@ -353,6 +360,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		ConfigDir:           configDir,
 		IsWorkspaceTerminal: data.IsWorkspaceTerminal,
 		issue:               data.Issue,
+		account:             data.Account,
 		claude:              claudeState{sessionID: data.ClaudeSessionID, transcriptPath: data.ClaudeTranscriptPath},
 		logger:              log.For("instance", "title", data.Title),
 	}
@@ -696,6 +704,25 @@ func (i *Instance) SetLaunchOptions(program string, headroomProxy, cacheTTL1h bo
 	i.program = program
 	i.headroomProxy = headroomProxy
 	i.cacheTTL1h = cacheTTL1h
+}
+
+// Account returns the Claude account this instance launches under: a
+// registered account's name, or "" for the default account.
+func (i *Instance) Account() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.account
+}
+
+// SetAccount records the account the next launch runs under.
+// account.DefaultName and "" both mean the default account.
+func (i *Instance) SetAccount(name string) {
+	if name == account.DefaultName {
+		name = ""
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.account = name
 }
 
 // launchSpec snapshots the launch fields under one read lock. The launch
