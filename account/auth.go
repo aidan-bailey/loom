@@ -127,16 +127,12 @@ func withEnv(c *exec.Cmd, env []string) *exec.Cmd {
 // decoded whenever there is some. program is run as-is: the caller must
 // have already gated it on the Claude adapter.
 func AuthStatus(program string, env []string, r internalexec.Executor) (Identity, error) {
-	bin := Binary(program)
-	if bin == "" {
-		return Identity{}, errors.New("no claude program configured")
-	}
-	if err := checkAccountDir(env); err != nil {
-		return Identity{}, err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), authTimeout)
 	defer cancel()
-	c := withEnv(exec.CommandContext(ctx, bin, "auth", "status"), env)
+	c, err := Command(ctx, program, env, "auth", "status")
+	if err != nil {
+		return Identity{}, err
+	}
 	c.WaitDelay = execWaitDelay
 	out, err := runner(r).Output(c)
 	if err != nil {

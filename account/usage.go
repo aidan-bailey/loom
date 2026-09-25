@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -82,19 +81,15 @@ const usageRequest = `{"type":"control_request","request_id":"` + usageRequestID
 // recorded for an arbitrary directory. program is run as-is: the caller
 // must have already gated it on the Claude adapter.
 func ProbeUsage(program string, env []string, cwd string, r internalexec.Executor) (Usage, error) {
-	bin := Binary(program)
-	if bin == "" {
-		return Usage{}, errors.New("no claude program configured")
-	}
-	if err := checkAccountDir(env); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
+	defer cancel()
+	c, err := Command(ctx, program, env,
+		"-p", "--input-format", "stream-json", "--output-format", "stream-json",
+		"--verbose", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config")
+	if err != nil {
 		return Usage{}, err
 	}
 	at := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
-	defer cancel()
-	c := withEnv(exec.CommandContext(ctx, bin,
-		"-p", "--input-format", "stream-json", "--output-format", "stream-json",
-		"--verbose", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config"), env)
 	c.Dir = cwd
 	c.Stdin = strings.NewReader(usageRequest)
 	c.WaitDelay = execWaitDelay
