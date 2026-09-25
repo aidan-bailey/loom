@@ -156,9 +156,19 @@ injected `internalexec.Executor`, in the style of `session/github`.
   `shell-snapshots`, `statsig`. A deny-list, not an allow-list, because user
   files such as an `RTK.md` pulled in by `CLAUDE.md`'s relative `@` import
   must follow too.
-- `Remove(name)`: unregisters and `os.RemoveAll`s the account dir. `RemoveAll`
-  removes symlinks without following them, so shared content is untouched; a
-  test pins this.
+- `Remove(name, force)`: unregisters and `os.RemoveAll`s the account dir.
+  `RemoveAll` removes symlinks without following them, so shared content is
+  untouched; a test pins this. It deletes only `filepath.Join(AccountsDir,
+  name)`, and only when the name is valid and the stored dir cleans to
+  exactly that path; any other stored dir (a hand-edited registry) is
+  unregistered, not deleted. Without `force` it refuses while the account
+  dir holds real, unshared entries (`Unshared`: a diverged file, or a dir
+  Claude created before the main dir had it), since those may hold the
+  only copy of a change.
+- `Reload()`: re-reads accounts.json. The TUI reloads before every action
+  that reads the registry, since `loom account` may have changed it from
+  another terminal. Loaded entries are validated; a bad one latches the
+  registry.
 - `Env(acct) []string`: `CLAUDE_CONFIG_DIR=<dir>`, or nil for `default`.
 - `AuthStatus(program, acct, exec) (Identity, error)`: `claude auth status`
   under the account env; `Identity{LoggedIn, AuthMethod, Email, Plan,
@@ -331,7 +341,7 @@ loom account login <name>
 loom account list                      # name, email, plan, 5h, 7d, default marker; probes live
 loom account use <name>                # set the default
 loom account sync                      # re-link every account; report diverged entries
-loom account remove <name> [--force]   # --force skips the confirmation and the in-use refusal
+loom account remove <name> [--force]   # --force skips the confirmation and the in-use and unshared-files refusals
 ```
 
 `remove` refuses while any session uses the account. The count comes from a
@@ -411,6 +421,14 @@ New packages need a `TestMain` calling `testenv.IsolateLoomDirs`
 - Accounts for non-Claude agents.
 - Adopting an existing, user-managed config dir.
 - Per-workspace default accounts.
+- Known limitations, found in review and left for later:
+  - The terminal pane runs on the default account.
+  - `R` on a Paused session whose tmux session is still alive (a false-dead
+    pause) reattaches to it on its old account, even if another was picked.
+  - An adopted orphan comes back on the default account; its live session's
+    `CLAUDE_CONFIG_DIR` could be read with `tmux show-environment`.
+  - Wrapper programs that are not recognized as Claude get no Account row
+    and run on the default account.
 
 ## Risks
 

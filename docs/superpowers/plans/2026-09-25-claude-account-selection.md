@@ -3258,6 +3258,32 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## Phase D — app
 
+### Amendments from the Phase A–C reviews (binding: they supersede the task code below where they conflict)
+
+1. **`session.SetAccountDirs(dirs map[string]string, registryErr error)`** also takes the registry's load error, so an unloadable registry gets its own launch error instead of "not registered". `publishAccounts` passes `m.accounts.LoadErr()` (nil when `m.accounts` is nil). Test cleanup calls `session.SetAccountDirs(nil, nil)`.
+2. **Reload before acting.** Another terminal can run `loom account …` under a running TUI. Add to `app/accounts.go` (Task 14):
+   ```go
+   // reloadAccounts re-reads accounts.json, which another loom or a `loom
+   // account` command may have changed, and republishes it. Called before
+   // every action that reads the registry: probes, pickers, Settings.
+   func (m *home) reloadAccounts() {
+   	if m.accounts == nil {
+   		return
+   	}
+   	if err := m.accounts.Reload(); err != nil {
+   		log.For("account").Warn("registry.reload_failed", "err", err.Error())
+   	}
+   	m.publishAccounts()
+   }
+   ```
+   Call `m.reloadAccounts()` first in the `maybeUsageProbe` builder (Task 16), `newLaunchOptionsOverlay` (Task 17), `runOpenSettings` and `handleAccountRequest` (Task 19).
+3. **`Registry.Remove(name string, force bool) (deleted bool, err error)`.** Without force it refuses, without unregistering anything, while the account dir holds real, unshared entries (`*account.UnsharedError`, or a wrapped error when it can't tell). The Settings screen passes `false`; on refusal the toast is the error, which already suggests `--force`. Add an app test: an account whose dir holds a real `settings.json` (write it after `Create`) is kept by a Settings remove.
+4. **The Account row is Claude-only.** The signature is `newLaunchOptionsOverlay(opts overlay.LaunchOptions, program string)`. When `!session.IsClaudeProgram(program)` it sets `opts.Account = ""` and never calls `SetAccounts`. Callers pass the instance's program (new-session flows) or the recovered base program (`R`). Add `func (l *SessionLaunchOptions) AccountsShown() bool { return l.accountRowShown() }` to the overlay; `refreshAccountViews` refreshes an open modal only when `lo.AccountsShown()`. Add a test: a non-Claude program gets no Account row and `Options().Account == ""`. The Task 17 tests pass `"claude"` as the program.
+5. **`RemoteControlAuth.Identity` is filled even when `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` forces Blocked**, so `mainConfigDir`, `accountLoggedOut` and the Accounts rows can rely on it.
+6. **A logged-out account's probe succeeds with `Available: false`**, like API-key auth. "logged out" comes only from `accountLoggedOut`, which `ui.AccountUsageText` checks first. Add a test: an account with `Identity{ConfigDir: dir, LoggedIn: false}` and a probed `Usage{At: now}` renders "logged out", not "n/a".
+7. **Missing dirs are refused.** `account.AuthStatus`, `ProbeUsage` and `session.QueryClaudeRosterEnv` refuse an env whose `CLAUDE_CONFIG_DIR` doesn't exist (`account.ErrAccountDirMissing`), and a launch on such an account fails. Tests that publish or probe accounts must use real dirs (`withAccounts` does).
+8. `AccountsManager`'s default width is 100 (a Phase C deviation; its rows need ~92 columns).
+
 ### Task 14: Load and publish the registry; per-account auth refresh
 
 **Files:**
@@ -4844,6 +4870,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## Phase E — CLI
 
+### Amendments (binding)
+
+- `reg.Remove(name)` is `reg.Remove(name, accountForce)`. When it refuses (unshared real entries in the account dir), return its error. It already names the entries and suggests `--force`. Add a test: after `add max-2 --no-login`, write a real `settings.json` into the account dir; `remove max-2` answered `y` fails and keeps the account; `remove max-2 --force` deletes it.
+- `account.AuthStatus`/`ProbeUsage` refuse an account whose dir is missing (`account.ErrAccountDirMissing`); `list` shows that error in the NOTE column.
+
 ### Task 20: `loom account`
 
 **Files:**
@@ -5329,6 +5360,16 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ---
 
 ## Phase F — docs and verification
+
+### Amendments (binding)
+
+Fold these into the Task 21 CLAUDE.md gotcha (replacing the sentences they contradict) and USAGE.md:
+- `Remove` deletes only `filepath.Join(AccountsDir, name)`, and only when the name is valid and the stored dir cleans to exactly that path; any other dir is unregistered, not deleted. Without `force` it refuses while the account dir holds real, unshared entries (`Unshared`), since those may be the only copy of a change.
+- The registry is reloaded before every action in the TUI (`reloadAccounts`), and loaded entries are validated (a bad one latches the registry).
+- `account.Command` builds every account-scoped `claude` invocation. It refuses a missing `CLAUDE_CONFIG_DIR` (`ErrAccountDirMissing`), because the CLI would silently recreate the dir empty and logged out. A launch on such an account fails too. `SetAccountDirs` also carries the registry's load error, so an unloadable registry isn't reported as "account removed".
+- The Account row, and with it `CLAUDE_CONFIG_DIR`, is Claude-only: wrapper programs run on the default account.
+- The deny-list also keeps `daemon.log`, `jobs`, `stats-cache.json`, `.last-cleanup` and `.credentials.json*` per account.
+- Known limitations (USAGE.md and the gotcha): the terminal pane runs on the default account; `R` on a Paused session whose tmux session is still alive reattaches to it, on its old account, even if you picked another; an adopted orphan comes back on the default account.
 
 ### Task 21: Documentation
 
