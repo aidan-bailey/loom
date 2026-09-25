@@ -562,12 +562,24 @@ a shell whose own environment already points at an account's config dir
 shell instead; `loom account login <name>` for a specific account is
 unaffected.
 
+Account selection needs `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
+`CLAUDE_CODE_OAUTH_TOKEN` unset in the environment loom itself runs in —
+Claude checks those before ever reading a config dir's own login, so with
+one set every account silently runs and bills as that credential no
+matter which one you pick. The usage strip and **Settings → Accounts** both warn "`⚠ $VAR set: all
+accounts use it`" when this is the case, and `loom account
+add`/`login`/`list` print the same warning.
+
 **Known limitations**: the terminal pane (the shell below the agent pane)
 always runs on the default account, whichever account the agent is on; an
 orphaned worktree recovered from disk (`r` on a `⟲` entry) always comes
 back on the default account, since nothing on disk records which one it
-used; and, as above, `R` on a still-live session reattaches on its old
-account rather than switching.
+used; `R` on a still-live session reattaches on its old account rather
+than switching; and `loom account remove --force` on an account a session
+is still actively using can lose a race with that session's own Claude
+process, which may recreate a bare, unlinked directory there right after
+the delete — if `loom account add` of the same name then fails with
+"already exists", remove the leftover directory by hand first.
 
 ### Work Across Multiple Workspaces
 
