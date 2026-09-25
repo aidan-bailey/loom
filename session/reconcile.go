@@ -275,7 +275,7 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 	instance.setStarted(true)
 	if instance.getTmuxSession() == nil {
 		// Unpublished, like FromInstanceData: the launch fields are read directly.
-		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(instance.program, instance.headroomProxy, instance.cacheTTL1h)...))
+		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(LaunchEnv{Program: instance.program, HeadroomProxy: instance.headroomProxy, CacheTTL1h: instance.cacheTTL1h})...))
 	}
 	return instance, nil
 }

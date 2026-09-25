@@ -223,17 +223,26 @@ func TestClaudeFullscreenEnv_NonClaudeIsNoOp(t *testing.T) {
 
 func TestInstanceEnv_CombinesBothTogglesIndependently(t *testing.T) {
 	const fullscreen = "CLAUDE_CODE_NO_FLICKER=1"
-	assert.Equal(t, []string{fullscreen}, InstanceEnv("claude", false, false))
-	assert.Equal(t, []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787", fullscreen}, InstanceEnv("claude", true, false))
-	assert.Equal(t, []string{"ENABLE_PROMPT_CACHING_1H=1", fullscreen}, InstanceEnv("claude", false, true))
+	assert.Equal(t, []string{fullscreen}, InstanceEnv(LaunchEnv{Program: "claude"}))
+	assert.Equal(t, []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787", fullscreen},
+		InstanceEnv(LaunchEnv{Program: "claude", HeadroomProxy: true}))
+	assert.Equal(t, []string{"ENABLE_PROMPT_CACHING_1H=1", fullscreen},
+		InstanceEnv(LaunchEnv{Program: "claude", CacheTTL1h: true}))
 	assert.Equal(t,
 		[]string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8787", "ENABLE_PROMPT_CACHING_1H=1", fullscreen},
-		InstanceEnv("claude", true, true),
+		InstanceEnv(LaunchEnv{Program: "claude", HeadroomProxy: true, CacheTTL1h: true}),
 	)
 }
 
 func TestInstanceEnv_NonClaudeIsEmpty(t *testing.T) {
-	assert.Empty(t, InstanceEnv("aider --model gemma", true, true))
+	assert.Empty(t, InstanceEnv(LaunchEnv{Program: "aider --model gemma", HeadroomProxy: true, CacheTTL1h: true, ClaudeConfigDir: "/acct"}))
+}
+
+func TestInstanceEnv_ClaudeConfigDirComesLast(t *testing.T) {
+	assert.Equal(t,
+		[]string{"CLAUDE_CODE_NO_FLICKER=1", "CLAUDE_CONFIG_DIR=/acct/max-2"},
+		InstanceEnv(LaunchEnv{Program: "claude --model opus", ClaudeConfigDir: "/acct/max-2"}),
+	)
 }
 
 func TestBuildResumeCommand(t *testing.T) {

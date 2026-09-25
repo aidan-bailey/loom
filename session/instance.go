@@ -391,7 +391,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		instance.setStarted(true)
 		// Unpublished: nothing else can see instance yet, so the
 		// launch fields are read directly.
-		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(instance.program, instance.headroomProxy, instance.cacheTTL1h)...))
+		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(LaunchEnv{Program: instance.program, HeadroomProxy: instance.headroomProxy, CacheTTL1h: instance.cacheTTL1h})...))
 	}
 
 	return instance, nil
@@ -797,7 +797,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		// InstanceEnv still keys off the bare program.
 		program, headroomProxy, cacheTTL1h := i.launchSpec()
 		launchProgram := i.launchProgram(program, firstTimeSetup)
-		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(program, headroomProxy, cacheTTL1h)...)
+		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(LaunchEnv{Program: program, HeadroomProxy: headroomProxy, CacheTTL1h: cacheTTL1h})...)
 	}
 	i.setTmuxSession(ts)
 

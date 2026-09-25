@@ -125,13 +125,35 @@ func ClaudeFullscreenEnv(program string) []string {
 	return []string{"CLAUDE_CODE_NO_FLICKER=1"}
 }
 
+// LaunchEnv is everything about an instance's launch that becomes tmux
+// session environment rather than part of the program string.
+type LaunchEnv struct {
+	Program       string
+	HeadroomProxy bool
+	CacheTTL1h    bool
+	// ClaudeConfigDir is the CLAUDE_CONFIG_DIR of the account the session
+	// runs on; empty for the default account.
+	ClaudeConfigDir string
+}
+
+// ClaudeConfigDirEnv returns the tmux session environment variable that
+// runs Claude as the account whose config dir is dir. A no-op (nil) for the
+// default account (empty dir) and for every program but Claude.
+func ClaudeConfigDirEnv(dir, program string) []string {
+	if dir == "" || !IsClaudeProgram(program) {
+		return nil
+	}
+	return []string{"CLAUDE_CONFIG_DIR=" + dir}
+}
+
 // InstanceEnv combines every per-session environment variable derived
-// from an instance's launch options (Headroom Proxy, Cache TTL) plus the
-// always-on Claude fullscreen renderer into the single slice
-// tmux.NewTmuxSession's variadic env parameter needs. Centralized here so
-// the four Instance call sites that construct a TmuxSession don't each
-// repeat the same combination.
-func InstanceEnv(program string, headroomProxy, cacheTTL1h bool) []string {
-	env := append(HeadroomProxyEnv(headroomProxy, program), CacheTTL1hEnv(cacheTTL1h, program)...)
-	return append(env, ClaudeFullscreenEnv(program)...)
+// from an instance's launch (Headroom Proxy, Cache TTL, the account's
+// config dir) plus the always-on Claude fullscreen renderer into the
+// single slice tmux.NewTmuxSession's variadic env parameter needs.
+// Centralized here so the four Instance call sites that construct a
+// TmuxSession don't each repeat the same combination.
+func InstanceEnv(e LaunchEnv) []string {
+	env := append(HeadroomProxyEnv(e.HeadroomProxy, e.Program), CacheTTL1hEnv(e.CacheTTL1h, e.Program)...)
+	env = append(env, ClaudeFullscreenEnv(e.Program)...)
+	return append(env, ClaudeConfigDirEnv(e.ClaudeConfigDir, e.Program)...)
 }

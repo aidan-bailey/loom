@@ -121,7 +121,7 @@ func (i *Instance) recoveryLaunch() (launch string, env []string) {
 	program, headroomProxy, cacheTTL1h := i.launchSpec()
 	sessionID, transcriptPath := i.ClaudeSession()
 	program = BuildResumeCommand(program, sessionID, transcriptPath)
-	return i.launchProgram(program, true), InstanceEnv(program, headroomProxy, cacheTTL1h)
+	return i.launchProgram(program, true), InstanceEnv(LaunchEnv{Program: program, HeadroomProxy: headroomProxy, CacheTTL1h: cacheTTL1h})
 }
 
 // prepareHooks readies a fresh hooks folder and returns program

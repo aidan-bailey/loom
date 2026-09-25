@@ -168,7 +168,7 @@ func TestRecoveryLaunch_AddsHooks(t *testing.T) {
 
 	launch, env := inst.recoveryLaunch()
 
-	assert.Equal(t, InstanceEnv("claude --continue", true, true), env,
+	assert.Equal(t, InstanceEnv(LaunchEnv{Program: "claude --continue", HeadroomProxy: true, CacheTTL1h: true}), env,
 		"the env keys off the bare recovery program and the instance's launch toggles")
 	assert.Contains(t, env, "ANTHROPIC_BASE_URL="+HeadroomProxyURL)
 	assert.Contains(t, env, "ENABLE_PROMPT_CACHING_1H=1")
@@ -424,7 +424,7 @@ func TestRecoveryLaunch_ResumesRecordedConversation(t *testing.T) {
 
 	assert.Contains(t, launch, "--resume "+id)
 	assert.NotContains(t, launch, "--continue")
-	assert.Equal(t, InstanceEnv("claude --resume "+id, false, false), env)
+	assert.Equal(t, InstanceEnv(LaunchEnv{Program: "claude --resume " + id}), env)
 	got, _ := inst.ClaudeSession()
 	assert.Equal(t, id, got, "the relaunch's reset keeps the ID until its own SessionStart replaces it")
 }
