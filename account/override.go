@@ -1,6 +1,9 @@
 package account
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 // CredentialOverrides are environment variables whose credential outranks
 // every config dir's login: the Claude CLI checks these before ever
@@ -14,11 +17,14 @@ var CredentialOverrides = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", 
 
 // ActiveCredentialOverride returns the first of CredentialOverrides set to
 // a non-blank value in loom's own environment, and whether one was found.
-// Callers use this to warn before per-account selection would be a no-op:
-// switching CLAUDE_CONFIG_DIR changes nothing while an override is active.
+// Trimmed, matching the whitespace-only handling the remote-control auth
+// check already does elsewhere, so a stray "export FOO=  " can't warn
+// without actually blocking anything. Callers use this to warn before
+// per-account selection would be a no-op: switching CLAUDE_CONFIG_DIR
+// changes nothing while an override is active.
 func ActiveCredentialOverride() (name string, ok bool) {
 	for _, v := range CredentialOverrides {
-		if os.Getenv(v) != "" {
+		if strings.TrimSpace(os.Getenv(v)) != "" {
 			return v, true
 		}
 	}

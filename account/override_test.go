@@ -54,3 +54,12 @@ func TestActiveCredentialOverride_BlankValueDoesNotCount(t *testing.T) {
 
 	assert.False(t, ok, "an env var present but empty is not a credential")
 }
+
+func TestActiveCredentialOverride_WhitespaceOnlyValueDoesNotCount(t *testing.T) {
+	clearCredentialOverrides(t)
+	t.Setenv("ANTHROPIC_API_KEY", "   \t\n  ")
+
+	_, ok := ActiveCredentialOverride()
+
+	assert.False(t, ok, "matches the trimming the remote-control check already does")
+}
