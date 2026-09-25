@@ -220,6 +220,31 @@ func TestResume_AbsentWorktreeStillRebuilds(t *testing.T) {
 	require.Len(t, srv.launchArgs(), 1)
 }
 
+// TestResume_MissingAccountFailsBeforeAnySideEffect pins that a Resume
+// refused over an unresolvable account touches nothing: no worktree
+// rebuild, no stash apply, no launch. Without the check running before
+// any of that, this scenario would still fail — but only once
+// finishResume's startFreshWithRecovery reaches recoveryLaunch, by which
+// point the rebuild below has already recreated the worktree on disk.
+func TestResume_MissingAccountFailsBeforeAnySideEffect(t *testing.T) {
+	withAccountDirs(t, nil)
+	inst, srv := newTickPausedInstance(t)
+	inst.SetAccount("gone")
+	gw, err := inst.GetGitWorktree()
+	require.NoError(t, err)
+	dir := gw.GetWorktreePath()
+	gitIn(t, gw.GetRepoPath(), "worktree", "remove", "--force", dir)
+	require.NoDirExists(t, dir)
+
+	err = resumeLikeApp(t, inst)
+
+	var missing *MissingAccountError
+	require.True(t, errors.As(err, &missing))
+	assert.NoDirExists(t, dir, "a refused resume must not rebuild the worktree")
+	assert.Empty(t, srv.launchArgs(), "a refused resume must not launch anything")
+	assert.Equal(t, Paused, inst.GetStatus())
+}
+
 // TestResume_GuttedWorktreeIsSetAsideAndRebuilt keeps the gutted case on
 // the existing recovery path: a directory git has let go of (no .git) is
 // rebuilt, and its leftovers — possibly uncommitted work git can no

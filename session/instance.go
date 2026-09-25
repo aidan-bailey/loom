@@ -1276,6 +1276,15 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		lg.Debug("instance.resume.end", args...)
 	}()
 
+	// Resolved before anything below rebuilds the worktree or touches a
+	// stash: a resume refused over an unresolvable account must change
+	// nothing on disk. finishResume's own launch paths (startFreshWithRecovery,
+	// CrashRestart) resolve it again at the moment they actually launch —
+	// this is the fail-closed guard for everything before that point.
+	if _, envErr := i.launchEnv(true); envErr != nil {
+		return envErr
+	}
+
 	if i.IsWorkspaceTerminal {
 		return fmt.Errorf("cannot resume workspace terminal")
 	}
