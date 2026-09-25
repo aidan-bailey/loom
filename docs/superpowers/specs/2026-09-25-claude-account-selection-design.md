@@ -341,7 +341,7 @@ loom account login <name>
 loom account list                      # name, email, plan, 5h, 7d, default marker; probes live
 loom account use <name>                # set the default
 loom account sync                      # re-link every account; report diverged entries
-loom account remove <name> [--force]   # --force skips the confirmation and the in-use and unshared-files refusals
+loom account remove <name> [--yes] [--force]   # --yes skips only the confirmation; --force overrides the in-use and unshared-files refusals (and says what it overrode)
 ```
 
 `remove` refuses while any session uses the account. The count comes from a
