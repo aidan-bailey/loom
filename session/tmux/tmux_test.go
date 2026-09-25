@@ -93,6 +93,32 @@ func TestWithProgram(t *testing.T) {
 	require.Equal(t, 40, got.lastRows)
 }
 
+// TestWithProgramEnv verifies the replacement session keeps the identity,
+// dependencies and geometry of the original but takes the given env
+// instead of carrying over the original's — Instance.Restart uses this
+// because a relaunch resolves the account's CLAUDE_CONFIG_DIR fresh, and
+// it may have changed since the original session was built.
+func TestWithProgramEnv(t *testing.T) {
+	ptyFactory := NewMockPtyFactory(t)
+	cmdExec := cmd_test.MockCmdExec{}
+	old := NewTmuxSessionWithDeps("with program env", "aider", ptyFactory, cmdExec, "A=1")
+	_ = old.SetDetachedSize(120, 40)
+
+	got := old.WithProgramEnv("claude --model opus", []string{"CLAUDE_CONFIG_DIR=/acct/max-2"})
+
+	require.NotSame(t, old, got)
+	require.Equal(t, old.sanitizedName, got.sanitizedName)
+	require.Equal(t, "claude --model opus", got.program)
+	require.Equal(t, "claude", got.adapter.Name())
+	require.Equal(t, []string{"A=1"}, old.env, "the original is untouched")
+	require.Equal(t, []string{"CLAUDE_CONFIG_DIR=/acct/max-2"}, got.env)
+	require.Same(t, ptyFactory, got.ptyFactory.(*MockPtyFactory))
+	require.Equal(t, cmdExec, got.cmdExec)
+	require.NotNil(t, got.monitor)
+	require.Equal(t, 120, got.lastCols)
+	require.Equal(t, 40, got.lastRows)
+}
+
 // TestFullScreenAttachCmd verifies that the returned exec.Cmd is shaped so
 // tea.ExecProcess can hand the terminal to `tmux attach-session -t =<name>`
 // (exact: see SessionTarget).

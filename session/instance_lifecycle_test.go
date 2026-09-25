@@ -568,6 +568,75 @@ func TestInstance_RestartIsARealLaunch(t *testing.T) {
 		"--append-system-prompt-file '"+filepath.Join(configDir, loomContextFileWorkspace)+"'")
 }
 
+// TestInstance_RestartUsesAFreshlyResolvedAccountEnv pins that Restart
+// resolves the account's env fresh at restart time rather than carrying
+// over whatever the dead session object happened to be built with — the
+// account may have been chosen (or changed) since.
+func TestInstance_RestartUsesAFreshlyResolvedAccountEnv(t *testing.T) {
+	dir := t.TempDir()
+	withAccountDirs(t, map[string]string{"max-2": dir})
+	var hasSessionCalls int
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			if len(c.Args) >= 2 && c.Args[1] == "has-session" {
+				hasSessionCalls++
+				if hasSessionCalls == 1 {
+					return fmt.Errorf("no such session")
+				}
+			}
+			return nil
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	// Built with no account env at all.
+	ts := tmux.NewTmuxSessionWithDeps("restart-env", "claude", fakePtyFactory{t: t}, cmdExec)
+
+	inst := &Instance{
+		Title:               "restart-env",
+		Path:                t.TempDir(),
+		program:             "claude",
+		Status:              Running,
+		IsWorkspaceTerminal: true,
+	}
+	inst.setTmuxSession(ts)
+	inst.setStarted(true)
+	inst.SetAccount("max-2") // chosen after the dead session was built
+
+	require.NoError(t, inst.Restart())
+
+	assert.Contains(t, inst.getTmuxSession().Env(), "CLAUDE_CONFIG_DIR="+dir)
+}
+
+// TestInstance_RestartFailsClosedOnAMissingAccount pins that a restart
+// whose account can't be resolved never touches the existing session or
+// the started/starting flags — "don't restart" on a refused env.
+func TestInstance_RestartFailsClosedOnAMissingAccount(t *testing.T) {
+	withAccountDirs(t, nil)
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc:    func(c *exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
+	}
+	ts := tmux.NewTmuxSessionWithDeps("restart-missing", "claude", fakePtyFactory{t: t}, cmdExec)
+
+	inst := &Instance{
+		Title:               "restart-missing",
+		Path:                t.TempDir(),
+		program:             "claude",
+		Status:              Running,
+		IsWorkspaceTerminal: true,
+	}
+	inst.setTmuxSession(ts)
+	inst.setStarted(true)
+	inst.SetAccount("gone")
+
+	err := inst.Restart()
+
+	var missing *MissingAccountError
+	require.True(t, errors.As(err, &missing))
+	assert.Same(t, ts, inst.getTmuxSession(), "a refused restart must not touch the existing session")
+	assert.True(t, inst.isStarted(), "a refused restart must not reset the started flag either")
+}
+
 // TestInstance_RestartFailureCounter guards the workspace-terminal restart
 // circuit breaker's underlying counter (app's metadataReadyMsg handling): it
 // must accumulate across consecutive dead-tmux ticks and reset the moment

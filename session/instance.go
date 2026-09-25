@@ -415,25 +415,35 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 // first so Start can run its real path.
 //
 // A restart is a real launch: the dead session object is closed and
-// replaced by one running a command freshly composed by launchProgram,
-// so the previous launch's subagent state and hooks folder are reset,
-// new hooks are prepared, and the loom context flag is re-applied.
-// Reusing the old object would relaunch its old command — for a session
-// restored after a loom restart, the bare Program, with no hooks or
-// context at all — while the tracker kept the dead process's rows.
+// replaced by one running a command freshly composed by launchProgram
+// under a freshly resolved env — the account's CLAUDE_CONFIG_DIR (or
+// Headroom Proxy / Cache TTL toggle) may have changed since the dead
+// session was built — so the previous launch's subagent state and hooks
+// folder are reset, new hooks are prepared, and the loom context flag is
+// re-applied. Reusing the old object would relaunch its old command — for
+// a session restored after a loom restart, the bare Program, with no
+// hooks or context at all — while the tracker kept the dead process's
+// rows. A launch whose account no longer resolves refuses before touching
+// anything: no close, no flag reset, nothing to undo.
 func (i *Instance) Restart() error {
+	// Resolved before taking i.mu: launchEnv takes its own RLock, and
+	// sync.RWMutex is not reentrant.
+	env, err := i.launchEnv(true)
+	if err != nil {
+		return err
+	}
+
 	i.mu.Lock()
 	old := i.tmuxSession
-	program := i.program // under mu: Program() would self-deadlock here
 	i.started = false
 	i.starting = false
 	i.mu.Unlock()
 	if old != nil {
 		// Already dead; this only releases the PTY, emulator and pump.
-		if err := old.Close(); err != nil {
-			i.getLogger().Debug("instance.restart.close_old_failed", "err", err.Error())
+		if closeErr := old.Close(); closeErr != nil {
+			i.getLogger().Debug("instance.restart.close_old_failed", "err", closeErr.Error())
 		}
-		i.setTmuxSession(old.WithProgram(i.launchProgram(program, true)))
+		i.setTmuxSession(old.WithProgramEnv(i.launchProgram(env.Program, true), InstanceEnv(env)))
 	}
 	return i.Start(true)
 }
