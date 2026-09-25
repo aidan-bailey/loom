@@ -107,6 +107,24 @@ func TestRenderCard_AccountBadgeDecisionIsWidthOnly(t *testing.T) {
 	}
 }
 
+// TestRenderCard_AccountBadgeDecisionIgnoresIndexPrefixWidth reproduces a
+// second name-independence bug: a single-digit index's shorter "N. "
+// prefix (e.g. "3. ") left more room than a double-digit index's ("12.
+// "), so two cards at the same width but different index digit counts
+// could disagree on whether to show the badge. The decision must reserve
+// the prefix's worst case (railIndexPrefixReserve), not read it off this
+// card's own index.
+func TestRenderCard_AccountBadgeDecisionIgnoresIndexPrefixWidth(t *testing.T) {
+	for _, w := range []int{26, 27, 28, 29, 30} {
+		d3 := CardData{Title: "fix", Index: 3, Status: session.Running, Account: "max-2"}
+		d12 := CardData{Title: "fix", Index: 12, Status: session.Running, Account: "max-2"}
+		shown3 := strings.Contains(ansi.Strip(strings.Split(RenderCard(d3, DensityRail, w), "\n")[0]), "@")
+		shown12 := strings.Contains(ansi.Strip(strings.Split(RenderCard(d12, DensityRail, w), "\n")[0]), "@")
+		assert.Equal(t, shown3, shown12,
+			"width %d: card 3 and card 12 must decide the same way", w)
+	}
+}
+
 // TestRenderCard_LongAccountNameBadgeIsCapped pins the badge's own width
 // cap: a long account name is truncated with an ellipsis rather than
 // growing the badge (which would also invalidate the width-only decision

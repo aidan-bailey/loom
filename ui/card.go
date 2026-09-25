@@ -64,6 +64,14 @@ const railAccountBadgeMaxWidth = 10
 // given width.
 const railAccountBadgeMinTitle = 12
 
+// railIndexPrefixReserve is the "N. " prefix width the badge decision
+// reserves — "99. ", not whatever the card's actual index needs. A
+// single-digit index's shorter real prefix must not let its badge show
+// at a width where a double-digit card's would not: like
+// railAccountBadgeMaxWidth, the decision reserves the worst case rather
+// than reading it off this particular card.
+const railIndexPrefixReserve = 4
+
 // showAccounts turns account badges on. app sets it (SetShowAccounts)
 // while an extra account is registered. Main goroutine only.
 var showAccounts bool
@@ -612,11 +620,14 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 	prefix := fmt.Sprintf("%d. ", d.Index)
 	inner := width - 2 // bar + space
 	// The account badge rides the title line's right edge. The decision
-	// to show it reserves railAccountBadgeMaxWidth — the badge's cap, not
-	// its actual width — so a short account name can't sneak the badge
-	// onto a card too narrow for a long one; see railAccountBadgeMinTitle.
+	// to show it reserves railAccountBadgeMaxWidth and
+	// railIndexPrefixReserve — the badge's and the index prefix's caps,
+	// never their actual (content-dependent) widths — so neither a
+	// shorter account name nor a single-digit index can sneak the badge
+	// onto a card too narrow for a longer name or a double-digit index;
+	// see railAccountBadgeMinTitle.
 	acct := accountToken(d, solidBg)
-	if acct != "" && inner-lipgloss.Width(prefix)-railAccountBadgeMaxWidth-1 < railAccountBadgeMinTitle {
+	if acct != "" && inner-railIndexPrefixReserve-railAccountBadgeMaxWidth-1 < railAccountBadgeMinTitle {
 		acct = ""
 	}
 	titleW := inner
