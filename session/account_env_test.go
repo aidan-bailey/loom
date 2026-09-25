@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -193,6 +194,50 @@ func TestRecoveryLaunch_RunsAsTheAccount(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, env, "CLAUDE_CONFIG_DIR="+dir)
+}
+
+// TestRecoveryLaunch_ResumesAcrossAnAccountSwitch pins the design's
+// switching-accounts guarantee end to end at the recoveryLaunch level: a
+// conversation recorded under one account (its sessionID/transcriptPath,
+// as a real SessionStart hook would set them) still resumes with
+// --resume <id> after the instance is switched to a different account,
+// because both accounts' projects/ is a real symlink into the same
+// shared main dir (built with account.Sync, exactly as a real account is
+// created) — the transcript's path, recorded through the old account's
+// dir, keeps resolving. The launch itself runs under the NEW account's
+// CLAUDE_CONFIG_DIR, not the old one's.
+func TestRecoveryLaunch_ResumesAcrossAnAccountSwitch(t *testing.T) {
+	const id = "8c634184-0fe5-4b62-b437-8f364eeeefcc"
+
+	// The shared main dir every account's projects/ links into.
+	mainDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(mainDir, "projects"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(mainDir, "projects", id+".jsonl"), []byte("{}\n"), 0o600))
+
+	// The account the conversation was originally recorded under.
+	oldAcctDir := filepath.Join(t.TempDir(), "old")
+	require.NoError(t, os.MkdirAll(oldAcctDir, 0o700))
+	_, err := account.Sync(oldAcctDir, mainDir)
+	require.NoError(t, err)
+	transcriptViaOldAccount := filepath.Join(oldAcctDir, "projects", id+".jsonl")
+	require.FileExists(t, transcriptViaOldAccount, "precondition: the transcript resolves through the old account's projects link")
+
+	// The account the user switches the instance to before relaunching.
+	newAcctDir := filepath.Join(t.TempDir(), "new")
+	require.NoError(t, os.MkdirAll(newAcctDir, 0o700))
+	withAccountDirs(t, map[string]string{"max-2": newAcctDir})
+
+	inst := hooksInstance(t, "claude")
+	inst.claude = claudeState{sessionID: id, transcriptPath: transcriptViaOldAccount}
+	inst.SetAccount("max-2")
+
+	launch, env, err := inst.recoveryLaunch()
+
+	require.NoError(t, err)
+	assert.Contains(t, launch, "--resume "+id,
+		"the conversation recorded under the old account must still be found via its shared projects link")
+	assert.NotContains(t, launch, "--continue")
+	assert.Contains(t, env, "CLAUDE_CONFIG_DIR="+newAcctDir, "the relaunch must run under the newly chosen account, not the old one")
 }
 
 func TestRecoveryLaunch_MissingAccountFails(t *testing.T) {
