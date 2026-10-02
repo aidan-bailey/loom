@@ -5,7 +5,9 @@
 Supervision became a workspace mode at the end of the session. Revised the
 same day after a review against the code. Coordination state moved from
 hook events and `state.json` into a per-workspace work log. Proposals now
-ship before the inbox, and per-repo protocol files were dropped.
+ship before the inbox, and per-repo protocol files were dropped. Probes
+the same day answered assumptions 1–3: messages don't cross Claude
+accounts, so a supervised workspace keeps to one account.
 **Origin:** a day on the kermit repository in which one loom session acted
 as a hand-made supervisor over seven per-issue sessions, coordinating them
 through Claude Code's cross-session messages: six landings and seven issues
@@ -65,7 +67,7 @@ automatic pushes or merges, and answering questions from inside loom.
 | 4 | **One inbox** in loom holds everything that waits on the user, from every session. The user answers in the asking session's pane. |
 | 5 | The state of each piece of work **lives in loom**, in a per-workspace **work log** that agents append to through loom's CLI. Workers declare their state, the supervisor verifies, and loom derives `landed` from git. Messages carry content (briefs, reports), not status. |
 | 6 | Claude Code only. |
-| 7 | Every session in a supervised workspace runs under a **stable name**, so cross-session messages keep reaching it across restarts. |
+| 7 | Every session in a supervised workspace runs under a **stable name**, so cross-session messages keep reaching it across restarts. Messages don't cross Claude accounts, so the workspace keeps to **one account**, the main session's. |
 | 8 | Loom owns the mode, the work log, proposals and the inbox, through a small agent CLI (`loom work`) and an `AskUserQuestion` hook. They are delivered in three stages: first the CLI and the log, then the board and proposals, then the inbox. |
 
 Rejected:
@@ -145,24 +147,45 @@ ways. A normal workspace launches exactly as today.
    store path, the `loom` on `PATH` is a different build.
 3. **Name and environment.** Loom passes `--name`. The main session is
    named after the workspace, and a worker `<workspace>/<title>`.
-   Cross-session messages address a session by this name, and it survives
-   `--resume` and relaunches (assumption 1). Through `LaunchEnv`, loom also
-   exports three variables into the session's environment:
+   Cross-session messages address a session by exactly this name. Without
+   it, Claude derives the name from the working directory and adds a
+   suffix (`supervised-18dabde87c36d40f-bc`), which is how the kermit day's
+   sessions changed names across restarts. A pinned name survives a kill
+   and relaunch with `--continue` without leaving a stale duplicate
+   (probe 1). Through `LaunchEnv`, loom also exports three variables into
+   the session's environment, and Bash commands inherit them (probe 3):
    - `LOOM_INSTANCE`, the instance title;
    - `LOOM_ROLE`, `supervisor` or `worker`;
    - `LOOM_WORK_DIR`, the workspace's work log folder (§4).
 4. **Settings.** Loom's per-launch settings file, which already carries its
-   hooks, gets two additions:
-   - an allow rule for the CLI, `Bash(<loom path> work:*)`, so it never
-     prompts;
-   - `LOOM_WORK_DIR` in `permissions.additionalDirectories`, so a sandboxed
-     worker can write the log (assumption 3). The main session's working
-     directory already contains it.
+   hooks, gets two additions (both verified by probe 3):
+   - an allow rule for the CLI, `Bash(<loom path> work *)`, so it never
+     prompts in manual mode;
+   - `LOOM_WORK_DIR` in `sandbox.filesystem.allowWrite`, so a sandboxed
+     worker can write the log. Without it, the sandbox refuses the write
+     with "read-only file system". This key grants sandboxed shell commands
+     only. `permissions.additionalDirectories` would also open the
+     directory to Claude's file tools. The main session's working directory
+     already contains the folder.
 
 A program string with its own `--name` keeps it. Sometimes loom can't add
 its settings: the program has its own `--settings`, or the config dir path
 contains a `'`. The session still runs, but the CLI may prompt and a
 sandboxed worker may be refused, and loom warns at launch.
+
+**One account, one permission mode.** Cross-session messages stay within a
+Claude account: a session on another `CLAUDE_CONFIG_DIR` is neither listed
+nor reachable (probe 2). In a supervised workspace, a new worker therefore
+preselects the main session's account. Launch Options warn when the user
+picks another account, because that worker and the supervisor couldn't
+message each other. Its state and report would still reach the board,
+since the log is a file.
+
+The SendMessage documentation says a session in a different permission
+mode from the sender may hold incoming messages until its user approves
+them. Launch Options therefore also warn when a worker's permission mode
+differs from the main session's. A model without auto mode (Haiku) falls
+back to manual mode on its own.
 
 ### 3. Protocol text
 
@@ -228,7 +251,8 @@ file uses the absolute path.
   - every question you put to the user, with its answer.
 
   Run `loom work state ready "<summary>" --report <file>`, then send the
-  supervisor the report as one message.
+  supervisor the report as one message. If the message can't reach the
+  supervisor, the report on the board stands: tell the user.
 - **Never** push to the base branch, or bump a lock or toolchain file unless
   assigned.
 - **Resources.** Run builds in the foreground with limited jobs, detach long
@@ -453,6 +477,8 @@ context.
 | A proposal reuses a title | `propose` refuses. Loom's own checks still run at approval, and a refusal there is logged as a rejection. |
 | A branch lands through GitHub | The TUI marks it `landed` from the poller's PR state. `loom work board` uses git only, so it shows the landing after a fetch. |
 | Loom can't add its launch settings | The session runs, but the CLI may prompt and a sandboxed worker may be refused. Loom warns at launch. |
+| A worker runs on another Claude account | It and the supervisor can't message each other, but its state and report still reach the board. Launch Options warn when it is created. |
+| A worker runs in another permission mode | Messages to it may wait for its user's approval. Launch Options warn when it is created. |
 | A question is cleared by neither hook nor a later event | Cleared at the next health tick once the instance is no longer Prompting. |
 | The mode is switched while sessions run | Each session picks up the change at its next launch, and the CLI refuses once the mode is off. Loom offers to restart the main session. |
 
@@ -479,7 +505,9 @@ context.
     a supervised workspace;
   - a normal workspace launching exactly as before;
   - two open workspaces in different modes, each launching with its own
-    role.
+    role;
+  - a new worker preselecting the main session's account, and the Launch
+    Options warnings for another account or permission mode.
 - **The TUI (stage 2):**
   - work-state cards keep `overviewCardHeight`;
   - placeholder cards, `y` and `x` work;
@@ -519,9 +547,10 @@ tried on kermit, with one supervisor and two workers, before the next stage
 starts.
 
 1. **Supervision without new UI:** the mode (`loom workspace mode`), the
-   launch changes, the protocol text, the work log, and `loom work state`,
-   `verify`, `note` and `board`. The supervisor and the user read the board
-   through `loom work board`.
+   launch changes (with the account preselect and the Launch Options
+   warnings, which reuse the existing notice line), the protocol text, the
+   work log, and `loom work state`, `verify`, `note` and `board`. The
+   supervisor and the user read the board through `loom work board`.
 2. **The board and proposals:**
    - work state on the cards, the decisions tab and the push command;
    - the settings toggle and the offer to restart the main session;
@@ -545,16 +574,32 @@ from the text alone.
 - Stacking a worker on another worker's branch.
 - Windows, which has neither `flock` nor loom's hooks.
 
-## Assumptions to verify first
+## Assumptions
+
+### Probed on 2026-10-02
+
+The probes used Claude Code 2.1.281 and throwaway Haiku sessions on a
+private tmux server. Messages were sent from a loom session through
+SendMessage, and a fake `loom` script appended to a log.
+
+| # | Assumption | Result |
+|---|---|---|
+| 1 | `claude --name` sets the address that cross-session messages use, keeps it across relaunches, and accepts `/`. | **Holds.** `--name loomprobe-a` was listed and reachable under exactly that name. After an abrupt `kill-session` and a relaunch with `--continue --name`, it was listed once under the same name (a new ref). `loomprobe/b` was listed and received a message. |
+| 2 | A cross-session message reaches a session running on another Claude account. | **Fails.** A session on the default account was not listed from a `personal`-account session, and a send failed with "No agent named 'loomprobe-c' is reachable". Hence the one-account rule in §2. |
+| 3 | An allow rule and a writable path in loom's `--settings` let a worker run the CLI without a prompt and write the log. | **Holds, using `sandbox.filesystem.allowWrite`.** In manual mode the CLI prompted without a rule and ran without one when the rule was `Bash(<path> work *)`. With the sandbox on, a write outside the working and temp directories failed with "read-only file system" and succeeded once the path was in `allowWrite`. Variables in the session's environment reached the Bash command. |
+
+A message from an auto-mode session to a manual-mode one was delivered
+without a hold. The documented hold for a different permission mode
+therefore applies at least in the other direction; that direction wasn't
+probed, because it would have put an approval prompt in a working session.
+
+### Still to verify
 
 | # | Assumption | How |
 |---|---|---|
-| 1 | `claude --name` sets the address that cross-session messages use, keeps it across `--resume` and relaunches, and accepts `/`. | The cross-session messaging docs say so. Confirm in the contract test before stage 1. |
-| 2 | A cross-session message reaches a session running on another Claude account. | Unknown: each account has its own `sessions` and `daemon` dirs, and `claude agents` answers per config dir. If not, reports on the board are the fallback, and loom either keeps a supervised workspace on one account or warns when its sessions span accounts. Probe before stage 1. |
-| 3 | An allow rule and `permissions.additionalDirectories` in loom's `--settings` let a sandboxed worker run the CLI without a prompt and write the log. | The permissions and sandboxing docs say so. Probe before stage 1. |
 | 4 | Claude Code honours a `PreToolUse`/`PostToolUse` matcher on `AskUserQuestion`, and the payloads carry the questions and a `tool_use_id`. | The docs confirm the matcher, not the payload. Probe before stage 3, as for the hook-events spec. |
 
-Verified against the code on 2026-10-02:
+### Verified against the code on 2026-10-02
 
 - Loom can export environment variables at launch: `LaunchEnv` becomes the
   tmux session's environment through `InstanceEnv`
