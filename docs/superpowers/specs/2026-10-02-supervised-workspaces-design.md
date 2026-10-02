@@ -67,7 +67,7 @@ automatic pushes or merges, and answering questions from inside loom.
 | 4 | **One inbox** in loom holds everything that waits on the user, from every session. The user answers in the asking session's pane. |
 | 5 | The state of each piece of work **lives in loom**, in a per-workspace **work log** that agents append to through loom's CLI. Workers declare their state, the supervisor verifies, and loom derives `landed` from git. Messages carry content (briefs, reports), not status. |
 | 6 | Claude Code only. |
-| 7 | Every session in a supervised workspace runs under a **stable name**, so cross-session messages keep reaching it across restarts. Messages don't cross Claude accounts, so the workspace keeps to **one account**, the main session's. |
+| 7 | Every session in a supervised workspace runs under a **stable name**, so cross-session messages keep reaching it across restarts. Messages don't cross Claude accounts, so the workspace's sessions share **one account**, set per workspace. |
 | 8 | Loom owns the mode, the work log, proposals and the inbox, through a small agent CLI (`loom work`) and an `AskUserQuestion` hook. They are delivered in three stages: first the CLI and the log, then the board and proposals, then the inbox. |
 
 Rejected:
@@ -100,8 +100,10 @@ Rejected:
 ### 1. The mode
 
 `workspaces.json` gains a `mode` for each workspace: `""` (normal, as today)
-or `supervised`. It is set with `loom workspace mode [name]
-<normal|supervised>`, and from stage 2 also with a toggle in the settings
+or `supervised`. It also gains an `account`, the Claude account a
+supervised workspace's sessions share (§2; `""` is the default account).
+Both are set with `loom workspace mode [name] <normal|supervised>
+[--account <name>]`, and from stage 2 also with a toggle in the settings
 overlay (`S`). Registry writes already reload the file before saving, so
 the CLI and a running TUI don't overwrite each other. The TUI notices a
 change made elsewhere by checking the file's size and modification time on
@@ -175,11 +177,16 @@ sandboxed worker may be refused, and loom warns at launch.
 
 **One account, one permission mode.** Cross-session messages stay within a
 Claude account: a session on another `CLAUDE_CONFIG_DIR` is neither listed
-nor reachable (probe 2). In a supervised workspace, a new worker therefore
-preselects the main session's account. Launch Options warn when the user
-picks another account, because that worker and the supervisor couldn't
-message each other. Its state and report would still reach the board,
-since the log is a file.
+nor reachable (probe 2). A supervised workspace's sessions therefore share
+the workspace's account (§1):
+- **The main session** launches on that account, which loom records on the
+  instance at launch, so the roster join and the account badge follow it.
+  Today the main session always runs on the default account and can't be
+  moved, because `R` is blocked for it.
+- **A new worker** preselects that account.
+- **Launch Options** warn when the user picks another account, because that
+  worker and the supervisor couldn't message each other. Its state and
+  report would still reach the board, since the log is a file.
 
 The SendMessage documentation says a session in a different permission
 mode from the sender may hold incoming messages until its user approves
