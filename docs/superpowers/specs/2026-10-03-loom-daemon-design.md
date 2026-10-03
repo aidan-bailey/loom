@@ -327,7 +327,26 @@ end:
    tick, gated jobs and completions out of `home` into `core.Model`, a
    loop on its own goroutine inside the TUI process, fed by the same
    messages it gets today. `home` holds a `Core` backed by that loop over
-   channels. No socket, no behaviour change.
+   channels. No socket, no behaviour change. Through stage 1 the model
+   loads the TUI's open tabs as it does today; loading every registered
+   workspace starts with stage 3.
+
+   Planned on 2026-10-03 as four plans, each leaving the TUI working end
+   to end:
+
+   - **1A, pane split**
+     ([plan](../plans/2026-10-03-daemon-stage1a-pane-split.md)).
+     `session.Instance` holds a lifecycle-only `tmux.Session` and never
+     attaches. The TUI attaches one client per live agent session, by
+     name, through `ui.PaneClients`. Prompts and trust-prompt answers
+     go through `send-keys`.
+   - **1B, model extraction.** `core.Model` takes over the workspaces,
+     storage, reconcile, sweeps, ticks, gated jobs and completions. It is
+     still called on the Update goroutine, and `ui.List` mirrors core's
+     order.
+   - **1C, the `Core` interface.** It brings `InstanceView` and events,
+     draft rows for creation flows, and Lua lifecycle through `Core`.
+   - **1D, the model's own goroutine.**
 2. **Codec and transport.** `core/rpc`. The TUI uses the socket client
    against an in-process server over `net.Pipe`.
 3. **The daemon process.** `loom serve`, the lock, spawn on demand, the
@@ -357,9 +376,14 @@ The scrum workflow starts after stage 3.
 - Completions already act by identity (`reopenedTwin` matches on title
   and worktree path), so a reply naming title and workspace path is
   enough for a client to apply it.
-- Preview panes attach to tmux by session name through `TmuxSession`,
+- ~~Preview panes attach to tmux by session name through `TmuxSession`,
   not through anything the TUI's lifecycle state owns, so they survive a
-  daemon restart.
+  daemon restart.~~ **Corrected 2026-10-03:** not true. Every pane reads
+  through the instance's own `TmuxSession`, which lifecycle code creates
+  and attaches (`Start` → `Restore`, `EnsureRunning`, `Resume`,
+  `CrashRestart`, `Restart`). All keys and prompts are written to that
+  attach PTY. A daemon that attached its own clients would fight the
+  TUI's over window size. Stage 1A makes the assumption true.
 - `loomdev` already isolates a sandbox with `LOOM_GLOBAL_DIR` and
   `LOOM_TMUX_SOCKET`; a per-global-dir socket slots into that.
 
@@ -369,3 +393,6 @@ The scrum workflow starts after stage 3.
 |---|---|---|
 | 1 | A detached child started from a TUI process (new session, stdio closed) keeps running after the TUI exits and after its tmux pane closes. | Stage 3's end-to-end test. |
 | 2 | `$XDG_RUNTIME_DIR` is set in the environments loom runs in (a tmux pane under a systemd user session; a plain ssh login may lack it). | Stage 3 falls back to `<globalDir>/run/`; the test covers both. |
+| 3 | The fallback socket path fits `sun_path`: 108 bytes on Linux, 104 on macOS. A deep `LOOM_GLOBAL_DIR`, such as a sandbox under a long temp dir, overflows it, and `connect` fails with "File name too long" (hit while probing for 1A). | Stage 3: hash into a short path, or bind relative to the dir, and test with a 100-byte global dir. |
+| 4 | With no pane events, the daemon still answers trust prompts and reads hook events promptly. 1A keeps trust detection in the TUI's status scrape and hook scans on pane events. | Stage 3: a launch watch (`capture-pane` for N seconds after each launch) and a hook-scan timer (~250ms; no file-watch library is vendored). |
+| 5 | Loading every registered workspace (decision 3) does not start a Claude workspace terminal in each one. Today activating a workspace auto-creates its terminal. | Decide before stage 3. Suggested rule: create on a client's first open of the workspace, then relaunch on death as today. |
