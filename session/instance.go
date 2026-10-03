@@ -1056,7 +1056,8 @@ func (i *Instance) combineErrors(errs []error) error {
 }
 
 // TmuxSession returns the instance's tmux session (lifecycle only: launch,
-// probe, kill, send-keys), or nil if the instance has not been started.
+// probe, kill, type text through paste-buffer and keys through send-keys),
+// or nil if the instance has not been started.
 // The app takes a full-screen attach command from it.
 func (i *Instance) TmuxSession() *tmux.Session {
 	if !i.isStarted() {

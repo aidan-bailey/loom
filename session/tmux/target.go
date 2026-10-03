@@ -24,10 +24,10 @@ func SessionTarget(name string) string { return "=" + name }
 // PaneTarget returns the -t value naming the current window and active
 // pane of the session called name, and nothing else, for pane- and
 // window-typed commands: capture-pane, display-message, send-keys,
-// set-option, resize-window, list-panes. SessionTarget does not work
-// there: tmux reads a colon-free target as a window or pane and fails
-// with "can't find pane: =loom_x". The trailing ':' makes "=name" the
-// session part. A missing session fails cleanly.
+// paste-buffer, set-option, resize-window, list-panes. SessionTarget does
+// not work there: tmux reads a colon-free target as a window or pane and
+// fails with "can't find pane: =loom_x". The trailing ':' makes "=name"
+// the session part. A missing session fails cleanly.
 func PaneTarget(name string) string { return "=" + name + ":" }
 
 // ExactlyTargetable reports whether SessionTarget and PaneTarget can name

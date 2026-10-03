@@ -9,12 +9,13 @@ import (
 
 // AgentPane is what session lifecycle does with an instance's agent pane
 // without an attach client: liveness probes, the session name, a
-// capture-pane read of the screen, and typing keys and prompts through
-// send-keys. Rendering the pane and forwarding input through a PTY belong
-// to the TUI's client (ui.Pane), which the instance never holds. Each
-// method keeps its guard: started and not paused for the screen read and
-// keys (SendPrompt checks only started), and only "has a tmux session" for
-// the liveness probes.
+// capture-pane read of the screen, typing text and prompts through
+// load-buffer + paste-buffer (tmux.Session.TypeText), and pressing Enter
+// through send-keys. Rendering the pane and forwarding input through a
+// PTY belong to the TUI's client (ui.Pane), which the instance never
+// holds. Each method keeps its guard: started and not paused for the
+// screen read and keys (SendPrompt checks only started), and only "has a
+// tmux session" for the liveness probes.
 //
 // It is a cheap value wrapper around the *Instance: take one with
 // inst.Pane() at the call site rather than storing it.
@@ -39,7 +40,8 @@ func (p AgentPane) Preview() (string, error) {
 	return ts.CapturePaneContent()
 }
 
-// SendKeys types keys into the agent's tmux session through send-keys.
+// SendKeys types keys, as text, into the agent's tmux session through
+// load-buffer + paste-buffer (tmux.Session.TypeText).
 func (p AgentPane) SendKeys(keys string) error {
 	i := p.i
 	if !i.isStarted() || i.GetStatus() == Paused {
@@ -48,8 +50,9 @@ func (p AgentPane) SendKeys(keys string) error {
 	return i.getTmuxSession().TypeText(keys)
 }
 
-// SendPrompt types prompt into the agent's tmux session and submits it,
-// through send-keys.
+// SendPrompt types prompt into the agent's tmux session through
+// load-buffer + paste-buffer and submits it with Enter through send-keys
+// (tmux.Session.SendPrompt).
 func (p AgentPane) SendPrompt(prompt string) error {
 	i := p.i
 	if !i.isStarted() {
