@@ -1985,6 +1985,40 @@ After this package, `session.Instance` attaches nothing. The registry builds its
 - Create: `app/panes_test.go`, `app/testpanes_test.go`
 - Modify tests: listed in C2, C3 and C7
 
+### Amendments (binding; added 2026-10-03 after the reviews of Packages A and B)
+
+These amend the steps below. Where a step's text disagrees with an amendment, the amendment wins.
+
+1. **Package A changed the input API.** `Session.TypeText` uses `load-buffer` + `paste-buffer`, and errors carry tmux's stderr. `SetCmdExecForTest` lives on `*Session`. The parity test is now `TestTypeTextMatchesPTYWrite_RealTmux`. None of this changes a step below, but it is the API you build on.
+2. **A client's adapter comes from the program its session runs, not from `inst.Program()`.** `R` on a paused instance whose tmux session is still alive reattaches the old session: `Resume` keeps the old `tmux.Session`, while `i.Program()` already names the new program. A client built from `inst.Program()` would scan that session with the wrong trust-prompt and pending-prompt patterns.
+   - In C1, add to `session/tmux/session.go`:
+     ```go
+     // Program returns the command line the session was launched with.
+     func (s *Session) Program() string { return s.program }
+     ```
+   - Add to `session/agent_pane.go`:
+     ```go
+     // SessionProgram returns the command line the agent's tmux session was
+     // launched with ("" without a session). A pane client's status scan must
+     // use it: after a reattach it can differ from Instance.Program.
+     func (p AgentPane) SessionProgram() string {
+     	ts := p.i.getTmuxSession()
+     	if ts == nil {
+     		return ""
+     	}
+     	return ts.Program()
+     }
+     ```
+   - In C3, `ensurePane` and `replacePane` pass `inst.Pane().SessionProgram()` where the plan shows `inst.Program()`.
+   - In C6, `attachTestClient` builds its client with `inst.Pane().SessionProgram()`.
+   - Add a unit test in `session/` that a reattaching resume keeps the old program in `SessionProgram()` while `Program()` reports the new one.
+3. **Registry tests the flip relies on.** Add these to `ui/panes_test.go` in C2:
+   - A client whose attach fails stays registered, and a later `Ensure` retries it. Use a PTY factory whose first `Start` errors.
+   - `Retain` followed by `Ensure` for the same name builds a *new* client, never the released one.
+   - A `-race` test: `For`/`Get` from several goroutines while the test goroutine runs `Ensure`/`Retain`.
+4. **`reopenedTwin`** (`app/completions.go`): `&& !m.panes.For(twin).PtmxAlive()` is always true, because `For` never gives a paused twin a client. Drop the conjunct, so the rule is twin `Paused()`. In its doc, "plus Paused and unattached" becomes "plus Paused (a paused instance has no pane client)".
+5. **Doc fixes in `ui/panes.go`:** "Every method is nil-receiver safe" becomes "Every method except the …ForTest helpers is nil-receiver safe". `ui/preview.go`'s `panes` field comment becomes true once the fallback is gone; leave it.
+
 ### C1. Session: the instance holds a `tmux.Session`
 
 - [ ] **Step 1: `session/instance.go`**
