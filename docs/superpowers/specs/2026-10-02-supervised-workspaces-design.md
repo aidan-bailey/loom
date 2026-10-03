@@ -7,7 +7,11 @@ same day after a review against the code. Coordination state moved from
 hook events and `state.json` into a per-workspace work log. Proposals now
 ship before the inbox, and per-repo protocol files were dropped. Probes
 the same day answered assumptions 1–3: messages don't cross Claude
-accounts, so a supervised workspace keeps to one account.
+accounts, so a supervised workspace keeps to one account. Revised on
+2026-10-03 against the stage 1 plan. An append now starts a new line after
+a torn last line, and a launch without loom's settings warns in the status
+bar. The permission-mode warning now compares with the main session's own
+mode.
 **Origin:** a day on the kermit repository in which one loom session acted
 as a hand-made supervisor over seven per-issue sessions, coordinating them
 through Claude Code's cross-session messages: six landings and seven issues
@@ -171,9 +175,14 @@ ways. A normal workspace launches exactly as today.
      already contains the folder.
 
 A program string with its own `--name` keeps it. Sometimes loom can't add
-its settings: the program has its own `--settings`, or the config dir path
-contains a `'`. The session still runs, but the CLI may prompt and a
-sandboxed worker may be refused, and loom warns at launch.
+its settings: the program has its own `--settings`, the config dir path
+contains a `'`, or the hooks folder can't be written. The session still
+runs, but the CLI may prompt and a sandboxed worker may be refused.
+
+Loom warns in its status bar, naming the session. A log line alone would
+go unseen. The launch records the warning on the instance, and the next
+health tick shows it. Every launch path therefore reaches the user: a
+start, a resume, a crash restart, or the main session's relaunch.
 
 **One account, one permission mode.** Cross-session messages stay within a
 Claude account: a session on another `CLAUDE_CONFIG_DIR` is neither listed
@@ -191,8 +200,11 @@ the workspace's account (§1):
 The SendMessage documentation says a session in a different permission
 mode from the sender may hold incoming messages until its user approves
 them. Launch Options therefore also warn when a worker's permission mode
-differs from the main session's. A model without auto mode (Haiku) falls
-back to manual mode on its own.
+differs from the main session's. That is the mode the main session
+actually runs in, read from its launch command, not the configured
+default, which may have changed since the main session launched. With no
+main session, the configured default stands in. A model without auto mode
+(Haiku) falls back to manual mode on its own.
 
 ### 3. Protocol text
 
@@ -309,6 +321,12 @@ workspace's config dir, which is gitignored:
 writes one complete line in a single write. The CLI reads the log under the
 same lock before it appends, so its checks see every earlier entry. Loom
 appends its own entries the same way, from a `tea.Cmd`.
+
+A crash or a hand edit can leave the last line without its newline. An
+entry written straight after it would merge into that line, and neither
+would decode, while the CLI still reported success. So, under the lock, an
+append that finds the log not ending in a newline writes one first. The
+torn line then stands alone, and reads skip it.
 
 **Authority.** The CLI refuses, and writes nothing, when:
 
@@ -483,7 +501,8 @@ context.
 | The branch moves after `ready` or `verified` | The card shows the state as stale, and `verify` refuses. The push command stays pinned to the verified commit. |
 | A proposal reuses a title | `propose` refuses. Loom's own checks still run at approval, and a refusal there is logged as a rejection. |
 | A branch lands through GitHub | The TUI marks it `landed` from the poller's PR state. `loom work board` uses git only, so it shows the landing after a fetch. |
-| Loom can't add its launch settings | The session runs, but the CLI may prompt and a sandboxed worker may be refused. Loom warns at launch. |
+| Loom can't add its launch settings | The session runs, but the CLI may prompt and a sandboxed worker may be refused. Loom's status bar warns, naming the session, within a health tick of the launch. |
+| The log's last line is torn (a crash, a hand edit) | The next append starts a new line, so the torn line is skipped and not merged with the new entry. |
 | A worker runs on another Claude account | It and the supervisor can't message each other, but its state and report still reach the board. Launch Options warn when it is created. |
 | A worker runs in another permission mode | Messages to it may wait for its user's approval. Launch Options warn when it is created. |
 | A question is cleared by neither hook nor a later event | Cleared at the next health tick once the instance is no longer Prompting. |
@@ -500,7 +519,8 @@ context.
     must not count as landed;
   - concurrent appends from several processes, each landing as a complete
     line;
-  - reading across a partial trailing line.
+  - reading across a partial trailing line;
+  - an append after a torn last line, which keeps the new entry whole.
 - **The CLI** runs against a temporary `LOOM_WORK_DIR`. Tests cover the
   refusals (outside loom, from the wrong role, with the mode off), the exit
   codes and the `--json` shape.
@@ -513,8 +533,11 @@ context.
   - a normal workspace launching exactly as before;
   - two open workspaces in different modes, each launching with its own
     role;
+  - a supervised launch that can't add its settings, which warns once in
+    the status bar;
   - a new worker preselecting the main session's account, and the Launch
-    Options warnings for another account or permission mode.
+    Options warnings for another account or permission mode, the mode
+    compared with the main session's own.
 - **The TUI (stage 2):**
   - work-state cards keep `overviewCardHeight`;
   - placeholder cards, `y` and `x` work;

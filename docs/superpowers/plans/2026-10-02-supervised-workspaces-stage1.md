@@ -86,10 +86,10 @@ Run every command from the worktree root.
 | `main.go` | Register `WorkCmd`; `reset` removes the work folder |
 | `session/hooks/hooks.go` | `Extra`, `SettingsJSONWith`, `PrepareWith` |
 | `session/agent/*.go` | `ApplyNameFlag` on every adapter |
-| `session/supervision.go` (new) | `BuildNameCommand`, `supervision`, `supervisedProgram`, `supervisedContextProgram` |
+| `session/supervision.go` (new) | `BuildNameCommand`, `supervision`, `supervisedProgram`, `supervisedContextProgram`, `SetLaunchWarning`/`TakeLaunchWarning` |
 | `session/agent_restart.go`, `session/instance.go`, `session/subagent_hooks.go`, `session/loom_context.go` | Launch wiring |
 | `ui/overlay/sessionLaunchOptions.go` | `SetSupervisor` and its warnings |
-| `app/supervision.go` (new), `app/accounts.go`, `app/intents.go` | Preselect and warnings; `work.Forget` on kill |
+| `app/supervision.go` (new), `app/accounts.go`, `app/intents.go`, `app/app.go` | Preselect and warnings; launch warnings on the health tick; `work.Forget` on kill |
 | `tools/fakeagent/agent.go`, `e2e/e2e_test.go` | `run` command; supervised e2e |
 | `CLAUDE.md`, `USAGE.md` | Documentation |
 
@@ -511,6 +511,27 @@ func TestReadSkipsBadLinesAndAPartialTail(t *testing.T) {
 	assert.Equal(t, 1, bad)
 }
 
+// A crash or a hand edit can leave the last line without its newline. The
+// next append starts a fresh line rather than merging its entry into that
+// one, which would lose the entry while the CLI reported success.
+func TestAppendAfterATornLineKeepsTheNewEntry(t *testing.T) {
+	dir := t.TempDir()
+	appendEntry(t, dir, logEntry("a"))
+	f, err := os.OpenFile(LogPath(dir), os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	_, err = f.WriteString(`{"v":1,"by":"to`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	appendEntry(t, dir, logEntry("b"))
+
+	got, bad, err := Read(dir)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "b", got[1].By, "the new entry survives")
+	assert.Equal(t, 1, bad, "the torn line stands alone and is skipped")
+}
+
 // Every append holds the lock while it reads and writes, so concurrent
 // appends each land as one whole line and each build sees every earlier one.
 func TestConcurrentAppendsAreSerialized(t *testing.T) {
@@ -695,7 +716,8 @@ func ReportPath(dir, title string) string {
 // Append adds one entry to the log in dir under an exclusive lock. build
 // receives every complete entry already in the log, read under the same
 // lock, and returns the entry to append, or an error to refuse with, in
-// which case nothing is written. The line goes out in a single write.
+// which case nothing is written. The line goes out in a single write,
+// after a newline of its own when the log's last line was left torn.
 func Append(dir string, build func(existing []Entry) (Entry, error)) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("work: create %s: %w", dir, err)
@@ -722,10 +744,39 @@ func Append(dir string, build func(existing []Entry) (Entry, error)) error {
 	if err != nil {
 		return fmt.Errorf("work: encode entry: %w", err)
 	}
-	if _, err := f.Write(append(line, '\n')); err != nil {
+	line = append(line, '\n')
+	// A crash or a hand edit can leave the last line without its newline.
+	// Written straight after it, this entry would merge into that line and
+	// neither would decode, so start a fresh line first.
+	torn, err := endsTorn(f)
+	if err != nil {
+		return err
+	}
+	if torn {
+		line = append([]byte{'\n'}, line...)
+	}
+	if _, err := f.Write(line); err != nil {
 		return fmt.Errorf("work: append entry: %w", err)
 	}
 	return nil
+}
+
+// endsTorn reports whether f is non-empty and its last byte is not a
+// newline: a line left incomplete. Under the lock no loom writer can be
+// mid-line, so only a crash or another program leaves one.
+func endsTorn(f *os.File) (bool, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return false, fmt.Errorf("work: stat log: %w", err)
+	}
+	if info.Size() == 0 {
+		return false, nil
+	}
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
+		return false, fmt.Errorf("work: read log: %w", err)
+	}
+	return last[0] != '\n', nil
 }
 
 // Read returns the complete entries of the log in dir and how many lines
@@ -3282,7 +3333,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `session/supervision.go`
-- Modify: `session/agent_restart.go` (`LaunchEnv`, `InstanceEnv`), `session/instance.go` (`launchEnv`, `Restart`, `Start`), `session/subagent_hooks.go` (`launchProgram`, `recoveryLaunch`, `prepareHooks`), `session/loom_context.go` (`writeContextFile`), `session/subagent_hooks_test.go` (call shape)
+- Modify: `session/agent_restart.go` (`LaunchEnv`, `InstanceEnv`), `session/instance.go` (the `launchWarning` field, `launchEnv`, `Restart`, `Start`), `session/subagent_hooks.go` (`launchProgram`, `recoveryLaunch`, `prepareHooks`), `session/loom_context.go` (`writeContextFile`), `session/subagent_hooks_test.go` (call shape)
 - Test: `session/supervision_test.go`
 
 - [ ] **Step 1: Write the failing test**
@@ -3430,6 +3481,30 @@ func TestLaunch_MainSessionTakesTheWorkspacesAccount(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, worker.Account(), "a worker's account is the user's choice in Launch Options")
 }
+
+// A supervised launch that can't add loom's settings still launches, but
+// leaves a warning for the app's status bar; loom.log alone goes unseen.
+func TestLaunch_WithoutItsSettingsASupervisedLaunchWarns(t *testing.T) {
+	cfgDir := supervisedRegistry(t, config.ModeSupervised, "")
+	inst := newSupervisionInstance(t, cfgDir, "fix-ci", false)
+	le, err := inst.launchEnv(true)
+	require.NoError(t, err)
+	le.Program = "claude --settings /mine.json"
+
+	got := inst.launchProgram(le, true)
+	assert.Contains(t, got, "--name 'kermit/fix-ci'", "the rest of the supervised launch stands")
+	w := inst.TakeLaunchWarning()
+	assert.Contains(t, w, "program already passes --settings")
+	assert.Contains(t, w, "loom work")
+	assert.Empty(t, inst.TakeLaunchWarning(), "each warning is taken once")
+
+	plain := newSupervisionInstance(t, supervisedRegistry(t, config.ModeNormal, ""), "x", false)
+	plainEnv, err := plain.launchEnv(true)
+	require.NoError(t, err)
+	plainEnv.Program = "claude --settings /mine.json"
+	plain.launchProgram(plainEnv, true)
+	assert.Empty(t, plain.TakeLaunchWarning(), "a normal launch without hooks is only logged, as today")
+}
 ```
 
 - [ ] **Step 2: Run it to make sure it fails**
@@ -3471,6 +3546,7 @@ package session
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -3537,13 +3613,36 @@ func (i *Instance) supervisedContextProgram(program string, sv work.Launch) stri
 	return BuildLoomContextCommand(program, path)
 }
 
-// noSupervisionSettings logs a supervised launch that went without loom's
-// settings file: the CLI may then prompt, and a sandboxed session can't
-// write the work log.
+// noSupervisionSettings records a supervised launch that went without
+// loom's settings file: the CLI may then prompt, and a sandboxed session
+// can't write the work log. Besides the log line, it leaves a launch
+// warning, which the app's health tick shows in the status bar
+// (showLaunchWarnings) whichever path launched the session. A normal
+// launch (sv nil) is only logged, by the caller, as before.
 func (i *Instance) noSupervisionSettings(sv *work.Launch, reason string) {
-	if sv != nil {
-		i.getLogger().Warn("supervision.settings_skipped", "reason", reason)
+	if sv == nil {
+		return
 	}
+	i.getLogger().Warn("supervision.settings_skipped", "reason", reason)
+	i.SetLaunchWarning(fmt.Sprintf("launched without loom's supervision settings (%s): `loom work` may ask for approval, and a sandboxed session can't write the work log", reason))
+}
+
+// SetLaunchWarning records something the user must hear about this
+// session's latest launch. A later warning replaces one not yet taken.
+func (i *Instance) SetLaunchWarning(msg string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.launchWarning = msg
+}
+
+// TakeLaunchWarning returns the launch warning not yet shown and clears
+// it, so each warning is shown once.
+func (i *Instance) TakeLaunchWarning() string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	w := i.launchWarning
+	i.launchWarning = ""
+	return w
 }
 ```
 
@@ -3577,7 +3676,17 @@ func InstanceEnv(e LaunchEnv) []string {
 }
 ```
 
-(d) `session/instance.go`: add `"github.com/aidan-bailey/loom/work"` to the imports. In `launchEnv`, between `i.mu.RUnlock()` and `dir, err := accountDir(name)`, insert:
+(d) `session/instance.go`: add `"github.com/aidan-bailey/loom/work"` to the imports. In the `Instance` struct, after the `waitReason` field, add:
+
+```go
+	// launchWarning is what the latest launch needs the user to hear (a
+	// supervised launch that went without loom's settings), until the
+	// app's health tick takes it (TakeLaunchWarning). Ephemeral: never
+	// serialized.
+	launchWarning string
+```
+
+In `launchEnv`, between `i.mu.RUnlock()` and `dir, err := accountDir(name)`, insert:
 
 ```go
 	if launching {
@@ -3846,7 +3955,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `app/supervision.go`
-- Modify: `app/accounts.go` (`newLaunchOptionsOverlay`), `app/intents.go` (`killActionFor`)
+- Modify: `app/accounts.go` (`newLaunchOptionsOverlay`), `app/intents.go` (`killActionFor`), `app/app.go` (the `tickUpdateMetadataMessage` case)
 - Test: `app/supervision_test.go`
 
 - [ ] **Step 1: Write the failing test**
@@ -3907,6 +4016,36 @@ func TestNewLaunchOptionsOverlay_NormalWorkspaceHasNoSupervisor(t *testing.T) {
 	assert.NotContains(t, lo.Render(), "can't message each other")
 }
 
+// The permission-mode warning compares with the mode the main session
+// actually runs in, not the configured default, which may have changed
+// since the main session launched.
+func TestNewLaunchOptionsOverlay_ComparesWithTheMainSessionsOwnMode(t *testing.T) {
+	m := supervisedHome(t, "")
+	main, err := session.NewInstance(session.InstanceOptions{Title: "kermit", Path: t.TempDir(),
+		Program: "claude --permission-mode plan", IsWorkspaceTerminal: true})
+	require.NoError(t, err)
+	m.list.AddInstance(main)
+
+	lo, _ := m.newLaunchOptionsOverlay(bareOpts(""), "claude") // the configured default mode
+	assert.Contains(t, lo.Render(), "the supervisor runs in plan mode")
+}
+
+// A launch warning reaches the status bar on the health tick, once.
+func TestShowLaunchWarnings(t *testing.T) {
+	m := newTestHome(t)
+	inst, err := session.NewInstance(session.InstanceOptions{Title: "fix-ci", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	m.list.AddInstance(inst)
+	inst.SetLaunchWarning("launched without loom's supervision settings")
+
+	m.showLaunchWarnings()
+	assert.Contains(t, m.errBox.String(), "fix-ci: launched without loom's supervision settings")
+
+	m.errBox.Clear()
+	m.showLaunchWarnings()
+	assert.NotContains(t, m.errBox.String(), "fix-ci", "a warning is shown once")
+}
+
 func TestKill_ForgetsTheSessionOnTheWorkLog(t *testing.T) {
 	isolateTmux(t)
 	repo := t.TempDir()
@@ -3940,8 +4079,8 @@ func TestKill_ForgetsTheSessionOnTheWorkLog(t *testing.T) {
 
 - [ ] **Step 2: Run it to make sure it fails**
 
-Run: `go test ./app/ -run 'TestNewLaunchOptionsOverlay_(Supervised|Normal)|TestKill_Forgets' -v`
-Expected: FAIL (no preselect, no warning, no `remove` entry).
+Run: `go test ./app/ -run 'TestNewLaunchOptionsOverlay_(Supervised|Normal|Compares)|TestKill_Forgets|TestShowLaunchWarnings' -v`
+Expected: FAIL to build (`m.showLaunchWarnings undefined`). Once it builds, the other tests fail for the missing preselect, warnings and `remove` entry.
 
 - [ ] **Step 3: Implement**
 
@@ -3951,6 +4090,8 @@ Expected: FAIL (no preselect, no warning, no `remove` entry).
 package app
 
 import (
+	"strings"
+
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 )
@@ -3973,6 +4114,48 @@ func (m *home) supervisedWorkspace() *config.Workspace {
 	}
 	return ws
 }
+
+// supervisorPermissionMode is the permission mode the focused workspace's
+// main session runs in, decoded from its launch command. The configured
+// default may have changed since that session launched, so it stands in
+// only when there is no main session.
+func (m *home) supervisorPermissionMode() string {
+	for _, inst := range m.list.GetInstances() {
+		if inst.IsWorkspaceTerminal {
+			if opts, _ := ParseLaunchOptions(inst.Program()); opts.PermissionMode != "" {
+				return opts.PermissionMode
+			}
+		}
+	}
+	return launchOptionsFromConfig(m.appConfig).PermissionMode
+}
+
+// showLaunchWarnings puts every launch warning not yet shown into the
+// status bar, one line per session. It runs on the health tick, which
+// every launch path (start, resume, crash restart, the main session's
+// relaunch) reaches within one tick, so no path has to carry a warning
+// back to the app itself. Update goroutine only.
+func (m *home) showLaunchWarnings() {
+	var lines []string
+	for _, inst := range m.allInstances() {
+		if w := inst.TakeLaunchWarning(); w != "" {
+			lines = append(lines, inst.Title+": "+w)
+		}
+	}
+	if len(lines) > 0 {
+		m.errBox.SetInfo(strings.Join(lines, "\n"))
+	}
+}
+```
+
+In `app/app.go`, in the `case tickUpdateMetadataMessage:` block, right after `m.errBox.ExpireIfDue(time.Now())`, add:
+
+```go
+
+		// A launch that went without part of its setup (a supervised
+		// session without loom's settings) says so here, whichever path
+		// launched it.
+		m.showLaunchWarnings()
 ```
 
 In `app/accounts.go`, `newLaunchOptionsOverlay`: after `claude := session.IsClaudeProgram(program)`, insert:
@@ -3993,7 +4176,7 @@ Before its final `return lo, reloaded`, insert:
 
 ```go
 	if supervised != nil {
-		lo.SetSupervisor(accountOrDefault(supervised.Account), launchOptionsFromConfig(m.appConfig).PermissionMode)
+		lo.SetSupervisor(accountOrDefault(supervised.Account), m.supervisorPermissionMode())
 	}
 ```
 
@@ -4032,9 +4215,9 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-gofmt -w app/supervision.go app/supervision_test.go app/accounts.go app/intents.go
-git add app/supervision.go app/supervision_test.go app/accounts.go app/intents.go
-git commit -m "feat(app): preselect a supervised workspace's account and forget killed sessions
+gofmt -w app/supervision.go app/supervision_test.go app/accounts.go app/intents.go app/app.go
+git add app/supervision.go app/supervision_test.go app/accounts.go app/intents.go app/app.go
+git commit -m "feat(app): preselect a supervised workspace's account, show launch warnings, forget killed sessions
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -4125,7 +4308,7 @@ func TestRun_RunExecutesAShellCommandLine(t *testing.T) {
 }
 ```
 
-Append to `e2e/e2e_test.go` (add `"github.com/aidan-bailey/loom/config"` to its imports if missing):
+Append to `e2e/e2e_test.go` (add `"github.com/aidan-bailey/loom/config"` to its imports if missing). The test's own `t.Setenv` only points its `SetMode` at the sandbox's registry. The CLI the fake agent runs finds that registry because the agent's pane inherits `LOOM_GLOBAL_DIR`. `devsandbox.tmuxCmd` starts the private tmux server with the sandbox's environment, and every pane takes the server's global environment (checked 2026-10-03).
 
 ```go
 // A supervised workspace launches its workers with the work-log variables,
@@ -4230,7 +4413,7 @@ loom work board [--json] [title]     # the board; also works from a shell inside
 
 ```markdown
 - **`work/`** — The coordination store of a supervised workspace (spec `docs/superpowers/specs/2026-10-02-supervised-workspaces-design.md`). It holds:
-  - **The log:** an append-only, `flock`-guarded `<repo>/.loom/work/log.jsonl`. `Append` reads and validates under the lock, then writes one line in one write; `Read` returns complete lines only.
+  - **The log:** an append-only, `flock`-guarded `<repo>/.loom/work/log.jsonl`. `Append` reads and validates under the lock, then writes one line in one write. When a crash or a hand edit left the last line torn, it writes a newline first (`endsTorn`); otherwise the new entry would merge into the torn line and be lost while the CLI reported success. `Read` returns complete lines only.
   - **The fold** into each session's work state (`Fold`/`Validate`): workers declare `working`/`blocked`/`ready`, only the supervisor verifies or notes, and only loom removes.
   - **The board** (`BuildBoard`): `landed` and stale are derived from git, never stored. `landed` needs commits past the session's base commit, because `merge-base --is-ancestor` counts a fresh branch's tip as an ancestor.
   - **Launch facts:** the embedded role protocols (`protocol/*.md`), session names (`SessionName`), and `ResolveLaunch`/`Launch.Env`/`AllowRule`/`Executable`.
@@ -4249,6 +4432,8 @@ loom work board [--json] [title]     # the board; also works from a shell inside
     - the role's composed `claude-loom-context-<role>.md`, which includes the protocol even with loom-context off;
     - `LOOM_INSTANCE`, `LOOM_ROLE` and `LOOM_WORK_DIR`;
     - in the per-launch hooks settings (`hooks.PrepareWith`), `permissions.allow` for `Bash(<loom> work *)` and `sandbox.filesystem.allowWrite` for the work folder. Probed: without them the CLI prompts in manual mode, and the sandbox refuses the write with "read-only file system".
+  - **When the settings can't be added:** the program has its own `--settings`, the path holds a `'`, or the hooks folder can't be written. The session still launches, and `prepareHooks` leaves a launch warning on the instance (`SetLaunchWarning`). The app's health tick shows it in the status bar (`showLaunchWarnings`, which takes each warning once). Every launch path reaches the tick, so none has to carry the warning back itself. Don't downgrade it to a `loom.log` line: the user would never see why `loom work` prompts or fails.
+  - **Launch Options' permission-mode warning** compares with the main session's own mode, decoded from its program (`supervisorPermissionMode` → `ParseLaunchOptions`). The configured default stands in only when there is no main session.
   - **The main session's account:** the main session of a supervised workspace launches on the workspace's account and records it on the instance (`SetAccount`), because cross-session messages don't cross Claude accounts.
   - **What doesn't change:** `Start(false)` (a reattach) resolves nothing, and normal workspaces launch exactly as before.
 - **The work log, not hooks or state.json, carries coordination state.**
@@ -4283,7 +4468,10 @@ that loom reads.
    the change up at their next launch.
 3. New sessions (`n`, `N`, `I`) are workers. Session Launch Options
    preselect the workspace's account, and warn when you pick another
-   account or a permission mode other than the supervisor's.
+   account or a permission mode other than the supervisor's. If a session
+   launches without loom's settings (its program passes its own
+   `--settings`, say), the status bar says so: `loom work` may then ask
+   for approval there.
 4. Sessions run `loom work state`, `verify`, `note` and `board` themselves,
    as their protocol tells them. To read the board, run `loom work board`
    in any shell inside the repo. It shows each session's message address,
@@ -4394,7 +4582,8 @@ How the spec's stage-1 items map to tasks:
 | Protocol text (§3) | 6 |
 | Work log: entries, locking, authority, reading, derived states, lifetime (§4) | 3, 4, 7, 14, 15 |
 | Agent CLI (§5) | 8 |
-| Failure handling (§10): refusals, wrong role, moved branch, crashes, missing settings | 3, 4, 8, 12 |
+| Failure handling (§10): refusals, wrong role, moved branch, crashes, a torn last line, missing settings (warned in the status bar) | 3, 4, 8, 12, 14 |
+| Permission-mode warning against the main session's own mode (§2) | 14 |
 | Testing section | each task's tests, and Task 16's e2e |
 | Documentation (CLAUDE.md gotchas; USAGE.md mode and CLI) | 17 |
 
