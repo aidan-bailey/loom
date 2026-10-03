@@ -115,3 +115,29 @@ func TestBellBadgesUnselectedInstance(t *testing.T) {
 	_ = m.instanceChanged()
 	require.False(t, inst2.BellPending(), "selecting a badged instance clears the badge")
 }
+
+// TestStatusDetection_NoClientGivesNoOpinion: a pane with no client has
+// no screen to scan. Its scan used to come back as "unchanged, no prompt",
+// which the ladder reads as settled, so a working agent whose client had
+// been released went Ready and its re-detection chain ended there. Now
+// nothing is scanned and nothing moves.
+func TestStatusDetection_NoClientGivesNoOpinion(t *testing.T) {
+	isolateTmux(t)
+	m := newTestHome(t)
+	inst := liveInstance(t, "working")
+	m.list.AddInstance(inst)
+	name := inst.Pane().TmuxSessionName()
+	m.panes.Retain(nil) // its client was released
+	require.Nil(t, m.panes.For(inst).Client())
+
+	_, cmd := m.Update(redetectMsg{session: name})
+	if cmd != nil {
+		if detected, ok := cmd().(statusDetectedMsg); ok {
+			_, cmd = m.Update(detected)
+		}
+	}
+
+	require.Equal(t, session.Running, inst.GetStatus(), "no screen, no opinion: the status stays")
+	require.Nil(t, cmd, "and the re-detection chain ends")
+	require.False(t, m.redetectPending[name])
+}

@@ -914,3 +914,19 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 	_, isQuit := msg.(tea.QuitMsg)
 	assert.False(t, isQuit, "handleQuit must not quit when SaveInstances fails in multi-slot path")
 }
+
+// TestRunNow_RunsEveryCmdOfABatch: a batched Cmd called directly only
+// returns the BatchMsg the runtime would expand, so none of its Cmds run.
+// restoreSavedWorkspaces runs activateWorkspace's release before the
+// program starts, and that release is a batch.
+func TestRunNow_RunsEveryCmdOfABatch(t *testing.T) {
+	var ran []string
+	step := func(name string) tea.Cmd {
+		return func() tea.Msg { ran = append(ran, name); return nil }
+	}
+
+	runNow(tea.Batch(step("terminal clients"), tea.Batch(step("pane clients"), step("more")), nil))
+	runNow(nil)
+
+	assert.ElementsMatch(t, []string{"terminal clients", "pane clients", "more"}, ran)
+}

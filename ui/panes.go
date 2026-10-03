@@ -414,7 +414,8 @@ func (p Pane) GetContentHash() []byte {
 
 // DetectStatus runs one status scan of the pane's screen (see
 // tmux.TmuxSession.DetectStatus). Without a client there is no screen to
-// scan, so it gives no opinion.
+// scan and it returns zeros, which are no opinion, not "settled, no
+// prompt": callers skip a pane whose Client is nil.
 func (p Pane) DetectStatus() (updated, hasPrompt bool, err error) {
 	if p.c == nil {
 		return false, false, nil

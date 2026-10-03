@@ -360,6 +360,22 @@ func (m *home) loadSlotStorage(slot *workspaceSlot, cfgDir string, cmdExec cmd2.
 	return recovery, nil
 }
 
+// runNow runs cmd on the calling goroutine, with every Cmd of a
+// tea.BatchMsg it yields, recursively, and discards their messages. A
+// batched Cmd called directly only returns the BatchMsg the runtime
+// would expand, so none of its Cmds would run. For self-contained work
+// (releases) before the program runs; once it runs, Cmds belong to it.
+func runNow(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, c := range batch {
+			runNow(c)
+		}
+	}
+}
+
 // restoreSavedWorkspaces activates all workspaces in `saved` as slots, merging
 // the explicit startup target (if any) into the set, then focuses the
 // appropriate slot. Missing/failed workspaces are not opened (failures
@@ -406,9 +422,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		// loaded, so release is nil in practice. Were it not, running it
 		// here is safe: the program is not running yet (Run installs the
 		// pane notifier after newHome), so no pump can block on Send.
-		if release != nil {
-			release()
-		}
+		runNow(release)
 	}
 
 	// Sweep orphan tmux sessions left by prior crashes. The classic

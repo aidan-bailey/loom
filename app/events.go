@@ -69,7 +69,15 @@ type statusDetectedMsg struct {
 	err       error
 }
 
+// statusDetectCmd scans inst's pane once, off the Update goroutine. A pane
+// with no client has no screen to scan, so there is no Cmd: its zero
+// result would read as "settled, no prompt" and move a working agent to
+// Ready, and with no message the re-detection chain ends there. The next
+// attach and its output resume detection.
 func statusDetectCmd(inst *session.Instance, pane ui.Pane) tea.Cmd {
+	if pane.Client() == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		updated, hasPrompt, err := pane.DetectStatus()
 		return statusDetectedMsg{instance: inst, updated: updated, hasPrompt: hasPrompt, err: err}

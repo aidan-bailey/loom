@@ -14,8 +14,8 @@ import (
 // through send-keys. Rendering the pane and forwarding input through a
 // PTY belong to the TUI's client (ui.Pane), which the instance never
 // holds. Each method keeps its guard: started and not paused for the
-// screen read and keys (SendPrompt checks only started), and only "has a
-// tmux session" for the liveness probes.
+// screen read, keys and prompts, and only "has a tmux session" for the
+// liveness probes.
 //
 // It is a cheap value wrapper around the *Instance: take one with
 // inst.Pane() at the call site rather than storing it.
@@ -57,6 +57,11 @@ func (p AgentPane) SendPrompt(prompt string) error {
 	i := p.i
 	if !i.isStarted() {
 		return fmt.Errorf("instance not started")
+	}
+	// The paste goes to the session by name: a paused instance's name may
+	// belong to a live session of the same title in another workspace.
+	if i.GetStatus() == Paused {
+		return fmt.Errorf("cannot send a prompt to a paused instance")
 	}
 	ts := i.getTmuxSession()
 	if ts == nil {
