@@ -1,6 +1,6 @@
 # Loom Daemon Stage 1A: Pane Split Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan package by package: each package (A–D) is one task for the sub-skill. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Session lifecycle code never attaches to a tmux session. `session.Instance` holds a lifecycle-only `tmux.Session`, and the TUI renders every agent pane from attach clients it owns in a registry keyed by tmux session name. Nothing changes for the user.
 
@@ -30,12 +30,12 @@ Through stage 1 the model loads the TUI's open tabs, as today. Loading every reg
 | # | Decision |
 |---|---|
 | 1 | **Split by embedding, not renaming.** The new `tmux.Session` is the lifecycle half. `TmuxSession` embeds `*Session` and is the attach client. Renaming `TmuxSession` to `Client` would touch about 115 references with no behavioural gain, so it waits for stage 4's cleanup. |
-| 2 | **Input without a PTY is `send-keys -l -- <text>` plus `send-keys <keys>`.** A probe on tmux 3.7b on 2026-10-03 gave byte-identical results for a PTY write and for `send-keys -l`. The probe text covered a leading dash, `--`, quotes, `$`, a backslash, a tab, a newline and multi-byte UTF-8. Task 1 pins this against real tmux; CI runs 3.6a. |
+| 2 | **Input without a PTY is `send-keys -l -- <text>` plus `send-keys <keys>`.** A probe on tmux 3.7b on 2026-10-03 gave byte-identical results for a PTY write and for `send-keys -l`. The probe text covered a leading dash, `--`, quotes, `$`, a backslash, a tab, a newline and multi-byte UTF-8. A1 pins this against real tmux; CI runs 3.6a. |
 | 3 | **The registry is keyed by tmux session name, with one client per session.** Today two open workspaces holding the same title each attach a client to their shared `loom_<title>` session. The registry attaches one. |
 | 4 | **Attach on the Update goroutine, release off it.** Attaching there has precedent: `RepairPtmx` and `ResumePreview` already do. Releasing can't run there, because `PausePreview` waits for the output pump, which blocks in `tea.Program.Send` until Update returns. A client that `Replace` or `Retain` hands back is closed by `releaseClientsCmd`. |
 | 5 | **Trust-prompt detection stays in the TUI's status scrape, and only the answer moves to `send-keys`.** Detection needs the screen, which only a client has. A daemon-side launch watch that reads `capture-pane` is stage 3 work. |
-| 6 | **Lua `inst:preview()` reads `capture-pane` after the flip,** which needs no client. Lua `send_keys`, `send_prompt` and `tap_enter` go through `send-keys` from Task 2. |
-| 7 | **The plan is itself a strangler.** In Tasks 4–5, every display read goes through the registry, which falls back to the instance's own client. Task 6 wires the app's attach and release points while *adopting* that client, so behaviour is unchanged. Task 7 flips the instance to `tmux.Session` and the registry to its own clients. |
+| 6 | **Lua `inst:preview()` reads `capture-pane` after the flip,** which needs no client. Lua `send_keys`, `send_prompt` and `tap_enter` go through `send-keys` from A2. |
+| 7 | **Every package leaves the TUI working.** Package A is internal to `session/tmux`. In Package B every display read goes through the registry, which falls back to the instance's own client, so behaviour is unchanged. Package C flips the instance to `tmux.Session` and the registry to its own clients, and wires every attach and release point. |
 | 8 | **Status and hooks are untouched.** Pane events still drive hook scans and the status ladder. Making the ladder a display-only overlay is 1C; the daemon's hook-scan timer is stage 3. |
 
 Out of scope:
@@ -43,7 +43,18 @@ Out of scope:
 - The terminal pane's `loom_term_*` shells. The TUI keeps creating them with `TmuxSession.Start`, and `Instance.Kill` and `Pause` already kill them by name (`CloseRelatedSession`).
 - Renaming `TmuxSession` (stage 4).
 
-## Conventions for every task
+## Packages
+
+| Package | Delivers | Commit |
+|---|---|---|
+| **A** | `tmux.Session` (lifecycle, no PTY), `send-keys` input, attach clients by name | `refactor(tmux): split a lifecycle-only Session from the attach client` |
+| **B** | `ui.PaneClients` + `ui.Pane`; every display read and input forward goes through them | `refactor(ui,app): read agent panes through PaneClients` |
+| **C** | The flip: instances hold a `tmux.Session`; the app attaches and releases clients | `feat: session lifecycle never attaches; the TUI owns its pane clients` |
+| **D** | CLAUDE.md, then full verification (suite, race, e2e, sandbox smoke) | `docs: CLAUDE.md for the pane split (daemon stage 1A)` |
+
+A package is one unit of work: one implementer, one review, one commit (plus fixups the review asks for). Its numbered subsections (A1, A2, …) and their steps are checkpoints inside it, not commits. Do them in order: each builds on the last.
+
+## Conventions for every package
 
 - Run Go commands from the worktree root. Plain tests need `CGO_ENABLED=0`, e.g. `CGO_ENABLED=0 go test ./session/tmux/...`.
 - Race detector: `CC=clang CGO_ENABLED=1 go test -race ./app/... ./ui/... ./session/...`.
@@ -67,7 +78,7 @@ Out of scope:
 | `ui/panes_test.go` | Registry and `Pane` tests |
 | `app/panes.go` | `paneSnapshot`, `livePaneNames`, `ensurePane`, `replacePane`, `ensureSlotPanes`, `prunePanes` |
 | `app/panes_test.go` | App pane lifecycle tests |
-| `app/testpanes_test.go` | `testPanes`, `attachTestClient`, `clientOf`, `wirePanes` (Task 7) |
+| `app/testpanes_test.go` | `testPanes`, `attachTestClient`, `clientOf`, `wirePanes` (Package C) |
 
 **Modified**
 | File | Change |
@@ -82,7 +93,11 @@ Out of scope:
 
 ---
 
-## Task 1: `tmux.Session` types into a session without a PTY
+## Package A: `session/tmux` splits lifecycle from the attach client
+
+`session/tmux` gains `Session`: launch, probe, type into and kill a session with tmux commands, no PTY. `TmuxSession` embeds it and stays the attach client. Prompts and trust-prompt answers move to `send-keys`, and a client can attach by name to a session it did not start. Outside `session/` the only change is how prompts and keys reach the agent (`send-keys`, byte-identical to the PTY write it replaces); `session.Instance` still holds a `TmuxSession` until Package C. One commit at the end.
+
+### A1. `tmux.Session` types into a session without a PTY
 
 **Files:**
 - Create: `session/tmux/session.go`
@@ -445,21 +460,15 @@ func waitForBytes(t *testing.T, path string, n int) string {
 Run: `CGO_ENABLED=0 go test ./session/tmux -run TestSendKeysMatchesPTYWrite_RealTmux -v`
 Expected: PASS, or SKIP where tmux is not installed. **If it fails on a byte mismatch, stop.** Decision 2 is falsified, and the plan goes back to the user.
 
-- [ ] **Step 7: Format, vet, commit**
+- [ ] **Step 7: Format and vet**
 
 ```bash
 gofmt -w session/tmux/session.go session/tmux/session_test.go session/tmux/sendkeys_realtmux_test.go
 go vet ./session/tmux/
 CGO_ENABLED=0 go test ./session/tmux/
-git add session/tmux/session.go session/tmux/session_test.go session/tmux/sendkeys_realtmux_test.go
-git commit -m "feat(tmux): Session types into a session through send-keys
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
----
-
-## Task 2: `TmuxSession` embeds `Session`; prompts and trust answers go through `send-keys`
+### A2. `TmuxSession` embeds `Session`; prompts and trust answers go through `send-keys`
 
 **Files:**
 - Modify: `session/tmux/session.go`, `session/tmux/tmux.go`
@@ -864,7 +873,7 @@ func (s *Session) WithProgramEnv(program string, env []string) *Session {
 	return newSanitizedSession(s.sanitizedName, program, s.ptyFactory, s.cmdExec, env...)
 }
 ```
-Leave `TmuxSession.WithProgram` and `TmuxSession.WithProgramEnv` in `tmux.go` unchanged. They override the embedded versions, and `session.Instance` still calls them until Task 7 deletes them.
+Leave `TmuxSession.WithProgram` and `TmuxSession.WithProgramEnv` in `tmux.go` unchanged. They override the embedded versions, and `session.Instance` still calls them until Package C deletes them.
 
 - [ ] **Step 4: Route `AgentPane` input through `send-keys`**
 
@@ -925,23 +934,14 @@ Expected: PASS. `TestStartTmuxSession` still sees `new-session` then `attach-ses
 Run: `CC=clang CGO_ENABLED=1 go test -race ./session/tmux/`
 Expected: PASS.
 
-- [ ] **Step 7: Format, vet, commit**
+- [ ] **Step 7: Format and vet**
 
 ```bash
 gofmt -w $(git ls-files '*.go' | grep -v '^vendor/')
 go vet ./...
-git add -A session/
-git commit -m "refactor(tmux): TmuxSession embeds a lifecycle-only Session
-
-Prompts, Lua send_keys/tap_enter and trust-prompt answers now go through
-send-keys, which needs no attach client.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
----
-
-## Task 3: Attach clients by session name, and their status scan
+### A3. Attach clients by session name, and their status scan
 
 **Files:**
 - Create: `session/tmux/attach.go`
@@ -1123,21 +1123,33 @@ func (t *TmuxSession) DetectStatus() (updated, hasPrompt bool, err error) {
 Run: `CGO_ENABLED=0 go test ./session/tmux -run 'TestNewAttachClient|TestDetectStatus|TestAttachClient' -v`
 Expected: PASS. The real-tmux test SKIPs without tmux.
 
-- [ ] **Step 5: Format, vet, commit**
+- [ ] **Step 5: Package A checkpoint and commit**
 
 ```bash
-gofmt -w session/tmux/attach.go session/tmux/attach_test.go
-go vet ./session/tmux/
-CGO_ENABLED=0 go test ./session/tmux/
-git add session/tmux/attach.go session/tmux/attach_test.go
-git commit -m "feat(tmux): attach clients by session name
+gofmt -w $(git ls-files '*.go' | grep -v '^vendor/') session/tmux/attach.go session/tmux/attach_test.go
+go vet ./...
+CGO_ENABLED=0 go test ./...
+CC=clang CGO_ENABLED=1 go test -race ./session/...
+git add -A session/
+git commit -m "refactor(tmux): split a lifecycle-only Session from the attach client
+
+TmuxSession embeds a Session that launches, probes, types into and kills
+a tmux session with tmux commands. Prompts, Lua send_keys/tap_enter and
+trust-prompt answers go through send-keys (byte-identical to a PTY
+write), and NewAttachClient attaches by name to a session it did not
+start.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
+Expected: every package PASSes before the commit.
 
 ---
 
-## Task 4: `ui.PaneClients` and `ui.Pane`
+## Package B: The TUI reads every agent pane through `ui.PaneClients`
+
+A registry of attach clients keyed by tmux session name (`ui.PaneClients`), and a `ui.Pane` per instance that every display read, input forward and status scrape goes through, in `ui` and `app` alike. `PaneClients.For` falls back to the instance's own client while nothing is registered, so behaviour is unchanged until Package C. One commit at the end.
+
+### B1. `ui.PaneClients` and `ui.Pane`
 
 **Files:**
 - Create: `ui/panes.go`
@@ -1302,7 +1314,7 @@ func TestPaneClients_ForGuardsTheInstance(t *testing.T) {
 
 	inst := runningInstance(t, "live")
 	name := inst.Pane().TmuxSessionName()
-	// Stage 1A transition (until Task 7): with nothing registered, the
+	// Stage 1A transition (until Package C): with nothing registered, the
 	// instance's own client is the pane.
 	assert.Same(t, inst.TmuxSession(), p.For(inst).Client())
 
@@ -1433,7 +1445,7 @@ func (p *PaneClients) Alive(sessionName string) bool {
 
 // For returns inst's pane: its session's client here when inst is started
 // and not paused, else the zero Pane. Until the instance stops attaching
-// its own client (daemon stage 1A, Task 7), a session with nothing
+// its own client (daemon stage 1A, Package C), a session with nothing
 // registered falls back to that client, so every pane renders exactly as
 // before.
 func (p *PaneClients) For(inst *session.Instance) Pane {
@@ -1699,21 +1711,15 @@ func (p Pane) scrollSource() (scrollSource, bool) {
 Run: `CGO_ENABLED=0 go test ./ui -run 'TestPaneClients|TestPane_' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Race, format, vet, commit**
+- [ ] **Step 5: Race, format, vet**
 
 ```bash
 CC=clang CGO_ENABLED=1 go test -race ./ui -run 'TestPaneClients|TestPane_'
 gofmt -w ui/panes.go ui/panes_test.go
 go vet ./ui/
-git add ui/panes.go ui/panes_test.go
-git commit -m "feat(ui): PaneClients registry of attach clients by session name
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
----
-
-## Task 5: Route every agent-pane display read and input through `ui.Pane`
+### B2. Route every agent-pane display read and input through `ui.Pane`
 
 Behaviour is unchanged: `For` still falls back to the instance's own client.
 
@@ -1947,494 +1953,51 @@ Run: `go build ./... && go vet ./... && CGO_ENABLED=0 go test ./ui/... ./app/...
 Expected: PASS.
 
 Then run: `git grep -n -E '\.Pane\(\)\.(Preview|EmulatorScreen|CaptureHistory|IsAlternateScreen|CursorState|PaneTitle|HasEmulator|SetPreviewSize|SendKeysRaw|Paste|ForwardWheel|ForwardMouse|ForwardFocus|HasUpdated|GetContentHash|CaptureAndProcessStatus|PtmxAlive)\(' -- '*.go' ':!*_test.go' ':!vendor'`
-Expected: only `script/userdata_instance.go`'s `Preview`, which is Lua and becomes lifecycle-side in Task 7.
+Expected: only `script/userdata_instance.go`'s `Preview`, which is Lua and becomes lifecycle-side in Package C.
 
-- [ ] **Step 9: Race, format, commit**
+- [ ] **Step 9: Package B checkpoint and commit**
 
 ```bash
+CGO_ENABLED=0 go test ./...
 CC=clang CGO_ENABLED=1 go test -race ./app/... ./ui/...
-gofmt -w $(git ls-files '*.go' | grep -v '^vendor/') app/panes.go
+gofmt -w $(git ls-files '*.go' | grep -v '^vendor/') ui/panes.go ui/panes_test.go app/panes.go
 git add -A ui/ app/
 git commit -m "refactor(ui,app): read agent panes through PaneClients
 
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
-
----
-
-## Task 6: The app owns the pane clients' attach points, adopting the instances' own
-
-Behaviour is unchanged. This task wires every attach point the app will need. While instances still attach their own clients, the registry *adopts* those clients rather than opening new ones. Pruning only forgets entries, because releasing them here would race the instance's own `Close`. Task 7 flips both behaviours.
-
-**Files:**
-- Modify: `ui/panes.go` (`Adopt`, transitional)
-- Modify: `app/panes.go`, `app/github.go`, `app/app.go`, `app/app_init.go`, `app/workspaces.go`, `app/completions.go`, `app/intents.go`
-- Modify tests: `app/liveness_unknown_test.go`
-- Test: `app/panes_test.go`
-
-- [ ] **Step 1: Write the failing tests**
-
-`app/panes_test.go`:
-```go
-package app
-
-import (
-	"testing"
-
-	"github.com/aidan-bailey/loom/session"
-	"github.com/aidan-bailey/loom/ui"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-)
-
-func TestEnsureSlotPanes_RegistersActiveInstances(t *testing.T) {
-	m := newTestHome(t)
-	m.panes = ui.NewPaneClients()
-	live := liveInstance(t, "a-live")
-	paused := liveInstance(t, "a-paused")
-	require.NoError(t, paused.TransitionTo(session.Paused))
-	m.list.AddInstance(live)
-	m.list.AddInstance(paused)
-
-	m.ensureSlotPanes(m.workspaceSlot)
-
-	assert.NotNil(t, m.panes.Get(live.Pane().TmuxSessionName()))
-	assert.True(t, m.panes.Alive(live.Pane().TmuxSessionName()))
-	assert.Nil(t, m.panes.Get(paused.Pane().TmuxSessionName()), "a paused session gets no client")
-}
-
-func TestPrunePanes_ForgetsInactiveSessions(t *testing.T) {
-	m := newTestHome(t)
-	m.panes = ui.NewPaneClients()
-	keep, gone := liveInstance(t, "keep"), liveInstance(t, "gone")
-	m.list.AddInstance(keep)
-	m.list.AddInstance(gone)
-	m.ensureSlotPanes(m.workspaceSlot)
-	m.list.RemoveInstance(gone)
-
-	drainCmd(m.prunePanes())
-
-	assert.NotNil(t, m.panes.Get(keep.Pane().TmuxSessionName()))
-	assert.Nil(t, m.panes.Get(gone.Pane().TmuxSessionName()))
-}
-
-func TestFullScreenAttach_PausesAndRestoresThePaneClient(t *testing.T) {
-	isolateTmux(t)
-	m := newTestHome(t)
-	m.panes = ui.NewPaneClients()
-	inst := liveInstance(t, "fs")
-	m.list.AddInstance(inst)
-	m.ensureSlotPanes(m.workspaceSlot)
-	name := inst.Pane().TmuxSessionName()
-	require.True(t, m.panes.Alive(name))
-
-	_, cmd := m.Update(startFullScreenAttachMsg{instance: inst, target: attachTargetAgent})
-	require.NotNil(t, cmd, "the foreground attach runs as an ExecProcess")
-	assert.False(t, m.panes.Alive(name), "the client lets go of the session for the foreground attach")
-	assert.Same(t, inst, m.attachingInstance)
-
-	_, _ = m.Update(attachDoneMsg{instance: inst})
-	assert.True(t, m.panes.Alive(name), "and re-attaches when it returns")
-	assert.Nil(t, m.attachingInstance)
-}
-```
-In `app/liveness_unknown_test.go`, change both `alive := m.applyLiveness(…)` to `alive, _ := m.applyLiveness(…)`.
-
-- [ ] **Step 2: Run them to verify they fail**
-
-Run: `CGO_ENABLED=0 go test ./app -run 'TestEnsureSlotPanes|TestPrunePanes|TestFullScreenAttach_|TestApplyLiveness' -v`
-Expected: FAIL to compile with `m.ensureSlotPanes undefined`, and `applyLiveness` returning one value.
-
-- [ ] **Step 3: `ui.PaneClients.Adopt` (transitional)**
-
-Add to `ui/panes.go`, after `Retain`:
-```go
-// Adopt registers c as sessionName's client and returns the client now
-// registered. An already registered client is kept unless replace is set.
-// Transitional (daemon stage 1A; Task 7 deletes it): until session.Instance
-// stops attaching its own client, the app registers that client instead
-// of opening a second one.
-func (p *PaneClients) Adopt(sessionName string, c *tmux.TmuxSession, replace bool) *tmux.TmuxSession {
-	if p == nil || sessionName == "" || c == nil {
-		return c
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if cur := p.clients[sessionName]; cur != nil && !replace {
-		return cur
-	}
-	p.clients[sessionName] = c
-	return c
-}
-```
-
-- [ ] **Step 4: `activeInstance` and the pane lifecycle helpers**
-
-In `app/github.go`, extract the predicate and use it:
-```go
-// activeInstance reports whether the background jobs may touch inst (see
-// activeInstances).
-func activeInstance(inst *session.Instance) bool {
-	st := inst.GetStatus()
-	return inst.Started() && !inst.Paused() && st != session.Deleting && st != session.Recoverable && st != session.Loading
-}
-```
-```go
-func (m *home) activeInstances() []*session.Instance {
-	var active []*session.Instance
-	for _, inst := range m.allInstances() {
-		if activeInstance(inst) {
-			active = append(active, inst)
-		}
-	}
-	return active
-}
-```
-Replace `app/panes.go` with:
-```go
-package app
-
-import (
-	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session"
-	"github.com/aidan-bailey/loom/ui"
-
-	tea "charm.land/bubbletea/v2"
-)
-
-// The TUI's pane clients (m.panes, ui.PaneClients) give every live agent
-// tmux session one attach client. Everything that renders, scrolls,
-// forwards input to or scrapes an agent pane goes through that client.
-// Session lifecycle never attaches one.
-//
-// Attach points, all on the Update goroutine:
-//   - A workspace load attaches every active instance of the slot
-//     (ensureSlotPanes).
-//   - A start, resume or recover landing in a loaded slot, or a workspace
-//     terminal's auto-restart, relaunched the session, so any earlier
-//     client was watching the session it replaced (replacePane).
-//   - The health tick's repair, when the session is alive but its client's
-//     PTY is gone, and a returning full-screen attach (ensurePane).
-//
-// Release points: the health tick, kill, pause and every slot drop
-// (prunePanes) release the clients of sessions that no loaded instance is
-// active on. A release closes the client's PTY off the Update goroutine
-// (releaseClientsCmd), because PausePreview waits for the client's output
-// pump, which blocks in tea.Program.Send until Update returns.
-
-// paneSnapshot resolves each instance's pane on the Update goroutine, for
-// use by a Cmd that must not read the model.
-func (m *home) paneSnapshot(insts []*session.Instance) map[*session.Instance]ui.Pane {
-	out := make(map[*session.Instance]ui.Pane, len(insts))
-	for _, inst := range insts {
-		out[inst] = m.panes.For(inst)
-	}
-	return out
-}
-
-// livePaneNames returns the tmux session names that should have a client:
-// those of the active instances of every loaded slot.
-func (m *home) livePaneNames() map[string]bool {
-	names := make(map[string]bool)
-	for _, inst := range m.activeInstances() {
-		if name := inst.Pane().TmuxSessionName(); name != "" {
-			names[name] = true
-		}
-	}
-	return names
-}
-
-// ensurePane gives inst's session a client, and re-attaches one whose PTY
-// is gone.
-func (m *home) ensurePane(inst *session.Instance) {
-	name := inst.Pane().TmuxSessionName()
-	ts := inst.TmuxSession()
-	if name == "" || ts == nil {
-		return
-	}
-	// Stage 1A transition (until Task 7): the instance still attaches its
-	// own client, so register that one rather than opening a second.
-	c := m.panes.Adopt(name, ts, false)
-	if c.PtmxAlive() {
-		return
-	}
-	if err := c.Restore(); err != nil {
-		log.For("app").Error("pane.attach_failed", "session", name, "err", err)
-	}
-}
-
-// replacePane gives inst's just-(re)launched session a fresh client. It
-// returns a Cmd closing the client it replaced, or nil when there is
-// nothing to close.
-func (m *home) replacePane(inst *session.Instance) tea.Cmd {
-	name := inst.Pane().TmuxSessionName()
-	ts := inst.TmuxSession()
-	if name == "" || ts == nil {
-		return nil
-	}
-	// Stage 1A transition (until Task 7): the relaunch attached the
-	// instance's new client itself and closed the old one, so just
-	// register the new one.
-	m.panes.Adopt(name, ts, true)
-	return nil
-}
-
-// ensureSlotPanes gives every active instance of slot a client.
-func (m *home) ensureSlotPanes(slot *workspaceSlot) {
-	for _, inst := range slot.list.GetInstances() {
-		if activeInstance(inst) {
-			m.ensurePane(inst)
-		}
-	}
-}
-
-// prunePanes drops the clients of sessions that no loaded instance is
-// active on, and returns a Cmd closing them.
-func (m *home) prunePanes() tea.Cmd {
-	// Stage 1A transition (until Task 7): the instances' own lifecycle
-	// closes their clients (Kill, Pause, a relaunch) and releaseSlotCmd
-	// closes a dropped slot's. Closing them here too would race those, so
-	// only forget them.
-	m.panes.Retain(m.livePaneNames())
-	return nil
-}
-```
-
-- [ ] **Step 5: Wire the attach points**
-
-In `loadSlotStorage` in `app/app_init.go`, add this immediately before the final `return recovery, nil`:
-```go
-	m.ensureSlotPanes(slot)
-```
-In `activateWorkspace` in `app/workspaces.go`, add this immediately after the `m.slots = append(m.slots, &workspaceSlot{…})` statement:
-```go
-	m.ensureSlotPanes(m.slots[len(m.slots)-1])
-```
-In `app/completions.go`:
-- `handleInstanceStarted`: after the prompt is sent (the `if prompt := inst.Prompt(); …` block) and before the `switch`, add:
-```go
-	var attach tea.Cmd
-	if loaded {
-		attach = m.replacePane(inst)
-	}
-```
-  Its final return becomes `return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release, attach)`.
-- `handleResumeDone`: after the `if inst := msg.instance; inst != nil && m.slotHolding(inst) == nil { … }` block, add:
-```go
-	if inst := msg.instance; inst != nil && m.slotHolding(inst) != nil {
-		cmds = append(cmds, m.replacePane(inst))
-	}
-```
-- `handleRecoverDone`: after the `if owner != nil { … }` block that replaces the placeholder, add:
-```go
-	var attach tea.Cmd
-	if loaded {
-		attach = m.replacePane(msg.recovered)
-	}
-```
-  Its final return becomes `return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release, attach)`.
-
-In `applyLiveness` in `app/app.go`, change the signature and the first line of its doc to:
-```go
-// applyLiveness reacts to one instance's health-probe result. Dead tmux
-// pauses the instance (or restarts a workspace terminal, subject to the
-// existing circuit breaker); live tmux with no open attach client
-// re-attaches it. It returns false when the instance was found dead (so
-// callers can stop treating it as running) or is no longer in any loaded
-// slot, plus a Cmd closing any client a restart replaced. Must run on the
-// Update goroutine.
-func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool) (alive bool, release tea.Cmd) {
-```
-Each `return false` becomes `return false, nil` and `return true` becomes `return true, nil`, with two exceptions. The workspace-terminal restart becomes:
-```go
-			log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", inst.Title)
-			if err := inst.Restart(); err != nil {
-				log.For("app").Error("workspace_terminal.restart_failed", "title", inst.Title, "err", err)
-				return false, nil
-			}
-			return false, m.replacePane(inst)
-```
-and the repair at the end becomes:
-```go
-	if !ptmxAlive && inst != m.attachingInstance {
-		// The session exists but its attach client is gone (e.g. a
-		// reattach failed after a full-screen attach returned). Nothing
-		// else ever retries this, so self-heal here. This mirrors the
-		// workspace-terminal restart above, but at the client layer.
-		log.For("app").Warn("tick.ptmx_dead_repairing", "title", inst.Title)
-		m.ensurePane(inst)
-	}
-	return true, nil
-```
-Its callers in `Update`:
-- `deadVerifiedMsg`:
-```go
-	case deadVerifiedMsg:
-		if !statusEligible(msg.instance) {
-			return m, nil
-		}
-		_, release := m.applyLiveness(msg.instance, msg.tmuxLive, msg.ptmxAlive)
-		m.updateTabBarStatuses()
-		return m, tea.Batch(m.instanceChanged(), release)
-```
-- `metadataReadyMsg`: declare `var releases []tea.Cmd` before the loop and open the loop with:
-```go
-		for _, r := range msg.results {
-			alive, release := m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive)
-			releases = append(releases, release)
-			if !alive {
-				continue
-			}
-```
-  End the case with `return m, tea.Batch(append(releases, tickUpdateMetadataCmd)...)`.
-
-`tickUpdateMetadataMessage`: right after `m.errBox.ExpireIfDue(time.Now())`, add:
-```go
-		// Close the clients of sessions that stopped being active since the
-		// last tick (paused, killed, exited, or their slot closed).
-		prune := m.prunePanes()
-```
-Then change the `var cmds []tea.Cmd` that follows to `cmds := []tea.Cmd{prune}`.
-
-`killInstanceMsg`:
-```go
-	case killInstanceMsg:
-		// … (comment unchanged)
-		m.removeInstanceEverywhere(msg.inst)
-		if msg.notice != nil {
-			return m, tea.Batch(m.handleError(msg.notice), m.instanceChanged(), m.prunePanes())
-		}
-		return m, tea.Batch(m.instanceChanged(), m.prunePanes())
-```
-`pauseInstanceMsg`:
-```go
-	case pauseInstanceMsg:
-		// Terminal session was already closed inside pauseAction off the update
-		// goroutine. Nothing I/O-blocking to do here.
-		return m, tea.Batch(m.instanceChanged(), m.prunePanes())
-```
-`startFullScreenAttachMsg` (the whole case):
-```go
-	case startFullScreenAttachMsg:
-		// Resolve the session to attach in the foreground, and the client
-		// whose preview PTY must let go of it while the attach lasts.
-		var attach *exec.Cmd
-		var preview *tmux.TmuxSession
-		switch msg.target {
-		case attachTargetAgent:
-			if s := msg.instance.TmuxSession(); s != nil {
-				attach = s.FullScreenAttachCmd()
-				preview = m.panes.For(msg.instance).Client()
-			}
-		case attachTargetTerminal:
-			if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
-				attach, preview = ts.FullScreenAttachCmd(), ts
-			}
-		}
-		if attach == nil {
-			return m, m.handleError(fmt.Errorf("no tmux session available for attach"))
-		}
-		// Close the preview PTY so the foreground tmux attach owns the tty.
-		if preview != nil {
-			if err := preview.PausePreview(); err != nil {
-				return m, m.handleError(err)
-			}
-		}
-		inst := msg.instance
-		m.attachingInstance = inst
-		return m, tea.ExecProcess(attach, func(err error) tea.Msg {
-			return attachDoneMsg{instance: inst, err: err}
-		})
-```
-Add `"os/exec"` to `app/app.go`'s imports.
-
-`attachDoneMsg`: replace the agent block (`if ts := msg.instance.TmuxSession(); ts != nil { … ResumePreview … }`) with:
-```go
-		// tea.ExecProcess has restored the terminal. Re-attach the agent's
-		// client so live capture resumes. ensurePane logs any failure, and
-		// the metadata tick's repair retries it once attachingInstance is
-		// cleared below.
-		if msg.instance != nil {
-			m.ensurePane(msg.instance)
-		}
-```
-The terminal pane's `ResumePreview` block is unchanged.
-
-In `app/intents.go`, close the TUI's client before the session goes, as the session's own `Close` used to:
-- In `killActionFor`, next to `splitPane, storage := m.splitPane, m.storage`, add:
-```go
-	panes, paneName := m.panes, selected.Pane().TmuxSessionName()
-```
-  Then add this immediately before `if err := selected.Kill(); err != nil {`:
-```go
-		// Close the TUI's attach client first. One left on a killed session
-		// reads a dead PTY until the next prune.
-		if c := panes.Get(paneName); c != nil {
-			if err := c.PausePreview(); err != nil {
-				log.For("app").Warn("kill.pane_close_failed", "title", title, "err", err)
-			}
-		}
-```
-- In `pauseActionFor`, add `panes, paneName := m.panes, selected.Pane().TmuxSessionName()` next to `splitPane := m.splitPane`. Then add this immediately before `if err := selected.Pause(saveFunc); err != nil {`:
-```go
-		// Close the TUI's attach client first, as kill does. If the pause
-		// aborts because the session survived, the health tick's repair
-		// re-attaches it.
-		if c := panes.Get(paneName); c != nil {
-			if err := c.PausePreview(); err != nil {
-				log.For("app").Warn("pause.pane_close_failed", "title", pauseTitle, "err", err)
-			}
-		}
-```
-
-Slot drops only forget entries for now; Task 7 makes them release:
-- In `activateWorkspace`, inside `if len(m.slots) == 1 { … }` after `m.loadSlot(0)`: replace `release = releaseSlotCmd(classic)` with `release = tea.Batch(releaseSlotCmd(classic), m.prunePanes())`.
-- In `deactivateWorkspace`: `return tea.Batch(releaseSlotCmd(slot), m.prunePanes()), nil`.
-- In `enterGlobalMode`: `cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged(), staleTerminals, m.prunePanes()}`.
-
-- [ ] **Step 6: Run the tests**
-
-Run: `go build ./... && go vet ./... && CGO_ENABLED=0 go test ./app/... ./ui/... ./session/...`
-Expected: PASS for the three new tests and for the whole existing suite, unchanged.
-
-- [ ] **Step 7: Race, format, commit**
-
-```bash
-CC=clang CGO_ENABLED=1 go test -race ./app/...
-gofmt -w $(git ls-files '*.go' | grep -v '^vendor/') app/panes_test.go
-git add -A app/ ui/
-git commit -m "refactor(app): wire pane-client attach and release points
-
-Transitional: the registry adopts each instance's own attach client.
+ui.PaneClients holds one attach client per tmux session name, and every
+pane render, scroll, cursor, mouse/paste/key forward and status scrape
+goes through ui.Pane. Until the instance stops attaching, For falls back
+to the instance's own client.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 7: The flip: instances hold a `tmux.Session` and the TUI attaches its own clients
+## Package C: The flip. Instances hold a `tmux.Session`, and the TUI attaches and releases its own clients
 
-After this task, `session.Instance` attaches nothing. The registry builds its own clients by name, and every release point closes them. Commit only when the whole suite is green.
+After this package, `session.Instance` attaches nothing. The registry builds its own clients by name. The app attaches them at every load, completion, restart and repair, and releases them on the health tick, on kill and pause, and on every slot drop. This is the risky package, so its checkpoints run in order — session, then ui, then app — and a failure points at one layer. It ends in one commit, made only once the whole suite is green.
 
 **Files:**
 - Modify: `session/instance.go`, `session/reconcile.go`, `session/agent_pane.go`, `session/agent_restart.go`, `session/tmux/tmux.go`
 - Modify: `ui/panes.go`
-- Modify: `app/panes.go`, `app/workspaces.go`, `app/completions.go`, `app/app.go`
-- Create: `app/testpanes_test.go`
-- Modify tests: listed in Steps 9–11
+- Modify: `app/panes.go`, `app/github.go`, `app/app.go`, `app/app_init.go`, `app/workspaces.go`, `app/completions.go`, `app/intents.go`
+- Create: `app/panes_test.go`, `app/testpanes_test.go`
+- Modify tests: listed in C2, C3 and C7
+
+### C1. Session: the instance holds a `tmux.Session`
 
 - [ ] **Step 1: `session/instance.go`**
 
-- Change the field to `tmuxSession *tmux.Session`, and change `getTmuxSession` and `setTmuxSession` to `*tmux.Session`.
-- In `FromInstanceData`, `tmux.NewTmuxSession(` becomes `tmux.NewSession(` (same arguments).
+- The field becomes `tmuxSession *tmux.Session`. `getTmuxSession` and `setTmuxSession` change to `*tmux.Session`.
+- In `FromInstanceData`, `tmux.NewTmuxSession(` becomes `tmux.NewSession(` with the same arguments.
 - In `Start`, `ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(env)...)` becomes `ts = tmux.NewSession(i.Title, launchProgram, InstanceEnv(env)...)`. Replace the launch block (`if !firstTimeSetup { … } else if i.IsWorkspaceTerminal { … } else { … }`) with:
 ```go
 	switch {
 	case !firstTimeSetup:
 		// The session already runs (a reconciled record). Session lifecycle
-		// attaches no client; the TUI attaches its own by name. So there is
-		// nothing to do here beyond marking the instance started below.
+		// attaches no client (the TUI attaches its own, by name), so there
+		// is nothing to do beyond marking the instance started below.
 	case i.IsWorkspaceTerminal:
 		// Workspace terminal: start tmux directly in root repo, no worktree
 		if err := ts.Start(i.Path); err != nil {
@@ -2459,20 +2022,20 @@ After this task, `session.Instance` attaches nothing. The registry builds its ow
 - `EnsureRunning`'s doc becomes:
 ```go
 // EnsureRunning marks a restored instance whose tmux session is running
-// as started (Start(false)). It attaches nothing, since the TUI attaches
-// its own client to the session by name. It is a no-op for paused,
-// Recoverable and already-started instances.
+// as started (Start(false)). It attaches nothing (the TUI attaches its own
+// client to the session by name) and is a no-op for paused, Recoverable
+// and already-started instances.
 ```
 - `failedStartCleanup(ts *tmux.TmuxSession, …)` becomes `failedStartCleanup(ts *tmux.Session, …)`.
-- `TmuxSession()` returns `*tmux.Session`. Its doc becomes `// TmuxSession returns the instance's tmux session, or nil if the instance has not been started. The session is lifecycle-only: launch, probe, kill, send-keys. The app takes a full-screen attach command from it.`
+- `TmuxSession()` now returns `*tmux.Session`. Its doc becomes `// TmuxSession returns the instance's tmux session (lifecycle only: launch, probe, kill, send-keys), or nil if the instance has not been started. The app takes a full-screen attach command from it.`
 - The signature becomes `finishResume(saveState func() error, ts *tmux.Session, gw *git.GitWorktree)`. Replace the first two cases of its `switch` with:
 ```go
 	case tmux.LivenessAlive:
-		// The session is running. Reattaching is the TUI's job: it attaches
-		// its own client by name when the resume lands.
+		// The session is running. Reattaching is the TUI's: it attaches its
+		// own client by name when the resume lands.
 	case tmux.LivenessDead:
-		// Close kills by exact name, so it cannot reach another session.
-		// It must run before the new session under the same name exists.
+		// Close kills by exact name, so this cannot reach another session —
+		// and it must run before the new session under the same name exists.
 		if err := ts.Close(); err != nil {
 			log.For("session").Debug("resume_close_dead_session", "err", err.Error())
 		}
@@ -2485,14 +2048,14 @@ After this task, `session.Instance` attaches nothing. The registry builds its ow
 
 - [ ] **Step 2: `session/reconcile.go` and `session/agent_restart.go`**
 
-In `fromInstanceDataPaused`, `tmux.NewTmuxSession(` becomes `tmux.NewSession(`. In its doc, "creates a TmuxSession object but does not connect" becomes "creates its tmux.Session (lifecycle only; nothing ever connects to it)". In the `ActionRestore` case of `ReconcileAndRestore`, replace the comment inside `if err := instance.EnsureRunning(); err != nil {` with:
+In `fromInstanceDataPaused`, `tmux.NewTmuxSession(` becomes `tmux.NewSession(`. In its doc, "creates a TmuxSession object but does not connect" becomes "creates its tmux.Session (lifecycle only; nothing ever connects to it)". In `ReconcileAndRestore`'s `ActionRestore` case, replace the comment inside `if err := instance.EnsureRunning(); err != nil {` with:
 ```go
-			// EnsureRunning touches no tmux (it attaches nothing), so it
+			// EnsureRunning touches no tmux (it attaches nothing), so this
 			// fails only on bad data or an unresolvable account. Return the
 			// error rather than masking it with a crash-restart:
 			// LoadAndReconcile stashes the raw record in the unrecovered
-			// cache (storage.go), so it survives in state.json and is
-			// retried on the next launch.
+			// cache (storage.go) so it survives in state.json and is retried
+			// on the next launch.
 ```
 In `session/agent_restart.go`, the comment that mentions `tmux.NewTmuxSession's variadic env parameter` now names `tmux.NewSession's`.
 
@@ -2514,9 +2077,9 @@ import (
 // capture-pane read of the screen, and typing keys and prompts through
 // send-keys. Rendering the pane and forwarding input through a PTY belong
 // to the TUI's client (ui.Pane), which the instance never holds. Each
-// method keeps its guard. The screen read and keys require started and
-// not paused (SendPrompt checks only started). The liveness probes
-// require only that a tmux session exists.
+// method keeps its guard: started and not paused for the screen read and
+// keys (SendPrompt checks only started), and only "has a tmux session" for
+// the liveness probes.
 //
 // It is a cheap value wrapper around the *Instance: take one with
 // inst.Pane() at the call site rather than storing it.
@@ -2526,10 +2089,9 @@ type AgentPane struct{ i *Instance }
 // of its methods applies its own guard.
 func (i *Instance) Pane() AgentPane { return AgentPane{i: i} }
 
-// Preview returns the pane's visible screen through capture-pane, which
-// needs no client. It returns empty, not an error, when the instance is
-// not started, is paused, or its session is gone. Backs Lua's
-// inst:preview().
+// Preview returns the pane's visible screen through capture-pane (no
+// client needed). It is empty, not an error, when the instance is not
+// started, is paused, or its session is gone. Used by Lua's inst:preview().
 func (p AgentPane) Preview() (string, error) {
 	i := p.i
 	if !i.isStarted() || i.GetStatus() == Paused {
@@ -2565,8 +2127,9 @@ func (p AgentPane) SendPrompt(prompt string) error {
 	return ts.SendPrompt(prompt)
 }
 
-// TapEnter presses Enter in the tmux session when the instance is running,
-// and does nothing otherwise. Exposed to Lua scripts as inst:tap_enter().
+// TapEnter presses Enter in the tmux session when the instance is
+// running; otherwise it does nothing. Exposed to Lua scripts as
+// inst:tap_enter().
 func (p AgentPane) TapEnter() {
 	i := p.i
 	if !i.isStarted() || i.GetStatus() == Paused {
@@ -2581,7 +2144,7 @@ func (p AgentPane) TapEnter() {
 	}
 }
 
-// TmuxAlive reports whether the tmux session is alive, as a sanity check
+// TmuxAlive reports whether the tmux session is alive: a sanity check
 // before acting on the pane.
 func (p AgentPane) TmuxAlive() bool {
 	ts := p.i.getTmuxSession()
@@ -2603,9 +2166,9 @@ func (p AgentPane) TmuxLiveness() tmux.Liveness {
 	return ts.SessionLiveness()
 }
 
-// TmuxSessionName returns the name of the tmux session backing this
-// instance, or "" when it has no session. Pane events and the TUI's pane
-// clients are keyed by it.
+// TmuxSessionName returns the tmux session name backing this instance, or
+// "" when it has no session. Pane events and the TUI's pane clients are
+// keyed by it.
 func (p AgentPane) TmuxSessionName() string {
 	ts := p.i.getTmuxSession()
 	if ts == nil {
@@ -2617,142 +2180,19 @@ func (p AgentPane) TmuxSessionName() string {
 
 - [ ] **Step 4: `session/tmux/tmux.go`**
 
-Delete `TmuxSession.WithProgram` and `TmuxSession.WithProgramEnv`; `Session`'s versions remain. In `session/tmux/tmux_test.go`, delete `TestWithProgram` and `TestWithProgramEnv`, which `TestSession_WithProgramEnv` now covers.
+Delete `TmuxSession.WithProgram` and `TmuxSession.WithProgramEnv`; `Session`'s versions remain. In `session/tmux/tmux_test.go`, delete `TestWithProgram` and `TestWithProgramEnv`, which `TestSession_WithProgramEnv` covers.
 
-- [ ] **Step 5: `ui/panes.go`: no fallback and no `Adopt`**
+- [ ] **Step 5: Session test migration**
 
-Replace `For`:
-```go
-// For returns inst's pane: its session's client here when inst is started
-// and not paused, else the zero Pane.
-func (p *PaneClients) For(inst *session.Instance) Pane {
-	if inst == nil || !inst.Started() || inst.Paused() {
-		return Pane{}
-	}
-	return Pane{c: p.Get(inst.Pane().TmuxSessionName())}
-}
-```
-Delete `Adopt`. In `TestPaneClients_ForGuardsTheInstance` in `ui/panes_test.go`, replace the two lines under `// Stage 1A transition (until Task 7)…` with:
-```go
-	assert.Nil(t, p.For(inst).Client(), "nothing attached: no pane")
-```
-
-- [ ] **Step 6: `app/panes.go`: build and release clients**
-
-Replace `ensurePane`, `replacePane` and `prunePanes`:
-```go
-// ensurePane gives inst's session a client, and re-attaches one whose PTY
-// is gone (ui.PaneClients.Ensure).
-func (m *home) ensurePane(inst *session.Instance) {
-	name := inst.Pane().TmuxSessionName()
-	if name == "" {
-		return
-	}
-	if err := m.panes.Ensure(name, inst.Program()); err != nil {
-		log.For("app").Error("pane.attach_failed", "session", name, "err", err)
-	}
-}
-
-// replacePane gives inst's just-(re)launched session a fresh client. It
-// returns a Cmd closing the client it replaced, or nil when there was
-// none.
-func (m *home) replacePane(inst *session.Instance) tea.Cmd {
-	name := inst.Pane().TmuxSessionName()
-	if name == "" {
-		return nil
-	}
-	old, err := m.panes.Replace(name, inst.Program())
-	if err != nil {
-		log.For("app").Error("pane.attach_failed", "session", name, "err", err)
-	}
-	if old == nil {
-		return nil
-	}
-	return releaseClientsCmd(attachedClients([]*tmux.TmuxSession{old}))
-}
-```
-```go
-// prunePanes drops the clients of sessions that no loaded instance is
-// active on, and returns a Cmd closing them.
-func (m *home) prunePanes() tea.Cmd {
-	return releaseClientsCmd(attachedClients(m.panes.Retain(m.livePaneNames())))
-}
-```
-Add `"github.com/aidan-bailey/loom/session/tmux"` to the imports.
-
-- [ ] **Step 7: Remove the per-instance releases the instances no longer need**
-
-In `app/workspaces.go`:
-- `releaseSlotCmd` keeps only the terminal pane's clients:
-```go
-// releaseSlotCmd returns a Cmd that releases the attach clients a dropped
-// slot's terminal pane holds on each loom_term_* shell it has shown. The
-// shells keep running. The agent panes' clients belong to the registry,
-// which every drop site prunes (prunePanes). Returns nil when nothing is
-// attached.
-func releaseSlotCmd(slot *workspaceSlot) tea.Cmd {
-	if slot == nil || slot.splitPane == nil {
-		return nil
-	}
-	return releaseClientsCmd(attachedClients(slot.splitPane.Terminal().DetachAll()))
-}
-```
-- Delete `releaseInstancesCmd`. Move into `releaseClientsCmd`'s doc the explanation of why the close runs off Update, which used to live on `releaseInstancesCmd`: "PausePreview waits — up to the pump-exit timeout, per session — for the output pump to exit, and the pump delivers pane events through tea.Program.Send, which blocks until Update returns."
-- In the final loop of `enterGlobalMode`, replace
-```go
-		if slot == carried {
-			cmds = append(cmds, releaseInstancesCmd(slot.list.GetInstances()))
-			continue
-		}
-```
-  with
-```go
-		if slot == carried {
-			continue // its panes live on; prunePanes closes its agents' clients
-		}
-```
-
-In `app/completions.go`:
-- `handleInstanceStarted`: in the reopened-twin failure branch, `return tea.Batch(m.handleError(msg.err), releaseInstancesCmd([]*session.Instance{inst}))` becomes `return m.handleError(msg.err)`. Delete the `var release tea.Cmd` / `if !loaded { release = releaseInstancesCmd(…) }` block, and drop `release` from the two returns that used it: `return tea.Batch(m.handleError(err), release)` becomes `return m.handleError(err)`.
-- `handleResumeDone`: remove the `else` branch that appends `releaseInstancesCmd([]*session.Instance{inst})`, keeping the `if adopted != nil { … }` block without an `else`.
-- `handleRecoverDone`: delete the `var release …` / `if !loaded { … }` block, and drop `release` from its return.
-- Rewrite the package comment at the top of the file and the docs of `handleInstanceStarted`, `handleResumeDone` and `handleRecoverDone`. Wherever they say an owner closed meanwhile is "attaching a preview client" or being "released", say instead: "A completion whose owner was closed meanwhile attaches nothing (nothing displays it); one landing in a loaded slot attaches the instance's client (replacePane)." Keep every other sentence.
-
-In `app/app.go`, delete the `release` handling and the comment block above it in `transitionFailedMsg`, since a resume no longer attaches before its checkpoint save:
-```go
-	case transitionFailedMsg:
-		// Revert instance status on failed background op (kill/pause/resume).
-		// previousStatus came from this same instance, so the reverse
-		// transition should always be allowed; if the state machine rejects
-		// it, log and leave the status as-is rather than masking a real bug.
-		// The message carries the instance pointer: like killInstanceMsg, the
-		// focused m.list may have been swapped since the op started.
-		if msg.inst != nil {
-			if terr := msg.inst.TransitionTo(msg.previousStatus); terr != nil {
-				log.For("app").Warn("revert_transition_failed", "err", terr)
-			}
-		}
-		log.For("app").Error("op_failed", "op", msg.op, "title", msg.title, "err", msg.err)
-		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), m.prunePanes())
-```
-In the first comment of `applyLiveness` ("The probe was taken before inst's slot was dropped. Its attach client has been (or is being) released by releaseSlotCmd, …"), change `released by releaseSlotCmd` to `released by prunePanes`.
-
-- [ ] **Step 8: Build**
-
-Run: `go build ./... && go vet ./...`
-Expected: production code builds. Test compile errors are fixed in Steps 9–11.
-
-- [ ] **Step 9: Session test migration**
-
-- In `session/instance_lifecycle_test.go`, `session/start_cleanup_test.go` and `session/stash_notice_test.go`, every `tmux.NewTmuxSessionWithDeps(` becomes `tmux.NewSessionWithDeps(` (same arguments).
-- `session/resume_inplace_test.go`:
+- In `session/instance_lifecycle_test.go`, `session/start_cleanup_test.go` and `session/stash_notice_test.go`, every `tmux.NewTmuxSessionWithDeps(` becomes `tmux.NewSessionWithDeps(` with the same arguments.
+- In `session/resume_inplace_test.go`:
   - Both `newRecoverySession = func(name, program string, env ...string) *tmux.TmuxSession {` overrides become `… *tmux.Session {`, returning `tmux.NewSessionWithDeps(name, program, srv, srv.runner(), env...)`.
-  - Delete the `failAttach` field and the `attach-session` branch of `fakeTmuxServer.Start`, since nothing attaches now.
+  - Delete the `failAttach` field and the `attach-session` branch of `fakeTmuxServer.Start`. Nothing attaches now.
   - Replace `TestResume_RelaunchReleasesTheDeadSession` with:
 ```go
-// TestResume_RelaunchClosesTheDeadSession: relaunching first kills the
-// dead session by exact name (tmux prefix-matches a bare -t, and the
-// session is gone), then replaces the session object.
+// TestResume_RelaunchClosesTheDeadSession: relaunching kills the dead
+// session first, by exact name (tmux prefix-matches a bare -t, and the
+// session is gone), and then replaces the session object.
 func TestResume_RelaunchClosesTheDeadSession(t *testing.T) {
 	inst, srv := newTickPausedInstance(t)
 	old := inst.getTmuxSession()
@@ -2764,14 +2204,38 @@ func TestResume_RelaunchClosesTheDeadSession(t *testing.T) {
 	assert.NotSame(t, old, inst.getTmuxSession())
 }
 ```
-- `session/tmux/tmux_test.go`: `TestWithProgram` and `TestWithProgramEnv` were already deleted in Step 4.
 
-Run: `CGO_ENABLED=0 go test ./session/...`
-Expected: PASS.
+- [ ] **Step 6: Checkpoint: session builds and passes on its own**
 
-- [ ] **Step 10: ui test migration**
+Run: `go build ./session/... && go vet ./session/... && CGO_ENABLED=0 go test ./session/...`
+Expected: PASS. `ui` and `app` do not build yet; C2 and C3 fix them.
 
-In `ui/preview_test.go`, `setupTestEnvironment` builds the lifecycle session plus a registry holding a client for it:
+Then run: `git grep -n -E 'Restore\(\)|PausePreview|ResumePreview|attach-session' -- 'session/*.go' ':!session/tmux' ':!*_test.go'`
+Expected: no output. Nothing in `session` attaches anymore.
+
+### C2. ui: no fallback
+
+- [ ] **Step 1: `ui/panes.go`**
+
+Replace `For`:
+```go
+// For returns inst's pane: its session's client here, when inst is started
+// and not paused; otherwise the zero Pane.
+func (p *PaneClients) For(inst *session.Instance) Pane {
+	if inst == nil || !inst.Started() || inst.Paused() {
+		return Pane{}
+	}
+	return Pane{c: p.Get(inst.Pane().TmuxSessionName())}
+}
+```
+In `ui/panes_test.go` `TestPaneClients_ForGuardsTheInstance`, replace the two lines under `// Stage 1A transition (until Package C)…` with:
+```go
+	assert.Nil(t, p.For(inst).Client(), "nothing attached: no pane")
+```
+
+- [ ] **Step 2: ui test migration**
+
+In `ui/preview_test.go`, `setupTestEnvironment` builds the lifecycle session and a registry holding a client for it:
 - Add `panes *PaneClients` to `testSetup`.
 - Replace
 ```go
@@ -2794,10 +2258,400 @@ In `ui/preview_test.go`, `setupTestEnvironment` builds the lifecycle session plu
 - In every test that calls `setupTestEnvironment` and builds a `PreviewPane`, add `p.SetPanes(setup.panes)` right after `p := NewPreviewPane()`. Find them with `git grep -n -A4 'setupTestEnvironment(' -- ui/preview_test.go`.
 - `require.True(t, setup.instance.Pane().IsAlternateScreen(), …)` becomes `require.True(t, setup.panes.For(setup.instance).IsAlternateScreen(), …)`.
 
-Run: `CGO_ENABLED=0 go test ./ui/...`
+- [ ] **Step 3: Checkpoint**
+
+Run: `go build ./ui/... && CGO_ENABLED=0 go test ./ui/...`
 Expected: PASS.
 
-- [ ] **Step 11: app test migration**
+### C3. app: the pane lifecycle helpers
+
+- [ ] **Step 1: `activeInstance`**
+
+In `app/github.go`, extract the predicate and use it:
+```go
+// activeInstance reports whether the background jobs may touch inst (see
+// activeInstances).
+func activeInstance(inst *session.Instance) bool {
+	st := inst.GetStatus()
+	return inst.Started() && !inst.Paused() && st != session.Deleting && st != session.Recoverable && st != session.Loading
+}
+```
+```go
+func (m *home) activeInstances() []*session.Instance {
+	var active []*session.Instance
+	for _, inst := range m.allInstances() {
+		if activeInstance(inst) {
+			active = append(active, inst)
+		}
+	}
+	return active
+}
+```
+
+- [ ] **Step 2: `app/panes.go`**
+
+Replace the file (B2 created it with `paneSnapshot` only) with:
+```go
+package app
+
+import (
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/aidan-bailey/loom/ui"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+// The TUI's pane clients (m.panes, ui.PaneClients) give every live agent
+// tmux session one attach client. Everything that renders, scrolls,
+// forwards input to or scrapes an agent pane goes through it. Session
+// lifecycle never attaches one.
+//
+// Attach points, all on the Update goroutine:
+//   - a workspace load: every active instance of the slot (ensureSlotPanes);
+//   - a start, resume or recover landing in a loaded slot, and a workspace
+//     terminal's auto-restart: the session was (re)launched, so any client
+//     from before was watching the session it replaced (replacePane);
+//   - the health tick's repair, when the session is alive but its client's
+//     PTY is gone, and a full-screen attach returning (ensurePane).
+//
+// Release points: the health tick, kill, pause, a failed transition and
+// every slot drop (prunePanes) release the clients of sessions no loaded
+// instance is active on. A release closes the client's PTY off the Update
+// goroutine (releaseClientsCmd): PausePreview waits for the client's
+// output pump, which blocks in tea.Program.Send until Update returns. A
+// released client is never re-attached: Retain removes it first, and
+// Ensure builds a new one.
+
+// paneSnapshot resolves each instance's pane on the Update goroutine, for
+// a Cmd that must not read the model.
+func (m *home) paneSnapshot(insts []*session.Instance) map[*session.Instance]ui.Pane {
+	out := make(map[*session.Instance]ui.Pane, len(insts))
+	for _, inst := range insts {
+		out[inst] = m.panes.For(inst)
+	}
+	return out
+}
+
+// livePaneNames is the set of tmux session names that should have a
+// client: those of the active instances of every loaded slot.
+func (m *home) livePaneNames() map[string]bool {
+	names := make(map[string]bool)
+	for _, inst := range m.activeInstances() {
+		if name := inst.Pane().TmuxSessionName(); name != "" {
+			names[name] = true
+		}
+	}
+	return names
+}
+
+// ensurePane gives inst's session a client, re-attaching one whose PTY is
+// gone (ui.PaneClients.Ensure).
+func (m *home) ensurePane(inst *session.Instance) {
+	name := inst.Pane().TmuxSessionName()
+	if name == "" {
+		return
+	}
+	if err := m.panes.Ensure(name, inst.Program()); err != nil {
+		log.For("app").Error("pane.attach_failed", "session", name, "err", err)
+	}
+}
+
+// replacePane gives inst's session, just (re)launched, a fresh client. It
+// returns a Cmd closing the client it replaced, or nil when there was none.
+func (m *home) replacePane(inst *session.Instance) tea.Cmd {
+	name := inst.Pane().TmuxSessionName()
+	if name == "" {
+		return nil
+	}
+	old, err := m.panes.Replace(name, inst.Program())
+	if err != nil {
+		log.For("app").Error("pane.attach_failed", "session", name, "err", err)
+	}
+	if old == nil {
+		return nil
+	}
+	return releaseClientsCmd(attachedClients([]*tmux.TmuxSession{old}))
+}
+
+// ensureSlotPanes gives every active instance of slot a client.
+func (m *home) ensureSlotPanes(slot *workspaceSlot) {
+	for _, inst := range slot.list.GetInstances() {
+		if activeInstance(inst) {
+			m.ensurePane(inst)
+		}
+	}
+}
+
+// prunePanes drops the clients of sessions no loaded instance is active
+// on, and returns a Cmd closing them.
+func (m *home) prunePanes() tea.Cmd {
+	return releaseClientsCmd(attachedClients(m.panes.Retain(m.livePaneNames())))
+}
+```
+
+### C4. app: the attach points
+
+- [ ] **Step 1: Workspace loads**
+
+In `app/app_init.go`'s `loadSlotStorage`, add this immediately before the final `return recovery, nil`:
+```go
+	m.ensureSlotPanes(slot)
+```
+In `app/workspaces.go`'s `activateWorkspace`, add this immediately after the `m.slots = append(m.slots, &workspaceSlot{…})` statement:
+```go
+	m.ensureSlotPanes(m.slots[len(m.slots)-1])
+```
+
+- [ ] **Step 2: Completions**
+
+In `app/completions.go`:
+- `handleInstanceStarted`: in the reopened-twin failure branch, `return tea.Batch(m.handleError(msg.err), releaseInstancesCmd([]*session.Instance{inst}))` becomes `return m.handleError(msg.err)`. Delete the `var release tea.Cmd` / `if !loaded { release = releaseInstancesCmd(…) }` block. `return tea.Batch(m.handleError(err), release)` becomes `return m.handleError(err)`. After the prompt is sent (the `if prompt := inst.Prompt(); …` block) and before the `switch`, add:
+```go
+	var attach tea.Cmd
+	if loaded {
+		attach = m.replacePane(inst)
+	}
+```
+  The final return becomes `return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), attach)`.
+- `handleResumeDone`: delete the `else` branch that appends `releaseInstancesCmd([]*session.Instance{inst})`, keeping the `if adopted != nil { … }` block with no `else`. After the `if inst := msg.instance; inst != nil && m.slotHolding(inst) == nil { … }` block, add:
+```go
+	if inst := msg.instance; inst != nil && m.slotHolding(inst) != nil {
+		cmds = append(cmds, m.replacePane(inst))
+	}
+```
+- `handleRecoverDone`: delete the `var release …` / `if !loaded { … }` block. After the `if owner != nil { … }` block that replaces the placeholder, add:
+```go
+	var attach tea.Cmd
+	if loaded {
+		attach = m.replacePane(msg.recovered)
+	}
+```
+  The final return becomes `return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), attach)`.
+- In the `reopenedTwin` check, `if twin.Paused() && !m.panes.For(twin).PtmxAlive() {` (from B2) stays as it is.
+- Rewrite the package comment at the top of the file and the docs of `handleInstanceStarted`, `handleResumeDone` and `handleRecoverDone`. Wherever an owner closed meanwhile "attaching a preview client" or being "released" is mentioned, say instead: "A completion whose owner was closed meanwhile attaches nothing (nothing displays it); one landing in a loaded slot attaches the instance's client (replacePane)." Keep every other sentence.
+
+- [ ] **Step 3: `applyLiveness`: repair and restart**
+
+In `app/app.go`, change `applyLiveness`'s signature and the first line of its doc to:
+```go
+// applyLiveness reacts to one instance's health-probe result: dead tmux →
+// pause (or restart a workspace terminal, with the existing circuit
+// breaker); live tmux but no open attach client → re-attach it. It returns
+// false when the instance was found dead (so callers can stop treating it
+// as running) or is no longer in any loaded slot, plus a Cmd closing a
+// client that a restart replaced. Must run on the Update goroutine.
+func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool) (alive bool, release tea.Cmd) {
+```
+In its first comment, "The probe was taken before inst's slot was dropped. Its attach client has been (or is being) released by releaseSlotCmd, …", change `released by releaseSlotCmd` to `released by prunePanes`. Each `return false` becomes `return false, nil` and `return true` becomes `return true, nil`. The exceptions are the workspace-terminal restart:
+```go
+			log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", inst.Title)
+			if err := inst.Restart(); err != nil {
+				log.For("app").Error("workspace_terminal.restart_failed", "title", inst.Title, "err", err)
+				return false, nil
+			}
+			return false, m.replacePane(inst)
+```
+and the repair at the end:
+```go
+	if !ptmxAlive && inst != m.attachingInstance {
+		// The session exists but its attach client is gone (e.g. a reattach
+		// failed after full-screen attach returned). Nothing else ever
+		// retries this, so self-heal here: the same shape as the
+		// workspace-terminal restart above, but at the client layer.
+		log.For("app").Warn("tick.ptmx_dead_repairing", "title", inst.Title)
+		m.ensurePane(inst)
+	}
+	return true, nil
+```
+Update its callers in `Update`:
+- `deadVerifiedMsg`:
+```go
+	case deadVerifiedMsg:
+		if !statusEligible(msg.instance) {
+			return m, nil
+		}
+		_, release := m.applyLiveness(msg.instance, msg.tmuxLive, msg.ptmxAlive)
+		m.updateTabBarStatuses()
+		return m, tea.Batch(m.instanceChanged(), release)
+```
+- `metadataReadyMsg`: declare `var releases []tea.Cmd` before the loop and open the loop with:
+```go
+		for _, r := range msg.results {
+			alive, release := m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive)
+			releases = append(releases, release)
+			if !alive {
+				continue
+			}
+```
+  End the case with `return m, tea.Batch(append(releases, tickUpdateMetadataCmd)...)`.
+
+- [ ] **Step 4: Full-screen attach**
+
+`startFullScreenAttachMsg` (whole case):
+```go
+	case startFullScreenAttachMsg:
+		// Resolve the session to attach in the foreground, and the client
+		// whose preview PTY must let go of it for the duration.
+		var attach *exec.Cmd
+		var preview *tmux.TmuxSession
+		switch msg.target {
+		case attachTargetAgent:
+			if s := msg.instance.TmuxSession(); s != nil {
+				attach = s.FullScreenAttachCmd()
+				preview = m.panes.For(msg.instance).Client()
+			}
+		case attachTargetTerminal:
+			if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
+				attach, preview = ts.FullScreenAttachCmd(), ts
+			}
+		}
+		if attach == nil {
+			return m, m.handleError(fmt.Errorf("no tmux session available for attach"))
+		}
+		// Close the preview PTY so the foreground tmux attach owns the tty.
+		if preview != nil {
+			if err := preview.PausePreview(); err != nil {
+				return m, m.handleError(err)
+			}
+		}
+		inst := msg.instance
+		m.attachingInstance = inst
+		return m, tea.ExecProcess(attach, func(err error) tea.Msg {
+			return attachDoneMsg{instance: inst, err: err}
+		})
+```
+Add `"os/exec"` to `app/app.go`'s imports.
+
+In `attachDoneMsg`, replace the agent block (`if ts := msg.instance.TmuxSession(); ts != nil { … ResumePreview … }`) with:
+```go
+		// tea.ExecProcess has restored the terminal. Re-attach the agent's
+		// client so live capture resumes. A failure is logged inside
+		// ensurePane, and the metadata tick's repair retries it once
+		// attachingInstance is cleared below.
+		if msg.instance != nil {
+			m.ensurePane(msg.instance)
+		}
+```
+The terminal pane's `ResumePreview` block is unchanged.
+
+### C5. app: the release points
+
+- [ ] **Step 1: Health tick, kill, pause, failed transitions**
+
+`tickUpdateMetadataMessage`: right after `m.errBox.ExpireIfDue(time.Now())`, add:
+```go
+		// Close the clients of sessions that stopped being active since the
+		// last tick (paused, killed, exited, or their slot closed).
+		prune := m.prunePanes()
+```
+and change the `var cmds []tea.Cmd` that follows to `cmds := []tea.Cmd{prune}`.
+
+`killInstanceMsg`:
+```go
+	case killInstanceMsg:
+		// … (comment unchanged)
+		m.removeInstanceEverywhere(msg.inst)
+		if msg.notice != nil {
+			return m, tea.Batch(m.handleError(msg.notice), m.instanceChanged(), m.prunePanes())
+		}
+		return m, tea.Batch(m.instanceChanged(), m.prunePanes())
+```
+`pauseInstanceMsg`:
+```go
+	case pauseInstanceMsg:
+		// Terminal session was already closed inside pauseAction off the update
+		// goroutine. Nothing I/O-blocking to do here.
+		return m, tea.Batch(m.instanceChanged(), m.prunePanes())
+```
+`transitionFailedMsg`: the resume no longer attaches before its checkpoint save, so the per-instance release and its comment block go:
+```go
+	case transitionFailedMsg:
+		// Revert instance status on failed background op (kill/pause/resume).
+		// previousStatus came from this same instance, so the reverse
+		// transition should always be allowed; if the state machine rejects
+		// it, log and leave the status as-is rather than masking a real bug.
+		// The message carries the instance pointer: like killInstanceMsg, the
+		// focused m.list may have been swapped since the op started.
+		if msg.inst != nil {
+			if terr := msg.inst.TransitionTo(msg.previousStatus); terr != nil {
+				log.For("app").Warn("revert_transition_failed", "err", terr)
+			}
+		}
+		log.For("app").Error("op_failed", "op", msg.op, "title", msg.title, "err", msg.err)
+		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), m.prunePanes())
+```
+
+In `app/intents.go`, close the TUI's client before the session goes, as the session's own `Close` used to:
+- In `killActionFor`, next to `splitPane, storage := m.splitPane, m.storage`, add:
+```go
+	panes, paneName := m.panes, selected.Pane().TmuxSessionName()
+```
+  and immediately before `if err := selected.Kill(); err != nil {`, add:
+```go
+		// Close the TUI's attach client first: one left on a killed session
+		// reads a dead PTY until the next prune.
+		if c := panes.Get(paneName); c != nil {
+			if err := c.PausePreview(); err != nil {
+				log.For("app").Warn("kill.pane_close_failed", "title", title, "err", err)
+			}
+		}
+```
+- In `pauseActionFor`, next to `splitPane := m.splitPane`, add `panes, paneName := m.panes, selected.Pane().TmuxSessionName()`. Immediately before `if err := selected.Pause(saveFunc); err != nil {`, add:
+```go
+		// Close the TUI's attach client first, as kill does. If the pause
+		// aborts (the session survived), the health tick's repair
+		// re-attaches it.
+		if c := panes.Get(paneName); c != nil {
+			if err := c.PausePreview(); err != nil {
+				log.For("app").Warn("pause.pane_close_failed", "title", pauseTitle, "err", err)
+			}
+		}
+```
+
+- [ ] **Step 2: Slot drops**
+
+In `app/workspaces.go`:
+- `releaseSlotCmd` keeps only the terminal pane's clients:
+```go
+// releaseSlotCmd returns a Cmd that releases the attach clients a dropped
+// slot's terminal pane holds on each loom_term_* shell it has shown (the
+// shells keep running). The agent panes' clients belong to the registry,
+// which every drop site prunes (prunePanes). Returns nil when nothing is
+// attached.
+func releaseSlotCmd(slot *workspaceSlot) tea.Cmd {
+	if slot == nil || slot.splitPane == nil {
+		return nil
+	}
+	return releaseClientsCmd(attachedClients(slot.splitPane.Terminal().DetachAll()))
+}
+```
+- Delete `releaseInstancesCmd`. Move the explanation of why the close runs off Update, which used to live on `releaseInstancesCmd`, into `releaseClientsCmd`'s doc: "PausePreview waits — up to the pump-exit timeout, per session — for the output pump to exit, and the pump delivers pane events through tea.Program.Send, which blocks until Update returns."
+- `activateWorkspace`, inside `if len(m.slots) == 1 { … }` after `m.loadSlot(0)`: `release = releaseSlotCmd(classic)` becomes `release = tea.Batch(releaseSlotCmd(classic), m.prunePanes())`.
+- `deactivateWorkspace`: `return releaseSlotCmd(slot), nil` becomes `return tea.Batch(releaseSlotCmd(slot), m.prunePanes()), nil`.
+- `enterGlobalMode`: `cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged(), staleTerminals}` becomes `cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged(), staleTerminals, m.prunePanes()}`. In its final loop, replace
+```go
+		if slot == carried {
+			cmds = append(cmds, releaseInstancesCmd(slot.list.GetInstances()))
+			continue
+		}
+```
+  with
+```go
+		if slot == carried {
+			continue // its panes live on; prunePanes closes its agents' clients
+		}
+```
+
+- [ ] **Step 3: Checkpoint: everything builds**
+
+Run: `go build ./... && go vet ./...`
+Expected: production code builds. The app tests compile once C6 is done.
+
+### C6. app tests
+
+- [ ] **Step 1: The test registry**
 
 Create `app/testpanes_test.go`:
 ```go
@@ -2814,21 +2668,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testPaneClients is the pane registry of the running test, and
-// testInstanceClients records the client each fixture instance was given.
-// Every fixture that builds a home wires the registry in (wirePanes), and
-// every fixture that attaches a client registers it here. That way an
-// instance built before its home still renders through the registry. No
-// test in this package calls t.Parallel, so tests run one at a time and
-// one registry at a time suffices.
+// testPaneClients is the pane registry of the test that is running, and
+// testInstanceClients the client each fixture instance was given. Every
+// fixture that builds a home wires the registry in (wirePanes), and every
+// fixture that attaches a client registers it here, so an instance built
+// before its home still renders through it. Tests in this package run one
+// at a time (none calls t.Parallel), so one registry at a time suffices.
 var (
 	testPaneClients     *ui.PaneClients
 	testInstanceClients map[*session.Instance]*tmux.TmuxSession
 )
 
 // testPanes returns the running test's pane registry, creating it on first
-// use. Its own clients (from Ensure and Replace) attach through a fake PTY
-// to an always-alive mock tmux, so no tmux server is reached.
+// use. Its own clients (Ensure, Replace) attach through a fake PTY to an
+// always-alive mock tmux, so no tmux server is reached.
 func testPanes(t *testing.T) *ui.PaneClients {
 	t.Helper()
 	if testPaneClients == nil {
@@ -2843,10 +2696,10 @@ func testPanes(t *testing.T) *ui.PaneClients {
 	return testPaneClients
 }
 
-// attachTestClient registers an attach client for inst's session in the
-// running test's registry, attached through ptyFactory and running its tmux
-// commands on cmdExec, and returns it. This is what ensurePane does at a
-// load or a start.
+// attachTestClient registers, in the running test's registry, an attach
+// client for inst's session. The client is attached through ptyFactory and
+// runs its tmux commands on cmdExec, as ensurePane does at a load or a
+// start. It returns the client.
 func attachTestClient(t *testing.T, inst *session.Instance, ptyFactory tmux.PtyFactory, cmdExec cmd_test.MockCmdExec) *tmux.TmuxSession {
 	t.Helper()
 	panes := testPanes(t)
@@ -2858,7 +2711,7 @@ func attachTestClient(t *testing.T, inst *session.Instance, ptyFactory tmux.PtyF
 }
 
 // clientOf returns the client attachTestClient gave inst, even after the
-// registry has dropped it.
+// registry dropped it.
 func clientOf(t *testing.T, inst *session.Instance) *tmux.TmuxSession {
 	t.Helper()
 	c := testInstanceClients[inst]
@@ -2866,8 +2719,8 @@ func clientOf(t *testing.T, inst *session.Instance) *tmux.TmuxSession {
 	return c
 }
 
-// wirePanes points m, along with every loaded slot's list and split pane,
-// at the running test's registry, and returns m.
+// wirePanes points m, and every loaded slot's list and split pane, at the
+// running test's registry, and returns m.
 func wirePanes(t *testing.T, m *home) *home {
 	t.Helper()
 	m.panes = testPanes(t)
@@ -2882,20 +2735,95 @@ func wirePanes(t *testing.T, m *home) *home {
 	return m
 }
 ```
-Wire the home fixtures:
-- `newTestHome` in `app/actions_test.go`: `return h` becomes `return wirePanes(t, h)`.
-- `fleetHome` in `app/overview_cursor_test.go`: `return m` becomes `return wirePanes(t, m)`.
-- `restoreModeHome` in `app/workspace_restore_test.go`: `return m, statePath` becomes `return wirePanes(t, m), statePath`.
+Wire the home fixtures to it:
+- `app/actions_test.go` `newTestHome`: `return h` becomes `return wirePanes(t, h)`.
+- `app/overview_cursor_test.go` `fleetHome`: `return m` becomes `return wirePanes(t, m)`.
+- `app/workspace_restore_test.go` `restoreModeHome`: `return m, statePath` becomes `return wirePanes(t, m), statePath`.
 
-Instance fixtures get the lifecycle `Session`, plus a client wherever the old fixture attached one:
-- `startedInstanceWithProgram` in `app/status_redetect_test.go`:
+- [ ] **Step 2: New tests for the pane lifecycle**
+
+Create `app/panes_test.go`:
+```go
+package app
+
+import (
+	"testing"
+
+	"github.com/aidan-bailey/loom/session"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestEnsureSlotPanes_AttachesActiveInstances: a workspace load attaches a
+// client to every active session of the slot, and none to a paused one.
+func TestEnsureSlotPanes_AttachesActiveInstances(t *testing.T) {
+	m := newTestHome(t)
+	live := liveInstance(t, "a-live")
+	paused := liveInstance(t, "a-paused")
+	require.NoError(t, paused.TransitionTo(session.Paused))
+	m.list.AddInstance(live)
+	m.list.AddInstance(paused)
+	m.panes.Retain(nil) // the fixtures came with clients; start from none
+
+	m.ensureSlotPanes(m.workspaceSlot)
+
+	assert.True(t, m.panes.Alive(live.Pane().TmuxSessionName()))
+	assert.Nil(t, m.panes.Get(paused.Pane().TmuxSessionName()), "a paused session gets no client")
+}
+
+// TestReplacePane_ClosesTheOldClientOffUpdate: a relaunched session gets a
+// fresh client, and the old one is closed by the returned Cmd, not on the
+// Update goroutine.
+func TestReplacePane_ClosesTheOldClientOffUpdate(t *testing.T) {
+	m := newTestHome(t)
+	inst := liveInstance(t, "relaunched")
+	m.list.AddInstance(inst)
+	old := clientOf(t, inst)
+
+	cmd := m.replacePane(inst)
+
+	fresh := m.panes.Get(inst.Pane().TmuxSessionName())
+	require.NotNil(t, fresh)
+	assert.NotSame(t, old, fresh)
+	assert.True(t, fresh.PtmxAlive())
+	assert.True(t, old.PtmxAlive(), "closing it waits for the Cmd")
+	drainCmd(cmd)
+	assert.False(t, old.PtmxAlive())
+}
+
+// TestFullScreenAttach_PausesAndRestoresThePaneClient: the foreground
+// attach takes the session from the client and gives it back.
+func TestFullScreenAttach_PausesAndRestoresThePaneClient(t *testing.T) {
+	isolateTmux(t)
+	m := newTestHome(t)
+	inst := liveInstance(t, "fs")
+	m.list.AddInstance(inst)
+	name := inst.Pane().TmuxSessionName()
+	require.True(t, m.panes.Alive(name))
+
+	_, cmd := m.Update(startFullScreenAttachMsg{instance: inst, target: attachTargetAgent})
+	require.NotNil(t, cmd, "the foreground attach runs as an ExecProcess")
+	assert.False(t, m.panes.Alive(name), "the client lets go of the session for the foreground attach")
+	assert.Same(t, inst, m.attachingInstance)
+
+	_, _ = m.Update(attachDoneMsg{instance: inst})
+	assert.True(t, m.panes.Alive(name), "and re-attaches when it returns")
+	assert.Nil(t, m.attachingInstance)
+}
+```
+
+- [ ] **Step 3: Migrate the fixtures**
+
+Each instance fixture gets the lifecycle `Session`, plus a client wherever the old fixture attached one:
+- `app/status_redetect_test.go` `startedInstanceWithProgram`:
 ```go
 	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, program, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
 	require.NoError(t, inst.Start(true))
 	attachTestClient(t, inst, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec)
 	return inst
 ```
-- `startedInstanceWithHistoryTitled` in `app/preview_tick_test.go`: the same three lines, with program `"bash"`. In `TestPreviewTickRerendersScrolledAgent`, `inst.Pane().HasUpdated()` becomes `clientOf(t, inst).HasUpdated()`, and `inst.Pane().GetContentHash()` becomes `clientOf(t, inst).GetContentHash()`.
+- `app/preview_tick_test.go` `startedInstanceWithHistoryTitled`: the same three lines, with program `"bash"`. In `TestPreviewTickRerendersScrolledAgent`, `inst.Pane().HasUpdated()` becomes `clientOf(t, inst).HasUpdated()` and `inst.Pane().GetContentHash()` becomes `clientOf(t, inst).GetContentHash()`.
 - `app/slot_release_test.go`:
 ```go
 // liveInstance builds a started, Running instance whose tmux session has a
@@ -2936,9 +2864,9 @@ func assertReleased(t *testing.T, m *home, cmd tea.Cmd, dropped ...*session.Inst
 ```
   Replace `TestReleaseInstancesCmd_OnlyAttachedLiveInstances` with:
 ```go
-// TestPrunePanes_ReleasesOnlyInactiveSessions: prunePanes drops the
-// clients of sessions that no loaded instance is active on and closes them
-// off the Update goroutine. The rest stay attached.
+// TestPrunePanes_ReleasesOnlyInactiveSessions: prunePanes drops and closes,
+// off the Update goroutine, the clients of sessions no loaded instance is
+// active on, and leaves the rest attached.
 func TestPrunePanes_ReleasesOnlyInactiveSessions(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
@@ -2958,23 +2886,27 @@ func TestPrunePanes_ReleasesOnlyInactiveSessions(t *testing.T) {
 	assert.True(t, m.panes.Alive(keep.Pane().TmuxSessionName()))
 }
 ```
-  In `TestDroppedSlot_StaleProbeDoesNotReattach`, `require.False(t, live.Pane().PtmxAlive())` becomes `require.False(t, clientOf(t, live).PtmxAlive())`, and the final assertion becomes `assert.Nil(t, m.panes.Get(live.Pane().TmuxSessionName()), "a dropped instance must not be re-attached")`. Also apply the `applyLiveness` change from Task 6 if this file calls it.
-- `setupPtmxDeadFixture` in `app/metadata_ptmx_repair_test.go`: `ts := tmux.NewTmuxSessionWithDeps(…)` becomes `ts := tmux.NewSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())`. The precondition becomes `require.False(t, m.panes.Alive(inst.Pane().TmuxSessionName()), "fixture precondition: no client attached")`. In both tests, `inst.Pane().PtmxAlive()` becomes `m.panes.Alive(inst.Pane().TmuxSessionName())`. The assertions keep their meaning: repaired, or not repaired mid full-screen attach.
-- `app/liveness_unknown_test.go`: `assert.False(t, inst.Pane().PtmxAlive(), …)` becomes `assert.False(t, m.panes.Alive(inst.Pane().TmuxSessionName()), …)`.
-- In `app/workspace_terminal_restart_circuit_test.go`, `app/app_scripts_dispatch_test.go` (`addReadyInstance`), `app/state_inline_attach_terminal_death_test.go` (`agentTs` only; `deadTermTs` stays a `TmuxSession`) and `app/workbench_review_test.go` (`aliveTmuxSessionForTest`, which now returns `*tmux.Session`), `tmux.NewTmuxSessionWithDeps(` becomes `tmux.NewSessionWithDeps(`.
-- `startedWorktreeInstance` in `app/flow_selection_test.go`: build the session with `tmux.NewSessionWithDeps(…)` and drop the `RepairPtmx`/`PtmxAlive` lines. Its doc's "its preview client attached" becomes "no client: a start attaches none". In `TestInstanceStarted_OwnerReopened`, with `late := tmux.ToLoomTmuxName("late")`:
+  In `TestDroppedSlot_StaleProbeDoesNotReattach`, `require.False(t, live.Pane().PtmxAlive())` becomes `require.False(t, clientOf(t, live).PtmxAlive())`, and the final assertion becomes `assert.Nil(t, m.panes.Get(live.Pane().TmuxSessionName()), "a dropped instance must not be re-attached")`.
+- `app/metadata_ptmx_repair_test.go` `setupPtmxDeadFixture`: `ts := tmux.NewTmuxSessionWithDeps(…)` becomes `ts := tmux.NewSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())`. The precondition becomes `require.False(t, m.panes.Alive(inst.Pane().TmuxSessionName()), "fixture precondition: no client attached")`. In both tests, `inst.Pane().PtmxAlive()` becomes `m.panes.Alive(inst.Pane().TmuxSessionName())`. The assertions keep their meaning: repaired, or not repaired mid full-screen attach.
+- `app/liveness_unknown_test.go`: both `alive := m.applyLiveness(…)` become `alive, _ := m.applyLiveness(…)`, and `assert.False(t, inst.Pane().PtmxAlive(), …)` becomes `assert.False(t, m.panes.Alive(inst.Pane().TmuxSessionName()), …)`.
+- In these files, `tmux.NewTmuxSessionWithDeps(` becomes `tmux.NewSessionWithDeps(`:
+  - `app/workspace_terminal_restart_circuit_test.go`
+  - `app/app_scripts_dispatch_test.go` (`addReadyInstance`)
+  - `app/state_inline_attach_terminal_death_test.go` (`agentTs` only; `deadTermTs` stays a `TmuxSession`)
+  - `app/workbench_review_test.go` (`aliveTmuxSessionForTest`, which now returns `*tmux.Session`)
+- `app/flow_selection_test.go`, `startedWorktreeInstance`: build the session with `tmux.NewSessionWithDeps(…)`, drop the `RepairPtmx`/`PtmxAlive` lines, and fix its doc ("its preview client attached" becomes "no client: a start attaches none"). In `TestInstanceStarted_OwnerReopened`, with `late := tmux.ToLoomTmuxName("late")`:
   - "success…": `assert.True(t, m.panes.Alive(late), "it is displayed again, so it gets a client")`
   - "failure…": `assert.Nil(t, m.panes.Get(late), "nothing attaches a failed start")`
   - "a namesake…": `assert.Nil(t, m.panes.Get(late), "the start stays with its closed owner, so nothing attaches it")`
   - "a session the reopen killed…": `assert.Nil(t, m.panes.Get(late), "nothing attaches the dead start")`
 - `app/async_owner_test.go`:
-  - `TestResumeDone_AfterOwnerDropped`: the resumed instance now has no client. Build it with `resumed := liveInstance(t, "resumed")`, then call `m.panes.Retain(nil)` to model "nothing attached it". After the `Update`, replace `assertReleased(t, m, cmd, resumed)` with `drainCmd(cmd); assert.Nil(t, m.panes.Get(resumed.Pane().TmuxSessionName()), "nothing displays it, so nothing attaches it")`. Rewrite its doc as: "The owner tab was closed while a resume ran. Nothing displays the instance, so its completion attaches nothing."
+  - `TestResumeDone_AfterOwnerDropped`: the resumed instance has no client now. Use `resumed := liveInstance(t, "resumed")`, then `m.panes.Retain(nil)` to model "nothing attached it". After the `Update`, replace `assertReleased(t, m, cmd, resumed)` with `drainCmd(cmd); assert.Nil(t, m.panes.Get(resumed.Pane().TmuxSessionName()), "nothing displays it, so nothing attaches it")`. Retitle its doc: "the owner tab was closed while a resume ran; nothing displays the instance, so its completion attaches nothing".
   - `TestResumeDone_OwnerReopened`: `assert.True(t, m.panes.Alive(resumed.Pane().TmuxSessionName()), "displayed again, so it gets a client")`.
   - Replace `TestResumeFailed_AfterOwnerDroppedReleasesPreview` with:
 ```go
 // TestResumeFailed_RevertsAndLeavesNoClient: a resume whose checkpoint save
 // failed comes back as transitionFailedMsg and is reverted to Paused, so
-// the user can retry. A paused session has no client, whether or not its
+// the user can retry. A paused session keeps no client, whether or not its
 // owner is still loaded.
 func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 	isolateTmux(t)
@@ -3000,19 +2932,17 @@ func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 	}
 }
 ```
-- `app/workspace_restore_test.go` (around line 495): `assert.True(t, live.Pane().PtmxAlive(), "the same instance stays attached")` becomes `assert.Same(t, clientOf(t, live), m.panes.Get(live.Pane().TmuxSessionName()), "the same client stays attached")`.
-- `app/panes_test.go` (Task 6's tests). `newTestHome` is now wired to the test registry, so delete every `m.panes = ui.NewPaneClients()` line: it would swap in a registry that attaches through a real PTY. Drop the `ui` import. Make these changes:
-  - `TestEnsureSlotPanes_RegistersActiveInstances`: `liveInstance` already registers a client for both instances. After adding them to the list, call `m.panes.Retain(nil)`, so that `ensureSlotPanes` attaches through the registry's own (fake) factory. The assertions are unchanged.
-  - `TestPrunePanes_ForgetsInactiveSessions`: delete it. `TestPrunePanes_ReleasesOnlyInactiveSessions` (slot_release_test.go) covers it now that pruning releases.
-  - `TestFullScreenAttach_PausesAndRestoresThePaneClient`: unchanged apart from the deleted line. `liveInstance` registered the client, and `ensureSlotPanes` leaves it alone.
+- `app/workspace_restore_test.go`, around line 495: `assert.True(t, live.Pane().PtmxAlive(), "the same instance stays attached")` becomes `assert.Same(t, clientOf(t, live), m.panes.Get(live.Pane().TmuxSessionName()), "the same client stays attached")`.
 
-Then run `CGO_ENABLED=0 go test ./app/... 2>&1 | grep -E '^(---|FAIL|ok)'`. Any failure left over is one of two kinds:
-- A test that builds a bare `&home{…}` and renders or attaches an agent pane: add `wirePanes(t, m)` after the construction.
-- A fixture that attached through the old `Instance.Start` or `RepairPtmx`: give it `attachTestClient`.
+Then run `CGO_ENABLED=0 go test ./app/... 2>&1 | grep -E '^(---|FAIL|ok)'`. A failure that remains is one of two things:
+- a test building a bare `&home{…}` that renders or attaches an agent pane: add `wirePanes(t, m)` after it;
+- a fixture that attached through the old `Instance.Start` or `RepairPtmx`: give it `attachTestClient`.
 
 No assertion's meaning may change beyond the rewrites listed above. If one would have to, stop and report it.
 
-- [ ] **Step 12: Full suite and race**
+### C7. Package C checkpoint and commit
+
+- [ ] **Step 1: Full suite and race**
 
 ```bash
 go vet ./...
@@ -3021,14 +2951,10 @@ CC=clang CGO_ENABLED=1 go test -race ./app/... ./ui/... ./session/... ./script/.
 ```
 Expected: all PASS.
 
-Then confirm that nothing in `session` attaches any more:
-`git grep -n -E 'Restore\(\)|PausePreview|ResumePreview|attach-session' -- 'session/*.go' ':!session/tmux' ':!*_test.go'`
-Expected: no output.
-
-- [ ] **Step 13: Format, commit**
+- [ ] **Step 2: Format and commit**
 
 ```bash
-gofmt -w $(git ls-files '*.go' | grep -v '^vendor/') app/testpanes_test.go
+gofmt -w $(git ls-files '*.go' | grep -v '^vendor/') app/panes_test.go app/testpanes_test.go
 git add -A session/ ui/ app/
 git commit -m "feat: session lifecycle never attaches; the TUI owns its pane clients
 
@@ -3042,7 +2968,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 8: CLAUDE.md
+## Package D: Docs and verification
+
+CLAUDE.md catches up with the split (its own commit), then the whole change is verified end to end.
+
+### D1. CLAUDE.md
 
 **Files:**
 - Modify: `CLAUDE.md`
@@ -3078,9 +3008,7 @@ git commit -m "docs: CLAUDE.md for the pane split (daemon stage 1A)
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
----
-
-## Task 9: Verification
+### D2. Verification
 
 - [ ] **Step 1: Static checks and the full suite**
 
