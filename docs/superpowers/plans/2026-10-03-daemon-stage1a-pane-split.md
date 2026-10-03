@@ -2018,6 +2018,7 @@ These amend the steps below. Where a step's text disagrees with an amendment, th
    - A `-race` test: `For`/`Get` from several goroutines while the test goroutine runs `Ensure`/`Retain`.
 4. **`reopenedTwin`** (`app/completions.go`): `&& !m.panes.For(twin).PtmxAlive()` is always true, because `For` never gives a paused twin a client. Drop the conjunct, so the rule is twin `Paused()`. In its doc, "plus Paused and unattached" becomes "plus Paused (a paused instance has no pane client)".
 5. **Doc fixes in `ui/panes.go`:** "Every method is nil-receiver safe" becomes "Every method except the …ForTest helpers is nil-receiver safe". `ui/preview.go`'s `panes` field comment becomes true once the fallback is gone; leave it.
+6. **Close released clients in parallel.** On creack/pty the attach PTY's fd is blocking, so `PausePreview` of a client whose session is still live waits the full 2s `pumpWaitTimeout`. A client of a dead session gets EIO at once. C releases clients more often than before, so `releaseClientsCmd` (`app/workspaces.go`) must close its clients concurrently, one goroutine each with a `sync.WaitGroup`, and return once all are closed. N live clients then cost about 2s, not N×2s. Keep every `PausePreview`/`Close` of a client with a live pump off the Update goroutine: `Replace`'s old client always goes through `releaseClientsCmd`. Making the PTY pollable, so a release takes milliseconds, is a separate follow-up, not part of this plan.
 
 ### C1. Session: the instance holds a `tmux.Session`
 
