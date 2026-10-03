@@ -59,9 +59,9 @@ func (m *home) instanceForSession(name string) *session.Instance {
 
 // statusDetectedMsg carries one instance's settled-content detection result
 // back to the Update goroutine (the detection itself runs in a tea.Cmd:
-// in-process on the emulator path, but trust-prompt handling can write keys
-// to the PTY, and the snapshot fallback shells out — neither belongs on the
-// Update goroutine).
+// in-process on the emulator path, but answering a trust prompt runs
+// `tmux send-keys`, and the snapshot fallback shells out to capture-pane —
+// neither subprocess belongs on the Update goroutine).
 type statusDetectedMsg struct {
 	instance  *session.Instance
 	updated   bool
