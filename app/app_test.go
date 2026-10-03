@@ -747,6 +747,48 @@ func TestPersistableInstancesFiltersDeleting(t *testing.T) {
 	assert.Equal(t, "paused", result[1].Title)
 }
 
+// TestPersistableInstances_KeepsIdleSessions: Ready is overloaded. A
+// creation flow's instance is Ready before it starts, and the status
+// ladder and Claude's roster report an idle agent or workspace terminal as
+// Ready too. Only the never-started one stays off disk: skipping every
+// Ready instance dropped idle sessions' records on each save, so the next
+// load offered their worktrees as Recoverable orphans and killed and
+// recreated an idle workspace terminal.
+func TestPersistableInstances_KeepsIdleSessions(t *testing.T) {
+	// started builds a started instance (paused data comes back started)
+	// and moves it through Running to status.
+	started := func(title string, terminal bool, status session.Status) *session.Instance {
+		t.Helper()
+		inst, err := session.FromInstanceData(session.InstanceData{
+			Title: title, Status: session.Paused, Program: "claude", IsWorkspaceTerminal: terminal,
+		}, t.TempDir())
+		require.NoError(t, err)
+		require.NoError(t, inst.TransitionTo(session.Running))
+		require.NoError(t, inst.TransitionTo(status))
+		require.True(t, inst.Started())
+		return inst
+	}
+	idleAgent := started("idle-agent", false, session.Ready)
+	idleTerminal := started("idle-terminal", true, session.Ready)
+	deleting := started("deleting", false, session.Deleting)
+
+	creating, err := session.NewInstance(session.InstanceOptions{Title: "creating", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	require.Equal(t, session.Ready, creating.GetStatus())
+	require.False(t, creating.Started(), "fixture: a creation flow's instance")
+	starting, err := session.NewInstance(session.InstanceOptions{Title: "starting", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	require.NoError(t, starting.TransitionTo(session.Loading)) // its start is in flight
+	recoverable, err := session.FromInstanceData(session.InstanceData{
+		Title: "orphan", Status: session.Recoverable, Program: "claude", IsWorkspaceTerminal: true,
+	}, t.TempDir())
+	require.NoError(t, err)
+
+	got := persistableInstances([]*session.Instance{idleAgent, idleTerminal, creating, starting, deleting, recoverable})
+
+	assert.Equal(t, []*session.Instance{idleAgent, idleTerminal, starting}, got)
+}
+
 // TestPendingConfirmationClearedOnCancel verifies that cancelling a
 // confirmation clears the bundled task so a stale Sync/Async pair
 // can't leak into the next confirmation.

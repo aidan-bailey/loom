@@ -1651,17 +1651,24 @@ func (s recoverySummary) String() string {
 }
 
 // persistableInstances filters out instances whose state should not reach disk:
-// Ready (mid-creation), Deleting (kill in progress, about to be removed via
-// DeleteInstance), and Recoverable (an orphan surfaced inline; it is re-derived
-// from disk each load and adopted only on explicit recovery, so persisting it
-// would resurrect a never-confirmed entry). All other statuses — Loading,
-// Running, Paused — are persisted so that a crash or quit during the kill
-// window cannot orphan a live worktree from its JSON record.
+// a creation flow's instance that has never started (Ready and not Started),
+// Deleting (kill in progress, about to be removed via DeleteInstance), and
+// Recoverable (an orphan surfaced inline; it is re-derived from disk each load
+// and adopted only on explicit recovery, so persisting it would resurrect a
+// never-confirmed entry). Every other instance is persisted — Loading,
+// Running, Prompting, Paused and a started Ready one — so that a crash or quit
+// during the kill window cannot orphan a live worktree from its JSON record.
+//
+// Ready is overloaded: a creation flow's instance is Ready before it starts,
+// and the status ladder and Claude's roster report an idle agent or workspace
+// terminal as Ready too. Skipping every Ready instance dropped idle sessions'
+// records on each save, so the next load offered their worktrees as
+// Recoverable orphans and killed and recreated an idle workspace terminal.
 func persistableInstances(instances []*session.Instance) []*session.Instance {
 	var result []*session.Instance
 	for _, inst := range instances {
 		status := inst.GetStatus()
-		if status == session.Ready || status == session.Deleting || status == session.Recoverable {
+		if (status == session.Ready && !inst.Started()) || status == session.Deleting || status == session.Recoverable {
 			continue
 		}
 		result = append(result, inst)
