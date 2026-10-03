@@ -35,7 +35,13 @@ func registerInstanceType(L *lua.LState, e *Engine) {
 		// Scripts can't persist on their own (the engine doesn't have
 		// access to storage), so pass a no-op. The app-level action
 		// path owns persistence.
-		return inst.Resume(func() error { return nil })
+		err := inst.Resume(func() error { return nil })
+		// A notice alone means the resume succeeded. Either way the
+		// session now runs, and only the TUI can attach its pane.
+		if _, notice := session.OnlyNotice(err); (err == nil || notice) && e.curHost != nil {
+			e.curHost.InstanceResumed(inst)
+		}
+		return err
 	})))
 	idx.RawSetString("kill", L.NewFunction(noticeAware(e, "kill", (*session.Instance).Kill)))
 	L.SetField(mt, "__index", idx)

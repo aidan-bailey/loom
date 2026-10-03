@@ -31,9 +31,13 @@ import (
 //
 // slot is the slot that was focused when the host snapshot was taken
 // (see scriptHost.slot): the one pendingInstances were built for.
+//
+// resumedInstances are the instances the script's inst:resume() brought
+// back: each loaded one gets a fresh pane client (replacePane).
 type scriptDoneMsg struct {
 	err              error
 	pendingInstances []*session.Instance
+	resumedInstances []*session.Instance
 	pendingActions   []func(*home)
 	notices          []string
 	pendingIntents   []pendingIntent
@@ -78,6 +82,7 @@ type scriptHost struct {
 
 	mu      sync.Mutex
 	pending []*session.Instance
+	resumed []*session.Instance
 	notices []string
 	intents []pendingIntent
 	// actions holds model mutations recorded by the "sync" primitives
@@ -150,6 +155,17 @@ func (s *scriptHost) QueueInstance(inst *session.Instance) {
 	}
 	s.mu.Lock()
 	s.pending = append(s.pending, inst)
+	s.mu.Unlock()
+}
+
+// InstanceResumed stages a script-resumed instance for a fresh pane
+// client, attached on the main goroutine in handleScriptDone.
+func (s *scriptHost) InstanceResumed(inst *session.Instance) {
+	if inst == nil {
+		return
+	}
+	s.mu.Lock()
+	s.resumed = append(s.resumed, inst)
 	s.mu.Unlock()
 }
 
@@ -430,18 +446,20 @@ type pendingIntent struct {
 // returns and from scriptResumeMsg handling after each Resume — any call
 // that wakes a coroutine may leave fresh Intents or actions in the host
 // buffer.
-func (s *scriptHost) drain() ([]*session.Instance, []string, []pendingIntent, []func(*home)) {
+func (s *scriptHost) drain() ([]*session.Instance, []string, []pendingIntent, []func(*home), []*session.Instance) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.pending
 	n := s.notices
 	in := s.intents
 	ac := s.actions
+	r := s.resumed
 	s.pending = nil
 	s.notices = nil
 	s.intents = nil
 	s.actions = nil
-	return p, n, in, ac
+	s.resumed = nil
+	return p, n, in, ac, r
 }
 
 // initScripts wires a fresh engine onto h and loads the global
@@ -534,7 +552,7 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 
 	return func() tea.Msg {
 		_, err := engine.Dispatch(ctx, key, host)
-		pending, notices, intents, actions := host.drain()
+		pending, notices, intents, actions, resumed := host.drain()
 		// Stamp trace on every intent so handleScriptIntent can
 		// log under the same ID. Engine.Dispatch already produced
 		// traced handler.begin/end records; this carries the trace
@@ -545,6 +563,7 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 		return scriptDoneMsg{
 			err:              err,
 			pendingInstances: pending,
+			resumedInstances: resumed,
 			pendingActions:   actions,
 			notices:          notices,
 			pendingIntents:   intents,
@@ -695,13 +714,14 @@ func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 	}
 	return func() tea.Msg {
 		err := engine.ResumeWithHost(ctx, msg.id, host)
-		pending, notices, intents, actions := host.drain()
+		pending, notices, intents, actions, resumed := host.drain()
 		for i := range intents {
 			intents[i].trace = msg.trace
 		}
 		return scriptDoneMsg{
 			err:              err,
 			pendingInstances: pending,
+			resumedInstances: resumed,
 			pendingActions:   actions,
 			notices:          notices,
 			pendingIntents:   intents,
@@ -715,7 +735,8 @@ func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 // instances into the list of the slot they were built for (or drops
 // them with a notice if the user switched workspace mid-dispatch),
 // routes a failure through handleError, and surfaces script notices via
-// errBox so users see them inline. The ordering keeps instance adoption
+// errBox so users see them inline. Instances the script resumed get a
+// fresh pane client (replacePane). The ordering keeps instance adoption
 // prior to error display so that, e.g., a script that creates an
 // instance and then errors still leaves the new session visible.
 // instanceChanged fires unconditionally on dispatch so sync primitives
@@ -751,6 +772,17 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 		}
 		log.For("script").Warn("pending_instances_dropped", "trace", msg.trace, "titles", titles)
 		cmds = append(cmds, m.handleError(fmt.Errorf("workspace changed while a script ran; not creating %s here", strings.Join(titles, ", "))))
+	}
+	// Session lifecycle attaches no pane client, so a session a script
+	// resumed (relaunched or reattached) gets a fresh one here, as a
+	// resume completion's does. One no loaded slot holds displays
+	// nothing and gets none; replacePane skips an inactive instance.
+	for _, inst := range msg.resumedInstances {
+		if m.slotHolding(inst) != nil {
+			if c := m.replacePane(inst); c != nil {
+				cmds = append(cmds, c)
+			}
+		}
 	}
 	// Notices surface through the error bar so they auto-clear on
 	// the same 3s schedule as real errors. ErrBox has no info-style

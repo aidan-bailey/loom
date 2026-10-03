@@ -16,11 +16,14 @@ import (
 //
 // Attach points, all on the Update goroutine:
 //   - a workspace load: every active instance of the slot (ensureSlotPanes);
-//   - a start, resume or recover landing in a loaded slot, and a workspace
-//     terminal's auto-restart: the session was (re)launched, so any client
-//     from before was watching the session it replaced (replacePane);
+//   - a start, resume or recover landing in a loaded slot, a script's
+//     inst:resume() (handleScriptDone), and a workspace terminal's
+//     auto-restart: the session was (re)launched or reattached, so any
+//     client from before was watching the session it replaced
+//     (replacePane);
 //   - the health tick's repair, when the session is alive but its client's
-//     PTY is gone, and a full-screen attach returning (ensurePane).
+//     PTY is gone, a full-screen attach returning, and a failed kill or
+//     pause reverting its instance to active (ensurePane).
 //
 // Only an active instance (activeInstance) gets a client: a paused,
 // Recoverable, Loading or Deleting one has nothing to display, and an
@@ -31,8 +34,11 @@ import (
 // instance is active on. A release closes the client's PTY off the Update
 // goroutine (releaseClientsCmd): PausePreview waits for the client's
 // output pump, which blocks in tea.Program.Send until Update returns. A
-// released client is never re-attached: Retain removes it first, and
-// Ensure builds a new one.
+// client is closed only after Retain or Replace has removed it from the
+// registry, so it is never re-attached or closed twice while it closes
+// (Ensure builds a new one). Nothing else closes a registered client: a
+// kill or pause ends the session and leaves its client to the prune that
+// follows the completion.
 
 // paneSnapshot resolves each instance's pane on the Update goroutine, for
 // a Cmd that must not read the model.

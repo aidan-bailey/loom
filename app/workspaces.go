@@ -301,17 +301,20 @@ type attachedClient struct {
 
 // releaseClientsCmd returns a Cmd that closes each client's attach PTY —
 // PTY, output pump and emulator — leaving the tmux sessions running, or
-// nil when there are none. The clients must already be unreachable from
-// the model (dropped from the registry, or detached from a terminal pane),
-// so nothing re-attaches them afterwards.
+// nil when there are none.
+//
+// A client is only ever closed here, and only after Retain or Replace has
+// removed it from the registry (or its terminal pane has detached it), so
+// nothing re-attaches or closes it while it closes: a TmuxSession's attach
+// lifecycle (Restore, PausePreview) must never run on two goroutines at
+// once.
 //
 // The close runs in the Cmd, off the Update goroutine: PausePreview waits
 // — up to the pump-exit timeout, per session — for the output pump to
 // exit, and the pump delivers pane events through tea.Program.Send, which
 // blocks until Update returns. The clients close concurrently, so N
 // clients of live sessions cost about one pump-exit timeout rather than
-// N. PausePreview is serialized by each client's stateMu against a
-// concurrent kill or pause.
+// N.
 func releaseClientsCmd(clients []attachedClient) tea.Cmd {
 	if len(clients) == 0 {
 		return nil

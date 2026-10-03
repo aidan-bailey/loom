@@ -48,6 +48,12 @@ type Host interface {
 	// methods like ctx:new_instance{}. The actual list mutation is
 	// deferred to Update — see app.scriptDoneMsg.
 	QueueInstance(inst *session.Instance)
+	// InstanceResumed reports that a script's inst:resume() relaunched or
+	// reattached inst's tmux session, so the main goroutine gives it a
+	// fresh pane client (session lifecycle attaches none). Called from
+	// the resume userdata method after a successful Resume; deferred to
+	// Update like QueueInstance.
+	InstanceResumed(inst *session.Instance)
 	// Notify posts a transient message to the TUI's error/info bar.
 	// Called from script userdata through ctx:notify().
 	Notify(msg string)

@@ -1457,6 +1457,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if terr := msg.inst.TransitionTo(msg.previousStatus); terr != nil {
 				log.For("app").Warn("revert_transition_failed", "err", terr)
 			}
+			// A reverted kill or pause is active again: give it back a
+			// client, which a tick may have pruned while it was Deleting or
+			// Loading. A no-op unless it is active (a reverted discard is
+			// Recoverable, a reverted resume Paused).
+			m.ensurePane(msg.inst)
 		}
 		log.For("app").Error("op_failed", "op", msg.op, "title", msg.title, "err", msg.err)
 		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), m.prunePanes())

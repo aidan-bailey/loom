@@ -7,6 +7,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // TestNoticeAware: inst:kill() / inst:resume() used to raise on any error,
@@ -39,4 +40,23 @@ func TestNoticeAware(t *testing.T) {
 
 	require.NoError(t, call(func(*session.Instance) error { return nil }))
 	assert.Len(t, h.notices, 1)
+}
+
+// TestResume_ReportsOnlyASuccessfulResume: inst:resume() hands the
+// instance to the host for a fresh pane client only when the resume
+// worked; a failed one has nothing new to display.
+func TestResume_ReportsOnlyASuccessfulResume(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	h := &fakeHost{}
+	e.curHost = h
+	L := e.L
+	resume := L.GetField(L.GetTypeMetatable(instanceTypeName), "__index").(*lua.LTable).RawGetString("resume")
+
+	L.Push(resume)
+	L.Push(pushInstance(L, &session.Instance{Title: "term", IsWorkspaceTerminal: true}))
+	err := L.PCall(1, 0, nil)
+
+	require.Error(t, err, "a workspace terminal cannot be resumed")
+	assert.Empty(t, h.resumed)
 }

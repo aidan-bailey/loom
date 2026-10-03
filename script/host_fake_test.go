@@ -15,6 +15,7 @@ type fakeHost struct {
 	defaultProgram  string
 	branchPrefix    string
 	queuedInstances []*session.Instance
+	resumed         []*session.Instance
 	notices         []string
 	enqueued        []Intent
 	enqueuedIDs     []IntentID
@@ -40,6 +41,10 @@ func (f *fakeHost) BranchPrefix() string                { return f.branchPrefix 
 
 func (f *fakeHost) QueueInstance(inst *session.Instance) {
 	f.queuedInstances = append(f.queuedInstances, inst)
+}
+
+func (f *fakeHost) InstanceResumed(inst *session.Instance) {
+	f.resumed = append(f.resumed, inst)
 }
 
 func (f *fakeHost) Notify(msg string) {
