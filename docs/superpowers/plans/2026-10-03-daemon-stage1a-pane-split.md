@@ -2020,6 +2020,9 @@ These amend the steps below. Where a step's text disagrees with an amendment, th
 5. **Doc fixes in `ui/panes.go`:** "Every method is nil-receiver safe" becomes "Every method except the …ForTest helpers is nil-receiver safe". `ui/preview.go`'s `panes` field comment becomes true once the fallback is gone; leave it.
 6. **Close released clients in parallel.** On creack/pty the attach PTY's fd is blocking, so `PausePreview` of a client whose session is still live waits the full 2s `pumpWaitTimeout`. A client of a dead session gets EIO at once. C releases clients more often than before, so `releaseClientsCmd` (`app/workspaces.go`) must close its clients concurrently, one goroutine each with a `sync.WaitGroup`, and return once all are closed. N live clients then cost about 2s, not N×2s. Keep every `PausePreview`/`Close` of a client with a live pump off the Update goroutine: `Replace`'s old client always goes through `releaseClientsCmd`. Making the PTY pollable, so a release takes milliseconds, is a separate follow-up, not part of this plan.
 
+7. **(Added after Package C's review; supersedes C5 Step 1's `killActionFor`/`pauseActionFor` blocks.) Kill and pause do not close the client.** Closing a still-registered client from the Cmd races any `Ensure`/`Restore` on the same name, for example a twin under a shared title or the tick's prune: `waitPumpExit` reads and writes `pumpDone` with no lock, and the reviewer reproduced a data race. The kill or pause ends the session, so the client's pump hits EOF, and `killInstanceMsg`'s/`pauseInstanceMsg`'s `prunePanes()` releases it off Update. `transitionFailedMsg` calls `m.ensurePane(msg.inst)` after the revert, so a reverted pause is never left without a client. Invariant: a client is closed only after `Retain` or `Replace` has removed it from the registry.
+8. **(Added after Package C's review.) A Lua `inst:resume()` attaches a client.** The script host records the instances a script resumed (`script.Host.InstanceResumed`), and `handleScriptDone` calls `replacePane` for each one a loaded slot holds. Without it the pane is blank until the next tick, and a session relaunched before the prune keeps a stale client forever: its pump hit EOF, but `PtmxAlive` still reads true.
+
 ### C1. Session: the instance holds a `tmux.Session`
 
 - [ ] **Step 1: `session/instance.go`**
@@ -2620,6 +2623,8 @@ and change the `var cmds []tea.Cmd` that follows to `cmds := []tea.Cmd{prune}`.
 		log.For("app").Error("op_failed", "op", msg.op, "title", msg.title, "err", msg.err)
 		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), m.prunePanes())
 ```
+
+**Superseded by amendment 7: do not apply the two `app/intents.go` blocks below.** They closed a still-registered client from the Cmd, which races `Ensure` and the prune.
 
 In `app/intents.go`, close the TUI's client before the session goes, as the session's own `Close` used to:
 - In `killActionFor`, next to `splitPane, storage := m.splitPane, m.storage`, add:
