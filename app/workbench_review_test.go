@@ -400,17 +400,17 @@ func TestWorkbenchReview_ScrollIgnoredWhileModalOpen(t *testing.T) {
 		"wheel ticks during the modal must not leak into the comment body")
 }
 
-// aliveTmuxSessionForTest builds a TmuxSession whose DoesSessionExist
+// aliveTmuxSessionForTest builds a tmux.Session whose DoesSessionExist
 // (and thus Instance.Pane().TmuxAlive) reports true without touching a real
 // tmux server — mirrors addReadyInstance's fixture in
 // app_scripts_dispatch_test.go.
-func aliveTmuxSessionForTest(t *testing.T, name string) *tmux.TmuxSession {
+func aliveTmuxSessionForTest(t *testing.T, name string) *tmux.Session {
 	t.Helper()
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc:    func(*exec.Cmd) error { return nil },
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
-	return tmux.NewTmuxSessionWithDeps(name, "true", fakePtyFactory{t: t}, cmdExec)
+	return tmux.NewSessionWithDeps(name, "true", fakePtyFactory{t: t}, cmdExec)
 }
 
 // TestWorkbenchReview_SendNoComments pins the zero-comment guard: `S`

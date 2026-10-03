@@ -192,7 +192,7 @@ type Instance struct {
 	// and both proceed to allocate a tmux session and worktree.
 	starting bool
 	// tmuxSession is the tmux session for the instance.
-	tmuxSession *tmux.TmuxSession
+	tmuxSession *tmux.Session
 	// gitWorktree is the git worktree for the instance.
 	gitWorktree *git.GitWorktree
 	// restartFailureCount counts consecutive metadata ticks that observed
@@ -339,10 +339,10 @@ func (i *Instance) ToInstanceData() InstanceData {
 }
 
 // FromInstanceData creates a new Instance from serialized data without
-// spawning a tmux PTY attachment. Paused instances are constructed fully
-// (started=true, TmuxSession object present, no PTY — matches their on-disk
-// shape). Non-paused instances are returned with started=false; the caller
-// must invoke EnsureRunning to attach the PTY. configDir is injected for
+// touching tmux. Paused instances are constructed fully (started=true,
+// tmux.Session object present — matches their on-disk shape). Non-paused
+// instances are returned with started=false; the caller must invoke
+// EnsureRunning to mark them started. configDir is injected for
 // workspace-scoped worktree resolution.
 func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 	// Normalized the same way SetAccount normalizes it on write: "" and
@@ -408,7 +408,7 @@ func FromInstanceData(data InstanceData, configDir string) (*Instance, error) {
 		instance.setStarted(true)
 		// Unpublished: nothing else can see instance yet, so the
 		// launch fields are read directly.
-		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(LaunchEnv{Program: instance.program, HeadroomProxy: instance.headroomProxy, CacheTTL1h: instance.cacheTTL1h, ClaudeConfigDir: bestEffortAccountDir(instance.account)})...))
+		instance.setTmuxSession(tmux.NewSession(instance.Title, instance.program, InstanceEnv(LaunchEnv{Program: instance.program, HeadroomProxy: instance.headroomProxy, CacheTTL1h: instance.cacheTTL1h, ClaudeConfigDir: bestEffortAccountDir(instance.account)})...))
 	}
 
 	return instance, nil
@@ -448,7 +448,7 @@ func (i *Instance) Restart() error {
 	i.starting = false
 	i.mu.Unlock()
 	if old != nil {
-		// Already dead; this only releases the PTY, emulator and pump.
+		// Already dead: Close only makes sure nothing holds the name before Start.
 		if closeErr := old.Close(); closeErr != nil {
 			i.getLogger().Debug("instance.restart.close_old_failed", "err", closeErr.Error())
 		}
@@ -457,10 +457,10 @@ func (i *Instance) Restart() error {
 	return i.Start(true)
 }
 
-// EnsureRunning attaches a PTY to the instance's tmux session, restoring
-// any previously-persisted session state. A no-op for paused instances
-// (they deliberately have no PTY) and for already-started instances.
-// Idempotent: the underlying Start guards against double-attaches.
+// EnsureRunning marks a restored instance whose tmux session is running
+// as started (Start(false)). It attaches nothing (the TUI attaches its own
+// client to the session by name) and is a no-op for paused, Recoverable
+// and already-started instances.
 func (i *Instance) EnsureRunning() error {
 	if i.GetStatus() == Recoverable {
 		// An orphan surfaced inline; never auto-spawn its PTY. It goes
@@ -579,13 +579,13 @@ func (i *Instance) StatusAge() time.Duration {
 	return time.Since(i.statusChangedAt)
 }
 
-func (i *Instance) getTmuxSession() *tmux.TmuxSession {
+func (i *Instance) getTmuxSession() *tmux.Session {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	return i.tmuxSession
 }
 
-func (i *Instance) setTmuxSession(s *tmux.TmuxSession) {
+func (i *Instance) setTmuxSession(s *tmux.Session) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.tmuxSession = s
@@ -864,11 +864,12 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 	if ts == nil {
 		// Create new tmux session. launchProgram adds loom's context flag
 		// and, only when this Start actually launches (firstTimeSetup),
-		// the subagent hooks. Start(false) reattaches with Restore, and
-		// that Claude keeps writing to its existing hooks folder.
+		// the subagent hooks. Start(false) launches nothing (the session
+		// already runs), and that Claude keeps writing to its existing
+		// hooks folder.
 		// InstanceEnv still keys off the bare program.
 		launchProgram := i.launchProgram(env.Program, firstTimeSetup)
-		ts = tmux.NewTmuxSession(i.Title, launchProgram, InstanceEnv(env)...)
+		ts = tmux.NewSession(i.Title, launchProgram, InstanceEnv(env)...)
 	}
 	i.setTmuxSession(ts)
 
@@ -907,19 +908,18 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		gw = i.getGitWorktree()
 	}
 
-	if !firstTimeSetup {
-		// Reuse existing session
-		if err := ts.Restore(); err != nil {
-			setupErr = fmt.Errorf("failed to restore existing session: %w", err)
-			return setupErr
-		}
-	} else if i.IsWorkspaceTerminal {
+	switch {
+	case !firstTimeSetup:
+		// The session already runs (a reconciled record). Session lifecycle
+		// attaches no client (the TUI attaches its own, by name), so there
+		// is nothing to do beyond marking the instance started below.
+	case i.IsWorkspaceTerminal:
 		// Workspace terminal: start tmux directly in root repo, no worktree
 		if err := ts.Start(i.Path); err != nil {
 			setupErr = fmt.Errorf("failed to start workspace terminal session: %w", err)
 			return setupErr
 		}
-	} else {
+	default:
 		// Setup git worktree first
 		if err := gw.Setup(); err != nil {
 			setupErr = fmt.Errorf("failed to setup git worktree: %w", err)
@@ -950,7 +950,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 // session must then be confirmed Dead, as Pause requires before it removes
 // a worktree. Deleting the tree under a live agent would orphan it,
 // writing into a directory git has unlinked.
-func (i *Instance) failedStartCleanup(ts *tmux.TmuxSession, gw *git.GitWorktree, startErr error) error {
+func (i *Instance) failedStartCleanup(ts *tmux.Session, gw *git.GitWorktree, startErr error) error {
 	if !errors.Is(startErr, tmux.ErrSessionExists) && ts.SessionLiveness() != tmux.LivenessDead {
 		i.getLogger().Warn("instance.start.cleanup_skipped", "worktree", gw.GetWorktreePath(), "err", startErr.Error())
 		return fmt.Errorf("failed to start new session, and its agent may still be running: tmux session %s could not be confirmed gone, so the worktree %s and branch %s were left in place (check `tmux ls`; the next workspace load offers the worktree for recovery, or cleans it up once nothing runs in it): %w",
@@ -1055,10 +1055,10 @@ func (i *Instance) combineErrors(errs []error) error {
 	return errors.Join(errs...)
 }
 
-// TmuxSession returns the backing tmux session, or nil if the instance has
-// not been started yet. Exposed so the app layer can drive a full-screen
-// attach via tea.ExecProcess.
-func (i *Instance) TmuxSession() *tmux.TmuxSession {
+// TmuxSession returns the instance's tmux session (lifecycle only: launch,
+// probe, kill, send-keys), or nil if the instance has not been started.
+// The app takes a full-screen attach command from it.
+func (i *Instance) TmuxSession() *tmux.Session {
 	if !i.isStarted() {
 		return nil
 	}
@@ -1538,26 +1538,14 @@ func restoreStashInPlace(gw *git.GitWorktree) (note, err error) {
 // instance Running. Shared by every Resume path: the rebuild, which has
 // just recreated the worktree, and the reattach and relaunch-in-place
 // paths, which deliberately left the worktree alone.
-func (i *Instance) finishResume(saveState func() error, ts *tmux.TmuxSession, gw *git.GitWorktree) error {
+func (i *Instance) finishResume(saveState func() error, ts *tmux.Session, gw *git.GitWorktree) error {
 	switch ts.SessionLiveness() {
 	case tmux.LivenessAlive:
-		// Session exists, just restore PTY connection to it
-		if err := ts.Restore(); err != nil {
-			// Kill the broken session before creating a new one,
-			// because Start() rejects sessions that already exist.
-			if closeErr := ts.Close(); closeErr != nil {
-				log.For("session").Error("broken_session_close_failed", "err", closeErr)
-			}
-			if err := i.startFreshWithRecovery(gw); err != nil {
-				return err
-			}
-		}
+		// The session is running. Reattaching is the TUI's: it attaches its
+		// own client by name when the resume lands.
 	case tmux.LivenessDead:
-		// The dead session object may still hold an attach client, an
-		// emulator and an output pump; release them before replacing it,
-		// as Restart does. Close kills by exact name, so this cannot reach
-		// another session — and it must run before the new session under
-		// the same name exists.
+		// Close kills by exact name, so this cannot reach another session —
+		// and it must run before the new session under the same name exists.
 		if err := ts.Close(); err != nil {
 			log.For("session").Debug("resume_close_dead_session", "err", err.Error())
 		}
@@ -1584,7 +1572,7 @@ func (i *Instance) finishResume(saveState func() error, ts *tmux.TmuxSession, gw
 // (startFreshWithRecovery, CrashRestart) starts. A var so tests can
 // substitute a session with fake PTY/exec dependencies: a real one would
 // run tmux against whatever server the test process can reach.
-var newRecoverySession = tmux.NewTmuxSession
+var newRecoverySession = tmux.NewSession
 
 // startFreshWithRecovery creates a brand-new tmux session for an instance
 // whose previous session no longer exists (normal after crash or kill-server).
@@ -1838,6 +1826,6 @@ func (i *Instance) UpdateParity(base string) {
 }
 
 // SetTmuxSession sets the tmux session for testing purposes
-func (i *Instance) SetTmuxSession(session *tmux.TmuxSession) {
+func (i *Instance) SetTmuxSession(session *tmux.Session) {
 	i.setTmuxSession(session)
 }

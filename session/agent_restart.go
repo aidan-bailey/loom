@@ -149,9 +149,9 @@ func ClaudeConfigDirEnv(dir, program string) []string {
 // InstanceEnv combines every per-session environment variable derived
 // from an instance's launch (Headroom Proxy, Cache TTL, the account's
 // config dir) plus the always-on Claude fullscreen renderer into the
-// single slice tmux.NewTmuxSession's variadic env parameter needs.
+// single slice tmux.NewSession's variadic env parameter needs.
 // Centralized here so the four Instance call sites that construct a
-// TmuxSession don't each repeat the same combination.
+// tmux.Session don't each repeat the same combination.
 func InstanceEnv(e LaunchEnv) []string {
 	env := append(HeadroomProxyEnv(e.HeadroomProxy, e.Program), CacheTTL1hEnv(e.CacheTTL1h, e.Program)...)
 	env = append(env, ClaudeFullscreenEnv(e.Program)...)

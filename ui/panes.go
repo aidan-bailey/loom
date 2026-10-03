@@ -23,8 +23,8 @@ import (
 // on the Update goroutine as the attach paths before them did. A client
 // that Replace or Retain hands back must be closed off the Update
 // goroutine: PausePreview waits for the client's output pump, which blocks
-// in tea.Program.Send until Update returns. Every method is nil-receiver
-// safe; a nil registry holds no clients.
+// in tea.Program.Send until Update returns. Every method except the
+// …ForTest helpers is nil-receiver safe; a nil registry holds no clients.
 type PaneClients struct {
 	mu      sync.Mutex
 	clients map[string]*tmux.TmuxSession
@@ -78,19 +78,13 @@ func (p *PaneClients) Alive(sessionName string) bool {
 	return c != nil && c.PtmxAlive()
 }
 
-// For returns inst's pane: its session's client here when inst is started
-// and not paused, else the zero Pane. Until the instance stops attaching
-// its own client (daemon stage 1A, Package C), a session with nothing
-// registered falls back to that client, so every pane renders exactly as
-// before.
+// For returns inst's pane: its session's client here, when inst is started
+// and not paused; otherwise the zero Pane.
 func (p *PaneClients) For(inst *session.Instance) Pane {
 	if inst == nil || !inst.Started() || inst.Paused() {
 		return Pane{}
 	}
-	if c := p.Get(inst.Pane().TmuxSessionName()); c != nil {
-		return Pane{c: c}
-	}
-	return Pane{c: inst.TmuxSession()}
+	return Pane{c: p.Get(inst.Pane().TmuxSessionName())}
 }
 
 // SetDefaultSize records the agent pane size that clients attach at.

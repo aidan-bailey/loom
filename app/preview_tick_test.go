@@ -111,9 +111,9 @@ func startedInstanceWithHistoryTitled(t *testing.T, historyCaptures *int, title 
 			return []byte(""), nil
 		},
 	}
-	ts := tmux.NewTmuxSessionWithDeps(title, "bash", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec)
-	inst.SetTmuxSession(ts)
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "bash", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
 	require.NoError(t, inst.Start(true)) // creates the worktree and marks started
+	attachTestClient(t, inst, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec)
 	return inst
 }
 
@@ -144,9 +144,9 @@ func TestPreviewTickRerendersScrolledAgent(t *testing.T) {
 	// Make the preview-tick hash short-circuit fire: populate the content hash,
 	// then pin lastPreview* to the current title + hash so the tick treats the
 	// live content as unchanged.
-	_, _ = inst.Pane().HasUpdated()
+	_, _ = clientOf(t, inst).HasUpdated()
 	m.lastPreviewTitle = inst.Title
-	m.lastPreviewHash = inst.Pane().GetContentHash()
+	m.lastPreviewHash = clientOf(t, inst).GetContentHash()
 	require.NotNil(t, m.lastPreviewHash, "need a non-nil content hash to hit the short-circuit branch")
 
 	before := historyCaptures

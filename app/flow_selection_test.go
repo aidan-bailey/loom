@@ -158,8 +158,8 @@ func tmuxTarget(args []string) string {
 }
 
 // startedWorktreeInstance is a started, Running session with a git worktree
-// record at wtPath and its preview client attached (a fake PTY) — what a
-// start leaves behind — whose tmux session lives on srv.
+// record at wtPath and no client: a start attaches none — what a start
+// leaves behind — whose tmux session lives on srv.
 func startedWorktreeInstance(t *testing.T, title, wtPath string, srv *fakeTmuxServer) *session.Instance {
 	t.Helper()
 	srv.mu.Lock()
@@ -167,10 +167,8 @@ func startedWorktreeInstance(t *testing.T, title, wtPath string, srv *fakeTmuxSe
 	srv.mu.Unlock()
 	inst, err := session.FromInstanceData(worktreeRecord(title, wtPath, session.Paused), t.TempDir())
 	require.NoError(t, err)
-	inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps(title, "claude", fakePtyFactory{t: t}, srv.exec()))
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "claude", fakePtyFactory{t: t}, srv.exec()))
 	require.NoError(t, inst.TransitionTo(session.Running))
-	require.NoError(t, inst.Pane().RepairPtmx())
-	require.True(t, inst.Pane().PtmxAlive())
 	return inst
 }
 
@@ -214,6 +212,7 @@ func reopenedHome(t *testing.T, title, twinWorktree string, reopenExec cmd_test.
 func TestInstanceStarted_OwnerReopened(t *testing.T) {
 	isolateTmux(t)
 	wtPath := filepath.Join(t.TempDir(), "late-wt")
+	late := tmux.ToLoomTmuxName("late")
 
 	t.Run("success takes the twin's place", func(t *testing.T) {
 		m, owner, twin, recA, recC := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
@@ -228,7 +227,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		assert.NotContains(t, reopened.list.GetInstances(), twin)
 		assert.GreaterOrEqual(t, recC.calls, 1, "the reopened slot is saved")
 		assert.Zero(t, recA.calls, "the closed owner's stale copy is not")
-		assert.True(t, started.Pane().PtmxAlive(), "it is displayed again, so its preview stays")
+		assert.True(t, m.panes.Alive(late), "it is displayed again, so it gets a client")
 	})
 
 	t.Run("failure leaves the twin's worktree and branch alone", func(t *testing.T) {
@@ -241,7 +240,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		drainCmd(cmd)
 
 		assert.False(t, srv.killed("late"), "not killed: the reopened record owns its worktree and branch")
-		assert.False(t, started.Pane().PtmxAlive(), "only its preview client is released")
+		assert.Nil(t, m.panes.Get(late), "nothing attaches a failed start")
 		assert.Same(t, twin, m.slots[1].list.GetInstanceByTitle("late"))
 	})
 
@@ -256,7 +255,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 
 		assert.Same(t, namesake, m.slots[1].list.GetInstanceByTitle("late"), "an unrelated same-titled session is untouched")
 		assert.Zero(t, recC.calls)
-		assert.False(t, started.Pane().PtmxAlive(), "the start stays with its closed owner, so its preview is released")
+		assert.Nil(t, m.panes.Get(late), "the start stays with its closed owner, so nothing attaches it")
 		// The notice used to say the workspace is no longer open, while
 		// its reopened tab sat right there.
 		assert.NotContains(t, m.errBox.String(), "no longer open")
@@ -277,7 +276,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 
 		assert.Same(t, twin, m.slots[1].list.GetInstanceByTitle("late"), "the twin stays: its record is the live truth")
 		assert.Zero(t, recC.calls)
-		assert.False(t, started.Pane().PtmxAlive(), "the dead start's preview client is released")
+		assert.Nil(t, m.panes.Get(late), "nothing attaches the dead start")
 	})
 }
 

@@ -109,8 +109,8 @@ func TestInstanceStarted_SuccessInFocusedWorkspaceAttaches(t *testing.T) {
 }
 
 // TestInstanceStarted_AfterOwnerDropped: the owner tab was closed while
-// the start ran. Nothing displays the instance, so its preview client is
-// released, and the owner's storage is still saved so the record isn't
+// the start ran. Nothing displays the instance, so its completion attaches
+// nothing, and the owner's storage is still saved so the record isn't
 // left at Loading.
 func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	isolateTmux(t)
@@ -119,8 +119,10 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
 	require.Equal(t, []string{"bpeer"}, m.slotNames())
 	recA.calls, recB.calls = 0, 0
-	// The start finishes after the drop: live, with its preview attached.
+	// The start finishes after the drop: live, with no client (a start
+	// attaches none).
 	started := liveInstance(t, "late")
+	m.panes.Retain(nil) // nothing attached it
 	owner.list.AddInstance(started)
 
 	m.errBox.SetSize(400, 1)
@@ -133,7 +135,10 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	assert.GreaterOrEqual(t, recA.calls, 1, "the closed owner's record is saved")
 	assert.Contains(t, string(recA.lastData), "late")
 	assert.Zero(t, recB.calls)
-	assertReleased(t, m, cmd, started)
+	drainCmd(cmd)
+	assert.Nil(t, m.panes.Get(started.Pane().TmuxSessionName()), "nothing displays it, so nothing attaches it")
+	assert.NotContains(t, referencedInstances(m), started)
+	require.NoError(t, m.checkSlotInvariant())
 }
 
 // TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity: recoverDoneMsg used
@@ -187,9 +192,8 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 }
 
 // TestResumeDone_AfterOwnerDropped: the owner tab was closed while a
-// resume ran. releaseSlotCmd skipped the instance (nothing was attached
-// yet), and the finished resume attached a preview client that nothing
-// displays — so the completion must release it.
+// resume ran; nothing displays the instance, so its completion attaches
+// nothing.
 func TestResumeDone_AfterOwnerDropped(t *testing.T) {
 	isolateTmux(t)
 	m, _, recB := ownerTestHome(t)
@@ -197,13 +201,15 @@ func TestResumeDone_AfterOwnerDropped(t *testing.T) {
 	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
 	recB.calls = 0
 	resumed := liveInstance(t, "resumed")
+	m.panes.Retain(nil) // nothing attached it
 	owner.list.AddInstance(resumed)
 
 	_, cmd := m.Update(resumeDoneMsg{instance: resumed, slot: owner})
 
 	assert.Nil(t, m.list.GetInstanceByTitle("resumed"), "not filed under the focused workspace")
 	assert.Zero(t, recB.calls)
-	assertReleased(t, m, cmd, resumed)
+	drainCmd(cmd)
+	assert.Nil(t, m.panes.Get(resumed.Pane().TmuxSessionName()), "nothing displays it, so nothing attaches it")
 }
 
 // TestResumeDone_OwnerReopened: the owner was closed and its workspace
@@ -223,44 +229,33 @@ func TestResumeDone_OwnerReopened(t *testing.T) {
 	assert.Same(t, resumed, reopened.list.GetInstanceByTitle("res"))
 	assert.NotContains(t, reopened.list.GetInstances(), twin)
 	assert.GreaterOrEqual(t, recC.calls, 1, "the reopened slot is saved")
-	assert.True(t, resumed.Pane().PtmxAlive(), "displayed again, so its preview stays")
+	assert.True(t, m.panes.Alive(resumed.Pane().TmuxSessionName()), "displayed again, so it gets a client")
 }
 
-// TestResumeFailed_AfterOwnerDroppedReleasesPreview: a resume attaches its
-// preview client before its checkpoint save, and a failing save comes back
-// as transitionFailedMsg, which reverted the instance to Paused but left
-// that client open. With the owner closed meanwhile, nothing displays the
-// instance, so the client leaked until exit.
-func TestResumeFailed_AfterOwnerDroppedReleasesPreview(t *testing.T) {
+// TestResumeFailed_RevertsAndLeavesNoClient: a resume whose checkpoint save
+// failed comes back as transitionFailedMsg and is reverted to Paused, so
+// the user can retry. A paused session keeps no client, whether or not its
+// owner is still loaded.
+func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 	isolateTmux(t)
 	failedResume := func(inst *session.Instance) transitionFailedMsg {
 		return transitionFailedMsg{inst: inst, title: inst.Title, op: "resume", previousStatus: session.Paused,
 			err: errors.New("resume checkpoint save: disk full")}
 	}
-
-	t.Run("owner closed", func(t *testing.T) {
+	for _, ownerClosed := range []bool{true, false} {
 		m, _, _ := ownerTestHome(t)
 		owner := m.workspaceSlot
-		drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
-		// finishResume leaves it Running, preview attached, when the save fails.
+		if ownerClosed {
+			drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
+		}
 		resumed := liveInstance(t, "resumed")
 		owner.list.AddInstance(resumed)
 
 		_, cmd := m.Update(failedResume(resumed))
-
-		assert.Equal(t, session.Paused, resumed.GetStatus(), "reverted, so the user can retry")
-		assertReleased(t, m, cmd, resumed)
-	})
-
-	t.Run("control: owner loaded, the preview stays", func(t *testing.T) {
-		m, _, _ := ownerTestHome(t)
-		resumed := liveInstance(t, "resumed")
-		m.list.AddInstance(resumed)
-
-		_, cmd := m.Update(failedResume(resumed))
 		drainCmd(cmd)
 
-		assert.Equal(t, session.Paused, resumed.GetStatus())
-		assert.True(t, resumed.Pane().PtmxAlive(), "a displayed instance keeps its preview")
-	})
+		assert.Equal(t, session.Paused, resumed.GetStatus(), "reverted, so the user can retry (owner closed: %v)", ownerClosed)
+		assert.Nil(t, m.panes.Get(resumed.Pane().TmuxSessionName()), "a paused session keeps no client (owner closed: %v)", ownerClosed)
+		assert.False(t, clientOf(t, resumed).PtmxAlive(), "and the one it had is closed (owner closed: %v)", ownerClosed)
+	}
 }

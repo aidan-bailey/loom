@@ -38,7 +38,7 @@ func (f fakePtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
 func (f fakePtyFactory) Close() {}
 
 // newTestStartedInstance returns an Instance that reports isStarted()==true
-// and owns a mock-backed TmuxSession whose Close() can be called safely
+// and owns a mock-backed tmux.Session whose Close() can be called safely
 // any number of times. No git worktree is attached; the instance is
 // marked as a workspace terminal so Kill() skips the gitWorktree branch.
 func newTestStartedInstance(t *testing.T) *Instance {
@@ -49,7 +49,7 @@ func newTestStartedInstance(t *testing.T) *Instance {
 		RunFunc:    func(c *exec.Cmd) error { return nil },
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
-	ts := tmux.NewTmuxSessionWithDeps("kill-test", "true", ptyFactory, cmdExec)
+	ts := tmux.NewSessionWithDeps("kill-test", "true", ptyFactory, cmdExec)
 
 	inst := &Instance{
 		Title:               "kill-test",
@@ -74,31 +74,8 @@ func TestInstance_KillIsIdempotent(t *testing.T) {
 	assert.Nil(t, inst.getTmuxSession(), "Kill should nil out the tmux session")
 }
 
-// TestInstance_KillBoundedWithStuckPump is the Instance-level
-// regression guard for F3+F7. A stuck pump goroutine inside TmuxSession
-// used to propagate into an unbounded wait in Close → Kill → Pause,
-// wedging the UI flow that triggered the op and — via the app tick
-// loop's UpdateDiffStats path — every other tracked instance. With the
-// bounded pump wait in tmux, Kill must complete within a reasonable
-// budget even when the pump never exits.
-func TestInstance_KillBoundedWithStuckPump(t *testing.T) {
-	inst := newTestStartedInstance(t)
-	inst.getTmuxSession().SimulateStuckPumpForTest()
-
-	done := make(chan error, 1)
-	go func() { done <- inst.Kill() }()
-
-	select {
-	case <-done:
-		// Kill returned; assertion elsewhere (no error is OK — tmux
-		// Close logs but does not fail on the abandoned pump path).
-	case <-time.After(5 * time.Second):
-		t.Fatal("Kill blocked on stuck pump — F3 bounded wait regressed")
-	}
-}
-
 // newTestPausableInstance builds an Instance backed by a real git repo
-// and worktree plus a mock-backed TmuxSession. Used by F9 tests to
+// and worktree plus a mock-backed tmux.Session. Used by F9 tests to
 // exercise Pause/Resume end-to-end with a controllable saveState hook.
 func newTestPausableInstance(t *testing.T) *Instance {
 	t.Helper()
@@ -145,7 +122,7 @@ func newTestPausableInstanceWithExec(t *testing.T, cmdExec cmd_test.MockCmdExec)
 	gw := git.NewGitWorktreeFromStorage(repoDir, worktreePath, "pause-test", branchName, baseSHA, true, configDir)
 
 	ptyFactory := fakePtyFactory{t: t}
-	ts := tmux.NewTmuxSessionWithDeps("pause-test", "true", ptyFactory, cmdExec)
+	ts := tmux.NewSessionWithDeps("pause-test", "true", ptyFactory, cmdExec)
 
 	inst := &Instance{
 		Title:  "pause-test",
@@ -435,7 +412,7 @@ func TestInstance_RestartProceedsPastIdempotencyGuard(t *testing.T) {
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
 	ptyFactory := fakePtyFactory{t: t}
-	ts := tmux.NewTmuxSessionWithDeps("restart-test", "true", ptyFactory, cmdExec)
+	ts := tmux.NewSessionWithDeps("restart-test", "true", ptyFactory, cmdExec)
 
 	inst := &Instance{
 		Title:               "restart-test",
@@ -472,7 +449,7 @@ func TestInstance_StartFailsClosedEvenWithAPresetSession(t *testing.T) {
 		RunFunc:    func(c *exec.Cmd) error { return nil },
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
-	ts := tmux.NewTmuxSessionWithDeps("preset-session", "claude", fakePtyFactory{t: t}, cmdExec)
+	ts := tmux.NewSessionWithDeps("preset-session", "claude", fakePtyFactory{t: t}, cmdExec)
 
 	inst := &Instance{
 		Title:               "preset-session",
@@ -544,7 +521,7 @@ func TestInstance_RestartIsARealLaunch(t *testing.T) {
 	}
 	// As restored after a loom restart: the session object was built
 	// from the bare program.
-	inst.setTmuxSession(tmux.NewTmuxSessionWithDeps(inst.Title, inst.Program(), ptyFactory, cmdExec))
+	inst.setTmuxSession(tmux.NewSessionWithDeps(inst.Title, inst.Program(), ptyFactory, cmdExec))
 	inst.setStarted(true)
 	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "0123456789abcdef", Replayed: true,
 		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
@@ -589,7 +566,7 @@ func TestInstance_RestartUsesAFreshlyResolvedAccountEnv(t *testing.T) {
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
 	// Built with no account env at all.
-	ts := tmux.NewTmuxSessionWithDeps("restart-env", "claude", fakePtyFactory{t: t}, cmdExec)
+	ts := tmux.NewSessionWithDeps("restart-env", "claude", fakePtyFactory{t: t}, cmdExec)
 
 	inst := &Instance{
 		Title:               "restart-env",
@@ -616,7 +593,7 @@ func TestInstance_RestartFailsClosedOnAMissingAccount(t *testing.T) {
 		RunFunc:    func(c *exec.Cmd) error { return nil },
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
 	}
-	ts := tmux.NewTmuxSessionWithDeps("restart-missing", "claude", fakePtyFactory{t: t}, cmdExec)
+	ts := tmux.NewSessionWithDeps("restart-missing", "claude", fakePtyFactory{t: t}, cmdExec)
 
 	inst := &Instance{
 		Title:               "restart-missing",

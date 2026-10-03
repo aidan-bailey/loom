@@ -28,7 +28,7 @@ type fakeTmuxServer struct {
 	mu         sync.Mutex
 	created    bool
 	failStart  bool       // make every new-session fail
-	failAttach bool       // make every attach-session (Restore) fail
+	failLaunch bool       // new-session creates the session, then reports failure
 	failKill   bool       // make every kill-session fail
 	launches   [][]string // argv of every new-session
 	runs       [][]string // argv of every other command
@@ -46,13 +46,8 @@ func (f *fakeTmuxServer) Start(cmd *exec.Cmd) (*os.File, error) {
 			return nil, errors.New("fake tmux: new-session failed")
 		}
 		f.created = true
-	}
-	if slices.Contains(cmd.Args, "attach-session") {
-		f.mu.Lock()
-		fail := f.failAttach
-		f.mu.Unlock()
-		if fail {
-			return nil, errors.New("fake tmux: attach-session failed")
+		if f.failLaunch {
+			return nil, errors.New("fake tmux: new-session killed at its deadline")
 		}
 	}
 	return os.OpenFile(os.DevNull, os.O_RDWR, 0)
@@ -116,8 +111,8 @@ func newTickPausedInstance(t *testing.T) (*Instance, *fakeTmuxServer) {
 	inst.program = "claude"
 
 	orig := newRecoverySession
-	newRecoverySession = func(name, program string, env ...string) *tmux.TmuxSession {
-		return tmux.NewTmuxSessionWithDeps(name, program, srv, srv.runner(), env...)
+	newRecoverySession = func(name, program string, env ...string) *tmux.Session {
+		return tmux.NewSessionWithDeps(name, program, srv, srv.runner(), env...)
 	}
 	t.Cleanup(func() { newRecoverySession = orig })
 
@@ -135,8 +130,8 @@ func newCrashRecoveredInstance(t *testing.T) (*Instance, *fakeTmuxServer) {
 	inst := newTestPausableInstanceWithExec(t, srv.runner())
 	inst.program = "claude"
 	orig := newRecoverySession
-	newRecoverySession = func(name, program string, env ...string) *tmux.TmuxSession {
-		return tmux.NewTmuxSessionWithDeps(name, program, srv, srv.runner(), env...)
+	newRecoverySession = func(name, program string, env ...string) *tmux.Session {
+		return tmux.NewSessionWithDeps(name, program, srv, srv.runner(), env...)
 	}
 	t.Cleanup(func() { newRecoverySession = orig })
 	require.Equal(t, Running, inst.GetStatus())
@@ -265,6 +260,27 @@ func TestResume_ReattachesLiveSessionDespiteAnUnregisteredAccount(t *testing.T) 
 
 	assert.Empty(t, srv.launchArgs(), "reattach must not launch a new session")
 	assert.Equal(t, Running, inst.GetStatus())
+}
+
+// TestResume_ReattachKeepsTheSessionsProgram: R on a paused instance whose
+// tmux session is still alive reattaches to that session, which keeps
+// running the program it was launched with, while Program already names
+// the one R chose. The TUI's pane client scans the session with the
+// adapter of SessionProgram, so it must report the old one.
+func TestResume_ReattachKeepsTheSessionsProgram(t *testing.T) {
+	inst, srv := newTickPausedInstance(t)
+	launched := inst.Pane().SessionProgram()
+	require.NotEmpty(t, launched)
+	srv.mu.Lock()
+	srv.created = true // the agent's session is alive after all
+	srv.mu.Unlock()
+	inst.SetProgram("aider") // what R chose
+
+	require.NoError(t, resumeLikeApp(t, inst))
+
+	assert.Empty(t, srv.launchArgs(), "precondition: this exercises the reattach path")
+	assert.Equal(t, launched, inst.Pane().SessionProgram(), "the session still runs what it was launched with")
+	assert.Equal(t, "aider", inst.Program())
 }
 
 // TestResume_GuttedWorktreeIsSetAsideAndRebuilt keeps the gutted case on
@@ -596,23 +612,15 @@ func TestUnverifiedTreeError(t *testing.T) {
 	assert.Contains(t, quoted.Error(), `mv '/a b/it'\''s' '/a b/it'\''s.bak'`)
 }
 
-// TestResume_RelaunchReleasesTheDeadSession: the dead session object still
-// holds its attach client, emulator and output pump. Relaunching must close
-// it first, as Restart does — by exact name, since tmux prefix-matches a
-// bare -t and the session is gone. Killing the tmux session by name alone
-// would pass a kill-session check while leaking all three, so the old
-// object is attached (on the fake PTY) first and checked afterwards.
-func TestResume_RelaunchReleasesTheDeadSession(t *testing.T) {
+// TestResume_RelaunchClosesTheDeadSession: relaunching kills the dead
+// session first, by exact name (tmux prefix-matches a bare -t, and the
+// session is gone), and then replaces the session object.
+func TestResume_RelaunchClosesTheDeadSession(t *testing.T) {
 	inst, srv := newTickPausedInstance(t)
 	old := inst.getTmuxSession()
-	require.NoError(t, old.Restore(), "attach the old session object, as the health tick left it")
-	require.True(t, old.PtmxAlive(), "precondition: it holds an attach client")
-	require.True(t, old.HasEmulator(), "precondition: and an emulator")
 
 	require.NoError(t, resumeLikeApp(t, inst))
 
-	assert.False(t, old.PtmxAlive(), "the dead session's attach client must be released")
-	assert.False(t, old.HasEmulator(), "and its emulator")
 	assert.True(t, srv.ran("kill-session", "-t", tmux.SessionTarget(tmux.ToLoomTmuxName(inst.Title))),
 		"the dead session must be closed, by exact name")
 	assert.NotSame(t, old, inst.getTmuxSession())

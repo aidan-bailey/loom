@@ -17,11 +17,11 @@ import (
 // handlers therefore act on the slot that owns the instance — stamped into
 // the message at dispatch — and on the instance by identity, never on the
 // focused slot's list, storage or selection. (Kill, pause and transition
-// failures carry the instance and act by identity; a killed or paused
-// instance has no attach client left for a closed owner to leak, and a
-// resume that failed after attaching — its checkpoint save — has its
-// client released by the transitionFailedMsg handler when no loaded slot
-// holds it.)
+// failures carry the instance and act by identity; the TUI's pane clients
+// of a killed, paused or reverted instance are closed by the prune that
+// follows each of them.) A completion whose owner was closed meanwhile
+// attaches nothing (nothing displays it); one landing in a loaded slot
+// attaches the instance's client (replacePane).
 //
 // Nor do they move the focused slot's selection while another flow is on
 // screen (m.state != stateDefault): a creation flow, an inline attach or
@@ -68,8 +68,8 @@ func (m *home) adoptIntoReopened(twin *session.Instance, reopened *workspaceSlot
 // ActionKillAndPause if the session was already up), so the twin is
 // matched on the record's identity: the same title, worktree path and
 // (when both are known) branch — which rules out an unrelated
-// same-titled session — plus Paused and unattached. nil when there is
-// none.
+// same-titled session — plus Paused (a paused instance has no pane
+// client). nil when there is none.
 func (m *home) reopenedTwin(owner *workspaceSlot, inst *session.Instance) (*session.Instance, *workspaceSlot) {
 	wt := inst.GetWorktreePath()
 	if wt == "" {
@@ -86,7 +86,7 @@ func (m *home) reopenedTwin(owner *workspaceSlot, inst *session.Instance) (*sess
 		if b1, b2 := twin.GetBranch(), inst.GetBranch(); b1 != "" && b2 != "" && b1 != b2 {
 			continue
 		}
-		if twin.Paused() && !m.panes.For(twin).PtmxAlive() {
+		if twin.Paused() {
 			return twin, s
 		}
 	}
@@ -186,20 +186,21 @@ func (m *home) saveSlot(slot *workspaceSlot) error {
 //     both belong to the instance, wherever it lives. Only when the owner
 //     is the focused slot and no other flow is on screen does the UI
 //     follow (select, inline attach); otherwise a notice says where it
-//     started, and an owner closed meanwhile gets its preview client
-//     released (releaseInstancesCmd).
+//     started. A completion whose owner was closed meanwhile attaches
+//     nothing (nothing displays it); one landing in a loaded slot
+//     attaches the instance's client (replacePane).
 //   - Owner closed and its workspace reopened meanwhile: the reopened
 //     slot reconciled the record into a Paused twin, which the instance
 //     replaces on success if its tmux session survived the reopen
 //     (adoptIntoReopened); on failure the twin's record owns the worktree
-//     and branch, so nothing is killed and only the preview goes.
+//     and branch, so nothing is killed and nothing attaches.
 func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 	inst := msg.instance
 	owner := m.owningSlot(msg.slot, inst)
 	if owner != nil && !m.slotLoaded(owner) {
 		if twin, reopened := m.reopenedTwin(owner, inst); twin != nil {
 			if msg.err != nil {
-				return tea.Batch(m.handleError(msg.err), releaseInstancesCmd([]*session.Instance{inst}))
+				return m.handleError(msg.err)
 			}
 			if adopted := m.adoptIntoReopened(twin, reopened, inst); adopted != nil {
 				owner = adopted
@@ -219,15 +220,9 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 		return tea.Batch(m.handleError(msg.err), saveErr, m.instanceChanged(), backgroundKillCmd(inst))
 	}
 
-	var release tea.Cmd
-	if !loaded {
-		// Nothing displays it: the start attached a preview client that
-		// would otherwise stay open until exit.
-		release = releaseInstancesCmd([]*session.Instance{inst})
-	}
 	if owner != nil {
 		if err := m.saveSlot(owner); err != nil {
-			return tea.Batch(m.handleError(err), release)
+			return m.handleError(err)
 		}
 	}
 
@@ -236,6 +231,11 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 			log.For("app").Error("send_prompt_failed", "err", err)
 		}
 		inst.SetPrompt("")
+	}
+
+	var attach tea.Cmd
+	if loaded {
+		attach = m.replacePane(inst)
 	}
 
 	switch {
@@ -262,16 +262,15 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 		m.menu.SetState(ui.StateInlineAttach)
 	}
 
-	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release)
+	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), attach)
 }
 
 // handleResumeDone finishes a resume. The owner may have been closed while
-// it ran: releaseSlotCmd skipped the instance then (nothing was attached
-// yet), and the resume has since attached a preview client that nothing
-// displays. An instance no loaded slot holds is therefore swapped into a
+// it ran. An instance no loaded slot holds is therefore swapped into a
 // reopened copy of its workspace when there is one and its session
-// survived the reopen (adoptIntoReopened), and otherwise has its preview
-// client released.
+// survived the reopen (adoptIntoReopened). A completion whose owner was
+// closed meanwhile attaches nothing (nothing displays it); one landing in
+// a loaded slot attaches the instance's client (replacePane).
 func (m *home) handleResumeDone(msg resumeDoneMsg) tea.Cmd {
 	cmds := []tea.Cmd{tea.RequestWindowSize}
 	if msg.notice != nil {
@@ -289,9 +288,10 @@ func (m *home) handleResumeDone(msg resumeDoneMsg) tea.Cmd {
 				cmds = append(cmds, m.handleError(err))
 			}
 			m.errBox.SetInfo(fmt.Sprintf("%s resumed in %s", inst.Title, slotLabel(adopted)))
-		} else {
-			cmds = append(cmds, releaseInstancesCmd([]*session.Instance{inst}))
 		}
+	}
+	if inst := msg.instance; inst != nil && m.slotHolding(inst) != nil {
+		cmds = append(cmds, m.replacePane(inst))
 	}
 	return tea.Batch(append(cmds, m.instanceChanged())...)
 }
@@ -300,10 +300,12 @@ func (m *home) handleResumeDone(msg resumeDoneMsg) tea.Cmd {
 // the slot that owns it, by identity (see the note above) — in place, so
 // the list order and the selection's row are unchanged. It is selected
 // only where that can't retarget an open flow. A failure reverts the
-// placeholder to Recoverable so the user can retry r. The adopted
-// instance of an owner closed meanwhile has its preview client released;
-// its adoption is saved to the closed owner's storage unless the
-// workspace has since been reopened (saveSlot skips a stale copy then).
+// placeholder to Recoverable so the user can retry r. A completion whose
+// owner was closed meanwhile attaches nothing (nothing displays it); one
+// landing in a loaded slot attaches the instance's client (replacePane).
+// An adoption whose owner was closed meanwhile is saved to the closed
+// owner's storage unless the workspace has since been reopened (saveSlot
+// skips a stale copy then).
 // In that case nothing is lost: the adopted session keeps running on its
 // worktree, which the reopened slot's orphan discovery re-offers as
 // Recoverable, so r there adopts it again.
@@ -321,10 +323,6 @@ func (m *home) handleRecoverDone(msg recoverDoneMsg) tea.Cmd {
 	}
 
 	loaded := m.slotLoaded(owner)
-	var release tea.Cmd
-	if !loaded {
-		release = releaseInstancesCmd([]*session.Instance{msg.recovered})
-	}
 	if owner != nil {
 		if !owner.list.ReplaceInstance(msg.placeholder, msg.recovered) {
 			owner.list.AddInstance(msg.recovered)
@@ -335,6 +333,10 @@ func (m *home) handleRecoverDone(msg recoverDoneMsg) tea.Cmd {
 		if err := m.saveSlot(owner); err != nil {
 			log.For("app").Error("recover.save_failed", "title", msg.recovered.Title, "err", err)
 		}
+	}
+	var attach tea.Cmd
+	if loaded {
+		attach = m.replacePane(msg.recovered)
 	}
 	// Recovery is otherwise invisible when fast — confirm it, and be
 	// explicit about the degraded case where both the tmux session and
@@ -352,5 +354,5 @@ func (m *home) handleRecoverDone(msg recoverDoneMsg) tea.Cmd {
 	} else {
 		m.errBox.SetInfo(fmt.Sprintf("Recovered session '%s'%s", msg.recovered.Title, where))
 	}
-	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release)
+	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), attach)
 }

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -153,9 +154,7 @@ func TestPaneClients_ForGuardsTheInstance(t *testing.T) {
 
 	inst := runningInstance(t, "live")
 	name := inst.Pane().TmuxSessionName()
-	// Stage 1A transition (until Package C): with nothing registered, the
-	// instance's own client is the pane.
-	assert.Same(t, inst.TmuxSession(), p.For(inst).Client())
+	assert.Nil(t, p.For(inst).Client(), "nothing attached: no pane")
 
 	require.NoError(t, p.Ensure(name, "claude"))
 	t.Cleanup(func() { _ = p.Get(name).PausePreview() })
@@ -191,4 +190,99 @@ func TestPane_ZeroValueIsInert(t *testing.T) {
 	assert.NoError(t, err)
 	_, ok = pane.scrollSource()
 	assert.False(t, ok)
+}
+
+// failFirstPty is a devNullPty whose first Start fails, as an attach to a
+// session tmux has not finished creating can.
+type failFirstPty struct {
+	devNullPty
+	failed *bool
+}
+
+func (f failFirstPty) Start(c *exec.Cmd) (*os.File, error) {
+	f.mu.Lock()
+	first := !*f.failed
+	*f.failed = true
+	f.mu.Unlock()
+	if first {
+		return nil, errors.New("attach failed")
+	}
+	return f.devNullPty.Start(c)
+}
+
+func TestPaneClients_FailedAttachStaysRegisteredAndRetries(t *testing.T) {
+	var mu sync.Mutex
+	var starts []string
+	failed := false
+	p := NewPaneClients()
+	p.SetClientFactoryForTest(func(name, program string) *tmux.TmuxSession {
+		return tmux.NewAttachClientWithDeps(name, program, failFirstPty{devNullPty{mu: &mu, starts: &starts}, &failed}, aliveRunner())
+	})
+
+	require.Error(t, p.Ensure("loom_a", "claude"))
+	c := p.Get("loom_a")
+	require.NotNil(t, c, "a client whose attach failed stays registered")
+	assert.False(t, c.PtmxAlive())
+
+	require.NoError(t, p.Ensure("loom_a", "claude"))
+	t.Cleanup(func() { _ = c.PausePreview() })
+	assert.Same(t, c, p.Get("loom_a"), "the retry re-attaches the same client")
+	assert.True(t, c.PtmxAlive())
+}
+
+func TestPaneClients_EnsureAfterRetainBuildsANewClient(t *testing.T) {
+	p, starts := newTestPaneClients(t)
+	require.NoError(t, p.Ensure("loom_a", "claude"))
+	released := p.Get("loom_a")
+	require.Equal(t, []*tmux.TmuxSession{released}, p.Retain(nil))
+	require.NoError(t, released.PausePreview()) // as releaseClientsCmd does
+
+	require.NoError(t, p.Ensure("loom_a", "claude"))
+	fresh := p.Get("loom_a")
+	t.Cleanup(func() { _ = fresh.PausePreview() })
+
+	assert.NotSame(t, released, fresh, "a released client is never re-attached")
+	assert.False(t, released.PtmxAlive())
+	assert.True(t, fresh.PtmxAlive())
+	assert.Len(t, starts(), 2)
+}
+
+// TestPaneClients_ConcurrentReadsDuringEnsureAndRetain is for -race: Cmd
+// goroutines read the registry (For, Get) while Update attaches and
+// prunes.
+func TestPaneClients_ConcurrentReadsDuringEnsureAndRetain(t *testing.T) {
+	p, _ := newTestPaneClients(t)
+	inst := runningInstance(t, "racy")
+	name := inst.Pane().TmuxSessionName()
+
+	stop := make(chan struct{})
+	var readers sync.WaitGroup
+	for range 4 {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_ = p.For(inst).PtmxAlive()
+				_ = p.Get(name)
+				_ = p.Alive(name)
+			}
+		}()
+	}
+
+	var released []*tmux.TmuxSession
+	for range 50 {
+		require.NoError(t, p.Ensure(name, "claude"))
+		released = append(released, p.Retain(nil)...)
+	}
+	close(stop)
+	readers.Wait()
+	for _, c := range released {
+		_ = c.PausePreview()
+	}
+	assert.Len(t, released, 50)
 }

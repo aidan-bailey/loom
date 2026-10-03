@@ -101,6 +101,9 @@ func (s *Session) SessionName() string {
 	return s.sanitizedName
 }
 
+// Program returns the command line the session was launched with.
+func (s *Session) Program() string { return s.program }
+
 // Start creates the tmux session, running program in workDir, and sets
 // the options every client attached to it relies on: scroll-back history,
 // mouse, no status line, and C-q to detach a full-screen attach. It

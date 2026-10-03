@@ -20,6 +20,7 @@ import (
 	"github.com/aidan-bailey/loom/ui/overlay"
 	reviewui "github.com/aidan-bailey/loom/ui/review"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -211,12 +212,12 @@ type home struct {
 	keySent bool
 
 	// attachingInstance is set for the duration of a full-screen attach
-	// (PausePreview -> tea.ExecProcess -> ResumePreview; see
+	// (PausePreview -> tea.ExecProcess -> ensurePane; see
 	// startFullScreenAttachMsg/attachDoneMsg) and nil otherwise. The metadata
-	// tick's ptmx self-heal (metadataReadyMsg) must not call RepairPtmx on
-	// this instance while it is set — PtmxAlive is expected to read false
-	// during that window, and racing a Restore against the in-flight
-	// ExecProcess would fight over the same tmux session's attach.
+	// tick's ptmx self-heal (metadataReadyMsg) must not re-attach this
+	// instance's pane client while it is set — PtmxAlive is expected to
+	// read false during that window, and racing a Restore against the
+	// in-flight ExecProcess would fight over the same tmux session's attach.
 	attachingInstance *session.Instance
 
 	// -- UI Components --
@@ -946,9 +947,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !statusEligible(msg.instance) {
 			return m, nil
 		}
-		_ = m.applyLiveness(msg.instance, msg.tmuxLive, msg.ptmxAlive)
+		_, release := m.applyLiveness(msg.instance, msg.tmuxLive, msg.ptmxAlive)
 		m.updateTabBarStatuses()
-		return m, m.instanceChanged()
+		return m, tea.Batch(m.instanceChanged(), release)
 	case bellMsg:
 		if inst := m.instanceForSession(msg.session); inst != nil && inst != m.list.GetSelectedInstance() {
 			inst.SetBellPending(true)
@@ -981,6 +982,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// because time passed with no other activity.
 		m.errBox.ExpireIfDue(time.Now())
 
+		// Close the clients of sessions that stopped being active since the
+		// last tick (paused, killed, exited, or their slot closed).
+		prune := m.prunePanes()
+
 		// Active instances from every loaded workspace slot (see
 		// activeInstances for what is skipped and why).
 		selected := m.list.GetSelectedInstance()
@@ -989,7 +994,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Inline-attach liveness backstop (the preview tick used to check
 		// this every 100ms in event mode; ptyDeadMsg is the fast path now,
 		// this tick is the safety net for deaths that never EOF'd the PTY).
-		var cmds []tea.Cmd
+		cmds := []tea.Cmd{prune}
 		if m.state == stateInlineAttach {
 			if selected == nil || selected.Paused() || !focusedPaneAlive(m, selected) {
 				m.state = stateDefault
@@ -1051,8 +1056,11 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case metadataReadyMsg:
 		// Apply results on main thread.
+		var releases []tea.Cmd
 		for _, r := range msg.results {
-			if !m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive) {
+			alive, release := m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive)
+			releases = append(releases, release)
+			if !alive {
 				continue
 			}
 			// Claude's reported status applies on BOTH paths. The exclusion
@@ -1105,7 +1113,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.workbench.Diff().SetDiff(selected)
 			}
 		}
-		return m, tickUpdateMetadataCmd
+		return m, tea.Batch(append(releases, tickUpdateMetadataCmd)...)
 	case wbScanMsg:
 		title, ok := m.wbCurrentTitle()
 		if !ok || msg.title != title || msg.err != nil {
@@ -1435,9 +1443,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// by identity, or the row stays Deleting until restart.
 		m.removeInstanceEverywhere(msg.inst)
 		if msg.notice != nil {
-			return m, tea.Batch(m.handleError(msg.notice), m.instanceChanged())
+			return m, tea.Batch(m.handleError(msg.notice), m.instanceChanged(), m.prunePanes())
 		}
-		return m, m.instanceChanged()
+		return m, tea.Batch(m.instanceChanged(), m.prunePanes())
 	case transitionFailedMsg:
 		// Revert instance status on failed background op (kill/pause/resume).
 		// previousStatus came from this same instance, so the reverse
@@ -1445,26 +1453,17 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// it, log and leave the status as-is rather than masking a real bug.
 		// The message carries the instance pointer: like killInstanceMsg, the
 		// focused m.list may have been swapped since the op started.
-		var release tea.Cmd
 		if msg.inst != nil {
-			// A resume attaches its preview client before its checkpoint
-			// save, so a failed save lands here with the client open. If
-			// the owner was closed meanwhile, releaseSlotCmd ran before the
-			// attach and nothing displays the instance now: release it —
-			// before the revert, as releaseInstancesCmd skips Paused.
-			if m.slotHolding(msg.inst) == nil {
-				release = releaseInstancesCmd([]*session.Instance{msg.inst})
-			}
 			if terr := msg.inst.TransitionTo(msg.previousStatus); terr != nil {
 				log.For("app").Warn("revert_transition_failed", "err", terr)
 			}
 		}
 		log.For("app").Error("op_failed", "op", msg.op, "title", msg.title, "err", msg.err)
-		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), release)
+		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), m.prunePanes())
 	case pauseInstanceMsg:
 		// Terminal session was already closed inside pauseAction off the update
 		// goroutine. Nothing I/O-blocking to do here.
-		return m, m.instanceChanged()
+		return m, tea.Batch(m.instanceChanged(), m.prunePanes())
 	case backgroundCleanupDoneMsg:
 		// Nothing to do; the instance was already popped and the cleanup
 		// result was logged inside backgroundKillCmd.
@@ -1477,24 +1476,33 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case recoverDoneMsg:
 		return m, m.handleRecoverDone(msg)
 	case startFullScreenAttachMsg:
-		// Resolve the tmux session for the requested pane.
-		var ts *tmux.TmuxSession
+		// Resolve the session to attach in the foreground, and the client
+		// whose preview PTY must let go of it for the duration.
+		var attach *exec.Cmd
+		var preview *tmux.TmuxSession
 		switch msg.target {
 		case attachTargetAgent:
-			ts = msg.instance.TmuxSession()
+			if s := msg.instance.TmuxSession(); s != nil {
+				attach = s.FullScreenAttachCmd()
+				preview = m.panes.For(msg.instance).Client()
+			}
 		case attachTargetTerminal:
-			ts = m.splitPane.TerminalTmuxSession()
+			if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
+				attach, preview = ts.FullScreenAttachCmd(), ts
+			}
 		}
-		if ts == nil {
+		if attach == nil {
 			return m, m.handleError(fmt.Errorf("no tmux session available for attach"))
 		}
 		// Close the preview PTY so the foreground tmux attach owns the tty.
-		if err := ts.PausePreview(); err != nil {
-			return m, m.handleError(err)
+		if preview != nil {
+			if err := preview.PausePreview(); err != nil {
+				return m, m.handleError(err)
+			}
 		}
 		inst := msg.instance
 		m.attachingInstance = inst
-		return m, tea.ExecProcess(ts.FullScreenAttachCmd(), func(err error) tea.Msg {
+		return m, tea.ExecProcess(attach, func(err error) tea.Msg {
 			return attachDoneMsg{instance: inst, err: err}
 		})
 	case editorDoneMsg:
@@ -1508,15 +1516,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, tea.RequestWindowSize, m.instanceChanged())
 		return m, tea.Batch(cmds...)
 	case attachDoneMsg:
-		// tea.ExecProcess has restored the terminal. Rebuild the preview PTYs
-		// so live capture resumes. Errors here are logged — the session
-		// itself is untouched (only our attach client failed to reopen), so
-		// the metadata tick's ptmx self-heal (metadataReadyMsg) will retry
-		// this on the next tick now that attachingInstance is cleared below.
-		if ts := msg.instance.TmuxSession(); ts != nil {
-			if err := ts.ResumePreview(); err != nil {
-				log.For("app").Error("preview.resume_failed", "title", msg.instance.Title, "err", err)
-			}
+		// tea.ExecProcess has restored the terminal. Re-attach the agent's
+		// client so live capture resumes. A failure is logged inside
+		// ensurePane, and the metadata tick's repair retries it once
+		// attachingInstance is cleared below.
+		if msg.instance != nil {
+			m.ensurePane(msg.instance)
 		}
 		if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
 			if err := ts.ResumePreview(); err != nil {
@@ -2267,18 +2272,18 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 
 // applyLiveness reacts to one instance's health-probe result: dead tmux →
 // pause (or restart a workspace terminal, with the existing circuit
-// breaker); live tmux but dead attach PTY → RepairPtmx self-heal. Returns
+// breaker); live tmux but no open attach client → re-attach it. It returns
 // false when the instance was found dead (so callers can stop treating it
-// as running), or is no longer in any loaded slot. Must run on the Update
-// goroutine.
-func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool) (alive bool) {
+// as running) or is no longer in any loaded slot, plus a Cmd closing a
+// client that a restart replaced. Must run on the Update goroutine.
+func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool) (alive bool, release tea.Cmd) {
 	if m.slotHolding(inst) == nil {
 		// The probe was taken before inst's slot was dropped. Its attach
-		// client has been (or is being) released by releaseSlotCmd, which
-		// reads as a dead PTY: RepairPtmx here would re-attach an
+		// client has been (or is being) released by prunePanes, which
+		// reads as a dead PTY: a repair here would re-attach an
 		// instance nothing displays, and a workspace-terminal restart
 		// would relaunch one. Drop the result.
-		return false
+		return false, nil
 	}
 	if tmuxLive == tmux.LivenessUnknown {
 		// The probe never got an answer, which says nothing about the
@@ -2288,7 +2293,7 @@ func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptm
 		// it would do so across the whole fleet simultaneously. Leave
 		// the instance untouched; the next tick re-probes.
 		log.For("app").Debug("tick.tmux_probe_inconclusive", "title", inst.Title)
-		return true
+		return true, nil
 	}
 	if tmuxLive != tmux.LivenessAlive {
 		if inst.IsWorkspaceTerminal {
@@ -2308,32 +2313,31 @@ func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptm
 				if err := inst.TransitionTo(session.Paused); err != nil {
 					log.For("app").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
 				}
-				return false
+				return false, nil
 			}
 			log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", inst.Title)
 			if err := inst.Restart(); err != nil {
 				log.For("app").Error("workspace_terminal.restart_failed", "title", inst.Title, "err", err)
+				return false, nil
 			}
-			return false
+			return false, m.replacePane(inst)
 		}
 		log.For("app").Warn("tick.tmux_gone_marking_paused", "title", inst.Title)
 		if err := inst.TransitionTo(session.Paused); err != nil {
 			log.For("app").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
 		}
-		return false
+		return false, nil
 	}
 	inst.ResetRestartFailures()
 	if !ptmxAlive && inst != m.attachingInstance {
-		// Session exists but Loom's own attach client is gone (e.g. a
+		// The session exists but its attach client is gone (e.g. a
 		// reattach failed after full-screen attach returned). Nothing
-		// else ever retries this, so self-heal here — same shape as
-		// the workspace-terminal restart above, but at the PTY layer.
+		// else ever retries this, so self-heal here: the same shape as the
+		// workspace-terminal restart above, but at the client layer.
 		log.For("app").Warn("tick.ptmx_dead_repairing", "title", inst.Title)
-		if err := inst.Pane().RepairPtmx(); err != nil {
-			log.For("app").Error("tick.ptmx_repair_failed", "title", inst.Title, "err", err)
-		}
+		m.ensurePane(inst)
 	}
-	return true
+	return true, nil
 }
 
 // handleError handles all errors which get bubbled up to the app. sets the error message. We return a callback tea.Cmd that returns a hideErrMsg message

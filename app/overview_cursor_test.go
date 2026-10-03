@@ -54,7 +54,7 @@ func fleetHome(t *testing.T) *home {
 	}
 	focusSlots(m, 0, focus, peer)
 	m.seedOverviewCursor()
-	return m
+	return wirePanes(t, m)
 }
 
 func TestMoveCursor_CrossesGroupBoundary(t *testing.T) {

@@ -16,20 +16,19 @@ import (
 )
 
 // liveInstance builds a started, Running instance whose tmux session has a
-// preview attach client (a fake PTY), as LoadAndReconcile leaves a live
-// session. No tmux server is contacted.
+// TUI attach client (a fake PTY) in the test's registry, as a workspace
+// load leaves a live session. No tmux server is contacted.
 func liveInstance(t *testing.T, title string) *session.Instance {
 	t.Helper()
 	// Paused data comes back started; its session is swapped for a
-	// fake-PTY one and the instance moved to Running.
+	// mock-backed one and the instance moved to Running.
 	inst, err := session.FromInstanceData(session.InstanceData{
 		Title: title, Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true,
 	}, t.TempDir())
 	require.NoError(t, err)
-	inst.SetTmuxSession(tmux.NewTmuxSessionWithDeps(title, "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
 	require.NoError(t, inst.TransitionTo(session.Running))
-	require.NoError(t, inst.Pane().RepairPtmx())
-	require.True(t, inst.Pane().PtmxAlive(), "fixture: the preview PTY is attached")
+	require.True(t, attachTestClient(t, inst, fakePtyFactory{t: t}, aliveCmdExecForTest()).PtmxAlive(), "fixture: the client is attached")
 	return inst
 }
 
@@ -66,18 +65,19 @@ func pointAt(m *home, inst *session.Instance) {
 	m.menu.SetInstance(inst)
 }
 
-// assertReleased checks that dropped instances keep their preview PTY
-// until the returned Cmd runs, lose it once it has, and are no longer
-// reachable from the model.
+// assertReleased checks that dropped instances' clients leave the registry
+// at once, keep their PTY until the returned Cmd runs and lose it once it
+// has, and that the instances are no longer reachable.
 func assertReleased(t *testing.T, m *home, cmd tea.Cmd, dropped ...*session.Instance) {
 	t.Helper()
 	for _, inst := range dropped {
-		assert.True(t, inst.Pane().PtmxAlive(), "%s: released on the Update goroutine; must wait for the Cmd", inst.Title)
+		assert.Nil(t, m.panes.Get(inst.Pane().TmuxSessionName()), "%s: still registered after the drop", inst.Title)
+		assert.True(t, clientOf(t, inst).PtmxAlive(), "%s: released on the Update goroutine; must wait for the Cmd", inst.Title)
 	}
 	drainCmd(cmd)
 	refs := referencedInstances(m)
 	for _, inst := range dropped {
-		assert.False(t, inst.Pane().PtmxAlive(), "%s: preview PTY still attached after the drop", inst.Title)
+		assert.False(t, clientOf(t, inst).PtmxAlive(), "%s: attach client still open after the drop", inst.Title)
 		assert.NotContains(t, refs, inst, "%s: still reachable from the model", inst.Title)
 	}
 	require.NoError(t, m.checkSlotInvariant())
@@ -159,26 +159,26 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 	})
 }
 
-// TestReleaseInstancesCmd_OnlyAttachedLiveInstances: the release covers
-// started, non-paused instances with an attached preview PTY, and is nil
-// when there are none.
-func TestReleaseInstancesCmd_OnlyAttachedLiveInstances(t *testing.T) {
+// TestPrunePanes_ReleasesOnlyInactiveSessions: prunePanes drops and closes,
+// off the Update goroutine, the clients of sessions no loaded instance is
+// active on, and leaves the rest attached.
+func TestPrunePanes_ReleasesOnlyInactiveSessions(t *testing.T) {
 	isolateTmux(t)
-	unstarted, err := session.NewInstance(session.InstanceOptions{Title: "new", Path: t.TempDir(), Program: "claude"})
-	require.NoError(t, err)
-	paused, err := session.FromInstanceData(session.InstanceData{
-		Title: "paused", Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true,
-	}, t.TempDir())
-	require.NoError(t, err)
-	assert.Nil(t, releaseInstancesCmd([]*session.Instance{unstarted, paused}), "nothing attached, nothing to release")
+	m := newTestHome(t)
+	keep, gone := liveInstance(t, "keep"), liveInstance(t, "gone")
+	m.list.AddInstance(keep)
+	m.list.AddInstance(gone)
+	require.NoError(t, gone.TransitionTo(session.Paused))
 	assert.Nil(t, releaseSlotCmd(nil))
 
-	live := liveInstance(t, "live")
-	cmd := releaseInstancesCmd([]*session.Instance{unstarted, paused, live})
+	cmd := m.prunePanes()
 	require.NotNil(t, cmd)
-	assert.True(t, live.Pane().PtmxAlive(), "building the Cmd must not release anything")
+	assert.True(t, clientOf(t, gone).PtmxAlive(), "building the Cmd must not close anything")
 	assert.Nil(t, cmd(), "the release reports nothing back to Update")
-	assert.False(t, live.Pane().PtmxAlive())
+
+	assert.False(t, clientOf(t, gone).PtmxAlive())
+	assert.Nil(t, m.panes.Get(gone.Pane().TmuxSessionName()))
+	assert.True(t, m.panes.Alive(keep.Pane().TmuxSessionName()))
 }
 
 // TestDroppedSlot_StaleProbeDoesNotReattach: a metadata probe taken before
@@ -192,12 +192,12 @@ func TestDroppedSlot_StaleProbeDoesNotReattach(t *testing.T) {
 	live := liveInstance(t, "b-live")
 	m.slots[1].list.AddInstance(live)
 	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}}))
-	require.False(t, live.Pane().PtmxAlive())
+	require.False(t, clientOf(t, live).PtmxAlive())
 
 	_, _ = m.Update(metadataReadyMsg{results: []metadataResult{
 		{instance: live, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
 	}})
-	assert.False(t, live.Pane().PtmxAlive(), "a dropped instance must not be re-attached")
+	assert.Nil(t, m.panes.Get(live.Pane().TmuxSessionName()), "a dropped instance must not be re-attached")
 }
 
 // attachedTerminal is a terminal-pane shell session with its attach client

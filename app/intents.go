@@ -206,6 +206,7 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 	// would race loadSlot and, after a workspace switch, reach another
 	// workspace's pane and storage.
 	splitPane, storage := m.splitPane, m.storage
+	panes, paneName := m.panes, selected.Pane().TmuxSessionName()
 
 	preAction := func() {
 		if err := selected.TransitionTo(session.Deleting); err != nil {
@@ -244,6 +245,13 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 		// (a stash entry it could not drop); it reaches them whatever else
 		// happened. A notice alone means the kill itself succeeded.
 		var notice error
+		// Close the TUI's attach client first: one left on a killed session
+		// reads a dead PTY until the next prune.
+		if c := panes.Get(paneName); c != nil {
+			if err := c.PausePreview(); err != nil {
+				log.For("app").Warn("kill.pane_close_failed", "title", title, "err", err)
+			}
+		}
 		if err := selected.Kill(); err != nil {
 			if n, ok := session.NoticeIn(err); ok {
 				notice = n
@@ -369,10 +377,19 @@ func pauseActionFor(m *home, selected *session.Instance) tea.Cmd {
 	pauseTitle := selected.Title
 	saveFunc := snapshotSaveFunc(m)
 	splitPane := m.splitPane // the owning slot's, captured on Update (see killActionFor)
+	panes, paneName := m.panes, selected.Pane().TmuxSessionName()
 	return func() tea.Msg {
 		if ts := splitPane.DetachTerminalForInstance(pauseTitle); ts != nil {
 			if err := ts.Close(); err != nil {
 				log.For("app").Error("pause.terminal_close_failed", "title", pauseTitle, "err", err)
+			}
+		}
+		// Close the TUI's attach client first, as kill does. If the pause
+		// aborts (the session survived), the health tick's repair
+		// re-attaches it.
+		if c := panes.Get(paneName); c != nil {
+			if err := c.PausePreview(); err != nil {
+				log.For("app").Warn("pause.pane_close_failed", "title", pauseTitle, "err", err)
 			}
 		}
 		if err := selected.Pause(saveFunc); err != nil {

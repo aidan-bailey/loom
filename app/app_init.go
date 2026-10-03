@@ -356,6 +356,7 @@ func (m *home) loadSlotStorage(slot *workspaceSlot, cfgDir string, cmdExec cmd2.
 			}
 		}
 	}
+	m.ensureSlotPanes(slot)
 	return recovery, nil
 }
 

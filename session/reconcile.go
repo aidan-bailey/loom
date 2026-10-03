@@ -204,16 +204,12 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 			return nil, err
 		}
 		if err := instance.EnsureRunning(); err != nil {
-			// On a genuine Start-level failure (e.g. PTY exhaustion, bad
-			// data) we deliberately return the error rather than masking
-			// it with a crash-restart: LoadAndReconcile stashes the raw
-			// record in the unrecovered cache (storage.go) so it survives
-			// in state.json and is retried on the next launch. Note that a
-			// session that merely died after the liveness probe does NOT
-			// land here — tmux.Restore's pty.Start returns once the attach
-			// process spawns, before tmux validates the session — so this
-			// path fires only on real local failures, which the cache is
-			// the right home for.
+			// EnsureRunning touches no tmux (it attaches nothing), so this
+			// fails only on bad data or an unresolvable account. Return the
+			// error rather than masking it with a crash-restart:
+			// LoadAndReconcile stashes the raw record in the unrecovered
+			// cache (storage.go) so it survives in state.json and is retried
+			// on the next launch.
 			return nil, err
 		}
 		return instance, nil
@@ -254,8 +250,8 @@ func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalex
 }
 
 // fromInstanceDataPaused creates an Instance from serialized data in a
-// detached (no live PTY) state: it sets started=true and creates a
-// TmuxSession object but does not connect. Despite the name it backs
+// detached (no live PTY) state: it sets started=true and creates its
+// tmux.Session (lifecycle only; nothing ever connects to it). Despite the name it backs
 // several non-paused actions too (ActionRestart, ActionRestartWsTerminal)
 // — in those cases the caller sets crashRecovered=true and a later
 // CrashRestart spawns the real session.
@@ -270,12 +266,12 @@ func fromInstanceDataPaused(data InstanceData, configDir string) (*Instance, err
 
 	// Unlike FromInstanceData, which only wires these for Paused and
 	// Recoverable records, every caller of this variant needs the started
-	// flag and a detached TmuxSession regardless of persisted status —
+	// flag and a tmux.Session regardless of persisted status —
 	// ActionRestart/ActionRestartWsTerminal rehydrate Running records.
 	instance.setStarted(true)
 	if instance.getTmuxSession() == nil {
 		// Unpublished, like FromInstanceData: the launch fields are read directly.
-		instance.setTmuxSession(tmux.NewTmuxSession(instance.Title, instance.program, InstanceEnv(LaunchEnv{Program: instance.program, HeadroomProxy: instance.headroomProxy, CacheTTL1h: instance.cacheTTL1h, ClaudeConfigDir: bestEffortAccountDir(instance.account)})...))
+		instance.setTmuxSession(tmux.NewSession(instance.Title, instance.program, InstanceEnv(LaunchEnv{Program: instance.program, HeadroomProxy: instance.headroomProxy, CacheTTL1h: instance.cacheTTL1h, ClaudeConfigDir: bestEffortAccountDir(instance.account)})...))
 	}
 	return instance, nil
 }

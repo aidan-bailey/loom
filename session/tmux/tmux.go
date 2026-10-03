@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -223,30 +222,6 @@ func NewTmuxSession(name string, program string, env ...string) *TmuxSession {
 // avoid spawning real subprocesses or allocating real PTYs.
 func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor, env ...string) *TmuxSession {
 	return newTmuxSession(name, program, ptyFactory, cmdExec, env...)
-}
-
-// WithProgram is WithProgramEnv, carrying over t's own env instead of
-// taking a fresh one.
-func (t *TmuxSession) WithProgram(program string) *TmuxSession {
-	return t.WithProgramEnv(program, slices.Clone(t.env))
-}
-
-// WithProgramEnv returns a new, unstarted TmuxSession for the same tmux
-// session that runs program, with env instead of t's program and env. The
-// result keeps t's session name, injected PTY factory, executor, and last
-// pane geometry, and resolves its agent adapter from program exactly as
-// NewTmuxSession does. No runtime state (PTY, emulator, output pump, seed
-// history) is carried over, and t itself is left unchanged: the caller is
-// expected to Close t and Start the result. Instance.Restart uses it to
-// relaunch a dead session with a freshly composed command and a freshly
-// resolved env — in particular, the account's CLAUDE_CONFIG_DIR may have
-// changed since t was built.
-func (t *TmuxSession) WithProgramEnv(program string, env []string) *TmuxSession {
-	n := newSanitizedTmuxSession(t.sanitizedName, program, t.ptyFactory, t.cmdExec, env...)
-	t.stateMu.Lock()
-	n.lastCols, n.lastRows = t.lastCols, t.lastRows
-	t.stateMu.Unlock()
-	return n
 }
 
 func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor, env ...string) *TmuxSession {

@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupPtmxDeadFixture builds a Running instance whose tmux session is alive
-// (TmuxAlive true) but was constructed without ever calling Restore, leaving
-// ptmx nil — the exact "session healthy, Loom's attach client gone" state
+// setupPtmxDeadFixture builds a started, Running instance whose tmux
+// session is alive (TmuxAlive true) but has no attach client in the
+// registry — the exact "session healthy, Loom's attach client gone" state
 // produced by a failed reattach after full-screen attach.
 func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
 	t.Helper()
@@ -24,11 +24,13 @@ func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
 	})
 	require.NoError(t, err)
 	m.list.AddInstance(inst)
-	require.NoError(t, inst.TransitionTo(session.Running))
 
-	ts := tmux.NewTmuxSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())
+	ts := tmux.NewSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())
 	inst.SetTmuxSession(ts)
-	require.False(t, inst.Pane().PtmxAlive(), "fixture precondition: ptmx must start dead")
+	// Marked started, as a restored record whose session runs is.
+	require.NoError(t, inst.EnsureRunning())
+	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")
+	require.False(t, m.panes.Alive(inst.Pane().TmuxSessionName()), "fixture precondition: no client attached")
 	require.True(t, inst.Pane().TmuxAlive(), "fixture precondition: tmux session must read alive")
 
 	return m, inst
@@ -37,7 +39,7 @@ func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
 // TestMetadataReadyMsg_RepairsDeadPtmx is the regression guard for the
 // "PTY is not available" bug: a session that TmuxAlive reports as healthy
 // but whose ptmx is nil was never retried by anything, forever. The
-// metadata tick must now notice ptmxAlive=false and call RepairPtmx.
+// metadata tick must now notice ptmxAlive=false and re-attach the client.
 func TestMetadataReadyMsg_RepairsDeadPtmx(t *testing.T) {
 	m, inst := setupPtmxDeadFixture(t)
 
@@ -45,12 +47,12 @@ func TestMetadataReadyMsg_RepairsDeadPtmx(t *testing.T) {
 		{instance: inst, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
 	}})
 
-	require.True(t, inst.Pane().PtmxAlive(), "metadata tick should have repaired the dead ptmx")
+	require.True(t, m.panes.Alive(inst.Pane().TmuxSessionName()), "metadata tick should have repaired the dead ptmx")
 }
 
 // TestMetadataReadyMsg_SkipsRepairDuringFullScreenAttach guards against a
 // race with an in-progress full-screen attach: PausePreview legitimately
-// nils ptmx for the duration of tea.ExecProcess, and RepairPtmx racing that
+// nils ptmx for the duration of tea.ExecProcess, and a re-attach racing that
 // window would fight the foreground attach over the same tmux session.
 func TestMetadataReadyMsg_SkipsRepairDuringFullScreenAttach(t *testing.T) {
 	m, inst := setupPtmxDeadFixture(t)
@@ -60,5 +62,5 @@ func TestMetadataReadyMsg_SkipsRepairDuringFullScreenAttach(t *testing.T) {
 		{instance: inst, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
 	}})
 
-	require.False(t, inst.Pane().PtmxAlive(), "repair must not run for the instance currently mid full-screen attach")
+	require.False(t, m.panes.Alive(inst.Pane().TmuxSessionName()), "repair must not run for the instance currently mid full-screen attach")
 }

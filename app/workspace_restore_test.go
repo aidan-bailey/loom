@@ -212,7 +212,7 @@ func restoreModeHome(t *testing.T, exec cmd2.Executor, instancesJSON string) (*h
 	m.wsCtx = &config.WorkspaceContext{ConfigDir: dir}
 	m.program = "true"
 	m.errBox.SetSize(400, 1)
-	return m, statePath
+	return wirePanes(t, m), statePath
 }
 
 func corruptWorkspaces(t *testing.T, names ...string) []config.Workspace {
@@ -492,7 +492,7 @@ func TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces(t *testing.T) {
 			assert.Empty(t, rec.args, "no reload: no reconcile, orphan discovery or hooks sweep")
 			if live != nil {
 				assert.Contains(t, m.list.GetInstances(), live)
-				assert.True(t, live.Pane().PtmxAlive(), "the same instance stays attached")
+				assert.Same(t, clientOf(t, live), m.panes.Get(live.Pane().TmuxSessionName()), "the same client stays attached")
 			}
 			require.NoError(t, m.checkSlotInvariant())
 		})

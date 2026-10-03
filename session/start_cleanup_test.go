@@ -33,7 +33,7 @@ func newStartFixture(t *testing.T, title string) (inst *Instance, repoDir, branc
 	require.NoError(t, err)
 	inst.SetBranchPrefix("loom-test/")
 	srv := &fakeTmuxServer{failStart: true}
-	inst.setTmuxSession(tmux.NewTmuxSessionWithDeps(title, "claude", srv, srv.runner()))
+	inst.setTmuxSession(tmux.NewSessionWithDeps(title, "claude", srv, srv.runner()))
 	return inst, repoDir, "loom-test/" + title
 }
 

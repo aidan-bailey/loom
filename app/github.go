@@ -130,21 +130,28 @@ func (m *home) allInstances() []*session.Instance {
 // activeInstances returns the loaded instances the background jobs may
 // touch: started and not paused. Recoverable placeholders are ephemeral
 // orphan-review rows: they report Started() (so recover/discard can reach
-// their handles) but must never be driven by a background job, since
-// RepairPtmx would attach a PTY and TransitionTo(Running) would promote a
-// never-confirmed orphan past the explicit recover flow. Loading rows are
-// likewise owned by an in-flight Start/Resume/Recover: probing them
-// mid-setup reads a dead tmux session and force-flips them to Paused
-// under the op. Deleting rows are being torn down.
+// their handles) but must never be driven by a background job, since the
+// tick's repair would attach a pane client and TransitionTo(Running) would
+// promote a never-confirmed orphan past the explicit recover flow. Loading
+// rows are likewise owned by an in-flight Start/Resume/Recover: probing
+// them mid-setup reads a dead tmux session and force-flips them to Paused
+// under the op. Deleting rows are being torn down. The same set is what
+// keeps a pane client (livePaneNames).
 func (m *home) activeInstances() []*session.Instance {
 	var active []*session.Instance
 	for _, inst := range m.allInstances() {
-		st := inst.GetStatus()
-		if inst.Started() && !inst.Paused() && st != session.Deleting && st != session.Recoverable && st != session.Loading {
+		if activeInstance(inst) {
 			active = append(active, inst)
 		}
 	}
 	return active
+}
+
+// activeInstance reports whether the background jobs may touch inst (see
+// activeInstances).
+func activeInstance(inst *session.Instance) bool {
+	st := inst.GetStatus()
+	return inst.Started() && !inst.Paused() && st != session.Deleting && st != session.Recoverable && st != session.Loading
 }
 
 // linkedIssues lists the non-zero issue numbers of instances in repo.

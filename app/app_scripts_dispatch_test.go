@@ -62,7 +62,7 @@ func addReadyInstance(t *testing.T, h *home) *session.Instance {
 		RunFunc:    func(*exec.Cmd) error { return nil },
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
-	ts := tmux.NewTmuxSessionWithDeps("a", "true", fakePtyFactory{t: t}, cmdExec)
+	ts := tmux.NewSessionWithDeps("a", "true", fakePtyFactory{t: t}, cmdExec)
 	inst.SetTmuxSession(ts)
 	return inst
 }

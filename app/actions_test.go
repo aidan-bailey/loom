@@ -46,7 +46,7 @@ func newTestHome(t *testing.T) *home {
 	}
 	h.scripts = script.NewEngine(buildReservedKeys())
 	h.scripts.LoadDefaults()
-	return h
+	return wirePanes(t, h)
 }
 
 // TestSelectedNotBusyNotWorkspaceGuardsLifecycle exercises the shared

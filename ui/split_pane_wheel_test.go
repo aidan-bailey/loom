@@ -58,6 +58,7 @@ func TestSplitPane_WheelScrollRerendersAgentImmediately(t *testing.T) {
 	defer setup.cleanupFn()
 
 	sp := NewSplitPane(NewPreviewPane(), NewDiffPane(), NewTerminalPane())
+	sp.SetPanes(setup.panes)
 	sp.SetSize(120, 40)
 	sp.SetInstance(setup.instance)
 	require.NoError(t, sp.UpdateAgent(setup.instance))

@@ -213,7 +213,7 @@ func TestResume_InPlaceUndroppableRedundantStashIsANotice(t *testing.T) {
 func newStartFixtureOn(t *testing.T, title string, srv *fakeTmuxServer) (inst *Instance, repoDir, branch string) {
 	t.Helper()
 	inst, repoDir, branch = newStartFixture(t, title)
-	inst.setTmuxSession(tmux.NewTmuxSessionWithDeps(title, "claude", srv, srv.runner()))
+	inst.setTmuxSession(tmux.NewSessionWithDeps(title, "claude", srv, srv.runner()))
 	return inst, repoDir, branch
 }
 
@@ -241,12 +241,12 @@ func TestStart_UnconfirmedDeathKeepsTheWorktree(t *testing.T) {
 	assert.Contains(t, err.Error(), gw.GetWorktreePath())
 }
 
-// TestStart_LiveSessionAfterFailedAttachKeepsTheWorktree: the session came
-// up but the attach failed, and so did the cleanup kill. The agent is
-// running; its tree stays.
-func TestStart_LiveSessionAfterFailedAttachKeepsTheWorktree(t *testing.T) {
-	srv := &fakeTmuxServer{failAttach: true, failKill: true}
-	inst, repoDir, branch := newStartFixtureOn(t, "attachfail", srv)
+// TestStart_LiveSessionAfterFailedLaunchKeepsTheWorktree: the session came
+// up but its launch reported failure (new-session killed at its deadline,
+// say), and so did the cleanup kill. The agent is running; its tree stays.
+func TestStart_LiveSessionAfterFailedLaunchKeepsTheWorktree(t *testing.T) {
+	srv := &fakeTmuxServer{failLaunch: true, failKill: true}
+	inst, repoDir, branch := newStartFixtureOn(t, "launchfail", srv)
 
 	err := inst.Start(true)
 

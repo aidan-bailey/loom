@@ -10,6 +10,7 @@ import (
 	"github.com/aidan-bailey/loom/ui"
 	"slices"
 	"strings"
+	"sync"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -72,8 +73,8 @@ func applySessionConfig(cfg *config.Config, cfgDir string) {
 // that want to show one focus it with loadSlot.
 //
 // Focusing the first tab drops the classic slot; the returned Cmd
-// releases its instances' preview attach clients (releaseSlotCmd) and is
-// nil otherwise. Callers must return it (or, before the program runs,
+// releases its pane clients (releaseSlotCmd, prunePanes) and is nil
+// otherwise. Callers must return it (or, before the program runs,
 // run it).
 func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 	wsCtx := config.WorkspaceContextFor(&ws)
@@ -205,6 +206,7 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitPane.Terminal()),
 		recovery:  recovery,
 	})
+	m.ensureSlotPanes(m.slots[len(m.slots)-1])
 	// Opened at last: no longer a restore failure to retry.
 	m.restoreFailed = slices.DeleteFunc(m.restoreFailed, func(n string) bool { return n == ws.Name })
 	var release tea.Cmd
@@ -215,7 +217,7 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 		// the slot is then dropped, so its attach clients go too.
 		classic := m.workspaceSlot
 		m.loadSlot(0)
-		release = releaseSlotCmd(classic)
+		release = tea.Batch(releaseSlotCmd(classic), m.prunePanes())
 	}
 	// Force the next health tick to poll: a newly opened workspace's repo
 	// wasn't in openRepoPaths() until just now, and without this the
@@ -236,9 +238,9 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 // leaving no tab means leaving workspace mode, and only enterGlobalMode
 // builds the slot that must take focus then.
 //
-// The returned Cmd releases the closed slot's preview attach clients
-// (releaseSlotCmd; nil when none is attached) and must be returned to
-// the runtime.
+// The returned Cmd releases the closed slot's pane clients
+// (releaseSlotCmd, prunePanes; nil when none is attached) and must be
+// returned to the runtime.
 func (m *home) deactivateWorkspace(name string) (tea.Cmd, error) {
 	idx := slices.IndexFunc(m.slots, func(s *workspaceSlot) bool { return s.wsCtx.Name == name })
 	if idx == -1 {
@@ -264,29 +266,19 @@ func (m *home) deactivateWorkspace(name string) (tea.Cmd, error) {
 	case idx < m.focusedSlot:
 		m.focusedSlot--
 	}
-	return releaseSlotCmd(slot), nil
+	return tea.Batch(releaseSlotCmd(slot), m.prunePanes()), nil
 }
 
 // releaseSlotCmd returns a Cmd that releases the attach clients a dropped
-// slot holds: its instances' preview clients (releaseInstancesCmd) and the
-// ones its terminal pane keeps on each loom_term_* shell it has shown (the
-// shells keep running). Every site that drops a slot from the model
-// returns it: activateWorkspace (the classic slot), deactivateWorkspace
-// (the closed tab) and enterGlobalMode (every tab, or a classic workspace
-// slot — except for the panes it carries into the new global slot, whose
-// terminals stay in use). nil when nothing is attached.
+// slot's terminal pane holds on each loom_term_* shell it has shown (the
+// shells keep running). The agent panes' clients belong to the registry,
+// which every drop site prunes (prunePanes). Returns nil when nothing is
+// attached.
 func releaseSlotCmd(slot *workspaceSlot) tea.Cmd {
-	if slot == nil {
+	if slot == nil || slot.splitPane == nil {
 		return nil
 	}
-	var cmds []tea.Cmd
-	if slot.list != nil {
-		cmds = append(cmds, releaseInstancesCmd(slot.list.GetInstances()))
-	}
-	if slot.splitPane != nil {
-		cmds = append(cmds, releaseClientsCmd(attachedClients(slot.splitPane.Terminal().DetachAll())))
-	}
-	return tea.Batch(cmds...)
+	return releaseClientsCmd(attachedClients(slot.splitPane.Terminal().DetachAll()))
 }
 
 // attachedClients keeps the sessions whose attach client is open.
@@ -300,40 +292,6 @@ func attachedClients(sessions []*tmux.TmuxSession) []attachedClient {
 	return out
 }
 
-// releaseInstancesCmd returns a Cmd that closes loom's preview attach
-// client — PTY, output pump and emulator — for each started, non-paused
-// instance in insts that has one, leaving the tmux sessions running. The
-// instances are being dropped from the model, and must not keep theirs:
-// reloading the same workspace attaches a second client to each live
-// session (LoadAndReconcile → EnsureRunning), and the stale one keeps
-// pumping output, emitting pane events and fighting over the window
-// size. nil when nothing is attached.
-//
-// The instances are snapshotted here, on the Update goroutine. By the
-// time the Cmd runs they must be unreachable from the model — the drop
-// sites' callers repoint the panes and menu with instanceChanged before
-// returning — and a health-probe result still in flight for one is
-// dropped by applyLiveness, so nothing re-attaches them (RepairPtmx)
-// afterwards. The release runs in the Cmd, off Update:
-// PausePreview waits — up to the pump-exit timeout, per session — for the
-// output pump to exit, and the pump delivers pane events through
-// tea.Program.Send, which blocks until Update returns. PausePreview is
-// serialized by the session's stateMu against a concurrent kill/pause.
-// The terminal pane's own loom_term_* sessions belong to the pane, not
-// the instance, and are left alone.
-func releaseInstancesCmd(insts []*session.Instance) tea.Cmd {
-	var release []attachedClient
-	for _, inst := range insts {
-		if !inst.Started() || inst.Paused() {
-			continue
-		}
-		if ts := inst.TmuxSession(); ts != nil && ts.PtmxAlive() {
-			release = append(release, attachedClient{name: inst.Title, ts: ts})
-		}
-	}
-	return releaseClientsCmd(release)
-}
-
 // attachedClient is a tmux session whose attach client a release closes;
 // name labels it in logs.
 type attachedClient struct {
@@ -341,19 +299,35 @@ type attachedClient struct {
 	ts   *tmux.TmuxSession
 }
 
-// releaseClientsCmd returns a Cmd that closes each client's attach PTY
-// (PausePreview) off the Update goroutine — see releaseInstancesCmd for
-// why it must — or nil when there are none.
+// releaseClientsCmd returns a Cmd that closes each client's attach PTY —
+// PTY, output pump and emulator — leaving the tmux sessions running, or
+// nil when there are none. The clients must already be unreachable from
+// the model (dropped from the registry, or detached from a terminal pane),
+// so nothing re-attaches them afterwards.
+//
+// The close runs in the Cmd, off the Update goroutine: PausePreview waits
+// — up to the pump-exit timeout, per session — for the output pump to
+// exit, and the pump delivers pane events through tea.Program.Send, which
+// blocks until Update returns. The clients close concurrently, so N
+// clients of live sessions cost about one pump-exit timeout rather than
+// N. PausePreview is serialized by each client's stateMu against a
+// concurrent kill or pause.
 func releaseClientsCmd(clients []attachedClient) tea.Cmd {
 	if len(clients) == 0 {
 		return nil
 	}
 	return func() tea.Msg {
+		var wg sync.WaitGroup
 		for _, c := range clients {
-			if err := c.ts.PausePreview(); err != nil {
-				log.For("app").Warn("slot_release.preview_close_failed", "session", c.name, "err", err)
-			}
+			wg.Add(1)
+			go func(c attachedClient) {
+				defer wg.Done()
+				if err := c.ts.PausePreview(); err != nil {
+					log.For("app").Warn("slot_release.preview_close_failed", "session", c.name, "err", err)
+				}
+			}(c)
 		}
+		wg.Wait()
 		return nil
 	}
 }
@@ -774,11 +748,10 @@ func (m *home) enterGlobalMode() tea.Cmd {
 
 	// Point the carried-over panes and the menu at the global selection,
 	// so none of them keeps a dropped instance, then release the drops.
-	cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged(), staleTerminals}
+	cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged(), staleTerminals, m.prunePanes()}
 	for _, slot := range dropped {
 		if slot == carried {
-			cmds = append(cmds, releaseInstancesCmd(slot.list.GetInstances()))
-			continue
+			continue // its panes live on; prunePanes closes its agents' clients
 		}
 		cmds = append(cmds, releaseSlotCmd(slot))
 	}

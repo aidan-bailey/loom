@@ -22,6 +22,7 @@ type testSetup struct {
 	workdir     string
 	instance    *session.Instance
 	sessionName string
+	panes       *PaneClients
 	cleanupFn   func()
 }
 
@@ -67,15 +68,21 @@ func setupTestEnvironment(t *testing.T, cmdExec cmd_test.MockCmdExec) *testSetup
 	}
 
 	// Set up tmux session with mocks
-	tmuxSession := tmux.NewTmuxSessionWithDeps(sessionName, "bash", ptyFactory, cmdExec)
-	instance.SetTmuxSession(tmuxSession)
+	instance.SetTmuxSession(tmux.NewSessionWithDeps(sessionName, "bash", ptyFactory, cmdExec))
 
 	// Start the tmux session
 	err = instance.Start(true)
 	require.NoError(t, err)
 
+	// The TUI's attach client, by name, as the app's ensurePane builds it.
+	panes := NewPaneClients()
+	client := tmux.NewAttachClientWithDeps(tmux.ToLoomTmuxName(sessionName), "bash", ptyFactory, cmdExec)
+	require.NoError(t, client.Restore())
+	panes.InjectForTest(client.SessionName(), client)
+
 	// Create cleanup function
 	cleanupFn := func() {
+		_ = client.PausePreview()
 		if instance != nil {
 			_ = instance.Kill() // Ignore errors during cleanup
 		}
@@ -86,6 +93,7 @@ func setupTestEnvironment(t *testing.T, cmdExec cmd_test.MockCmdExec) *testSetup
 		workdir:     workdir,
 		instance:    instance,
 		sessionName: sessionName,
+		panes:       panes,
 		cleanupFn:   cleanupFn,
 	}
 }
@@ -202,6 +210,7 @@ func TestPreviewContentWithoutScrolling(t *testing.T) {
 
 	// Create the preview pane
 	previewPane := NewPreviewPane()
+	previewPane.SetPanes(setup.panes)
 	previewPane.SetSize(80, 30) // Set reasonable size for testing
 
 	// Update the preview content (this should display the content without scrolling)
@@ -269,6 +278,7 @@ func TestPreviewPane_ScrollsIntoHistory(t *testing.T) {
 	defer setup.cleanupFn()
 
 	p := NewPreviewPane()
+	p.SetPanes(setup.panes)
 	p.SetSize(80, 24)
 
 	// Live tail: shows the newest lines.
@@ -327,13 +337,14 @@ func TestPreviewPane_TUIAgentForwardsWheel(t *testing.T) {
 	defer setup.cleanupFn()
 
 	p := NewPreviewPane()
+	p.SetPanes(setup.panes)
 	p.SetSize(80, 24)
 	require.NoError(t, p.UpdateContent(setup.instance)) // live tail
 
 	require.NoError(t, p.ScrollUp(setup.instance))
 	require.NoError(t, p.PageUp(setup.instance))
 
-	require.True(t, setup.instance.Pane().IsAlternateScreen(), "alt-screen TUI agent must be detected")
+	require.True(t, setup.panes.For(setup.instance).IsAlternateScreen(), "alt-screen TUI agent must be detected")
 	require.False(t, p.IsScrolling(), "TUI agent: Loom stays at the live tail, no offset window")
 	require.Equal(t, 0, p.snapFallback.offset, "offset model must not be engaged for a TUI agent")
 }

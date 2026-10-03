@@ -68,57 +68,6 @@ func TestSanitizeName(t *testing.T) {
 	require.Equal(t, TmuxPrefix+"asdf__asdf", session.sanitizedName)
 }
 
-// TestWithProgram verifies the replacement session keeps the identity,
-// dependencies, env and geometry of the original and swaps only the
-// program and the adapter resolved from it.
-func TestWithProgram(t *testing.T) {
-	ptyFactory := NewMockPtyFactory(t)
-	cmdExec := cmd_test.MockCmdExec{}
-	old := NewTmuxSessionWithDeps("with program", "aider", ptyFactory, cmdExec, "A=1")
-	// No PTY yet, so the resize itself errors; the geometry is recorded.
-	_ = old.SetDetachedSize(120, 40)
-
-	got := old.WithProgram("claude --settings '/h/settings.json'")
-
-	require.NotSame(t, old, got)
-	require.Equal(t, old.sanitizedName, got.sanitizedName)
-	require.Equal(t, "claude --settings '/h/settings.json'", got.program)
-	require.Equal(t, "claude", got.adapter.Name())
-	require.Equal(t, "aider", old.adapter.Name(), "the original is untouched")
-	require.Equal(t, []string{"A=1"}, got.env)
-	require.Same(t, ptyFactory, got.ptyFactory.(*MockPtyFactory))
-	require.Equal(t, cmdExec, got.cmdExec)
-	require.NotNil(t, got.monitor)
-	require.Equal(t, 120, got.lastCols)
-	require.Equal(t, 40, got.lastRows)
-}
-
-// TestWithProgramEnv verifies the replacement session keeps the identity,
-// dependencies and geometry of the original but takes the given env
-// instead of carrying over the original's — Instance.Restart uses this
-// because a relaunch resolves the account's CLAUDE_CONFIG_DIR fresh, and
-// it may have changed since the original session was built.
-func TestWithProgramEnv(t *testing.T) {
-	ptyFactory := NewMockPtyFactory(t)
-	cmdExec := cmd_test.MockCmdExec{}
-	old := NewTmuxSessionWithDeps("with program env", "aider", ptyFactory, cmdExec, "A=1")
-	_ = old.SetDetachedSize(120, 40)
-
-	got := old.WithProgramEnv("claude --model opus", []string{"CLAUDE_CONFIG_DIR=/acct/max-2"})
-
-	require.NotSame(t, old, got)
-	require.Equal(t, old.sanitizedName, got.sanitizedName)
-	require.Equal(t, "claude --model opus", got.program)
-	require.Equal(t, "claude", got.adapter.Name())
-	require.Equal(t, []string{"A=1"}, old.env, "the original is untouched")
-	require.Equal(t, []string{"CLAUDE_CONFIG_DIR=/acct/max-2"}, got.env)
-	require.Same(t, ptyFactory, got.ptyFactory.(*MockPtyFactory))
-	require.Equal(t, cmdExec, got.cmdExec)
-	require.NotNil(t, got.monitor)
-	require.Equal(t, 120, got.lastCols)
-	require.Equal(t, 40, got.lastRows)
-}
-
 // TestEnv_ReturnsACloneNotTheInternalSlice pins that a caller mutating the
 // slice Env() returns cannot corrupt the session's own env — Env() is
 // documented read-only, and returning the internal slice directly would
@@ -273,7 +222,7 @@ func TestPtmxAliveReflectsFailedReattach(t *testing.T) {
 	require.Error(t, session.Restore(), "Restore should surface the ptyFactory failure")
 	require.False(t, session.PtmxAlive(), "ptmx must read dead after a failed reattach")
 
-	// A later, successful Restore (what RepairPtmx calls) must recover it.
+	// A later, successful Restore (what the TUI's repair calls) must recover it.
 	factory.fail = false
 	require.NoError(t, session.Restore())
 	require.True(t, session.PtmxAlive())
