@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +148,16 @@ type MockPtyFactory struct {
 }
 
 func (pt *MockPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
+	if slices.Contains(cmd.Args, "attach-session") {
+		// An attach client's PTY stays open until its session ends; a
+		// regular file reads EOF at once, which the client takes for a
+		// session that died.
+		attach, _ := testpty.Pair(pt.t)
+		pt.cmds = append(pt.cmds, cmd)
+		pt.files = append(pt.files, attach)
+		_ = pt.cmdExec.Run(cmd)
+		return attach, nil
+	}
 	filePath := filepath.Join(pt.t.TempDir(), fmt.Sprintf("pty-%s-%d", pt.t.Name(), len(pt.cmds)))
 	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err == nil {

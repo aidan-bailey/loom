@@ -7,6 +7,7 @@ import (
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -16,17 +17,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakePtyFactory is a no-op PtyFactory: Start returns a /dev/null
-// handle so callers can Close it safely; Close is a no-op. Attached
-// to the mock tmux session so nothing touches a real pseudo-terminal.
+// fakePtyFactory is a no-op PtyFactory: Start returns one end of a
+// testpty pair, which stays open (an attach client stays attached) until
+// the test ends; Close is a no-op. Attached to the mock tmux session so
+// nothing touches a real pseudo-terminal.
 type fakePtyFactory struct{ t *testing.T }
 
 func (f fakePtyFactory) Start(*exec.Cmd) (*os.File, error) {
-	h, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-	if err != nil {
-		f.t.Fatalf("fakePtyFactory: /dev/null: %v", err)
-	}
-	return h, nil
+	attach, _ := testpty.Pair(f.t)
+	return attach, nil
 }
 
 func (f fakePtyFactory) Close() {}

@@ -3,10 +3,16 @@ package app
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -178,4 +184,126 @@ end)
 	drainCmd(release)
 	assert.False(t, old.PtmxAlive())
 	assert.Same(t, fresh, m.panes.Get(name))
+}
+
+// peerPty is fakePtyFactory keeping each attach's peer: closing one ends
+// that client's session, and writing to it is the session's output.
+type peerPty struct {
+	t     *testing.T
+	mu    *sync.Mutex
+	peers *[]*os.File
+}
+
+func (f peerPty) Start(*exec.Cmd) (*os.File, error) {
+	attach, peer := testpty.Pair(f.t)
+	f.mu.Lock()
+	*f.peers = append(*f.peers, peer)
+	f.mu.Unlock()
+	return attach, nil
+}
+
+func (peerPty) Close() {}
+
+// relaunchedUnderItsName builds an active instance whose registered client
+// was watching a session that has ended (its pump read EOF) while a new
+// session runs under the same name, as when activateWorkspace kills and
+// recreates a workspace terminal another slot's client still watches.
+// peer(i) is the i-th attach's peer: 0 the dead session's, 1 the next.
+func relaunchedUnderItsName(t *testing.T, title string) (inst *session.Instance, peer func(i int) *os.File) {
+	t.Helper()
+	inst, err := session.FromInstanceData(session.InstanceData{
+		Title: title, Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true,
+	}, t.TempDir())
+	require.NoError(t, err)
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
+	require.NoError(t, inst.TransitionTo(session.Running))
+	var mu sync.Mutex
+	var peers []*os.File
+	peer = func(i int) *os.File {
+		mu.Lock()
+		defer mu.Unlock()
+		if i >= len(peers) {
+			return nil
+		}
+		return peers[i]
+	}
+	old := attachTestClient(t, inst, peerPty{t: t, mu: &mu, peers: &peers}, aliveCmdExecForTest())
+	require.True(t, old.HasEmulator(), "fixture: the pane renders from the emulator")
+	require.NoError(t, peer(0).Close()) // the session ends; the mock tmux reports one of its name running
+	require.Eventually(t, func() bool { return !old.Attached() }, 2*time.Second, 5*time.Millisecond,
+		"fixture: the client's pump read EOF")
+	require.True(t, old.PtmxAlive(), "fixture: its PTY handle is still open")
+	return inst, peer
+}
+
+// requireShowsNewSession checks that inst's pane is attached to the
+// relaunched session: a second PTY was opened for it, and what that
+// session prints reaches the pane.
+func requireShowsNewSession(t *testing.T, m *home, inst *session.Instance, peer func(i int) *os.File) {
+	t.Helper()
+	assert.True(t, m.panes.Alive(inst.Pane().TmuxSessionName()))
+	next := peer(1)
+	require.NotNil(t, next, "no new attach to the relaunched session")
+	_, err := next.WriteString("relaunched session\r\n")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		screen, _ := m.panes.For(inst).EmulatorScreen()
+		return strings.Contains(screen, "relaunched session")
+	}, 2*time.Second, 5*time.Millisecond, "the new session's output must reach the pane")
+}
+
+// TestExitedClient_HealsOntoTheRelaunchedSession: a client whose pump hit
+// EOF still holds an open PTY. Read as alive, it was kept by every attach
+// and repair point while its pane showed "[exited]", and the session
+// relaunched under its name ran with no client at all. Each healing path
+// re-attaches it.
+func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
+	isolateTmux(t)
+
+	t.Run("ensurePane", func(t *testing.T) {
+		m := newTestHome(t)
+		inst, peer := relaunchedUnderItsName(t, "relaunched")
+		m.list.AddInstance(inst)
+
+		m.ensurePane(inst)
+
+		requireShowsNewSession(t, m, inst, peer)
+	})
+
+	t.Run("a workspace load", func(t *testing.T) {
+		m := newTestHome(t)
+		inst, peer := relaunchedUnderItsName(t, "relaunched")
+		m.list.AddInstance(inst)
+
+		m.ensureSlotPanes(m.workspaceSlot)
+
+		requireShowsNewSession(t, m, inst, peer)
+	})
+
+	t.Run("the Dead event", func(t *testing.T) {
+		m := newTestHome(t)
+		inst, peer := relaunchedUnderItsName(t, "relaunched")
+		m.list.AddInstance(inst)
+
+		_, cmd := m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
+		require.NotNil(t, cmd)
+		verified, ok := cmd().(deadVerifiedMsg)
+		require.True(t, ok)
+		require.Equal(t, tmux.LivenessAlive, verified.tmuxLive, "the relaunched session is alive")
+		_, _ = m.Update(verified)
+
+		assert.Equal(t, session.Running, inst.GetStatus())
+		requireShowsNewSession(t, m, inst, peer)
+	})
+
+	t.Run("the health tick", func(t *testing.T) {
+		m := newTestHome(t)
+		inst, peer := relaunchedUnderItsName(t, "relaunched")
+		m.list.AddInstance(inst)
+
+		active := m.activeInstances()
+		_, _ = m.Update(gatherMetadataCmd(active, nil, nil, nil, m.paneSnapshot(active))())
+
+		requireShowsNewSession(t, m, inst, peer)
+	})
 }

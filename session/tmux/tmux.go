@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -90,6 +91,14 @@ type TmuxSession struct {
 	// closed while the child tmux process owns the real tty (see PausePreview/
 	// ResumePreview). This should never be nil outside of those paused windows.
 	ptmx *os.File
+	// pumpExited is set by the output pump draining ptmx when its read loop
+	// ends with no stop requested: the session died, or its tmux client
+	// exited. It belongs to that one pump. startOutputPump installs a fresh
+	// one for each pump, and Restore, PausePreview and Close drop it with
+	// the ptmx, so an old pump that exits late (after waitPumpExit gave up
+	// on it) can never mark a newer attach dead. Guarded by stateMu like
+	// ptmx. See Attached.
+	pumpExited *atomic.Bool
 	// monitor monitors the tmux pane content and sends signals to the UI when it's status changes
 	monitor *statusMonitor
 
@@ -294,6 +303,7 @@ func (t *TmuxSession) Restore() error {
 	t.stateMu.Lock()
 	old := t.ptmx
 	t.ptmx = nil
+	t.pumpExited = nil
 	oldEmu := t.emu
 	t.emu = nil
 	cols, rows := t.lastCols, t.lastRows
@@ -368,15 +378,32 @@ func (t *TmuxSession) currentPtmx() *os.File {
 	return t.ptmx
 }
 
-// PtmxAlive reports whether a PTY is currently attached. This is distinct
+// PtmxAlive reports whether a PTY handle is currently open. This is distinct
 // from DoesSessionExist: the tmux session can be alive on the server while
 // this is false — e.g. Restore's reattach failed (attach-session errored
 // after the prior ptmx was already cleared) or a full-screen attach has
 // PausePreview'd this session and not yet resumed. Callers that want to
 // self-heal a dead-ptmx-but-alive-session instance should re-run Restore;
-// callers checking during a legitimate PausePreview window must not.
+// callers checking during a legitimate PausePreview window must not. It
+// stays true after the pump hit EOF, so it says only that there is a
+// handle to close; whether the client still reads its session is Attached.
 func (t *TmuxSession) PtmxAlive() bool {
 	return t.currentPtmx() != nil
+}
+
+// Attached reports whether this client is attached and still reading its
+// session: a PTY is open (PtmxAlive) and the output pump draining it has
+// not stopped on its own. A pump stops on its own when a read fails with
+// no stop requested, at EOF once the session or its tmux client is gone.
+// PtmxAlive still reads true then, and a client that went by it would
+// keep showing a dead session's last screen, even after a new session of
+// the same name has started. Whoever decides whether a client is usable
+// (the TUI's pane registry) asks this instead; Restore re-attaches a
+// client that is not.
+func (t *TmuxSession) Attached() bool {
+	t.stateMu.Lock()
+	defer t.stateMu.Unlock()
+	return t.ptmx != nil && (t.pumpExited == nil || !t.pumpExited.Load())
 }
 
 // processContentHash feeds the latest pane content to the monitor and reports
@@ -404,8 +431,12 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// Default the pump into the emulator so the visible screen stays current.
 	// nil emu (Windows / snapshot kill-switch) keeps the legacy io.Discard drain.
+	// This pump's own exit flag (see pumpExited), installed before the
+	// goroutine starts so it can never miss its pump's exit.
+	exited := new(atomic.Bool)
 	t.stateMu.Lock()
 	emu := t.emu
+	t.pumpExited = exited
 	t.stateMu.Unlock()
 	var dest io.Writer = io.Discard
 	var co *coalescer
@@ -449,16 +480,28 @@ func (t *TmuxSession) startOutputPump(ptmx *os.File) {
 				}
 			}
 			if err != nil {
+				// Dead only on a genuine EOF/read failure. Deliberate stops
+				// (Close/Restore/PausePreview) cancel ctx first via
+				// signalPumpStop, and must not look like a died session.
+				unrequested := ctx.Err() == nil
 				if co != nil {
 					co.stop()
-					// Dead only on a genuine EOF/read failure. Deliberate
-					// stops (Close/Restore/PausePreview) cancel ctx first via
-					// signalPumpStop, and must not look like a died session.
-					if ctx.Err() == nil {
+					if unrequested {
 						if f := currentNotifier().Dead; f != nil {
 							f(t.sanitizedName)
 						}
 					}
+				}
+				if unrequested {
+					// Marked last, once the Dead notification has been
+					// delivered: by the time Attached reads false this pump
+					// is about to close pumpDone, so a Restore on the
+					// Update goroutine (PaneClients.Ensure) finds it gone
+					// at once rather than waiting out pumpWaitTimeout on a
+					// pump still blocked in tea.Program.Send, which waits
+					// for that same Update. The snapshot path (no
+					// coalescer, no Dead event) is marked too.
+					exited.Store(true)
 				}
 				return
 			}
@@ -651,6 +694,7 @@ func (t *TmuxSession) PausePreview() error {
 	t.stateMu.Lock()
 	ptmx := t.ptmx
 	t.ptmx = nil
+	t.pumpExited = nil
 	emu := t.emu
 	t.emu = nil
 	t.stateMu.Unlock()
@@ -683,6 +727,7 @@ func (t *TmuxSession) Close() error {
 	t.stateMu.Lock()
 	ptmx := t.ptmx
 	t.ptmx = nil
+	t.pumpExited = nil
 	emu := t.emu
 	t.emu = nil
 	t.stateMu.Unlock()

@@ -359,8 +359,10 @@ func (m *home) maybeArmRatioSave() tea.Cmd {
 
 // deadVerifiedMsg carries the background has-session probe triggered by a
 // ptyDeadMsg. A dead attach PTY does not always mean a dead session (a
-// failed reattach leaves the session alive), so the probe distinguishes
-// pause-the-instance from repair-the-ptmx.
+// failed reattach leaves the session alive, and a session relaunched under
+// the same name leaves the old client's pump at EOF), so the probe
+// distinguishes pause-the-instance from repair-the-client. ptmxAlive is
+// ui.Pane.Attached.
 type deadVerifiedMsg struct {
 	instance  *session.Instance
 	tmuxLive  tmux.Liveness
@@ -369,7 +371,7 @@ type deadVerifiedMsg struct {
 
 func verifyDeadCmd(inst *session.Instance, pane ui.Pane) tea.Cmd {
 	return func() tea.Msg {
-		return deadVerifiedMsg{instance: inst, tmuxLive: inst.Pane().TmuxLiveness(), ptmxAlive: pane.PtmxAlive()}
+		return deadVerifiedMsg{instance: inst, tmuxLive: inst.Pane().TmuxLiveness(), ptmxAlive: pane.Attached()}
 	}
 }
 

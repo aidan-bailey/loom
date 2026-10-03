@@ -55,8 +55,10 @@ func rebuildAppStyles() {
 // metadataResult holds I/O results for one instance from the parallel
 // metadata tick. Written by goroutine; status updates applied on main thread.
 type metadataResult struct {
-	instance   *session.Instance
-	tmuxLive   tmux.Liveness
+	instance *session.Instance
+	tmuxLive tmux.Liveness
+	// ptmxAlive is whether the pane's client is attached (ui.Pane.Attached):
+	// its PTY is open and its pump still reads the session.
 	ptmxAlive  bool
 	updated    bool
 	hasPrompt  bool
@@ -2241,7 +2243,7 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 					return
 				}
 				pane := panes[instance]
-				r.ptmxAlive = pane.PtmxAlive()
+				r.ptmxAlive = pane.Attached()
 
 				// Event-mode instances get status from quiet events, so the
 				// subprocess scan only remains for the snapshot path. With
@@ -2277,7 +2279,9 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 
 // applyLiveness reacts to one instance's health-probe result: dead tmux →
 // pause (or restart a workspace terminal, with the existing circuit
-// breaker); live tmux but no open attach client → re-attach it. It returns
+// breaker); live tmux but no attached client (ui.Pane.Attached: none, a
+// closed PTY, or a pump that hit EOF on an earlier session of the same
+// name) → re-attach it. It returns
 // false when the instance was found dead (so callers can stop treating it
 // as running) or is no longer in any loaded slot, plus a Cmd closing a
 // client that a restart replaced. Must run on the Update goroutine.
@@ -2335,10 +2339,11 @@ func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptm
 	}
 	inst.ResetRestartFailures()
 	if !ptmxAlive && inst != m.attachingInstance {
-		// The session exists but its attach client is gone (e.g. a
-		// reattach failed after full-screen attach returned). Nothing
-		// else ever retries this, so self-heal here: the same shape as the
-		// workspace-terminal restart above, but at the client layer.
+		// The session exists but its attach client is not attached (a
+		// reattach failed after full-screen attach returned, or the
+		// client's pump hit EOF on a session that has since been
+		// relaunched under the same name). Self-heal here: the same shape
+		// as the workspace-terminal restart above, but at the client layer.
 		log.For("app").Warn("tick.ptmx_dead_repairing", "title", inst.Title)
 		m.ensurePane(inst)
 	}

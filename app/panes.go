@@ -21,9 +21,11 @@ import (
 //     auto-restart: the session was (re)launched or reattached, so any
 //     client from before was watching the session it replaced
 //     (replacePane);
-//   - the health tick's repair, when the session is alive but its client's
-//     PTY is gone, a full-screen attach returning, and a failed kill or
-//     pause reverting its instance to active (ensurePane).
+//   - the health tick's repair and the Dead event's, when the session is
+//     alive but its client is not attached (ui.Pane.Attached: no PTY, or a
+//     pump that hit EOF on an earlier session of the same name), a
+//     full-screen attach returning, and a failed kill or pause reverting
+//     its instance to active (ensurePane).
 //
 // Only an active instance (activeInstance) gets a client: a paused,
 // Recoverable, Loading or Deleting one has nothing to display, and an

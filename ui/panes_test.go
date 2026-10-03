@@ -7,30 +7,37 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// devNullPty is a tmux.PtyFactory whose PTYs are /dev/null: attaching runs
-// no tmux client, and the output pump hits EOF at once. starts records
-// each command it was asked to start.
-type devNullPty struct {
+// fakePty is a tmux.PtyFactory whose PTYs are testpty pairs: attaching
+// runs no tmux client, and a client stays attached until the test closes
+// its peer, as its session ending would. starts records each command it
+// was asked to start, and peers each attach's peer.
+type fakePty struct {
+	t      *testing.T
 	mu     *sync.Mutex
 	starts *[]string
+	peers  *[]*os.File
 }
 
-func (f devNullPty) Start(c *exec.Cmd) (*os.File, error) {
+func (f fakePty) Start(c *exec.Cmd) (*os.File, error) {
+	attach, peer := testpty.Pair(f.t)
 	f.mu.Lock()
 	*f.starts = append(*f.starts, strings.Join(c.Args, " "))
+	*f.peers = append(*f.peers, peer)
 	f.mu.Unlock()
-	return os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	return attach, nil
 }
 
-func (devNullPty) Close() {}
+func (fakePty) Close() {}
 
 // aliveRunner answers every tmux command with success and empty output.
 func aliveRunner() cmd_test.MockCmdExec {
@@ -41,20 +48,33 @@ func aliveRunner() cmd_test.MockCmdExec {
 }
 
 // newTestPaneClients returns a registry whose clients attach through
-// devNullPty, along with a func reporting the recorded PTY starts.
+// fakePty, along with a func reporting the recorded PTY starts.
 func newTestPaneClients(t *testing.T) (*PaneClients, func() []string) {
+	t.Helper()
+	p, starts, _ := newTestPaneClientsWithPeers(t)
+	return p, starts
+}
+
+// newTestPaneClientsWithPeers is newTestPaneClients plus a func returning
+// the i-th attach's peer, whose Close ends that client's session.
+func newTestPaneClientsWithPeers(t *testing.T) (*PaneClients, func() []string, func(i int) *os.File) {
 	t.Helper()
 	var mu sync.Mutex
 	var starts []string
+	var peers []*os.File
 	p := NewPaneClients()
 	p.SetClientFactoryForTest(func(name, program string) *tmux.TmuxSession {
-		return tmux.NewAttachClientWithDeps(name, program, devNullPty{mu: &mu, starts: &starts}, aliveRunner())
+		return tmux.NewAttachClientWithDeps(name, program, fakePty{t: t, mu: &mu, starts: &starts, peers: &peers}, aliveRunner())
 	})
 	return p, func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]string(nil), starts...)
-	}
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), starts...)
+		}, func(i int) *os.File {
+			mu.Lock()
+			defer mu.Unlock()
+			return peers[i]
+		}
 }
 
 // runningInstance is a started, Running instance (no tmux contacted).
@@ -106,6 +126,28 @@ func TestPaneClients_EnsureReattachesAPausedClient(t *testing.T) {
 
 	assert.Same(t, c, p.Get("loom_a"), "the same client, re-attached")
 	assert.True(t, c.PtmxAlive())
+	assert.Len(t, starts(), 2)
+}
+
+// TestPaneClients_EnsureReattachesAnExitedClient: a client whose pump hit
+// EOF when its session ended still holds an open PTY, but it shows the
+// dead session forever. Ensure re-attaches it, the same object, as it does
+// a client paused for a full-screen attach: a new session of the same
+// name may be running.
+func TestPaneClients_EnsureReattachesAnExitedClient(t *testing.T) {
+	p, starts, peer := newTestPaneClientsWithPeers(t)
+	require.NoError(t, p.Ensure("loom_a", "claude"))
+	c := p.Get("loom_a")
+	t.Cleanup(func() { _ = c.PausePreview() })
+
+	require.NoError(t, peer(0).Close()) // the session ends
+	require.Eventually(t, func() bool { return !p.Alive("loom_a") }, 2*time.Second, 5*time.Millisecond)
+	require.True(t, c.PtmxAlive(), "precondition: its PTY handle is still open")
+
+	require.NoError(t, p.Ensure("loom_a", "claude"))
+
+	assert.Same(t, c, p.Get("loom_a"), "the same client, re-attached")
+	assert.True(t, p.Alive("loom_a"))
 	assert.Len(t, starts(), 2)
 }
 
@@ -176,7 +218,7 @@ func TestPane_ZeroValueIsInert(t *testing.T) {
 	_, ok = pane.PaneTitle()
 	assert.False(t, ok)
 	assert.False(t, pane.HasEmulator())
-	assert.False(t, pane.PtmxAlive())
+	assert.False(t, pane.Attached())
 	assert.NoError(t, pane.SetPreviewSize(80, 24))
 	assert.Error(t, pane.SendKeysRaw([]byte("x")), "dropping keys silently would hide a dead inline attach")
 	assert.NoError(t, pane.Paste("x"))
@@ -192,10 +234,10 @@ func TestPane_ZeroValueIsInert(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// failFirstPty is a devNullPty whose first Start fails, as an attach to a
+// failFirstPty is a fakePty whose first Start fails, as an attach to a
 // session tmux has not finished creating can.
 type failFirstPty struct {
-	devNullPty
+	fakePty
 	failed *bool
 }
 
@@ -207,16 +249,17 @@ func (f failFirstPty) Start(c *exec.Cmd) (*os.File, error) {
 	if first {
 		return nil, errors.New("attach failed")
 	}
-	return f.devNullPty.Start(c)
+	return f.fakePty.Start(c)
 }
 
 func TestPaneClients_FailedAttachStaysRegisteredAndRetries(t *testing.T) {
 	var mu sync.Mutex
 	var starts []string
+	var peers []*os.File
 	failed := false
 	p := NewPaneClients()
 	p.SetClientFactoryForTest(func(name, program string) *tmux.TmuxSession {
-		return tmux.NewAttachClientWithDeps(name, program, failFirstPty{devNullPty{mu: &mu, starts: &starts}, &failed}, aliveRunner())
+		return tmux.NewAttachClientWithDeps(name, program, failFirstPty{fakePty{t: t, mu: &mu, starts: &starts, peers: &peers}, &failed}, aliveRunner())
 	})
 
 	require.Error(t, p.Ensure("loom_a", "claude"))
@@ -267,7 +310,7 @@ func TestPaneClients_ConcurrentReadsDuringEnsureAndRetain(t *testing.T) {
 					return
 				default:
 				}
-				_ = p.For(inst).PtmxAlive()
+				_ = p.For(inst).Attached()
 				_ = p.Get(name)
 				_ = p.Alive(name)
 			}

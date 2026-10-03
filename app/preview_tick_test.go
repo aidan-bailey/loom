@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 
@@ -17,20 +18,18 @@ import (
 
 // runningPtyFactory is a PtyFactory that runs the spawned command through the
 // mock cmdExec (so `tmux new-session` flips the mock's sessionCreated flag),
-// then hands back a /dev/null handle. Without running the command the post-create
-// has-session poll never succeeds and Start times out.
+// then hands back one end of a testpty pair, which stays open (an attach
+// client stays attached) until the test ends. Without running the command
+// the post-create has-session poll never succeeds and Start times out.
 type runningPtyFactory struct {
 	t       *testing.T
 	cmdExec cmd_test.MockCmdExec
 }
 
 func (f runningPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
-	h, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-	if err != nil {
-		f.t.Fatalf("runningPtyFactory: /dev/null: %v", err)
-	}
+	attach, _ := testpty.Pair(f.t)
 	_ = f.cmdExec.Run(cmd)
-	return h, nil
+	return attach, nil
 }
 
 func (f runningPtyFactory) Close() {}

@@ -72,10 +72,11 @@ func (p *PaneClients) Get(sessionName string) *tmux.TmuxSession {
 	return p.clients[sessionName]
 }
 
-// Alive reports whether sessionName has a client with an open PTY.
+// Alive reports whether sessionName has an attached client: its PTY is
+// open and its pump still reads the session (tmux.TmuxSession.Attached).
 func (p *PaneClients) Alive(sessionName string) bool {
 	c := p.Get(sessionName)
-	return c != nil && c.PtmxAlive()
+	return c != nil && c.Attached()
 }
 
 // For returns inst's pane: its session's client here, when inst is started
@@ -98,12 +99,15 @@ func (p *PaneClients) SetDefaultSize(cols, rows int) {
 }
 
 // Ensure gives sessionName a client attached at the default size. If the
-// session has no client, Ensure builds and attaches one. If its client's
-// PTY is gone (a failed attach, or one paused for a full-screen attach),
-// Ensure re-attaches it. A client with an open PTY is left alone. program
-// selects a new client's agent adapter for its status scan. The client
-// stays registered even when attaching fails, so a later Ensure retries
-// it. Update goroutine only.
+// session has no client, Ensure builds and attaches one. If its client is
+// not attached (a failed attach, one paused for a full-screen attach, or
+// one whose pump hit EOF when its session ended, even if a new session of
+// the same name runs now), Ensure re-attaches it, the same object. Its
+// Restore never waits on a live pump: a client whose PTY is gone has no
+// pump left, and an exited pump marks itself only as it returns. An
+// attached client is left alone. program selects a new client's agent
+// adapter for its status scan. The client stays registered even when
+// attaching fails, so a later Ensure retries it. Update goroutine only.
 func (p *PaneClients) Ensure(sessionName, program string) error {
 	if p == nil || sessionName == "" {
 		return nil
@@ -116,13 +120,13 @@ func (p *PaneClients) Ensure(sessionName, program string) error {
 	}
 	cols, rows := p.cols, p.rows
 	p.mu.Unlock()
-	if c.PtmxAlive() {
+	if c.Attached() {
 		return nil
 	}
 	sized := cols > 0 && rows > 0
 	if sized {
-		// No PTY yet, so this only records the geometry Restore builds the
-		// emulator at. Its "PTY is not available" error is expected.
+		// No PTY (or a dead one), so this only records the geometry
+		// Restore builds the emulator at. Its error is expected.
 		_ = c.SetDetachedSize(cols, rows)
 	}
 	if err := c.Restore(); err != nil {
@@ -246,8 +250,10 @@ func (p Pane) PaneTitle() (string, bool) {
 // emulator, the event-driven path.
 func (p Pane) HasEmulator() bool { return p.c != nil && p.c.HasEmulator() }
 
-// PtmxAlive reports whether the pane's client has an open PTY.
-func (p Pane) PtmxAlive() bool { return p.c != nil && p.c.PtmxAlive() }
+// Attached reports whether the pane's client is attached: its PTY is open
+// and its pump still reads the session (tmux.TmuxSession.Attached). The
+// health tick and the Dead path repair a live session's pane that is not.
+func (p Pane) Attached() bool { return p.c != nil && p.c.Attached() }
 
 // SetPreviewSize resizes the pane's client, and with it the session's
 // window. Without a client it does nothing; Ensure attaches at the default
