@@ -1,7 +1,13 @@
 # Supervised Workspaces
 
 **Date:** 2026-10-02
-**Status:** Approved design, brainstormed with the user one section at a time.
+**Status:** Superseded on 2026-10-03 by
+[2026-10-03-scrum-workspaces-design.md](2026-10-03-scrum-workspaces-design.md),
+which keeps this spec's work log, launch mechanics, protocol discipline and
+probe results, and replaces the single supervisor with a Product Owner and
+a Scrum Master on top of the loom daemon
+([2026-10-03-loom-daemon-design.md](2026-10-03-loom-daemon-design.md)).
+Kept for its Problem section and probes. Was: approved design, brainstormed with the user one section at a time.
 Supervision became a workspace mode at the end of the session. Revised the
 same day after a review against the code. Coordination state moved from
 hook events and `state.json` into a per-workspace work log. Proposals now

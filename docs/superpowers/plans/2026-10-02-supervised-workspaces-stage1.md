@@ -1,5 +1,10 @@
 # Supervised Workspaces — Stage 1 Implementation Plan
 
+> **Superseded on 2026-10-03.** The supervised-workspaces spec was replaced by
+> [the scrum workspaces spec](../specs/2026-10-03-scrum-workspaces-design.md),
+> which depends on [the loom daemon](../specs/2026-10-03-loom-daemon-design.md).
+> Do not execute this plan; the daemon's stage 1 plan comes first.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A workspace can be switched to supervised mode. Its main session
