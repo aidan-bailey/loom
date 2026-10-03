@@ -949,7 +949,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !statusEligible(msg.instance) {
 			return m, nil
 		}
-		_, release := m.applyLiveness(msg.instance, msg.tmuxLive, msg.ptmxAlive)
+		_, release := m.applyLiveness(msg.instance, msg.tmuxLive, msg.ptmxAlive, fromDeadEvent)
 		m.updateTabBarStatuses()
 		return m, tea.Batch(m.instanceChanged(), release)
 	case bellMsg:
@@ -1060,7 +1060,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Apply results on main thread.
 		var releases []tea.Cmd
 		for _, r := range msg.results {
-			alive, release := m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive)
+			alive, release := m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive, fromTick)
 			releases = append(releases, release)
 			if !alive {
 				continue
@@ -2284,6 +2284,15 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 	}
 }
 
+// livenessSource names the path a liveness result reached applyLiveness
+// by, for its logs: the health tick's probe or a pane's Dead event.
+type livenessSource string
+
+const (
+	fromTick      livenessSource = "tick"
+	fromDeadEvent livenessSource = "dead_event"
+)
+
 // applyLiveness reacts to one instance's health-probe result: dead tmux →
 // pause (or restart a workspace terminal, with the existing circuit
 // breaker); live tmux but no attached client (ui.Pane.Attached: none, a
@@ -2291,8 +2300,9 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 // name) → re-attach it. It returns
 // false when the instance was found dead (so callers can stop treating it
 // as running) or is no longer in any loaded slot, plus a Cmd closing a
-// client that a restart replaced. Must run on the Update goroutine.
-func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool) (alive bool, release tea.Cmd) {
+// client that a restart replaced. source names the path the result came
+// from, for the logs. Must run on the Update goroutine.
+func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool, source livenessSource) (alive bool, release tea.Cmd) {
 	if m.slotHolding(inst) == nil {
 		// The probe was taken before inst's slot was dropped. Its attach
 		// client has been (or is being) released by prunePanes, which
@@ -2308,7 +2318,7 @@ func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptm
 		// because that same load starves every instance's probe at once,
 		// it would do so across the whole fleet simultaneously. Leave
 		// the instance untouched; the next tick re-probes.
-		log.For("app").Debug("tick.tmux_probe_inconclusive", "title", inst.Title)
+		log.For("app").Debug("tick.tmux_probe_inconclusive", "title", inst.Title, "source", source)
 		return true, nil
 	}
 	if tmuxLive != tmux.LivenessAlive {
@@ -2331,14 +2341,14 @@ func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptm
 				}
 				return false, nil
 			}
-			log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", inst.Title)
+			log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", inst.Title, "source", source)
 			if err := inst.Restart(); err != nil {
 				log.For("app").Error("workspace_terminal.restart_failed", "title", inst.Title, "err", err)
 				return false, nil
 			}
 			return false, m.replacePane(inst)
 		}
-		log.For("app").Warn("tick.tmux_gone_marking_paused", "title", inst.Title)
+		log.For("app").Warn("tick.tmux_gone_marking_paused", "title", inst.Title, "source", source)
 		if err := inst.TransitionTo(session.Paused); err != nil {
 			log.For("app").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
 		}
@@ -2351,7 +2361,7 @@ func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptm
 		// client's pump hit EOF on a session that has since been
 		// relaunched under the same name). Self-heal here: the same shape
 		// as the workspace-terminal restart above, but at the client layer.
-		log.For("app").Warn("tick.ptmx_dead_repairing", "title", inst.Title)
+		log.For("app").Warn("pane.client_dead_repairing", "title", inst.Title, "source", source)
 		m.ensurePane(inst)
 	}
 	return true, nil

@@ -22,7 +22,7 @@ func TestApplyLiveness_UnknownDoesNotPause(t *testing.T) {
 	m, inst := setupPtmxDeadFixture(t)
 	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")
 
-	alive, _ := m.applyLiveness(inst, tmux.LivenessUnknown, false)
+	alive, _ := m.applyLiveness(inst, tmux.LivenessUnknown, false, fromTick)
 
 	assert.True(t, alive, "an inconclusive probe must leave the instance treated as running")
 	assert.Equal(t, session.Running, inst.GetStatus(),
@@ -37,7 +37,7 @@ func TestApplyLiveness_UnknownDoesNotPause(t *testing.T) {
 func TestApplyLiveness_DeadStillPauses(t *testing.T) {
 	m, inst := setupPtmxDeadFixture(t)
 
-	alive, _ := m.applyLiveness(inst, tmux.LivenessDead, false)
+	alive, _ := m.applyLiveness(inst, tmux.LivenessDead, false, fromTick)
 
 	assert.False(t, alive)
 	assert.Equal(t, session.Paused, inst.GetStatus(),

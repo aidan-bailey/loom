@@ -283,11 +283,11 @@ Wraps `*session.Instance`. Obtained from `ctx:selected()`, `ctx:instances()`, `c
 | `inst:started()` | bool | True once the tmux session has been created. |
 | `inst:paused()` | bool | True while the worktree is torn down. |
 | `inst:diff_stats()` | {added, removed, content} \| nil | Diff stats. Nil if not yet computed. |
-| `inst:preview()` | string, err? | Tmux pane contents. Returns `(nil, errmsg)` on failure. |
-| `inst:send_keys(keys)` | void | Raw tmux `send-keys` to the **agent** pane. Raises on error. |
+| `inst:preview()` | string, err? | The agent pane's visible screen, read with tmux `capture-pane` (no attach client needed). Empty when the session is not started, is paused, or is gone. Returns `(nil, errmsg)` on failure. |
+| `inst:send_keys(keys)` | void | Types `keys` into the **agent** pane as raw text, through tmux `load-buffer` + `paste-buffer`, not `send-keys`: the bytes arrive verbatim, so an escape sequence reaches the agent exactly as written, where `send-keys` used to parse it into a key and re-encode it for the pane's modes (DECCKM cursor keys, say). Raises on error, and on an unstarted or paused session. |
 | `inst:send_terminal_keys(text)` | void | Send text followed by Enter to the instance's **terminal** pane (the bottom pane). Useful for launching out-of-TUI tools like `inst:send_terminal_keys("emacs " .. wt:path() .. " &")`. Raises if the terminal session is not cached (e.g. the instance was never visible) or has died. |
-| `inst:send_prompt(text)` | void | Send text followed by Enter to the agent pane. Raises on error. |
-| `inst:tap_enter()` | void | Send a single Enter keystroke. |
+| `inst:send_prompt(text)` | void | Types text into the agent pane (`load-buffer` + `paste-buffer`, as `send_keys`), then presses Enter (`send-keys`). Raises on error, and on an unstarted or paused session. |
+| `inst:tap_enter()` | void | Presses Enter in the agent pane (`send-keys`). Does nothing on an unstarted or paused session. |
 | `inst:pause()` | void | Pause the session. Raises on error. |
 | `inst:resume()` | void | Resume a paused session. Raises on error. |
 | `inst:kill()` | void | Kill and clean up. Raises on error. |
