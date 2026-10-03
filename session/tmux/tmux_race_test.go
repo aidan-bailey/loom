@@ -24,7 +24,7 @@ func (f *racePtyFactory) Close() {}
 
 // TestTmuxSession_ConcurrentCaptureAndRestore reproduces the data race the
 // audit identified between the metadata fan-out (CaptureAndProcess/HasUpdated,
-// which read t.ptmx via the trust-prompt TapEnter and mutate t.monitor) and
+// which answer the trust prompt through send-keys and mutate t.monitor) and
 // the attach lifecycle (Restore, which reassigns both t.ptmx and t.monitor).
 // In production these run on the metadata goroutine and the Update goroutine
 // respectively. Must pass under `go test -race`.
@@ -34,7 +34,7 @@ func TestTmuxSession_ConcurrentCaptureAndRestore(t *testing.T) {
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
 			if strings.Contains(c.String(), "capture-pane") {
 				// Trust-prompt content so CaptureAndProcess takes the
-				// TapEnter branch, which reads t.ptmx.
+				// trust-prompt branch.
 				return []byte("Do you trust the files in this folder?"), nil
 			}
 			return []byte{}, nil

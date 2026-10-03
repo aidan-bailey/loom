@@ -2,7 +2,6 @@ package session
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -149,13 +148,14 @@ func (p AgentPane) SetPreviewSize(width, height int) error {
 	return i.getTmuxSession().SetDetachedSize(width, height)
 }
 
-// SendKeys sends keys to the tmux session
+// SendKeys types keys into the agent's tmux session through send-keys,
+// which needs no attach client.
 func (p AgentPane) SendKeys(keys string) error {
 	i := p.i
 	if !i.isStarted() || i.GetStatus() == Paused {
 		return fmt.Errorf("cannot send keys to instance that has not been started or is paused")
 	}
-	return i.getTmuxSession().SendKeys(keys)
+	return i.getTmuxSession().TypeText(keys)
 }
 
 // SendKeysRaw writes raw bytes to the tmux PTY. Used by inline attach mode.
@@ -171,7 +171,8 @@ func (p AgentPane) SendKeysRaw(b []byte) error {
 	return ts.SendKeysRaw(b)
 }
 
-// SendPrompt sends a prompt to the tmux session
+// SendPrompt types prompt into the agent's tmux session and submits it,
+// through send-keys.
 func (p AgentPane) SendPrompt(prompt string) error {
 	i := p.i
 	if !i.isStarted() {
@@ -181,21 +182,11 @@ func (p AgentPane) SendPrompt(prompt string) error {
 	if ts == nil {
 		return fmt.Errorf("tmux session not initialized")
 	}
-	if err := ts.SendKeys(prompt); err != nil {
-		return fmt.Errorf("error sending keys to tmux session: %w", err)
-	}
-
-	// Brief pause to prevent carriage return from being interpreted as newline
-	time.Sleep(100 * time.Millisecond)
-	if err := ts.TapEnter(); err != nil {
-		return fmt.Errorf("error tapping enter: %w", err)
-	}
-
-	return nil
+	return ts.SendPrompt(prompt)
 }
 
-// TapEnter sends a single Enter keystroke to the tmux session when the
-// instance is running. No-op otherwise. Exposed to Lua scripts as
+// TapEnter presses Enter in the tmux session when the instance is
+// running, and does nothing otherwise. Exposed to Lua scripts as
 // inst:tap_enter().
 func (p AgentPane) TapEnter() {
 	i := p.i
@@ -206,7 +197,7 @@ func (p AgentPane) TapEnter() {
 	if ts == nil {
 		return
 	}
-	if err := ts.TapEnter(); err != nil {
+	if err := ts.PressKeys("Enter"); err != nil {
 		log.For("session").Error("tap_enter_failed", "err", err)
 	}
 }
