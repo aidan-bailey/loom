@@ -222,7 +222,8 @@ func TestSession_StartLaunchesWithoutAttaching(t *testing.T) {
 
 	require.Len(t, ptyFactory.cmds, 1, "new-session only: no attach client")
 	assert.Equal(t, []string{"tmux", "new-session", "-d", "-s", "loom_launch", "-c", workdir, "claude"}, ptyFactory.cmds[0].Args)
-	assert.Len(t, rec.ran("set-option"), 3, "history-limit, mouse and status, as before")
+	assert.Len(t, rec.ran("set-option"), 4, "history-limit, mouse, status and detach-on-destroy")
+	assert.Contains(t, rec.ran("set-option"), []string{"tmux", "set-option", "-t", "=loom_launch:", "detach-on-destroy", "on"})
 	assert.Len(t, rec.ran("bind-key"), 1)
 	assert.Empty(t, rec.ran("capture-pane"), "no seed capture: that belongs to an attach client")
 }

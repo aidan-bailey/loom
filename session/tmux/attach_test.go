@@ -41,6 +41,8 @@ func TestNewAttachClient_RestoreAttachesByExactName(t *testing.T) {
 	require.Len(t, ptyFactory.cmds, 1)
 	assert.Equal(t, []string{"tmux", "attach-session", "-t", "=loom_api"}, ptyFactory.cmds[0].Args)
 	assert.Empty(t, rec.ran("new-session"), "a client launches nothing")
+	assert.Equal(t, [][]string{{"tmux", "set-option", "-t", "=loom_api:", "detach-on-destroy", "on"}}, rec.ran("set-option"),
+		"a session an older loom launched gets detach-on-destroy too")
 	assert.True(t, c.PtmxAlive())
 }
 

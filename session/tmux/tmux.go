@@ -319,6 +319,11 @@ func (t *TmuxSession) Restore() error {
 		_ = oldEmu.Close()
 	}
 
+	// A session launched by an older loom never got detach-on-destroy
+	// (Session.Start sets it); without it, under a global `off`, this
+	// client would be switched to another session when this one dies.
+	t.setDetachOnDestroy()
+
 	// Seed pre-attach history. Rows that scroll off between this capture
 	// and the attach are lost from scroll-back (tiny window, accepted by
 	// design) — the alternative, capturing after attach, would duplicate

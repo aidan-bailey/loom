@@ -204,6 +204,8 @@ func (s *Session) Start(workDir string) (err error) {
 	}
 	statusCancel()
 
+	s.setDetachOnDestroy()
+
 	// Rebind Ctrl-Q to detach-client for full-screen attach. The default tmux
 	// prefix is Ctrl-B + d; our users expect Ctrl-Q because inline attach has
 	// always used it. This binding is server-wide, but claude-squad has always
@@ -216,6 +218,23 @@ func (s *Session) Start(workDir string) (err error) {
 	bindCancel()
 
 	return nil
+}
+
+// setDetachOnDestroy makes every client of the session exit when the
+// session is destroyed, whatever the user's global setting. With tmux's
+// `detach-on-destroy off`, a common global choice, tmux instead switches
+// the client to another session: the TUI's pane client keyed by this
+// session's name would then show another session, possibly another
+// agent's, and pass it inline-attach keys, and its pump would never read
+// the EOF that tells the TUI the session is gone. A per-session `on` wins
+// over a global `off`. Best-effort: a failure is logged.
+func (s *Session) setDetachOnDestroy() {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := Command(ctx, "set-option", "-t", PaneTarget(s.sanitizedName), "detach-on-destroy", "on")
+	if err := s.cmdExec.Run(cmd); err != nil {
+		log.For("tmux").Warn("detach_on_destroy_failed", "session", s.sanitizedName, "err", err)
+	}
 }
 
 // Close kills the tmux session by exact name (see SessionTarget). Close
