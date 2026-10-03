@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
@@ -28,11 +29,39 @@ import (
 type PaneClients struct {
 	mu      sync.Mutex
 	clients map[string]*tmux.TmuxSession
+	// attaches records, per client, when Ensure last attached it and what
+	// it saw since (see quickExitHoldoff). A client Ensure never attached
+	// (InjectForTest) has none.
+	attaches map[*tmux.TmuxSession]*attachRecord
 	// cols, rows is the agent pane size new clients attach at
 	// (SetDefaultSize); 0 before the first layout.
 	cols, rows int
 	// newClient builds an unattached client for a session name.
 	newClient func(sessionName, program string) *tmux.TmuxSession
+	// now is the clock attaches are timed by; time.Now outside tests.
+	now func() time.Time
+}
+
+// quickExitHoldoff is how long after attaching a client Ensure leaves it
+// alone once its pump has exited on its own. A client whose tmux attach
+// exits at once while its session lives (a TERM tmux cannot use, say)
+// would otherwise loop: every exit is a Dead event, whose repair attaches
+// again, which exits again — hundreds of attaches a second, each a
+// has-session, a capture-pane and a PTY spawn. Within the hold-off Ensure
+// does nothing and the health tick retries; a client that dies after
+// longer than this is re-attached at once.
+const quickExitHoldoff = time.Second
+
+// attachRecord is what Ensure knows about one client's attaches.
+type attachRecord struct {
+	// at is when Ensure last attached the client.
+	at time.Time
+	// exitSeen is when Ensure first found that attach's pump exited, or
+	// zero; at most a Dead event's latency after the exit itself.
+	exitSeen time.Time
+	// warned is set once a quick exit has been logged, until an attach
+	// outlives the hold-off: one warning per burst, not per attempt.
+	warned bool
 }
 
 // NewPaneClients returns an empty registry whose clients attach through
@@ -40,8 +69,19 @@ type PaneClients struct {
 func NewPaneClients() *PaneClients {
 	return &PaneClients{
 		clients:   make(map[string]*tmux.TmuxSession),
+		attaches:  make(map[*tmux.TmuxSession]*attachRecord),
 		newClient: tmux.NewAttachClient,
+		now:       time.Now,
 	}
+}
+
+// SetClockForTest replaces the clock Ensure times attaches by, so a test
+// can step past quickExitHoldoff without sleeping. Test-only, like
+// SetClientFactoryForTest.
+func (p *PaneClients) SetClockForTest(now func() time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.now = now
 }
 
 // SetClientFactoryForTest replaces how new clients are built, so that a
@@ -105,9 +145,12 @@ func (p *PaneClients) SetDefaultSize(cols, rows int) {
 // the same name runs now), Ensure re-attaches it, the same object. Its
 // Restore never waits on a live pump: a client whose PTY is gone has no
 // pump left, and an exited pump marks itself only as it returns. An
-// attached client is left alone. program selects a new client's agent
-// adapter for its status scan. The client stays registered even when
-// attaching fails, so a later Ensure retries it. Update goroutine only.
+// attached client is left alone, and so, for quickExitHoldoff after Ensure
+// attached it, is one whose pump exited on its own: that attach failed at
+// once, and the health tick retries it. program selects a new client's
+// agent adapter for its status scan. The client stays registered even
+// when attaching fails, so a later Ensure retries it. Update goroutine
+// only.
 func (p *PaneClients) Ensure(sessionName, program string) error {
 	if p == nil || sessionName == "" {
 		return nil
@@ -123,6 +166,12 @@ func (p *PaneClients) Ensure(sessionName, program string) error {
 	if c.Attached() {
 		return nil
 	}
+	// A PTY that is still open belongs to a pump that exited on its own. A
+	// client with none (a failed attach, or one paused for a full-screen
+	// attach) is attached at once.
+	if c.PtmxAlive() && p.holdQuickExit(sessionName, c) {
+		return nil
+	}
 	sized := cols > 0 && rows > 0
 	if sized {
 		// No PTY (or a dead one), so this only records the geometry
@@ -132,12 +181,52 @@ func (p *PaneClients) Ensure(sessionName, program string) error {
 	if err := c.Restore(); err != nil {
 		return fmt.Errorf("attach to tmux session %s: %w", sessionName, err)
 	}
+	p.mu.Lock()
+	r := p.attaches[c]
+	if r == nil {
+		r = &attachRecord{}
+		p.attaches[c] = r
+	}
+	r.at, r.exitSeen = p.now(), time.Time{}
+	p.mu.Unlock()
 	if sized {
 		if err := c.SetDetachedSize(cols, rows); err != nil {
 			log.For("ui").Debug("pane.resize_failed", "session", sessionName, "err", err.Error())
 		}
 	}
 	return nil
+}
+
+// holdQuickExit reports whether Ensure must leave c, whose pump exited on
+// its own, alone for now: Ensure attached it less than quickExitHoldoff
+// ago. It warns once per burst of such exits; an attach that outlived the
+// hold-off before it exited ends the burst.
+func (p *PaneClients) holdQuickExit(sessionName string, c *tmux.TmuxSession) bool {
+	p.mu.Lock()
+	r := p.attaches[c]
+	if r == nil {
+		p.mu.Unlock()
+		return false
+	}
+	now := p.now()
+	if r.exitSeen.IsZero() {
+		r.exitSeen = now
+	}
+	lived := r.exitSeen.Sub(r.at)
+	if lived >= quickExitHoldoff {
+		r.warned = false
+	}
+	hold := now.Sub(r.at) < quickExitHoldoff
+	warn := hold && !r.warned
+	if warn {
+		r.warned = true
+	}
+	p.mu.Unlock()
+	if warn {
+		log.For("ui").Warn("pane.client_exited_after_attach", "session", sessionName,
+			"attached_ms", lived.Milliseconds(), "retry", "health tick")
+	}
+	return hold
 }
 
 // Replace gives sessionName a fresh client. It is for a session just
@@ -151,6 +240,7 @@ func (p *PaneClients) Replace(sessionName, program string) (*tmux.TmuxSession, e
 	p.mu.Lock()
 	old := p.clients[sessionName]
 	delete(p.clients, sessionName)
+	delete(p.attaches, old)
 	p.mu.Unlock()
 	return old, p.Ensure(sessionName, program)
 }
@@ -168,6 +258,7 @@ func (p *PaneClients) Retain(keep map[string]bool) []*tmux.TmuxSession {
 		if !keep[name] {
 			dropped = append(dropped, c)
 			delete(p.clients, name)
+			delete(p.attaches, c)
 		}
 	}
 	return dropped

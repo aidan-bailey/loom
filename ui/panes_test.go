@@ -136,10 +136,12 @@ func TestPaneClients_EnsureReattachesAPausedClient(t *testing.T) {
 // name may be running.
 func TestPaneClients_EnsureReattachesAnExitedClient(t *testing.T) {
 	p, starts, peer := newTestPaneClientsWithPeers(t)
+	clock := newTestClock(p)
 	require.NoError(t, p.Ensure("loom_a", "claude"))
 	c := p.Get("loom_a")
 	t.Cleanup(func() { _ = c.PausePreview() })
 
+	clock.advance(time.Minute)          // it was attached long ago
 	require.NoError(t, peer(0).Close()) // the session ends
 	require.Eventually(t, func() bool { return !p.Alive("loom_a") }, 2*time.Second, 5*time.Millisecond)
 	require.True(t, c.PtmxAlive(), "precondition: its PTY handle is still open")
@@ -147,6 +149,85 @@ func TestPaneClients_EnsureReattachesAnExitedClient(t *testing.T) {
 	require.NoError(t, p.Ensure("loom_a", "claude"))
 
 	assert.Same(t, c, p.Get("loom_a"), "the same client, re-attached")
+	assert.True(t, p.Alive("loom_a"))
+	assert.Len(t, starts(), 2)
+}
+
+// testClock is a PaneClients clock a test steps by hand.
+type testClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+// newTestClock installs a hand-stepped clock in p and returns it.
+func newTestClock(p *PaneClients) *testClock {
+	c := &testClock{t: time.Unix(1_000_000, 0)}
+	p.SetClockForTest(func() time.Time {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.t
+	})
+	return c
+}
+
+func (c *testClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
+// exitAttach ends the session of p's i-th attach and waits for its
+// client's pump to read EOF.
+func exitAttach(t *testing.T, p *PaneClients, peer func(int) *os.File, i int) {
+	t.Helper()
+	require.NoError(t, peer(i).Close())
+	require.Eventually(t, func() bool { return !p.Alive("loom_a") }, 2*time.Second, 5*time.Millisecond)
+}
+
+// TestPaneClients_EnsureHoldsOffAClientThatExitsOnAttach: a client whose
+// attach exits at once while its session lives (a TERM tmux cannot use)
+// would loop through the Dead event's repair, attaching hundreds of times
+// a second. Within quickExitHoldoff of attaching it, Ensure leaves it
+// alone; past it, Ensure tries again. A client that lived longer than the
+// hold-off before it died is re-attached at once.
+func TestPaneClients_EnsureHoldsOffAClientThatExitsOnAttach(t *testing.T) {
+	p, starts, peer := newTestPaneClientsWithPeers(t)
+	clock := newTestClock(p)
+	require.NoError(t, p.Ensure("loom_a", "claude"))
+	c := p.Get("loom_a")
+	t.Cleanup(func() { _ = c.PausePreview() })
+
+	exitAttach(t, p, peer, 0) // exits right after attaching
+	for range 5 {
+		require.NoError(t, p.Ensure("loom_a", "claude")) // the Dead event's repair, again and again
+	}
+	assert.Len(t, starts(), 1, "no re-attach within the hold-off")
+	assert.False(t, p.Alive("loom_a"))
+
+	clock.advance(quickExitHoldoff) // the health tick, later
+	require.NoError(t, p.Ensure("loom_a", "claude"))
+	assert.Len(t, starts(), 2, "past the hold-off it tries again")
+	assert.True(t, p.Alive("loom_a"))
+
+	clock.advance(time.Minute)
+	exitAttach(t, p, peer, 1) // this one lived, then its session died
+	require.NoError(t, p.Ensure("loom_a", "claude"))
+	assert.Len(t, starts(), 3, "a client that lived is healed at once")
+}
+
+// TestPaneClients_HoldOffSparesAPausedClient: a client with no PTY (paused
+// for a full-screen attach, or one whose attach failed) never exited on
+// its own, so Ensure re-attaches it at once however recent its attach.
+func TestPaneClients_HoldOffSparesAPausedClient(t *testing.T) {
+	p, starts := newTestPaneClients(t)
+	newTestClock(p) // frozen: every attach is "just now"
+	require.NoError(t, p.Ensure("loom_a", "claude"))
+	c := p.Get("loom_a")
+	t.Cleanup(func() { _ = c.PausePreview() })
+	require.NoError(t, c.PausePreview()) // a full-screen attach
+
+	require.NoError(t, p.Ensure("loom_a", "claude")) // it returns
+
 	assert.True(t, p.Alive("loom_a"))
 	assert.Len(t, starts(), 2)
 }

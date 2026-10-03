@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -204,12 +205,13 @@ func (f peerPty) Start(*exec.Cmd) (*os.File, error) {
 
 func (peerPty) Close() {}
 
-// relaunchedUnderItsName builds an active instance whose registered client
-// was watching a session that has ended (its pump read EOF) while a new
+// endedUnderItsName builds an active instance whose registered client was
+// watching a session that has just ended (its peer is closed) while a new
 // session runs under the same name, as when activateWorkspace kills and
-// recreates a workspace terminal another slot's client still watches.
-// peer(i) is the i-th attach's peer: 0 the dead session's, 1 the next.
-func relaunchedUnderItsName(t *testing.T, title string) (inst *session.Instance, peer func(i int) *os.File) {
+// recreates a workspace terminal another slot's client still watches. It
+// does not wait for the client's pump to read the EOF. peer(i) is the
+// i-th attach's peer: 0 the dead session's, 1 the next.
+func endedUnderItsName(t *testing.T, title string) (inst *session.Instance, old *tmux.TmuxSession, peer func(i int) *os.File) {
 	t.Helper()
 	inst, err := session.FromInstanceData(session.InstanceData{
 		Title: title, Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true,
@@ -227,13 +229,34 @@ func relaunchedUnderItsName(t *testing.T, title string) (inst *session.Instance,
 		}
 		return peers[i]
 	}
-	old := attachTestClient(t, inst, peerPty{t: t, mu: &mu, peers: &peers}, aliveCmdExecForTest())
+	old = attachTestClient(t, inst, peerPty{t: t, mu: &mu, peers: &peers}, aliveCmdExecForTest())
 	require.True(t, old.HasEmulator(), "fixture: the pane renders from the emulator")
 	require.NoError(t, peer(0).Close()) // the session ends; the mock tmux reports one of its name running
+	return inst, old, peer
+}
+
+// relaunchedUnderItsName is endedUnderItsName once the client's pump has
+// read the EOF and delivered its Dead event: the client is no longer
+// Attached, but its PTY handle is still open.
+func relaunchedUnderItsName(t *testing.T, title string) (inst *session.Instance, peer func(i int) *os.File) {
+	t.Helper()
+	inst, old, peer := endedUnderItsName(t, title)
 	require.Eventually(t, func() bool { return !old.Attached() }, 2*time.Second, 5*time.Millisecond,
 		"fixture: the client's pump read EOF")
 	require.True(t, old.PtmxAlive(), "fixture: its PTY handle is still open")
 	return inst, peer
+}
+
+// healThroughDeadEvent delivers the Dead event for inst's session as the
+// runtime would: the probe Cmd runs off Update, its answer back through it.
+func healThroughDeadEvent(t *testing.T, m *home, inst *session.Instance) {
+	t.Helper()
+	_, cmd := m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
+	require.NotNil(t, cmd)
+	verified, ok := cmd().(deadVerifiedMsg)
+	require.True(t, ok)
+	require.Equal(t, tmux.LivenessAlive, verified.tmuxLive, "the relaunched session is alive")
+	_, _ = m.Update(verified)
 }
 
 // requireShowsNewSession checks that inst's pane is attached to the
@@ -270,7 +293,9 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		requireShowsNewSession(t, m, inst, peer)
 	})
 
-	t.Run("a workspace load", func(t *testing.T) {
+	t.Run("a workspace load after its Dead event", func(t *testing.T) {
+		// The EOF was handled before the load (the Dead event found no
+		// eligible instance to repair, say): the load heals it.
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
 		m.list.AddInstance(inst)
@@ -280,17 +305,53 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		requireShowsNewSession(t, m, inst, peer)
 	})
 
+	t.Run("a workspace load during its EOF, then the Dead event", func(t *testing.T) {
+		// In production the dying pump delivers its Dead event through
+		// tea.Program.Send, which blocks while the load's own Update runs
+		// (activateWorkspace kills and relaunches the session, then
+		// ensureSlotPanes). Until the Dead event is delivered the client
+		// still reads Attached, so the load keeps it, and the Dead event
+		// that Update receives next heals it.
+		var once sync.Once
+		release, inSend := make(chan struct{}), make(chan struct{}, 1)
+		tmux.SetNotifier(tmux.Notifier{Dead: func(string) {
+			select {
+			case inSend <- struct{}{}:
+			default:
+			}
+			<-release
+		}})
+		t.Cleanup(func() {
+			once.Do(func() { close(release) })
+			tmux.SetNotifier(tmux.Notifier{})
+		})
+		m := newTestHome(t)
+		inst, old, peer := endedUnderItsName(t, "relaunched")
+		select {
+		case <-inSend: // the pump read EOF and is blocked delivering it
+		case <-time.After(2 * time.Second):
+			t.Fatal("the client's pump never reported its EOF")
+		}
+		m.list.AddInstance(inst)
+
+		m.ensureSlotPanes(m.workspaceSlot)
+
+		assert.Nil(t, peer(1), "the load cannot tell yet: the client still reads attached")
+		assert.True(t, old.Attached())
+
+		once.Do(func() { close(release) }) // Update returns; the runtime delivers the Dead event
+		require.Eventually(t, func() bool { return !old.Attached() }, 2*time.Second, 5*time.Millisecond)
+		healThroughDeadEvent(t, m, inst)
+
+		requireShowsNewSession(t, m, inst, peer)
+	})
+
 	t.Run("the Dead event", func(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
 		m.list.AddInstance(inst)
 
-		_, cmd := m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
-		require.NotNil(t, cmd)
-		verified, ok := cmd().(deadVerifiedMsg)
-		require.True(t, ok)
-		require.Equal(t, tmux.LivenessAlive, verified.tmuxLive, "the relaunched session is alive")
-		_, _ = m.Update(verified)
+		healThroughDeadEvent(t, m, inst)
 
 		assert.Equal(t, session.Running, inst.GetStatus())
 		requireShowsNewSession(t, m, inst, peer)
@@ -306,4 +367,54 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 
 		requireShowsNewSession(t, m, inst, peer)
 	})
+}
+
+// instantExitPty is fakePtyFactory whose attach client exits at once while
+// its session lives, as tmux attach does under a TERM it cannot use
+// ("missing or unsuitable terminal"). starts counts the attaches.
+type instantExitPty struct {
+	t      *testing.T
+	starts *atomic.Int32
+}
+
+func (f instantExitPty) Start(*exec.Cmd) (*os.File, error) {
+	attach, peer := testpty.Pair(f.t)
+	_ = peer.Close()
+	f.starts.Add(1)
+	return attach, nil
+}
+
+func (instantExitPty) Close() {}
+
+// TestDeadEvent_RepairOfAClientThatExitsOnAttachIsBounded: every exit of
+// an attach client is a Dead event, whose repair attaches it again. A
+// client that exits as soon as it attaches, while its session lives,
+// turned that into a loop of attaches as fast as Update could turn them
+// (each a has-session, a capture-pane and a PTY spawn) for every agent
+// session. The registry now leaves a client that exited right after its
+// attach to the health tick.
+func TestDeadEvent_RepairOfAClientThatExitsOnAttachIsBounded(t *testing.T) {
+	isolateTmux(t)
+	m := newTestHome(t)
+	inst, err := session.FromInstanceData(session.InstanceData{
+		Title: "badterm", Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true,
+	}, t.TempDir())
+	require.NoError(t, err)
+	inst.SetTmuxSession(tmux.NewSessionWithDeps("badterm", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
+	require.NoError(t, inst.TransitionTo(session.Running))
+	var starts atomic.Int32
+	attachTestClient(t, inst, instantExitPty{t: t, starts: &starts}, aliveCmdExecForTest())
+	m.list.AddInstance(inst)
+	name := inst.Pane().TmuxSessionName()
+
+	for deadline := time.Now().Add(500 * time.Millisecond); time.Now().Before(deadline); {
+		_, cmd := m.Update(ptyDeadMsg{session: name})
+		require.NotNil(t, cmd)
+		if verified, ok := cmd().(deadVerifiedMsg); ok {
+			_, _ = m.Update(verified)
+		}
+	}
+
+	assert.LessOrEqual(t, starts.Load(), int32(2), "attaches in 500ms of Dead events")
+	assert.Equal(t, session.Running, inst.GetStatus(), "the session lives; only its client is retried")
 }

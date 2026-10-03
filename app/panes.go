@@ -15,7 +15,12 @@ import (
 // lifecycle never attaches one.
 //
 // Attach points, all on the Update goroutine:
-//   - a workspace load: every active instance of the slot (ensureSlotPanes);
+//   - a workspace load: every active instance of the slot (ensureSlotPanes).
+//     It also re-attaches a client whose pump read EOF, but only once that
+//     pump has delivered its Dead event: a session the load itself killed
+//     and relaunched under the same name (a workspace terminal) leaves its
+//     client still reading Attached through the load, since that event
+//     waits on the load's own Update, and the Dead event heals it next;
 //   - a start, resume or recover landing in a loaded slot, a script's
 //     inst:resume() (handleScriptDone), and a workspace terminal's
 //     auto-restart: the session was (re)launched or reattached, so any
@@ -25,7 +30,9 @@ import (
 //     alive but its client is not attached (ui.Pane.Attached: no PTY, or a
 //     pump that hit EOF on an earlier session of the same name), a
 //     full-screen attach returning, and a failed kill or pause reverting
-//     its instance to active (ensurePane).
+//     its instance to active (ensurePane). A client whose attach exited
+//     right away is left to the tick for a moment (ui's quickExitHoldoff),
+//     or each exit's Dead event would attach it again at once.
 //
 // Only an active instance (activeInstance) gets a client: a paused,
 // Recoverable, Loading or Deleting one has nothing to display, and an
