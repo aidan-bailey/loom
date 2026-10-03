@@ -96,7 +96,7 @@ func TestBuildCardData_CopiesGitHubAndParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	inst.SetGitHubState(github.State{Known: true, IssueNumber: 9})
-	d := BuildCardData(inst, false, "", 0)
+	d := BuildCardData(inst, Pane{}, false, "", 0)
 	assert.Equal(t, 9, d.GitHub.IssueNumber)
 	assert.False(t, d.HasParity)
 
@@ -106,7 +106,7 @@ func TestBuildCardData_CopiesGitHubAndParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh.SetIssue(7)
-	d = BuildCardData(fresh, false, "", 0)
+	d = BuildCardData(fresh, Pane{}, false, "", 0)
 	assert.False(t, d.GitHub.Known)
 	assert.Equal(t, 7, d.GitHub.IssueNumber)
 }

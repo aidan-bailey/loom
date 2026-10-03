@@ -38,7 +38,7 @@ func TestAccountLabel(t *testing.T) {
 
 func TestBuildCardData_CarriesTheAccount(t *testing.T) {
 	withShowAccounts(t, true)
-	d := BuildCardData(claudeInstance(t, "claude", "max-2"), false, "", 0)
+	d := BuildCardData(claudeInstance(t, "claude", "max-2"), Pane{}, false, "", 0)
 	assert.Equal(t, "max-2", d.Account)
 }
 

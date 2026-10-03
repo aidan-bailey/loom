@@ -71,7 +71,7 @@ func handleStateInlineAttachKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
 			err = m.splitPane.SendTerminalKeysRaw(b)
 		} else {
-			err = selected.Pane().SendKeysRaw(b)
+			err = m.panes.For(selected).SendKeysRaw(b)
 		}
 		if err != nil {
 			log.For("app").Error("inline_attach.send_failed", "err", err)

@@ -74,8 +74,9 @@ func (m *home) forwardClickToFocused(pane, row, col int) {
 		_ = m.splitPane.ForwardTerminalMouse(0, col+1, row+1, true)
 		_ = m.splitPane.ForwardTerminalMouse(0, col+1, row+1, false)
 	} else {
-		_ = selected.Pane().ForwardMouse(0, col+1, row+1, true)
-		_ = selected.Pane().ForwardMouse(0, col+1, row+1, false)
+		pane := m.panes.For(selected)
+		_ = pane.ForwardMouse(0, col+1, row+1, true)
+		_ = pane.ForwardMouse(0, col+1, row+1, false)
 	}
 }
 
@@ -88,6 +89,6 @@ func (m *home) pasteToFocused(text string) {
 	if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
 		_ = m.splitPane.PasteTerminal(text)
 	} else {
-		_ = selected.Pane().Paste(text)
+		_ = m.panes.For(selected).Paste(text)
 	}
 }

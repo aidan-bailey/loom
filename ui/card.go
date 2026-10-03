@@ -166,15 +166,16 @@ func (d CardData) NeedsAttention() bool {
 	return d.Status != session.Deleting && (d.Status == session.Prompting || d.BellPending)
 }
 
-// BuildCardData snapshots inst into a CardData. spinnerFrame is the
-// current spinner view (pass "" when unavailable). tailN caps the live
-// tail; 0 skips the screen read entirely (DensityLine callers). The
-// tail comes from AgentPane.EmulatorScreen — in-memory only, so calling
-// this per visible card per frame forks no subprocesses; snapshot-path
-// instances simply render their status label instead of a tail. When
-// Claude's last message is current and the session is not working, the
-// tail is the end of that message instead, on either path.
-func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, tailN int) CardData {
+// BuildCardData snapshots inst into a CardData. pane is inst's pane
+// (PaneClients.For), and the live tail is read from its in-memory emulator
+// screen, so calling this per visible card per frame forks no
+// subprocesses. Instances on the snapshot path render their status label
+// instead of a tail. spinnerFrame is the current spinner view ("" when
+// unavailable). tailN caps the tail; 0 skips the screen read entirely
+// (DensityLine callers). When Claude's last message is current and the
+// session is not working, the tail is the end of that message instead,
+// on either path.
+func BuildCardData(inst *session.Instance, pane Pane, selected bool, spinnerFrame string, tailN int) CardData {
 	d := CardData{
 		Title:               inst.Title,
 		Status:              inst.GetStatus(),
@@ -211,7 +212,7 @@ func BuildCardData(inst *session.Instance, selected bool, spinnerFrame string, t
 			// What Claude said it did, or is asking, says more than the
 			// screen's tail once the session stops.
 			d.TailLines = MessageTailLines(msg, tailN)
-		} else if screen, ok := inst.Pane().EmulatorScreen(); ok {
+		} else if screen, ok := pane.EmulatorScreen(); ok {
 			d.TailLines = ContentTailLines(screen, tailN)
 		}
 	}

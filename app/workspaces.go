@@ -105,6 +105,7 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 	// recovered sessions identically — no restart required.
 
 	list := ui.NewList(&m.spinner)
+	list.SetPanes(m.panes)
 	hasWorkspaceTerminal := false
 	for _, inst := range instances {
 		if inst.IsWorkspaceTerminal {
@@ -182,6 +183,7 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 	list.SetWorkspaceName(ws.Name)
 
 	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+	splitPane.SetPanes(m.panes)
 
 	// Pre-size components if terminal dimensions are known.
 	if m.lastWidth > 0 && m.lastHeight > 0 {
@@ -703,12 +705,14 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	// splitPane and workbench: the panes are sized and wired already, and
 	// the closed tab no longer uses them. It is only focused once every
 	// check below has passed.
+	globalList := ui.NewList(&m.spinner)
+	globalList.SetPanes(m.panes)
 	global := &workspaceSlot{
 		wsCtx:     globalCtx,
 		storage:   storage,
 		appConfig: appConfig,
 		appState:  appState,
-		list:      ui.NewList(&m.spinner),
+		list:      globalList,
 		splitPane: m.splitPane,
 		workbench: m.workbench,
 	}

@@ -34,7 +34,7 @@ func (s *SplitPane) CursorScreenPosition(instance *session.Instance) (x, y int, 
 		if instance == nil || s.agent.IsScrolling() || s.agent.ShowingFallback() {
 			return 0, 0, vt.Cursor{}, false
 		}
-		c, have = instance.Pane().CursorState()
+		c, have = s.panes.For(instance).CursorState()
 		w, h = s.agent.width, s.agent.height
 	case FocusTerminal:
 		if s.terminal.IsScrolling() || s.terminal.ShowingFallback() {

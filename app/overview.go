@@ -278,6 +278,7 @@ func (m *home) overviewData() ui.OverviewData {
 			Groups:  []ui.OverviewGroup{g},
 			Cursor:  cursor,
 			Spinner: m.spinner.View(),
+			Panes:   m.panes,
 		}
 	}
 
@@ -299,7 +300,7 @@ func (m *home) overviewData() ui.OverviewData {
 		groups = append(groups, g)
 	}
 
-	return ui.OverviewData{Groups: groups, Cursor: cursor, Spinner: m.spinner.View()}
+	return ui.OverviewData{Groups: groups, Cursor: cursor, Spinner: m.spinner.View(), Panes: m.panes}
 }
 
 // moveCursor advances selection: list order in focus mode, fleet display

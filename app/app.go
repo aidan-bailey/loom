@@ -150,6 +150,12 @@ type home struct {
 	// orphan sweep) — a test seam so those paths can run without touching
 	// a real tmux server. Always nil in production; read via executor().
 	cmdExec cmd2.Executor
+	// panes holds the TUI's attach clients, one per live agent tmux session
+	// (ui.PaneClients). Everything that renders an agent pane, scrolls it,
+	// forwards input to it or scrapes its screen for status goes through
+	// it. It is shared by every slot's list and split pane, and is never
+	// nil after newHome.
+	panes *ui.PaneClients
 	// restoreFailed names the workspaces the registry's open list held but
 	// restoreSavedWorkspaces could not open. The user never closed them,
 	// and their live sessions were spared only because that launch skipped
@@ -708,7 +714,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var currentHash []byte
 			var currentTitle string
 			if selected != nil {
-				currentHash = selected.Pane().GetContentHash()
+				currentHash = m.panes.For(selected).GetContentHash()
 				currentTitle = selected.Title
 			}
 
@@ -808,7 +814,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, scan
 		}
-		return m, tea.Batch(scan, statusDetectCmd(inst))
+		return m, tea.Batch(scan, statusDetectCmd(inst, m.panes.For(inst)))
 	case gatedMsg:
 		return m.deliverGated(msg)
 	case ratioSaveMsg:
@@ -827,7 +833,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		return m, statusDetectCmd(inst)
+		return m, statusDetectCmd(inst, m.panes.For(inst))
 	case hookScanMsg:
 		return m, m.handleHookScan(msg)
 	case rosterReadyMsg:
@@ -934,7 +940,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		cmds = append(cmds, verifyDeadCmd(inst))
+		cmds = append(cmds, verifyDeadCmd(inst, m.panes.For(inst)))
 		return m, tea.Batch(cmds...)
 	case deadVerifiedMsg:
 		if !statusEligible(msg.instance) {
@@ -995,7 +1001,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Fan out I/O off the update goroutine. A stalled tmux or git process
 		// must not block the UI loop — gatherMetadataCmd runs wg.Wait() inside
 		// a background Cmd and returns the results via metadataReadyMsg.
-		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty(), m.ghBases))
+		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty(), m.ghBases, m.paneSnapshot(active)))
 
 		// One `claude agents --json` for the whole fleet (~100ms, off the
 		// Update goroutine), on its OWN cadence rather than the tick's —
@@ -1909,12 +1915,12 @@ func (m *home) instanceChanged() tea.Cmd {
 		// loses focus, the new one gains it (host focus permitting).
 		if m.hostFocused && m.splitPane.GetFocusedPane() == ui.FocusAgent {
 			if prev := m.list.GetInstanceByTitle(m.lastFocusTitle); prev != nil {
-				prev.Pane().ForwardFocus(false)
+				m.panes.For(prev).ForwardFocus(false)
 			}
 		}
 		m.lastFocusTitle = newFocusTitle
 		if m.hostFocused && selected != nil && m.splitPane.GetFocusedPane() == ui.FocusAgent {
-			selected.Pane().ForwardFocus(true)
+			m.panes.For(selected).ForwardFocus(true)
 		}
 	}
 
@@ -2209,7 +2215,7 @@ var tickUpdateMetadataCmd = func() tea.Msg {
 // an idle instance with no pane output does not trigger a git subprocess on
 // every tick. For N active instances with a single active agent, the git
 // fan-out drops from ~N subprocesses per tick to ~1.
-func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, dirty map[string]bool, bases map[string]string) tea.Cmd {
+func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, dirty map[string]bool, bases map[string]string, panes map[*session.Instance]ui.Pane) tea.Cmd {
 	return func() tea.Msg {
 		results := make([]metadataResult, len(active))
 		var wg sync.WaitGroup
@@ -2224,13 +2230,15 @@ func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, d
 				if r.tmuxLive != tmux.LivenessAlive {
 					return
 				}
-				r.ptmxAlive = instance.Pane().PtmxAlive()
+				pane := panes[instance]
+				r.ptmxAlive = pane.PtmxAlive()
 
-				// Event-mode instances get status from quiet events; the
-				// subprocess scan only remains for the snapshot path.
-				r.emulatorDriven = instance.Pane().HasEmulator()
+				// Event-mode instances get status from quiet events, so the
+				// subprocess scan only remains for the snapshot path. With
+				// no client there is no screen to scan, and no opinion.
+				r.emulatorDriven = pane.Client() == nil || pane.HasEmulator()
 				if !r.emulatorDriven {
-					r.updated, r.hasPrompt, r.captureErr = instance.Pane().CaptureAndProcessStatus()
+					r.updated, r.hasPrompt, r.captureErr = pane.DetectStatus()
 				}
 
 				// Parity must not sit behind ShouldRefreshDiff: that gate
@@ -2544,7 +2552,7 @@ func (m *home) forwardFocus(in bool) {
 	}
 	switch m.splitPane.GetFocusedPane() {
 	case ui.FocusAgent:
-		selected.Pane().ForwardFocus(in)
+		m.panes.For(selected).ForwardFocus(in)
 	case ui.FocusTerminal:
 		m.splitPane.ForwardTerminalFocus(in)
 	}
@@ -2575,7 +2583,7 @@ func (m *home) windowTitle() string {
 	if sel == nil {
 		return "loom"
 	}
-	if t, ok := sel.Pane().PaneTitle(); ok {
+	if t, ok := m.panes.For(sel).PaneTitle(); ok {
 		return t + " — loom"
 	}
 	return "loom — " + sel.Title

@@ -131,9 +131,12 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		tabBar:      ui.NewWorkspaceTabBar(),
 		skipScripts: noScripts,
 		hostFocused: true,
+		panes:       ui.NewPaneClients(),
 	}
+	sp.SetPanes(h.panes)
 	// Built after h so the list can point at h.spinner.
 	h.list = ui.NewList(&h.spinner)
+	h.list.SetPanes(h.panes)
 	if wsCtx != nil && wsCtx.Name != "" {
 		h.list.SetWorkspaceName(wsCtx.Name)
 	}

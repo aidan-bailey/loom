@@ -69,9 +69,9 @@ type statusDetectedMsg struct {
 	err       error
 }
 
-func statusDetectCmd(inst *session.Instance) tea.Cmd {
+func statusDetectCmd(inst *session.Instance, pane ui.Pane) tea.Cmd {
 	return func() tea.Msg {
-		updated, hasPrompt, err := inst.Pane().CaptureAndProcessStatus()
+		updated, hasPrompt, err := pane.DetectStatus()
 		return statusDetectedMsg{instance: inst, updated: updated, hasPrompt: hasPrompt, err: err}
 	}
 }
@@ -367,9 +367,9 @@ type deadVerifiedMsg struct {
 	ptmxAlive bool
 }
 
-func verifyDeadCmd(inst *session.Instance) tea.Cmd {
+func verifyDeadCmd(inst *session.Instance, pane ui.Pane) tea.Cmd {
 	return func() tea.Msg {
-		return deadVerifiedMsg{instance: inst, tmuxLive: inst.Pane().TmuxLiveness(), ptmxAlive: inst.Pane().PtmxAlive()}
+		return deadVerifiedMsg{instance: inst, tmuxLive: inst.Pane().TmuxLiveness(), ptmxAlive: pane.PtmxAlive()}
 	}
 }
 

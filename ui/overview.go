@@ -53,6 +53,8 @@ type OverviewData struct {
 	Groups  []OverviewGroup
 	Cursor  OverviewCursor
 	Spinner string
+	// Panes resolves each card's attach client for its tail.
+	Panes *PaneClients
 }
 
 // Overview renders the triage card grid: every open workspace group's
@@ -155,7 +157,7 @@ func (o *Overview) renderGroupGrid(g OverviewGroup, gi int, d OverviewData) stri
 		for pos := start; pos < end; pos++ {
 			idx := g.Order[pos]
 			selected := d.Cursor.Group == gi && d.Cursor.Item == pos
-			cd := BuildCardData(g.Items[idx], selected, d.Spinner, overviewCardTailLines+1)
+			cd := BuildCardData(g.Items[idx], d.Panes.For(g.Items[idx]), selected, d.Spinner, overviewCardTailLines+1)
 			cd.Index = DisplayIndex(g.Items, idx)
 			cards = append(cards, renderOverviewCard(cd, cardW))
 		}

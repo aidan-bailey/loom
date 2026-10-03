@@ -33,6 +33,9 @@ type List struct {
 	height, width int
 	spinner       *spinner.Model
 	peers         []PeerSection
+	// panes is the attach-client registry the cards' tails and preview
+	// sizing go through (SetPanes).
+	panes *PaneClients
 
 	// workspaceName is the current workspace name, shown in the title
 	workspaceName string
@@ -48,6 +51,10 @@ func NewList(spinner *spinner.Model) *List {
 	}
 }
 
+// SetPanes sets the registry the list reads its instances' attach clients
+// from.
+func (l *List) SetPanes(panes *PaneClients) { l.panes = panes }
+
 // SetSize sets the height and width of the list.
 func (l *List) SetSize(width, height int) {
 	l.width = width
@@ -57,12 +64,14 @@ func (l *List) SetSize(width, height int) {
 // SetSessionPreviewSize sets the height and width for the tmux sessions. This makes the stdout line have the correct
 // width and height.
 func (l *List) SetSessionPreviewSize(width, height int) (err error) {
+	// New clients attach at this size too (PaneClients.Ensure).
+	l.panes.SetDefaultSize(width, height)
 	for i, item := range l.items {
 		if !item.Started() || item.Paused() || !item.Pane().TmuxAlive() {
 			continue
 		}
 
-		if innerErr := item.Pane().SetPreviewSize(width, height); innerErr != nil {
+		if innerErr := l.panes.For(item).SetPreviewSize(width, height); innerErr != nil {
 			err = errors.Join(
 				err, fmt.Errorf("could not set preview size for instance %d: %v", i, innerErr))
 		}
@@ -190,7 +199,7 @@ func (l *List) String() string {
 	// See DisplayIndex for the workspace-terminal numbering rule.
 	spinnerFrame := l.spinner.View()
 	for i := startIdx; i < endIdx; i++ {
-		d := BuildCardData(l.items[i], i == l.selectedIdx, spinnerFrame, 1)
+		d := BuildCardData(l.items[i], l.panes.For(l.items[i]), i == l.selectedIdx, spinnerFrame, 1)
 		d.Index = DisplayIndex(l.items, i)
 		parts = append(parts, RenderCard(d, DensityRail, l.width))
 		if i != endIdx-1 {

@@ -86,7 +86,7 @@ func (m *home) reopenedTwin(owner *workspaceSlot, inst *session.Instance) (*sess
 		if b1, b2 := twin.GetBranch(), inst.GetBranch(); b1 != "" && b2 != "" && b1 != b2 {
 			continue
 		}
-		if twin.Paused() && !twin.Pane().PtmxAlive() {
+		if twin.Paused() && !m.panes.For(twin).PtmxAlive() {
 			return twin, s
 		}
 	}

@@ -75,6 +75,8 @@ type SplitPane struct {
 	width  int
 
 	instance *session.Instance
+	// panes is the attach-client registry the agent pane and the cursor read.
+	panes *PaneClients
 }
 
 // NewSplitPane wires the three child panes into a SplitPane with the
@@ -107,6 +109,13 @@ func (s *SplitPane) SetInstance(instance *session.Instance) {
 
 // Instance returns the instance set by SetInstance (nil for none).
 func (s *SplitPane) Instance() *session.Instance { return s.instance }
+
+// SetPanes sets the registry the agent pane and the hardware cursor read
+// attach clients from.
+func (s *SplitPane) SetPanes(panes *PaneClients) {
+	s.panes = panes
+	s.agent.SetPanes(panes)
+}
 
 // SetSize recomputes the agent/terminal split (per AgentRatio, or all
 // agent when the terminal is hidden) for the given container dimensions

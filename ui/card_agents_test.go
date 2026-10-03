@@ -81,7 +81,7 @@ func TestBuildCardData_CopiesSubagents(t *testing.T) {
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore", Description: "map code"}},
 	}))
 
-	d := BuildCardData(inst, false, "", 0)
+	d := BuildCardData(inst, Pane{}, false, "", 0)
 	assert.Equal(t, []SubagentRow{{Name: "Explore", Description: "map code"}}, d.Subagents)
 }
 
@@ -106,7 +106,7 @@ func TestBuildCardData_SanitizesAgentText(t *testing.T) {
 	inst.SetWaitReason(osc52)
 	require.NoError(t, inst.TransitionTo(session.Prompting))
 
-	d := BuildCardData(inst, false, "", 0)
+	d := BuildCardData(inst, Pane{}, false, "", 0)
 	require.Len(t, d.Subagents, 1)
 	overview := renderOverviewCard(d, 60)
 	rail := RenderCard(d, DensityRail, 60)
