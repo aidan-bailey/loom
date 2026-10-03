@@ -3,7 +3,6 @@ package tmux
 import (
 	"errors"
 	"os/exec"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +18,7 @@ func screenRunner(rec *argvRecorder, screen string) cmd_test.MockCmdExec {
 	e := rec.runner()
 	e.OutputFunc = func(c *exec.Cmd) ([]byte, error) {
 		rec.mu.Lock()
-		rec.runs = append(rec.runs, slices.Clone(c.Args))
+		rec.record(c)
 		rec.mu.Unlock()
 		return []byte(screen), nil
 	}

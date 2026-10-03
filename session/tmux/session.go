@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
@@ -80,6 +83,16 @@ func (s *Session) WithProgram(program string) *Session {
 // since s was built.
 func (s *Session) WithProgramEnv(program string, env []string) *Session {
 	return newSanitizedSession(s.sanitizedName, program, s.ptyFactory, s.cmdExec, env...)
+}
+
+// SetCmdExecForTest swaps this session's executor after construction, so a
+// test can assert on the commands issued by methods (like Close or
+// CloseRelatedSession) that a fixture built via NewSessionWithDeps or
+// NewTmuxSessionWithDeps already exercises for other purposes.
+// Test-only: the name and doc comment are guardrails, nothing about the
+// method enforces test-only use.
+func (s *Session) SetCmdExecForTest(cmdExec internalexec.Executor) {
+	s.cmdExec = cmdExec
 }
 
 // SessionName returns the tmux session name. It is the identity pane
@@ -216,20 +229,40 @@ func (s *Session) Close() error {
 	return nil
 }
 
-// TypeText types text into the session's active pane as literal keys
-// (`send-keys -l`). tmux delivers exactly text's bytes to the program,
-// the same bytes a write to an attach client's PTY delivers
-// (TestSendKeysMatchesPTYWrite_RealTmux), so no client is needed. "--"
-// ends tmux's option parsing, which means text that starts with '-' is
-// typed rather than parsed. Empty text runs nothing.
+// pasteBufferSeq numbers the paste buffers TypeText creates in this
+// process. With the pid it keeps every buffer name unique on a tmux server
+// that several loom processes (a TUI, later a daemon) share.
+var pasteBufferSeq atomic.Uint64
+
+// TypeText types text into the session's active pane: it loads text into
+// a fresh paste buffer (`load-buffer`, text on stdin) and pastes that
+// buffer into the pane (`paste-buffer -d -r`), which deletes it. The
+// program receives exactly text's raw bytes, in one paste that no other
+// input can interleave with: the same bytes a write to an attach client's
+// PTY delivers (TestTypeTextMatchesPTYWrite_RealTmux), with no client
+// needed. -r keeps LF as LF instead of turning it into CR, and without -p
+// tmux adds no bracketed-paste markers. Empty text runs nothing.
+//
+// Not `send-keys -l -- text`, for two reasons. tmux refuses any command
+// over about 16 KiB ("command too long"), and an issue-born prompt carries
+// the whole issue body. It also parses an argument ending in ';' as a
+// command separator even after "--", so "abc;" types "abc". Text on stdin
+// is never parsed and has no such limit.
 func (s *Session) TypeText(text string) error {
 	if text == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	defer cancel()
-	cmd := Command(ctx, "send-keys", "-l", "-t", PaneTarget(s.sanitizedName), "--", text)
-	if err := s.cmdExec.Run(cmd); err != nil {
+	buffer := fmt.Sprintf("loom-%s-%d-%d", s.sanitizedName, os.Getpid(), pasteBufferSeq.Add(1))
+	if err := s.runTmux(strings.NewReader(text), "load-buffer", "-b", buffer, "-"); err != nil {
+		return fmt.Errorf("type into tmux session %s: %w", s.sanitizedName, err)
+	}
+	if err := s.runTmux(nil, "paste-buffer", "-d", "-r", "-b", buffer, "-t", PaneTarget(s.sanitizedName)); err != nil {
+		// -d deletes the buffer only once it is pasted, so a failed paste
+		// leaves it on the server. Best-effort: when even this fails, the
+		// server is most likely gone, and the buffer with it.
+		if delErr := s.runTmux(nil, "delete-buffer", "-b", buffer); delErr != nil {
+			log.For("tmux").Debug("type_text.delete_buffer_failed", "session", s.sanitizedName, "buffer", buffer, "err", delErr)
+		}
 		return fmt.Errorf("type into tmux session %s: %w", s.sanitizedName, err)
 	}
 	return nil
@@ -241,13 +274,31 @@ func (s *Session) PressKeys(keys ...string) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
-	defer cancel()
 	args := append([]string{"send-keys", "-t", PaneTarget(s.sanitizedName)}, keys...)
-	if err := s.cmdExec.Run(Command(ctx, args...)); err != nil {
+	if err := s.runTmux(nil, args...); err != nil {
 		return fmt.Errorf("press %v in tmux session %s: %w", keys, s.sanitizedName, err)
 	}
 	return nil
+}
+
+// runTmux runs one tmux command, bounded by tmuxTimeout, with stdin as its
+// input when it is not nil. A failure carries tmux's own message ("can't
+// find pane: =loom_x:"), not just its exit status.
+func (s *Session) runTmux(stdin io.Reader, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	cmd := Command(ctx, args...)
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
+	out, err := s.cmdExec.CombinedOutput(cmd)
+	if err == nil {
+		return nil
+	}
+	if msg := strings.TrimSpace(string(out)); msg != "" {
+		return fmt.Errorf("tmux %s: %s (%w)", args[0], msg, err)
+	}
+	return fmt.Errorf("tmux %s: %w", args[0], err)
 }
 
 // promptEnterDelay separates a prompt's text from the Enter that submits
@@ -307,11 +358,11 @@ func (s *Session) pendingPrompt(content string) bool {
 
 // CloseRelatedSession best-effort kills another tmux session identified by
 // its raw (pre-ToLoomTmuxName) name, reusing this session's cmdExec. It
-// does not touch t's own PTY/emulator state.
+// leaves s's own tmux session alone.
 //
 // This exists so a resource whose lifecycle is tied to this session (e.g.
-// the terminal pane's shell, which shares this instance's title but is
-// otherwise untracked by *TmuxSession) can be torn down at the same point
+// the terminal pane's shell, which shares this instance's title but is not
+// otherwise tracked by session lifecycle) can be torn down at the same point
 // this session is — without the caller needing its own injected executor.
 // The common case is "no such session", which is expected and harmless.
 func (s *Session) CloseRelatedSession(rawName string) error {
@@ -322,9 +373,6 @@ func (s *Session) CloseRelatedSession(rawName string) error {
 	return s.cmdExec.Run(cmd)
 }
 
-// DoesSessionExist reports whether the backing tmux session is still
-// alive on the tmux server. Used as a sanity check before attach and
-// for orphan detection during reconcile.
 // Liveness is the outcome of a tmux session liveness probe.
 type Liveness int
 
@@ -381,17 +429,19 @@ func (s *Session) SessionLiveness() Liveness {
 	return LivenessAlive
 }
 
-// DoesSessionExist reports whether the session is known to be alive. An
-// inconclusive probe reads as false here, preserving the original
-// semantics for callers that only gate reads on it; callers that act
-// destructively on a negative should use SessionLiveness instead.
+// DoesSessionExist reports whether the session is known to be alive on
+// the tmux server. Used as a sanity check before attach and for orphan
+// detection during reconcile. An inconclusive probe reads as false here,
+// preserving the original semantics for callers that only gate reads on
+// it; callers that act destructively on a negative should use
+// SessionLiveness instead.
 func (s *Session) DoesSessionExist() bool {
 	return s.SessionLiveness() == LivenessAlive
 }
 
 // Env returns a clone of the tmux session environment this session was
 // constructed with — the "KEY=VALUE" entries applied via `new-session -e`
-// (see NewTmuxSession). Read-only: env is set once at construction (or by
+// (see NewSession). Read-only: env is set once at construction (or by
 // WithProgram/WithProgramEnv building a new session) and never mutated
 // afterward; the clone means a caller mutating the result cannot corrupt
 // it.

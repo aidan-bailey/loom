@@ -36,7 +36,7 @@ const (
 )
 
 // adapterRegistry resolves a program string to its agent adapter once
-// per TmuxSession. Shared and read-only after init.
+// per Session. Shared and read-only after init.
 var adapterRegistry = agent.DefaultRegistry()
 
 // tmuxTimeout bounds the wall time of a single tmux subprocess invocation.
@@ -68,7 +68,10 @@ const pumpWaitTimeout = 2 * time.Second
 // monitor fields: the metadata fan-out (CaptureAndProcess/HasUpdated/
 // keystroke injection) and the Update loop's attach lifecycle
 // (Restore/PausePreview/Close). Both are therefore guarded by stateMu (see
-// its doc).
+// its doc). Input written to its PTY (SendKeys, SendKeysRaw, TapEnter,
+// Paste, the Forward* methods) is the interactive path, while the promoted
+// TypeText, PressKeys and SendPrompt go through tmux commands and need no
+// attach.
 type TmuxSession struct {
 	*Session
 
@@ -522,16 +525,6 @@ func (t *TmuxSession) SimulateStuckPumpForTest() {
 	t.stateMu.Lock()
 	t.ptmx = nil
 	t.stateMu.Unlock()
-}
-
-// SetCmdExecForTest swaps this session's executor after construction, so a
-// test can assert on the commands issued by methods (like Close or
-// CloseRelatedSession) that a fixture built via NewTmuxSessionWithDeps
-// already exercises for other purposes.
-// Test-only: the name and doc comment are guardrails, nothing about the
-// method enforces test-only use.
-func (t *TmuxSession) SetCmdExecForTest(cmdExec internalexec.Executor) {
-	t.cmdExec = cmdExec
 }
 
 // waitPumpExit blocks until the current pump goroutine signals exit or

@@ -2,6 +2,9 @@ package tmux
 
 import (
 	"errors"
+	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"slices"
 	"sync"
@@ -12,15 +15,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// argvRecorder is a tmux executor that records the argv of every command
-// it runs. has-session answers "no such session" the first time it is
-// asked and "alive" after that, which is the sequence Start's pre-launch
+// argvRecorder is a tmux executor that records the argv and stdin of every
+// command it runs. has-session answers "no such session" the first time it
+// is asked and "alive" after that, which is the sequence Start's pre-launch
 // check and post-launch poll expect. No tmux server is contacted.
 type argvRecorder struct {
 	mu     sync.Mutex
 	probed bool
-	fail   error // when set, every Run returns it
+	fail   error // when set, every Run and CombinedOutput returns it
+	// failOn makes a `tmux <sub> …` run through CombinedOutput exit 1
+	// after printing failOn[sub], as tmux prints its error message.
+	failOn map[string]string
 	runs   [][]string
+	stdins []string // stdins[i] is what runs[i] read on stdin, "" for none
+}
+
+// record appends c's argv and drains its stdin. Callers hold r.mu.
+func (r *argvRecorder) record(c *exec.Cmd) {
+	var in []byte
+	if c.Stdin != nil {
+		in, _ = io.ReadAll(c.Stdin)
+	}
+	r.runs = append(r.runs, slices.Clone(c.Args))
+	r.stdins = append(r.stdins, string(in))
 }
 
 func (r *argvRecorder) runner() cmd_test.MockCmdExec {
@@ -28,7 +45,7 @@ func (r *argvRecorder) runner() cmd_test.MockCmdExec {
 		RunFunc: func(c *exec.Cmd) error {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			r.runs = append(r.runs, slices.Clone(c.Args))
+			r.record(c)
 			if r.fail != nil {
 				return r.fail
 			}
@@ -41,7 +58,19 @@ func (r *argvRecorder) runner() cmd_test.MockCmdExec {
 		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			r.runs = append(r.runs, slices.Clone(c.Args))
+			r.record(c)
+			return []byte{}, nil
+		},
+		CombinedOutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.record(c)
+			if r.fail != nil {
+				return nil, r.fail
+			}
+			if msg, ok := r.failOn[c.Args[1]]; ok {
+				return []byte(msg + "\n"), errors.New("exit status 1")
+			}
 			return []byte{}, nil
 		},
 	}
@@ -60,14 +89,63 @@ func (r *argvRecorder) ran(sub string) [][]string {
 	return out
 }
 
-func TestSession_TypeTextSendsLiteralKeys(t *testing.T) {
+// stdin returns what every recorded `tmux <sub> …` command read on stdin,
+// in order.
+func (r *argvRecorder) stdin(sub string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for i, argv := range r.runs {
+		if len(argv) > 1 && argv[1] == sub {
+			out = append(out, r.stdins[i])
+		}
+	}
+	return out
+}
+
+// subcommands returns the tmux subcommand of every recorded command, in
+// order.
+func (r *argvRecorder) subcommands() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, argv := range r.runs {
+		if len(argv) > 1 {
+			out = append(out, argv[1])
+		}
+	}
+	return out
+}
+
+func TestSession_TypeTextPastesThroughABuffer(t *testing.T) {
+	rec := &argvRecorder{}
+	s := NewSessionWithDeps("typed", "claude", NewMockPtyFactory(t), rec.runner())
+	text := "-v fix it;"
+
+	require.NoError(t, s.TypeText(text))
+
+	require.Equal(t, []string{"load-buffer", "paste-buffer"}, rec.subcommands())
+	load, paste := rec.ran("load-buffer")[0], rec.ran("paste-buffer")[0]
+	buffer := load[3]
+	assert.Regexp(t, fmt.Sprintf(`^loom-loom_typed-%d-\d+$`, os.Getpid()), buffer,
+		"named for the session, this process and the call, so no other process's paste can collide")
+	assert.Equal(t, []string{"tmux", "load-buffer", "-b", buffer, "-"}, load)
+	assert.Equal(t, []string{text}, rec.stdin("load-buffer"),
+		"the text goes in on stdin, where tmux neither parses nor size-caps it")
+	assert.Equal(t, []string{"tmux", "paste-buffer", "-d", "-r", "-b", buffer, "-t", "=loom_typed:"}, paste,
+		"the same buffer, deleted once pasted, LF kept as LF, exactly targeted")
+}
+
+func TestSession_TypeTextUsesAFreshBufferPerCall(t *testing.T) {
 	rec := &argvRecorder{}
 	s := NewSessionWithDeps("typed", "claude", NewMockPtyFactory(t), rec.runner())
 
-	require.NoError(t, s.TypeText("-v fix it"))
+	require.NoError(t, s.TypeText("one"))
+	require.NoError(t, s.TypeText("two"))
 
-	assert.Equal(t, [][]string{{"tmux", "send-keys", "-l", "-t", "=loom_typed:", "--", "-v fix it"}}, rec.ran("send-keys"),
-		"literal, exactly targeted, and a leading dash is typed rather than parsed as a flag")
+	loads := rec.ran("load-buffer")
+	require.Len(t, loads, 2)
+	assert.NotEqual(t, loads[0][3], loads[1][3])
 }
 
 func TestSession_TypeTextEmptyRunsNothing(t *testing.T) {
@@ -76,7 +154,7 @@ func TestSession_TypeTextEmptyRunsNothing(t *testing.T) {
 
 	require.NoError(t, s.TypeText(""))
 
-	assert.Empty(t, rec.ran("send-keys"))
+	assert.Empty(t, rec.runs)
 }
 
 func TestSession_PressKeysNamesKeysInOrder(t *testing.T) {
@@ -94,10 +172,9 @@ func TestSession_SendPromptTypesThenPressesEnter(t *testing.T) {
 
 	require.NoError(t, s.SendPrompt("fix the login bug"))
 
-	assert.Equal(t, [][]string{
-		{"tmux", "send-keys", "-l", "-t", "=loom_prompt:", "--", "fix the login bug"},
-		{"tmux", "send-keys", "-t", "=loom_prompt:", "Enter"},
-	}, rec.ran("send-keys"))
+	assert.Equal(t, []string{"load-buffer", "paste-buffer", "send-keys"}, rec.subcommands())
+	assert.Equal(t, []string{"fix the login bug"}, rec.stdin("load-buffer"))
+	assert.Equal(t, [][]string{{"tmux", "send-keys", "-t", "=loom_prompt:", "Enter"}}, rec.ran("send-keys"))
 }
 
 func TestSession_TypeTextReportsTmuxFailure(t *testing.T) {
@@ -108,6 +185,31 @@ func TestSession_TypeTextReportsTmuxFailure(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "loom_gone")
+	assert.Empty(t, rec.ran("paste-buffer"), "nothing to paste when the load failed")
+}
+
+func TestSession_TypeTextDeletesTheBufferWhenThePasteFails(t *testing.T) {
+	rec := &argvRecorder{failOn: map[string]string{"paste-buffer": "can't find pane: =loom_gone:"}}
+	s := NewSessionWithDeps("gone", "claude", NewMockPtyFactory(t), rec.runner())
+
+	err := s.TypeText("x")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "can't find pane", "tmux's own message, not just its exit status")
+	buffer := rec.ran("load-buffer")[0][3]
+	assert.Equal(t, [][]string{{"tmux", "delete-buffer", "-b", buffer}}, rec.ran("delete-buffer"),
+		"-d deletes only after a paste, so a failed one would leave the buffer on the server")
+}
+
+func TestSession_PressKeysReportsTmuxMessage(t *testing.T) {
+	rec := &argvRecorder{failOn: map[string]string{"send-keys": "can't find pane: =loom_keys:"}}
+	s := NewSessionWithDeps("keys", "claude", NewMockPtyFactory(t), rec.runner())
+
+	err := s.PressKeys("Enter")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "can't find pane")
+	assert.Contains(t, err.Error(), "loom_keys")
 }
 
 func TestSession_StartLaunchesWithoutAttaching(t *testing.T) {
