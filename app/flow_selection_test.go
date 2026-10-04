@@ -46,7 +46,7 @@ func TestCompletionDuringNaming_CancelKillsOnlyThePendingInstance(t *testing.T) 
 	pending := m.list.GetSelectedInstance()
 	require.NotSame(t, first, pending)
 
-	_, _ = m.Update(instanceStartedMsg{instance: first, slot: m.workspaceSlot})
+	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws})
 	assert.Same(t, pending, m.list.GetSelectedInstance(), "a completion must not move the selection under the naming flow")
 	assert.Equal(t, stateNew, m.state)
 	assert.Contains(t, m.errBox.String(), "first", "the start is still announced")
@@ -67,7 +67,7 @@ func TestCompletionDuringInlineAttach_KeepsTheAttachTarget(t *testing.T) {
 	m.list.SelectInstance(attached)
 	m.state = stateInlineAttach
 
-	_, _ = m.Update(instanceStartedMsg{instance: first, slot: m.workspaceSlot})
+	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws})
 	assert.Same(t, attached, m.list.GetSelectedInstance(), "keys must keep going to the attached session")
 	assert.Equal(t, stateInlineAttach, m.state)
 }
@@ -89,7 +89,7 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, recovered.TransitionTo(session.Running))
 
-	_, _ = m.Update(recoverDoneMsg{oldTitle: "orphan", recovered: recovered, placeholder: placeholder, slot: m.workspaceSlot})
+	deliver(t, m, core.RecoverResult{OldTitle: "orphan", Recovered: recovered, Placeholder: placeholder, Owner: m.ws})
 	assert.Same(t, pending, m.list.GetSelectedInstance(), "the recover must not move the selection under the naming flow")
 
 	typeTitle(t, m, "x")
@@ -221,7 +221,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
 		owner.ws.Add(started)
 
-		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
+		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
 		drainCmd(cmd)
 
 		reopened := m.slots[1]
@@ -238,7 +238,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		started := startedWorktreeInstance(t, "late", wtPath, srv)
 		owner.ws.Add(started)
 
-		_, cmd := m.Update(instanceStartedMsg{instance: started, err: errors.New("boom"), slot: owner})
+		cmd := deliver(t, m, core.StartResult{Instance: started, Err: errors.New("boom"), Owner: owner.ws})
 		drainCmd(cmd)
 
 		assert.False(t, srv.killed("late"), "not killed: the reopened record owns its worktree and branch")
@@ -252,7 +252,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
 		owner.ws.Add(started)
 
-		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
+		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
 		drainCmd(cmd)
 
 		assert.Same(t, namesake, m.slots[1].list.GetInstanceByTitle("late"), "an unrelated same-titled session is untouched")
@@ -273,7 +273,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		require.True(t, srv.killed("late"), "fixture: reconcile killed the live session")
 		owner.ws.Add(started)
 
-		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
+		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
 		drainCmd(cmd)
 
 		assert.Same(t, twin, m.slots[1].list.GetInstanceByTitle("late"), "the twin stays: its record is the live truth")
@@ -349,9 +349,9 @@ func TestIssueExpanded_ForDeletedInstanceIsDropped(t *testing.T) {
 	assert.Contains(t, m.errBox.String(), "#5")
 }
 
-// TestKillAction_UsesTheDispatchSlotsStorage: killAction runs for seconds
-// in a Cmd. It read m.storage() there, so after a tab switch it deleted the
-// record from whichever workspace was focused by then.
+// TestKillAction_UsesTheDispatchSlotsStorage: the kill's job runs for
+// seconds in a Cmd. It read m.storage() there, so after a tab switch it
+// deleted the record from whichever workspace was focused by then.
 func TestKillAction_UsesTheDispatchSlotsStorage(t *testing.T) {
 	isolateTmux(t)
 	repo := t.TempDir()
@@ -369,7 +369,7 @@ func TestKillAction_UsesTheDispatchSlotsStorage(t *testing.T) {
 	require.NoError(t, err)
 	recA.lastData = seed
 
-	_, killAction := killActionFor(m, a1)
+	_, killAction := m.core.Kill(m.ws, a1, m.closeTerminalFor(a1.Title, "kill"))
 	m.switchWorkspaceSlot(1)
 	_ = killAction()
 
@@ -424,19 +424,6 @@ func TestCreationCancelPaths_KillThePendingInstanceByIdentity(t *testing.T) {
 			assert.Nil(t, m.pendingNew)
 		})
 	}
-}
-
-// TestStartOwner_ResolvesByIdentity: the start is stamped with the slot
-// that holds the instance, not whichever slot is focused at confirm time.
-func TestStartOwner_ResolvesByIdentity(t *testing.T) {
-	m, _, _ := ownerTestHome(t)
-	peer := m.slots[1]
-	inst := startingInstance(t, peer, "in-peer")
-	assert.Same(t, peer, m.startOwner(inst))
-
-	loose, err := session.NewInstance(session.InstanceOptions{Title: "loose", Path: t.TempDir(), Program: "claude"})
-	require.NoError(t, err)
-	assert.Same(t, m.workspaceSlot, m.startOwner(loose), "an instance no slot holds falls back to the focused slot")
 }
 
 // TestDropPendingNew_NeverKillsAStartedInstance is a belt: a started

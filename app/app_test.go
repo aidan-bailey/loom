@@ -555,11 +555,11 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 		menu:  menu,
 	})
 
-	// Simulate instanceStartedMsg (no prompt, no error)
-	msg := instanceStartedMsg{
-		instance: instance,
-		err:      nil,
-	}
+	// Simulate a start's result (no prompt, no error)
+	msg := coreResultMsg{msg: core.StartResult{
+		Instance: instance,
+		Err:      nil,
+	}}
 	model, _ := h.Update(msg)
 	homeModel := model.(*home)
 
@@ -633,7 +633,7 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 			_ = instance.TransitionTo(session.Deleting)
 		},
 		Async: func() tea.Msg {
-			return killInstanceMsg{inst: instance, title: "test-delete"}
+			return coreResultMsg{msg: core.KillResult{Instance: instance, Title: "test-delete"}}
 		},
 	})
 
@@ -645,9 +645,9 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	assert.Equal(t, session.Deleting, instance.GetStatus())
 }
 
-// TestTransitionFailedMsgRevertsStatus verifies that a transitionFailedMsg
-// reverts the instance status to its previous value.
-func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
+// TestOpFailedRevertsStatus verifies that a failed operation's
+// result (core.OpFailed) reverts the instance status to its previous value.
+func TestOpFailedRevertsStatus(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	instance, err := session.NewInstance(session.InstanceOptions{
@@ -672,14 +672,14 @@ func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
 		errBox: ui.NewErrBox(),
 	})
 
-	msg := transitionFailedMsg{
-		inst:           instance,
-		title:          "test-revert",
-		op:             "delete",
-		previousStatus: session.Running,
-		err:            fmt.Errorf("branch is checked out"),
+	msg := core.OpFailed{
+		Instance: instance,
+		Title:    "test-revert",
+		Op:       "delete",
+		Previous: session.Running,
+		Err:      fmt.Errorf("branch is checked out"),
 	}
-	h.Update(msg)
+	deliver(t, h, msg)
 
 	assert.Equal(t, session.Running, instance.GetStatus())
 }

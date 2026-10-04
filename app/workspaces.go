@@ -208,20 +208,6 @@ func releaseClientsCmd(clients []attachedClient) tea.Cmd {
 	}
 }
 
-// removeInstanceEverywhere removes inst (by identity) from every loaded
-// slot's list. Async op completions land on whatever slot is focused at
-// delivery time, which may not be the slot that owns the instance — slot
-// lists are in-memory until restart, so a missed removal would orphan the
-// row (e.g. stuck in Deleting) with its backing resources already gone.
-func (m *home) removeInstanceEverywhere(inst *session.Instance) {
-	if inst == nil {
-		return
-	}
-	for _, ws := range m.core.Loaded() {
-		ws.Remove(inst)
-	}
-}
-
 // openSlots returns every loaded workspace slot: the open tabs, or in
 // classic/global mode the classic slot alone. The focused slot is always
 // among them.

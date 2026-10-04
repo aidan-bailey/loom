@@ -178,6 +178,22 @@ func (m *Model) Drain() Out {
 func (m *Model) Deliver(msg any) {
 	switch msg := msg.(type) {
 	case nil:
+	case StartResult:
+		m.deliverStart(msg)
+	case ResumeResult:
+		m.deliverResume(msg)
+	case RecoverResult:
+		m.deliverRecover(msg)
+	case KillResult:
+		m.deliverKill(msg)
+	case PauseResult:
+		m.deliverPause(msg)
+	case OpFailed:
+		m.deliverOpFailed(msg)
+	case MergeResult:
+		m.notifyErr(msg.Err)
+	case promptFailed:
+		m.notifyErr(msg.err)
 	default:
 		log.For("core").Error("deliver.unknown_result", "type", fmt.Sprintf("%T", msg))
 	}

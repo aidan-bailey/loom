@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +33,18 @@ func pausedInst(t *testing.T, title string) *session.Instance {
 	inst, err := session.FromInstanceData(session.InstanceData{Title: title, Status: session.Paused, Program: "claude"}, t.TempDir())
 	require.NoError(t, err)
 	return inst
+}
+
+// storedWorkspace builds a workspace named name over a fresh temp config
+// dir and its (empty) storage. A storage never loaded loads before its
+// first write (Storage.writeLocked), so no explicit load is needed.
+func storedWorkspace(t *testing.T, name string) *Workspace {
+	t.Helper()
+	dir := t.TempDir()
+	state := config.LoadStateFrom(dir)
+	storage, err := session.NewStorage(state, dir)
+	require.NoError(t, err)
+	return NewWorkspace(WorkspaceParts{Ctx: &config.WorkspaceContext{Name: name, ConfigDir: dir}, Storage: storage, Config: config.DefaultConfig(), State: state})
 }
 
 // recordingInstanceStorage counts SaveInstances calls and keeps the last

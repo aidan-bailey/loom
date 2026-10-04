@@ -110,7 +110,13 @@ func (l *List) resolveSelection() int {
 // the selected one there that is still present (the row that slid into its
 // place, however many removals landed in between), else the new last row.
 // A lone in-place replacement of the selected row (a recover swapping its
-// placeholder) keeps the selection on that row.
+// placeholder) keeps the selection on that row. Mixed edit windows, an add
+// or replace landing between two reads alongside the selected row's
+// removal, are resolved heuristically: the selected last row removed and
+// one row appended reads as a replacement and selects the new row, where
+// the old list selected the previous row, and so does the selected first
+// row removed with the terminal prepended. Removals alone always match the
+// old rule.
 func (l *List) lostSelectionRow(items []*session.Instance) int {
 	p := slices.Index(l.seen, l.selected)
 	if p < 0 {

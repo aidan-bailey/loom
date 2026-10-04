@@ -293,7 +293,7 @@ type home struct {
 	// pendingMergeTarget and pendingMergeSourceItems capture the merge
 	// target instance and a snapshot of the eligible source list at the
 	// moment the merge picker opens. A background message unrelated to
-	// key input (e.g. recoverDoneMsg reassigning m.list's selection, or
+	// key input (e.g. a recover completion reassigning m.list's selection, or
 	// a kill/resume completing) can still land while stateMergePicker is
 	// active — m.state only gates key-press routing, not arbitrary
 	// tea.Msg handling in Update(). Re-querying m.list live when Enter
@@ -1428,52 +1428,9 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case instanceChangedMsg:
 		// Handle instance changed after confirmation action
 		return m, m.instanceChanged()
-	case killInstanceMsg:
-		// Terminal session was already closed inside killAction off the update
-		// goroutine. Here we only do in-memory list bookkeeping. The kill ran
-		// for seconds off the update goroutine, so the focused m.list may no
-		// longer be the list that owns the instance (workspace tab switch,
-		// global-mode transition) — remove it from whichever list holds it,
-		// by identity, or the row stays Deleting until restart.
-		m.removeInstanceEverywhere(msg.inst)
-		if msg.notice != nil {
-			return m, tea.Batch(m.handleError(msg.notice), m.instanceChanged(), m.prunePanes())
-		}
-		return m, tea.Batch(m.instanceChanged(), m.prunePanes())
-	case transitionFailedMsg:
-		// Revert instance status on failed background op (kill/pause/resume).
-		// previousStatus came from this same instance, so the reverse
-		// transition should always be allowed; if the state machine rejects
-		// it, log and leave the status as-is rather than masking a real bug.
-		// The message carries the instance pointer: like killInstanceMsg, the
-		// focused m.list may have been swapped since the op started.
-		if msg.inst != nil {
-			if terr := msg.inst.TransitionTo(msg.previousStatus); terr != nil {
-				log.For("app").Warn("revert_transition_failed", "err", terr)
-			}
-			// A reverted kill or pause is active again: give it back a
-			// client, which a tick may have pruned while it was Deleting or
-			// Loading. A no-op unless it is active (a reverted discard is
-			// Recoverable, a reverted resume Paused).
-			m.ensurePane(msg.inst)
-		}
-		log.For("app").Error("op_failed", "op", msg.op, "title", msg.title, "err", msg.err)
-		return m, tea.Batch(m.handleError(msg.err), m.instanceChanged(), m.prunePanes())
-	case pauseInstanceMsg:
-		// Terminal session was already closed inside pauseAction off the update
-		// goroutine. Nothing I/O-blocking to do here.
-		return m, tea.Batch(m.instanceChanged(), m.prunePanes())
-	case backgroundCleanupDoneMsg:
-		// Nothing to do; the instance was already popped and the cleanup
-		// result was logged inside backgroundKillCmd.
-		return m, nil
-	case resumeDoneMsg:
-		return m, m.handleResumeDone(msg)
 	case showHelpScreenMsg:
 		m.menu.SetState(ui.StateDefault)
 		return m.showHelpScreen(msg.helpType, nil)
-	case recoverDoneMsg:
-		return m, m.handleRecoverDone(msg)
 	case startFullScreenAttachMsg:
 		// Resolve the session to attach in the foreground, and the client
 		// whose preview PTY must let go of it for the duration.
@@ -1565,8 +1522,6 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// selection; release drops the classic slot's attach clients
 		// when this was the first tab.
 		return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), release)
-	case instanceStartedMsg:
-		return m, m.handleInstanceStarted(msg)
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -1788,79 +1743,12 @@ type metadataReadyMsg struct {
 
 type instanceChangedMsg struct{}
 
-// killInstanceMsg is returned by the killAction goroutine after I/O cleanup
-// (git checks, instance kill, storage deletion) is complete. The main event loop
-// handles the list removal so it doesn't race with rendering.
-type killInstanceMsg struct {
-	// inst is the killed instance itself. The handler removes it by
-	// identity from whichever slot list owns it — the focused m.list may
-	// have been swapped (workspace tab switch, global mode) between kill
-	// start and completion, so a title lookup against m.list can miss.
-	inst  *session.Instance
-	title string
-	// notice, when set, is what the kill could not finish but the user
-	// must see (a stash entry it could not drop; see session.Notice).
-	notice error
-}
-
-// transitionFailedMsg is returned when a background status-transitioning
-// operation (kill, pause, resume) fails. The main event loop reverts the
-// instance to previousStatus so the user can retry. `op` identifies the
-// operation for the error log.
-type transitionFailedMsg struct {
-	// inst is the instance whose background op failed. Reverted directly
-	// by pointer — see killInstanceMsg.inst for why a title search against
-	// the focused m.list is not enough.
-	inst           *session.Instance
-	title          string
-	op             string
-	previousStatus session.Status
-	err            error
-}
-
-// pauseInstanceMsg is returned by the pauseAction goroutine after the instance
-// has been paused. Terminal cleanup happens in the main event loop.
-type pauseInstanceMsg struct {
-	title string
-}
-
-// backgroundCleanupDoneMsg is returned by backgroundKillCmd after a popped
-// instance has been fully cleaned up. It carries no state — failures are
-// already logged inside the Cmd and there's nothing for the main loop to do.
-type backgroundCleanupDoneMsg struct{}
-
-// resumeDoneMsg is returned by the Resume Cmd on success. Failures come
-// through transitionFailedMsg. instance and slot are stamped at dispatch,
-// like instanceStartedMsg: the resume runs for seconds, and its owner may
-// be closed meanwhile.
-type resumeDoneMsg struct {
-	instance *session.Instance
-	slot     *workspaceSlot
-	// notice, when set, is what the resume found that the user must see
-	// (a stash it forgot or could not drop; see session.Notice).
-	notice error
-}
-
 // showHelpScreenMsg asks Update to open a help overlay. Emitted from
 // tea.Cmd closures, which run off the main goroutine and therefore must
 // not call showHelpScreen (it mutates m.state/overlay and writes app
 // state to disk) directly.
 type showHelpScreenMsg struct {
 	helpType helpText
-}
-
-// recoverDoneMsg is returned after a Recoverable orphan is adopted into a
-// live instance off the UI goroutine. The handler swaps the inline
-// placeholder for the recovered instance and persists. placeholder and
-// slot are stamped at dispatch: the recover runs for seconds with the UI
-// live, so by delivery the focused slot may be another workspace, which
-// can even hold a same-titled row.
-type recoverDoneMsg struct {
-	oldTitle    string
-	recovered   *session.Instance
-	err         error
-	placeholder *session.Instance
-	slot        *workspaceSlot
 }
 
 // fullScreenAttachTarget picks which tmux session (agent vs terminal) a
@@ -1888,23 +1776,6 @@ type attachDoneMsg struct {
 	err      error
 }
 
-// backgroundKillCmd runs the blocking Kill() of a popped instance in a tea.Cmd
-// goroutine so the Bubble Tea update loop stays responsive. Used by the
-// "abort unstarted instance" paths (ctrl-c / Esc during new-instance entry,
-// Esc during prompt entry, failed instanceStartedMsg). The instance has
-// already been removed from the list, so any failure here is silently logged.
-func backgroundKillCmd(inst *session.Instance) tea.Cmd {
-	if inst == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		if err := inst.Kill(); err != nil {
-			log.For("app").Error("background_instance_kill_failed", "err", err)
-		}
-		return backgroundCleanupDoneMsg{}
-	}
-}
-
 // startAttachCmd returns a Cmd that emits startFullScreenAttachMsg so Update
 // can hand off to tea.ExecProcess. It exists as a helper because the same
 // payload is needed from both the "help skipped" and "help dismissed" paths.
@@ -1921,17 +1792,6 @@ func startAttachCmd(inst *session.Instance, target fullScreenAttachTarget) tea.C
 type registerWorkspaceMsg struct {
 	name string
 	dir  string
-}
-
-// instanceStartedMsg reports an async Start. slot is the slot that owns
-// instance, stamped at dispatch: the start runs for seconds with the UI
-// live, so by delivery the focused slot may be another workspace (or the
-// owner may be closed).
-type instanceStartedMsg struct {
-	instance       *session.Instance
-	err            error
-	selectedBranch string
-	slot           *workspaceSlot
 }
 
 // branchSearchDebounceMsg fires after the debounce interval to trigger a search.

@@ -43,6 +43,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.cancelPromptOverlay()
 		}
 
+		var send tea.Cmd
 		if ti.IsSubmitted() {
 			prompt := ti.GetValue()
 			selectedBranch := ti.GetSelectedBranch()
@@ -73,7 +74,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 
 				m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-					owner := m.startOwner(selected) // stamped for instanceStartedMsg
+					startJob := m.core.Start(selected, m.ws) // owner stamped now
 					startTask := overlay.ConfirmationTask{
 						Sync: func() {
 							m.pendingNew = nil // the start owns it now
@@ -86,15 +87,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 							m.state = stateDefault
 							m.menu.SetState(ui.StateDefault)
 						},
-						Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
-							err := selected.Start(true)
-							return instanceStartedMsg{
-								instance:       selected,
-								err:            err,
-								selectedBranch: selectedBranch,
-								slot:           owner,
-							}
-						}),
+						Async: tea.Batch(tea.RequestWindowSize, coreCmd(startJob)),
 					}
 
 					if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), selected.Program()) {
@@ -110,10 +103,10 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())
 			}
 
-			// Regular flow: instance already running, just send prompt
-			if err := selected.Pane().SendPrompt(prompt); err != nil {
-				return m, m.handleError(err)
-			}
+			// Regular flow: instance already running, just send the prompt,
+			// off the Update goroutine (three tmux subprocesses and a pause).
+			// The overlay closes now; a failed send comes back as an error.
+			send = coreCmd(m.core.SendPrompt(selected, prompt))
 		}
 
 		m.dismissOverlay()
@@ -122,10 +115,10 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// disk, so it must run on the main goroutine — hand it back via
 		// a message instead of calling it inside the (goroutine-run)
 		// Sequence closure. The handler also resets the menu state.
-		return m, tea.Sequence(
+		return m, tea.Batch(send, tea.Sequence(
 			tea.RequestWindowSize,
 			func() tea.Msg { return showHelpScreenMsg{helpType: helpStart(selected)} },
-		)
+		))
 	}
 
 	if branchFilterChanged {

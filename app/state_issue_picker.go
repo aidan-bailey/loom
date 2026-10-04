@@ -253,12 +253,13 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 // openLaunchOptionsForNew shows the Session Launch Options modal for an
 // unstarted instance already in the list. Confirming composes the
 // program from the chosen options and starts the instance; cancelling
-// pops it (killPendingLaunchOptionsCancel). selectedBranch is threaded
-// to instanceStartedMsg for the N flow's branch picker.
+// pops it (killPendingLaunchOptionsCancel). selectedBranch is no longer
+// read: the prompt flow set it on the instance (SetSelectedBranch) before
+// any issue expansion, and the start result does not carry it.
 func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranch string) (tea.Model, tea.Cmd) {
 	m.pendingNew = instance
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-		owner := m.startOwner(instance) // stamped for instanceStartedMsg
+		startJob := m.core.Start(instance, m.ws) // owner stamped now
 		startTask := overlay.ConfirmationTask{
 			Sync: func() {
 				m.pendingNew = nil // the start owns it now
@@ -272,15 +273,7 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
 			},
-			Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
-				err := instance.Start(true)
-				return instanceStartedMsg{
-					instance:       instance,
-					err:            err,
-					selectedBranch: selectedBranch,
-					slot:           owner,
-				}
-			}),
+			Async: tea.Batch(tea.RequestWindowSize, coreCmd(startJob)),
 		}
 		if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), instance.Program()) {
 			return m, m.promptRemoteControlBlocked(startTask, m.rcAuthFor(opts.Account).Reason)

@@ -314,10 +314,10 @@ func TestInstance_KillDropsLeftoverStash(t *testing.T) {
 // Instance, keyed only by title. Before this fix, Pause() closed the
 // agent's tmux session and removed the worktree, but never touched the
 // terminal pane's session — so a terminal session that outlived Pause()
-// (e.g. because it was reached via a caller other than the UI's
-// pauseActionFor, which used to be the only place this happened) stayed
-// alive, cd'd into the worktree directory Pause() was about to delete.
-// Resume() then recreated a fresh worktree at the same path, but the
+// (e.g. because it was reached via a caller other than the UI's pause,
+// now core.Model.Pause, which used to be the only place this happened)
+// stayed alive, cd'd into the worktree directory Pause() was about to
+// delete. Resume() then recreated a fresh worktree at the same path, but the
 // surviving terminal shell kept the stale (deleted) directory as its cwd,
 // and the next reattach silently reused it instead of noticing the
 // mismatch. Pause must now kill the terminal session itself so the

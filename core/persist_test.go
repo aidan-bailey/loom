@@ -3,7 +3,6 @@ package core
 import (
 	"testing"
 
-	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -92,18 +91,6 @@ func TestPersistableInstances_KeepsIdleSessions(t *testing.T) {
 	got := Persistable([]*session.Instance{idleAgent, idleTerminal, creating, starting, deleting, recoverable})
 
 	assert.Equal(t, []*session.Instance{idleAgent, idleTerminal, starting}, got)
-}
-
-// storedWorkspace builds a workspace named name over a fresh temp config
-// dir and its (empty) storage. A storage never loaded loads before its
-// first write (Storage.writeLocked), so no explicit load is needed.
-func storedWorkspace(t *testing.T, name string) *Workspace {
-	t.Helper()
-	dir := t.TempDir()
-	state := config.LoadStateFrom(dir)
-	storage, err := session.NewStorage(state, dir)
-	require.NoError(t, err)
-	return NewWorkspace(WorkspaceParts{Ctx: &config.WorkspaceContext{Name: name, ConfigDir: dir}, Storage: storage, Config: config.DefaultConfig(), State: state})
 }
 
 // TestSave_WritesALoadedWorkspace is the control for the skip below: a

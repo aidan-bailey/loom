@@ -3,6 +3,7 @@ package app
 import (
 	"testing"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
@@ -87,10 +88,10 @@ func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFail
 	cmd := m.pendingConfirmation.Run() // runs Sync, returns Async
 	require.NotNil(t, cmd)
 
-	// Async is tea.Batch(tea.RequestWindowSize, resumeFunc) — calling it
+	// Async is tea.Batch(tea.RequestWindowSize, resumeJob) — calling it
 	// returns a tea.BatchMsg (the sub-commands to run), not an
 	// already-resolved message. Run every sub-command and confirm none
-	// of them is the resume outcome (transitionFailedMsg/resumeDoneMsg);
+	// of them is the resume outcome (core.OpFailed/core.ResumeResult);
 	// a tea.WindowSizeMsg from the RequestWindowSize half is expected
 	// and fine.
 	msg := cmd()
@@ -98,10 +99,11 @@ func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFail
 	require.True(t, ok, "Async must be a batch (RequestWindowSize + the resume check)")
 	for _, sub := range batch {
 		require.NotNil(t, sub)
-		switch sub().(type) {
-		case transitionFailedMsg:
+		res, _ := sub().(coreResultMsg)
+		switch res.msg.(type) {
+		case core.OpFailed:
 			t.Fatal("Resume must not have run (and errored)")
-		case resumeDoneMsg:
+		case core.ResumeResult:
 			t.Fatal("Resume must not have run (and succeeded)")
 		}
 	}

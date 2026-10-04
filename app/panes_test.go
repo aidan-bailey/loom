@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -92,14 +93,20 @@ func TestKillAndPause_CloseTheClientOnlyAfterTheRegistryDrops(t *testing.T) {
 		done   func(t *testing.T, msg tea.Msg)
 	}{
 		{"kill", func(m *home, inst *session.Instance) tea.Cmd {
-			preAction, killAction := killActionFor(m, inst)
+			preAction, killAction := m.core.Kill(m.ws, inst, m.closeTerminalFor(inst.Title, "kill"))
 			preAction()
-			return killAction
-		}, func(t *testing.T, msg tea.Msg) { require.IsType(t, killInstanceMsg{}, msg) }},
+			return coreCmd(killAction)
+		}, func(t *testing.T, msg tea.Msg) {
+			res, _ := msg.(coreResultMsg)
+			require.IsType(t, core.KillResult{}, res.msg)
+		}},
 		{"pause", func(m *home, inst *session.Instance) tea.Cmd {
 			require.NoError(t, inst.TransitionTo(session.Loading)) // as the pause's confirm does
-			return pauseActionFor(m, inst)
-		}, func(t *testing.T, msg tea.Msg) { require.IsType(t, pauseInstanceMsg{}, msg, "%v", msg) }},
+			return coreCmd(m.core.Pause(m.ws, inst, m.closeTerminalFor(inst.Title, "pause")))
+		}, func(t *testing.T, msg tea.Msg) {
+			res, _ := msg.(coreResultMsg)
+			require.IsType(t, core.PauseResult{}, res.msg, "%v", msg)
+		}},
 	} {
 		t.Run(op.name, func(t *testing.T) {
 			m := newTestHome(t)
@@ -136,8 +143,8 @@ func TestTransitionFailed_ReattachesARevertedInstance(t *testing.T) {
 	drainCmd(m.prunePanes())                               // a tick while it ran
 	require.Nil(t, m.panes.Get(name), "precondition: pruned while Loading")
 
-	_, _ = m.Update(transitionFailedMsg{inst: inst, title: inst.Title, op: "pause",
-		previousStatus: session.Running, err: errors.New("the session survived")})
+	deliver(t, m, core.OpFailed{Instance: inst, Title: inst.Title, Op: "pause",
+		Previous: session.Running, Err: errors.New("the session survived")})
 
 	assert.Equal(t, session.Running, inst.GetStatus())
 	assert.True(t, m.panes.Alive(name), "the reverted instance gets its client back")

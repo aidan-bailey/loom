@@ -1,11 +1,9 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
-	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/files"
@@ -175,7 +173,8 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 
 func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	preAction, killAction := killActionFor(m, selected)
+	preAction, job := m.core.Kill(m.ws, selected, m.closeTerminalFor(selected.Title, "kill"))
+	killAction := coreCmd(job)
 	message := fmt.Sprintf("[!] Kill session '%s'?", selected.Title)
 	if selected.GetStatus() == session.Recoverable {
 		message = fmt.Sprintf("[!] Discard recoverable session '%s'? Uncommitted changes are lost; the branch is kept.", selected.Title)
@@ -191,103 +190,10 @@ func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 // killAction. Used by cs.actions.kill_selected{confirm=false}.
 func runKillSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	preAction, killAction := killActionFor(m, selected)
+	preAction, job := m.core.Kill(m.ws, selected, m.closeTerminalFor(selected.Title, "kill"))
+	killAction := coreCmd(job)
 	preAction()
 	return m, killAction
-}
-
-// killActionFor returns the (synchronous pre-step, async body) pair
-// that both runKillSelected variants share. preAction flips the
-// instance to Deleting; killAction handles I/O off the update
-// goroutine and returns the appropriate tea.Msg on completion.
-func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
-	previousStatus := selected.GetStatus()
-	title := selected.Title
-	// The owning slot's pane and storage, captured here on the Update
-	// goroutine: killAction runs for seconds in a Cmd, and reading m.* there
-	// would race loadSlot and, after a workspace switch, reach another
-	// workspace's pane and storage.
-	splitPane, storage := m.splitPane, m.storage()
-
-	preAction := func() {
-		if err := selected.TransitionTo(session.Deleting); err != nil {
-			log.For("app").Warn("kill.preaction_transition_failed", "err", err)
-		}
-	}
-
-	killAction := func() tea.Msg {
-		worktree, err := selected.GetGitWorktree()
-		if err != nil {
-			return transitionFailedMsg{inst: selected, title: title, op: "delete", previousStatus: previousStatus, err: err}
-		}
-
-		checkedOut, err := worktree.IsBranchCheckedOut()
-		if err != nil {
-			return transitionFailedMsg{inst: selected, title: title, op: "delete", previousStatus: previousStatus, err: err}
-		}
-
-		if checkedOut {
-			return transitionFailedMsg{
-				inst:           selected,
-				title:          title,
-				op:             "delete",
-				previousStatus: previousStatus,
-				err:            fmt.Errorf("instance %s is currently checked out", selected.Title),
-			}
-		}
-
-		if ts := splitPane.DetachTerminalForInstance(title); ts != nil {
-			if err := ts.Close(); err != nil {
-				log.For("app").Error("kill.terminal_close_failed", "title", title, "err", err)
-			}
-		}
-
-		// A notice is what the kill could not finish but the user must see
-		// (a stash entry it could not drop); it reaches them whatever else
-		// happened. A notice alone means the kill itself succeeded.
-		var notice error
-		if err := selected.Kill(); err != nil {
-			if n, ok := session.NoticeIn(err); ok {
-				notice = n
-			}
-			if _, only := session.OnlyNotice(err); !only {
-				log.For("app").Error("kill.instance_kill_failed", "title", title, "err", err)
-				// A discarded orphan whose cleanup failed must NOT vanish
-				// from the list: the worktree is still on disk and would
-				// silently reappear on the next workspace load. Keep the
-				// row, revert to Recoverable, and show the error (notices
-				// included) so the user can retry D.
-				if previousStatus == session.Recoverable {
-					return transitionFailedMsg{
-						inst:           selected,
-						title:          title,
-						op:             "discard",
-						previousStatus: previousStatus,
-						err:            fmt.Errorf("discard %s: %w", title, err),
-					}
-				}
-			}
-		}
-
-		// Past this point tmux + worktree + branch are gone (or, for a
-		// non-Recoverable kill, best-effort gone with the failure logged).
-		// Reverting status on a storage error would leave a zombie in the
-		// list (Ready/Running with no backing resources); emit
-		// killInstanceMsg regardless so the UI matches reality.
-		// ErrInstanceNotFound just means storage already agreed, so it's a
-		// debug-level note rather than an error.
-		if err := storage.DeleteInstance(selected.Title); err != nil {
-			if errors.Is(err, session.ErrInstanceNotFound) {
-				log.For("app").Debug("kill.storage_already_absent", "title", title)
-			} else {
-				log.For("app").Error("kill.storage_delete_failed", "title", title, "err", err)
-			}
-		}
-
-		return killInstanceMsg{inst: selected, title: title, notice: notice}
-	}
-
-	return preAction, killAction
 }
 
 func runSubmitSelected(m *home) (tea.Model, tea.Cmd) {
@@ -326,7 +232,7 @@ func pushActionFor(selected *session.Instance) tea.Cmd {
 // renders immediately.
 func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	pauseAction := pauseActionFor(m, selected)
+	pauseAction := coreCmd(m.core.Pause(m.ws, selected, m.closeTerminalFor(selected.Title, "pause")))
 
 	startPause := func() tea.Cmd {
 		if !confirm {
@@ -352,70 +258,20 @@ func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	return m, startPause()
 }
 
-// snapshotSaveFunc returns a saveFunc for Pause/Resume that persists the
-// current instance list. Must be called on the main goroutine: it
-// snapshots list membership immediately because ui.List is unlocked and
-// must not be read from the tea.Cmd goroutine the saveFunc runs on.
-// Status filtering still happens at save time via core.Persistable,
-// so state changes made by Pause/Resume itself are captured.
-func snapshotSaveFunc(m *home) func() error {
-	storage := m.storage()
-	snapshot := append([]*session.Instance(nil), m.list.GetInstances()...)
-	return func() error {
-		return storage.SaveInstances(core.Persistable(snapshot))
-	}
-}
-
-func pauseActionFor(m *home, selected *session.Instance) tea.Cmd {
-	previousStatus := selected.GetStatus()
-	pauseTitle := selected.Title
-	saveFunc := snapshotSaveFunc(m)
-	splitPane := m.splitPane // the owning slot's, captured on Update (see killActionFor)
-	return func() tea.Msg {
-		if ts := splitPane.DetachTerminalForInstance(pauseTitle); ts != nil {
-			if err := ts.Close(); err != nil {
-				log.For("app").Error("pause.terminal_close_failed", "title", pauseTitle, "err", err)
-			}
-		}
-		if err := selected.Pause(saveFunc); err != nil {
-			return transitionFailedMsg{inst: selected, title: pauseTitle, op: "pause", previousStatus: previousStatus, err: err}
-		}
-		return pauseInstanceMsg{title: pauseTitle}
-	}
-}
-
 func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
 
-	// Flip to Loading immediately so the list shows the spinner while
-	// Resume's blocking worktree/tmux setup runs in a Cmd goroutine.
-	// TransitionTo enforces Paused→Loading atomically, so a concurrent
-	// reconcile flip between the precondition check and this write can't
-	// leave us starting Resume on a non-Paused instance.
-	if err := selected.TransitionTo(session.Loading); err != nil {
-		log.For("app").Warn("resume.skipped", "err", err)
+	// Flip to Loading immediately (core.Model.Resume) so the list shows
+	// the spinner while Resume's blocking worktree/tmux setup runs in a
+	// Cmd goroutine. TransitionTo enforces Paused→Loading atomically, so a
+	// concurrent reconcile flip between the precondition check and this
+	// write can't leave us starting Resume on a non-Paused instance:
+	// Resume then returns no job.
+	job := m.core.Resume(m.ws, selected)
+	if job == nil {
 		return m, nil
 	}
-	saveFunc := snapshotSaveFunc(m)
-	resumeTitle := selected.Title
-	owner := m.startOwner(selected) // stamped for resumeDoneMsg
-	resumeCmd := func() tea.Msg {
-		return resumeResult(selected, resumeTitle, owner, selected.Resume(saveFunc))
-	}
-	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), resumeCmd)
-}
-
-// resumeResult turns Resume's error into its completion message. A Notice
-// alone means the resume succeeded with something to report, which the
-// done handler shows; anything else failed.
-func resumeResult(inst *session.Instance, title string, owner *workspaceSlot, err error) tea.Msg {
-	if n, ok := session.OnlyNotice(err); ok {
-		return resumeDoneMsg{instance: inst, slot: owner, notice: n}
-	}
-	if err != nil {
-		return transitionFailedMsg{inst: inst, title: title, op: "resume", previousStatus: session.Paused, err: err}
-	}
-	return resumeDoneMsg{instance: inst, slot: owner}
+	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), coreCmd(job))
 }
 
 // runResumeOrRecover routes the 'r' key: Recoverable orphans are adopted
@@ -447,11 +303,10 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	opts.Account = accountOrDefault(selected.Account())
 
 	m.pendingLaunchOptions = func(newOpts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-		resumeTitle := selected.Title
-		// Snapshot here, on the main goroutine — Async below runs on a
-		// Cmd goroutine and must not touch the unlocked ui.List.
-		saveFunc := snapshotSaveFunc(m)
-		owner := m.startOwner(selected) // stamped for resumeDoneMsg
+		// Snapshot the save and stamp the owner here, on the main
+		// goroutine — Async below runs on a Cmd goroutine and must not
+		// read the model.
+		resumeJob := m.core.ResumeIfLoading(m.ws, selected)
 		resumeTask := overlay.ConfirmationTask{
 			Sync: func() {
 				m.applyChosenLaunch(selected, newOpts, base)
@@ -461,19 +316,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 					log.For("app").Warn("resume.skipped", "err", err)
 				}
 			},
-			Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
-				// Sync's TransitionTo(Loading) may have failed (e.g. a
-				// concurrent reconcile flip landed the instance
-				// somewhere that transition can't legally proceed
-				// from) — mirrors runResumeSelected's early return on
-				// the same failure, just checked here since Sync's
-				// func() signature can't otherwise signal Run() to
-				// skip Async.
-				if selected.GetStatus() != session.Loading {
-					return nil
-				}
-				return resumeResult(selected, resumeTitle, owner, selected.Resume(saveFunc))
-			}),
+			Async: tea.Batch(tea.RequestWindowSize, coreCmd(resumeJob)),
 		}
 		if m.remoteControlBlockedOn(newOpts.Account, launch.EffectiveRemoteControl(newOpts), selected.Program()) {
 			return m, m.promptRestartRemoteControlBlocked(resumeTask, m.rcAuthFor(newOpts.Account).Reason)
@@ -495,36 +338,17 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())
 }
 
-// runRecoverSelected adopts the selected Recoverable orphan: it serializes
-// the inline placeholder, flips the data to Running, and runs
+// runRecoverSelected adopts the selected Recoverable orphan: core's
+// Recover flips it to Loading for the spinner and returns the job running
 // ReconcileAndRestore (which adopts the existing worktree and spawns tmux)
-// off the UI goroutine. The list swap + persist happen in the recoverDoneMsg
-// handler on the main goroutine.
+// off the UI goroutine. The list swap + persist happen when the model
+// delivers its result, on the main goroutine.
 func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
-	selected := m.list.GetSelectedInstance()
-	cfgDir := m.configDir()
-	data := selected.ToInstanceData()
-	data.Status = session.Running
-	oldTitle := selected.Title
-	cmdExec := cmd2.MakeExecutor()
-
-	// Show the spinner while ReconcileAndRestore does its blocking
-	// tmux/worktree probing — same shape as runResumeSelected. The
-	// recoverDoneMsg handler reverts to Recoverable on failure.
-	if err := selected.TransitionTo(session.Loading); err != nil {
-		log.For("app").Warn("recover.skipped", "err", err)
+	job := m.core.Recover(m.ws, m.list.GetSelectedInstance())
+	if job == nil {
 		return m, nil
 	}
-
-	owner := m.workspaceSlot
-	recoverCmd := func() tea.Msg {
-		inst, err := session.ReconcileAndRestore(data, cfgDir, cmdExec)
-		if err != nil {
-			return recoverDoneMsg{oldTitle: oldTitle, err: err, placeholder: selected, slot: owner}
-		}
-		return recoverDoneMsg{oldTitle: oldTitle, recovered: inst, placeholder: selected, slot: owner}
-	}
-	return m, tea.Batch(recoverCmd, m.instanceChanged())
+	return m, tea.Batch(coreCmd(job), m.instanceChanged())
 }
 
 // -- Attach --
@@ -827,23 +651,4 @@ func instanceByDisplayIndex(items []*session.Instance, idx int) *session.Instanc
 		}
 	}
 	return nil
-}
-
-// mergeActionFor returns the tea.Cmd that performs the actual git
-// merge once the user commits a selection in the picker. Mirrors
-// pushActionFor: returns nil on success (silent, matching push's
-// convention of treating "no error" as sufficient feedback) or the
-// wrapped git error, which Update()'s case error: branch surfaces via
-// m.handleError.
-func mergeActionFor(target, source *session.Instance) tea.Cmd {
-	return func() tea.Msg {
-		worktree, err := target.GetGitWorktree()
-		if err != nil {
-			return fmt.Errorf("merge: %w", err)
-		}
-		if err := worktree.Merge(source.GetBranch()); err != nil {
-			return err
-		}
-		return nil
-	}
 }

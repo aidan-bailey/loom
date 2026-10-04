@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -43,7 +44,7 @@ func (m *home) drainCore() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// applyCoreEvent applies one model event to the view. Packages B and C add
+// applyCoreEvent applies one model event to the view. Package C adds
 // cases.
 func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 	switch ev := ev.(type) {
@@ -52,8 +53,40 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 			return m.handleError(ev.Err)
 		}
 		m.errBox.SetInfo(ev.Info)
+	case core.InstancesChanged:
+		cmd := m.instanceChanged()
+		if ev.Relayout {
+			return tea.Batch(tea.RequestWindowSize, cmd)
+		}
+		return cmd
+	case core.ClientsStale:
+		return m.prunePanes()
+	case core.SessionLaunched:
+		return m.replacePane(ev.Instance)
+	case core.Reactivated:
+		m.ensurePane(ev.Instance)
+	case core.Started:
+		return m.applyStarted(ev)
+	case core.Recovered:
+		return m.applyRecovered(ev)
 	}
 	return nil
+}
+
+// closeTerminalFor returns the step kill and pause run in their job before
+// touching the instance: closing the focused split pane's terminal shell
+// for title (its loom_term_* session), which ends that shell. The pane is
+// the TUI's; it is captured here on Update, and the job only runs the
+// returned func. op names the operation in the log ("kill", "pause").
+func (m *home) closeTerminalFor(title, op string) func() {
+	splitPane := m.splitPane // the owning slot's, captured on Update
+	return func() {
+		if ts := splitPane.DetachTerminalForInstance(title); ts != nil {
+			if err := ts.Close(); err != nil {
+				log.For("app").Error(op+".terminal_close_failed", "title", title, "err", err)
+			}
+		}
+	}
 }
 
 // newSlotView builds the view of a loaded workspace: a rail reading its

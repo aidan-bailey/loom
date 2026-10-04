@@ -137,7 +137,7 @@ func TestFromInstanceData_Recoverable_PreservesShape(t *testing.T) {
 	assert.NotNil(t, inst.getTmuxSession(), "Recoverable instance should have a TmuxSession object")
 
 	// This is the exact accessor the discard ('D') path calls first
-	// (app/intents.go killActionFor). Before this fix it always errored
+	// (core/ops.go Kill). Before this fix it always errored
 	// with "not been started", so discard silently no-opped and the
 	// Recoverable row never left the list.
 	wt, err := inst.GetGitWorktree()

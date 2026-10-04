@@ -8,6 +8,7 @@ import (
 	"github.com/aidan-bailey/loom/ui"
 
 	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 )
 
 // testWS builds a fixture workspace from its handles (any may be nil, as
@@ -103,4 +104,12 @@ func editRCAuth(m *home, edit func(*session.RemoteControlAuth)) {
 	a := m.core.RCAuth()
 	edit(&a)
 	m.core.SetRCAuth(a)
+}
+
+// deliver hands m a core job's result as the runtime would, returning the
+// Cmd the update produced (handler plus drained events).
+func deliver(t *testing.T, m *home, result any) tea.Cmd {
+	t.Helper()
+	_, cmd := m.Update(coreResultMsg{msg: result})
+	return cmd
 }
