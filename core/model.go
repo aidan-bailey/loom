@@ -194,6 +194,8 @@ func (m *Model) Deliver(msg any) {
 		m.notifyErr(msg.Err)
 	case promptFailed:
 		m.notifyErr(msg.err)
+	case promptSent:
+		m.deliverPromptSent(msg)
 	default:
 		log.For("core").Error("deliver.unknown_result", "type", fmt.Sprintf("%T", msg))
 	}

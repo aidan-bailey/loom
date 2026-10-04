@@ -300,12 +300,14 @@ func killUnstarted(inst *session.Instance) Job {
 // SendPrompt returns the job typing prompt into inst's agent pane and
 // pressing Enter (Pane().SendPrompt: load-buffer, paste-buffer, a 100ms
 // pause, Enter: three tmux subprocesses that must not block the TUI). A
-// failure comes back as a notice. For text the user sends to a running
-// session: the prompt overlay, the quick input bar, a workbench review.
+// failure comes back as a notice naming the session: it arrives after the
+// overlay or bar that took the text has closed, so the user must resend.
+// For text the user sends to a running session: the prompt overlay, the
+// quick input bar, a workbench review.
 func (m *Model) SendPrompt(inst *session.Instance, prompt string) Job {
 	return func() any {
 		if err := inst.Pane().SendPrompt(prompt); err != nil {
-			return promptFailed{err: err}
+			return promptFailed{err: fmt.Errorf("prompt not sent to %s: %w", inst.Title, err)}
 		}
 		return nil
 	}
@@ -313,12 +315,15 @@ func (m *Model) SendPrompt(inst *session.Instance, prompt string) Job {
 
 // sendInitialPrompt is the start completion's send of an N flow's
 // prompt. A failure is logged, as it was when the completion sent it
-// on the TUI's goroutine.
-func sendInitialPrompt(inst *session.Instance, prompt string) Job {
+// on the TUI's goroutine. Either way it reports promptSent, whose
+// delivery tells the TUI the start finished (Started): only after the
+// prompt, as before, so no key the user types into the attached pane
+// can land ahead of it.
+func sendInitialPrompt(inst *session.Instance, owner *Workspace, prompt string) Job {
 	return func() any {
 		if err := inst.Pane().SendPrompt(prompt); err != nil {
 			log.For("core").Error("send_prompt_failed", "err", err)
 		}
-		return nil
+		return promptSent{inst: inst, owner: owner}
 	}
 }

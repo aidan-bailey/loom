@@ -83,7 +83,7 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 	m.switchWorkspaceSlot(1)
 	m.errBox.SetSize(400, 1)
 
-	deliver(t, m, core.StartResult{Instance: starting, Owner: owner.ws})
+	pumpCore(t, m, deliver(t, m, core.StartResult{Instance: starting, Owner: owner.ws}))
 
 	assert.Equal(t, stateDefault, m.state, "no inline attach into another workspace's pane")
 	assert.Equal(t, "bpeer", focusedName(m), "focus stays where the user put it")
@@ -108,6 +108,25 @@ func TestInstanceStarted_SuccessInFocusedWorkspaceAttaches(t *testing.T) {
 	assert.Same(t, starting, m.list.GetSelectedInstance())
 	assert.GreaterOrEqual(t, recA.calls, 1)
 	assert.Zero(t, recB.calls)
+}
+
+// TestInstanceStarted_InlineAttachWaitsForThePrompt: the N flow's prompt
+// is pasted and Entered before the completion puts the user into inline
+// attach, as when the completion sent it inline: a key typed into the
+// attached pane in between would join the prompt.
+func TestInstanceStarted_InlineAttachWaitsForThePrompt(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	starting := startingInstance(t, m.workspaceSlot, "new-one")
+	starting.SetPrompt("do the thing")
+	require.NoError(t, starting.TransitionTo(session.Running))
+
+	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	assert.Equal(t, stateDefault, m.state, "no inline attach while the prompt is being sent")
+	assert.Empty(t, starting.Prompt(), "the prompt is cleared at once, so nothing re-sends it")
+
+	pumpCore(t, m, cmd)
+	assert.Equal(t, stateInlineAttach, m.state, "attached once the prompt is sent")
+	assert.Same(t, starting, m.list.GetSelectedInstance())
 }
 
 // TestInstanceStarted_AfterOwnerDropped: the owner tab was closed while

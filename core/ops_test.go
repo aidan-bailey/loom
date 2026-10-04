@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/aidan-bailey/loom/session"
@@ -33,21 +34,45 @@ func TestDeliverStart_FailureRemovesSavesAndKills(t *testing.T) {
 
 // TestDeliverStart_SuccessSendsThePromptByJob: the N flow's prompt no
 // longer blocks the caller; it is cleared at once (a later save never
-// re-sends it) and typed by a job.
+// re-sends it) and typed by a job. The TUI hears of the start (Started)
+// only once that job has sent it, as when the completion sent it inline
+// before attaching: a key typed into the attached pane must not land
+// ahead of the prompt. Whether the owner is loaded is asked again then:
+// it may have closed while the prompt was sent.
 func TestDeliverStart_SuccessSendsThePromptByJob(t *testing.T) {
-	m := NewForTest(Options{})
-	ws := storedWorkspace(t, "a")
-	inst := newInst(t, "x")
-	inst.SetPrompt("do the thing")
-	ws.Add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	for _, tc := range []struct {
+		name        string
+		closeOwner  bool
+		wantsLoaded bool
+	}{
+		{"owner still open", false, true},
+		{"owner closed while the prompt was sent", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewForTest(Options{})
+			ws := storedWorkspace(t, "a")
+			inst := newInst(t, "x")
+			inst.SetPrompt("do the thing")
+			ws.Add(inst)
+			m.SetWorkspacesForTest(nil, []*Workspace{ws, storedWorkspace(t, "b")})
 
-	m.Deliver(StartResult{Instance: inst, Owner: ws})
+			m.Deliver(StartResult{Instance: inst, Owner: ws})
 
-	out := m.Drain()
-	assert.Empty(t, inst.Prompt())
-	assert.Len(t, out.Jobs, 1)
-	assert.Equal(t, []Event{Started{Instance: inst, Owner: ws, Loaded: true}}, out.Events)
+			out := m.Drain()
+			assert.Empty(t, inst.Prompt())
+			require.Len(t, out.Jobs, 1)
+			assert.Empty(t, out.Events, "no Started until the prompt is sent")
+
+			if tc.closeOwner {
+				_, err := m.CloseTab("a")
+				require.NoError(t, err)
+			}
+			// The fixture never started, so the send fails; the job logs
+			// that and reports the start finished all the same.
+			m.Deliver(out.Jobs[0]())
+			assert.Equal(t, []Event{Started{Instance: inst, Owner: ws, Loaded: tc.wantsLoaded}}, m.Drain().Events)
+		})
+	}
 }
 
 // TestDeliverOpFailed_Reverts pins a failed resume's revert (Loading back
@@ -119,4 +144,82 @@ func TestStartOwner_ResolvesByIdentity(t *testing.T) {
 	loose, err := session.NewInstance(session.InstanceOptions{Title: "loose", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	assert.Same(t, focused, m.startOwner(loose, focused), "an instance no workspace holds falls back to the one the TUI shows")
+}
+
+// TestKill_BeforeKillRunsAfterTheChecksAndBeforeTheKill pins where the
+// TUI's step (beforeKill: its terminal shell's close) runs in the kill's
+// job: never for a kill the checks refuse, and on a kill that proceeds,
+// once, while the instance's worktree is still there, i.e. before
+// Instance.Kill removes it.
+func TestKill_BeforeKillRunsAfterTheChecksAndBeforeTheKill(t *testing.T) {
+	refused := func(t *testing.T, inst *session.Instance, wantErr string) {
+		t.Helper()
+		m := NewForTest(Options{})
+		ws := storedWorkspace(t, "a")
+		ws.Add(inst)
+		m.SetWorkspacesForTest(nil, []*Workspace{ws})
+		calls := 0
+		pre, job := m.Kill(ws, inst, func() { calls++ })
+		pre()
+
+		failed, ok := job().(OpFailed)
+		require.True(t, ok, "the kill is refused")
+		assert.ErrorContains(t, failed.Err, wantErr)
+		assert.Zero(t, calls, "beforeKill must not run for a refused kill")
+	}
+
+	t.Run("no worktree", func(t *testing.T) {
+		// Never started: GetGitWorktree fails.
+		refused(t, newInst(t, "unstarted"), "has not been started")
+	})
+
+	t.Run("branch checked out in the repository", func(t *testing.T) {
+		repo := gitRepo(t)
+		inst, err := session.FromInstanceData(session.InstanceData{
+			Title: "main-session", Status: session.Paused, Program: "claude",
+			Worktree: session.GitWorktreeData{RepoPath: repo, WorktreePath: t.TempDir(), BranchName: "main", SessionName: "main-session"},
+		}, t.TempDir())
+		require.NoError(t, err)
+		refused(t, inst, "currently checked out")
+	})
+
+	t.Run("a kill that proceeds", func(t *testing.T) {
+		repo := gitRepo(t)
+		inst := pausedWorktreeInst(t, repo, "victim", "victim-branch")
+		wtPath := inst.GetWorktreePath()
+		require.DirExists(t, wtPath, "fixture: the worktree exists")
+		m := NewForTest(Options{})
+		ws := storedWorkspace(t, "a")
+		ws.Add(inst)
+		m.SetWorkspacesForTest(nil, []*Workspace{ws})
+
+		calls, worktreeThere := 0, false
+		pre, job := m.Kill(ws, inst, func() {
+			calls++
+			_, err := os.Stat(wtPath)
+			worktreeThere = err == nil
+		})
+		pre()
+
+		_, ok := job().(KillResult)
+		require.True(t, ok, "the kill proceeds")
+		assert.Equal(t, 1, calls, "beforeKill runs once")
+		assert.True(t, worktreeThere, "beforeKill runs before Instance.Kill, while the worktree is still there")
+		assert.NoDirExists(t, wtPath, "and Instance.Kill removed it afterwards")
+	})
+}
+
+// TestSendPrompt_FailureNamesTheSession: a failed send reaches the user
+// after the overlay or bar that took the text has closed, so its notice
+// says what was not sent, and to which session.
+func TestSendPrompt_FailureNamesTheSession(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := newInst(t, "x") // never started, so the send fails
+	m.Deliver(m.SendPrompt(inst, "hi")())
+
+	events := m.Drain().Events
+	require.Len(t, events, 1)
+	n, ok := events[0].(Notice)
+	require.True(t, ok, "a notice")
+	assert.ErrorContains(t, n.Err, "prompt not sent to x: ")
 }

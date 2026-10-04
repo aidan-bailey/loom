@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
+	"github.com/stretchr/testify/require"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -112,4 +113,28 @@ func deliver(t *testing.T, m *home, result any) tea.Cmd {
 	t.Helper()
 	_, cmd := m.Update(coreResultMsg{msg: result})
 	return cmd
+}
+
+// pumpCore runs cmd as the runtime would, handing every core result among
+// its messages back through Update and running what that produces in
+// turn, until no Cmd is left: a core job that follows another (a start's
+// initial-prompt send) lands too.
+func pumpCore(t *testing.T, m *home, cmd tea.Cmd) {
+	t.Helper()
+	queue := []tea.Cmd{cmd}
+	for steps := 0; len(queue) > 0; steps++ {
+		require.Less(t, steps, 100, "core pump did not settle")
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		case coreResultMsg:
+			_, next := m.Update(msg)
+			queue = append(queue, next)
+		}
+	}
 }

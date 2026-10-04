@@ -2,6 +2,8 @@ package core
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
@@ -45,6 +47,44 @@ func storedWorkspace(t *testing.T, name string) *Workspace {
 	storage, err := session.NewStorage(state, dir)
 	require.NoError(t, err)
 	return NewWorkspace(WorkspaceParts{Ctx: &config.WorkspaceContext{Name: name, ConfigDir: dir}, Storage: storage, Config: config.DefaultConfig(), State: state})
+}
+
+// gitRepo creates a repository on branch main with one commit (adapted
+// from app's setupMergeRepo; runGit is load_test.go's).
+func gitRepo(t *testing.T) string {
+	t.Helper()
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init", "-q", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "f"), []byte("x"), 0o644))
+	runGit(t, repoDir, "add", ".")
+	runGit(t, repoDir, "commit", "-qm", "init")
+	return repoDir
+}
+
+// pausedWorktreeInst builds a Paused instance backed by a real worktree of
+// repoDir on a new branch (app's pausedInstanceWithRealWorktree): a
+// started instance whose GetGitWorktree resolves, with no tmux session
+// running.
+func pausedWorktreeInst(t *testing.T, repoDir, title, branch string) *session.Instance {
+	t.Helper()
+	worktreePath := filepath.Join(t.TempDir(), title)
+	runGit(t, repoDir, "worktree", "add", "-b", branch, worktreePath)
+	inst, err := session.FromInstanceData(session.InstanceData{
+		SchemaVersion: session.CurrentSchemaVersion,
+		Title:         title,
+		Path:          repoDir,
+		Branch:        branch,
+		Status:        session.Paused,
+		Worktree: session.GitWorktreeData{
+			RepoPath:         repoDir,
+			WorktreePath:     worktreePath,
+			SessionName:      title,
+			BranchName:       branch,
+			IsExistingBranch: true,
+		},
+	}, t.TempDir())
+	require.NoError(t, err)
+	return inst
 }
 
 // recordingInstanceStorage counts SaveInstances calls and keeps the last

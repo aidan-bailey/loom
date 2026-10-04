@@ -87,6 +87,14 @@ type MergeResult struct {
 // promptFailed is a prompt send that failed (SendPrompt).
 type promptFailed struct{ err error }
 
+// promptSent is a started instance's initial prompt, sent or (logged)
+// failed (sendInitialPrompt). owner is the start's owner, as deliverStart
+// resolved it.
+type promptSent struct {
+	inst  *session.Instance
+	owner *Workspace
+}
+
 // adoptIntoReopened swaps inst in for its reopened twin (reopenedTwin) and
 // returns the reopened workspace, or nil when inst's tmux session did not
 // survive the reopen: a session already up when the reopen reconciled the
@@ -168,6 +176,9 @@ func (m *Model) removeEverywhere(inst *session.Instance) {
 //     a job; both belong to the instance, wherever it lives. Started tells
 //     the TUI, which attaches the instance's client when the owner is
 //     loaded and moves its selection only when that can't retarget a flow.
+//     With a prompt, Started waits for the send (deliverPromptSent): the
+//     TUI's inline attach forwards keys to the agent, and a key typed
+//     before the prompt's paste and Enter would join the prompt.
 //   - Owner closed and its workspace reopened meanwhile: the reopened
 //     workspace reconciled the record into a Paused twin, which the
 //     instance replaces on success if its tmux session survived the
@@ -214,9 +225,18 @@ func (m *Model) deliverStart(r StartResult) {
 	}
 	if prompt := inst.Prompt(); prompt != "" {
 		inst.SetPrompt("")
-		m.spawn(sendInitialPrompt(inst, prompt))
+		m.spawn(sendInitialPrompt(inst, owner, prompt))
+		return
 	}
 	m.emit(Started{Instance: inst, Owner: owner, Loaded: loaded})
+}
+
+// deliverPromptSent finishes a start whose initial prompt was sent first
+// (deliverStart): only now does the TUI hear of it (Started). The owner may
+// have closed while the prompt was sent, so whether it is still loaded is
+// asked again.
+func (m *Model) deliverPromptSent(r promptSent) {
+	m.emit(Started{Instance: r.inst, Owner: r.owner, Loaded: m.IsLoaded(r.owner)})
 }
 
 // deliverResume finishes a resume. The owner may have been closed while
