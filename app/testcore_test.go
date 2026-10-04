@@ -70,9 +70,10 @@ func wireCore(t *testing.T, m *home) *home {
 
 // reworkspace rebuilds slot's workspace with its handles edited by edit,
 // keeping its instances in order, and gives the slot a fresh rail over it
-// (the selection kept). It stands in for the handle assignments fixtures
-// made when the slot owned its handles: a core.Workspace's handles are
-// fixed for its lifetime. It re-installs the model's mirror (wireCore).
+// (the selection, workspace name and size kept). It stands in for the
+// handle assignments fixtures made when the slot owned its handles: a
+// core.Workspace's handles are fixed for its lifetime. It re-installs the
+// model's mirror (wireCore).
 func reworkspace(t *testing.T, m *home, slot *workspaceSlot, edit func(*core.WorkspaceParts)) {
 	t.Helper()
 	var p core.WorkspaceParts
@@ -82,15 +83,16 @@ func reworkspace(t *testing.T, m *home, slot *workspaceSlot, edit func(*core.Wor
 		insts = slot.ws.Instances()
 	}
 	edit(&p)
-	var sel *session.Instance
-	if slot.list != nil {
-		sel = slot.list.GetSelectedInstance()
-	}
+	old := slot.list
 	slot.ws = testWS(p, insts...)
 	slot.list = ui.NewList(&m.spinner, slot.ws)
 	slot.list.SetPanes(m.panes)
-	if sel != nil {
-		slot.list.SelectInstance(sel)
+	if old != nil {
+		slot.list.SetWorkspaceName(old.WorkspaceName())
+		slot.list.SetSize(old.Size())
+		if sel := old.GetSelectedInstance(); sel != nil {
+			slot.list.SelectInstance(sel)
+		}
 	}
 	wireCore(t, m)
 }

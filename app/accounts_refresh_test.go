@@ -53,7 +53,7 @@ func TestAccountsRefresh_AReloadWithEveryAuthKnownReadsNothing(t *testing.T) {
 func TestAccountsRefresh_IncludesTheDefaultWhileItsIdentityIsUnknown(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // account.MainDir's fallback
 	m := newTestHome(t)
-	m.program = "/nonexistent/loom-test/claude"
+	m.core.SetProgram("/nonexistent/loom-test/claude")
 	main := withAccounts(t, m, "max-2")
 
 	msg := runRefresh(t, m.requestAccountsRefresh(false))

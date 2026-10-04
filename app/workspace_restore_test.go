@@ -212,8 +212,7 @@ func restoreModeHome(t *testing.T, exec cmd2.Executor, instancesJSON string) (*h
 	storage, err := session.NewStorage(appState, dir)
 	require.NoError(t, err)
 	m := newRestoreHome(exec)
-	m.program = "true"
-	m.core = core.NewForTest(core.Options{CmdExec: exec, Program: m.program})
+	m.core.SetProgram("true")
 	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) {
 		p.Storage, p.State, p.Ctx = storage, appState, &config.WorkspaceContext{ConfigDir: dir}
 	})

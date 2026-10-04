@@ -87,3 +87,32 @@ func TestList_ReplacedRowKeepsTheSelection(t *testing.T) {
 	assert.Same(t, replacement, l.GetSelectedInstance())
 	assert.Equal(t, 1, l.SelectedIdx())
 }
+
+// TestList_TwoRemovalsBetweenReadsKeepTheRowRule: an unfocused list is not
+// read between edits, so a kill above the selection and a kill of the
+// selection itself can both land before its next read. The selection must
+// end where the list's own removals left it, one at a time: on the row
+// that slid into the selected row's place (d), not on whatever row now
+// sits at the stale index (e).
+func TestList_TwoRemovalsBetweenReadsKeepTheRowRule(t *testing.T) {
+	l, src := newPageNavList(5) // a b c d e
+	a, c, d := src.items[0], src.items[2], src.items[3]
+	l.SetSelectedInstance(2) // c
+	src.remove(a)
+	src.remove(c)
+	assert.Same(t, d, l.GetSelectedInstance())
+	assert.Equal(t, 1, l.SelectedIdx())
+}
+
+// TestList_SelectedAndEveryLaterRowRemovedSelectsTheLastRow: with nothing
+// left after the selected row, the selection moves to the new last row.
+func TestList_SelectedAndEveryLaterRowRemovedSelectsTheLastRow(t *testing.T) {
+	l, src := newPageNavList(5) // a b c d e
+	b := src.items[1]
+	l.SetSelectedInstance(2) // c
+	for _, inst := range append([]*session.Instance(nil), src.items[2:]...) {
+		src.remove(inst)
+	}
+	assert.Same(t, b, l.GetSelectedInstance())
+	assert.Equal(t, 1, l.SelectedIdx())
+}

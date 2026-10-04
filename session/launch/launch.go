@@ -102,11 +102,11 @@ func FromConfig(cfg *config.Config) Options {
 
 // EffectiveRemoteControl reports whether opts should actually apply
 // the --remote-control flag once Headroom Proxy's exclusivity is
-// accounted for. Compose and every remoteControlBlocked
+// accounted for. Compose and every RemoteControlBlocked
 // call site must agree on this value — otherwise a config.json
 // hand-edited to set both ClaudeRemoteControl and HeadroomProxy true
 // (or a Session Launch Options selection reaching that state) would
-// make remoteControlBlocked report a conflict the composed command
+// make RemoteControlBlocked report a conflict the composed command
 // doesn't actually have.
 func EffectiveRemoteControl(opts Options) bool {
 	return opts.RemoteControl && !opts.HeadroomProxy

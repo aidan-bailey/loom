@@ -14,7 +14,7 @@ import (
 
 func TestUsageProbe_NotDispatchedWithoutAnExtraAccount(t *testing.T) {
 	m := homeWithAppState(t)
-	m.program = "claude"
+	m.core.SetProgram("claude")
 	withAccounts(t, m)
 
 	assert.Nil(t, m.maybeUsageProbe())
@@ -23,7 +23,7 @@ func TestUsageProbe_NotDispatchedWithoutAnExtraAccount(t *testing.T) {
 
 func TestUsageProbe_NotDispatchedWithoutAClaudeProgram(t *testing.T) {
 	m := homeWithAppState(t)
-	m.program = "aider"
+	m.core.SetProgram("aider")
 	withAccounts(t, m, "max-2")
 
 	assert.Nil(t, m.maybeUsageProbe())
@@ -31,7 +31,7 @@ func TestUsageProbe_NotDispatchedWithoutAClaudeProgram(t *testing.T) {
 
 func TestUsageProbe_DispatchesOnceAndThrottles(t *testing.T) {
 	m := homeWithAppState(t)
-	m.program = "claude"
+	m.core.SetProgram("claude")
 	withAccounts(t, m, "max-2")
 
 	require.NotNil(t, m.maybeUsageProbe())
@@ -78,7 +78,7 @@ func TestUsageReady_LoggedOutOutranksAProbedSample(t *testing.T) {
 
 func TestRequestUsageProbe_BringsTheNextProbeForward(t *testing.T) {
 	m := homeWithAppState(t)
-	m.program = "claude"
+	m.core.SetProgram("claude")
 	withAccounts(t, m, "max-2")
 	require.NotNil(t, m.maybeUsageProbe())
 	m.Update(gatedMsg{kind: gateUsage, msg: usageReadyMsg{}})

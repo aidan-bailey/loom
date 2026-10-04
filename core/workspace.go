@@ -51,15 +51,17 @@ func (w *Workspace) State() config.AppState { return w.state }
 // Recovery is the summary of the workspace's last orphan reconcile.
 func (w *Workspace) Recovery() RecoverySummary { return w.recovery }
 
-// Name is the workspace's registered name, "" for the global context.
+// Name is the workspace's registered name, "" for the global context (and
+// for a nil workspace).
 func (w *Workspace) Name() string {
-	if w.ctx == nil {
+	if w == nil || w.ctx == nil {
 		return ""
 	}
 	return w.ctx.Name
 }
 
-// Label names the workspace in notices: its name, or "global".
+// Label names the workspace in notices: its name, or "global" (also for a
+// nil workspace).
 func (w *Workspace) Label() string {
 	if n := w.Name(); n != "" {
 		return n
@@ -69,8 +71,9 @@ func (w *Workspace) Label() string {
 
 // Instances returns the workspace's instances in display order: the
 // workspace terminal first when there is one, the rest in the order they
-// were added. The slice is the workspace's own: callers must not modify
-// it, and copy it to keep it past the next edit.
+// were added. It is the model's own slice: valid until the next model
+// call; copy it to keep it, and always before handing it to a job.
+// Callers must not modify it.
 func (w *Workspace) Instances() []*session.Instance { return w.insts }
 
 // Add adds inst: first when it is the workspace terminal, last otherwise.

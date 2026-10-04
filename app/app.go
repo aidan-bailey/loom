@@ -144,8 +144,6 @@ type home struct {
 
 	// -- Storage and Configuration --
 
-	program string
-
 	// core is the session model (package core): the loaded workspaces,
 	// their instances and everything lifecycle. Never nil after newHome.
 	core *core.Model

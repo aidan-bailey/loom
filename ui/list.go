@@ -42,8 +42,13 @@ type List struct {
 	// last resolved. The rows change under the list (the source is edited
 	// elsewhere), so the selection is kept by identity and re-resolved on
 	// every read (resolveSelection).
-	selected      *session.Instance
-	selectedIdx   int
+	selected    *session.Instance
+	selectedIdx int
+	// seen is the list's own copy of the rows as of the last resolve: a
+	// selection whose instance has since gone is placed against it
+	// (lostSelectionRow), which takes every edit made in between into
+	// account, not just the last one.
+	seen          []*session.Instance
 	scrollOffset  int // index of the first visible item in the viewport
 	height, width int
 	spinner       *spinner.Model
@@ -75,12 +80,13 @@ func (l *List) items() []*session.Instance {
 // it moves its index, not the selection (inline attach looks the
 // selection up per key, so a silent shift would redirect typing). When
 // the selected instance is gone, the selection moves to the row that slid
-// into its place, or to the new last row; with no rows it is 0. These are
-// the rules the list's own removal and workspace-terminal prepend applied
-// when it held the rows, and like them a selection that moves is scrolled
-// back into view.
+// into its place, or to the new last row (lostSelectionRow); with no rows
+// it is 0. These are the rules the list's own removal and
+// workspace-terminal prepend applied when it held the rows, and like them
+// a selection that moves is scrolled back into view.
 func (l *List) resolveSelection() int {
 	items := l.items()
+	defer l.remember(items)
 	if len(items) == 0 {
 		l.selected, l.selectedIdx = nil, 0
 		return 0
@@ -88,17 +94,58 @@ func (l *List) resolveSelection() int {
 	if l.selectedIdx < len(items) && items[l.selectedIdx] == l.selected {
 		return l.selectedIdx
 	}
+	i := min(l.selectedIdx, len(items)-1)
 	if l.selected != nil {
-		if i := slices.Index(items, l.selected); i >= 0 {
-			l.selectedIdx = i
-			l.scrollToSelected(len(items))
+		if i = slices.Index(items, l.selected); i < 0 {
+			i = l.lostSelectionRow(items)
+		}
+	}
+	l.selected, l.selectedIdx = items[i], i
+	l.scrollToSelected(len(items))
+	return i
+}
+
+// lostSelectionRow is the row a selection whose instance is gone moves to,
+// placed against the rows of the last resolve (seen): the first row after
+// the selected one there that is still present (the row that slid into its
+// place, however many removals landed in between), else the new last row.
+// A lone in-place replacement of the selected row (a recover swapping its
+// placeholder) keeps the selection on that row.
+func (l *List) lostSelectionRow(items []*session.Instance) int {
+	p := slices.Index(l.seen, l.selected)
+	if p < 0 {
+		return len(items) - 1
+	}
+	if replacedOnlyAt(l.seen, items, p) {
+		return p
+	}
+	for _, inst := range l.seen[p+1:] {
+		if i := slices.Index(items, inst); i >= 0 {
 			return i
 		}
 	}
-	l.selectedIdx = min(l.selectedIdx, len(items)-1)
-	l.selected = items[l.selectedIdx]
-	l.scrollToSelected(len(items))
-	return l.selectedIdx
+	return len(items) - 1
+}
+
+// replacedOnlyAt reports whether now is before with only row p changed.
+func replacedOnlyAt(before, now []*session.Instance, p int) bool {
+	if len(before) != len(now) {
+		return false
+	}
+	for i := range now {
+		if i != p && now[i] != before[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// remember records items as the rows of the last resolve (seen), in the
+// list's own copy: the source edits its slice in place.
+func (l *List) remember(items []*session.Instance) {
+	if !slices.Equal(l.seen, items) {
+		l.seen = append(l.seen[:0], items...)
+	}
 }
 
 // selectRow selects row i, which must be in range.
@@ -116,6 +163,9 @@ func (l *List) SetSize(width, height int) {
 	l.width = width
 	l.height = height
 }
+
+// Size returns the width and height SetSize last set.
+func (l *List) Size() (width, height int) { return l.width, l.height }
 
 // SetSessionPreviewSize sets the height and width for the tmux sessions. This makes the stdout line have the correct
 // width and height.
@@ -139,6 +189,9 @@ func (l *List) SetSessionPreviewSize(width, height int) (err error) {
 func (l *List) SetWorkspaceName(name string) {
 	l.workspaceName = name
 }
+
+// WorkspaceName returns the workspace name displayed in the title.
+func (l *List) WorkspaceName() string { return l.workspaceName }
 
 // SetPeerSections sets the peer-workspace summaries rendered under the rail.
 func (l *List) SetPeerSections(peers []PeerSection) { l.peers = peers }

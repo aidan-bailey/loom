@@ -100,7 +100,7 @@ func newScriptHost(m *home) *scriptHost {
 	h := &scriptHost{
 		configDir:      m.configDir(),
 		repoPath:       m.repoPath(),
-		defaultProgram: m.program,
+		defaultProgram: m.core.Program(),
 		splitPane:      m.splitPane,
 		slot:           m.workspaceSlot,
 	}

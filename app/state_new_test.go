@@ -86,7 +86,7 @@ func TestNewInstanceFlowRemoteControlBlockedViaModalPromptsConfirm(t *testing.T)
 	require.Equal(t, stateLaunchOptions, m.state)
 
 	// Row 0 (Remote Control) defaults to enabled from DefaultConfig;
-	// confirm without toggling it off, so remoteControlBlocked fires.
+	// confirm without toggling it off, so remoteControlBlockedOn fires.
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	assert.Equal(t, stateConfirm, m.state)

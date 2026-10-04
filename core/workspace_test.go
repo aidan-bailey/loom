@@ -47,3 +47,13 @@ func titles(insts []*session.Instance) []string {
 	}
 	return out
 }
+
+func TestWorkspace_NameAndLabelAreNilSafe(t *testing.T) {
+	var w *Workspace
+	assert.Equal(t, "", w.Name())
+	assert.Equal(t, "global", w.Label())
+}
+
+func TestModel_InstanceForSessionWithNothingLoaded(t *testing.T) {
+	assert.Nil(t, NewForTest(Options{}).InstanceForSession("loom_x"))
+}

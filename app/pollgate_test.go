@@ -229,7 +229,7 @@ func TestProductionGatedCmdsYieldOneMessage(t *testing.T) {
 
 	t.Run("usage", func(t *testing.T) {
 		m := homeWithAppState(t)
-		m.program = "/nonexistent/loom-test/claude"
+		m.core.SetProgram("/nonexistent/loom-test/claude")
 		main := withAccounts(t, m, "max-2")
 		editRCAuth(m, func(a *session.RemoteControlAuth) { a.Identity.ConfigDir = main })
 		msg := inner(t, m.maybeUsageProbe(), gateUsage)
@@ -239,7 +239,7 @@ func TestProductionGatedCmdsYieldOneMessage(t *testing.T) {
 	t.Run("accounts_refresh", func(t *testing.T) {
 		t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // account.MainDir's fallback
 		m := homeWithAppState(t)
-		m.program = "/nonexistent/loom-test/claude"
+		m.core.SetProgram("/nonexistent/loom-test/claude")
 		withAccounts(t, m, "max-2")
 		msg := inner(t, m.requestAccountsRefresh(true), gateAccountsRefresh)
 		assert.IsType(t, accountsRefreshedMsg{}, msg)

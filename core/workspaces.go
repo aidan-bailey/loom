@@ -13,11 +13,14 @@ import (
 // Classic is the workspace shown while no tab is open; nil while one is.
 func (m *Model) Classic() *Workspace { return m.classic }
 
-// Tabs are the open workspace tabs, in tab order. Callers must not modify
-// the slice.
+// Tabs are the open workspace tabs, in tab order. It is the model's own
+// slice: valid until the next model call; copy it to keep it, and always
+// before handing it to a job. Callers must not modify it.
 func (m *Model) Tabs() []*Workspace { return m.tabs }
 
-// Loaded is every loaded workspace: the tabs, or the classic one alone.
+// Loaded is every loaded workspace: the tabs, or the classic one alone. It
+// returns a fresh slice, so a caller may keep iterating it while calling
+// back into the model (which can close a tab).
 func (m *Model) Loaded() []*Workspace {
 	if len(m.tabs) == 0 {
 		if m.classic == nil {
@@ -25,7 +28,7 @@ func (m *Model) Loaded() []*Workspace {
 		}
 		return []*Workspace{m.classic}
 	}
-	return m.tabs
+	return slices.Clone(m.tabs)
 }
 
 // Registry is the workspace registry (nil in bare tests). The TUI reads
@@ -127,6 +130,9 @@ func (m *Model) InstanceForSession(name string) *session.Instance {
 	// Runs on every pane event: check classic mode's one workspace directly
 	// rather than through Loaded, which allocates there.
 	if len(m.tabs) == 0 {
+		if m.classic == nil {
+			return nil
+		}
 		return check(m.classic)
 	}
 	for _, ws := range m.tabs {
@@ -449,7 +455,7 @@ func (m *Model) RestoreSaved(saved []config.Workspace) int {
 	}
 
 	// Sweep orphan tmux sessions left by prior crashes. The classic
-	// startup path does this inline in OpenTab's caller; the
+	// startup path does this inline in loadWorkspace; the
 	// multi-tab restore path historically did not, so stale
 	// loom_*/claudesquad_* sessions accumulated across restarts. Each
 	// tab's OpenTab call above already ran reconcileOrphans,

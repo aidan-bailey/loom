@@ -141,7 +141,7 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:     title,
 		Path:      m.repoPath(),
-		Program:   m.program,
+		Program:   m.core.Program(),
 		Prompt:    github.SeedPrompt(msg.issue),
 		ConfigDir: m.configDir(),
 	})

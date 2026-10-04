@@ -105,7 +105,6 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		menu:        ui.NewMenu(),
 		overview:    ui.NewOverview(),
 		errBox:      ui.NewErrBox(),
-		program:     program,
 		state:       stateDefault,
 		tabBar:      ui.NewWorkspaceTabBar(),
 		skipScripts: noScripts,

@@ -61,8 +61,10 @@ type Model struct {
 	// them all.
 	restoreFailed []string
 
-	// rcAuth is the default account's remote-control auth, detected once
-	// at startup (the TUI sets it) and read by every launch decision.
+	// rcAuth is the default account's remote-control auth: detected at
+	// startup and refreshed by the accounts refresh
+	// (app.handleAccountsRefreshed), both through SetRCAuth, and read by
+	// every launch decision.
 	rcAuth session.RemoteControlAuth
 
 	out Out
@@ -130,8 +132,13 @@ func (m *Model) executor() cmd2.Executor {
 	return cmd2.MakeExecutor()
 }
 
-// Program is the agent command the process was started with (-p).
+// Program is the agent command new sessions launch: the one the process
+// was started with (-p), until a settings save replaces it (SetProgram).
 func (m *Model) Program() string { return m.program }
+
+// SetProgram replaces the agent command new sessions launch (a settings
+// save of the default program).
+func (m *Model) SetProgram(p string) { m.program = p }
 
 // RCAuth is the default account's remote-control auth.
 func (m *Model) RCAuth() session.RemoteControlAuth { return m.rcAuth }

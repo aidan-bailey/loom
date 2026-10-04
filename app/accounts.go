@@ -270,8 +270,8 @@ func (m *home) rcAuthFor(acct string) session.RemoteControlAuth {
 // configured program when it is Claude, else a live Claude session's, else
 // "" (no probes).
 func (m *home) claudeProgram() string {
-	if session.IsClaudeProgram(m.program) {
-		return m.program
+	if session.IsClaudeProgram(m.core.Program()) {
+		return m.core.Program()
 	}
 	for _, inst := range m.core.ActiveInstances() {
 		if p := inst.Program(); session.IsClaudeProgram(p) {

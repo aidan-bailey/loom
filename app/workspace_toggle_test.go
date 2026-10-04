@@ -372,8 +372,9 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 }
 
 // TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram: the shared
-// loader gave Recoverable orphan placeholders m.program — the program the
-// process started with, possibly a workspace's — rather than the program
+// loader gave Recoverable orphan placeholders the startup program
+// (core.Model.Program) — the one the process started with, possibly a
+// workspace's — rather than the program
 // of the config the slot loaded, as activateWorkspace does. Recovering one
 // then relaunched it with another workspace's agent.
 func TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram(t *testing.T) {
@@ -395,7 +396,7 @@ func TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram(t *testing.T) {
 	m := fleetHome(t)
 	m.ctx = cancelledCtx()
 	m.errBox = ui.NewErrBox()
-	m.program = "startup-agent"
+	m.core.SetProgram("startup-agent")
 
 	drainCmd(m.applyWorkspaceToggle(nil))
 

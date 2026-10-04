@@ -8,12 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// remoteControlBlocked is remoteControlBlockedOn for the default account
-// (workspace terminals, which always run on it).
-func (m *home) remoteControlBlocked(rcEnabled bool, program string) bool {
-	return m.remoteControlBlockedOn("", rcEnabled, program)
-}
-
 // remoteControlBlockedOn reports whether a launch of program on account
 // acct should be interrupted to tell the user remote control can't work:
 // the toggle is on (rcEnabled — either the global config or a

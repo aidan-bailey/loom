@@ -127,7 +127,7 @@ func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:     "",
 		Path:      repoDir,
-		Program:   m.program,
+		Program:   m.core.Program(),
 		ConfigDir: m.configDir(),
 	})
 	if err != nil {
@@ -157,7 +157,7 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:     "",
 		Path:      m.repoPath(),
-		Program:   m.program,
+		Program:   m.core.Program(),
 		ConfigDir: m.configDir(),
 	})
 	if err != nil {

@@ -95,7 +95,7 @@ func TestMaybeReloadAccounts_ARegistryWithNoFileDoesNothing(t *testing.T) {
 // cheap stat's business, not the builder's.
 func TestUsageProbe_DoesNotReadTheRegistry(t *testing.T) {
 	m := homeWithAppState(t)
-	m.program = "claude"
+	m.core.SetProgram("claude")
 	withAccounts(t, m, "max-2")
 	m.accounts.Accounts = nil // in memory only
 
