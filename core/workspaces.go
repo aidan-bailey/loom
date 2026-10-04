@@ -327,6 +327,10 @@ func (m *Model) OpenTab(def config.Workspace) (*Workspace, error) {
 	m.tabs = append(m.tabs, ws)
 	// Opened at last: no longer a restore failure to retry.
 	m.restoreFailed = slices.DeleteFunc(m.restoreFailed, func(n string) bool { return n == def.Name })
+	// Force the next health tick to poll: a newly opened workspace's repo
+	// wasn't in openRepoPaths() until just now, and without this the
+	// poller stays silent on it until the ambient ghInterval next elapses.
+	m.ExpediteGitHub()
 	return ws, nil
 }
 

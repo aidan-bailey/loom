@@ -5,7 +5,6 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
-	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -49,16 +48,6 @@ import (
 // (Ensure builds a new one). Nothing else closes a registered client: a
 // kill or pause ends the session and leaves its client to the prune that
 // follows the completion.
-
-// paneSnapshot resolves each instance's pane on the Update goroutine, for
-// a Cmd that must not read the model.
-func (m *home) paneSnapshot(insts []*session.Instance) map[*session.Instance]ui.Pane {
-	out := make(map[*session.Instance]ui.Pane, len(insts))
-	for _, inst := range insts {
-		out[inst] = m.panes.For(inst)
-	}
-	return out
-}
 
 // livePaneNames is the set of tmux session names that should have a
 // client: those of the active instances of every loaded slot.

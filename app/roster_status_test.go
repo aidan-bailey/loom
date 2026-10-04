@@ -10,7 +10,7 @@ import (
 )
 
 // rosterFor builds a one-entry roster keyed to an instance's worktree,
-// which is how the app joins Claude's roster to Loom instances.
+// which is how the model joins Claude's roster to Loom instances.
 func rosterFor(inst *session.Instance, status session.RosterStatus) map[string]session.RosterEntry {
 	return map[string]session.RosterEntry{
 		inst.GetWorktreePath(): {Status: status, WaitingFor: "dialog open"},
@@ -102,46 +102,6 @@ func TestRosterIgnoredForNonClaudeInstance(t *testing.T) {
 	require.Equal(t, session.Running, inst.GetStatus(),
 		"a non-Claude agent must not be governed by Claude's roster")
 	require.NotNil(t, follow)
-}
-
-// TestRosterReadyMsgStoresEntries: the tick's query result lands on the
-// model so later status events can consult it.
-func TestRosterReadyMsgStoresEntries(t *testing.T) {
-	m := homeWithAppState(t)
-	entries := map[string]session.RosterEntry{"/w/x": {Status: session.RosterStatusIdle}}
-
-	_, cmd := m.Update(rosterReadyMsg{entries: entries})
-
-	require.Nil(t, cmd)
-	require.Equal(t, entries, m.roster)
-}
-
-// TestRosterReadyMsgErrorClearsEntries: a failed query must drop the old
-// roster rather than keep driving transitions from stale data — one tick on
-// the scraper is safer than acting on a snapshot that may be minutes old.
-func TestRosterReadyMsgErrorClearsEntries(t *testing.T) {
-	m := homeWithAppState(t)
-	m.roster = map[string]session.RosterEntry{"/w/x": {Status: session.RosterStatusIdle}}
-
-	_, cmd := m.Update(rosterReadyMsg{err: errors.New("daemon down")})
-
-	require.Nil(t, cmd)
-	require.Empty(t, m.roster, "a failed roster query must not leave stale entries")
-}
-
-// TestRosterQueryCmdSkipsWhenNoClaudeInstances: Loom must not shell out to
-// the Claude CLI on every tick for a fleet that contains no Claude agents.
-func TestRosterQueryCmdSkipsWhenNoClaudeInstances(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "aideronly", "aider", "x")
-	require.Nil(t, rosterQueryCmd([]*session.Instance{inst}, nil))
-}
-
-// TestRosterQueryCmdRunsForClaudeInstances: with at least one Claude agent
-// the tick schedules exactly one roster query for the whole fleet.
-func TestRosterQueryCmdRunsForClaudeInstances(t *testing.T) {
-	aider := startedInstanceWithProgram(t, "mixed-aider", "aider", "x")
-	claude := startedInstanceWithProgram(t, "mixed-claude", "claude", "x")
-	require.NotNil(t, rosterQueryCmd([]*session.Instance{aider, claude}, nil))
 }
 
 // errAssertRoster is a sentinel for roster query failures in tests.

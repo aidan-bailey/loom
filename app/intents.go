@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -198,7 +197,7 @@ func runKillSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 
 func runSubmitSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	pushAction := pushActionFor(selected)
+	pushAction := coreCmd(m.core.Push(selected))
 	message := fmt.Sprintf("[!] Push changes from session '%s'?", selected.Title)
 	return m, m.confirmAction(message, pushAction)
 }
@@ -207,21 +206,7 @@ func runSubmitSelected(m *home) (tea.Model, tea.Cmd) {
 // confirmation overlay. Used by cs.actions.push_selected{confirm=false}.
 func runSubmitSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	return m, pushActionFor(selected)
-}
-
-func pushActionFor(selected *session.Instance) tea.Cmd {
-	return func() tea.Msg {
-		commitMsg := fmt.Sprintf("[loom] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))
-		worktree, err := selected.GetGitWorktree()
-		if err != nil {
-			return err
-		}
-		if err = worktree.PushChanges(commitMsg, true); err != nil {
-			return err
-		}
-		return ghRefreshMsg{}
-	}
+	return m, coreCmd(m.core.Push(selected))
 }
 
 // runStashSelectedOpts is the parameterized pause path. confirm
@@ -319,7 +304,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 			Async: tea.Batch(tea.RequestWindowSize, coreCmd(resumeJob)),
 		}
 		if m.remoteControlBlockedOn(newOpts.Account, launch.EffectiveRemoteControl(newOpts), selected.Program()) {
-			return m, m.promptRestartRemoteControlBlocked(resumeTask, m.rcAuthFor(newOpts.Account).Reason)
+			return m, m.promptRestartRemoteControlBlocked(resumeTask, m.core.RCAuthFor(newOpts.Account).Reason)
 		}
 		return m, tea.Batch(resumeTask.Run(), m.instanceChanged())
 	}
@@ -335,7 +320,8 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	lo.SetBranchPrefixLocked(selected.GetBranch())
 	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
-	return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())
+	m.core.RequestUsageProbe()
+	return m, tea.Batch(tea.RequestWindowSize, reloaded)
 }
 
 // runRecoverSelected adopts the selected Recoverable orphan: core's
@@ -480,13 +466,15 @@ func runOpenSettings(m *home) (tea.Model, tea.Cmd) {
 	if m.appConfig() == nil {
 		return m, m.handleError(fmt.Errorf("no configuration loaded"))
 	}
-	reloaded := m.reloadAccounts()
+	m.core.ReloadAccounts()
+	reloaded := m.drainCore()
 	so := overlay.NewSettingsOverlay(m.appConfig(), m.core.RCAuth().Blocked(), m.core.RCAuth().Reason)
 	so.SetAccountRows(m.accountRows(m.accountStatuses()))
 	so.SetAccountNotice(m.accountsScreenNotice())
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
-	return m, tea.Batch(reloaded, m.requestUsageProbe())
+	m.core.RequestUsageProbe()
+	return m, reloaded
 }
 
 // -- File explorer --

@@ -14,7 +14,7 @@ import (
 // per-instance override), the program is Claude, and acct's auth was
 // clearly determined incompatible.
 func (m *home) remoteControlBlockedOn(acct string, rcEnabled bool, program string) bool {
-	return launch.RemoteControlBlocked(m.rcAuthFor(acct), rcEnabled, program)
+	return launch.RemoteControlBlocked(m.core.RCAuthFor(acct), rcEnabled, program)
 }
 
 // promptRemoteControlBlocked shows the "remote control unavailable" modal for

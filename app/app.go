@@ -12,7 +12,6 @@ import (
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
-	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/session/vt"
 	"github.com/aidan-bailey/loom/ui"
@@ -21,7 +20,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -48,23 +46,6 @@ func rebuildAppStyles() {
 		Bold(true)
 	statusLineStyle = lipgloss.NewStyle().
 		Foreground(ui.Rule)
-}
-
-// metadataResult holds I/O results for one instance from the parallel
-// metadata tick. Written by goroutine; status updates applied on main thread.
-type metadataResult struct {
-	instance *session.Instance
-	tmuxLive tmux.Liveness
-	// ptmxAlive is whether the pane's client is attached (ui.Pane.Attached):
-	// its PTY is open and its pump still reads the session.
-	ptmxAlive  bool
-	updated    bool
-	hasPrompt  bool
-	captureErr error
-	diffErr    error
-	// emulatorDriven marks instances whose status rides pane events (quiet
-	// detection); the tick must not run the status ladder for them.
-	emulatorDriven bool
 }
 
 type state int
@@ -202,8 +183,8 @@ type home struct {
 
 	// attachingInstance is set for the duration of a full-screen attach
 	// (PausePreview -> tea.ExecProcess -> ensurePane; see
-	// startFullScreenAttachMsg/attachDoneMsg) and nil otherwise. The metadata
-	// tick's ptmx self-heal (metadataReadyMsg) must not re-attach this
+	// startFullScreenAttachMsg/attachDoneMsg) and nil otherwise. The health
+	// tick's ptmx self-heal (the core.Alive applier) must not re-attach this
 	// instance's pane client while it is set — PtmxAlive is expected to
 	// read false during that window, and racing a Restore against the
 	// in-flight ExecProcess would fight over the same tmux session's attach.
@@ -240,34 +221,9 @@ type home struct {
 	quickInputBar *ui.QuickInputBar
 	// errBox displays error messages
 	errBox *ui.ErrBox
-	// accounts is the Claude account registry (account/), loaded from the
-	// global config dir at startup. Update-goroutine only: launches read the
-	// published dir map (session.SetAccountDirs) instead.
-	accounts *account.Registry
-	// accountAuth is each extra account's remote-control auth, with the
-	// identity `claude auth status` reported, filled by accountsRefreshedMsg.
-	// The default account's lives in rcAuth.
-	accountAuth map[string]session.RemoteControlAuth
-	// accountSync is each extra account's last link report.
-	accountSync map[string]account.SyncReport
-	// usage is each account's latest probe state (usage.go).
-	usage map[string]accountUsage
 	// accountStrip is the usage strip above the tab bar; empty (height 0)
 	// until an extra account exists.
 	accountStrip *ui.AccountStrip
-	// accountsStamp is the accounts.json version the registry was last read
-	// (or written) at, and accountsSeen the state it held then; the health
-	// tick rereads the file only when its stat differs from the stamp, and
-	// acts only when the state differs (see maybeReloadAccounts).
-	accountsStamp accountsFileStamp
-	accountsSeen  string
-	// syncRefusalLogged is the last reason syncMainDir refused the main
-	// config dir, so each reason is logged once.
-	syncRefusalLogged string
-	// refreshDefaultAuth asks the next accounts refresh to reread the
-	// default account's auth too; kept until one dispatches, so a request
-	// made while another refresh is in flight is not lost.
-	refreshDefaultAuth bool
 	// global spinner instance. we plumb this down to where it's needed
 	spinner spinner.Model
 	// activeOverlay is the currently displayed modal (nil when no overlay
@@ -359,59 +315,26 @@ type home struct {
 	// lastPreviewTitle tracks which instance the hash belongs to.
 	lastPreviewTitle string
 
-	// dirtySessions records tmux session names that emitted output since the
-	// last health tick (event mode only). Consumed by takeDirty to gate
-	// diff-stat refreshes. Update-goroutine only.
-	dirtySessions map[string]bool
-
 	// redetectPending tracks sessions with an armed delayed re-detection
 	// (see maybeRedetect), so inconclusive detections cannot stack parallel
 	// re-detect chains. Update-goroutine only.
 	redetectPending map[string]bool
 
-	// gates throttle the background jobs riding the health tick (roster
-	// query, subagent scan, GitHub poll, account usage probe) and dedupe
-	// the split-ratio flush tick, one pollGate per gateKind (see
-	// pollgate.go; resolve with m.gate). The zero value is ready to use:
-	// intervals come from gateIntervals. Update-goroutine only.
-	gates [numGateKinds]pollGate
-
-	// ghAvailable caches gh's install/auth check, resolved by the first
-	// poll. Until checked, polls proceed (the poll itself checks).
-	ghAvailable ghAvailability
-	// ghState is the latest GitHub snapshot per open repo path. Replaced
-	// wholesale on every ghReadyMsg; a repo whose query failed is absent.
-	ghState map[string]github.Snapshot
-	// ghErrs is the last poll error per open repo, replaced wholesale
-	// alongside ghState. A repo can fail every poll forever while
-	// ghAvailable stays ok — CheckCLI is not repo-scoped, so a repo with
-	// no GitHub remote never flips availability — and without this the
-	// picker would sit on "loading…" with nothing to show for it.
-	ghErrs map[string]error
-	// ghBases is the resolved base ref name per repo ("origin/main"),
-	// refreshed by the poll and read by gatherMetadataCmd for parity.
-	ghBases map[string]string
-
-	// roster is Claude's own view of its live sessions, keyed by working
-	// directory, refreshed once per health tick (see rosterQueryCmd). It is
-	// authoritative where the pane scraper is inferential, so status events
-	// consult it first and fall back when it has no entry for a session.
-	// Update-goroutine only.
-	roster map[string]session.RosterEntry
-	// rosterByAccount is each extra account's roster, keyed by account then
-	// working directory: `claude agents --json` lists only its own config
-	// dir's sessions, so each account is queried as itself. The default
-	// account's stays in roster. Update-goroutine only.
-	rosterByAccount map[string]map[string]session.RosterEntry
+	// snapshotScanning is set while a snapshot scan is in flight; cleared
+	// when its result lands. Update-goroutine only.
+	snapshotScanning bool
 
 	// pendingRatioSaves buffers title→ratio pairs recorded by resizeSplit
 	// until the throttled ratioSaveMsg flushes them into one mutateUIPrefs
 	// write — key-repeat resize would otherwise fsync state.json per
 	// keystroke. applyStoredRatio reads it first (pending is newest
 	// truth); leaveFocusedSlot/handleQuit flush it synchronously.
-	// The gateRatioSave gate dedupes the flush tick (see
-	// maybeArmRatioSave). Update-goroutine only.
+	// ratioTickArmed dedupes the flush tick (see maybeArmRatioSave).
+	// Update-goroutine only.
 	pendingRatioSaves map[string]float64
+	// ratioTickArmed is set while the split-ratio flush tick is in flight;
+	// cleared when it lands. Update-goroutine only.
+	ratioTickArmed bool
 
 	// hostFocused mirrors the host terminal's focus state (via tea.FocusMsg/
 	// BlurMsg with ReportFocus on). Assumed focused at startup; used to
@@ -632,13 +555,8 @@ func (m *home) mutateUIPrefs(fn func(*config.UIPrefs)) {
 // preview and metadata tick loops — those loops re-arm themselves by
 // returning the same tick message, so Init fires exactly once per Run.
 func (m *home) Init() tea.Cmd {
-	cmds := []tea.Cmd{
-		m.spinner.Tick,
-		tickUpdateMetadataCmd,
-		m.maybeAccountsRefresh(),
-		m.maybeUsageProbe(),
-		m.initCmd,
-	}
+	m.core.Begin()
+	cmds := []tea.Cmd{m.spinner.Tick, tickUpdateMetadataCmd, m.initCmd, m.drainCore()}
 	// Event mode renders on paneDirtyMsg; the timer poll only survives for
 	// the snapshot/Windows path, which has no emulator to emit events.
 	if !tmux.EmulatorEnabled() {
@@ -742,10 +660,11 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case paneDirtyMsg:
-		m.markDirty(msg.session)
+		m.core.MarkOutput(msg.session)
 		selected := m.list.GetSelectedInstance()
 
 		if inst := m.core.InstanceForSession(msg.session); inst != nil {
+			m.core.PaneOutput(inst)
 			// Output arrived → the agent is doing something. Mirrors the old
 			// tick's updated→Running transition; Ready re-derives on the
 			// quiet event once the burst settles. Prompting is exempt:
@@ -763,23 +682,12 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.updateTabBarStatuses()
 			}
-			var cmds []tea.Cmd
-			// Answering a permission prompt makes output (the dialog goes
-			// away) but fires no hook; the roster reports busy at once.
-			if st == session.Prompting && session.IsClaudeProgram(inst.Program()) {
-				cmds = append(cmds, m.maybeRosterQuerySoon())
-			}
-			// While Claude works, its spinner keeps output flowing, so this
-			// reads a UserPromptSubmit within hookScanInterval.
-			if inst.HooksLaunched() {
-				cmds = append(cmds, m.maybeHookScan(m.core.ActiveInstances()))
-			}
 			if selected != nil && inst == selected {
 				if err := m.splitPane.UpdateAgent(selected); err != nil {
 					return m, m.handleError(err)
 				}
 			}
-			return m, tea.Batch(cmds...)
+			return m, nil
 		}
 		// Not an agent session — the terminal pane's current session renders;
 		// dirty events from cached-but-hidden terminal sessions are dropped.
@@ -791,75 +699,37 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case paneQuietMsg:
 		inst := m.core.InstanceForSession(msg.session)
-		var scan tea.Cmd
-		if inst != nil && inst.HooksLaunched() {
-			// Stop and PermissionRequest arrive as output settles. This is
-			// often a burst's last output, so it must scan even inside
-			// hookScanInterval or while a scan is in flight: request().
-			m.gate(gateHookScan).request()
-			scan = m.maybeHookScan(m.core.ActiveInstances())
-		}
-		if !statusEligible(inst) {
+		m.core.PaneQuiet(inst)
+		if !core.StatusEligible(inst) {
 			// A quiet that lands mid-Start (Loading) is this burst's only
 			// settle signal — quiet never re-fires without new output, so
 			// dropping it would leave the unconditional Running set by
 			// Start/Resume uncorrected. Re-check after the start resolves.
-			if inst != nil && inst.GetStatus() == session.Loading {
-				return m, tea.Batch(scan, m.maybeRedetect(msg.session))
-			}
-			return m, scan
-		}
-		return m, tea.Batch(scan, statusDetectCmd(inst, m.panes.For(inst)))
-	case gatedMsg:
-		return m.deliverGated(msg)
-	case ratioSaveMsg:
-		// Throttled flush of resizeSplit's pending ratios — one persisted
-		// write per 750ms window instead of one per keystroke. A flush
-		// that already ran (slot switch, quit) leaves the map empty, so
-		// this is a no-op; the gatedMsg wrapper has disarmed the tick.
-		m.flushPendingRatioSaves()
-		return m, nil
-	case redetectMsg:
-		delete(m.redetectPending, msg.session)
-		inst := m.core.InstanceForSession(msg.session)
-		if !statusEligible(inst) {
 			if inst != nil && inst.GetStatus() == session.Loading {
 				return m, m.maybeRedetect(msg.session)
 			}
 			return m, nil
 		}
 		return m, statusDetectCmd(inst, m.panes.For(inst))
-	case hookScanMsg:
-		return m, m.handleHookScan(msg)
-	case rosterReadyMsg:
-		if msg.err != nil {
-			// Debug, not warn: a missing daemon or an older CLI without
-			// `agents --json` is a supported configuration, not a fault —
-			// detection simply falls back to hooks and pane content.
-			// Dropping the previous roster is deliberate; a stale snapshot
-			// would keep driving transitions long after it stopped being
-			// true, which is also why observeRoster voids every
-			// roster-sourced status below.
-			log.DebugKV("app.roster.query_failed", "err", msg.err.Error())
-			m.roster = nil
-		} else {
-			m.roster = msg.entries
-		}
-		// Another account's failed query clears only its own entries: the
-		// map is replaced wholesale and a failed account is absent from it.
-		for name, err := range msg.extraErrs {
-			log.DebugKV("app.roster.query_failed", "account", name, "err", err.Error())
-		}
-		m.rosterByAccount = msg.extra
-		m.observeRoster(msg.at)
+	case ratioSaveMsg:
+		// Throttled flush of resizeSplit's pending ratios — one persisted
+		// write per 750ms window instead of one per keystroke. A flush
+		// that already ran (slot switch, quit) leaves the map empty, so
+		// this is a no-op; clearing ratioTickArmed first lets the next
+		// resize arm a fresh tick.
+		m.ratioTickArmed = false
+		m.flushPendingRatioSaves()
 		return m, nil
-	case ghReadyMsg:
-		m.handleGHReady(msg)
-		return m, nil
-	case accountsRefreshedMsg:
-		return m, m.handleAccountsRefreshed(msg)
-	case usageReadyMsg:
-		return m, m.handleUsageReady(msg)
+	case redetectMsg:
+		delete(m.redetectPending, msg.session)
+		inst := m.core.InstanceForSession(msg.session)
+		if !core.StatusEligible(inst) {
+			if inst != nil && inst.GetStatus() == session.Loading {
+				return m, m.maybeRedetect(msg.session)
+			}
+			return m, nil
+		}
+		return m, statusDetectCmd(inst, m.panes.For(inst))
 	case accountLoginDoneMsg:
 		// tea.ExecProcess has returned the terminal. Re-read the auth of the
 		// account that just logged in (and the default's, which the
@@ -868,17 +738,16 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			cmds = append(cmds, m.handleError(fmt.Errorf("claude auth login for %s: %w", msg.name, msg.err)))
 		}
-		cmds = append(cmds, tea.RequestWindowSize, m.requestAccountsRefresh(msg.name == account.DefaultName), m.requestUsageProbe())
+		m.core.RequestAccountsRefresh(msg.name == account.DefaultName)
+		m.core.RequestUsageProbe()
+		cmds = append(cmds, tea.RequestWindowSize)
 		return m, tea.Batch(cmds...)
-	case ghRefreshMsg:
-		m.gate(gateGH).expedite()
-		return m, nil
 	case issuePickedMsg:
 		return m.handleIssuePicked(msg)
 	case issueExpandedMsg:
 		return m.handleIssueExpanded(msg)
 	case statusDetectedMsg:
-		if !statusEligible(msg.instance) {
+		if !core.StatusEligible(msg.instance) {
 			return m, nil
 		}
 		if msg.err != nil {
@@ -891,7 +760,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// re-detection chain: the ladder re-samples because one content
 		// hash cannot distinguish "still working" from "just finished",
 		// but the report says which it is.
-		target, authoritative := m.adoptClaudeStatus(msg.instance)
+		target, authoritative := m.core.AdoptClaudeStatus(msg.instance)
 		if !authoritative {
 			// Same transition ladder as the old metadata tick: still-changing →
 			// Running; settled with a prompt → Prompting; settled → Ready.
@@ -929,21 +798,14 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		inst := m.core.InstanceForSession(msg.session)
-		if inst == nil || inst == m.attachingInstance || !statusEligible(inst) {
+		if inst == nil || inst == m.attachingInstance || !core.StatusEligible(inst) {
 			if len(cmds) > 0 {
 				return m, tea.Batch(cmds...)
 			}
 			return m, nil
 		}
-		cmds = append(cmds, verifyDeadCmd(inst, m.panes.For(inst)))
+		cmds = append(cmds, coreCmd(m.core.VerifyDead(inst)))
 		return m, tea.Batch(cmds...)
-	case deadVerifiedMsg:
-		if !statusEligible(msg.instance) {
-			return m, nil
-		}
-		_, release := m.applyLiveness(msg.instance, msg.tmuxLive, msg.ptmxAlive, fromDeadEvent)
-		m.updateTabBarStatuses()
-		return m, tea.Batch(m.instanceChanged(), release)
 	case bellMsg:
 		if inst := m.core.InstanceForSession(msg.session); inst != nil && inst != m.list.GetSelectedInstance() {
 			inst.SetBellPending(true)
@@ -978,17 +840,12 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Close the clients of sessions that stopped being active since the
 		// last tick (paused, killed, exited, or their slot closed).
-		prune := m.prunePanes()
+		cmds := []tea.Cmd{m.prunePanes()}
 
-		// Active instances from every loaded workspace slot (see
-		// core.Model.ActiveInstances for what is skipped and why).
 		selected := m.list.GetSelectedInstance()
-		active := m.core.ActiveInstances()
-
 		// Inline-attach liveness backstop (the preview tick used to check
 		// this every 100ms in event mode; ptyDeadMsg is the fast path now,
 		// this tick is the safety net for deaths that never EOF'd the PTY).
-		cmds := []tea.Cmd{prune}
 		if m.state == stateInlineAttach {
 			if selected == nil || selected.Paused() || !focusedPaneAlive(m, selected) {
 				m.state = stateDefault
@@ -997,47 +854,15 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Fan out I/O off the update goroutine. A stalled tmux or git process
-		// must not block the UI loop — gatherMetadataCmd runs wg.Wait() inside
-		// a background Cmd and returns the results via metadataReadyMsg.
-		cmds = append(cmds, gatherMetadataCmd(active, selected, m.takeDirty(), m.ghBases, m.paneSnapshot(active)))
+		// The model's half: liveness, parity, diff stats and the background
+		// jobs. Its probe's result re-arms this tick (core.HealthChecked),
+		// so ticks never overlap a probe still running.
+		m.core.Tick(selected)
 
-		// One `claude agents --json` for the whole fleet (~100ms, off the
-		// Update goroutine), on its OWN cadence rather than the tick's —
-		// this tick runs at 500ms on the snapshot path, which would keep a
-		// claude process alive most of the time. Claude reports its own
-		// busy/idle/waiting state, which beats inferring it from pane text
-		// (see rosterStatusFor). nil when not due, already in flight, or no
-		// Claude agent is running.
-		if roster := m.maybeRosterQuery(active); roster != nil {
-			cmds = append(cmds, roster)
-		}
-
-		// Hook events: the backstop behind the output and quiet triggers
-		// (see maybeHookScan). nil when not due, in flight, or no Claude
-		// agent is live.
-		if scan := m.maybeHookScan(active); scan != nil {
+		// The status ladder on the snapshot path reads each pane's screen,
+		// which only the TUI's clients have.
+		if scan := m.snapshotScan(); scan != nil {
 			cmds = append(cmds, scan)
-		}
-
-		// GitHub PR/issue state + base-branch fetch, on the poller's own
-		// 60s cadence (see maybeGHQuery). nil when not due, in flight, or
-		// gh is known unavailable.
-		if poll := m.maybeGHQuery(); poll != nil {
-			cmds = append(cmds, poll)
-		}
-
-		// accounts.json, which another loom or a `loom account` run may have
-		// changed: one stat per tick, a reread only when it moved.
-		if reload := m.maybeReloadAccounts(); reload != nil {
-			cmds = append(cmds, reload)
-		}
-
-		// Account plan usage, on its own 2-minute cadence (see
-		// maybeUsageProbe). nil when not due, in flight, or no extra
-		// account is registered.
-		if usage := m.maybeUsageProbe(); usage != nil {
-			cmds = append(cmds, usage)
 		}
 
 		// Workbench follow scan rides the health tick: cheap stat-walk
@@ -1048,66 +873,38 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tea.Batch(cmds...)
-	case metadataReadyMsg:
-		// Apply results on main thread.
-		var releases []tea.Cmd
+	case snapshotStatusMsg:
+		m.snapshotScanning = false
 		for _, r := range msg.results {
-			alive, release := m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive, fromTick)
-			releases = append(releases, release)
-			if !alive {
+			if !core.StatusEligible(r.instance) {
 				continue
 			}
-			// Claude's reported status applies on BOTH paths. The exclusion
-			// below is specifically about r.updated/r.hasPrompt, which are
-			// zero for emulator instances (no capture ran) and would fight
-			// the event pipeline. Hook scans and roster answers already
-			// moved the instance when they landed (applyClaudeStatus);
-			// applying the report here again covers a move TransitionTo
-			// refused then, and keeps the snapshot path in lockstep with
-			// the event path. TransitionTo still validates, so an illegal
-			// transition is rejected rather than forced.
-			if target, authoritative := m.adoptClaudeStatus(r.instance); authoritative {
-				if err := r.instance.TransitionTo(target); err != nil {
-					log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", target.String(), "err", err.Error())
-				}
-			} else if !r.emulatorDriven {
-				// Event-mode instances get their status ladder from quiet
-				// events (statusDetectedMsg); running it here too would fight
-				// that pipeline with stale zero-valued results.
-				if r.updated {
-					if err := r.instance.TransitionTo(session.Running); err != nil {
-						log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Running", "err", err.Error())
-					}
-				} else {
-					if r.hasPrompt {
-						if err := r.instance.TransitionTo(session.Prompting); err != nil {
-							log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Prompting", "err", err.Error())
-						}
-					} else {
-						if err := r.instance.TransitionTo(session.Ready); err != nil {
-							log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", "Ready", "err", err.Error())
-						}
-					}
-				}
+			// A reported Claude status is the model's: its tick applies it.
+			if _, authoritative := m.core.AdoptClaudeStatus(r.instance); authoritative {
+				continue
 			}
-			if r.captureErr != nil {
-				log.WarnKV("app.tick.capture_failed", "instance", r.instance.Title, "err", r.captureErr.Error())
+			// Same transition ladder as the event path: still-changing →
+			// Running; settled with a prompt → Prompting; settled → Ready.
+			// A failed capture leaves updated and hasPrompt false, so it
+			// still runs the ladder (to Ready) before its error is
+			// logged, as the old tick did.
+			target := session.Ready
+			if r.updated {
+				// Output: the next tick refreshes the diff (MarkOutput).
+				m.core.MarkOutput(r.instance.Pane().TmuxSessionName())
+				target = session.Running
+			} else if r.hasPrompt {
+				target = session.Prompting
 			}
-			if r.diffErr != nil {
-				log.For("app").Warn("diff_stats_update_failed", "err", r.diffErr)
+			if err := r.instance.TransitionTo(target); err != nil {
+				log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", target.String(), "err", err.Error())
+			}
+			if r.err != nil {
+				log.WarnKV("app.tick.capture_failed", "instance", r.instance.Title, "err", r.err.Error())
 			}
 		}
 		m.updateTabBarStatuses()
-		// A user parked on the workbench's diff tab generates none of the
-		// nav traffic that refreshes the diff in focus mode, so ride the
-		// metadata tick: re-render from the just-updated diff stats so the
-		// tab tracks the agent's work live.
-		if m.viewMode == viewWorkbench && m.workbench != nil && m.workbench.Tab() == ui.WbTabDiff {
-			if selected := m.list.GetSelectedInstance(); selected != nil {
-				m.workbench.Diff().SetDiff(selected)
-			}
-		}
-		return m, tea.Batch(append(releases, tickUpdateMetadataCmd)...)
+		return m, nil
 	case wbScanMsg:
 		title, ok := m.wbCurrentTitle()
 		if !ok || msg.title != title || msg.err != nil {
@@ -1735,12 +1532,6 @@ type previewTickMsg struct{}
 
 type tickUpdateMetadataMessage struct{}
 
-// metadataReadyMsg carries the results of a parallel metadata gather back to
-// the main update goroutine for application.
-type metadataReadyMsg struct {
-	results []metadataResult
-}
-
 type instanceChangedMsg struct{}
 
 // showHelpScreenMsg asks Update to open a help overlay. Emitted from
@@ -1836,18 +1627,6 @@ func (m *home) runBranchSearch(filter string, version uint64) tea.Cmd {
 	}
 }
 
-// maxWorkspaceTerminalRestartFailures bounds how many consecutive metadata
-// ticks the workspace-terminal auto-restart path (metadataReadyMsg) will
-// retry a dead tmux session before giving up and marking it Paused instead.
-// Without this, a permanently broken Program (e.g. a stale command left
-// over from a since-changed launch mechanism) restart-loops forever at
-// tick cadence — 500ms tickUpdateMetadataCmd below, so ~1.5s of thrash
-// before this trips. Restart's own Start(true) blocks until the session is
-// confirmed up before returning, so a genuinely successful restart should
-// never even reach 2 consecutive misses; this is slack for one flaky
-// blip, not a real recovery window.
-const maxWorkspaceTerminalRestartFailures = 3
-
 // tickUpdateMetadataCmd drives the health tick. In event mode (emulator
 // path) it is a slow belt-and-braces sweep — liveness, ptmx self-heal, and
 // diff stats — because status detection rides pane events instead. On the
@@ -1859,148 +1638,6 @@ var tickUpdateMetadataCmd = func() tea.Msg {
 		time.Sleep(500 * time.Millisecond)
 	}
 	return tickUpdateMetadataMessage{}
-}
-
-// gatherMetadataCmd fans out I/O (tmux checks, status captures, git diffs) across
-// goroutines and waits for all of them before returning. Running inside a tea.Cmd
-// keeps the wg.Wait off the update goroutine — a stalled tmux/git subprocess
-// delays the next tick instead of freezing the UI.
-//
-// Diff refresh is gated on tmux content changes (see Instance.ShouldRefreshDiff):
-// an idle instance with no pane output does not trigger a git subprocess on
-// every tick. For N active instances with a single active agent, the git
-// fan-out drops from ~N subprocesses per tick to ~1.
-func gatherMetadataCmd(active []*session.Instance, selected *session.Instance, dirty map[string]bool, bases map[string]string, panes map[*session.Instance]ui.Pane) tea.Cmd {
-	return func() tea.Msg {
-		results := make([]metadataResult, len(active))
-		var wg sync.WaitGroup
-		for i, inst := range active {
-			wg.Add(1)
-			go func(idx int, instance *session.Instance) {
-				defer wg.Done()
-				r := &results[idx]
-				r.instance = instance
-
-				r.tmuxLive = instance.Pane().TmuxLiveness()
-				if r.tmuxLive != tmux.LivenessAlive {
-					return
-				}
-				pane := panes[instance]
-				r.ptmxAlive = pane.Attached()
-
-				// Event-mode instances get status from quiet events, so the
-				// subprocess scan only remains for the snapshot path. With
-				// no client there is no screen to scan, and no opinion.
-				r.emulatorDriven = pane.Client() == nil || pane.HasEmulator()
-				if !r.emulatorDriven {
-					r.updated, r.hasPrompt, r.captureErr = pane.DetectStatus()
-				}
-
-				// Parity must not sit behind ShouldRefreshDiff: that gate
-				// is about session output, but the base branch moves
-				// without any session activity at all — "you are now N
-				// behind main" is exactly the case where tmuxUpdated is
-				// false. One local rev-list, no network.
-				instance.UpdateParity(bases[instance.Path])
-
-				wantFull := instance == selected
-				tmuxUpdated := r.updated || dirty[instance.Pane().TmuxSessionName()]
-				if !instance.ShouldRefreshDiff(tmuxUpdated, wantFull) {
-					return
-				}
-				if wantFull {
-					r.diffErr = instance.UpdateDiffStats()
-				} else {
-					r.diffErr = instance.UpdateDiffStatsShort()
-				}
-			}(i, inst)
-		}
-		wg.Wait()
-		return metadataReadyMsg{results: results}
-	}
-}
-
-// livenessSource names the path a liveness result reached applyLiveness
-// by, for its logs: the health tick's probe or a pane's Dead event.
-type livenessSource string
-
-const (
-	fromTick      livenessSource = "tick"
-	fromDeadEvent livenessSource = "dead_event"
-)
-
-// applyLiveness reacts to one instance's health-probe result: dead tmux →
-// pause (or restart a workspace terminal, with the existing circuit
-// breaker); live tmux but no attached client (ui.Pane.Attached: none, a
-// closed PTY, or a pump that hit EOF on an earlier session of the same
-// name) → re-attach it. It returns
-// false when the instance was found dead (so callers can stop treating it
-// as running) or is no longer in any loaded slot, plus a Cmd closing a
-// client that a restart replaced. source names the path the result came
-// from, for the logs. Must run on the Update goroutine.
-func (m *home) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, ptmxAlive bool, source livenessSource) (alive bool, release tea.Cmd) {
-	if m.slotHolding(inst) == nil {
-		// The probe was taken before inst's slot was dropped. Its attach
-		// client has been (or is being) released by prunePanes, which
-		// reads as a dead PTY: a repair here would re-attach an
-		// instance nothing displays, and a workspace-terminal restart
-		// would relaunch one. Drop the result.
-		return false, nil
-	}
-	if tmuxLive == tmux.LivenessUnknown {
-		// The probe never got an answer, which says nothing about the
-		// session — under load it is simply what a starved subprocess
-		// looks like. Acting on it would pause a healthy agent, and
-		// because that same load starves every instance's probe at once,
-		// it would do so across the whole fleet simultaneously. Leave
-		// the instance untouched; the next tick re-probes.
-		log.For("app").Debug("tick.tmux_probe_inconclusive", "title", inst.Title, "source", source)
-		return true, nil
-	}
-	if tmuxLive != tmux.LivenessAlive {
-		if inst.IsWorkspaceTerminal {
-			if failures := inst.RecordRestartFailure(); failures >= maxWorkspaceTerminalRestartFailures {
-				// The session died again immediately after every
-				// recent Restart (e.g. a permanently broken Program
-				// string) — restarting further would just loop
-				// forever at tick cadence. Give up like a regular
-				// instance would. RestartWithOptions/Resume are both
-				// gated off for workspace terminals (see
-				// selectedPausedNotWorkspace/selectedResumableNotWorkspace
-				// in intents.go), so recovering today means killing
-				// this instance (a fresh one is auto-created from
-				// current config on next workspace activation) or
-				// fixing Program on disk and relaunching Loom.
-				log.For("app").Error("workspace_terminal.restart_circuit_tripped", "title", inst.Title, "consecutive_failures", failures)
-				if err := inst.TransitionTo(session.Paused); err != nil {
-					log.For("app").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
-				}
-				return false, nil
-			}
-			log.For("app").Warn("workspace_terminal.tmux_died_restarting", "title", inst.Title, "source", source)
-			if err := inst.Restart(); err != nil {
-				log.For("app").Error("workspace_terminal.restart_failed", "title", inst.Title, "err", err)
-				return false, nil
-			}
-			return false, m.replacePane(inst)
-		}
-		log.For("app").Warn("tick.tmux_gone_marking_paused", "title", inst.Title, "source", source)
-		if err := inst.TransitionTo(session.Paused); err != nil {
-			log.For("app").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
-		}
-		return false, nil
-	}
-	inst.ResetRestartFailures()
-	if !ptmxAlive && inst != m.attachingInstance {
-		// The session exists but its attach client is not attached (a
-		// reattach failed after full-screen attach returned, or the
-		// client's pump hit EOF on a session that has since been
-		// relaunched under the same name). Self-heal here: the same shape
-		// as the workspace-terminal restart above, but at the client layer.
-		log.For("app").Warn("pane.client_dead_repairing", "title", inst.Title, "source", source)
-		m.ensurePane(inst)
-	}
-	return true, nil
 }
 
 // handleError handles all errors which get bubbled up to the app. sets the error message. We return a callback tea.Cmd that returns a hideErrMsg message

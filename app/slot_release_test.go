@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
@@ -194,8 +195,8 @@ func TestDroppedSlot_StaleProbeDoesNotReattach(t *testing.T) {
 	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}}))
 	require.False(t, clientOf(t, live).PtmxAlive())
 
-	_, _ = m.Update(metadataReadyMsg{results: []metadataResult{
-		{instance: live, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
+	deliver(t, m, core.HealthResult{Results: []core.ProbeResult{
+		{Instance: live, TmuxLive: tmux.LivenessAlive},
 	}})
 	assert.Nil(t, m.panes.Get(live.Pane().TmuxSessionName()), "a dropped instance must not be re-attached")
 }

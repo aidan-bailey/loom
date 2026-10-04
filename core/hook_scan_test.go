@@ -1,4 +1,4 @@
-package app
+package core
 
 import (
 	"errors"
@@ -17,57 +17,57 @@ import (
 )
 
 func TestSubagentScanDispatchesForClaude(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "sub-first", "claude", "x")
-	m := homeWithAppState(t)
+	inst := startedInst(t, "sub-first", "claude")
+	m := NewForTest(Options{})
 
-	require.NotNil(t, m.maybeHookScan([]*session.Instance{inst}))
+	require.True(t, m.maybeHookScan([]*session.Instance{inst}))
 	require.True(t, m.gate(gateHookScan).inFlight)
 }
 
 func TestSubagentScanThrottledWithinInterval(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "sub-window", "claude", "x")
-	m := homeWithAppState(t)
+	inst := startedInst(t, "sub-window", "claude")
+	m := NewForTest(Options{})
 	active := []*session.Instance{inst}
 
-	require.NotNil(t, m.maybeHookScan(active))
+	require.True(t, m.maybeHookScan(active))
 	m.gate(gateHookScan).inFlight = false
-	require.Nil(t, m.maybeHookScan(active))
+	require.False(t, m.maybeHookScan(active))
 
 	m.gate(gateHookScan).last = time.Now().Add(-hookScanInterval - time.Second)
-	require.NotNil(t, m.maybeHookScan(active))
+	require.True(t, m.maybeHookScan(active))
 }
 
 func TestSubagentScanNotStackedWhileInFlight(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "sub-inflight", "claude", "x")
-	m := homeWithAppState(t)
+	inst := startedInst(t, "sub-inflight", "claude")
+	m := NewForTest(Options{})
 	active := []*session.Instance{inst}
 
-	require.NotNil(t, m.maybeHookScan(active))
+	require.True(t, m.maybeHookScan(active))
 	m.gate(gateHookScan).last = time.Now().Add(-hookScanInterval - time.Second)
-	require.Nil(t, m.maybeHookScan(active))
+	require.False(t, m.maybeHookScan(active))
 }
 
 // Same deadlock guard as the roster: no dispatch must arm nothing, or no
-// message would ever clear the flag.
+// result would ever clear the flag.
 func TestSubagentScanNoClaudeDoesNotLatch(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "sub-aider", "aider", "x")
-	m := homeWithAppState(t)
+	inst := startedInst(t, "sub-aider", "aider")
+	m := NewForTest(Options{})
 
-	require.Nil(t, m.maybeHookScan([]*session.Instance{inst}))
+	require.False(t, m.maybeHookScan([]*session.Instance{inst}))
 	require.False(t, m.gate(gateHookScan).inFlight)
 	require.True(t, m.gate(gateHookScan).last.IsZero())
 }
 
-func TestSubagentScanMsgClearsInFlightOnEveryDelivery(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "sub-clear", "claude", "x")
-	m := homeWithAppState(t)
+func TestSubagentScanResultClearsInFlightOnEveryDelivery(t *testing.T) {
+	inst := startedInst(t, "sub-clear", "claude")
+	m := NewForTest(Options{})
 
 	m.gate(gateHookScan).inFlight = true
-	m.Update(gatedMsg{kind: gateHookScan, msg: hookScanMsg{}})
+	m.Deliver(gatedResult{kind: gateHookScan, result: hookScanResults{}})
 	require.False(t, m.gate(gateHookScan).inFlight)
 
 	m.gate(gateHookScan).inFlight = true
-	m.Update(gatedMsg{kind: gateHookScan, msg: hookScanMsg{results: []hookScanResult{
+	m.Deliver(gatedResult{kind: gateHookScan, result: hookScanResults{results: []hookScanResult{
 		{instance: inst, err: errors.New("disk on fire")},
 		{instance: inst, err: hooks.ErrNoHooks},
 	}}})
@@ -86,40 +86,37 @@ func explorerResult(launchID string, replayed bool, extra ...hooks.Event) sessio
 	}
 }
 
-func TestSubagentScanMsgAppliesAndGatesByLaunch(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "sub-apply", "claude", "x")
-	m := homeWithAppState(t)
-	m.ws.Add(inst)
+func TestSubagentScanResultAppliesAndGatesByLaunch(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "sub-apply")
 
-	m.Update(hookScanMsg{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
+	m.Deliver(hookScanResults{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
 	require.Equal(t, []subagent.View{{Name: "Explore", Description: "map code"}}, inst.Subagents())
 
 	// A result from another launch, even one that would clear everything, is dropped.
-	m.Update(hookScanMsg{results: []hookScanResult{{instance: inst, result: explorerResult("L2", true,
+	m.Deliver(hookScanResults{results: []hookScanResult{{instance: inst, result: explorerResult("L2", true,
 		hooks.Event{Name: hooks.EventSessionEnd})}}})
 	require.Len(t, inst.Subagents(), 1)
 }
 
 // A warm instance whose hooks folder disappears mid-run drops its rows
 // instead of keeping them frozen.
-func TestSubagentScanMsgNoHooksForgetsWarmRows(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "sub-gone", "claude", "x")
-	m := homeWithAppState(t)
-	m.ws.Add(inst)
-	m.Update(hookScanMsg{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
+func TestSubagentScanResultNoHooksForgetsWarmRows(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "sub-gone")
+	m.Deliver(hookScanResults{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
 	require.Len(t, inst.Subagents(), 1)
 
 	m.gate(gateHookScan).inFlight = true
-	m.Update(gatedMsg{kind: gateHookScan, msg: hookScanMsg{results: []hookScanResult{{instance: inst, err: hooks.ErrNoHooks}}}})
+	m.Deliver(gatedResult{kind: gateHookScan, result: hookScanResults{results: []hookScanResult{{instance: inst, err: hooks.ErrNoHooks}}}})
 
 	require.Empty(t, inst.Subagents())
 	require.False(t, m.gate(gateHookScan).inFlight)
 }
 
-func TestSubagentScanCmdEndToEnd(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "sub-e2e", "claude", "x")
-	m := homeWithAppState(t)
-	m.ws.Add(inst)
+func TestSubagentScanJobEndToEnd(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "sub-e2e")
 
 	dir := session.SubagentHooksDir(inst.ConfigDir, inst.Title)
 	_, err := hooks.Prepare(dir)
@@ -133,48 +130,43 @@ func TestSubagentScanCmdEndToEnd(t *testing.T) {
 		filepath.Join(root, "sess.jsonl"))
 	require.NoError(t, os.WriteFile(filepath.Join(hooks.EventsDir(dir), "1-1.json"), []byte(payload), 0o600))
 
-	cmd := m.maybeHookScan([]*session.Instance{inst})
-	require.NotNil(t, cmd)
-	m.Update(cmd())
+	dispatched := m.maybeHookScan([]*session.Instance{inst})
+	require.True(t, dispatched)
+	m.Deliver(m.Drain().Jobs[0]())
 
 	require.Equal(t, []subagent.View{{Name: "Explore", Description: "map code"}}, inst.Subagents())
 	require.False(t, m.gate(gateHookScan).inFlight, "the gated delivery must disarm the scan")
 }
 
 func TestHookScanOnOutputHonoursInterval(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "scan-dirty", "claude", "x")
-	m := homeWithAppState(t)
-	m.ws.Add(inst)
-	m.splitPane.SetSize(100, 40)
-	m.splitPane.SetInstance(inst)
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "scan-dirty")
 	require.True(t, inst.HooksLaunched())
 
-	m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
+	m.PaneOutput(inst)
 	require.True(t, m.gate(gateHookScan).inFlight, "output on a hooked session scans")
 
 	m.gate(gateHookScan).inFlight = false
-	m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
+	m.PaneOutput(inst)
 	assert.False(t, m.gate(gateHookScan).inFlight, "a second scan inside hookScanInterval is not dispatched")
 }
 
 func TestHookScanOnQuietIgnoresInterval(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "scan-quiet", "claude", "x")
-	m := homeWithAppState(t)
-	m.ws.Add(inst)
-	require.NotNil(t, m.maybeHookScan(m.core.ActiveInstances()))
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "scan-quiet")
+	require.True(t, m.maybeHookScan(m.ActiveInstances()))
 
-	m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
+	m.PaneQuiet(inst)
 	assert.True(t, m.gate(gateHookScan).pending, "a quiet during a scan asks for one more")
 
 	m.gate(gateHookScan).inFlight, m.gate(gateHookScan).pending = false, false
-	m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
+	m.PaneQuiet(inst)
 	assert.True(t, m.gate(gateHookScan).inFlight, "a quiet scans even inside hookScanInterval")
 }
 
 func TestHookScanStatusChangeMovesInstanceAndAsksRoster(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "scan-status", "claude", "x")
-	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "scan-status")
 	// The test instance starts on a mock tmux session, so no launch
 	// prepared its folder; it adopts this one's launch ID, as a restored
 	// instance would.
@@ -185,12 +177,12 @@ func TestHookScanStatusChangeMovesInstanceAndAsksRoster(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(hooks.EventsDir(dir), name),
 		[]byte(`{"hook_event_name":"PermissionRequest","tool_name":"Bash"}`), 0o600))
 
-	cmd := m.maybeHookScan(m.core.ActiveInstances())
-	require.NotNil(t, cmd)
-	_, follow := m.Update(cmd())
+	dispatched := m.maybeHookScan(m.ActiveInstances())
+	require.True(t, dispatched)
+	m.Deliver(m.Drain().Jobs[0]())
 
 	assert.Equal(t, session.Prompting, inst.GetStatus())
 	assert.Equal(t, "permission: Bash", inst.WaitReason())
-	require.NotNil(t, follow, "a status change asks the roster to confirm")
+	require.NotEmpty(t, m.Drain().Jobs, "a status change asks the roster to confirm")
 	assert.True(t, m.gate(gateRoster).inFlight)
 }

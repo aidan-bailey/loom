@@ -1,4 +1,4 @@
-package app
+package core
 
 import (
 	"errors"
@@ -7,8 +7,6 @@ import (
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/hooks"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 // hookScanInterval is the minimum time between hook scans. Scans are
@@ -24,16 +22,17 @@ type hookScanResult struct {
 	err      error
 }
 
-// hookScanMsg carries a scan of every tracked instance back to Update.
-type hookScanMsg struct {
+// hookScanResults carries a scan of every tracked instance back to the
+// model.
+type hookScanResults struct {
 	results []hookScanResult
 }
 
-// hookScanCmd builds one scan covering every instance that wants one.
-// Requests are built here, on the Update goroutine, because they read the
-// tracker; the returned Cmd only touches the filesystem. Returns nil when
+// hookScanJob builds one scan covering every instance that wants one.
+// Requests are built here, on the model's goroutine, because they read the
+// tracker; the returned Job only touches the filesystem. Returns nil when
 // there is nothing to scan.
-func hookScanCmd(active []*session.Instance) tea.Cmd {
+func hookScanJob(active []*session.Instance) Job {
 	type job struct {
 		inst *session.Instance
 		req  session.HookScanRequest
@@ -47,32 +46,32 @@ func hookScanCmd(active []*session.Instance) tea.Cmd {
 	if len(jobs) == 0 {
 		return nil
 	}
-	return func() tea.Msg {
+	return func() any {
 		now := time.Now()
 		results := make([]hookScanResult, 0, len(jobs))
 		for _, j := range jobs {
 			res, err := session.ScanHooks(j.req, now)
 			results = append(results, hookScanResult{instance: j.inst, result: res, err: err})
 		}
-		return hookScanMsg{results: results}
+		return hookScanResults{results: results}
 	}
 }
 
-// maybeHookScan returns a scan when gateHookScan is due, following
+// maybeHookScan dispatches a scan when gateHookScan is due, following
 // maybeRosterQuery: none in flight, and at least hookScanInterval since
-// the last dispatch. Returns nil when not due or nothing wants a scan.
+// the last dispatch. Reports false when not due or nothing wants a scan.
 // Call on the Update goroutine.
-func (m *home) maybeHookScan(active []*session.Instance) tea.Cmd {
-	return m.dispatchGated(gateHookScan, time.Now(), func() tea.Cmd {
-		return hookScanCmd(active)
+func (m *Model) maybeHookScan(active []*session.Instance) bool {
+	return m.dispatchGated(gateHookScan, time.Now(), func() Job {
+		return hookScanJob(active)
 	})
 }
 
-// handleHookScan applies a scan. An instance whose Claude status changed
+// deliverHookScan applies a scan. An instance whose Claude status changed
 // moves to it at once, and any change also asks the roster to confirm:
 // its answer, stamped after the event, corrects a Stop that ended a turn
 // but not the work (a lead about to pick up a teammate's reply).
-func (m *home) handleHookScan(msg hookScanMsg) tea.Cmd {
+func (m *Model) deliverHookScan(msg hookScanResults) {
 	changed := false
 	for _, r := range msg.results {
 		if r.err != nil {
@@ -82,7 +81,7 @@ func (m *home) handleHookScan(msg hookScanMsg) tea.Cmd {
 				// mid-run, and its rows would otherwise stay frozen.
 				r.instance.ForgetSubagentsWithoutHooks()
 			} else {
-				log.DebugKV("app.hook_scan.failed", "instance", r.instance.Title, "err", r.err.Error())
+				log.DebugKV("core.hook_scan.failed", "instance", r.instance.Title, "err", r.err.Error())
 			}
 			continue
 		}
@@ -95,9 +94,9 @@ func (m *home) handleHookScan(msg hookScanMsg) tea.Cmd {
 		}
 	}
 	if !changed {
-		return nil
+		return
 	}
-	m.updateTabBarStatuses()
+	m.emit(StatusesChanged{})
 	m.gate(gateRoster).request()
-	return m.maybeRosterQuery(m.core.ActiveInstances())
+	m.maybeRosterQuery(m.ActiveInstances())
 }

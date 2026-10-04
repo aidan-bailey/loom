@@ -2,12 +2,19 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,3 +110,139 @@ func (r *recordingInstanceStorage) SaveInstances(data json.RawMessage) error {
 
 func (r *recordingInstanceStorage) GetInstances() json.RawMessage { return r.lastData }
 func (r *recordingInstanceStorage) DeleteAllInstances() error     { return nil }
+
+// runningPtyFactory runs a session's new-session through cmdExec and hands
+// it a fake PTY, open until the test ends (app's fixture of the same name).
+type runningPtyFactory struct {
+	t       *testing.T
+	cmdExec cmd_test.MockCmdExec
+}
+
+func (f runningPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
+	attach, _ := testpty.Pair(f.t)
+	_ = f.cmdExec.Run(cmd)
+	return attach, nil
+}
+
+func (f runningPtyFactory) Close() {}
+
+// fakePtyFactory hands a session a fake PTY without running anything
+// (app's fixture of the same name).
+type fakePtyFactory struct{ t *testing.T }
+
+func (f fakePtyFactory) Start(*exec.Cmd) (*os.File, error) {
+	attach, _ := testpty.Pair(f.t)
+	return attach, nil
+}
+
+func (f fakePtyFactory) Close() {}
+
+// aliveExec answers every tmux command with success, so has-session reads
+// the session alive (app's aliveCmdExecForTest).
+func aliveExec() cmd_test.MockCmdExec {
+	return cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+}
+
+// startedInst builds a started instance titled title running program, in a
+// worktree of a fresh repository, on a mock tmux session (no tmux server
+// contacted) whose has-session answers once new-session ran. A Claude
+// program's launch prepares its hooks folder (HooksLaunched). It is app's
+// startedInstanceWithProgram minus the pane client and the captured
+// content, which are the TUI's.
+func startedInst(t *testing.T, title, program string) *session.Instance {
+	t.Helper()
+
+	workdir := t.TempDir()
+	runGit(t, workdir, "init")
+	runGit(t, workdir, "config", "--local", "user.email", "t@t.com")
+	runGit(t, workdir, "config", "--local", "user.name", "T")
+	require.NoError(t, os.WriteFile(filepath.Join(workdir, "f.txt"), []byte("x"), 0644))
+	runGit(t, workdir, "add", ".")
+	runGit(t, workdir, "commit", "-m", "init")
+
+	inst, err := session.NewInstance(session.InstanceOptions{
+		Title:     title,
+		Path:      workdir,
+		Program:   program,
+		ConfigDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+
+	sessionCreated := false
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error {
+			s := cmd.String()
+			if strings.Contains(s, "has-session") {
+				if sessionCreated {
+					return nil
+				}
+				return fmt.Errorf("session does not exist")
+			}
+			if strings.Contains(s, "new-session") {
+				sessionCreated = true
+			}
+			return nil
+		},
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return []byte(""), nil },
+	}
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, program, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+	require.NoError(t, inst.Start(true))
+	return inst
+}
+
+// activeInst builds a started, Running instance titled title on a mock
+// tmux session (no tmux server contacted), held by a workspace installed
+// in m as its classic one.
+func activeInst(t *testing.T, m *Model, title string) *session.Instance {
+	t.Helper()
+	inst := startedInst(t, title, "claude")
+	require.Equal(t, session.Running, inst.GetStatus(), "fixture: a started instance runs")
+	hold(m, inst)
+	return inst
+}
+
+// hold adds insts to m's classic workspace, installing an empty one first
+// when m has no workspace: what app's fixtures did with m.ws.Add.
+func hold(m *Model, insts ...*session.Instance) {
+	ws := m.classic
+	if ws == nil && len(m.tabs) == 0 {
+		ws = NewWorkspace(WorkspaceParts{})
+		m.SetWorkspacesForTest(ws, nil)
+	} else if ws == nil {
+		ws = m.tabs[0]
+	}
+	for _, inst := range insts {
+		ws.Add(inst)
+	}
+}
+
+// withAccounts registers extra accounts on m, linked against a throwaway
+// main dir, and publishes them; the package-level publication is undone at
+// cleanup. Returns the main dir (app's fixture of the same name).
+func withAccounts(t *testing.T, m *Model, names ...string) string {
+	t.Helper()
+	reg := account.LoadRegistry(t.TempDir())
+	main := t.TempDir()
+	for _, n := range names {
+		_, _, err := reg.Create(n, main)
+		require.NoError(t, err)
+	}
+	m.adoptAccounts(reg)
+	t.Cleanup(func() { session.SetAccountDirs(nil, nil) })
+	return main
+}
+
+// otherTerminal is a second handle on m's accounts.json, the way a `loom
+// account` run in another terminal sees it.
+func otherTerminal(t *testing.T, m *Model) *account.Registry {
+	t.Helper()
+	return account.LoadRegistry(filepath.Dir(m.accounts.Path()))
+}
+
+// editRCAuth edits the model's default-account remote-control auth.
+func editRCAuth(m *Model, edit func(*session.RemoteControlAuth)) {
+	edit(&m.rcAuth)
+}

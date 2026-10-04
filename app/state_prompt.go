@@ -64,7 +64,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				// launch options modal opens. The fetch is async, so the
 				// overlay is dismissed now and the flow resumes in
 				// handleIssueExpanded once it resolves.
-				if n, rest, ok := github.ParseShorthand(prompt); ok && !(m.ghAvailable.checked && !m.ghAvailable.ok) {
+				if n, rest, ok := github.ParseShorthand(prompt); ok && !m.core.GitHubUnavailable() {
 					m.dismissOverlay()
 					m.state = stateDefault
 					// The flow is suspended until the expansion lands;
@@ -91,7 +91,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					}
 
 					if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), selected.Program()) {
-						return m, m.promptRemoteControlBlocked(startTask, m.rcAuthFor(opts.Account).Reason)
+						return m, m.promptRemoteControlBlocked(startTask, m.core.RCAuthFor(opts.Account).Reason)
 					}
 					return m, tea.Batch(startTask.Run(), m.instanceChanged())
 				}
@@ -100,7 +100,8 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				lo, reloaded := m.newLaunchOptionsOverlay(launch.FromConfig(m.appConfig()), selected.Program())
 				m.setOverlay(lo, overlayLaunchOptions)
 				m.menu.SetState(ui.StateNewInstance)
-				return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())
+				m.core.RequestUsageProbe()
+				return m, tea.Batch(tea.RequestWindowSize, reloaded)
 			}
 
 			// Regular flow: instance already running, just send the prompt,

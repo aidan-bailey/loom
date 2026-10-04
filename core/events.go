@@ -68,3 +68,43 @@ type Recovered struct {
 }
 
 func (Recovered) coreEvent() {}
+
+// StatusesChanged reports that instance statuses may have moved (a probe,
+// a hook scan, a roster answer): the TUI refreshes its tab statuses and
+// peer sections (updateTabBarStatuses).
+type StatusesChanged struct{}
+
+func (StatusesChanged) coreEvent() {}
+
+// Alive lists instances whose tmux session a probe found alive. The TUI
+// re-attaches the client of any whose client is not attached (a reattach
+// failed after a full-screen attach, or the client's pump hit EOF on a
+// session since relaunched under its name), unless a full-screen attach
+// owns it. Source names the probe for the TUI's log ("tick",
+// "dead_event").
+type Alive struct {
+	Instances []*session.Instance
+	Source    string
+}
+
+func (Alive) coreEvent() {}
+
+// HealthChecked reports that a health tick's probe landed and was
+// applied: the TUI arms the next tick then, so probes never overlap.
+type HealthChecked struct{}
+
+func (HealthChecked) coreEvent() {}
+
+// GitHubChanged reports a GitHub poll applied: the TUI refreshes an open
+// issue picker.
+type GitHubChanged struct{}
+
+func (GitHubChanged) coreEvent() {}
+
+// AccountsChanged reports that the account registry, an account's auth,
+// sync report or usage changed: the TUI refreshes every view showing
+// accounts (refreshAccountViews) and whether account UI shows at all
+// (ui.SetShowAccounts).
+type AccountsChanged struct{}
+
+func (AccountsChanged) coreEvent() {}

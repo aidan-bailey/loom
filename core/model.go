@@ -3,10 +3,12 @@ package core
 import (
 	"fmt"
 
+	"github.com/aidan-bailey/loom/account"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/github"
 )
 
 // Job is work the model hands its caller to run off the model's
@@ -62,10 +64,75 @@ type Model struct {
 	restoreFailed []string
 
 	// rcAuth is the default account's remote-control auth: detected at
-	// startup and refreshed by the accounts refresh
-	// (app.handleAccountsRefreshed), both through SetRCAuth, and read by
-	// every launch decision.
+	// startup (SetRCAuth) and refreshed by the accounts refresh
+	// (deliverAccountsRefreshed), and read by every launch decision.
 	rcAuth session.RemoteControlAuth
+
+	// gates throttle the background jobs riding the health tick (roster
+	// query, subagent scan, GitHub poll, account usage probe, accounts
+	// refresh), one pollGate per gateKind (see gate.go; resolve with
+	// m.gate). The zero value is ready to use: intervals come from
+	// gateIntervals. Update-goroutine only.
+	gates [numGateKinds]pollGate
+
+	// dirtySessions records tmux session names that emitted output since the
+	// last health tick (event mode only). Consumed by takeDirty to gate
+	// diff-stat refreshes. Update-goroutine only.
+	dirtySessions map[string]bool
+
+	// roster is Claude's own view of its live sessions, keyed by working
+	// directory, refreshed once per health tick (see rosterQueryJob). It is
+	// authoritative where the pane scraper is inferential, so status events
+	// consult it first and fall back when it has no entry for a session.
+	// Update-goroutine only.
+	roster map[string]session.RosterEntry
+	// rosterByAccount is each extra account's roster, keyed by account then
+	// working directory: `claude agents --json` lists only its own config
+	// dir's sessions, so each account is queried as itself. The default
+	// account's stays in roster. Update-goroutine only.
+	rosterByAccount map[string]map[string]session.RosterEntry
+
+	// ghAvailable caches gh's install/auth check, resolved by the first
+	// poll. Until checked, polls proceed (the poll itself checks).
+	ghAvailable ghAvailability
+	// ghState is the latest GitHub snapshot per open repo path. Replaced
+	// wholesale on every ghResult; a repo whose query failed is absent.
+	ghState map[string]github.Snapshot
+	// ghErrs is the last poll error per open repo, replaced wholesale
+	// alongside ghState. A repo can fail every poll forever while
+	// ghAvailable stays ok — CheckCLI is not repo-scoped, so a repo with
+	// no GitHub remote never flips availability — and without this the
+	// picker would sit on "loading…" with nothing to show for it.
+	ghErrs map[string]error
+	// ghBases is the resolved base ref name per repo ("origin/main"),
+	// refreshed by the poll and read by probeJob for parity.
+	ghBases map[string]string
+
+	// accounts is the Claude account registry (account/), loaded from the
+	// global config dir at startup. Update-goroutine only: launches read the
+	// published dir map (session.SetAccountDirs) instead.
+	accounts *account.Registry
+	// accountAuth is each extra account's remote-control auth, with the
+	// identity `claude auth status` reported, filled by accountsRefreshed.
+	// The default account's lives in rcAuth.
+	accountAuth map[string]session.RemoteControlAuth
+	// accountSync is each extra account's last link report.
+	accountSync map[string]account.SyncReport
+	// usage is each account's latest probe state (usage.go).
+	usage map[string]accountUsage
+	// accountsStamp is the accounts.json version the registry was last read
+	// (or written) at, and accountsSeen the state it held then; the health
+	// tick rereads the file only when its stat differs from the stamp, and
+	// acts only when the state differs (see maybeReloadAccounts).
+	accountsStamp accountsFileStamp
+	accountsSeen  string
+	// syncRefusalLogged is the last reason syncMainDir refused the main
+	// config dir, so each reason is logged once.
+	syncRefusalLogged string
+	// refreshDefaultAuth asks the next accounts refresh to reread the
+	// default account's auth too; kept until one dispatches, so a request
+	// made while another refresh is in flight is not lost.
+	refreshDefaultAuth bool
 
 	out Out
 }
@@ -196,7 +263,32 @@ func (m *Model) Deliver(msg any) {
 		m.notifyErr(msg.err)
 	case promptSent:
 		m.deliverPromptSent(msg)
+	case gatedResult:
+		m.deliverGated(msg)
+	case HealthResult:
+		m.deliverHealth(msg)
+	case DeadVerified:
+		m.deliverDeadVerified(msg)
+	case rosterResult:
+		m.deliverRoster(msg)
+	case hookScanResults:
+		m.deliverHookScan(msg)
+	case ghResult:
+		m.deliverGH(msg)
+	case pushResult:
+		m.deliverPush(msg)
+	case accountsRefreshed:
+		m.deliverAccountsRefreshed(msg)
+	case usageResult:
+		m.deliverUsage(msg)
 	default:
 		log.For("core").Error("deliver.unknown_result", "type", fmt.Sprintf("%T", msg))
 	}
+}
+
+// Begin starts the background jobs the TUI's first frame wants, each when
+// due: an accounts refresh and a usage probe.
+func (m *Model) Begin() {
+	m.maybeAccountsRefresh()
+	m.maybeUsageProbe()
 }

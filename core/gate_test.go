@@ -1,10 +1,9 @@
-package app
+package core
 
 import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 
@@ -12,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// pollResultMsg stands in for a gated job's result.
-type pollResultMsg struct{ n int }
+// pollResult stands in for a gated job's result.
+type pollResult struct{ n int }
 
-func resultCmd(n int) tea.Cmd {
-	return func() tea.Msg { return pollResultMsg{n: n} }
+func resultJob(n int) Job {
+	return func() any { return pollResult{n: n} }
 }
 
 func TestGateIntervalsUseEachJobsInterval(t *testing.T) {
@@ -24,7 +23,6 @@ func TestGateIntervalsUseEachJobsInterval(t *testing.T) {
 	assert.Equal(t, hookScanInterval, gateIntervals[gateHookScan])
 	assert.Equal(t, ghInterval, gateIntervals[gateGH])
 	assert.Equal(t, usageInterval, gateIntervals[gateUsage])
-	assert.Zero(t, gateIntervals[gateRatioSave], "the ratio flush paces itself with its own tick")
 	assert.Zero(t, gateIntervals[gateAccountsRefresh], "account refreshes run on events, not a cadence")
 }
 
@@ -65,102 +63,106 @@ func TestPollGateExpedite(t *testing.T) {
 	assert.True(t, g.due(now, time.Hour), "it polls again as soon as that one is delivered")
 }
 
-// A zero-value home must be throttled like a production one: the
+// A zero-value Model must be throttled like a production one: the
 // intervals are keyed by kind, not installed by a constructor, so no
 // construction path can leave a job polling on every tick.
-func TestZeroValueHomeThrottlesRoster(t *testing.T) {
-	m := &home{}
+func TestZeroValueModelThrottlesRoster(t *testing.T) {
+	m := &Model{}
 	inst, err := session.NewInstance(session.InstanceOptions{
 		Title: "zero-home", Path: t.TempDir(), Program: "/nonexistent/loom-test/claude",
 	})
 	require.NoError(t, err)
 	active := []*session.Instance{inst}
 
-	require.NotNil(t, m.maybeRosterQuery(active))
+	require.True(t, m.maybeRosterQuery(active))
 	m.gate(gateRoster).inFlight = false // pretend the first query already returned
 
-	assert.Nil(t, m.maybeRosterQuery(active), "a second query inside rosterInterval must not dispatch")
+	assert.False(t, m.maybeRosterQuery(active), "a second query inside rosterInterval must not dispatch")
 	m.gate(gateRoster).last = time.Now().Add(-rosterInterval - time.Second)
-	assert.NotNil(t, m.maybeRosterQuery(active), "once the interval has elapsed it runs again")
+	assert.True(t, m.maybeRosterQuery(active), "once the interval has elapsed it runs again")
 }
 
 func TestDispatchGatedNilBuildArmsNothing(t *testing.T) {
-	m := &home{}
+	m := &Model{}
 
-	assert.Nil(t, m.dispatchGated(gateRoster, time.Now(), func() tea.Cmd { return nil }))
-	assert.False(t, m.gate(gateRoster).inFlight, "no Cmd means no delivery to disarm it")
+	assert.False(t, m.dispatchGated(gateRoster, time.Now(), func() Job { return nil }))
+	assert.False(t, m.gate(gateRoster).inFlight, "no Job means no delivery to disarm it")
 	assert.True(t, m.gate(gateRoster).last.IsZero(), "nor does it start the interval")
 }
 
 func TestDispatchGatedArmsAndWrapsResult(t *testing.T) {
-	m := &home{}
+	m := &Model{}
 	now := time.Now()
 
-	cmd := m.dispatchGated(gateGH, now, func() tea.Cmd { return resultCmd(7) })
-	require.NotNil(t, cmd)
+	dispatched := m.dispatchGated(gateGH, now, func() Job { return resultJob(7) })
+	require.True(t, dispatched)
 	assert.True(t, m.gate(gateGH).inFlight)
 	assert.Equal(t, now, m.gate(gateGH).last)
 	assert.False(t, m.gate(gateRoster).inFlight, "only the named gate arms")
 
-	assert.Equal(t, gatedMsg{kind: gateGH, msg: pollResultMsg{n: 7}}, cmd())
+	jobs := m.Drain().Jobs
+	require.Len(t, jobs, 1)
+	assert.Equal(t, gatedResult{kind: gateGH, result: pollResult{n: 7}}, jobs[0]())
 }
 
-func TestDispatchGatedWrapsATickOnceItFires(t *testing.T) {
-	m := &home{}
+// A job that blocks before it answers (as the ratio flush's tea.Tick did)
+// is wrapped all the same once it returns.
+func TestDispatchGatedWrapsABlockingJobOnceItReturns(t *testing.T) {
+	m := &Model{}
 
-	cmd := m.dispatchGated(gateRatioSave, time.Now(), func() tea.Cmd {
-		return tea.Tick(time.Millisecond, func(time.Time) tea.Msg { return pollResultMsg{n: 1} })
+	dispatched := m.dispatchGated(gateAccountsRefresh, time.Now(), func() Job {
+		return func() any { time.Sleep(time.Millisecond); return pollResult{n: 1} }
 	})
-	require.NotNil(t, cmd)
-	assert.Equal(t, gatedMsg{kind: gateRatioSave, msg: pollResultMsg{n: 1}}, cmd())
+	require.True(t, dispatched)
+	assert.Equal(t, gatedResult{kind: gateAccountsRefresh, result: pollResult{n: 1}}, m.Drain().Jobs[0]())
 }
 
 func TestDispatchGatedSkipsBuildWhenNotDue(t *testing.T) {
-	m := &home{}
+	m := &Model{}
 	now := time.Now()
-	require.NotNil(t, m.dispatchGated(gateHookScan, now, func() tea.Cmd { return resultCmd(1) }))
+	require.True(t, m.dispatchGated(gateHookScan, now, func() Job { return resultJob(1) }))
 
 	called := false
-	build := func() tea.Cmd { called = true; return resultCmd(2) }
+	build := func() Job { called = true; return resultJob(2) }
 
-	assert.Nil(t, m.dispatchGated(gateHookScan, now.Add(hookScanInterval), build),
+	assert.False(t, m.dispatchGated(gateHookScan, now.Add(hookScanInterval), build),
 		"in flight, even with the interval elapsed")
 	m.gate(gateHookScan).inFlight = false
-	assert.Nil(t, m.dispatchGated(gateHookScan, now.Add(hookScanInterval/2), build),
+	assert.False(t, m.dispatchGated(gateHookScan, now.Add(hookScanInterval/2), build),
 		"delivered, but inside the interval")
 	assert.False(t, called, "build must not run when the gate is not due: it reads model state and may be costly")
 
-	assert.NotNil(t, m.dispatchGated(gateHookScan, now.Add(hookScanInterval), build))
+	assert.True(t, m.dispatchGated(gateHookScan, now.Add(hookScanInterval), build))
 	assert.True(t, called)
 }
 
 func TestGatedDeliveryDisarmsFirst(t *testing.T) {
-	m := homeWithAppState(t)
-	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateRatioSave, gateUsage, gateAccountsRefresh} {
+	m := NewForTest(Options{})
+	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateUsage, gateAccountsRefresh} {
 		m.gate(kind).inFlight = true
-		// An inner message no case handles, and a nil one, disarm all the
+		// A result no case handles, and a nil one, disarm all the
 		// same: disarming belongs to the wrapper, not the handler.
-		m.Update(gatedMsg{kind: kind, msg: pollResultMsg{}})
+		m.Deliver(gatedResult{kind: kind, result: pollResult{}})
 		assert.False(t, m.gate(kind).inFlight, "kind %d", kind)
 
 		m.gate(kind).inFlight = true
-		m.Update(gatedMsg{kind: kind})
-		assert.False(t, m.gate(kind).inFlight, "kind %d, nil inner message", kind)
+		m.Deliver(gatedResult{kind: kind})
+		assert.False(t, m.gate(kind).inFlight, "kind %d, nil result", kind)
 	}
 }
 
 // TestGatedDeliveryDisarmsRosterErrorAndGitHubResult drives both result
-// shapes that once had to disarm by hand through Update: a failed roster
+// shapes that once had to disarm by hand through Deliver: a failed roster
 // query (the easy one to miss) and a GitHub poll. Each gate disarms, and
-// each inner message still reaches its handler.
+// each inner result still reaches its handler.
 func TestGatedDeliveryDisarmsRosterErrorAndGitHubResult(t *testing.T) {
-	m := homeWithAppState(t)
+	m := NewForTest(Options{})
 	m.roster = map[string]session.RosterEntry{"/w/x": {Status: session.RosterStatusIdle}}
 	m.gate(gateRoster).inFlight = true
 	m.gate(gateGH).inFlight = true
 
-	m.Update(gatedMsg{kind: gateRoster, msg: rosterReadyMsg{err: errAssertRoster}})
-	m.Update(gatedMsg{kind: gateGH, msg: ghReadyMsg{
+	m.Deliver(gatedResult{kind: gateRoster, result: rosterResult{err: errAssertRoster}})
+	m.Deliver(gatedResult{kind: gateGH, result: ghResult{
 		available: ghAvailability{checked: true, ok: true},
 		snapshots: map[string]github.Snapshot{"/repo": {}},
 	}})
@@ -171,86 +173,82 @@ func TestGatedDeliveryDisarmsRosterErrorAndGitHubResult(t *testing.T) {
 	assert.Contains(t, m.ghState, "/repo", "the GitHub handler still ran")
 }
 
-// A builder that broke the single-message rule still disarms its gate,
-// and the dropped batch is logged rather than lost silently.
-func TestGatedBatchMsgStillDisarms(t *testing.T) {
-	m := homeWithAppState(t)
+// A builder that broke the single-result rule (its job answers with
+// another job) still disarms its gate, and the stray job is logged as an
+// unknown result rather than run.
+func TestGatedNestedJobStillDisarms(t *testing.T) {
+	m := NewForTest(Options{})
 	m.gate(gateGH).inFlight = true
 
-	_, cmd := m.Update(gatedMsg{kind: gateGH, msg: tea.BatchMsg{resultCmd(1)}})
+	m.Deliver(gatedResult{kind: gateGH, result: resultJob(1)})
 
 	assert.False(t, m.gate(gateGH).inFlight)
-	assert.Nil(t, cmd)
+	assert.True(t, m.Drain().Empty())
 }
 
-// TestProductionGatedCmdsYieldOneMessage runs each gated job's Cmd once
-// and checks it produces its own result type, never a tea.BatchMsg that
-// Update could not expand. The roster points at a nonexistent binary so
-// the query fails fast; the GitHub poll runs ghPollCmd (what maybeGHQuery
-// builds) against a fake executor rather than real git and gh.
-func TestProductionGatedCmdsYieldOneMessage(t *testing.T) {
-	inner := func(t *testing.T, cmd tea.Cmd, kind gateKind) tea.Msg {
+// TestProductionGatedJobsYieldOneResult runs each gated job once and
+// checks it produces its own result type inside one gatedResult. The
+// roster points at a nonexistent binary so the query fails fast; the
+// GitHub poll runs ghPollJob (what maybeGHQuery builds) against a fake
+// executor rather than real git and gh.
+func TestProductionGatedJobsYieldOneResult(t *testing.T) {
+	inner := func(t *testing.T, m *Model, dispatched bool, kind gateKind) any {
 		t.Helper()
-		require.NotNil(t, cmd)
-		gm, ok := cmd().(gatedMsg)
-		require.True(t, ok, "a gated Cmd must deliver a gatedMsg")
-		require.Equal(t, kind, gm.kind)
-		require.NotNil(t, gm.msg)
-		_, isBatch := gm.msg.(tea.BatchMsg)
-		require.False(t, isBatch, "Update cannot expand a wrapped batch")
-		return gm.msg
+		require.True(t, dispatched)
+		jobs := m.Drain().Jobs
+		require.Len(t, jobs, 1)
+		gr, ok := jobs[0]().(gatedResult)
+		require.True(t, ok, "a gated job must deliver a gatedResult")
+		require.Equal(t, kind, gr.kind)
+		require.NotNil(t, gr.result)
+		_, nested := gr.result.(gatedResult)
+		require.False(t, nested, "Deliver unwraps one gatedResult, not two")
+		return gr.result
 	}
 
 	t.Run("roster", func(t *testing.T) {
-		m := homeWithAppState(t)
+		m := NewForTest(Options{})
 		inst, err := session.NewInstance(session.InstanceOptions{
 			Title: "one-msg-roster", Path: t.TempDir(), Program: "/nonexistent/loom-test/claude",
 		})
 		require.NoError(t, err)
-		msg := inner(t, m.maybeRosterQuery([]*session.Instance{inst}), gateRoster)
-		assert.IsType(t, rosterReadyMsg{}, msg)
+		result := inner(t, m, m.maybeRosterQuery([]*session.Instance{inst}), gateRoster)
+		assert.IsType(t, rosterResult{}, result)
 	})
 
 	t.Run("subagent", func(t *testing.T) {
-		m := homeWithAppState(t)
-		inst := startedInstanceWithProgram(t, "one-msg-sub", "claude", "x")
-		msg := inner(t, m.maybeHookScan([]*session.Instance{inst}), gateHookScan)
-		assert.IsType(t, hookScanMsg{}, msg)
+		m := NewForTest(Options{})
+		inst := startedInst(t, "one-msg-sub", "claude")
+		result := inner(t, m, m.maybeHookScan([]*session.Instance{inst}), gateHookScan)
+		assert.IsType(t, hookScanResults{}, result)
 	})
 
 	t.Run("github", func(t *testing.T) {
-		m := homeWithAppState(t)
+		m := NewForTest(Options{})
 		req := ghPollRequest{repos: []string{"/r"}, linked: map[string][]int{}, configured: map[string]string{}, check: true}
-		msg := inner(t, m.dispatchGated(gateGH, time.Now(), func() tea.Cmd {
-			return ghPollCmd(req, &ghFakeExec{})
+		result := inner(t, m, m.dispatchGated(gateGH, time.Now(), func() Job {
+			return ghPollJob(req, &ghFakeExec{})
 		}), gateGH)
-		assert.IsType(t, ghReadyMsg{}, msg)
+		assert.IsType(t, ghResult{}, result)
 	})
 
 	t.Run("usage", func(t *testing.T) {
-		m := homeWithAppState(t)
-		m.core.SetProgram("/nonexistent/loom-test/claude")
+		m := NewForTest(Options{Program: "/nonexistent/loom-test/claude"})
 		main := withAccounts(t, m, "max-2")
 		editRCAuth(m, func(a *session.RemoteControlAuth) { a.Identity.ConfigDir = main })
-		msg := inner(t, m.maybeUsageProbe(), gateUsage)
-		assert.IsType(t, usageReadyMsg{}, msg)
+		m.Drain()
+		result := inner(t, m, m.maybeUsageProbe(), gateUsage)
+		assert.IsType(t, usageResult{}, result)
 	})
 
 	t.Run("accounts_refresh", func(t *testing.T) {
 		t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // account.MainDir's fallback
-		m := homeWithAppState(t)
-		m.core.SetProgram("/nonexistent/loom-test/claude")
+		m := NewForTest(Options{Program: "/nonexistent/loom-test/claude"})
 		withAccounts(t, m, "max-2")
-		msg := inner(t, m.requestAccountsRefresh(true), gateAccountsRefresh)
-		assert.IsType(t, accountsRefreshedMsg{}, msg)
-	})
-
-	t.Run("ratio_save", func(t *testing.T) {
-		m := newTestHome(t)
-		mustAddInstance(t, m, "one-msg-ratio")
-		m.resizeSplit(+0.05)
-		msg := inner(t, m.maybeArmRatioSave(), gateRatioSave) // waits out ratioSaveDelay
-		assert.IsType(t, ratioSaveMsg{}, msg)
+		m.Drain()
+		m.RequestAccountsRefresh(true)
+		result := inner(t, m, m.gate(gateAccountsRefresh).inFlight, gateAccountsRefresh)
+		assert.IsType(t, accountsRefreshed{}, result)
 	})
 }
 
@@ -268,19 +266,19 @@ func TestPollGateRequest(t *testing.T) {
 }
 
 func TestDeliverGatedRedispatchesPendingOnce(t *testing.T) {
-	inst := startedInstanceWithProgram(t, "gate-redispatch", "claude", "x")
-	m := homeWithAppState(t)
-	m.ws.Add(inst)
-	require.NotNil(t, m.maybeRosterQuery(m.core.ActiveInstances()))
+	m := NewForTest(Options{})
+	activeInst(t, m, "gate-redispatch")
+	require.True(t, m.maybeRosterQuery(m.ActiveInstances()))
 	m.gate(gateRoster).request()
+	m.Drain()
 
-	_, cmd := m.Update(gatedMsg{kind: gateRoster, msg: rosterReadyMsg{}})
+	m.Deliver(gatedResult{kind: gateRoster, result: rosterResult{}})
 
-	require.NotNil(t, cmd, "the pending request dispatches again as soon as the flight lands")
+	require.NotEmpty(t, m.Drain().Jobs, "the pending request dispatches again as soon as the flight lands")
 	assert.True(t, m.gate(gateRoster).inFlight)
 	assert.False(t, m.gate(gateRoster).pending)
 
-	_, cmd = m.Update(gatedMsg{kind: gateRoster, msg: rosterReadyMsg{}})
-	assert.Nil(t, cmd, "no request, no follow-up")
+	m.Deliver(gatedResult{kind: gateRoster, result: rosterResult{}})
+	assert.Empty(t, m.Drain().Jobs, "no request, no follow-up")
 	assert.False(t, m.gate(gateRoster).inFlight)
 }

@@ -98,10 +98,6 @@ func (m *home) activateWorkspace(def config.Workspace) (tea.Cmd, error) {
 		m.loadSlot(0)
 		release = tea.Batch(releaseSlotCmd(classic), m.prunePanes())
 	}
-	// Force the next health tick to poll: a newly opened workspace's repo
-	// wasn't in openRepoPaths() until just now, and without this the
-	// poller stays silent on it until the ambient ghInterval next elapses.
-	m.gate(gateGH).expedite()
 	return tea.Batch(notices, release), nil
 }
 

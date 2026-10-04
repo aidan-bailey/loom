@@ -44,8 +44,7 @@ func (m *home) drainCore() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// applyCoreEvent applies one model event to the view. Package C adds
-// cases.
+// applyCoreEvent applies one model event to the view.
 func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 	switch ev := ev.(type) {
 	case core.Notice:
@@ -69,6 +68,40 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 		return m.applyStarted(ev)
 	case core.Recovered:
 		return m.applyRecovered(ev)
+	case core.StatusesChanged:
+		m.updateTabBarStatuses()
+	case core.Alive:
+		for _, inst := range ev.Instances {
+			if inst == m.attachingInstance || m.panes.For(inst).Attached() {
+				continue
+			}
+			// The session exists but its attach client is not attached (a
+			// reattach failed after full-screen attach returned, or the
+			// client's pump hit EOF on a session that has since been
+			// relaunched under the same name). Self-heal here: the same
+			// shape as the workspace-terminal restart, at the client layer.
+			log.For("app").Warn("pane.client_dead_repairing", "title", inst.Title, "source", ev.Source)
+			m.ensurePane(inst)
+		}
+	case core.HealthChecked:
+		// A user parked on the workbench's diff tab generates none of the
+		// nav traffic that refreshes the diff in focus mode, so ride the
+		// health tick: re-render from the just-updated diff stats so the
+		// tab tracks the agent's work live.
+		if m.viewMode == viewWorkbench && m.workbench != nil && m.workbench.Tab() == ui.WbTabDiff {
+			if selected := m.list.GetSelectedInstance(); selected != nil {
+				m.workbench.Diff().SetDiff(selected)
+			}
+		}
+		return tickUpdateMetadataCmd
+	case core.GitHubChanged:
+		if p := m.issuePicker(); p != nil {
+			p.SetRows(m.issueRows())
+			p.SetStatus(m.issuePickerStatus())
+		}
+	case core.AccountsChanged:
+		ui.SetShowAccounts(m.core.HasExtraAccounts())
+		return m.refreshAccountViews()
 	}
 	return nil
 }

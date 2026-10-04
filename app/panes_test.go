@@ -260,10 +260,12 @@ func healThroughDeadEvent(t *testing.T, m *home, inst *session.Instance) {
 	t.Helper()
 	_, cmd := m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd)
-	verified, ok := cmd().(deadVerifiedMsg)
+	result, ok := cmd().(coreResultMsg)
 	require.True(t, ok)
-	require.Equal(t, tmux.LivenessAlive, verified.tmuxLive, "the relaunched session is alive")
-	_, _ = m.Update(verified)
+	verified, ok := result.msg.(core.DeadVerified)
+	require.True(t, ok)
+	require.Equal(t, tmux.LivenessAlive, verified.TmuxLive, "the relaunched session is alive")
+	_, _ = m.Update(result)
 }
 
 // requireShowsNewSession checks that inst's pane is attached to the
@@ -369,8 +371,10 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
 		m.ws.Add(inst)
 
-		active := m.core.ActiveInstances()
-		_, _ = m.Update(gatherMetadataCmd(active, nil, nil, nil, m.paneSnapshot(active))())
+		// The tick's probe, as the model's probe job takes it.
+		deliver(t, m, core.HealthResult{Results: []core.ProbeResult{
+			{Instance: inst, TmuxLive: inst.Pane().TmuxLiveness()},
+		}})
 
 		requireShowsNewSession(t, m, inst, peer)
 	})
@@ -417,8 +421,8 @@ func TestDeadEvent_RepairOfAClientThatExitsOnAttachIsBounded(t *testing.T) {
 	for deadline := time.Now().Add(500 * time.Millisecond); time.Now().Before(deadline); {
 		_, cmd := m.Update(ptyDeadMsg{session: name})
 		require.NotNil(t, cmd)
-		if verified, ok := cmd().(deadVerifiedMsg); ok {
-			_, _ = m.Update(verified)
+		if result, ok := cmd().(coreResultMsg); ok {
+			_, _ = m.Update(result)
 		}
 	}
 

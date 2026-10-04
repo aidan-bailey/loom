@@ -28,7 +28,7 @@ type issuePickedMsg struct {
 
 // issueRows lists the focused repo's open issues, newest first.
 func (m *home) issueRows() []overlay.IssueRow {
-	snap, ok := m.ghState[m.repoPath()]
+	snap, ok := m.core.GitHubSnapshot(m.repoPath())
 	if !ok {
 		return nil
 	}
@@ -51,10 +51,10 @@ func (m *home) issueRows() []overlay.IssueRow {
 // result that will never come.
 func (m *home) issuePickerStatus() string {
 	repo := m.repoPath()
-	if _, ok := m.ghState[repo]; ok {
+	if _, ok := m.core.GitHubSnapshot(repo); ok {
 		return ""
 	}
-	if err, ok := m.ghErrs[repo]; ok && err != nil {
+	if err := m.core.GitHubErr(repo); err != nil {
 		return "gh unavailable: " + err.Error()
 	}
 	return "loading…"
@@ -66,13 +66,13 @@ func runNewFromIssue(m *home) (tea.Model, tea.Cmd) {
 	if m.list.NumInstances() >= GlobalInstanceLimit {
 		return m, m.handleError(fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
 	}
-	if m.ghAvailable.checked && !m.ghAvailable.ok {
-		return m, m.handleError(fmt.Errorf("gh unavailable: %s", m.ghAvailable.reason))
+	if m.core.GitHubUnavailable() {
+		return m, m.handleError(fmt.Errorf("gh unavailable: %s", m.core.GitHubUnavailableReason()))
 	}
 	p := overlay.NewIssuePicker(m.issueRows())
 	p.SetStatus(m.issuePickerStatus())
-	if _, ok := m.ghState[m.repoPath()]; !ok {
-		m.gate(gateGH).expedite()
+	if _, ok := m.core.GitHubSnapshot(m.repoPath()); !ok {
+		m.core.ExpediteGitHub()
 	}
 	m.setOverlay(p, overlayIssuePicker)
 	m.state = stateIssuePicker
@@ -151,8 +151,8 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	instance.SetIssue(msg.issue.Number)
 	m.ws.Add(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
-	m.gate(gateGH).expedite()
-	m.applyGitHubState()
+	m.core.ExpediteGitHub()
+	m.core.ApplyGitHubState()
 	return m.openLaunchOptionsForNew(instance, "")
 }
 
@@ -243,8 +243,8 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 		}
 		inst.SetPrompt(prompt)
 		inst.SetIssue(msg.issue.Number)
-		m.gate(gateGH).expedite()
-		m.applyGitHubState()
+		m.core.ExpediteGitHub()
+		m.core.ApplyGitHubState()
 	}
 	_, cmd := m.openLaunchOptionsForNew(inst, msg.selectedBranch)
 	return m, tea.Batch(cmd, errCmd)
@@ -276,7 +276,7 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 			Async: tea.Batch(tea.RequestWindowSize, coreCmd(startJob)),
 		}
 		if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), instance.Program()) {
-			return m, m.promptRemoteControlBlocked(startTask, m.rcAuthFor(opts.Account).Reason)
+			return m, m.promptRemoteControlBlocked(startTask, m.core.RCAuthFor(opts.Account).Reason)
 		}
 		return m, tea.Batch(startTask.Run(), m.instanceChanged())
 	}
@@ -285,5 +285,6 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 	lo, reloaded := m.newLaunchOptionsOverlay(launch.FromConfig(m.appConfig()), instance.Program())
 	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
-	return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())
+	m.core.RequestUsageProbe()
+	return m, tea.Batch(tea.RequestWindowSize, reloaded)
 }
