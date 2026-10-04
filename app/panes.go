@@ -1,6 +1,7 @@
 package app
 
 import (
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -63,7 +64,7 @@ func (m *home) paneSnapshot(insts []*session.Instance) map[*session.Instance]ui.
 // client: those of the active instances of every loaded slot.
 func (m *home) livePaneNames() map[string]bool {
 	names := make(map[string]bool)
-	for _, inst := range m.activeInstances() {
+	for _, inst := range m.core.ActiveInstances() {
 		if name := inst.Pane().TmuxSessionName(); name != "" {
 			names[name] = true
 		}
@@ -75,7 +76,7 @@ func (m *home) livePaneNames() map[string]bool {
 // gone (ui.PaneClients.Ensure). A no-op for an inactive instance.
 func (m *home) ensurePane(inst *session.Instance) {
 	name := inst.Pane().TmuxSessionName()
-	if name == "" || !activeInstance(inst) {
+	if name == "" || !core.ActiveInstance(inst) {
 		return
 	}
 	if err := m.panes.Ensure(name, inst.Pane().SessionProgram()); err != nil {
@@ -89,7 +90,7 @@ func (m *home) ensurePane(inst *session.Instance) {
 // record Paused, say): the next prune closes any client of its name.
 func (m *home) replacePane(inst *session.Instance) tea.Cmd {
 	name := inst.Pane().TmuxSessionName()
-	if name == "" || !activeInstance(inst) {
+	if name == "" || !core.ActiveInstance(inst) {
 		return nil
 	}
 	old, err := m.panes.Replace(name, inst.Pane().SessionProgram())

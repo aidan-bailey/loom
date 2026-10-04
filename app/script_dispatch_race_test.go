@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -20,7 +21,8 @@ import (
 // `go test -race`.
 func TestScriptHost_ConcurrentNavAndRead(t *testing.T) {
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&sp)
+	ws := testWS(core.WorkspaceParts{})
+	list := ui.NewList(&sp, ws)
 	for _, title := range []string{"a", "b", "c"} {
 		inst, err := session.NewInstance(session.InstanceOptions{
 			Title:   title,
@@ -30,11 +32,11 @@ func TestScriptHost_ConcurrentNavAndRead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		list.AddInstance(inst)
+		ws.Add(inst)
 	}
 	list.SetSelectedInstance(0)
 
-	h := &home{workspaceSlot: &workspaceSlot{list: list}}
+	h := wireCore(t, &home{workspaceSlot: &workspaceSlot{ws: ws, list: list}})
 	host := newScriptHost(h)
 
 	var wg sync.WaitGroup

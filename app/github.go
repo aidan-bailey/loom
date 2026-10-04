@@ -8,7 +8,6 @@ import (
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/github"
 )
@@ -64,7 +63,7 @@ type ghPollRequest struct {
 	repos  []string
 	linked map[string][]int
 	// configured is each repo's own config.BaseBranch. Keyed per repo
-	// because every workspace has its own config.json — m.appConfig is
+	// because every workspace has its own config.json — m.appConfig() is
 	// whichever slot is focused, not a shared primary, so one string
 	// applied across the batch would resolve non-focused repos against
 	// the wrong workspace's setting.
@@ -88,8 +87,8 @@ func (m *home) openRepoPaths() []string {
 		return out
 	}
 	for _, s := range m.slots {
-		if s.wsCtx != nil {
-			add(s.wsCtx.RepoPath)
+		if s.wsCtx() != nil {
+			add(s.wsCtx().RepoPath)
 		}
 	}
 	return out
@@ -97,67 +96,28 @@ func (m *home) openRepoPaths() []string {
 
 // baseBranchByRepo maps each open repo to ITS OWN configured base
 // branch. Classic mode has a single config; slot mode reads each
-// slot's, since m.appConfig only ever reflects the focused slot.
+// slot's, since m.appConfig() only ever reflects the focused slot.
 func (m *home) baseBranchByRepo() map[string]string {
 	out := map[string]string{}
 	if len(m.slots) == 0 {
-		if m.appConfig != nil {
-			out[m.repoPath()] = m.appConfig.GetBaseBranch()
+		if m.appConfig() != nil {
+			out[m.repoPath()] = m.appConfig().GetBaseBranch()
 		}
 		return out
 	}
 	for _, s := range m.slots {
-		if s.wsCtx == nil || s.appConfig == nil {
+		if s.wsCtx() == nil || s.appConfig() == nil {
 			continue
 		}
-		out[s.wsCtx.RepoPath] = s.appConfig.GetBaseBranch()
+		out[s.wsCtx().RepoPath] = s.appConfig().GetBaseBranch()
 	}
 	return out
-}
-
-// allInstances returns every instance across open slots (or the
-// classic list).
-func (m *home) allInstances() []*session.Instance {
-	var out []*session.Instance
-	for _, s := range m.openSlots() {
-		if s.list != nil {
-			out = append(out, s.list.GetInstances()...)
-		}
-	}
-	return out
-}
-
-// activeInstances returns the loaded instances the background jobs may
-// touch: started and not paused. Recoverable placeholders are ephemeral
-// orphan-review rows: they report Started() (so recover/discard can reach
-// their handles) but must never be driven by a background job, since the
-// tick's repair would attach a pane client and TransitionTo(Running) would
-// promote a never-confirmed orphan past the explicit recover flow. Loading
-// rows are likewise owned by an in-flight Start/Resume/Recover: probing
-// them mid-setup reads a dead tmux session and force-flips them to Paused
-// under the op. Deleting rows are being torn down. The same set is what
-// keeps a pane client (livePaneNames).
-func (m *home) activeInstances() []*session.Instance {
-	var active []*session.Instance
-	for _, inst := range m.allInstances() {
-		if activeInstance(inst) {
-			active = append(active, inst)
-		}
-	}
-	return active
-}
-
-// activeInstance reports whether the background jobs may touch inst (see
-// activeInstances).
-func activeInstance(inst *session.Instance) bool {
-	st := inst.GetStatus()
-	return inst.Started() && !inst.Paused() && st != session.Deleting && st != session.Recoverable && st != session.Loading
 }
 
 // linkedIssues lists the non-zero issue numbers of instances in repo.
 func (m *home) linkedIssues(repo string) []int {
 	var out []int
-	for _, inst := range m.allInstances() {
+	for _, inst := range m.core.Instances() {
 		if inst.Path == repo && inst.IssueNumber() != 0 {
 			out = append(out, inst.IssueNumber())
 		}
@@ -257,7 +217,7 @@ func (m *home) baseFor(repo string) string {
 // applyGitHubState joins ghState onto every instance. Cheap and pure,
 // so it also runs when a link is set outside a poll (issue pick).
 func (m *home) applyGitHubState() {
-	for _, inst := range m.allInstances() {
+	for _, inst := range m.core.Instances() {
 		snap, known := m.ghState[inst.Path]
 		inst.SetGitHubState(github.StateFor(snap, known, inst.GetBranch(), inst.IssueNumber()))
 	}

@@ -34,12 +34,12 @@ func TestToggleOverview_ScriptHostPersistsViewMode(t *testing.T) {
 
 	toggle()
 	assert.Equal(t, viewOverview, m.viewMode)
-	assert.Equal(t, "overview", m.appState.GetUIPrefs().ViewMode,
+	assert.Equal(t, "overview", m.appState().GetUIPrefs().ViewMode,
 		"entering overview must persist the mode")
 
 	toggle()
 	assert.Equal(t, viewFocus, m.viewMode)
-	assert.Equal(t, "", m.appState.GetUIPrefs().ViewMode,
+	assert.Equal(t, "", m.appState().GetUIPrefs().ViewMode,
 		"returning to focus must persist the empty mode (same value enter/esc write)")
 }
 
@@ -58,11 +58,11 @@ func TestOverviewEnterEsc_ReturnToFocusAndPersist(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newTestHome(t)
 			m.viewMode = viewOverview
-			require.NoError(t, m.appState.SetUIPrefs(config.UIPrefs{ViewMode: "overview"}))
+			require.NoError(t, m.appState().SetUIPrefs(config.UIPrefs{ViewMode: "overview"}))
 
 			_, _ = handleStateDefaultKey(m, tc.msg)
 			assert.Equal(t, viewFocus, m.viewMode)
-			assert.Equal(t, "", m.appState.GetUIPrefs().ViewMode)
+			assert.Equal(t, "", m.appState().GetUIPrefs().ViewMode)
 		})
 	}
 }
@@ -112,11 +112,11 @@ func flattenCmdMsgs(cmd tea.Cmd) []tea.Msg {
 func TestOverviewNewInstance_DropsToFocusFirst(t *testing.T) {
 	m := newTestHome(t)
 	m.viewMode = viewOverview
-	require.NoError(t, m.appState.SetUIPrefs(config.UIPrefs{ViewMode: "overview"}))
+	require.NoError(t, m.appState().SetUIPrefs(config.UIPrefs{ViewMode: "overview"}))
 
 	_, cmd := handleStateDefaultKey(m, tea.KeyPressMsg{Code: 'n', Text: "n"})
 	assert.Equal(t, viewFocus, m.viewMode, "n must drop overview back to focus")
-	assert.Equal(t, "", m.appState.GetUIPrefs().ViewMode, "the focus drop must persist")
+	assert.Equal(t, "", m.appState().GetUIPrefs().ViewMode, "the focus drop must persist")
 
 	require.NotNil(t, cmd)
 	var done *scriptDoneMsg
@@ -186,11 +186,11 @@ func TestOverviewMouse_Ignored(t *testing.T) {
 func TestApplyUIPrefs_RestoresViewMode(t *testing.T) {
 	m := newTestHome(t)
 
-	require.NoError(t, m.appState.SetUIPrefs(config.UIPrefs{ViewMode: "overview"}))
+	require.NoError(t, m.appState().SetUIPrefs(config.UIPrefs{ViewMode: "overview"}))
 	m.applyUIPrefs()
 	assert.Equal(t, viewOverview, m.viewMode)
 
-	require.NoError(t, m.appState.SetUIPrefs(config.UIPrefs{ViewMode: ""}))
+	require.NoError(t, m.appState().SetUIPrefs(config.UIPrefs{ViewMode: ""}))
 	m.applyUIPrefs()
 	assert.Equal(t, viewFocus, m.viewMode)
 }

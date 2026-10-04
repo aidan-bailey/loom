@@ -15,6 +15,7 @@ import (
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 )
@@ -257,7 +258,7 @@ func (m *home) accountsChanged(prevErr error) tea.Cmd {
 // fail closed, no flag and no prompt — until that has landed.
 func (m *home) rcAuthFor(acct string) session.RemoteControlAuth {
 	if acct == "" || acct == account.DefaultName {
-		return m.rcAuth
+		return m.core.RCAuth()
 	}
 	if a, ok := m.accountAuth[acct]; ok {
 		return a
@@ -272,7 +273,7 @@ func (m *home) claudeProgram() string {
 	if session.IsClaudeProgram(m.program) {
 		return m.program
 	}
-	for _, inst := range m.activeInstances() {
+	for _, inst := range m.core.ActiveInstances() {
 		if p := inst.Program(); session.IsClaudeProgram(p) {
 			return p
 		}
@@ -283,7 +284,7 @@ func (m *home) claudeProgram() string {
 // mainConfigDir is the default account's config dir, which extra accounts
 // link to (account.MainDir over the identity read at startup).
 func (m *home) mainConfigDir() string {
-	return account.MainDir(m.rcAuth.Identity)
+	return account.MainDir(m.core.RCAuth().Identity)
 }
 
 // accountLoggedOut reports that `claude auth status` ran for acct and said
@@ -420,7 +421,7 @@ func (m *home) requestAccountsRefresh(withDefault bool) tea.Cmd {
 // the accounts link to the config dir it names and the views show it.
 func (m *home) maybeAccountsRefresh() tea.Cmd {
 	return m.dispatchGated(gateAccountsRefresh, time.Now(), func() tea.Cmd {
-		withDefault := m.refreshDefaultAuth || (m.hasExtraAccounts() && m.rcAuth.Identity.ConfigDir == "")
+		withDefault := m.refreshDefaultAuth || (m.hasExtraAccounts() && m.core.RCAuth().Identity.ConfigDir == "")
 		cmd := m.accountsRefreshCmd(withDefault)
 		if cmd != nil {
 			m.refreshDefaultAuth = false
@@ -472,7 +473,7 @@ func extraAccountAuth(name string, a session.RemoteControlAuth, override bool) s
 func (m *home) handleAccountsRefreshed(msg accountsRefreshedMsg) tea.Cmd {
 	m.ensureAccountMaps()
 	if msg.defaultAuth != nil {
-		m.rcAuth = *msg.defaultAuth
+		m.core.SetRCAuth(*msg.defaultAuth)
 	}
 	_, override := account.ActiveCredentialOverride()
 	for name, a := range msg.auth {
@@ -574,7 +575,7 @@ func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program strin
 // composed from base with the chosen account's remote-control auth, the env
 // toggles, and the account itself.
 func (m *home) applyChosenLaunch(inst *session.Instance, opts overlay.LaunchOptions, base string) {
-	inst.SetLaunchOptions(applyLaunchOptions(opts, m.rcAuthFor(opts.Account), base, inst.Title), opts.HeadroomProxy, opts.CacheTTL1h)
+	inst.SetLaunchOptions(launch.Compose(opts, m.rcAuthFor(opts.Account), base, inst.Title), opts.HeadroomProxy, opts.CacheTTL1h)
 	inst.SetAccount(opts.Account)
 }
 
@@ -632,8 +633,8 @@ func (m *home) accountUsers(acct string) (int, error) {
 				}
 			}
 		}
-		if dir := slotStateDir(s); dir != "" && s.storage != nil &&
-			!s.storage.WritesRefused() && len(s.storage.PreservedTitles()) == 0 {
+		if dir := slotStateDir(s); dir != "" && s.storage() != nil &&
+			!s.storage().WritesRefused() && len(s.storage().PreservedTitles()) == 0 {
 			covered[canonicalDir(dir)] = true
 		}
 	}
@@ -654,11 +655,11 @@ func (m *home) accountUsers(acct string) (int, error) {
 // slotStateDir is the config dir holding s's state.json: its context's,
 // the default one for an empty context dir, "" when s has no context.
 func slotStateDir(s *workspaceSlot) string {
-	if s.wsCtx == nil {
+	if s.wsCtx() == nil {
 		return ""
 	}
-	if s.wsCtx.ConfigDir != "" {
-		return s.wsCtx.ConfigDir
+	if s.wsCtx().ConfigDir != "" {
+		return s.wsCtx().ConfigDir
 	}
 	dir, err := config.GetConfigDir()
 	if err != nil {

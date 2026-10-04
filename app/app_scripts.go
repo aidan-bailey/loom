@@ -110,8 +110,8 @@ func newScriptHost(m *home) *scriptHost {
 	}
 	// Locked accessor: the settings overlay mutates the same *Config
 	// through Config.Mutate.
-	if m.appConfig != nil {
-		h.branchPrefix = m.appConfig.GetBranchPrefix()
+	if m.appConfig() != nil {
+		h.branchPrefix = m.appConfig().GetBranchPrefix()
 	}
 	return h
 }
@@ -147,7 +147,7 @@ func (s *scriptHost) BranchPrefix() string {
 }
 
 // QueueInstance stages an instance for finalization on the main
-// goroutine. We can't call h.list.AddInstance here because the list
+// goroutine. We can't call h.ws.Add here because the workspace
 // isn't goroutine-safe.
 func (s *scriptHost) QueueInstance(inst *session.Instance) {
 	if inst == nil {
@@ -195,7 +195,7 @@ func (s *scriptHost) Enqueue(intent script.Intent) script.IntentID {
 // runs inside a tea.Cmd goroutine that Bubble Tea executes concurrently
 // with Update and View, and ui.List / ui.SplitPane have no internal
 // locking. Recording the mutation and applying it on the main loop (the
-// same pattern QueueInstance uses for AddInstance) removes the race.
+// same pattern QueueInstance uses for ws.Add) removes the race.
 // Reads come from the newScriptHost snapshot, so a handler does not see
 // its own deferred mutations; this matches how Intents already defer
 // their effects.
@@ -249,7 +249,7 @@ func (s *scriptHost) WorkspaceNext() {
 // switchWorkspaceSlot rotates the focused workspace slot by delta (-1 prev,
 // +1 next) via loadSlot. No-op with one slot. Runs on the main goroutine
 // via deferModelMutation, so the embedded focused-slot swap (m.list,
-// m.splitPane, m.storage, … and m.focusedSlot) does not race the render
+// m.splitPane, m.storage(), … and m.focusedSlot) does not race the render
 // loop.
 func (m *home) switchWorkspaceSlot(delta int) {
 	if len(m.slots) <= 1 {
@@ -763,7 +763,7 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	var cmds []tea.Cmd
 	if adopt {
 		for _, inst := range msg.pendingInstances {
-			msg.slot.list.AddInstance(inst)
+			msg.slot.ws.Add(inst)
 		}
 	} else if len(msg.pendingInstances) > 0 {
 		titles := make([]string, len(msg.pendingInstances))

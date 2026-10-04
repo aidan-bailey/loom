@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -50,7 +51,7 @@ func newSnapshotTestHome(t *testing.T) *home {
 	require.True(t, m.scripts.HasAction("Y"))
 
 	for _, title := range []string{"a", "b", "c"} {
-		m.list.AddInstance(newSnapshotTestInstance(t, title))
+		m.ws.Add(newSnapshotTestInstance(t, title))
 	}
 	m.list.SetSelectedInstance(0)
 	return m
@@ -70,21 +71,22 @@ func newSnapshotTestInstance(t *testing.T, title string) *session.Instance {
 // TestScriptHost_ReadsDoNotRaceUpdate runs a user script's read-heavy
 // handler in the dispatch Cmd goroutine while this goroutine plays the
 // part of Update: mutating the list, swapping the embedded focused slot
-// the way loadSlot does, and rewriting the focused slot's wsCtx. The
-// host's reads must come from a snapshot taken in dispatchScript, not
-// from the live model. Must pass under `go test -race`.
+// the way loadSlot does, and rewriting the focused slot's workspace (which
+// carries its wsCtx). The host's reads must come from a snapshot taken in
+// dispatchScript, not from the live model. Must pass under `go test -race`.
 func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 	m := newSnapshotTestHome(t)
 
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	altList := ui.NewList(&sp)
-	altList.AddInstance(newSnapshotTestInstance(t, "other"))
-	altSplit := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	ctxA := &config.WorkspaceContext{ConfigDir: t.TempDir()}
 	ctxB := &config.WorkspaceContext{ConfigDir: t.TempDir()}
+	wsB := testWS(core.WorkspaceParts{Ctx: ctxB, Config: config.DefaultConfig()}, newSnapshotTestInstance(t, "other"))
+	altList := ui.NewList(&sp, wsB)
+	altSplit := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	extra := newSnapshotTestInstance(t, "extra")
-	slotA := m.workspaceSlot
-	slotB := &workspaceSlot{list: altList, splitPane: altSplit, appConfig: config.DefaultConfig()}
+	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx = ctxA })
+	slotA, wsA := m.workspaceSlot, m.ws
+	slotB := &workspaceSlot{ws: wsB, list: altList, splitPane: altSplit}
 
 	cmd, ok := m.dispatchScript("X")
 	require.True(t, ok)
@@ -97,15 +99,15 @@ func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 		select {
 		case msg = <-done:
 		default:
-			m.list.AddInstance(extra)
+			m.ws.Add(extra)
 			m.list.SetSelectedInstance(i % 4)
-			m.list.RemoveInstance(extra)
+			m.ws.Remove(extra)
 			if i%2 == 0 {
 				m.workspaceSlot = slotB
-				m.wsCtx = ctxB
+				m.ws = wsB
 			} else {
 				m.workspaceSlot = slotA
-				m.wsCtx = ctxA
+				m.ws = wsA
 			}
 		}
 	}

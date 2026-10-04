@@ -68,7 +68,7 @@ func TestPromptFlowEndToEndComposesRealClosure(t *testing.T) {
 func TestPromptFlowRemoteControlBlockedViaModalPromptsConfirm(t *testing.T) {
 	m := newPendingTitleEntryHome(t)
 	m.promptAfterName = true
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 
 	for _, r := range "my-task" {
 		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})

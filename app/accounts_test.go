@@ -35,7 +35,7 @@ func withAccounts(t *testing.T, m *home, names ...string) string {
 
 func TestRcAuthFor(t *testing.T) {
 	m := newTestHome(t)
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthOK})
 	m.accountAuth = map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "logged out"}}
 
 	assert.True(t, m.rcAuthFor("").OK())
@@ -85,7 +85,7 @@ func TestHandleAccountsRefreshed_StoresAuthAndSync(t *testing.T) {
 		sync:        map[string]account.SyncReport{"max-2": {Diverged: []string{"settings.json"}}},
 	})
 
-	assert.True(t, m.rcAuth.OK())
+	assert.True(t, m.core.RCAuth().OK())
 	assert.True(t, m.rcAuthFor("max-2").Blocked())
 	assert.Equal(t, []string{"settings.json"}, m.accountSync["max-2"].Diverged)
 }

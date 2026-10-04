@@ -89,7 +89,7 @@ func explorerResult(launchID string, replayed bool, extra ...hooks.Event) sessio
 func TestSubagentScanMsgAppliesAndGatesByLaunch(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "sub-apply", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 
 	m.Update(hookScanMsg{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
 	require.Equal(t, []subagent.View{{Name: "Explore", Description: "map code"}}, inst.Subagents())
@@ -105,7 +105,7 @@ func TestSubagentScanMsgAppliesAndGatesByLaunch(t *testing.T) {
 func TestSubagentScanMsgNoHooksForgetsWarmRows(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "sub-gone", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	m.Update(hookScanMsg{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
 	require.Len(t, inst.Subagents(), 1)
 
@@ -119,7 +119,7 @@ func TestSubagentScanMsgNoHooksForgetsWarmRows(t *testing.T) {
 func TestSubagentScanCmdEndToEnd(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "sub-e2e", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 
 	dir := session.SubagentHooksDir(inst.ConfigDir, inst.Title)
 	_, err := hooks.Prepare(dir)
@@ -144,7 +144,7 @@ func TestSubagentScanCmdEndToEnd(t *testing.T) {
 func TestHookScanOnOutputHonoursInterval(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "scan-dirty", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	m.splitPane.SetSize(100, 40)
 	m.splitPane.SetInstance(inst)
 	require.True(t, inst.HooksLaunched())
@@ -160,8 +160,8 @@ func TestHookScanOnOutputHonoursInterval(t *testing.T) {
 func TestHookScanOnQuietIgnoresInterval(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "scan-quiet", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
-	require.NotNil(t, m.maybeHookScan(m.activeInstances()))
+	m.ws.Add(inst)
+	require.NotNil(t, m.maybeHookScan(m.core.ActiveInstances()))
 
 	m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
 	assert.True(t, m.gate(gateHookScan).pending, "a quiet during a scan asks for one more")
@@ -174,7 +174,7 @@ func TestHookScanOnQuietIgnoresInterval(t *testing.T) {
 func TestHookScanStatusChangeMovesInstanceAndAsksRoster(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "scan-status", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	// The test instance starts on a mock tmux session, so no launch
 	// prepared its folder; it adopts this one's launch ID, as a restored
 	// instance would.
@@ -185,7 +185,7 @@ func TestHookScanStatusChangeMovesInstanceAndAsksRoster(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(hooks.EventsDir(dir), name),
 		[]byte(`{"hook_event_name":"PermissionRequest","tool_name":"Bash"}`), 0o600))
 
-	cmd := m.maybeHookScan(m.activeInstances())
+	cmd := m.maybeHookScan(m.core.ActiveInstances())
 	require.NotNil(t, cmd)
 	_, follow := m.Update(cmd())
 

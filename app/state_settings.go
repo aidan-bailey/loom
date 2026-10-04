@@ -36,21 +36,21 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// the change lives only in memory and silently vanishes on
 		// restart.
 		dir := ""
-		if m.wsCtx != nil {
-			dir = m.wsCtx.ConfigDir
+		if m.wsCtx() != nil {
+			dir = m.wsCtx().ConfigDir
 		} else if globalDir, err := config.GetConfigDir(); err == nil {
 			dir = globalDir
 		}
 		if dir != "" {
-			if err := config.SaveConfigTo(m.appConfig, dir); err != nil {
+			if err := config.SaveConfigTo(m.appConfig(), dir); err != nil {
 				return m, m.handleError(fmt.Errorf("save settings: %w", err))
 			}
 		}
-		m.program = m.appConfig.GetProgram()
+		m.program = m.appConfig().GetProgram()
 		// Re-sync the loom-context toggle so an in-place change takes
 		// effect on the next session launch without a workspace switch.
-		session.SetLoomContextEnabled(m.appConfig.LoomContextEnabled())
-		session.SetSubagentTrackingEnabled(m.appConfig.SubagentTrackingEnabled())
+		session.SetLoomContextEnabled(m.appConfig().LoomContextEnabled())
+		session.SetSubagentTrackingEnabled(m.appConfig().SubagentTrackingEnabled())
 	}
 
 	if closed {

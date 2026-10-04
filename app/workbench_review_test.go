@@ -43,7 +43,7 @@ func newReviewWorkbenchHome(t *testing.T) (*home, string) {
 		},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	m.list.SetSelectedInstance(0)
 
 	sel := m.list.GetSelectedInstance()
@@ -100,7 +100,7 @@ func newCodeReviewWorkbenchHome(t *testing.T, dirty bool) (*home, string) {
 		},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	m.list.SetSelectedInstance(0)
 
 	_, _ = handleStateDefaultKey(m, wbKey("enter"))
@@ -276,7 +276,7 @@ func TestWorkbenchReview_RetargetDropsPane(t *testing.T) {
 		},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	m.list.SetSelectedInstance(1)
 	require.Equal(t, "b", m.list.GetSelectedInstance().Title)
 
@@ -318,7 +318,7 @@ func TestWorkbenchReview_PausedSessionNotifies(t *testing.T) {
 				},
 			}, t.TempDir())
 			require.NoError(t, err)
-			m.list.AddInstance(inst)
+			m.ws.Add(inst)
 			m.list.SetSelectedInstance(0)
 
 			assert.Nil(t, m.openDocReview(doc))

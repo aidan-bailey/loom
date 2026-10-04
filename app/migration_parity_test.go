@@ -138,7 +138,7 @@ func mustAddInstance(t *testing.T, m *home, title string) *session.Instance {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	return inst
 }
 

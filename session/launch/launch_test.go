@@ -1,0 +1,323 @@
+package launch
+
+import (
+	"testing"
+
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/stretchr/testify/assert"
+)
+
+func boolPtrTest(b bool) *bool { return &b }
+
+func stringPtrTest(s string) *string { return &s }
+
+func TestRemoteControlProgram(t *testing.T) {
+	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+	authBlocked := session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	authUnknown := session.RemoteControlAuth{State: session.RemoteControlAuthUnknown}
+
+	t.Run("enabled + auth OK rewrites claude", func(t *testing.T) {
+		assert.Equal(t, "claude --remote-control fix-bug", remoteControlProgram(true, authOK, "claude", "fix bug"))
+	})
+
+	t.Run("auth Blocked leaves program untouched (fail closed)", func(t *testing.T) {
+		assert.Equal(t, "claude", remoteControlProgram(true, authBlocked, "claude", "task"))
+	})
+
+	t.Run("auth Unknown leaves program untouched (fail closed)", func(t *testing.T) {
+		assert.Equal(t, "claude", remoteControlProgram(true, authUnknown, "claude", "task"))
+	})
+
+	t.Run("disabled leaves program untouched even when auth OK", func(t *testing.T) {
+		assert.Equal(t, "claude", remoteControlProgram(false, authOK, "claude", "task"))
+	})
+
+	t.Run("non-claude program is a no-op even when enabled + auth OK", func(t *testing.T) {
+		assert.Equal(t, "aider --model x", remoteControlProgram(true, authOK, "aider --model x", "task"))
+	})
+}
+
+func TestPermissionModeProgram(t *testing.T) {
+	t.Run("default mode is a no-op", func(t *testing.T) {
+		assert.Equal(t, "claude --model sonnet", permissionModeProgram("default", "claude --model sonnet"))
+	})
+
+	t.Run("explicit mode is injected", func(t *testing.T) {
+		assert.Equal(t, "claude --permission-mode acceptEdits --model sonnet", permissionModeProgram("acceptEdits", "claude --model sonnet"))
+	})
+
+	t.Run("non-claude program is a no-op", func(t *testing.T) {
+		assert.Equal(t, "aider --model gemma", permissionModeProgram("acceptEdits", "aider --model gemma"))
+	})
+}
+
+func TestModelProgram(t *testing.T) {
+	t.Run("default model is a no-op", func(t *testing.T) {
+		assert.Equal(t, "claude --permission-mode plan", modelProgram("default", "claude --permission-mode plan"))
+	})
+
+	t.Run("explicit model is injected", func(t *testing.T) {
+		assert.Equal(t, "claude --model 'sonnet' --permission-mode plan", modelProgram("sonnet", "claude --permission-mode plan"))
+	})
+
+	t.Run("non-claude program is a no-op", func(t *testing.T) {
+		assert.Equal(t, "aider --model gemma", modelProgram("sonnet", "aider --model gemma"))
+	})
+}
+
+func TestLaunchOptionsFromConfig(t *testing.T) {
+	t.Run("nil cfg returns zero value", func(t *testing.T) {
+		assert.Equal(t, Options{}, FromConfig(nil))
+	})
+
+	t.Run("populated cfg maps every field", func(t *testing.T) {
+		got := FromConfig(config.DefaultConfig())
+		assert.Equal(t, Options{
+			RemoteControl:  true,
+			PermissionMode: "default",
+			Model:          "default",
+			HeadroomProxy:  false,
+			Effort:         "default",
+			CacheTTL1h:     false,
+			BranchPrefix:   config.DefaultConfig().BranchPrefix,
+		}, got)
+	})
+
+	t.Run("threads through explicit overrides", func(t *testing.T) {
+		cfg := &config.Config{
+			ClaudeRemoteControl:  boolPtrTest(false),
+			ClaudePermissionMode: stringPtrTest("plan"),
+			ClaudeModel:          stringPtrTest("opus"),
+			HeadroomProxy:        boolPtrTest(true),
+			ClaudeEffort:         stringPtrTest("high"),
+			CacheTTL1h:           boolPtrTest(true),
+		}
+		assert.Equal(t, Options{
+			RemoteControl:  false,
+			PermissionMode: "plan",
+			Model:          "opus",
+			HeadroomProxy:  true,
+			Effort:         "high",
+			CacheTTL1h:     true,
+		}, FromConfig(cfg))
+	})
+}
+
+func TestEffectiveRemoteControl(t *testing.T) {
+	assert.True(t, EffectiveRemoteControl(Options{RemoteControl: true, HeadroomProxy: false}))
+	assert.False(t, EffectiveRemoteControl(Options{RemoteControl: false, HeadroomProxy: false}))
+	assert.False(t, EffectiveRemoteControl(Options{RemoteControl: true, HeadroomProxy: true}))
+	assert.False(t, EffectiveRemoteControl(Options{RemoteControl: false, HeadroomProxy: true}))
+}
+
+func TestEffortProgram(t *testing.T) {
+	assert.Equal(t, "claude --effort high", effortProgram("high", "claude"))
+	assert.Equal(t, "claude", effortProgram("default", "claude"))
+	assert.Equal(t, "claude", effortProgram("", "claude"))
+}
+
+func TestApplyLaunchOptions_ComposesEffort(t *testing.T) {
+	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+	opts := Options{Model: "opus", Effort: "high"}
+	got := Compose(opts, authOK, "claude", "t")
+	assert.Contains(t, got, "--effort high")
+	assert.Contains(t, got, "--model 'opus'")
+}
+
+func TestParseLaunchOptions_RoundTrip(t *testing.T) {
+	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+	cases := []struct {
+		name string
+		opts Options
+	}{
+		{"all default", Options{PermissionMode: "default", Model: "default", Effort: "default"}},
+		{"remote control on", Options{RemoteControl: true, PermissionMode: "default", Model: "default", Effort: "default"}},
+		{"permission mode", Options{PermissionMode: "acceptEdits", Model: "default", Effort: "default"}},
+		{"model", Options{PermissionMode: "default", Model: "opus", Effort: "default"}},
+		{"effort", Options{PermissionMode: "default", Model: "default", Effort: "high"}},
+		{"all on", Options{RemoteControl: true, PermissionMode: "acceptEdits", Model: "opus", Effort: "high"}},
+		{"1m on", Options{PermissionMode: "default", Model: "sonnet", Context1M: true, Effort: "default"}},
+		{"1m on with everything", Options{RemoteControl: true, PermissionMode: "acceptEdits", Model: "opus", Context1M: true, Effort: "high"}},
+		{"1m off explicitly", Options{PermissionMode: "default", Model: "opus", Context1M: false, Effort: "default"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			composed := Compose(tc.opts, authOK, "claude", "my-title")
+			gotOpts, gotBase := Parse(composed)
+			assert.Equal(t, "claude", gotBase)
+			assert.Equal(t, tc.opts.RemoteControl, gotOpts.RemoteControl)
+			assert.Equal(t, tc.opts.PermissionMode, gotOpts.PermissionMode)
+			assert.Equal(t, tc.opts.Model, gotOpts.Model)
+			assert.Equal(t, tc.opts.Context1M, gotOpts.Context1M)
+			assert.Equal(t, tc.opts.Effort, gotOpts.Effort)
+		})
+	}
+}
+
+// TestParseLaunchOptions_NeverSetsHeadroomProxy documents that, unlike
+// the other four options, HeadroomProxy is never baked into Program
+// (see session.HeadroomProxyEnv) — Parse always leaves it
+// at its zero value; callers must seed/apply it from
+// Instance.HeadroomProxy directly (see runRestartWithOptionsSelected).
+func TestParseLaunchOptions_NeverSetsHeadroomProxy(t *testing.T) {
+	opts, _ := Parse("claude --model sonnet --permission-mode auto")
+	assert.False(t, opts.HeadroomProxy)
+}
+
+// TestParseLaunchOptions_NeverSetsCacheTTL1h mirrors
+// TestParseLaunchOptions_NeverSetsHeadroomProxy: CacheTTL1h is never
+// baked into Program either (see session.CacheTTL1hEnv).
+func TestParseLaunchOptions_NeverSetsCacheTTL1h(t *testing.T) {
+	opts, _ := Parse("claude --model sonnet --permission-mode auto")
+	assert.False(t, opts.CacheTTL1h)
+}
+
+func TestParseLaunchOptions_UnrecognizedFlagLeftInBase(t *testing.T) {
+	opts, base := Parse("claude --some-other-flag value --model opus")
+	assert.Equal(t, "opus", opts.Model)
+	assert.Contains(t, base, "--some-other-flag value")
+	assert.NotContains(t, base, "--model")
+}
+
+func TestParseLaunchOptions_EmptyProgram(t *testing.T) {
+	opts, base := Parse("")
+	assert.Equal(t, Options{}, opts)
+	assert.Equal(t, "", base)
+}
+
+func TestApplyLaunchOptions(t *testing.T) {
+	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+
+	t.Run("stacks remote-control, permission-mode, and model", func(t *testing.T) {
+		opts := Options{RemoteControl: true, PermissionMode: "acceptEdits", Model: "opus", HeadroomProxy: false}
+		got := Compose(opts, authOK, "claude", "my task")
+		assert.Equal(t, "claude --model 'opus' --permission-mode acceptEdits --remote-control my-task", got)
+	})
+
+	t.Run("headroom proxy never touches program", func(t *testing.T) {
+		opts := Options{PermissionMode: "acceptEdits", Model: "opus", HeadroomProxy: true}
+		got := Compose(opts, authOK, "claude", "task")
+		assert.Equal(t, "claude --model 'opus' --permission-mode acceptEdits", got)
+	})
+
+	t.Run("headroom proxy forcibly disables remote control even if both are true", func(t *testing.T) {
+		// Compose calls remoteControlProgram with
+		// EffectiveRemoteControl(opts), not raw opts.RemoteControl — this
+		// is the authoritative enforcement of the RC/HeadroomProxy
+		// exclusivity rule (see TestEffectiveRemoteControl), not just a
+		// UI-level nicety.
+		opts := Options{RemoteControl: true, HeadroomProxy: true}
+		got := Compose(opts, authOK, "claude", "task")
+		assert.Equal(t, "claude", got)
+	})
+
+	t.Run("cache TTL never touches program", func(t *testing.T) {
+		opts := Options{PermissionMode: "acceptEdits", Model: "opus", CacheTTL1h: true}
+		got := Compose(opts, authOK, "claude", "task")
+		assert.Equal(t, "claude --model 'opus' --permission-mode acceptEdits", got)
+	})
+
+	t.Run("all defaults/disabled is a no-op", func(t *testing.T) {
+		opts := Options{PermissionMode: "default", Model: "default"}
+		got := Compose(opts, authOK, "claude", "task")
+		assert.Equal(t, "claude", got)
+	})
+}
+
+func TestLaunchOptionsFromConfig_SeedsContext1M(t *testing.T) {
+	t.Run("on", func(t *testing.T) {
+		cfg := &config.Config{Claude1MContext: boolPtrTest(true)}
+		assert.True(t, FromConfig(cfg).Context1M)
+	})
+	t.Run("off", func(t *testing.T) {
+		cfg := &config.Config{Claude1MContext: boolPtrTest(false)}
+		assert.False(t, FromConfig(cfg).Context1M)
+	})
+	t.Run("unset", func(t *testing.T) {
+		assert.False(t, FromConfig(&config.Config{}).Context1M)
+	})
+	t.Run("nil config", func(t *testing.T) {
+		assert.False(t, FromConfig(nil).Context1M)
+	})
+}
+
+func TestParseModelValue(t *testing.T) {
+	cases := []struct {
+		name      string
+		tok       string
+		wantModel string
+		want1M    bool
+	}{
+		{"bare", "opus", "opus", false},
+		{"quoted", "'opus'", "opus", false},
+		{"bare suffixed", "sonnet[1m]", "sonnet", true},
+		{"quoted suffixed", "'sonnet[1m]'", "sonnet", true},
+		{"uppercase suffix", "'sonnet[1M]'", "sonnet", true},
+		{"mixed-case suffix", "opus[1M]", "opus", true},
+		{"suffix only is not a suffix", "[1m]", "[1m]", false},
+		{"empty", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotModel, got1M := parseModelValue(tc.tok)
+			assert.Equal(t, tc.wantModel, gotModel)
+			assert.Equal(t, tc.want1M, got1M)
+		})
+	}
+}
+
+// A Program written by an older loom has an unquoted --model and no
+// suffix. Those records are decoded on every load via
+// Storage.LoadAndReconcile, so the decoder must keep accepting them.
+func TestParseLaunchOptions_LegacyUnquotedModel(t *testing.T) {
+	opts, base := Parse("claude --model opus --effort high")
+	assert.Equal(t, "claude", base)
+	assert.Equal(t, "opus", opts.Model)
+	assert.False(t, opts.Context1M)
+	assert.Equal(t, "high", opts.Effort)
+}
+
+func TestParseLaunchOptions_HandEditedSuffix(t *testing.T) {
+	opts, base := Parse("claude --model sonnet[1m]")
+	assert.Equal(t, "claude", base)
+	assert.Equal(t, "sonnet", opts.Model)
+	assert.True(t, opts.Context1M)
+}
+
+func TestEffectiveModel(t *testing.T) {
+	cases := []struct {
+		name string
+		opts Options
+		want string
+	}{
+		{"off", Options{Model: "sonnet"}, "sonnet"},
+		{"on, supported", Options{Model: "sonnet", Context1M: true}, "sonnet[1m]"},
+		{"on, opus", Options{Model: "opus", Context1M: true}, "opus[1m]"},
+		{"on, fable", Options{Model: "fable", Context1M: true}, "fable[1m]"},
+		{"on, haiku is a no-op", Options{Model: "haiku", Context1M: true}, "haiku"},
+		{"on, default is a no-op", Options{Model: "default", Context1M: true}, "default"},
+		{"on, unknown alias is a no-op", Options{Model: "future", Context1M: true}, "future"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, effectiveModel(tc.opts))
+		})
+	}
+}
+
+func TestApplyLaunchOptions_Context1M(t *testing.T) {
+	authOK := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+	t.Run("supported model gets a quoted suffix", func(t *testing.T) {
+		opts := Options{PermissionMode: "default", Model: "sonnet", Context1M: true, Effort: "default"}
+		assert.Equal(t, "claude --model 'sonnet[1m]'", Compose(opts, authOK, "claude", "t"))
+	})
+	t.Run("unsupported model is left bare", func(t *testing.T) {
+		opts := Options{PermissionMode: "default", Model: "haiku", Context1M: true, Effort: "default"}
+		assert.Equal(t, "claude --model 'haiku'", Compose(opts, authOK, "claude", "t"))
+	})
+	t.Run("default model emits no flag at all", func(t *testing.T) {
+		opts := Options{PermissionMode: "default", Model: "default", Context1M: true, Effort: "default"}
+		assert.Equal(t, "claude", Compose(opts, authOK, "claude", "t"))
+	})
+}

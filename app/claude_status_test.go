@@ -36,7 +36,7 @@ func applyHookEvents(t *testing.T, inst *session.Instance, events ...hooks.Event
 func TestRosterAnswerOlderThanHookEventIsDropped(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "stale-roster", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	queryStarted := time.Now()
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventStop, HasTasks: true, At: queryStarted.Add(100 * time.Millisecond)})
 	m.applyClaudeStatus(inst)
@@ -52,7 +52,7 @@ func TestRosterAnswerOlderThanHookEventIsDropped(t *testing.T) {
 func TestNewerRosterAnswerCorrectsIntermediateStop(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "mid-stop", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventStop, HasTasks: true, At: time.Now().Add(-time.Second)})
 	m.applyClaudeStatus(inst)
 	require.Equal(t, session.Ready, inst.GetStatus())
@@ -65,7 +65,7 @@ func TestNewerRosterAnswerCorrectsIntermediateStop(t *testing.T) {
 func TestFailedRosterKeepsHookStatus(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "hook-survives", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: time.Now().Add(-time.Second)})
 	m.applyClaudeStatus(inst)
 
@@ -80,7 +80,7 @@ func TestFailedRosterKeepsHookStatus(t *testing.T) {
 func TestReportedReadyNotPromotedByOutput(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "reported-ready", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	m.splitPane.SetSize(100, 40)
 	m.splitPane.SetInstance(inst)
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventStop, HasTasks: true, At: time.Now()})
@@ -98,7 +98,7 @@ func TestReportedReadyNotPromotedByOutput(t *testing.T) {
 func TestPromptingOutputQueriesRosterSpaced(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "prompt-roster", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	m.splitPane.SetSize(100, 40)
 	m.splitPane.SetInstance(inst)
 	require.NoError(t, inst.TransitionTo(session.Prompting))
@@ -122,7 +122,7 @@ func TestReportedStatusSuppressesRedetect(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "hook-redetect", "claude", "working...")
 	t.Setenv("LOOM_PANE_RENDERER", "")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: time.Now()})
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})

@@ -42,7 +42,7 @@ func (m *home) dropPendingNew() tea.Cmd {
 		return nil
 	}
 	if slot := m.slotHolding(inst); slot != nil {
-		slot.list.RemoveInstance(inst)
+		slot.ws.Remove(inst)
 	}
 	return backgroundKillCmd(inst)
 }
@@ -57,7 +57,7 @@ func (m *home) adoptIntoReopened(twin *session.Instance, reopened *workspaceSlot
 	if !inst.Pane().TmuxAlive() {
 		return nil
 	}
-	reopened.list.ReplaceInstance(twin, inst)
+	reopened.ws.Replace(twin, inst)
 	return reopened
 }
 
@@ -76,7 +76,7 @@ func (m *home) reopenedTwin(owner *workspaceSlot, inst *session.Instance) (*sess
 		return nil, nil
 	}
 	for _, s := range m.openSlots() {
-		if slotLabel(s) != slotLabel(owner) {
+		if s.ws.Label() != owner.ws.Label() {
 			continue
 		}
 		twin := s.list.GetInstanceByTitle(inst.Title)
@@ -103,20 +103,6 @@ func (m *home) owningSlot(stamped *workspaceSlot, inst *session.Instance) *works
 	return m.slotHolding(inst)
 }
 
-// slotHolding returns the loaded slot whose list holds inst (by identity),
-// or nil.
-func (m *home) slotHolding(inst *session.Instance) *workspaceSlot {
-	if inst == nil {
-		return nil
-	}
-	for _, slot := range m.openSlots() {
-		if slices.Contains(slot.list.GetInstances(), inst) {
-			return slot
-		}
-	}
-	return nil
-}
-
 // startOwner is the slot an instance about to start belongs to, for
 // stamping instanceStartedMsg: the loaded slot holding it, or the focused
 // slot if none does. Resolved by identity, not assumed to be the focused
@@ -127,53 +113,6 @@ func (m *home) startOwner(inst *session.Instance) *workspaceSlot {
 		return slot
 	}
 	return m.workspaceSlot
-}
-
-// slotLoaded reports whether slot is still part of the model: an open tab,
-// or the classic/global slot.
-func (m *home) slotLoaded(slot *workspaceSlot) bool {
-	return slot != nil && slices.Contains(m.openSlots(), slot)
-}
-
-// reopened reports whether slot's workspace is open in a loaded slot other
-// than slot itself: for a slot that is no longer loaded, whether the user
-// has reopened its workspace since.
-func (m *home) reopened(slot *workspaceSlot) bool {
-	for _, s := range m.openSlots() {
-		if s != slot && slotLabel(s) == slotLabel(slot) {
-			return true
-		}
-	}
-	return false
-}
-
-// closedOwnerNote describes, for a completion's notice, an owner slot that
-// was closed while the operation ran.
-func (m *home) closedOwnerNote(slot *workspaceSlot) string {
-	if m.reopened(slot) {
-		return "which was closed and reopened meanwhile"
-	}
-	return "which is no longer open"
-}
-
-// slotLabel names slot's workspace for notices ("global" for none).
-func slotLabel(slot *workspaceSlot) string {
-	if slot.wsCtx == nil || slot.wsCtx.Name == "" {
-		return "global"
-	}
-	return slot.wsCtx.Name
-}
-
-// saveSlot persists slot's list after an async completion changed it. A
-// slot that is no longer loaded is saved only if no loaded slot holds the
-// same workspace: such a slot reloaded state.json into its own, newer
-// copy, which a save from the dropped slot's stale one would overwrite.
-func (m *home) saveSlot(slot *workspaceSlot) error {
-	if !m.slotLoaded(slot) && m.reopened(slot) {
-		log.For("app").Warn("closed_slot_save_skipped", "workspace", slotLabel(slot), "reason", "workspace_reopened")
-		return nil
-	}
-	return slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances()))
 }
 
 // handleInstanceStarted applies an async Start's result to the slot that
@@ -197,7 +136,7 @@ func (m *home) saveSlot(slot *workspaceSlot) error {
 func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 	inst := msg.instance
 	owner := m.owningSlot(msg.slot, inst)
-	if owner != nil && !m.slotLoaded(owner) {
+	if owner != nil && !m.core.IsLoaded(owner.ws) {
 		if twin, reopened := m.reopenedTwin(owner, inst); twin != nil {
 			if msg.err != nil {
 				return m.handleError(msg.err)
@@ -207,13 +146,13 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 			}
 		}
 	}
-	loaded := m.slotLoaded(owner)
+	loaded := owner != nil && m.core.IsLoaded(owner.ws)
 
 	if msg.err != nil {
 		var saveErr tea.Cmd
 		if owner != nil {
-			owner.list.RemoveInstance(inst)
-			if err := m.saveSlot(owner); err != nil {
+			owner.ws.Remove(inst)
+			if err := m.core.Save(owner.ws); err != nil {
 				saveErr = m.handleError(err)
 			}
 		}
@@ -221,7 +160,7 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 	}
 
 	if owner != nil {
-		if err := m.saveSlot(owner); err != nil {
+		if err := m.core.Save(owner.ws); err != nil {
 			return m.handleError(err)
 		}
 	}
@@ -243,11 +182,11 @@ func (m *home) handleInstanceStarted(msg instanceStartedMsg) tea.Cmd {
 		// Unknown owner (unstamped, and no loaded slot holds it): only
 		// the persistence-free parts above apply.
 	case !loaded:
-		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", inst.Title, slotLabel(owner), m.closedOwnerNote(owner)))
+		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", inst.Title, owner.ws.Label(), m.core.ClosedNote(owner.ws)))
 	case owner != m.workspaceSlot:
 		// A background slot's selection drives no open flow.
 		owner.list.SelectInstance(inst)
-		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", inst.Title, slotLabel(owner)))
+		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", inst.Title, owner.ws.Label()))
 	case m.state != stateDefault || !slices.Contains(m.list.GetInstances(), inst):
 		// Another flow owns the screen and acts on the selection; leave
 		// both alone. (The second test is a belt: the owner is stamped by
@@ -284,10 +223,10 @@ func (m *home) handleResumeDone(msg resumeDoneMsg) tea.Cmd {
 			}
 		}
 		if adopted != nil {
-			if err := m.saveSlot(adopted); err != nil {
+			if err := m.core.Save(adopted.ws); err != nil {
 				cmds = append(cmds, m.handleError(err))
 			}
-			m.errBox.SetInfo(fmt.Sprintf("%s resumed in %s", inst.Title, slotLabel(adopted)))
+			m.errBox.SetInfo(fmt.Sprintf("%s resumed in %s", inst.Title, adopted.ws.Label()))
 		}
 	}
 	if inst := msg.instance; inst != nil && m.slotHolding(inst) != nil {
@@ -304,7 +243,7 @@ func (m *home) handleResumeDone(msg resumeDoneMsg) tea.Cmd {
 // owner was closed meanwhile attaches nothing (nothing displays it); one
 // landing in a loaded slot attaches the instance's client (replacePane).
 // An adoption whose owner was closed meanwhile is saved to the closed
-// owner's storage unless the workspace has since been reopened (saveSlot
+// owner's storage unless the workspace has since been reopened (core.Model.Save
 // skips a stale copy then).
 // In that case nothing is lost: the adopted session keeps running on its
 // worktree, which the reopened slot's orphan discovery re-offers as
@@ -322,15 +261,15 @@ func (m *home) handleRecoverDone(msg recoverDoneMsg) tea.Cmd {
 		return m.handleError(fmt.Errorf("recover %s: %w", msg.oldTitle, msg.err))
 	}
 
-	loaded := m.slotLoaded(owner)
+	loaded := owner != nil && m.core.IsLoaded(owner.ws)
 	if owner != nil {
-		if !owner.list.ReplaceInstance(msg.placeholder, msg.recovered) {
-			owner.list.AddInstance(msg.recovered)
+		if !owner.ws.Replace(msg.placeholder, msg.recovered) {
+			owner.ws.Add(msg.recovered)
 		}
 		if owner != m.workspaceSlot || m.state == stateDefault {
 			owner.list.SelectInstance(msg.recovered)
 		}
-		if err := m.saveSlot(owner); err != nil {
+		if err := m.core.Save(owner.ws); err != nil {
 			log.For("app").Error("recover.save_failed", "title", msg.recovered.Title, "err", err)
 		}
 	}
@@ -344,9 +283,9 @@ func (m *home) handleRecoverDone(msg recoverDoneMsg) tea.Cmd {
 	// record Paused (resume rebuilds the worktree from the branch).
 	where := ""
 	if owner != nil && owner != m.workspaceSlot {
-		where = " in " + slotLabel(owner)
+		where = " in " + owner.ws.Label()
 		if !loaded {
-			where += ", " + m.closedOwnerNote(owner)
+			where += ", " + m.core.ClosedNote(owner.ws)
 		}
 	}
 	if msg.recovered.GetStatus() == session.Paused {

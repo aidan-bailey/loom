@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/ui"
@@ -23,11 +24,11 @@ func newPendingTitleEntryHome(t *testing.T) *home {
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:     "",
 		Path:      t.TempDir(),
-		Program:   m.appConfig.DefaultProgram,
+		Program:   m.appConfig().DefaultProgram,
 		ConfigDir: t.TempDir(),
 	})
 	require.NoError(t, err)
-	m.list.AddInstance(instance)
+	m.ws.Add(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.pendingNew = instance
 	m.state = stateNew
@@ -75,7 +76,7 @@ func TestNewInstanceFlowEndToEndComposesRealClosure(t *testing.T) {
 
 func TestNewInstanceFlowRemoteControlBlockedViaModalPromptsConfirm(t *testing.T) {
 	m := newPendingTitleEntryHome(t)
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 
 	for _, r := range "my-task" {
 		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
@@ -113,7 +114,7 @@ func preservedTitleStorage(t *testing.T, title string) *session.Storage {
 // edit it.
 func TestHandleStateNewKey_RejectsTitleOfPreservedRecord(t *testing.T) {
 	m := newPendingTitleEntryHome(t)
-	m.storage = preservedTitleStorage(t, "taken")
+	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Storage = preservedTitleStorage(t, "taken") })
 	m.errBox.SetSize(400, 1)
 
 	for _, r := range "taken" {
@@ -155,7 +156,7 @@ func TestNewSession_RefusedWhileStorageLatched(t *testing.T) {
 	for name, create := range cases {
 		t.Run(name, func(t *testing.T) {
 			m := newTestHomeWithWsCtx(t)
-			m.storage = latchedStorage(t)
+			reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Storage = latchedStorage(t) })
 			m.errBox.SetSize(400, 1)
 			before := m.list.NumInstances()
 

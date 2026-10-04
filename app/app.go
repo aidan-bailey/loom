@@ -3,11 +3,10 @@ package app
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"github.com/aidan-bailey/loom/account"
-	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/keys"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/script"
@@ -22,7 +21,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -131,7 +129,7 @@ type home struct {
 	ctx context.Context
 
 	// *workspaceSlot is the focused workspace slot, embedded so its
-	// per-workspace state (m.wsCtx, m.storage, m.appConfig, m.appState,
+	// per-workspace state (m.wsCtx(), m.storage(), m.appConfig(), m.appState(),
 	// m.list, m.splitPane, m.workbench) reads and writes straight through
 	// to the one slot that owns it — there is no copy on home to keep in
 	// sync. Invariant (checkSlotInvariant): with workspace tabs open
@@ -148,27 +146,18 @@ type home struct {
 
 	program string
 
-	// cmdExec, when non-nil, replaces cmd2.MakeExecutor() on the workspace
-	// load paths (activateWorkspace, enterGlobalMode, and the restore-time
-	// orphan sweep) — a test seam so those paths can run without touching
-	// a real tmux server. Always nil in production; read via executor().
-	cmdExec cmd2.Executor
+	// core is the session model (package core): the loaded workspaces,
+	// their instances and everything lifecycle. Never nil after newHome.
+	core *core.Model
+	// initCmd holds the Cmds newHome drained from the model before the
+	// program ran (an error notice's hide timer); Init returns them.
+	initCmd tea.Cmd
 	// panes holds the TUI's attach clients, one per live agent tmux session
 	// (ui.PaneClients). Everything that renders an agent pane, scrolls it,
 	// forwards input to it or scrapes its screen for status goes through
 	// it. It is shared by every slot's list and split pane, and is never
 	// nil after newHome.
 	panes *ui.PaneClients
-	// restoreFailed names the workspaces the registry's open list held but
-	// restoreSavedWorkspaces could not open. The user never closed them,
-	// and their live sessions were spared only because that launch skipped
-	// the orphan sweep — dropping them from the open list would let the
-	// next launch sweep (kill) them. saveOpenWorkspaces keeps them in the
-	// persisted list and the picker shows them selected, until one is
-	// opened (activateWorkspace) or deselected in the picker
-	// (applyWorkspaceToggle); returning to global mode clears them all, as
-	// does a Global commit made from global mode (stayInGlobalMode).
-	restoreFailed []string
 
 	// -- State --
 
@@ -253,10 +242,6 @@ type home struct {
 	quickInputBar *ui.QuickInputBar
 	// errBox displays error messages
 	errBox *ui.ErrBox
-	// rcAuth caches whether the current Claude authentication can drive
-	// --remote-control, detected once at startup (see remote_control.go).
-	// Global to the machine's login, so one probe covers every workspace.
-	rcAuth session.RemoteControlAuth
 	// accounts is the Claude account registry (account/), loaded from the
 	// global config dir at startup. Update-goroutine only: launches read the
 	// published dir map (session.SetAccountDirs) instead.
@@ -322,8 +307,6 @@ type home struct {
 
 	// -- Workspace slots --
 
-	// registry is the loaded workspace registry, retained for the picker flow.
-	registry *config.WorkspaceRegistry
 	// slots holds per-workspace state for every open workspace tab, in
 	// tab order. Empty in classic/global mode. The focused one is also
 	// embedded as m.workspaceSlot (see the invariant there).
@@ -531,11 +514,11 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 // Called at the end of newHome (classic startup), after a slot is
 // loaded/focused (loadSlot), and on entering global mode.
 func (m *home) applyUIPrefs() {
-	if m.appState == nil {
+	if m.appState() == nil {
 		// Bare test homes construct no app state; nothing to apply.
 		return
 	}
-	p := m.appState.GetUIPrefs()
+	p := m.appState().GetUIPrefs()
 	if p.ViewMode == "overview" {
 		m.enterOverview()
 	} else {
@@ -555,7 +538,7 @@ func (m *home) applyUIPrefs() {
 // a fresh restart would, instead of inheriting whatever ratio the
 // previously selected instance left behind.
 func (m *home) applyStoredRatio(inst *session.Instance) {
-	if m.appState == nil || inst == nil {
+	if m.appState() == nil || inst == nil {
 		return
 	}
 	// A pending (not-yet-flushed) resize is the newest truth and must win
@@ -568,7 +551,7 @@ func (m *home) applyStoredRatio(inst *session.Instance) {
 		m.splitPane.SetAgentRatio(r)
 		return
 	}
-	if r, ok := m.appState.GetUIPrefs().SplitRatios[inst.Title]; ok {
+	if r, ok := m.appState().GetUIPrefs().SplitRatios[inst.Title]; ok {
 		m.splitPane.SetAgentRatio(r)
 		return
 	}
@@ -636,13 +619,13 @@ func (m *home) flushPendingRatioSaves() {
 // Persistence is a synchronous write-through to state.json — fine for
 // rare toggles; debounce burst callers (e.g. key-repeat ratio changes).
 func (m *home) mutateUIPrefs(fn func(*config.UIPrefs)) {
-	if m.appState == nil {
+	if m.appState() == nil {
 		// Bare test homes construct no app state; nothing to persist.
 		return
 	}
-	p := m.appState.GetUIPrefs()
+	p := m.appState().GetUIPrefs()
 	fn(&p)
-	if err := m.appState.SetUIPrefs(p); err != nil {
+	if err := m.appState().SetUIPrefs(p); err != nil {
 		log.For("app").Warn("ui_prefs_save_failed", "err", err)
 	}
 }
@@ -656,6 +639,7 @@ func (m *home) Init() tea.Cmd {
 		tickUpdateMetadataCmd,
 		m.maybeAccountsRefresh(),
 		m.maybeUsageProbe(),
+		m.initCmd,
 	}
 	// Event mode renders on paneDirtyMsg; the timer poll only survives for
 	// the snapshot/Windows path, which has no emulator to emit events.
@@ -668,9 +652,19 @@ func (m *home) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// Update implements tea.Model.
+// Update implements tea.Model: the message's handler (update), then
+// whatever the model produced meanwhile (drainCore).
 func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	return model, tea.Batch(cmd, m.drainCore())
+}
+
+// update is Update's message handler.
+func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case coreResultMsg:
+		m.core.Deliver(msg.msg)
+		return m, nil
 	case hideErrMsg:
 		m.errBox.Clear()
 	case scriptDoneMsg:
@@ -753,7 +747,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.markDirty(msg.session)
 		selected := m.list.GetSelectedInstance()
 
-		if inst := m.instanceForSession(msg.session); inst != nil {
+		if inst := m.core.InstanceForSession(msg.session); inst != nil {
 			// Output arrived → the agent is doing something. Mirrors the old
 			// tick's updated→Running transition; Ready re-derives on the
 			// quiet event once the burst settles. Prompting is exempt:
@@ -780,7 +774,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// While Claude works, its spinner keeps output flowing, so this
 			// reads a UserPromptSubmit within hookScanInterval.
 			if inst.HooksLaunched() {
-				cmds = append(cmds, m.maybeHookScan(m.activeInstances()))
+				cmds = append(cmds, m.maybeHookScan(m.core.ActiveInstances()))
 			}
 			if selected != nil && inst == selected {
 				if err := m.splitPane.UpdateAgent(selected); err != nil {
@@ -798,14 +792,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case paneQuietMsg:
-		inst := m.instanceForSession(msg.session)
+		inst := m.core.InstanceForSession(msg.session)
 		var scan tea.Cmd
 		if inst != nil && inst.HooksLaunched() {
 			// Stop and PermissionRequest arrive as output settles. This is
 			// often a burst's last output, so it must scan even inside
 			// hookScanInterval or while a scan is in flight: request().
 			m.gate(gateHookScan).request()
-			scan = m.maybeHookScan(m.activeInstances())
+			scan = m.maybeHookScan(m.core.ActiveInstances())
 		}
 		if !statusEligible(inst) {
 			// A quiet that lands mid-Start (Loading) is this burst's only
@@ -829,7 +823,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case redetectMsg:
 		delete(m.redetectPending, msg.session)
-		inst := m.instanceForSession(msg.session)
+		inst := m.core.InstanceForSession(msg.session)
 		if !statusEligible(inst) {
 			if inst != nil && inst.GetStatus() == session.Loading {
 				return m, m.maybeRedetect(msg.session)
@@ -936,7 +930,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, tea.RequestWindowSize)
 			}
 		}
-		inst := m.instanceForSession(msg.session)
+		inst := m.core.InstanceForSession(msg.session)
 		if inst == nil || inst == m.attachingInstance || !statusEligible(inst) {
 			if len(cmds) > 0 {
 				return m, tea.Batch(cmds...)
@@ -953,7 +947,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateTabBarStatuses()
 		return m, tea.Batch(m.instanceChanged(), release)
 	case bellMsg:
-		if inst := m.instanceForSession(msg.session); inst != nil && inst != m.list.GetSelectedInstance() {
+		if inst := m.core.InstanceForSession(msg.session); inst != nil && inst != m.list.GetSelectedInstance() {
 			inst.SetBellPending(true)
 			// A bell from a background workspace is the canonical
 			// peer-attention signal — refresh the rail's peer summaries
@@ -989,9 +983,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		prune := m.prunePanes()
 
 		// Active instances from every loaded workspace slot (see
-		// activeInstances for what is skipped and why).
+		// core.Model.ActiveInstances for what is skipped and why).
 		selected := m.list.GetSelectedInstance()
-		active := m.activeInstances()
+		active := m.core.ActiveInstances()
 
 		// Inline-attach liveness backstop (the preview tick used to check
 		// this every 100ms in event mode; ptyDeadMsg is the fast path now,
@@ -1548,19 +1542,16 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case registerWorkspaceMsg:
 		// The registry has no lock, so the Add runs here on Update, never
 		// in the confirmation's Cmd.
-		if err := m.registry.Add(msg.name, msg.dir); err != nil {
-			return m, m.handleError(fmt.Errorf("failed to register workspace: %w", err))
+		def, err := m.core.Register(msg.name, msg.dir)
+		if err != nil {
+			return m, m.handleError(err)
 		}
-		ws := m.registry.FindByPath(msg.dir)
-		if ws == nil {
-			return m, m.handleError(fmt.Errorf("workspace not found after registration"))
-		}
-		release, err := m.activateWorkspace(*ws)
+		release, err := m.activateWorkspace(def)
 		if err != nil {
 			return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 		}
-		if err := m.registry.UpdateLastUsed(ws.Name); err != nil {
-			log.For("app").Debug("registry.update_last_used_failed", "workspace", ws.Name, "err", err)
+		if err := m.core.SetLastUsed(def.Name); err != nil {
+			log.For("app").Debug("registry.update_last_used_failed", "workspace", def.Name, "err", err)
 		}
 
 		// Focus the just-registered slot so the user sees its
@@ -1570,7 +1561,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// flushes the outgoing slot's pending split-ratio saves.
 		m.loadSlot(len(m.slots) - 1)
 		m.updateTabBarStatuses()
-		m.showRecoverySummary(m.recovery)
+		m.showRecoverySummary(m.ws.Recovery())
 
 		// instanceChanged repoints the panes and menu at the new slot's
 		// selection; release drops the classic slot's attach clients
@@ -1586,189 +1577,10 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// executor returns the command executor for the workspace load paths:
-// the injected test seam when set, the production executor otherwise.
-func (m *home) executor() cmd2.Executor {
-	if m.cmdExec != nil {
-		return m.cmdExec
-	}
-	return cmd2.MakeExecutor()
-}
-
-// recoverySummary tallies what a reconcileOrphans pass did, for the
-// non-blocking one-line summary shown to the user.
-type recoverySummary struct {
-	cleaned int // stale worktrees auto-removed
-	review  int // Recoverable entries added to the list
-	failed  int // records that failed reconcile (storage unrecovered cache)
-	// undecodable counts records this binary cannot decode (corrupt, or
-	// written by a newer loom); storage preserves them verbatim.
-	undecodable int
-}
-
-func (s recoverySummary) empty() bool {
-	return s.cleaned == 0 && s.review == 0 && s.failed == 0 && s.undecodable == 0
-}
-
-func (s recoverySummary) String() string {
-	plural := func(n int, one, many string) string {
-		if n == 1 {
-			return fmt.Sprintf("%d %s", n, one)
-		}
-		return fmt.Sprintf("%d %s", n, many)
-	}
-	var parts []string
-	if s.cleaned > 0 {
-		parts = append(parts, "cleaned "+plural(s.cleaned, "stale worktree", "stale worktrees"))
-	}
-	if s.review > 0 {
-		verb := "need"
-		if s.review == 1 {
-			verb = "needs"
-		}
-		parts = append(parts, fmt.Sprintf("%s %s review (in list)", plural(s.review, "session", "sessions"), verb))
-	}
-	if s.failed > 0 {
-		// These records are preserved on disk and retried next launch,
-		// but never appear in the list — without this line they would
-		// look like silently lost sessions.
-		parts = append(parts, fmt.Sprintf("%s failed to load (kept; see loom.log)", plural(s.failed, "session", "sessions")))
-	}
-	if s.undecodable > 0 {
-		// Typically left by a newer loom after a downgrade. Saves write
-		// them back untouched, so the newer binary finds them intact.
-		verb := "were"
-		if s.undecodable == 1 {
-			verb = "was"
-		}
-		parts = append(parts, fmt.Sprintf("%s could not be read by this version of loom and %s preserved unchanged",
-			plural(s.undecodable, "session record", "session records"), verb))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return "Recovery: " + strings.Join(parts, " · ")
-}
-
-// persistableInstances filters out instances whose state should not reach disk:
-// a creation flow's instance that has never started (Ready and not Started),
-// Deleting (kill in progress, about to be removed via DeleteInstance), and
-// Recoverable (an orphan surfaced inline; it is re-derived from disk each load
-// and adopted only on explicit recovery, so persisting it would resurrect a
-// never-confirmed entry). Every other instance is persisted — Loading,
-// Running, Prompting, Paused and a started Ready one — so that a crash or quit
-// during the kill window cannot orphan a live worktree from its JSON record.
-//
-// Ready is overloaded: a creation flow's instance is Ready before it starts,
-// and the status ladder and Claude's roster report an idle agent or workspace
-// terminal as Ready too. Skipping every Ready instance dropped idle sessions'
-// records on each save, so the next load offered their worktrees as
-// Recoverable orphans and killed and recreated an idle workspace terminal.
-func persistableInstances(instances []*session.Instance) []*session.Instance {
-	var result []*session.Instance
-	for _, inst := range instances {
-		status := inst.GetStatus()
-		if (status == session.Ready && !inst.Started()) || status == session.Deleting || status == session.Recoverable {
-			continue
-		}
-		result = append(result, inst)
-	}
-	return result
-}
-
-// claimedWorktreePaths returns the set of worktree paths already accounted
-// for: live instances plus the records storage preserves outside the live
-// list (reconcile failures and undecodable records, both still tracked in
-// state.json). Orphan discovery skips these.
-func claimedWorktreePaths(claimed []*session.Instance, storage *session.Storage) map[string]bool {
-	paths := make(map[string]bool, len(claimed))
-	for _, inst := range claimed {
-		wt, err := inst.GetGitWorktree()
-		if err != nil || wt == nil {
-			continue
-		}
-		if p := wt.GetWorktreePath(); p != "" {
-			paths[p] = true
-		}
-	}
-	if storage != nil {
-		for p := range storage.PreservedWorktreePaths() {
-			paths[p] = true
-		}
-	}
-	return paths
-}
-
-// claimTitles adds to claimed every session title one workspace owns, for
-// the title-keyed sweeps: the orphan tmux sweep (CleanupOrphanedSessions,
-// which also spares sessions started outside the roots it owns) and the
-// subagent hooks sweep. That is each instance in list (Recoverable orphans
-// included) plus each record storage preserves on disk outside the list
-// (Storage.PreservedTitles: reconcile failures and undecodable records,
-// e.g. a newer loom's after a downgrade) — sparing those keeps a preserved
-// record's agent alive for the binary that can load it. storage may be nil.
-func claimTitles(claimed map[string]bool, list *ui.List, storage *session.Storage) {
-	for _, inst := range list.GetInstances() {
-		claimed[inst.Title] = true
-	}
-	if storage == nil {
-		return
-	}
-	for _, title := range storage.PreservedTitles() {
-		claimed[title] = true
-	}
-}
-
-// reconcileOrphans discovers orphaned worktrees for one workspace, auto-cleans
-// stale leftovers, and adds inline Recoverable entries for orphans that need a
-// human decision. It mutates list (adds Recoverable instances) and returns a
-// summary for the caller to surface. Safe to run on any workspace-load path.
-func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *session.Storage, cmdExec cmd2.Executor) recoverySummary {
-	var summary recoverySummary
-	orphans, err := session.DiscoverOrphans(cfgDir, claimedWorktreePaths(list.GetInstances(), storage), cmdExec)
-	if err != nil {
-		log.For("app").Warn("orphan_discovery_failed", "cfg_dir", cfgDir, "err", err)
-		return summary
-	}
-	for _, cand := range orphans {
-		switch cand.Disposition() {
-		case session.DisposeClean:
-			if err := session.RemoveOrphanWorktree(cand.RepoPath, cand.WorktreePath); err != nil {
-				log.For("app").Warn("orphan_autoclean_failed", "worktree", cand.WorktreePath, "err", err)
-				continue
-			}
-			summary.cleaned++
-		case session.DisposeReview:
-			data := session.InstanceDataFromOrphan(cand, program)
-			data.Status = session.Recoverable
-			inst, err := session.FromInstanceData(data, cfgDir)
-			if err != nil {
-				log.For("app").Warn("orphan_placeholder_failed", "title", cand.Title, "err", err)
-				continue
-			}
-			list.AddInstance(inst)
-			summary.review++
-		}
-	}
-	// Records that failed reconcile at load time live only in the storage
-	// cache, and undecodable ones only on disk — surface their counts so
-	// they don't read as lost sessions.
-	if storage != nil {
-		summary.failed = len(storage.UnrecoveredTitles())
-		summary.undecodable = storage.UndecodableCount()
-	}
-	// Preserved records may come back on a later load (or under a newer
-	// loom); claimTitles keeps their hooks folders.
-	claimed := make(map[string]bool)
-	claimTitles(claimed, list, storage)
-	session.SweepSubagentHooks(cfgDir, claimed, cmdExec)
-	return summary
-}
-
 // showRecoverySummary surfaces a reconcile summary on the error bar as a
 // non-alarming info line. No-op when nothing happened.
-func (m *home) showRecoverySummary(s recoverySummary) {
-	if s.empty() {
+func (m *home) showRecoverySummary(s core.RecoverySummary) {
+	if s.Empty() {
 		return
 	}
 	m.errBox.SetInfo(s.String())
@@ -1781,7 +1593,8 @@ func (m *home) showRecoverySummary(s recoverySummary) {
 // issue (disk full, read-only mount, etc.) and retry — silent data
 // loss on exit is worse than a sticky quit. Both branches share this
 // policy; the multi-slot branch used to log-and-quit, which is the
-// bug this function comment now documents has been fixed.
+// bug this function comment now documents has been fixed. The saves and
+// that policy are core.Model.SaveForQuit's.
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	// Persist any not-yet-flushed split resize before exit (the throttle
 	// tick may still be in flight; covers the classic path too, which
@@ -1791,46 +1604,11 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	m.flushWorkbenchRatio()
 	if len(m.slots) > 0 {
 		m.leaveFocusedSlot()
-		var firstErr error
-		for _, slot := range m.slots {
-			if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
-				if quitSkipsSave(err) {
-					log.For("app").Warn("quit.save_skipped", "name", slot.wsCtx.Name, "reason", "storage_load_failed", "err", err)
-					continue
-				}
-				log.For("app").Error("workspace.save_failed", "name", slot.wsCtx.Name, "err", err)
-				if firstErr == nil {
-					firstErr = fmt.Errorf("failed to save workspace %s: %w", slot.wsCtx.Name, err)
-				}
-			}
-		}
-		if firstErr != nil {
-			return m, m.handleError(firstErr)
-		}
-		m.saveOpenWorkspaces()
-	} else {
-		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
-			if !quitSkipsSave(err) {
-				return m, m.handleError(err)
-			}
-			log.For("app").Warn("quit.save_skipped", "reason", "storage_load_failed", "err", err)
-		}
-		// Classic/global mode has no open tabs: this clears the list,
-		// except for workspaces that failed to restore (restoreFailed).
-		if m.registry != nil && len(m.registry.OpenWorkspaces) > 0 {
-			m.saveOpenWorkspaces()
-		}
+	}
+	if err := m.core.SaveForQuit(); err != nil {
+		return m, m.handleError(err)
 	}
 	return m, tea.Quit
-}
-
-// quitSkipsSave reports whether a save error on quit is the storage's write
-// latch (ErrStorageLoadFailed). The sticky-quit policy exists so the user can
-// fix the cause and retry, but a latched storage is never reloaded by the
-// TUI, so no retry could succeed; its list is also empty by construction
-// (latchedStorageErr), and the unreadable file is left untouched. Quit.
-func quitSkipsSave(err error) bool {
-	return errors.Is(err, session.ErrStorageLoadFailed)
 }
 
 func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnEarly bool) {
@@ -2391,7 +2169,7 @@ func (m *home) handleError(err error) tea.Cmd {
 }
 
 func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
-	ti := overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig.GetProfiles())
+	ti := overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig().GetProfiles())
 	ti.SetBaseBranchName(m.baseBranchName)
 	return ti
 }
@@ -2402,7 +2180,7 @@ func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
 // runtime and Cmd bodies run concurrently with Update.
 func (m *home) resolveBaseBranchCmd() tea.Cmd {
 	repoDir := m.repoPath()
-	configured := m.appConfig.GetBaseBranch()
+	configured := m.appConfig().GetBaseBranch()
 	return func() tea.Msg {
 		_, name, err := git.ResolveBaseCommit(repoDir, configured, nil)
 		if err != nil {
@@ -2454,8 +2232,8 @@ func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
 // path; otherwise (classic/global mode, even with a startup workspace
 // context) it falls back to the process working directory.
 func (m *home) repoPath() string {
-	if len(m.slots) > 0 && m.wsCtx.RepoPath != "" {
-		return m.wsCtx.RepoPath
+	if len(m.slots) > 0 && m.wsCtx().RepoPath != "" {
+		return m.wsCtx().RepoPath
 	}
 	cwd, _ := os.Getwd()
 	return cwd
@@ -2467,8 +2245,8 @@ func (m *home) repoPath() string {
 // empty string only for a nil context (bare test homes), which callers
 // resolve to config.GetConfigDir.
 func (m *home) configDir() string {
-	if m.wsCtx != nil {
-		return m.wsCtx.ConfigDir
+	if m.wsCtx() != nil {
+		return m.wsCtx().ConfigDir
 	}
 	return ""
 }

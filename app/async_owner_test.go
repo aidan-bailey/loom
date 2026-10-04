@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/stretchr/testify/assert"
@@ -21,11 +22,12 @@ func ownerTestHome(t *testing.T) (m *home, recA, recB *recordingInstanceStorage)
 	m.viewMode = viewFocus
 	m.errBox = ui.NewErrBox()
 	recA, recB = &recordingInstanceStorage{}, &recordingInstanceStorage{}
-	var err error
-	m.slots[0].storage, err = session.NewStorage(recA, t.TempDir())
+	storageA, err := session.NewStorage(recA, t.TempDir())
 	require.NoError(t, err)
-	m.slots[1].storage, err = session.NewStorage(recB, t.TempDir())
+	reworkspace(t, m, m.slots[0], func(p *core.WorkspaceParts) { p.Storage = storageA })
+	storageB, err := session.NewStorage(recB, t.TempDir())
 	require.NoError(t, err)
+	reworkspace(t, m, m.slots[1], func(p *core.WorkspaceParts) { p.Storage = storageB })
 	return m, recA, recB
 }
 
@@ -36,7 +38,7 @@ func startingInstance(t *testing.T, slot *workspaceSlot, title string) *session.
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Loading))
-	slot.list.AddInstance(inst)
+	slot.ws.Add(inst)
 	return inst
 }
 
@@ -123,7 +125,7 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	// attaches none).
 	started := liveInstance(t, "late")
 	m.panes.Retain(nil) // nothing attached it
-	owner.list.AddInstance(started)
+	owner.ws.Add(started)
 
 	m.errBox.SetSize(400, 1)
 
@@ -153,7 +155,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		}, t.TempDir())
 		require.NoError(t, err)
 		require.NoError(t, p.TransitionTo(session.Loading))
-		slot.list.AddInstance(p)
+		slot.ws.Add(p)
 		return p
 	}
 
@@ -202,7 +204,7 @@ func TestResumeDone_AfterOwnerDropped(t *testing.T) {
 	recB.calls = 0
 	resumed := liveInstance(t, "resumed")
 	m.panes.Retain(nil) // nothing attached it
-	owner.list.AddInstance(resumed)
+	owner.ws.Add(resumed)
 
 	_, cmd := m.Update(resumeDoneMsg{instance: resumed, slot: owner})
 
@@ -220,7 +222,7 @@ func TestResumeDone_OwnerReopened(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "res-wt")
 	m, owner, twin, _, recC := reopenedHome(t, "res", wtPath, deadCmdExecForTest())
 	resumed := startedWorktreeInstance(t, "res", wtPath, newFakeTmuxServer())
-	owner.list.AddInstance(resumed)
+	owner.ws.Add(resumed)
 
 	_, cmd := m.Update(resumeDoneMsg{instance: resumed, slot: owner})
 	drainCmd(cmd)
@@ -249,7 +251,7 @@ func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 			drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
 		}
 		resumed := liveInstance(t, "resumed")
-		owner.list.AddInstance(resumed)
+		owner.ws.Add(resumed)
 
 		_, cmd := m.Update(failedResume(resumed))
 		drainCmd(cmd)

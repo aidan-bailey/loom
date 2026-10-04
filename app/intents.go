@@ -5,10 +5,12 @@ import (
 	"fmt"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/files"
 	"github.com/aidan-bailey/loom/session/git"
+	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"os"
@@ -132,7 +134,7 @@ func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 		return m, m.handleError(err)
 	}
 
-	m.list.AddInstance(instance)
+	m.ws.Add(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.pendingNew = instance
 	m.state = stateNew
@@ -162,7 +164,7 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 		return m, m.handleError(err)
 	}
 
-	m.list.AddInstance(instance)
+	m.ws.Add(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.pendingNew = instance
 	m.state = stateNew
@@ -205,7 +207,7 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 	// goroutine: killAction runs for seconds in a Cmd, and reading m.* there
 	// would race loadSlot and, after a workspace switch, reach another
 	// workspace's pane and storage.
-	splitPane, storage := m.splitPane, m.storage
+	splitPane, storage := m.splitPane, m.storage()
 
 	preAction := func() {
 		if err := selected.TransitionTo(session.Deleting); err != nil {
@@ -354,13 +356,13 @@ func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 // current instance list. Must be called on the main goroutine: it
 // snapshots list membership immediately because ui.List is unlocked and
 // must not be read from the tea.Cmd goroutine the saveFunc runs on.
-// Status filtering still happens at save time via persistableInstances,
+// Status filtering still happens at save time via core.Persistable,
 // so state changes made by Pause/Resume itself are captured.
 func snapshotSaveFunc(m *home) func() error {
-	storage := m.storage
+	storage := m.storage()
 	snapshot := append([]*session.Instance(nil), m.list.GetInstances()...)
 	return func() error {
-		return storage.SaveInstances(persistableInstances(snapshot))
+		return storage.SaveInstances(core.Persistable(snapshot))
 	}
 }
 
@@ -434,9 +436,9 @@ func runResumeOrRecover(m *home) (tea.Model, tea.Cmd) {
 // (pendingLaunchOptionsCancel, not the creation flow's pop-and-kill).
 func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	opts, base := ParseLaunchOptions(selected.Program())
+	opts, base := launch.Parse(selected.Program())
 	// HeadroomProxy/CacheTTL1h are never baked into the program (see
-	// session.HeadroomProxyEnv/CacheTTL1hEnv) — ParseLaunchOptions can't
+	// session.HeadroomProxyEnv/CacheTTL1hEnv) — launch.Parse can't
 	// recover them, so seed them from the instance's own settings instead.
 	opts.HeadroomProxy = selected.HeadroomProxy()
 	opts.CacheTTL1h = selected.CacheTTL1h()
@@ -473,7 +475,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 				return resumeResult(selected, resumeTitle, owner, selected.Resume(saveFunc))
 			}),
 		}
-		if m.remoteControlBlockedOn(newOpts.Account, effectiveRemoteControl(newOpts), selected.Program()) {
+		if m.remoteControlBlockedOn(newOpts.Account, launch.EffectiveRemoteControl(newOpts), selected.Program()) {
 			return m, m.promptRestartRemoteControlBlocked(resumeTask, m.rcAuthFor(newOpts.Account).Reason)
 		}
 		return m, tea.Batch(resumeTask.Run(), m.instanceChanged())
@@ -629,7 +631,7 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 	// Restore failures stay checked so their live sessions survive; the
 	// picker warns that closing one gives them up to the next launch's
 	// orphan sweep.
-	picker.MarkFailedToLoad(m.restoreFailed...)
+	picker.MarkFailedToLoad(m.core.RestoreFailed()...)
 	m.setOverlay(picker, overlayWorkspacePicker)
 	m.state = stateWorkspace
 	return m, nil
@@ -641,7 +643,7 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 // checked retries it and unchecking it is the explicit close.
 func (m *home) pickerActiveNames() map[string]bool {
 	active := make(map[string]bool, len(m.slots))
-	for _, name := range m.openWorkspaceNames() {
+	for _, name := range m.core.OpenNames() {
 		active[name] = true
 	}
 	return active
@@ -651,11 +653,11 @@ func (m *home) pickerActiveNames() map[string]bool {
 // config. authBlocked/authReason are passed as plain values (not
 // session.RemoteControlAuth) to keep ui/overlay decoupled from session.
 func runOpenSettings(m *home) (tea.Model, tea.Cmd) {
-	if m.appConfig == nil {
+	if m.appConfig() == nil {
 		return m, m.handleError(fmt.Errorf("no configuration loaded"))
 	}
 	reloaded := m.reloadAccounts()
-	so := overlay.NewSettingsOverlay(m.appConfig, m.rcAuth.Blocked(), m.rcAuth.Reason)
+	so := overlay.NewSettingsOverlay(m.appConfig(), m.core.RCAuth().Blocked(), m.core.RCAuth().Reason)
 	so.SetAccountRows(m.accountRows(m.accountStatuses()))
 	so.SetAccountNotice(m.accountsScreenNotice())
 	m.setOverlay(so, overlaySettings)

@@ -99,5 +99,5 @@ func (m *home) handleHookScan(msg hookScanMsg) tea.Cmd {
 	}
 	m.updateTabBarStatuses()
 	m.gate(gateRoster).request()
-	return m.maybeRosterQuery(m.activeInstances())
+	return m.maybeRosterQuery(m.core.ActiveInstances())
 }

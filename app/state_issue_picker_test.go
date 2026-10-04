@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/ui/overlay"
@@ -104,7 +105,7 @@ func TestIssuePickedMsg_ErrorCreatesNothing(t *testing.T) {
 // same guard as typed titles: never create over a preserved record's title.
 func TestIssuePickedMsg_RejectsTitleOfPreservedRecord(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.storage = preservedTitleStorage(t, "gh-12-fix")
+	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Storage = preservedTitleStorage(t, "gh-12-fix") })
 	before := m.list.NumInstances()
 	_, cmd := m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "Fix"}})
 	assert.Equal(t, before, m.list.NumInstances(), "no session is created under a preserved title")
@@ -117,7 +118,7 @@ func TestIssuePickedMsg_RespectsInstanceLimit(t *testing.T) {
 	for i := 0; i < GlobalInstanceLimit; i++ {
 		inst, err := session.NewInstance(session.InstanceOptions{Title: "x", Path: t.TempDir(), Program: "claude"})
 		require.NoError(t, err)
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 	}
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 1, Title: "t"}})
 	assert.Equal(t, GlobalInstanceLimit, m.list.NumInstances())

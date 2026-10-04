@@ -193,9 +193,9 @@ func (m *home) deliverGated(msg gatedMsg) (tea.Model, tea.Cmd) {
 func (m *home) redispatch(kind gateKind) tea.Cmd {
 	switch kind {
 	case gateRoster:
-		return m.maybeRosterQuery(m.activeInstances())
+		return m.maybeRosterQuery(m.core.ActiveInstances())
 	case gateHookScan:
-		return m.maybeHookScan(m.activeInstances())
+		return m.maybeHookScan(m.core.ActiveInstances())
 	case gateUsage:
 		return m.maybeUsageProbe()
 	case gateAccountsRefresh:

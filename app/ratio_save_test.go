@@ -42,7 +42,7 @@ func TestRatioSaveMsg_FlushesAndPrunes(t *testing.T) {
 	mustAddInstance(t, m, "live")
 
 	// Stale persisted entry whose instance is not in the list anymore.
-	require.NoError(t, m.appState.SetUIPrefs(config.UIPrefs{
+	require.NoError(t, m.appState().SetUIPrefs(config.UIPrefs{
 		SplitRatios: map[string]float64{"gone": 0.4},
 	}))
 
@@ -51,7 +51,7 @@ func TestRatioSaveMsg_FlushesAndPrunes(t *testing.T) {
 
 	_, _ = m.Update(gatedMsg{kind: gateRatioSave, msg: ratioSaveMsg{}})
 
-	got := m.appState.GetUIPrefs().SplitRatios
+	got := m.appState().GetUIPrefs().SplitRatios
 	assert.Equal(t, 0.8, got["live"], "pending ratio must be persisted")
 	_, stale := got["gone"]
 	assert.False(t, stale, "titles absent from the live list must be pruned")

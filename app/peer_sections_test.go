@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -32,8 +33,10 @@ func peerTestInstance(t *testing.T, title string) *session.Instance {
 // Running, unstarted (Ready) → Idle.
 func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	listA := ui.NewList(&s)
-	listB := ui.NewList(&s)
+	wsA := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-a"}})
+	wsB := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-b"}})
+	listA := ui.NewList(&s, wsA)
+	listB := ui.NewList(&s, wsB)
 
 	prompting := peerTestInstance(t, "prompting")
 	require.NoError(t, prompting.TransitionTo(session.Prompting))
@@ -44,14 +47,15 @@ func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 	idle := peerTestInstance(t, "idle")
 
 	for _, inst := range []*session.Instance{prompting, belled, running, idle} {
-		listB.AddInstance(inst)
+		wsB.Add(inst)
 	}
 
 	h := &home{}
 	focusSlots(h, 0,
-		&workspaceSlot{wsCtx: &config.WorkspaceContext{Name: "ws-a"}, list: listA},
-		&workspaceSlot{wsCtx: &config.WorkspaceContext{Name: "ws-b"}, list: listB},
+		&workspaceSlot{ws: wsA, list: listA},
+		&workspaceSlot{ws: wsB, list: listB},
 	)
+	wireCore(t, h)
 
 	h.refreshPeerSections()
 
@@ -64,11 +68,13 @@ func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 // single slot clears any previously set peer sections.
 func TestRefreshPeerSections_SingleSlotClears(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	listA := ui.NewList(&s)
+	wsA := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-a"}})
+	listA := ui.NewList(&s, wsA)
 	listA.SetPeerSections([]ui.PeerSection{{Name: "stale", Idle: 1}})
 
 	h := &home{}
-	focusSlots(h, 0, &workspaceSlot{wsCtx: &config.WorkspaceContext{Name: "ws-a"}, list: listA})
+	focusSlots(h, 0, &workspaceSlot{ws: wsA, list: listA})
+	wireCore(t, h)
 
 	h.refreshPeerSections()
 

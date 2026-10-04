@@ -9,6 +9,7 @@ import (
 
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"github.com/stretchr/testify/assert"
@@ -25,7 +26,7 @@ func TestAccountRequest_SetDefault(t *testing.T) {
 func TestAccountRequest_AddCreatesAndLogsIn(t *testing.T) {
 	m := newTestHome(t)
 	main := withAccounts(t, m)
-	m.rcAuth.Identity = account.Identity{LoggedIn: true, ConfigDir: main}
+	editRCAuth(m, func(a *session.RemoteControlAuth) { a.Identity = account.Identity{LoggedIn: true, ConfigDir: main} })
 
 	cmd := m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestAdd, Name: "max-3"})
 
@@ -41,7 +42,7 @@ func TestAccountRequest_RemoveIsRefusedWhileASessionUsesIt(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "on-max-2", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount("max-2")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestRemove, Name: "max-2"})
 
@@ -157,11 +158,11 @@ func TestAccountRequest_RemoveCountsALoadedSessionOnce(t *testing.T) {
 	t.Setenv("LOOM_HOME", global)
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	m.wsCtx = &config.WorkspaceContext{ConfigDir: global}
+	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx = &config.WorkspaceContext{ConfigDir: global} })
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "on-max-2", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount("max-2")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	require.NoError(t, os.WriteFile(filepath.Join(global, "state.json"),
 		[]byte(`{"instances":[{"title":"on-max-2","account":"max-2"}]}`), 0o644))
 
@@ -185,7 +186,7 @@ func TestAccountUsers_CountsAnUnloadedWorkspacesSessions(t *testing.T) {
 		[]byte(`{"instances":[{"title":"x","account":"max-2"},{"title":"y","account":"max-2"}]}`), 0o644))
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	m.wsCtx = &config.WorkspaceContext{ConfigDir: global}
+	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx = &config.WorkspaceContext{ConfigDir: global} })
 
 	n, err := m.accountUsers("max-2")
 
@@ -228,7 +229,9 @@ func TestAccountRequest_LoginProceedsOnAnIntactAccount(t *testing.T) {
 func TestAccountRequest_AddRefusesAnUnsafeMainDir(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m)
-	m.rcAuth.Identity = account.Identity{LoggedIn: true, ConfigDir: filepath.Dir(m.accounts.AccountsDir())}
+	editRCAuth(m, func(a *session.RemoteControlAuth) {
+		a.Identity = account.Identity{LoggedIn: true, ConfigDir: filepath.Dir(m.accounts.AccountsDir())}
+	})
 
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestAdd, Name: "max-3"})
 

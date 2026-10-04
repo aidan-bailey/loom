@@ -231,7 +231,7 @@ func TestProductionGatedCmdsYieldOneMessage(t *testing.T) {
 		m := homeWithAppState(t)
 		m.program = "/nonexistent/loom-test/claude"
 		main := withAccounts(t, m, "max-2")
-		m.rcAuth.Identity.ConfigDir = main
+		editRCAuth(m, func(a *session.RemoteControlAuth) { a.Identity.ConfigDir = main })
 		msg := inner(t, m.maybeUsageProbe(), gateUsage)
 		assert.IsType(t, usageReadyMsg{}, msg)
 	})
@@ -270,8 +270,8 @@ func TestPollGateRequest(t *testing.T) {
 func TestDeliverGatedRedispatchesPendingOnce(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "gate-redispatch", "claude", "x")
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
-	require.NotNil(t, m.maybeRosterQuery(m.activeInstances()))
+	m.ws.Add(inst)
+	require.NotNil(t, m.maybeRosterQuery(m.core.ActiveInstances()))
 	m.gate(gateRoster).request()
 
 	_, cmd := m.Update(gatedMsg{kind: gateRoster, msg: rosterReadyMsg{}})

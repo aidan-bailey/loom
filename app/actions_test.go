@@ -5,11 +5,11 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
-	"charm.land/bubbles/v2/spinner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,32 +21,23 @@ import (
 // engine should reset m.scripts after construction.
 func newTestHome(t *testing.T) *home {
 	t.Helper()
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
-
 	cfgDir := t.TempDir()
 	state := config.LoadStateFrom(cfgDir)
 	storage, err := session.NewStorage(state, cfgDir)
 	require.NoError(t, err)
 
 	h := &home{
-		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
-			list:      list,
-			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-			storage:   storage,
-			appState:  state,
-		},
-		ctx:      context.Background(),
-		state:    stateDefault,
-		menu:     ui.NewMenu(),
-		overview: ui.NewOverview(),
-		tabBar:   ui.NewWorkspaceTabBar(),
-		errBox:   ui.NewErrBox(),
+		workspaceSlot: slotOver(testWS(core.WorkspaceParts{Storage: storage, Config: config.DefaultConfig(), State: state})),
+		ctx:           context.Background(),
+		state:         stateDefault,
+		menu:          ui.NewMenu(),
+		overview:      ui.NewOverview(),
+		tabBar:        ui.NewWorkspaceTabBar(),
+		errBox:        ui.NewErrBox(),
 	}
 	h.scripts = script.NewEngine(buildReservedKeys())
 	h.scripts.LoadDefaults()
-	return wirePanes(t, h)
+	return wireCore(t, wirePanes(t, h))
 }
 
 // TestSelectedNotBusyNotWorkspaceGuardsLifecycle exercises the shared
@@ -60,7 +51,7 @@ func TestSelectedNotBusyNotWorkspaceGuardsLifecycle(t *testing.T) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	h.list.AddInstance(instance)
+	h.ws.Add(instance)
 
 	_ = instance.TransitionTo(session.Loading)
 	assert.False(t, selectedNotBusyNotWorkspace(h), "Loading should block")

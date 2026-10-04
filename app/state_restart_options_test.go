@@ -22,7 +22,7 @@ func newPausedInstanceHome(t *testing.T) (*home, *session.Instance) {
 		CacheTTL1h:    true,
 	})
 	require.NoError(t, err)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 	require.NoError(t, inst.TransitionTo(session.Paused))
 	return m, inst
@@ -66,7 +66,7 @@ func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFail
 	// Route through the blocked-RC path so resumeTask lands directly in
 	// m.pendingConfirmation instead of being wrapped in the outer
 	// tea.Batch(resumeTask.Run(), ...) the direct path returns.
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	runRestartWithOptionsSelected(m)
 
 	pending := m.pendingLaunchOptions
@@ -123,7 +123,7 @@ func TestRunRestartWithOptionsSelected_CancelLeavesInstanceUntouched(t *testing.
 
 func TestRunRestartWithOptionsSelected_BlockedRemoteControlPromptsConfirm(t *testing.T) {
 	m, inst := newPausedInstanceHome(t)
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	runRestartWithOptionsSelected(m)
 
 	pending := m.pendingLaunchOptions
@@ -139,7 +139,7 @@ func TestRunRestartWithOptionsSelected_BlockedRemoteControlPromptsConfirm(t *tes
 
 func TestRunRestartWithOptionsSelected_BlockedRemoteControlCancelLeavesInstanceUntouched(t *testing.T) {
 	m, inst := newPausedInstanceHome(t)
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	originalProgram := inst.Program()
 	runRestartWithOptionsSelected(m)
 

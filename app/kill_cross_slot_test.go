@@ -37,7 +37,7 @@ func TestKillInstanceMsg_RemovesFromNonFocusedSlot(t *testing.T) {
 func TestKillInstanceMsg_DuplicateTitleAcrossSlots(t *testing.T) {
 	m := fleetHome(t)
 	dup := &session.Instance{Title: "b1", Status: session.Ready}
-	m.list.AddInstance(dup) // focused slot now also has a "b1"
+	m.ws.Add(dup) // focused slot now also has a "b1"
 	b1 := m.slots[1].list.GetInstanceByTitle("b1")
 	require.NotNil(t, b1)
 	require.NoError(t, b1.TransitionTo(session.Deleting))

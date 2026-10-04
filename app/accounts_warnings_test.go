@@ -64,7 +64,7 @@ func TestAccountsRefreshed_TheDefaultAccountsHintIsUnchanged(t *testing.T) {
 
 	m.Update(accountsRefreshedMsg{defaultAuth: &def})
 
-	assert.Equal(t, def.Reason, m.rcAuth.Reason)
+	assert.Equal(t, def.Reason, m.core.RCAuth().Reason)
 }
 
 // TestAccountsRefreshed_AnOverridesHintIsUnchanged: with a credential in
@@ -159,7 +159,7 @@ func TestAccountsRefresh_RunningAsAnAccountSkipsSync(t *testing.T) {
 	self, _ := m.accounts.Get("max-3")
 	require.NoError(t, os.WriteFile(filepath.Join(self.Dir, "settings.json"), []byte("{}"), 0o644))
 	t.Setenv("CLAUDE_CONFIG_DIR", self.Dir)
-	m.rcAuth = session.RemoteControlAuth{}
+	m.core.SetRCAuth(session.RemoteControlAuth{})
 
 	msg, ok := m.accountsRefreshCmd(false)().(accountsRefreshedMsg)
 	require.True(t, ok)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
@@ -37,7 +38,7 @@ func (f fakePtyFactory) Close() {}
 func homeWithAppState(t *testing.T) *home {
 	t.Helper()
 	h := newTestHome(t)
-	h.appState = config.DefaultState()
+	reworkspace(t, h, h.workspaceSlot, func(p *core.WorkspaceParts) { p.State = config.DefaultState() })
 	return h
 }
 
@@ -54,7 +55,7 @@ func addReadyInstance(t *testing.T, h *home) *session.Instance {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	h.list.AddInstance(inst)
+	h.ws.Add(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 
 	cmdExec := cmd_test.MockCmdExec{
@@ -182,7 +183,7 @@ func TestHandleScriptIntentRestartWithOptions(t *testing.T) {
 	m := homeWithAppState(t)
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "a", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 	require.NoError(t, inst.TransitionTo(session.Paused))
 

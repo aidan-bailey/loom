@@ -107,7 +107,7 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // second record under the title, and the two would share a tmux session
 // name. Returns nil when the title is free.
 func (m *home) preservedTitleErr(title string) error {
-	if m.storage == nil || !slices.Contains(m.storage.PreservedTitles(), title) {
+	if m.storage() == nil || !slices.Contains(m.storage().PreservedTitles(), title) {
 		return nil
 	}
 	return fmt.Errorf("title %q belongs to a saved session this version of loom could not load; choose another", title)
@@ -119,7 +119,7 @@ func (m *home) preservedTitleErr(title string) error {
 // is what makes skipping its save lossless (applyWorkspaceToggle,
 // handleQuit). Returns nil when the storage accepts writes.
 func (m *home) latchedStorageErr() error {
-	if m.storage == nil || !m.storage.WritesRefused() {
+	if m.storage() == nil || !m.storage().WritesRefused() {
 		return nil
 	}
 	return fmt.Errorf("new sessions can't be created here: this workspace's saved sessions could not be read, so nothing can be saved (see loom.log)")

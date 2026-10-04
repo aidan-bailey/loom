@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
+	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
@@ -96,14 +97,14 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 						}),
 					}
 
-					if m.remoteControlBlockedOn(opts.Account, effectiveRemoteControl(opts), selected.Program()) {
+					if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), selected.Program()) {
 						return m, m.promptRemoteControlBlocked(startTask, m.rcAuthFor(opts.Account).Reason)
 					}
 					return m, tea.Batch(startTask.Run(), m.instanceChanged())
 				}
 				m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 				m.state = stateLaunchOptions
-				lo, reloaded := m.newLaunchOptionsOverlay(launchOptionsFromConfig(m.appConfig), selected.Program())
+				lo, reloaded := m.newLaunchOptionsOverlay(launch.FromConfig(m.appConfig()), selected.Program())
 				m.setOverlay(lo, overlayLaunchOptions)
 				m.menu.SetState(ui.StateNewInstance)
 				return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())

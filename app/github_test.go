@@ -112,7 +112,7 @@ func TestLinkedIssuesCollectsNonZero(t *testing.T) {
 	a.SetIssue(3)
 	b, err := session.NewInstance(session.InstanceOptions{Title: "b", Path: a.Path, Program: "claude"})
 	require.NoError(t, err)
-	m.list.AddInstance(b)
+	m.ws.Add(b)
 	assert.Equal(t, []int{3}, m.linkedIssues(a.Path))
 }
 

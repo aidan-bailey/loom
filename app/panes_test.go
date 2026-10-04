@@ -27,8 +27,8 @@ func TestEnsureSlotPanes_AttachesActiveInstances(t *testing.T) {
 	live := liveInstance(t, "a-live")
 	paused := liveInstance(t, "a-paused")
 	require.NoError(t, paused.TransitionTo(session.Paused))
-	m.list.AddInstance(live)
-	m.list.AddInstance(paused)
+	m.ws.Add(live)
+	m.ws.Add(paused)
 	m.panes.Retain(nil) // the fixtures came with clients; start from none
 
 	m.ensureSlotPanes(m.workspaceSlot)
@@ -43,7 +43,7 @@ func TestEnsureSlotPanes_AttachesActiveInstances(t *testing.T) {
 func TestReplacePane_ClosesTheOldClientOffUpdate(t *testing.T) {
 	m := newTestHome(t)
 	inst := liveInstance(t, "relaunched")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	old := clientOf(t, inst)
 
 	cmd := m.replacePane(inst)
@@ -63,7 +63,7 @@ func TestFullScreenAttach_PausesAndRestoresThePaneClient(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
 	inst := liveInstance(t, "fs")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	name := inst.Pane().TmuxSessionName()
 	require.True(t, m.panes.Alive(name))
 
@@ -104,7 +104,7 @@ func TestKillAndPause_CloseTheClientOnlyAfterTheRegistryDrops(t *testing.T) {
 		t.Run(op.name, func(t *testing.T) {
 			m := newTestHome(t)
 			inst := startedInstanceWithProgram(t, "victim-"+op.name, "claude", "idle")
-			m.list.AddInstance(inst)
+			m.ws.Add(inst)
 			name := inst.Pane().TmuxSessionName()
 			c := clientOf(t, inst)
 			require.True(t, c.PtmxAlive(), "fixture: the client is attached")
@@ -130,7 +130,7 @@ func TestTransitionFailed_ReattachesARevertedInstance(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
 	inst := liveInstance(t, "reverted")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	name := inst.Pane().TmuxSessionName()
 	require.NoError(t, inst.TransitionTo(session.Loading)) // the pause's confirm
 	drainCmd(m.prunePanes())                               // a tick while it ran
@@ -160,7 +160,7 @@ end)
 	m.scripts = nil
 	initScriptsIn(m, dir, false)
 	inst := startedInstanceWithProgram(t, "lua-resumed", "claude", "idle")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	name := inst.Pane().TmuxSessionName()
 	old := clientOf(t, inst)
 	// The health tick found the agent gone and marked it Paused; its
@@ -286,7 +286,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 	t.Run("ensurePane", func(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
 		m.ensurePane(inst)
 
@@ -298,7 +298,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		// eligible instance to repair, say): the load heals it.
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
 		m.ensureSlotPanes(m.workspaceSlot)
 
@@ -332,7 +332,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("the client's pump never reported its EOF")
 		}
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
 		m.ensureSlotPanes(m.workspaceSlot)
 
@@ -349,7 +349,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 	t.Run("the Dead event", func(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
 		healThroughDeadEvent(t, m, inst)
 
@@ -360,9 +360,9 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 	t.Run("the health tick", func(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
-		active := m.activeInstances()
+		active := m.core.ActiveInstances()
 		_, _ = m.Update(gatherMetadataCmd(active, nil, nil, nil, m.paneSnapshot(active))())
 
 		requireShowsNewSession(t, m, inst, peer)
@@ -404,7 +404,7 @@ func TestDeadEvent_RepairOfAClientThatExitsOnAttachIsBounded(t *testing.T) {
 	require.NoError(t, inst.TransitionTo(session.Running))
 	var starts atomic.Int32
 	attachTestClient(t, inst, instantExitPty{t: t, starts: &starts}, aliveCmdExecForTest())
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	name := inst.Pane().TmuxSessionName()
 
 	for deadline := time.Now().Add(500 * time.Millisecond); time.Now().Before(deadline); {

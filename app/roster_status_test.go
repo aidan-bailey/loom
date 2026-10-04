@@ -27,7 +27,7 @@ func TestRosterOverridesScrapedStatus(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
@@ -45,7 +45,7 @@ func TestRosterBusyMapsToRunning(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	deliverRoster(m, rosterFor(inst, session.RosterStatusBusy))
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: false})
@@ -62,7 +62,7 @@ func TestRosterAbsentFallsBackToScraper(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
 
@@ -77,7 +77,7 @@ func TestRosterUnknownStatusFallsBack(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	deliverRoster(m, rosterFor(inst, session.RosterStatusUnknown))
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
@@ -94,7 +94,7 @@ func TestRosterIgnoredForNonClaudeInstance(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
 
 	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
@@ -164,7 +164,7 @@ func TestRosterWaitReasonReachesInstance(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "sandbox request"))
 
 	m.Update(statusDetectedMsg{instance: inst, updated: true})
@@ -181,7 +181,7 @@ func TestRosterWaitReasonClearedWhenNoLongerWaiting(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "dialog open"))
 	m.Update(statusDetectedMsg{instance: inst, updated: true})
 	require.Equal(t, "dialog open", inst.WaitReason(), "precondition")
@@ -201,7 +201,7 @@ func TestRosterWaitReasonClearedWhenRosterGoesAway(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "input needed"))
 	m.Update(statusDetectedMsg{instance: inst, updated: true})
 	require.Equal(t, "input needed", inst.WaitReason(), "precondition")

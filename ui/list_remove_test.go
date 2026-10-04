@@ -13,35 +13,35 @@ import (
 // selection up per key, then typed into that other session.
 func TestList_RemoveKeepsSelectionOnItsRow(t *testing.T) {
 	t.Run("an earlier row, by identity", func(t *testing.T) {
-		l := newPageNavList(5)
-		selected := l.items[3]
+		l, src := newPageNavList(5)
+		selected := src.items[3]
 		l.SetSelectedInstance(3)
-		l.RemoveInstance(l.items[1])
+		src.remove(src.items[1])
 		assert.Same(t, selected, l.GetSelectedInstance())
 	})
 	t.Run("the first row", func(t *testing.T) {
-		l := newPageNavList(5)
-		selected := l.items[3]
+		l, src := newPageNavList(5)
+		selected := src.items[3]
 		l.SetSelectedInstance(3)
-		l.RemoveInstance(l.items[0])
+		src.remove(src.items[0])
 		assert.Same(t, selected, l.GetSelectedInstance())
 	})
 	t.Run("a later row", func(t *testing.T) {
-		l := newPageNavList(5)
-		selected := l.items[1]
+		l, src := newPageNavList(5)
+		selected := src.items[1]
 		l.SetSelectedInstance(1)
-		l.RemoveInstance(l.items[3])
+		src.remove(src.items[3])
 		assert.Same(t, selected, l.GetSelectedInstance())
 	})
 	t.Run("the selected last row clamps to the new last", func(t *testing.T) {
-		l := newPageNavList(3)
+		l, src := newPageNavList(3)
 		l.SetSelectedInstance(2)
-		l.RemoveInstance(l.items[2])
+		src.remove(src.items[2])
 		assert.Equal(t, 1, l.SelectedIdx())
 	})
 	t.Run("the only row", func(t *testing.T) {
-		l := newPageNavList(1)
-		l.RemoveInstance(l.items[0])
+		l, src := newPageNavList(1)
+		src.remove(src.items[0])
 		assert.Equal(t, 0, l.SelectedIdx())
 		assert.Nil(t, l.GetSelectedInstance())
 	})
@@ -51,28 +51,39 @@ func TestList_RemoveKeepsSelectionOnItsRow(t *testing.T) {
 // are pinned at index 0, which used to shift the selection onto the row
 // above it.
 func TestList_PrependedWorkspaceTerminalKeepsSelection(t *testing.T) {
-	l := newPageNavList(3)
-	selected := l.items[1]
+	l, src := newPageNavList(3)
+	selected := src.items[1]
 	l.SetSelectedInstance(1)
-	l.AddInstance(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
+	src.prepend(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
 	assert.Same(t, selected, l.GetSelectedInstance())
 
-	empty := newPageNavList(0)
-	empty.AddInstance(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
+	empty, emptySrc := newPageNavList(0)
+	emptySrc.prepend(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
 	assert.Equal(t, 0, empty.SelectedIdx())
 }
 
 // TestList_PrependedWorkspaceTerminalKeepsSelectionVisible: the prepend
 // shifts the selection down a row, which can push it past the bottom of
-// the visible window, so AddInstance must scroll to it as removeAt does.
+// the visible window, so the list must scroll to it as a removal does.
 func TestList_PrependedWorkspaceTerminalKeepsSelectionVisible(t *testing.T) {
-	l := newPageNavList(5) // 3 rows visible
+	l, src := newPageNavList(5) // 3 rows visible
 	l.SetSelectedInstance(4)
 	selected := l.GetSelectedInstance()
-	l.AddInstance(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
+	src.prepend(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
 
 	assert.Same(t, selected, l.GetSelectedInstance())
 	assert.GreaterOrEqual(t, l.SelectedIdx(), l.scrollOffset)
 	assert.Less(t, l.SelectedIdx(), l.scrollOffset+l.maxVisibleItems(),
 		"the selected row must stay inside the visible window")
+}
+
+// TestList_ReplacedRowKeepsTheSelection: a recover swaps the placeholder
+// for the recovered instance in place, and the selection follows the row.
+func TestList_ReplacedRowKeepsTheSelection(t *testing.T) {
+	l, src := newPageNavList(3)
+	l.SetSelectedInstance(1)
+	replacement := &session.Instance{Title: "recovered"}
+	src.items[1] = replacement
+	assert.Same(t, replacement, l.GetSelectedInstance())
+	assert.Equal(t, 1, l.SelectedIdx())
 }

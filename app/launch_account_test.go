@@ -122,7 +122,7 @@ func openRestartOn(t *testing.T, m *home, acct string) *overlay.SessionLaunchOpt
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-removed", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount(acct)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	runRestartWithOptionsSelected(m)
 	lo := m.launchOptionsOverlay()
 	require.NotNil(t, lo)
@@ -211,7 +211,7 @@ func TestApplyChosenLaunch_RecordsTheAccount(t *testing.T) {
 func TestApplyChosenLaunch_UsesTheAccountsRemoteControlAuth(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthOK}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthOK})
 	m.accountAuth = map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "logged out"}}
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-rc", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
@@ -234,7 +234,7 @@ func TestRestartWithOptions_PresetsTheSessionsAccount(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-restart", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount("max-3")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	require.Equal(t, inst, m.list.GetSelectedInstance())
 
 	runRestartWithOptionsSelected(m)

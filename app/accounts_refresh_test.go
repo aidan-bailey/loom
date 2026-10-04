@@ -60,7 +60,7 @@ func TestAccountsRefresh_IncludesTheDefaultWhileItsIdentityIsUnknown(t *testing.
 	assert.NotNil(t, msg.defaultAuth, "an RC-off startup never read the default account")
 
 	m.Update(gatedMsg{kind: gateAccountsRefresh, msg: msg})
-	m.rcAuth.Identity.ConfigDir = main
+	editRCAuth(m, func(a *session.RemoteControlAuth) { a.Identity.ConfigDir = main })
 	msg = runRefresh(t, m.requestAccountsRefresh(false))
 	assert.Nil(t, msg.defaultAuth, "known: not reread")
 }
@@ -112,7 +112,7 @@ func TestUsageReady_StillNoAccessRereadsNothing(t *testing.T) {
 func TestUsageReady_TheDefaultLosingAccessRereadsTheDefault(t *testing.T) {
 	m := homeWithAppState(t)
 	main := withAccounts(t, m, "max-2")
-	m.rcAuth.Identity = account.Identity{ConfigDir: main, LoggedIn: true}
+	editRCAuth(m, func(a *session.RemoteControlAuth) { a.Identity = account.Identity{ConfigDir: main, LoggedIn: true} })
 	m.ensureAccountMaps()
 	m.usage[account.DefaultName] = accountUsage{last: account.Usage{Available: true, At: time.Now().Add(-time.Minute)}}
 	m.gate(gateAccountsRefresh).inFlight = true // a refresh already running
@@ -155,7 +155,7 @@ func TestAccountsRefresh_SkipsSyncForAnUnsafeMainDir(t *testing.T) {
 			acct, _ := m.accounts.Get("max-2")
 			main := tc.main(m)
 			require.NoError(t, os.WriteFile(filepath.Join(main, "settings.json"), []byte("{}"), 0o644))
-			m.rcAuth.Identity.ConfigDir = main
+			editRCAuth(m, func(a *session.RemoteControlAuth) { a.Identity.ConfigDir = main })
 
 			msg, ok := m.accountsRefreshCmd(false)().(accountsRefreshedMsg)
 			require.True(t, ok)
@@ -176,7 +176,7 @@ func TestAccountsRefresh_SyncsAgainstASafeMainDir(t *testing.T) {
 	m := newTestHome(t)
 	main := withAccounts(t, m, "max-2")
 	require.NoError(t, os.WriteFile(filepath.Join(main, "settings.json"), []byte("{}"), 0o644))
-	m.rcAuth.Identity.ConfigDir = main
+	editRCAuth(m, func(a *session.RemoteControlAuth) { a.Identity.ConfigDir = main })
 
 	msg, ok := m.accountsRefreshCmd(false)().(accountsRefreshedMsg)
 	require.True(t, ok)

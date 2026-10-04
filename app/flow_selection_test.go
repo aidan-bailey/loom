@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui/overlay"
@@ -28,7 +29,7 @@ func runningInstance(t *testing.T, m *home, title string) *session.Instance {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Running))
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	return inst
 }
 
@@ -81,7 +82,7 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	}, t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, placeholder.TransitionTo(session.Loading))
-	m.list.AddInstance(placeholder)
+	m.ws.Add(placeholder)
 	_, _ = runNewInstance(m)
 	pending := m.list.GetSelectedInstance()
 	recovered, err := session.NewInstance(session.InstanceOptions{Title: "orphan", Path: t.TempDir(), Program: "claude"})
@@ -192,14 +193,15 @@ func reopenedHome(t *testing.T, title, twinWorktree string, reopenExec cmd_test.
 	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
 	reopened := fleetSlot(t, "afocus")
 	recC = &recordingInstanceStorage{}
-	var err error
-	reopened.storage, err = session.NewStorage(recC, t.TempDir())
+	storageC, err := session.NewStorage(recC, t.TempDir())
 	require.NoError(t, err)
+	reworkspace(t, m, reopened, func(p *core.WorkspaceParts) { p.Storage = storageC })
 	twin, err = session.ReconcileAndRestore(worktreeRecord(title, twinWorktree, session.Loading), t.TempDir(), reopenExec)
 	require.NoError(t, err)
 	require.True(t, twin.Paused(), "fixture: a reconciled Loading record comes back Paused")
-	reopened.list.AddInstance(twin)
+	reopened.ws.Add(twin)
 	m.slots = append(m.slots, reopened)
+	wireCore(t, m)
 	recA.calls = 0
 	return m, owner, twin, recA, recC
 }
@@ -217,7 +219,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 	t.Run("success takes the twin's place", func(t *testing.T) {
 		m, owner, twin, recA, recC := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
-		owner.list.AddInstance(started)
+		owner.ws.Add(started)
 
 		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
 		drainCmd(cmd)
@@ -234,7 +236,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m, owner, twin, _, _ := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
 		srv := newFakeTmuxServer()
 		started := startedWorktreeInstance(t, "late", wtPath, srv)
-		owner.list.AddInstance(started)
+		owner.ws.Add(started)
 
 		_, cmd := m.Update(instanceStartedMsg{instance: started, err: errors.New("boom"), slot: owner})
 		drainCmd(cmd)
@@ -248,7 +250,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m, owner, namesake, _, recC := reopenedHome(t, "late", filepath.Join(t.TempDir(), "other-wt"), deadCmdExecForTest())
 		m.errBox.SetSize(400, 1)
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
-		owner.list.AddInstance(started)
+		owner.ws.Add(started)
 
 		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
 		drainCmd(cmd)
@@ -269,7 +271,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		started := startedWorktreeInstance(t, "late", wtPath, srv)
 		m, owner, twin, _, recC := reopenedHome(t, "late", wtPath, srv.exec())
 		require.True(t, srv.killed("late"), "fixture: reconcile killed the live session")
-		owner.list.AddInstance(started)
+		owner.ws.Add(started)
 
 		_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
 		drainCmd(cmd)
@@ -348,7 +350,7 @@ func TestIssueExpanded_ForDeletedInstanceIsDropped(t *testing.T) {
 }
 
 // TestKillAction_UsesTheDispatchSlotsStorage: killAction runs for seconds
-// in a Cmd. It read m.storage there, so after a tab switch it deleted the
+// in a Cmd. It read m.storage() there, so after a tab switch it deleted the
 // record from whichever workspace was focused by then.
 func TestKillAction_UsesTheDispatchSlotsStorage(t *testing.T) {
 	isolateTmux(t)
@@ -362,7 +364,7 @@ func TestKillAction_UsesTheDispatchSlotsStorage(t *testing.T) {
 		Worktree: session.GitWorktreeData{RepoPath: repo, WorktreePath: t.TempDir(), BranchName: "loom/a1", SessionName: "a1"},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.list.AddInstance(a1)
+	m.ws.Add(a1)
 	seed, err := json.Marshal([]session.InstanceData{a1.ToInstanceData()})
 	require.NoError(t, err)
 	recA.lastData = seed
@@ -443,7 +445,7 @@ func TestDropPendingNew_NeverKillsAStartedInstance(t *testing.T) {
 	isolateTmux(t)
 	m, _, _ := ownerTestHome(t)
 	live := liveInstance(t, "live")
-	m.list.AddInstance(live)
+	m.ws.Add(live)
 	m.pendingNew = live
 
 	assert.Nil(t, m.dropPendingNew())

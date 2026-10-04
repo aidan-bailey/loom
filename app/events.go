@@ -29,34 +29,6 @@ type ptyDeadMsg struct{ session string }
 // bellMsg: a session's pane rang BEL.
 type bellMsg struct{ session string }
 
-// instanceForSession resolves a tmux session name (as carried by pane
-// events) to the owning instance across every workspace slot, or nil for
-// terminal-pane sessions and unknown names.
-func (m *home) instanceForSession(name string) *session.Instance {
-	if name == "" {
-		return nil
-	}
-	check := func(l *ui.List) *session.Instance {
-		for _, inst := range l.GetInstances() {
-			if inst.Pane().TmuxSessionName() == name {
-				return inst
-			}
-		}
-		return nil
-	}
-	// Runs on every pane event: check classic mode's one list directly
-	// rather than through openSlots, which allocates there.
-	if len(m.slots) == 0 {
-		return check(m.list)
-	}
-	for _, slot := range m.slots {
-		if inst := check(slot.list); inst != nil {
-			return inst
-		}
-	}
-	return nil
-}
-
 // statusDetectedMsg carries one instance's settled-content detection result
 // back to the Update goroutine (the detection itself runs in a tea.Cmd:
 // in-process on the emulator path, but answering a trust prompt runs
@@ -297,7 +269,7 @@ func (m *home) applyClaudeStatus(inst *session.Instance) {
 // nil) loses a roster-sourced status but keeps a hook-sourced one.
 func (m *home) observeRoster(at time.Time) {
 	changed := false
-	for _, inst := range m.activeInstances() {
+	for _, inst := range m.core.ActiveInstances() {
 		if !session.IsClaudeProgram(inst.Program()) {
 			continue
 		}
@@ -328,7 +300,7 @@ func (m *home) maybeRosterQuerySoon() tea.Cmd {
 		return nil
 	}
 	g.expedite()
-	return m.maybeRosterQuery(m.activeInstances())
+	return m.maybeRosterQuery(m.core.ActiveInstances())
 }
 
 // ratioSaveMsg flushes the throttled split-ratio persistence: resizeSplit
