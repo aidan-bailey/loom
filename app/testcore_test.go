@@ -1,6 +1,7 @@
 package app
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/aidan-bailey/loom/core"
@@ -115,10 +116,21 @@ func deliver(t *testing.T, m *home, result any) tea.Cmd {
 	return cmd
 }
 
-// pumpCore runs cmd as the runtime would, handing every core result among
-// its messages back through Update and running what that produces in
-// turn, until no Cmd is left: a core job that follows another (a start's
-// initial-prompt send) lands too.
+// sequenceMsgType is the type of the message a tea.Sequence of two or
+// more Cmds produces. bubbletea keeps it unexported, so it is taken from a
+// throwaway Sequence (one Cmd alone would come back as itself).
+var sequenceMsgType = reflect.TypeOf(tea.Sequence(
+	func() tea.Msg { return nil },
+	func() tea.Msg { return nil },
+)())
+
+// pumpCore models only the core-result feedback loop of the runtime: it
+// runs cmd, then every Cmd it produces, serially in FIFO order, expanding
+// tea.Batch and handing each coreResultMsg back through Update, whose Cmd
+// joins the queue, so a core job that follows another (a start's
+// initial-prompt send) lands too. Every other message is dropped, and a
+// tea.Sequence is not expanded: meeting one fails the test, since the
+// order it promises is not modelled.
 func pumpCore(t *testing.T, m *home, cmd tea.Cmd) {
 	t.Helper()
 	queue := []tea.Cmd{cmd}
@@ -129,7 +141,11 @@ func pumpCore(t *testing.T, m *home, cmd tea.Cmd) {
 		if c == nil {
 			continue
 		}
-		switch msg := c().(type) {
+		msg := c()
+		if reflect.TypeOf(msg) == sequenceMsgType {
+			t.Fatalf("pumpCore met a tea.Sequence, whose ordering it does not model")
+		}
+		switch msg := msg.(type) {
 		case tea.BatchMsg:
 			queue = append(queue, msg...)
 		case coreResultMsg:

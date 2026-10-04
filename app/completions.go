@@ -40,10 +40,15 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 			s.list.SelectInstance(inst)
 		}
 		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", inst.Title, owner.Label()))
-	case m.state != stateDefault || !m.ws.Holds(inst):
+	case m.state != stateDefault || !m.ws.Holds(inst) || inst.GetStatus() == session.Deleting:
 		// Another flow owns the screen and acts on the selection; leave
 		// both alone. (The second test is a belt: the owner is stamped by
-		// identity, so a focused owner holds inst.)
+		// identity, so a focused owner holds inst.) Nor is a Deleting
+		// instance attached: a kill confirmed while Started was deferred
+		// for the initial prompt's send (the instance is already Running
+		// then, so kill is allowed) leaves the row Deleting, and inline
+		// attach, which looks the selection up per key, would have the user
+		// typing into the neighbouring session once the kill removes it.
 		m.errBox.SetInfo(fmt.Sprintf("%s started", inst.Title))
 	default:
 		m.list.SelectInstance(inst)

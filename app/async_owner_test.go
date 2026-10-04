@@ -129,6 +129,27 @@ func TestInstanceStarted_InlineAttachWaitsForThePrompt(t *testing.T) {
 	assert.Same(t, starting, m.list.GetSelectedInstance())
 }
 
+// TestInstanceStarted_KilledWhileThePromptIsSentIsNotAttached: Started
+// waits for the initial prompt's send, and the instance is Running then,
+// so the user can confirm a kill meanwhile. Inline attach on its Deleting
+// row would leave them typing into the neighbouring session once the kill
+// removes it (inline attach looks the selection up per key).
+func TestInstanceStarted_KilledWhileThePromptIsSentIsNotAttached(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	m.errBox.SetSize(400, 1)
+	starting := startingInstance(t, m.workspaceSlot, "new-one")
+	starting.SetPrompt("do the thing")
+	require.NoError(t, starting.TransitionTo(session.Running))
+
+	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	require.NoError(t, starting.TransitionTo(session.Deleting)) // a kill confirmed meanwhile
+	pumpCore(t, m, cmd)
+
+	assert.Equal(t, stateDefault, m.state, "no inline attach on a session being killed")
+	assert.NotEqual(t, ui.StateInlineAttach, m.menu.State(), "nor the menu")
+	assert.Contains(t, m.errBox.String(), "new-one started")
+}
+
 // TestInstanceStarted_AfterOwnerDropped: the owner tab was closed while
 // the start ran. Nothing displays the instance, so its completion attaches
 // nothing, and the owner's storage is still saved so the record isn't
