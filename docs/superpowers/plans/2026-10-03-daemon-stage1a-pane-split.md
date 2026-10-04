@@ -3085,3 +3085,50 @@ Finish with `go run ./tools/loomdev down`.
 - [ ] **Step 4: Report**
 
 Report to the user the test totals, the e2e result, the outcome of the eight smoke checks, and any deviation from this plan with its reason.
+
+---
+
+## Outcome and follow-ups (recorded 2026-10-04)
+
+Stage 1A is done. The code commits run from 702b48b to 2ccdf72, and docs end at 0308ee2.
+
+Each package had a spec review and a quality review. Every fix round went back to the reviewer who filed its findings. A final cross-cutting review and a sandbox smoke run followed.
+
+Final state:
+- `go test ./...`, `-race ./...` and the e2e suite (4/4) all pass.
+- The sandbox checks pass: one client per session, inline attach, prompts, pause/resume, kill, plus the heal and idle-persistence repros.
+
+What the reviews changed beyond the plan:
+- **Decision 2 was falsified.** `send-keys -l` refuses text over about 16 KiB and parses a trailing `;`. Text now goes through `load-buffer` + `paste-buffer`.
+- **Kill and pause no longer close the client from the Cmd.** That was a data race with `Ensure` and the prune.
+- **A Lua `inst:resume()` attaches its client.**
+- **Dead clients now count as dead.** A client whose pump hits an EOF nobody requested reads as dead (`TmuxSession.Attached`, one flag per pump), and the Dead event, the tick and loads heal it. Re-attaching a client that exits right after attaching is held off for 1s.
+- **Every loom session sets `detach-on-destroy on`.**
+- **A status scan with no client gives no opinion.** A paused instance refuses `SendPrompt`.
+- **A bug that predates the stage, fixed in it:** `persistableInstances` dropped idle (Ready) agents on every save.
+
+Follow-ups, none blocking:
+1. **Pollable attach PTY (planned as its own stage).** Wrap the ptmx fd as non-blocking and set the window size through `SyscallConn` instead of `pty.Setsize`. This fixes:
+   - the 2s wait when releasing a live session's client;
+   - a released client lingering until its session next writes (two clients on one session, fighting over window size);
+   - full-screen attach's 2s stall on Update;
+   - the stale chunk the leaked pump writes after a timed-out close (the doubled "hellohello");
+   - the unlocked `pumpDone`.
+
+   Pin it with a real-tmux test: `PausePreview` under 200ms.
+2. **Quick-exit clients.** Grow the hold-off per consecutive quick exit, capped at about 60s, and show a one-time notice in the error bar that mentions TERM. Also demote `detach_on_destroy_failed` and the repeated `pane.client_dead_repairing` warnings.
+3. **The 1s hold-off can delay a healthy same-name relaunch** that happens within 1s of its client's attach, by up to one tick. Fix by confirming the session's identity, e.g. its creation time. The heal fixtures inject clients without an attach record, so they can't see this.
+4. **`Ensure` keeps a healed client's adapter** when the relaunched session runs a different program. Rebuild the client in that case.
+5. **Terminal-pane (`loom_term_*`) clients still judge liveness by `PtmxAlive`.**
+6. **For 1B/1C:**
+   - `SendPrompt` runs three tmux subprocesses plus a 100ms sleep on Update; move it into a Cmd.
+   - The initial N-flow prompt is sent from `app/completions.go`, so it must move into core.
+   - `Session.Start` runs `new-session -d` through a PTY it doesn't need.
+7. **Before stage 3:**
+   - Session names carry no workspace, so title reuse across workspaces lets a reconciled record adopt another workspace's session.
+   - Titles ending in `;` can't start, because tmux parses the `;`.
+   - On the snapshot path, two instances sharing a session name share one status monitor.
+8. **Unverified here:**
+   - a multi-line `N` prompt and an issue-born prompt over 16 KiB against real Claude;
+   - the parity test on tmux 3.6a (CI's version);
+   - full-screen attach (`alt+a`) in the sandbox, which the headless driver can't run nested.
