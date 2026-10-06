@@ -75,7 +75,7 @@ func TestFullScreenAttachCmd_TargetsExactly(t *testing.T) {
 	sibling := ToLoomTmuxName("api-v2")
 	newRawSession(t, sibling, "exec sleep 300")
 
-	cmd := NewTmuxSession("api", "sh").FullScreenAttachCmd()
+	cmd := NewTmuxSession("api", "sh").FullScreenAttachCmd(context.Background())
 	out, err := cmd.CombinedOutput()
 	assert.Error(t, err, "attaching to the dead session must fail, not attach to %s", sibling)
 	assert.Contains(t, string(out), "can't find session")

@@ -8,6 +8,7 @@ import (
 	"github.com/aidan-bailey/loom/account"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/internal/takeover"
 	"github.com/aidan-bailey/loom/keys"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/script"
@@ -221,6 +222,12 @@ type home struct {
 	// read false during that window, and racing a Restore against the
 	// in-flight ExecProcess would fight over the same tmux session's attach.
 	attachingInstance *session.Instance
+	// fullScreen is the full-screen attach's cancel, which a takeover
+	// request ends from the lock listener's goroutine (see takeover.go).
+	fullScreen *foregroundAttach
+	// takenOverBy is the loom that took over, set when a takeover quits
+	// this one; Run names it once the TUI is gone.
+	takenOverBy *takeover.Holder
 
 	// -- UI Components --
 
@@ -1487,28 +1494,32 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// whose preview PTY must let go of it for the duration.
 		var attach *exec.Cmd
 		var preview *tmux.TmuxSession
+		attachCtx, endAttach := context.WithCancel(context.Background())
 		switch msg.target {
 		case attachTargetAgent:
 			if s := msg.instance.TmuxSession(); s != nil {
-				attach = s.FullScreenAttachCmd()
+				attach = s.FullScreenAttachCmd(attachCtx)
 				preview = m.panes.For(msg.instance).Client()
 			}
 		case attachTargetTerminal:
 			if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
-				attach, preview = ts.FullScreenAttachCmd(), ts
+				attach, preview = ts.FullScreenAttachCmd(attachCtx), ts
 			}
 		}
 		if attach == nil {
+			endAttach()
 			return m, m.handleError(fmt.Errorf("no tmux session available for attach"))
 		}
 		// Close the preview PTY so the foreground tmux attach owns the tty.
 		if preview != nil {
 			if err := preview.PausePreview(); err != nil {
+				endAttach()
 				return m, m.handleError(err)
 			}
 		}
 		inst := msg.instance
 		m.attachingInstance = inst
+		m.fullScreen.set(endAttach)
 		return m, tea.ExecProcess(attach, func(err error) tea.Msg {
 			return attachDoneMsg{instance: inst, err: err}
 		})
@@ -1522,11 +1533,14 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, tea.RequestWindowSize, m.instanceChanged())
 		return m, tea.Batch(cmds...)
+	case takeoverMsg:
+		return m.handleTakeover(msg)
 	case attachDoneMsg:
 		// tea.ExecProcess has restored the terminal. Re-attach the agent's
 		// client so live capture resumes. A failure is logged inside
 		// ensurePane, and the metadata tick's repair retries it once
 		// attachingInstance is cleared below.
+		m.fullScreen.set(nil)
 		if msg.instance != nil {
 			m.ensurePane(msg.instance)
 		}
@@ -1783,6 +1797,16 @@ func (m *home) showRecoverySummary(s recoverySummary) {
 // policy; the multi-slot branch used to log-and-quit, which is the
 // bug this function comment now documents has been fixed.
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
+	if err := m.saveForQuit(); err != nil {
+		return m, m.handleError(err)
+	}
+	return m, tea.Quit
+}
+
+// saveForQuit persists everything handleQuit saves, returning the first
+// failure that must keep loom running (see handleQuit's policy). The
+// takeover quit shares it.
+func (m *home) saveForQuit() error {
 	// Persist any not-yet-flushed split resize before exit (the throttle
 	// tick may still be in flight; covers the classic path too, which
 	// runs no leaveFocusedSlot). The workbench ratio flushes the same
@@ -1805,13 +1829,13 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 			}
 		}
 		if firstErr != nil {
-			return m, m.handleError(firstErr)
+			return firstErr
 		}
 		m.saveOpenWorkspaces()
 	} else {
 		if err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances())); err != nil {
 			if !quitSkipsSave(err) {
-				return m, m.handleError(err)
+				return err
 			}
 			log.For("app").Warn("quit.save_skipped", "reason", "storage_load_failed", "err", err)
 		}
@@ -1821,7 +1845,7 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 			m.saveOpenWorkspaces()
 		}
 	}
-	return m, tea.Quit
+	return nil
 }
 
 // quitSkipsSave reports whether a save error on quit is the storage's write
