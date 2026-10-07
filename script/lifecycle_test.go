@@ -77,6 +77,7 @@ func TestLifecycleMethods_YieldUntilTheHostResumes(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), op+": boom")
 			assert.Contains(t, err.Error(), lifecycleLine[op], "raised at the script's line, not the wrapper's")
+			assert.True(t, strings.HasPrefix(err.Error(), "lc.lua: "), "named after its file, as a dispatch's error is: %q", err)
 			assert.Len(t, h.notices, 1, "the raise ends the handler")
 			assert.Empty(t, e.coroutines, "and its coroutine")
 			assert.Empty(t, e.waitingIn, "a resume clears the record of the method it waited in")
@@ -437,6 +438,57 @@ end)`))
 			err = e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{Instance: &core.InstanceView{ID: 1, Title: "made"}})
 			assert.ErrorIs(t, err, errEngineClosed)
 			assert.Len(t, h.notices, notices, "and only once")
+		})
+	}
+}
+
+// TestYieldingMethods_ATailCallRaisesWithoutAPosition: a tail call to a
+// yielding method (return inst:kill()) replaces the script's frame with
+// the wrapper's, so no frame names the script's line. Its error, found
+// before the yield or resumed with, carries no position rather than the
+// wrapper chunk's own line; the file still names the script.
+func TestYieldingMethods_ATailCallRaisesWithoutAPosition(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+	}{
+		{"from the handler", `cs.bind("Z", function(ctx) return ctx:selected():send_prompt({}) end)`},
+		{"from a function it calls", `local function send(inst) return inst:send_prompt({}) end
+cs.bind("Z", function(ctx) send(ctx:selected()) end)`},
+	} {
+		t.Run(tc.name+": a bad argument", func(t *testing.T) {
+			e := NewEngine(nil)
+			defer e.Close()
+			require.NoError(t, e.LoadFromString("tail.lua", tc.src))
+			h := &fakeHost{selected: &core.InstanceView{ID: 3, Title: "x"}}
+
+			_, err := e.Dispatch(context.Background(), "Z", h)
+
+			require.Error(t, err)
+			assert.Equal(t, "tail.lua: bad argument #2 to send_prompt (string expected, got table)", err.Error())
+			assert.Empty(t, h.enqueued)
+		})
+	}
+
+	for _, tc := range []struct {
+		name, src string
+	}{
+		{"from the handler", `cs.bind("Z", function(ctx) return ctx:selected():kill() end)`},
+		{"from a function it calls", `local function kill(inst) return inst:kill() end
+cs.bind("Z", function(ctx) kill(ctx:selected()) end)`},
+	} {
+		t.Run(tc.name+": the host's error", func(t *testing.T) {
+			e := NewEngine(nil)
+			defer e.Close()
+			require.NoError(t, e.LoadFromString("tail.lua", tc.src))
+			h := &fakeHost{selected: &core.InstanceView{ID: 3, Title: "x"}}
+			_, err := e.Dispatch(context.Background(), "Z", h)
+			require.NoError(t, err)
+			require.Len(t, h.enqueuedIDs, 1)
+
+			err = e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{Err: "kill: boom"})
+
+			require.Error(t, err)
+			assert.Equal(t, "tail.lua: kill: boom", err.Error())
 		})
 	}
 }

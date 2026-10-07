@@ -516,7 +516,7 @@ func (e *Engine) resumeLocked(id IntentID, value lua.LValue) (lua.LValue, error)
 		e.coroutines[IntentID(next)] = slot
 		return lua.LNil, nil
 	default:
-		return lua.LNil, rerr
+		return lua.LNil, fmt.Errorf("%s: %w", slot.file, rerr)
 	}
 }
 

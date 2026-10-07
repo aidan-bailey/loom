@@ -114,23 +114,43 @@ const maxYieldDepth = 256
 // raiseReturnedErrorsLua wraps the methods that yield to the TUI. Each
 // returns an error message rather than raising it, whether it found the
 // error before yielding or was resumed with it; the wrapper raises it at
-// the line that called the method, so the methods keep "void (or a
-// value), raise on error". It keeps its own type, error and ipairs, which
-// a script may reassign.
+// the line that called the method (raiseAtCaller), so the methods keep
+// "void (or a value), raise on error". It keeps its own type and ipairs,
+// which a script may reassign.
 const raiseReturnedErrorsLua = `
 -- loom: these calls yield to the TUI, which resumes them with nil (done) or
 -- an error message, raised here so the methods keep raising on error.
-local type, error, ipairs = type, error, ipairs
-local methods, names = ...
+local type, ipairs = type, ipairs
+local methods, names, raise = ...
 for _, name in ipairs(names) do
   local yielding = methods[name]
   methods[name] = function(...)
     local r = yielding(...)
-    if type(r) == "string" then error(r, 3) end
+    if type(r) == "string" then raise(r) end
     return r
   end
 end
 `
+
+// raiseAtCaller is the wrapper's raise (raiseReturnedErrorsLua): it raises
+// its message at the line that called the yielding method, two frames
+// up, past the wrapper. A tail call to the method (return inst:kill())
+// replaced that frame with the wrapper's, so no frame left names the
+// script's line, and a position would name the wrapper's own: the error
+// then carries none.
+func raiseAtCaller(L *lua.LState) int {
+	msg := L.CheckString(1)
+	if wrapper, ok := L.GetStack(1); ok {
+		// The wrapper's frame: "tail" when tail-called, or "main" when the
+		// tail call replaced the handler, the coroutine's base frame.
+		if _, err := L.GetInfo("S", wrapper, lua.LNil); err == nil && (wrapper.What == "tail" || wrapper.What == "main") {
+			L.Error(lua.LString(msg), 0)
+			return 0
+		}
+	}
+	L.Error(lua.LString(msg), 3)
+	return 0
+}
 
 // raiseReturnedErrors installs raiseReturnedErrorsLua over the named
 // methods of methods, once, when their type is registered. The chunk is a
@@ -144,7 +164,7 @@ func raiseReturnedErrors(L *lua.LState, methods *lua.LTable, names []string) {
 	for _, name := range names {
 		list.Append(lua.LString(name))
 	}
-	if err := L.CallByParam(lua.P{Fn: fn, NRet: 0, Protect: true}, methods, list); err != nil {
+	if err := L.CallByParam(lua.P{Fn: fn, NRet: 0, Protect: true}, methods, list, L.NewFunction(raiseAtCaller)); err != nil {
 		panic(fmt.Sprintf("script: installing the yielding-method wrapper: %v", err))
 	}
 }

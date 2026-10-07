@@ -277,6 +277,7 @@ func TestScriptResume_RefusedRaises(t *testing.T) {
 	require.Error(t, err, "a workspace terminal cannot be resumed")
 	assert.Contains(t, err.Error(), "resume: resume term: not allowed on a workspace terminal")
 	assert.Contains(t, err.Error(), ":2:", "raised at the script's line")
+	assert.Contains(t, err.Error(), "lua.lua: ", "in the script's file")
 	assert.Empty(t, done[1].notices, "nothing after the call ran")
 	assert.Empty(t, m.pending)
 	assert.Contains(t, m.errBox.String(), "resume term", "the script's error is shown")
