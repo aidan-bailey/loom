@@ -128,6 +128,9 @@ func ctxNewInstance(L *lua.LState) int {
 	if bad == "" && c.engine.curHost == nil {
 		bad = "new_instance: no host context"
 	}
+	if bad == "" && !c.engine.yieldable(L) {
+		bad = "new_instance: " + errNotYieldable
+	}
 	if bad != "" {
 		L.Push(lua.LString(bad))
 		return 1

@@ -277,7 +277,8 @@ func TestEnterGlobalMode_SlotSaveFailureAbortsCleanly(t *testing.T) {
 }
 
 // scriptSlotTestScript creates an instance, and in Y also switches to the
-// next workspace from inside the same handler.
+// next workspace from inside the same handler, after the instance exists;
+// W switches before creating it, so its result carries both.
 const scriptSlotTestScript = `
 cs.bind("X", function(ctx)
   ctx:new_instance{title = "made"}
@@ -285,6 +286,10 @@ end)
 cs.bind("Y", function(ctx)
   ctx:new_instance{title = "made"}
   cs.actions.workspace_next()
+end)
+cs.bind("W", function(ctx)
+  cs.actions.workspace_next()
+  ctx:new_instance{title = "made"}
 end)
 `
 
@@ -347,6 +352,15 @@ func TestScriptDone_DropsInstanceWhenFocusChangedMidDispatch(t *testing.T) {
 		runScript(t, m, "Y", nil)
 		assert.Equal(t, "bpeer", focusedName(m), "the script's own workspace_next applies")
 		assert.NotNil(t, m.slots[0].list.GetInstanceByTitle("made"), "adopted by the slot it was built for")
+		assert.Nil(t, m.slots[1].list.GetInstanceByTitle("made"))
+	})
+
+	t.Run("script switches before creating: instance stays in its own workspace", func(t *testing.T) {
+		m := newScriptSlotHome(t)
+		runScript(t, m, "W", nil)
+		assert.Equal(t, "bpeer", focusedName(m), "the script's own workspace_next applies")
+		assert.NotNil(t, m.slots[0].list.GetInstanceByTitle("made"),
+			"created in the slot it was built for: the switch is the script's own, decided on before it applies")
 		assert.Nil(t, m.slots[1].list.GetInstanceByTitle("made"))
 	})
 

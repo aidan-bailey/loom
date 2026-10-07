@@ -36,6 +36,12 @@ type Engine struct {
 	// means "being compiled"; logScript prefers curFile.
 	curActionFile string
 
+	// curCo is the handler coroutine running now, set for the length of
+	// each L.Resume of one (runAction, resumeLocked). A yielding method
+	// checks it (yieldable): a yield from any other thread, a coroutine a
+	// script made, would park the wrong one.
+	curCo *lua.LState
+
 	// inFlight names the handler holding e.mu, recorded when Dispatch or
 	// ResumeWithHost (or a shutdown drain) starts running one and
 	// cleared when it returns. Atomic because Shutdown reads it without
@@ -130,6 +136,14 @@ func (e *Engine) enterActionFile(file string) (restore func()) {
 	prev := e.curActionFile
 	e.curActionFile = file
 	return func() { e.curActionFile = prev }
+}
+
+// enterCoroutine sets curCo for a resume of co and returns the func that
+// restores the previous value. Caller holds e.mu.
+func (e *Engine) enterCoroutine(co *lua.LState) (restore func()) {
+	prev := e.curCo
+	e.curCo = co
+	return func() { e.curCo = prev }
 }
 
 // LogEntry is a single script-emitted log record.
@@ -462,7 +476,9 @@ func (e *Engine) resumeLocked(id IntentID, value lua.LValue) (lua.LValue, error)
 	e.lastEnqueued = 0
 
 	defer e.enterActionFile(slot.file)()
+	restoreCo := e.enterCoroutine(slot.co)
 	st, rerr, vals := e.L.Resume(slot.co, nil, value)
+	restoreCo()
 	switch st {
 	case lua.ResumeOK:
 		if len(vals) > 0 {
@@ -527,7 +543,9 @@ func (e *Engine) runAction(act *scriptAction, h Host) (err error) {
 	co, cancel := e.L.NewThread()
 	slot := coroutineSlot{co: co, cancel: cancel, ctx: ctxSt, key: act.key, file: act.file}
 	e.lastEnqueued = 0
+	restoreCo := e.enterCoroutine(co)
 	st, rerr, vals := e.L.Resume(co, act.run, ctx)
+	restoreCo()
 	switch st {
 	case lua.ResumeOK:
 		return nil

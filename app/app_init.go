@@ -64,7 +64,7 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 	// QuitIntent path where tea.Batch does not sequence scriptResumeMsg
 	// before tea.QuitMsg, so the awaiting coroutine can be stranded.
 	// Bounded: a handler still running (a Lua loop, or slow Go work such
-	// as inst:pause()) must not leave the terminal hanging after the TUI
+	// as worktree:push()) must not leave the terminal hanging after the TUI
 	// has torn down.
 	defer func() {
 		if h.scripts != nil {

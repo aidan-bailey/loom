@@ -66,6 +66,9 @@ func lifecycleOp(e *Engine, op string) lua.LGFunction {
 		if bad == "" && e.curHost == nil {
 			bad = op + ": no host context"
 		}
+		if bad == "" && !e.yieldable(L) {
+			bad = op + ": " + errNotYieldable
+		}
 		if bad != "" {
 			L.Push(lua.LString(bad))
 			return 1
@@ -73,6 +76,40 @@ func lifecycleOp(e *Engine, op string) lua.LGFunction {
 		return e.enqueueAndYield(L, InstanceOpIntent{ID: v.ID, Title: v.Title, Op: op, Text: text})
 	}
 }
+
+// errNotYieldable is why a yielding method refuses to run where it can't
+// yield: gopher-lua can't yield across a Go call (pcall, xpcall, a
+// table.sort comparator, a gsub callback), from a precondition, which
+// runs outside the handler's coroutine, or from a coroutine the script
+// made. Such a yield returns through the Go call as if the method had
+// returned: the operation would run while the script went on unaware, and
+// its Reply would find no coroutine to resume. So the method refuses
+// before it enqueues anything.
+const errNotYieldable = "cannot wait for loom inside pcall, a callback, a precondition or a coroutine of the script's own; call it from the handler itself"
+
+// yieldable reports whether the Go function running on L can yield its
+// handler's coroutine: L is the handler coroutine the engine is running
+// (curCo), and no Go function sits between this one and the coroutine's
+// entry (level 0 is this function itself).
+func (e *Engine) yieldable(L *lua.LState) bool {
+	if L != e.curCo {
+		return false
+	}
+	for level := 1; level < maxYieldDepth; level++ {
+		dbg, ok := L.GetStack(level)
+		if !ok {
+			return true
+		}
+		if _, err := L.GetInfo("S", dbg, lua.LNil); err != nil || dbg.What == "G" {
+			return false
+		}
+	}
+	return false
+}
+
+// maxYieldDepth bounds yieldable's walk: a stack deeper than this is
+// treated as not yieldable rather than walked to its end.
+const maxYieldDepth = 256
 
 // raiseReturnedErrorsLua wraps the methods that yield to the TUI. Each
 // returns an error message rather than raising it, whether it found the

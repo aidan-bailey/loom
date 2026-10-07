@@ -21,8 +21,8 @@ import (
 //     and relaunched under the same name (a workspace terminal) leaves its
 //     client still reading Attached through the load, since that event
 //     waits on the load's own Update, and the Dead event heals it next;
-//   - a start, resume or recover landing in a loaded slot, a script's
-//     inst:resume() (handleScriptDone), and a workspace terminal's
+//   - a start, resume or recover landing in a loaded slot (a script's
+//     inst:resume() is one), and a workspace terminal's
 //     auto-restart: the session was (re)launched or reattached, so any
 //     client from before was watching the session it replaced
 //     (replacePane);

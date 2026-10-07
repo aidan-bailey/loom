@@ -3,6 +3,7 @@ package script
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
@@ -245,4 +246,107 @@ end)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"u/a|/wt/a|/real/repo", "none"}, h.notices)
+}
+
+// TestYieldingMethods_RefuseWhereTheyCannotYield: gopher-lua can't yield
+// across a Go call. A lifecycle call inside pcall used to yield anyway:
+// pcall returned true at once, the kill still ran, the handler went on
+// unaware, and the Reply's resume found no coroutine. Inside pcall, a
+// callback, a precondition or a coroutine of the script's own, the
+// yielding methods now refuse before they enqueue anything, so pcall
+// returns false with the reason and nothing runs. A tail call from the
+// handler still yields.
+func TestYieldingMethods_RefuseWhereTheyCannotYield(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+	}{
+		{"pcall", `cs.bind("Z", function(ctx)
+  local ok, err = pcall(function() ctx:selected():kill() end)
+  ctx:notify(tostring(ok) .. " " .. tostring(err))
+end)`},
+		{"pcall of new_instance", `cs.bind("Z", function(ctx)
+  local ok, err = pcall(ctx.new_instance, ctx, {title = "made"})
+  ctx:notify(tostring(ok) .. " " .. tostring(err))
+end)`},
+		{"a callback", `cs.bind("Z", function(ctx)
+  local ok, err = pcall(table.sort, {1, 2}, function(a, b) ctx:selected():pause(); return a < b end)
+  ctx:notify(tostring(ok) .. " " .. tostring(err))
+end)`},
+		{"a coroutine of its own", `cs.bind("Z", function(ctx)
+  local ok, err = coroutine.resume(coroutine.create(function() ctx:selected():resume() end))
+  ctx:notify(tostring(ok) .. " " .. tostring(err))
+end)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewEngine(nil)
+			defer e.Close()
+			require.NoError(t, e.LoadFromString("p.lua", tc.src))
+			h := &fakeHost{selected: &core.InstanceView{ID: 3, Title: "x"}}
+
+			_, err := e.Dispatch(context.Background(), "Z", h)
+
+			require.NoError(t, err, "the handler caught the refusal")
+			assert.Empty(t, h.enqueued, "nothing was enqueued, so nothing runs")
+			require.Len(t, h.notices, 1)
+			assert.Contains(t, h.notices[0], "false ")
+			assert.Contains(t, h.notices[0], errNotYieldable)
+			assert.Empty(t, e.coroutines, "the handler ran to its end")
+		})
+	}
+
+	t.Run("a precondition", func(t *testing.T) {
+		e := NewEngine(nil)
+		defer e.Close()
+		require.NoError(t, e.LoadFromString("pre.lua", `cs.register_action{
+  key = "Z",
+  precondition = function(ctx) ctx:selected():kill() return true end,
+  run = function(ctx) end,
+}`))
+		h := &fakeHost{selected: &core.InstanceView{ID: 3, Title: "x"}}
+
+		_, err := e.Dispatch(context.Background(), "Z", h)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "kill: "+errNotYieldable)
+		assert.Empty(t, h.enqueued)
+	})
+
+	t.Run("a tail call still yields", func(t *testing.T) {
+		e := NewEngine(nil)
+		defer e.Close()
+		require.NoError(t, e.LoadFromString("tail.lua", `cs.bind("Z", function(ctx) return ctx:selected():kill() end)`))
+		h := &fakeHost{selected: &core.InstanceView{ID: 3, Title: "x"}}
+
+		_, err := e.Dispatch(context.Background(), "Z", h)
+
+		require.NoError(t, err)
+		assert.Equal(t, []Intent{InstanceOpIntent{ID: 3, Title: "x", Op: "kill"}}, h.enqueued)
+		require.Len(t, e.coroutines, 1, "parked until the host resumes it")
+		require.NoError(t, e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{}))
+		assert.Empty(t, e.coroutines)
+	})
+}
+
+// TestShutdown_ACallInFlightResumesOnceAndALateReplyIsHarmless: Shutdown
+// resumes a coroutine parked on a yielding call once, with nothing, so its
+// post-yield work runs; a resume that arrives after (the call's Reply, had
+// the TUI still been running) finds the engine closed and is refused,
+// even carrying an instance, which needs the Lua state to build.
+func TestShutdown_ACallInFlightResumesOnceAndALateReplyIsHarmless(t *testing.T) {
+	e := NewEngine(nil)
+	require.NoError(t, e.LoadFromString("sd.lua", `cs.bind("Z", function(ctx)
+  local inst = ctx:new_instance{title = "made"}
+  ctx:notify("resumed with " .. tostring(inst))
+end)`))
+	h := &fakeHost{}
+	_, err := e.Dispatch(context.Background(), "Z", h)
+	require.NoError(t, err)
+	require.Len(t, h.enqueuedIDs, 1)
+
+	e.Shutdown(time.Second)
+
+	assert.Equal(t, []string{"resumed with nil"}, h.notices, "shutdown resumed the call once")
+	err = e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{Instance: &core.InstanceView{ID: 1, Title: "made"}})
+	assert.ErrorIs(t, err, errEngineClosed)
+	assert.Len(t, h.notices, 1, "and only once")
 }

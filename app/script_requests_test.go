@@ -313,7 +313,7 @@ func TestScriptReplied_ANoticeAloneResumesWithNothing(t *testing.T) {
 // the model's notice when its result lands, as the D key's does; its Reply
 // then raises "kill: <err>" in the script, whose error the TUI shows in
 // turn (the error bar holds one message, so the second replaces the
-// first). A script that catches the raise still leaves the model's notice.
+// first, naming the script's file and line).
 func TestScriptKill_AJobFailureIsShownAndRaised(t *testing.T) {
 	m := homeWithAppState(t)
 	m.ctx = cancelledCtx()
