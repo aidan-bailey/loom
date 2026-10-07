@@ -1,11 +1,15 @@
 package script
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -75,6 +79,7 @@ func TestLifecycleMethods_YieldUntilTheHostResumes(t *testing.T) {
 			assert.Contains(t, err.Error(), lifecycleLine[op], "raised at the script's line, not the wrapper's")
 			assert.Len(t, h.notices, 1, "the raise ends the handler")
 			assert.Empty(t, e.coroutines, "and its coroutine")
+			assert.Empty(t, e.waitingIn, "a resume clears the record of the method it waited in")
 		})
 	}
 }
@@ -383,26 +388,55 @@ end)`))
 	})
 }
 
-// TestShutdown_ACallInFlightResumesOnceAndALateReplyIsHarmless: Shutdown
-// resumes a coroutine parked on a yielding call once, with nothing, so its
-// post-yield work runs; a resume that arrives after (the call's Reply, had
-// the TUI still been running) finds the engine closed and is refused,
-// even carrying an instance, which needs the Lua state to build.
-func TestShutdown_ACallInFlightResumesOnceAndALateReplyIsHarmless(t *testing.T) {
-	e := NewEngine(nil)
-	require.NoError(t, e.LoadFromString("sd.lua", `cs.bind("Z", function(ctx)
-  local inst = ctx:new_instance{title = "made"}
-  ctx:notify("resumed with " .. tostring(inst))
+// TestShutdown_ACallInFlightRaisesOnceAndALateReplyIsHarmless: Shutdown
+// resumes every parked coroutine once, so its post-yield work runs. One
+// waiting in a yielding method used to be resumed with nothing, which the
+// method returned as a success: the script's code after a kill or a
+// ctx:new_instance ran at exit on an outcome that never happened. It is
+// resumed with "<op>: loom is shutting down" now, which the method raises.
+// A cs.actions.* intent is still resumed with nothing. A resume that
+// arrives after (the call's Reply, had the TUI still been running) finds
+// the engine closed and is refused, even carrying an instance, which
+// needs the Lua state to build.
+func TestShutdown_ACallInFlightRaisesOnceAndALateReplyIsHarmless(t *testing.T) {
+	for _, tc := range []struct {
+		name, call, raised string
+	}{
+		{"new_instance", `ctx:new_instance{title = "made"}`, "new_instance: loom is shutting down"},
+		{"kill", "ctx:selected():kill()", "kill: loom is shutting down"},
+		{"cs.actions", "cs.actions.show_help()", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := log.Structured
+			log.Structured = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			t.Cleanup(func() { log.Structured = prev })
+			e := NewEngine(nil)
+			require.NoError(t, e.LoadFromString("sd.lua", `cs.bind("Z", function(ctx)
+  local r = `+tc.call+`
+  ctx:notify("resumed with " .. tostring(r))
 end)`))
-	h := &fakeHost{}
-	_, err := e.Dispatch(context.Background(), "Z", h)
-	require.NoError(t, err)
-	require.Len(t, h.enqueuedIDs, 1)
+			h := &fakeHost{selected: &core.InstanceView{ID: 3, Title: "x"}}
+			_, err := e.Dispatch(context.Background(), "Z", h)
+			require.NoError(t, err)
+			require.Len(t, h.enqueuedIDs, 1)
 
-	e.Shutdown(time.Second)
+			e.Shutdown(time.Second)
 
-	assert.Equal(t, []string{"resumed with nil"}, h.notices, "shutdown resumed the call once")
-	err = e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{Instance: &core.InstanceView{ID: 1, Title: "made"}})
-	assert.ErrorIs(t, err, errEngineClosed)
-	assert.Len(t, h.notices, 1, "and only once")
+			out := buf.String()
+			if tc.raised == "" {
+				assert.Equal(t, []string{"resumed with nil"}, h.notices, "an intent is resumed with nothing, as before")
+				assert.NotContains(t, out, "cleanup_resume_failed")
+			} else {
+				assert.Empty(t, h.notices, "the call raised: the code after it did not run")
+				assert.Contains(t, logLineContaining(out, "cleanup_resume_failed"), tc.raised)
+				assert.Equal(t, 1, strings.Count(out, "cleanup_resume_failed"), "shutdown resumed the call once")
+			}
+			assert.Empty(t, e.waitingIn, "no record outlives its coroutine")
+			notices := len(h.notices)
+			err = e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{Instance: &core.InstanceView{ID: 1, Title: "made"}})
+			assert.ErrorIs(t, err, errEngineClosed)
+			assert.Len(t, h.notices, notices, "and only once")
+		})
+	}
 }

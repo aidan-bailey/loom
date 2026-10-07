@@ -73,7 +73,7 @@ func lifecycleOp(e *Engine, op string) lua.LGFunction {
 			L.Push(lua.LString(bad))
 			return 1
 		}
-		return e.enqueueAndYield(L, InstanceOpIntent{ID: v.ID, Title: v.Title, Op: op, Text: text})
+		return e.waitIn(L, op, InstanceOpIntent{ID: v.ID, Title: v.Title, Op: op, Text: text})
 	}
 }
 

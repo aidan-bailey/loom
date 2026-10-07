@@ -318,14 +318,25 @@ func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 // enqueueAndYield enqueues intent on the current host, records its id on
 // e.lastEnqueued so a bare cs.await() can consume it, and yields the
 // running coroutine with the id. Without a host (no dispatch) it does
-// nothing. The deferred cs.actions.* primitives and the yielding
-// instance and ctx methods (lifecycleOp, ctxNewInstance) share it.
+// nothing. The deferred cs.actions.* primitives use it; the yielding
+// instance and ctx methods use waitIn.
 func (e *Engine) enqueueAndYield(L *lua.LState, intent Intent) int {
 	if e.curHost == nil {
 		return 0
 	}
 	id := e.curHost.Enqueue(intent)
 	e.lastEnqueued = id
+	return L.Yield(lua.LNumber(id))
+}
+
+// waitIn is enqueueAndYield for the yielding method op (lifecycleOp,
+// ctxNewInstance), which has checked for a host already: it also records
+// op under the intent's id (waitingIn), so a shutdown raises in the method
+// rather than returning from it as if the TUI had replied.
+func (e *Engine) waitIn(L *lua.LState, op string, intent Intent) int {
+	id := e.curHost.Enqueue(intent)
+	e.lastEnqueued = id
+	e.waitingIn[id] = op
 	return L.Yield(lua.LNumber(id))
 }
 

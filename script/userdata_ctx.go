@@ -140,7 +140,7 @@ func ctxNewInstance(L *lua.LState) int {
 	prompt := luaTableString(opts, "prompt", "")
 	branch := luaTableString(opts, "branch", "")
 
-	return c.engine.enqueueAndYield(L, CreateInstanceIntent{Title: title, Program: program, Path: path, Prompt: prompt, Branch: branch})
+	return c.engine.waitIn(L, "new_instance", CreateInstanceIntent{Title: title, Program: program, Path: path, Prompt: prompt, Branch: branch})
 }
 
 // ctxArg is checkCtx (argument 1) for ctx's yielding method: the error

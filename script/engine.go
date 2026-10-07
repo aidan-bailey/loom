@@ -70,6 +70,13 @@ type Engine struct {
 	// coroutine awaits again. Access always under e.mu.
 	coroutines map[IntentID]coroutineSlot
 
+	// waitingIn names the yielding method (lifecycleOp, ctxNewInstance)
+	// a coroutine parked under an IntentID waits in, so a shutdown resumes
+	// it with an error rather than with nothing, which the method would
+	// return as a success (cleanupAllCoroutinesLocked). An entry lives
+	// until its coroutine is resumed. Access always under e.mu.
+	waitingIn map[IntentID]string
+
 	// lastEnqueued records the most recent IntentID the active Lua
 	// callback enqueued via the host. A bare cs.await() consumes it, so
 	// a primitive that enqueues without yielding can be awaited without
@@ -192,6 +199,7 @@ func NewEngine(reserved map[string]bool) *Engine {
 		actions:    map[string]*scriptAction{},
 		reserved:   reserved,
 		coroutines: map[IntentID]coroutineSlot{},
+		waitingIn:  map[IntentID]string{},
 		cancel:     cancel,
 	}
 
@@ -274,7 +282,9 @@ func (e *Engine) Shutdown(timeout time.Duration) {
 
 // CleanupAllCoroutines resumes every tracked coroutine with lua.LNil
 // so any deferred work (defers, finalizers, logging) runs before the
-// LState closes. Shutdown runs it before closing the engine. A
+// LState closes. A coroutine waiting in a yielding method (waitingIn)
+// is resumed with "<op>: loom is shutting down" instead, which the
+// method raises: nil would read as a success that never happened. Shutdown runs it before closing the engine. A
 // coroutine that yields again mid-drain is dropped — cleanup is
 // best-effort, not a full dispatch cycle, since the TUI is already gone
 // and there is no host left to service further intents. Ignored errors
@@ -295,7 +305,12 @@ func (e *Engine) cleanupAllCoroutinesLocked() {
 		delete(e.coroutines, id)
 		unmark := e.markInFlight(slot.key, slot.file)
 		restoreFile := e.enterActionFile(slot.file)
-		st, rerr, _ := e.L.Resume(slot.co, nil, lua.LNil)
+		var value lua.LValue = lua.LNil
+		if op, ok := e.waitingIn[id]; ok {
+			delete(e.waitingIn, id)
+			value = lua.LString(op + ": loom is shutting down")
+		}
+		st, rerr, _ := e.L.Resume(slot.co, nil, value)
 		restoreFile()
 		unmark()
 		if rerr != nil {
@@ -470,6 +485,7 @@ func (e *Engine) resumeLocked(id IntentID, value lua.LValue) (lua.LValue, error)
 		return lua.LNil, fmt.Errorf("script: no coroutine awaiting intent %d", id)
 	}
 	delete(e.coroutines, id)
+	delete(e.waitingIn, id)
 
 	// Clear lastEnqueued so a coroutine body that enqueues during this
 	// resume leaves a fresh value behind for cs.await to consume.

@@ -422,3 +422,32 @@ end)`)
 	assert.Equal(t, "go", inst.Prompt())
 	assert.False(t, inst.Started())
 }
+
+// TestScriptSnapshot_LeavesOutTheDraftRow: a creation flow's draft is a
+// row (ID 0) but no instance, and a script can't act on it. While a "#n"
+// expansion runs, the draft stays open and selected in stateDefault, so a
+// script can dispatch then: ctx:selected() reads nil, as it did when the
+// snapshot mapped rows to instances, and ctx:instances() leaves the draft
+// out.
+func TestScriptSnapshot_LeavesOutTheDraftRow(t *testing.T) {
+	m := homeWithAppState(t)
+	addReadyInstance(t, m)
+	_, _ = runNewInstance(m)
+	require.NotNil(t, m.draft, "fixture: a draft is open")
+	m.state = stateDefault // the "#n" expansion window
+	sel := m.list.GetSelectedInstance()
+	require.NotNil(t, sel)
+	require.Equal(t, core.InstanceID(0), sel.ID, "fixture: the draft's row is selected")
+	withScript(t, m, `cs.bind("Z", function(ctx)
+  ctx:notify(tostring(ctx:selected()))
+  ctx:notify(tostring(#ctx:instances()))
+end)`)
+
+	cmd, ok := m.dispatchScript("Z")
+	require.True(t, ok)
+	done, ok := cmd().(scriptDoneMsg)
+	require.True(t, ok)
+
+	require.NoError(t, done.err)
+	assert.Equal(t, []string{"nil", "1"}, done.notices, "no draft: nothing selected, one instance")
+}
