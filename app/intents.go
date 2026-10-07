@@ -322,6 +322,11 @@ func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
 // -- Attach --
 
 func runInlineAttachAgent(m *home) (tea.Model, tea.Cmd) {
+	// Keys typed while a prompt send to the session is still landing
+	// would go between its paste and its Enter (sendingTo says so).
+	if m.sendingTo(m.list.GetSelectedInstance()) {
+		return m, nil
+	}
 	// If the pane is scrolled back, drop to live tail first — otherwise
 	// the user's keystrokes go to live tmux while they're still looking
 	// at scrolled-back history. ResetAgentToNormalMode is nil/Paused-safe
@@ -385,6 +390,11 @@ func runFullScreenAttachTerminal(m *home) (tea.Model, tea.Cmd) {
 // -- Quick input --
 
 func runQuickInputAgent(m *home) (tea.Model, tea.Cmd) {
+	// A second send would land between the first's paste and its Enter
+	// (sendingTo says so).
+	if m.sendingTo(m.list.GetSelectedInstance()) {
+		return m, nil
+	}
 	m.state = stateQuickInteract
 	m.quickInputBar = ui.NewQuickInputBar(ui.QuickInputTargetAgent)
 	m.menu.SetState(ui.StateQuickInteract)

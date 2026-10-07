@@ -33,10 +33,15 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 		case ui.QuickInputTargetTerminal:
 			err = m.splitPane.SendTerminalPrompt(text)
 		case ui.QuickInputTargetAgent:
+			// The last send to this session is still landing: keep the bar,
+			// and its text, open until it has (sendingTo says so).
+			if m.sendingTo(selected) {
+				return m, nil
+			}
 			// Off the Update goroutine (three tmux subprocesses and a
 			// pause): a request, whose job the drain hands to the
 			// runtime; a failed send comes back as an error.
-			m.core.SendPrompt(selected.ID, text, 0)
+			m.sendPrompt(selected, text)
 		}
 		m.quickInputBar = nil
 		m.state = stateDefault

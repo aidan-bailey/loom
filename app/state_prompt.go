@@ -76,8 +76,11 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// Regular flow: instance already running, just send the prompt,
 			// off the Update goroutine (three tmux subprocesses and a pause):
 			// a request, whose job the drain hands to the runtime.
-			// The overlay closes now; a failed send comes back as an error.
-			m.core.SendPrompt(selected.ID, prompt, 0)
+			// The overlay closes now; a failed send comes back as an error,
+			// and a send still landing holds this one (sendingTo says so).
+			if !m.sendingTo(selected) {
+				m.sendPrompt(selected, prompt)
+			}
 		}
 
 		m.dismissOverlay()

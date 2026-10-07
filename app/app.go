@@ -210,6 +210,9 @@ type home struct {
 	// their Reply (handleReply); nextReq is the last ReqID it chose.
 	pending map[core.ReqID]pendingReq
 	nextReq core.ReqID
+	// sending holds the instances a prompt send is in flight to (sendPrompt,
+	// until its Reply): input to them is held meanwhile (sendingTo).
+	sending map[core.InstanceID]bool
 
 	// -- UI Components --
 

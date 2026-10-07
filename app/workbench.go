@@ -446,16 +446,22 @@ func (m *home) sendReviewCmd() tea.Cmd {
 		m.errBox.SetInfo("agent is not running — resume the session first")
 		return nil
 	}
+	if m.sendingTo(sel) {
+		return nil
+	}
 	prompt := review.ComposePrompt(rv.Root(), rv.States())
 	if prompt == "" {
 		m.errBox.SetInfo("no review comments to send")
 		return nil
 	}
 	title := sel.Title
-	id := sel.ID
 	msg := fmt.Sprintf("Send %d review comment(s) to %s?", rv.CommentCount(), title)
 	return m.confirmTask(msg, overlay.ConfirmationTask{
-		Sync: func() { m.core.SendPrompt(id, prompt, 0) },
+		Sync: func() {
+			if !m.sendingTo(sel) {
+				m.sendPrompt(sel, prompt)
+			}
+		},
 	})
 }
 
