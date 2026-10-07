@@ -703,3 +703,43 @@ func TestSubagentTrackingEnabled(t *testing.T) {
 	c.ClaudeSubagentTracking = &fls
 	assert.False(t, c.SubagentTrackingEnabled())
 }
+
+// TestClaudeTmpArchiveRoot: claude_tmp_archive_dir is optional, takes a
+// leading ~, and must be absolute: a relative value is an error, so the
+// caller keeps the default location rather than archive relative to
+// whatever directory loom runs in.
+func TestClaudeTmpArchiveRoot(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		value, want string
+		wantErr     bool
+	}{
+		{value: "", want: ""},
+		{value: "/mnt/big/claude-archives", want: "/mnt/big/claude-archives"},
+		{value: "~/claude-archives", want: filepath.Join(home, "claude-archives")},
+		{value: "claude-archives", wantErr: true},
+	} {
+		root, err := (&Config{ClaudeTmpArchiveDir: tc.value}).ClaudeTmpArchiveRoot()
+		if tc.wantErr {
+			assert.Error(t, err, "value %q", tc.value)
+			continue
+		}
+		require.NoError(t, err, "value %q", tc.value)
+		assert.Equal(t, tc.want, root, "value %q", tc.value)
+	}
+}
+
+// TestClaudeTmpArchiveDir_LoadsFromConfigJSON: the setting round-trips
+// through config.json under its documented key, and an unset one is not
+// written.
+func TestClaudeTmpArchiveDir_LoadsFromConfigJSON(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(`{"claude_tmp_archive_dir":"/mnt/big/a"}`), 0o644))
+	assert.Equal(t, "/mnt/big/a", LoadConfigFrom(dir).ClaudeTmpArchiveDir)
+
+	require.NoError(t, SaveConfigTo(DefaultConfig(), dir))
+	data, err := os.ReadFile(filepath.Join(dir, ConfigFileName))
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "claude_tmp_archive_dir", "an unset setting is omitted")
+}

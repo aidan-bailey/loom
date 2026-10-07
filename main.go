@@ -266,7 +266,14 @@ var (
 			} else {
 				fmt.Printf("Claude temp root: %s (absent)\n", root)
 			}
-			fmt.Printf("Claude temp archives: %s (a workspace's: <repo>/.loom/archive/claude-tmp)\n", claudetmp.ArchiveDir(wsCtx.ConfigDir))
+			switch root, err := cfg.ClaudeTmpArchiveRoot(); {
+			case err != nil:
+				fmt.Printf("Claude temp archives: %s (claude_tmp_archive_dir ignored: %v; a workspace's: <repo>/.loom/archive/claude-tmp)\n", claudetmp.ArchiveDir(wsCtx.ConfigDir), err)
+			case root != "":
+				fmt.Printf("Claude temp archives: %s (claude_tmp_archive_dir: each workspace in its own subfolder of %s)\n", session.ClaudeTmpArchiveDir(wsCtx.ConfigDir), root)
+			default:
+				fmt.Printf("Claude temp archives: %s (a workspace's: <repo>/.loom/archive/claude-tmp; set claude_tmp_archive_dir in %s to move them)\n", claudetmp.ArchiveDir(wsCtx.ConfigDir), filepath.Join(wsCtx.ConfigDir, config.ConfigFileName))
+			}
 			if globalDir, err := config.GetGlobalConfigDir(); err != nil {
 				fmt.Printf("Global dir: error: %v\n", err)
 			} else {

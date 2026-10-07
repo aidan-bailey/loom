@@ -8,9 +8,63 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/claudetmp"
 )
+
+// ClaudeTmpArchiveDir is where configDir's Claude temp-dir archives go. By
+// default that is claudetmp.ArchiveDir(configDir), inside the workspace's
+// own loom config folder. The global config.json's claude_tmp_archive_dir
+// relocates every workspace's archives under one dir, each workspace in a
+// subfolder named after its config dir (its canonical path, encoded the way
+// Claude names its dirs), so two workspaces' archives never mix and a
+// resume finds its own. The setting is read at each use, so an edit applies
+// without a restart; one that cannot be used (not absolute) is logged and
+// the default kept.
+func ClaudeTmpArchiveDir(configDir string) string {
+	root := configuredArchiveRoot()
+	if root == "" {
+		return claudetmp.ArchiveDir(configDir)
+	}
+	return filepath.Join(root, archiveSubdir(configDir))
+}
+
+// archiveRootWarn rate-limits the warning about an unusable
+// claude_tmp_archive_dir: every archive, restore and sweep reads it.
+var archiveRootWarn = log.NewEvery(time.Minute)
+
+// configuredArchiveRoot is the global config.json's claude_tmp_archive_dir,
+// expanded, or "" when it is unset or unusable.
+func configuredArchiveRoot() string {
+	global, err := config.GetGlobalConfigDir()
+	if err != nil {
+		return ""
+	}
+	root, err := config.LoadConfigFrom(global).ClaudeTmpArchiveRoot()
+	if err != nil {
+		if archiveRootWarn.ShouldLog() {
+			log.For("claudetmp").Warn("claudetmp.archive_dir_ignored", "err", err.Error())
+		}
+		return ""
+	}
+	return root
+}
+
+// archiveSubdir names configDir's folder under claude_tmp_archive_dir: its
+// canonical path, so every spelling of the same dir agrees, encoded like
+// Claude's dir names, less the leading "-" an absolute path encodes to.
+func archiveSubdir(configDir string) string {
+	p := canonicalPath(configDir)
+	if p == "" {
+		p = filepath.Clean(configDir)
+	}
+	name, _ := claudetmp.DirName(p)
+	if name = strings.TrimLeft(name, "-"); name == "" {
+		return "workspace"
+	}
+	return name
+}
 
 // archiveClaudeTempFn is how Pause and Kill reach archiveClaudeTemp, so a
 // test can observe the instance at the moment the archive runs.
@@ -39,7 +93,7 @@ func archiveClaudeTemp(configDir, worktreePath, reason string) {
 // archiveClaudeTempDir archives src, a temp dir already found, as
 // <archive dir>/<name>.zip (claudetmp.ArchiveAs) and logs the outcome.
 func archiveClaudeTempDir(configDir, src, worktreePath, reason string) error {
-	dir := claudetmp.ArchiveDir(configDir)
+	dir := ClaudeTmpArchiveDir(configDir)
 	name := claudetmp.ArchiveName(filepath.Base(src), claudetmp.WorktreePrefixes(configDir))
 	zipPath, res, err := claudetmp.ArchiveAs(dir, name, src, claudetmp.Manifest{Worktree: worktreePath, Reason: reason})
 	lg := log.For("claudetmp")
@@ -55,16 +109,30 @@ func archiveClaudeTempDir(configDir, src, worktreePath, reason string) error {
 
 // restoreClaudeTemp puts back the temp dir a pause archived for the
 // session whose worktree is worktreePath, before the agent launches in it.
-// A no-op when no zip is parked for it, or when the dir is already there
-// (a pause whose archive failed left it in place). A failed restore
-// returns what the user must hear; the zip is kept and the launch goes
-// ahead without the scratchpad.
+// It looks in the archive dir in effect (ClaudeTmpArchiveDir) and then in
+// the workspace's own folder, so a session paused before
+// claude_tmp_archive_dir was set still gets its scratchpad back. A no-op
+// when no zip is parked for it, or when the dir is already there (a pause
+// whose archive failed left it in place). A failed restore returns what
+// the user must hear; the zip is kept and the launch goes ahead without the
+// scratchpad.
 func restoreClaudeTemp(configDir, worktreePath string) error {
 	if configDir == "" || worktreePath == "" {
 		return nil
 	}
-	zipPath, ok := claudetmp.Parked(claudetmp.ArchiveDir(configDir), worktreePath, claudetmp.WorktreePrefixes(configDir))
-	if !ok {
+	prefixes := claudetmp.WorktreePrefixes(configDir)
+	dirs := []string{ClaudeTmpArchiveDir(configDir)}
+	if own := claudetmp.ArchiveDir(configDir); own != dirs[0] {
+		dirs = append(dirs, own)
+	}
+	var zipPath string
+	for _, d := range dirs {
+		if z, ok := claudetmp.Parked(d, worktreePath, prefixes); ok {
+			zipPath = z
+			break
+		}
+	}
+	if zipPath == "" {
 		return nil
 	}
 	root, exists := claudetmp.Root()
@@ -146,7 +214,7 @@ func SweepClaudeTemp(configDir string, claimed map[string]bool, otherConfigDirs 
 	}
 	// An archive a crash or quit cut short leaves a partial zip that nothing
 	// finishes; its source is only deleted after the zip is complete.
-	adir := claudetmp.ArchiveDir(configDir)
+	adir := ClaudeTmpArchiveDir(configDir)
 	if n := claudetmp.PurgePartials(adir, sweepPartialAge); n > 0 {
 		log.For("claudetmp").Info("claudetmp.partials_purged", "dir", adir, "removed", n)
 	}

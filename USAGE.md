@@ -687,6 +687,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | `theme` | string | `"afterglow"` | UI color theme (`"afterglow"` or `"legacy"`) |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
+| `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) |
 
 ### Example config.json
 
@@ -757,7 +758,13 @@ Claude Code keeps a temp directory for every session, outside the worktree: `/tm
 - **Pause** zips the session's temp dir and removes it; **resume** puts it back before the agent starts. If the restore fails, you see why, the archive is kept, and the session starts without it.
 - **Kill** zips it and removes it.
 - **At every workspace load**, loom sweeps the temp dirs of its sessions that no longer exist and haven't been touched for a day (worktrees it auto-cleaned, sessions killed before this feature) into the archive.
-- Archives live in the workspace's loom folder: `<repo>/.loom/archive/claude-tmp/` for a registered workspace, otherwise `~/.loom/archive/claude-tmp/`. `loom debug` prints both the temp root and the archive folder.
+- Archives live in the workspace's loom folder: `<repo>/.loom/archive/claude-tmp/` for a registered workspace, otherwise `~/.loom/archive/claude-tmp/`. To keep them somewhere else (a bigger disk, say), set `claude_tmp_archive_dir` in the global `~/.loom/config.json` to an absolute path (or one starting with `~/`):
+
+  ```json
+  { "claude_tmp_archive_dir": "~/claude-archives" }
+  ```
+
+  Every workspace's archives then go under that folder, each workspace in its own subfolder named after its loom config folder (e.g. `~/claude-archives/home-you-projects-my-app--loom/`). It applies to the next archive, no restart needed. Archives already made stay where they are, and a session paused before the change still gets its scratchpad back on resume. A relative path is ignored (with a warning in `loom.log`). A workspace's own `config.json` doesn't set this. `loom debug` prints the temp root and the archive folder in effect.
 - Directories marked with a valid `CACHEDIR.TAG` (cargo's `target/`, for example) are left out; the archive's `.loom-archive.json` lists what was skipped and how big it was. Symlinks are stored as links.
 - Loom never deletes an archive. Prune `archive/claude-tmp/` by hand when you no longer need them. To look inside one: `unzip -l <file>.zip`.
 
