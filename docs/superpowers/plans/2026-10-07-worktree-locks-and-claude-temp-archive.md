@@ -3255,6 +3255,9 @@ Follow-ups, not in this branch:
 - Pause holds for the whole compression of a huge scratchpad.
 - `loom workspace migrate` strands parked zips.
 - The terminal pane opens in `~` after a rebuild-resume (pre-existing race).
+- `opsInFlight` doesn't cover Kill: a Lua `inst:kill()`, or D on a reopened twin, during a Pause or Resume of the same tree (pre-existing; sits next to M-6).
+- A lock-refused Kill has already dropped a pending paused stash before cleanup refuses. This is harmless (the tree is intact and holds that content; Resume forgets the reference with a notice), and rare since F-3(b).
+- Stray `*.partial` and `.loom-restore-*` files from a crash are reaped only by a sweep, so a workspace that never reloads keeps them.
 
 ## Spec coverage
 
