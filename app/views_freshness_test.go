@@ -1,6 +1,7 @@
 package app
 
 import (
+	"github.com/aidan-bailey/loom/config"
 	"testing"
 	"time"
 
@@ -326,4 +327,19 @@ func TestScriptDone_ReadsWhatTheScriptChanged(t *testing.T) {
 
 		assert.Contains(t, agentPane(m), "Please enter a name for the instance")
 	})
+}
+
+// TestWorkspacesChanged_RefreshesTheSlotsView: a slot caches its
+// workspace's view, and the drain's WorkspacesChanged replaces it with the
+// model's newest, so a change the model made on its own (a load's recovery
+// summary, the classic workspace's first load, a pref written elsewhere)
+// reaches the slot without the slot rereading it.
+func TestWorkspacesChanged_RefreshesTheSlotsView(t *testing.T) {
+	m := newTestHome(t)
+	require.NoError(t, m.appState().SetUIPrefs(config.UIPrefs{RailHidden: true}))
+	require.False(t, m.uiPrefs().RailHidden, "fixture: the slot's copy is stale")
+
+	_ = m.drainCore()
+
+	assert.True(t, m.uiPrefs().RailHidden, "the drain's WorkspacesChanged refreshed the slot's view")
 }
