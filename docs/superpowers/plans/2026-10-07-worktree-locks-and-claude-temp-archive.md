@@ -3259,6 +3259,7 @@ Follow-ups, not in this branch:
 - The terminal pane opens in `~` after a rebuild-resume (pre-existing race).
 - `opsInFlight` doesn't cover Kill: a Lua `inst:kill()`, or D on a reopened twin, during a Pause or Resume of the same tree (pre-existing; sits next to M-6).
 - Stray `*.partial` and `.loom-restore-*` files from a crash are reaped only by a sweep, so a workspace that never reloads keeps them.
+- `killActionFor`/`pauseActionFor` close the session's terminal-pane shell (`loom_term_*`) before Kill or Pause runs, so a lock-refused Kill or Pause still ends that shell, even though the agent is now left alone (pre-existing ordering).
 
 ## Spec coverage
 
