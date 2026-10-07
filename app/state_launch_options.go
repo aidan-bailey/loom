@@ -11,9 +11,8 @@ import (
 // entry, right before a new instance actually starts. Confirming
 // (enter) hands the chosen overlay.LaunchOptions to whichever closure
 // state_new.go/state_prompt.go stashed in m.pendingLaunchOptions before
-// opening this modal; canceling (esc/ctrl+c) pops and kills the
-// pending, not-yet-started instance, mirroring handleStateNewKey's own
-// cancel path.
+// opening this modal; canceling (esc/ctrl+c) discards the draft,
+// mirroring handleStateNewKey's own cancel path.
 func handleStateLaunchOptionsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m.cancelLaunchOptions()
@@ -46,9 +45,9 @@ func handleStateLaunchOptionsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 
 // cancelLaunchOptions dismisses the Session Launch Options modal
 // without confirming and runs whatever pendingLaunchOptionsCancel the
-// opening flow stashed — pop-and-kill the pending instance for
-// creation (killPendingLaunchOptionsCancel), or a no-op dismiss for
-// restart (runRestartWithOptionsSelected).
+// opening flow stashed — discard the draft for creation
+// (killPendingLaunchOptionsCancel), or a no-op dismiss for restart
+// (runRestartWithOptionsSelected).
 func (m *home) cancelLaunchOptions() (tea.Model, tea.Cmd) {
 	cancel := m.pendingLaunchOptionsCancel
 	m.pendingLaunchOptions = nil
@@ -62,11 +61,11 @@ func (m *home) cancelLaunchOptions() (tea.Model, tea.Cmd) {
 }
 
 // killPendingLaunchOptionsCancel is the creation flow's
-// pendingLaunchOptionsCancel: remove and kill the pending, not-yet-started
-// instance (dropPendingNew) and return to stateDefault — the same shape
-// as handleStateNewKey's Esc/ctrl+c handling.
+// pendingLaunchOptionsCancel: discard the draft (discardDraft) and return
+// to stateDefault — the same shape as handleStateNewKey's Esc/ctrl+c
+// handling.
 func (m *home) killPendingLaunchOptionsCancel() (tea.Model, tea.Cmd) {
-	kill := m.dropPendingNew()
+	m.discardDraft()
 	m.state = stateDefault
 	// Before instanceChanged, whose menu refresh leaves the new-instance
 	// menu state alone.
@@ -76,6 +75,5 @@ func (m *home) killPendingLaunchOptionsCancel() (tea.Model, tea.Cmd) {
 		// discarding it would silently swallow them.
 		m.instanceChanged(),
 		tea.RequestWindowSize,
-		kill,
 	)
 }

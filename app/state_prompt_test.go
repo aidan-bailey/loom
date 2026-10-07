@@ -52,12 +52,12 @@ func TestPromptFlowEndToEndComposesRealClosure(t *testing.T) {
 	handleStatePromptKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // -> stateLaunchOptions, real closure stashed
 
 	require.Equal(t, stateLaunchOptions, m.state)
-	instance := lastInst(m)
 
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: ' ', Text: " "})
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	instance := lastInst(m) // the confirm's Create made it
 
 	assert.Contains(t, instance.Program(), "--model 'sonnet'")
 	assert.Equal(t, stateDefault, m.state)

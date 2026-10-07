@@ -45,18 +45,16 @@ func TestCompletionDuringNaming_CancelKillsOnlyThePendingInstance(t *testing.T) 
 	finishStart(t, first) // active, so only the open flow keeps the completion off the selection
 	_, _ = runNewInstance(m)
 	require.Equal(t, stateNew, m.state)
-	pending := m.core.InstanceOf(selID(m.list))
-	require.NotSame(t, first, pending)
-	pendingID := idOf(m, pending) // captured while loaded: a removal forgets it
+	require.NotEqual(t, idOf(m, first), selID(m.list), "the draft's row (ID 0) is selected")
 
 	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws})
-	assert.Equal(t, idOf(m, pending), selID(m.list), "a completion must not move the selection under the naming flow")
+	assert.Equal(t, core.InstanceID(0), selID(m.list), "a completion must not move the selection under the naming flow")
 	assert.Equal(t, stateNew, m.state)
 	assert.Contains(t, m.errBox.String(), "first", "the start is still announced")
 
 	_, _ = handleStateNewKey(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	assert.Contains(t, listIDs(m.list), idOf(m, first), "cancel must not kill the started session")
-	assert.NotContains(t, listIDs(m.list), pendingID, "cancel removes the pending instance")
+	assert.NotContains(t, listIDs(m.list), core.InstanceID(0), "cancel removes the draft's row")
 	assert.Equal(t, session.Running, first.GetStatus())
 }
 
@@ -92,22 +90,21 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	m.ws.Add(placeholder)
 	m.syncViews()
 	_, _ = runNewInstance(m)
-	pending := m.core.InstanceOf(selID(m.list))
-	pendingID := idOf(m, pending) // captured while loaded: a removal forgets it
+	pending := m.draft
 	recovered, err := session.NewInstance(session.InstanceOptions{Title: "orphan", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, recovered.TransitionTo(session.Running))
 
 	deliver(t, m, core.RecoverResult{OldTitle: "orphan", Recovered: recovered, Placeholder: placeholder, Owner: m.ws})
-	assert.Equal(t, idOf(m, pending), selID(m.list), "the recover must not move the selection under the naming flow")
+	assert.Equal(t, core.InstanceID(0), selID(m.list), "the recover must not move the selection under the naming flow")
 
 	typeTitle(t, m, "x")
-	assert.Equal(t, "x", pending.Title, "typing names the pending instance")
+	assert.Equal(t, "x", pending.title, "typing names the draft")
 	assert.Equal(t, "orphan", recovered.Title, "not the recovered row")
 
 	_, _ = handleStateNewKey(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	assert.Contains(t, listIDs(m.list), idOf(m, recovered), "cancel must not remove the recovered session")
-	assert.NotContains(t, listIDs(m.list), pendingID)
+	assert.NotContains(t, listIDs(m.list), core.InstanceID(0))
 }
 
 // fakeTmuxServer is a scripted tmux server: has-session answers from a set
@@ -319,9 +316,9 @@ end)
 	pumpScript(t, m, cmd)
 
 	require.Equal(t, stateNew, m.state, "the intent opened the naming flow")
-	require.NotNil(t, m.pendingNew)
+	require.NotNil(t, m.draft)
 	assert.Same(t, owner, m.workspaceSlot, "focus must not move while naming is open")
-	assert.Contains(t, listIDs(m.list), idOf(m, m.pendingNew))
+	assert.Contains(t, listIDs(m.list), core.InstanceID(0), "the draft's row is in the focused list")
 }
 
 // pumpScript feeds a script's Cmds and their script messages back through
@@ -346,20 +343,20 @@ func pumpScript(t *testing.T, m *home, cmd tea.Cmd) {
 	}
 }
 
-// TestIssueExpanded_ForDeletedInstanceIsDropped: after the #n dispatch
-// the instance is back in the list, unstarted, for up to ~20s; D can kill
-// it meanwhile. The expansion then re-armed the creation flow for an
-// instance no list holds.
-func TestIssueExpanded_ForDeletedInstanceIsDropped(t *testing.T) {
+// TestIssueExpanded_ForReplacedDraftIsDropped: after the #n dispatch the
+// draft stays open, its row shown, for up to ~20s; a newer creation flow
+// can replace it meanwhile (formerly: D could kill the unstarted instance).
+// The expansion must not reopen the flow for a draft no rail shows.
+func TestIssueExpanded_ForReplacedDraftIsDropped(t *testing.T) {
 	m := newTestHome(t)
 	m.errBox.SetSize(400, 1)
-	gone, err := session.NewInstance(session.InstanceOptions{Title: "gone", Path: t.TempDir(), Program: "claude"})
-	require.NoError(t, err)
+	gone := &draft{slot: m.workspaceSlot, path: m.repoPath(), title: "gone"}
+	require.Nil(t, m.draft, "fixture: the expansion's draft is no longer open")
 
-	_, _ = m.Update(issueExpandedMsg{instance: gone, repo: m.repoPath(), number: 5})
+	_, _ = m.Update(issueExpandedMsg{draft: gone, repo: m.repoPath(), number: 5})
 
-	assert.Equal(t, stateDefault, m.state, "no launch options for a deleted instance")
-	assert.Nil(t, m.pendingNew)
+	assert.Equal(t, stateDefault, m.state, "no launch options for a replaced draft")
+	assert.Nil(t, m.draft)
 	assert.Contains(t, m.errBox.String(), "#5")
 }
 
@@ -395,7 +392,8 @@ func TestKillAction_UsesTheDispatchSlotsStorage(t *testing.T) {
 
 // TestCreationCancelPaths_KillThePendingInstanceByIdentity is the defence
 // in depth: whatever moved the selection mid-flow, every creation-flow
-// cancel path removes the pending instance and leaves the selected one.
+// cancel path discards the draft (by identity, never the selection) and
+// leaves the selected session.
 func TestCreationCancelPaths_KillThePendingInstanceByIdentity(t *testing.T) {
 	type flow struct {
 		name   string
@@ -430,29 +428,29 @@ func TestCreationCancelPaths_KillThePendingInstanceByIdentity(t *testing.T) {
 			m := newTestHome(t)
 			first := runningInstance(t, m, "first")
 			f.open(m)
-			pending := m.pendingNew
-			require.NotNil(t, pending)
-			pendingID := idOf(m, pending) // captured while loaded: a removal forgets it
-			selectIn(m, m.list, first)    // however it moved
+			require.NotNil(t, m.draft)
+			selectIn(m, m.list, first) // however it moved
 			f.cancel(m)
 			assert.Contains(t, listIDs(m.list), idOf(m, first), "the selected session must survive the cancel")
-			assert.NotContains(t, listIDs(m.list), pendingID, "the pending instance is removed")
-			assert.Nil(t, m.pendingNew)
+			assert.NotContains(t, listIDs(m.list), core.InstanceID(0), "the draft's row is removed")
+			assert.Nil(t, m.draft)
 		})
 	}
 }
 
-// TestDropPendingNew_NeverKillsAStartedInstance is a belt: a started
-// instance is not pending, and a cancel must not kill a live session.
-func TestDropPendingNew_NeverKillsAStartedInstance(t *testing.T) {
+// TestDiscardDraft_NeverKillsAStartedInstance is a belt: a draft is not a
+// session, so a cancel has nothing to kill, and a live session in the list
+// is left alone.
+func TestDiscardDraft_NeverKillsAStartedInstance(t *testing.T) {
 	isolateTmux(t)
 	m, _, _ := ownerTestHome(t)
 	live := liveInstance(t, "live")
 	m.ws.Add(live)
 	m.syncViews()
-	m.pendingNew = live
+	m.newDraft("pending", "", 0)
 
-	assert.Nil(t, m.dropPendingNew())
+	m.discardDraft()
+	assert.Empty(t, requestResults(t, m), "a cancel queues no job: there is nothing to kill")
 	assert.Contains(t, listIDs(m.list), idOf(m, live))
-	assert.Nil(t, m.pendingNew)
+	assert.Nil(t, m.draft)
 }

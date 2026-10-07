@@ -46,12 +46,12 @@ func TestNewInstanceFlowAppliesBranchPrefixOverride(t *testing.T) {
 	}
 	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.Equal(t, stateLaunchOptions, m.state)
-	instance := lastInst(m)
 
 	editBranchPrefixTo(m, "aidanb/", "spike/")
 	require.Equal(t, stateLaunchOptions, m.state, "committing the edit must not close the modal")
 
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // confirm
+	instance := lastInst(m)                                             // the confirm's Create made it
 
 	require.NotNil(t, instance.BranchPrefixOverride())
 	assert.Equal(t, "spike/", *instance.BranchPrefixOverride())
@@ -68,8 +68,8 @@ func TestNewInstanceFlowRecordsPrefixEvenWhenUnedited(t *testing.T) {
 		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	instance := lastInst(m)
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	instance := lastInst(m) // the confirm's Create made it
 
 	require.NotNil(t, instance.BranchPrefixOverride())
 	assert.Equal(t, "aidanb/", *instance.BranchPrefixOverride())

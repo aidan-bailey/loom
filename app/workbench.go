@@ -42,7 +42,8 @@ var workbenchKeyAllowed = map[string]bool{
 // Returns nil (no-op) when nothing is selected.
 func (m *home) enterWorkbench() tea.Cmd {
 	sel := m.list.GetSelectedInstance()
-	if sel == nil {
+	// ID 0 is a creation flow's draft row: no session to deep-dive yet.
+	if sel == nil || sel.ID == 0 {
 		return nil
 	}
 	// The workbench has its own diff tab; a lingering focus-mode diff

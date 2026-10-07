@@ -152,8 +152,8 @@ type home struct {
 	baseBranchName string
 
 	// pendingLaunchOptions holds the compose-and-start closure for a
-	// not-yet-started instance while stateLaunchOptions is active.
-	// state_new.go/state_prompt.go stash it (capturing the instance and
+	// draft while stateLaunchOptions is active.
+	// state_new.go/state_prompt.go stash it (capturing the draft and
 	// any prompt-flow-specific data like selectedBranch) right before
 	// opening the Session Launch Options modal; handleStateLaunchOptionsKey
 	// invokes it with the user's chosen overlay.LaunchOptions on confirm,
@@ -162,22 +162,23 @@ type home struct {
 
 	// pendingLaunchOptionsCancel runs when the Session Launch Options
 	// modal is dismissed without confirming (Esc/ctrl+c). The creation
-	// flow (state_new.go/state_prompt.go) sets this to pop-and-kill the
-	// pending, not-yet-started instance. The restart flow
+	// flow (state_new.go/state_prompt.go) sets this to discard the
+	// draft. The restart flow
 	// (runRestartWithOptionsSelected) sets it to a no-op dismiss, since
 	// the instance being edited already exists and must survive a
 	// cancel untouched. nil outside the stateLaunchOptions window.
 	pendingLaunchOptionsCancel func() (tea.Model, tea.Cmd)
 
-	// pendingNew is the not-yet-started instance an open creation flow
-	// (naming, prompt, launch options, the remote-control confirm) has
-	// appended to the focused list. The flow edits it, and its cancel
-	// paths remove and kill it (dropPendingNew) by identity: the
-	// selection and the list's last row are not reliable, since a
-	// completion or removal can land mid-flow. Set when a flow appends
-	// or re-opens it (openLaunchOptionsForNew), cleared when its start is
-	// dispatched or the flow is cancelled. nil outside creation flows.
-	pendingNew *session.Instance
+	// draft is the session-to-be an open creation flow (naming, prompt,
+	// launch options, the remote-control confirm, a #n expansion in
+	// flight) edits: TUI state the model never sees until the flow
+	// confirms (Create), shown as an ID-0 row at the end of its own slot's
+	// rail (rowsOf). The flow holds it by identity, never by the selection
+	// or the list's last row, which a completion or removal can move
+	// mid-flow; its cancel paths discard it (discardDraft), with nothing
+	// to kill. Set when a flow opens it (newDraft), cleared when its
+	// Create is sent or the flow is cancelled. nil outside creation flows.
+	draft *draft
 
 	// keySent is used to manage underlining menu items
 	keySent bool
@@ -1777,15 +1778,15 @@ func (m *home) resolveBaseBranchCmd() tea.Cmd {
 	}
 }
 
-// cancelPromptOverlay cancels the prompt overlay, cleaning up the pending
-// instance of a creation flow (none when the overlay was prompting a
-// running session).
+// cancelPromptOverlay cancels the prompt overlay, discarding the draft
+// of a creation flow (none when the overlay was prompting a running
+// session).
 func (m *home) cancelPromptOverlay() tea.Cmd {
-	killCmd := m.dropPendingNew()
+	m.discardDraft()
 	m.dismissOverlay()
 	m.state = stateDefault
 	m.menu.SetState(ui.StateDefault)
-	return tea.Batch(tea.RequestWindowSize, killCmd)
+	return tea.RequestWindowSize
 }
 
 // confirmTask shows a confirmation modal with the supplied task

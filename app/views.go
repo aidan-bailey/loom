@@ -9,10 +9,10 @@ import (
 // core.InstanceView values (workspaceSlot.views), replaced wholesale by
 // core.ViewsChanged and seeded from core.Model.Views when the slot is
 // built. The rail and every other reader see them through slotRows, which
-// lays the TUI's own overlays (bells; the pane ladder and the creation draft
-// from package C) over them. Nothing in app holds a *session.Instance once
-// package D lands; until then the creation flow's pending instance and the
-// script host do, and writes reach instances through the bridge (instOf).
+// lays the TUI's own overlays (bells; the pane ladder from package C) over
+// them and appends the creation flow's draft row. Nothing in app holds a
+// *session.Instance once package D lands; until then the script host
+// does, and its writes reach instances through the bridge (instOf).
 
 // slotRows is a slot's list source (ui.InstanceSource): its views with the
 // TUI's overlays applied.
@@ -24,12 +24,16 @@ type slotRows struct {
 // Rows returns the slot's rows, freshly copied.
 func (r slotRows) Rows() []core.InstanceView { return r.m.rowsOf(r.s) }
 
-// rowsOf copies s's views with the TUI's overlays applied.
+// rowsOf copies s's views with the TUI's overlays applied, followed by
+// the open draft's row when the draft belongs to s.
 func (m *home) rowsOf(s *workspaceSlot) []core.InstanceView {
 	rows := make([]core.InstanceView, len(s.views), len(s.views)+1)
 	copy(rows, s.views)
 	for i := range rows {
 		m.overlay(&rows[i])
+	}
+	if d, ok := m.draftRow(s); ok {
+		rows = append(rows, d)
 	}
 	return rows
 }
@@ -87,9 +91,10 @@ func (m *home) viewBySession(name string) (*core.InstanceView, *workspaceSlot) {
 }
 
 // findRow returns a copy of the first row of any open slot that match
-// accepts, overlays applied, and its slot. It runs on every pane event, so
-// it applies the overlays to the one row it returns rather than copying
-// every slot's rows (rowsOf).
+// accepts, overlays applied, and its slot; the rows are rowsOf's, the
+// draft's included. It runs on every pane event, so it applies the
+// overlays to the one row it returns rather than copying every slot's
+// rows (rowsOf).
 func (m *home) findRow(match func(*core.InstanceView) bool) (*core.InstanceView, *workspaceSlot) {
 	for _, s := range m.openSlots() {
 		for i := range s.views {
@@ -98,6 +103,9 @@ func (m *home) findRow(match func(*core.InstanceView) bool) (*core.InstanceView,
 				m.overlay(&v)
 				return &v, s
 			}
+		}
+		if d, ok := m.draftRow(s); ok && match(&d) {
+			return &d, s
 		}
 	}
 	return nil, nil

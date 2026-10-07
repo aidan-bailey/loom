@@ -2,20 +2,16 @@ package app
 
 import (
 	"github.com/aidan-bailey/loom/core"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
-	"github.com/aidan-bailey/loom/session/launch"
-	"github.com/aidan-bailey/loom/ui"
-	"github.com/aidan-bailey/loom/ui/overlay"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 // handleStatePromptKey runs while the prompt+branch-picker overlay is
-// active. Branch-filter events drive a debounced search; submit kicks
-// off Start for a not-yet-started instance or SendPrompt for a running
-// one; cancel routes through cancelPromptOverlay to clean up unstarted
-// instances.
+// active. Branch-filter events drive a debounced search; submit moves a
+// creation flow's draft on to the launch options (and Create), or sends
+// SendPrompt to a running session; cancel routes through
+// cancelPromptOverlay to discard the draft.
 func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle cancel via ctrl+c before delegating to the overlay
 	if msg.String() == "ctrl+c" {
@@ -30,18 +26,14 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	shouldClose, branchFilterChanged := ti.HandleKeyPress(msg)
 
 	if shouldClose {
-		// A creation flow's prompt targets its pending instance; otherwise
-		// the overlay was opened to prompt the selected, running session
-		// (its instance, through the bridge until package C sends by
-		// request).
-		selected := m.pendingNew
-		if selected == nil {
-			if sel := m.list.GetSelectedInstance(); sel != nil {
-				selected = m.instOf(sel.ID)
+		// A creation flow's prompt targets its draft; otherwise the overlay
+		// was opened to prompt the selected, running session.
+		d := m.draft
+		var selected *core.InstanceView
+		if d == nil {
+			if selected = m.list.GetSelectedInstance(); selected == nil {
+				return m, nil
 			}
-		}
-		if selected == nil {
-			return m, nil
 		}
 
 		if ti.IsCanceled() {
@@ -53,16 +45,17 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			selectedBranch := ti.GetSelectedBranch()
 			selectedProgram := ti.GetSelectedProgram()
 
-			if !selected.Started() {
-				// Shift+N flow: instance not started yet — set branch, then
-				// show the Session Launch Options modal before starting.
+			if d != nil {
+				// Shift+N flow: no session yet — set the draft's branch,
+				// program and prompt, then show the Session Launch Options
+				// modal before creating it.
 				if selectedBranch != "" {
-					selected.SetSelectedBranch(selectedBranch)
+					d.branch = selectedBranch
 				}
 				if selectedProgram != "" {
-					selected.SetProgram(selectedProgram)
+					d.program = selectedProgram
 				}
-				selected.SetPrompt(prompt)
+				d.prompt = prompt
 
 				// "#123 …" expands into the issue's seeded prompt before the
 				// launch options modal opens. The fetch is async, so the
@@ -71,58 +64,32 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				if n, rest, ok := github.ParseShorthand(prompt); ok && !m.core.GitHubUnavailable() {
 					m.dismissOverlay()
 					m.state = stateDefault
-					// The flow is suspended until the expansion lands;
-					// openLaunchOptionsForNew re-arms pendingNew then.
-					m.pendingNew = nil
-					return m, issueExpandCmd(m.repoPath(), n, selected, rest, prompt, selectedBranch)
+					// The flow is suspended until the expansion lands; the
+					// draft stays open, its row shown, and
+					// handleIssueExpanded reopens the flow on it.
+					return m, issueExpandCmd(m.repoPath(), n, d, rest, prompt, selectedBranch)
 				}
 
-				m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-					startJob := m.core.StartInst(selected, m.ws) // owner stamped now
-					startTask := overlay.ConfirmationTask{
-						Sync: func() {
-							m.pendingNew = nil // the start owns it now
-							m.applyChosenLaunch(selected, opts, selected.Program())
-							// Always recorded, edited or not, so branch composition has
-							// a single source of truth instead of falling back to a
-							// re-read of config.json inside the git package.
-							selected.SetBranchPrefix(opts.BranchPrefix)
-							_ = selected.TransitionTo(session.Loading)
-							m.state = stateDefault
-							m.menu.SetState(ui.StateDefault)
-						},
-						Async: tea.Batch(tea.RequestWindowSize, coreCmd(startJob)),
-					}
-
-					if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), selected.Program()) {
-						return m, m.promptRemoteControlBlocked(startTask, m.core.RCAuthFor(opts.Account).Reason)
-					}
-					return m, tea.Batch(m.runTask(startTask), m.instanceChanged())
-				}
-				m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
-				m.state = stateLaunchOptions
-				lo, reloaded := m.newLaunchOptionsOverlay(launch.FromConfig(m.appConfig()), selected.Program())
-				m.setOverlay(lo, overlayLaunchOptions)
-				m.menu.SetState(ui.StateNewInstance)
-				m.core.RequestUsageProbe()
-				return m, tea.Batch(tea.RequestWindowSize, reloaded)
+				return m.openLaunchOptionsForNew(d, selectedBranch)
 			}
 
 			// Regular flow: instance already running, just send the prompt,
 			// off the Update goroutine (three tmux subprocesses and a pause):
 			// a request, whose job the drain hands to the runtime.
 			// The overlay closes now; a failed send comes back as an error.
-			if id, ok := m.core.IDFor(selected); ok {
-				m.core.SendPrompt(id, prompt, 0)
-			}
+			m.core.SendPrompt(selected.ID, prompt, 0)
 		}
 
 		m.dismissOverlay()
 		m.state = stateDefault
-		// The help names the session's branch and program: its row.
+		// The help names the session's branch and program: its row (the
+		// draft's, for a flow closed neither submitted nor cancelled).
 		var started *core.InstanceView
-		if id, ok := m.core.IDFor(selected); ok {
-			started, _ = m.viewByID(id)
+		if d != nil {
+			row := d.row(m)
+			started = &row
+		} else {
+			started, _ = m.viewByID(selected.ID)
 		}
 		// showHelpScreen mutates model state and writes app state to
 		// disk, so it must run on the main goroutine — hand it back via

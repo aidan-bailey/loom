@@ -15,8 +15,7 @@ import (
 func promptOverlayForNewInstance(t *testing.T, m *home) {
 	t.Helper()
 	_, _ = runPromptNewInstance(m)
-	inst := lastInst(m)
-	inst.Title = "shorthand"
+	m.draft.title = "shorthand"
 	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.Equal(t, statePrompt, m.state)
 }
@@ -41,26 +40,26 @@ func TestPromptShorthand_DispatchesExpansion(t *testing.T) {
 func TestIssueExpandedMsg_SeedsPromptAndLinks(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := lastInst(m)
+	d := m.draft
 	m.dismissOverlay()
 	m.state = stateDefault
-	m.Update(issueExpandedMsg{instance: inst, repo: m.repoPath(), rest: "and tidy tests",
+	m.Update(issueExpandedMsg{draft: d, repo: m.repoPath(), rest: "and tidy tests",
 		issue: github.Issue{Number: 12, Title: "Fix", URL: "https://x/12", Body: "b"}})
-	assert.Equal(t, 12, inst.IssueNumber())
-	assert.Contains(t, inst.Prompt(), "# Fix")
-	assert.Contains(t, inst.Prompt(), "\n\nand tidy tests")
+	assert.Equal(t, 12, d.issue)
+	assert.Contains(t, d.prompt, "# Fix")
+	assert.Contains(t, d.prompt, "\n\nand tidy tests")
 	assert.Equal(t, stateLaunchOptions, m.state)
 }
 
 func TestIssueExpandedMsg_FailureLaunchesLiteral(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := lastInst(m)
+	d := m.draft
 	m.dismissOverlay()
 	m.state = stateDefault
-	_, cmd := m.Update(issueExpandedMsg{instance: inst, repo: m.repoPath(), number: 12, literal: "#12 and tidy tests", err: errors.New("nope")})
-	assert.Equal(t, 0, inst.IssueNumber())
-	assert.Equal(t, "#12 and tidy tests", inst.Prompt())
+	_, cmd := m.Update(issueExpandedMsg{draft: d, repo: m.repoPath(), number: 12, literal: "#12 and tidy tests", err: errors.New("nope")})
+	assert.Equal(t, 0, d.issue)
+	assert.Equal(t, "#12 and tidy tests", d.prompt)
 	assert.Equal(t, stateLaunchOptions, m.state, "a bad number never blocks the session")
 	assert.NotNil(t, cmd, "the footer error still surfaces")
 }
@@ -71,14 +70,14 @@ func TestIssueExpandedMsg_FailureLaunchesLiteral(t *testing.T) {
 func TestIssueExpandedMsg_DoesNotClobberAnotherFlow(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := lastInst(m)
+	d := m.draft
 	m.dismissOverlay()
-	m.state = stateLaunchOptions // another creation flow is on screen
+	m.state = stateLaunchOptions // another flow is on screen
 
-	_, cmd := m.Update(issueExpandedMsg{instance: inst, repo: m.repoPath(), rest: "",
+	_, cmd := m.Update(issueExpandedMsg{draft: d, repo: m.repoPath(), rest: "",
 		issue: github.Issue{Number: 12, Title: "Fix", URL: "https://x/12", Body: "b"}})
 	assert.Equal(t, stateLaunchOptions, m.state, "the in-progress flow's state is not replaced")
-	assert.Equal(t, 0, inst.IssueNumber(), "and nothing is applied to the waiting instance")
+	assert.Equal(t, 0, d.issue, "and nothing is applied to the waiting draft")
 	assert.NotNil(t, cmd, "but the user is told")
 }
 
@@ -88,14 +87,14 @@ func TestIssueExpandedMsg_DoesNotClobberAnotherFlow(t *testing.T) {
 func TestIssueExpandedMsg_WrongRepoDoesNotOpenHere(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := lastInst(m)
+	d := m.draft
 	m.dismissOverlay()
 	m.state = stateDefault
 
-	_, cmd := m.Update(issueExpandedMsg{instance: inst, repo: "/somewhere/else", number: 12,
+	_, cmd := m.Update(issueExpandedMsg{draft: d, repo: "/somewhere/else", number: 12,
 		issue: github.Issue{Number: 12, Title: "Fix", URL: "https://x/12", Body: "b"}})
 	assert.Equal(t, stateDefault, m.state, "no modal opens on the wrong workspace")
-	assert.Equal(t, 0, inst.IssueNumber(), "and nothing is applied")
+	assert.Equal(t, 0, d.issue, "and nothing is applied")
 	assert.NotNil(t, cmd, "but the user is told")
 }
 
@@ -105,15 +104,15 @@ func TestIssueExpandedMsg_WrongRepoDoesNotOpenHere(t *testing.T) {
 func TestIssueExpandedMsg_DroppedResultReportsFetchError(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := lastInst(m)
+	d := m.draft
 	m.dismissOverlay()
 	m.state = stateDefault
 
-	m.Update(issueExpandedMsg{instance: inst, repo: "/somewhere/else", number: 12,
+	m.Update(issueExpandedMsg{draft: d, repo: "/somewhere/else", number: 12,
 		literal: "#12 and tidy tests", err: errors.New("gh exploded")})
 
 	got := m.errBox.String()
 	assert.Contains(t, got, "gh exploded", "the real failure must survive the guard")
-	assert.Contains(t, got, "discard it with D", "and say how to recover")
+	assert.Contains(t, got, `"shorthand" discarded`, "and say what became of the draft")
 	assert.NotContains(t, got, "expanded for another workspace", "and not claim an expansion that never happened")
 }

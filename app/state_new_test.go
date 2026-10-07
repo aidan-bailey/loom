@@ -15,23 +15,16 @@ import (
 )
 
 // newPendingTitleEntryHome mirrors what runNewInstance (app/intents.go)
-// does when 'n' is pressed: append a blank, unstarted instance and
-// enter stateNew — without needing the full repoPath()/configDir()
-// plumbing runNewInstance itself depends on.
+// does when 'n' is pressed: open a blank draft and enter stateNew — with
+// its repo a temp dir and the config's default program rather than the
+// repoPath()/core.Program() runNewInstance itself reads.
 func newPendingTitleEntryHome(t *testing.T) *home {
 	t.Helper()
 	m := newTestHome(t)
-	instance, err := session.NewInstance(session.InstanceOptions{
-		Title:     "",
-		Path:      t.TempDir(),
-		Program:   m.appConfig().DefaultProgram,
-		ConfigDir: t.TempDir(),
-	})
-	require.NoError(t, err)
-	m.ws.Add(instance)
-	m.syncViews()
-	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
-	m.pendingNew = instance
+	d := m.newDraft("", "", 0)
+	require.Same(t, d, m.draft)
+	d.path = t.TempDir()
+	d.program = m.appConfig().DefaultProgram
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)
 	return m
@@ -59,7 +52,6 @@ func TestNewInstanceFlowEndToEndComposesRealClosure(t *testing.T) {
 	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // opens the real modal + stashes the real closure
 
 	require.Equal(t, stateLaunchOptions, m.state)
-	instance := lastInst(m)
 
 	// Move to Model row (row 2), cycle it, then confirm through the real
 	// handleStateLaunchOptionsKey -> real pendingLaunchOptions closure
@@ -68,6 +60,7 @@ func TestNewInstanceFlowEndToEndComposesRealClosure(t *testing.T) {
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: ' ', Text: " "})
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	instance := lastInst(m) // the confirm's Create made it
 
 	assert.Contains(t, instance.Program(), "--model 'sonnet'")
 	assert.Equal(t, stateDefault, m.state)

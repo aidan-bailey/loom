@@ -11,23 +11,23 @@ import (
 )
 
 // handleStateNewKey runs while the title-entry overlay is active. The
-// instance is already appended to the list (in a pre-started form) and
-// held as m.pendingNew; Enter finalizes it and kicks off Start,
-// Esc/ctrl+c removes and kills it (dropPendingNew).
+// draft is already shown as the list's last row and held as m.draft;
+// Enter finalizes its title and moves on to the prompt or the Session
+// Launch Options modal, Esc/ctrl+c discards it (discardDraft).
 func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle quit commands first. Don't handle q because the user might want to type that.
 	if msg.String() == "ctrl+c" {
 		m.state = stateDefault
 		m.promptAfterName = false
 		m.menu.SetState(ui.StateDefault)
-		kill := m.dropPendingNew()
-		return m, tea.Batch(m.instanceChanged(), tea.RequestWindowSize, kill)
+		m.discardDraft()
+		return m, tea.Batch(m.instanceChanged(), tea.RequestWindowSize)
 	}
 
-	// The instance being named — by identity, never the selection or the
+	// The draft being named — by identity, never the selection or the
 	// list's last row, which a completion landing mid-flow can change.
-	instance := m.pendingNew
-	if instance == nil {
+	d := m.draft
+	if d == nil {
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
 		return m, nil
@@ -35,10 +35,10 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.Code {
 	// Start the instance (enable previews etc) and go back to the main menu state.
 	case tea.KeyEnter:
-		if len(instance.Title) == 0 {
+		if len(d.title) == 0 {
 			return m, m.handleError(fmt.Errorf("title cannot be empty"))
 		}
-		if err := m.preservedTitleErr(instance.Title); err != nil {
+		if err := m.preservedTitleErr(d.title); err != nil {
 			return m, m.handleError(err)
 		}
 
@@ -56,23 +56,19 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 		// Show the Session Launch Options modal, seeded from the global
 		// config, before actually starting. Confirming there runs the
-		// closure openLaunchOptionsForNew stashes (compose Program with
-		// the chosen overrides, then Start) via handleStateLaunchOptionsKey.
-		return m.openLaunchOptionsForNew(instance, "")
+		// closure openLaunchOptionsForNew stashes (Create the draft with
+		// the chosen overrides) via handleStateLaunchOptionsKey.
+		return m.openLaunchOptionsForNew(d, "")
 	case tea.KeyBackspace:
-		runes := []rune(instance.Title)
+		runes := []rune(d.title)
 		if len(runes) == 0 {
 			return m, nil
 		}
-		if err := instance.SetTitle(string(runes[:len(runes)-1])); err != nil {
-			return m, m.handleError(err)
-		}
+		d.title = string(runes[:len(runes)-1])
 	case tea.KeySpace:
-		if err := instance.SetTitle(instance.Title + " "); err != nil {
-			return m, m.handleError(err)
-		}
+		d.title += " "
 	case tea.KeyEsc:
-		kill := m.dropPendingNew()
+		m.discardDraft()
 		m.state = stateDefault
 		// Before instanceChanged, whose menu refresh leaves the
 		// new-instance menu state alone.
@@ -83,20 +79,19 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// discarding it would silently swallow them.
 			m.instanceChanged(),
 			tea.RequestWindowSize,
-			kill,
 		)
 	default:
 		// Printable text (was tea.KeyRunes in v1).
 		if msg.Text == "" {
 			break
 		}
-		if runewidth.StringWidth(instance.Title) >= 32 {
+		if runewidth.StringWidth(d.title) >= 32 {
 			return m, m.handleError(fmt.Errorf("title cannot be longer than 32 characters"))
 		}
-		if err := instance.SetTitle(instance.Title + msg.Text); err != nil {
-			return m, m.handleError(err)
-		}
+		d.title += msg.Text
 	}
+	// The split pane and the menu hold a copy of the draft's row.
+	m.refreshSelection()
 	return m, nil
 }
 

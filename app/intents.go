@@ -40,7 +40,8 @@ type editorDoneMsg struct{ err error }
 // mid-transition.
 func selectedNotBusyNotWorkspace(m *home) bool {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.IsWorkspaceTerminal {
+	// ID 0 is a creation flow's draft row: no session to act on yet.
+	if selected == nil || selected.ID == 0 || selected.IsWorkspaceTerminal {
 		return false
 	}
 	s := selected.Status
@@ -122,20 +123,7 @@ func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 		return nil
 	}
 
-	instance, err := session.NewInstance(session.InstanceOptions{
-		Title:     "",
-		Path:      repoDir,
-		Program:   m.core.Program(),
-		ConfigDir: m.configDir(),
-	})
-	if err != nil {
-		return m, m.handleError(err)
-	}
-
-	m.ws.Add(instance)
-	m.syncViews() // the row the add made, for the selection below
-	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
-	m.pendingNew = instance
+	m.newDraft("", "", 0)
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)
 	m.promptAfterName = true
@@ -153,20 +141,7 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 	if err := m.latchedStorageErr(); err != nil {
 		return m, m.handleError(err)
 	}
-	instance, err := session.NewInstance(session.InstanceOptions{
-		Title:     "",
-		Path:      m.repoPath(),
-		Program:   m.core.Program(),
-		ConfigDir: m.configDir(),
-	})
-	if err != nil {
-		return m, m.handleError(err)
-	}
-
-	m.ws.Add(instance)
-	m.syncViews() // the row the add made, for the selection below
-	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
-	m.pendingNew = instance
+	m.newDraft("", "", 0)
 	m.state = stateNew
 	m.menu.SetState(ui.StateNewInstance)
 
@@ -614,7 +589,8 @@ func runMergeSelected(m *home) (tea.Model, tea.Cmd) {
 func mergeSourceRows(items []core.InstanceView, target *core.InstanceView) []overlay.MergePickerRow {
 	var rows []overlay.MergePickerRow
 	for i, inst := range items {
-		if inst.ID == target.ID || inst.IsWorkspaceTerminal {
+		// ID 0 is a creation flow's draft row, which has no branch yet.
+		if inst.ID == 0 || inst.ID == target.ID || inst.IsWorkspaceTerminal {
 			continue
 		}
 		status := inst.Status

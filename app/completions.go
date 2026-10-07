@@ -99,19 +99,3 @@ func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 	}
 	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), attach)
 }
-
-// dropPendingNew removes the open creation flow's pending instance from
-// its workspace, by identity, and returns a Cmd that kills it off the
-// Update goroutine (core's DropUnstarted); nil when no creation flow is
-// open. Every creation-flow cancel path goes through it. Killing "the
-// selection" or "the last row" instead could reach an unrelated session
-// once a completion or removal had moved either mid-flow.
-func (m *home) dropPendingNew() tea.Cmd {
-	inst := m.pendingNew
-	m.pendingNew = nil
-	job := m.core.DropUnstarted(inst)
-	// The removal is the model's; what follows in this Update (the
-	// cancel's instanceChanged) reads the rows.
-	m.syncViews()
-	return coreCmd(job)
-}

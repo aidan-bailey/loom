@@ -11,7 +11,6 @@ import (
 
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/session"
-	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 )
@@ -172,14 +171,6 @@ func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program strin
 		lo.SetAccounts(m.accountChoices(m.accountStatuses()))
 	}
 	return lo, reloaded
-}
-
-// applyChosenLaunch records the chosen launch options on inst: the program
-// composed from base with the chosen account's remote-control auth, the env
-// toggles, and the account itself.
-func (m *home) applyChosenLaunch(inst *session.Instance, opts overlay.LaunchOptions, base string) {
-	inst.SetLaunchOptions(launch.Compose(opts, m.core.RCAuthFor(opts.Account), base, inst.Title), opts.HeadroomProxy, opts.CacheTTL1h)
-	inst.SetAccount(opts.Account)
 }
 
 // accountOrDefault maps an instance's stored account ("" = default) to the

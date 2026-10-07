@@ -18,11 +18,11 @@ func (m *home) remoteControlBlockedOn(acct string, rcEnabled bool, program strin
 }
 
 // promptRemoteControlBlocked shows the "remote control unavailable" modal for
-// a titled-but-unstarted instance. Confirm (y) runs startWithoutRC — which
-// launches the session with no --remote-control flag; cancel (n/esc) aborts
-// creation, popping and killing the pending instance the way Esc does. Both
-// branches route their Cmd through pendingConfirmation so state_confirm.go
-// dispatches it. reason is the launching account's auth reason.
+// a titled draft. Confirm (y) runs startWithoutRC — which launches the
+// session with no --remote-control flag; cancel (n/esc) aborts creation,
+// discarding the draft the way Esc does. Both branches route through
+// pendingConfirmation so state_confirm.go dispatches it. reason is the
+// launching account's auth reason.
 func (m *home) promptRemoteControlBlocked(startWithoutRC overlay.ConfirmationTask, reason string) tea.Cmd {
 	m.state = stateConfirm
 	m.pendingConfirmation = startWithoutRC
@@ -32,10 +32,11 @@ func (m *home) promptRemoteControlBlocked(startWithoutRC overlay.ConfirmationTas
 	co := overlay.NewConfirmationOverlay(msg)
 	co.SetWidth(60)
 	co.OnCancel = func() {
-		// Swap in an abort task so cancel tears the pending instance down
-		// (async, like the Esc path) instead of starting it.
+		// Discard the draft, like the Esc path, and swap in the zero task
+		// so cancel doesn't start it.
 		m.menu.SetState(ui.StateDefault)
-		m.pendingConfirmation = overlay.ConfirmationTask{Async: m.dropPendingNew()}
+		m.discardDraft()
+		m.pendingConfirmation = overlay.ConfirmationTask{}
 	}
 	m.setOverlay(co, overlayConfirmation)
 	return nil
@@ -48,8 +49,8 @@ func (m *home) promptRemoteControlBlocked(startWithoutRC overlay.ConfirmationTas
 // --remote-control when auth isn't OK regardless of the enabled flag,
 // so confirming here just proceeds with the composition the caller
 // was always going to apply. Unlike promptRemoteControlBlocked
-// (creation flow, which pops/kills the pending not-yet-started
-// instance on cancel), cancel here just returns to stateDefault — the
+// (creation flow, which discards the draft on cancel), cancel here
+// just returns to stateDefault — the
 // already-existing Paused instance is untouched. handleStateConfirmKey
 // unconditionally calls m.pendingConfirmation.Run() once the overlay
 // reports closed=true (confirm AND cancel alike), so OnCancel must

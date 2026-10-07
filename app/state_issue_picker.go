@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
@@ -104,9 +103,9 @@ func handleStateIssuePickerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	}
 }
 
-// handleIssuePicked creates the pre-started instance titled by the
-// issue slug, seeds its prompt, links the issue, and opens the launch
-// options modal — the same path n/N take after title entry.
+// handleIssuePicked opens a draft titled by the issue slug, seeds its
+// prompt, links the issue, and opens the launch options modal — the same
+// path n/N take after title entry.
 func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		return m, m.handleError(fmt.Errorf("fetch issue: %w", msg.err))
@@ -119,7 +118,7 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	//     seed an agent with issue text from another repository;
 	//   - some other flow is on screen, whose overlay and pending
 	//     launch-options closure this would silently replace, stranding
-	//     its instance unstarted and unreachable.
+	//     its draft.
 	//
 	// Both drop the result with an explanation rather than applying it.
 	if msg.repo != m.repoPath() {
@@ -138,35 +137,21 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	if err := m.preservedTitleErr(title); err != nil {
 		return m, m.handleError(err)
 	}
-	instance, err := session.NewInstance(session.InstanceOptions{
-		Title:     title,
-		Path:      m.repoPath(),
-		Program:   m.core.Program(),
-		Prompt:    github.SeedPrompt(msg.issue),
-		ConfigDir: m.configDir(),
-	})
-	if err != nil {
-		return m, m.handleError(err)
-	}
-	instance.SetIssue(msg.issue.Number)
-	m.ws.Add(instance)
-	m.syncViews() // the row the add made, for the selection below
-	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
+	d := m.newDraft(title, github.SeedPrompt(msg.issue), msg.issue.Number)
 	m.core.ExpediteGitHub()
-	m.core.ApplyGitHubState()
-	return m.openLaunchOptionsForNew(instance, "")
+	return m.openLaunchOptionsForNew(d, "")
 }
 
 // issueExpandedMsg is the #n shorthand's result: on success the seeded
 // prompt replaces the token; on error the literal prompt launches
 // unchanged and unlinked.
 type issueExpandedMsg struct {
-	instance *session.Instance
-	// repo is the workspace the prompt was submitted in. The instance is
-	// already bound to its own worktree, so a late result cannot create
-	// it in the wrong place — but openLaunchOptionsForNew would still
-	// open the modal on whichever workspace is focused when this lands,
-	// for an instance in another slot's list.
+	draft *draft
+	// repo is the workspace the prompt was submitted in. The draft is
+	// already bound to its own slot and repo, so a late result cannot
+	// create it in the wrong place — but openLaunchOptionsForNew would
+	// still open the modal on whichever workspace is focused when this
+	// lands, for a draft in another slot's list.
 	repo           string
 	number         int
 	issue          github.Issue
@@ -176,114 +161,113 @@ type issueExpandedMsg struct {
 	err            error
 }
 
-// issueExpandCmd fetches issue n for the shorthand.
-func issueExpandCmd(repo string, n int, inst *session.Instance, rest, literal, selectedBranch string) tea.Cmd {
+// issueExpandCmd fetches issue n for the shorthand. It carries d back
+// untouched: the Cmd runs off the Update goroutine and must not read the
+// draft.
+func issueExpandCmd(repo string, n int, d *draft, rest, literal, selectedBranch string) tea.Cmd {
 	return func() tea.Msg {
 		is, err := github.View(context.Background(), repo, n, internalexec.Default{})
-		return issueExpandedMsg{instance: inst, repo: repo, number: n, issue: is, rest: rest, literal: literal, selectedBranch: selectedBranch, err: err}
+		return issueExpandedMsg{draft: d, repo: repo, number: n, issue: is, rest: rest, literal: literal, selectedBranch: selectedBranch, err: err}
 	}
 }
 
 // issueExpandDropped explains a #n expansion that was dropped by a
 // guard. The fetch error is folded into the same string because errBox
 // shows one message at a time — reporting only the guard would assert
-// an expansion that may in fact have failed. The instance is left
-// unstarted with no path back into launch options (r/R only act on
-// Paused/Recoverable status, and n/N always append a new instance), so
-// the message says how to actually get rid of it.
+// an expansion that may in fact have failed. The draft has no path back
+// into launch options (n/N/I always open a new draft), so it is
+// discarded, and the message says so.
 func issueExpandDropped(msg issueExpandedMsg, title, why string) error {
 	if msg.err != nil {
-		return fmt.Errorf("issue #%d not expanded (%v) and %s; %q left unstarted — discard it with D", msg.number, msg.err, why, title)
+		return fmt.Errorf("issue #%d not expanded (%v) and %s; %q discarded", msg.number, msg.err, why, title)
 	}
-	return fmt.Errorf("issue #%d not expanded because %s; %q left unstarted — discard it with D", msg.number, why, title)
+	return fmt.Errorf("issue #%d not expanded because %s; %q discarded", msg.number, why, title)
 }
 
 // handleIssueExpanded finishes the N flow after a #n expansion. The
 // fetch is async and the user stays interactive during it (the prompt
 // overlay is dismissed the moment the shorthand is spotted — see
-// handleStatePromptKey), so this can land while another flow is on
-// screen — whose overlay and pending launch-options closure
-// openLaunchOptionsForNew would silently replace, stranding its
-// instance unstarted. Matches the guard handleIssuePicked uses for the
+// handleStatePromptKey), so this can land after a newer creation flow
+// replaced the draft, or while another flow is on screen — whose overlay
+// and pending launch-options closure openLaunchOptionsForNew would
+// silently replace. Matches the guard handleIssuePicked uses for the
 // same reason. It can also land after the user switched workspace tabs:
-// inst stays correctly bound to its own repo either way, but
+// the draft stays bound to its own slot either way, but
 // openLaunchOptionsForNew would open the modal on whichever workspace
-// is now focused, for an instance living in another slot's list — so
-// that is checked too, same as handleIssuePicked's repo guard.
+// is now focused, for a draft living in another slot's list — so that
+// is checked too, same as handleIssuePicked's repo guard. A guard that
+// fires discards the draft (issueExpandDropped).
 //
-// Both guards sit above the msg.err != nil branch below, unlike
+// The guards sit above the msg.err != nil branch below, unlike
 // handleIssuePicked's error check which returns early. Here err!=nil
 // is a degrade-and-continue branch — it still calls
-// openLaunchOptionsForNew with the literal prompt — so if either guard
-// ran after it, a failed fetch could still pop the modal on the wrong
+// openLaunchOptionsForNew with the literal prompt — so if a guard ran
+// after it, a failed fetch could still pop the modal on the wrong
 // workspace or on top of another flow. Keep the guards first.
 func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
-	inst := msg.instance
-	if inst == nil || inst.Started() {
+	d := msg.draft
+	if d == nil {
 		return m, nil
 	}
-	if _, held := m.core.IDFor(inst); !held {
-		// Deleted (D) while the fetch ran: reopening the flow would re-arm
-		// pendingNew for an instance no list holds.
-		return m, m.handleError(fmt.Errorf("issue #%d not expanded: %q was deleted meanwhile", msg.number, inst.Title))
+	if m.draft != d {
+		// Replaced by a newer creation flow (or discarded) while the
+		// fetch ran: reopening the flow would revive a draft no rail
+		// shows.
+		return m, m.handleError(issueExpandDropped(msg, d.title, "a newer session was being created"))
 	}
 	if msg.repo != m.repoPath() {
-		return m, m.handleError(issueExpandDropped(msg, inst.Title, "its workspace is no longer focused"))
+		m.discardDraft()
+		return m, m.handleError(issueExpandDropped(msg, d.title, "its workspace is no longer focused"))
 	}
 	if m.state != stateDefault {
-		return m, m.handleError(issueExpandDropped(msg, inst.Title, "another session was being created"))
+		m.discardDraft()
+		return m, m.handleError(issueExpandDropped(msg, d.title, "another session was being created"))
 	}
 	var errCmd tea.Cmd
 	if msg.err != nil {
-		inst.SetPrompt(msg.literal)
+		d.prompt = msg.literal
 		errCmd = m.handleError(fmt.Errorf("issue #%d not expanded: %w", msg.number, msg.err))
 	} else {
 		prompt := github.SeedPrompt(msg.issue)
 		if msg.rest != "" {
 			prompt += "\n" + msg.rest + "\n"
 		}
-		inst.SetPrompt(prompt)
-		inst.SetIssue(msg.issue.Number)
+		d.prompt = prompt
+		d.issue = msg.issue.Number
 		m.core.ExpediteGitHub()
-		m.core.ApplyGitHubState()
 	}
-	_, cmd := m.openLaunchOptionsForNew(inst, msg.selectedBranch)
+	_, cmd := m.openLaunchOptionsForNew(d, msg.selectedBranch)
 	return m, tea.Batch(cmd, errCmd)
 }
 
-// openLaunchOptionsForNew shows the Session Launch Options modal for an
-// unstarted instance already in the list. Confirming composes the
-// program from the chosen options and starts the instance; cancelling
-// pops it (killPendingLaunchOptionsCancel). selectedBranch is no longer
-// read: the prompt flow set it on the instance (SetSelectedBranch) before
-// any issue expansion, and the start result does not carry it.
-func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranch string) (tea.Model, tea.Cmd) {
-	m.pendingNew = instance
+// openLaunchOptionsForNew shows the Session Launch Options modal for a
+// draft. Confirming creates and starts its session with the chosen
+// options (confirmDraft); cancelling discards it
+// (killPendingLaunchOptionsCancel). selectedBranch, when set, is the
+// branch picker's choice, recorded on the draft (the prompt flow sets it
+// there too, before any issue expansion).
+func (m *home) openLaunchOptionsForNew(d *draft, selectedBranch string) (tea.Model, tea.Cmd) {
+	if selectedBranch != "" {
+		d.branch = selectedBranch
+	}
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-		startJob := m.core.StartInst(instance, m.ws) // owner stamped now
 		startTask := overlay.ConfirmationTask{
 			Sync: func() {
-				m.pendingNew = nil // the start owns it now
-				m.applyChosenLaunch(instance, opts, instance.Program())
-				// Always recorded, edited or not, so branch composition has a
-				// single source of truth instead of falling back to a re-read
-				// of config.json inside the git package.
-				instance.SetBranchPrefix(opts.BranchPrefix)
-				_ = instance.TransitionTo(session.Loading)
 				m.promptAfterName = false
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
+				m.confirmDraft(d, opts)
 			},
-			Async: tea.Batch(tea.RequestWindowSize, coreCmd(startJob)),
+			Async: tea.RequestWindowSize,
 		}
-		if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), instance.Program()) {
+		if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), d.program) {
 			return m, m.promptRemoteControlBlocked(startTask, m.core.RCAuthFor(opts.Account).Reason)
 		}
 		return m, tea.Batch(m.runTask(startTask), m.instanceChanged())
 	}
 	m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions
-	lo, reloaded := m.newLaunchOptionsOverlay(launch.FromConfig(m.appConfig()), instance.Program())
+	lo, reloaded := m.newLaunchOptionsOverlay(launch.FromConfig(m.appConfig()), d.program)
 	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
 	m.core.RequestUsageProbe()

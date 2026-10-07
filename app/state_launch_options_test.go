@@ -13,26 +13,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newPendingLaunchOptionsHome builds a *home with one not-yet-started
-// instance in the list, the Session Launch Options modal open, and
-// m.pendingLaunchOptions wired the same way state_new.go's Enter
-// branch wires it — capturing instance.Program()/Title so confirming
-// composes and stashes the result via instance.SetLaunchOptions without actually
-// invoking Start() (which would need a real git worktree + tmux).
+// newPendingLaunchOptionsHome builds a *home with a draft in the list,
+// the Session Launch Options modal open, and m.pendingLaunchOptions wired
+// the same way state_new.go's Enter branch wires it — except that
+// confirming composes onto a stand-in instance (outside every list) via
+// instance.SetLaunchOptions instead of creating and starting the draft's
+// session (which would need a real git worktree + tmux).
 func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*home, *session.Instance) {
 	t.Helper()
 	m := newTestHome(t)
+	d := m.newDraft("my task", "", 0)
+	d.path, d.program = t.TempDir(), "claude"
 	instance, err := session.NewInstance(session.InstanceOptions{
-		Title:     "my task",
-		Path:      t.TempDir(),
-		Program:   "claude",
+		Title:     d.title,
+		Path:      d.path,
+		Program:   d.program,
 		ConfigDir: t.TempDir(),
 	})
 	require.NoError(t, err)
-	m.ws.Add(instance)
-	m.syncViews()
-	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
-	m.pendingNew = instance
 
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
 		instance.SetLaunchOptions(launch.Compose(opts, m.core.RCAuth(), instance.Program(), instance.Title), opts.HeadroomProxy, opts.CacheTTL1h)

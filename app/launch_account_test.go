@@ -196,35 +196,50 @@ func TestRefreshAccountViews_TheOpenModalsAccountRemovedShowsTheSwitch(t *testin
 	}
 }
 
-func TestApplyChosenLaunch_RecordsTheAccount(t *testing.T) {
+// pausedForResumeWith adds a Paused session titled title to m's focused
+// workspace: what the R flow's request (core.Model.ResumeWith) acts on.
+func pausedForResumeWith(t *testing.T, m *home, title string) *session.Instance {
+	t.Helper()
+	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	require.NoError(t, inst.TransitionTo(session.Paused))
+	m.ws.Add(inst)
+	m.syncViews()
+	return inst
+}
+
+// TestResumeWith_RecordsTheAccount: the chosen launch options, recorded by
+// the R flow's request (formerly app's applyChosenLaunch, now inside
+// core.Model.ResumeWith), carry the account.
+func TestResumeWith_RecordsTheAccount(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-launch", Path: t.TempDir(), Program: "claude"})
-	require.NoError(t, err)
+	inst := pausedForResumeWith(t, m, "acct-launch")
 
-	m.applyChosenLaunch(inst, bareOpts("max-2"), "claude")
+	m.core.ResumeWith(idOf(m, inst), bareOpts("max-2"), "claude", 0)
 	assert.Equal(t, "max-2", inst.Account())
 
-	m.applyChosenLaunch(inst, bareOpts(account.DefaultName), "claude")
+	require.NoError(t, inst.TransitionTo(session.Paused)) // resumable again
+	m.core.ResumeWith(idOf(m, inst), bareOpts(account.DefaultName), "claude", 0)
 	assert.Equal(t, "", inst.Account())
 }
 
-func TestApplyChosenLaunch_UsesTheAccountsRemoteControlAuth(t *testing.T) {
+func TestResumeWith_UsesTheAccountsRemoteControlAuth(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
 	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthOK})
 	m.core.SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "logged out"}})
-	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-rc", Path: t.TempDir(), Program: "claude"})
-	require.NoError(t, err)
+	inst := pausedForResumeWith(t, m, "acct-rc")
 
 	opts := bareOpts("max-2")
 	opts.RemoteControl = true
-	m.applyChosenLaunch(inst, opts, "claude")
+	m.core.ResumeWith(idOf(m, inst), opts, "claude", 0)
 	assert.NotContains(t, inst.Program(), "--remote-control")
 	assert.True(t, m.remoteControlBlockedOn("max-2", true, "claude"))
 
+	require.NoError(t, inst.TransitionTo(session.Paused)) // resumable again
 	opts.Account = account.DefaultName
-	m.applyChosenLaunch(inst, opts, "claude")
+	m.core.ResumeWith(idOf(m, inst), opts, "claude", 0)
 	assert.Contains(t, inst.Program(), "--remote-control")
 	assert.False(t, m.remoteControlBlockedOn(account.DefaultName, true, "claude"))
 }
