@@ -671,7 +671,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		selected := m.list.GetSelectedInstance()
 
 		if inst := m.core.InstanceForSession(msg.session); inst != nil {
-			m.core.PaneOutput(inst)
+			m.core.PaneOutputInst(inst)
 			// Output arrived → the agent is doing something. Mirrors the old
 			// tick's updated→Running transition; Ready re-derives on the
 			// quiet event once the burst settles. Prompting is exempt:
@@ -706,7 +706,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case paneQuietMsg:
 		inst := m.core.InstanceForSession(msg.session)
-		m.core.PaneQuiet(inst)
+		m.core.PaneQuietInst(inst)
 		if !core.StatusEligible(inst) {
 			// A quiet that lands mid-Start (Loading) is this burst's only
 			// settle signal — quiet never re-fires without new output, so
@@ -811,7 +811,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		cmds = append(cmds, coreCmd(m.core.VerifyDead(inst)))
+		cmds = append(cmds, coreCmd(m.core.VerifyDeadInst(inst)))
 		return m, tea.Batch(cmds...)
 	case bellMsg:
 		if inst := m.core.InstanceForSession(msg.session); inst != nil && inst != m.list.GetSelectedInstance() {
@@ -864,7 +864,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The model's half: liveness, parity, diff stats and the background
 		// jobs. Its probe's result re-arms this tick (core.HealthChecked),
 		// so ticks never overlap a probe still running.
-		m.core.Tick(selected)
+		m.core.TickInst(selected)
 
 		// The status ladder on the snapshot path reads each pane's screen,
 		// which only the TUI's clients have.

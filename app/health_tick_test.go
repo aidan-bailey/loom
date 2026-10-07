@@ -51,7 +51,7 @@ func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 	m.core.SetGateForTest("github", true, time.Now())
 
 	gone = true
-	m.core.Tick(m.list.GetSelectedInstance())
+	m.core.TickInst(m.list.GetSelectedInstance())
 	out := m.core.Drain()
 	require.Len(t, out.Jobs, 1, "the probe is the tick's only job")
 	msg, ok := coreCmd(out.Jobs[0])().(coreResultMsg)

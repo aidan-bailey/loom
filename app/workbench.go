@@ -452,7 +452,7 @@ func (m *home) sendReviewCmd() tea.Cmd {
 	title := sel.Title
 	msg := fmt.Sprintf("Send %d review comment(s) to %s?", rv.CommentCount(), title)
 	return m.confirmTask(msg, overlay.ConfirmationTask{
-		Async: coreCmd(m.core.SendPrompt(sel, prompt)),
+		Async: coreCmd(m.core.SendPromptInst(sel, prompt)),
 	})
 }
 

@@ -228,7 +228,7 @@ func (m *Model) deliverStart(r StartResult) {
 		m.spawn(sendInitialPrompt(inst, owner, prompt))
 		return
 	}
-	m.emit(Started{Instance: inst, Owner: owner, Loaded: loaded})
+	m.emit(Started{Instance: inst, ID: m.idOf(inst), Title: inst.Title, Owner: owner, Loaded: loaded})
 }
 
 // deliverPromptSent finishes a start whose initial prompt was sent first
@@ -236,7 +236,7 @@ func (m *Model) deliverStart(r StartResult) {
 // have closed while the prompt was sent, so whether it is still loaded is
 // asked again.
 func (m *Model) deliverPromptSent(r promptSent) {
-	m.emit(Started{Instance: r.inst, Owner: r.owner, Loaded: m.IsLoaded(r.owner)})
+	m.emit(Started{Instance: r.inst, ID: m.idOf(r.inst), Title: r.inst.Title, Owner: r.owner, Loaded: m.IsLoaded(r.owner)})
 }
 
 // deliverResume finishes a resume. The owner may have been closed while
@@ -262,7 +262,7 @@ func (m *Model) deliverResume(r ResumeResult) {
 		}
 	}
 	if inst := r.Instance; inst != nil && m.Holding(inst) != nil {
-		m.emit(SessionLaunched{Instance: inst})
+		m.emit(SessionLaunched{Instance: inst, ID: m.idOf(inst)})
 	}
 	m.emit(InstancesChanged{Relayout: true})
 }
@@ -298,7 +298,7 @@ func (m *Model) deliverRecover(r RecoverResult) {
 			log.For("core").Error("recover.save_failed", "title", r.Recovered.Title, "err", err)
 		}
 	}
-	m.emit(Recovered{Instance: r.Recovered, Owner: owner, Loaded: loaded})
+	m.emit(Recovered{Instance: r.Recovered, ID: m.idOf(r.Recovered), Title: r.Recovered.Title, Owner: owner, Loaded: loaded})
 }
 
 // deliverKill removes a killed instance from every loaded workspace, by
@@ -335,7 +335,7 @@ func (m *Model) deliverOpFailed(r OpFailed) {
 		// a client, which a tick may have pruned while it was Deleting or
 		// Loading. A no-op unless it is active (a reverted discard is
 		// Recoverable, a reverted resume Paused).
-		m.emit(Reactivated{Instance: r.Instance})
+		m.emit(Reactivated{Instance: r.Instance, ID: m.idOf(r.Instance)})
 	}
 	log.For("core").Error("op_failed", "op", r.Op, "title", r.Title, "err", r.Err)
 	m.notifyErr(r.Err)

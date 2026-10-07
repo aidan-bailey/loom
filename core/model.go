@@ -134,6 +134,14 @@ type Model struct {
 	// made while another refresh is in flight is not lost.
 	refreshDefaultAuth bool
 
+	// ids is each reported instance's ID (idOf). An instance no loaded
+	// workspace holds is forgotten at the next publish; IDs are never reused
+	// (nextID only grows).
+	ids    map[*session.Instance]InstanceID
+	nextID InstanceID
+	// published is each loaded workspace's views as last published (Sync).
+	published map[*Workspace][]InstanceView
+
 	out Out
 }
 
@@ -166,7 +174,13 @@ func New(o Options) (*Model, error) {
 
 // newModel builds a model with no workspace and no side effects.
 func newModel(o Options) *Model {
-	return &Model{registry: o.Registry, program: o.Program, cmdExec: o.CmdExec}
+	return &Model{
+		registry:  o.Registry,
+		program:   o.Program,
+		cmdExec:   o.CmdExec,
+		ids:       make(map[*session.Instance]InstanceID),
+		published: make(map[*Workspace][]InstanceView),
+	}
 }
 
 // NewForTest builds a model with no workspace and no side effects; a test
@@ -284,6 +298,10 @@ func (m *Model) Deliver(msg any) {
 		m.deliverAccountsRefreshed(msg)
 	case usageResult:
 		m.deliverUsage(msg)
+	case tracked:
+		m.deliverTracked(msg)
+	case issueResult:
+		// Only its Reply carries it (deliverTracked).
 	default:
 		log.For("core").Error("deliver.unknown_result", "type", fmt.Sprintf("%T", msg))
 	}

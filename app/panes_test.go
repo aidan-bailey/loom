@@ -93,7 +93,7 @@ func TestKillAndPause_CloseTheClientOnlyAfterTheRegistryDrops(t *testing.T) {
 		done   func(t *testing.T, msg tea.Msg)
 	}{
 		{"kill", func(m *home, inst *session.Instance) tea.Cmd {
-			preAction, killAction := m.core.Kill(m.ws, inst, m.closeTerminalFor(inst.Title, "kill"))
+			preAction, killAction := m.core.KillInst(m.ws, inst, m.closeTerminalFor(inst.Title, "kill"))
 			preAction()
 			return coreCmd(killAction)
 		}, func(t *testing.T, msg tea.Msg) {
@@ -102,7 +102,7 @@ func TestKillAndPause_CloseTheClientOnlyAfterTheRegistryDrops(t *testing.T) {
 		}},
 		{"pause", func(m *home, inst *session.Instance) tea.Cmd {
 			require.NoError(t, inst.TransitionTo(session.Loading)) // as the pause's confirm does
-			return coreCmd(m.core.Pause(m.ws, inst, m.closeTerminalFor(inst.Title, "pause")))
+			return coreCmd(m.core.PauseInst(m.ws, inst, m.closeTerminalFor(inst.Title, "pause")))
 		}, func(t *testing.T, msg tea.Msg) {
 			res, _ := msg.(coreResultMsg)
 			require.IsType(t, core.PauseResult{}, res.msg, "%v", msg)

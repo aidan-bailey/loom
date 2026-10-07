@@ -36,5 +36,5 @@ func handleStateMergePickerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	if source == nil {
 		return m, nil
 	}
-	return m, coreCmd(m.core.Merge(target, source))
+	return m, coreCmd(m.core.MergeInst(target, source))
 }

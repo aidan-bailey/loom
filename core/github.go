@@ -250,10 +250,10 @@ func (m *Model) ExpediteGitHub() { m.gate(gateGH).expedite() }
 // failure, nil on success.
 type pushResult struct{ err error }
 
-// Push returns the job committing and pushing inst's worktree, reporting
+// PushInst returns the job committing and pushing inst's worktree, reporting
 // a pushResult: an error becomes a notice, a success expedites the GitHub
 // poll so the PR badge follows. Formerly app.pushActionFor.
-func (m *Model) Push(inst *session.Instance) Job {
+func (m *Model) PushInst(inst *session.Instance) Job {
 	selected := inst
 	return func() any {
 		commitMsg := fmt.Sprintf("[loom] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))

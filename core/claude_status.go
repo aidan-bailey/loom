@@ -263,14 +263,14 @@ func StatusEligible(inst *session.Instance) bool {
 	return st != session.Deleting && st != session.Recoverable && st != session.Loading
 }
 
-// PaneOutput is the TUI's report that inst's pane produced output (a pane
+// PaneOutputInst is the TUI's report that inst's pane produced output (a pane
 // dirty event). Answering a permission prompt makes output (the dialog
 // goes away) but fires no hook, and the roster reports busy at once, so a
 // Prompting Claude session asks the roster soon. While Claude works its
 // spinner keeps output flowing, so this also reads a UserPromptSubmit
 // within hookScanInterval. Call it before the TUI's own status ladder
 // moves inst: it reads the status the output arrived in.
-func (m *Model) PaneOutput(inst *session.Instance) {
+func (m *Model) PaneOutputInst(inst *session.Instance) {
 	// Answering a permission prompt makes output (the dialog goes
 	// away) but fires no hook; the roster reports busy at once.
 	if inst.GetStatus() == session.Prompting && session.IsClaudeProgram(inst.Program()) {
@@ -283,11 +283,11 @@ func (m *Model) PaneOutput(inst *session.Instance) {
 	}
 }
 
-// PaneQuiet is the TUI's report that inst's pane went quiet (nil for a
+// PaneQuietInst is the TUI's report that inst's pane went quiet (nil for a
 // pane no instance owns). Stop and PermissionRequest arrive as output
 // settles, often in a burst's last output, so it scans even inside
 // hookScanInterval or while a scan is in flight: request().
-func (m *Model) PaneQuiet(inst *session.Instance) {
+func (m *Model) PaneQuietInst(inst *session.Instance) {
 	if inst == nil || !inst.HooksLaunched() {
 		return
 	}
@@ -296,4 +296,18 @@ func (m *Model) PaneQuiet(inst *session.Instance) {
 	// hookScanInterval or while a scan is in flight: request().
 	m.gate(gateHookScan).request()
 	m.maybeHookScan(m.ActiveInstances())
+}
+
+// PaneOutput reports that id's pane produced output (PaneOutputInst).
+func (m *Model) PaneOutput(id InstanceID) {
+	if inst, _ := m.lookup(id); inst != nil {
+		m.PaneOutputInst(inst)
+	}
+}
+
+// PaneQuiet reports that id's pane went quiet (PaneQuietInst).
+func (m *Model) PaneQuiet(id InstanceID) {
+	if inst, _ := m.lookup(id); inst != nil {
+		m.PaneQuietInst(inst)
+	}
 }

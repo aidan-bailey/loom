@@ -70,7 +70,7 @@ func TestDeliverStart_SuccessSendsThePromptByJob(t *testing.T) {
 			// The fixture never started, so the send fails; the job logs
 			// that and reports the start finished all the same.
 			m.Deliver(out.Jobs[0]())
-			assert.Equal(t, []Event{Started{Instance: inst, Owner: ws, Loaded: tc.wantsLoaded}}, m.Drain().Events)
+			assert.Equal(t, []Event{Started{Instance: inst, ID: m.idOf(inst), Title: "x", Owner: ws, Loaded: tc.wantsLoaded}}, m.Drain().Events)
 		})
 	}
 }
@@ -84,7 +84,7 @@ func TestDeliverOpFailed_Reverts(t *testing.T) {
 	err := errors.New("no")
 	m.Deliver(OpFailed{Instance: inst, Title: "x", Op: "resume", Previous: session.Paused, Err: err})
 	assert.Equal(t, session.Paused, inst.GetStatus())
-	assert.Equal(t, []Event{Reactivated{Instance: inst}, Notice{Err: err}, InstancesChanged{}, ClientsStale{}}, m.Drain().Events)
+	assert.Equal(t, []Event{Reactivated{Instance: inst, ID: m.idOf(inst)}, Notice{Err: err}, InstancesChanged{}, ClientsStale{}}, m.Drain().Events)
 }
 
 func TestDropUnstarted_RemovesAndKillsOnlyAnUnstartedInstance(t *testing.T) {
@@ -159,7 +159,7 @@ func TestKill_BeforeKillRunsAfterTheChecksAndBeforeTheKill(t *testing.T) {
 		ws.Add(inst)
 		m.SetWorkspacesForTest(nil, []*Workspace{ws})
 		calls := 0
-		pre, job := m.Kill(ws, inst, func() { calls++ })
+		pre, job := m.KillInst(ws, inst, func() { calls++ })
 		pre()
 
 		failed, ok := job().(OpFailed)
@@ -194,7 +194,7 @@ func TestKill_BeforeKillRunsAfterTheChecksAndBeforeTheKill(t *testing.T) {
 		m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 		calls, worktreeThere := 0, false
-		pre, job := m.Kill(ws, inst, func() {
+		pre, job := m.KillInst(ws, inst, func() {
 			calls++
 			_, err := os.Stat(wtPath)
 			worktreeThere = err == nil
@@ -215,7 +215,7 @@ func TestKill_BeforeKillRunsAfterTheChecksAndBeforeTheKill(t *testing.T) {
 func TestSendPrompt_FailureNamesTheSession(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := newInst(t, "x") // never started, so the send fails
-	m.Deliver(m.SendPrompt(inst, "hi")())
+	m.Deliver(m.SendPromptInst(inst, "hi")())
 
 	events := m.Drain().Events
 	require.Len(t, events, 1)

@@ -126,7 +126,7 @@ func TestMerge_MergesBranchIntoTarget(t *testing.T) {
 	runGit(t, sourceWT.GetWorktreePath(), "add", ".")
 	runGit(t, sourceWT.GetWorktreePath(), "commit", "-qm", "add new.txt")
 
-	job := core.NewForTest(core.Options{}).Merge(target, source)
+	job := core.NewForTest(core.Options{}).MergeInst(target, source)
 	msg := job()
 	assert.Equal(t, core.MergeResult{}, msg, "successful merge returns no error")
 

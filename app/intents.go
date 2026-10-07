@@ -172,7 +172,7 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 
 func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	preAction, job := m.core.Kill(m.ws, selected, m.closeTerminalFor(selected.Title, "kill"))
+	preAction, job := m.core.KillInst(m.ws, selected, m.closeTerminalFor(selected.Title, "kill"))
 	killAction := coreCmd(job)
 	message := fmt.Sprintf("[!] Kill session '%s'?", selected.Title)
 	if selected.GetStatus() == session.Recoverable {
@@ -189,7 +189,7 @@ func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 // killAction. Used by cs.actions.kill_selected{confirm=false}.
 func runKillSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	preAction, job := m.core.Kill(m.ws, selected, m.closeTerminalFor(selected.Title, "kill"))
+	preAction, job := m.core.KillInst(m.ws, selected, m.closeTerminalFor(selected.Title, "kill"))
 	killAction := coreCmd(job)
 	preAction()
 	return m, killAction
@@ -197,7 +197,7 @@ func runKillSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 
 func runSubmitSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	pushAction := coreCmd(m.core.Push(selected))
+	pushAction := coreCmd(m.core.PushInst(selected))
 	message := fmt.Sprintf("[!] Push changes from session '%s'?", selected.Title)
 	return m, m.confirmAction(message, pushAction)
 }
@@ -206,7 +206,7 @@ func runSubmitSelected(m *home) (tea.Model, tea.Cmd) {
 // confirmation overlay. Used by cs.actions.push_selected{confirm=false}.
 func runSubmitSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	return m, coreCmd(m.core.Push(selected))
+	return m, coreCmd(m.core.PushInst(selected))
 }
 
 // runStashSelectedOpts is the parameterized pause path. confirm
@@ -217,7 +217,7 @@ func runSubmitSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 // renders immediately.
 func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	pauseAction := coreCmd(m.core.Pause(m.ws, selected, m.closeTerminalFor(selected.Title, "pause")))
+	pauseAction := coreCmd(m.core.PauseInst(m.ws, selected, m.closeTerminalFor(selected.Title, "pause")))
 
 	startPause := func() tea.Cmd {
 		if !confirm {
@@ -252,7 +252,7 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	// concurrent reconcile flip between the precondition check and this
 	// write can't leave us starting Resume on a non-Paused instance:
 	// Resume then returns no job.
-	job := m.core.Resume(m.ws, selected)
+	job := m.core.ResumeInst(m.ws, selected)
 	if job == nil {
 		return m, nil
 	}
@@ -291,7 +291,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 		// Snapshot the save and stamp the owner here, on the main
 		// goroutine — Async below runs on a Cmd goroutine and must not
 		// read the model.
-		resumeJob := m.core.ResumeIfLoading(m.ws, selected)
+		resumeJob := m.core.ResumeIfLoadingInst(m.ws, selected)
 		resumeTask := overlay.ConfirmationTask{
 			Sync: func() {
 				m.applyChosenLaunch(selected, newOpts, base)
@@ -330,7 +330,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 // off the UI goroutine. The list swap + persist happen when the model
 // delivers its result, on the main goroutine.
 func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
-	job := m.core.Recover(m.ws, m.list.GetSelectedInstance())
+	job := m.core.RecoverInst(m.ws, m.list.GetSelectedInstance())
 	if job == nil {
 		return m, nil
 	}

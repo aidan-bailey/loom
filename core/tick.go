@@ -50,7 +50,7 @@ type DeadVerified struct {
 	TmuxLive tmux.Liveness
 }
 
-// Tick runs the health tick's model half: it queues the probe of every
+// TickInst runs the health tick's model half: it queues the probe of every
 // active instance (liveness, parity, diff stats; its result is applied by
 // deliverHealth, which ends with HealthChecked) and every background job
 // that is due: the roster query, the hook scan, the GitHub poll, the
@@ -60,7 +60,7 @@ type DeadVerified struct {
 // rides pane events; on the snapshot path it keeps the legacy 500ms
 // cadence. Formerly the lifecycle half of the tickUpdateMetadataMessage
 // case.
-func (m *Model) Tick(selected *session.Instance) {
+func (m *Model) TickInst(selected *session.Instance) {
 	active := m.ActiveInstances()
 	// Fan out I/O off the model's goroutine. A stalled tmux or git process
 	// must not block it: the probe waits for its goroutines inside the job.
@@ -93,6 +93,13 @@ func (m *Model) Tick(selected *session.Instance) {
 	// maybeUsageProbe). nil when not due, in flight, or no extra
 	// account is registered.
 	m.maybeUsageProbe()
+}
+
+// Tick runs the health tick's model half (TickInst); selected is the
+// TUI's selected instance, 0 for none.
+func (m *Model) Tick(selected InstanceID) {
+	inst, _ := m.lookup(selected)
+	m.TickInst(inst)
 }
 
 // probeJob fans out the per-instance I/O (tmux liveness, parity, git
@@ -152,6 +159,7 @@ func probeJob(active []*session.Instance, selected *session.Instance, dirty map[
 // overrides a reported status (it asks AdoptClaudeStatus first).
 func (m *Model) deliverHealth(r HealthResult) {
 	var alive []*session.Instance
+	var aliveIDs []InstanceID
 	for _, p := range r.Results {
 		// The probe only probes active instances, but a kill, pause or
 		// resume confirmed while it ran may have moved one to Deleting or
@@ -171,6 +179,7 @@ func (m *Model) deliverHealth(r HealthResult) {
 		// session, and applyLiveness left the instance untouched.
 		if p.TmuxLive == tmux.LivenessAlive {
 			alive = append(alive, p.Instance)
+			aliveIDs = append(aliveIDs, m.idOf(p.Instance))
 		}
 		if target, authoritative := m.AdoptClaudeStatus(p.Instance); authoritative {
 			if err := p.Instance.TransitionTo(target); err != nil {
@@ -182,18 +191,26 @@ func (m *Model) deliverHealth(r HealthResult) {
 		}
 	}
 	m.emit(StatusesChanged{})
-	m.emit(Alive{Instances: alive, Source: string(fromTick)})
+	m.emit(Alive{Instances: alive, IDs: aliveIDs, Source: string(fromTick)})
 	m.emit(HealthChecked{})
 }
 
-// VerifyDead returns the probe a pane's Dead event asks for, on inst's
+// VerifyDeadInst returns the probe a pane's Dead event asks for, on inst's
 // tmux session (a DeadVerified result). A dead attach PTY does not always
 // mean a dead session: a failed reattach leaves the session alive, and a
 // session relaunched under the same name leaves the old client's pump at
 // EOF. The probe tells pause-the-instance from repair-the-client.
-func (m *Model) VerifyDead(inst *session.Instance) Job {
+func (m *Model) VerifyDeadInst(inst *session.Instance) Job {
 	return func() any {
 		return DeadVerified{Instance: inst, TmuxLive: inst.Pane().TmuxLiveness()}
+	}
+}
+
+// VerifyDead queues the probe a pane's Dead event asks for on id's session
+// (VerifyDeadInst); its result is a DeadVerified as before.
+func (m *Model) VerifyDead(id InstanceID) {
+	if inst, _ := m.lookup(id); inst != nil {
+		m.spawn(m.VerifyDeadInst(inst))
 	}
 }
 
@@ -206,7 +223,7 @@ func (m *Model) deliverDeadVerified(r DeadVerified) {
 	alive := m.applyLiveness(r.Instance, r.TmuxLive, fromDeadEvent)
 	m.emit(StatusesChanged{})
 	if alive && r.TmuxLive == tmux.LivenessAlive {
-		m.emit(Alive{Instances: []*session.Instance{r.Instance}, Source: string(fromDeadEvent)})
+		m.emit(Alive{Instances: []*session.Instance{r.Instance}, IDs: []InstanceID{m.idOf(r.Instance)}, Source: string(fromDeadEvent)})
 	}
 	m.emit(InstancesChanged{})
 }
@@ -261,7 +278,7 @@ func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, so
 				log.For("core").Error("workspace_terminal.restart_failed", "title", inst.Title, "err", err)
 				return false
 			}
-			m.emit(SessionLaunched{Instance: inst})
+			m.emit(SessionLaunched{Instance: inst, ID: m.idOf(inst)})
 			return false
 		}
 		log.For("core").Warn("tick.tmux_gone_marking_paused", "title", inst.Title, "source", source)

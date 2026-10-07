@@ -579,6 +579,15 @@ func (i *Instance) StatusAge() time.Duration {
 	return time.Since(i.statusChangedAt)
 }
 
+// StatusSince returns when the instance entered its current status, or the
+// zero time when no transition has been observed this process. StatusAge is
+// the time since then.
+func (i *Instance) StatusSince() time.Time {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.statusChangedAt
+}
+
 func (i *Instance) getTmuxSession() *tmux.Session {
 	i.mu.RLock()
 	defer i.mu.RUnlock()

@@ -143,11 +143,11 @@ func TestHookScanOnOutputHonoursInterval(t *testing.T) {
 	inst := activeInst(t, m, "scan-dirty")
 	require.True(t, inst.HooksLaunched())
 
-	m.PaneOutput(inst)
+	m.PaneOutputInst(inst)
 	require.True(t, m.gate(gateHookScan).inFlight, "output on a hooked session scans")
 
 	m.gate(gateHookScan).inFlight = false
-	m.PaneOutput(inst)
+	m.PaneOutputInst(inst)
 	assert.False(t, m.gate(gateHookScan).inFlight, "a second scan inside hookScanInterval is not dispatched")
 }
 
@@ -156,11 +156,11 @@ func TestHookScanOnQuietIgnoresInterval(t *testing.T) {
 	inst := activeInst(t, m, "scan-quiet")
 	require.True(t, m.maybeHookScan(m.ActiveInstances()))
 
-	m.PaneQuiet(inst)
+	m.PaneQuietInst(inst)
 	assert.True(t, m.gate(gateHookScan).pending, "a quiet during a scan asks for one more")
 
 	m.gate(gateHookScan).inFlight, m.gate(gateHookScan).pending = false, false
-	m.PaneQuiet(inst)
+	m.PaneQuietInst(inst)
 	assert.True(t, m.gate(gateHookScan).inFlight, "a quiet scans even inside hookScanInterval")
 }
 

@@ -74,7 +74,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 
 				m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-					startJob := m.core.Start(selected, m.ws) // owner stamped now
+					startJob := m.core.StartInst(selected, m.ws) // owner stamped now
 					startTask := overlay.ConfirmationTask{
 						Sync: func() {
 							m.pendingNew = nil // the start owns it now
@@ -107,7 +107,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// Regular flow: instance already running, just send the prompt,
 			// off the Update goroutine (three tmux subprocesses and a pause).
 			// The overlay closes now; a failed send comes back as an error.
-			send = coreCmd(m.core.SendPrompt(selected, prompt))
+			send = coreCmd(m.core.SendPromptInst(selected, prompt))
 		}
 
 		m.dismissOverlay()

@@ -259,7 +259,7 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranch string) (tea.Model, tea.Cmd) {
 	m.pendingNew = instance
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-		startJob := m.core.Start(instance, m.ws) // owner stamped now
+		startJob := m.core.StartInst(instance, m.ws) // owner stamped now
 		startTask := overlay.ConfirmationTask{
 			Sync: func() {
 				m.pendingNew = nil // the start owns it now

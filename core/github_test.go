@@ -266,7 +266,7 @@ func TestBaseFor_ReadsGHBases(t *testing.T) {
 func TestPush_ErrorPathReportsTheError(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := readyInst(t, m)
-	msg := m.Push(inst)()
+	msg := m.PushInst(inst)()
 	r, isResult := msg.(pushResult)
 	assert.True(t, isResult && r.err != nil, "no worktree on a test instance: expected an error, got %#v", msg)
 }

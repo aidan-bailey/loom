@@ -134,15 +134,15 @@ func TestPromptingOutputQueriesRosterSpaced(t *testing.T) {
 	inst := activeInst(t, m, "prompt-roster")
 	require.NoError(t, inst.TransitionTo(session.Prompting))
 
-	m.PaneOutput(inst)
+	m.PaneOutputInst(inst)
 	require.True(t, m.gate(gateRoster).inFlight, "output on a Prompting session queries the roster")
 
 	m.gate(gateRoster).inFlight = false
-	m.PaneOutput(inst)
+	m.PaneOutputInst(inst)
 	assert.False(t, m.gate(gateRoster).inFlight, "a second query inside promptingRosterSpacing is not dispatched")
 
 	m.gate(gateRoster).last = time.Now().Add(-promptingRosterSpacing)
-	m.PaneOutput(inst)
+	m.PaneOutputInst(inst)
 	assert.True(t, m.gate(gateRoster).inFlight)
 }
 
