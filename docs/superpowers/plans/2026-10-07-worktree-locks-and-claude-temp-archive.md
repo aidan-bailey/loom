@@ -637,6 +637,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## Package B: `session/claudetmp`
 
+> **Review amendments B-2 to B-8 (2026-10-07, binding; from the Package B review; supersede the code below where they differ).**
+> - **B-2 (Archive is all-or-nothing on src's name).** Once the zip is renamed into place (and the archive dir fsynced, B-6), Archive renames src to a tombstone `<dir of src>/.loom-trash-<pid>-<unix-nano hex>`: same directory, so the rename is atomic. It then `removeTree`s the tombstone. A tombstone it cannot fully delete (say root-owned files an agent's container left) is logged at warn (`claudetmp.trash_kept`, with its path), and Archive still succeeds: src's live name is gone, and no `Locate` or sweep prefix matches a `.loom-trash-` name. If the rename itself fails, Archive removes the zip it just wrote and returns an error with src untouched. If that removal also fails, the error says the zip is left at its path. So success means the zip is in place and src's name is gone; an error means src is intact under its name and no new zip exists. Tests: (a) after a successful Archive, neither src nor any `.loom-trash-*` remains beside it; (b) with src's parent made read-only (0555; `t.Skip` when `os.Geteuid() == 0`), Archive returns an error, src is intact, and neither the zip nor its `.partial` exists. Restore the parent's mode in `t.Cleanup`.
+> - **B-3 (a truncated name never matches).** `Name.Matches` returns false for a `Truncated` name. Its tail is Claude's hash of the full path, so two sessions whose encodings share their first 200 characters can't be told apart, and `Locate` could otherwise hand Pause or Kill another, running session's dir. `Locate` and `Parked` therefore never return a truncated match, and such temp dirs are left alone, as the sweep already leaves them. Update the doc comments of `Name`, `Matches`, `Names`, `Locate` and `Parked`. Replace `TestLocate_TruncatedNameMatchesOnlyAUniquePrefix` with `TestLocate_NeverMatchesATruncatedName`: a dir `prefix+"abc123"` exists, and Locate reports not found. `Restore` still recreates exactly the manifest's `dir_name` (keep `TestRestore_UsesTheManifestsName`). This supersedes Decision 7's "exact or truncated prefix" and the spec's "a prefix must match exactly one directory".
+> - **B-4 (the manifest is the last entry of its name).** `readManifest` takes the **last** `.loom-archive.json` entry, which Archive always writes last, and `extract` skips only that entry. A user file of that name at src's top level then round-trips as content and can't stand in for the manifest. Test: src holding a top-level `.loom-archive.json` of `{"dir_name":"-other"}` restores under its real name, with that file intact and no `-other` dir.
+> - **B-5.** `Root` skips a non-absolute value of any of the four variables and moves on to the next one.
+> - **B-6.** After renaming the zip into place, Archive fsyncs the archive dir (best-effort: open, `Sync`, `Close`, errors ignored).
+> - **B-7.** `IsolateLoomDirs` creates the (empty) `claude-tmp` dir, so a real Claude launched by an opt-in test finds an existing parent. `Root()` stays absent, since `claude-tmp/claude-<uid>` is not created. Extend `TestIsolateLoomDirs` to assert the dir exists.
+> - **B-8.** `Restore`'s error texts quote zip entry names with `%q`, so control characters can't reach the TUI.
+
 **Files:** create everything under `session/claudetmp/`; modify `internal/testenv/testenv.go`, `internal/testenv/testenv_test.go`.
 
 The package imports only the standard library and `github.com/aidan-bailey/loom/log` (which has no loom dependencies), so it does not reach `config`, and `TestEveryConfigReachingPackageIsolatesLoomDirs` does not require a `TestMain` for it. Its tests set `CLAUDE_CODE_TMPDIR` themselves.
@@ -2171,6 +2180,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## Package C: Session wiring
 
+> **Review amendments C-1 to C-2 (2026-10-07, binding; supersede C1 step 4 and the C2 code where they differ).**
+> - **C-1 (Pause archives before it marks the instance Paused).** The archive runs inside the pause Cmd. Once the status reads Paused, `runResumeSelected` can start a resume, which would find src still in place, skip the restore, launch Claude in it, and then have the archive delete what the resumed session writes. So `Pause` calls the archive immediately after the worktree removal and prune succeed, while the status is still Loading, and before `TransitionTo(Paused)`. It still never runs when Pause returns early with an error. Crash safety holds: a crash mid-archive leaves the saved record Running (with `StashRef` when there was a stash), reconcile's `CrashRestart` fails on the missing tree and marks it Paused, and Resume then finds either the zip or src. Route both call sites through a package var, `var archiveClaudeTempFn = archiveClaudeTemp`, so a test can wrap it. Test: wrap it to record `inst.GetStatus()` at call time, and assert the status is not Paused.
+> - **C-2 (one sweep warning per dir per loom run).** `SweepClaudeTemp` remembers (a package-level `sync.Map` keyed by the dir's full path) every dir it failed to archive in this process. Later sweeps in the same process skip it with a debug line, so a dir that can never be archived (an unreadable subdir, say) costs one warning per run, not one per workspace load. A restart retries. Test: a dir that fails (make the archive dir path a file, as `TestArchiveFailure_FailsNeitherPauseNorKill` does) is attempted once across two sweeps. Count attempts through `archiveClaudeTempFn` if the sweep uses it, or another seam you add.
+
 **Files:** create `session/claude_tmp.go`, `session/claude_tmp_test.go`; modify `session/instance.go`, `session/notice.go`.
 
 ### C1. Archive and restore glue, wired into Pause, Kill and Resume (TDD)
@@ -2848,6 +2861,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ---
 
 ## Package D: App sweep, `loom debug`, docs, verification
+
+> **Doc amendment D-1 (2026-10-07, binding; follows B-2, B-3, C-1 and C-2).** In D3's CLAUDE.md text:
+> - In the `session/claudetmp/` Key Packages bullet, after "truncated past 200 characters with a hash loom can't compute", add ", so a truncated name never matches and such dirs are left alone". After "the source deleted only after the rename", add "(renamed to a `.loom-trash-*` tombstone, then deleted)".
+> - In the "Claude's temp dirs are archived" gotcha, change "Pause archives it after the Paused checkpoint is saved" to "Pause archives it after the worktree is removed but before it marks the instance Paused (a resume can't start while the archive runs)". Change "`Locate` fails closed on zero or several matches" to "`Locate` fails closed on zero or several matches and never matches a truncated name". After "one in flight", add "; a dir that fails to archive is skipped for the rest of that loom run".
 
 **Files:** create `app/claude_tmp.go`, `app/claude_tmp_test.go`; modify `app/app.go`, `app/pollgate.go`, `main.go`, `CLAUDE.md`, `USAGE.md`.
 
