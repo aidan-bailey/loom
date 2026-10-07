@@ -210,7 +210,6 @@ func (m *Model) accountsChanged(prevErr error) {
 	}
 	m.accountsSeen = sig
 	m.publishAccounts()
-	m.emit(AccountsChanged{})
 	if err := m.accounts.LoadErr(); err != nil {
 		log.For("account").Warn("registry.reload_failed", "err", err.Error())
 		if prevErr == nil {

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session"
@@ -34,6 +35,84 @@ func probedRunning(t *testing.T, m *Model) *session.Instance {
 	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")
 	require.True(t, inst.Pane().TmuxAlive(), "fixture precondition: tmux session must read alive")
 	return inst
+}
+
+// tickedInst builds a started, Running instance titled title, held by m's
+// classic workspace, on a mock tmux session (no server contacted) whose
+// has-session answers alive until *gone is set; gone may be nil. It runs
+// no Claude program, so the tick queues no roster query or hook scan for
+// it, and it has no worktree, so a diff refresh runs no git.
+func tickedInst(t *testing.T, m *Model, title string, gone *bool) *session.Instance {
+	t.Helper()
+	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "aider"})
+	require.NoError(t, err)
+	hold(m, inst)
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error {
+			if gone != nil && *gone && strings.Contains(cmd.String(), "has-session") {
+				return errors.New("can't find session")
+			}
+			return nil
+		},
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "aider", fakePtyFactory{t: t}, cmdExec))
+	// Marked started, as a restored record whose session runs is.
+	require.NoError(t, inst.EnsureRunning())
+	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")
+	return inst
+}
+
+// TestTick_TheProbeRoundTrip: the tick takes the dirty set MarkOutput
+// filled and hands it to one probe of the active instances. Delivered,
+// the probe's result pauses the session it found gone, keeps the live
+// ones, refreshes the diff of the one with output only, and ends with
+// HealthChecked, the event that re-arms the TUI's tick (app's
+// TestHealthTick_ProbeRoundTrip applies it).
+func TestTick_TheProbeRoundTrip(t *testing.T) {
+	m := NewForTest(Options{})
+	gone := false
+	busy := tickedInst(t, m, "busy", nil)
+	idle := tickedInst(t, m, "idle", nil)
+	dead := tickedInst(t, m, "dead", &gone)
+	// Classic mode polls GitHub for the cwd's repository: hold that poll
+	// in flight, so the probe is the tick's only job and nothing runs git
+	// or gh.
+	m.SetGateForTest("github", true, time.Now())
+	probe := func() HealthResult {
+		t.Helper()
+		m.Tick(nil)
+		out := m.Drain()
+		require.Len(t, out.Jobs, 1, "the probe is the tick's only job")
+		r, ok := out.Jobs[0]().(HealthResult)
+		require.True(t, ok, "the job is the health probe")
+		return r
+	}
+
+	// A first probe caches every diff, so the next refreshes one only for
+	// output (no instance is selected, so none wants a full diff).
+	m.Deliver(probe())
+	m.Drain()
+	busyDiff, idleDiff := busy.GetDiffStats(), idle.GetDiffStats()
+	require.NotNil(t, busyDiff, "fixture precondition: the first probe cached the diff")
+	require.NotNil(t, idleDiff, "fixture precondition: the first probe cached the diff")
+
+	gone = true
+	m.MarkOutput(busy.Pane().TmuxSessionName())
+	r := probe()
+	assert.Empty(t, m.takeDirty(), "the tick took the dirty set for its probe")
+	m.Deliver(r)
+
+	assert.Equal(t, session.Paused, dead.GetStatus(), "a session the probe found gone is paused")
+	assert.Equal(t, session.Running, busy.GetStatus())
+	assert.Equal(t, session.Running, idle.GetStatus())
+	assert.NotSame(t, busyDiff, busy.GetDiffStats(), "output refreshes the diff")
+	assert.Same(t, idleDiff, idle.GetDiffStats(), "no output, no refresh")
+	assert.Equal(t, []Event{
+		StatusesChanged{},
+		Alive{Instances: []*session.Instance{busy, idle}, Source: "tick"},
+		HealthChecked{},
+	}, m.Drain().Events)
 }
 
 // TestApplyLiveness_UnknownDoesNotPause is the regression guard for the

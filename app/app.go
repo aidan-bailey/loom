@@ -879,28 +879,33 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !core.StatusEligible(r.instance) {
 				continue
 			}
+			// A failed capture is no opinion, as on the event path. Its
+			// zero result reads as "settled, no prompt": run through the
+			// ladder, it moved a dead session to Ready before the probe
+			// paused it.
+			if r.err != nil {
+				log.WarnKV("app.tick.capture_failed", "instance", r.instance.Title, "err", r.err.Error())
+				continue
+			}
+			// Output: the next tick refreshes the diff, whoever reports the
+			// status, as a pane event's output does (paneDirtyMsg).
+			if r.updated {
+				m.core.MarkOutput(r.instance.Pane().TmuxSessionName())
+			}
 			// A reported Claude status is the model's: its tick applies it.
 			if _, authoritative := m.core.AdoptClaudeStatus(r.instance); authoritative {
 				continue
 			}
 			// Same transition ladder as the event path: still-changing →
 			// Running; settled with a prompt → Prompting; settled → Ready.
-			// A failed capture leaves updated and hasPrompt false, so it
-			// still runs the ladder (to Ready) before its error is
-			// logged, as the old tick did.
 			target := session.Ready
 			if r.updated {
-				// Output: the next tick refreshes the diff (MarkOutput).
-				m.core.MarkOutput(r.instance.Pane().TmuxSessionName())
 				target = session.Running
 			} else if r.hasPrompt {
 				target = session.Prompting
 			}
 			if err := r.instance.TransitionTo(target); err != nil {
 				log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", target.String(), "err", err.Error())
-			}
-			if r.err != nil {
-				log.WarnKV("app.tick.capture_failed", "instance", r.instance.Title, "err", r.err.Error())
 			}
 		}
 		m.updateTabBarStatuses()

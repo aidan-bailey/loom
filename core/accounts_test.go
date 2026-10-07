@@ -226,6 +226,32 @@ func TestMaybeReloadAccounts_AnUnchangedFileIsNotReread(t *testing.T) {
 	assert.Equal(t, "max-2", m.accounts.DefaultAccount, "not reread")
 }
 
+// TestReloadAccounts_AChangeIsReportedOnce: a change another process made
+// reaches the TUI as one AccountsChanged (publishAccounts emits it), and
+// a reload that finds nothing changed as none.
+func TestReloadAccounts_AChangeIsReportedOnce(t *testing.T) {
+	m := NewForTest(Options{})
+	main := withAccounts(t, m)
+	m.Drain()
+	_, _, err := otherTerminal(t, m).Create("max-2", main)
+	require.NoError(t, err)
+	accountsChanged := func() int {
+		n := 0
+		for _, ev := range m.Drain().Events {
+			if _, ok := ev.(AccountsChanged); ok {
+				n++
+			}
+		}
+		return n
+	}
+
+	m.ReloadAccounts()
+	assert.Equal(t, 1, accountsChanged())
+
+	m.ReloadAccounts()
+	assert.Zero(t, accountsChanged(), "nothing changed")
+}
+
 func TestMaybeReloadAccounts_ARegistryWithNoFileDoesNothing(t *testing.T) {
 	m := NewForTest(Options{})
 	withAccounts(t, m)

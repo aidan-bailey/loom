@@ -159,16 +159,19 @@ func New(o Options) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize storage: %w", err)
 	}
-	m := NewForTest(o)
+	m := newModel(o)
 	m.classic = NewWorkspace(WorkspaceParts{Ctx: o.Ctx, Storage: storage, Config: o.Config, State: state})
 	return m, nil
 }
 
-// NewForTest builds a model with no workspace and no side effects; a test
-// installs its fixture's workspaces with SetWorkspacesForTest.
-func NewForTest(o Options) *Model {
+// newModel builds a model with no workspace and no side effects.
+func newModel(o Options) *Model {
 	return &Model{registry: o.Registry, program: o.Program, cmdExec: o.CmdExec}
 }
+
+// NewForTest builds a model with no workspace and no side effects; a test
+// installs its fixture's workspaces with SetWorkspacesForTest.
+func NewForTest(o Options) *Model { return newModel(o) }
 
 // SetWorkspacesForTest installs a fixture's workspaces: classic when tabs
 // is empty, else tabs in order (classic is then ignored, as the first tab

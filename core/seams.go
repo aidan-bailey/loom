@@ -97,3 +97,7 @@ func (m *Model) SetGateForTest(kind string, inFlight bool, last time.Time) {
 // RefreshDefaultAuthForTest reports whether the next accounts refresh
 // rereads the default account's auth too.
 func (m *Model) RefreshDefaultAuthForTest() bool { return m.refreshDefaultAuth }
+
+// OutputMarkedForTest reports whether sessionName's output is recorded
+// for the next health tick's diff refresh (MarkOutput).
+func (m *Model) OutputMarkedForTest(sessionName string) bool { return m.dirtySessions[sessionName] }

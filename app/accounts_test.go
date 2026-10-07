@@ -37,13 +37,29 @@ func withAccounts(t *testing.T, m *home, names ...string) string {
 	return main
 }
 
+// TestPublishAccounts_BadgesOnlyWithAnExtraAccount runs production's path
+// (the model's AccountsChanged, applied by drainCore), not withAccounts,
+// which sets the badges itself.
 func TestPublishAccounts_BadgesOnlyWithAnExtraAccount(t *testing.T) {
 	m := newTestHome(t)
-	withAccounts(t, m)
+	m.accountStrip = ui.NewAccountStrip()
+	t.Cleanup(func() {
+		session.SetAccountDirs(nil, nil)
+		ui.SetShowAccounts(false)
+	})
+	reg := account.LoadRegistry(t.TempDir())
+
+	ui.SetShowAccounts(true) // stale: the event must clear it
+	m.core.AdoptAccountsForTest(reg)
+	m.drainCore()
 	assert.False(t, ui.ShowAccounts())
 	assert.False(t, m.core.HasExtraAccounts())
 
-	withAccounts(t, m, "max-2")
+	_, _, err := reg.Create("max-2", t.TempDir())
+	require.NoError(t, err)
+	m.core.AdoptAccountsForTest(reg)
+	require.False(t, ui.ShowAccounts(), "not shown until the event is applied")
+	m.drainCore()
 	assert.True(t, ui.ShowAccounts())
 	assert.True(t, m.core.HasExtraAccounts())
 }
