@@ -11,10 +11,10 @@ import (
 )
 
 func newTestSettingsCfg() *config.Config {
-	return &config.Config{
+	return &config.Config{Settings: config.Settings{
 		DefaultProgram: "claude",
 		BranchPrefix:   "aidan/",
-	}
+	}}
 }
 
 func TestSettingsOverlayNavigation(t *testing.T) {

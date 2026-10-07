@@ -10,13 +10,13 @@ import (
 )
 
 func newTestProfilesCfg() *config.Config {
-	return &config.Config{
+	return &config.Config{Settings: config.Settings{
 		DefaultProgram: "alpha",
 		Profiles: []config.Profile{
 			{Name: "alpha", Program: "claude"},
 			{Name: "beta", Program: "aider --model gpt-4"},
 		},
-	}
+	}}
 }
 
 func typeText(t *testing.T, pm *ProfilesManager, text string) {

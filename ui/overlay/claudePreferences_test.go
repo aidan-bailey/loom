@@ -76,7 +76,7 @@ func TestClaudePreferencesHeadroomProxyExcludesRemoteControl(t *testing.T) {
 }
 
 func TestClaudePreferencesRemoteControlExcludesHeadroomProxy(t *testing.T) {
-	cfg := &config.Config{HeadroomProxy: boolPtr(true), ClaudeRemoteControl: boolPtr(false)}
+	cfg := &config.Config{Settings: config.Settings{HeadroomProxy: boolPtr(true), ClaudeRemoteControl: boolPtr(false)}}
 	cp := NewClaudePreferences(cfg, false, "")
 	assert.True(t, cfg.HeadroomProxyEnabled())
 
@@ -110,7 +110,7 @@ func TestClaudePreferencesRowNavigationClamps(t *testing.T) {
 
 func TestClaudePreferencesRendersPermissionMode(t *testing.T) {
 	mode := "plan"
-	cfg := &config.Config{ClaudePermissionMode: &mode}
+	cfg := &config.Config{Settings: config.Settings{ClaudePermissionMode: &mode}}
 	cp := NewClaudePreferences(cfg, false, "")
 	rendered := cp.Render()
 	assert.Contains(t, rendered, "Permission Mode")
@@ -119,7 +119,7 @@ func TestClaudePreferencesRendersPermissionMode(t *testing.T) {
 
 func TestClaudePreferencesRendersModel(t *testing.T) {
 	model := "opus"
-	cfg := &config.Config{ClaudeModel: &model}
+	cfg := &config.Config{Settings: config.Settings{ClaudeModel: &model}}
 	cp := NewClaudePreferences(cfg, false, "")
 	rendered := cp.Render()
 	assert.Contains(t, rendered, "Model")
@@ -127,7 +127,7 @@ func TestClaudePreferencesRendersModel(t *testing.T) {
 }
 
 func TestClaudePreferencesRendersHeadroomProxy(t *testing.T) {
-	cfg := &config.Config{HeadroomProxy: boolPtr(true)}
+	cfg := &config.Config{Settings: config.Settings{HeadroomProxy: boolPtr(true)}}
 	cp := NewClaudePreferences(cfg, false, "")
 	rendered := cp.Render()
 	assert.Contains(t, rendered, "Headroom Proxy")
@@ -152,7 +152,7 @@ func TestClaudePreferences_EffortRowCycles(t *testing.T) {
 }
 
 func TestClaudePreferencesRendersCacheTTL1h(t *testing.T) {
-	cfg := &config.Config{CacheTTL1h: boolPtr(true)}
+	cfg := &config.Config{Settings: config.Settings{CacheTTL1h: boolPtr(true)}}
 	cp := NewClaudePreferences(cfg, false, "")
 	rendered := cp.Render()
 	assert.Contains(t, rendered, "Cache TTL")
