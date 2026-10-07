@@ -112,7 +112,7 @@ type scriptAction struct {
 
 A userdata value handed to handlers. It lives for one handler run: the dispatch, plus any resumes after the handler yields on an intent (each resume rebinds it to that resume's host). `ctx` exposes methods that forward to the `Host` interface.
 
-Don't keep a `ctx` across dispatches. A `ctx` saved in a Lua global and reused from a later dispatch still points at the host of the run that created it, which the app has already drained, so what it posts there (`ctx:notify`) is dropped and its reads come from that old snapshot (`ctx:new_instance` reaches the running handler's host, but takes its default program and path from that old snapshot). Use the `ctx` each handler receives.
+Don't keep a `ctx` across dispatches. A `ctx` saved in a Lua global and reused from a later dispatch still points at the host of the run that created it, which the app has already drained, so what it posts there (`ctx:notify`) is dropped and its reads come from that old snapshot (`ctx:new_instance` reaches the running handler's host, but takes its default program and path from that old snapshot, so it can create the session in the current workspace against the old snapshot's repository path). Use the `ctx` each handler receives.
 
 ```lua
 cs.bind("ctrl+shift+p", function(ctx)
@@ -300,7 +300,7 @@ Source of truth: `script/api_actions.go` (primitives + Lua wiring), `script/inte
 
 ### `ctx` Methods
 
-A userdata handed to every bound handler. Lives for one dispatch.
+A userdata handed to every bound handler. Lives for one handler run (the dispatch and its resumes; see [Context](#context-ctx)).
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -311,7 +311,7 @@ A userdata handed to every bound handler. Lives for one dispatch.
 | `ctx:repo_path()` | → string | Repo root new instances should be created against. |
 | `ctx:default_program()` | → string | The configured default agent command (e.g. `"claude"`). |
 | `ctx:branch_prefix()` | → string | The branch prefix for the active workspace (e.g. `"alice/"`). |
-| `ctx:new_instance{title=, ...}` | → instance | Create a new, unstarted session in the workspace the dispatch began in. Required: `title`. Optional: `program` (default `ctx:default_program()`), `path` (default `ctx:repo_path()`), `prompt`, `branch`. Yields until the model's `Create` replies and returns the created instance (`Ready`, not started). Raises `new_instance: workspace changed while a script ran; not creating <title> here` if the user switched workspace while the script ran, and `new_instance: <err>` if the model refuses it. A [lifecycle call](#lifecycle-calls): not inside `pcall` or a callback. |
+| `ctx:new_instance{title=, ...}` | → instance | Create a new, unstarted session in the workspace focused when the dispatch, or the resume the call runs in, began. Required: `title`. Optional: `program` (default `ctx:default_program()`), `path` (default `ctx:repo_path()`), `prompt`, `branch`. Yields until the model's `Create` replies and returns the created instance (`Ready`, not started). Raises `new_instance: workspace changed while a script ran; not creating <title> here` if the user switched workspace while the script ran, and `new_instance: <err>` if the model refuses it. A [lifecycle call](#lifecycle-calls): not inside `pcall` or a callback. |
 | `ctx:log(level, msg)` | → void | Equivalent to `cs.log`. |
 | `ctx:notify(msg)` | → void | Equivalent to `cs.notify` when dispatch is active. |
 
@@ -437,7 +437,7 @@ Source: `script/api_actions.go` (steps 1-2), `app/app_scripts.go#dispatchScript`
 `inst:kill()`, `inst:pause()`, `inst:resume()`, `inst:send_prompt(text)` and `ctx:new_instance{}` are deferred too, but their intent is a request to the model rather than a UI flow, and they keep the shape of a plain method: void (or the new instance), raise on error.
 
 1. **Enqueue and yield.** The method enqueues an `InstanceOpIntent{ID, Title, Op, Text}` (for `ctx:new_instance`, a `CreateInstanceIntent{Title, Program, Path, Prompt, Branch}`), records the method it waits in (`Engine.waitingIn`), and yields.
-2. **Request.** `handleScriptIntent` sends the request with a `ReqID` and does not resume the coroutine itself: `scriptInstanceOp` calls `core.Model.Kill`, `Pause`, `Resume` (`Recover` for a Recoverable session) or `SendPrompt`, and `scriptCreate` calls `core.Model.Create`, unstarted, in the workspace the dispatch began in. A few calls the TUI refuses before any request, resuming at once with the error: `pause()` on a Paused session, `send_prompt()` while another send to that session is in flight, and `new_instance` when the user switched workspace while the script ran (decided before the script's recorded actions run, so the script's own `workspace_next()` doesn't count).
+2. **Request.** `handleScriptIntent` sends the request with a `ReqID` and does not resume the coroutine itself: `scriptInstanceOp` calls `core.Model.Kill`, `Pause`, `Resume` (`Recover` for a Recoverable session) or `SendPrompt`, and `scriptCreate` calls `core.Model.Create`, unstarted, in the workspace focused when the dispatch, or the resume the call runs in, began. A few calls the TUI refuses before any request, resuming at once with the error: `pause()` on a Paused session, `send_prompt()` while another send to that session is in flight, and `new_instance` when the user switched workspace while the script ran (decided before the script's recorded actions run, so the script's own `workspace_next()` doesn't count).
 3. **Reply.** The model answers with a `core.Reply`: at once when it refuses the request (its precondition mirrors the keys' gates), when the job finishes otherwise. `scriptReplied` (`app/requests.go`) turns it into a `script.ResumeValue`. On failure, `Err` is the error the method raises (`scriptError`): a refusal's own message, which names the request and the session (`"kill x: not allowed on a workspace terminal"`), or `"<op>: <err>"` for a failed job, a gone session (`"kill: no such session"`) and every `ctx:new_instance` error. On success, `Instance` is the session's row as the model left it: `new_instance` returns it, and a lifecycle call's instance takes it as its view (the method still returns nothing; `Engine.luaValue`). A kill leaves no row, so its instance keeps the view it had when the kill was asked for, marked `Deleting`. A Reply's `Notice` (a stash the kill or resume could not drop, say) changes none of this: the model has shown it already.
 4. **Resume and raise.** `Engine.ResumeWithHost(ctx, id, host, value)` resumes the coroutine with the Lua form of the `ResumeValue` (`nil`, the error string, or an instance userdata). A Lua wrapper around each of these methods (`raiseReturnedErrors`) raises an error string at the line that called the method. After a tail call (`return inst:kill()`) no frame names that line, and the error carries no position.
 
@@ -509,7 +509,7 @@ app/state_default.go: handleStateDefaultKey
 - `cs.await` is cheap — the coroutine is parked, the mutex released, and no CPU is consumed until `Resume` delivers the value.
 
 **What this means for the app**:
-- Scripts never touch an instance or a workspace: the userdata holds views, and lifecycle calls and `ctx:new_instance` are intents the app turns into model requests on the main goroutine (`scriptInstanceOp`, `scriptCreate`); the model edits its workspaces itself. A `ctx:new_instance` creates in the workspace of the slot the dispatch snapshotted, and only while that slot is still focused when the script's result lands.
+- Scripts never touch an instance or a workspace: the userdata holds views, and lifecycle calls and `ctx:new_instance` are intents the app turns into model requests on the main goroutine (`scriptInstanceOp`, `scriptCreate`); the model edits its workspaces itself. A `ctx:new_instance` creates in the workspace of the slot the dispatch or resume snapshotted, and only while that slot is still focused when the script's result lands.
 - Intent dispatch (`handleScriptIntent`) also runs on the main goroutine, from inside `Update`.
 - Notices, intents and recorded actions are buffered and surfaced through `scriptDoneMsg` so error-bar updates happen on the main loop.
 - On quit, `Engine.Shutdown` drains parked coroutines and closes the LState within a bound (`scriptShutdownTimeout`); a coroutine parked in a lifecycle call raises `"<op>: loom is shutting down"`. If a handler is still running it cancels the LState's context, which stops a Lua loop at its next instruction. A handler blocked inside a Go call is left for process exit to reclaim, and the `engine_busy_at_shutdown` warning names its key and file.
