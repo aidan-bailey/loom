@@ -4,8 +4,9 @@ import "errors"
 
 // Notice is the error an Instance operation returns when it did all it
 // was asked but found something the user must hear about: a pending stash
-// it forgot because it was no longer in `git stash list`, or a stash entry
-// it could not drop. The operation's effects stand. A caller that gets
+// it forgot because it was no longer in `git stash list`, a stash entry it
+// could not drop, or Claude's archived scratchpad it could not restore. The
+// operation's effects stand. A caller that gets
 // exactly a Notice back (OnlyNotice) treats the operation as succeeded and
 // shows the message — the app through its error bar, never just loom.log,
 // since the message is often the only place a lost stash's SHA appears. A

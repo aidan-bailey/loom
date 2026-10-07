@@ -965,7 +965,9 @@ func (i *Instance) failedStartCleanup(ts *tmux.Session, gw *git.GitWorktree, sta
 // Kill terminates the instance and cleans up all resources. A stash entry
 // it cannot drop does not fail the kill (everything else is gone): Kill
 // then returns a Notice carrying DropStash's error, which says what is
-// left on the stash list.
+// left on the stash list. A worktree locked with `git worktree lock`
+// refuses the kill before anything is closed, dropped or removed
+// (git.ErrWorktreeLocked), and the instance stays as it was.
 func (i *Instance) Kill() (err error) {
 	lg := i.getLogger()
 	t0 := time.Now()
@@ -995,6 +997,28 @@ func (i *Instance) Kill() (err error) {
 	i.gitWorktree = nil
 	i.mu.Unlock()
 
+	// Puts the instance back as the snapshot found it, so a retried Kill
+	// actually re-attempts instead of no-oping on the started guard above.
+	restore := func() {
+		i.mu.Lock()
+		i.started = true
+		i.tmuxSession = tmuxSess
+		i.gitWorktree = gitWT
+		i.mu.Unlock()
+	}
+
+	// A lock on the tree refuses the cleanup below, by which time the agent's
+	// tmux session would be closed, its stash dropped and its hooks removed.
+	// Ask first, as Pause does: a refused kill then leaves the agent running
+	// and the instance ready for a retry once the lock is gone. Cleanup keeps
+	// its own check, since a lock can appear in between.
+	if gitWT != nil && !isWorkspaceTerm {
+		if err := git.RefuseLocked(gitWT.GetRepoPath(), gitWT.GetWorktreePath(), nil); err != nil {
+			restore()
+			return fmt.Errorf("cannot kill: %w", err)
+		}
+	}
+
 	var errs []error
 	var notices []error
 
@@ -1002,7 +1026,16 @@ func (i *Instance) Kill() (err error) {
 	// Clean up tmux session first since it's using the git worktree
 	if tmuxSess != nil {
 		if err := tmuxSess.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close tmux session: %w", err))
+			// kill-session fails for a session that is already gone (a
+			// paused or crashed instance's), which is the state a kill is
+			// after. As in Pause, only an answered "no such session" says
+			// so; a probe that never answered leaves the agent possibly
+			// running, and the kill failed.
+			if tmuxSess.SessionLiveness() == tmux.LivenessDead {
+				log.For("session").Debug("kill_close_tmux_already_gone", "title", i.Title, "err", err)
+			} else {
+				errs = append(errs, fmt.Errorf("failed to close tmux session: %w", err))
+			}
 		}
 		// See the matching comment in Pause: the terminal pane's tmux
 		// session is untracked by Instance and must be killed alongside
@@ -1038,12 +1071,15 @@ func (i *Instance) Kill() (err error) {
 		// Cleanup failed, so resources still exist on disk — restore the
 		// snapshot so a retried Kill actually re-attempts the cleanup
 		// instead of no-oping on the started guard above.
-		i.mu.Lock()
-		i.started = true
-		i.tmuxSession = tmuxSess
-		i.gitWorktree = gitWT
-		i.mu.Unlock()
+		restore()
 		return errors.Join(err, NewNotice(notices...))
+	}
+	// Only once everything else is gone: a kill that failed restored the
+	// instance above, which still claims its dir, and an agent whose tmux
+	// session could not be confirmed gone (its close failed and tmux did not
+	// answer "no such session") may still be writing to it.
+	if gitWT != nil && !isWorkspaceTerm {
+		archiveClaudeTempFn(i.ConfigDir, gitWT.GetWorktreePath(), "kill")
 	}
 	return NewNotice(notices...)
 }
@@ -1129,9 +1165,62 @@ func (i *Instance) RestartFailureCount() int {
 	return i.restartFailureCount
 }
 
+// Lifecycle operations that must not overlap on one worktree: a Pause and a
+// Resume (or two of either) would stash, close, rebuild and launch the same
+// session twice, and a Resume that began while Pause was still archiving
+// Claude's temp dir would launch Claude in it and have the archive delete
+// what the new session writes.
+const (
+	opPause  = "pause"
+	opResume = "resume"
+)
+
+// opsInFlight maps the worktree path (worktreeKey) of every Pause and Resume
+// running in this process to which of the two it is, for as long as it runs.
+// It is keyed by path, not by *Instance, because a tab closed and reopened
+// mid-operation yields a second Instance for the same worktree, and Lua's
+// inst:resume() has no status gate to keep a Resume away from a Pause that
+// has not yet marked its instance Paused.
+var opsInFlight sync.Map
+
+// worktreeKey is the opsInFlight key for a worktree path: its symlinks
+// resolved (the deepest existing ancestor, for a tree already removed), so
+// two spellings of one directory share a key.
+func worktreeKey(worktreePath string) string {
+	if p := canonicalPath(worktreePath); p != "" {
+		return p
+	}
+	return filepath.Clean(worktreePath)
+}
+
+// beginOp marks op as running for the worktree at worktreePath and returns
+// the func that clears the mark, for the caller to defer. When a Pause or
+// Resume of that worktree (this instance's or a twin's) is already running it
+// marks nothing and returns the error to give the user.
+func beginOp(worktreePath, op string) (end func(), err error) {
+	key := worktreeKey(worktreePath)
+	if running, busy := opsInFlight.LoadOrStore(key, op); busy {
+		switch {
+		case op == opPause && running == opPause:
+			return nil, fmt.Errorf("a pause of this session is already running")
+		case op == opPause:
+			return nil, fmt.Errorf("a resume of this session is still running; pause it once that finishes")
+		case running == opPause:
+			return nil, fmt.Errorf("this session is still pausing (archiving Claude's scratchpad); resume it once that finishes")
+		default:
+			return nil, fmt.Errorf("a resume of this session is already running")
+		}
+	}
+	return func() { opsInFlight.Delete(key) }, nil
+}
+
 // Pause stops the tmux session and removes the worktree, preserving the branch.
 // If saveState is non-nil, it is called after committing changes and marking the
 // instance as Paused, providing a checkpoint that reduces the crash inconsistency window.
+//
+// It refuses a worktree locked with `git worktree lock` before it stashes or
+// closes anything, and while another Pause or a Resume of the same worktree
+// is running (see opsInFlight).
 func (i *Instance) Pause(saveState func() error) (err error) {
 	lg := i.getLogger()
 	t0 := time.Now()
@@ -1157,6 +1246,24 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	gw := i.getGitWorktree()
 	ts := i.getTmuxSession()
 	var errs []error
+
+	// Held until Pause returns, before its first destructive step: no Resume
+	// of this worktree starts while the archive below is still deleting
+	// Claude's temp dir, and no second Pause repeats this one's steps (see
+	// opsInFlight).
+	end, err := beginOp(gw.GetWorktreePath(), opPause)
+	if err != nil {
+		return err
+	}
+	defer end()
+
+	// A lock on the tree refuses the removal at the end of this pause, by
+	// which time the agent's session is closed and its changes stashed.
+	// Ask first: a refused pause then leaves the session running and the
+	// work where it was.
+	if err := git.RefuseLocked(gw.GetRepoPath(), gw.GetWorktreePath(), nil); err != nil {
+		return fmt.Errorf("cannot pause: %w", err)
+	}
 
 	// Stash any uncommitted changes (tracked and untracked) so Resume
 	// can restore them without polluting the branch's real history
@@ -1260,6 +1367,17 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 		return err
 	}
 
+	// Before the status reads Paused: the app can start a resume the moment
+	// it does, and a resume that began while this slow step was still
+	// deleting the temp dir would find it in place, skip the restore, launch
+	// Claude in it, and have the archive delete what the new session writes.
+	// A crash mid-archive leaves the saved status Loading (when the stash
+	// checkpoint above ran) or Running; the next load's reconcile marks the
+	// record Paused directly (the worktree is gone and its tmux session
+	// dead), with no relaunch attempted. Resume then finds the temp dir
+	// either intact or zipped and restores it from either.
+	archiveClaudeTempFn(i.ConfigDir, gw.GetWorktreePath(), "pause")
+
 	// Checkpoint: mark as Paused immediately after cleanup succeeds.
 	// If we crash after this point, the instance is safely Paused.
 	_ = i.TransitionTo(Paused)
@@ -1280,9 +1398,13 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 // instance is Running, providing a checkpoint that reduces the crash
 // inconsistency window.
 //
+// It refuses, before anything changes, while a Pause or another Resume of the
+// same worktree is running (see opsInFlight).
+//
 // A resume that succeeded but forgot a stash no longer in `git stash
-// list`, or restored one it then could not drop, returns a Notice saying
-// so (see OnlyNotice); a failed one includes those notices in its error.
+// list`, restored one it then could not drop, or could not restore Claude's
+// archived scratchpad, returns a Notice saying so (see OnlyNotice); a
+// failed one includes those notices in its error.
 func (i *Instance) Resume(saveState func() error) (err error) {
 	lg := i.getLogger()
 	t0 := time.Now()
@@ -1304,6 +1426,17 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 
 	gw := i.getGitWorktree()
 	ts := i.getTmuxSession()
+
+	// Before decideResume and anything on disk: a Pause of this worktree
+	// (this instance's or a twin's) may still be archiving Claude's temp dir,
+	// and a resume that started now would launch Claude in it and have the
+	// archive delete what the new session writes. Held until Resume returns,
+	// so a Pause started meanwhile is refused in turn.
+	end, err := beginOp(gw.GetWorktreePath(), opResume)
+	if err != nil {
+		return err
+	}
+	defer end()
 
 	// Check if branch is checked out
 	if checked, err := gw.IsBranchCheckedOut(); err != nil {
@@ -1365,7 +1498,12 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		if err := gw.EnsureBaseCommit(); err != nil {
 			lg.Warn("instance.resume.base_commit_failed", "worktree", gw.GetWorktreePath(), "err", err.Error())
 		}
-		return withNotices(i.finishResume(saveState, ts, gw), note)
+		// Before finishResume launches the agent, so Claude finds its
+		// scratchpad. (Evaluated first: Go evaluates call arguments in
+		// order, so this must not move into withNotices' argument list
+		// after finishResume.)
+		tmpNote := restoreClaudeTemp(i.ConfigDir, gw.GetWorktreePath())
+		return withNotices(i.finishResume(saveState, ts, gw), note, tmpNote)
 	case resumeRefuse:
 		if live == tmux.LivenessUnknown {
 			return fmt.Errorf("cannot tell whether this session's agent is still running (tmux did not answer in time); leaving the worktree untouched — retry once the machine is less busy")
@@ -1421,6 +1559,8 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		gw.SetStashRef("")
 	}
 
+	// Before finishResume launches the agent, so Claude finds its scratchpad.
+	notes = append(notes, restoreClaudeTemp(i.ConfigDir, gw.GetWorktreePath()))
 	return withNotices(i.finishResume(saveState, ts, gw), notes...)
 }
 
