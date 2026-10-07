@@ -90,6 +90,8 @@ A package is one unit of work: one implementer, one review, one commit (plus any
 ## Package A: Locked worktrees
 
 > **Review amendment A-1 (2026-10-07, binding).** When a stale "initializing" lock could not be removed, `LockedError` must not say an add "may still be checking it out" or that loom will unlock it later. `RefuseLocked` passes the unlock failure on: add an `UnlockErr error` field to `LockedError`. With it set, the message reads: the tree is locked "initializing" by an interrupted `git worktree add`, loom could not unlock it (`<err>`), and run `git -C … worktree unlock …`. `Unwrap` returns `UnlockErr`, and `Is(ErrWorktreeLocked)` still holds. Format the staleness age in whole minutes ("6 minutes"), not "6m0s". Extend `TestUnlockStaleInit_FailedUnlockKeepsTheLock` and `TestLockedError_Message` to cover both.
+>
+> **A-2 (a pre-existing flake the final verification will otherwise trip on).** `TestStashOnDisk_LeavesRealIndexAlone` (`session/git/worktree_inspect_test.go`) globs the shared `os.TempDir()` for `loom-stash-index-*` before and after, so a concurrent test run in another process fails it. Put `t.Setenv("TMPDIR", t.TempDir())` at the top of the test; `scratchIndexEnv`'s `os.CreateTemp("")` and the glob then share a private dir.
 
 **Files:** create `session/git/worktree_lock.go`, `session/git/worktree_lock_test.go`; modify `session/git/worktree_ops.go`, `session/orphan.go`, `session/orphan_removal_test.go`, `app/app.go`, `app/recovery_test.go`.
 
@@ -2191,6 +2193,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 > - **C-5 (`worktreeOnDisk` fails closed at its depth limit).** When the depth limit stops a descent into a directory that is neither a worktree (timestamp suffix) nor a git root, return true (treat it as on disk). A branch prefix with five or more slashes would otherwise hide a live worktree from check 4. Test: a live worktree nested deeper than `maxOrphanScanDepth` keeps its dir.
 > - **C-6 (a quiet period before the sweep takes a dir).** Defence in depth for live sessions that check 4 cannot see (an unregistered colliding workspace used by a loom with another global dir, or an agent that outlived a Kill whose tmux close timed out): the sweep skips a candidate when the dir, or any entry within its top three levels (`<dir>`, `<dir>/<session id>`, `<dir>/<session id>/{scratchpad,tasks}` and their direct children), has an mtime within `sweepQuietPeriod` (a package var, 24h). Use `Lstat`, not `Stat`, and count an error as recent (fail closed). The cost is that an orphan's dir is archived a day after it goes quiet; Pause and Kill are unaffected. Existing sweep tests set `sweepQuietPeriod = 0` (save and restore it) or backdate their fixtures. New test: with the default period, a freshly written unclaimed dir is kept, and the same dir backdated past the period is archived. Add a sixth numbered check to `SweepClaudeTemp`'s doc comment.
 > - **C-7.** `SweepClaudeTemp` ignores empty entries in `otherConfigDirs`, since `WorktreePrefixes("")` would resolve the process's cwd.
+> - **C-8 (reap old tombstones; fix Pause's crash comment).** Before its candidate loop, `SweepClaudeTemp` removes (`removeTree`, best-effort, failures at debug) every `.loom-trash-*` directory directly under the root whose mtime is more than an hour old. A tombstone only ever holds content already archived, and one a quit or takeover interrupted mid-delete is otherwise never retried. This needs a small exported helper in `claudetmp`, e.g. `PurgeTrash(root string, olderThan time.Duration) int`, unit-tested there: an old tombstone is removed, a fresh one and a non-tombstone dir are kept. Separately, correct Pause's comment above the archive call: a crash mid-archive leaves the saved status Loading (if the stash checkpoint ran) or Running, and reconcile marks the record Paused directly (worktree gone, tmux dead), with no relaunch attempted.
 
 **Files:** create `session/claude_tmp.go`, `session/claude_tmp_test.go`; modify `session/instance.go`, `session/notice.go`.
 
@@ -2877,6 +2880,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 >   - After "Kill archives it once `Cleanup` and everything else succeeded", add "(a tmux session tmux confirms is already gone counts as closed, as in Pause)".
 >   - Add the quiet period to the sweep's list of conditions: "nothing in its top three levels changed in the last 24 hours (`sweepQuietPeriod`)".
 >   - Add "Lua `inst:pause()`/`inst:resume()` run under the script engine's lock, so key dispatch waits for the archive or restore too."
+> - **D-3 (doc accuracy after the review; supersedes conflicting D-1/D-2 phrasing).**
+>   - The Kill sentence reads: "Kill archives it when nothing failed; a tmux session tmux confirms is already gone counts as closed (as in Pause), so killing an exited agent archives at once."
+>   - Replace "a live dir always fails that last check" with "a live session's dir fails that last check whenever its worktree is where the walk looks, and the walk fails closed at its depth limit; for the rest (a colliding workspace this loom doesn't know, an agent that outlived its Kill), the 24-hour quiet period is the backstop."
+>   - Add: "a workspace whose storage fails to load queues no sweep, since its claims are unknown"; "old `.loom-trash-*` tombstones are reaped by the sweep"; "a dir that fails to archive is skipped until loom restarts".
+>   - In Testing Patterns, extend the `IsolateLoomDirs` bullet: it also points `CLAUDE_CODE_TMPDIR` at a throwaway dir it creates empty, so Claude's root reads as absent.
+>   - In USAGE.md, mention the 24-hour quiet period in the sweep bullet ("…sessions that no longer exist and haven't been touched for a day…").
 
 **Files:** create `app/claude_tmp.go`, `app/claude_tmp_test.go`; modify `app/app.go`, `app/pollgate.go`, `main.go`, `CLAUDE.md`, `USAGE.md`.
 
