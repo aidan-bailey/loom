@@ -190,14 +190,14 @@ func TestHandleStateMergePickerKey_EnterMergesTheDisplayedTarget(t *testing.T) {
 	require.Nil(t, cmd)
 	require.Equal(t, stateMergePicker, m.state)
 
-	_, cmd = handleStateMergePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.NotNil(t, cmd, "enter must return the merge Cmd")
+	_, _ = handleStateMergePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	results := requestResults(t, m)
+	require.Len(t, results, 1, "enter must request the merge, whose job the drain runs")
 	assert.Equal(t, stateDefault, m.state)
 	assert.Nil(t, m.pendingMergeTarget)
 	assert.Nil(t, m.pendingMergeSourceItems)
 
-	msg := cmd()
-	assert.Equal(t, coreResultMsg{msg: core.MergeResult{}}, msg, "successful merge returns no error")
+	assert.Equal(t, core.MergeResult{}, results[0], "successful merge returns no error")
 
 	targetWT, err := target.GetGitWorktree()
 	require.NoError(t, err)
@@ -239,10 +239,10 @@ func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) 
 	// handling in Update()).
 	selectIn(m, m.list, other)
 
-	_, cmd = handleStateMergePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.NotNil(t, cmd)
-	msg := cmd()
-	assert.Equal(t, coreResultMsg{msg: core.MergeResult{}}, msg, "merge should still succeed")
+	_, _ = handleStateMergePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	results := requestResults(t, m)
+	require.Len(t, results, 1)
+	assert.Equal(t, core.MergeResult{}, results[0], "merge should still succeed")
 
 	// The merge must have landed in the ORIGINAL target ("target"), not
 	// the instance the list's selection was reassigned to ("other").

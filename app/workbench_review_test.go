@@ -469,5 +469,5 @@ func TestWorkbenchReview_SendOpensConfirm(t *testing.T) {
 	// from here on) — the real signal is the state flip below.
 	_ = m.sendReviewCmd()
 	assert.Equal(t, stateConfirm, m.state, "S must open the confirm overlay")
-	assert.NotNil(t, m.pendingConfirmation.Async, "pending task must carry the send side-effect")
+	assert.NotNil(t, m.pendingConfirmation.Sync, "pending task must carry the send side-effect (the request)")
 }

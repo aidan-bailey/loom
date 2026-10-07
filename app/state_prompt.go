@@ -48,7 +48,6 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.cancelPromptOverlay()
 		}
 
-		var send tea.Cmd
 		if ti.IsSubmitted() {
 			prompt := ti.GetValue()
 			selectedBranch := ti.GetSelectedBranch()
@@ -110,9 +109,12 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 
 			// Regular flow: instance already running, just send the prompt,
-			// off the Update goroutine (three tmux subprocesses and a pause).
+			// off the Update goroutine (three tmux subprocesses and a pause):
+			// a request, whose job the drain hands to the runtime.
 			// The overlay closes now; a failed send comes back as an error.
-			send = coreCmd(m.core.SendPromptInst(selected, prompt))
+			if id, ok := m.core.IDFor(selected); ok {
+				m.core.SendPrompt(id, prompt, 0)
+			}
 		}
 
 		m.dismissOverlay()
@@ -126,10 +128,10 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// disk, so it must run on the main goroutine — hand it back via
 		// a message instead of calling it inside the (goroutine-run)
 		// Sequence closure. The handler also resets the menu state.
-		return m, tea.Batch(send, tea.Sequence(
+		return m, tea.Sequence(
 			tea.RequestWindowSize,
 			func() tea.Msg { return showHelpScreenMsg{helpType: helpStart(started)} },
-		))
+		)
 	}
 
 	if branchFilterChanged {

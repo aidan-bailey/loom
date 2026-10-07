@@ -175,62 +175,43 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 
 func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	// The instance, through the bridge until package C kills by request.
-	inst := m.instOf(selected.ID)
-	if inst == nil {
-		return m, nil
-	}
-	preAction, job := m.core.KillInst(m.ws, inst, m.closeTerminalFor(selected.Title, "kill"))
-	killAction := coreCmd(job)
+	id := selected.ID
 	message := fmt.Sprintf("[!] Kill session '%s'?", selected.Title)
 	if selected.Status == session.Recoverable {
 		message = fmt.Sprintf("[!] Discard recoverable session '%s'? Uncommitted changes are lost; the branch is kept.", selected.Title)
 	}
+	// The kill is a request (core.Model.Kill): its pre-step (Deleting) and
+	// its job both start when the user confirms, and the job reaches the
+	// runtime at the end of that Update.
 	return m, m.confirmTask(message, overlay.ConfirmationTask{
-		Sync:  preAction,
-		Async: killAction,
+		Sync: func() { m.core.Kill(id, 0) },
 	})
 }
 
 // runKillSelectedNoConfirm mirrors runKillSelected but skips the
-// confirmation overlay, running preAction inline before returning
-// killAction. Used by cs.actions.kill_selected{confirm=false}.
+// confirmation overlay, making the kill request inline. Used by
+// cs.actions.kill_selected{confirm=false}.
 func runKillSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	// The instance, through the bridge until package C kills by request.
-	inst := m.instOf(selected.ID)
-	if inst == nil {
-		return m, nil
-	}
-	preAction, job := m.core.KillInst(m.ws, inst, m.closeTerminalFor(selected.Title, "kill"))
-	killAction := coreCmd(job)
-	preAction()
+	m.core.Kill(selected.ID, 0)
 	m.syncViews() // the Deleting it wrote, for the rest of this Update
-	return m, killAction
+	return m, nil
 }
 
 func runSubmitSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	// The instance, through the bridge until package C pushes by request.
-	inst := m.instOf(selected.ID)
-	if inst == nil {
-		return m, nil
-	}
-	pushAction := coreCmd(m.core.PushInst(inst))
+	id := selected.ID
 	message := fmt.Sprintf("[!] Push changes from session '%s'?", selected.Title)
-	return m, m.confirmAction(message, pushAction)
+	return m, m.confirmTask(message, overlay.ConfirmationTask{
+		Sync: func() { m.core.Push(id, 0) },
+	})
 }
 
 // runSubmitSelectedNoConfirm mirrors runSubmitSelected but skips the
 // confirmation overlay. Used by cs.actions.push_selected{confirm=false}.
 func runSubmitSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
-	selected := m.list.GetSelectedInstance()
-	// The instance, through the bridge until package C pushes by request.
-	inst := m.instOf(selected.ID)
-	if inst == nil {
-		return m, nil
-	}
-	return m, coreCmd(m.core.PushInst(inst))
+	m.core.Push(m.list.GetSelectedInstance().ID, 0)
+	return m, nil
 }
 
 // runStashSelectedOpts is the parameterized pause path. confirm
@@ -241,29 +222,19 @@ func runSubmitSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 // renders immediately.
 func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	// The instance, through the bridge until package C pauses by request.
-	inst := m.instOf(selected.ID)
-	if inst == nil {
-		return m, nil
-	}
-	pauseAction := coreCmd(m.core.PauseInst(m.ws, inst, m.closeTerminalFor(selected.Title, "pause")))
+	id := selected.ID
 
+	// The pause is a request (core.Model.Pause), which moves the session
+	// to Loading itself.
 	startPause := func() tea.Cmd {
 		if !confirm {
-			if err := inst.TransitionTo(session.Loading); err != nil {
-				log.For("app").Warn("pause.preaction_transition_failed", "err", err)
-			}
+			m.core.Pause(id, 0)
 			m.syncViews() // the Loading it wrote, for the rest of this Update
-			return pauseAction
+			return nil
 		}
 		message := fmt.Sprintf("[!] Pause session '%s'?", selected.Title)
 		return m.confirmTask(message, overlay.ConfirmationTask{
-			Sync: func() {
-				if err := inst.TransitionTo(session.Loading); err != nil {
-					log.For("app").Warn("pause.preaction_transition_failed", "err", err)
-				}
-			},
-			Async: pauseAction,
+			Sync: func() { m.core.Pause(id, 0) },
 		})
 	}
 
@@ -275,24 +246,16 @@ func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 
 func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	// The instance, through the bridge until package C resumes by request.
-	inst := m.instOf(selected.ID)
-	if inst == nil {
-		return m, nil
-	}
 
 	// Flip to Loading immediately (core.Model.Resume) so the list shows
 	// the spinner while Resume's blocking worktree/tmux setup runs in a
-	// Cmd goroutine. TransitionTo enforces Paused→Loading atomically, so a
-	// concurrent reconcile flip between the precondition check and this
-	// write can't leave us starting Resume on a non-Paused instance:
-	// Resume then returns no job.
-	job := m.core.ResumeInst(m.ws, inst)
-	if job == nil {
-		return m, nil
-	}
+	// Cmd goroutine. The request refuses a session that is no longer
+	// Paused (its precondition), so a concurrent reconcile flip between
+	// the key's gate and this request can't start Resume on a non-Paused
+	// instance.
+	m.core.Resume(selected.ID, 0)
 	m.syncViews() // the Loading it wrote, for instanceChanged
-	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), coreCmd(job))
+	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
 }
 
 // runResumeOrRecover routes the 'r' key: Recoverable orphans are adopted
@@ -323,31 +286,29 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	// instance so R preselects the session's own account.
 	opts.Account = accountOrDefault(selected.Account)
 
+	id := selected.ID
 	m.pendingLaunchOptions = func(newOpts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-		// The instance, through the bridge until package C resumes by
-		// request (ResumeWith).
-		inst := m.instOf(selected.ID)
-		if inst == nil {
+		// The session's row as it is now: it may have gone while the
+		// modal was open.
+		row, _ := m.viewByID(id)
+		if row == nil {
 			m.state = stateDefault
 			m.menu.SetState(ui.StateDefault)
 			return m, nil
 		}
-		// Snapshot the save and stamp the owner here, on the main
-		// goroutine — Async below runs on a Cmd goroutine and must not
-		// read the model.
-		resumeJob := m.core.ResumeIfLoadingInst(m.ws, inst)
+		// The resume is a request (core.Model.ResumeWith): it records the
+		// chosen options, recomposing the program from base, moves the
+		// session to Loading and starts its job, all when the user
+		// confirms.
 		resumeTask := overlay.ConfirmationTask{
 			Sync: func() {
-				m.applyChosenLaunch(inst, newOpts, base)
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
-				if err := inst.TransitionTo(session.Loading); err != nil {
-					log.For("app").Warn("resume.skipped", "err", err)
-				}
+				m.core.ResumeWith(id, newOpts, base, 0)
 			},
-			Async: tea.Batch(tea.RequestWindowSize, coreCmd(resumeJob)),
+			Async: tea.RequestWindowSize,
 		}
-		if m.remoteControlBlockedOn(newOpts.Account, launch.EffectiveRemoteControl(newOpts), inst.Program()) {
+		if m.remoteControlBlockedOn(newOpts.Account, launch.EffectiveRemoteControl(newOpts), row.Program) {
 			return m, m.promptRestartRemoteControlBlocked(resumeTask, m.core.RCAuthFor(newOpts.Account).Reason)
 		}
 		return m, tea.Batch(m.runTask(resumeTask), m.instanceChanged())
@@ -369,27 +330,18 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 }
 
 // runRecoverSelected adopts the selected Recoverable orphan: core's
-// Recover flips it to Loading for the spinner and returns the job running
+// Recover flips it to Loading for the spinner and queues the job running
 // ReconcileAndRestore (which adopts the existing worktree and spawns tmux)
 // off the UI goroutine. The list swap + persist happen when the model
 // delivers its result, on the main goroutine.
 func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
-	// The instance, through the bridge until package C recovers by
-	// request.
 	sel := m.list.GetSelectedInstance()
 	if sel == nil {
 		return m, nil
 	}
-	inst := m.instOf(sel.ID)
-	if inst == nil {
-		return m, nil
-	}
-	job := m.core.RecoverInst(m.ws, inst)
-	if job == nil {
-		return m, nil
-	}
+	m.core.Recover(sel.ID, 0)
 	m.syncViews() // the Loading it wrote, for instanceChanged
-	return m, tea.Batch(coreCmd(job), m.instanceChanged())
+	return m, m.instanceChanged()
 }
 
 // -- Attach --

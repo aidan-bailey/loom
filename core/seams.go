@@ -71,6 +71,16 @@ func (m *Model) SetAccountUsageForTest(name string, u account.Usage, err error) 
 // instances in the model and then find them through the TUI.
 func (m *Model) IDForTest(inst *session.Instance) InstanceID { return m.idOf(inst) }
 
+// UntrackedForTest is a job's result with a request's tracking removed: a
+// request's job (Kill, Merge, SendPrompt, …) answers with its operation's
+// result wrapped for its Reply; any other result comes back as it is.
+func UntrackedForTest(result any) any {
+	if t, ok := result.(tracked); ok {
+		return t.result
+	}
+	return result
+}
+
 // ViewForTest is the view the model would publish for inst, with ID id:
 // for ui tests that build an instance and render it.
 func ViewForTest(inst *session.Instance, id InstanceID) InstanceView {

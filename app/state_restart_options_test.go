@@ -76,38 +76,32 @@ func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFail
 	_, _ = pending(overlay.LaunchOptions{RemoteControl: true, PermissionMode: "default", Model: "default", Effort: "default"})
 	require.Equal(t, stateConfirm, m.state)
 
-	// Every legal Status permits transitioning to Loading (see
-	// allowedTransitions in session/instance.go) — TransitionTo(Loading)
-	// only fails when the instance's current Status isn't one of the
-	// known enum values, e.g. clobbered by a concurrent write between
-	// the precondition check and Sync's write. Status is an exported
-	// field, so corrupt it directly to force that failure once the user
-	// confirms, proving Async bails instead of blindly calling Resume on
-	// an instance that never actually transitioned.
+	// Corrupt the status between the key's gate and the confirm: Status is
+	// an exported field, so a concurrent write could leave any value
+	// there. The request's precondition (Paused) then refuses it once the
+	// user confirms, proving nothing runs Resume on an instance that is no
+	// longer Paused, and that a refused request records no options.
 	inst.Status = session.Status(99)
+	programBefore := inst.Program()
 
-	cmd := m.pendingConfirmation.Run() // runs Sync, returns Async
+	cmd := m.pendingConfirmation.Run() // runs Sync (the request), returns Async
 	require.NotNil(t, cmd)
 
-	// Async is tea.Batch(tea.RequestWindowSize, resumeJob) — calling it
-	// returns a tea.BatchMsg (the sub-commands to run), not an
-	// already-resolved message. Run every sub-command and confirm none
-	// of them is the resume outcome (core.OpFailed/core.ResumeResult);
-	// a tea.WindowSizeMsg from the RequestWindowSize half is expected
-	// and fine.
-	msg := cmd()
-	batch, ok := msg.(tea.BatchMsg)
-	require.True(t, ok, "Async must be a batch (RequestWindowSize + the resume check)")
-	for _, sub := range batch {
-		require.NotNil(t, sub)
-		res, _ := sub().(coreResultMsg)
-		switch res.msg.(type) {
+	// Async is only tea.RequestWindowSize now: the resume is a request,
+	// whose job a drain would hand to the runtime. A refused request
+	// queues none, so neither a resume outcome (core.OpFailed /
+	// core.ResumeResult) nor a skipped-resume check can come of it.
+	results := requestResults(t, m)
+	require.Empty(t, results, "a refused resume queues no job")
+	for _, res := range results {
+		switch res.(type) {
 		case core.OpFailed:
 			t.Fatal("Resume must not have run (and errored)")
 		case core.ResumeResult:
 			t.Fatal("Resume must not have run (and succeeded)")
 		}
 	}
+	assert.Equal(t, programBefore, inst.Program(), "a refused request applies no launch options")
 	assert.Equal(t, session.Status(99), inst.GetStatus(), "status must be untouched by Resume")
 }
 

@@ -432,18 +432,16 @@ func (m *home) closeReview() tea.Cmd {
 
 // sendReviewCmd composes the review comments into a prompt and, after
 // confirmation, sends it to the session's agent pane. The prompt is
-// composed at press time; the send is a core job (core.Model.SendPrompt)
-// the confirmation runs off the main goroutine, like the quick-input
-// bar's, and a failed send comes back as an error.
+// composed at press time; the send is a request (core.Model.SendPrompt)
+// the confirmation makes, whose job runs off the main goroutine, like the
+// quick-input bar's, and a failed send comes back as an error.
 func (m *home) sendReviewCmd() tea.Cmd {
 	sel := m.list.GetSelectedInstance()
 	rv := m.wbReview
 	if sel == nil || rv == nil {
 		return nil
 	}
-	// The instance, through the bridge until package C sends by request.
-	inst := m.instOf(sel.ID)
-	if sel.Paused() || inst == nil || !inst.Pane().TmuxAlive() {
+	if sel.Paused() || !m.tmuxAlive(sel) {
 		m.errBox.SetInfo("agent is not running — resume the session first")
 		return nil
 	}
@@ -453,9 +451,10 @@ func (m *home) sendReviewCmd() tea.Cmd {
 		return nil
 	}
 	title := sel.Title
+	id := sel.ID
 	msg := fmt.Sprintf("Send %d review comment(s) to %s?", rv.CommentCount(), title)
 	return m.confirmTask(msg, overlay.ConfirmationTask{
-		Async: coreCmd(m.core.SendPromptInst(inst, prompt)),
+		Sync: func() { m.core.SendPrompt(id, prompt, 0) },
 	})
 }
 

@@ -237,6 +237,26 @@ func deliver(t *testing.T, m *home, result any) tea.Cmd {
 	return cmd
 }
 
+// requestResults drains m's model as Update's drain does (drainCore),
+// applying its events but dropping their Cmds, and runs its jobs as the
+// runtime would, off the drain. It returns their results, each with a
+// request's tracking removed (core.UntrackedForTest), without delivering
+// them: what a request made outside an Update (a handler called directly)
+// queued.
+func requestResults(t *testing.T, m *home) []any {
+	t.Helper()
+	var results []any
+	for out := m.core.Sync(); !out.Empty(); out = m.core.Sync() {
+		for _, ev := range out.Events {
+			_ = m.applyCoreEvent(ev)
+		}
+		for _, job := range out.Jobs {
+			results = append(results, core.UntrackedForTest(job()))
+		}
+	}
+	return results
+}
+
 // sequenceMsgType is the type of the message a tea.Sequence of two or
 // more Cmds produces. bubbletea keeps it unexported, so it is taken from a
 // throwaway Sequence (one Cmd alone would come back as itself).

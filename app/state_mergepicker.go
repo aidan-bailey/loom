@@ -8,8 +8,8 @@ import (
 
 // handleStateMergePickerKey drives the merge-picker overlay opened by
 // runMergeSelected. On commit it either cancels (Esc — no git command
-// runs) or hands the chosen source instance to core's Merge, whose job
-// runs the actual git merge as a tea.Cmd. This is where the Lua
+// runs) or requests core's Merge of the chosen source, whose job runs
+// the actual git merge as a tea.Cmd. This is where the Lua
 // coroutine's involvement ends for good — everything past
 // runMergeSelected's yield-and-resume is plain Go state-handler code,
 // the same as stateWorkspace/stateConfirm.
@@ -38,15 +38,17 @@ func handleStateMergePickerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	if source == nil {
 		return m, nil
 	}
-	// The instances, through the bridge until package C merges by
-	// request. Either may have gone since the picker opened.
-	targetInst, sourceInst := m.instOf(target.ID), m.instOf(source.ID)
-	if targetInst == nil || sourceInst == nil {
+	// Either session may have gone since the picker opened: re-resolve
+	// both by ID before the request.
+	targetRow, _ := m.viewByID(target.ID)
+	sourceRow, _ := m.viewByID(source.ID)
+	if targetRow == nil || sourceRow == nil {
 		gone := target.Title
-		if targetInst != nil {
+		if targetRow != nil {
 			gone = source.Title
 		}
 		return m, m.handleError(fmt.Errorf("merge: session '%s' is gone", gone))
 	}
-	return m, coreCmd(m.core.MergeInst(targetInst, sourceInst))
+	m.core.Merge(target.ID, source.ID, 0)
+	return m, nil
 }

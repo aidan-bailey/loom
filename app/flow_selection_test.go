@@ -384,7 +384,7 @@ func TestKillAction_UsesTheDispatchSlotsStorage(t *testing.T) {
 	require.NoError(t, err)
 	recA.lastData = seed
 
-	_, killAction := m.core.KillInst(m.ws, a1, m.closeTerminalFor(a1.Title, "kill"))
+	_, killAction := m.core.KillInst(m.ws, a1, nil)
 	m.switchWorkspaceSlot(1)
 	_ = killAction()
 

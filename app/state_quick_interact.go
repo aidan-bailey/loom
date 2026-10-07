@@ -29,18 +29,14 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 	case ui.QuickInputSubmit:
 		text := m.quickInputBar.Value()
 		var err error
-		var send tea.Cmd
 		switch m.quickInputBar.Target {
 		case ui.QuickInputTargetTerminal:
 			err = m.splitPane.SendTerminalPrompt(text)
 		case ui.QuickInputTargetAgent:
 			// Off the Update goroutine (three tmux subprocesses and a
-			// pause); a failed send comes back as an error.
-			// The instance, through the bridge until package C sends by
-			// request.
-			if inst := m.instOf(selected.ID); inst != nil {
-				send = coreCmd(m.core.SendPromptInst(inst, text))
-			}
+			// pause): a request, whose job the drain hands to the
+			// runtime; a failed send comes back as an error.
+			m.core.SendPrompt(selected.ID, text, 0)
 		}
 		m.quickInputBar = nil
 		m.state = stateDefault
@@ -48,7 +44,7 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 		if err != nil {
 			return m, tea.Batch(tea.RequestWindowSize, m.handleError(err))
 		}
-		return m, tea.Batch(tea.RequestWindowSize, send)
+		return m, tea.RequestWindowSize
 	case ui.QuickInputCancel:
 		m.quickInputBar = nil
 		m.state = stateDefault

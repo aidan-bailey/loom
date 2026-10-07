@@ -201,6 +201,11 @@ type home struct {
 	// focused (TUI state; laid over rows as InstanceView.Bell).
 	bells map[core.InstanceID]bool
 
+	// pending holds the requests the TUI made with a ReqID, by ReqID, until
+	// their Reply (handleReply); nextReq is the last ReqID it chose.
+	pending map[core.ReqID]pendingReq
+	nextReq core.ReqID
+
 	// -- UI Components --
 
 	// menu displays the bottom menu

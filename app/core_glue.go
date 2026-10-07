@@ -114,24 +114,10 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 	case core.AccountsChanged:
 		ui.SetShowAccounts(m.core.HasExtraAccounts())
 		return m.refreshAccountViews()
+	case core.Reply:
+		return m.handleReply(ev)
 	}
 	return nil
-}
-
-// closeTerminalFor returns the step kill and pause run in their job before
-// touching the instance: closing the focused split pane's terminal shell
-// for title (its loom_term_* session), which ends that shell. The pane is
-// the TUI's; it is captured here on Update, and the job only runs the
-// returned func. op names the operation in the log ("kill", "pause").
-func (m *home) closeTerminalFor(title, op string) func() {
-	splitPane := m.splitPane // the owning slot's, captured on Update
-	return func() {
-		if ts := splitPane.DetachTerminalForInstance(title); ts != nil {
-			if err := ts.Close(); err != nil {
-				log.For("app").Error(op+".terminal_close_failed", "title", title, "err", err)
-			}
-		}
-	}
 }
 
 // newSlotView builds the view of a loaded workspace: a rail reading its
