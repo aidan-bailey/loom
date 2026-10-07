@@ -885,3 +885,54 @@ Claude-Session: https://claude.ai/code/session_01WdG6KL8iCdQeM21uVaqCM7"
 ### D3. Outcome (coordinator, after the final review)
 
 - [ ] Append "Outcome and follow-ups" to this plan, and update the `loom-scrum-daemon-direction` memory: 1D is done, and the next step is plan 1E.
+
+---
+
+## Outcome and follow-ups
+
+Executed inline on 2026-10-07 as seven commits on `aidanb/daemon`, f65331e..b0ffe0e:
+
+| Package | Commits |
+|---|---|
+| A | cc97015 |
+| B | 55f408a, plus d6f5b7c, the `ui/overlay` test literals A left out |
+| C | 0b0ee64 |
+| D | ef25cc1 (docs) and b0ffe0e (a fix the smoke run found) |
+
+Final state:
+- **Checks.** `go vet`, `go test ./...`, `-race ./...` (every package) and e2e are green, and gofmt is clean.
+- **Assertions.** The count went from 8436 to 8586. No assertion was weakened. Test rewrites kept every assertion's meaning: `.ws` → `.ws()`, and handle reads moved to test-only accessors.
+- **Enforcement.** `TestCoreIsValueTyped`, `TestTUIHoldsNoModelObject`, `TestCoreImportsNoUI` and `TestNoProductionCallsOfTestSeams` all pass. Each new rule was shown to bite: a `Bad() *Workspace` method on `Core`, a `func` field on an event, and a temporary app file using `*core.Workspace`, `session.SetLoomContextEnabled` and `config.LoadWorkspaceRegistry`.
+- **Smoke run.** It used sandbox `smoke1d`, built once at ef25cc1, then rebuilt at b0ffe0e after the fix it found.
+  - **Settings:** saved at once to `config.json`, kept across a restart, and a new session uses the new branch prefix. The theme cycles and persists.
+  - **UI prefs:** the rail, the terminal, the split ratio and the overview mode persist, and are kept per workspace with two tabs.
+  - **Help screens:** a screen marks itself seen in `state.json`.
+  - **Registry:** a workspace registered by `loom workspace add` from another shell shows in `W`. Opening it, closing it and entering global mode each update the open list on disk.
+  - **Recovery summary:** shown at startup for an orphaned worktree (after the fix).
+  - **Storage latch:** a failed load refuses new sessions with the latched message (after the fix).
+  - **Lifecycle:** recover, pause, resume and kill work.
+
+### What execution changed beyond the plan
+- **A transition that drops a workspace now tears the focused slot down first.**
+  - The cases are the first tab leaving classic mode, closing the focused tab, and entering global mode.
+  - The TUI used to write the departing workspace's UI prefs through its own pointer after the model had dropped it. Through `SetUIPrefs` that write is refused, and the pending split ratio was lost. `TestStartupPicker_FlushesPendingRatiosIntoClassicState` caught it.
+  - A test pins each of the three cases (mutation-checked), and the focused-slot gotcha in CLAUDE.md says so.
+- **The `WorkspacesChanged` applier (b0ffe0e).** Package B shipped without it. The smoke run caught that the startup recovery summary had gone missing.
+  - The classic slot is named before `LoadClassic`, so without the applier its cached view stayed as it was before the load. That hid the recovery summary and left the storage-latch and preserved-title guards blind.
+  - The app suite missed it because `wireCore` builds every view after the model is installed. `TestWorkspacesChanged_RefreshesTheSlotsView` now pins it, and it was the only test to fail without the applier.
+- **`Save(unknown id)` is an error.** The plan had it save "as a nil workspace does", but `saveWS(nil)` panics.
+- **`RegistryView.Open` is the resolved `[]config.Workspace`,** because `RestoreSaved` takes workspaces, not names.
+- **`config.WorkspaceRegistry.Reload`** is new; the registry had no reload of its own.
+- **`ViewsChanged.WS`** was in the plan's A5 but landed in B.
+- **Read-only getters `session.LoomContextEnabled` and `SubagentTrackingEnabled`** were added for the `SaveSettings` tests.
+- **Test plumbing:**
+  - The fixture-workspace map (`fixtureWS`) and the fallback through the wired model (`wiredModel`).
+  - The test-only slot accessors `ws()`, `wsCtx()`, `storage()`, `appConfig()` and `appState()`.
+  - `settingsOverlayForTest`, and `newRestoreHome(t, …)`.
+- **The plan's smoke check 2 ("settings cancel") described behaviour loom never had.** The overlay saves each change as it is made. The check now tests that.
+
+### Follow-ups, none blocking
+1. **For 1E** (decision 14): `Sync`'s jobs, `Deliver`, and the read-after-write sites (`syncViews`, `syncWorkspaces`, the drains after a transition, `mutateUIPrefs` keeping its write). Also the nested drain in `newLaunchOptionsOverlay`, and the merge dirty check on Update.
+2. **A refusal sent with `ReqID` 0 logs at Info only.** In the smoke run, a resume and a kill pressed while a pause was still running were refused with nothing on screen. Every user-started request carries a `ReqID` since 1C, so this was the smoke run's own key timing. Still, a busy session could say so when a key is pressed on it.
+3. **A newly registered workspace has no `config.json`,** so its terminal runs the real `claude` (`DefaultConfig`), even in a sandbox. This predates 1D.
+4. **`ui.SetShowAccounts` and the theme stay TUI-only, unsynchronized globals,** as before.
