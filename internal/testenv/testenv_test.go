@@ -1,6 +1,7 @@
 package testenv
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -162,6 +163,7 @@ func callsIsolate(file *ast.File) bool {
 func TestIsolateLoomDirs(t *testing.T) {
 	t.Setenv(EnvHome, "before-home")
 	t.Setenv(EnvGlobalDir, "before-global")
+	t.Setenv(EnvClaudeTmpDir, "before-claude-tmp")
 	cleanup, err := IsolateLoomDirs()
 	require.NoError(t, err)
 
@@ -171,6 +173,10 @@ func TestIsolateLoomDirs(t *testing.T) {
 	assert.NotEqual(t, home, global)
 	assert.Equal(t, filepath.Dir(home), filepath.Dir(global), "both live under one throwaway dir")
 	assert.DirExists(t, filepath.Dir(home))
+	claudeTmp := os.Getenv(EnvClaudeTmpDir)
+	assert.Equal(t, filepath.Dir(home), filepath.Dir(claudeTmp), "Claude's temp root is isolated under the same dir")
+	assert.DirExists(t, claudeTmp, "a real Claude launched by an opt-in test finds its root's parent")
+	assert.NoDirExists(t, filepath.Join(claudeTmp, fmt.Sprintf("claude-%d", os.Getuid())), "but no root: every archive operation stays a no-op")
 
 	cleanup()
 	assert.NoDirExists(t, filepath.Dir(home), "cleanup removes the throwaway dir")
