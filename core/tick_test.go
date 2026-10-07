@@ -9,6 +9,7 @@ import (
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/tmux"
 
 	"github.com/stretchr/testify/assert"
@@ -183,10 +184,46 @@ func TestHealthResult_ReportsTheLiveAndRearmsTheTick(t *testing.T) {
 	}, m.Drain().Events)
 }
 
-// setupWorkspaceTerminalDead builds a Running workspace-terminal
+// TestHealthResult_LeavesAnInstanceAnOpTookWhileTheProbeRan: a kill
+// (Deleting) or a pause or resume (Loading) confirmed while a probe was in
+// flight owns the instance by the time the probe lands. Neither the
+// probe's answer nor the hooks' reported status may move it: a Ready
+// would reopen the busy gate to a second kill or pause, and keep a record
+// whose worktree is going away persistable. A dead answer must not pause
+// it under the op, and an alive one asks for no client repair.
+func TestHealthResult_LeavesAnInstanceAnOpTookWhileTheProbeRan(t *testing.T) {
+	for _, held := range []session.Status{session.Deleting, session.Loading} {
+		t.Run(held.String(), func(t *testing.T) {
+			m := NewForTest(Options{})
+			inst := activeInst(t, m, "probed")
+			applyHookEvents(t, inst, hooks.Event{Name: hooks.EventStop, HasTasks: true, At: time.Now()})
+			require.NoError(t, inst.TransitionTo(held), "the op confirmed while the probe ran")
+			target, authoritative := m.AdoptClaudeStatus(inst)
+			require.True(t, authoritative, "fixture precondition: the hooks reported a status")
+			require.Equal(t, session.Ready, target, "fixture precondition")
+
+			m.Deliver(HealthResult{Results: []ProbeResult{{Instance: inst, TmuxLive: tmux.LivenessAlive}}})
+
+			assert.Equal(t, held, inst.GetStatus(), "the op owns the instance: the reported status must not move it")
+			assert.Equal(t, []Event{
+				StatusesChanged{},
+				Alive{Source: "tick"},
+				HealthChecked{},
+			}, m.Drain().Events, "no client repair for an instance the op owns")
+
+			m.Deliver(HealthResult{Results: []ProbeResult{{Instance: inst, TmuxLive: tmux.LivenessDead}}})
+
+			assert.Equal(t, held, inst.GetStatus(), "a dead answer must not pause it under the op")
+		})
+	}
+}
+
+// setupWorkspaceTerminalDead builds a started, Running workspace-terminal
 // instance with a mock tmux session attached, for driving repeated
 // dead-tmux health results against the restart circuit breaker without
-// touching a real tmux server.
+// touching a real tmux server. The mock answers as a server would:
+// has-session finds the session from new-session until kill-session, so
+// each Restart (a Close, then a Start) relaunches it.
 func setupWorkspaceTerminalDead(t *testing.T) (*Model, *session.Instance) {
 	t.Helper()
 	m := NewForTest(Options{})
@@ -199,10 +236,27 @@ func setupWorkspaceTerminalDead(t *testing.T) (*Model, *session.Instance) {
 	})
 	require.NoError(t, err)
 	hold(m, inst)
-	require.NoError(t, inst.TransitionTo(session.Running))
 
-	ts := tmux.NewSessionWithDeps("ws-term", "broken-program", fakePtyFactory{t: t}, aliveExec())
-	inst.SetTmuxSession(ts)
+	running := true
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(cmd *exec.Cmd) error {
+			switch s := cmd.String(); {
+			case strings.Contains(s, "has-session") && !running:
+				return errors.New("no session")
+			case strings.Contains(s, "new-session"):
+				running = true
+			case strings.Contains(s, "kill-session"):
+				running = false
+			}
+			return nil
+		},
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	inst.SetTmuxSession(tmux.NewSessionWithDeps("ws-term", "broken-program", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+	// Marked started, as a restored record whose session runs is: the
+	// probe only probes started instances.
+	require.NoError(t, inst.EnsureRunning())
+	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")
 
 	return m, inst
 }
@@ -263,7 +317,6 @@ func TestHealthResult_ARestartedWorkspaceTerminalGetsAFreshClient(t *testing.T) 
 	})
 	require.NoError(t, err)
 	hold(m, inst)
-	require.NoError(t, inst.TransitionTo(session.Running))
 	// The session is gone until a new-session relaunches it.
 	running := false
 	cmdExec := cmd_test.MockCmdExec{
@@ -279,6 +332,10 @@ func TestHealthResult_ARestartedWorkspaceTerminalGetsAFreshClient(t *testing.T) 
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
 	inst.SetTmuxSession(tmux.NewSessionWithDeps("ws-restart", "sh", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+	// Marked started, as a restored record whose session ran is: the
+	// probe only probes started instances.
+	require.NoError(t, inst.EnsureRunning())
+	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")
 
 	m.Deliver(HealthResult{Results: []ProbeResult{{Instance: inst, TmuxLive: tmux.LivenessDead}}})
 

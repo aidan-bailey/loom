@@ -537,6 +537,7 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
+	finishStart(t, instance)
 
 	storage, err := session.NewStorage(&mockInstanceStorage{}, t.TempDir())
 	require.NoError(t, err)
@@ -544,7 +545,7 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 	list := ui.NewList(&sp, ws)
 	list.SetSelectedInstance(0)
 
-	h := wireCore(t, &home{
+	h := wirePanes(t, wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
 			ws:        ws,
 			list:      list,
@@ -553,7 +554,7 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 		ctx:   context.Background(),
 		state: stateDefault,
 		menu:  menu,
-	})
+	}))
 
 	// Simulate a start's result (no prompt, no error)
 	msg := coreResultMsg{msg: core.StartResult{

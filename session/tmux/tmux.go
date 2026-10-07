@@ -64,26 +64,29 @@ const pumpWaitTimeout = 2 * time.Second
 // embedded Session for the session itself. The TUI renders every pane from
 // one. Session lifecycle holds only a Session and never attaches. The zero
 // value is not usable: construct via NewTmuxSession or NewAttachClient (or
-// their WithDeps variants in tests). Two goroutines touch the ptmx and
-// monitor fields: the metadata fan-out (CaptureAndProcess/HasUpdated/
-// keystroke injection) and the Update loop's attach lifecycle
-// (Restore/PausePreview/Close). Both are therefore guarded by stateMu (see
-// its doc). Input written to its PTY (SendKeys, SendKeysRaw, TapEnter,
-// Paste, the Forward* methods) is the interactive path, while the promoted
-// TypeText, PressKeys and SendPrompt go through tmux commands and need no
-// attach.
+// their WithDeps variants in tests). Its fields are touched off the TUI's
+// Update goroutine: the TUI's status scans (DetectStatus, run in a Cmd on
+// a pane's quiet event and, on the snapshot path, at each health tick)
+// read the emulator and update monitor, and a client release (PausePreview
+// in a Cmd) closes ptmx, while the Update loop's attach lifecycle
+// (Restore/PausePreview/Close) reassigns or closes them. They are
+// therefore guarded by stateMu (see its doc). Input written to its PTY
+// (SendKeys, SendKeysRaw, TapEnter, Paste, the Forward* methods) is the
+// interactive path, while the promoted TypeText, PressKeys and SendPrompt
+// go through tmux commands and need no attach.
 type TmuxSession struct {
 	*Session
 
 	// Initialized by Start or Restore
 	//
 	// stateMu guards ptmx and monitor (both pointer and the monitor's
-	// fields). The metadata fan-out reads ptmx and updates monitor while
-	// the Update goroutine's attach lifecycle reassigns or closes them, so
-	// every access goes through stateMu. To avoid stalling the UI, callers
-	// snapshot ptmx under the lock and run PTY I/O on the local copy; the
-	// lock is never held across ptmx I/O, ptyFactory.Start, or a tmux
-	// subprocess. The monitor hash update is CPU-only and does run under it.
+	// fields). The TUI's status scans update monitor, and a client release
+	// closes ptmx, from Cmd goroutines while the Update goroutine's attach
+	// lifecycle reassigns or closes them, so every access goes through
+	// stateMu. To avoid stalling the UI, callers snapshot ptmx under the
+	// lock and run PTY I/O on the local copy; the lock is never held across
+	// ptmx I/O, ptyFactory.Start, or a tmux subprocess. The monitor hash
+	// update is CPU-only and does run under it.
 	stateMu sync.Mutex
 	// ptmx is the detached-mode PTY attached to the tmux session. The UI drives
 	// preview rendering, resizing, and keystroke injection through it. Full-screen

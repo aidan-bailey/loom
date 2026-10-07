@@ -40,15 +40,19 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 			s.list.SelectInstance(inst)
 		}
 		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", inst.Title, owner.Label()))
-	case m.state != stateDefault || !m.ws.Holds(inst) || inst.GetStatus() == session.Deleting:
+	case m.state != stateDefault || !m.ws.Holds(inst) || !core.ActiveInstance(inst):
 		// Another flow owns the screen and acts on the selection; leave
 		// both alone. (The second test is a belt: the owner is stamped by
-		// identity, so a focused owner holds inst.) Nor is a Deleting
-		// instance attached: a kill confirmed while Started was deferred
-		// for the initial prompt's send (the instance is already Running
-		// then, so kill is allowed) leaves the row Deleting, and inline
-		// attach, which looks the selection up per key, would have the user
-		// typing into the neighbouring session once the kill removes it.
+		// identity, so a focused owner holds inst.) Nor is an instance
+		// attached unless it is what a start leaves behind (active:
+		// started and Running, Ready or Prompting), the same test that
+		// gives it a client (replacePane). Started waits for an N flow's
+		// initial prompt to be sent, and the instance is already Running
+		// then, so the user can confirm a kill (Deleting) or a pause
+		// (Loading, then Paused) meanwhile. Inline attach, which looks the
+		// selection up per key, would have them typing into a session
+		// being torn down, and into the neighbouring one once a kill
+		// removes it.
 		m.errBox.SetInfo(fmt.Sprintf("%s started", inst.Title))
 	default:
 		m.list.SelectInstance(inst)

@@ -8,6 +8,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,6 +41,18 @@ func startingInstance(t *testing.T, slot *workspaceSlot, title string) *session.
 	require.NoError(t, inst.TransitionTo(session.Loading))
 	slot.ws.Add(inst)
 	return inst
+}
+
+// finishStart leaves inst as a successful Instance.Start(true) does before
+// its StartResult exists: started and Running, on a mock tmux session that
+// answers alive (no tmux server contacted). Start(false) marks the preset
+// session started without launching anything.
+func finishStart(t *testing.T, inst *session.Instance) {
+	t.Helper()
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(inst.Title, inst.Program(), fakePtyFactory{t: t}, aliveCmdExecForTest()))
+	require.NoError(t, inst.EnsureRunning())
+	require.Equal(t, session.Running, inst.GetStatus(), "fixture: a start leaves the instance Running")
+	require.True(t, core.ActiveInstance(inst), "fixture: a start leaves the instance active")
 }
 
 // selectTitle selects the instance titled title in m's focused list.
@@ -79,7 +92,7 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 	owner := m.workspaceSlot
 	starting := startingInstance(t, owner, "new-one")
 	starting.SetPrompt("do the thing")
-	require.NoError(t, starting.TransitionTo(session.Running))
+	finishStart(t, starting)
 	m.switchWorkspaceSlot(1)
 	m.errBox.SetSize(400, 1)
 
@@ -100,7 +113,7 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 func TestInstanceStarted_SuccessInFocusedWorkspaceAttaches(t *testing.T) {
 	m, recA, recB := ownerTestHome(t)
 	starting := startingInstance(t, m.workspaceSlot, "new-one")
-	require.NoError(t, starting.TransitionTo(session.Running))
+	finishStart(t, starting)
 
 	deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
 
@@ -118,7 +131,7 @@ func TestInstanceStarted_InlineAttachWaitsForThePrompt(t *testing.T) {
 	m, _, _ := ownerTestHome(t)
 	starting := startingInstance(t, m.workspaceSlot, "new-one")
 	starting.SetPrompt("do the thing")
-	require.NoError(t, starting.TransitionTo(session.Running))
+	finishStart(t, starting)
 
 	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
 	assert.Equal(t, stateDefault, m.state, "no inline attach while the prompt is being sent")
@@ -139,13 +152,33 @@ func TestInstanceStarted_KilledWhileThePromptIsSentIsNotAttached(t *testing.T) {
 	m.errBox.SetSize(400, 1)
 	starting := startingInstance(t, m.workspaceSlot, "new-one")
 	starting.SetPrompt("do the thing")
-	require.NoError(t, starting.TransitionTo(session.Running))
+	finishStart(t, starting)
 
 	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
 	require.NoError(t, starting.TransitionTo(session.Deleting)) // a kill confirmed meanwhile
 	pumpCore(t, m, cmd)
 
 	assert.Equal(t, stateDefault, m.state, "no inline attach on a session being killed")
+	assert.NotEqual(t, ui.StateInlineAttach, m.menu.State(), "nor the menu")
+	assert.Contains(t, m.errBox.String(), "new-one started")
+}
+
+// TestInstanceStarted_PausedWhileThePromptIsSentIsNotAttached: likewise
+// a pause confirmed while the initial prompt is sent leaves the instance
+// Loading (then Paused). Inline attach on it would forward keys to a
+// session being torn down.
+func TestInstanceStarted_PausedWhileThePromptIsSentIsNotAttached(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	m.errBox.SetSize(400, 1)
+	starting := startingInstance(t, m.workspaceSlot, "new-one")
+	starting.SetPrompt("do the thing")
+	finishStart(t, starting)
+
+	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	require.NoError(t, starting.TransitionTo(session.Loading)) // a pause confirmed meanwhile
+	pumpCore(t, m, cmd)
+
+	assert.Equal(t, stateDefault, m.state, "no inline attach on a session being paused")
 	assert.NotEqual(t, ui.StateInlineAttach, m.menu.State(), "nor the menu")
 	assert.Contains(t, m.errBox.String(), "new-one started")
 }

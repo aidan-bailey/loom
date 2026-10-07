@@ -15,7 +15,9 @@ import (
 
 // TestNoProductionCallsOfTestSeams fails when production source (a .go
 // file that is not a _test.go) calls a function or method whose name ends
-// in ForTest, or takes one as a value (x.FooForTest). Those are test seams
+// in ForTest, or takes one as a value (x.FooForTest, or a bare FooForTest
+// within its own package: `f := FooForTest`, whose later call through f
+// names no seam). Those are test seams
 // (core/seams.go, and the …ForTest methods in session/tmux and ui), and
 // only their name keeps them out of the shipped binary's paths.
 //
@@ -53,18 +55,13 @@ func TestNoProductionCallsOfTestSeams(t *testing.T) {
 			if fn, ok := decl.(*ast.FuncDecl); ok && isSeam(fn.Name.Name) {
 				continue
 			}
+			// Every use names the seam by an identifier: a selector's
+			// (pkg.FooForTest, x.FooForTest), a call's within its own
+			// package (FooForTest()), or a bare value's (f := FooForTest).
+			// The seam's own declaration was skipped above.
 			ast.Inspect(decl, func(n ast.Node) bool {
-				var name string
-				switch n := n.(type) {
-				case *ast.SelectorExpr: // pkg.FooForTest or x.FooForTest, called or not
-					name = n.Sel.Name
-				case *ast.CallExpr: // FooForTest() within its own package
-					if id, ok := n.Fun.(*ast.Ident); ok {
-						name = id.Name
-					}
-				}
-				if isSeam(name) {
-					offenders = append(offenders, fset.Position(n.Pos()).String()+": "+name)
+				if id, ok := n.(*ast.Ident); ok && isSeam(id.Name) {
+					offenders = append(offenders, fset.Position(id.Pos()).String()+": "+id.Name)
 				}
 				return true
 			})

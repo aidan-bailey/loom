@@ -41,14 +41,14 @@ func (m *Model) InitAccounts() {
 		log.For("account").Error("registry.load_failed", "err", err.Error())
 		m.notifyErr(fmt.Errorf("accounts: %w", err))
 	}
+	// Publishing emits AccountsChanged, which fills the strip now rather
+	// than when the first probe lands. Its relayout Cmd is not needed: the
+	// first WindowSizeMsg is still to come.
 	m.adoptAccounts(reg)
 	m.warnIfRunningAsAccount()
 	if name, ok := account.ActiveCredentialOverride(); ok && m.HasExtraAccounts() {
 		log.For("account").Warn("registry.credential_override", "env", name)
 	}
-	// Fill the strip now rather than when the first probe lands. Its
-	// relayout Cmd is not needed: the first WindowSizeMsg is still to come.
-	m.emit(AccountsChanged{})
 }
 
 // warnIfRunningAsAccount says, once at startup, that loom itself runs as an

@@ -148,9 +148,12 @@ func aliveExec() cmd_test.MockCmdExec {
 
 // startedInst builds a started instance titled title running program, in a
 // worktree of a fresh repository, on a mock tmux session (no tmux server
-// contacted) whose has-session answers once new-session ran. A Claude
-// program's launch prepares its hooks folder (HooksLaunched). It is app's
-// startedInstanceWithProgram minus the pane client and the captured
+// contacted) whose has-session answers once new-session ran. Start finds
+// that session preset, so it never calls launchProgram and prepares no
+// hooks folder. A Claude program still reads HooksLaunched: its launch ID
+// stays "", never reset to the no-hooks sentinel, so like a restored
+// instance it adopts the first scan result's (applyHookEvents). It is
+// app's startedInstanceWithProgram minus the pane client and the captured
 // content, which are the TUI's.
 func startedInst(t *testing.T, title, program string) *session.Instance {
 	t.Helper()

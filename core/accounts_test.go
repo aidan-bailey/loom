@@ -402,3 +402,28 @@ func TestAccountRequests_RefuseWithoutARegistry(t *testing.T) {
 	assert.EqualError(t, m.SetDefaultAccount("max-2"), "the account registry is unavailable")
 	assert.EqualError(t, m.RemoveAccount("max-2"), "the account registry is unavailable")
 }
+
+// TestInitAccounts_FillsTheStripOnce: the startup publication tells the
+// TUI once (AccountsChanged), which fills the strip when newHome drains;
+// a second event only repeated the same refresh.
+func TestInitAccounts_FillsTheStripOnce(t *testing.T) {
+	noCredentialOverride(t)
+	global := t.TempDir()
+	t.Setenv("LOOM_GLOBAL_DIR", global)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	_, _, err := account.LoadRegistry(global).Create("max-2", t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { session.SetAccountDirs(nil, nil) })
+	m := NewForTest(Options{})
+
+	m.InitAccounts()
+
+	changed := 0
+	for _, ev := range m.Drain().Events {
+		if _, ok := ev.(AccountsChanged); ok {
+			changed++
+		}
+	}
+	assert.Equal(t, 1, changed)
+	assert.True(t, m.HasExtraAccounts(), "the registry was loaded and published")
+}

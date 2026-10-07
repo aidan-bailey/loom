@@ -153,6 +153,16 @@ func probeJob(active []*session.Instance, selected *session.Instance, dirty map[
 func (m *Model) deliverHealth(r HealthResult) {
 	var alive []*session.Instance
 	for _, p := range r.Results {
+		// The probe only probes active instances, but a kill, pause or
+		// resume confirmed while it ran may have moved one to Deleting or
+		// Loading since, and that flow owns it now. Skip liveness as well as
+		// status: a dead answer would pause it (or relaunch a workspace
+		// terminal) under the op, and an alive one would ask for a client
+		// repair. A reported status would move it off Deleting or Loading,
+		// reopening the busy gate and keeping a dying record persistable.
+		if !StatusEligible(p.Instance) {
+			continue
+		}
 		if !m.applyLiveness(p.Instance, p.TmuxLive, fromTick) {
 			continue
 		}
