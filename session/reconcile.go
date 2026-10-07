@@ -65,6 +65,32 @@ func CheckTmuxAlive(sessionTitle string, cmdExec internalexec.Executor) bool {
 	return true
 }
 
+// liveSessionAccount names the account a live session's agent runs on,
+// read back from the CLAUDE_CONFIG_DIR loom put in the session's
+// environment at launch (ClaudeConfigDirEnv, passed as new-session -e).
+// "" is the default account, and also every case it can't tell: the
+// variable unset (the default account itself), a dir no registered
+// account owns, or a probe that failed.
+func liveSessionAccount(sessionTitle string, cmdExec internalexec.Executor) string {
+	const name = "CLAUDE_CONFIG_DIR"
+	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
+	defer cancel()
+	cmd := tmux.Command(ctx, "show-environment", "-t", tmux.SessionTarget(tmux.ToLoomTmuxName(sessionTitle)), name)
+	out, err := cmdExec.Output(cmd)
+	if err != nil {
+		return "" // tmux says "unknown variable" for the default account
+	}
+	dir, ok := strings.CutPrefix(strings.TrimSpace(string(out)), name+"=")
+	if !ok {
+		return "" // "-NAME": removed from the session environment
+	}
+	acct := accountNameForDir(dir)
+	if acct == "" {
+		log.For("session").Warn("orphan.account_unregistered", "title", sessionTitle, "claude_config_dir", dir)
+	}
+	return acct
+}
+
 // KillTmuxSessionByTitle kills the tmux session matching title's sanitized
 // name. Best-effort: returns the command error if any (commonly a benign
 // "session not found"), which most callers can ignore. Used to clear

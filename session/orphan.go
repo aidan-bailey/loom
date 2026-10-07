@@ -46,6 +46,11 @@ type OrphanCandidate struct {
 	// loom_<sanitized-title> is currently running. When true, recovery
 	// can adopt the live PTY rather than spawning a new one.
 	HasLiveTmux bool
+	// Account is the account a live session's agent runs on
+	// (liveSessionAccount), so adopting it keeps the account it is
+	// billed to; "" (the default account) without a live session, whose
+	// account nothing on disk records.
+	Account string
 	// HasUncommittedChanges reports whether the worktree has uncommitted
 	// edits (git status --porcelain). True (conservatively, on probe
 	// error) keeps an orphan in the needs-review bucket so auto-clean
@@ -249,13 +254,19 @@ func buildOrphanCandidate(worktreePath, userPrefix, leafDirName string, cmdExec 
 	if exact, ok := readTitleSidecar(worktreePath); ok {
 		title = exact
 	}
+	live := CheckTmuxAlive(title, cmdExec)
+	acct := ""
+	if live {
+		acct = liveSessionAccount(title, cmdExec)
+	}
 	return OrphanCandidate{
 		WorktreePath:          worktreePath,
 		BranchName:            branchName,
 		RepoPath:              repoPath,
 		BaseCommitSHA:         headSHA,
 		Title:                 title,
-		HasLiveTmux:           CheckTmuxAlive(title, cmdExec),
+		HasLiveTmux:           live,
+		Account:               acct,
 		HasUncommittedChanges: probeWorktreeDirty(worktreePath),
 	}, true
 }
@@ -441,6 +452,7 @@ func InstanceDataFromOrphan(cand OrphanCandidate, program string) InstanceData {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		Program:       program,
+		Account:       cand.Account,
 		Worktree: GitWorktreeData{
 			RepoPath:         cand.RepoPath,
 			WorktreePath:     cand.WorktreePath,

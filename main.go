@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/aidan-bailey/loom/app"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
@@ -56,6 +57,20 @@ var (
 				fmt.Fprintf(os.Stderr, "loom: %v\n", logErr)
 			}
 			defer log.Close()
+
+			// One TUI per global dir (see internal/takeover): take the
+			// lock, or take over from the loom holding it, before any
+			// state is read, so this loom loads what that one saved.
+			if globalDir, err := config.GetGlobalConfigDir(); err == nil {
+				lock, err := acquireUILock(globalDir, os.Stdin, os.Stdout, os.Stderr, stdinIsTerminal())
+				if errors.Is(err, errTakeoverDeclined) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				uiLock = lock
+			}
 
 			// Resolve workspace context.
 			registry, regErr := config.LoadWorkspaceRegistry()
@@ -139,7 +154,7 @@ var (
 				program = programFlag
 			}
 
-			return app.Run(ctx, wsCtx, registry, cfg, program, pendingDir, noScriptsFlag)
+			return app.Run(ctx, wsCtx, registry, cfg, program, pendingDir, noScriptsFlag, uiLock)
 		},
 	}
 

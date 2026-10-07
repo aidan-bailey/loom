@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
@@ -544,6 +545,11 @@ func (s *Session) IsAlternateScreen() bool {
 // releases and restores the terminal around the call so the child tmux
 // owns the real tty for the duration of the attach. Detach is driven by
 // the C-q key binding installed during Start (see bind-key call).
-func (s *Session) FullScreenAttachCmd() *exec.Cmd {
-	return Command(context.Background(), "attach-session", "-t", SessionTarget(s.sanitizedName))
+// Cancelling ctx ends the attach the way a takeover needs: SIGTERM, which
+// tmux takes as its client exiting (it restores the terminal and leaves
+// the session running), rather than exec's default SIGKILL.
+func (s *Session) FullScreenAttachCmd(ctx context.Context) *exec.Cmd {
+	cmd := Command(ctx, "attach-session", "-t", SessionTarget(s.sanitizedName))
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	return cmd
 }

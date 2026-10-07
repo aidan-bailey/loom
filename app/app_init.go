@@ -6,6 +6,7 @@ import (
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/internal/takeover"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -38,7 +39,11 @@ const scriptShutdownTimeout = 1500 * time.Millisecond
 //     overlay with (used by `loom` invoked from a non-workspace dir).
 //   - noScripts disables loading user scripts from ~/.loom/scripts;
 //     embedded defaults still load so core keybindings work.
-func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, pendingDir string, noScripts bool) error {
+//   - uiLock is the takeover lock main holds; the TUI saves and quits
+//     when another loom asks to take over (see internal/takeover). Nil
+//     when it couldn't be taken: loom then runs unlocked and serves no
+//     takeovers.
+func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, pendingDir string, noScripts bool, uiLock *takeover.Lock) error {
 	// Activate the configured theme before any component renders.
 	// Package-init styles are theme-hooked (ui.RegisterThemeHook), so
 	// this rebuild-on-apply is what makes config-selected themes stick.
@@ -78,7 +83,17 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 		Dead:   func(s string) { p.Send(ptyDeadMsg{session: s}) },
 	})
 	defer tmux.SetNotifier(tmux.Notifier{})
+	if uiLock != nil {
+		if err := uiLock.Listen(takeoverListener(h.fullScreen, p.Send)); err != nil {
+			// Not fatal: this loom still holds the lock, so a second one
+			// is refused rather than overwriting its sessions.
+			log.For("app").Warn("takeover.listen_failed", "err", err)
+		}
+	}
 	_, err = p.Run()
+	if h.takenOverBy != nil {
+		fmt.Printf("loom: saved and quit; taken over by %s\n", h.takenOverBy)
+	}
 	return err
 }
 
@@ -94,8 +109,9 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	}
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	h := &home{
-		ctx:  ctx,
-		core: model,
+		ctx:        ctx,
+		core:       model,
+		fullScreen: &foregroundAttach{},
 		workspaceSlot: &workspaceSlot{
 			ws:        model.Classic(),
 			splitPane: sp,

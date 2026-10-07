@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 
 	"github.com/aidan-bailey/loom/account"
@@ -121,6 +122,23 @@ func accountDir(name string) (string, error) {
 		return "", fmt.Errorf("account %q: stat %s: %w", name, dir, err)
 	}
 	return dir, nil
+}
+
+// accountNameForDir is accountDir in reverse: the registered account whose
+// config dir is dir, or "" when none is (the default account, a removed
+// account, or a registry that failed to load — no opinion either way).
+func accountNameForDir(dir string) string {
+	snap := accountDirsState.Load()
+	if snap == nil || dir == "" {
+		return ""
+	}
+	dir = filepath.Clean(dir)
+	for name, d := range snap.dirs {
+		if filepath.Clean(d) == dir {
+			return name
+		}
+	}
+	return ""
 }
 
 // bestEffortAccountDir is accountDir for a session object that is built

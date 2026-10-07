@@ -487,6 +487,24 @@ Select session → D → y (confirm)
 
 Destroys the tmux session, removes the worktree, and deletes the branch (unless it was pre-existing). This is irreversible.
 
+### Move to Another Terminal (takeover)
+
+Only one Loom TUI runs at a time. Two would overwrite each other's
+session records. If you start Loom while another is still running, on
+your desktop say, with this one over SSH from a laptop, it asks first:
+
+```
+loom (pid 3713275 on /dev/pts/2, since 06:23) is already running, and two looms overwrite each other's sessions.
+Take over? It will save and quit. [y/N]
+```
+
+Answer `y` and the running Loom saves and quits, ending a full-screen
+attach if it is in one. Its terminal then reads `loom: saved and quit;
+taken over by …`. Your agents keep running throughout, and the new Loom
+opens with them. To move back, start Loom on the other terminal again.
+If the old one is in an editor or a login, or can't save, the takeover
+times out after 15 seconds and says how to end it.
+
 ### Session Recovery (orphaned worktrees)
 
 If Loom crashes or its state file loses track of a session, the worktree
