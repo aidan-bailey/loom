@@ -871,7 +871,7 @@ Claude-Session: https://claude.ai/code/session_01WdG6KL8iCdQeM21uVaqCM7"
 
   Run the 1C smoke's checks 1–14, then these new ones:
   1. **Settings.** Change the default program, the branch prefix and a Claude preference. Save, quit and restart: each persists. `config.json` holds them with the same keys. A new session uses the new program. The theme cycles live and persists.
-  2. **Settings cancel.** Change several settings, then cancel. Nothing changes, on screen or on disk.
+  2. **Settings save as they change.** The overlay saves each change at once, as it always has: change a setting, close with Esc, and the change is kept (on screen, in `config.json`, after a restart). Two tabs keep separate settings.
   3. **UI prefs.** Toggle the rail, the terminal and the overview, and resize a split. Quit and restart: each persists, per workspace (two tabs with different prefs).
   4. **Help screens.** A help screen seen once is not shown again after a restart.
   5. **Registry.** Register a new workspace from a second shell (`loom workspace add` against the sandbox's global dir) while the TUI runs. `W` shows it. Open it, close it, and enter global mode: the open list on disk follows each step.

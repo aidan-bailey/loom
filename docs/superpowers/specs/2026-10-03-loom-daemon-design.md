@@ -370,10 +370,22 @@ end:
      (answered by a `Reply`; Lua's lifecycle calls yield until it lands),
      with draft rows for creation flows, the pane ladder and bells as
      display overlays, and `home.core` typed as `core.Core`.
-   - **1D, the workspace half, then the model's own goroutine.** The
-     workspace half of the boundary: workspace, config, state, registry,
-     account and GitHub views and requests, leaving `core.Core` fully
-     value-typed. Then the model moves to its own goroutine.
+   - **1D, the workspace boundary**
+     ([plan](../plans/2026-10-07-daemon-stage1d-workspace-boundary.md)).
+     Workspaces are named by a model-assigned `WorkspaceID` and seen as
+     `WorkspaceView` values (published as `WorkspacesChanged`); config
+     crosses as `config.Settings` copies, and settings saves, UI prefs and
+     help screens are requests; the registry and the account names cross
+     as copies, and every query hands out copies. `core.Core` is
+     value-typed (`TestCoreIsValueTyped`), apart from the job plumbing
+     (`Sync`'s jobs, `Deliver`).
+   - **1E, the model's own goroutine.** The model runs on its own loop
+     and runs its own jobs, so `Deliver` and the jobs leave the boundary;
+     it wakes the TUI (a coalesced message) when it has events to drain.
+     The TUI's calls stay synchronous round trips over the loop, so the
+     read-after-write sites (`syncViews`, `syncWorkspaces`, the drains
+     after a transition) keep their meaning; stage 2's transport must
+     revisit them.
 2. **Codec and transport.** `core/rpc`. The TUI uses the socket client
    against an in-process server over `net.Pipe`.
 3. **The daemon process.** `loom serve`, the lock, spawn on demand, the
