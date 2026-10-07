@@ -150,7 +150,7 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 
 func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	id := selected.ID
+	id, title := selected.ID, selected.Title
 	message := fmt.Sprintf("[!] Kill session '%s'?", selected.Title)
 	if selected.Status == session.Recoverable {
 		message = fmt.Sprintf("[!] Discard recoverable session '%s'? Uncommitted changes are lost; the branch is kept.", selected.Title)
@@ -159,7 +159,7 @@ func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 	// its job both start when the user confirms, and the job reaches the
 	// runtime at the end of that Update.
 	return m, m.confirmTask(message, overlay.ConfirmationTask{
-		Sync: func() { m.core.Kill(id, 0) },
+		Sync: func() { m.core.Kill(id, m.opReq("kill", title)) },
 	})
 }
 
@@ -168,24 +168,25 @@ func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 // cs.actions.kill_selected{confirm=false}.
 func runKillSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	m.core.Kill(selected.ID, 0)
+	m.core.Kill(selected.ID, m.opReq("kill", selected.Title))
 	m.syncViews() // the Deleting it wrote, for the rest of this Update
 	return m, nil
 }
 
 func runSubmitSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	id := selected.ID
+	id, title := selected.ID, selected.Title
 	message := fmt.Sprintf("[!] Push changes from session '%s'?", selected.Title)
 	return m, m.confirmTask(message, overlay.ConfirmationTask{
-		Sync: func() { m.core.Push(id, 0) },
+		Sync: func() { m.core.Push(id, m.opReq("push", title)) },
 	})
 }
 
 // runSubmitSelectedNoConfirm mirrors runSubmitSelected but skips the
 // confirmation overlay. Used by cs.actions.push_selected{confirm=false}.
 func runSubmitSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
-	m.core.Push(m.list.GetSelectedInstance().ID, 0)
+	selected := m.list.GetSelectedInstance()
+	m.core.Push(selected.ID, m.opReq("push", selected.Title))
 	return m, nil
 }
 
@@ -197,19 +198,19 @@ func runSubmitSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 // renders immediately.
 func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	id := selected.ID
+	id, title := selected.ID, selected.Title
 
 	// The pause is a request (core.Model.Pause), which moves the session
 	// to Loading itself.
 	startPause := func() tea.Cmd {
 		if !confirm {
-			m.core.Pause(id, 0)
+			m.core.Pause(id, m.opReq("pause", title))
 			m.syncViews() // the Loading it wrote, for the rest of this Update
 			return nil
 		}
 		message := fmt.Sprintf("[!] Pause session '%s'?", selected.Title)
 		return m.confirmTask(message, overlay.ConfirmationTask{
-			Sync: func() { m.core.Pause(id, 0) },
+			Sync: func() { m.core.Pause(id, m.opReq("pause", title)) },
 		})
 	}
 
@@ -228,7 +229,7 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	// Paused (its precondition), so a concurrent reconcile flip between
 	// the key's gate and this request can't start Resume on a non-Paused
 	// instance.
-	m.core.Resume(selected.ID, 0)
+	m.core.Resume(selected.ID, m.opReq("resume", selected.Title))
 	m.syncViews() // the Loading it wrote, for instanceChanged
 	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged())
 }
@@ -248,7 +249,8 @@ func runResumeOrRecover(m *home) (tea.Model, tea.Cmd) {
 // against the recovered base program and resumes through the same
 // Loading-transition/Resume/save-checkpoint shape runResumeSelected
 // uses directly; canceling leaves the instance Paused and untouched
-// (pendingLaunchOptionsCancel, not the creation flow's pop-and-kill).
+// (pendingLaunchOptionsCancel, not the creation flow's discard of its
+// draft).
 func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
 	opts, base := launch.Parse(selected.Program)
@@ -279,7 +281,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 			Sync: func() {
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
-				m.core.ResumeWith(id, newOpts, base, 0)
+				m.core.ResumeWith(id, newOpts, base, m.opReq("resume", row.Title))
 			},
 			Async: tea.RequestWindowSize,
 		}
@@ -314,7 +316,7 @@ func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
 	if sel == nil {
 		return m, nil
 	}
-	m.core.Recover(sel.ID, 0)
+	m.core.Recover(sel.ID, m.opReq("recover", sel.Title))
 	m.syncViews() // the Loading it wrote, for instanceChanged
 	return m, m.instanceChanged()
 }

@@ -49,6 +49,6 @@ func handleStateMergePickerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		}
 		return m, m.handleError(fmt.Errorf("merge: session '%s' is gone", gone))
 	}
-	m.core.Merge(target.ID, source.ID, 0)
+	m.core.Merge(target.ID, source.ID, m.opReq("merge into", target.Title))
 	return m, nil
 }

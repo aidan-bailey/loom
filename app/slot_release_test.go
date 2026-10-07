@@ -309,3 +309,26 @@ func TestPrune_ReleasesTheTerminalClientsOfGoneSessions(t *testing.T) {
 	drainCmd(m.prunePanes()) // the health tick's
 	assert.True(t, keptTerm.PtmxAlive(), "and the tick's prune keeps it too")
 }
+
+// TestPrune_KeepsTheTerminalClientsOfLoadingRows: a row whose resume,
+// pause or kill is running (Loading, Deleting) keeps its terminal pane
+// client through a prune, so the pane doesn't blank, or re-attach and
+// detach on every tick, meanwhile; a Paused row's client is released.
+func TestPrune_KeepsTheTerminalClientsOfLoadingRows(t *testing.T) {
+	isolateTmux(t)
+	m := newTestHome(t)
+	loading, paused := liveInstance(t, "loading"), liveInstance(t, "paused")
+	m.ws.AddForTest(loading)
+	m.ws.AddForTest(paused)
+	loadingTerm, pausedTerm := attachedTerminal(t, "loading"), attachedTerminal(t, "paused")
+	m.splitPane.Terminal().InjectSessionForTest("loading", loadingTerm, t.TempDir())
+	m.splitPane.Terminal().InjectSessionForTest("paused", pausedTerm, t.TempDir())
+	require.NoError(t, loading.TransitionTo(session.Loading))
+	require.NoError(t, paused.TransitionTo(session.Paused))
+	m.syncViews()
+
+	drainCmd(m.prunePanes())
+
+	assert.True(t, loadingTerm.PtmxAlive(), "a Loading row keeps its terminal client")
+	assert.False(t, pausedTerm.PtmxAlive(), "a Paused row's is released")
+}

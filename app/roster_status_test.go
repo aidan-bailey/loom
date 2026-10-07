@@ -58,18 +58,22 @@ func TestRosterBusyMapsToRunning(t *testing.T) {
 
 // TestRosterAbsentFallsBackToScraper: with no roster entry (daemon down,
 // Claude too old, session not listed) the existing ladder must behave
-// exactly as before — including arming the re-detection.
+// exactly as before — including arming the re-detection. The model's
+// status is set apart from the scraper's answer, so the row shows which
+// one won.
 func TestRosterAbsentFallsBackToScraper(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "nofallback", "claude", "working...")
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
 	m.ws.AddForTest(inst)
+	require.NoError(t, inst.TransitionTo(session.Ready))
 	m.syncViews()
 
 	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
-	require.Equal(t, session.Running, inst.GetStatus())
+	require.Equal(t, session.Running, shownStatus(t, m, inst), "the row shows the scraper's Running")
+	require.Equal(t, session.Ready, inst.GetStatus(), "which is the TUI's overlay, not the model's")
 	require.NotNil(t, follow, "without a roster the re-detect ladder must still run")
 }
 
@@ -81,12 +85,14 @@ func TestRosterUnknownStatusFallsBack(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.AddForTest(inst)
+	require.NoError(t, inst.TransitionTo(session.Ready))
 	m.syncViews()
 	deliverRoster(m, rosterFor(inst, session.RosterStatusUnknown))
 
 	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
-	require.Equal(t, session.Running, inst.GetStatus())
+	require.Equal(t, session.Running, shownStatus(t, m, inst), "the row shows the scraper's Running")
+	require.Equal(t, session.Ready, inst.GetStatus(), "and the unrecognized answer moved nothing in the model")
 	require.NotNil(t, follow, "an unrecognized roster status must fall through to the ladder")
 }
 
@@ -177,8 +183,11 @@ func TestRosterWaitReasonClearedWhenRosterGoesAway(t *testing.T) {
 	failRoster(m)
 	m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: false, hasPrompt: true})
 
-	require.Equal(t, session.Prompting, inst.GetStatus(),
+	require.Equal(t, session.Prompting, m.ladder[idOf(m, inst)].status,
 		"the scraper still sees a prompt on screen")
+	require.Equal(t, session.Prompting, shownStatus(t, m, inst), "and the row shows it")
+	require.Equal(t, session.Prompting, inst.GetStatus(),
+		"the model keeps the roster's last status: a failed query is no opinion, not a change")
 	require.Empty(t, inst.WaitReason(),
 		"but only the roster can name a reason, so it must be dropped")
 }

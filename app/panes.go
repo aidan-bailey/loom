@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 
 	tea "charm.land/bubbletea/v2"
@@ -50,8 +51,8 @@ import (
 //
 // The terminal pane's clients (each slot's ui.TerminalPane, attached to
 // its loom_term_* shells by instance title) are released by the same
-// prune: per open slot, it detaches those of titles the slot has no
-// active row for. A kill or pause ends the shell itself (Instance.Kill
+// prune: per open slot, it detaches those of titles the slot has no live
+// row for (keepsTerminal). A kill or pause ends the shell itself (Instance.Kill
 // and Pause close it by name), so the TUI needs no step of its own in
 // their jobs; the shell's client reads EOF and the prune after the
 // completion releases it.
@@ -105,6 +106,18 @@ func (m *home) replacePane(v *core.InstanceView) tea.Cmd {
 	return releaseClientsCmd(attachedClients([]*tmux.TmuxSession{old}))
 }
 
+// keepsTerminal reports whether v's terminal pane client stays through a
+// prune: v started and is neither Paused nor Recoverable, the rows the
+// terminal pane shows a shell for. A Loading or Deleting row keeps it
+// while its resume, pause or kill runs, so the pane doesn't blank (or, on
+// the snapshot path, re-attach and detach on every tick) meanwhile. A kill
+// or pause ends the shell itself, and its completion leaves the row gone
+// or Paused, so the prune after it (ClientsStale) still releases the
+// client.
+func keepsTerminal(v core.InstanceView) bool {
+	return v.Started && !v.Paused() && v.Status != session.Recoverable
+}
+
 // ensureSlotPanes gives every active instance of slot a client.
 func (m *home) ensureSlotPanes(slot *workspaceSlot) {
 	for _, v := range slot.list.GetInstances() {
@@ -113,10 +126,10 @@ func (m *home) ensureSlotPanes(slot *workspaceSlot) {
 }
 
 // prunePanes drops the clients of sessions no loaded instance is active
-// on, and the terminal pane clients of titles their slot has no active row
-// for, and returns a Cmd closing them. A terminal client is only detached
-// (DetachExcept, then PausePreview in the release), never closed: that
-// would kill a shell the user may come back to.
+// on, and the terminal pane clients of titles their slot has no live row
+// for (keepsTerminal), and returns a Cmd closing them. A terminal client is
+// only detached (DetachExcept, then PausePreview in the release), never
+// closed: that would kill a shell the user may come back to.
 func (m *home) prunePanes() tea.Cmd {
 	cmds := []tea.Cmd{releaseClientsCmd(attachedClients(m.panes.Retain(m.livePaneNames())))}
 	for _, s := range m.openSlots() {
@@ -125,7 +138,7 @@ func (m *home) prunePanes() tea.Cmd {
 		}
 		keep := make(map[string]bool)
 		for _, v := range m.rowsOf(s) {
-			if v.Active() {
+			if keepsTerminal(v) {
 				keep[v.Title] = true
 			}
 		}

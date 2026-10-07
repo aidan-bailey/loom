@@ -41,6 +41,38 @@ func TestRequests_AnUnknownIDIsRefused(t *testing.T) {
 	assert.Empty(t, replies(m.Drain()))
 }
 
+// TestRequests_RefusalsMatchErrRefused: every refusal's Err matches
+// ErrRefused, its own message kept (a gone session, a failed precondition);
+// a failure of the request's job does not, since the model already
+// reported it in a Notice.
+func TestRequests_RefusalsMatchErrRefused(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	busy, unstarted := newInst(t, "busy"), newInst(t, "unstarted")
+	require.NoError(t, busy.TransitionTo(session.Loading))
+	ws.add(busy)
+	ws.add(unstarted)
+	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+
+	m.Kill(99, 1)
+	m.Kill(m.idOf(busy), 2)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 2)
+	assert.ErrorIs(t, rs[0].Err, ErrRefused, "a gone session is a refusal")
+	assert.ErrorIs(t, rs[0].Err, ErrNoSession)
+	assert.ErrorIs(t, rs[1].Err, ErrRefused, "so is a failed precondition")
+	assert.EqualError(t, rs[1].Err, "kill busy: the session is busy (Loading)", "its message is kept")
+	assert.NotErrorIs(t, rs[1].Err, ErrNoSession)
+
+	m.Kill(m.idOf(unstarted), 3) // admitted; its job fails (no worktree)
+	out := run(m, m.Drain())
+	rs = replies(out)
+	require.Len(t, rs, 1)
+	require.Error(t, rs[0].Err)
+	assert.NotErrorIs(t, rs[0].Err, ErrRefused, "a job's failure is no refusal")
+	assert.Contains(t, out.Events, Event(Notice{Err: rs[0].Err}), "the model reported it itself")
+}
+
 // TestKill_RepliesWhenItFinishes: an unstarted instance has no worktree, so
 // the kill job refuses (OpFailed); the Reply comes when its result lands,
 // not when the request is made.

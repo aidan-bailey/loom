@@ -27,11 +27,14 @@ var instanceNames = map[string]bool{
 }
 
 // bridgeNames are the model's bridge from an InstanceID to an instance and
-// back, which only the script host may call until stage 1C package D.
+// back, and the script host's own wrapper of it (app's instOf, which
+// returns the instance), which only the script host may call until stage
+// 1C package D.
 var bridgeNames = map[string]bool{
 	"InstanceOf":     true,
 	"IDFor":          true,
 	"AdoptForScript": true,
+	"instOf":         true,
 }
 
 // TestTUIHoldsNoInstance fails when the TUI (app, ui and its subpackages)

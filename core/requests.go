@@ -16,10 +16,25 @@ import (
 // chooses it; 0 asks for no Reply.
 type ReqID uint64
 
+// ErrRefused marks every refusal: a request the model would not start (its
+// session gone, its precondition failed, its transition refused). A
+// Reply's Err matches it (errors.Is) exactly when the request was refused,
+// which the model reports nowhere but in that Reply; a failure of the
+// request's job does not match it, and the model has already shown that
+// one in a Notice.
+var ErrRefused = errors.New("request refused")
+
+// refusedError is a refusal's error: its own message, matching ErrRefused
+// and whatever it wraps.
+type refusedError struct{ error }
+
+func (e refusedError) Is(target error) bool { return target == ErrRefused }
+func (e refusedError) Unwrap() error        { return e.error }
+
 // ErrNoSession refuses a request naming an ID no loaded workspace holds:
 // the session was removed, or its workspace closed, after the client last
-// saw it.
-var ErrNoSession = errors.New("no such session")
+// saw it. It matches ErrRefused.
+var ErrNoSession error = refusedError{errors.New("no such session")}
 
 // tracked carries a request's job result back to Deliver together with the
 // request it answers.
@@ -91,8 +106,11 @@ func outcome(result any) (err, notice error) {
 
 // refuse answers a request the model won't start: with a Reply when one was
 // asked for, else only in the log (as the TUI's own paths have always
-// logged a refused transition).
+// logged a refused transition). The Reply's Err matches ErrRefused.
 func (m *Model) refuse(req ReqID, id InstanceID, err error) {
+	if !errors.Is(err, ErrRefused) {
+		err = refusedError{err}
+	}
 	if req == 0 {
 		log.For("core").Info("request.refused", "id", uint64(id), "err", err)
 		return
