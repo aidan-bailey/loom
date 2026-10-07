@@ -152,7 +152,7 @@ func TestKill_DiscardsARecoverableOrphanWhoseTmuxSessionIsGone(t *testing.T) {
 			m := NewForTest(Options{})
 			m.SetWorkspacesForTest(nil, []*Workspace{ws})
 			summary := m.reconcileOrphans(ws, cfgDir, "true", cmd2.MakeExecutor())
-			require.Equal(t, 1, summary.review, "fixture: the orphan surfaces as Recoverable")
+			require.Equal(t, 1, summary.Review, "fixture: the orphan surfaces as Recoverable")
 			placeholder := ws.byTitle("x")
 			require.NotNil(t, placeholder)
 			require.Equal(t, session.Recoverable, placeholder.GetStatus())

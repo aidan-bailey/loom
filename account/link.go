@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -56,6 +57,11 @@ type SyncReport struct {
 	// Sync leaves them alone, since the account's copy may hold the only
 	// copy of a change.
 	Diverged []string
+}
+
+// Clone deep-copies r's slices.
+func (r SyncReport) Clone() SyncReport {
+	return SyncReport{Linked: slices.Clone(r.Linked), Diverged: slices.Clone(r.Diverged)}
 }
 
 // Sync links every shared entry of mainDir that acctDir does not have yet.

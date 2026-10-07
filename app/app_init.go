@@ -113,7 +113,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		core:       model,
 		fullScreen: &foregroundAttach{},
 		workspaceSlot: &workspaceSlot{
-			ws:        model.Classic(),
+			ws:        model.ClassicWS(),
 			splitPane: sp,
 			workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 		},
@@ -209,7 +209,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			}
 			confirm.OnCancel = func() {
 				h.pendingConfirmation = overlay.ConfirmationTask{}
-				if reg := h.core.Registry(); reg != nil && len(reg.Workspaces) > 0 {
+				if reg := h.core.RegistryObj(); reg != nil && len(reg.Workspaces) > 0 {
 					h.setOverlay(overlay.NewStartupWorkspacePicker(reg.Workspaces), overlayWorkspacePickerStartup)
 					h.state = stateWorkspace
 				}
@@ -276,7 +276,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	// each activation set its own.
 	m.initCmd = tea.Batch(m.initCmd, m.drainCore())
 	classic := m.workspaceSlot
-	for _, ws := range m.core.Tabs() {
+	for _, ws := range m.core.TabsWS() {
 		m.slots = append(m.slots, m.newSlotView(ws))
 	}
 	m.loadSlot(focus)

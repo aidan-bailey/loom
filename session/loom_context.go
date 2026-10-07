@@ -35,6 +35,9 @@ var loomContextEnabled atomic.Bool
 // SetLoomContextEnabled updates the global loom-context toggle.
 func SetLoomContextEnabled(enabled bool) { loomContextEnabled.Store(enabled) }
 
+// LoomContextEnabled reports the global loom-context toggle.
+func LoomContextEnabled() bool { return loomContextEnabled.Load() }
+
 // WriteLoomContextFiles writes both embedded prompt files into configDir,
 // (re)writing a file only when it is missing or its bytes differ from the
 // embedded content (so a loom upgrade refreshes the prose automatically).

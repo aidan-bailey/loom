@@ -85,14 +85,14 @@ func TestLaunchOptionsFromConfig(t *testing.T) {
 	})
 
 	t.Run("threads through explicit overrides", func(t *testing.T) {
-		cfg := &config.Config{
+		cfg := &config.Config{Settings: config.Settings{
 			ClaudeRemoteControl:  boolPtrTest(false),
 			ClaudePermissionMode: stringPtrTest("plan"),
 			ClaudeModel:          stringPtrTest("opus"),
 			HeadroomProxy:        boolPtrTest(true),
 			ClaudeEffort:         stringPtrTest("high"),
 			CacheTTL1h:           boolPtrTest(true),
-		}
+		}}
 		assert.Equal(t, Options{
 			RemoteControl:  false,
 			PermissionMode: "plan",
@@ -227,11 +227,11 @@ func TestApplyLaunchOptions(t *testing.T) {
 
 func TestLaunchOptionsFromConfig_SeedsContext1M(t *testing.T) {
 	t.Run("on", func(t *testing.T) {
-		cfg := &config.Config{Claude1MContext: boolPtrTest(true)}
+		cfg := &config.Config{Settings: config.Settings{Claude1MContext: boolPtrTest(true)}}
 		assert.True(t, FromConfig(cfg).Context1M)
 	})
 	t.Run("off", func(t *testing.T) {
-		cfg := &config.Config{Claude1MContext: boolPtrTest(false)}
+		cfg := &config.Config{Settings: config.Settings{Claude1MContext: boolPtrTest(false)}}
 		assert.False(t, FromConfig(cfg).Context1M)
 	})
 	t.Run("unset", func(t *testing.T) {

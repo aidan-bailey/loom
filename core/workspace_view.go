@@ -1,0 +1,50 @@
+package core
+
+import "github.com/aidan-bailey/loom/config"
+
+// WorkspaceID names a loaded workspace. The model assigns it the first
+// time it reports the workspace and never reuses it, so a workspace closed
+// and reopened is a new workspace with a new ID (its completions tell the
+// two apart, as ClosedNote did by identity). 0 means none.
+type WorkspaceID uint64
+
+// WorkspaceView is a loaded workspace as its clients see it: a value the
+// model publishes (WorkspacesChanged) and answers queries with. Every
+// field is a copy.
+type WorkspaceView struct {
+	ID WorkspaceID
+	// Name is the registered name, "" for the global context; Label names
+	// it in notices (its name, or "global").
+	Name, Label string
+	// RepoPath and ConfigDir are the workspace context's ("" in a bare
+	// context).
+	RepoPath, ConfigDir string
+	// Settings is a copy of the workspace's config.json.
+	Settings config.Settings
+	// UIPrefs and HelpScreensSeen are copies of its state.json.
+	UIPrefs         config.UIPrefs
+	HelpScreensSeen uint32
+	// WritesRefused is set while the workspace's storage refuses writes
+	// (its load failed: Storage.WritesRefused). PreservedTitles are the
+	// titles of records its storage preserves but could not load.
+	WritesRefused   bool
+	PreservedTitles []string
+	// Recovery is the summary of its last orphan reconcile.
+	Recovery RecoverySummary
+}
+
+// RegistryView is a copy of the workspace registry: every registered
+// workspace, and the open tabs to restore (the open list resolved to its
+// registered workspaces, in order, as GetOpenWorkspaces resolves it).
+type RegistryView struct {
+	Workspaces []config.Workspace
+	Open       []config.Workspace
+}
+
+// AccountNames are the registered accounts, default first. Present is
+// false until the account registry is set up (InitAccounts).
+type AccountNames struct {
+	Present bool
+	Default string
+	Names   []string
+}

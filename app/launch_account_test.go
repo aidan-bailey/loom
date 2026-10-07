@@ -26,7 +26,7 @@ func TestNewLaunchOptionsOverlay_NoAccountRowWithoutExtras(t *testing.T) {
 func TestNewLaunchOptionsOverlay_PreselectsTheRegistryDefault(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	require.NoError(t, m.core.Accounts().SetDefault("max-2"))
+	require.NoError(t, m.core.AccountsRegistry().SetDefault("max-2"))
 
 	lo, _ := m.newLaunchOptionsOverlay(bareOpts(""), "claude")
 
@@ -48,7 +48,7 @@ func TestNewLaunchOptionsOverlay_AnUnknownAccountFallsBackToTheDefault(t *testin
 func TestNewLaunchOptionsOverlay_NoAccountRowForANonClaudeProgram(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	require.NoError(t, m.core.Accounts().SetDefault("max-2"))
+	require.NoError(t, m.core.AccountsRegistry().SetDefault("max-2"))
 
 	lo, _ := m.newLaunchOptionsOverlay(bareOpts("max-2"), "aider")
 
@@ -147,7 +147,7 @@ func TestRestartWithOptions_ARemovedAccountWithNoneLeftShowsTheSwitch(t *testing
 func TestRestartWithOptions_ARemovedAccountWithOthersLeftShowsTheSwitch(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-3")
-	require.NoError(t, m.core.Accounts().SetDefault("max-3"))
+	require.NoError(t, m.core.AccountsRegistry().SetDefault("max-3"))
 
 	lo := openRestartOn(t, m, "max-2")
 

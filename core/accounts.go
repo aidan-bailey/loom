@@ -563,16 +563,16 @@ func (m *Model) Account(name string) (account.Account, bool) {
 // AccountSync returns name's last link report.
 func (m *Model) AccountSync(name string) (account.SyncReport, bool) {
 	rep, ok := m.accountSync[name]
-	return rep, ok
+	return rep.Clone(), ok
 }
 
 // AccountUsage returns name's latest usage sample and the last probe's
 // error (a failed probe keeps the last good sample).
 func (m *Model) AccountUsage(name string) (account.Usage, error) {
 	u := m.usage[name]
-	return u.last, u.err
+	return u.last.Clone(), u.err
 }
 
-// Accounts is the registry for the TUI's views to read (nil before
+// AccountsRegistry is the registry for the TUI's views to read (nil before
 // InitAccounts); writes go through the requests above.
-func (m *Model) Accounts() *account.Registry { return m.accounts }
+func (m *Model) AccountsRegistry() *account.Registry { return m.accounts }

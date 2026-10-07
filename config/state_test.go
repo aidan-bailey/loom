@@ -173,7 +173,7 @@ func TestUIPrefs_RoundTrip(t *testing.T) {
 
 func TestUIPrefsClone_WorkbenchRatiosIndependent(t *testing.T) {
 	p := UIPrefs{WorkbenchRatios: map[string]float64{"sess": 0.6}}
-	c := p.clone()
+	c := p.Clone()
 	c.WorkbenchRatios["sess"] = 0.9
 	assert.Equal(t, 0.6, p.WorkbenchRatios["sess"], "clone must deep-copy WorkbenchRatios")
 }

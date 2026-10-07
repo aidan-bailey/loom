@@ -27,15 +27,15 @@ func runGit(t *testing.T, dir string, args ...string) {
 
 func TestRecoverySummary_String(t *testing.T) {
 	assert.True(t, RecoverySummary{}.Empty())
-	assert.Equal(t, "Recovery: cleaned 1 stale worktree", RecoverySummary{cleaned: 1}.String())
+	assert.Equal(t, "Recovery: cleaned 1 stale worktree", RecoverySummary{Cleaned: 1}.String())
 	assert.Equal(t, "Recovery: cleaned 2 stale worktrees · 3 sessions need review (in list)",
-		RecoverySummary{cleaned: 2, review: 3}.String())
-	assert.Equal(t, "Recovery: 1 session needs review (in list)", RecoverySummary{review: 1}.String())
-	assert.False(t, RecoverySummary{undecodable: 1}.Empty(), "undecodable records alone must still be surfaced")
+		RecoverySummary{Cleaned: 2, Review: 3}.String())
+	assert.Equal(t, "Recovery: 1 session needs review (in list)", RecoverySummary{Review: 1}.String())
+	assert.False(t, RecoverySummary{Undecodable: 1}.Empty(), "undecodable records alone must still be surfaced")
 	assert.Equal(t, "Recovery: 1 session record could not be read by this version of loom and was preserved unchanged",
-		RecoverySummary{undecodable: 1}.String())
+		RecoverySummary{Undecodable: 1}.String())
 	assert.Equal(t, "Recovery: 1 session failed to load (kept; see loom.log) · 2 session records could not be read by this version of loom and were preserved unchanged",
-		RecoverySummary{failed: 1, undecodable: 2}.String())
+		RecoverySummary{Failed: 1, Undecodable: 2}.String())
 }
 
 // TestReconcileOrphans_CleanAutoRemoved_DirtyBecomesRecoverable exercises the
@@ -68,8 +68,8 @@ func TestReconcileOrphans_CleanAutoRemoved_DirtyBecomesRecoverable(t *testing.T)
 
 	summary := m.reconcileOrphans(ws, cfgDir, "true", cmd2.MakeExecutor())
 
-	assert.Equal(t, 1, summary.cleaned, "clean orphan should be auto-removed")
-	assert.Equal(t, 1, summary.review, "dirty orphan should surface for review")
+	assert.Equal(t, 1, summary.Cleaned, "clean orphan should be auto-removed")
+	assert.Equal(t, 1, summary.Review, "dirty orphan should surface for review")
 	assert.NoDirExists(t, cleanWT, "clean worktree dir should be removed")
 	assert.DirExists(t, dirtyWT, "dirty worktree dir must be preserved")
 
@@ -107,8 +107,8 @@ func TestReconcileOrphans_ReportsUndecodableRecords(t *testing.T) {
 	m := NewForTest(Options{})
 	summary := m.reconcileOrphans(ws, t.TempDir(), "true", cmd2.MakeExecutor())
 
-	assert.Equal(t, 1, summary.undecodable)
-	assert.Zero(t, summary.failed, "undecodable records are not reconcile failures")
+	assert.Equal(t, 1, summary.Undecodable)
+	assert.Zero(t, summary.Failed, "undecodable records are not reconcile failures")
 	assert.Contains(t, summary.String(), "could not be read by this version of loom")
 }
 

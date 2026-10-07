@@ -16,7 +16,7 @@ func TestView_CopiesTheInstance(t *testing.T) {
 	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
-	views := m.Views(ws)
+	views := m.ViewsWS(ws)
 	require.Len(t, views, 1)
 	v := views[0]
 	assert.NotZero(t, v.ID)
@@ -62,11 +62,13 @@ func TestSync_PublishesChangedWorkspacesFirst(t *testing.T) {
 
 	m.notifyInfo("hello")
 	out := m.Sync()
-	require.Len(t, out.Events, 2)
-	vc, ok := out.Events[0].(ViewsChanged)
-	require.True(t, ok, "views first")
+	require.Len(t, out.Events, 3)
+	_, ok := out.Events[0].(WorkspacesChanged)
+	require.True(t, ok, "workspace views first")
+	vc, ok := out.Events[1].(ViewsChanged)
+	require.True(t, ok, "instance views next")
 	assert.Same(t, ws, vc.Workspace)
-	assert.Equal(t, Notice{Info: "hello"}, out.Events[1])
+	assert.Equal(t, Notice{Info: "hello"}, out.Events[2])
 
 	assert.Empty(t, m.Sync().Events, "nothing changed")
 
@@ -85,9 +87,9 @@ func TestSync_PublishedViewsDoNotAliasTheModel(t *testing.T) {
 	ws.add(pausedInst(t, "x"))
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
-	out := m.Sync()
-	require.Len(t, out.Events, 1)
-	vc := out.Events[0].(ViewsChanged)
+	out := instanceEvents(m.Sync().Events)
+	require.Len(t, out, 1)
+	vc := out[0].(ViewsChanged)
 	vc.Views[0].Title = "scribbled"
 	assert.Empty(t, m.Sync().Events, "the model's published copy is its own")
 }
@@ -100,14 +102,14 @@ func TestSync_ForgetsClosedWorkspaces(t *testing.T) {
 	a.add(pausedInst(t, "x"))
 	b.add(pausedInst(t, "y"))
 	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
-	require.Len(t, m.Sync().Events, 2, "both published the first time")
+	require.Len(t, instanceEvents(m.Sync().Events), 2, "both published the first time")
 
 	m.SetWorkspacesForTest(nil, []*Workspace{a})
-	assert.Empty(t, m.Sync().Events, "a closed workspace publishes nothing")
+	assert.Empty(t, instanceEvents(m.Sync().Events), "a closed workspace publishes nothing")
 	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
-	out := m.Sync()
-	require.Len(t, out.Events, 1)
-	assert.Same(t, b, out.Events[0].(ViewsChanged).Workspace, "reopened: published again")
+	out := instanceEvents(m.Sync().Events)
+	require.Len(t, out, 1)
+	assert.Same(t, b, out[0].(ViewsChanged).Workspace, "reopened: published again")
 }
 
 // TestLookup_DoesNotAllocate: lookup runs on every pane event.
@@ -141,4 +143,16 @@ func TestCloneViews_CopiesSubagents(t *testing.T) {
 	assert.Equal(t, "a", views[0].Subagents[0].Name)
 	assert.Empty(t, views[0].Title)
 	assert.Nil(t, cloneViews([]InstanceView{{}})[0].Subagents, "nil stays nil")
+}
+
+// instanceEvents drops the WorkspacesChanged events from events: the
+// instance-view tests count only what they publish.
+func instanceEvents(events []Event) []Event {
+	var out []Event
+	for _, ev := range events {
+		if _, ok := ev.(WorkspacesChanged); !ok {
+			out = append(out, ev)
+		}
+	}
+	return out
 }

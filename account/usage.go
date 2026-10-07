@@ -51,6 +51,20 @@ type Usage struct {
 	At time.Time
 }
 
+// Clone deep-copies u: the windows are its own.
+func (u Usage) Clone() Usage {
+	out := u
+	if u.FiveHour != nil {
+		w := *u.FiveHour
+		out.FiveHour = &w
+	}
+	if u.SevenDay != nil {
+		w := *u.SevenDay
+		out.SevenDay = &w
+	}
+	return out
+}
+
 // usageTimeout bounds one probe. It measured ~1.4s on 2.1.281, but the
 // usage endpoint is a network call, so this is a network budget. A var,
 // not a const, so a test can shrink it to exercise the timeout path

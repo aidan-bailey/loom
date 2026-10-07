@@ -70,7 +70,7 @@ func TestReloadAccounts_SeesAnotherProcessesChanges(t *testing.T) {
 	require.False(t, ui.ShowAccounts())
 
 	// A `loom account add` in another terminal writes the same file.
-	other := account.LoadRegistry(filepath.Dir(m.core.Accounts().AccountsDir()))
+	other := account.LoadRegistry(filepath.Dir(m.core.AccountsRegistry().AccountsDir()))
 	_, _, err := other.Create("max-2", main)
 	require.NoError(t, err)
 	assert.False(t, m.core.HasExtraAccounts(), "not seen until reloaded")
@@ -78,7 +78,7 @@ func TestReloadAccounts_SeesAnotherProcessesChanges(t *testing.T) {
 	m.core.ReloadAccounts()
 	m.drainCore()
 
-	_, ok := m.core.Accounts().Get("max-2")
+	_, ok := m.core.AccountsRegistry().Get("max-2")
 	assert.True(t, ok)
 	assert.True(t, ui.ShowAccounts(), "the reload is republished")
 }
@@ -86,7 +86,7 @@ func TestReloadAccounts_SeesAnotherProcessesChanges(t *testing.T) {
 func TestAccountStatuses_DefaultFirstAndMarked(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	require.NoError(t, m.core.Accounts().SetDefault("max-2"))
+	require.NoError(t, m.core.AccountsRegistry().SetDefault("max-2"))
 	testModel(m).SetAccountAuthForTest(map[string]session.RemoteControlAuth{
 		"max-2": {Identity: account.Identity{ConfigDir: "/acct", LoggedIn: false}},
 	})

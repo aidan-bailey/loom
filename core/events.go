@@ -64,6 +64,12 @@ type Started struct {
 	Title  string
 	Owner  *Workspace
 	Loaded bool
+	// OwnerID and OwnerLabel name the owner (0 and "global" when unknown).
+	// ClosedNote, set when !Loaded, says where the owner went ("which is no
+	// longer open", or "which was closed and reopened meanwhile").
+	OwnerID    WorkspaceID
+	OwnerLabel string
+	ClosedNote string
 }
 
 func (Started) coreEvent() {}
@@ -78,6 +84,10 @@ type Recovered struct {
 	Owner  *Workspace
 	Loaded bool
 	Paused bool
+	// OwnerID, OwnerLabel and ClosedNote are as for Started.
+	OwnerID    WorkspaceID
+	OwnerLabel string
+	ClosedNote string
 }
 
 func (Recovered) coreEvent() {}
@@ -121,6 +131,16 @@ func (GitHubChanged) coreEvent() {}
 type AccountsChanged struct{}
 
 func (AccountsChanged) coreEvent() {}
+
+// WorkspacesChanged carries every loaded workspace's view, in Loaded
+// order, whenever any of them (or the loaded set) changed since the last
+// Sync. Sync puts it first, ahead of ViewsChanged, so the appliers of
+// everything after it see the new workspace views.
+type WorkspacesChanged struct {
+	Views []WorkspaceView
+}
+
+func (WorkspacesChanged) coreEvent() {}
 
 // ViewsChanged carries a loaded workspace's instance views, in display
 // order, whenever any of them changed since the last Sync. The TUI replaces

@@ -88,12 +88,12 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 	return v
 }
 
-// Views returns ws's instances as views, in display order (a fresh slice).
+// ViewsWS returns ws's instances as views, in display order (a fresh slice).
 // The TUI seeds a new slot's store with it; afterwards ViewsChanged keeps
 // the store current. ws must be loaded: the IDs it assigns to a workspace
 // that isn't are pruned by the next publish, and its instances get new
 // ones if it loads later.
-func (m *Model) Views(ws *Workspace) []InstanceView {
+func (m *Model) ViewsWS(ws *Workspace) []InstanceView {
 	if ws == nil {
 		return nil
 	}
@@ -156,12 +156,13 @@ func cloneViews(views []InstanceView) []InstanceView {
 	return out
 }
 
-// Sync publishes the views that changed (ViewsChanged, first) and then
+// Sync publishes the workspace views that changed (WorkspacesChanged,
+// first), then the instance views that changed (ViewsChanged), and then
 // returns everything else produced since the last call (Drain). The TUI
 // calls it where it drained; core's own tests may still call Drain.
 func (m *Model) Sync() Out {
-	views := m.publishViews()
+	published := append(m.publishWorkspaces(), m.publishViews()...)
 	out := m.Drain()
-	out.Events = append(views, out.Events...)
+	out.Events = append(published, out.Events...)
 	return out
 }

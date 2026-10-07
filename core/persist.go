@@ -43,12 +43,12 @@ func quitSkipsSave(err error) bool {
 	return errors.Is(err, session.ErrStorageLoadFailed)
 }
 
-// Save persists ws's instances after a change. A workspace no longer
+// SaveWS persists ws's instances after a change. A workspace no longer
 // loaded is saved only if no loaded workspace holds the same workspace:
 // that one reloaded state.json into its own, newer copy, which a save from
 // the dropped one's stale copy would overwrite. Formerly app.saveSlot.
-func (m *Model) Save(ws *Workspace) error {
-	if !m.IsLoaded(ws) && m.Reopened(ws) {
+func (m *Model) SaveWS(ws *Workspace) error {
+	if !m.IsLoadedWS(ws) && m.Reopened(ws) {
 		log.For("core").Warn("closed_slot_save_skipped", "workspace", ws.Label(), "reason", "workspace_reopened")
 		return nil
 	}

@@ -5,7 +5,11 @@
 // renders nothing, never a guess.
 package github
 
-import "time"
+import (
+	"maps"
+	"slices"
+	"time"
+)
 
 // PRState is the folded pull-request lifecycle state.
 type PRState int
@@ -61,6 +65,20 @@ type Snapshot struct {
 	PRs       map[string]PR // keyed by head branch name
 	Issues    map[int]Issue // keyed by issue number
 	FetchedAt time.Time
+}
+
+// Clone deep-copies s: its maps and each issue's labels are its own.
+func (s Snapshot) Clone() Snapshot {
+	out := s
+	out.PRs = maps.Clone(s.PRs)
+	if s.Issues != nil {
+		out.Issues = make(map[int]Issue, len(s.Issues))
+		for n, iss := range s.Issues {
+			iss.Labels = slices.Clone(iss.Labels)
+			out.Issues[n] = iss
+		}
+	}
+	return out
 }
 
 // State is the per-session join of a Snapshot, ready for rendering.

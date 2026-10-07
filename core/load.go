@@ -17,16 +17,16 @@ import (
 // RecoverySummary tallies what a reconcileOrphans pass did, for the
 // non-blocking one-line summary shown to the user.
 type RecoverySummary struct {
-	cleaned int // stale worktrees auto-removed
-	review  int // Recoverable entries added to the list
-	failed  int // records that failed reconcile (storage unrecovered cache)
-	// undecodable counts records this binary cannot decode (corrupt, or
+	Cleaned int // stale worktrees auto-removed
+	Review  int // Recoverable entries added to the list
+	Failed  int // records that failed reconcile (storage unrecovered cache)
+	// Undecodable counts records this binary cannot decode (corrupt, or
 	// written by a newer loom); storage preserves them verbatim.
-	undecodable int
+	Undecodable int
 }
 
 func (s RecoverySummary) Empty() bool {
-	return s.cleaned == 0 && s.review == 0 && s.failed == 0 && s.undecodable == 0
+	return s.Cleaned == 0 && s.Review == 0 && s.Failed == 0 && s.Undecodable == 0
 }
 
 func (s RecoverySummary) String() string {
@@ -37,31 +37,31 @@ func (s RecoverySummary) String() string {
 		return fmt.Sprintf("%d %s", n, many)
 	}
 	var parts []string
-	if s.cleaned > 0 {
-		parts = append(parts, "cleaned "+plural(s.cleaned, "stale worktree", "stale worktrees"))
+	if s.Cleaned > 0 {
+		parts = append(parts, "cleaned "+plural(s.Cleaned, "stale worktree", "stale worktrees"))
 	}
-	if s.review > 0 {
+	if s.Review > 0 {
 		verb := "need"
-		if s.review == 1 {
+		if s.Review == 1 {
 			verb = "needs"
 		}
-		parts = append(parts, fmt.Sprintf("%s %s review (in list)", plural(s.review, "session", "sessions"), verb))
+		parts = append(parts, fmt.Sprintf("%s %s review (in list)", plural(s.Review, "session", "sessions"), verb))
 	}
-	if s.failed > 0 {
+	if s.Failed > 0 {
 		// These records are preserved on disk and retried next launch,
 		// but never appear in the list — without this line they would
 		// look like silently lost sessions.
-		parts = append(parts, fmt.Sprintf("%s failed to load (kept; see loom.log)", plural(s.failed, "session", "sessions")))
+		parts = append(parts, fmt.Sprintf("%s failed to load (kept; see loom.log)", plural(s.Failed, "session", "sessions")))
 	}
-	if s.undecodable > 0 {
+	if s.Undecodable > 0 {
 		// Typically left by a newer loom after a downgrade. Saves write
 		// them back untouched, so the newer binary finds them intact.
 		verb := "were"
-		if s.undecodable == 1 {
+		if s.Undecodable == 1 {
 			verb = "was"
 		}
 		parts = append(parts, fmt.Sprintf("%s could not be read by this version of loom and %s preserved unchanged",
-			plural(s.undecodable, "session record", "session records"), verb))
+			plural(s.Undecodable, "session record", "session records"), verb))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -136,7 +136,7 @@ func (m *Model) reconcileOrphans(ws *Workspace, cfgDir, program string, cmdExec 
 				}
 				continue
 			}
-			summary.cleaned++
+			summary.Cleaned++
 		case session.DisposeReview:
 			data := session.InstanceDataFromOrphan(cand, program)
 			data.Status = session.Recoverable
@@ -146,15 +146,15 @@ func (m *Model) reconcileOrphans(ws *Workspace, cfgDir, program string, cmdExec 
 				continue
 			}
 			ws.add(inst)
-			summary.review++
+			summary.Review++
 		}
 	}
 	// Records that failed reconcile at load time live only in the storage
 	// cache, and undecodable ones only on disk — surface their counts so
 	// they don't read as lost sessions.
 	if ws.storage != nil {
-		summary.failed = len(ws.storage.UnrecoveredTitles())
-		summary.undecodable = ws.storage.UndecodableCount()
+		summary.Failed = len(ws.storage.UnrecoveredTitles())
+		summary.Undecodable = ws.storage.UndecodableCount()
 	}
 	// Claude's temp dirs of sessions that are gone, the worktrees just
 	// auto-cleaned included: archived off the model's goroutine once the

@@ -48,9 +48,10 @@ func TestDeliverStart_SuccessSendsThePromptByJob(t *testing.T) {
 		name        string
 		closeOwner  bool
 		wantsLoaded bool
+		wantsNote   string
 	}{
-		{"owner still open", false, true},
-		{"owner closed while the prompt was sent", true, false},
+		{"owner still open", false, true, ""},
+		{"owner closed while the prompt was sent", true, false, "which is no longer open"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewForTest(Options{})
@@ -68,13 +69,14 @@ func TestDeliverStart_SuccessSendsThePromptByJob(t *testing.T) {
 			assert.Empty(t, out.Events, "no Started until the prompt is sent")
 
 			if tc.closeOwner {
-				_, err := m.CloseTab("a")
+				_, err := m.CloseTabWS("a")
 				require.NoError(t, err)
 			}
 			// The fixture never started, so the send fails; the job logs
 			// that and reports the start finished all the same.
 			m.Deliver(out.Jobs[0]())
-			assert.Equal(t, []Event{Started{ID: m.idOf(inst), Title: "x", Owner: ws, Loaded: tc.wantsLoaded}}, m.Drain().Events)
+			assert.Equal(t, []Event{Started{ID: m.idOf(inst), Title: "x", Owner: ws, Loaded: tc.wantsLoaded,
+				OwnerID: m.wsIDOf(ws), OwnerLabel: "a", ClosedNote: tc.wantsNote}}, m.Drain().Events)
 		})
 	}
 }

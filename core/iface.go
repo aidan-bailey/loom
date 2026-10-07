@@ -30,13 +30,13 @@ type Core interface {
 
 	// Workspaces: the loaded ones, their transitions, saves and the
 	// registry.
-	Classic() *Workspace
-	Tabs() []*Workspace
-	IsLoaded(ws *Workspace) bool
-	ClosedNote(ws *Workspace) string
-	OpenTab(def config.Workspace) (*Workspace, error)
-	CloseTab(name string) (*Workspace, error)
-	EnterGlobal(focused *Workspace) (*Workspace, error)
+	ClassicWS() *Workspace
+	TabsWS() []*Workspace
+	IsLoadedWS(ws *Workspace) bool
+	ClosedNoteWS(ws *Workspace) string
+	OpenTabWS(def config.Workspace) (*Workspace, error)
+	CloseTabWS(name string) (*Workspace, error)
+	EnterGlobalWS(focused *Workspace) (*Workspace, error)
 	StayGlobal()
 	RestoreSaved(saved []config.Workspace) int
 	RestoreFailed() []string
@@ -44,16 +44,36 @@ type Core interface {
 	OpenNames() []string
 	PersistOpenList()
 	Register(name, dir string) (config.Workspace, error)
-	Registry() *config.WorkspaceRegistry
+	RegistryObj() *config.WorkspaceRegistry
 	SetLastUsed(name string) error
-	Save(ws *Workspace) error
+	SaveWS(ws *Workspace) error
 	SaveForQuit() error
+
+	// Workspaces by ID (stage 1D): their views, transitions and saves,
+	// the registry as a copy, and the requests that change a workspace's
+	// settings, UI prefs and help screens. The ...WS versions above go in
+	// package C of the 1D plan.
+	Workspace(id WorkspaceID) (WorkspaceView, bool)
+	Classic() (WorkspaceView, bool)
+	Tabs() []WorkspaceView
+	IsLoaded(id WorkspaceID) bool
+	OpenTab(def config.Workspace) (WorkspaceView, error)
+	CloseTab(name string) error
+	EnterGlobal(focused WorkspaceID) (WorkspaceView, error)
+	Save(id WorkspaceID) error
+	Registry() RegistryView
+	ReloadRegistry() error
+	SaveSettings(id WorkspaceID, s config.Settings) error
+	SetUIPrefs(id WorkspaceID, p config.UIPrefs) error
+	SetHelpScreensSeen(id WorkspaceID, seen uint32) error
 
 	// Instances: their views, and every lifecycle action as a request by
 	// ID, answered by a Reply when it carries a ReqID.
-	Views(ws *Workspace) []InstanceView
+	ViewsWS(ws *Workspace) []InstanceView
+	Views(id WorkspaceID) []InstanceView
 	View(id InstanceID) (InstanceView, bool)
-	Create(ws *Workspace, spec NewInstance, req ReqID)
+	CreateWS(ws *Workspace, spec NewInstance, req ReqID)
+	Create(id WorkspaceID, spec NewInstance, req ReqID)
 	Kill(id InstanceID, req ReqID)
 	Pause(id InstanceID, req ReqID)
 	Resume(id InstanceID, req ReqID)
@@ -86,7 +106,8 @@ type Core interface {
 
 	// Accounts: the registry, each account's auth, sync, usage and env,
 	// and the account requests.
-	Accounts() *account.Registry
+	AccountNames() AccountNames
+	AccountsRegistry() *account.Registry
 	AccountsLoaded() bool
 	HasExtraAccounts() bool
 	Account(name string) (account.Account, bool)

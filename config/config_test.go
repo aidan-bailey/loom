@@ -378,28 +378,28 @@ func TestLoadConfigFrom_CorruptFileQuarantined(t *testing.T) {
 
 func TestGetProgram(t *testing.T) {
 	t.Run("no profiles returns default_program as-is", func(t *testing.T) {
-		cfg := &Config{DefaultProgram: "/usr/local/bin/claude"}
+		cfg := &Config{Settings: Settings{DefaultProgram: "/usr/local/bin/claude"}}
 		assert.Equal(t, "/usr/local/bin/claude", cfg.GetProgram())
 	})
 
 	t.Run("profiles defined and default_program matches a profile name", func(t *testing.T) {
-		cfg := &Config{
+		cfg := &Config{Settings: Settings{
 			DefaultProgram: "claude",
 			Profiles: []Profile{
 				{Name: "claude", Program: "/usr/local/bin/claude"},
 				{Name: "aider", Program: "aider --model ollama_chat/gemma3:1b"},
 			},
-		}
+		}}
 		assert.Equal(t, "/usr/local/bin/claude", cfg.GetProgram())
 	})
 
 	t.Run("profiles defined but default_program does not match any profile", func(t *testing.T) {
-		cfg := &Config{
+		cfg := &Config{Settings: Settings{
 			DefaultProgram: "some-other-program",
 			Profiles: []Profile{
 				{Name: "claude", Program: "/usr/local/bin/claude"},
 			},
-		}
+		}}
 		assert.Equal(t, "some-other-program", cfg.GetProgram())
 	})
 }
@@ -411,12 +411,12 @@ func TestRemoteControlEnabled(t *testing.T) {
 	})
 
 	t.Run("explicit true is enabled", func(t *testing.T) {
-		cfg := &Config{ClaudeRemoteControl: boolPtr(true)}
+		cfg := &Config{Settings: Settings{ClaudeRemoteControl: boolPtr(true)}}
 		assert.True(t, cfg.RemoteControlEnabled())
 	})
 
 	t.Run("explicit false disables", func(t *testing.T) {
-		cfg := &Config{ClaudeRemoteControl: boolPtr(false)}
+		cfg := &Config{Settings: Settings{ClaudeRemoteControl: boolPtr(false)}}
 		assert.False(t, cfg.RemoteControlEnabled())
 	})
 
@@ -432,12 +432,12 @@ func TestPermissionMode(t *testing.T) {
 	})
 
 	t.Run("explicit value round-trips", func(t *testing.T) {
-		cfg := &Config{ClaudePermissionMode: stringPtr("acceptEdits")}
+		cfg := &Config{Settings: Settings{ClaudePermissionMode: stringPtr("acceptEdits")}}
 		assert.Equal(t, "acceptEdits", cfg.PermissionMode())
 	})
 
 	t.Run("explicit \"default\" round-trips", func(t *testing.T) {
-		cfg := &Config{ClaudePermissionMode: stringPtr("default")}
+		cfg := &Config{Settings: Settings{ClaudePermissionMode: stringPtr("default")}}
 		assert.Equal(t, "default", cfg.PermissionMode())
 	})
 
@@ -461,12 +461,12 @@ func TestHeadroomProxyEnabled(t *testing.T) {
 	})
 
 	t.Run("explicit true is enabled", func(t *testing.T) {
-		cfg := &Config{HeadroomProxy: boolPtr(true)}
+		cfg := &Config{Settings: Settings{HeadroomProxy: boolPtr(true)}}
 		assert.True(t, cfg.HeadroomProxyEnabled())
 	})
 
 	t.Run("explicit false is disabled", func(t *testing.T) {
-		cfg := &Config{HeadroomProxy: boolPtr(false)}
+		cfg := &Config{Settings: Settings{HeadroomProxy: boolPtr(false)}}
 		assert.False(t, cfg.HeadroomProxyEnabled())
 	})
 
@@ -482,12 +482,12 @@ func TestCacheTTL1hEnabled(t *testing.T) {
 	})
 
 	t.Run("explicit true is enabled", func(t *testing.T) {
-		cfg := &Config{CacheTTL1h: boolPtr(true)}
+		cfg := &Config{Settings: Settings{CacheTTL1h: boolPtr(true)}}
 		assert.True(t, cfg.CacheTTL1hEnabled())
 	})
 
 	t.Run("explicit false is disabled", func(t *testing.T) {
-		cfg := &Config{CacheTTL1h: boolPtr(false)}
+		cfg := &Config{Settings: Settings{CacheTTL1h: boolPtr(false)}}
 		assert.False(t, cfg.CacheTTL1hEnabled())
 	})
 
@@ -503,7 +503,7 @@ func TestModel(t *testing.T) {
 	})
 
 	t.Run("explicit value round-trips", func(t *testing.T) {
-		cfg := &Config{ClaudeModel: stringPtr("opus")}
+		cfg := &Config{Settings: Settings{ClaudeModel: stringPtr("opus")}}
 		assert.Equal(t, "opus", cfg.Model())
 	})
 
@@ -548,7 +548,7 @@ func TestEffort(t *testing.T) {
 	})
 
 	t.Run("explicit value round-trips", func(t *testing.T) {
-		cfg := &Config{ClaudeEffort: stringPtr("low")}
+		cfg := &Config{Settings: Settings{ClaudeEffort: stringPtr("low")}}
 		assert.Equal(t, "low", cfg.Effort())
 	})
 
@@ -567,7 +567,7 @@ func TestClaudeEfforts(t *testing.T) {
 
 func TestGetProfiles(t *testing.T) {
 	t.Run("no profiles returns single synthetic profile", func(t *testing.T) {
-		cfg := &Config{DefaultProgram: "/usr/local/bin/claude"}
+		cfg := &Config{Settings: Settings{DefaultProgram: "/usr/local/bin/claude"}}
 		profiles := cfg.GetProfiles()
 		assert.Len(t, profiles, 1)
 		assert.Equal(t, "/usr/local/bin/claude", profiles[0].Name)
@@ -575,13 +575,13 @@ func TestGetProfiles(t *testing.T) {
 	})
 
 	t.Run("profiles defined returns them with default first", func(t *testing.T) {
-		cfg := &Config{
+		cfg := &Config{Settings: Settings{
 			DefaultProgram: "aider",
 			Profiles: []Profile{
 				{Name: "claude", Program: "/usr/local/bin/claude"},
 				{Name: "aider", Program: "aider --model gemma"},
 			},
-		}
+		}}
 		profiles := cfg.GetProfiles()
 		assert.Len(t, profiles, 2)
 		assert.Equal(t, "aider", profiles[0].Name)
@@ -589,13 +589,13 @@ func TestGetProfiles(t *testing.T) {
 	})
 
 	t.Run("profiles defined but default not matching preserves order", func(t *testing.T) {
-		cfg := &Config{
+		cfg := &Config{Settings: Settings{
 			DefaultProgram: "other",
 			Profiles: []Profile{
 				{Name: "claude", Program: "/usr/local/bin/claude"},
 				{Name: "aider", Program: "aider --model gemma"},
 			},
-		}
+		}}
 		profiles := cfg.GetProfiles()
 		assert.Len(t, profiles, 2)
 		assert.Equal(t, "claude", profiles[0].Name)
@@ -607,10 +607,10 @@ func TestSaveConfigTo(t *testing.T) {
 	t.Run("saves config to file", func(t *testing.T) {
 		configDir := t.TempDir()
 
-		testConfig := &Config{
+		testConfig := &Config{Settings: Settings{
 			DefaultProgram: "test-program",
 			BranchPrefix:   "test-branch/",
-		}
+		}}
 
 		err := SaveConfigTo(testConfig, configDir)
 		assert.NoError(t, err)
@@ -674,11 +674,11 @@ func TestContext1MEnabled(t *testing.T) {
 		assert.False(t, cfg.Context1MEnabled())
 	})
 	t.Run("explicit true", func(t *testing.T) {
-		cfg := &Config{Claude1MContext: boolPtr(true)}
+		cfg := &Config{Settings: Settings{Claude1MContext: boolPtr(true)}}
 		assert.True(t, cfg.Context1MEnabled())
 	})
 	t.Run("explicit false", func(t *testing.T) {
-		cfg := &Config{Claude1MContext: boolPtr(false)}
+		cfg := &Config{Settings: Settings{Claude1MContext: boolPtr(false)}}
 		assert.False(t, cfg.Context1MEnabled())
 	})
 	t.Run("default config is off", func(t *testing.T) {
@@ -720,7 +720,7 @@ func TestClaudeTmpArchiveRoot(t *testing.T) {
 		{value: "~/claude-archives", want: filepath.Join(home, "claude-archives")},
 		{value: "claude-archives", wantErr: true},
 	} {
-		root, err := (&Config{ClaudeTmpArchiveDir: tc.value}).ClaudeTmpArchiveRoot()
+		root, err := (&Config{Settings: Settings{ClaudeTmpArchiveDir: tc.value}}).ClaudeTmpArchiveRoot()
 		if tc.wantErr {
 			assert.Error(t, err, "value %q", tc.value)
 			continue

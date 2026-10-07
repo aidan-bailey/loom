@@ -55,9 +55,9 @@ type UIPrefs struct {
 	WorkbenchRatios map[string]float64 `json:"workbench_ratios,omitempty"`
 }
 
-// clone deep-copies the prefs so callers can mutate the returned value
+// Clone deep-copies the prefs so callers can mutate the returned value
 // (including the SplitRatios map) without affecting the stored state.
-func (p UIPrefs) clone() UIPrefs {
+func (p UIPrefs) Clone() UIPrefs {
 	out := p
 	if p.SplitRatios != nil {
 		out.SplitRatios = make(map[string]float64, len(p.SplitRatios))
@@ -318,14 +318,14 @@ func (s *State) SetHelpScreensSeen(seen uint32) error {
 func (s *State) GetUIPrefs() UIPrefs {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.UI.clone()
+	return s.UI.Clone()
 }
 
 // SetUIPrefs replaces and persists the UI layout prefs.
 func (s *State) SetUIPrefs(p UIPrefs) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.UI = p.clone()
+	s.UI = p.Clone()
 	dir, err := s.resolveDirLocked()
 	if err != nil {
 		return err

@@ -379,13 +379,13 @@ type NewInstance struct {
 	Start bool
 }
 
-// Create builds an instance in ws from spec, adds it, and (with Start)
+// CreateWS builds an instance in ws from spec, adds it, and (with Start)
 // configures and starts it: the owner is stamped now, and the start's
 // completion is a StartResult as before. The Reply comes at once and names
 // the new instance. A ws no longer loaded is refused: an instance added to
 // it would be shown nowhere, and a start would run for it anyway.
-func (m *Model) Create(ws *Workspace, spec NewInstance, req ReqID) {
-	if !m.IsLoaded(ws) {
+func (m *Model) CreateWS(ws *Workspace, spec NewInstance, req ReqID) {
+	if !m.IsLoadedWS(ws) {
 		m.refuse(req, 0, fmt.Errorf("create %s: its workspace is no longer open", spec.Title))
 		return
 	}

@@ -223,7 +223,7 @@ func (m *Model) applyGitHubState() {
 // poll of it succeeded.
 func (m *Model) GitHubSnapshot(repo string) (github.Snapshot, bool) {
 	s, ok := m.ghState[repo]
-	return s, ok
+	return s.Clone(), ok
 }
 
 // GitHubErr returns the last poll's error for repo, or nil.

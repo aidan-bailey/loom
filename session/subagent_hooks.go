@@ -39,6 +39,9 @@ const noHooksLaunchID = "-"
 // SetSubagentTrackingEnabled updates the global subagent-tracking toggle.
 func SetSubagentTrackingEnabled(enabled bool) { subagentRowsHidden.Store(!enabled) }
 
+// SubagentTrackingEnabled reports the global subagent-tracking toggle.
+func SubagentTrackingEnabled() bool { return !subagentRowsHidden.Load() }
+
 // hooksRoot holds every instance's hooks folder. It is deliberately outside
 // worktrees/: DiscoverOrphans descends into any directory there that lacks
 // the _<hex> suffix.

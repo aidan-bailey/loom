@@ -88,15 +88,21 @@ func FromConfig(cfg *config.Config) Options {
 	if cfg == nil {
 		return Options{}
 	}
+	return FromSettings(cfg.Snapshot())
+}
+
+// FromSettings is FromConfig over a copy of the settings: what the TUI
+// holds (core.WorkspaceView.Settings).
+func FromSettings(s config.Settings) Options {
 	return Options{
-		RemoteControl:  cfg.RemoteControlEnabled(),
-		PermissionMode: cfg.PermissionMode(),
-		Model:          cfg.Model(),
-		Context1M:      cfg.Context1MEnabled(),
-		HeadroomProxy:  cfg.HeadroomProxyEnabled(),
-		Effort:         cfg.Effort(),
-		CacheTTL1h:     cfg.CacheTTL1hEnabled(),
-		BranchPrefix:   cfg.GetBranchPrefix(),
+		RemoteControl:  s.RemoteControlEnabled(),
+		PermissionMode: s.PermissionMode(),
+		Model:          s.Model(),
+		Context1M:      s.Context1MEnabled(),
+		HeadroomProxy:  s.HeadroomProxyEnabled(),
+		Effort:         s.Effort(),
+		CacheTTL1h:     s.CacheTTL1hEnabled(),
+		BranchPrefix:   s.GetBranchPrefix(),
 	}
 }
 

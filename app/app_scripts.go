@@ -836,7 +836,7 @@ func (m *home) scriptCreate(p pendingIntent, i script.CreateInstanceIntent, slot
 		return m.resumeScript(p, script.ResumeValue{Err: fmt.Sprintf("new_instance: workspace changed while a script ran; not creating %s here", i.Title)})
 	}
 	req := m.newReq(pendingReq{script: &pendingScript{intent: p.id, trace: p.trace, op: "new_instance"}})
-	m.core.Create(slot.ws, core.NewInstance{Title: i.Title, Path: i.Path, Program: i.Program, Prompt: i.Prompt, Branch: i.Branch}, req)
+	m.core.CreateWS(slot.ws, core.NewInstance{Title: i.Title, Path: i.Path, Program: i.Program, Prompt: i.Prompt, Branch: i.Branch}, req)
 	return nil
 }
 

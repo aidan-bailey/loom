@@ -302,7 +302,7 @@ func TestOpenTabExpeditesGitHub(t *testing.T) {
 	m.gate(gateGH).last = time.Now()
 	require.False(t, m.gateDue(gateGH, time.Now()))
 
-	_, err := m.OpenTab(def)
+	_, err := m.OpenTabWS(def)
 	require.NoError(t, err)
 
 	assert.True(t, m.gateDue(gateGH, time.Now()), "a newly opened workspace's repo is polled on the next tick")

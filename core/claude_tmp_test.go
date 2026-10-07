@@ -52,7 +52,7 @@ func TestClaudeTmpSweep_QueuedByEveryLoadPath(t *testing.T) {
 		def := preservedTerminalWorkspace(t, "ws-sweep")
 		m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: noTmuxExec()})
 
-		_, err := m.OpenTab(def)
+		_, err := m.OpenTabWS(def)
 		require.NoError(t, err)
 
 		assert.Contains(t, m.claudeTmpPending, config.WorkspaceConfigDir(&def))
@@ -141,8 +141,8 @@ func TestReconcileOrphans_Locks(t *testing.T) {
 
 	summary := NewForTest(Options{}).reconcileOrphans(NewWorkspace(WorkspaceParts{}), cfgDir, "true", cmd2.MakeExecutor())
 
-	assert.Equal(t, 1, summary.cleaned, "only the stale-locked orphan is cleaned")
-	assert.Zero(t, summary.review)
+	assert.Equal(t, 1, summary.Cleaned, "only the stale-locked orphan is cleaned")
+	assert.Zero(t, summary.Review)
 	assert.NoDirExists(t, staleWT)
 	assert.DirExists(t, keptWT, "a lock the user set is respected")
 }

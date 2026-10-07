@@ -130,6 +130,18 @@ func SaveWorkspaceRegistry(reg *WorkspaceRegistry) error {
 	return AtomicWriteFile(regPath, data, 0644)
 }
 
+// Reload replaces the receiver's in-memory state with the registry on
+// disk, as every write does before it saves: another process (`loom
+// workspace add`, a second loom) may have changed it.
+func (r *WorkspaceRegistry) Reload() error {
+	fresh, err := LoadWorkspaceRegistry()
+	if err != nil {
+		return err
+	}
+	r.syncFrom(fresh)
+	return nil
+}
+
 // syncFrom refreshes the receiver's in-memory state from the merged
 // registry after a reload-before-save cycle.
 func (r *WorkspaceRegistry) syncFrom(fresh *WorkspaceRegistry) {

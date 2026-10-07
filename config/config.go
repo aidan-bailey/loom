@@ -76,7 +76,8 @@ type Profile struct {
 	Program string `json:"program"`
 }
 
-// Config represents the application configuration
+// Config represents the application configuration: the persisted
+// Settings and the lock that guards them once a Config is shared.
 type Config struct {
 	// mu guards mutation of every field below once the settings overlay
 	// makes Config mutable at runtime. Before the settings overlay,
@@ -90,96 +91,7 @@ type Config struct {
 	// encoding/json skips it (same precedent as State.mu).
 	mu sync.RWMutex
 
-	// DefaultProgram is the default program to run in new instances
-	DefaultProgram string `json:"default_program"`
-	// BranchPrefix is the prefix used for git branches created by the application.
-	BranchPrefix string `json:"branch_prefix"`
-	// BaseBranch names the branch new session worktrees are cut from.
-	// Empty means auto-detect (origin/HEAD, then main, then master, then
-	// whatever the root repo currently has checked out) — see
-	// git.ResolveBaseCommit. DefaultConfig deliberately leaves it empty:
-	// unlike BranchPrefix there is no sensible universal literal, and
-	// auto-detect is correct for main/master/develop repos alike.
-	// Read through GetBaseBranch.
-	BaseBranch string `json:"base_branch,omitempty"`
-	// Profiles is a list of named program profiles.
-	Profiles []Profile `json:"profiles,omitempty"`
-	// ClaudeRemoteControl controls whether new Claude sessions launch
-	// with `--remote-control` (named after the session title). It is a
-	// pointer so a config file predating this field (nil) is treated as
-	// enabled rather than taking the bool zero value; only an explicit
-	// false disables it. Read it through RemoteControlEnabled.
-	ClaudeRemoteControl *bool `json:"claude_remote_control,omitempty"`
-	// ClaudeLoomContext controls whether new Claude sessions launch with
-	// --append-system-prompt-file pointing at loom's embedded context
-	// file (see session.WriteLoomContextFiles). nil is treated as enabled
-	// (read via LoomContextEnabled), matching ClaudeRemoteControl. A no-op
-	// for agents other than Claude.
-	ClaudeLoomContext *bool `json:"claude_loom_context,omitempty"`
-	// ClaudeSubagentTracking controls whether the subagents and teammates
-	// loom's hooks track are shown, as a count on rail cards and as rows
-	// on overview cards (see session/subagent). Every Claude launch gets
-	// the hooks regardless, since they also carry status, the session ID
-	// and the last message. nil is treated as enabled (read via
-	// SubagentTrackingEnabled), matching ClaudeLoomContext. Takes effect
-	// at once.
-	ClaudeSubagentTracking *bool `json:"claude_subagent_tracking,omitempty"`
-	// ClaudePermissionMode is the --permission-mode value new Claude
-	// sessions launch with. Unlike ClaudeRemoteControl, DefaultConfig
-	// sets this explicitly to "default" rather than leaving it nil — nil
-	// only occurs for a config.json predating this field, and is
-	// treated identically to "default" (no flag injected; Claude's own
-	// default applies). Read it through PermissionMode.
-	ClaudePermissionMode *string `json:"claude_permission_mode,omitempty"`
-	// Theme names the active UI color theme (see ui.ThemeNames).
-	// Empty (pre-existing config files) means the default theme.
-	// Read through GetTheme.
-	Theme string `json:"theme,omitempty"`
-	// ClaudeTmpArchiveDir relocates the zips loom archives Claude's
-	// per-session temp dirs into (session.ClaudeTmpArchiveDir): every
-	// workspace's archives go under it, each workspace in its own
-	// subfolder. Read from the global config.json only. Empty (the
-	// default) keeps each workspace's archives in its own loom config
-	// folder. Absolute, or starting with ~. Read through
-	// ClaudeTmpArchiveRoot.
-	ClaudeTmpArchiveDir string `json:"claude_tmp_archive_dir,omitempty"`
-	// HeadroomProxy controls whether new Claude sessions launch with
-	// ANTHROPIC_BASE_URL pointed at Headroom's proxy (see
-	// session.HeadroomProxyEnv). A no-op for agents other than Claude.
-	// Loom does not start or manage the headroom proxy process itself —
-	// the user is expected to have it running separately. Defaults to
-	// off (DefaultConfig sets it explicitly to false) since it's
-	// opt-in. Mutually exclusive with ClaudeRemoteControl: enabling one
-	// disables the other, enforced in the Claude Preferences toggle
-	// handler, the Session Launch Options modal, and defensively again
-	// in launch.Compose so a hand-edited config.json with both
-	// fields true still can't launch both at once. Read it through
-	// HeadroomProxyEnabled.
-	HeadroomProxy *bool `json:"headroom_proxy,omitempty"`
-	// ClaudeModel is the --model value new Claude sessions launch with.
-	// Values are short CLI aliases (not versioned IDs) so the list
-	// stays valid as new models ship without a code change. "default"
-	// is a no-op — Claude's own default applies. Read it through Model.
-	ClaudeModel *string `json:"claude_model,omitempty"`
-	// ClaudeEffort is the --effort value new Claude sessions launch
-	// with. "default" is a no-op — Claude's own default applies. Read
-	// it through Effort.
-	ClaudeEffort *string `json:"claude_effort,omitempty"`
-	// CacheTTL1h controls whether new Claude sessions launch with
-	// ENABLE_PROMPT_CACHING_1H=1 (see session.CacheTTL1hEnv), extending
-	// Claude's prompt cache from the default 5-minute TTL to 1 hour. A
-	// no-op for agents other than Claude. Defaults to off (DefaultConfig
-	// sets it explicitly to false) since it's opt-in. Read it through
-	// CacheTTL1hEnabled.
-	CacheTTL1h *bool `json:"cache_ttl_1h,omitempty"`
-	// Claude1MContext controls whether new Claude sessions launch with
-	// the [1m] long-context suffix appended to their --model alias
-	// (e.g. "sonnet[1m]"). A no-op for agents other than Claude, and
-	// for aliases that don't accept the suffix (see
-	// ClaudeModelSupports1M). Defaults to off (DefaultConfig sets it
-	// explicitly to false) since it's opt-in. Read it through
-	// Context1MEnabled.
-	Claude1MContext *bool `json:"claude_1m_context,omitempty"`
+	Settings
 }
 
 // ClaudePermissionModes lists the values --permission-mode accepts, in
@@ -254,7 +166,7 @@ func (c *Config) Mutate(fn func(*Config)) {
 func (c *Config) GetBranchPrefix() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.BranchPrefix
+	return c.Settings.GetBranchPrefix()
 }
 
 // GetBaseBranch returns BaseBranch under a read lock. Locked rather
@@ -264,7 +176,7 @@ func (c *Config) GetBranchPrefix() string {
 func (c *Config) GetBaseBranch() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.BaseBranch
+	return c.Settings.GetBaseBranch()
 }
 
 // GetTheme returns the configured UI theme name under the config lock
@@ -272,7 +184,7 @@ func (c *Config) GetBaseBranch() string {
 func (c *Config) GetTheme() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.Theme
+	return c.Settings.GetTheme()
 }
 
 // ClaudeTmpArchiveRoot returns ClaudeTmpArchiveDir with a leading ~
@@ -281,122 +193,8 @@ func (c *Config) GetTheme() string {
 // archive relative to whatever directory loom runs in.
 func (c *Config) ClaudeTmpArchiveRoot() (string, error) {
 	c.mu.RLock()
-	dir := c.ClaudeTmpArchiveDir
-	c.mu.RUnlock()
-	if dir == "" {
-		return "", nil
-	}
-	return resolveEnvDir("claude_tmp_archive_dir", dir)
-}
-
-// RemoteControlEnabled reports whether new Claude sessions should launch
-// with the --remote-control flag. Defaults to true when unset so the
-// feature is on out of the box; only an explicit false disables it.
-func (c *Config) RemoteControlEnabled() bool {
-	return c.ClaudeRemoteControl == nil || *c.ClaudeRemoteControl
-}
-
-// LoomContextEnabled reports whether new Claude sessions should launch
-// with loom's context file injected. nil (unset) is treated as enabled,
-// mirroring RemoteControlEnabled. Read only from the main goroutine.
-func (c *Config) LoomContextEnabled() bool {
-	return c.ClaudeLoomContext == nil || *c.ClaudeLoomContext
-}
-
-// SubagentTrackingEnabled reports whether the subagents loom's hooks track
-// are shown. nil (unset) is treated as enabled, mirroring
-// LoomContextEnabled. Read only from the main goroutine.
-func (c *Config) SubagentTrackingEnabled() bool {
-	return c.ClaudeSubagentTracking == nil || *c.ClaudeSubagentTracking
-}
-
-// PermissionMode returns the configured --permission-mode value,
-// defaulting to "default" when unset (nil). Deliberately unlocked, like
-// RemoteControlEnabled: it's read only from the main goroutine (view
-// rendering, instance creation during key handling, and from inside a
-// Mutate callback in the Claude Preferences cycle handler — a
-// Mutate-held lock is not reentrant, so a locked accessor here would
-// deadlock). If a future caller needs this from the Lua dispatch
-// goroutine, add a locked variant rather than locking this one.
-func (c *Config) PermissionMode() string {
-	if c.ClaudePermissionMode == nil {
-		return "default"
-	}
-	return *c.ClaudePermissionMode
-}
-
-// HeadroomProxyEnabled reports whether new Claude sessions should
-// launch with ANTHROPIC_BASE_URL pointed at Headroom's proxy. Defaults
-// to false when unset.
-func (c *Config) HeadroomProxyEnabled() bool {
-	return c.HeadroomProxy != nil && *c.HeadroomProxy
-}
-
-// Model returns the configured --model alias, defaulting to "default"
-// when unset (nil). Unlocked for the same reason as PermissionMode.
-func (c *Config) Model() string {
-	if c.ClaudeModel == nil {
-		return "default"
-	}
-	return *c.ClaudeModel
-}
-
-// Effort returns the configured --effort value, defaulting to
-// "default" when unset. Unlocked for the same reason as
-// PermissionMode/Model.
-func (c *Config) Effort() string {
-	if c.ClaudeEffort == nil {
-		return "default"
-	}
-	return *c.ClaudeEffort
-}
-
-// CacheTTL1hEnabled reports whether new Claude sessions should launch
-// with ENABLE_PROMPT_CACHING_1H=1. Defaults to false when unset.
-func (c *Config) CacheTTL1hEnabled() bool {
-	return c.CacheTTL1h != nil && *c.CacheTTL1h
-}
-
-// Context1MEnabled reports whether new Claude sessions should launch
-// with the [1m] long-context suffix on their --model alias. Defaults to
-// false when unset. Unlocked for the same reason as PermissionMode.
-func (c *Config) Context1MEnabled() bool {
-	return c.Claude1MContext != nil && *c.Claude1MContext
-}
-
-// GetProgram returns the program to run. If Profiles is non-empty and
-// DefaultProgram matches a profile name, that profile's Program is returned.
-// Otherwise DefaultProgram is returned as-is.
-func (c *Config) GetProgram() string {
-	for _, p := range c.Profiles {
-		if p.Name == c.DefaultProgram {
-			return p.Program
-		}
-	}
-	return c.DefaultProgram
-}
-
-// GetProfiles returns a unified list of profiles. If Profiles is defined,
-// those are returned with the default profile first. Otherwise, a single
-// profile is synthesized from DefaultProgram.
-func (c *Config) GetProfiles() []Profile {
-	if len(c.Profiles) == 0 {
-		return []Profile{{Name: c.DefaultProgram, Program: c.DefaultProgram}}
-	}
-	// Reorder so the default profile comes first.
-	profiles := make([]Profile, 0, len(c.Profiles))
-	for _, p := range c.Profiles {
-		if p.Name == c.DefaultProgram {
-			profiles = append(profiles, p)
-			break
-		}
-	}
-	for _, p := range c.Profiles {
-		if p.Name != c.DefaultProgram {
-			profiles = append(profiles, p)
-		}
-	}
-	return profiles
+	defer c.mu.RUnlock()
+	return c.Settings.ClaudeTmpArchiveRoot()
 }
 
 // DefaultConfig returns the default configuration
@@ -407,7 +205,7 @@ func DefaultConfig() *Config {
 		program = defaultProgram
 	}
 
-	return &Config{
+	return &Config{Settings: Settings{
 		DefaultProgram: program,
 		BranchPrefix: func() string {
 			user, err := user.Current()
@@ -425,7 +223,7 @@ func DefaultConfig() *Config {
 		ClaudeEffort:         stringPtr("default"),
 		CacheTTL1h:           boolPtr(false),
 		Claude1MContext:      boolPtr(false),
-	}
+	}}
 }
 
 // boolPtr returns a pointer to b. Used for config fields whose absent
@@ -513,7 +311,9 @@ func SaveConfigTo(config *Config, dir string) error {
 	}
 
 	configPath := filepath.Join(dir, ConfigFileName)
+	config.mu.RLock()
 	data, err := json.MarshalIndent(config, "", "  ")
+	config.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}

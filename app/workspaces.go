@@ -83,7 +83,7 @@ func (s *workspaceSlot) appState() config.AppState {
 // its pane clients (releaseSlotCmd, prunePanes) and is nil otherwise.
 // Callers must return it (or, before the program runs, run it).
 func (m *home) activateWorkspace(def config.Workspace) (tea.Cmd, error) {
-	ws, err := m.core.OpenTab(def)
+	ws, err := m.core.OpenTabWS(def)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (m *home) deactivateWorkspace(name string) (tea.Cmd, error) {
 	if idx == -1 {
 		return nil, nil
 	}
-	if _, err := m.core.CloseTab(name); err != nil {
+	if _, err := m.core.CloseTabWS(name); err != nil {
 		return nil, err
 	}
 	slot := m.slots[idx]
@@ -241,7 +241,7 @@ func (m *home) checkSlotInvariant() error {
 	// The slots mirror the model's workspaces: the tabs in order, or with
 	// none open the classic workspace. A bare test home has no model.
 	if m.core != nil {
-		tabs := m.core.Tabs()
+		tabs := m.core.TabsWS()
 		if len(tabs) != len(m.slots) {
 			return fmt.Errorf("slot invariant: %d slots, but the model has %d tabs", len(m.slots), len(tabs))
 		}
@@ -250,7 +250,7 @@ func (m *home) checkSlotInvariant() error {
 				return fmt.Errorf("slot invariant: m.slots[%d] does not show the model's tab %d", i, i)
 			}
 		}
-		if len(m.slots) == 0 && m.ws != m.core.Classic() {
+		if len(m.slots) == 0 && m.ws != m.core.ClassicWS() {
 			return errors.New("slot invariant: the focused slot does not show the model's classic workspace")
 		}
 	}
@@ -364,7 +364,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		return m.stayInGlobalMode()
 	}
 	if len(m.slots) == 0 {
-		err := m.core.Save(m.ws)
+		err := m.core.SaveWS(m.ws)
 		switch {
 		case errors.Is(err, session.ErrStorageLoadFailed):
 			// The global payload is unreadable (typically the fail-closed
@@ -527,7 +527,7 @@ func (m *home) stayInGlobalMode() tea.Cmd {
 //     possibly-recoverable global state.json — the same rule
 //     activateWorkspace and the classic startup path follow.
 func (m *home) enterGlobalMode() tea.Cmd {
-	global, err := m.core.EnterGlobal(m.ws)
+	global, err := m.core.EnterGlobalWS(m.ws)
 	if err != nil {
 		return m.handleError(err)
 	}

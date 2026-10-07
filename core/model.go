@@ -146,6 +146,14 @@ type Model struct {
 	nextID InstanceID
 	// published is each loaded workspace's views as last published (Sync).
 	published map[*Workspace][]InstanceView
+	// wsIDs is each reported workspace's ID (wsIDOf). A workspace no
+	// longer loaded loses its entry at the next publish, and its ID is
+	// never reused (nextWSID only grows).
+	wsIDs    map[*Workspace]WorkspaceID
+	nextWSID WorkspaceID
+	// publishedWS is every loaded workspace's view as last published
+	// (Sync), in Loaded order.
+	publishedWS []WorkspaceView
 
 	out Out
 }
@@ -185,6 +193,7 @@ func newModel(o Options) *Model {
 		cmdExec:   o.CmdExec,
 		ids:       make(map[*session.Instance]InstanceID),
 		published: make(map[*Workspace][]InstanceView),
+		wsIDs:     make(map[*Workspace]WorkspaceID),
 	}
 }
 

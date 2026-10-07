@@ -34,7 +34,7 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 		// Unknown owner (unstamped, and no loaded workspace holds it):
 		// only the model's half applies.
 	case !ev.Loaded:
-		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", ev.Title, owner.Label(), m.core.ClosedNote(owner)))
+		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", ev.Title, owner.Label(), m.core.ClosedNoteWS(owner)))
 	case owner != m.ws:
 		// A background slot's selection drives no open flow.
 		if s := m.slotFor(owner); s != nil {
@@ -89,7 +89,7 @@ func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 	if owner != nil && owner != m.ws {
 		where = " in " + owner.Label()
 		if !ev.Loaded {
-			where += ", " + m.core.ClosedNote(owner)
+			where += ", " + m.core.ClosedNoteWS(owner)
 		}
 	}
 	if ev.Paused {
