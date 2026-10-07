@@ -265,7 +265,7 @@ A userdata handed to every bound handler. Lives for one dispatch.
 | `ctx:repo_path()` | → string | Repo root new instances should be created against. |
 | `ctx:default_program()` | → string | The configured default agent command (e.g. `"claude"`). |
 | `ctx:branch_prefix()` | → string | The branch prefix for the active workspace (e.g. `"alice/"`). |
-| `ctx:new_instance{title=, ...}` | → instance | Create a new session. Required: `title`. Optional: `program`, `path`, `prompt`, `branch`. Instance is queued; actual `list.AddInstance` happens on the main goroutine after the script returns. |
+| `ctx:new_instance{title=, ...}` | → instance | Create a new session. Required: `title`. Optional: `program`, `path`, `prompt`, `branch`. Instance is queued; it is added to the dispatch's workspace (`core.Workspace.Add`) on the main goroutine after the script returns. |
 | `ctx:log(level, msg)` | → void | Equivalent to `cs.log`. |
 | `ctx:notify(msg)` | → void | Equivalent to `cs.notify` when dispatch is active. |
 
@@ -424,7 +424,7 @@ app/state_default.go: handleStateDefaultKey
                                       ▼
                                Update: handleScriptDone
                                       │
-                                      ├── list.AddInstance for each pending inst
+                                      ├── slot.ws.Add for each pending inst
                                       ├── errBox for each notice
                                       ├── handleScriptIntent for each intent (→ step 4 of Intent Lifecycle)
                                       └── if err: errBox
@@ -445,7 +445,7 @@ app/state_default.go: handleStateDefaultKey
 - `cs.await` is cheap — the coroutine is parked, the mutex released, and no CPU is consumed until `Resume` delivers the value.
 
 **What this means for the app**:
-- `h.list.AddInstance` must run on the main goroutine. Scripts queue instances via `Host.QueueInstance`; finalization happens in `handleScriptDone`. Never call `AddInstance` from inside the Lua VM.
+- Adding an instance to its workspace (`core.Workspace.Add`) must run on the main goroutine. Scripts queue instances via `Host.QueueInstance`; finalization happens in `handleScriptDone`, which adds them to the workspace of the slot the dispatch snapshotted (dropping them with a notice if focus moved meanwhile). Never edit a workspace from inside the Lua VM.
 - Intent dispatch (`handleScriptIntent`) also runs on the main goroutine, from inside `Update`.
 - Notices and the instance queue are buffered and surfaced through `scriptDoneMsg` so error-bar updates happen on the main loop.
 - On quit, `Engine.Shutdown` drains parked coroutines and closes the LState within a bound (`scriptShutdownTimeout`). If a handler is still running it cancels the LState's context, which stops a Lua loop at its next instruction. A handler blocked inside a Go call is left for process exit to reclaim, and the `engine_busy_at_shutdown` warning names its key and file.
@@ -512,4 +512,4 @@ Reference scripts ship in `script/testdata/`. Copy to `~/.loom/scripts/` to acti
 
 **No `io`, `os`, or shell execution in the sandbox.** If a script needs to shell out, it should do it via an instance's tmux session (where the user already has agent output visible) rather than forking a subprocess the user cannot observe. This keeps the surface of "what scripts can do" bounded to "what the TUI already shows."
 
-**Instance creation is queued, not immediate.** `ctx:new_instance{}` returns a userdata handle, but the actual `list.AddInstance` call happens on the main goroutine in `handleScriptDone`. This preserves the invariant that `h.list` is only mutated from the Bubble Tea loop, even though scripts execute in a `tea.Cmd` goroutine.
+**Instance creation is queued, not immediate.** `ctx:new_instance{}` returns a userdata handle, but the actual `core.Workspace.Add` call happens on the main goroutine in `handleScriptDone`. This preserves the invariant that a workspace's instances are only edited from the Bubble Tea loop, even though scripts execute in a `tea.Cmd` goroutine.
