@@ -140,9 +140,14 @@ underneath; they gain one caller instead of several.
 
 A long operation (kill, resume, recover) replies when it finishes, as
 the TUI's completion messages land today. The reply names the instance by
-**title plus workspace path**, the identity `reopenedTwin` already
-matches on, so the client applies the result to what it asked about, not
-to its selection.
+its **`InstanceID`**, which the model assigns the first time it reports
+the instance and never reuses within a daemon's life, so the client
+applies the result to what it asked about, not to its selection, and a
+stale ID is refused rather than reaching an instance that took its
+place. A reconnecting client re-lists, since a restarted daemon assigns
+new IDs. Title and repository path are in the view, for display. (Amended
+2026-10-07 by stage 1C, which replaced the planned title-plus-workspace-
+path identity.)
 
 **Events** are frames with no `id`, pushed to every subscribed client:
 instance added, removed and changed (status, diff stats, GitHub state,
@@ -151,12 +156,20 @@ accounts changed, and notice (the text `handleError` shows today, with a
 severity). A client that reconnects replaces its lists wholesale from a
 fresh `list`.
 
-**`InstanceView`** is the value type the daemon publishes: title,
-workspace path, worktree path, branch, tmux session name, runtime status
-and its age, wait reason, diff stats, GitHub state, parity, issue,
-account, program, and the flags the TUI gates keys on (workspace
-terminal, started, paused, recoverable, busy). It carries no methods that
-act. Panes attach by the tmux session name.
+**`InstanceView`** is the value type the daemon publishes, as built in
+stage 1C (`core/view.go`): `ID`; `Title`; `RepoPath` (the repository the
+session works in); `WorktreePath` and `WorktreeRepoPath` (the repository
+root git resolved for the worktree, which Lua's worktree handle is built
+on); `Branch`; `TmuxSession` and `SessionProgram` (the session's name and
+the program it was launched with, which picks a pane client's adapter);
+`Program`; `Status` and `StatusSince`; `StatusReported` (whether Claude's
+hooks or roster have an opinion on the status); `WaitReason`;
+`LastMessage`/`HasLastMessage`; `Subagents`; `Diff`/`HasDiff`; `GitHub`;
+`Ahead`, `Behind` and `ParityKnown`; `Issue`; `Account`; `HeadroomProxy`
+and `CacheTTL1h`; `IsWorkspaceTerminal`; `Started`; and `Bell`, which only
+the TUI fills (its bell overlay). Paused, busy and recoverable are read
+from `Status` (`Paused()`, `Active()`). It carries no methods that act.
+Panes attach by the tmux session name.
 
 ### 3. What moves, what stays
 
@@ -350,12 +363,17 @@ end:
      through `Deliver`, and the model reports through events (carrying
      `*session.Instance`) that the TUI drains after every message.
      `ui.List` reads its rows from the workspace.
-   - **1C, the `Core` interface.** It brings `InstanceView` and the
-     `Core` interface over the events 1B introduced, draft rows for
-     creation flows, Lua lifecycle through `Core`, the issue-picker
-     fetches as requests, and the pane status ladder as a display-only
-     overlay.
-   - **1D, the model's own goroutine.**
+   - **1C, the instance boundary**
+     ([plan](../plans/2026-10-07-daemon-stage1c-instance-boundary.md)).
+     The TUI and Lua see instances only as `InstanceView` values named
+     by a model-assigned `InstanceID` and change them only by request
+     (answered by a `Reply`; Lua's lifecycle calls yield until it lands),
+     with draft rows for creation flows, the pane ladder and bells as
+     display overlays, and `home.core` typed as `core.Core`.
+   - **1D, the workspace half, then the model's own goroutine.** The
+     workspace half of the boundary: workspace, config, state, registry,
+     account and GitHub views and requests, leaving `core.Core` fully
+     value-typed. Then the model moves to its own goroutine.
 2. **Codec and transport.** `core/rpc`. The TUI uses the socket client
    against an in-process server over `net.Pipe`.
 3. **The daemon process.** `loom serve`, the lock, spawn on demand, the
@@ -384,7 +402,9 @@ The scrum workflow starts after stage 3.
   so moving it behind a loop changes the sender, not the rules.
 - Completions already act by identity (`reopenedTwin` matches on title
   and worktree path), so a reply naming title and workspace path is
-  enough for a client to apply it.
+  enough for a client to apply it. **Superseded 2026-10-07:** replies
+  name a model-assigned `InstanceID` instead (§2), which a reopened
+  workspace's fresh copy of a record does not share.
 - ~~Preview panes attach to tmux by session name through `TmuxSession`,
   not through anything the TUI's lifecycle state owns, so they survive a
   daemon restart.~~ **Corrected 2026-10-03:** not true. Every pane reads

@@ -17,19 +17,23 @@ A single `gopher-lua` state plus the bound-action table. One `Engine` lives for 
 ```go
 // script/engine.go
 type Engine struct {
-    mu           sync.Mutex
-    L            *lua.LState
-    actions      map[string]*scriptAction
-    order        []string        // insertion order for Registrations()
-    loading      bool            // true only inside Load()/LoadDefaults()
-    curFile      string          // script file currently being compiled
-    reserved     map[string]bool // raw key strings owned by built-ins
-    curActionFile string         // source file of the handler running now (runtime log lines)
-    inFlight     atomic.Pointer[inFlightAction] // key/file of the handler holding mu, for Shutdown's warning
-    curHost      Host            // Host active for the current dispatch
-    lastEnqueued IntentID        // most recent intent id for bare cs.await()
-    coroutines   map[IntentID]coroutineSlot // parked coroutines awaiting a resume
-    logs         []LogEntry      // bounded test capture; real sink is log.For("script")
+    mu            sync.Mutex
+    L             *lua.LState
+    actions       map[string]*scriptAction
+    order         []string        // insertion order for Registrations()
+    loading       bool            // true only inside Load()/LoadDefaults()
+    curFile       string          // script file currently being compiled
+    reserved      map[string]bool // raw key strings owned by built-ins
+    curActionFile string          // source file of the handler running now (runtime log lines)
+    curCo         *lua.LState     // handler coroutine running now (yieldable checks it)
+    inFlight      atomic.Pointer[inFlightAction]  // key/file of the handler holding mu, for Shutdown's warning
+    bindings      atomic.Pointer[bindingSnapshot] // what HasAction/Registrations read without mu
+    cancel        context.CancelFunc              // cancels the LState's context (Shutdown)
+    curHost       Host                            // Host active for the current dispatch
+    coroutines    map[IntentID]coroutineSlot      // parked coroutines awaiting a resume
+    waitingIn     map[IntentID]string             // the yielding method each parked lifecycle call waits in
+    lastEnqueued  IntentID                        // most recent intent id for bare cs.await()
+    logs          []LogEntry                      // bounded test capture; real sink is log.For("script")
 }
 ```
 
@@ -37,36 +41,57 @@ type Engine struct {
 
 ### Host
 
-An interface implemented by `app/app_scripts.go#scriptHost` that lets the engine touch live TUI state without importing `app/` (which would be a cycle). It carries the sync primitives (cursor movement, diff toggle, workspace switching) plus the `Enqueue(Intent) IntentID` method that powers deferred actions.
+An interface implemented by `app/app_scripts.go#scriptHost` that lets the engine touch live TUI state without importing `app/` (which would be a cycle). Its queries answer from a snapshot; its sync primitives record UI changes for the main goroutine to apply; and `Enqueue(Intent) IntentID` powers every deferred action, the lifecycle calls included, which reach the model as requests (see [Lifecycle calls](#lifecycle-calls)).
 
 ```go
 // script/host.go
 type Host interface {
-    // Queries
-    SelectedInstance() *session.Instance
-    Instances() []*session.Instance
+    // Queries, answered from the snapshot taken when the dispatch or resume began
+    SelectedInstance() (core.InstanceView, bool)
+    Instances() []core.InstanceView
     ConfigDir() string
     RepoPath() string
     DefaultProgram() string
     BranchPrefix() string
 
     // Side-effects
-    QueueInstance(inst *session.Instance)
     Notify(msg string)
+    Enqueue(intent Intent) IntentID // deferred primitives, lifecycle calls, ctx:new_instance
+    SendTerminalKeys(v core.InstanceView, text string) error
 
-    // Sync primitives (immediate)
+    // Sync primitives: recorded, applied on the main goroutine (handleScriptDone)
     CursorUp()
     CursorDown()
     ToggleDiff()
     WorkspacePrev()
     WorkspaceNext()
-
-    // Deferred primitives — returns an id the script can cs.await()
-    Enqueue(intent Intent) IntentID
+    ScrollLineUp()
+    ScrollLineDown()
+    ScrollPageUp()
+    ScrollPageDown()
+    ScrollTop()
+    ScrollBottom()
+    ScrollTerminalLineUp()
+    ScrollTerminalLineDown()
+    ScrollTerminalPageUp()
+    ScrollTerminalPageDown()
+    ResetAgentScroll()
+    ResetTerminalScroll()
+    ListPageUp()
+    ListPageDown()
+    ListTop()
+    ListBottom()
+    NextWaiting()
+    PrevWaiting()
+    ToggleRail()
+    ToggleTerminalPane()
+    ToggleOverview()
+    ResizeSplitUp()
+    ResizeSplitDown()
 }
 ```
 
-A fresh `scriptHost` is allocated per dispatch so pending instances, notices, and enqueued intents from one script can't leak into another. It holds no `*home`: the queries answer from a snapshot taken on the main goroutine (see [Concurrency](#concurrency)).
+Instances are views: `core.InstanceView` values copied into the snapshot, never the live instance, and never the TUI's draft row (a creation flow's session-to-be, which has no instance yet). A fresh `scriptHost` is allocated per dispatch and per resume so notices, enqueued intents and recorded actions from one script can't leak into another. It holds no `*home`: the queries answer from a snapshot taken on the main goroutine (see [Concurrency](#concurrency)).
 
 ### Script Action
 
@@ -87,7 +112,7 @@ type scriptAction struct {
 
 A userdata value handed to handlers. It lives for one handler run: the dispatch, plus any resumes after the handler yields on an intent (each resume rebinds it to that resume's host). `ctx` exposes methods that forward to the `Host` interface.
 
-Don't keep a `ctx` across dispatches. A `ctx` saved in a Lua global and reused from a later dispatch still points at the host of the run that created it, which the app has already drained, so whatever it writes (`ctx:notify`, `ctx:new_instance`, …) is dropped and its reads come from that old snapshot. Use the `ctx` each handler receives.
+Don't keep a `ctx` across dispatches. A `ctx` saved in a Lua global and reused from a later dispatch still points at the host of the run that created it, which the app has already drained, so what it posts there (`ctx:notify`) is dropped and its reads come from that old snapshot (`ctx:new_instance` reaches the running handler's host, but takes its default program and path from that old snapshot). Use the `ctx` each handler receives.
 
 ```lua
 cs.bind("ctrl+shift+p", function(ctx)
@@ -131,7 +156,7 @@ Passing `--no-scripts` to `loom` skips the user-scripts directory entirely; only
 loom --no-scripts
 ```
 
-Source: `main.go:269` wires the flag, `app/app.go:186` stores it as `skipScripts`, `app/app_scripts.go:211` skips the `engine.Load(dir)` call when set.
+Source: `main.go` wires the flag (`noScriptsFlag`), `app/app_init.go#newHome` stores it as `skipScripts`, and `app/app_scripts.go#initScriptsIn` skips the `engine.Load(dir)` call when set.
 
 ### Hard-reserved `ctrl+c`
 
@@ -193,7 +218,7 @@ Source: `script/sandbox.go`; test: `TestOpenSandbox_PrintRoutesToScriptLog` in `
 
 ### Userdata Boundary
 
-All host objects (`session.Instance`, `git.GitWorktree`, `ctx`) are exposed as opaque userdata with metatables that restrict access to an explicit method list. Scripts cannot read Go struct fields directly or reach into unexposed methods.
+All host objects (an instance as a `core.InstanceView` value, `git.GitWorktree`, `ctx`) are exposed as opaque userdata with metatables that restrict access to an explicit method list. Scripts cannot read Go struct fields directly or reach into unexposed methods. An instance userdata is a copy of the view, not the instance: it changes the instance only through requests to the model, and reaches its pane only through tmux, by the session name in the view.
 
 ### Untrusted Scripts
 
@@ -221,7 +246,7 @@ Installed as a global at engine construction (`script/api.go`).
 
 `cs.actions.*` are the primitives `cs.bind` handlers call to make things happen in the TUI. They split into two categories.
 
-**Sync primitives** run on the dispatch goroutine by calling a `Host` method directly. No overlay, no `tea.Cmd`, no coroutine yield.
+**Sync primitives** call a `Host` method directly on the dispatch goroutine: no overlay, no `tea.Cmd`, no coroutine yield. The host only records the change; the app applies it on the main goroutine when the dispatch (or resume) returns (`handleScriptDone`), so the handler's own later reads don't see it.
 
 | Primitive | Effect |
 |-----------|--------|
@@ -230,6 +255,19 @@ Installed as a global at engine construction (`script/api.go`).
 | `cs.actions.toggle_diff()` | Toggle the diff overlay. |
 | `cs.actions.workspace_prev()` | Focus the previous workspace tab. |
 | `cs.actions.workspace_next()` | Focus the next workspace tab. |
+| `cs.actions.scroll_line_up()` / `scroll_line_down()` | Scroll the active pane one line (the diff overlay when shown, else the focused pane). |
+| `cs.actions.scroll_page_up()` / `scroll_page_down()` | Scroll the active pane one page. |
+| `cs.actions.scroll_top()` / `scroll_bottom()` | Scroll the active pane to its top / back to the live tail. |
+| `cs.actions.scroll_terminal_line_up()` / `scroll_terminal_line_down()` | Scroll the terminal pane one line, whatever has focus. |
+| `cs.actions.scroll_terminal_page_up()` / `scroll_terminal_page_down()` | Scroll the terminal pane one page. |
+| `cs.actions.reset_agent_scroll()` / `reset_terminal_scroll()` | Drop that pane back to the live tail (no-op when not scrolled). |
+| `cs.actions.list_page_up()` / `list_page_down()` | Move the list selection one page. |
+| `cs.actions.list_top()` / `list_bottom()` | Select the first / last row. |
+| `cs.actions.next_waiting()` / `prev_waiting()` | Jump to the next / previous agent waiting for input (`]` / `[`). |
+| `cs.actions.toggle_rail()` | Show or hide the session rail. |
+| `cs.actions.toggle_terminal_pane()` | Show or hide the terminal pane. |
+| `cs.actions.toggle_overview()` | Switch between focus mode and the overview grid (persisted per workspace). |
+| `cs.actions.resize_split_up()` / `resize_split_down()` | Resize the agent/terminal split. |
 
 **Deferred primitives** enqueue an `Intent` on the host and `Yield` the running coroutine with the resulting `IntentID`. Any UI work that opens an overlay or produces a `tea.Cmd` goes through this path. All deferred primitives take a single opt-table argument; unknown keys are ignored.
 
@@ -240,15 +278,23 @@ Installed as a global at engine construction (`script/api.go`).
 | `cs.actions.kill_selected{confirm=?}` | `confirm` | `true` | `KillSelectedIntent{Confirm}` |
 | `cs.actions.stash_selected{confirm=?, help=?}` | `confirm`, `help` | `true`, `true` | `StashIntent{Confirm, Help}` |
 | `cs.actions.resume_selected()` | — | | `ResumeIntent` |
+| `cs.actions.restart_with_options_selected()` | — | | `RestartWithOptionsIntent` |
+| `cs.actions.open_review()` | — | | `OpenReviewIntent` |
 | `cs.actions.new_instance{prompt=?, title=?}` | `prompt`, `title` | `false`, `""` | `NewInstanceIntent{Prompt, Title}` |
 | `cs.actions.show_help()` | — | | `ShowHelpIntent` |
 | `cs.actions.open_workspace_picker()` | — | | `WorkspacePickerIntent` |
+| `cs.actions.open_settings()` | — | | `SettingsIntent` |
 | `cs.actions.inline_attach_agent()` | — | | `InlineAttachIntent{Pane: Agent}` |
 | `cs.actions.inline_attach_terminal()` | — | | `InlineAttachIntent{Pane: Terminal}` |
 | `cs.actions.fullscreen_attach_agent()` | — | | `FullscreenAttachIntent{Pane: Agent}` |
 | `cs.actions.fullscreen_attach_terminal()` | — | | `FullscreenAttachIntent{Pane: Terminal}` |
 | `cs.actions.quick_input_agent()` | — | | `QuickInputIntent{Pane: Agent}` |
 | `cs.actions.quick_input_terminal()` | — | | `QuickInputIntent{Pane: Terminal}` |
+| `cs.actions.toggle_file_explorer()` | — | | `ToggleFileExplorerIntent` |
+| `cs.actions.merge_selected()` | — | | `MergeSessionsIntent` |
+| `cs.actions.new_from_issue()` | — | | `NewFromIssueIntent` |
+
+These open the same flows the keys do; the lifecycle calls on an instance itself (`inst:kill()`, …) are [instance methods](#instance-methods), not `cs.actions`.
 
 Source of truth: `script/api_actions.go` (primitives + Lua wiring), `script/intent.go` (Intent types).
 
@@ -258,40 +304,40 @@ A userdata handed to every bound handler. Lives for one dispatch.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `ctx:selected()` | → instance\|nil | The focused instance in the list panel. |
-| `ctx:instances()` | → instance[] | 1-indexed array of every tracked instance. Mutating the array does nothing; use per-instance methods. |
+| `ctx:selected()` | → instance\|nil | The focused instance in the list panel; nil when the list is empty or the selection is a creation flow's draft row. |
+| `ctx:instances()` | → instance[] | 1-indexed array of every tracked instance (the draft row excluded). Mutating the array does nothing; use per-instance methods. |
 | `ctx:find(title)` | → instance\|nil | First instance with a matching title. |
 | `ctx:config_dir()` | → string | Resolved config directory for the active workspace. |
 | `ctx:repo_path()` | → string | Repo root new instances should be created against. |
 | `ctx:default_program()` | → string | The configured default agent command (e.g. `"claude"`). |
 | `ctx:branch_prefix()` | → string | The branch prefix for the active workspace (e.g. `"alice/"`). |
-| `ctx:new_instance{title=, ...}` | → instance | Create a new session. Required: `title`. Optional: `program`, `path`, `prompt`, `branch`. Instance is queued; it is added to the dispatch's workspace (`core.Workspace.Add`) on the main goroutine after the script returns. |
+| `ctx:new_instance{title=, ...}` | → instance | Create a new, unstarted session in the workspace the dispatch began in. Required: `title`. Optional: `program` (default `ctx:default_program()`), `path` (default `ctx:repo_path()`), `prompt`, `branch`. Yields until the model's `Create` replies and returns the created instance (`Ready`, not started). Raises `new_instance: workspace changed while a script ran; not creating <title> here` if the user switched workspace while the script ran, and `new_instance: <err>` if the model refuses it. A [lifecycle call](#lifecycle-calls): not inside `pcall` or a callback. |
 | `ctx:log(level, msg)` | → void | Equivalent to `cs.log`. |
 | `ctx:notify(msg)` | → void | Equivalent to `cs.notify` when dispatch is active. |
 
 ### `instance` Methods
 
-Wraps `*session.Instance`. Obtained from `ctx:selected()`, `ctx:instances()`, `ctx:find()`, or `ctx:new_instance{}`.
+Wraps a `core.InstanceView`: the instance as the rail showed it when the dispatch or resume began (for `ctx:new_instance{}`, when it was created). Obtained from `ctx:selected()`, `ctx:instances()`, `ctx:find()`, or `ctx:new_instance{}`. Its reads never change; after a yield, read again through `ctx` for a fresh copy. The lifecycle methods (`kill`, `pause`, `resume`, `send_prompt`) are requests to the model ([Lifecycle calls](#lifecycle-calls)); the pane methods (`preview`, `send_keys`, `tap_enter`) act on the agent's tmux session by the name in the view.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `inst:title()` | string | Session title. |
-| `inst:status()` | string | Lowercase status (`"ready"`, `"loading"`, `"running"`, `"paused"`). |
+| `inst:status()` | string | Status as the rail shows it: `"Ready"`, `"Loading"`, `"Running"`, `"Prompting"`, `"Paused"`, `"Deleting"`, `"Recoverable"`. |
 | `inst:branch()` | string | Git branch name. |
 | `inst:path()` | string | Repo path for this session. |
 | `inst:program()` | string | Agent command. |
-| `inst:started()` | bool | True once the tmux session has been created. |
+| `inst:started()` | bool | True once the session has started (its tmux session was created). |
 | `inst:paused()` | bool | True while the worktree is torn down. |
 | `inst:diff_stats()` | {added, removed, content} \| nil | Diff stats. Nil if not yet computed. |
-| `inst:preview()` | string, err? | The agent pane's visible screen, read with tmux `capture-pane` (no attach client needed). Empty when the session is not started, is paused, or is gone. Returns `(nil, errmsg)` on failure. |
+| `inst:preview()` | string, err? | The agent pane's visible screen, read with tmux `capture-pane` on the session named in the view (no attach client needed). Empty when the session is not started, is paused, or is gone. Returns `(nil, errmsg)` on failure. |
 | `inst:send_keys(keys)` | void | Types `keys` into the **agent** pane as raw text, through tmux `load-buffer` + `paste-buffer`, not `send-keys`: the bytes arrive verbatim, so an escape sequence reaches the agent exactly as written, where the write to the attach client's PTY it replaced was parsed into keys by tmux and re-encoded for the pane's modes (DECCKM cursor keys, say). Raises on error, and on an unstarted or paused session. |
 | `inst:send_terminal_keys(text)` | void | Send text followed by Enter to the instance's **terminal** pane (the bottom pane). Useful for launching out-of-TUI tools like `inst:send_terminal_keys("emacs " .. wt:path() .. " &")`. Raises if the terminal session is not cached (e.g. the instance was never visible) or has died. |
-| `inst:send_prompt(text)` | void | Types text into the agent pane (`load-buffer` + `paste-buffer`, as `send_keys`), then presses Enter (`send-keys`). Raises on error, and on an unstarted or paused session. |
+| `inst:send_prompt(text)` | void | Asks the model to type text into the agent pane (`load-buffer` + `paste-buffer`, as `send_keys`) and press Enter (`send-keys`), and waits until it has. Meanwhile the TUI holds input to the session: inline attach and other sends to it are refused. Raises `send_prompt: <err>` on an unstarted or paused session, a failed send, or while another send to it is in flight. |
 | `inst:tap_enter()` | void | Presses Enter in the agent pane (`send-keys`). Does nothing on an unstarted or paused session. |
-| `inst:pause()` | void | Pause the session. Raises on error. |
-| `inst:resume()` | void | Resume a paused session. Raises on error. |
-| `inst:kill()` | void | Kill and clean up. Raises on error. |
-| `inst:worktree()` | worktree\|nil | The git worktree, or nil if none is attached (paused / unstarted / workspace terminal). |
+| `inst:pause()` | void | Asks the model to pause the session (stash, end its tmux session, remove the worktree) and waits until it has; the rail shows the spinner meanwhile, and the record is saved. Raises `pause: <err>` on a session already paused, a workspace terminal, a busy session (Loading or Deleting), or a failed pause. |
+| `inst:resume()` | void | Asks the model to resume a paused session, or to recover a Recoverable one (as `r` does), and waits until it has; the rail shows the spinner meanwhile, and the record is saved. Raises `resume: <err>` when the model refuses or the resume fails. |
+| `inst:kill()` | void | Asks the model to kill the session and clean up (tmux, worktree, branch) and waits until it has: the session leaves the list and storage. A Recoverable one is discarded. Raises `kill: <err>` on a workspace terminal, a busy session, or a failed kill. |
+| `inst:worktree()` | worktree\|nil | A handle on the worktree, built from the view (repository, worktree path, branch); nil before the session has started and for a workspace terminal. |
 | `tostring(inst)` | string | `instance(title, status)` for debugging. |
 
 ### `worktree` Methods
@@ -352,7 +398,7 @@ Deferred primitives route through a 6-step enqueue → yield → Cmd → runXYZ 
 2. **Yield.** The primitive calls `L.Yield(id)`. The coroutine suspends; `runAction` catches the yield and parks the coroutine in `engine.coroutines[id]`.
 3. **Cmd.** When `Engine.Dispatch` returns from `runAction`, `dispatchScript` drains the `scriptHost` via `host.drain()` and returns the collected intents inside `scriptDoneMsg.pendingIntents`.
 4. **runXYZ.** `app.Update` receives the `scriptDoneMsg` and walks each `pendingIntent`. `handleScriptIntent` checks preconditions (moved here from the retired `ActionRegistry`) and calls the matching `runXYZ` helper in `app/intents.go`. Each helper returns the same `tea.Cmd` it did pre-migration (e.g. `runSubmitSelected` opens the push-confirm overlay).
-5. **Resume.** `handleScriptIntent` batches a `scriptResumeMsg{id}` with that `tea.Cmd`. When the message fires, `Engine.ResumeWithHost(ctx, id, host)` unparks the coroutine with `nil`: the primitive's call returns `nil`, and a `cs.await(id)` parked by hand returns `nil` as well.
+5. **Resume.** `handleScriptIntent` batches a `scriptResumeMsg{id}` with that `tea.Cmd`. When the message fires, `Engine.ResumeWithHost(ctx, id, host, value)` unparks the coroutine with the zero `ResumeValue`, which is `nil` in Lua: the primitive's call returns `nil`, and a `cs.await(id)` parked by hand returns `nil` as well. (A [lifecycle call](#lifecycle-calls) is resumed by its request's `Reply` instead.)
 6. **Continue.** The coroutine runs to completion or yields again on another deferred primitive, repeating the loop.
 
 Intent actions yield on their own, so a bare `cs.actions.push_selected{}` also waits, and the code after it runs only after the resume. Wrapping the call in `cs.await` is optional: the resumed action returns `nil`, and `cs.await(nil)` returns at once.
@@ -377,7 +423,7 @@ Step:       [1 Enqueue][2 Yield]──┐
                      [5 scriptResumeMsg]
                                   │
                                   ▼
-                     Engine.Resume(id) — unparks coroutine
+                     Engine.ResumeWithHost(…, id, …) — unparks coroutine
                                   │
                      [6 cs.notify("pushed")] runs
 ```
@@ -385,6 +431,21 @@ Step:       [1 Enqueue][2 Yield]──┐
 Source: `script/api_actions.go` (steps 1-2), `app/app_scripts.go#dispatchScript` and `#handleScriptDone` (step 3), `app/app_scripts.go#handleScriptIntent` + `app/intents.go` (step 4), `script/engine.go#ResumeWithHost` (step 5).
 
 **No `cs.await` needed**: a handler that calls a deferred primitive without `cs.await` behaves the same as one that wraps it — the primitive yields, the coroutine is parked in `engine.coroutines`, and it resumes after the intent runs. A coroutine that yields anything other than an intent id (e.g. a raw `coroutine.yield()`) is dropped with an error from the dispatch or resume, and its context is cancelled.
+
+### Lifecycle calls
+
+`inst:kill()`, `inst:pause()`, `inst:resume()`, `inst:send_prompt(text)` and `ctx:new_instance{}` are deferred too, but their intent is a request to the model rather than a UI flow, and they keep the shape of a plain method: void (or the new instance), raise on error.
+
+1. **Enqueue and yield.** The method enqueues an `InstanceOpIntent{ID, Title, Op, Text}` (for `ctx:new_instance`, a `CreateInstanceIntent{Title, Program, Path, Prompt, Branch}`), records the method it waits in (`Engine.waitingIn`), and yields.
+2. **Request.** `handleScriptIntent` sends the request with a `ReqID` and does not resume the coroutine itself: `scriptInstanceOp` calls `core.Model.Kill`, `Pause`, `Resume` (`Recover` for a Recoverable session) or `SendPrompt`, and `scriptCreate` calls `core.Model.Create`, unstarted, in the workspace the dispatch began in. A few calls the TUI refuses before any request, resuming at once with the error: `pause()` on a Paused session, `send_prompt()` while another send to that session is in flight, and `new_instance` when the user switched workspace while the script ran (decided before the script's recorded actions run, so the script's own `workspace_next()` doesn't count).
+3. **Reply.** The model answers with a `core.Reply`: at once when it refuses the request (its precondition mirrors the keys' gates), when the job finishes otherwise. `scriptReplied` (`app/requests.go`) turns it into a `script.ResumeValue`: `Err` = `"<op>: <err>"` on a refusal or failure, `Instance` = the new view for `new_instance`, nothing otherwise. A Reply's `Notice` (a stash the kill or resume could not drop, say) resumes with nothing: the model has shown it already.
+4. **Resume and raise.** `Engine.ResumeWithHost(ctx, id, host, value)` resumes the coroutine with the Lua form of the `ResumeValue` (`nil`, the error string, or an instance userdata). A Lua wrapper around each of these methods (`raiseReturnedErrors`) raises an error string at the line that called the method. After a tail call (`return inst:kill()`) no frame names that line, and the error carries no position.
+
+The raise ends the handler like any other Lua error, shown in the error bar prefixed with the script's file. When the request's job failed, the model's own notice shows first and the Lua error then replaces it in the error bar.
+
+**Not inside `pcall` or a callback.** gopher-lua can't yield across a Go call, so these five methods refuse to run where they couldn't yield (`Engine.yieldable`): inside `pcall` or `xpcall`, inside a callback such as a `table.sort` comparator or a `string.gsub` function, in a `register_action` precondition, or in a coroutine the script created. There they raise `"<op>: cannot be called inside pcall or a callback (it waits for the TUI)"` and request nothing. A script therefore can't catch a lifecycle error with `pcall`; check state first (`inst:paused()`, `inst:status()`).
+
+**Shutdown.** A call still parked when loom quits is resumed with `"<op>: loom is shutting down"`, which it raises, rather than with `nil`, which would read as a success that never happened.
 
 ## Dispatch Flow
 
@@ -419,15 +480,18 @@ app/state_default.go: handleStateDefaultKey
                                       │    └── run(ctx)
                                       │
                                       ▼
-                               scriptDoneMsg{err, pendingInstances, notices, pendingIntents}
+                               scriptDoneMsg{err, pendingActions, notices, pendingIntents, slot}
                                       │
                                       ▼
                                Update: handleScriptDone
                                       │
-                                      ├── slot.ws.Add for each pending inst
+                                      ├── is slot still focused? (decides where a new_instance may create)
+                                      ├── apply each recorded action (sync primitives)
                                       ├── errBox for each notice
-                                      ├── handleScriptIntent for each intent (→ step 4 of Intent Lifecycle)
-                                      └── if err: errBox
+                                      ├── if err: errBox
+                                      └── handleScriptIntent for each intent
+                                            ├── UI intents → step 4 of Intent Lifecycle
+                                            └── lifecycle calls, new_instance → a model request (Lifecycle calls)
 ```
 
 ## Concurrency
@@ -441,14 +505,14 @@ app/state_default.go: handleStateDefaultKey
 **What this means for scripts**:
 - A slow script blocks other scripts but not the TUI: key lookups and the help screen read the bindings snapshot, not the engine mutex.
 - Two keys bound to the same long-running script serialize.
-- Host reads (`ctx:selected()`, `ctx:instances()`, `ctx:config_dir()`, …) come from a snapshot `newScriptHost` takes on the main goroutine when the dispatch begins, not from the live model, so they never see later changes — including the handler's own deferred sync primitives and queued instances. When a handler resumes after an intent yield, its `ctx` is rebound to the resume's host, so reads after the yield see a fresh snapshot and `ctx:notify`/`ctx:new_instance` reach the resume's `scriptDoneMsg`.
+- Host reads (`ctx:selected()`, `ctx:instances()`, `ctx:config_dir()`, …) come from a snapshot `newScriptHost` takes on the main goroutine when the dispatch begins, not from the live model, so they never see later changes — including the handler's own recorded sync primitives. When a handler resumes after an intent yield, its `ctx` is rebound to the resume's host, so reads after the yield see a fresh snapshot and `ctx:notify`/`ctx:new_instance` reach the resume's `scriptDoneMsg`.
 - `cs.await` is cheap — the coroutine is parked, the mutex released, and no CPU is consumed until `Resume` delivers the value.
 
 **What this means for the app**:
-- Adding an instance to its workspace (`core.Workspace.Add`) must run on the main goroutine. Scripts queue instances via `Host.QueueInstance`; finalization happens in `handleScriptDone`, which adds them to the workspace of the slot the dispatch snapshotted (dropping them with a notice if focus moved meanwhile). Never edit a workspace from inside the Lua VM.
+- Scripts never touch an instance or a workspace: the userdata holds views, and lifecycle calls and `ctx:new_instance` are intents the app turns into model requests on the main goroutine (`scriptInstanceOp`, `scriptCreate`); the model edits its workspaces itself. A `ctx:new_instance` creates in the workspace of the slot the dispatch snapshotted, and only while that slot is still focused when the script's result lands.
 - Intent dispatch (`handleScriptIntent`) also runs on the main goroutine, from inside `Update`.
-- Notices and the instance queue are buffered and surfaced through `scriptDoneMsg` so error-bar updates happen on the main loop.
-- On quit, `Engine.Shutdown` drains parked coroutines and closes the LState within a bound (`scriptShutdownTimeout`). If a handler is still running it cancels the LState's context, which stops a Lua loop at its next instruction. A handler blocked inside a Go call is left for process exit to reclaim, and the `engine_busy_at_shutdown` warning names its key and file.
+- Notices, intents and recorded actions are buffered and surfaced through `scriptDoneMsg` so error-bar updates happen on the main loop.
+- On quit, `Engine.Shutdown` drains parked coroutines and closes the LState within a bound (`scriptShutdownTimeout`); a coroutine parked in a lifecycle call raises `"<op>: loom is shutting down"`. If a handler is still running it cancels the LState's context, which stops a Lua loop at its next instruction. A handler blocked inside a Go call is left for process exit to reclaim, and the `engine_busy_at_shutdown` warning names its key and file.
 
 ## Error Handling
 
@@ -458,7 +522,10 @@ app/state_default.go: handleStateDefaultKey
 | `run` function raises a Lua error | Wrapped as `<file>: <error>`, returned from `Dispatch`, shown in the error bar. |
 | `precondition` (register_action) raises | Wrapped as `<file>: precondition: <error>`, shown in the error bar. |
 | Go panic inside userdata (shouldn't happen) | Recovered, Lua stack drained, wrapped as `script <file> panic: ...`. |
-| Host method returns an error (e.g. `inst:send_keys` on a dead tmux session) | The userdata method raises a Lua error, which becomes a dispatch error via the above. |
+| A userdata method fails (e.g. `inst:send_keys` on a dead tmux session, `inst:send_terminal_keys` with no cached terminal session) | The method raises a Lua error, which becomes a dispatch error via the above. |
+| A lifecycle call or `ctx:new_instance` is refused or fails | The method raises `<op>: <err>` at the calling line ([Lifecycle calls](#lifecycle-calls)), surfacing as a dispatch or resume error. A failed job's notice from the model shows first; the raise replaces it. |
+| A lifecycle call inside `pcall`, a callback, a precondition or a script's own coroutine | Raises `<op>: cannot be called inside pcall or a callback (it waits for the TUI)`; nothing is requested. |
+| loom quits while a lifecycle call waits | The call raises `<op>: loom is shutting down` during the shutdown drain, logged as `cleanup_resume_failed`. |
 | Intent precondition fails (e.g. `kill_selected` with nothing selected) | Intent is silently dropped in `handleScriptIntent`. The coroutine is resumed anyway so `cs.await` returns cleanly; handlers can observe the no-op by checking state via `ctx` after the await. |
 
 Script log output via `cs.log` / `ctx:log` writes straight to `log.For("script")` inside the same call, under `e.mu` — no separate drain step, and no coupling to the app's Update loop (the app never calls into the engine's log path). Each line carries a `file` attribute: the file being loaded, or at runtime the file that bound the running handler.
@@ -481,13 +548,14 @@ Reference scripts ship in `script/testdata/`. Copy to `~/.loom/scripts/` to acti
 | `script/sandbox.go` | Allow-list lib loader, escape-hatch stripping. See [Security](#security). |
 | `script/api.go` | Installs the `cs` global (`bind`, `unbind`, `register_action`, `log`, `notify`, `now`, `sprintf`, `await`). |
 | `script/api_actions.go` | Installs `cs.actions.*` (sync + deferred primitives). |
-| `script/intent.go` | Deferred Intent types consumed by the app. |
+| `script/intent.go` | Deferred Intent types consumed by the app, the lifecycle calls' (`InstanceOpIntent`, `CreateInstanceIntent`) included, and `ResumeValue`. |
 | `script/loader.go` | Walks `~/.loom/scripts/`, runs each `.lua` file under `loading=true`. |
 | `script/host.go` | The `Host` interface. |
 | `script/userdata_ctx.go` | `ctx` userdata metatable and methods. |
-| `script/userdata_instance.go` | `instance` userdata metatable and methods. |
+| `script/userdata_instance.go` | `instance` userdata (a `core.InstanceView`) metatable and methods; the yielding lifecycle methods (`lifecycleOp`, `yieldable`) and their raise wrapper (`raiseReturnedErrors`). |
 | `script/userdata_worktree.go` | `worktree` userdata metatable and methods. |
-| `app/app_scripts.go` | `scriptHost` adapter, `initScripts`, `dispatchScript`, `handleScriptIntent`, `handleScriptDone`. |
+| `app/app_scripts.go` | `scriptHost` adapter, `initScripts`, `dispatchScript`, `handleScriptIntent`, `handleScriptDone`, and the lifecycle calls' requests (`scriptInstanceOp`, `scriptCreate`). |
+| `app/requests.go` | The TUI's request book: `scriptReplied` turns a lifecycle call's `Reply` into its `ResumeValue`. |
 | `app/intents.go` | Preconditions + `runXYZ` helpers each intent routes to. |
 | `app/state_default.go` | `ctrl+c` hard-reserve and single-point dispatch into the script engine. |
 | `script/testdata/` | Sample scripts. |
@@ -512,4 +580,4 @@ Reference scripts ship in `script/testdata/`. Copy to `~/.loom/scripts/` to acti
 
 **No `io`, `os`, or shell execution in the sandbox.** If a script needs to shell out, it should do it via an instance's tmux session (where the user already has agent output visible) rather than forking a subprocess the user cannot observe. This keeps the surface of "what scripts can do" bounded to "what the TUI already shows."
 
-**Instance creation is queued, not immediate.** `ctx:new_instance{}` returns a userdata handle, but the actual `core.Workspace.Add` call happens on the main goroutine in `handleScriptDone`. This preserves the invariant that a workspace's instances are only edited from the Bubble Tea loop, even though scripts execute in a `tea.Cmd` goroutine.
+**Instance changes are model requests.** A script never holds an instance: its userdata is a copy of a `core.InstanceView`, and `kill`, `pause`, `resume`, `send_prompt` and `ctx:new_instance` yield until the model's `Reply`. A script's changes therefore pass the same preconditions, show the same spinner, save the same records and show the same notices as the keys' (before daemon stage 1C a Lua kill left the row and its record behind, and a Lua pause or resume neither saved nor showed the spinner), and only the model edits a workspace, even though scripts execute in a `tea.Cmd` goroutine. The cost is that these five methods can't run inside `pcall` or a callback.
