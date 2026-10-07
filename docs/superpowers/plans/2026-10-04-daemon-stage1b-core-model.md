@@ -3843,3 +3843,54 @@ The sandbox must not reach the real `~/.claude`. For the account check, use a th
   - the follow-ups. Include those found during execution, plus the open items this plan defers: the two workspace-terminal auto-create paths, the snapshot path's diff a tick late, and the prompt overlay closing before a failed send.
 
   Update the `loom-scrum-daemon-direction` memory: 1B is done and where it merged, and the next step is plan 1C.
+
+---
+
+## Outcome and follow-ups (recorded 2026-10-07)
+
+Stage 1B is done. Commits:
+- **A** (83641eb, then fixes af864ed);
+- **B** (ebdbf92, then fixes aef4cd2 and 2652164);
+- **C** (3d17d9b, then fixes d65008a);
+- **docs** (a276de7);
+- **final-review fixes** (10b4adf, caadc6c).
+
+Every package had a spec and quality review by one standing reviewer, and every fix round went back to the reviewer who filed the findings. A final cross-cutting review and a sandbox smoke run came last. Final state:
+- `go vet`, `go test ./...`, `-race` (core, app, ui, session) and the e2e suite (4/4) are green;
+- the assertion count rose from 6951 to 7188, and none was dropped;
+- the smoke run passed 10/10 on 10b4adf: restore with two tabs, `N` with a prompt, kill/pause/resume/`R`, recover/discard of orphans, tabs and global mode, quit/restart, agent exit, the workspace terminal's restart, quick input, the account strip and the snapshot path. It found no regressions.
+
+What the reviews changed beyond the plan:
+- **The list selection follows the old rules across several edits between reads.** `lostSelectionRow` works over a copy of the last-seen rows, and a lone in-place replacement keeps the row. Two mixed shapes are heuristic (follow-up 2).
+- **Core owns the agent program** (`SetProgram`), and `Loaded()` returns a copy.
+- **`Started` waits for the N flow's initial prompt to be sent** (`promptSent`, with `Loaded` recomputed), so no keystroke can land between the paste and its Enter. A failed send names the session.
+- **`applyStarted` only attaches an active instance** (`!core.ActiveInstance`): a kill or pause confirmed during the send leaves it alone.
+- **`Alive` excludes `LivenessUnknown`.** This was a plan bug: the old code never repaired a client on an inconclusive probe.
+- **`deliverHealth` skips ineligible instances (`StatusEligible`).** This was a bug that predates 1B, found by the final review. A probe in flight across a kill or pause could move a Deleting or Loading instance back to Ready. That reopened the busy gate and could save a killed session's record back to disk.
+- **On the snapshot path, a failed capture is no opinion.** Output is recorded before the reported-status check.
+- **Test seams live in `core/seams.go`.** `TestNoProductionCallsOfTestSeams` guards them, and it caught `core.New` calling `NewForTest`.
+- **The outbox fixed a latent latch.** Before 1B, a `paneDirtyMsg` that hit an `UpdateAgent` error dropped the roster and hook-scan Cmds it had already armed, so those jobs stopped for the rest of the session. Jobs now always reach the runtime.
+- **The fixtures now mirror production** (lesson 14 again):
+  - start completions use a started, Running instance (`finishStart`);
+  - workspace-terminal tick tests probe started instances;
+  - the circuit-breaker mock behaves like a tmux server. The old one made every restart fail with "already exists".
+
+Follow-ups, none blocking:
+1. **First selection.** When a workspace terminal is auto-created over loaded sessions, the first selection is the terminal. Accepted: it now matches every later launch.
+2. **Mixed list edits.** Two shapes, landing between reads, read as an in-place replace and select the new row: the selected last row removed while one row is appended, and the selected first row removed while the terminal is prepended. Neither is reachable today.
+3. **Prompt sends race later input.** A quick-input, review or prompt-overlay send runs as a job and isn't serialized against input that follows within about 150ms. Keys typed into inline attach, or a second send, can land between the paste and the Enter. Fix with a per-instance in-flight hold in the TUI (`SendPrompt` reporting success too). The overlay also closes before its send now, and a failure arrives as "prompt not sent to X".
+4. **Two workspace-terminal auto-create paths still differ.** `OpenTab` uses the workspace config's program and kills an owned leftover; `loadWorkspace` uses `-p` and doesn't. They moved verbatim.
+5. **Snapshot path:** the diff refresh is a tick late.
+6. **`selectedBranch` is dead** along `issueExpandCmd` → `openLaunchOptionsForNew`. Drop it in 1C.
+7. **A failed restart strands a workspace terminal (predates 1B).** If `Instance.Restart` clears `started` and its `Start` then fails, the terminal stays Running but unstarted. It is never probed, never paused by the circuit breaker, and never given a client.
+8. **Seen in the smoke run, all predating 1B** (reproduced on a 1A baseline build):
+   - after `r`/`R` the terminal pane's shell starts in `~`, because it spawns while the instance is Loading;
+   - the focused workspace's terminal pane is blank on startup until the first focus change;
+   - on the snapshot path, overview cards are empty and the rail shows labels instead of tails;
+   - `pump.wait_timeout` warnings after a release (the pollable-PTY stage, 1A follow-up 1);
+   - "Recovery: …" shows again after a tab closes, because it is the slot's stored summary;
+   - tab-bar status dots vanish for a few seconds after a cross-workspace `]`.
+9. **Test gap:** `GitHubResultForTest` builds no bases.
+10. **For 1C:** `InstanceView` and the `Core` interface over the 1B events, draft rows, Lua through `Core`, the issue-picker fetches as requests, and the pane ladder as a display-only overlay.
+11. **`main` has moved on** since this branch began: c8fb3b0, one loom TUI per global dir with takeover (`app/app.go`, `app/app_init.go`, `app/takeover.go`), plus the orphan-account fix. Merging needs conflict work against this refactor.
+12. **Unverified here:** real Claude (the smoke run used the fake agent), tmux 3.6a, and full-screen attach (`alt+a`), which the headless driver can't run nested. For sandbox account checks, set `CLAUDE_CONFIG_DIR` to a throwaway dir: the accounts refresh syncs against the main config dir, which defaults to `~/.claude`.
