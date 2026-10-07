@@ -72,7 +72,7 @@ func createSession(t *testing.T, sb *devsandbox.Sandbox, title string) {
 	}, uiTimeout, 200*time.Millisecond, "agent session for %q never started", title)
 	require.NoError(t, sb.WaitFor("commands: work N", uiTimeout))
 	// Starting a session auto-attaches the agent pane in "capturing input"
-	// mode (app/app.go's instanceStartedMsg handler, confirmed by driving
+	// mode (app/completions.go's applyStarted, confirmed by driving
 	// the sandbox interactively: the footer reads "CAPTURING INPUT" right
 	// after start). Detach so later driver keystrokes (quick input, quit)
 	// reach loom's normal keymap instead of the agent's pty.

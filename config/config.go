@@ -144,7 +144,7 @@ type Config struct {
 	// opt-in. Mutually exclusive with ClaudeRemoteControl: enabling one
 	// disables the other, enforced in the Claude Preferences toggle
 	// handler, the Session Launch Options modal, and defensively again
-	// in applyLaunchOptions so a hand-edited config.json with both
+	// in launch.Compose so a hand-edited config.json with both
 	// fields true still can't launch both at once. Read it through
 	// HeadroomProxyEnabled.
 	HeadroomProxy *bool `json:"headroom_proxy,omitempty"`

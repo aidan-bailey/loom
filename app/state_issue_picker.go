@@ -10,6 +10,7 @@ import (
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
+	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 )
@@ -27,7 +28,7 @@ type issuePickedMsg struct {
 
 // issueRows lists the focused repo's open issues, newest first.
 func (m *home) issueRows() []overlay.IssueRow {
-	snap, ok := m.ghState[m.repoPath()]
+	snap, ok := m.core.GitHubSnapshot(m.repoPath())
 	if !ok {
 		return nil
 	}
@@ -50,10 +51,10 @@ func (m *home) issueRows() []overlay.IssueRow {
 // result that will never come.
 func (m *home) issuePickerStatus() string {
 	repo := m.repoPath()
-	if _, ok := m.ghState[repo]; ok {
+	if _, ok := m.core.GitHubSnapshot(repo); ok {
 		return ""
 	}
-	if err, ok := m.ghErrs[repo]; ok && err != nil {
+	if err := m.core.GitHubErr(repo); err != nil {
 		return "gh unavailable: " + err.Error()
 	}
 	return "loading…"
@@ -65,13 +66,13 @@ func runNewFromIssue(m *home) (tea.Model, tea.Cmd) {
 	if m.list.NumInstances() >= GlobalInstanceLimit {
 		return m, m.handleError(fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
 	}
-	if m.ghAvailable.checked && !m.ghAvailable.ok {
-		return m, m.handleError(fmt.Errorf("gh unavailable: %s", m.ghAvailable.reason))
+	if m.core.GitHubUnavailable() {
+		return m, m.handleError(fmt.Errorf("gh unavailable: %s", m.core.GitHubUnavailableReason()))
 	}
 	p := overlay.NewIssuePicker(m.issueRows())
 	p.SetStatus(m.issuePickerStatus())
-	if _, ok := m.ghState[m.repoPath()]; !ok {
-		m.gate(gateGH).expedite()
+	if _, ok := m.core.GitHubSnapshot(m.repoPath()); !ok {
+		m.core.ExpediteGitHub()
 	}
 	m.setOverlay(p, overlayIssuePicker)
 	m.state = stateIssuePicker
@@ -140,7 +141,7 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:     title,
 		Path:      m.repoPath(),
-		Program:   m.program,
+		Program:   m.core.Program(),
 		Prompt:    github.SeedPrompt(msg.issue),
 		ConfigDir: m.configDir(),
 	})
@@ -148,10 +149,10 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 		return m, m.handleError(err)
 	}
 	instance.SetIssue(msg.issue.Number)
-	m.list.AddInstance(instance)
+	m.ws.Add(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
-	m.gate(gateGH).expedite()
-	m.applyGitHubState()
+	m.core.ExpediteGitHub()
+	m.core.ApplyGitHubState()
 	return m.openLaunchOptionsForNew(instance, "")
 }
 
@@ -242,8 +243,8 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 		}
 		inst.SetPrompt(prompt)
 		inst.SetIssue(msg.issue.Number)
-		m.gate(gateGH).expedite()
-		m.applyGitHubState()
+		m.core.ExpediteGitHub()
+		m.core.ApplyGitHubState()
 	}
 	_, cmd := m.openLaunchOptionsForNew(inst, msg.selectedBranch)
 	return m, tea.Batch(cmd, errCmd)
@@ -252,12 +253,13 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 // openLaunchOptionsForNew shows the Session Launch Options modal for an
 // unstarted instance already in the list. Confirming composes the
 // program from the chosen options and starts the instance; cancelling
-// pops it (killPendingLaunchOptionsCancel). selectedBranch is threaded
-// to instanceStartedMsg for the N flow's branch picker.
+// pops it (killPendingLaunchOptionsCancel). selectedBranch is no longer
+// read: the prompt flow set it on the instance (SetSelectedBranch) before
+// any issue expansion, and the start result does not carry it.
 func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranch string) (tea.Model, tea.Cmd) {
 	m.pendingNew = instance
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-		owner := m.startOwner(instance) // stamped for instanceStartedMsg
+		startJob := m.core.Start(instance, m.ws) // owner stamped now
 		startTask := overlay.ConfirmationTask{
 			Sync: func() {
 				m.pendingNew = nil // the start owns it now
@@ -271,25 +273,18 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
 			},
-			Async: tea.Batch(tea.RequestWindowSize, func() tea.Msg {
-				err := instance.Start(true)
-				return instanceStartedMsg{
-					instance:       instance,
-					err:            err,
-					selectedBranch: selectedBranch,
-					slot:           owner,
-				}
-			}),
+			Async: tea.Batch(tea.RequestWindowSize, coreCmd(startJob)),
 		}
-		if m.remoteControlBlockedOn(opts.Account, effectiveRemoteControl(opts), instance.Program()) {
-			return m, m.promptRemoteControlBlocked(startTask, m.rcAuthFor(opts.Account).Reason)
+		if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), instance.Program()) {
+			return m, m.promptRemoteControlBlocked(startTask, m.core.RCAuthFor(opts.Account).Reason)
 		}
 		return m, tea.Batch(startTask.Run(), m.instanceChanged())
 	}
 	m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions
-	lo, reloaded := m.newLaunchOptionsOverlay(launchOptionsFromConfig(m.appConfig), instance.Program())
+	lo, reloaded := m.newLaunchOptionsOverlay(launch.FromConfig(m.appConfig()), instance.Program())
 	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
-	return m, tea.Batch(tea.RequestWindowSize, reloaded, m.requestUsageProbe())
+	m.core.RequestUsageProbe()
+	return m, tea.Batch(tea.RequestWindowSize, reloaded)
 }

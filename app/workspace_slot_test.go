@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -23,19 +24,28 @@ import (
 
 // focusSlots installs slots as h's open workspace tabs and focuses
 // slots[focused], so the embedded focused slot is the same pointer as
-// h.slots[focused] (the invariant checkSlotInvariant enforces).
+// h.slots[focused] (the invariant checkSlotInvariant enforces). A home
+// already given a model (wireCore) gets the model's tabs re-installed to
+// mirror the new slots.
 func focusSlots(h *home, focused int, slots ...*workspaceSlot) {
 	h.slots = slots
 	h.focusedSlot = focused
 	h.workspaceSlot = slots[focused]
+	if h.core != nil {
+		var tabs []*core.Workspace
+		for _, s := range slots {
+			tabs = append(tabs, s.ws)
+		}
+		h.core.SetWorkspacesForTest(nil, tabs)
+	}
 }
 
 // focusedName is the focused slot's workspace name ("" for a nil wsCtx).
 func focusedName(m *home) string {
-	if m.wsCtx == nil {
+	if m.wsCtx() == nil {
 		return ""
 	}
-	return m.wsCtx.Name
+	return m.wsCtx().Name
 }
 
 // TestSlotInvariant_HoldsAcrossSlotLifecycle drives every m.slots
@@ -85,8 +95,8 @@ func TestSlotInvariant_HoldsAcrossSlotLifecycle(t *testing.T) {
 	_ = m.applyWorkspaceToggle(nil)
 	require.NoError(t, m.checkSlotInvariant(), "after returning to global mode")
 	assert.Empty(t, m.slots)
-	require.NotNil(t, m.wsCtx, "global mode's slot carries the global context")
-	assert.Equal(t, config.WorkspaceContext{ConfigDir: globalDir}, *m.wsCtx)
+	require.NotNil(t, m.wsCtx(), "global mode's slot carries the global context")
+	assert.Equal(t, config.WorkspaceContext{ConfigDir: globalDir}, *m.wsCtx())
 	assert.NotNil(t, m.workbench, "the global slot keeps a workbench")
 	assert.NotNil(t, m.splitPane, "the global slot keeps a split pane")
 }
@@ -133,17 +143,17 @@ func TestSlotInvariant_ToggleKeepsTabsWhenEveryActivationFails(t *testing.T) {
 func TestSlotOwnsState_MutationVisibleWithoutSave(t *testing.T) {
 	m := fleetHome(t)
 	inst := &session.Instance{Title: "added", Status: session.Ready}
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	assert.Same(t, inst, m.slots[0].list.GetInstanceByTitle("added"))
 
-	replacement := ui.NewList(&m.spinner)
+	replacement := ui.NewList(&m.spinner, m.ws)
 	m.list = replacement
 	assert.Same(t, replacement, m.slots[0].list, "a promoted-field write lands in the focused slot")
 
 	m.switchWorkspaceSlot(1)
 	require.NoError(t, m.checkSlotInvariant())
 	other := &session.Instance{Title: "peer-added", Status: session.Ready}
-	m.list.AddInstance(other)
+	m.ws.Add(other)
 	assert.Same(t, other, m.slots[1].list.GetInstanceByTitle("peer-added"))
 	assert.Nil(t, m.slots[0].list.GetInstanceByTitle("peer-added"), "the other slot is untouched")
 }
@@ -236,10 +246,11 @@ func TestEnterGlobalMode_SlotSaveFailureAbortsCleanly(t *testing.T) {
 	m := newRestoreHome(dead)
 	m.errBox.SetSize(400, 1)
 	slotA := fleetSlot(t, "ws-a", "a1")
-	slotA.storage = storageA
+	reworkspace(t, m, slotA, func(p *core.WorkspaceParts) { p.Storage = storageA })
 	slotB := fleetSlot(t, "ws-b", "b1")
-	slotB.storage = storageB
+	reworkspace(t, m, slotB, func(p *core.WorkspaceParts) { p.Storage = storageB })
 	focusSlots(m, 0, slotA, slotB)
+	wireCore(t, m)
 
 	cmd := m.applyWorkspaceToggle(nil)
 
@@ -353,10 +364,10 @@ func TestScriptDone_DropsInstanceWhenFocusChangedMidDispatch(t *testing.T) {
 func TestStartupPicker_FlushesPendingRatiosIntoClassicState(t *testing.T) {
 	isolateTmux(t)
 	m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
-	m.list.AddInstance(&session.Instance{Title: "main", Status: session.Running})
+	m.ws.Add(&session.Instance{Title: "main", Status: session.Running})
 	m.list.SetSelectedInstance(0)
 	m.pendingRatioSaves = map[string]float64{"main": 0.4}
-	classicState := m.appState
+	classicState := m.appState()
 
 	ws := preservedTerminalWorkspace(t, "ws-a")
 	m.setOverlay(overlay.NewStartupWorkspacePicker([]config.Workspace{ws}), overlayWorkspacePickerStartup)
@@ -367,6 +378,6 @@ func TestStartupPicker_FlushesPendingRatiosIntoClassicState(t *testing.T) {
 	require.NoError(t, m.checkSlotInvariant())
 	assert.Empty(t, m.pendingRatioSaves, "the switch must flush pending ratios")
 	assert.Equal(t, 0.4, classicState.GetUIPrefs().SplitRatios["main"], "flushed into the departing (classic) state")
-	_, leaked := m.appState.GetUIPrefs().SplitRatios["main"]
+	_, leaked := m.appState().GetUIPrefs().SplitRatios["main"]
 	assert.False(t, leaked, "the new workspace's state must not receive the classic ratio")
 }

@@ -128,8 +128,9 @@ func TestMigrationParitySyncPrimitives(t *testing.T) {
 	}
 }
 
-// mustAddInstance creates a Ready instance with the given title and
-// registers it on m.list. Keeps the parity test terse.
+// mustAddInstance creates a Ready instance with the given title and adds
+// it to the focused slot's workspace (m.ws), whose rail m.list shows. Keeps
+// the parity test terse.
 func mustAddInstance(t *testing.T, m *home, title string) *session.Instance {
 	t.Helper()
 	inst, err := session.NewInstance(session.InstanceOptions{
@@ -138,7 +139,7 @@ func mustAddInstance(t *testing.T, m *home, title string) *session.Instance {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	return inst
 }
 

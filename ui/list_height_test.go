@@ -48,11 +48,12 @@ func TestListRenderDimensions(t *testing.T) {
 		contentHeight := termHeight - 2 // no tab bar
 
 		t.Run(fmt.Sprintf("termWidth_%d", termWidth), func(t *testing.T) {
-			list := NewList(&sp)
+			src := &sliceSource{}
+			list := NewList(&sp, src)
 			list.SetSize(listWidth, contentHeight)
 
 			for _, inst := range instances {
-				list.AddInstance(inst)
+				src.add(inst)
 			}
 
 			output := list.String()
@@ -102,7 +103,7 @@ func TestListRenderDimensions(t *testing.T) {
 func TestMaxVisibleItems_RailMath(t *testing.T) {
 	_ = log.Initialize("", false)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	l := NewList(&sp)
+	l := NewList(&sp, nil)
 	// height 20: (20 - RailHeaderLines) / RailCardLines = 6
 	l.SetSize(30, 20)
 	assert.Equal(t, 6, l.maxVisibleItems())
@@ -117,12 +118,13 @@ func TestMaxVisibleItems_RailMath(t *testing.T) {
 func TestListString_RendersRailCards(t *testing.T) {
 	_ = log.Initialize("", false)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	l := NewList(&sp)
+	src := &sliceSource{}
+	l := NewList(&sp, src)
 	l.SetWorkspaceName("loom")
 	l.SetSize(40, 30)
 	inst := &session.Instance{Title: "auth-refactor"}
 	_ = inst.TransitionTo(session.Ready)
-	l.AddInstance(inst)
+	src.add(inst)
 	out := ansi.Strip(l.String())
 	assert.Contains(t, out, "LOOM")          // section label, uppercased
 	assert.Contains(t, out, "auth-refactor") // card title
@@ -138,7 +140,8 @@ func TestListString_NeverExceedsHeight(t *testing.T) {
 	for height := 1; height <= 8; height++ {
 		for _, nPeers := range []int{0, 3, 5} {
 			for _, nItems := range []int{0, 1, 5} {
-				l := NewList(&sp)
+				src := &sliceSource{}
+				l := NewList(&sp, src)
 				l.SetSize(30, height)
 				l.SetWorkspaceName("loom")
 				peers := make([]PeerSection, nPeers)
@@ -149,7 +152,7 @@ func TestListString_NeverExceedsHeight(t *testing.T) {
 				for i := 0; i < nItems; i++ {
 					inst := &session.Instance{Title: fmt.Sprintf("inst-%d", i)}
 					_ = inst.TransitionTo(session.Ready)
-					l.AddInstance(inst)
+					src.add(inst)
 				}
 				out := l.String()
 				assert.LessOrEqual(t, len(strings.Split(out, "\n")), height,
@@ -162,7 +165,7 @@ func TestListString_NeverExceedsHeight(t *testing.T) {
 func TestListString_RendersPeerSummaries(t *testing.T) {
 	_ = log.Initialize("", false)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	l := NewList(&sp)
+	l := NewList(&sp, nil)
 	l.SetWorkspaceName("loom")
 	l.SetSize(40, 30)
 	l.SetPeerSections([]PeerSection{{Name: "summa", Attention: 2, Running: 1, Idle: 3}})

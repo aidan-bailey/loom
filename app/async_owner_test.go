@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,11 +23,12 @@ func ownerTestHome(t *testing.T) (m *home, recA, recB *recordingInstanceStorage)
 	m.viewMode = viewFocus
 	m.errBox = ui.NewErrBox()
 	recA, recB = &recordingInstanceStorage{}, &recordingInstanceStorage{}
-	var err error
-	m.slots[0].storage, err = session.NewStorage(recA, t.TempDir())
+	storageA, err := session.NewStorage(recA, t.TempDir())
 	require.NoError(t, err)
-	m.slots[1].storage, err = session.NewStorage(recB, t.TempDir())
+	reworkspace(t, m, m.slots[0], func(p *core.WorkspaceParts) { p.Storage = storageA })
+	storageB, err := session.NewStorage(recB, t.TempDir())
 	require.NoError(t, err)
+	reworkspace(t, m, m.slots[1], func(p *core.WorkspaceParts) { p.Storage = storageB })
 	return m, recA, recB
 }
 
@@ -36,8 +39,20 @@ func startingInstance(t *testing.T, slot *workspaceSlot, title string) *session.
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Loading))
-	slot.list.AddInstance(inst)
+	slot.ws.Add(inst)
 	return inst
+}
+
+// finishStart leaves inst as a successful Instance.Start(true) does before
+// its StartResult exists: started and Running, on a mock tmux session that
+// answers alive (no tmux server contacted). Start(false) marks the preset
+// session started without launching anything.
+func finishStart(t *testing.T, inst *session.Instance) {
+	t.Helper()
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(inst.Title, inst.Program(), fakePtyFactory{t: t}, aliveCmdExecForTest()))
+	require.NoError(t, inst.EnsureRunning())
+	require.Equal(t, session.Running, inst.GetStatus(), "fixture: a start leaves the instance Running")
+	require.True(t, core.ActiveInstance(inst), "fixture: a start leaves the instance active")
 }
 
 // selectTitle selects the instance titled title in m's focused list.
@@ -60,7 +75,7 @@ func TestInstanceStarted_FailureAfterSwitchKillsOnlyTheFailedInstance(t *testing
 	m.switchWorkspaceSlot(1)
 	victim := selectTitle(t, m, "b1")
 
-	_, _ = m.Update(instanceStartedMsg{instance: starting, err: errors.New("boom"), slot: owner})
+	deliver(t, m, core.StartResult{Instance: starting, Err: errors.New("boom"), Owner: owner.ws})
 
 	assert.Same(t, victim, m.slots[1].list.GetInstanceByTitle("b1"), "the focused workspace's selected session must be untouched")
 	assert.NotEqual(t, session.Deleting, victim.GetStatus())
@@ -77,11 +92,11 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 	owner := m.workspaceSlot
 	starting := startingInstance(t, owner, "new-one")
 	starting.SetPrompt("do the thing")
-	require.NoError(t, starting.TransitionTo(session.Running))
+	finishStart(t, starting)
 	m.switchWorkspaceSlot(1)
 	m.errBox.SetSize(400, 1)
 
-	_, _ = m.Update(instanceStartedMsg{instance: starting, slot: owner})
+	pumpCore(t, m, deliver(t, m, core.StartResult{Instance: starting, Owner: owner.ws}))
 
 	assert.Equal(t, stateDefault, m.state, "no inline attach into another workspace's pane")
 	assert.Equal(t, "bpeer", focusedName(m), "focus stays where the user put it")
@@ -98,14 +113,75 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 func TestInstanceStarted_SuccessInFocusedWorkspaceAttaches(t *testing.T) {
 	m, recA, recB := ownerTestHome(t)
 	starting := startingInstance(t, m.workspaceSlot, "new-one")
-	require.NoError(t, starting.TransitionTo(session.Running))
+	finishStart(t, starting)
 
-	_, _ = m.Update(instanceStartedMsg{instance: starting, slot: m.workspaceSlot})
+	deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
 
 	assert.Equal(t, stateInlineAttach, m.state)
 	assert.Same(t, starting, m.list.GetSelectedInstance())
+	assert.True(t, m.panes.Alive(starting.Pane().TmuxSessionName()), "its pane client is attached")
 	assert.GreaterOrEqual(t, recA.calls, 1)
 	assert.Zero(t, recB.calls)
+}
+
+// TestInstanceStarted_InlineAttachWaitsForThePrompt: the N flow's prompt
+// is pasted and Entered before the completion puts the user into inline
+// attach, as when the completion sent it inline: a key typed into the
+// attached pane in between would join the prompt.
+func TestInstanceStarted_InlineAttachWaitsForThePrompt(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	starting := startingInstance(t, m.workspaceSlot, "new-one")
+	starting.SetPrompt("do the thing")
+	finishStart(t, starting)
+
+	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	assert.Equal(t, stateDefault, m.state, "no inline attach while the prompt is being sent")
+	assert.Empty(t, starting.Prompt(), "the prompt is cleared at once, so nothing re-sends it")
+
+	pumpCore(t, m, cmd)
+	assert.Equal(t, stateInlineAttach, m.state, "attached once the prompt is sent")
+	assert.Same(t, starting, m.list.GetSelectedInstance())
+}
+
+// TestInstanceStarted_KilledWhileThePromptIsSentIsNotAttached: Started
+// waits for the initial prompt's send, and the instance is Running then,
+// so the user can confirm a kill meanwhile. Inline attach on its Deleting
+// row would leave them typing into the neighbouring session once the kill
+// removes it (inline attach looks the selection up per key).
+func TestInstanceStarted_KilledWhileThePromptIsSentIsNotAttached(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	m.errBox.SetSize(400, 1)
+	starting := startingInstance(t, m.workspaceSlot, "new-one")
+	starting.SetPrompt("do the thing")
+	finishStart(t, starting)
+
+	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	require.NoError(t, starting.TransitionTo(session.Deleting)) // a kill confirmed meanwhile
+	pumpCore(t, m, cmd)
+
+	assert.Equal(t, stateDefault, m.state, "no inline attach on a session being killed")
+	assert.NotEqual(t, ui.StateInlineAttach, m.menu.State(), "nor the menu")
+	assert.Contains(t, m.errBox.String(), "new-one started")
+}
+
+// TestInstanceStarted_PausedWhileThePromptIsSentIsNotAttached: likewise
+// a pause confirmed while the initial prompt is sent leaves the instance
+// Loading (then Paused). Inline attach on it would forward keys to a
+// session being torn down.
+func TestInstanceStarted_PausedWhileThePromptIsSentIsNotAttached(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	m.errBox.SetSize(400, 1)
+	starting := startingInstance(t, m.workspaceSlot, "new-one")
+	starting.SetPrompt("do the thing")
+	finishStart(t, starting)
+
+	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	require.NoError(t, starting.TransitionTo(session.Loading)) // a pause confirmed meanwhile
+	pumpCore(t, m, cmd)
+
+	assert.Equal(t, stateDefault, m.state, "no inline attach on a session being paused")
+	assert.NotEqual(t, ui.StateInlineAttach, m.menu.State(), "nor the menu")
+	assert.Contains(t, m.errBox.String(), "new-one started")
 }
 
 // TestInstanceStarted_AfterOwnerDropped: the owner tab was closed while
@@ -123,11 +199,11 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	// attaches none).
 	started := liveInstance(t, "late")
 	m.panes.Retain(nil) // nothing attached it
-	owner.list.AddInstance(started)
+	owner.ws.Add(started)
 
 	m.errBox.SetSize(400, 1)
 
-	_, cmd := m.Update(instanceStartedMsg{instance: started, slot: owner})
+	cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
 
 	assert.Contains(t, m.errBox.String(), "afocus, which is no longer open")
 	assert.Equal(t, stateDefault, m.state)
@@ -141,8 +217,8 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	require.NoError(t, m.checkSlotInvariant())
 }
 
-// TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity: recoverDoneMsg used
-// to act on the focused list by title — after a tab switch removing a
+// TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity: the recover
+// completion used to act on the focused list by title — after a tab switch removing a
 // same-titled row in another workspace, filing the recovered session
 // there, saving that workspace, and stranding the placeholder.
 func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
@@ -153,7 +229,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		}, t.TempDir())
 		require.NoError(t, err)
 		require.NoError(t, p.TransitionTo(session.Loading))
-		slot.list.AddInstance(p)
+		slot.ws.Add(p)
 		return p
 	}
 
@@ -167,7 +243,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, recovered.TransitionTo(session.Running))
 
-		_, _ = m.Update(recoverDoneMsg{oldTitle: "dup", recovered: recovered, placeholder: placeholder, slot: owner})
+		deliver(t, m, core.RecoverResult{OldTitle: "dup", Recovered: recovered, Placeholder: placeholder, Owner: owner.ws})
 
 		assert.Same(t, bystander, m.slots[1].list.GetInstanceByTitle("dup"), "the same-titled row elsewhere is untouched")
 		assert.NotContains(t, m.slots[1].list.GetInstances(), recovered)
@@ -184,7 +260,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		m.switchWorkspaceSlot(1)
 		bystander := startingInstance(t, m.workspaceSlot, "dup")
 
-		_, _ = m.Update(recoverDoneMsg{oldTitle: "dup", err: errors.New("boom"), placeholder: placeholder, slot: owner})
+		deliver(t, m, core.RecoverResult{OldTitle: "dup", Err: errors.New("boom"), Placeholder: placeholder, Owner: owner.ws})
 
 		assert.Equal(t, session.Recoverable, placeholder.GetStatus(), "the placeholder is back to Recoverable for a retry")
 		assert.Equal(t, session.Loading, bystander.GetStatus(), "the namesake is untouched")
@@ -202,9 +278,9 @@ func TestResumeDone_AfterOwnerDropped(t *testing.T) {
 	recB.calls = 0
 	resumed := liveInstance(t, "resumed")
 	m.panes.Retain(nil) // nothing attached it
-	owner.list.AddInstance(resumed)
+	owner.ws.Add(resumed)
 
-	_, cmd := m.Update(resumeDoneMsg{instance: resumed, slot: owner})
+	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws})
 
 	assert.Nil(t, m.list.GetInstanceByTitle("resumed"), "not filed under the focused workspace")
 	assert.Zero(t, recB.calls)
@@ -220,9 +296,9 @@ func TestResumeDone_OwnerReopened(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "res-wt")
 	m, owner, twin, _, recC := reopenedHome(t, "res", wtPath, deadCmdExecForTest())
 	resumed := startedWorktreeInstance(t, "res", wtPath, newFakeTmuxServer())
-	owner.list.AddInstance(resumed)
+	owner.ws.Add(resumed)
 
-	_, cmd := m.Update(resumeDoneMsg{instance: resumed, slot: owner})
+	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws})
 	drainCmd(cmd)
 
 	reopened := m.slots[1]
@@ -233,14 +309,14 @@ func TestResumeDone_OwnerReopened(t *testing.T) {
 }
 
 // TestResumeFailed_RevertsAndLeavesNoClient: a resume whose checkpoint save
-// failed comes back as transitionFailedMsg and is reverted to Paused, so
+// failed comes back as core.OpFailed and is reverted to Paused, so
 // the user can retry. A paused session keeps no client, whether or not its
 // owner is still loaded.
 func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 	isolateTmux(t)
-	failedResume := func(inst *session.Instance) transitionFailedMsg {
-		return transitionFailedMsg{inst: inst, title: inst.Title, op: "resume", previousStatus: session.Paused,
-			err: errors.New("resume checkpoint save: disk full")}
+	failedResume := func(inst *session.Instance) core.OpFailed {
+		return core.OpFailed{Instance: inst, Title: inst.Title, Op: "resume", Previous: session.Paused,
+			Err: errors.New("resume checkpoint save: disk full")}
 	}
 	for _, ownerClosed := range []bool{true, false} {
 		m, _, _ := ownerTestHome(t)
@@ -249,9 +325,9 @@ func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 			drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
 		}
 		resumed := liveInstance(t, "resumed")
-		owner.list.AddInstance(resumed)
+		owner.ws.Add(resumed)
 
-		_, cmd := m.Update(failedResume(resumed))
+		cmd := deliver(t, m, failedResume(resumed))
 		drainCmd(cmd)
 
 		assert.Equal(t, session.Paused, resumed.GetStatus(), "reverted, so the user can retry (owner closed: %v)", ownerClosed)

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -50,15 +51,18 @@ func TestApplyWorkspaceToggle_ClassicToGlobalPersists(t *testing.T) {
 	require.NoError(t, err)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
+	ws := testWS(core.WorkspaceParts{
+		Ctx:     &config.WorkspaceContext{Name: "classic-ws", ConfigDir: t.TempDir()},
+		Storage: storage,
+		Config:  config.DefaultConfig(),
+	})
+	list := ui.NewList(&s, ws)
 
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-			storage:   storage,
-			wsCtx:     &config.WorkspaceContext{Name: "classic-ws", ConfigDir: t.TempDir()},
 		},
 		ctx:    context.Background(),
 		state:  stateDefault,
@@ -66,14 +70,14 @@ func TestApplyWorkspaceToggle_ClassicToGlobalPersists(t *testing.T) {
 		tabBar: ui.NewWorkspaceTabBar(),
 		errBox: ui.NewErrBox(),
 		// registry = nil, slots = nil — classic mode.,
-	}
+	})
 
 	require.Equal(t, 0, rec.calls, "no save calls before invoke")
 
 	// Empty desired triggers classic → global with enterGlobalMode.
 	_ = h.applyWorkspaceToggle(nil)
-	require.NotNil(t, h.wsCtx)
-	require.Empty(t, h.wsCtx.Name, "fixture: the transition ran")
+	require.NotNil(t, h.wsCtx())
+	require.Empty(t, h.wsCtx().Name, "fixture: the transition ran")
 
 	assert.GreaterOrEqual(t, rec.calls, 1,
 		"global storage must be saved at least once during transition (leak-fix regression)")
@@ -93,14 +97,14 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 	require.NoError(t, err)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
+	ws := testWS(core.WorkspaceParts{Storage: storage, Config: config.DefaultConfig()})
+	list := ui.NewList(&s, ws)
 
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-			storage:   storage,
 		},
 		ctx:    context.Background(),
 		state:  stateDefault,
@@ -110,8 +114,8 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 		// Keep activation off tmux entirely: a recording executor, and a
 		// workspace whose terminal record already exists (preserved), so
 		// no workspace terminal is created and started.
-		cmdExec: &recordingExec{},
-	}
+		core: core.NewForTest(core.Options{CmdExec: &recordingExec{}}),
+	})
 
 	// Non-empty desired forces the bug's actual code path:
 	// len(m.slots)==0 → leak-fix → activate → loadSlot. Whether
@@ -134,14 +138,14 @@ func TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, globalDir)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
+	ws := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "stale-ws"}, Config: config.DefaultConfig()})
+	list := ui.NewList(&s, ws)
 
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-			wsCtx:     &config.WorkspaceContext{Name: "stale-ws"},
 		},
 		ctx:    context.Background(),
 		state:  stateDefault,
@@ -149,14 +153,14 @@ func TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots(t *testing.T) {
 		tabBar: ui.NewWorkspaceTabBar(),
 		errBox: ui.NewErrBox(),
 		// registry = nil so the SetOpenWorkspaces side effect is skipped.,
-	}
+	})
 
 	h.enterGlobalMode()
 
 	assert.Empty(t, h.slots, "slots must be cleared")
-	require.NotNil(t, h.wsCtx, "the global slot carries the global context")
-	assert.Equal(t, config.WorkspaceContext{ConfigDir: globalDir}, *h.wsCtx)
-	assert.NotNil(t, h.storage, "storage must be reconstructed for global cfgDir")
+	require.NotNil(t, h.wsCtx(), "the global slot carries the global context")
+	assert.Equal(t, config.WorkspaceContext{ConfigDir: globalDir}, *h.wsCtx())
+	assert.NotNil(t, h.storage(), "storage must be reconstructed for global cfgDir")
 	assert.NotNil(t, h.list, "list must be reset to a fresh ui.List")
 }
 
@@ -170,23 +174,23 @@ func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, t.TempDir())
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
+	ws := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "stale-ws"}, Config: config.DefaultConfig()})
+	list := ui.NewList(&s, ws)
 	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: split,
 			workbench: ui.NewWorkbench(ui.NewDiffPane(), split.Terminal()),
-			wsCtx:     &config.WorkspaceContext{Name: "stale-ws"},
 		},
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
 		tabBar: ui.NewWorkspaceTabBar(),
 		errBox: ui.NewErrBox(),
-	}
+	})
 	// Simulate an active workbench: terminal force-hidden, non-default ratio.
 	h.viewMode = viewWorkbench
 	h.wbPrevTerminalHidden = false
@@ -205,7 +209,7 @@ func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
 
 // TestEnterGlobalMode_WithSlots_PersistsAndDeactivates verifies the
 // workspace → global transition properly fires deactivateWorkspace
-// (which saves each slot's instances via slot.storage) before the
+// (which saves each slot's instances via slot.storage()) before the
 // slot is dropped. The pre-fix path didn't iterate slots in
 // enterGlobalMode at all; this test guards against regressing to a
 // version that drops slots without persisting.
@@ -220,12 +224,14 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 	slotRecA := &recordingInstanceStorage{}
 	storageA, err := session.NewStorage(slotRecA, t.TempDir())
 	require.NoError(t, err)
-	slotARecListings := ui.NewList(&s)
+	wsA := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}, Storage: storageA, Config: config.DefaultConfig()})
+	slotARecListings := ui.NewList(&s, wsA)
 
 	slotRecB := &recordingInstanceStorage{}
 	storageB, err := session.NewStorage(slotRecB, t.TempDir())
 	require.NoError(t, err)
-	slotBRecListings := ui.NewList(&s)
+	wsB := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()}, Storage: storageB, Config: config.DefaultConfig()})
+	slotBRecListings := ui.NewList(&s, wsB)
 
 	h := &home{
 		ctx:    context.Background(),
@@ -236,28 +242,25 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 	}
 	focusSlots(h, 0,
 		&workspaceSlot{
-			wsCtx:     &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()},
-			storage:   storageA,
-			appConfig: config.DefaultConfig(),
+			ws:        wsA,
 			list:      slotARecListings,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		},
 		&workspaceSlot{
-			wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
-			storage:   storageB,
-			appConfig: config.DefaultConfig(),
+			ws:        wsB,
 			list:      slotBRecListings,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		},
 	)
+	wireCore(t, h)
 
 	h.enterGlobalMode()
 
 	assert.GreaterOrEqual(t, slotRecA.calls, 1, "slot ws-a must be persisted before dropping")
 	assert.GreaterOrEqual(t, slotRecB.calls, 1, "slot ws-b must be persisted before dropping")
 	assert.Empty(t, h.slots, "all slots dropped after enterGlobalMode")
-	require.NotNil(t, h.wsCtx)
-	assert.Equal(t, globalDir, h.wsCtx.ConfigDir)
+	require.NotNil(t, h.wsCtx())
+	assert.Equal(t, globalDir, h.wsCtx().ConfigDir)
 	require.NoError(t, h.checkSlotInvariant())
 }
 
@@ -282,13 +285,15 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	recA := &recordingInstanceStorage{}
 	storageA, err := session.NewStorage(recA, t.TempDir())
 	require.NoError(t, err)
-	listA := ui.NewList(&s)
 	recB := &recordingInstanceStorage{}
 	storageB, err := session.NewStorage(recB, t.TempDir())
 	require.NoError(t, err)
 
 	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	ctxA := &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}
+	wsA := testWS(core.WorkspaceParts{Ctx: ctxA, Storage: storageA, Config: config.DefaultConfig()})
+	listA := ui.NewList(&s, wsA)
+	wsB := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()}, Storage: storageB, Config: config.DefaultConfig()})
 	h := &home{
 		ctx:    context.Background(),
 		state:  stateDefault,
@@ -297,15 +302,14 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 		errBox: ui.NewErrBox(),
 	}
 	focusSlots(h, 0,
-		&workspaceSlot{wsCtx: ctxA, storage: storageA, appConfig: config.DefaultConfig(), list: listA, splitPane: split},
+		&workspaceSlot{ws: wsA, list: listA, splitPane: split},
 		&workspaceSlot{
-			wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
-			storage:   storageB,
-			appConfig: config.DefaultConfig(),
-			list:      ui.NewList(&s),
+			ws:        wsB,
+			list:      ui.NewList(&s, wsB),
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		},
 	)
+	wireCore(t, h)
 	h.errBox.SetSize(400, 1)
 
 	cmd := h.applyWorkspaceToggle(nil)
@@ -313,8 +317,8 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	assert.NotNil(t, cmd, "the failure must be surfaced, not just logged")
 	assert.Contains(t, h.errBox.String(), "global")
 	require.Len(t, h.slots, 2, "no workspace slot may be deactivated")
-	assert.Same(t, ctxA, h.wsCtx, "still in workspace mode")
-	assert.Same(t, storageA, h.storage, "storage must not be swapped for the unreadable global one")
+	assert.Same(t, ctxA, h.wsCtx(), "still in workspace mode")
+	assert.Same(t, storageA, h.storage(), "storage must not be swapped for the unreadable global one")
 	assert.Same(t, listA, h.list)
 	require.NoError(t, h.checkSlotInvariant())
 
@@ -343,7 +347,7 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 	m := fleetHome(t)
 	m.ctx = cancelledCtx()
 	m.errBox = ui.NewErrBox()
-	m.cmdExec = &recordingExec{}
+	m.core.SetExecForTest(&recordingExec{})
 
 	drainCmd(m.applyWorkspaceToggle(nil))
 
@@ -354,22 +358,23 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 	for _, inst := range m.list.GetInstances() {
 		assert.False(t, inst.IsWorkspaceTerminal, "global mode has no repo, so no workspace terminal")
 	}
-	require.NotNil(t, m.wsCtx, "the global slot carries the global context")
-	assert.Equal(t, config.WorkspaceContext{ConfigDir: globalDir}, *m.wsCtx)
+	require.NotNil(t, m.wsCtx(), "the global slot carries the global context")
+	assert.Equal(t, config.WorkspaceContext{ConfigDir: globalDir}, *m.wsCtx())
 	assert.Equal(t, globalDir, m.configDir(), "sessions created in global mode get the global config dir")
 	entries, err := os.ReadDir(loomHome)
 	require.NoError(t, err)
 	assert.Len(t, entries, 1, "nothing is written to LOOM_HOME")
 
-	require.NoError(t, m.storage.SaveInstances(persistableInstances(m.list.GetInstances())))
+	require.NoError(t, m.storage().SaveInstances(core.Persistable(m.list.GetInstances())))
 	raw, err := os.ReadFile(filepath.Join(globalDir, config.StateFileName))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "in-global", "global mode saves back to the global dir")
 }
 
 // TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram: the shared
-// loader gave Recoverable orphan placeholders m.program — the program the
-// process started with, possibly a workspace's — rather than the program
+// loader gave Recoverable orphan placeholders the startup program
+// (core.Model.Program) — the one the process started with, possibly a
+// workspace's — rather than the program
 // of the config the slot loaded, as activateWorkspace does. Recovering one
 // then relaunched it with another workspace's agent.
 func TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram(t *testing.T) {
@@ -391,7 +396,7 @@ func TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram(t *testing.T) {
 	m := fleetHome(t)
 	m.ctx = cancelledCtx()
 	m.errBox = ui.NewErrBox()
-	m.program = "startup-agent"
+	m.core.SetProgram("startup-agent")
 
 	drainCmd(m.applyWorkspaceToggle(nil))
 

@@ -10,6 +10,7 @@ import (
 
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 
 	"github.com/stretchr/testify/assert"
@@ -79,7 +80,7 @@ func TestOrphanSweep_SparesWorkspacesThisProcessDidNotLoad(t *testing.T) {
 	t.Run("multi-tab restore", func(t *testing.T) {
 		rec := &listingExec{listing: listing}
 		m := newRestoreHome(rec)
-		m.registry = reg
+		m.core.SetRegistryForTest(reg)
 		m.restoreSavedWorkspaces([]config.Workspace{mine})
 
 		require.Len(t, m.slots, 1)
@@ -90,14 +91,14 @@ func TestOrphanSweep_SparesWorkspacesThisProcessDidNotLoad(t *testing.T) {
 	t.Run("classic startup", func(t *testing.T) {
 		rec := &listingExec{listing: listing}
 		m := newRestoreHome(rec)
-		m.registry = reg
-		m.wsCtx = config.WorkspaceContextFor(&mine)
-		state := config.LoadStateFrom(m.wsCtx.ConfigDir)
-		storage, err := session.NewStorage(state, m.wsCtx.ConfigDir)
+		m.core.SetRegistryForTest(reg)
+		wsCtx := config.WorkspaceContextFor(&mine)
+		state := config.LoadStateFrom(wsCtx.ConfigDir)
+		storage, err := session.NewStorage(state, wsCtx.ConfigDir)
 		require.NoError(t, err)
-		m.appState, m.storage = state, storage
+		reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx, p.State, p.Storage = wsCtx, state, storage })
 
-		_, err = m.loadStartupStorage(rec, true)
+		err = m.core.LoadClassic(true)
 		require.NoError(t, err)
 
 		require.True(t, rec.ran("ls"), "the sweep must run")
@@ -130,7 +131,7 @@ func TestActivateWorkspace_TerminalOrphanKillIsOwnershipGated(t *testing.T) {
 			rec := &listingExec{listing: "loom_ws-term-v2\t" + ws.Path + "\n" +
 				"loom_ws-term\t" + tc.dir(ws) + "\n"}
 			m := newRestoreHome(rec)
-			m.registry = &config.WorkspaceRegistry{}
+			m.core.SetRegistryForTest(&config.WorkspaceRegistry{})
 
 			_, err := m.activateWorkspace(ws)
 			require.NoError(t, err)

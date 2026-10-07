@@ -271,9 +271,9 @@ func (m *home) showHelpScreen(helpType helpText, onDismiss func() tea.Cmd) (tea.
 	// Check if this help screen has been seen before
 	// Only show if we're showing the general help screen or the corresponding flag is not set
 	// in the seen bitmask.
-	if alwaysShow || (m.appState.GetHelpScreensSeen()&flag) == 0 {
+	if alwaysShow || (m.appState().GetHelpScreensSeen()&flag) == 0 {
 		// Mark this help screen as seen and save state
-		if err := m.appState.SetHelpScreensSeen(m.appState.GetHelpScreensSeen() | flag); err != nil {
+		if err := m.appState().SetHelpScreensSeen(m.appState().GetHelpScreensSeen() | flag); err != nil {
 			log.For("app").Warn("help.save_screen_state_failed", "err", err)
 		}
 

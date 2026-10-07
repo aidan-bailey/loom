@@ -11,8 +11,8 @@ import (
 
 // handleStateSettingsKey drives the settings overlay. Every key press
 // may report a field change; when it does, the change is persisted to
-// disk and the home field that shadows appConfig (m.program) is
-// refreshed so new-instance creation picks up the new value immediately
+// disk and the model's program that shadows appConfig (core.Model.Program)
+// is refreshed so new-instance creation picks up the new value immediately
 // instead of using a stale cached copy.
 func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	so := m.settingsOverlay()
@@ -36,21 +36,21 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// the change lives only in memory and silently vanishes on
 		// restart.
 		dir := ""
-		if m.wsCtx != nil {
-			dir = m.wsCtx.ConfigDir
+		if m.wsCtx() != nil {
+			dir = m.wsCtx().ConfigDir
 		} else if globalDir, err := config.GetConfigDir(); err == nil {
 			dir = globalDir
 		}
 		if dir != "" {
-			if err := config.SaveConfigTo(m.appConfig, dir); err != nil {
+			if err := config.SaveConfigTo(m.appConfig(), dir); err != nil {
 				return m, m.handleError(fmt.Errorf("save settings: %w", err))
 			}
 		}
-		m.program = m.appConfig.GetProgram()
+		m.core.SetProgram(m.appConfig().GetProgram())
 		// Re-sync the loom-context toggle so an in-place change takes
 		// effect on the next session launch without a workspace switch.
-		session.SetLoomContextEnabled(m.appConfig.LoomContextEnabled())
-		session.SetSubagentTrackingEnabled(m.appConfig.SubagentTrackingEnabled())
+		session.SetLoomContextEnabled(m.appConfig().LoomContextEnabled())
+		session.SetSubagentTrackingEnabled(m.appConfig().SubagentTrackingEnabled())
 	}
 
 	if closed {

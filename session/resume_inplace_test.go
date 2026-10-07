@@ -486,10 +486,10 @@ func TestCrashRestart_FailsClosedOnAMissingAccount(t *testing.T) {
 }
 
 // resumeLikeApp resumes the way the app does: runResumeSelected moves the
-// instance to Loading before Resume runs, and transitionFailedMsg reverts
-// it to Paused when Resume fails. A Notice alone is a success (the app
-// shows it and keeps the instance running); it is returned for the test
-// to check.
+// instance to Loading before Resume runs, and its failure result
+// (core.OpFailed) reverts it to Paused when Resume fails. A Notice alone
+// is a success (the app shows it and keeps the instance running); it is
+// returned for the test to check.
 func resumeLikeApp(t *testing.T, inst *Instance) error {
 	t.Helper()
 	require.NoError(t, inst.TransitionTo(Loading))

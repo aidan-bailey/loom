@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
@@ -28,19 +29,19 @@ func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*
 		ConfigDir: t.TempDir(),
 	})
 	require.NoError(t, err)
-	m.list.AddInstance(instance)
+	m.ws.Add(instance)
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.pendingNew = instance
 
 	m.pendingLaunchOptions = func(opts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
-		instance.SetLaunchOptions(applyLaunchOptions(opts, m.rcAuth, instance.Program(), instance.Title), opts.HeadroomProxy, opts.CacheTTL1h)
+		instance.SetLaunchOptions(launch.Compose(opts, m.core.RCAuth(), instance.Program(), instance.Title), opts.HeadroomProxy, opts.CacheTTL1h)
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
 		return m, nil
 	}
 	m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions
-	m.setOverlay(overlay.NewSessionLaunchOptions(initial, m.rcAuth.Blocked(), m.rcAuth.Reason), overlayLaunchOptions)
+	m.setOverlay(overlay.NewSessionLaunchOptions(initial, m.core.RCAuth().Blocked(), m.core.RCAuth().Reason), overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
 
 	return m, instance

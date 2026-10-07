@@ -232,7 +232,7 @@ type Instance struct {
 	// waitReason is Claude's own account of what this session is blocked
 	// on ("permission: Bash" from a PermissionRequest hook, "sandbox
 	// request" from the roster's waitingFor). Only ever set while Claude's
-	// report drives a Prompting status (adoptClaudeStatus), and cleared
+	// report drives a Prompting status (core.Model.AdoptClaudeStatus), and cleared
 	// the moment it does not, so a dismissed dialog cannot leave a label
 	// behind. Empty for non-Claude agents and whenever the scraper is
 	// deciding. Ephemeral: never serialized (absent from InstanceData).
@@ -1342,7 +1342,7 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// cd'd into the worktree directory we're about to delete below; Resume
 	// would then silently reattach to that now-orphaned directory instead
 	// of the freshly recreated worktree. Kill it here so the invariant
-	// holds for every caller, not just the UI's pauseActionFor. Best-effort:
+	// holds for every caller, not just the TUI's pause (core.Model.Pause). Best-effort:
 	// "no such session" (never opened) is the common case.
 	if err := ts.CloseRelatedSession(tmux.TerminalSessionName(i.Title)); err != nil {
 		log.For("session").Debug("pause_close_terminal_tmux_failed", "err", err)

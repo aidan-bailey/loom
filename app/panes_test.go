@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -27,8 +28,8 @@ func TestEnsureSlotPanes_AttachesActiveInstances(t *testing.T) {
 	live := liveInstance(t, "a-live")
 	paused := liveInstance(t, "a-paused")
 	require.NoError(t, paused.TransitionTo(session.Paused))
-	m.list.AddInstance(live)
-	m.list.AddInstance(paused)
+	m.ws.Add(live)
+	m.ws.Add(paused)
 	m.panes.Retain(nil) // the fixtures came with clients; start from none
 
 	m.ensureSlotPanes(m.workspaceSlot)
@@ -43,7 +44,7 @@ func TestEnsureSlotPanes_AttachesActiveInstances(t *testing.T) {
 func TestReplacePane_ClosesTheOldClientOffUpdate(t *testing.T) {
 	m := newTestHome(t)
 	inst := liveInstance(t, "relaunched")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	old := clientOf(t, inst)
 
 	cmd := m.replacePane(inst)
@@ -63,7 +64,7 @@ func TestFullScreenAttach_PausesAndRestoresThePaneClient(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
 	inst := liveInstance(t, "fs")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	name := inst.Pane().TmuxSessionName()
 	require.True(t, m.panes.Alive(name))
 
@@ -92,19 +93,25 @@ func TestKillAndPause_CloseTheClientOnlyAfterTheRegistryDrops(t *testing.T) {
 		done   func(t *testing.T, msg tea.Msg)
 	}{
 		{"kill", func(m *home, inst *session.Instance) tea.Cmd {
-			preAction, killAction := killActionFor(m, inst)
+			preAction, killAction := m.core.Kill(m.ws, inst, m.closeTerminalFor(inst.Title, "kill"))
 			preAction()
-			return killAction
-		}, func(t *testing.T, msg tea.Msg) { require.IsType(t, killInstanceMsg{}, msg) }},
+			return coreCmd(killAction)
+		}, func(t *testing.T, msg tea.Msg) {
+			res, _ := msg.(coreResultMsg)
+			require.IsType(t, core.KillResult{}, res.msg)
+		}},
 		{"pause", func(m *home, inst *session.Instance) tea.Cmd {
 			require.NoError(t, inst.TransitionTo(session.Loading)) // as the pause's confirm does
-			return pauseActionFor(m, inst)
-		}, func(t *testing.T, msg tea.Msg) { require.IsType(t, pauseInstanceMsg{}, msg, "%v", msg) }},
+			return coreCmd(m.core.Pause(m.ws, inst, m.closeTerminalFor(inst.Title, "pause")))
+		}, func(t *testing.T, msg tea.Msg) {
+			res, _ := msg.(coreResultMsg)
+			require.IsType(t, core.PauseResult{}, res.msg, "%v", msg)
+		}},
 	} {
 		t.Run(op.name, func(t *testing.T) {
 			m := newTestHome(t)
 			inst := startedInstanceWithProgram(t, "victim-"+op.name, "claude", "idle")
-			m.list.AddInstance(inst)
+			m.ws.Add(inst)
 			name := inst.Pane().TmuxSessionName()
 			c := clientOf(t, inst)
 			require.True(t, c.PtmxAlive(), "fixture: the client is attached")
@@ -130,14 +137,14 @@ func TestTransitionFailed_ReattachesARevertedInstance(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
 	inst := liveInstance(t, "reverted")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	name := inst.Pane().TmuxSessionName()
 	require.NoError(t, inst.TransitionTo(session.Loading)) // the pause's confirm
 	drainCmd(m.prunePanes())                               // a tick while it ran
 	require.Nil(t, m.panes.Get(name), "precondition: pruned while Loading")
 
-	_, _ = m.Update(transitionFailedMsg{inst: inst, title: inst.Title, op: "pause",
-		previousStatus: session.Running, err: errors.New("the session survived")})
+	deliver(t, m, core.OpFailed{Instance: inst, Title: inst.Title, Op: "pause",
+		Previous: session.Running, Err: errors.New("the session survived")})
 
 	assert.Equal(t, session.Running, inst.GetStatus())
 	assert.True(t, m.panes.Alive(name), "the reverted instance gets its client back")
@@ -160,7 +167,7 @@ end)
 	m.scripts = nil
 	initScriptsIn(m, dir, false)
 	inst := startedInstanceWithProgram(t, "lua-resumed", "claude", "idle")
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	name := inst.Pane().TmuxSessionName()
 	old := clientOf(t, inst)
 	// The health tick found the agent gone and marked it Paused; its
@@ -253,10 +260,12 @@ func healThroughDeadEvent(t *testing.T, m *home, inst *session.Instance) {
 	t.Helper()
 	_, cmd := m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd)
-	verified, ok := cmd().(deadVerifiedMsg)
+	result, ok := cmd().(coreResultMsg)
 	require.True(t, ok)
-	require.Equal(t, tmux.LivenessAlive, verified.tmuxLive, "the relaunched session is alive")
-	_, _ = m.Update(verified)
+	verified, ok := result.msg.(core.DeadVerified)
+	require.True(t, ok)
+	require.Equal(t, tmux.LivenessAlive, verified.TmuxLive, "the relaunched session is alive")
+	_, _ = m.Update(result)
 }
 
 // requireShowsNewSession checks that inst's pane is attached to the
@@ -286,7 +295,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 	t.Run("ensurePane", func(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
 		m.ensurePane(inst)
 
@@ -298,7 +307,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		// eligible instance to repair, say): the load heals it.
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
 		m.ensureSlotPanes(m.workspaceSlot)
 
@@ -332,7 +341,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("the client's pump never reported its EOF")
 		}
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
 		m.ensureSlotPanes(m.workspaceSlot)
 
@@ -349,7 +358,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 	t.Run("the Dead event", func(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
 		healThroughDeadEvent(t, m, inst)
 
@@ -360,10 +369,12 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 	t.Run("the health tick", func(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 
-		active := m.activeInstances()
-		_, _ = m.Update(gatherMetadataCmd(active, nil, nil, nil, m.paneSnapshot(active))())
+		// The tick's probe, as the model's probe job takes it.
+		deliver(t, m, core.HealthResult{Results: []core.ProbeResult{
+			{Instance: inst, TmuxLive: inst.Pane().TmuxLiveness()},
+		}})
 
 		requireShowsNewSession(t, m, inst, peer)
 	})
@@ -404,14 +415,14 @@ func TestDeadEvent_RepairOfAClientThatExitsOnAttachIsBounded(t *testing.T) {
 	require.NoError(t, inst.TransitionTo(session.Running))
 	var starts atomic.Int32
 	attachTestClient(t, inst, instantExitPty{t: t, starts: &starts}, aliveCmdExecForTest())
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	name := inst.Pane().TmuxSessionName()
 
 	for deadline := time.Now().Add(500 * time.Millisecond); time.Now().Before(deadline); {
 		_, cmd := m.Update(ptyDeadMsg{session: name})
 		require.NotNil(t, cmd)
-		if verified, ok := cmd().(deadVerifiedMsg); ok {
-			_, _ = m.Update(verified)
+		if result, ok := cmd().(coreResultMsg); ok {
+			_, _ = m.Update(result)
 		}
 	}
 

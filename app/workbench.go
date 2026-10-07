@@ -59,8 +59,8 @@ func (m *home) enterWorkbench() tea.Cmd {
 	// same-title pane cannot survive to here).
 	m.dropReviewPane()
 	m.wbRatio = 0
-	if m.appState != nil {
-		if r, ok := m.appState.GetUIPrefs().WorkbenchRatios[sel.Title]; ok {
+	if m.appState() != nil {
+		if r, ok := m.appState().GetUIPrefs().WorkbenchRatios[sel.Title]; ok {
 			m.wbRatio = r
 		}
 	}
@@ -431,9 +431,9 @@ func (m *home) closeReview() tea.Cmd {
 
 // sendReviewCmd composes the review comments into a prompt and, after
 // confirmation, sends it to the session's agent pane. The prompt is
-// composed at press time — the confirm overlay's Sync step runs on the
-// main goroutine (SendPrompt has its own locking, same precedent as
-// the quick-input bar).
+// composed at press time; the send is a core job (core.Model.SendPrompt)
+// the confirmation runs off the main goroutine, like the quick-input
+// bar's, and a failed send comes back as an error.
 func (m *home) sendReviewCmd() tea.Cmd {
 	sel := m.list.GetSelectedInstance()
 	rv := m.wbReview
@@ -452,11 +452,7 @@ func (m *home) sendReviewCmd() tea.Cmd {
 	title := sel.Title
 	msg := fmt.Sprintf("Send %d review comment(s) to %s?", rv.CommentCount(), title)
 	return m.confirmTask(msg, overlay.ConfirmationTask{
-		Sync: func() {
-			if err := sel.Pane().SendPrompt(prompt); err != nil {
-				m.errBox.SetError(err)
-			}
-		},
+		Async: coreCmd(m.core.SendPrompt(sel, prompt)),
 	})
 }
 

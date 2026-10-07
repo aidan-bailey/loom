@@ -1,10 +1,10 @@
-package app
+package core
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
@@ -42,29 +42,25 @@ type ghAvailability struct {
 	checkedAt time.Time
 }
 
-// ghRefreshMsg asks for an immediate poll on the next tick. Sent after
-// a push, an issue-born session, and a workspace activation.
-type ghRefreshMsg struct{}
-
-// ghReadyMsg carries one poll's result for every open repo. errs holds
+// ghResult carries one poll's result for every open repo. errs holds
 // repos whose query failed; they are dropped from ghState so a stale
 // snapshot never keeps rendering. bases is the resolved base ref per
 // repo, for parity.
-type ghReadyMsg struct {
+type ghResult struct {
 	available ghAvailability
 	snapshots map[string]github.Snapshot
 	errs      map[string]error
 	bases     map[string]string
 }
 
-// ghPollRequest is the main-goroutine snapshot the poll Cmd works
-// from. Everything it needs is copied here so the Cmd body touches no
+// ghPollRequest is the main-goroutine snapshot the poll Job works
+// from. Everything it needs is copied here so the Job body touches no
 // model state.
 type ghPollRequest struct {
 	repos  []string
 	linked map[string][]int
 	// configured is each repo's own config.BaseBranch. Keyed per repo
-	// because every workspace has its own config.json — m.appConfig is
+	// because every workspace has its own config.json — m.appConfig() is
 	// whichever slot is focused, not a shared primary, so one string
 	// applied across the batch would resolve non-focused repos against
 	// the wrong workspace's setting.
@@ -74,7 +70,7 @@ type ghPollRequest struct {
 
 // openRepoPaths lists the repo path of every open workspace (or the
 // classic single repo), deduplicated, in slot order.
-func (m *home) openRepoPaths() []string {
+func (m *Model) openRepoPaths() []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(p string) {
@@ -83,13 +79,14 @@ func (m *home) openRepoPaths() []string {
 			out = append(out, p)
 		}
 	}
-	if len(m.slots) == 0 {
-		add(m.repoPath())
+	if len(m.tabs) == 0 {
+		cwd, _ := os.Getwd()
+		add(cwd)
 		return out
 	}
-	for _, s := range m.slots {
-		if s.wsCtx != nil {
-			add(s.wsCtx.RepoPath)
+	for _, ws := range m.tabs {
+		if ws.ctx != nil {
+			add(ws.ctx.RepoPath)
 		}
 	}
 	return out
@@ -97,67 +94,29 @@ func (m *home) openRepoPaths() []string {
 
 // baseBranchByRepo maps each open repo to ITS OWN configured base
 // branch. Classic mode has a single config; slot mode reads each
-// slot's, since m.appConfig only ever reflects the focused slot.
-func (m *home) baseBranchByRepo() map[string]string {
+// slot's, since m.appConfig() only ever reflects the focused slot.
+func (m *Model) baseBranchByRepo() map[string]string {
 	out := map[string]string{}
-	if len(m.slots) == 0 {
-		if m.appConfig != nil {
-			out[m.repoPath()] = m.appConfig.GetBaseBranch()
+	if len(m.tabs) == 0 {
+		if m.classic != nil && m.classic.cfg != nil {
+			cwd, _ := os.Getwd()
+			out[cwd] = m.classic.cfg.GetBaseBranch()
 		}
 		return out
 	}
-	for _, s := range m.slots {
-		if s.wsCtx == nil || s.appConfig == nil {
+	for _, ws := range m.tabs {
+		if ws.ctx == nil || ws.cfg == nil {
 			continue
 		}
-		out[s.wsCtx.RepoPath] = s.appConfig.GetBaseBranch()
+		out[ws.ctx.RepoPath] = ws.cfg.GetBaseBranch()
 	}
 	return out
-}
-
-// allInstances returns every instance across open slots (or the
-// classic list).
-func (m *home) allInstances() []*session.Instance {
-	var out []*session.Instance
-	for _, s := range m.openSlots() {
-		if s.list != nil {
-			out = append(out, s.list.GetInstances()...)
-		}
-	}
-	return out
-}
-
-// activeInstances returns the loaded instances the background jobs may
-// touch: started and not paused. Recoverable placeholders are ephemeral
-// orphan-review rows: they report Started() (so recover/discard can reach
-// their handles) but must never be driven by a background job, since the
-// tick's repair would attach a pane client and TransitionTo(Running) would
-// promote a never-confirmed orphan past the explicit recover flow. Loading
-// rows are likewise owned by an in-flight Start/Resume/Recover: probing
-// them mid-setup reads a dead tmux session and force-flips them to Paused
-// under the op. Deleting rows are being torn down. The same set is what
-// keeps a pane client (livePaneNames).
-func (m *home) activeInstances() []*session.Instance {
-	var active []*session.Instance
-	for _, inst := range m.allInstances() {
-		if activeInstance(inst) {
-			active = append(active, inst)
-		}
-	}
-	return active
-}
-
-// activeInstance reports whether the background jobs may touch inst (see
-// activeInstances).
-func activeInstance(inst *session.Instance) bool {
-	st := inst.GetStatus()
-	return inst.Started() && !inst.Paused() && st != session.Deleting && st != session.Recoverable && st != session.Loading
 }
 
 // linkedIssues lists the non-zero issue numbers of instances in repo.
-func (m *home) linkedIssues(repo string) []int {
+func (m *Model) linkedIssues(repo string) []int {
 	var out []int
-	for _, inst := range m.allInstances() {
+	for _, inst := range m.Instances() {
 		if inst.Path == repo && inst.IssueNumber() != 0 {
 			out = append(out, inst.IssueNumber())
 		}
@@ -165,16 +124,16 @@ func (m *home) linkedIssues(repo string) []int {
 	return out
 }
 
-// maybeGHQuery returns a poll Cmd when one is due: gh not known
+// maybeGHQuery dispatches a poll when one is due: gh not known
 // unavailable, and gateGH due (none in flight, and ghInterval since the
 // last dispatch). Update goroutine only.
-func (m *home) maybeGHQuery() tea.Cmd {
+func (m *Model) maybeGHQuery() bool {
 	// A gh that reported unavailable is re-probed on ghRecheckInterval
 	// rather than never again.
 	if m.ghAvailable.checked && !m.ghAvailable.ok && time.Since(m.ghAvailable.checkedAt) < ghRecheckInterval {
-		return nil
+		return false
 	}
-	return m.dispatchGated(gateGH, time.Now(), func() tea.Cmd {
+	return m.dispatchGated(gateGH, time.Now(), func() Job {
 		repos := m.openRepoPaths()
 		if len(repos) == 0 {
 			return nil
@@ -188,20 +147,20 @@ func (m *home) maybeGHQuery() tea.Cmd {
 		for _, r := range repos {
 			req.linked[r] = m.linkedIssues(r)
 		}
-		return ghPollCmd(req, internalexec.Default{})
+		return ghPollJob(req, internalexec.Default{})
 	})
 }
 
-// ghPollCmd runs one poll: an optional CLI check, then per repo a base
+// ghPollJob runs one poll: an optional CLI check, then per repo a base
 // resolve + fetch (always, even without gh) and the gh query (only
-// when gh is available). Pure I/O; returns a single message. The
+// when gh is available). Pure I/O; returns a single result. The
 // whole poll is bounded by ghPollBudget so a repo with many linked
 // closed issues cannot stall every other workspace's refresh.
-func ghPollCmd(req ghPollRequest, r internalexec.Executor) tea.Cmd {
-	return func() tea.Msg {
+func ghPollJob(req ghPollRequest, r internalexec.Executor) Job {
+	return func() any {
 		ctx, cancel := context.WithTimeout(context.Background(), ghPollBudget)
 		defer cancel()
-		msg := ghReadyMsg{snapshots: map[string]github.Snapshot{}, errs: map[string]error{}, bases: map[string]string{}}
+		msg := ghResult{snapshots: map[string]github.Snapshot{}, errs: map[string]error{}, bases: map[string]string{}}
 		msg.available = ghAvailability{checked: true, ok: true, checkedAt: time.Now()}
 		if req.check {
 			if err := github.CheckCLI(r); err != nil {
@@ -229,9 +188,9 @@ func ghPollCmd(req ghPollRequest, r internalexec.Executor) tea.Cmd {
 	}
 }
 
-// handleGHReady applies a poll result: replaces ghState wholesale and
+// deliverGH applies a poll result: replaces ghState wholesale and
 // re-joins every instance.
-func (m *home) handleGHReady(msg ghReadyMsg) {
+func (m *Model) deliverGH(msg ghResult) {
 	m.ghAvailable = msg.available
 	for repo, err := range msg.errs {
 		log.For("github").Debug("query_failed", "repo", repo, "err", err.Error())
@@ -242,23 +201,79 @@ func (m *home) handleGHReady(msg ghReadyMsg) {
 		m.ghBases = msg.bases
 	}
 	m.applyGitHubState()
-	if p := m.issuePicker(); p != nil {
-		p.SetRows(m.issueRows())
-		p.SetStatus(m.issuePickerStatus())
-	}
+	m.emit(GitHubChanged{})
 }
 
 // baseFor returns the resolved base ref for repo, or "" before the
 // first poll resolved it (parity then stays unknown).
-func (m *home) baseFor(repo string) string {
+func (m *Model) baseFor(repo string) string {
 	return m.ghBases[repo]
 }
 
 // applyGitHubState joins ghState onto every instance. Cheap and pure,
 // so it also runs when a link is set outside a poll (issue pick).
-func (m *home) applyGitHubState() {
-	for _, inst := range m.allInstances() {
+func (m *Model) applyGitHubState() {
+	for _, inst := range m.Instances() {
 		snap, known := m.ghState[inst.Path]
 		inst.SetGitHubState(github.StateFor(snap, known, inst.GetBranch(), inst.IssueNumber()))
 	}
+}
+
+// ApplyGitHubState joins the latest poll's state onto every instance, for
+// a link set outside a poll (an issue pick).
+func (m *Model) ApplyGitHubState() { m.applyGitHubState() }
+
+// GitHubSnapshot returns the latest poll's snapshot of repo, if the last
+// poll of it succeeded.
+func (m *Model) GitHubSnapshot(repo string) (github.Snapshot, bool) {
+	s, ok := m.ghState[repo]
+	return s, ok
+}
+
+// GitHubErr returns the last poll's error for repo, or nil.
+func (m *Model) GitHubErr(repo string) error { return m.ghErrs[repo] }
+
+// GitHubUnavailable reports that gh was checked and found unusable
+// (missing, or not logged in).
+func (m *Model) GitHubUnavailable() bool { return m.ghAvailable.checked && !m.ghAvailable.ok }
+
+// GitHubUnavailableReason is why gh was found unusable (CheckCLI's
+// error), for the issue picker's refusal.
+func (m *Model) GitHubUnavailableReason() string { return m.ghAvailable.reason }
+
+// ExpediteGitHub makes the next tick poll GitHub at once (an in-flight
+// poll still lands first): after a push, an issue-born session, a newly
+// opened workspace.
+func (m *Model) ExpediteGitHub() { m.gate(gateGH).expedite() }
+
+// pushResult is a push job's result (Push): err is the commit or push
+// failure, nil on success.
+type pushResult struct{ err error }
+
+// Push returns the job committing and pushing inst's worktree, reporting
+// a pushResult: an error becomes a notice, a success expedites the GitHub
+// poll so the PR badge follows. Formerly app.pushActionFor.
+func (m *Model) Push(inst *session.Instance) Job {
+	selected := inst
+	return func() any {
+		commitMsg := fmt.Sprintf("[loom] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))
+		worktree, err := selected.GetGitWorktree()
+		if err != nil {
+			return pushResult{err: err}
+		}
+		if err = worktree.PushChanges(commitMsg, true); err != nil {
+			return pushResult{err: err}
+		}
+		return pushResult{}
+	}
+}
+
+// deliverPush reports a failed push, or expedites the GitHub poll after
+// a successful one.
+func (m *Model) deliverPush(r pushResult) {
+	if r.err != nil {
+		m.notifyErr(r.err)
+		return
+	}
+	m.ExpediteGitHub()
 }

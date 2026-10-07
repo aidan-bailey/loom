@@ -3,6 +3,7 @@ package app
 import (
 	"testing"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
@@ -22,7 +23,7 @@ func newPausedInstanceHome(t *testing.T) (*home, *session.Instance) {
 		CacheTTL1h:    true,
 	})
 	require.NoError(t, err)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 	require.NoError(t, inst.TransitionTo(session.Paused))
 	return m, inst
@@ -66,7 +67,7 @@ func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFail
 	// Route through the blocked-RC path so resumeTask lands directly in
 	// m.pendingConfirmation instead of being wrapped in the outer
 	// tea.Batch(resumeTask.Run(), ...) the direct path returns.
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	runRestartWithOptionsSelected(m)
 
 	pending := m.pendingLaunchOptions
@@ -87,10 +88,10 @@ func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFail
 	cmd := m.pendingConfirmation.Run() // runs Sync, returns Async
 	require.NotNil(t, cmd)
 
-	// Async is tea.Batch(tea.RequestWindowSize, resumeFunc) — calling it
+	// Async is tea.Batch(tea.RequestWindowSize, resumeJob) — calling it
 	// returns a tea.BatchMsg (the sub-commands to run), not an
 	// already-resolved message. Run every sub-command and confirm none
-	// of them is the resume outcome (transitionFailedMsg/resumeDoneMsg);
+	// of them is the resume outcome (core.OpFailed/core.ResumeResult);
 	// a tea.WindowSizeMsg from the RequestWindowSize half is expected
 	// and fine.
 	msg := cmd()
@@ -98,10 +99,11 @@ func TestRunRestartWithOptionsSelected_AsyncSkipsResumeWhenLoadingTransitionFail
 	require.True(t, ok, "Async must be a batch (RequestWindowSize + the resume check)")
 	for _, sub := range batch {
 		require.NotNil(t, sub)
-		switch sub().(type) {
-		case transitionFailedMsg:
+		res, _ := sub().(coreResultMsg)
+		switch res.msg.(type) {
+		case core.OpFailed:
 			t.Fatal("Resume must not have run (and errored)")
-		case resumeDoneMsg:
+		case core.ResumeResult:
 			t.Fatal("Resume must not have run (and succeeded)")
 		}
 	}
@@ -123,7 +125,7 @@ func TestRunRestartWithOptionsSelected_CancelLeavesInstanceUntouched(t *testing.
 
 func TestRunRestartWithOptionsSelected_BlockedRemoteControlPromptsConfirm(t *testing.T) {
 	m, inst := newPausedInstanceHome(t)
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	runRestartWithOptionsSelected(m)
 
 	pending := m.pendingLaunchOptions
@@ -139,7 +141,7 @@ func TestRunRestartWithOptionsSelected_BlockedRemoteControlPromptsConfirm(t *tes
 
 func TestRunRestartWithOptionsSelected_BlockedRemoteControlCancelLeavesInstanceUntouched(t *testing.T) {
 	m, inst := newPausedInstanceHome(t)
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	originalProgram := inst.Program()
 	runRestartWithOptionsSelected(m)
 

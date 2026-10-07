@@ -5,6 +5,7 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/stretchr/testify/assert"
@@ -17,24 +18,26 @@ import (
 // Shared across the fleet nav/teardown tests.
 func fleetSlot(t *testing.T, name string, titles ...string) *workspaceSlot {
 	t.Helper()
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
-	for _, ti := range titles {
-		list.AddInstance(&session.Instance{Title: ti, Status: session.Ready})
-	}
 	dir := t.TempDir()
 	st := config.LoadStateFrom(dir)
 	stor, err := session.NewStorage(st, dir)
 	require.NoError(t, err)
+	ws := testWS(core.WorkspaceParts{
+		Ctx:     &config.WorkspaceContext{Name: name, ConfigDir: dir},
+		Storage: stor,
+		Config:  config.DefaultConfig(),
+		State:   st,
+	})
+	for _, ti := range titles {
+		ws.Add(&session.Instance{Title: ti, Status: session.Ready})
+	}
+	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	return &workspaceSlot{
-		wsCtx:     &config.WorkspaceContext{Name: name, ConfigDir: dir},
-		list:      list,
+		ws:        ws,
+		list:      ui.NewList(&s, ws),
 		splitPane: sp,
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
-		storage:   stor,
-		appConfig: config.DefaultConfig(),
-		appState:  st,
 	}
 }
 
@@ -50,11 +53,11 @@ func fleetHome(t *testing.T) *home {
 		overview: ui.NewOverview(), // fleetOrder() reads m.overview.IsCollapsed
 		tabBar:   ui.NewWorkspaceTabBar(),
 		menu:     ui.NewMenu(),
-		registry: &config.WorkspaceRegistry{},
+		core:     core.NewForTest(core.Options{Registry: &config.WorkspaceRegistry{}}),
 	}
 	focusSlots(m, 0, focus, peer)
 	m.seedOverviewCursor()
-	return wirePanes(t, m)
+	return wireCore(t, wirePanes(t, m))
 }
 
 func TestMoveCursor_CrossesGroupBoundary(t *testing.T) {

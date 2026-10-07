@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 )
@@ -140,19 +141,25 @@ func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 	stateB := config.LoadStateFrom(t.TempDir())
 	storageB, err := session.NewStorage(stateB, t.TempDir())
 	require.NoError(t, err)
-	listB := ui.NewList(&m.spinner)
+	wsB := testWS(core.WorkspaceParts{
+		Ctx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
+		Storage: storageB,
+		Config:  config.DefaultConfig(),
+		State:   stateB,
+	})
+	listB := ui.NewList(&m.spinner, wsB)
 	splitB := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	// The test home's own slot becomes tab ws-a, focused.
-	m.wsCtx = &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}
+	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) {
+		p.Ctx = &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}
+	})
 	focusSlots(m, 0, m.workspaceSlot, &workspaceSlot{
-		wsCtx:     &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()},
-		storage:   storageB,
-		appConfig: config.DefaultConfig(),
-		appState:  stateB,
+		ws:        wsB,
 		list:      listB,
 		splitPane: splitB,
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitB.Terminal()),
 	})
+	wireCore(t, m)
 
 	departingSplit := m.splitPane
 	departingWb := m.workbench
@@ -277,7 +284,7 @@ func TestWorkbench_TerminalIntentsKeepSplitTerminalHidden(t *testing.T) {
 			_, _ = runner(m)
 			assert.True(t, m.splitPane.IsTerminalHidden(),
 				"terminal intent must not un-hide the split terminal in workbench mode")
-			assert.True(t, m.appState.GetUIPrefs().TerminalHidden,
+			assert.True(t, m.appState().GetUIPrefs().TerminalHidden,
 				"terminal intent must not persist TerminalHidden=false over the focus-mode pref")
 		})
 	}

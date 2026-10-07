@@ -3,6 +3,7 @@ package app
 import (
 	"testing"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 
@@ -23,7 +24,7 @@ func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	m.list.AddInstance(inst)
+	m.ws.Add(inst)
 
 	ts := tmux.NewSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())
 	inst.SetTmuxSession(ts)
@@ -36,30 +37,31 @@ func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
 	return m, inst
 }
 
-// TestMetadataReadyMsg_RepairsDeadPtmx is the regression guard for the
+// TestHealthTick_RepairsDeadPtmx is the regression guard for the
 // "PTY is not available" bug: a session that TmuxAlive reports as healthy
 // but whose ptmx is nil was never retried by anything, forever. The
-// metadata tick must now notice ptmxAlive=false and re-attach the client.
-func TestMetadataReadyMsg_RepairsDeadPtmx(t *testing.T) {
+// health tick must now notice the client is not attached (core.Alive)
+// and re-attach it.
+func TestHealthTick_RepairsDeadPtmx(t *testing.T) {
 	m, inst := setupPtmxDeadFixture(t)
 
-	_, _ = m.Update(metadataReadyMsg{results: []metadataResult{
-		{instance: inst, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
+	deliver(t, m, core.HealthResult{Results: []core.ProbeResult{
+		{Instance: inst, TmuxLive: tmux.LivenessAlive},
 	}})
 
 	require.True(t, m.panes.Alive(inst.Pane().TmuxSessionName()), "metadata tick should have repaired the dead ptmx")
 }
 
-// TestMetadataReadyMsg_SkipsRepairDuringFullScreenAttach guards against a
+// TestHealthTick_SkipsRepairDuringFullScreenAttach guards against a
 // race with an in-progress full-screen attach: PausePreview legitimately
 // nils ptmx for the duration of tea.ExecProcess, and a re-attach racing that
 // window would fight the foreground attach over the same tmux session.
-func TestMetadataReadyMsg_SkipsRepairDuringFullScreenAttach(t *testing.T) {
+func TestHealthTick_SkipsRepairDuringFullScreenAttach(t *testing.T) {
 	m, inst := setupPtmxDeadFixture(t)
 	m.attachingInstance = inst
 
-	_, _ = m.Update(metadataReadyMsg{results: []metadataResult{
-		{instance: inst, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
+	deliver(t, m, core.HealthResult{Results: []core.ProbeResult{
+		{Instance: inst, TmuxLive: tmux.LivenessAlive},
 	}})
 
 	require.False(t, m.panes.Alive(inst.Pane().TmuxSessionName()), "repair must not run for the instance currently mid full-screen attach")

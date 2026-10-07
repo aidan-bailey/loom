@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/ui/overlay"
@@ -15,10 +16,9 @@ import (
 
 func TestRunNewFromIssue_OpensPickerFromSnapshot(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.ghAvailable = ghAvailability{checked: true, ok: true}
-	m.ghState = map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{
+	deliver(t, m, core.GitHubResultForTest(true, "", map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{
 		12: {Number: 12, Title: "Fix"}, 13: {Number: 13, Title: "Closed one", Closed: true},
-	}}}
+	}}}, nil))
 	_, _ = runNewFromIssue(m)
 	require.Equal(t, stateIssuePicker, m.state)
 	p := m.issuePicker()
@@ -28,18 +28,18 @@ func TestRunNewFromIssue_OpensPickerFromSnapshot(t *testing.T) {
 
 func TestRunNewFromIssue_NoSnapshotShowsLoadingAndForcesPoll(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.ghAvailable = ghAvailability{checked: true, ok: true}
-	m.gate(gateGH).last = time.Now()
+	deliver(t, m, core.GitHubResultForTest(true, "", nil, nil))
+	m.core.SetGateForTest("github", false, time.Now())
 	_, _ = runNewFromIssue(m)
 	require.Equal(t, stateIssuePicker, m.state)
-	assert.True(t, m.gateDue(gateGH, time.Now()))
+	_, _, due := m.core.GateForTest("github", time.Now())
+	assert.True(t, due)
 	assert.Contains(t, m.issuePicker().Render(), "loading")
 }
 
 func TestRunNewFromIssue_ShowsPollErrorInsteadOfLoading(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.ghAvailable = ghAvailability{checked: true, ok: true, checkedAt: time.Now()}
-	m.ghErrs = map[string]error{m.repoPath(): errors.New("no GitHub remote")}
+	deliver(t, m, core.GitHubResultForTest(true, "", nil, map[string]error{m.repoPath(): errors.New("no GitHub remote")}))
 	_, _ = runNewFromIssue(m)
 	require.Equal(t, stateIssuePicker, m.state)
 	assert.Contains(t, m.issuePicker().Render(), "no GitHub remote")
@@ -47,27 +47,25 @@ func TestRunNewFromIssue_ShowsPollErrorInsteadOfLoading(t *testing.T) {
 
 func TestRunNewFromIssue_UnavailableGHErrors(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.ghAvailable = ghAvailability{checked: true, ok: false, reason: "no gh"}
+	deliver(t, m, core.GitHubResultForTest(false, "no gh", nil, nil))
 	_, cmd := runNewFromIssue(m)
 	assert.Equal(t, stateDefault, m.state)
 	assert.NotNil(t, cmd, "error surfaces via handleError")
 }
 
-func TestGHReadyRefreshesOpenPicker(t *testing.T) {
+func TestGHResultRefreshesOpenPicker(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.ghAvailable = ghAvailability{checked: true, ok: true}
+	deliver(t, m, core.GitHubResultForTest(true, "", nil, nil))
 	_, _ = runNewFromIssue(m)
-	m.Update(ghReadyMsg{
-		available: ghAvailability{checked: true, ok: true},
-		snapshots: map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{7: {Number: 7, Title: "New"}}}},
-	})
+	deliver(t, m, core.GitHubResultForTest(true, "",
+		map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{7: {Number: 7, Title: "New"}}}}, nil))
 	assert.Equal(t, []int{7}, m.issuePicker().VisibleNumbers())
 }
 
 func TestIssuePickerEnter_DispatchesView(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.ghAvailable = ghAvailability{checked: true, ok: true}
-	m.ghState = map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{12: {Number: 12, Title: "Fix"}}}}
+	deliver(t, m, core.GitHubResultForTest(true, "",
+		map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{12: {Number: 12, Title: "Fix"}}}}, nil))
 	_, _ = runNewFromIssue(m)
 	_, cmd := handleStateIssuePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, stateDefault, m.state)
@@ -78,7 +76,7 @@ func TestIssuePickerEnter_DispatchesView(t *testing.T) {
 func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	before := m.list.NumInstances()
-	m.gate(gateGH).last = time.Now()
+	m.core.SetGateForTest("github", false, time.Now())
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "Fix flaky test", URL: "https://x/12", Body: "do it"}})
 	require.Equal(t, before+1, m.list.NumInstances())
 	inst := m.list.GetInstances()[m.list.NumInstances()-1]
@@ -88,7 +86,8 @@ func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T)
 	assert.Equal(t, stateLaunchOptions, m.state)
 	_, ok := m.activeOverlay.(*overlay.SessionLaunchOptions)
 	assert.True(t, ok)
-	assert.True(t, m.gateDue(gateGH, time.Now()), "an issue-born session forces the next poll")
+	_, _, due := m.core.GateForTest("github", time.Now())
+	assert.True(t, due, "an issue-born session forces the next poll")
 }
 
 func TestIssuePickedMsg_ErrorCreatesNothing(t *testing.T) {
@@ -104,7 +103,7 @@ func TestIssuePickedMsg_ErrorCreatesNothing(t *testing.T) {
 // same guard as typed titles: never create over a preserved record's title.
 func TestIssuePickedMsg_RejectsTitleOfPreservedRecord(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.storage = preservedTitleStorage(t, "gh-12-fix")
+	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Storage = preservedTitleStorage(t, "gh-12-fix") })
 	before := m.list.NumInstances()
 	_, cmd := m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "Fix"}})
 	assert.Equal(t, before, m.list.NumInstances(), "no session is created under a preserved title")
@@ -117,7 +116,7 @@ func TestIssuePickedMsg_RespectsInstanceLimit(t *testing.T) {
 	for i := 0; i < GlobalInstanceLimit; i++ {
 		inst, err := session.NewInstance(session.InstanceOptions{Title: "x", Path: t.TempDir(), Program: "claude"})
 		require.NoError(t, err)
-		m.list.AddInstance(inst)
+		m.ws.Add(inst)
 	}
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 1, Title: "t"}})
 	assert.Equal(t, GlobalInstanceLimit, m.list.NumInstances())

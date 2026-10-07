@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
@@ -100,7 +101,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m := fleetHome(t)
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "b-live")
-		m.slots[1].list.AddInstance(live)
+		m.slots[1].ws.Add(live)
 
 		cmd := m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}})
 		require.Equal(t, []string{"afocus"}, m.slotNames())
@@ -111,7 +112,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m := fleetHome(t)
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "a-live")
-		m.list.AddInstance(live)
+		m.ws.Add(live)
 		pointAt(m, live)
 
 		cmd := m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}})
@@ -124,8 +125,8 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m := fleetHome(t)
 		m.ctx = cancelledCtx()
 		focused, peer := liveInstance(t, "a-live"), liveInstance(t, "b-live")
-		m.list.AddInstance(focused)
-		m.slots[1].list.AddInstance(peer)
+		m.ws.Add(focused)
+		m.slots[1].ws.Add(peer)
 		pointAt(m, focused) // the carried-over splitPane must let go of it
 
 		cmd := m.applyWorkspaceToggle(nil)
@@ -137,7 +138,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "c-live")
-		m.list.AddInstance(live)
+		m.ws.Add(live)
 		pointAt(m, live)
 
 		cmd := m.applyWorkspaceToggle([]config.Workspace{preservedTerminalWorkspace(t, "ws-a")})
@@ -148,10 +149,10 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 	t.Run("global mode entered from a classic workspace slot", func(t *testing.T) {
 		t.Setenv(config.EnvGlobalDir, t.TempDir())
 		m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
-		m.wsCtx.Name = "ws-classic" // launched inside a workspace, no tabs
+		m.wsCtx().Name = "ws-classic" // launched inside a workspace, no tabs
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "g-live")
-		m.list.AddInstance(live)
+		m.ws.Add(live)
 		pointAt(m, live)
 
 		cmd := m.applyWorkspaceToggle(nil)
@@ -166,8 +167,8 @@ func TestPrunePanes_ReleasesOnlyInactiveSessions(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
 	keep, gone := liveInstance(t, "keep"), liveInstance(t, "gone")
-	m.list.AddInstance(keep)
-	m.list.AddInstance(gone)
+	m.ws.Add(keep)
+	m.ws.Add(gone)
 	require.NoError(t, gone.TransitionTo(session.Paused))
 	assert.Nil(t, releaseSlotCmd(nil))
 
@@ -190,12 +191,12 @@ func TestDroppedSlot_StaleProbeDoesNotReattach(t *testing.T) {
 	m := fleetHome(t)
 	m.ctx = cancelledCtx()
 	live := liveInstance(t, "b-live")
-	m.slots[1].list.AddInstance(live)
+	m.slots[1].ws.Add(live)
 	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}}))
 	require.False(t, clientOf(t, live).PtmxAlive())
 
-	_, _ = m.Update(metadataReadyMsg{results: []metadataResult{
-		{instance: live, tmuxLive: tmux.LivenessAlive, ptmxAlive: false},
+	deliver(t, m, core.HealthResult{Results: []core.ProbeResult{
+		{Instance: live, TmuxLive: tmux.LivenessAlive},
 	}})
 	assert.Nil(t, m.panes.Get(live.Pane().TmuxSessionName()), "a dropped instance must not be re-attached")
 }

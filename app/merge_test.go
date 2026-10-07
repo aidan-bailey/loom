@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 
 	"github.com/stretchr/testify/assert"
@@ -67,7 +68,7 @@ func TestRunMergeSelected_BlocksOnDirtyTarget(t *testing.T) {
 	m := newTestHome(t)
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
-	m.list.AddInstance(target)
+	m.ws.Add(target)
 	m.list.SelectInstance(target)
 
 	// Make the target worktree dirty.
@@ -85,7 +86,7 @@ func TestRunMergeSelected_BlocksWhenNoEligibleSources(t *testing.T) {
 	m := newTestHome(t)
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
-	m.list.AddInstance(target)
+	m.ws.Add(target)
 	m.list.SelectInstance(target)
 
 	_, cmd := runMergeSelected(m)
@@ -99,8 +100,8 @@ func TestRunMergeSelected_OpensPickerWithEligibleSources(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	m.list.AddInstance(target)
-	m.list.AddInstance(source)
+	m.ws.Add(target)
+	m.ws.Add(source)
 	m.list.SelectInstance(target)
 
 	_, cmd := runMergeSelected(m)
@@ -114,7 +115,7 @@ func TestRunMergeSelected_OpensPickerWithEligibleSources(t *testing.T) {
 	assert.Equal(t, "source", row.Title, "the only eligible source should be pre-selected")
 }
 
-func TestMergeActionFor_MergesBranchIntoTarget(t *testing.T) {
+func TestMerge_MergesBranchIntoTarget(t *testing.T) {
 	repoDir := setupMergeRepo(t)
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
@@ -125,9 +126,9 @@ func TestMergeActionFor_MergesBranchIntoTarget(t *testing.T) {
 	runGit(t, sourceWT.GetWorktreePath(), "add", ".")
 	runGit(t, sourceWT.GetWorktreePath(), "commit", "-qm", "add new.txt")
 
-	cmd := mergeActionFor(target, source)
-	msg := cmd()
-	assert.Nil(t, msg, "successful merge returns nil")
+	job := core.NewForTest(core.Options{}).Merge(target, source)
+	msg := job()
+	assert.Equal(t, core.MergeResult{}, msg, "successful merge returns no error")
 
 	targetWT, err := target.GetGitWorktree()
 	require.NoError(t, err)
@@ -141,8 +142,8 @@ func TestHandleStateMergePickerKey_EscCancelsWithoutMerging(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	m.list.AddInstance(target)
-	m.list.AddInstance(source)
+	m.ws.Add(target)
+	m.ws.Add(source)
 	m.list.SelectInstance(target)
 
 	_, cmd := runMergeSelected(m)
@@ -170,8 +171,8 @@ func TestHandleStateMergePickerKey_EnterMergesTheDisplayedTarget(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	m.list.AddInstance(target)
-	m.list.AddInstance(source)
+	m.ws.Add(target)
+	m.ws.Add(source)
 	m.list.SelectInstance(target)
 
 	sourceWT, err := source.GetGitWorktree()
@@ -191,7 +192,7 @@ func TestHandleStateMergePickerKey_EnterMergesTheDisplayedTarget(t *testing.T) {
 	assert.Nil(t, m.pendingMergeSourceItems)
 
 	msg := cmd()
-	assert.Nil(t, msg, "successful merge returns nil")
+	assert.Equal(t, coreResultMsg{msg: core.MergeResult{}}, msg, "successful merge returns no error")
 
 	targetWT, err := target.GetGitWorktree()
 	require.NoError(t, err)
@@ -202,7 +203,7 @@ func TestHandleStateMergePickerKey_EnterMergesTheDisplayedTarget(t *testing.T) {
 // TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange is the
 // regression test for the stale-target bug: once the picker is open,
 // changing m.list's selection out from under it (simulating a
-// background message like recoverDoneMsg reassigning selection) must
+// background message like a recover completion reassigning selection) must
 // NOT change which instance Enter merges into — it must still act on
 // the instance that was selected when the picker opened.
 func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) {
@@ -212,9 +213,9 @@ func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
 	other := pausedInstanceWithRealWorktree(t, repoDir, "other", "other-branch")
-	m.list.AddInstance(target)
-	m.list.AddInstance(source)
-	m.list.AddInstance(other)
+	m.ws.Add(target)
+	m.ws.Add(source)
+	m.ws.Add(other)
 	m.list.SelectInstance(target)
 
 	sourceWT, err := source.GetGitWorktree()
@@ -235,7 +236,7 @@ func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) 
 	_, cmd = handleStateMergePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.NotNil(t, cmd)
 	msg := cmd()
-	assert.Nil(t, msg, "merge should still succeed")
+	assert.Equal(t, coreResultMsg{msg: core.MergeResult{}}, msg, "merge should still succeed")
 
 	// The merge must have landed in the ORIGINAL target ("target"), not
 	// the instance the list's selection was reassigned to ("other").

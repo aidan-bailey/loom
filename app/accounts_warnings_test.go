@@ -1,8 +1,6 @@
 package app
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -24,80 +22,8 @@ func noCredentialOverride(t *testing.T) {
 	}
 }
 
-// TestAccountsRefreshed_AnExtraAccountsBlockedHintNamesItsOwnLogin: `claude
-// auth login` logs in the default account; an extra account logs in with
-// `loom account login <name>` or from the Accounts screen.
-func TestAccountsRefreshed_AnExtraAccountsBlockedHintNamesItsOwnLogin(t *testing.T) {
-	noCredentialOverride(t)
-	for _, tc := range []struct {
-		name string
-		id   account.Identity
-	}{
-		{"not logged in", account.Identity{LoggedIn: false}},
-		{"not a claude.ai login", account.Identity{LoggedIn: true, AuthMethod: "console"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m := newTestHome(t)
-			withAccounts(t, m, "max-2")
-			acct, _ := m.accounts.Get("max-2")
-			tc.id.ConfigDir = acct.Dir
-
-			m.Update(accountsRefreshedMsg{auth: map[string]session.RemoteControlAuth{"max-2": {
-				State: session.RemoteControlAuthBlocked, Reason: "… Run `claude auth login`.", Identity: tc.id,
-			}}})
-
-			reason := m.rcAuthFor("max-2").Reason
-			assert.Contains(t, reason, "loom account login max-2")
-			assert.Contains(t, reason, "Settings → Accounts → l")
-			assert.NotContains(t, reason, "claude auth login")
-			assert.True(t, m.rcAuthFor("max-2").Blocked(), "still blocked")
-		})
-	}
-}
-
-func TestAccountsRefreshed_TheDefaultAccountsHintIsUnchanged(t *testing.T) {
-	noCredentialOverride(t)
-	m := newTestHome(t)
-	main := withAccounts(t, m, "max-2")
-	def := session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in to Claude — run `claude auth login`.",
-		Identity: account.Identity{ConfigDir: main}}
-
-	m.Update(accountsRefreshedMsg{defaultAuth: &def})
-
-	assert.Equal(t, def.Reason, m.rcAuth.Reason)
-}
-
-// TestAccountsRefreshed_AnOverridesHintIsUnchanged: with a credential in
-// loom's environment, logging the account in changes nothing; the hint
-// about the variable stands.
-func TestAccountsRefreshed_AnOverridesHintIsUnchanged(t *testing.T) {
-	noCredentialOverride(t)
-	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
-	m := newTestHome(t)
-	withAccounts(t, m, "max-2")
-	reason := "ANTHROPIC_API_KEY is set — remote control needs a claude.ai login. Unset it, or run `claude auth login`."
-
-	m.Update(accountsRefreshedMsg{auth: map[string]session.RemoteControlAuth{"max-2": {
-		State: session.RemoteControlAuthBlocked, Reason: reason, Identity: account.Identity{LoggedIn: true, AuthMethod: "claude.ai"},
-	}}})
-
-	assert.Equal(t, reason, m.rcAuthFor("max-2").Reason)
-}
-
-func TestAccountsRefreshed_AnOKAuthIsUntouched(t *testing.T) {
-	noCredentialOverride(t)
-	m := newTestHome(t)
-	withAccounts(t, m, "max-2")
-	ok := session.RemoteControlAuth{State: session.RemoteControlAuthOK, Identity: account.Identity{LoggedIn: true, AuthMethod: "claude.ai"}}
-
-	m.Update(accountsRefreshedMsg{auth: map[string]session.RemoteControlAuth{"max-2": ok}})
-
-	require.True(t, m.rcAuthFor("max-2").OK())
-	assert.Empty(t, m.rcAuthFor("max-2").Reason)
-}
-
 // globalAccounts registers names in a registry at a fresh LOOM_GLOBAL_DIR,
-// where initAccounts finds it, and undoes initAccounts' publication at
+// where InitAccounts finds it, and undoes InitAccounts' publication at
 // cleanup. Returns the registry.
 func globalAccounts(t *testing.T, names ...string) *account.Registry {
 	t.Helper()
@@ -116,6 +42,14 @@ func globalAccounts(t *testing.T, names ...string) *account.Registry {
 	return reg
 }
 
+// initAccounts loads the account registry as newHome does: the strip,
+// then the model's load, whose notices land at once.
+func initAccounts(m *home) {
+	m.accountStrip = ui.NewAccountStrip()
+	m.core.InitAccounts()
+	m.drainCore()
+}
+
 // TestInitAccounts_WarnsWhenLoomRunsAsAnAccount: started from an account's
 // pane, loom's own CLAUDE_CONFIG_DIR is that account's, so "default"
 // describes it rather than the main login.
@@ -126,7 +60,7 @@ func TestInitAccounts_WarnsWhenLoomRunsAsAnAccount(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", acct.Dir)
 	m := newTestHome(t)
 
-	m.initAccounts()
+	initAccounts(m)
 
 	toast := m.errBox.String()
 	assert.Contains(t, toast, `account "max-2"`)
@@ -134,7 +68,8 @@ func TestInitAccounts_WarnsWhenLoomRunsAsAnAccount(t *testing.T) {
 
 	m.errBox.Clear()
 	require.NoError(t, reg.SetDefault("max-2"))
-	m.maybeReloadAccounts()
+	m.core.ReloadAccounts()
+	m.drainCore()
 	assert.NotContains(t, m.errBox.String(), "CLAUDE_CONFIG_DIR", "said once, at startup")
 }
 
@@ -144,32 +79,9 @@ func TestInitAccounts_NoRunningAsWarningFromTheMainDir(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	m := newTestHome(t)
 
-	m.initAccounts()
+	initAccounts(m)
 
 	assert.NotContains(t, m.errBox.String(), "CLAUDE_CONFIG_DIR")
-}
-
-// TestAccountsRefresh_RunningAsAnAccountSkipsSync: with no identity read,
-// the main dir falls back to $CLAUDE_CONFIG_DIR, here an account's own;
-// linking against it would spread that account into its siblings.
-func TestAccountsRefresh_RunningAsAnAccountSkipsSync(t *testing.T) {
-	noCredentialOverride(t)
-	m := newTestHome(t)
-	withAccounts(t, m, "max-2", "max-3")
-	self, _ := m.accounts.Get("max-3")
-	require.NoError(t, os.WriteFile(filepath.Join(self.Dir, "settings.json"), []byte("{}"), 0o644))
-	t.Setenv("CLAUDE_CONFIG_DIR", self.Dir)
-	m.rcAuth = session.RemoteControlAuth{}
-
-	msg, ok := m.accountsRefreshCmd(false)().(accountsRefreshedMsg)
-	require.True(t, ok)
-
-	assert.Empty(t, msg.sync, "nothing synced")
-	// Create already linked "projects" from the real main dir; the
-	// running account's own settings.json must not follow it.
-	other, _ := m.accounts.Get("max-2")
-	_, err := os.Lstat(filepath.Join(other.Dir, "settings.json"))
-	assert.True(t, os.IsNotExist(err), "an account is never linked into its sibling")
 }
 
 // TestRefreshAccountViews_ACredentialOverrideWarnsOnTheStrip: with one in
@@ -204,7 +116,7 @@ func TestInitAccounts_ACredentialOverrideWarnsFromTheStart(t *testing.T) {
 	globalAccounts(t, "max-2")
 	m := newTestHome(t)
 
-	m.initAccounts()
+	initAccounts(m)
 	m.accountStrip.SetWidth(200)
 
 	assert.Contains(t, ansi.Strip(m.accountStrip.String()), "⚠ $ANTHROPIC_API_KEY set: all accounts use it")

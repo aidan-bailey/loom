@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
@@ -97,48 +98,14 @@ func runTests(m *testing.M) int {
 	return m.Run()
 }
 
-func TestPersistableInstances_ExcludesRecoverable(t *testing.T) {
-	data := session.InstanceData{
-		SchemaVersion: session.CurrentSchemaVersion,
-		Title:         "orphan",
-		Path:          t.TempDir(),
-		Branch:        "u/orphan",
-		Status:        session.Recoverable,
-		Worktree: session.GitWorktreeData{
-			RepoPath:         t.TempDir(),
-			WorktreePath:     t.TempDir(),
-			BranchName:       "u/orphan",
-			IsExistingBranch: true,
-		},
-	}
-	inst, err := session.FromInstanceData(data, t.TempDir())
-	require.NoError(t, err)
-	assert.Empty(t, persistableInstances([]*session.Instance{inst}))
-}
-
-func TestRecoverySummary_String(t *testing.T) {
-	assert.True(t, recoverySummary{}.empty())
-	assert.Equal(t, "Recovery: cleaned 1 stale worktree", recoverySummary{cleaned: 1}.String())
-	assert.Equal(t, "Recovery: cleaned 2 stale worktrees · 3 sessions need review (in list)",
-		recoverySummary{cleaned: 2, review: 3}.String())
-	assert.Equal(t, "Recovery: 1 session needs review (in list)", recoverySummary{review: 1}.String())
-	assert.False(t, recoverySummary{undecodable: 1}.empty(), "undecodable records alone must still be surfaced")
-	assert.Equal(t, "Recovery: 1 session record could not be read by this version of loom and was preserved unchanged",
-		recoverySummary{undecodable: 1}.String())
-	assert.Equal(t, "Recovery: 1 session failed to load (kept; see loom.log) · 2 session records could not be read by this version of loom and were preserved unchanged",
-		recoverySummary{failed: 1, undecodable: 2}.String())
-}
-
 // TestConfirmationModalStateTransitions tests state transitions without full instance setup
 func TestConfirmationModalStateTransitions(t *testing.T) {
 	// Create a minimal home struct for testing state transitions
-	h := &home{
-		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
-		},
-		ctx:   context.Background(),
-		state: stateDefault,
-	}
+	h := wireCore(t, &home{
+		workspaceSlot: &workspaceSlot{ws: testWS(core.WorkspaceParts{Config: config.DefaultConfig()})},
+		ctx:           context.Background(),
+		state:         stateDefault,
+	})
 
 	t.Run("shows confirmation on D press", func(t *testing.T) {
 		// Simulate pressing 'D'
@@ -214,19 +181,20 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 func TestConfirmationModalKeyHandling(t *testing.T) {
 	// Import needed packages
 	spinner := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&spinner)
+	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()})
+	list := ui.NewList(&spinner, ws)
 
 	// Create enough of home struct to test handleKeyPress in confirmation state
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		},
 		ctx:   context.Background(),
 		state: stateConfirm,
 		menu:  ui.NewMenu(),
-	}
+	})
 	h.setOverlay(overlay.NewConfirmationOverlay("Kill session?"), overlayConfirmation)
 
 	testCases := []struct {
@@ -339,7 +307,6 @@ func TestConfirmationMessageFormatting(t *testing.T) {
 func TestConfirmationFlowSimulation(t *testing.T) {
 	// Create a minimal setup
 	spinner := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&spinner)
 
 	// Add test instance
 	instance, err := session.NewInstance(session.InstanceOptions{
@@ -348,18 +315,19 @@ func TestConfirmationFlowSimulation(t *testing.T) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	list.AddInstance(instance)
+	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()}, instance)
+	list := ui.NewList(&spinner, ws)
 	list.SetSelectedInstance(0)
 
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
-			list:      list,
+			ws:   ws,
+			list: list,
 		},
 		ctx:   context.Background(),
 		state: stateDefault,
 		menu:  ui.NewMenu(),
-	}
+	})
 
 	// Simulate what happens when D is pressed
 	selected := h.list.GetSelectedInstance()
@@ -382,13 +350,11 @@ func TestConfirmationFlowSimulation(t *testing.T) {
 
 // TestConfirmActionWithDifferentTypes tests that confirmAction works with different action types
 func TestConfirmActionWithDifferentTypes(t *testing.T) {
-	h := &home{
-		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
-		},
-		ctx:   context.Background(),
-		state: stateDefault,
-	}
+	h := wireCore(t, &home{
+		workspaceSlot: &workspaceSlot{ws: testWS(core.WorkspaceParts{Config: config.DefaultConfig()})},
+		ctx:           context.Background(),
+		state:         stateDefault,
+	})
 
 	t.Run("works with simple action returning nil", func(t *testing.T) {
 		actionCalled := false
@@ -477,13 +443,11 @@ func TestConfirmActionWithDifferentTypes(t *testing.T) {
 
 // TestMultipleConfirmationsDontInterfere tests that multiple confirmations don't interfere with each other
 func TestMultipleConfirmationsDontInterfere(t *testing.T) {
-	h := &home{
-		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
-		},
-		ctx:   context.Background(),
-		state: stateDefault,
-	}
+	h := wireCore(t, &home{
+		workspaceSlot: &workspaceSlot{ws: testWS(core.WorkspaceParts{Config: config.DefaultConfig()})},
+		ctx:           context.Background(),
+		state:         stateDefault,
+	})
 
 	// First confirmation
 	action1Called := false
@@ -564,7 +528,6 @@ func (m *mockInstanceStorage) DeleteAllInstances() error             { return ni
 // starting, the app auto-enters inline attach mode focused on the agent pane.
 func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&sp)
 	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	menu := ui.NewMenu()
 
@@ -574,29 +537,30 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	list.AddInstance(instance)
-	list.SetSelectedInstance(0)
+	finishStart(t, instance)
 
 	storage, err := session.NewStorage(&mockInstanceStorage{}, t.TempDir())
 	require.NoError(t, err)
+	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig(), Storage: storage}, instance)
+	list := ui.NewList(&sp, ws)
+	list.SetSelectedInstance(0)
 
-	h := &home{
+	h := wirePanes(t, wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: splitPane,
-			storage:   storage,
 		},
 		ctx:   context.Background(),
 		state: stateDefault,
 		menu:  menu,
-	}
+	}))
 
-	// Simulate instanceStartedMsg (no prompt, no error)
-	msg := instanceStartedMsg{
-		instance: instance,
-		err:      nil,
-	}
+	// Simulate a start's result (no prompt, no error)
+	msg := coreResultMsg{msg: core.StartResult{
+		Instance: instance,
+		Err:      nil,
+	}}
 	model, _ := h.Update(msg)
 	homeModel := model.(*home)
 
@@ -606,13 +570,11 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 
 // TestConfirmationModalVisualAppearance tests that confirmation modal has distinct visual appearance
 func TestConfirmationModalVisualAppearance(t *testing.T) {
-	h := &home{
-		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
-		},
-		ctx:   context.Background(),
-		state: stateDefault,
-	}
+	h := wireCore(t, &home{
+		workspaceSlot: &workspaceSlot{ws: testWS(core.WorkspaceParts{Config: config.DefaultConfig()})},
+		ctx:           context.Background(),
+		state:         stateDefault,
+	})
 
 	// Create a test confirmation overlay
 	message := "[!] Delete everything?"
@@ -643,7 +605,6 @@ func TestConfirmationModalVisualAppearance(t *testing.T) {
 // sets the instance status to Deleting before the async cleanup Cmd runs.
 func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
 
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:   "test-delete",
@@ -652,19 +613,20 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_ = instance.TransitionTo(session.Running)
-	list.AddInstance(instance)
+	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()}, instance)
+	list := ui.NewList(&s, ws)
 	list.SetSelectedInstance(0)
 
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		},
 		ctx:   context.Background(),
 		state: stateDefault,
 		menu:  ui.NewMenu(),
-	}
+	})
 
 	// Set up a task like the kill handler does
 	h.confirmTask("[!] Kill session 'test-delete'?", overlay.ConfirmationTask{
@@ -672,7 +634,7 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 			_ = instance.TransitionTo(session.Deleting)
 		},
 		Async: func() tea.Msg {
-			return killInstanceMsg{inst: instance, title: "test-delete"}
+			return coreResultMsg{msg: core.KillResult{Instance: instance, Title: "test-delete"}}
 		},
 	})
 
@@ -684,11 +646,10 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	assert.Equal(t, session.Deleting, instance.GetStatus())
 }
 
-// TestTransitionFailedMsgRevertsStatus verifies that a transitionFailedMsg
-// reverts the instance status to its previous value.
-func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
+// TestOpFailedRevertsStatus verifies that a failed operation's
+// result (core.OpFailed) reverts the instance status to its previous value.
+func TestOpFailedRevertsStatus(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
 
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:   "test-revert",
@@ -697,11 +658,12 @@ func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_ = instance.TransitionTo(session.Deleting)
-	list.AddInstance(instance)
+	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()}, instance)
+	list := ui.NewList(&s, ws)
 
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		},
@@ -709,84 +671,18 @@ func TestTransitionFailedMsgRevertsStatus(t *testing.T) {
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
 		errBox: ui.NewErrBox(),
-	}
+	})
 
-	msg := transitionFailedMsg{
-		inst:           instance,
-		title:          "test-revert",
-		op:             "delete",
-		previousStatus: session.Running,
-		err:            fmt.Errorf("branch is checked out"),
+	msg := core.OpFailed{
+		Instance: instance,
+		Title:    "test-revert",
+		Op:       "delete",
+		Previous: session.Running,
+		Err:      fmt.Errorf("branch is checked out"),
 	}
-	h.Update(msg)
+	deliver(t, h, msg)
 
 	assert.Equal(t, session.Running, instance.GetStatus())
-}
-
-// TestPersistableInstancesFiltersDeleting verifies that persistableInstances
-// excludes instances with Deleting status.
-func TestPersistableInstancesFiltersDeleting(t *testing.T) {
-	running, _ := session.NewInstance(session.InstanceOptions{
-		Title: "running", Path: t.TempDir(), Program: "claude",
-	})
-	_ = running.TransitionTo(session.Running)
-
-	deleting, _ := session.NewInstance(session.InstanceOptions{
-		Title: "deleting", Path: t.TempDir(), Program: "claude",
-	})
-	_ = deleting.TransitionTo(session.Deleting)
-
-	paused, _ := session.NewInstance(session.InstanceOptions{
-		Title: "paused", Path: t.TempDir(), Program: "claude",
-	})
-	_ = paused.TransitionTo(session.Paused)
-
-	result := persistableInstances([]*session.Instance{running, deleting, paused})
-	assert.Len(t, result, 2)
-	assert.Equal(t, "running", result[0].Title)
-	assert.Equal(t, "paused", result[1].Title)
-}
-
-// TestPersistableInstances_KeepsIdleSessions: Ready is overloaded. A
-// creation flow's instance is Ready before it starts, and the status
-// ladder and Claude's roster report an idle agent or workspace terminal as
-// Ready too. Only the never-started one stays off disk: skipping every
-// Ready instance dropped idle sessions' records on each save, so the next
-// load offered their worktrees as Recoverable orphans and killed and
-// recreated an idle workspace terminal.
-func TestPersistableInstances_KeepsIdleSessions(t *testing.T) {
-	// started builds a started instance (paused data comes back started)
-	// and moves it through Running to status.
-	started := func(title string, terminal bool, status session.Status) *session.Instance {
-		t.Helper()
-		inst, err := session.FromInstanceData(session.InstanceData{
-			Title: title, Status: session.Paused, Program: "claude", IsWorkspaceTerminal: terminal,
-		}, t.TempDir())
-		require.NoError(t, err)
-		require.NoError(t, inst.TransitionTo(session.Running))
-		require.NoError(t, inst.TransitionTo(status))
-		require.True(t, inst.Started())
-		return inst
-	}
-	idleAgent := started("idle-agent", false, session.Ready)
-	idleTerminal := started("idle-terminal", true, session.Ready)
-	deleting := started("deleting", false, session.Deleting)
-
-	creating, err := session.NewInstance(session.InstanceOptions{Title: "creating", Path: t.TempDir(), Program: "claude"})
-	require.NoError(t, err)
-	require.Equal(t, session.Ready, creating.GetStatus())
-	require.False(t, creating.Started(), "fixture: a creation flow's instance")
-	starting, err := session.NewInstance(session.InstanceOptions{Title: "starting", Path: t.TempDir(), Program: "claude"})
-	require.NoError(t, err)
-	require.NoError(t, starting.TransitionTo(session.Loading)) // its start is in flight
-	recoverable, err := session.FromInstanceData(session.InstanceData{
-		Title: "orphan", Status: session.Recoverable, Program: "claude", IsWorkspaceTerminal: true,
-	}, t.TempDir())
-	require.NoError(t, err)
-
-	got := persistableInstances([]*session.Instance{idleAgent, idleTerminal, creating, starting, deleting, recoverable})
-
-	assert.Equal(t, []*session.Instance{idleAgent, idleTerminal, starting}, got)
 }
 
 // TestPendingConfirmationClearedOnCancel verifies that cancelling a
@@ -794,18 +690,19 @@ func TestPersistableInstances_KeepsIdleSessions(t *testing.T) {
 // can't leak into the next confirmation.
 func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
+	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()})
+	list := ui.NewList(&s, ws)
 
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		},
 		ctx:   context.Background(),
 		state: stateDefault,
 		menu:  ui.NewMenu(),
-	}
+	})
 
 	syncCalled := false
 	h.confirmTask("Test?", overlay.ConfirmationTask{
@@ -838,22 +735,20 @@ func TestHandleQuitStaysInTUIOnSaveError(t *testing.T) {
 	require.NoError(t, err)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
-	list.AddInstance(inst)
+	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig(), Storage: storage, State: state}, inst)
+	list := ui.NewList(&s, ws)
 
-	h := &home{
+	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
-			appConfig: config.DefaultConfig(),
+			ws:        ws,
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-			storage:   storage,
-			appState:  state,
 		},
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
 		errBox: ui.NewErrBox(),
-	}
+	})
 
 	// Make the config dir read-only so the next SaveInstances fails.
 	require.NoError(t, os.Chmod(cfgDir, 0o500))
@@ -884,15 +779,12 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 	require.NoError(t, err)
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	list := ui.NewList(&s)
-	list.AddInstance(inst)
-
 	wsCtx := &config.WorkspaceContext{Name: "test-ws", ConfigDir: cfgDir}
+	ws := testWS(core.WorkspaceParts{Ctx: wsCtx, Storage: storage, Config: config.DefaultConfig(), State: state}, inst)
+	list := ui.NewList(&s, ws)
+
 	slot := &workspaceSlot{
-		wsCtx:     wsCtx,
-		storage:   storage,
-		appConfig: config.DefaultConfig(),
-		appState:  state,
+		ws:        ws,
 		list:      list,
 		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 	}
@@ -904,6 +796,7 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 		errBox: ui.NewErrBox(),
 	}
 	focusSlots(h, 0, slot)
+	wireCore(t, h)
 
 	require.NoError(t, os.Chmod(cfgDir, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(cfgDir, 0o700) })

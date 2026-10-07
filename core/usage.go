@@ -1,10 +1,8 @@
-package app
+package core
 
 import (
 	"sync"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 
 	"github.com/aidan-bailey/loom/account"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
@@ -14,26 +12,26 @@ import (
 // usageInterval is the usage probes' cadence. Plan usage moves slowly and
 // the views dim a sample older than two intervals (ui.UsageStaleAfter);
 // the moments the user is choosing an account expedite a probe instead
-// (requestUsageProbe).
+// (RequestUsageProbe).
 const usageInterval = 2 * time.Minute
 
 // usageTarget is one account to probe. dir is its config dir, "" for the
 // default account.
 type usageTarget struct{ name, dir string }
 
-// usageReadyMsg carries one round of probes: results for the accounts that
+// usageResult carries one round of probes: results for the accounts that
 // answered, errs for the ones that did not.
-type usageReadyMsg struct {
+type usageResult struct {
 	results map[string]account.Usage
 	errs    map[string]error
 }
 
-// usageProbeCmd probes every target in parallel and returns one message.
+// usageProbeJob probes every target in parallel and returns one result.
 // Each probe runs in its account's config dir (the main dir for default)
 // so no project entry is recorded for an arbitrary directory.
-func usageProbeCmd(program, mainDir string, targets []usageTarget, r internalexec.Executor) tea.Cmd {
-	return func() tea.Msg {
-		msg := usageReadyMsg{results: map[string]account.Usage{}, errs: map[string]error{}}
+func usageProbeJob(program, mainDir string, targets []usageTarget, r internalexec.Executor) Job {
+	return func() any {
+		msg := usageResult{results: map[string]account.Usage{}, errs: map[string]error{}}
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 		for _, t := range targets {
@@ -59,17 +57,17 @@ func usageProbeCmd(program, mainDir string, targets []usageTarget, r internalexe
 	}
 }
 
-// maybeUsageProbe returns a probe round when gateUsage is due, an extra
+// maybeUsageProbe dispatches a probe round when gateUsage is due, an extra
 // account exists, and a Claude CLI is configured. It reads the registry as
 // the health tick last reloaded it (maybeReloadAccounts): a builder that
 // returns nil leaves the gate due, so it runs again on the very next tick.
 // Update goroutine only.
-func (m *home) maybeUsageProbe() tea.Cmd {
-	return m.dispatchGated(gateUsage, time.Now(), func() tea.Cmd {
-		if !m.hasExtraAccounts() {
+func (m *Model) maybeUsageProbe() bool {
+	return m.dispatchGated(gateUsage, time.Now(), func() Job {
+		if !m.HasExtraAccounts() {
 			return nil
 		}
-		program := m.claudeProgram()
+		program := m.ClaudeProgram()
 		if program == "" {
 			return nil
 		}
@@ -77,18 +75,18 @@ func (m *home) maybeUsageProbe() tea.Cmd {
 		for _, a := range m.accounts.Accounts {
 			targets = append(targets, usageTarget{name: a.Name, dir: a.Dir})
 		}
-		return usageProbeCmd(program, m.mainConfigDir(), targets, internalexec.Default{})
+		return usageProbeJob(program, m.MainConfigDir(), targets, internalexec.Default{})
 	})
 }
 
-// requestUsageProbe brings the next probe round forward: the user is about
+// RequestUsageProbe brings the next probe round forward: the user is about
 // to choose an account (a picker opened) or the accounts changed.
-func (m *home) requestUsageProbe() tea.Cmd {
+func (m *Model) RequestUsageProbe() {
 	m.gate(gateUsage).request()
-	return m.maybeUsageProbe()
+	m.maybeUsageProbe()
 }
 
-// handleUsageReady stores a probe round. A failed probe keeps the account's
+// deliverUsage stores a probe round. A failed probe keeps the account's
 // last good sample and records the error, which the views show as a dimmed,
 // aged value; usage never drives a status, so stale beats blank here.
 //
@@ -96,7 +94,7 @@ func (m *home) requestUsageProbe() tea.Cmd {
 // rereads the account's auth: an expired login probes as not available,
 // the same as API-key auth, and only `claude auth status` can tell the
 // strip to say "logged out" rather than "n/a".
-func (m *home) handleUsageReady(msg usageReadyMsg) tea.Cmd {
+func (m *Model) deliverUsage(msg usageResult) {
 	m.ensureAccountMaps()
 	reread, rereadDefault := false, false
 	for name, u := range msg.results {
@@ -112,24 +110,23 @@ func (m *home) handleUsageReady(msg usageReadyMsg) tea.Cmd {
 		m.usage[name] = cur
 		log.For("account").Debug("usage.probe_failed", "account", name, "err", err.Error())
 	}
-	cmds := []tea.Cmd{m.refreshAccountViews()}
+	m.emit(AccountsChanged{})
 	if reread {
-		cmds = append(cmds, m.requestAccountsRefresh(rereadDefault))
+		m.RequestAccountsRefresh(rereadDefault)
 	}
-	return tea.Batch(cmds...)
 }
 
 // lostAccess reports that u, name's new probe, has no plan access where
 // the account had some: its previous sample was available, or this is its
 // first sample and its auth says it is logged in. An account that stays
 // without access (API-key auth) triggers nothing after the first time.
-func (m *home) lostAccess(name string, u account.Usage) bool {
+func (m *Model) lostAccess(name string, u account.Usage) bool {
 	if u.Available {
 		return false
 	}
 	prev := m.usage[name].last
 	if prev.At.IsZero() {
-		return m.rcAuthFor(name).Identity.LoggedIn
+		return m.RCAuthFor(name).Identity.LoggedIn
 	}
 	return prev.Available
 }

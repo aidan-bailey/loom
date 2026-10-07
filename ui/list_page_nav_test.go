@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"slices"
 	"testing"
 
 	"charm.land/bubbles/v2/spinner"
@@ -15,39 +16,57 @@ import (
 // height = 11 gives n = (11 - 2) / 3 = 3).
 const pageNavTestHeight = 11
 
+// sliceSource is a test InstanceSource the tests edit directly, standing
+// in for core.Workspace.
+type sliceSource struct{ items []*session.Instance }
+
+func (s *sliceSource) Instances() []*session.Instance { return s.items }
+
+func (s *sliceSource) add(inst *session.Instance) { s.items = append(s.items, inst) }
+
+func (s *sliceSource) remove(inst *session.Instance) {
+	s.items = slices.DeleteFunc(s.items, func(i *session.Instance) bool { return i == inst })
+}
+
+func (s *sliceSource) prepend(inst *session.Instance) {
+	s.items = append([]*session.Instance{inst}, s.items...)
+}
+
 // newPageNavList builds a list containing n instances and sizes it so
 // maxVisibleItems() returns pageSize. Every item starts as Running;
 // callers can mutate individual items to Deleting to cover skip paths.
-func newPageNavList(n int) *List {
+// It returns the list's source too, for tests that edit the rows.
+func newPageNavList(n int) (*List, *sliceSource) {
 	log.Initialize("", false)
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	l := NewList(&sp)
+	src := &sliceSource{}
+	l := NewList(&sp, src)
 	l.SetSize(40, pageNavTestHeight)
 	for i := 0; i < n; i++ {
 		inst := &session.Instance{Title: fmt.Sprintf("inst-%02d", i)}
 		_ = inst.TransitionTo(session.Running)
-		l.AddInstance(inst)
+		src.add(inst)
 	}
-	return l
+	return l, src
 }
 
 func markDeleting(t *testing.T, l *List, idx int) {
 	t.Helper()
-	inst := l.items[idx]
+	inst := l.items()[idx]
 	if err := inst.TransitionTo(session.Deleting); err != nil {
 		t.Fatalf("transition to Deleting at idx=%d: %v", idx, err)
 	}
 }
 
 func TestListPageNav_MaxVisibleItemsMatchesFixture(t *testing.T) {
-	l := newPageNavList(0)
+	l, _ := newPageNavList(0)
 	assert.Equal(t, 3, l.maxVisibleItems(),
 		"fixture height %d should yield page size 3; formula drifted",
 		pageNavTestHeight)
 }
 
 func TestListPageNav_EmptyListNoOp(t *testing.T) {
-	l := newPageNavList(0)
+	l, _ := newPageNavList(0)
 	l.PageUp()
 	l.PageDown()
 	l.Top()
@@ -56,7 +75,7 @@ func TestListPageNav_EmptyListNoOp(t *testing.T) {
 }
 
 func TestListPageNav_PageDownAdvancesByPageSize(t *testing.T) {
-	l := newPageNavList(10)
+	l, _ := newPageNavList(10)
 	l.selectedIdx = 0
 
 	l.PageDown()
@@ -70,7 +89,7 @@ func TestListPageNav_PageDownAdvancesByPageSize(t *testing.T) {
 }
 
 func TestListPageNav_PageUpRetreatsByPageSize(t *testing.T) {
-	l := newPageNavList(10)
+	l, _ := newPageNavList(10)
 	l.selectedIdx = 9
 
 	l.PageUp()
@@ -84,7 +103,7 @@ func TestListPageNav_PageUpRetreatsByPageSize(t *testing.T) {
 }
 
 func TestListPageNav_PageDownSkipsDeleting(t *testing.T) {
-	l := newPageNavList(10)
+	l, _ := newPageNavList(10)
 	l.selectedIdx = 0
 	// Target after a PageDown from idx=0 is idx=3. Mark 3..5 Deleting so
 	// the forward-walk skip advances past them.
@@ -98,7 +117,7 @@ func TestListPageNav_PageDownSkipsDeleting(t *testing.T) {
 }
 
 func TestListPageNav_PageUpWalksUpwardThroughDeleting(t *testing.T) {
-	l := newPageNavList(10)
+	l, _ := newPageNavList(10)
 	l.selectedIdx = 9
 	// Target after a PageUp from idx=9 is idx=6. Mark 4..6 Deleting so
 	// the backward-walk skip retreats past them without overshooting 0.
@@ -112,7 +131,7 @@ func TestListPageNav_PageUpWalksUpwardThroughDeleting(t *testing.T) {
 }
 
 func TestListPageNav_TopSkipsLeadingDeleting(t *testing.T) {
-	l := newPageNavList(6)
+	l, _ := newPageNavList(6)
 	markDeleting(t, l, 0)
 	markDeleting(t, l, 1)
 	l.selectedIdx = 5
@@ -123,7 +142,7 @@ func TestListPageNav_TopSkipsLeadingDeleting(t *testing.T) {
 }
 
 func TestListPageNav_BottomSkipsTrailingDeleting(t *testing.T) {
-	l := newPageNavList(6)
+	l, _ := newPageNavList(6)
 	markDeleting(t, l, 4)
 	markDeleting(t, l, 5)
 	l.selectedIdx = 0
@@ -134,8 +153,8 @@ func TestListPageNav_BottomSkipsTrailingDeleting(t *testing.T) {
 }
 
 func TestListPageNav_AllDeletingKeepsSelection(t *testing.T) {
-	l := newPageNavList(4)
-	for i := range l.items {
+	l, _ := newPageNavList(4)
+	for i := range l.items() {
 		markDeleting(t, l, i)
 	}
 	l.selectedIdx = 2

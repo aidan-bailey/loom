@@ -6,51 +6,26 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestUsageProbe_NotDispatchedWithoutAnExtraAccount(t *testing.T) {
-	m := homeWithAppState(t)
-	m.program = "claude"
-	withAccounts(t, m)
-
-	assert.Nil(t, m.maybeUsageProbe())
-	assert.False(t, m.gate(gateUsage).inFlight, "no Cmd, nothing armed")
-}
-
-func TestUsageProbe_NotDispatchedWithoutAClaudeProgram(t *testing.T) {
-	m := homeWithAppState(t)
-	m.program = "aider"
-	withAccounts(t, m, "max-2")
-
-	assert.Nil(t, m.maybeUsageProbe())
-}
-
-func TestUsageProbe_DispatchesOnceAndThrottles(t *testing.T) {
-	m := homeWithAppState(t)
-	m.program = "claude"
-	withAccounts(t, m, "max-2")
-
-	require.NotNil(t, m.maybeUsageProbe())
-	assert.True(t, m.gate(gateUsage).inFlight)
-	assert.Nil(t, m.maybeUsageProbe(), "one probe in flight at a time")
-}
-
 func TestUsageReady_KeepsTheLastGoodSampleOnError(t *testing.T) {
 	m := homeWithAppState(t)
 	withAccounts(t, m, "max-2")
 	good := account.Usage{Available: true, At: time.Now(), FiveHour: &account.Window{Pct: 12}}
 
-	m.Update(gatedMsg{kind: gateUsage, msg: usageReadyMsg{results: map[string]account.Usage{"max-2": good}}})
-	m.Update(gatedMsg{kind: gateUsage, msg: usageReadyMsg{errs: map[string]error{"max-2": errors.New("timeout")}}})
+	deliver(t, m, core.UsageResultForTest(map[string]account.Usage{"max-2": good}, nil))
+	deliver(t, m, core.UsageResultForTest(nil, map[string]error{"max-2": errors.New("timeout")}))
 
-	got := m.usage["max-2"]
-	assert.Equal(t, good, got.last, "display-only: a failed probe keeps the sample")
-	assert.Error(t, got.err)
-	assert.False(t, m.gate(gateUsage).inFlight)
+	last, probeErr := m.core.AccountUsage("max-2")
+	assert.Equal(t, good, last, "display-only: a failed probe keeps the sample")
+	assert.Error(t, probeErr)
+	inFlight, _, _ := m.core.GateForTest("usage", time.Now())
+	assert.False(t, inFlight)
 	st := m.accountStatuses()
 	assert.True(t, st[1].Failing)
 }
@@ -61,28 +36,17 @@ func TestUsageReady_KeepsTheLastGoodSampleOnError(t *testing.T) {
 func TestUsageReady_LoggedOutOutranksAProbedSample(t *testing.T) {
 	m := homeWithAppState(t)
 	withAccounts(t, m, "max-2")
-	acct, ok := m.accounts.Get("max-2")
+	acct, ok := m.core.Account("max-2")
 	require.True(t, ok)
-	m.accountAuth = map[string]session.RemoteControlAuth{"max-2": {
+	m.core.SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {
 		State:    session.RemoteControlAuthBlocked,
 		Identity: account.Identity{ConfigDir: acct.Dir, LoggedIn: false},
-	}}
+	}})
 	now := time.Now()
 
-	m.Update(gatedMsg{kind: gateUsage, msg: usageReadyMsg{results: map[string]account.Usage{"max-2": {At: now}}}})
+	deliver(t, m, core.UsageResultForTest(map[string]account.Usage{"max-2": {At: now}}, nil))
 
 	st := m.accountStatuses()
 	require.Len(t, st, 2)
 	assert.Equal(t, "logged out", ui.AccountUsageText(st[1], now))
-}
-
-func TestRequestUsageProbe_BringsTheNextProbeForward(t *testing.T) {
-	m := homeWithAppState(t)
-	m.program = "claude"
-	withAccounts(t, m, "max-2")
-	require.NotNil(t, m.maybeUsageProbe())
-	m.Update(gatedMsg{kind: gateUsage, msg: usageReadyMsg{}})
-	assert.Nil(t, m.maybeUsageProbe(), "throttled by usageInterval")
-
-	assert.NotNil(t, m.requestUsageProbe())
 }

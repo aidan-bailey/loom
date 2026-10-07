@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,7 +16,7 @@ func TestLaunchOptionsFromConfigSeedsBranchPrefix(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.BranchPrefix = "team/"
 
-	opts := launchOptionsFromConfig(cfg)
+	opts := launch.FromConfig(cfg)
 
 	assert.Equal(t, "team/", opts.BranchPrefix, "the modal must open showing the prefix that would otherwise be used")
 }
@@ -38,7 +39,7 @@ func editBranchPrefixTo(m *home, current, value string) {
 
 func TestNewInstanceFlowAppliesBranchPrefixOverride(t *testing.T) {
 	m := newPendingTitleEntryHome(t)
-	m.appConfig.BranchPrefix = "aidanb/"
+	m.appConfig().BranchPrefix = "aidanb/"
 
 	for _, r := range "my-task" {
 		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
@@ -61,7 +62,7 @@ func TestNewInstanceFlowAppliesBranchPrefixOverride(t *testing.T) {
 // than sometimes the instance and sometimes a re-read of config.json.
 func TestNewInstanceFlowRecordsPrefixEvenWhenUnedited(t *testing.T) {
 	m := newPendingTitleEntryHome(t)
-	m.appConfig.BranchPrefix = "aidanb/"
+	m.appConfig().BranchPrefix = "aidanb/"
 
 	for _, r := range "my-task" {
 		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})

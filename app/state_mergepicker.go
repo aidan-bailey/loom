@@ -6,7 +6,7 @@ import (
 
 // handleStateMergePickerKey drives the merge-picker overlay opened by
 // runMergeSelected. On commit it either cancels (Esc — no git command
-// runs) or hands the chosen source instance to mergeActionFor, which
+// runs) or hands the chosen source instance to core's Merge, whose job
 // runs the actual git merge as a tea.Cmd. This is where the Lua
 // coroutine's involvement ends for good — everything past
 // runMergeSelected's yield-and-resume is plain Go state-handler code,
@@ -36,5 +36,5 @@ func handleStateMergePickerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	if source == nil {
 		return m, nil
 	}
-	return m, mergeActionFor(target, source)
+	return m, coreCmd(m.core.Merge(target, source))
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui/overlay"
 
@@ -17,20 +18,20 @@ import (
 func newTestHomeWithWsCtx(t *testing.T) *home {
 	t.Helper()
 	m := newTestHome(t)
-	m.wsCtx = &config.WorkspaceContext{ConfigDir: t.TempDir()}
-	m.program = m.appConfig.DefaultProgram
+	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx = &config.WorkspaceContext{ConfigDir: t.TempDir()} })
+	m.core.SetProgram(m.appConfig().DefaultProgram)
 	return m
 }
 
 func TestHandleStateSettingsKeyRefreshesProgramShadow(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	so := overlay.NewSettingsOverlay(m.appConfig, false, "")
+	so := overlay.NewSettingsOverlay(m.appConfig(), false, "")
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 
 	// Default Program starts at whatever DefaultConfig resolved (an
 	// absolute path GetClaudeCommand found on PATH, not a short fixed
-	// string); edit it to a distinct value and confirm m.program
+	// string); edit it to a distinct value and confirm m.core.Program()
 	// follows. The textarea pre-fills with the current value and
 	// leaves the cursor at the end, so the existing text must be
 	// cleared before typing or "aider" would land appended to it.
@@ -43,13 +44,13 @@ func TestHandleStateSettingsKeyRefreshesProgramShadow(t *testing.T) {
 	}
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // submit
 
-	assert.Equal(t, "aider", m.appConfig.DefaultProgram)
-	assert.Equal(t, "aider", m.program, "m.program must be refreshed, not left stale")
+	assert.Equal(t, "aider", m.appConfig().DefaultProgram)
+	assert.Equal(t, "aider", m.core.Program(), "m.core.Program() must be refreshed, not left stale")
 }
 
 func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	so := overlay.NewSettingsOverlay(m.appConfig, false, "")
+	so := overlay.NewSettingsOverlay(m.appConfig(), false, "")
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 
@@ -64,14 +65,14 @@ func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 	}
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // submit
 
-	reloaded := config.LoadConfigFrom(m.wsCtx.ConfigDir)
+	reloaded := config.LoadConfigFrom(m.wsCtx().ConfigDir)
 	require.NotNil(t, reloaded)
 	assert.Equal(t, "team/", reloaded.BranchPrefix, "the edit must be persisted immediately, not only in memory")
 }
 
 func TestSettingsDrillsIntoClaudePreferences(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"}
+	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	_, _ = runOpenSettings(m)
 
 	so := m.settingsOverlay()
@@ -86,5 +87,5 @@ func TestSettingsDrillsIntoClaudePreferences(t *testing.T) {
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // drill in
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // toggle remote control off
 
-	assert.False(t, m.appConfig.RemoteControlEnabled())
+	assert.False(t, m.appConfig().RemoteControlEnabled())
 }

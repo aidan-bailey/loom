@@ -25,7 +25,11 @@ func withAccounts(t *testing.T, m *home, names ...string) string {
 	if m.accountStrip == nil {
 		m.accountStrip = ui.NewAccountStrip()
 	}
-	m.adoptAccounts(reg)
+	m.core.AdoptAccountsForTest(reg)
+	// Publishing shows the badges (ui.SetShowAccounts), as it did before
+	// it became an event; the views refresh only when a test asks.
+	m.core.Drain()
+	ui.SetShowAccounts(m.core.HasExtraAccounts())
 	t.Cleanup(func() {
 		session.SetAccountDirs(nil, nil)
 		ui.SetShowAccounts(false)
@@ -33,27 +37,31 @@ func withAccounts(t *testing.T, m *home, names ...string) string {
 	return main
 }
 
-func TestRcAuthFor(t *testing.T) {
-	m := newTestHome(t)
-	m.rcAuth = session.RemoteControlAuth{State: session.RemoteControlAuthOK}
-	m.accountAuth = map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "logged out"}}
-
-	assert.True(t, m.rcAuthFor("").OK())
-	assert.True(t, m.rcAuthFor(account.DefaultName).OK())
-	assert.True(t, m.rcAuthFor("max-2").Blocked())
-	assert.Equal(t, session.RemoteControlAuthUnknown, m.rcAuthFor("max-3").State,
-		"an account whose auth has not been read yet fails closed: no flag, no prompt")
-}
-
+// TestPublishAccounts_BadgesOnlyWithAnExtraAccount runs production's path
+// (the model's AccountsChanged, applied by drainCore), not withAccounts,
+// which sets the badges itself.
 func TestPublishAccounts_BadgesOnlyWithAnExtraAccount(t *testing.T) {
 	m := newTestHome(t)
-	withAccounts(t, m)
-	assert.False(t, ui.ShowAccounts())
-	assert.False(t, m.hasExtraAccounts())
+	m.accountStrip = ui.NewAccountStrip()
+	t.Cleanup(func() {
+		session.SetAccountDirs(nil, nil)
+		ui.SetShowAccounts(false)
+	})
+	reg := account.LoadRegistry(t.TempDir())
 
-	withAccounts(t, m, "max-2")
+	ui.SetShowAccounts(true) // stale: the event must clear it
+	m.core.AdoptAccountsForTest(reg)
+	m.drainCore()
+	assert.False(t, ui.ShowAccounts())
+	assert.False(t, m.core.HasExtraAccounts())
+
+	_, _, err := reg.Create("max-2", t.TempDir())
+	require.NoError(t, err)
+	m.core.AdoptAccountsForTest(reg)
+	require.False(t, ui.ShowAccounts(), "not shown until the event is applied")
+	m.drainCore()
 	assert.True(t, ui.ShowAccounts())
-	assert.True(t, m.hasExtraAccounts())
+	assert.True(t, m.core.HasExtraAccounts())
 }
 
 func TestReloadAccounts_SeesAnotherProcessesChanges(t *testing.T) {
@@ -62,41 +70,26 @@ func TestReloadAccounts_SeesAnotherProcessesChanges(t *testing.T) {
 	require.False(t, ui.ShowAccounts())
 
 	// A `loom account add` in another terminal writes the same file.
-	other := account.LoadRegistry(filepath.Dir(m.accounts.AccountsDir()))
+	other := account.LoadRegistry(filepath.Dir(m.core.Accounts().AccountsDir()))
 	_, _, err := other.Create("max-2", main)
 	require.NoError(t, err)
-	assert.False(t, m.hasExtraAccounts(), "not seen until reloaded")
+	assert.False(t, m.core.HasExtraAccounts(), "not seen until reloaded")
 
-	m.reloadAccounts()
+	m.core.ReloadAccounts()
+	m.drainCore()
 
-	_, ok := m.accounts.Get("max-2")
+	_, ok := m.core.Accounts().Get("max-2")
 	assert.True(t, ok)
 	assert.True(t, ui.ShowAccounts(), "the reload is republished")
-}
-
-func TestHandleAccountsRefreshed_StoresAuthAndSync(t *testing.T) {
-	m := newTestHome(t)
-	withAccounts(t, m, "max-2")
-	def := session.RemoteControlAuth{State: session.RemoteControlAuthOK}
-
-	m.Update(accountsRefreshedMsg{
-		defaultAuth: &def,
-		auth:        map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "x"}},
-		sync:        map[string]account.SyncReport{"max-2": {Diverged: []string{"settings.json"}}},
-	})
-
-	assert.True(t, m.rcAuth.OK())
-	assert.True(t, m.rcAuthFor("max-2").Blocked())
-	assert.Equal(t, []string{"settings.json"}, m.accountSync["max-2"].Diverged)
 }
 
 func TestAccountStatuses_DefaultFirstAndMarked(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	require.NoError(t, m.accounts.SetDefault("max-2"))
-	m.accountAuth = map[string]session.RemoteControlAuth{
+	require.NoError(t, m.core.Accounts().SetDefault("max-2"))
+	m.core.SetAccountAuthForTest(map[string]session.RemoteControlAuth{
 		"max-2": {Identity: account.Identity{ConfigDir: "/acct", LoggedIn: false}},
-	}
+	})
 
 	st := m.accountStatuses()
 

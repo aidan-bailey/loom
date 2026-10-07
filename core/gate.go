@@ -1,16 +1,11 @@
-package app
+package core
 
 import (
 	"time"
-
-	tea "charm.land/bubbletea/v2"
-
-	"github.com/aidan-bailey/loom/log"
 )
 
-// gateKind names one gated background job. gatedMsg carries a kind rather
-// than a *pollGate so delivery never depends on home not having been
-// copied since dispatch.
+// gateKind names one gated background job. A gated job's result carries
+// its kind, so delivery never depends on which gate value a copy holds.
 type gateKind int
 
 const (
@@ -20,8 +15,6 @@ const (
 	gateHookScan
 	// gateGH throttles the GitHub poll (maybeGHQuery).
 	gateGH
-	// gateRatioSave dedupes the split-ratio flush tick (maybeArmRatioSave).
-	gateRatioSave
 	// gateUsage throttles the account usage probes (maybeUsageProbe).
 	gateUsage
 	// gateAccountsRefresh keeps one account auth refresh in flight
@@ -43,8 +36,6 @@ func (k gateKind) String() string {
 		return "hook_scan"
 	case gateGH:
 		return "github"
-	case gateRatioSave:
-		return "ratio_save"
 	case gateUsage:
 		return "usage"
 	case gateAccountsRefresh:
@@ -56,16 +47,14 @@ func (k gateKind) String() string {
 }
 
 // gateIntervals is each job's minimum time between dispatches. It is keyed
-// by kind rather than stored on the gate so a zero-value home — however it
+// by kind rather than stored on the gate so a zero-value Model — however it
 // was constructed — is throttled exactly like a production one.
 var gateIntervals = [numGateKinds]time.Duration{
 	gateRoster:   rosterInterval,
 	gateHookScan: hookScanInterval,
 	gateGH:       ghInterval,
 	gateUsage:    usageInterval,
-	// gateRatioSave stays 0: the flush paces itself with its own tick
-	// (ratioSaveDelay), so the gate only keeps one tick in flight.
-	// gateAccountsRefresh stays 0 too: refreshes run on events (an account
+	// gateAccountsRefresh stays 0: refreshes run on events (an account
 	// appeared, a login, a probe losing access), never on a cadence.
 	// gateClaudeTmp stays 0 too: sweeps run when a workspace loads.
 }
@@ -76,11 +65,11 @@ var gateIntervals = [numGateKinds]time.Duration{
 // comment at each site:
 //
 //  1. Arm nothing when nothing is dispatched. dispatchGated arms the gate
-//     only when build returns a Cmd — no Cmd means no result message, so
+//     only when build returns a Job — no Job means no result, so
 //     nothing would ever come back to disarm it.
-//  2. Disarm on every delivery, errors included. The Cmd dispatchGated
-//     returns wraps its result in a gatedMsg, and Update disarms the gate
-//     before the inner message reaches its handler, so no handler can
+//  2. Disarm on every delivery, errors included. The Job dispatchGated
+//     queues wraps its result in a gatedResult, and Deliver disarms the gate
+//     before the inner result reaches its handler, so no handler can
 //     forget to.
 //
 // Breaking either latches the job off for the rest of the session. The
@@ -125,89 +114,70 @@ func (g *pollGate) request() {
 }
 
 // gate resolves kind to the model's gate for it.
-func (m *home) gate(kind gateKind) *pollGate {
-	return &m.gates[kind]
-}
+func (m *Model) gate(kind gateKind) *pollGate { return &m.gates[kind] }
 
 // gateDue reports whether kind's gate is due at now under its interval.
-func (m *home) gateDue(kind gateKind, now time.Time) bool {
+func (m *Model) gateDue(kind gateKind, now time.Time) bool {
 	return m.gate(kind).due(now, gateIntervals[kind])
 }
 
-// gatedMsg carries a gated Cmd's result back to Update, which disarms the
-// gate for kind and then handles msg as if it had arrived on its own.
-type gatedMsg struct {
-	kind gateKind
-	msg  tea.Msg
+// gatedResult carries a gated job's result back to Deliver, which disarms
+// the gate for kind and then delivers result as if it had arrived on its
+// own.
+type gatedResult struct {
+	kind   gateKind
+	result any
 }
 
-// dispatchGated calls build only when kind's gate is due at now. A nil Cmd
-// from build arms nothing. Otherwise it arms the gate and returns a Cmd
-// whose result comes back wrapped in a gatedMsg.
-//
-// build runs on the Update goroutine, so it may read model state; the Cmd
-// it returns runs off it and must not. That Cmd must produce exactly one
-// message: a tea.Tick is fine (calling it blocks until the timer fires),
-// but a tea.Batch or tea.Sequence yields a message only the runtime can
-// expand, and wrapped it would reach Update as an unhandled type — the
-// gate would disarm, but the batched Cmds would never run (deliverGated
-// logs a wrapped tea.BatchMsg).
-func (m *home) dispatchGated(kind gateKind, now time.Time, build func() tea.Cmd) tea.Cmd {
+// dispatchGated calls build only when kind's gate is due at now. A nil job
+// from build arms nothing: no job means no result to disarm the gate.
+// Otherwise it arms the gate and queues the job, its result wrapped in a
+// gatedResult. Reports whether it dispatched. build runs on the model's
+// goroutine, so it may read model state; the job it returns must not.
+// (A job returns one value, so the old rule against a tea.Batch result is
+// gone: nothing can hide a second result from the disarm.)
+func (m *Model) dispatchGated(kind gateKind, now time.Time, build func() Job) bool {
 	if !m.gateDue(kind, now) {
-		return nil
+		return false
 	}
-	cmd := build()
-	if cmd == nil {
-		return nil
+	job := build()
+	if job == nil {
+		return false
 	}
 	g := m.gate(kind)
 	g.inFlight = true
 	g.last = now
-	return func() tea.Msg {
-		return gatedMsg{kind: kind, msg: cmd()}
-	}
+	m.spawn(func() any { return gatedResult{kind: kind, result: job()} })
+	return true
 }
 
-// deliverGated disarms msg's gate before anything else, then routes the
-// inner message back through Update so it reaches the same handler it
-// would have reached unwrapped. A nil inner message still disarms. A
-// request() made during the flight dispatches the job once more, after
-// the inner message is handled.
-func (m *home) deliverGated(msg gatedMsg) (tea.Model, tea.Cmd) {
-	g := m.gate(msg.kind)
+// deliverGated disarms r's gate before anything else, then delivers the
+// inner result. A nil result still disarms. A request() made during the
+// flight dispatches the job once more, after the result is handled.
+func (m *Model) deliverGated(r gatedResult) {
+	g := m.gate(r.kind)
 	g.inFlight = false
 	again := g.pending
 	g.pending = false
-	var cmd tea.Cmd
-	switch inner := msg.msg.(type) {
-	case nil:
-	case tea.BatchMsg:
-		// A builder broke dispatchGated's single-message rule. Update has
-		// no case for a BatchMsg, so its Cmds would silently never run.
-		log.For("app").Error("gated_batch_msg", "kind", msg.kind.String(), "cmds", len(inner))
-	default:
-		_, cmd = m.Update(msg.msg)
-	}
+	m.Deliver(r.result)
 	if again {
-		cmd = tea.Batch(cmd, m.redispatch(msg.kind))
+		m.redispatch(r.kind)
 	}
-	return m, cmd
 }
 
 // redispatch runs kind's job again for a request() made mid-flight. Only
 // the jobs that request() have an entry.
-func (m *home) redispatch(kind gateKind) tea.Cmd {
+func (m *Model) redispatch(kind gateKind) {
 	switch kind {
 	case gateRoster:
-		return m.maybeRosterQuery(m.activeInstances())
+		m.maybeRosterQuery(m.ActiveInstances())
 	case gateHookScan:
-		return m.maybeHookScan(m.activeInstances())
+		m.maybeHookScan(m.ActiveInstances())
 	case gateUsage:
-		return m.maybeUsageProbe()
+		m.maybeUsageProbe()
 	case gateAccountsRefresh:
-		return m.maybeAccountsRefresh()
+		m.maybeAccountsRefresh()
 	case gateClaudeTmp:
-		return m.maybeClaudeTmpSweep()
+		m.maybeClaudeTmpSweep()
 	}
-	return nil
 }

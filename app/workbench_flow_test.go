@@ -95,7 +95,7 @@ func TestWorkbench_FlushRatioKeysOffWorkbenchSession(t *testing.T) {
 	m.list.SetSelectedInstance(1)
 	m.flushWorkbenchRatio()
 
-	prefs := m.appState.GetUIPrefs()
+	prefs := m.appState().GetUIPrefs()
 	assert.Equal(t, 0.7, prefs.WorkbenchRatios["a"],
 		"ratio must persist under the workbench's session title")
 	_, hasB := prefs.WorkbenchRatios["b"]
@@ -110,7 +110,7 @@ func TestWorkbench_DeadSelectionDropsToFocus(t *testing.T) {
 	_, _ = handleStateDefaultKey(m, wbKey("enter"))
 	require.Equal(t, viewWorkbench, m.viewMode)
 
-	m.list.RemoveInstance(m.list.GetInstanceByTitle("a"))
+	m.ws.Remove(m.list.GetInstanceByTitle("a"))
 	require.Nil(t, m.list.GetSelectedInstance())
 	_ = m.instanceChanged()
 	assert.Equal(t, viewFocus, m.viewMode,
@@ -176,7 +176,7 @@ func TestWorkbench_TabToOverviewPersistsViewMode(t *testing.T) {
 	_, _ = handleStateDefaultKey(m, wbKey("enter"))
 	_, _ = handleStateDefaultKey(m, wbKey("tab"))
 	require.Equal(t, viewOverview, m.viewMode)
-	assert.Equal(t, "overview", m.appState.GetUIPrefs().ViewMode)
+	assert.Equal(t, "overview", m.appState().GetUIPrefs().ViewMode)
 }
 
 // TestWorkbench_EnterDismissesDiffOverlay pins entry hygiene: a

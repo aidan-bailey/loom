@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -15,26 +16,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// workspaceSlot bundles per-workspace state so multiple workspaces can be
-// loaded in memory simultaneously. It is the single owner of that state:
-// home embeds the focused slot (*workspaceSlot), so m.list, m.storage and
-// the rest resolve to the focused slot's own fields, and every other open
-// slot is reached through m.slots. Slots are always handled by pointer.
+// workspaceSlot is the TUI's view of one loaded workspace: the model's
+// workspace (ws) plus the view state over it, the rail, the split pane
+// and the workbench. The model (core) owns the workspace, its instances,
+// its storage, config and state; the slot never copies them. home embeds
+// the focused slot, so m.list, m.splitPane, m.workbench and the accessors
+// below resolve to the focused slot's. Slots are always handled by pointer.
 type workspaceSlot struct {
-	// wsCtx is the workspace's context (name, repo path, config dir). The
-	// classic slot newHome builds carries the startup context; the global
-	// slot enterGlobalMode builds carries config.GlobalWorkspaceContext,
-	// the same one classic global startup gets — no name, no repo path.
-	// Nil only in bare test homes (and a Run caller passing nil).
-	wsCtx *config.WorkspaceContext
-	// storage saves/loads this workspace's instances.
-	storage *session.Storage
-	// appConfig is this workspace's persistent configuration.
-	appConfig *config.Config
-	// appState is this workspace's persistent app state: help screens
-	// seen and the UI prefs block.
-	appState config.AppState
-	// list is this workspace's session rail (its instances).
+	// ws is the workspace this slot shows; nil only in bare test homes.
+	ws *core.Workspace
+	// list is the session rail; it reads ws's instances.
 	list *ui.List
 	// splitPane displays the agent and terminal panes with diff overlay.
 	splitPane *ui.SplitPane
@@ -43,172 +34,60 @@ type workspaceSlot struct {
 	// It pairs with this slot's splitPane (its terminal tab shows the
 	// slot's shared TerminalPane). Non-nil for every slot.
 	workbench *ui.Workbench
-	// recovery holds the orphan-reconcile summary from this slot's last
-	// activation, surfaced once the slot becomes focused.
-	recovery recoverySummary
 }
 
-// applySessionConfig syncs the process-wide session flags (loom-context
-// injection, subagent tracking) from cfg and, when cfgDir is non-empty,
-// rewrites that config dir's loom-context prompt files — the per-load
-// setup every Claude session launched afterwards relies on.
-func applySessionConfig(cfg *config.Config, cfgDir string) {
-	if cfg == nil {
-		return
+// wsCtx is the workspace's context (see core.Workspace.Ctx).
+func (s *workspaceSlot) wsCtx() *config.WorkspaceContext {
+	if s.ws == nil {
+		return nil
 	}
-	session.SetLoomContextEnabled(cfg.LoomContextEnabled())
-	session.SetSubagentTrackingEnabled(cfg.SubagentTrackingEnabled())
-	if cfgDir == "" {
-		return
-	}
-	if err := session.WriteLoomContextFiles(cfgDir); err != nil {
-		log.For("app").Warn("loom_context.write_failed", "err", err.Error())
-	}
+	return s.ws.Ctx()
 }
 
-// activateWorkspace loads a workspace's state, config, instances and UI
-// components, appending a new slot to m.slots. The first tab opened from
-// classic/global mode takes focus at once (see the invariant on
-// home.workspaceSlot); later ones open in the background, and callers
-// that want to show one focus it with loadSlot.
+// storage persists the workspace's instances.
+func (s *workspaceSlot) storage() *session.Storage {
+	if s.ws == nil {
+		return nil
+	}
+	return s.ws.Storage()
+}
+
+// appConfig is the workspace's configuration.
+func (s *workspaceSlot) appConfig() *config.Config {
+	if s.ws == nil {
+		return nil
+	}
+	return s.ws.Config()
+}
+
+// appState is the workspace's app state: help screens seen, UI prefs.
+func (s *workspaceSlot) appState() config.AppState {
+	if s.ws == nil {
+		return nil
+	}
+	return s.ws.State()
+}
+
+// activateWorkspace opens a workspace as a new tab (core's OpenTab: load,
+// reconcile, crash restart, workspace terminal, orphan recovery) and
+// builds its view. The first tab opened from classic/global mode takes
+// focus at once (see the invariant on home.workspaceSlot); later ones open
+// in the background, and callers that want to show one focus it with
+// loadSlot.
 //
-// Focusing the first tab drops the classic slot; the returned Cmd
-// releases its pane clients (releaseSlotCmd, prunePanes) and is nil
-// otherwise. Callers must return it (or, before the program runs,
-// run it).
-func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
-	wsCtx := config.WorkspaceContextFor(&ws)
-	state := config.LoadStateFrom(wsCtx.ConfigDir)
-	appConfig := config.LoadConfigFrom(wsCtx.ConfigDir)
-	// Loom-context injection: keep the config-dir prompt files current and
-	// sync the global enabled flag on every workspace load, before any
-	// Claude session (workspace terminal, crash-restart, resume) launches.
-	applySessionConfig(appConfig, wsCtx.ConfigDir)
-	storage, err := session.NewStorage(state, wsCtx.ConfigDir)
+// Focusing the first tab drops the classic slot; the returned Cmd releases
+// its pane clients (releaseSlotCmd, prunePanes) and is nil otherwise.
+// Callers must return it (or, before the program runs, run it).
+func (m *home) activateWorkspace(def config.Workspace) (tea.Cmd, error) {
+	ws, err := m.core.OpenTab(def)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create storage for workspace %s: %w", ws.Name, err)
+		return nil, err
 	}
-
-	cmdExec := m.executor()
-	instances, err := storage.LoadAndReconcile(cmdExec)
-	if err != nil {
-		// Fail closed: do NOT proceed to build an empty slot. Continuing
-		// here would append a slot with zero instances, and the next
-		// SaveInstances for it would overwrite a possibly-recoverable
-		// (e.g. transiently unreadable or corrupt) state.json with only
-		// the survivors — silent per-workspace data loss. The classic
-		// startup path already fails closed this way; mirror it. The slot
-		// is simply not opened, leaving state.json on disk untouched.
-		return nil, fmt.Errorf("load instances for workspace %s: %w", ws.Name, err)
-	}
-	// Orphan discovery runs here so every workspace-load path (startup
-	// picker, mid-session toggle, restore, registration) surfaces
-	// recovered sessions identically — no restart required.
-
-	list := ui.NewList(&m.spinner)
-	list.SetPanes(m.panes)
-	hasWorkspaceTerminal := false
-	for _, inst := range instances {
-		if inst.IsWorkspaceTerminal {
-			hasWorkspaceTerminal = true
-		}
-		list.AddInstance(inst)
-	}
-
-	// Restart crash-recovered instances.
-	for _, inst := range instances {
-		if !inst.CrashRecovered() {
-			continue
-		}
-		if err := inst.CrashRestart(); err != nil {
-			log.For("app").Error("crash_recovery.restart_failed", "instance", inst.Title, "err", err)
-			if tErr := inst.TransitionTo(session.Paused); tErr != nil {
-				log.For("app").Warn("crash_recovery.transition_failed", "instance", inst.Title, "err", tErr)
-			}
-		}
-		inst.SetCrashRecovered(false)
-	}
-
-	// Auto-create workspace terminal if none exists. A record storage
-	// preserves but could not load (after a downgrade every record is
-	// undecodable, the terminal included) may already own the title: then
-	// the terminal exists, just not in this binary's list, and killing its
-	// session plus creating a second same-titled record would clobber it.
-	wtTitle := ws.Name
-	if wtTitle == "" {
-		wtTitle = "Workspace Terminal"
-	}
-	if !hasWorkspaceTerminal && wsCtx.RepoPath != "" && !slices.Contains(storage.PreservedTitles(), wtTitle) {
-		// A prior non-clean exit may have left a tmux session named
-		// loom_<wtTitle> alive without persisting the instance. The
-		// multi-tab restore sweep (CleanupOrphanedSessions in
-		// restoreSavedWorkspaces) only runs AFTER every slot has
-		// activated — but the workspace-terminal Start below happens now,
-		// during activation, and would fail with "session already exists"
-		// against that orphan. Kill it here first so Start gets a clean
-		// name; the later sweep handles any other stragglers. Only if it
-		// is this workspace's, by the sweep's own ownership test: the
-		// tmux server is shared, and another loom's session (a workspace
-		// elsewhere with the same name) can carry this title. Anything
-		// else is left running, and Start then fails on the name.
-		scope := session.NewSweepScope([]*config.WorkspaceContext{wsCtx}, m.registry)
-		if killed, err := session.KillOwnedTmuxSession(wtTitle, scope, cmdExec); err != nil {
-			log.For("app").Warn("workspace_terminal.orphan_kill_skipped", "workspace", ws.Name, "err", err.Error())
-		} else if killed {
-			log.For("app").Info("workspace_terminal.orphan_killed", "workspace", ws.Name, "title", wtTitle)
-		}
-
-		wtOpts := launchOptionsFromConfig(appConfig)
-		if m.remoteControlBlocked(effectiveRemoteControl(wtOpts), appConfig.GetProgram()) {
-			m.errBox.SetInfo("remote control off: " + m.rcAuth.Reason)
-		}
-		wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
-			Title:               wtTitle,
-			Path:                wsCtx.RepoPath,
-			Program:             applyLaunchOptions(wtOpts, m.rcAuth, appConfig.GetProgram(), wtTitle),
-			HeadroomProxy:       wtOpts.HeadroomProxy,
-			CacheTTL1h:          wtOpts.CacheTTL1h,
-			IsWorkspaceTerminal: true,
-			ConfigDir:           wsCtx.ConfigDir,
-		})
-		if wtErr != nil {
-			log.For("app").Error("workspace_terminal.create_failed", "workspace", ws.Name, "err", wtErr)
-		} else {
-			list.AddInstance(wtInstance)
-			if startErr := wtInstance.Start(true); startErr != nil {
-				log.For("app").Error("workspace_terminal.start_failed", "workspace", ws.Name, "err", startErr)
-			}
-		}
-	}
-
-	list.SetWorkspaceName(ws.Name)
-
-	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
-	splitPane.SetPanes(m.panes)
-
-	// Pre-size components if terminal dimensions are known.
-	if m.lastWidth > 0 && m.lastHeight > 0 {
-		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
-		paneWidth := m.lastWidth - listWidth
-		contentHeight := m.lastHeight - m.topChromeHeight() - 2
-		list.SetSize(listWidth, contentHeight)
-		splitPane.SetSize(paneWidth, contentHeight)
-	}
-
-	recovery := m.reconcileOrphans(wsCtx.ConfigDir, appConfig.GetProgram(), list, storage, cmdExec)
-	m.slots = append(m.slots, &workspaceSlot{
-		wsCtx:     wsCtx,
-		storage:   storage,
-		appConfig: appConfig,
-		appState:  state,
-		list:      list,
-		splitPane: splitPane,
-		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitPane.Terminal()),
-		recovery:  recovery,
-	})
-	m.ensureSlotPanes(m.slots[len(m.slots)-1])
-	// Opened at last: no longer a restore failure to retry.
-	m.restoreFailed = slices.DeleteFunc(m.restoreFailed, func(n string) bool { return n == ws.Name })
+	// The load's notices (a workspace terminal launched without remote
+	// control) land before anything the caller shows next, as they did when
+	// the load set them itself.
+	notices := m.drainCore()
+	m.slots = append(m.slots, m.newSlotView(ws))
 	var release tea.Cmd
 	if len(m.slots) == 1 {
 		// Leaving classic mode: the classic slot is not in m.slots, so the
@@ -219,11 +98,7 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 		m.loadSlot(0)
 		release = tea.Batch(releaseSlotCmd(classic), m.prunePanes())
 	}
-	// Force the next health tick to poll: a newly opened workspace's repo
-	// wasn't in openRepoPaths() until just now, and without this the
-	// poller stays silent on it until the ambient ghInterval next elapses.
-	m.gate(gateGH).expedite()
-	return release, nil
+	return tea.Batch(notices, release), nil
 }
 
 // deactivateWorkspace saves and closes a workspace tab by name.
@@ -242,20 +117,14 @@ func (m *home) activateWorkspace(ws config.Workspace) (tea.Cmd, error) {
 // (releaseSlotCmd, prunePanes; nil when none is attached) and must be
 // returned to the runtime.
 func (m *home) deactivateWorkspace(name string) (tea.Cmd, error) {
-	idx := slices.IndexFunc(m.slots, func(s *workspaceSlot) bool { return s.wsCtx.Name == name })
+	idx := slices.IndexFunc(m.slots, func(s *workspaceSlot) bool { return s.ws.Name() == name })
 	if idx == -1 {
 		return nil, nil
 	}
-	if len(m.slots) == 1 {
-		return nil, fmt.Errorf("cannot close %s, the last open workspace: return to global mode instead", name)
+	if _, err := m.core.CloseTab(name); err != nil {
+		return nil, err
 	}
-
 	slot := m.slots[idx]
-	if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
-		log.For("app").Error("workspace.save_failed", "name", name, "err", err)
-		return nil, fmt.Errorf("failed to save workspace %s: %w", name, err)
-	}
-
 	wasFocused := idx == m.focusedSlot
 	m.slots = slices.Delete(m.slots, idx, idx+1)
 	switch {
@@ -335,20 +204,6 @@ func releaseClientsCmd(clients []attachedClient) tea.Cmd {
 	}
 }
 
-// removeInstanceEverywhere removes inst (by identity) from every loaded
-// slot's list. Async op completions land on whatever slot is focused at
-// delivery time, which may not be the slot that owns the instance — slot
-// lists are in-memory until restart, so a missed removal would orphan the
-// row (e.g. stuck in Deleting) with its backing resources already gone.
-func (m *home) removeInstanceEverywhere(inst *session.Instance) {
-	if inst == nil {
-		return
-	}
-	for _, slot := range m.openSlots() {
-		slot.list.RemoveInstance(inst)
-	}
-}
-
 // openSlots returns every loaded workspace slot: the open tabs, or in
 // classic/global mode the classic slot alone. The focused slot is always
 // among them.
@@ -378,6 +233,22 @@ func (m *home) checkSlotInvariant() error {
 			return fmt.Errorf("slot invariant: m.slots[%d] and m.slots[%d] are the same slot", j, i)
 		}
 		seen[s] = i
+	}
+	// The slots mirror the model's workspaces: the tabs in order, or with
+	// none open the classic workspace. A bare test home has no model.
+	if m.core != nil {
+		tabs := m.core.Tabs()
+		if len(tabs) != len(m.slots) {
+			return fmt.Errorf("slot invariant: %d slots, but the model has %d tabs", len(m.slots), len(tabs))
+		}
+		for i, s := range m.slots {
+			if s.ws != tabs[i] {
+				return fmt.Errorf("slot invariant: m.slots[%d] does not show the model's tab %d", i, i)
+			}
+		}
+		if len(m.slots) == 0 && m.ws != m.core.Classic() {
+			return errors.New("slot invariant: the focused slot does not show the model's classic workspace")
+		}
 	}
 	if len(m.slots) == 0 {
 		return nil
@@ -445,7 +316,7 @@ func (m *home) loadSlot(idx int) {
 	slot := m.slots[idx]
 	m.focusedSlot = idx
 	m.workspaceSlot = slot
-	m.list.SetWorkspaceName(slot.wsCtx.Name)
+	m.list.SetWorkspaceName(slot.ws.Name())
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	// Resize immediately using the now-correct tab bar height. Without this,
 	// the first View() after a workspace switch uses components pre-sized when
@@ -455,7 +326,7 @@ func (m *home) loadSlot(idx int) {
 	// this interim resize survives only for bare test homes — a redundant
 	// SetSize here would loop tmux SetDetachedSize subprocess calls twice
 	// per workspace switch.
-	if m.appState == nil && m.lastWidth > 0 && m.lastHeight > 0 {
+	if m.appState() == nil && m.lastWidth > 0 && m.lastHeight > 0 {
 		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
 		paneWidth := m.lastWidth - listWidth
 		contentHeight := m.lastHeight - m.topChromeHeight() - 2
@@ -489,11 +360,11 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		return m.stayInGlobalMode()
 	}
 	if len(m.slots) == 0 {
-		err := m.storage.SaveInstances(persistableInstances(m.list.GetInstances()))
+		err := m.core.Save(m.ws)
 		switch {
 		case errors.Is(err, session.ErrStorageLoadFailed):
 			// The global payload is unreadable (typically the fail-closed
-			// case of loadStartupStorageFallback), so the storage refuses
+			// case of core.Model.RestoreSaved's fallback), so the storage refuses
 			// every write and no save here could ever succeed: blocking
 			// would strand the user in an unwritable global mode. Leave
 			// the file untouched and switch.
@@ -518,7 +389,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		desiredNames[ws.Name] = true
 	}
 	// A failed-to-restore workspace left unchecked was explicitly closed.
-	m.restoreFailed = slices.DeleteFunc(m.restoreFailed, func(n string) bool { return !desiredNames[n] })
+	m.core.KeepRestoreFailed(desiredNames)
 
 	var activationErrors []string
 	var deactivationErrors []string
@@ -527,7 +398,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	// 1. Activate new workspaces first (safe — adds to slots without removing).
 	currentNames := make(map[string]bool, len(m.slots))
 	for _, slot := range m.slots {
-		currentNames[slot.wsCtx.Name] = true
+		currentNames[slot.ws.Name()] = true
 	}
 	for _, ws := range desired {
 		if !currentNames[ws.Name] {
@@ -545,13 +416,13 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	// Skipped when no desired workspace is open (every activation failed):
 	// closing the rest would leave no tab at all, which is enterGlobalMode's
 	// transition, not this one — keep the open tabs and report the failures.
-	if slices.ContainsFunc(m.slots, func(s *workspaceSlot) bool { return desiredNames[s.wsCtx.Name] }) {
+	if slices.ContainsFunc(m.slots, func(s *workspaceSlot) bool { return desiredNames[s.ws.Name()] }) {
 		for i := len(m.slots) - 1; i >= 0; i-- {
-			if !desiredNames[m.slots[i].wsCtx.Name] {
-				release, err := m.deactivateWorkspace(m.slots[i].wsCtx.Name)
+			if !desiredNames[m.slots[i].ws.Name()] {
+				release, err := m.deactivateWorkspace(m.slots[i].ws.Name())
 				if err != nil {
 					deactivationErrors = append(deactivationErrors,
-						fmt.Sprintf("%s: %v", m.slots[i].wsCtx.Name, err))
+						fmt.Sprintf("%s: %v", m.slots[i].ws.Name(), err))
 				}
 				releases = append(releases, release)
 			}
@@ -565,9 +436,9 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	m.loadSlot(m.focusedSlot)
 
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
-	m.saveOpenWorkspaces()
+	m.core.PersistOpenList()
 	if len(m.slots) > 0 {
-		m.showRecoverySummary(m.slots[m.focusedSlot].recovery)
+		m.showRecoverySummary(m.slots[m.focusedSlot].ws.Recovery())
 	}
 
 	// Point the panes and menu at the (possibly new) selection, so none
@@ -597,7 +468,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 // (`loom --workspace`, or launched inside one) is not: leaving it for
 // global mode is a real transition.
 func (m *home) inGlobalMode() bool {
-	return len(m.slots) == 0 && (m.wsCtx == nil || m.wsCtx.Name == "")
+	return len(m.slots) == 0 && (m.wsCtx() == nil || m.wsCtx().Name == "")
 }
 
 // stayInGlobalMode applies a picker commit with nothing selected (the
@@ -612,8 +483,7 @@ func (m *home) inGlobalMode() bool {
 // commit runs on the focused slot (leaveFocusedSlot).
 func (m *home) stayInGlobalMode() tea.Cmd {
 	m.leaveFocusedSlot()
-	m.restoreFailed = nil
-	m.saveOpenWorkspaces()
+	m.core.StayGlobal()
 	return tea.RequestWindowSize
 }
 
@@ -624,7 +494,7 @@ func (m *home) stayInGlobalMode() tea.Cmd {
 // global startup uses, so both resolve the same directory
 // (LOOM_GLOBAL_DIR, else ~/.loom; never LOOM_HOME) and the slot carries
 // that context like the startup one does — loaded by the same loader as
-// classic startup (loadSlotStorage: reconcile, crash restarts, inline
+// classic startup (core.Model.EnterGlobal: reconcile, crash restarts, inline
 // orphan recovery), minus the orphan tmux sweep: the closing tabs'
 // sessions are unclaimed here.
 //
@@ -653,55 +523,11 @@ func (m *home) stayInGlobalMode() tea.Cmd {
 //     possibly-recoverable global state.json — the same rule
 //     activateWorkspace and the classic startup path follow.
 func (m *home) enterGlobalMode() tea.Cmd {
-	// Persist every workspace tab before touching global state. A tab
-	// whose save fails keeps its unpersisted state reachable only while
-	// open, so abort — with nothing global loaded yet.
-	for _, slot := range m.slots {
-		if err := slot.storage.SaveInstances(persistableInstances(slot.list.GetInstances())); err != nil {
-			log.For("app").Error("workspace.save_failed", "name", slot.wsCtx.Name, "err", err)
-			return m.handleError(fmt.Errorf("failed to save workspace %s (staying in workspace mode): %w", slot.wsCtx.Name, err))
-		}
-	}
-
-	// Reconstruct global storage in the global config dir — resolved up
-	// front, since orphan discovery and the hooks sweep need the directory
-	// itself.
-	globalCtx, err := config.GlobalWorkspaceContext()
+	global, err := m.core.EnterGlobal(m.ws)
 	if err != nil {
-		return m.handleError(fmt.Errorf("failed to resolve the global config dir: %w", err))
+		return m.handleError(err)
 	}
-	cfgDir := globalCtx.ConfigDir
-	appState := config.LoadStateFrom(cfgDir)
-	appConfig := config.LoadConfigFrom(cfgDir)
-	storage, err := session.NewStorage(appState, cfgDir)
-	if err != nil {
-		return m.handleError(fmt.Errorf("failed to construct global storage: %w", err))
-	}
-
-	// The global slot is built fresh, but keeps the departing slot's
-	// splitPane and workbench: the panes are sized and wired already, and
-	// the closed tab no longer uses them. It is only focused once every
-	// check below has passed.
-	globalList := ui.NewList(&m.spinner)
-	globalList.SetPanes(m.panes)
-	global := &workspaceSlot{
-		wsCtx:     globalCtx,
-		storage:   storage,
-		appConfig: appConfig,
-		appState:  appState,
-		list:      globalList,
-		splitPane: m.splitPane,
-		workbench: m.workbench,
-	}
-	// Sessions the load (re)starts launch under the global config's
-	// settings, like activateWorkspace's; an abort puts the focused
-	// slot's back.
-	applySessionConfig(appConfig, cfgDir)
-	recovery, err := m.loadSlotStorage(global, cfgDir, m.executor(), false)
-	if err != nil {
-		applySessionConfig(m.appConfig, "")
-		return m.handleError(fmt.Errorf("failed to load global sessions (staying in workspace mode): %w", err))
-	}
+	notices := m.drainCore()
 
 	// Picker escape hatch (W → Global row) from a classic workspace slot
 	// reaches here with no leaveFocusedSlot of its own — clean up workbench
@@ -710,24 +536,21 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	// handleQuit later flushes them into the new global state.json.
 	m.leaveFocusedSlot()
 
+	// The global slot keeps the departing slot's splitPane and workbench:
+	// the panes are sized and wired already, and the closed tab no longer
+	// uses them.
+	list := ui.NewList(&m.spinner, global)
+	list.SetPanes(m.panes)
+	view := &workspaceSlot{ws: global, list: list, splitPane: m.splitPane, workbench: m.workbench}
+
 	// Everything loaded so far is dropped: every tab, or — global mode
 	// entered from a classic workspace slot — that slot. The focused one's
 	// panes live on in the global slot.
 	dropped, carried := m.openSlots(), m.workspaceSlot
 	m.slots = nil
 	m.focusedSlot = 0
-	m.workspaceSlot = global
-
-	// Clear registry's open-tab list so the next launch lands in
-	// global mode rather than auto-restoring tabs the user just closed.
-	// An explicit return to global mode closes the workspaces that failed
-	// to restore too.
-	m.restoreFailed = nil
-	if m.registry != nil {
-		if err := m.registry.SetOpenWorkspaces(nil); err != nil {
-			log.For("app").Warn("clear_open_workspaces_failed", "err", err)
-		}
-	}
+	m.workspaceSlot = view
+	m.ensureSlotPanes(view)
 
 	m.tabBar.SetWorkspaces(nil, 0)
 
@@ -747,11 +570,11 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	}
 	staleTerminals := releaseClientsCmd(attachedClients(m.splitPane.Terminal().DetachExcept(keep)))
 
-	m.showRecoverySummary(recovery)
+	m.showRecoverySummary(global.Recovery())
 
 	// Point the carried-over panes and the menu at the global selection,
 	// so none of them keeps a dropped instance, then release the drops.
-	cmds := []tea.Cmd{tea.RequestWindowSize, m.instanceChanged(), staleTerminals, m.prunePanes()}
+	cmds := []tea.Cmd{notices, tea.RequestWindowSize, m.instanceChanged(), staleTerminals, m.prunePanes()}
 	for _, slot := range dropped {
 		if slot == carried {
 			continue // its panes live on; prunePanes closes its agents' clients
@@ -821,52 +644,23 @@ func (m *home) refreshPeerSections() {
 	m.list.SetPeerSections(peers)
 }
 
-// saveOpenWorkspaces persists the current ordered list of open workspace tabs
-// (plus any still to be retried; see restoreFailed) to the registry so they
-// can be restored on next launch.
-func (m *home) saveOpenWorkspaces() {
-	if m.registry == nil {
-		return
-	}
-	if err := m.registry.SetOpenWorkspaces(m.openWorkspaceNames()); err != nil {
-		log.For("app").Error("persist_open_workspaces_failed", "err", err)
-	}
-}
-
-// openWorkspaceNames is the open set saveOpenWorkspaces persists and the
-// picker shows selected: the open tabs, then the workspaces that failed
-// to restore (restoreFailed) and are to be retried.
-func (m *home) openWorkspaceNames() []string {
-	names := m.slotNames()
-	for _, name := range m.restoreFailed {
-		if !slices.Contains(names, name) {
-			names = append(names, name)
-		}
-	}
-	return names
-}
-
 // persistFocusedWorkspace writes the currently focused slot's name to
 // LastUsed so the next launch focuses the same tab.
 func (m *home) persistFocusedWorkspace() {
-	if m.registry == nil || m.focusedSlot < 0 || m.focusedSlot >= len(m.slots) {
+	if m.focusedSlot < 0 || m.focusedSlot >= len(m.slots) {
 		return
 	}
-	name := m.slots[m.focusedSlot].wsCtx.Name
-	if name == "" {
-		return
-	}
-	if err := m.registry.UpdateLastUsed(name); err != nil {
+	if err := m.core.SetLastUsed(m.slots[m.focusedSlot].ws.Name()); err != nil {
 		log.For("app").Error("persist_focused_workspace_failed", "err", err)
 	}
 }
 
 // slotNames returns the names of all active workspace slots — the set
-// the tab bar shows and saveOpenWorkspaces persists.
+// the tab bar shows and core.Model.PersistOpenList persists.
 func (m *home) slotNames() []string {
 	names := make([]string, len(m.slots))
 	for i, slot := range m.slots {
-		names[i] = slot.wsCtx.Name
+		names[i] = slot.ws.Name()
 	}
 	return names
 }

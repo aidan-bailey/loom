@@ -34,11 +34,9 @@ func handleStateWorkspaceKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			// departing slot's pending split ratios either way.
 			m.loadSlot(len(m.slots) - 1)
 			m.updateTabBarStatuses()
-			m.showRecoverySummary(m.recovery)
-			if m.registry != nil {
-				_ = m.registry.UpdateLastUsed(selected.Name)
-			}
-			m.saveOpenWorkspaces()
+			m.showRecoverySummary(m.ws.Recovery())
+			_ = m.core.SetLastUsed(selected.Name)
+			m.core.PersistOpenList()
 			// instanceChanged repoints the panes and menu at the new
 			// slot's selection; release drops the classic slot's attach
 			// clients.

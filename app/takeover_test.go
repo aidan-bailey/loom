@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/takeover"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
@@ -22,7 +22,6 @@ func takeoverHome(t *testing.T, cfgDir string) *home {
 	state := config.LoadStateFrom(cfgDir)
 	storage, err := session.NewStorage(state, cfgDir)
 	require.NoError(t, err)
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	h := &home{
 		ctx:        context.Background(),
 		state:      stateDefault,
@@ -30,15 +29,15 @@ func takeoverHome(t *testing.T, cfgDir string) *home {
 		errBox:     ui.NewErrBox(),
 		fullScreen: &foregroundAttach{},
 	}
-	focusSlots(h, 0, &workspaceSlot{
-		wsCtx:     &config.WorkspaceContext{Name: "ws", ConfigDir: cfgDir},
-		storage:   storage,
-		appConfig: config.DefaultConfig(),
-		appState:  state,
-		list:      ui.NewList(&s),
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-	})
-	return h
+	focusSlots(h, 0, slotOver(testWS(core.WorkspaceParts{
+		Ctx:     &config.WorkspaceContext{Name: "ws", ConfigDir: cfgDir},
+		Storage: storage,
+		Config:  config.DefaultConfig(),
+		State:   state,
+	})))
+	// The quit's saves are the model's (core.Model.SaveForQuit): install it
+	// with the slot's workspace as its one tab, as newHome would have.
+	return wireCore(t, h)
 }
 
 func isQuit(cmd tea.Cmd) bool {

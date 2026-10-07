@@ -340,12 +340,21 @@ end:
      attaches. The TUI attaches one client per live agent session, by
      name, through `ui.PaneClients`. Prompts and trust-prompt answers
      go through `send-keys`.
-   - **1B, model extraction.** `core.Model` takes over the workspaces,
-     storage, reconcile, sweeps, ticks, gated jobs and completions. It is
-     still called on the Update goroutine, and `ui.List` mirrors core's
-     order.
-   - **1C, the `Core` interface.** It brings `InstanceView` and events,
-     draft rows for creation flows, and Lua lifecycle through `Core`.
+   - **1B, model extraction**
+     ([plan](../plans/2026-10-04-daemon-stage1b-core-model.md)).
+     `core.Model` owns the loaded workspaces and their instances, loading
+     and saving, reconcile and the sweeps, the workspace transitions, the
+     lifecycle operations and their completions, the health tick's model
+     half and every gated job. It is still called on the Update
+     goroutine: blocking work runs as jobs whose results come back
+     through `Deliver`, and the model reports through events (carrying
+     `*session.Instance`) that the TUI drains after every message.
+     `ui.List` reads its rows from the workspace.
+   - **1C, the `Core` interface.** It brings `InstanceView` and the
+     `Core` interface over the events 1B introduced, draft rows for
+     creation flows, Lua lifecycle through `Core`, the issue-picker
+     fetches as requests, and the pane status ladder as a display-only
+     overlay.
    - **1D, the model's own goroutine.**
 2. **Codec and transport.** `core/rpc`. The TUI uses the socket client
    against an in-process server over `net.Pipe`.

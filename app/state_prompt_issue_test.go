@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,7 +23,7 @@ func promptOverlayForNewInstance(t *testing.T, m *home) {
 
 func TestPromptShorthand_DispatchesExpansion(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.ghAvailable = ghAvailability{checked: true, ok: true}
+	deliver(t, m, core.GitHubResultForTest(true, "", nil, nil))
 	promptOverlayForNewInstance(t, m)
 	ti := m.textInput()
 	require.NotNil(t, ti)

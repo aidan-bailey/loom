@@ -2,40 +2,15 @@ package overlay
 
 import (
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
-// LaunchOptions holds the per-session launch overrides. Defined
-// here (rather than in app) so it's usable both by
-// SessionLaunchOptions (ephemeral, edited as a plain value) and by
-// app's launch-command composition, without an import cycle back to
-// app.
-type LaunchOptions struct {
-	RemoteControl  bool
-	PermissionMode string
-	Model          string
-	// Context1M requests Claude's [1m] long-context suffix on Model.
-	// Applied only when Model accepts it (see
-	// config.ClaudeModelSupports1M); otherwise silently ignored.
-	Context1M     bool
-	HeadroomProxy bool
-	Effort        string
-	CacheTTL1h    bool
-	// BranchPrefix overrides config.BranchPrefix for this one session.
-	// Unlike the fields above it never reaches the agent command line —
-	// it is consumed by git worktree setup (see session.Instance.
-	// SetBranchPrefix), so ParseLaunchOptions cannot recover it and the
-	// restart path seeds it from the instance instead.
-	BranchPrefix string
-	// Account is the Claude account to launch under (account.DefaultName
-	// for the default). Like BranchPrefix it never reaches the command
-	// line: app records it on the instance (session.Instance.SetAccount),
-	// and a launch turns it into CLAUDE_CONFIG_DIR.
-	Account string
-}
+// LaunchOptions is the value the modal edits; see launch.Options.
+type LaunchOptions = launch.Options
 
 // AccountChoice is one option on the Account row.
 type AccountChoice struct {
