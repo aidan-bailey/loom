@@ -3,7 +3,9 @@ package script
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	lua "github.com/yuin/gopher-lua"
@@ -516,4 +519,50 @@ end)`))
 
 	assert.Equal(t, []string{"nil Paused true", "Running"}, h.notices)
 	assert.Empty(t, e.waitingIn)
+}
+
+// TestKilledInstance_ReachesNoPane: after inst:kill() the handle keeps its
+// view, marked Deleting, with its session name. The pane methods refuse
+// it as they refuse a paused one: preview reads "", send_keys raises the
+// guard's message, tap_enter does nothing. Without the refusal they would
+// reach whatever session now answers to that name, here another one
+// started under the same title on a private tmux server.
+func TestKilledInstance_ReachesNoPane(t *testing.T) {
+	sock := fmt.Sprintf("script-killed-%d", os.Getpid())
+	t.Setenv(tmux.EnvTmuxSocket, sock)
+	t.Cleanup(func() { _ = tmux.CommandOnSocket(context.Background(), sock, "kill-server").Run() })
+	const name = "loom_killed"
+	out, err := tmux.Command(context.Background(), "new-session", "-d", "-s", name, "-x", "80", "-y", "10",
+		"sh -c 'echo another-session; sleep 60'").CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.Eventually(t, func() bool {
+		got, _ := tmux.NewSessionNamed(name, "").CapturePaneContent()
+		return strings.Contains(got, "another-session")
+	}, 5*time.Second, 50*time.Millisecond, "fixture: the session answering to the killed one's name prints")
+
+	e := NewEngine(nil)
+	defer e.Close()
+	require.NoError(t, e.LoadFromString("killed.lua", `cs.bind("Z", function(ctx)
+  local inst = ctx:selected()
+  inst:kill()
+  ctx:notify("preview=" .. inst:preview())
+  inst:tap_enter()
+  local ok, err = pcall(inst.send_keys, inst, "x")
+  ctx:notify(tostring(ok) .. " " .. tostring(err))
+end)`))
+	running := core.InstanceView{ID: 3, Title: "killed", Status: session.Running, Started: true, TmuxSession: name}
+	h := &fakeHost{selected: &running}
+	_, err = e.Dispatch(context.Background(), "Z", h)
+	require.NoError(t, err)
+	require.Len(t, h.enqueuedIDs, 1)
+
+	// What scriptReplied resumes a kill with: the view, marked Deleting.
+	gone := running
+	gone.Status = session.Deleting
+	require.NoError(t, e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{Instance: &gone}))
+
+	require.Len(t, h.notices, 2)
+	assert.Equal(t, "preview=", h.notices[0], "no preview of the session now under that name")
+	assert.Contains(t, h.notices[1], "false ")
+	assert.Contains(t, h.notices[1], "send_keys: cannot send keys to instance that has not been started or is paused")
 }

@@ -555,3 +555,74 @@ func TestScriptError_RefusalsRaiseTheirOwnMessage(t *testing.T) {
 	assert.Equal(t, "new_instance: "+refused.Error(), scriptError("new_instance", refused),
 		"ctx:new_instance keeps its prefix, refusals included")
 }
+
+// scriptReq is the ReqID of the one Lua call m is waiting on.
+func scriptReq(t *testing.T, m *home) core.ReqID {
+	t.Helper()
+	var reqs []core.ReqID
+	for req, p := range m.pending {
+		if p.script != nil {
+			reqs = append(reqs, req)
+		}
+	}
+	require.Len(t, reqs, 1, "one Lua call waits on the model")
+	return reqs[0]
+}
+
+// TestScriptResume_ARecoveredInstanceTakesTheAdoptedView: inst:resume() on
+// a Recoverable session recovers it, and the adoption replaces the
+// placeholder with a new instance, under a new ID. The handle takes the
+// adopted instance's view, its ID included, so its next call is a request
+// for the adopted instance, not the placeholder that is gone.
+func TestScriptResume_ARecoveredInstanceTakesTheAdoptedView(t *testing.T) {
+	m := homeWithAppState(t)
+	m.ctx = cancelledCtx()
+	placeholder, err := session.FromInstanceData(session.InstanceData{
+		Title: "orphan", Status: session.Recoverable, Program: "claude",
+		Worktree: session.GitWorktreeData{RepoPath: t.TempDir(), WorktreePath: t.TempDir(), BranchName: "u/orphan"},
+	}, t.TempDir())
+	require.NoError(t, err)
+	m.ws.AddForTest(placeholder)
+	selectIn(m, m.list, placeholder)
+	placeholderID := idOf(m, placeholder)
+	withScript(t, m, `cs.bind("Z", function(ctx)
+  local inst = ctx:selected()
+  inst:resume()
+  ctx:notify(inst:title() .. " " .. inst:status())
+  inst:kill()
+end)`)
+
+	cmd, ok := m.dispatchScript("Z")
+	require.True(t, ok)
+	first, ok := cmd().(scriptDoneMsg)
+	require.True(t, ok)
+	_, _ = m.Update(first) // the Recover request; its job, which would adopt for real, is not run
+	adopted := &session.Instance{Title: "orphan", Status: session.Running}
+
+	reply := deliver(t, m, core.TrackedForTest(scriptReq(t, m), placeholderID,
+		core.RecoverResult{Placeholder: placeholder, Owner: m.ws, OldTitle: "orphan", Recovered: adopted}))
+
+	adoptedID := idOf(m, adopted)
+	require.NotEqual(t, placeholderID, adoptedID, "fixture: the adoption is a new instance")
+	var resumed *scriptResumeMsg
+	for _, msg := range runCmds(t, reply) {
+		if rm, ok := msg.(scriptResumeMsg); ok {
+			resumed = &rm
+		}
+	}
+	require.NotNil(t, resumed, "the Reply resumes the script")
+	require.NotNil(t, resumed.value.Instance)
+	assert.Equal(t, adoptedID, resumed.value.Instance.ID, "with the adopted instance's view")
+	_, next := m.Update(*resumed)
+	var done *scriptDoneMsg
+	for _, msg := range runCmds(t, next) {
+		if d, ok := msg.(scriptDoneMsg); ok {
+			done = &d
+		}
+	}
+	require.NotNil(t, done)
+	require.NoError(t, done.err)
+	assert.Equal(t, []string{"orphan Running"}, done.notices, "the handle reads the adopted instance")
+	assert.Equal(t, []script.Intent{script.InstanceOpIntent{ID: adoptedID, Title: "orphan", Op: "kill"}}, intentsOf(*done),
+		"its next call targets the adopted instance")
+}

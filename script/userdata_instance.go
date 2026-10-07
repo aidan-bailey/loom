@@ -5,6 +5,7 @@ import (
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
 
@@ -327,10 +328,13 @@ func paneOf(v core.InstanceView) *tmux.Session {
 
 // paneUsable is the guard AgentPane put on its preview and input: a
 // session that has started, is not paused, and has a tmux session name.
-// The view is the dispatch-time snapshot, so a session that died since
-// makes tmux fail, and the method returns or raises its error.
+// It also refuses a Deleting view, which a killed instance's handle keeps
+// (scriptReplied): its session is gone, and its name would reach a session
+// started since under the same title. The view is the dispatch-time
+// snapshot, so a session that died since makes tmux fail, and the method
+// returns or raises its error.
 func paneUsable(v core.InstanceView) bool {
-	return v.Started && !v.Paused() && v.TmuxSession != ""
+	return v.Started && !v.Paused() && v.Status != session.Deleting && v.TmuxSession != ""
 }
 
 func instancePreview(L *lua.LState) int {

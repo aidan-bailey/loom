@@ -78,6 +78,13 @@ func (m *Model) InstanceForTest(id InstanceID) *session.Instance {
 	return inst
 }
 
+// TrackedForTest is result as the job of request req, for the instance id,
+// delivers it, so its Reply follows: a test delivers it in place of
+// running the job, whose real work (adopting an orphan, say) it can't do.
+func TrackedForTest(req ReqID, id InstanceID, result any) any {
+	return tracked{req: req, id: id, result: result}
+}
+
 // FetchedIssueForTest is the result FetchIssue's job delivers for request
 // req: issue, or err. A test delivers it in place of running the job, whose
 // gh call it can't make.
