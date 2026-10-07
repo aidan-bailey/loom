@@ -3230,6 +3230,32 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+## Final-review amendments (2026-10-07, binding)
+
+The final cross-cutting review (over `c8fb3b0..2911f6c`) found two Important seams and some minors. These amend the squashed packages:
+
+- **F-1 (app): a stale health-tick result must not flip a pausing instance to Paused.** The `metadataReadyMsg` handler calls `applyLiveness` for every result without re-checking status, unlike the Dead-event path (`statusEligible`, see `deadVerifiedMsg`). So a probe dispatched while the instance was Running, and answered Dead after Pause closed tmux, flips the instance from Loading to Paused while Pause is still archiving. Skip results whose instance is no longer `statusEligible` before `applyLiveness`, as `deadVerifiedMsg` does. Test: deliver `metadataReadyMsg` with a Dead result for an instance that is Loading, and it stays Loading.
+- **F-2 (session): Resume refuses while a Pause of the same worktree is in flight.** Lua `inst:resume()` calls `Resume` with no status gate, and a tab closed and reopened mid-pause yields a reconciled Paused twin (a different `*Instance`, same worktree). Either can start a resume while Pause's archive runs, and the archive then deletes the resumed session's dir. Keep a package-level `sync.Map` of worktree paths with a Pause in flight: Pause stores its path for its whole duration (`LoadOrStore`; an already-present path refuses with "a pause of this session is already running") and deletes it on return. `Resume` refuses at its start, before anything on disk changes, while the path is present: "this session is still pausing (archiving Claude's scratchpad); resume it once that finishes". Tests: a Resume issued while a Pause's archive is in progress (hold it through `archiveClaudeTempFn`) returns that error and launches nothing; after the Pause returns, Resume succeeds and restores. Do the same for a twin `*Instance` of the same worktree path.
+- **F-3 (app + session): locks reach the user, and Pause checks them before it stashes.** (a) In the kill Cmd (`app/intents.go`, the kill action), an error matching `errors.Is(err, git.ErrWorktreeLocked)` is handled like the Recoverable branch: return `transitionFailedMsg` with the error, keeping the row (its tmux session is gone, so the tick pauses it), so the user sees the `git worktree unlock` remedy and can press D again. Test: a real worktree locked with `--reason` through `killActionFor` yields `transitionFailedMsg` whose error contains "worktree unlock", and the row stays. (b) `Instance.Pause` calls `git.RefuseLocked(gw.GetRepoPath(), gw.GetWorktreePath(), nil)` before it stashes, so a respected lock refuses the pause without killing the agent or leaving a pending stash. Test: pausing a user-locked tree returns `ErrWorktreeLocked`, closes no tmux session, and stashes nothing.
+- **F-4 (session): cwds nested inside a live worktree count as on disk.** In `worktreeOnDisk`, for each worktree root it reaches, also return true when the candidate name starts with one of that root's `Names` values followed by `-`. A Claude session whose cwd is a subdirectory of a live tree is then protected by check 4, not only by the quiet period. Test: a candidate named after `<live worktree>/sub/x_18be000000000009` (on disk only up to the worktree) is kept.
+- **F-5 (claudetmp): reap interrupted restores.** `PurgeTrash` also removes `.loom-restore-*` staging directories older than the threshold. A Restore cut short by a quit, takeover or crash leaves one behind, and nothing else removes it. Its zip is deleted only after the rename, so nothing in it is lost. Update the doc comment and test.
+- **F-6 (docs).**
+  - CLAUDE.md's archive gotcha: the parenthetical after "before it marks the instance Paused" becomes "(the app's status gate keeps `r` off it, and `Resume` itself refuses while a Pause of the same worktree is in flight, which covers Lua `inst:resume()` and a reopened twin)".
+  - The lock gotcha says "returned before cleanup touches anything" instead of "before anything is touched". Also add that Pause checks locks before it stashes, and that a Kill a lock refuses keeps its row and shows the remedy.
+  - Add one sentence: loom computes Claude's root from its own environment, so if the tmux server's TMPDIR or CLAUDE_CODE_TMPDIR differs, archiving finds nothing (safe); `loom debug` prints the root loom uses.
+  - Fix the PurgePartials doc comment ("an hour is generous") to match the sweep's 24h.
+
+Follow-ups, not in this branch:
+- Kill still runs Cleanup when it can't confirm the agent is gone (pre-existing; Pause aborts in that case).
+- Read Claude's root from the tmux server's environment.
+- The error bar truncates a long zip path.
+- Notices are logged as `handle_error` at ERROR.
+- A gutted tree with a stale lock can't be killed.
+- Root ownership checks.
+- Pause holds for the whole compression of a huge scratchpad.
+- `loom workspace migrate` strands parked zips.
+- The terminal pane opens in `~` after a rebuild-resume (pre-existing race).
+
 ## Spec coverage
 
 | Spec item | Where |
