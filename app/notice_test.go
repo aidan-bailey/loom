@@ -17,7 +17,7 @@ func TestKillResult_ShowsNotice(t *testing.T) {
 	m := fleetHome(t)
 	m.errBox = ui.NewErrBox()
 	m.errBox.SetSize(1000, 1)
-	b1 := m.slots[1].list.GetInstanceByTitle("b1")
+	b1 := instByTitle(m, m.slots[1].list, "b1")
 	require.NotNil(t, b1)
 	require.NoError(t, b1.TransitionTo(session.Deleting))
 
@@ -34,7 +34,7 @@ func TestResumeDone_ShowsNotice(t *testing.T) {
 	m := fleetHome(t)
 	m.errBox = ui.NewErrBox()
 	m.errBox.SetSize(1000, 1)
-	f1 := m.list.GetInstanceByTitle("f1")
+	f1 := instByTitle(m, m.list, "f1")
 	require.NotNil(t, f1)
 
 	deliver(t, m, core.ResumeResult{Instance: f1, Owner: m.ws,

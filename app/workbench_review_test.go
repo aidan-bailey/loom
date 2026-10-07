@@ -44,11 +44,12 @@ func newReviewWorkbenchHome(t *testing.T) (*home, string) {
 	}, t.TempDir())
 	require.NoError(t, err)
 	m.ws.Add(inst)
+	m.syncViews()
 	m.list.SetSelectedInstance(0)
 
 	sel := m.list.GetSelectedInstance()
 	require.NotNil(t, sel)
-	require.Equal(t, root, sel.GetWorktreePath(), "test instance must expose a worktree root")
+	require.Equal(t, root, sel.WorktreePath, "test instance must expose a worktree root")
 
 	_, _ = handleStateDefaultKey(m, wbKey("enter"))
 	require.Equal(t, viewWorkbench, m.viewMode)
@@ -101,6 +102,7 @@ func newCodeReviewWorkbenchHome(t *testing.T, dirty bool) (*home, string) {
 	}, t.TempDir())
 	require.NoError(t, err)
 	m.ws.Add(inst)
+	m.syncViews()
 	m.list.SetSelectedInstance(0)
 
 	_, _ = handleStateDefaultKey(m, wbKey("enter"))
@@ -277,6 +279,7 @@ func TestWorkbenchReview_RetargetDropsPane(t *testing.T) {
 	}, t.TempDir())
 	require.NoError(t, err)
 	m.ws.Add(inst)
+	m.syncViews()
 	m.list.SetSelectedInstance(1)
 	require.Equal(t, "b", m.list.GetSelectedInstance().Title)
 
@@ -319,6 +322,7 @@ func TestWorkbenchReview_PausedSessionNotifies(t *testing.T) {
 			}, t.TempDir())
 			require.NoError(t, err)
 			m.ws.Add(inst)
+			m.syncViews()
 			m.list.SetSelectedInstance(0)
 
 			assert.Nil(t, m.openDocReview(doc))
@@ -443,10 +447,12 @@ func TestWorkbenchReview_SendOpensConfirm(t *testing.T) {
 	m, doc := newReviewWorkbenchHome(t)
 	sel := m.list.GetSelectedInstance()
 	require.NotNil(t, sel)
-	sel.SetTmuxSession(aliveTmuxSessionForTest(t, "a"))
-	require.True(t, sel.Pane().TmuxAlive(), "fixture precondition")
+	inst := m.core.InstanceOf(sel.ID)
+	inst.SetTmuxSession(aliveTmuxSessionForTest(t, "a"))
+	require.True(t, inst.Pane().TmuxAlive(), "fixture precondition")
+	m.syncViews()
 
-	root := sel.GetWorktreePath()
+	root := sel.WorktreePath
 	require.NoError(t, review.Save(root, &review.ReviewState{
 		File: doc,
 		Comments: []review.Comment{

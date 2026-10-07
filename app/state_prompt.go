@@ -1,6 +1,7 @@
 package app
 
 import (
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
@@ -30,10 +31,14 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if shouldClose {
 		// A creation flow's prompt targets its pending instance; otherwise
-		// the overlay was opened to prompt the selected, running session.
+		// the overlay was opened to prompt the selected, running session
+		// (its instance, through the bridge until package C sends by
+		// request).
 		selected := m.pendingNew
 		if selected == nil {
-			selected = m.list.GetSelectedInstance()
+			if sel := m.list.GetSelectedInstance(); sel != nil {
+				selected = m.instOf(sel.ID)
+			}
 		}
 		if selected == nil {
 			return m, nil
@@ -93,7 +98,7 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), selected.Program()) {
 						return m, m.promptRemoteControlBlocked(startTask, m.core.RCAuthFor(opts.Account).Reason)
 					}
-					return m, tea.Batch(startTask.Run(), m.instanceChanged())
+					return m, tea.Batch(m.runTask(startTask), m.instanceChanged())
 				}
 				m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 				m.state = stateLaunchOptions
@@ -112,13 +117,18 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 		m.dismissOverlay()
 		m.state = stateDefault
+		// The help names the session's branch and program: its row.
+		var started *core.InstanceView
+		if id, ok := m.core.IDFor(selected); ok {
+			started, _ = m.viewByID(id)
+		}
 		// showHelpScreen mutates model state and writes app state to
 		// disk, so it must run on the main goroutine — hand it back via
 		// a message instead of calling it inside the (goroutine-run)
 		// Sequence closure. The handler also resets the menu state.
 		return m, tea.Batch(send, tea.Sequence(
 			tea.RequestWindowSize,
-			func() tea.Msg { return showHelpScreenMsg{helpType: helpStart(selected)} },
+			func() tea.Msg { return showHelpScreenMsg{helpType: helpStart(started)} },
 		))
 	}
 

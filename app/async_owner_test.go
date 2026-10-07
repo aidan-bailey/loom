@@ -58,10 +58,10 @@ func finishStart(t *testing.T, inst *session.Instance) {
 // selectTitle selects the instance titled title in m's focused list.
 func selectTitle(t *testing.T, m *home, title string) *session.Instance {
 	t.Helper()
-	inst := m.list.GetInstanceByTitle(title)
-	require.NotNil(t, inst)
-	m.list.SelectInstance(inst)
-	return inst
+	v := m.list.GetInstanceByTitle(title)
+	require.NotNil(t, v)
+	m.list.SelectID(v.ID)
+	return m.core.InstanceOf(v.ID)
 }
 
 // TestInstanceStarted_FailureAfterSwitchKillsOnlyTheFailedInstance: a failed
@@ -77,7 +77,7 @@ func TestInstanceStarted_FailureAfterSwitchKillsOnlyTheFailedInstance(t *testing
 
 	deliver(t, m, core.StartResult{Instance: starting, Err: errors.New("boom"), Owner: owner.ws})
 
-	assert.Same(t, victim, m.slots[1].list.GetInstanceByTitle("b1"), "the focused workspace's selected session must be untouched")
+	assert.Equal(t, idOf(m, victim), titleID(m.slots[1].list, "b1"), "the focused workspace's selected session must be untouched")
 	assert.NotEqual(t, session.Deleting, victim.GetStatus())
 	assert.Nil(t, owner.list.GetInstanceByTitle("new-one"), "the failed instance is removed from its owner")
 	require.NoError(t, m.checkSlotInvariant())
@@ -103,7 +103,7 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 	assert.GreaterOrEqual(t, recA.calls, 1, "the owner's storage is saved")
 	assert.Contains(t, string(recA.lastData), "new-one")
 	assert.Zero(t, recB.calls, "the focused workspace's storage is not touched")
-	assert.Same(t, starting, owner.list.GetSelectedInstance(), "selected in its own workspace")
+	assert.Equal(t, idOf(m, starting), selID(owner.list), "selected in its own workspace")
 	assert.Empty(t, starting.Prompt(), "the pending prompt belongs to the instance and is sent anyway")
 	assert.Contains(t, m.errBox.String(), "new-one")
 }
@@ -118,7 +118,7 @@ func TestInstanceStarted_SuccessInFocusedWorkspaceAttaches(t *testing.T) {
 	deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
 
 	assert.Equal(t, stateInlineAttach, m.state)
-	assert.Same(t, starting, m.list.GetSelectedInstance())
+	assert.Equal(t, idOf(m, starting), selID(m.list))
 	assert.True(t, m.panes.Alive(starting.Pane().TmuxSessionName()), "its pane client is attached")
 	assert.GreaterOrEqual(t, recA.calls, 1)
 	assert.Zero(t, recB.calls)
@@ -140,7 +140,7 @@ func TestInstanceStarted_InlineAttachWaitsForThePrompt(t *testing.T) {
 
 	pumpCore(t, m, cmd)
 	assert.Equal(t, stateInlineAttach, m.state, "attached once the prompt is sent")
-	assert.Same(t, starting, m.list.GetSelectedInstance())
+	assert.Equal(t, idOf(m, starting), selID(m.list))
 }
 
 // TestInstanceStarted_KilledWhileThePromptIsSentIsNotAttached: Started
@@ -200,6 +200,7 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	started := liveInstance(t, "late")
 	m.panes.Retain(nil) // nothing attached it
 	owner.ws.Add(started)
+	m.syncViews()
 
 	m.errBox.SetSize(400, 1)
 
@@ -213,7 +214,7 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	assert.Zero(t, recB.calls)
 	drainCmd(cmd)
 	assert.Nil(t, m.panes.Get(started.Pane().TmuxSessionName()), "nothing displays it, so nothing attaches it")
-	assert.NotContains(t, referencedInstances(m), started)
+	assert.False(t, reaches(referencedViews(m), started))
 	require.NoError(t, m.checkSlotInvariant())
 }
 
@@ -243,12 +244,13 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, recovered.TransitionTo(session.Running))
 
+		placeholderID := idOf(m, placeholder) // captured while loaded: a removal forgets it
 		deliver(t, m, core.RecoverResult{OldTitle: "dup", Recovered: recovered, Placeholder: placeholder, Owner: owner.ws})
 
-		assert.Same(t, bystander, m.slots[1].list.GetInstanceByTitle("dup"), "the same-titled row elsewhere is untouched")
-		assert.NotContains(t, m.slots[1].list.GetInstances(), recovered)
-		assert.Contains(t, owner.list.GetInstances(), recovered, "filed under its own workspace")
-		assert.NotContains(t, owner.list.GetInstances(), placeholder, "the placeholder is replaced")
+		assert.Equal(t, idOf(m, bystander), titleID(m.slots[1].list, "dup"), "the same-titled row elsewhere is untouched")
+		assert.NotContains(t, listIDs(m.slots[1].list), idOf(m, recovered))
+		assert.Contains(t, listIDs(owner.list), idOf(m, recovered), "filed under its own workspace")
+		assert.NotContains(t, listIDs(owner.list), placeholderID, "the placeholder is replaced")
 		assert.GreaterOrEqual(t, recA.calls, 1, "the owner's storage is saved")
 		assert.Zero(t, recB.calls, "the focused workspace's storage is not touched")
 	})
@@ -279,6 +281,7 @@ func TestResumeDone_AfterOwnerDropped(t *testing.T) {
 	resumed := liveInstance(t, "resumed")
 	m.panes.Retain(nil) // nothing attached it
 	owner.ws.Add(resumed)
+	m.syncViews()
 
 	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws})
 
@@ -295,15 +298,17 @@ func TestResumeDone_OwnerReopened(t *testing.T) {
 	isolateTmux(t)
 	wtPath := filepath.Join(t.TempDir(), "res-wt")
 	m, owner, twin, _, recC := reopenedHome(t, "res", wtPath, deadCmdExecForTest())
+	twinID := idOf(m, twin) // captured while loaded: a removal forgets it
 	resumed := startedWorktreeInstance(t, "res", wtPath, newFakeTmuxServer())
 	owner.ws.Add(resumed)
+	m.syncViews()
 
 	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws})
 	drainCmd(cmd)
 
 	reopened := m.slots[1]
-	assert.Same(t, resumed, reopened.list.GetInstanceByTitle("res"))
-	assert.NotContains(t, reopened.list.GetInstances(), twin)
+	assert.Equal(t, idOf(m, resumed), titleID(reopened.list, "res"))
+	assert.NotContains(t, listIDs(reopened.list), twinID)
 	assert.GreaterOrEqual(t, recC.calls, 1, "the reopened slot is saved")
 	assert.True(t, m.panes.Alive(resumed.Pane().TmuxSessionName()), "displayed again, so it gets a client")
 }
@@ -326,6 +331,7 @@ func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 		}
 		resumed := liveInstance(t, "resumed")
 		owner.ws.Add(resumed)
+		m.syncViews()
 
 		cmd := deliver(t, m, failedResume(resumed))
 		drainCmd(cmd)

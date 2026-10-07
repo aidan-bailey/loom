@@ -18,7 +18,7 @@ func handleStateConfirmKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if !shouldClose {
 		return m, nil
 	}
-	cmd := m.pendingConfirmation.Run()
+	cmd := m.runTask(m.pendingConfirmation)
 	m.pendingConfirmation = overlay.ConfirmationTask{}
 	m.dismissOverlay()
 	m.state = stateDefault

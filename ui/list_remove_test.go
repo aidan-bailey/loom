@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,21 +17,21 @@ func TestList_RemoveKeepsSelectionOnItsRow(t *testing.T) {
 		selected := src.items[3]
 		l.SetSelectedInstance(3)
 		src.remove(src.items[1])
-		assert.Same(t, selected, l.GetSelectedInstance())
+		assert.Equal(t, selected.ID, selectedID(l))
 	})
 	t.Run("the first row", func(t *testing.T) {
 		l, src := newPageNavList(5)
 		selected := src.items[3]
 		l.SetSelectedInstance(3)
 		src.remove(src.items[0])
-		assert.Same(t, selected, l.GetSelectedInstance())
+		assert.Equal(t, selected.ID, selectedID(l))
 	})
 	t.Run("a later row", func(t *testing.T) {
 		l, src := newPageNavList(5)
 		selected := src.items[1]
 		l.SetSelectedInstance(1)
 		src.remove(src.items[3])
-		assert.Same(t, selected, l.GetSelectedInstance())
+		assert.Equal(t, selected.ID, selectedID(l))
 	})
 	t.Run("the selected last row clamps to the new last", func(t *testing.T) {
 		l, src := newPageNavList(3)
@@ -54,11 +54,11 @@ func TestList_PrependedWorkspaceTerminalKeepsSelection(t *testing.T) {
 	l, src := newPageNavList(3)
 	selected := src.items[1]
 	l.SetSelectedInstance(1)
-	src.prepend(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
-	assert.Same(t, selected, l.GetSelectedInstance())
+	src.prepend(core.InstanceView{ID: 100, Title: "ws", IsWorkspaceTerminal: true})
+	assert.Equal(t, selected.ID, selectedID(l))
 
 	empty, emptySrc := newPageNavList(0)
-	emptySrc.prepend(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
+	emptySrc.prepend(core.InstanceView{ID: 100, Title: "ws", IsWorkspaceTerminal: true})
 	assert.Equal(t, 0, empty.SelectedIdx())
 }
 
@@ -69,9 +69,9 @@ func TestList_PrependedWorkspaceTerminalKeepsSelectionVisible(t *testing.T) {
 	l, src := newPageNavList(5) // 3 rows visible
 	l.SetSelectedInstance(4)
 	selected := l.GetSelectedInstance()
-	src.prepend(&session.Instance{Title: "ws", IsWorkspaceTerminal: true})
+	src.prepend(core.InstanceView{ID: 100, Title: "ws", IsWorkspaceTerminal: true})
 
-	assert.Same(t, selected, l.GetSelectedInstance())
+	assert.Equal(t, selected.ID, selectedID(l))
 	assert.GreaterOrEqual(t, l.SelectedIdx(), l.scrollOffset)
 	assert.Less(t, l.SelectedIdx(), l.scrollOffset+l.maxVisibleItems(),
 		"the selected row must stay inside the visible window")
@@ -82,9 +82,9 @@ func TestList_PrependedWorkspaceTerminalKeepsSelectionVisible(t *testing.T) {
 func TestList_ReplacedRowKeepsTheSelection(t *testing.T) {
 	l, src := newPageNavList(3)
 	l.SetSelectedInstance(1)
-	replacement := &session.Instance{Title: "recovered"}
+	replacement := core.InstanceView{ID: 100, Title: "recovered"}
 	src.items[1] = replacement
-	assert.Same(t, replacement, l.GetSelectedInstance())
+	assert.Equal(t, replacement.ID, selectedID(l))
 	assert.Equal(t, 1, l.SelectedIdx())
 }
 
@@ -100,7 +100,7 @@ func TestList_TwoRemovalsBetweenReadsKeepTheRowRule(t *testing.T) {
 	l.SetSelectedInstance(2) // c
 	src.remove(a)
 	src.remove(c)
-	assert.Same(t, d, l.GetSelectedInstance())
+	assert.Equal(t, d.ID, selectedID(l))
 	assert.Equal(t, 1, l.SelectedIdx())
 }
 
@@ -110,9 +110,9 @@ func TestList_SelectedAndEveryLaterRowRemovedSelectsTheLastRow(t *testing.T) {
 	l, src := newPageNavList(5) // a b c d e
 	b := src.items[1]
 	l.SetSelectedInstance(2) // c
-	for _, inst := range append([]*session.Instance(nil), src.items[2:]...) {
+	for _, inst := range append([]core.InstanceView(nil), src.items[2:]...) {
 		src.remove(inst)
 	}
-	assert.Same(t, b, l.GetSelectedInstance())
+	assert.Equal(t, b.ID, selectedID(l))
 	assert.Equal(t, 1, l.SelectedIdx())
 }

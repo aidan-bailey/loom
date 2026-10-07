@@ -305,7 +305,8 @@ func (m *Model) deliverRecover(r RecoverResult) {
 			log.For("core").Error("recover.save_failed", "title", r.Recovered.Title, "err", err)
 		}
 	}
-	m.emit(Recovered{Instance: r.Recovered, ID: m.idOf(r.Recovered), Title: r.Recovered.Title, Owner: owner, Loaded: loaded})
+	m.emit(Recovered{Instance: r.Recovered, ID: m.idOf(r.Recovered), Title: r.Recovered.Title, Owner: owner, Loaded: loaded,
+		Paused: r.Recovered.GetStatus() == session.Paused})
 }
 
 // deliverKill removes a killed instance from every loaded workspace, by

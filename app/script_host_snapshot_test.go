@@ -10,7 +10,6 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
-	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,6 +52,7 @@ func newSnapshotTestHome(t *testing.T) *home {
 	for _, title := range []string{"a", "b", "c"} {
 		m.ws.Add(newSnapshotTestInstance(t, title))
 	}
+	m.syncViews()
 	m.list.SetSelectedInstance(0)
 	return m
 }
@@ -77,11 +77,10 @@ func newSnapshotTestInstance(t *testing.T, title string) *session.Instance {
 func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 	m := newSnapshotTestHome(t)
 
-	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	ctxA := &config.WorkspaceContext{ConfigDir: t.TempDir()}
 	ctxB := &config.WorkspaceContext{ConfigDir: t.TempDir()}
 	wsB := testWS(core.WorkspaceParts{Ctx: ctxB, Config: config.DefaultConfig()}, newSnapshotTestInstance(t, "other"))
-	altList := ui.NewList(&sp, wsB)
+	altList := fixtureList()
 	altSplit := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	extra := newSnapshotTestInstance(t, "extra")
 	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx = ctxA })
@@ -100,6 +99,7 @@ func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 		case msg = <-done:
 		default:
 			m.ws.Add(extra)
+			m.syncViews()
 			m.list.SetSelectedInstance(i % 4)
 			m.ws.Remove(extra)
 			if i%2 == 0 {

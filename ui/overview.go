@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -35,7 +36,7 @@ const (
 // OverviewGroup is one open workspace's slice of the overview.
 type OverviewGroup struct {
 	Name  string
-	Items []*session.Instance
+	Items []core.InstanceView
 	Order []int // SortForOverview(Items); empty when the group is empty
 	State GroupState
 }
@@ -157,7 +158,7 @@ func (o *Overview) renderGroupGrid(g OverviewGroup, gi int, d OverviewData) stri
 		for pos := start; pos < end; pos++ {
 			idx := g.Order[pos]
 			selected := d.Cursor.Group == gi && d.Cursor.Item == pos
-			cd := BuildCardData(g.Items[idx], d.Panes.For(g.Items[idx]), selected, d.Spinner, overviewCardTailLines+1)
+			cd := BuildCardData(g.Items[idx], d.Panes.For(&g.Items[idx]), selected, d.Spinner, overviewCardTailLines+1)
 			cd.Index = DisplayIndex(g.Items, idx)
 			cards = append(cards, renderOverviewCard(cd, cardW))
 		}

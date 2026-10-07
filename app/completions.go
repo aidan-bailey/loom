@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/aidan-bailey/loom/core"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -23,24 +22,26 @@ import (
 // focused slot and no other flow is on screen; otherwise a notice says
 // where it started. Formerly app.handleInstanceStarted's view half.
 func (m *home) applyStarted(ev core.Started) tea.Cmd {
-	inst, owner := ev.Instance, ev.Owner
+	owner := ev.Owner
+	// The row, nil when no open slot shows the instance (its owner closed).
+	v, holder := m.viewByID(ev.ID)
 	var attach tea.Cmd
 	if ev.Loaded {
-		attach = m.replacePane(inst)
+		attach = m.replacePane(v)
 	}
 	switch {
 	case owner == nil:
 		// Unknown owner (unstamped, and no loaded workspace holds it):
 		// only the model's half applies.
 	case !ev.Loaded:
-		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", inst.Title, owner.Label(), m.core.ClosedNote(owner)))
+		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", ev.Title, owner.Label(), m.core.ClosedNote(owner)))
 	case owner != m.ws:
 		// A background slot's selection drives no open flow.
 		if s := m.slotFor(owner); s != nil {
-			s.list.SelectInstance(inst)
+			s.list.SelectID(ev.ID)
 		}
-		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", inst.Title, owner.Label()))
-	case m.state != stateDefault || !m.ws.Holds(inst) || !core.ActiveInstance(inst):
+		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", ev.Title, owner.Label()))
+	case m.state != stateDefault || holder != m.workspaceSlot || !v.Active():
 		// Another flow owns the screen and acts on the selection; leave
 		// both alone. (The second test is a belt: the owner is stamped by
 		// identity, so a focused owner holds inst.) Nor is an instance
@@ -53,9 +54,9 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 		// selection up per key, would have them typing into a session
 		// being torn down, and into the neighbouring one once a kill
 		// removes it.
-		m.errBox.SetInfo(fmt.Sprintf("%s started", inst.Title))
+		m.errBox.SetInfo(fmt.Sprintf("%s started", ev.Title))
 	default:
-		m.list.SelectInstance(inst)
+		m.list.SelectID(ev.ID)
 		// Auto-focus agent pane and capture input
 		m.setPaneFocus(ui.FocusAgent)
 		m.splitPane.SetInlineAttach(true)
@@ -76,12 +77,13 @@ func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 	owner := ev.Owner
 	if owner != nil && (owner != m.ws || m.state == stateDefault) {
 		if s := m.slotFor(owner); s != nil {
-			s.list.SelectInstance(ev.Instance)
+			s.list.SelectID(ev.ID)
 		}
 	}
 	var attach tea.Cmd
 	if ev.Loaded {
-		attach = m.replacePane(ev.Instance)
+		v, _ := m.viewByID(ev.ID)
+		attach = m.replacePane(v)
 	}
 	where := ""
 	if owner != nil && owner != m.ws {
@@ -90,10 +92,10 @@ func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 			where += ", " + m.core.ClosedNote(owner)
 		}
 	}
-	if ev.Instance.GetStatus() == session.Paused {
-		m.errBox.SetInfo(fmt.Sprintf("Recovered '%s'%s as paused — its session and worktree were gone; branch preserved, press r to resume", ev.Instance.Title, where))
+	if ev.Paused {
+		m.errBox.SetInfo(fmt.Sprintf("Recovered '%s'%s as paused — its session and worktree were gone; branch preserved, press r to resume", ev.Title, where))
 	} else {
-		m.errBox.SetInfo(fmt.Sprintf("Recovered session '%s'%s", ev.Instance.Title, where))
+		m.errBox.SetInfo(fmt.Sprintf("Recovered session '%s'%s", ev.Title, where))
 	}
 	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), attach)
 }
@@ -107,5 +109,9 @@ func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 func (m *home) dropPendingNew() tea.Cmd {
 	inst := m.pendingNew
 	m.pendingNew = nil
-	return coreCmd(m.core.DropUnstarted(inst))
+	job := m.core.DropUnstarted(inst)
+	// The removal is the model's; what follows in this Update (the
+	// cancel's instanceChanged) reads the rows.
+	m.syncViews()
+	return coreCmd(job)
 }

@@ -2,9 +2,9 @@ package app
 
 import (
 	"fmt"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/keys"
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"strings"
@@ -24,14 +24,14 @@ type helpText interface {
 type helpTypeGeneral struct{}
 
 type helpTypeInstanceStart struct {
-	instance *session.Instance
+	instance *core.InstanceView
 }
 
 type helpTypeInstanceAttach struct{}
 
 type helpTypeInstanceStash struct{}
 
-func helpStart(instance *session.Instance) helpText {
+func helpStart(instance *core.InstanceView) helpText {
 	return helpTypeInstanceStart{instance: instance}
 }
 
@@ -183,14 +183,18 @@ func scriptHelpEntries(m *home) []helpEntry {
 }
 
 func (h helpTypeInstanceStart) toContent() string {
+	var branch, program string
+	if h.instance != nil {
+		branch, program = h.instance.Branch, h.instance.Program
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		titleStyle.Render("Instance Created"),
 		"",
 		descStyle.Render("New session created:"),
 		descStyle.Render(fmt.Sprintf("• Git branch: %s (isolated worktree)",
-			lipgloss.NewStyle().Bold(true).Render(h.instance.GetBranch()))),
+			lipgloss.NewStyle().Bold(true).Render(branch))),
 		descStyle.Render(fmt.Sprintf("• %s running in background tmux session",
-			lipgloss.NewStyle().Bold(true).Render(h.instance.Program()))),
+			lipgloss.NewStyle().Bold(true).Render(program))),
 		"",
 		headerStyle.Render("Managing:"),
 		renderHelpSection(instanceStartManagingEntries, 7),

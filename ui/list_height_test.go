@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"strings"
@@ -23,16 +24,13 @@ func TestListRenderDimensions(t *testing.T) {
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	// Create instances with various statuses to test all branches.
-	mkInstance := func(title string, status session.Status, isWT bool) *session.Instance {
-		inst := &session.Instance{
-			Title:               title,
-			IsWorkspaceTerminal: isWT,
-		}
-		_ = inst.TransitionTo(status)
-		return inst
+	var nextID core.InstanceID
+	mkInstance := func(title string, status session.Status, isWT bool) core.InstanceView {
+		nextID++
+		return core.InstanceView{ID: nextID, Title: title, IsWorkspaceTerminal: isWT, Status: status}
 	}
 
-	instances := []*session.Instance{
+	instances := []core.InstanceView{
 		mkInstance("Workspace Terminal", session.Running, true),
 		mkInstance("fix-auth-bug", session.Running, false),
 		mkInstance("add-logging", session.Paused, false),
@@ -122,9 +120,7 @@ func TestListString_RendersRailCards(t *testing.T) {
 	l := NewList(&sp, src)
 	l.SetWorkspaceName("loom")
 	l.SetSize(40, 30)
-	inst := &session.Instance{Title: "auth-refactor"}
-	_ = inst.TransitionTo(session.Ready)
-	src.add(inst)
+	src.add(core.InstanceView{ID: 1, Title: "auth-refactor", Status: session.Ready})
 	out := ansi.Strip(l.String())
 	assert.Contains(t, out, "LOOM")          // section label, uppercased
 	assert.Contains(t, out, "auth-refactor") // card title
@@ -150,9 +146,7 @@ func TestListString_NeverExceedsHeight(t *testing.T) {
 				}
 				l.SetPeerSections(peers)
 				for i := 0; i < nItems; i++ {
-					inst := &session.Instance{Title: fmt.Sprintf("inst-%d", i)}
-					_ = inst.TransitionTo(session.Ready)
-					src.add(inst)
+					src.add(core.InstanceView{ID: core.InstanceID(i + 1), Title: fmt.Sprintf("inst-%d", i), Status: session.Ready})
 				}
 				out := l.String()
 				assert.LessOrEqual(t, len(strings.Split(out, "\n")), height,

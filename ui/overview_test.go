@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/charmbracelet/x/ansi"
@@ -16,9 +17,9 @@ import (
 // testOverviewData builds a single loaded group ("loom") with two
 // instances, cursor on the first.
 func testOverviewData() OverviewData {
-	items := []*session.Instance{
-		{Title: "auth-refactor", Status: session.Running},
-		{Title: "db-migration", Status: session.Prompting},
+	items := []core.InstanceView{
+		{ID: 1, Title: "auth-refactor", Status: session.Running},
+		{ID: 2, Title: "db-migration", Status: session.Prompting},
 	}
 	return OverviewData{
 		Groups: []OverviewGroup{
@@ -61,7 +62,7 @@ func TestOverview_RendersMultipleGroups(t *testing.T) {
 	d := OverviewData{
 		Groups: []OverviewGroup{
 			{Name: "alpha", State: GroupLoaded,
-				Items: []*session.Instance{{Title: "a1", Status: session.Ready}},
+				Items: []core.InstanceView{{ID: 3, Title: "a1", Status: session.Ready}},
 				Order: []int{0}},
 			{Name: "delta", State: GroupEmpty},
 		},
@@ -130,11 +131,11 @@ func TestOverview_WindowKeepsCursorGroupVisible(t *testing.T) {
 	o.SetSize(80, overviewCardHeight+4) // room for ~1 card row + a header
 	// Two loaded groups, each with 3 cards; cursor deep in the SECOND
 	// group must be visible (the first group scrolls off the top).
-	mkItems := func(p string) ([]*session.Instance, []int) {
-		its := []*session.Instance{
-			{Title: p + "1", Status: session.Ready},
-			{Title: p + "2", Status: session.Ready},
-			{Title: p + "3", Status: session.Ready},
+	mkItems := func(p string) ([]core.InstanceView, []int) {
+		its := []core.InstanceView{
+			{ID: 4, Title: p + "1", Status: session.Ready},
+			{ID: 5, Title: p + "2", Status: session.Ready},
+			{ID: 6, Title: p + "3", Status: session.Ready},
 		}
 		return its, []int{0, 1, 2}
 	}
@@ -161,11 +162,11 @@ func TestOverview_WindowKeepsCursorGroupVisible(t *testing.T) {
 func TestOverview_WindowUpScrollsToFirstGroup(t *testing.T) {
 	o := NewOverview()
 	o.SetSize(80, overviewCardHeight+4) // room for ~1 card row + a header
-	mkItems := func(p string) ([]*session.Instance, []int) {
-		its := []*session.Instance{
-			{Title: p + "1", Status: session.Ready},
-			{Title: p + "2", Status: session.Ready},
-			{Title: p + "3", Status: session.Ready},
+	mkItems := func(p string) ([]core.InstanceView, []int) {
+		its := []core.InstanceView{
+			{ID: 7, Title: p + "1", Status: session.Ready},
+			{ID: 8, Title: p + "2", Status: session.Ready},
+			{ID: 9, Title: p + "3", Status: session.Ready},
 		}
 		return its, []int{0, 1, 2}
 	}
@@ -198,17 +199,17 @@ func TestOverview_WindowAccountsForShortPrecedingGroups(t *testing.T) {
 	o := NewOverview()
 	o.SetSize(80, overviewCardHeight+4)
 	o.ToggleCollapse("groupzero") // block 0 becomes header-only (1 line)
-	loaded := []*session.Instance{
-		{Title: "loom0", Status: session.Ready},
-		{Title: "loom1", Status: session.Ready},
-		{Title: "loom2", Status: session.Ready},
-		{Title: "loom3", Status: session.Ready},
+	loaded := []core.InstanceView{
+		{ID: 10, Title: "loom0", Status: session.Ready},
+		{ID: 11, Title: "loom1", Status: session.Ready},
+		{ID: 12, Title: "loom2", Status: session.Ready},
+		{ID: 13, Title: "loom3", Status: session.Ready},
 	}
-	tail := []*session.Instance{{Title: "z1", Status: session.Ready}}
+	tail := []core.InstanceView{{ID: 14, Title: "z1", Status: session.Ready}}
 	d := OverviewData{
 		Groups: []OverviewGroup{
 			{Name: "groupzero", State: GroupLoaded,
-				Items: []*session.Instance{{Title: "hidden", Status: session.Ready}},
+				Items: []core.InstanceView{{ID: 15, Title: "hidden", Status: session.Ready}},
 				Order: []int{0}},
 			{Name: "loom", State: GroupLoaded, Items: loaded, Order: []int{0, 1, 2, 3}},
 			{Name: "zeta", State: GroupLoaded, Items: tail, Order: []int{0}},
@@ -233,11 +234,11 @@ func TestOverview_NeverExceedsHeightDegenerate(t *testing.T) {
 			{Name: "gamma", State: GroupEmpty},
 		},
 	}
-	itemSets := map[int][]*session.Instance{
+	itemSets := map[int][]core.InstanceView{
 		0: nil,
 		2: {
-			{Title: "auth-refactor", Status: session.Running},
-			{Title: "db-migration", Status: session.Prompting},
+			{ID: 16, Title: "auth-refactor", Status: session.Running},
+			{ID: 17, Title: "db-migration", Status: session.Prompting},
 		},
 	}
 	for height := 1; height <= 8; height++ {

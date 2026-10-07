@@ -135,7 +135,7 @@ func TestTerminalUpdateContent(t *testing.T) {
 	injectSession(tp, instance.Title, ts, t.TempDir())
 
 	// UpdateContent should set fallback=false and capture content
-	err := tp.UpdateContent(instance)
+	err := tp.UpdateContent(viewPtr(instance))
 	require.NoError(t, err)
 
 	tp.mu.Lock()
@@ -177,7 +177,7 @@ func TestTerminalFallbackStates(t *testing.T) {
 		require.NoError(t, err)
 		_ = instance.TransitionTo(session.Paused)
 
-		err = tp.UpdateContent(instance)
+		err = tp.UpdateContent(viewPtr(instance))
 		require.NoError(t, err)
 
 		tp.mu.Lock()
@@ -195,7 +195,7 @@ func TestTerminalFallbackStates(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = tp.UpdateContent(instance)
+		err = tp.UpdateContent(viewPtr(instance))
 		require.NoError(t, err)
 
 		tp.mu.Lock()
@@ -240,7 +240,7 @@ func TestTerminalSessionCaching(t *testing.T) {
 	tp.currentTitle = instance1.Title
 	tp.mu.Unlock()
 
-	err := tp.UpdateContent(instance1)
+	err := tp.UpdateContent(viewPtr(instance1))
 	require.NoError(t, err)
 	tp.mu.Lock()
 	require.Equal(t, content1, tp.content)
@@ -251,7 +251,7 @@ func TestTerminalSessionCaching(t *testing.T) {
 	tp.currentTitle = instance2.Title
 	tp.mu.Unlock()
 
-	err = tp.UpdateContent(instance2)
+	err = tp.UpdateContent(viewPtr(instance2))
 	require.NoError(t, err)
 	tp.mu.Lock()
 	require.Equal(t, content2, tp.content)
@@ -262,7 +262,7 @@ func TestTerminalSessionCaching(t *testing.T) {
 	tp.currentTitle = instance1.Title
 	tp.mu.Unlock()
 
-	err = tp.UpdateContent(instance1)
+	err = tp.UpdateContent(viewPtr(instance1))
 	require.NoError(t, err)
 	tp.mu.Lock()
 	require.Equal(t, content1, tp.content, "should get cached session content when switching back")
@@ -321,7 +321,7 @@ func TestTerminalPane_SnapshotCaptureRevalidatesTitle(t *testing.T) {
 	tp.content = sentinel
 	tp.mu.Unlock()
 
-	err := tp.UpdateContent(instance)
+	err := tp.UpdateContent(viewPtr(instance))
 	require.NoError(t, err)
 
 	tp.mu.Lock()

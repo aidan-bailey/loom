@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -77,15 +78,22 @@ func newTestPaneClientsWithPeers(t *testing.T) (*PaneClients, func() []string, f
 		}
 }
 
-// runningInstance is a started, Running instance (no tmux contacted).
-func runningInstance(t *testing.T, title string) *session.Instance {
+// runningInstance is the view of a started, Running instance (no tmux
+// contacted).
+func runningInstance(t *testing.T, title string) *core.InstanceView {
 	t.Helper()
 	inst, err := session.FromInstanceData(session.InstanceData{
 		Title: title, Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true,
 	}, t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Running))
-	return inst
+	return viewPtr(inst)
+}
+
+// viewPtr is inst's view, as the model would publish it.
+func viewPtr(inst *session.Instance) *core.InstanceView {
+	v := core.ViewForTest(inst, 1)
+	return &v
 }
 
 func TestPaneClients_NilRegistryHasNoClients(t *testing.T) {
@@ -269,14 +277,14 @@ func TestPaneClients_ForGuardsTheInstance(t *testing.T) {
 
 	unstarted, err := session.NewInstance(session.InstanceOptions{Title: "new", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
-	assert.Nil(t, p.For(unstarted).Client(), "not started: no pane")
+	assert.Nil(t, p.For(viewPtr(unstarted)).Client(), "not started: no pane")
 
 	paused, err := session.FromInstanceData(session.InstanceData{Title: "paused", Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true}, t.TempDir())
 	require.NoError(t, err)
-	assert.Nil(t, p.For(paused).Client(), "paused: no pane")
+	assert.Nil(t, p.For(viewPtr(paused)).Client(), "paused: no pane")
 
 	inst := runningInstance(t, "live")
-	name := inst.Pane().TmuxSessionName()
+	name := inst.TmuxSession
 	assert.Nil(t, p.For(inst).Client(), "nothing attached: no pane")
 
 	require.NoError(t, p.Ensure(name, "claude"))
@@ -377,7 +385,7 @@ func TestPaneClients_EnsureAfterRetainBuildsANewClient(t *testing.T) {
 func TestPaneClients_ConcurrentReadsDuringEnsureAndRetain(t *testing.T) {
 	p, _ := newTestPaneClients(t)
 	inst := runningInstance(t, "racy")
-	name := inst.Pane().TmuxSessionName()
+	name := inst.TmuxSession
 
 	stop := make(chan struct{})
 	var readers sync.WaitGroup

@@ -30,6 +30,7 @@ func runningInstance(t *testing.T, m *home, title string) *session.Instance {
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Running))
 	m.ws.Add(inst)
+	m.syncViews()
 	return inst
 }
 
@@ -44,17 +45,18 @@ func TestCompletionDuringNaming_CancelKillsOnlyThePendingInstance(t *testing.T) 
 	finishStart(t, first) // active, so only the open flow keeps the completion off the selection
 	_, _ = runNewInstance(m)
 	require.Equal(t, stateNew, m.state)
-	pending := m.list.GetSelectedInstance()
+	pending := m.core.InstanceOf(selID(m.list))
 	require.NotSame(t, first, pending)
+	pendingID := idOf(m, pending) // captured while loaded: a removal forgets it
 
 	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws})
-	assert.Same(t, pending, m.list.GetSelectedInstance(), "a completion must not move the selection under the naming flow")
+	assert.Equal(t, idOf(m, pending), selID(m.list), "a completion must not move the selection under the naming flow")
 	assert.Equal(t, stateNew, m.state)
 	assert.Contains(t, m.errBox.String(), "first", "the start is still announced")
 
 	_, _ = handleStateNewKey(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-	assert.Contains(t, m.list.GetInstances(), first, "cancel must not kill the started session")
-	assert.NotContains(t, m.list.GetInstances(), pending, "cancel removes the pending instance")
+	assert.Contains(t, listIDs(m.list), idOf(m, first), "cancel must not kill the started session")
+	assert.NotContains(t, listIDs(m.list), pendingID, "cancel removes the pending instance")
 	assert.Equal(t, session.Running, first.GetStatus())
 }
 
@@ -69,11 +71,11 @@ func TestCompletionDuringInlineAttach_KeepsTheAttachTarget(t *testing.T) {
 	// selection.
 	finishStart(t, attached)
 	finishStart(t, first)
-	m.list.SelectInstance(attached)
+	selectIn(m, m.list, attached)
 	m.state = stateInlineAttach
 
 	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws})
-	assert.Same(t, attached, m.list.GetSelectedInstance(), "keys must keep going to the attached session")
+	assert.Equal(t, idOf(m, attached), selID(m.list), "keys must keep going to the attached session")
 	assert.Equal(t, stateInlineAttach, m.state)
 }
 
@@ -88,22 +90,24 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, placeholder.TransitionTo(session.Loading))
 	m.ws.Add(placeholder)
+	m.syncViews()
 	_, _ = runNewInstance(m)
-	pending := m.list.GetSelectedInstance()
+	pending := m.core.InstanceOf(selID(m.list))
+	pendingID := idOf(m, pending) // captured while loaded: a removal forgets it
 	recovered, err := session.NewInstance(session.InstanceOptions{Title: "orphan", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, recovered.TransitionTo(session.Running))
 
 	deliver(t, m, core.RecoverResult{OldTitle: "orphan", Recovered: recovered, Placeholder: placeholder, Owner: m.ws})
-	assert.Same(t, pending, m.list.GetSelectedInstance(), "the recover must not move the selection under the naming flow")
+	assert.Equal(t, idOf(m, pending), selID(m.list), "the recover must not move the selection under the naming flow")
 
 	typeTitle(t, m, "x")
 	assert.Equal(t, "x", pending.Title, "typing names the pending instance")
 	assert.Equal(t, "orphan", recovered.Title, "not the recovered row")
 
 	_, _ = handleStateNewKey(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-	assert.Contains(t, m.list.GetInstances(), recovered, "cancel must not remove the recovered session")
-	assert.NotContains(t, m.list.GetInstances(), pending)
+	assert.Contains(t, listIDs(m.list), idOf(m, recovered), "cancel must not remove the recovered session")
+	assert.NotContains(t, listIDs(m.list), pendingID)
 }
 
 // fakeTmuxServer is a scripted tmux server: has-session answers from a set
@@ -223,15 +227,17 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 
 	t.Run("success takes the twin's place", func(t *testing.T) {
 		m, owner, twin, recA, recC := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
+		twinID := idOf(m, twin) // captured while loaded: a removal forgets it
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
 		owner.ws.Add(started)
+		m.syncViews()
 
 		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
 		drainCmd(cmd)
 
 		reopened := m.slots[1]
-		assert.Same(t, started, reopened.list.GetInstanceByTitle("late"), "the started instance replaces the twin")
-		assert.NotContains(t, reopened.list.GetInstances(), twin)
+		assert.Equal(t, idOf(m, started), titleID(reopened.list, "late"), "the started instance replaces the twin")
+		assert.NotContains(t, listIDs(reopened.list), twinID)
 		assert.GreaterOrEqual(t, recC.calls, 1, "the reopened slot is saved")
 		assert.Zero(t, recA.calls, "the closed owner's stale copy is not")
 		assert.True(t, m.panes.Alive(late), "it is displayed again, so it gets a client")
@@ -242,13 +248,14 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		srv := newFakeTmuxServer()
 		started := startedWorktreeInstance(t, "late", wtPath, srv)
 		owner.ws.Add(started)
+		m.syncViews()
 
 		cmd := deliver(t, m, core.StartResult{Instance: started, Err: errors.New("boom"), Owner: owner.ws})
 		drainCmd(cmd)
 
 		assert.False(t, srv.killed("late"), "not killed: the reopened record owns its worktree and branch")
 		assert.Nil(t, m.panes.Get(late), "nothing attaches a failed start")
-		assert.Same(t, twin, m.slots[1].list.GetInstanceByTitle("late"))
+		assert.Equal(t, idOf(m, twin), titleID(m.slots[1].list, "late"))
 	})
 
 	t.Run("a namesake with another worktree is not a twin", func(t *testing.T) {
@@ -256,11 +263,12 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m.errBox.SetSize(400, 1)
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
 		owner.ws.Add(started)
+		m.syncViews()
 
 		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
 		drainCmd(cmd)
 
-		assert.Same(t, namesake, m.slots[1].list.GetInstanceByTitle("late"), "an unrelated same-titled session is untouched")
+		assert.Equal(t, idOf(m, namesake), titleID(m.slots[1].list, "late"), "an unrelated same-titled session is untouched")
 		assert.Zero(t, recC.calls)
 		assert.Nil(t, m.panes.Get(late), "the start stays with its closed owner, so nothing attaches it")
 		// The notice used to say the workspace is no longer open, while
@@ -277,11 +285,12 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m, owner, twin, _, recC := reopenedHome(t, "late", wtPath, srv.exec())
 		require.True(t, srv.killed("late"), "fixture: reconcile killed the live session")
 		owner.ws.Add(started)
+		m.syncViews()
 
 		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
 		drainCmd(cmd)
 
-		assert.Same(t, twin, m.slots[1].list.GetInstanceByTitle("late"), "the twin stays: its record is the live truth")
+		assert.Equal(t, idOf(m, twin), titleID(m.slots[1].list, "late"), "the twin stays: its record is the live truth")
 		assert.Zero(t, recC.calls)
 		assert.Nil(t, m.panes.Get(late), "nothing attaches the dead start")
 	})
@@ -312,7 +321,7 @@ end)
 	require.Equal(t, stateNew, m.state, "the intent opened the naming flow")
 	require.NotNil(t, m.pendingNew)
 	assert.Same(t, owner, m.workspaceSlot, "focus must not move while naming is open")
-	assert.Contains(t, m.list.GetInstances(), m.pendingNew)
+	assert.Contains(t, listIDs(m.list), idOf(m, m.pendingNew))
 }
 
 // pumpScript feeds a script's Cmds and their script messages back through
@@ -370,6 +379,7 @@ func TestKillAction_UsesTheDispatchSlotsStorage(t *testing.T) {
 	}, t.TempDir())
 	require.NoError(t, err)
 	m.ws.Add(a1)
+	m.syncViews()
 	seed, err := json.Marshal([]session.InstanceData{a1.ToInstanceData()})
 	require.NoError(t, err)
 	recA.lastData = seed
@@ -422,10 +432,11 @@ func TestCreationCancelPaths_KillThePendingInstanceByIdentity(t *testing.T) {
 			f.open(m)
 			pending := m.pendingNew
 			require.NotNil(t, pending)
-			m.list.SelectInstance(first) // however it moved
+			pendingID := idOf(m, pending) // captured while loaded: a removal forgets it
+			selectIn(m, m.list, first)    // however it moved
 			f.cancel(m)
-			assert.Contains(t, m.list.GetInstances(), first, "the selected session must survive the cancel")
-			assert.NotContains(t, m.list.GetInstances(), pending, "the pending instance is removed")
+			assert.Contains(t, listIDs(m.list), idOf(m, first), "the selected session must survive the cancel")
+			assert.NotContains(t, listIDs(m.list), pendingID, "the pending instance is removed")
 			assert.Nil(t, m.pendingNew)
 		})
 	}
@@ -438,9 +449,10 @@ func TestDropPendingNew_NeverKillsAStartedInstance(t *testing.T) {
 	m, _, _ := ownerTestHome(t)
 	live := liveInstance(t, "live")
 	m.ws.Add(live)
+	m.syncViews()
 	m.pendingNew = live
 
 	assert.Nil(t, m.dropPendingNew())
-	assert.Contains(t, m.list.GetInstances(), live)
+	assert.Contains(t, listIDs(m.list), idOf(m, live))
 	assert.Nil(t, m.pendingNew)
 }

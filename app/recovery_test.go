@@ -5,10 +5,8 @@ import (
 	"os/exec"
 	"testing"
 
-	"charm.land/bubbles/v2/spinner"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
-	"github.com/aidan-bailey/loom/ui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,10 +42,9 @@ func TestSelectedResumableNotWorkspace_AllowsRecoverable(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := testWS(core.WorkspaceParts{}, inst)
-	sp := spinner.New()
-	list := ui.NewList(&sp, ws)
-	list.SelectInstance(inst)
+	list := fixtureList()
 
 	h := wireCore(t, &home{workspaceSlot: &workspaceSlot{ws: ws, list: list}})
+	selectIn(h, list, inst)
 	assert.True(t, selectedResumableNotWorkspace(h), "'r' must be enabled for a Recoverable orphan")
 }

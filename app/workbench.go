@@ -9,6 +9,7 @@ import (
 
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/review"
 	gitdiff "github.com/aidan-bailey/loom/review/gitdiff"
 	"github.com/aidan-bailey/loom/session"
@@ -52,7 +53,7 @@ func (m *home) enterWorkbench() tea.Cmd {
 	m.viewMode = viewWorkbench
 	m.wbPrevTerminalHidden = m.splitPane.IsTerminalHidden()
 	m.splitPane.SetTerminalHidden(true)
-	m.workbench.SetSession(sel.Title, sel.GetWorktreePath())
+	m.workbench.SetSession(sel.Title, sel.WorktreePath)
 	// SetSession only clears the workbench's interface field on an actual
 	// title change; dropping unconditionally keeps the wbReview invariant
 	// trivially true (cleanup runs on every exit path anyway, so a stale
@@ -324,12 +325,12 @@ func (m *home) dropReviewPane() {
 // surfacing a notice (and returning nil) for the excluded states — a
 // paused or Recoverable session has no live agent to send comments to,
 // and its worktree may not even be on disk.
-func (m *home) reviewableSelection() *session.Instance {
+func (m *home) reviewableSelection() *core.InstanceView {
 	sel := m.list.GetSelectedInstance()
 	if sel == nil {
 		return nil
 	}
-	if sel.Paused() || sel.GetStatus() == session.Recoverable {
+	if sel.Paused() || sel.Status == session.Recoverable {
 		m.errBox.SetInfo("session is not running — resume it before reviewing")
 		return nil
 	}
@@ -344,7 +345,7 @@ func (m *home) openDocReview(docPath string) tea.Cmd {
 	if sel == nil {
 		return nil
 	}
-	root := sel.GetWorktreePath()
+	root := sel.WorktreePath
 	if root == "" {
 		return nil
 	}
@@ -367,7 +368,7 @@ func (m *home) openCodeReview() tea.Cmd {
 	if sel == nil {
 		return nil
 	}
-	root := sel.GetWorktreePath()
+	root := sel.WorktreePath
 	if root == "" {
 		return nil
 	}
@@ -440,7 +441,9 @@ func (m *home) sendReviewCmd() tea.Cmd {
 	if sel == nil || rv == nil {
 		return nil
 	}
-	if sel.Paused() || !sel.Pane().TmuxAlive() {
+	// The instance, through the bridge until package C sends by request.
+	inst := m.instOf(sel.ID)
+	if sel.Paused() || inst == nil || !inst.Pane().TmuxAlive() {
 		m.errBox.SetInfo("agent is not running — resume the session first")
 		return nil
 	}
@@ -452,7 +455,7 @@ func (m *home) sendReviewCmd() tea.Cmd {
 	title := sel.Title
 	msg := fmt.Sprintf("Send %d review comment(s) to %s?", rv.CommentCount(), title)
 	return m.confirmTask(msg, overlay.ConfirmationTask{
-		Async: coreCmd(m.core.SendPromptInst(sel, prompt)),
+		Async: coreCmd(m.core.SendPromptInst(inst, prompt)),
 	})
 }
 
@@ -534,10 +537,10 @@ type wbFilesMsg struct {
 // on-disk worktree, and the scan is read-only and harmless.
 func (m *home) workbenchScanCmd() tea.Cmd {
 	sel := m.list.GetSelectedInstance()
-	if sel == nil || !sel.Started() || sel.Paused() {
+	if sel == nil || !sel.Started || sel.Paused() {
 		return nil
 	}
-	title, root := sel.Title, sel.GetWorktreePath()
+	title, root := sel.Title, sel.WorktreePath
 	if root == "" {
 		return nil
 	}
@@ -575,7 +578,7 @@ func (m *home) workbenchFilesCmd() tea.Cmd {
 	if sel == nil {
 		return nil
 	}
-	title, root := sel.Title, sel.GetWorktreePath()
+	title, root := sel.Title, sel.WorktreePath
 	if root == "" {
 		return nil
 	}

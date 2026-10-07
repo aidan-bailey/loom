@@ -2,7 +2,7 @@ package ui
 
 import (
 	"fmt"
-	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/core"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
@@ -63,7 +63,7 @@ func (d *DiffPane) SetSize(width, height int) {
 // SetDiff replaces the rendered diff from instance's current diff
 // stats. No-ops when the content has not changed since the last call,
 // and shows fallback text for nil / unstarted / errored instances.
-func (d *DiffPane) SetDiff(instance *session.Instance) {
+func (d *DiffPane) SetDiff(instance *core.InstanceView) {
 	centeredFallbackMessage := lipgloss.Place(
 		d.width,
 		d.height,
@@ -72,13 +72,12 @@ func (d *DiffPane) SetDiff(instance *session.Instance) {
 		"No changes",
 	)
 
-	if instance == nil || !instance.Started() {
+	if instance == nil || !instance.Started {
 		d.viewport.SetContent(centeredFallbackMessage)
 		return
 	}
 
-	stats := instance.GetDiffStats()
-	if stats == nil {
+	if !instance.HasDiff {
 		// Show loading message if worktree is not ready
 		centeredMessage := lipgloss.Place(
 			d.width,
@@ -90,6 +89,7 @@ func (d *DiffPane) SetDiff(instance *session.Instance) {
 		d.viewport.SetContent(centeredMessage)
 		return
 	}
+	stats := &instance.Diff
 
 	if stats.Error != nil {
 		// Show error message

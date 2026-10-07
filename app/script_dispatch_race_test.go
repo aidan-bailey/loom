@@ -6,9 +6,6 @@ import (
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
-	"github.com/aidan-bailey/loom/ui"
-
-	"charm.land/bubbles/v2/spinner"
 )
 
 // TestScriptHost_ConcurrentNavAndRead reproduces the data race the audit
@@ -20,9 +17,8 @@ import (
 // goroutine no longer mutates shared model state. Must pass under
 // `go test -race`.
 func TestScriptHost_ConcurrentNavAndRead(t *testing.T) {
-	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	ws := testWS(core.WorkspaceParts{})
-	list := ui.NewList(&sp, ws)
+	list := fixtureList()
 	for _, title := range []string{"a", "b", "c"} {
 		inst, err := session.NewInstance(session.InstanceOptions{
 			Title:   title,

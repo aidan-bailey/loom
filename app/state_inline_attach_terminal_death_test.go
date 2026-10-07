@@ -73,6 +73,7 @@ func setupInlineAttachTerminalDeathFixture(t *testing.T) (*home, *session.Instan
 
 	m.state = stateInlineAttach
 	m.splitPane.SetFocusedPane(ui.FocusTerminal)
+	m.syncViews()
 	return m, inst
 }
 

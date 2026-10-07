@@ -23,15 +23,47 @@ func testWS(parts core.WorkspaceParts, insts ...*session.Instance) *core.Workspa
 	return ws
 }
 
-// slotOver builds a fixture slot view over ws: a rail reading it, plus the
-// split pane and workbench every slot needs. wirePanes points the rail and
-// pane at the test's pane registry.
+// fixtureRows is a fixture list's source: the rows of the slot holding the
+// list, as its home shows them (rowsOf, overlays applied), once wireCore
+// has bound it to the slot and the home; none before that, so a selection
+// is made after wireCore.
+type fixtureRows struct {
+	m *home
+	s *workspaceSlot
+}
+
+// Rows implements ui.InstanceSource.
+func (r *fixtureRows) Rows() []core.InstanceView {
+	if r.m == nil || r.s == nil {
+		return nil
+	}
+	return r.m.rowsOf(r.s)
+}
+
+// fixtureSources holds each fixture list's source, by list, for wireCore
+// to bind to the slot showing the list and its home. Tests in this
+// package run one at a time.
+var fixtureSources = map[*ui.List]*fixtureRows{}
+
+// fixtureList builds a rail for a fixture slot assembled before its home:
+// it shows the rows of the slot it ends up in (fixtureRows) once wireCore
+// has run.
+func fixtureList() *ui.List {
+	src := &fixtureRows{}
+	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	l := ui.NewList(&s, src)
+	fixtureSources[l] = src
+	return l
+}
+
+// slotOver builds a fixture slot view over ws: a rail reading its rows,
+// plus the split pane and workbench every slot needs. wirePanes points the
+// rail and pane at the test's pane registry; wireCore fills the rows.
 func slotOver(ws *core.Workspace) *workspaceSlot {
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	return &workspaceSlot{
 		ws:        ws,
-		list:      ui.NewList(&s, ws),
+		list:      fixtureList(),
 		splitPane: sp,
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 	}
@@ -40,9 +72,12 @@ func slotOver(ws *core.Workspace) *workspaceSlot {
 // wireCore gives a fixture home the model production builds in newHome:
 // with no tab open the focused slot's workspace is the classic one,
 // otherwise the tabs are m.slots' workspaces in order. A slot with no
-// workspace gets an empty one (and a list reading it, if it had none). It
-// keeps a model the test installed (m.core set beforehand, e.g. with a
-// registry). Call it after assembling the slots and before exercising m.
+// workspace gets an empty one (and a list reading its rows, if it had
+// none). It keeps a model the test installed (m.core set beforehand, e.g.
+// with a registry), and ends by filling every slot's view store from the
+// model (syncViews). Call it after assembling the slots and before
+// exercising m; a test that changes the model's instances afterwards calls
+// m.syncViews() before reading them through the TUI.
 func wireCore(t *testing.T, m *home) *home {
 	t.Helper()
 	if m.core == nil {
@@ -56,7 +91,11 @@ func wireCore(t *testing.T, m *home) *home {
 			s.ws = testWS(core.WorkspaceParts{})
 		}
 		if s.list == nil {
-			s.list = ui.NewList(&m.spinner, s.ws)
+			s.list = ui.NewList(&m.spinner, slotRows{m, s})
+			s.list.SetPanes(m.panes)
+		}
+		if src := fixtureSources[s.list]; src != nil {
+			src.m, src.s = m, s
 		}
 	}
 	var tabs []*core.Workspace
@@ -68,6 +107,7 @@ func wireCore(t *testing.T, m *home) *home {
 		classic = m.ws
 	}
 	m.core.SetWorkspacesForTest(classic, tabs)
+	m.syncViews()
 	return m
 }
 
@@ -88,17 +128,95 @@ func reworkspace(t *testing.T, m *home, slot *workspaceSlot, edit func(*core.Wor
 	edit(&p)
 	old := slot.list
 	slot.ws = testWS(p, insts...)
-	slot.list = ui.NewList(&m.spinner, slot.ws)
+	slot.list = ui.NewList(&m.spinner, slotRows{m, slot})
 	slot.list.SetPanes(m.panes)
+	wireCore(t, m)
 	if old != nil {
 		slot.list.SetWorkspaceName(old.WorkspaceName())
 		slot.list.SetSize(old.Size())
 		if sel := old.GetSelectedInstance(); sel != nil {
-			slot.list.SelectInstance(sel)
+			slot.list.SelectID(sel.ID)
 		}
 	}
-	wireCore(t, m)
 }
+
+// idOf is inst's ID in m's model, assigned on first use: what the TUI's
+// rows, messages and events name it by.
+func idOf(m *home, inst *session.Instance) core.InstanceID {
+	return m.core.IDForTest(inst)
+}
+
+// rowOf rereads m's view stores (syncViews) and returns inst's row, which
+// an open slot must show.
+func rowOf(t *testing.T, m *home, inst *session.Instance) *core.InstanceView {
+	t.Helper()
+	m.syncViews()
+	v, _ := m.viewByID(idOf(m, inst))
+	if v == nil {
+		t.Fatalf("fixture: no open slot shows %q", inst.Title)
+	}
+	return v
+}
+
+// selectIn rereads m's view stores (syncViews) and selects inst's row in
+// list, as SelectInstance did by identity.
+func selectIn(m *home, list *ui.List, inst *session.Instance) {
+	m.syncViews()
+	list.SelectID(idOf(m, inst))
+}
+
+// instByTitle returns the instance whose row in list is titled title,
+// through the model; nil when list shows none.
+func instByTitle(m *home, list *ui.List, title string) *session.Instance {
+	v := list.GetInstanceByTitle(title)
+	if v == nil {
+		return nil
+	}
+	return m.core.InstanceOf(v.ID)
+}
+
+// titleID is the ID of list's row titled title, 0 when it shows none.
+func titleID(list *ui.List, title string) core.InstanceID {
+	if v := list.GetInstanceByTitle(title); v != nil {
+		return v.ID
+	}
+	return 0
+}
+
+// lastInst is the instance of the focused list's last row, through the
+// model: the one a creation flow appended.
+func lastInst(m *home) *session.Instance {
+	rows := m.list.GetInstances()
+	return m.core.InstanceOf(rows[len(rows)-1].ID)
+}
+
+// selID is the ID of list's selected row, 0 when nothing is selected.
+func selID(list *ui.List) core.InstanceID {
+	if v := list.GetSelectedInstance(); v != nil {
+		return v.ID
+	}
+	return 0
+}
+
+// listIDs is list's rows' IDs, in order.
+func listIDs(list *ui.List) []core.InstanceID {
+	var ids []core.InstanceID
+	for _, v := range list.GetInstances() {
+		ids = append(ids, v.ID)
+	}
+	return ids
+}
+
+// ring sets inst's bell, the TUI's overlay a pane's BEL sets (bellMsg).
+func ring(m *home, inst *session.Instance) {
+	if m.bells == nil {
+		m.bells = make(map[core.InstanceID]bool)
+	}
+	m.bells[idOf(m, inst)] = true
+}
+
+// bell reports whether inst's bell is set (home.bells).
+func bell(m *home, inst *session.Instance) bool { return m.bells[idOf(m, inst)] }
 
 // editRCAuth edits the model's default-account remote-control auth: the
 // assignments fixtures made to the fields of home's old rcAuth.

@@ -31,6 +31,7 @@ func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "probed", Path: t.TempDir(), Program: "aider"})
 	require.NoError(t, err)
 	m.ws.Add(inst)
+	m.syncViews()
 	gone := false
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(cmd *exec.Cmd) error {
@@ -51,7 +52,8 @@ func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 	m.core.SetGateForTest("github", true, time.Now())
 
 	gone = true
-	m.core.TickInst(m.list.GetSelectedInstance())
+	m.syncViews()
+	m.core.Tick(m.list.GetSelectedInstance().ID)
 	out := m.core.Drain()
 	require.Len(t, out.Jobs, 1, "the probe is the tick's only job")
 	msg, ok := coreCmd(out.Jobs[0])().(coreResultMsg)
@@ -83,7 +85,7 @@ func snapshotHome(t *testing.T, title, program string) (*home, *session.Instance
 	inst := startedInstanceWithProgram(t, title, program, "$ ")
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
-	require.False(t, m.panes.For(inst).HasEmulator(), "fixture precondition: the snapshot path")
+	require.False(t, m.panes.For(rowOf(t, m, inst)).HasEmulator(), "fixture precondition: the snapshot path")
 	return m, inst
 }
 
@@ -114,7 +116,7 @@ func TestSnapshotStatus_Ladder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m, inst := snapshotHome(t, "ladder", "bash")
 			require.NoError(t, inst.TransitionTo(tc.from))
-			tc.result.instance = inst
+			tc.result.id, tc.result.title = idOf(m, inst), inst.Title
 
 			deliverScan(t, m, tc.result)
 
@@ -131,7 +133,7 @@ func TestSnapshotStatus_Ladder(t *testing.T) {
 func TestSnapshotStatus_AFailedCaptureIsNoOpinion(t *testing.T) {
 	m, inst := snapshotHome(t, "capture-failed", "bash")
 
-	deliverScan(t, m, snapshotStatus{instance: inst, err: errors.New("can't find pane")})
+	deliverScan(t, m, snapshotStatus{id: idOf(m, inst), title: inst.Title, err: errors.New("can't find pane")})
 
 	assert.Equal(t, session.Running, inst.GetStatus())
 	assert.False(t, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()))
@@ -146,7 +148,7 @@ func TestSnapshotStatus_AReportedClaudeStatusIsTheModels(t *testing.T) {
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: time.Now()})
 	require.NoError(t, inst.TransitionTo(session.Ready))
 
-	deliverScan(t, m, snapshotStatus{instance: inst, updated: true})
+	deliverScan(t, m, snapshotStatus{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	assert.Equal(t, session.Ready, inst.GetStatus(),
 		"neither the ladder's Running nor the reported Prompting: the model applies the report")
@@ -161,7 +163,7 @@ func TestSnapshotStatus_AnIneligibleInstanceIsSkipped(t *testing.T) {
 	m, inst := snapshotHome(t, "paused", "bash")
 	require.NoError(t, inst.TransitionTo(session.Paused))
 
-	deliverScan(t, m, snapshotStatus{instance: inst, updated: true})
+	deliverScan(t, m, snapshotStatus{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	assert.Equal(t, session.Paused, inst.GetStatus())
 	assert.False(t, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()))
@@ -182,7 +184,7 @@ func TestSnapshotScan_OneAtATime(t *testing.T) {
 	msg, ok := scan().(snapshotStatusMsg)
 	require.True(t, ok)
 	require.Len(t, msg.results, 1)
-	require.Same(t, inst, msg.results[0].instance)
+	require.Equal(t, idOf(m, inst), msg.results[0].id)
 	require.NoError(t, msg.results[0].err)
 	require.True(t, msg.results[0].updated, "the first sample hashes new content")
 	m.Update(msg)

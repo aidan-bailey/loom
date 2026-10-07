@@ -17,7 +17,7 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 	}
 
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !selected.Pane().TmuxAlive() {
+	if selected == nil || selected.Paused() || !m.tmuxAlive(selected) {
 		m.quickInputBar = nil
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)
@@ -36,7 +36,11 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 		case ui.QuickInputTargetAgent:
 			// Off the Update goroutine (three tmux subprocesses and a
 			// pause); a failed send comes back as an error.
-			send = coreCmd(m.core.SendPromptInst(selected, text))
+			// The instance, through the bridge until package C sends by
+			// request.
+			if inst := m.instOf(selected.ID); inst != nil {
+				send = coreCmd(m.core.SendPromptInst(inst, text))
+			}
 		}
 		m.quickInputBar = nil
 		m.state = stateDefault

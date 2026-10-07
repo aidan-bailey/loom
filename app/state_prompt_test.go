@@ -52,7 +52,7 @@ func TestPromptFlowEndToEndComposesRealClosure(t *testing.T) {
 	handleStatePromptKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // -> stateLaunchOptions, real closure stashed
 
 	require.Equal(t, stateLaunchOptions, m.state)
-	instance := m.list.GetInstances()[m.list.NumInstances()-1]
+	instance := lastInst(m)
 
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: 'j', Text: "j"})

@@ -126,11 +126,13 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		skipScripts: noScripts,
 		hostFocused: true,
 		panes:       ui.NewPaneClients(),
+		bells:       make(map[core.InstanceID]bool),
 	}
 	sp.SetPanes(h.panes)
-	// Built after h so the list can point at h.spinner.
-	h.list = ui.NewList(&h.spinner, model.Classic())
+	// Built after h so the list can point at h.spinner and read h's rows.
+	h.list = ui.NewList(&h.spinner, slotRows{h, h.workspaceSlot})
 	h.list.SetPanes(h.panes)
+	h.seedViews(h.workspaceSlot)
 	if wsCtx != nil && wsCtx.Name != "" {
 		h.list.SetWorkspaceName(wsCtx.Name)
 	}
@@ -168,6 +170,9 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		if err := h.core.LoadClassic(true); err != nil {
 			return nil, fmt.Errorf("load instances: %w", err)
 		}
+		// The load filled the workspace: the store reads it before the
+		// drain below, so the attach sees its rows.
+		h.seedViews(h.workspaceSlot)
 		h.ensureSlotPanes(h.workspaceSlot)
 		// The load's notices (a workspace terminal launched without
 		// remote control) land before the recovery summary below, as
@@ -259,6 +264,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	focus := m.core.RestoreSaved(saved)
 	if focus < 0 {
 		// No tab opened: the classic workspace was loaded in their place.
+		m.seedViews(m.workspaceSlot)
 		m.ensureSlotPanes(m.workspaceSlot)
 		// Its load error (a notice) lands before the summary, as when the
 		// fallback set it itself.

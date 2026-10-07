@@ -69,40 +69,40 @@ func TestMigrationParitySyncPrimitives(t *testing.T) {
 		m := newTestHome(t)
 		a := mustAddInstance(t, m, "a")
 		b := mustAddInstance(t, m, "b")
-		m.list.SelectInstance(a)
+		selectIn(m, m.list, a)
 
 		runDispatch(t, m, "j")
-		assert.Equal(t, b, m.list.GetSelectedInstance())
+		assert.Equal(t, idOf(m, b), selID(m.list))
 	})
 
 	t.Run("cursor_down_down", func(t *testing.T) {
 		m := newTestHome(t)
 		a := mustAddInstance(t, m, "a")
 		b := mustAddInstance(t, m, "b")
-		m.list.SelectInstance(a)
+		selectIn(m, m.list, a)
 
 		runDispatch(t, m, "down")
-		assert.Equal(t, b, m.list.GetSelectedInstance())
+		assert.Equal(t, idOf(m, b), selID(m.list))
 	})
 
 	t.Run("cursor_up_k", func(t *testing.T) {
 		m := newTestHome(t)
 		a := mustAddInstance(t, m, "a")
 		b := mustAddInstance(t, m, "b")
-		m.list.SelectInstance(b)
+		selectIn(m, m.list, b)
 
 		runDispatch(t, m, "k")
-		assert.Equal(t, a, m.list.GetSelectedInstance())
+		assert.Equal(t, idOf(m, a), selID(m.list))
 	})
 
 	t.Run("cursor_up_up", func(t *testing.T) {
 		m := newTestHome(t)
 		a := mustAddInstance(t, m, "a")
 		b := mustAddInstance(t, m, "b")
-		m.list.SelectInstance(b)
+		selectIn(m, m.list, b)
 
 		runDispatch(t, m, "up")
-		assert.Equal(t, a, m.list.GetSelectedInstance())
+		assert.Equal(t, idOf(m, a), selID(m.list))
 	})
 
 	t.Run("toggle_diff", func(t *testing.T) {
@@ -140,6 +140,7 @@ func mustAddInstance(t *testing.T, m *home, title string) *session.Instance {
 	})
 	require.NoError(t, err)
 	m.ws.Add(inst)
+	m.syncViews()
 	return inst
 }
 

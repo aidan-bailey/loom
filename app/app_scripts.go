@@ -94,8 +94,7 @@ type scriptHost struct {
 
 // newScriptHost snapshots the model state the script.Host read methods
 // expose. It must run on the Update goroutine (dispatchScript,
-// handleScriptResume); the instance slice is copied because ui.List
-// hands out its backing array.
+// handleScriptResume); the instance slice is the host's own.
 func newScriptHost(m *home) *scriptHost {
 	h := &scriptHost{
 		configDir:      m.configDir(),
@@ -105,8 +104,16 @@ func newScriptHost(m *home) *scriptHost {
 		slot:           m.workspaceSlot,
 	}
 	if m.list != nil {
-		h.selected = m.list.GetSelectedInstance()
-		h.instances = append([]*session.Instance(nil), m.list.GetInstances()...)
+		// Lua still holds instances until package D: the rows map to
+		// them through the bridge.
+		if sel := m.list.GetSelectedInstance(); sel != nil {
+			h.selected = m.instOf(sel.ID)
+		}
+		for _, v := range m.list.GetInstances() {
+			if inst := m.instOf(v.ID); inst != nil {
+				h.instances = append(h.instances, inst)
+			}
+		}
 	}
 	// Locked accessor: the settings overlay mutates the same *Config
 	// through Config.Mutate.
@@ -743,6 +750,11 @@ func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 // (CursorUp/Down/ToggleDiff) that used to trigger a refresh in the
 // legacy runXYZ now still do.
 func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
+	// The script ran on its own goroutine and may have changed instances
+	// directly (inst:pause()), which the stores see only at the drain:
+	// reread them for the deferred actions and instanceChanged below, as
+	// they read the shared instances before.
+	m.syncViews()
 	// Pending instances were built from the snapshot of the slot focused
 	// at dispatch (its ConfigDir and repo path). If the user switched
 	// workspace while the script ran, adding them to the slot focused now
@@ -765,6 +777,7 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 		for _, inst := range msg.pendingInstances {
 			msg.slot.ws.Add(inst)
 		}
+		m.syncViews() // the rows the adds made, for instanceChanged
 	} else if len(msg.pendingInstances) > 0 {
 		titles := make([]string, len(msg.pendingInstances))
 		for i, inst := range msg.pendingInstances {
@@ -778,8 +791,12 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	// resume completion's does. One no loaded slot holds displays
 	// nothing and gets none; replacePane skips an inactive instance.
 	for _, inst := range msg.resumedInstances {
-		if m.slotHolding(inst) != nil {
-			if c := m.replacePane(inst); c != nil {
+		id, ok := m.core.IDFor(inst)
+		if !ok {
+			continue
+		}
+		if v, _ := m.viewByID(id); v != nil {
+			if c := m.replacePane(v); c != nil {
 				cmds = append(cmds, c)
 			}
 		}

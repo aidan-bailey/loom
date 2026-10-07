@@ -46,8 +46,9 @@ func TestReportedReadyNotPromotedByOutput(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "reported-ready", "claude", "x")
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	m.splitPane.SetSize(100, 40)
-	m.splitPane.SetInstance(inst)
+	m.splitPane.SetInstance(rowOf(t, m, inst))
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventStop, HasTasks: true, At: time.Now()})
 	applyClaudeStatus(m, inst)
 	require.Equal(t, session.Ready, inst.GetStatus())
@@ -65,9 +66,10 @@ func TestReportedStatusSuppressesRedetect(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: time.Now()})
 
-	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
+	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	assert.Equal(t, session.Prompting, inst.GetStatus())
 	assert.Equal(t, "permission: Bash", inst.WaitReason())

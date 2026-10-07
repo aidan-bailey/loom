@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,26 +29,29 @@ type bellMsg struct{ session string }
 // back to the Update goroutine (the detection itself runs in a tea.Cmd:
 // in-process on the emulator path, but answering a trust prompt runs
 // `tmux send-keys`, and the snapshot fallback shells out to capture-pane —
-// neither subprocess belongs on the Update goroutine).
+// neither subprocess belongs on the Update goroutine). id and title name
+// the instance scanned.
 type statusDetectedMsg struct {
-	instance  *session.Instance
+	id        core.InstanceID
+	title     string
 	updated   bool
 	hasPrompt bool
 	err       error
 }
 
-// statusDetectCmd scans inst's pane once, off the Update goroutine. A pane
+// statusDetectCmd scans v's pane once, off the Update goroutine. A pane
 // with no client has no screen to scan, so there is no Cmd: its zero
 // result would read as "settled, no prompt" and move a working agent to
 // Ready, and with no message the re-detection chain ends there. The next
 // attach and its output resume detection.
-func statusDetectCmd(inst *session.Instance, pane ui.Pane) tea.Cmd {
+func statusDetectCmd(v core.InstanceView, pane ui.Pane) tea.Cmd {
 	if pane.Client() == nil {
 		return nil
 	}
+	id, title := v.ID, v.Title
 	return func() tea.Msg {
 		updated, hasPrompt, err := pane.DetectStatus()
-		return statusDetectedMsg{instance: inst, updated: updated, hasPrompt: hasPrompt, err: err}
+		return statusDetectedMsg{id: id, title: title, updated: updated, hasPrompt: hasPrompt, err: err}
 	}
 }
 
@@ -56,7 +59,7 @@ func statusDetectCmd(inst *session.Instance, pane ui.Pane) tea.Cmd {
 // could not settle the status. Two producers: an updated=true detection
 // (content changed since the previous sample, so "settled vs still working"
 // is undecidable from one sample) and a quiet event that landed while the
-// instance was still Loading (dropped by core.StatusEligible, and quiet never
+// instance was still Loading (dropped as inactive, InstanceView.Active, and quiet never
 // re-fires without new output). Without this follow-up the status ladder is
 // one-shot per burst and an idle agent latches on Running forever.
 type redetectMsg struct{ session string }
@@ -118,9 +121,10 @@ func (m *home) maybeArmRatioSave() tea.Cmd {
 type snapshotStatusMsg struct{ results []snapshotStatus }
 
 // snapshotStatus is one pane's scan: whether its content changed and
-// whether it shows a prompt.
+// whether it shows a prompt. id and title name the instance scanned.
 type snapshotStatus struct {
-	instance  *session.Instance
+	id        core.InstanceID
+	title     string
 	updated   bool
 	hasPrompt bool
 	err       error
@@ -137,13 +141,14 @@ func (m *home) snapshotScan() tea.Cmd {
 		return nil
 	}
 	type target struct {
-		inst *session.Instance
-		pane ui.Pane
+		id    core.InstanceID
+		title string
+		pane  ui.Pane
 	}
 	var targets []target
-	for _, inst := range m.core.ActiveInstances() {
-		if pane := m.panes.For(inst); pane.Client() != nil && !pane.HasEmulator() {
-			targets = append(targets, target{inst, pane})
+	for _, v := range m.activeViews() {
+		if pane := m.panes.For(&v); pane.Client() != nil && !pane.HasEmulator() {
+			targets = append(targets, target{v.ID, v.Title, pane})
 		}
 	}
 	if len(targets) == 0 {
@@ -158,7 +163,7 @@ func (m *home) snapshotScan() tea.Cmd {
 			go func(i int, t target) {
 				defer wg.Done()
 				r := &results[i]
-				r.instance = t.inst
+				r.id, r.title = t.id, t.title
 				r.updated, r.hasPrompt, r.err = t.pane.DetectStatus()
 			}(i, t)
 		}

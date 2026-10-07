@@ -67,6 +67,17 @@ func (m *Model) SetAccountUsageForTest(name string, u account.Usage, err error) 
 	m.usage[name] = accountUsage{last: u, err: err}
 }
 
+// IDForTest returns inst's ID (assigning one): for tests that build
+// instances in the model and then find them through the TUI.
+func (m *Model) IDForTest(inst *session.Instance) InstanceID { return m.idOf(inst) }
+
+// ViewForTest is the view the model would publish for inst, with ID id:
+// for ui tests that build an instance and render it.
+func ViewForTest(inst *session.Instance, id InstanceID) InstanceView {
+	m := &Model{ids: map[*session.Instance]InstanceID{inst: id}}
+	return m.viewOf(inst)
+}
+
 // gateNamed resolves a gate kind's String to the kind; it panics on a
 // name no kind has, which is a broken test.
 func gateNamed(kind string) gateKind {

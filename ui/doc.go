@@ -8,7 +8,7 @@
 //
 // Modal dialogs (text input, confirmation, branch/profile/workspace
 // pickers) live in [ui/overlay]. Renderers here are pure: they read
-// [session.Instance] state and emit strings; they do not mutate
+// [core.InstanceView] values and emit strings; they do not mutate
 // instances or spawn goroutines. Event handling happens in the app
 // layer.
 package ui

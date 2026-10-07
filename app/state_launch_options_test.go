@@ -30,6 +30,7 @@ func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*
 	})
 	require.NoError(t, err)
 	m.ws.Add(instance)
+	m.syncViews()
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.pendingNew = instance
 

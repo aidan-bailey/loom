@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"slices"
 	"strings"
@@ -23,32 +24,34 @@ func rebuildListStyles() {
 }
 
 // InstanceSource supplies the rows a List shows, in display order. In
-// production it is the list's workspace (core.Workspace), which owns the
-// instances; the List only reads it, so adding, removing and replacing
-// rows are edits of the source.
+// production it is the slot's view store (app's slotRows: the workspace's
+// views with the TUI's overlays), which the model's edits reach; the List
+// only reads it, so adding, removing and replacing rows are edits of the
+// source. Rows' IDs are unique; a draft row has ID 0.
 type InstanceSource interface {
-	Instances() []*session.Instance
+	Rows() []core.InstanceView
 }
 
 // List is the left-panel session rail. It owns the selection cursor
 // and viewport scroll offset, and delegates per-item rendering to
 // [RenderCard] at [DensityRail]. The list does not spawn goroutines or
-// mutate Instance state; its rows come from its InstanceSource, and all
-// status is read via the Instance accessors.
+// mutate instances; its rows come from its InstanceSource, as
+// core.InstanceView values.
 type List struct {
 	// src supplies the rows; nil shows none.
 	src InstanceSource
-	// selected is the selected row's instance and selectedIdx its row when
-	// last resolved. The rows change under the list (the source is edited
-	// elsewhere), so the selection is kept by identity and re-resolved on
-	// every read (resolveSelection).
-	selected    *session.Instance
+	// selected is the selected row's ID, hasSel whether a row is selected
+	// at all, and selectedIdx its row when last resolved. The rows change
+	// under the list (the source is edited elsewhere), so the selection is
+	// kept by ID and re-resolved on every read (resolveSelection).
+	selected    core.InstanceID
+	hasSel      bool
 	selectedIdx int
-	// seen is the list's own copy of the rows as of the last resolve: a
-	// selection whose instance has since gone is placed against it
+	// seen is the list's own copy of the rows' IDs as of the last resolve:
+	// a selection whose instance has since gone is placed against it
 	// (lostSelectionRow), which takes every edit made in between into
 	// account, not just the last one.
-	seen          []*session.Instance
+	seen          []core.InstanceID
 	scrollOffset  int // index of the first visible item in the viewport
 	height, width int
 	spinner       *spinner.Model
@@ -68,15 +71,24 @@ func NewList(spinner *spinner.Model, src InstanceSource) *List {
 }
 
 // items returns the source's rows.
-func (l *List) items() []*session.Instance {
+func (l *List) items() []core.InstanceView {
 	if l.src == nil {
 		return nil
 	}
-	return l.src.Instances()
+	return l.src.Rows()
+}
+
+// rowIDs returns items' IDs, in order.
+func rowIDs(items []core.InstanceView) []core.InstanceID {
+	ids := make([]core.InstanceID, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
+	}
+	return ids
 }
 
 // resolveSelection returns the selected row's index in the current rows,
-// finding the selected instance by identity: a row added or removed above
+// finding the selected instance by ID: a row added or removed above
 // it moves its index, not the selection (inline attach looks the
 // selection up per key, so a silent shift would redirect typing). When
 // the selected instance is gone, the selection moves to the row that slid
@@ -85,23 +97,23 @@ func (l *List) items() []*session.Instance {
 // workspace-terminal prepend applied when it held the rows, and like them
 // a selection that moves is scrolled back into view.
 func (l *List) resolveSelection() int {
-	items := l.items()
-	defer l.remember(items)
-	if len(items) == 0 {
-		l.selected, l.selectedIdx = nil, 0
+	ids := rowIDs(l.items())
+	defer l.remember(ids)
+	if len(ids) == 0 {
+		l.selected, l.hasSel, l.selectedIdx = 0, false, 0
 		return 0
 	}
-	if l.selectedIdx < len(items) && items[l.selectedIdx] == l.selected {
+	if l.hasSel && l.selectedIdx < len(ids) && ids[l.selectedIdx] == l.selected {
 		return l.selectedIdx
 	}
-	i := min(l.selectedIdx, len(items)-1)
-	if l.selected != nil {
-		if i = slices.Index(items, l.selected); i < 0 {
-			i = l.lostSelectionRow(items)
+	i := min(l.selectedIdx, len(ids)-1)
+	if l.hasSel {
+		if i = slices.Index(ids, l.selected); i < 0 {
+			i = l.lostSelectionRow(ids)
 		}
 	}
-	l.selected, l.selectedIdx = items[i], i
-	l.scrollToSelected(len(items))
+	l.selected, l.hasSel, l.selectedIdx = ids[i], true, i
+	l.scrollToSelected(len(ids))
 	return i
 }
 
@@ -117,24 +129,24 @@ func (l *List) resolveSelection() int {
 // the old list selected the previous row, and so does the selected first
 // row removed with the terminal prepended. Removals alone always match the
 // old rule.
-func (l *List) lostSelectionRow(items []*session.Instance) int {
+func (l *List) lostSelectionRow(ids []core.InstanceID) int {
 	p := slices.Index(l.seen, l.selected)
 	if p < 0 {
-		return len(items) - 1
+		return len(ids) - 1
 	}
-	if replacedOnlyAt(l.seen, items, p) {
+	if replacedOnlyAt(l.seen, ids, p) {
 		return p
 	}
-	for _, inst := range l.seen[p+1:] {
-		if i := slices.Index(items, inst); i >= 0 {
+	for _, id := range l.seen[p+1:] {
+		if i := slices.Index(ids, id); i >= 0 {
 			return i
 		}
 	}
-	return len(items) - 1
+	return len(ids) - 1
 }
 
 // replacedOnlyAt reports whether now is before with only row p changed.
-func replacedOnlyAt(before, now []*session.Instance, p int) bool {
+func replacedOnlyAt(before, now []core.InstanceID, p int) bool {
 	if len(before) != len(now) {
 		return false
 	}
@@ -146,17 +158,17 @@ func replacedOnlyAt(before, now []*session.Instance, p int) bool {
 	return true
 }
 
-// remember records items as the rows of the last resolve (seen), in the
-// list's own copy: the source edits its slice in place.
-func (l *List) remember(items []*session.Instance) {
-	if !slices.Equal(l.seen, items) {
-		l.seen = append(l.seen[:0], items...)
+// remember records ids as the rows of the last resolve (seen), in the
+// list's own copy.
+func (l *List) remember(ids []core.InstanceID) {
+	if !slices.Equal(l.seen, ids) {
+		l.seen = append(l.seen[:0], ids...)
 	}
 }
 
 // selectRow selects row i, which must be in range.
 func (l *List) selectRow(i int) {
-	l.selected, l.selectedIdx = l.items()[i], i
+	l.selected, l.hasSel, l.selectedIdx = l.items()[i].ID, true, i
 	l.ensureSelectedVisible()
 }
 
@@ -174,16 +186,18 @@ func (l *List) SetSize(width, height int) {
 func (l *List) Size() (width, height int) { return l.width, l.height }
 
 // SetSessionPreviewSize sets the height and width for the tmux sessions. This makes the stdout line have the correct
-// width and height.
+// width and height. It sizes each started, unpaused row's client and
+// probes no tmux session (it used to run a has-session per row): a row
+// with no client has the zero Pane, whose SetPreviewSize does nothing.
 func (l *List) SetSessionPreviewSize(width, height int) (err error) {
 	// New clients attach at this size too (PaneClients.Ensure).
 	l.panes.SetDefaultSize(width, height)
 	for i, item := range l.items() {
-		if !item.Started() || item.Paused() || !item.Pane().TmuxAlive() {
+		if !item.Started || item.Paused() {
 			continue
 		}
 
-		if innerErr := l.panes.For(item).SetPreviewSize(width, height); innerErr != nil {
+		if innerErr := l.panes.For(&item).SetPreviewSize(width, height); innerErr != nil {
 			err = errors.Join(
 				err, fmt.Errorf("could not set preview size for instance %d: %v", i, innerErr))
 		}
@@ -276,7 +290,7 @@ func (l *List) NumInstances() int {
 // that build a session-index picker from the same items (e.g. the
 // merge picker) label rows with the exact number the user already saw
 // in the main list.
-func DisplayIndex(items []*session.Instance, i int) int {
+func DisplayIndex(items []core.InstanceView, i int) int {
 	wsOffset := 0
 	if len(items) > 0 && items[0].IsWorkspaceTerminal {
 		wsOffset = 1
@@ -324,7 +338,7 @@ func (l *List) String() string {
 	// See DisplayIndex for the workspace-terminal numbering rule.
 	spinnerFrame := l.spinner.View()
 	for i := startIdx; i < endIdx; i++ {
-		d := BuildCardData(items[i], l.panes.For(items[i]), i == sel, spinnerFrame, 1)
+		d := BuildCardData(items[i], l.panes.For(&items[i]), i == sel, spinnerFrame, 1)
 		d.Index = DisplayIndex(items, i)
 		parts = append(parts, RenderCard(d, DensityRail, l.width))
 		if i != endIdx-1 {
@@ -379,7 +393,7 @@ func (l *List) Down() {
 		return
 	}
 	for i := l.resolveSelection() + 1; i < len(items); i++ {
-		if items[i].GetStatus() != session.Deleting {
+		if items[i].Status != session.Deleting {
 			l.selectRow(i)
 			break
 		}
@@ -387,21 +401,15 @@ func (l *List) Down() {
 	l.ensureSelectedVisible()
 }
 
-// GetInstanceByTitle returns the instance with the given title, or nil.
-func (l *List) GetInstanceByTitle(title string) *session.Instance {
-	if idx := l.findByTitle(title); idx >= 0 {
-		return l.items()[idx]
-	}
-	return nil
-}
-
-func (l *List) findByTitle(title string) int {
-	for i, inst := range l.items() {
-		if inst.Title == title {
-			return i
+// GetInstanceByTitle returns a copy of the row with the given title, or
+// nil.
+func (l *List) GetInstanceByTitle(title string) *core.InstanceView {
+	for _, v := range l.items() {
+		if v.Title == title {
+			return &v
 		}
 	}
-	return -1
+	return nil
 }
 
 // Up selects the prev non-Deleting item in the list. If every item
@@ -412,7 +420,7 @@ func (l *List) Up() {
 		return
 	}
 	for i := l.resolveSelection() - 1; i >= 0; i-- {
-		if items[i].GetStatus() != session.Deleting {
+		if items[i].Status != session.Deleting {
 			l.selectRow(i)
 			break
 		}
@@ -434,7 +442,7 @@ func (l *List) PageUp() {
 	}
 	// Prefer the target, then walk upward to find a non-Deleting item.
 	for i := target; i >= 0; i-- {
-		if items[i].GetStatus() != session.Deleting {
+		if items[i].Status != session.Deleting {
 			l.selectRow(i)
 			break
 		}
@@ -454,7 +462,7 @@ func (l *List) PageDown() {
 		target = len(items) - 1
 	}
 	for i := target; i < len(items); i++ {
-		if items[i].GetStatus() != session.Deleting {
+		if items[i].Status != session.Deleting {
 			l.selectRow(i)
 			break
 		}
@@ -469,7 +477,7 @@ func (l *List) Top() {
 		return
 	}
 	for i := 0; i < len(items); i++ {
-		if items[i].GetStatus() != session.Deleting {
+		if items[i].Status != session.Deleting {
 			l.selectRow(i)
 			break
 		}
@@ -484,7 +492,7 @@ func (l *List) Bottom() {
 		return
 	}
 	for i := len(items) - 1; i >= 0; i-- {
-		if items[i].GetStatus() != session.Deleting {
+		if items[i].Status != session.Deleting {
 			l.selectRow(i)
 			break
 		}
@@ -492,13 +500,15 @@ func (l *List) Bottom() {
 	l.ensureSelectedVisible()
 }
 
-// GetSelectedInstance returns the currently selected instance
-func (l *List) GetSelectedInstance() *session.Instance {
+// GetSelectedInstance returns a copy of the currently selected row, or nil
+// when there is none.
+func (l *List) GetSelectedInstance() *core.InstanceView {
 	items := l.items()
 	if len(items) == 0 {
 		return nil
 	}
-	return items[l.resolveSelection()]
+	v := items[l.resolveSelection()]
+	return &v
 }
 
 // SetSelectedInstance sets the selected index. Noop if the index is out of bounds.
@@ -509,17 +519,17 @@ func (l *List) SetSelectedInstance(idx int) {
 	l.selectRow(idx)
 }
 
-// SelectInstance finds and selects the given instance in the list.
-func (l *List) SelectInstance(target *session.Instance) {
-	for i, inst := range l.items() {
-		if inst == target {
+// SelectID finds and selects the row with the given ID in the list.
+func (l *List) SelectID(id core.InstanceID) {
+	for i, v := range l.items() {
+		if v.ID == id {
 			l.selectRow(i)
 			return
 		}
 	}
 }
 
-// GetInstances returns all instances in the list
-func (l *List) GetInstances() []*session.Instance {
+// GetInstances returns all rows in the list
+func (l *List) GetInstances() []core.InstanceView {
 	return l.items()
 }

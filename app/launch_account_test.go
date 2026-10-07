@@ -122,6 +122,7 @@ func openRestartOn(t *testing.T, m *home, acct string) *overlay.SessionLaunchOpt
 	require.NoError(t, err)
 	inst.SetAccount(acct)
 	m.ws.Add(inst)
+	m.syncViews()
 	runRestartWithOptionsSelected(m)
 	lo := m.launchOptionsOverlay()
 	require.NotNil(t, lo)
@@ -235,7 +236,8 @@ func TestRestartWithOptions_PresetsTheSessionsAccount(t *testing.T) {
 	require.NoError(t, err)
 	inst.SetAccount("max-3")
 	m.ws.Add(inst)
-	require.Equal(t, inst, m.list.GetSelectedInstance())
+	m.syncViews()
+	require.Equal(t, idOf(m, inst), selID(m.list))
 
 	runRestartWithOptionsSelected(m)
 

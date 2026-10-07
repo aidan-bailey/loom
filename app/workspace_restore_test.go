@@ -128,7 +128,7 @@ func newRestoreHome(exec cmd2.Executor) *home {
 		errBox: ui.NewErrBox(),
 		core:   core.NewForTest(core.Options{CmdExec: exec}),
 	}
-	h.list = ui.NewList(&h.spinner, ws)
+	h.list = fixtureList()
 	h.core.SetWorkspacesForTest(ws, nil)
 	return h
 }
@@ -154,7 +154,7 @@ func TestActivateWorkspace_PreservedTerminalIsNotReplaced(t *testing.T) {
 		assert.NotEqual(t, "ws-term", inst.Title, "no second workspace terminal under the preserved record's title")
 	}
 
-	require.NoError(t, slot.storage().SaveInstances(core.Persistable(slot.list.GetInstances())))
+	require.NoError(t, slot.storage().SaveInstances(core.Persistable(slot.ws.Instances())))
 	raw, err := os.ReadFile(filepath.Join(config.WorkspaceConfigDir(&ws), config.StateFileName))
 	require.NoError(t, err)
 	var st struct {
@@ -477,6 +477,7 @@ func TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces(t *testing.T) {
 			if !tc.latched { // a latched list stays empty (latchedStorageErr)
 				live = liveInstance(t, "g-live")
 				m.ws.Add(live)
+				m.syncViews()
 				pointAt(m, live)
 			}
 			slot, list, storage := m.workspaceSlot, m.list, m.storage()
@@ -496,7 +497,7 @@ func TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces(t *testing.T) {
 			assert.Same(t, storage, m.storage())
 			assert.Empty(t, rec.args, "no reload: no reconcile, orphan discovery or hooks sweep")
 			if live != nil {
-				assert.Contains(t, m.list.GetInstances(), live)
+				assert.Contains(t, listIDs(m.list), idOf(m, live))
 				assert.Same(t, clientOf(t, live), m.panes.Get(live.Pane().TmuxSessionName()), "the same client stays attached")
 			}
 			require.NoError(t, m.checkSlotInvariant())

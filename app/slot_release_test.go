@@ -47,23 +47,43 @@ func drainCmd(cmd tea.Cmd) {
 	}
 }
 
-// referencedInstances lists every instance the model can still reach.
-func referencedInstances(m *home) []*session.Instance {
-	var out []*session.Instance
+// referencedViews lists every instance view the model can still reach.
+func referencedViews(m *home) []core.InstanceView {
+	var out []core.InstanceView
 	for _, s := range m.openSlots() {
 		out = append(out, s.list.GetInstances()...)
 	}
-	out = append(out, m.splitPane.Instance(), m.menu.Instance(),
-		m.attachingInstance, m.pendingAttachTarget, m.pendingMergeTarget)
+	for _, v := range []*core.InstanceView{m.splitPane.Instance(), m.menu.Instance(), m.pendingMergeTarget} {
+		if v != nil {
+			out = append(out, *v)
+		}
+	}
+	if m.attachingID != 0 {
+		attaching := core.InstanceView{ID: m.attachingID}
+		if v, _ := m.viewByID(m.attachingID); v != nil {
+			attaching = *v
+		}
+		out = append(out, attaching)
+	}
 	return append(out, m.pendingMergeSourceItems...)
+}
+
+// reaches reports whether any of refs is inst's: a view of its agent
+// session. A dropped instance's ID is forgotten once the model publishes,
+// so the views are matched by the session they show.
+func reaches(refs []core.InstanceView, inst *session.Instance) bool {
+	name := inst.Pane().TmuxSessionName()
+	return slices.ContainsFunc(refs, func(v core.InstanceView) bool { return v.TmuxSession == name })
 }
 
 // pointAt makes inst the selection the panes and menu render, as
 // instanceChanged would (without its terminal-pane tmux side effects).
 func pointAt(m *home, inst *session.Instance) {
-	m.list.SetSelectedInstance(slices.Index(m.list.GetInstances(), inst))
-	m.splitPane.SetInstance(inst)
-	m.menu.SetInstance(inst)
+	m.syncViews()
+	m.list.SelectID(idOf(m, inst))
+	v, _ := m.viewByID(idOf(m, inst))
+	m.splitPane.SetInstance(v)
+	m.menu.SetInstance(v)
 }
 
 // assertReleased checks that dropped instances' clients leave the registry
@@ -76,10 +96,10 @@ func assertReleased(t *testing.T, m *home, cmd tea.Cmd, dropped ...*session.Inst
 		assert.True(t, clientOf(t, inst).PtmxAlive(), "%s: released on the Update goroutine; must wait for the Cmd", inst.Title)
 	}
 	drainCmd(cmd)
-	refs := referencedInstances(m)
+	refs := referencedViews(m)
 	for _, inst := range dropped {
 		assert.False(t, clientOf(t, inst).PtmxAlive(), "%s: attach client still open after the drop", inst.Title)
-		assert.NotContains(t, refs, inst, "%s: still reachable from the model", inst.Title)
+		assert.False(t, reaches(refs, inst), "%s: still reachable from the model", inst.Title)
 	}
 	require.NoError(t, m.checkSlotInvariant())
 }
@@ -102,6 +122,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "b-live")
 		m.slots[1].ws.Add(live)
+		m.syncViews()
 
 		cmd := m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}})
 		require.Equal(t, []string{"afocus"}, m.slotNames())
@@ -113,6 +134,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "a-live")
 		m.ws.Add(live)
+		m.syncViews()
 		pointAt(m, live)
 
 		cmd := m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}})
@@ -127,6 +149,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		focused, peer := liveInstance(t, "a-live"), liveInstance(t, "b-live")
 		m.ws.Add(focused)
 		m.slots[1].ws.Add(peer)
+		m.syncViews()
 		pointAt(m, focused) // the carried-over splitPane must let go of it
 
 		cmd := m.applyWorkspaceToggle(nil)
@@ -139,6 +162,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "c-live")
 		m.ws.Add(live)
+		m.syncViews()
 		pointAt(m, live)
 
 		cmd := m.applyWorkspaceToggle([]config.Workspace{preservedTerminalWorkspace(t, "ws-a")})
@@ -153,6 +177,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "g-live")
 		m.ws.Add(live)
+		m.syncViews()
 		pointAt(m, live)
 
 		cmd := m.applyWorkspaceToggle(nil)
@@ -169,7 +194,9 @@ func TestPrunePanes_ReleasesOnlyInactiveSessions(t *testing.T) {
 	keep, gone := liveInstance(t, "keep"), liveInstance(t, "gone")
 	m.ws.Add(keep)
 	m.ws.Add(gone)
+	m.syncViews()
 	require.NoError(t, gone.TransitionTo(session.Paused))
+	m.syncViews()
 	assert.Nil(t, releaseSlotCmd(nil))
 
 	cmd := m.prunePanes()
@@ -192,6 +219,7 @@ func TestDroppedSlot_StaleProbeDoesNotReattach(t *testing.T) {
 	m.ctx = cancelledCtx()
 	live := liveInstance(t, "b-live")
 	m.slots[1].ws.Add(live)
+	m.syncViews()
 	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}}))
 	require.False(t, clientOf(t, live).PtmxAlive())
 

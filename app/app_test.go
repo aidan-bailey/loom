@@ -15,7 +15,6 @@ import (
 	"os"
 	"testing"
 
-	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -180,9 +179,8 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 // TestConfirmationModalKeyHandling tests the actual key handling in confirmation state
 func TestConfirmationModalKeyHandling(t *testing.T) {
 	// Import needed packages
-	spinner := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()})
-	list := ui.NewList(&spinner, ws)
+	list := fixtureList()
 
 	// Create enough of home struct to test handleKeyPress in confirmation state
 	h := wireCore(t, &home{
@@ -306,7 +304,6 @@ func TestConfirmationMessageFormatting(t *testing.T) {
 // TestConfirmationFlowSimulation tests the confirmation flow by simulating the state changes
 func TestConfirmationFlowSimulation(t *testing.T) {
 	// Create a minimal setup
-	spinner := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	// Add test instance
 	instance, err := session.NewInstance(session.InstanceOptions{
@@ -316,7 +313,7 @@ func TestConfirmationFlowSimulation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()}, instance)
-	list := ui.NewList(&spinner, ws)
+	list := fixtureList()
 	list.SetSelectedInstance(0)
 
 	h := wireCore(t, &home{
@@ -527,7 +524,6 @@ func (m *mockInstanceStorage) DeleteAllInstances() error             { return ni
 // TestAutoFocusAgentAfterInstanceStart verifies that after a new session finishes
 // starting, the app auto-enters inline attach mode focused on the agent pane.
 func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
-	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	menu := ui.NewMenu()
 
@@ -542,7 +538,7 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 	storage, err := session.NewStorage(&mockInstanceStorage{}, t.TempDir())
 	require.NoError(t, err)
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig(), Storage: storage}, instance)
-	list := ui.NewList(&sp, ws)
+	list := fixtureList()
 	list.SetSelectedInstance(0)
 
 	h := wirePanes(t, wireCore(t, &home{
@@ -604,7 +600,6 @@ func TestConfirmationModalVisualAppearance(t *testing.T) {
 // TestKillSetsStatusToDeletingImmediately verifies that confirming a kill
 // sets the instance status to Deleting before the async cleanup Cmd runs.
 func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:   "test-delete",
@@ -614,7 +609,7 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	require.NoError(t, err)
 	_ = instance.TransitionTo(session.Running)
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()}, instance)
-	list := ui.NewList(&s, ws)
+	list := fixtureList()
 	list.SetSelectedInstance(0)
 
 	h := wireCore(t, &home{
@@ -649,7 +644,6 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 // TestOpFailedRevertsStatus verifies that a failed operation's
 // result (core.OpFailed) reverts the instance status to its previous value.
 func TestOpFailedRevertsStatus(t *testing.T) {
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 
 	instance, err := session.NewInstance(session.InstanceOptions{
 		Title:   "test-revert",
@@ -659,7 +653,7 @@ func TestOpFailedRevertsStatus(t *testing.T) {
 	require.NoError(t, err)
 	_ = instance.TransitionTo(session.Deleting)
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()}, instance)
-	list := ui.NewList(&s, ws)
+	list := fixtureList()
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -689,9 +683,8 @@ func TestOpFailedRevertsStatus(t *testing.T) {
 // confirmation clears the bundled task so a stale Sync/Async pair
 // can't leak into the next confirmation.
 func TestPendingConfirmationClearedOnCancel(t *testing.T) {
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()})
-	list := ui.NewList(&s, ws)
+	list := fixtureList()
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -734,9 +727,8 @@ func TestHandleQuitStaysInTUIOnSaveError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig(), Storage: storage, State: state}, inst)
-	list := ui.NewList(&s, ws)
+	list := fixtureList()
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -778,10 +770,9 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	wsCtx := &config.WorkspaceContext{Name: "test-ws", ConfigDir: cfgDir}
 	ws := testWS(core.WorkspaceParts{Ctx: wsCtx, Storage: storage, Config: config.DefaultConfig(), State: state}, inst)
-	list := ui.NewList(&s, ws)
+	list := fixtureList()
 
 	slot := &workspaceSlot{
 		ws:        ws,

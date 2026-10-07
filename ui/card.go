@@ -11,6 +11,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/charmbracelet/x/ansi"
@@ -82,14 +83,14 @@ func SetShowAccounts(on bool) { showAccounts = on }
 // ShowAccounts reports whether account badges are on.
 func ShowAccounts() bool { return showAccounts }
 
-// accountLabel is inst's account badge text: its account's name
+// accountLabel is v's account badge text: its account's name
 // (account.DefaultName for the default account), or "" when badges are off
-// or inst is not a Claude session.
-func accountLabel(inst *session.Instance) string {
-	if !showAccounts || inst == nil || !session.IsClaudeProgram(inst.Program()) {
+// or v is not a Claude session.
+func accountLabel(v *core.InstanceView) string {
+	if !showAccounts || v == nil || !session.IsClaudeProgram(v.Program) {
 		return ""
 	}
-	if name := inst.Account(); name != "" {
+	if name := v.Account; name != "" {
 		return name
 	}
 	return account.DefaultName
@@ -144,7 +145,7 @@ type CardData struct {
 	WaitReason string
 	// Subagents lists the session's live subagents and teammates, working
 	// first, with names and descriptions passed through sanitizeCardText.
-	// Empty for most cards; see session.Instance.Subagents.
+	// Empty for most cards; see core.InstanceView.Subagents.
 	Subagents []SubagentRow
 	// GitHub is the poller's join for this session (issue, PR, checks).
 	// Known=false renders nothing. See app/github.go.
@@ -166,7 +167,7 @@ func (d CardData) NeedsAttention() bool {
 	return d.Status != session.Deleting && (d.Status == session.Prompting || d.BellPending)
 }
 
-// BuildCardData snapshots inst into a CardData. pane is inst's pane
+// BuildCardData snapshots v into a CardData. pane is v's pane
 // (PaneClients.For), and the live tail is read from its in-memory emulator
 // screen, so calling this per visible card per frame forks no
 // subprocesses. Instances on the snapshot path render their status label
@@ -175,39 +176,39 @@ func (d CardData) NeedsAttention() bool {
 // (DensityLine callers). When Claude's last message is current and the
 // session is not working, the tail is the end of that message instead,
 // on either path.
-func BuildCardData(inst *session.Instance, pane Pane, selected bool, spinnerFrame string, tailN int) CardData {
+func BuildCardData(v core.InstanceView, pane Pane, selected bool, spinnerFrame string, tailN int) CardData {
 	d := CardData{
-		Title:               inst.Title,
-		Status:              inst.GetStatus(),
-		IsWorkspaceTerminal: inst.IsWorkspaceTerminal,
-		BellPending:         inst.BellPending(),
+		Title:               v.Title,
+		Status:              v.Status,
+		IsWorkspaceTerminal: v.IsWorkspaceTerminal,
+		BellPending:         v.Bell,
 		Selected:            selected,
-		Branch:              inst.GetBranch(),
-		StatusAge:           inst.StatusAge(),
+		Branch:              v.Branch,
+		StatusAge:           v.StatusAge(),
 		Spinner:             spinnerFrame,
-		WaitReason:          sanitizeCardText(inst.WaitReason()),
-		Account:             accountLabel(inst),
+		WaitReason:          sanitizeCardText(v.WaitReason),
+		Account:             accountLabel(&v),
 	}
-	for _, v := range inst.Subagents() {
+	for _, a := range v.Subagents {
 		d.Subagents = append(d.Subagents, SubagentRow{
-			Name:        sanitizeCardText(v.Name),
-			Description: sanitizeCardText(v.Description),
-			Idle:        v.Idle,
+			Name:        sanitizeCardText(a.Name),
+			Description: sanitizeCardText(a.Description),
+			Idle:        a.Idle,
 		})
 	}
-	if stat := inst.GetDiffStats(); stat != nil && stat.Error == nil && !stat.IsEmpty() {
+	if stat := v.Diff; v.HasDiff && stat.Error == nil && !stat.IsEmpty() {
 		d.HasDiff, d.DiffAdded, d.DiffRemoved = true, stat.Added, stat.Removed
 	}
-	d.GitHub = inst.GitHubState()
+	d.GitHub = v.GitHub
 	d.GitHub.IssueTitle = sanitizeCardText(d.GitHub.IssueTitle)
 	// Before the first poll the join is empty, but the link itself is
 	// known from the instance — show "#12" immediately.
-	if !d.GitHub.Known && inst.IssueNumber() != 0 {
-		d.GitHub.IssueNumber = inst.IssueNumber()
+	if !d.GitHub.Known && v.Issue != 0 {
+		d.GitHub.IssueNumber = v.Issue
 	}
-	d.Ahead, d.Behind, d.HasParity = inst.Parity()
+	d.Ahead, d.Behind, d.HasParity = v.Ahead, v.Behind, v.ParityKnown
 	if tailN > 0 {
-		if msg, current := inst.LastMessage(); current && msg != "" &&
+		if msg, current := v.LastMessage, v.HasLastMessage; current && msg != "" &&
 			d.Status != session.Running && d.Status != session.Loading {
 			// What Claude said it did, or is asking, says more than the
 			// screen's tail once the session stops.
@@ -703,13 +704,13 @@ func RenderCard(d CardData, density CardDensity, width int) string {
 // overview grid and overview cursor movement: workspace terminal pinned
 // first, then attention > running/loading > ready > paused/recoverable,
 // stable by title within a tier. Deleting sorts last.
-func SortForOverview(items []*session.Instance) []int {
+func SortForOverview(items []core.InstanceView) []int {
 	// Tiers are computed once up front so the sort sees a consistent
 	// snapshot (status/bell are read under the instance lock) and each
 	// instance is read exactly once instead of O(n log n) times.
 	tiers := make([]int, len(items))
-	for i, inst := range items {
-		tiers[i] = overviewTier(inst)
+	for i, v := range items {
+		tiers[i] = overviewTier(v)
 	}
 	order := make([]int, len(items))
 	for i := range order {
@@ -725,17 +726,17 @@ func SortForOverview(items []*session.Instance) []int {
 }
 
 // overviewTier maps an instance to its SortForOverview tier.
-func overviewTier(inst *session.Instance) int {
-	if inst.IsWorkspaceTerminal {
+func overviewTier(v core.InstanceView) int {
+	if v.IsWorkspaceTerminal {
 		return 0
 	}
-	st := inst.GetStatus()
+	st := v.Status
 	switch {
 	case st == session.Deleting:
 		// Checked before the bell: a stale bell on a mid-kill instance
 		// must not float it into the attention tier.
 		return 5
-	case st == session.Prompting || inst.BellPending():
+	case st == session.Prompting || v.Bell:
 		return 1
 	case st == session.Running || st == session.Loading:
 		return 2

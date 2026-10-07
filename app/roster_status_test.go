@@ -28,9 +28,10 @@ func TestRosterOverridesScrapedStatus(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
 
-	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
+	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	require.Equal(t, session.Prompting, inst.GetStatus(),
 		"roster 'waiting' must beat the scraper's updated=true Running")
@@ -46,9 +47,10 @@ func TestRosterBusyMapsToRunning(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	deliverRoster(m, rosterFor(inst, session.RosterStatusBusy))
 
-	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: false})
+	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: false})
 
 	require.Equal(t, session.Running, inst.GetStatus())
 	require.Nil(t, follow)
@@ -63,8 +65,9 @@ func TestRosterAbsentFallsBackToScraper(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 
-	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
+	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	require.Equal(t, session.Running, inst.GetStatus())
 	require.NotNil(t, follow, "without a roster the re-detect ladder must still run")
@@ -78,9 +81,10 @@ func TestRosterUnknownStatusFallsBack(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	deliverRoster(m, rosterFor(inst, session.RosterStatusUnknown))
 
-	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
+	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	require.Equal(t, session.Running, inst.GetStatus())
 	require.NotNil(t, follow, "an unrecognized roster status must fall through to the ladder")
@@ -95,9 +99,10 @@ func TestRosterIgnoredForNonClaudeInstance(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
 
-	_, follow := m.Update(statusDetectedMsg{instance: inst, updated: true})
+	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	require.Equal(t, session.Running, inst.GetStatus(),
 		"a non-Claude agent must not be governed by Claude's roster")
@@ -125,9 +130,10 @@ func TestRosterWaitReasonReachesInstance(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "sandbox request"))
 
-	m.Update(statusDetectedMsg{instance: inst, updated: true})
+	m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	require.Equal(t, session.Prompting, inst.GetStatus())
 	require.Equal(t, "sandbox request", inst.WaitReason())
@@ -142,12 +148,13 @@ func TestRosterWaitReasonClearedWhenNoLongerWaiting(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "dialog open"))
-	m.Update(statusDetectedMsg{instance: inst, updated: true})
+	m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 	require.Equal(t, "dialog open", inst.WaitReason(), "precondition")
 
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusBusy, ""))
-	m.Update(statusDetectedMsg{instance: inst, updated: true})
+	m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	require.Equal(t, session.Running, inst.GetStatus())
 	require.Empty(t, inst.WaitReason(), "a stale reason must not outlive the wait")
@@ -162,12 +169,13 @@ func TestRosterWaitReasonClearedWhenRosterGoesAway(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "input needed"))
-	m.Update(statusDetectedMsg{instance: inst, updated: true})
+	m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 	require.Equal(t, "input needed", inst.WaitReason(), "precondition")
 
 	failRoster(m)
-	m.Update(statusDetectedMsg{instance: inst, updated: false, hasPrompt: true})
+	m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: false, hasPrompt: true})
 
 	require.Equal(t, session.Prompting, inst.GetStatus(),
 		"the scraper still sees a prompt on screen")

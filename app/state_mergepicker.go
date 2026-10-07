@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -36,5 +38,15 @@ func handleStateMergePickerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	if source == nil {
 		return m, nil
 	}
-	return m, coreCmd(m.core.MergeInst(target, source))
+	// The instances, through the bridge until package C merges by
+	// request. Either may have gone since the picker opened.
+	targetInst, sourceInst := m.instOf(target.ID), m.instOf(source.ID)
+	if targetInst == nil || sourceInst == nil {
+		gone := target.Title
+		if targetInst != nil {
+			gone = source.Title
+		}
+		return m, m.handleError(fmt.Errorf("merge: session '%s' is gone", gone))
+	}
+	return m, coreCmd(m.core.MergeInst(targetInst, sourceInst))
 }

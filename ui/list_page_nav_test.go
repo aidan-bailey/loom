@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"slices"
@@ -17,19 +18,27 @@ import (
 const pageNavTestHeight = 11
 
 // sliceSource is a test InstanceSource the tests edit directly, standing
-// in for core.Workspace.
-type sliceSource struct{ items []*session.Instance }
+// in for the app's view store. Every row needs a distinct ID.
+type sliceSource struct{ items []core.InstanceView }
 
-func (s *sliceSource) Instances() []*session.Instance { return s.items }
+func (s *sliceSource) Rows() []core.InstanceView { return s.items }
 
-func (s *sliceSource) add(inst *session.Instance) { s.items = append(s.items, inst) }
+func (s *sliceSource) add(v core.InstanceView) { s.items = append(s.items, v) }
 
-func (s *sliceSource) remove(inst *session.Instance) {
-	s.items = slices.DeleteFunc(s.items, func(i *session.Instance) bool { return i == inst })
+func (s *sliceSource) remove(v core.InstanceView) {
+	s.items = slices.DeleteFunc(s.items, func(i core.InstanceView) bool { return i.ID == v.ID })
 }
 
-func (s *sliceSource) prepend(inst *session.Instance) {
-	s.items = append([]*session.Instance{inst}, s.items...)
+func (s *sliceSource) prepend(v core.InstanceView) {
+	s.items = append([]core.InstanceView{v}, s.items...)
+}
+
+// selectedID is the list's selected row's ID, 0 when nothing is selected.
+func selectedID(l *List) core.InstanceID {
+	if v := l.GetSelectedInstance(); v != nil {
+		return v.ID
+	}
+	return 0
 }
 
 // newPageNavList builds a list containing n instances and sizes it so
@@ -43,19 +52,14 @@ func newPageNavList(n int) (*List, *sliceSource) {
 	l := NewList(&sp, src)
 	l.SetSize(40, pageNavTestHeight)
 	for i := 0; i < n; i++ {
-		inst := &session.Instance{Title: fmt.Sprintf("inst-%02d", i)}
-		_ = inst.TransitionTo(session.Running)
-		src.add(inst)
+		src.add(core.InstanceView{ID: core.InstanceID(i + 1), Title: fmt.Sprintf("inst-%02d", i), Status: session.Running})
 	}
 	return l, src
 }
 
 func markDeleting(t *testing.T, l *List, idx int) {
 	t.Helper()
-	inst := l.items()[idx]
-	if err := inst.TransitionTo(session.Deleting); err != nil {
-		t.Fatalf("transition to Deleting at idx=%d: %v", idx, err)
-	}
+	l.src.(*sliceSource).items[idx].Status = session.Deleting
 }
 
 func TestListPageNav_MaxVisibleItemsMatchesFixture(t *testing.T) {

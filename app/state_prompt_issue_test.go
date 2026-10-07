@@ -15,7 +15,7 @@ import (
 func promptOverlayForNewInstance(t *testing.T, m *home) {
 	t.Helper()
 	_, _ = runPromptNewInstance(m)
-	inst := m.list.GetInstances()[m.list.NumInstances()-1]
+	inst := lastInst(m)
 	inst.Title = "shorthand"
 	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.Equal(t, statePrompt, m.state)
@@ -41,7 +41,7 @@ func TestPromptShorthand_DispatchesExpansion(t *testing.T) {
 func TestIssueExpandedMsg_SeedsPromptAndLinks(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := m.list.GetInstances()[m.list.NumInstances()-1]
+	inst := lastInst(m)
 	m.dismissOverlay()
 	m.state = stateDefault
 	m.Update(issueExpandedMsg{instance: inst, repo: m.repoPath(), rest: "and tidy tests",
@@ -55,7 +55,7 @@ func TestIssueExpandedMsg_SeedsPromptAndLinks(t *testing.T) {
 func TestIssueExpandedMsg_FailureLaunchesLiteral(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := m.list.GetInstances()[m.list.NumInstances()-1]
+	inst := lastInst(m)
 	m.dismissOverlay()
 	m.state = stateDefault
 	_, cmd := m.Update(issueExpandedMsg{instance: inst, repo: m.repoPath(), number: 12, literal: "#12 and tidy tests", err: errors.New("nope")})
@@ -71,7 +71,7 @@ func TestIssueExpandedMsg_FailureLaunchesLiteral(t *testing.T) {
 func TestIssueExpandedMsg_DoesNotClobberAnotherFlow(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := m.list.GetInstances()[m.list.NumInstances()-1]
+	inst := lastInst(m)
 	m.dismissOverlay()
 	m.state = stateLaunchOptions // another creation flow is on screen
 
@@ -88,7 +88,7 @@ func TestIssueExpandedMsg_DoesNotClobberAnotherFlow(t *testing.T) {
 func TestIssueExpandedMsg_WrongRepoDoesNotOpenHere(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := m.list.GetInstances()[m.list.NumInstances()-1]
+	inst := lastInst(m)
 	m.dismissOverlay()
 	m.state = stateDefault
 
@@ -105,7 +105,7 @@ func TestIssueExpandedMsg_WrongRepoDoesNotOpenHere(t *testing.T) {
 func TestIssueExpandedMsg_DroppedResultReportsFetchError(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	promptOverlayForNewInstance(t, m)
-	inst := m.list.GetInstances()[m.list.NumInstances()-1]
+	inst := lastInst(m)
 	m.dismissOverlay()
 	m.state = stateDefault
 

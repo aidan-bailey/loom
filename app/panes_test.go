@@ -30,6 +30,7 @@ func TestEnsureSlotPanes_AttachesActiveInstances(t *testing.T) {
 	require.NoError(t, paused.TransitionTo(session.Paused))
 	m.ws.Add(live)
 	m.ws.Add(paused)
+	m.syncViews()
 	m.panes.Retain(nil) // the fixtures came with clients; start from none
 
 	m.ensureSlotPanes(m.workspaceSlot)
@@ -45,9 +46,10 @@ func TestReplacePane_ClosesTheOldClientOffUpdate(t *testing.T) {
 	m := newTestHome(t)
 	inst := liveInstance(t, "relaunched")
 	m.ws.Add(inst)
+	m.syncViews()
 	old := clientOf(t, inst)
 
-	cmd := m.replacePane(inst)
+	cmd := m.replacePane(rowOf(t, m, inst))
 
 	fresh := m.panes.Get(inst.Pane().TmuxSessionName())
 	require.NotNil(t, fresh)
@@ -65,17 +67,18 @@ func TestFullScreenAttach_PausesAndRestoresThePaneClient(t *testing.T) {
 	m := newTestHome(t)
 	inst := liveInstance(t, "fs")
 	m.ws.Add(inst)
+	m.syncViews()
 	name := inst.Pane().TmuxSessionName()
 	require.True(t, m.panes.Alive(name))
 
-	_, cmd := m.Update(startFullScreenAttachMsg{instance: inst, target: attachTargetAgent})
+	_, cmd := m.Update(startFullScreenAttachMsg{instance: rowOf(t, m, inst), target: attachTargetAgent})
 	require.NotNil(t, cmd, "the foreground attach runs as an ExecProcess")
 	assert.False(t, m.panes.Alive(name), "the client lets go of the session for the foreground attach")
-	assert.Same(t, inst, m.attachingInstance)
+	assert.Equal(t, idOf(m, inst), m.attachingID)
 
-	_, _ = m.Update(attachDoneMsg{instance: inst})
+	_, _ = m.Update(attachDoneMsg{instance: rowOf(t, m, inst)})
 	assert.True(t, m.panes.Alive(name), "and re-attaches when it returns")
-	assert.Nil(t, m.attachingInstance)
+	assert.Zero(t, m.attachingID)
 }
 
 // TestKillAndPause_CloseTheClientOnlyAfterTheRegistryDrops: a client is
@@ -112,6 +115,7 @@ func TestKillAndPause_CloseTheClientOnlyAfterTheRegistryDrops(t *testing.T) {
 			m := newTestHome(t)
 			inst := startedInstanceWithProgram(t, "victim-"+op.name, "claude", "idle")
 			m.ws.Add(inst)
+			m.syncViews()
 			name := inst.Pane().TmuxSessionName()
 			c := clientOf(t, inst)
 			require.True(t, c.PtmxAlive(), "fixture: the client is attached")
@@ -138,9 +142,11 @@ func TestTransitionFailed_ReattachesARevertedInstance(t *testing.T) {
 	m := newTestHome(t)
 	inst := liveInstance(t, "reverted")
 	m.ws.Add(inst)
+	m.syncViews()
 	name := inst.Pane().TmuxSessionName()
 	require.NoError(t, inst.TransitionTo(session.Loading)) // the pause's confirm
-	drainCmd(m.prunePanes())                               // a tick while it ran
+	m.syncViews()
+	drainCmd(m.prunePanes()) // a tick while it ran
 	require.Nil(t, m.panes.Get(name), "precondition: pruned while Loading")
 
 	deliver(t, m, core.OpFailed{Instance: inst, Title: inst.Title, Op: "pause",
@@ -168,6 +174,7 @@ end)
 	initScriptsIn(m, dir, false)
 	inst := startedInstanceWithProgram(t, "lua-resumed", "claude", "idle")
 	m.ws.Add(inst)
+	m.syncViews()
 	name := inst.Pane().TmuxSessionName()
 	old := clientOf(t, inst)
 	// The health tick found the agent gone and marked it Paused; its
@@ -279,7 +286,7 @@ func requireShowsNewSession(t *testing.T, m *home, inst *session.Instance, peer 
 	_, err := next.WriteString("relaunched session\r\n")
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		screen, _ := m.panes.For(inst).EmulatorScreen()
+		screen, _ := m.panes.For(rowOf(t, m, inst)).EmulatorScreen()
 		return strings.Contains(screen, "relaunched session")
 	}, 2*time.Second, 5*time.Millisecond, "the new session's output must reach the pane")
 }
@@ -296,8 +303,9 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
 		m.ws.Add(inst)
+		m.syncViews()
 
-		m.ensurePane(inst)
+		m.ensurePane(rowOf(t, m, inst))
 
 		requireShowsNewSession(t, m, inst, peer)
 	})
@@ -308,6 +316,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
 		m.ws.Add(inst)
+		m.syncViews()
 
 		m.ensureSlotPanes(m.workspaceSlot)
 
@@ -342,6 +351,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 			t.Fatal("the client's pump never reported its EOF")
 		}
 		m.ws.Add(inst)
+		m.syncViews()
 
 		m.ensureSlotPanes(m.workspaceSlot)
 
@@ -359,6 +369,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
 		m.ws.Add(inst)
+		m.syncViews()
 
 		healThroughDeadEvent(t, m, inst)
 
@@ -370,6 +381,7 @@ func TestExitedClient_HealsOntoTheRelaunchedSession(t *testing.T) {
 		m := newTestHome(t)
 		inst, peer := relaunchedUnderItsName(t, "relaunched")
 		m.ws.Add(inst)
+		m.syncViews()
 
 		// The tick's probe, as the model's probe job takes it.
 		deliver(t, m, core.HealthResult{Results: []core.ProbeResult{
@@ -416,6 +428,7 @@ func TestDeadEvent_RepairOfAClientThatExitsOnAttachIsBounded(t *testing.T) {
 	var starts atomic.Int32
 	attachTestClient(t, inst, instantExitPty{t: t, starts: &starts}, aliveCmdExecForTest())
 	m.ws.Add(inst)
+	m.syncViews()
 	name := inst.Pane().TmuxSessionName()
 
 	for deadline := time.Now().Add(500 * time.Millisecond); time.Now().Before(deadline); {

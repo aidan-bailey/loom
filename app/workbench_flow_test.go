@@ -110,7 +110,8 @@ func TestWorkbench_DeadSelectionDropsToFocus(t *testing.T) {
 	_, _ = handleStateDefaultKey(m, wbKey("enter"))
 	require.Equal(t, viewWorkbench, m.viewMode)
 
-	m.ws.Remove(m.list.GetInstanceByTitle("a"))
+	m.ws.Remove(instByTitle(m, m.list, "a"))
+	m.syncViews()
 	require.Nil(t, m.list.GetSelectedInstance())
 	_ = m.instanceChanged()
 	assert.Equal(t, viewFocus, m.viewMode,

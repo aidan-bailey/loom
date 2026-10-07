@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -109,7 +110,8 @@ func TestSplitPaneAgentTitleCarriesBranchAndDiff(t *testing.T) {
 
 	sp := NewSplitPane(NewPreviewPane(), NewDiffPane(), NewTerminalPane())
 	sp.SetSize(80, 24)
-	sp.SetInstance(inst)
+	v := core.ViewForTest(inst, 1)
+	sp.SetInstance(&v)
 
 	title := ansi.Strip(sp.agentPaneTitle())
 	if !strings.Contains(title, "aidan/auth-refactor") {

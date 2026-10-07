@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/testpty"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
@@ -23,6 +24,7 @@ import (
 type testSetup struct {
 	workdir     string
 	instance    *session.Instance
+	view        *core.InstanceView // instance's view, once started
 	sessionName string
 	panes       *PaneClients
 	cleanupFn   func()
@@ -91,9 +93,11 @@ func setupTestEnvironment(t *testing.T, cmdExec cmd_test.MockCmdExec) *testSetup
 		log.Close()
 	}
 
+	view := core.ViewForTest(instance, 1)
 	return &testSetup{
 		workdir:     workdir,
 		instance:    instance,
+		view:        &view,
 		sessionName: sessionName,
 		panes:       panes,
 		cleanupFn:   cleanupFn,
@@ -226,7 +230,7 @@ func TestPreviewContentWithoutScrolling(t *testing.T) {
 	previewPane.SetSize(80, 30) // Set reasonable size for testing
 
 	// Update the preview content (this should display the content without scrolling)
-	err := previewPane.UpdateContent(setup.instance)
+	err := previewPane.UpdateContent(setup.view)
 	require.NoError(t, err)
 
 	// Verify we're not in scrolling mode
@@ -294,16 +298,16 @@ func TestPreviewPane_ScrollsIntoHistory(t *testing.T) {
 	p.SetSize(80, 24)
 
 	// Live tail: shows the newest lines.
-	require.NoError(t, p.UpdateContent(setup.instance))
+	require.NoError(t, p.UpdateContent(setup.view))
 	liveText := p.previewState.text
 	require.Contains(t, liveText, "histline200", "live tail should show the newest line")
 	require.False(t, p.IsScrolling(), "fresh pane is at the live tail")
 
 	// Scroll well up into history, then refresh.
 	for i := 0; i < 60; i++ {
-		require.NoError(t, p.ScrollUp(setup.instance))
+		require.NoError(t, p.ScrollUp(setup.view))
 	}
-	require.NoError(t, p.UpdateContent(setup.instance))
+	require.NoError(t, p.UpdateContent(setup.view))
 	scrolledText := p.previewState.text
 
 	require.True(t, p.IsScrolling(), "pane should be scrolled after scrolling up")
@@ -351,12 +355,12 @@ func TestPreviewPane_TUIAgentForwardsWheel(t *testing.T) {
 	p := NewPreviewPane()
 	p.SetPanes(setup.panes)
 	p.SetSize(80, 24)
-	require.NoError(t, p.UpdateContent(setup.instance)) // live tail
+	require.NoError(t, p.UpdateContent(setup.view)) // live tail
 
-	require.NoError(t, p.ScrollUp(setup.instance))
-	require.NoError(t, p.PageUp(setup.instance))
+	require.NoError(t, p.ScrollUp(setup.view))
+	require.NoError(t, p.PageUp(setup.view))
 
-	require.True(t, setup.panes.For(setup.instance).IsAlternateScreen(), "alt-screen TUI agent must be detected")
+	require.True(t, setup.panes.For(setup.view).IsAlternateScreen(), "alt-screen TUI agent must be detected")
 	require.False(t, p.IsScrolling(), "TUI agent: Loom stays at the live tail, no offset window")
 	require.Equal(t, 0, p.snapFallback.offset, "offset model must not be engaged for a TUI agent")
 }

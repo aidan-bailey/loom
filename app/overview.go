@@ -3,6 +3,7 @@ package app
 import (
 	"sort"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 )
@@ -34,7 +35,7 @@ func (m *home) jumpWaiting(dir int) {
 		for step := 1; step <= n; step++ {
 			p := order[((start+dir*step)%n+n)%n]
 			inst := m.slots[p.slot].list.GetInstances()[p.inst]
-			if inst.GetStatus() == session.Prompting || inst.BellPending() {
+			if inst.Status == session.Prompting || inst.Bell {
 				m.overviewCursor = overviewCursor{slot: p.slot, inst: p.inst}
 				return
 			}
@@ -50,7 +51,7 @@ func (m *home) jumpWaiting(dir int) {
 		// Classic/global mode: no slots, walk m.list directly.
 		items := m.list.GetInstances()
 		for _, idx := range ui.SortForOverview(items) {
-			if items[idx].GetStatus() == session.Deleting {
+			if items[idx].Status == session.Deleting {
 				continue
 			}
 			order = append(order, fleetPos{slot: 0, inst: idx})
@@ -59,7 +60,7 @@ func (m *home) jumpWaiting(dir int) {
 		for _, si := range m.fleetSlotOrder() {
 			items := m.slots[si].list.GetInstances()
 			for _, idx := range ui.SortForOverview(items) {
-				if items[idx].GetStatus() == session.Deleting {
+				if items[idx].Status == session.Deleting {
 					continue
 				}
 				order = append(order, fleetPos{slot: si, inst: idx})
@@ -90,7 +91,7 @@ func (m *home) jumpWaiting(dir int) {
 			list = m.slots[p.slot].list
 		}
 		inst := list.GetInstances()[p.inst]
-		if inst.GetStatus() == session.Prompting || inst.BellPending() {
+		if inst.Status == session.Prompting || inst.Bell {
 			if len(m.slots) != 0 && p.slot != m.focusedSlot {
 				m.loadSlot(p.slot)
 			}
@@ -122,7 +123,7 @@ func (m *home) fleetOrder() []fleetPos {
 		}
 		items := m.slots[si].list.GetInstances()
 		for _, idx := range ui.SortForOverview(items) {
-			if items[idx].GetStatus() == session.Deleting {
+			if items[idx].Status == session.Deleting {
 				continue
 			}
 			out = append(out, fleetPos{slot: si, inst: idx})
@@ -182,9 +183,9 @@ func (m *home) focusCursorSlot() {
 func (m *home) peerSectionFor(slot *workspaceSlot) ui.PeerSection {
 	p := ui.PeerSection{Name: slot.wsCtx().Name}
 	for _, inst := range slot.list.GetInstances() {
-		st := inst.GetStatus()
+		st := inst.Status
 		switch {
-		case st == session.Prompting || inst.BellPending():
+		case st == session.Prompting || inst.Bell:
 			p.Attention++
 		case st == session.Running || st == session.Loading:
 			p.Running++
@@ -237,7 +238,7 @@ func (m *home) slotGroupName(slot *workspaceSlot) string {
 
 // overviewGroupFor builds one OverviewGroup from a list's instances,
 // deriving GroupEmpty/Order from the item count.
-func overviewGroupFor(name string, items []*session.Instance) ui.OverviewGroup {
+func overviewGroupFor(name string, items []core.InstanceView) ui.OverviewGroup {
 	g := ui.OverviewGroup{Name: name, Items: items, State: ui.GroupLoaded}
 	if len(items) == 0 {
 		g.State = ui.GroupEmpty
@@ -335,7 +336,7 @@ func (m *home) moveCursor(dir int) {
 			if np < 0 || np >= len(order) {
 				return // no wrap in the grid
 			}
-			if items[order[np]].GetStatus() != session.Deleting {
+			if items[order[np]].Status != session.Deleting {
 				m.list.SetSelectedInstance(order[np])
 				return
 			}

@@ -34,6 +34,7 @@ func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
 	require.False(t, m.panes.Alive(inst.Pane().TmuxSessionName()), "fixture precondition: no client attached")
 	require.True(t, inst.Pane().TmuxAlive(), "fixture precondition: tmux session must read alive")
 
+	m.syncViews()
 	return m, inst
 }
 
@@ -58,7 +59,7 @@ func TestHealthTick_RepairsDeadPtmx(t *testing.T) {
 // window would fight the foreground attach over the same tmux session.
 func TestHealthTick_SkipsRepairDuringFullScreenAttach(t *testing.T) {
 	m, inst := setupPtmxDeadFixture(t)
-	m.attachingInstance = inst
+	m.attachingID = idOf(m, inst)
 
 	deliver(t, m, core.HealthResult{Results: []core.ProbeResult{
 		{Instance: inst, TmuxLive: tmux.LivenessAlive},

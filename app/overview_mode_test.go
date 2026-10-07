@@ -144,21 +144,21 @@ func TestOverviewBell_ClearedOnFocusNotGridCursor(t *testing.T) {
 
 	a := mustAddInstance(t, m, "a")
 	b := mustAddInstance(t, m, "b")
-	b.SetBellPending(true)
+	ring(m, b)
 
 	// Selection starts on "a"; walk onto "b" (bell → attention tier,
 	// overview position 0) the way a j/k dispatch does: moveCursor,
 	// then the unconditional instanceChanged from handleScriptDone.
-	require.Same(t, a, m.list.GetSelectedInstance())
+	require.Equal(t, idOf(m, a), selID(m.list))
 	m.moveCursor(-1)
-	require.Same(t, b, m.list.GetSelectedInstance())
+	require.Equal(t, idOf(m, b), selID(m.list))
 	_ = m.instanceChanged()
-	assert.True(t, b.BellPending(), "overview cursor landing must not clear the bell")
+	assert.True(t, bell(m, b), "overview cursor landing must not clear the bell")
 
 	// Enter drops to focus on the card — now it is attended.
 	_, _ = handleStateDefaultKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.Equal(t, viewFocus, m.viewMode)
-	assert.False(t, b.BellPending(), "entering focus on the card must clear the bell")
+	assert.False(t, bell(m, b), "entering focus on the card must clear the bell")
 }
 
 // TestOverviewMouse_Ignored pins the v1 no-mouse-in-overview rule: a
@@ -212,6 +212,7 @@ func TestMoveCursor_OverviewWalksSortedOrder(t *testing.T) {
 	require.NoError(t, b.TransitionTo(session.Prompting))
 	require.NoError(t, c.TransitionTo(session.Deleting))
 	require.NoError(t, d.TransitionTo(session.Running))
+	m.syncViews()
 
 	items := m.list.GetInstances()
 	require.Equal(t, []int{1, 3, 0, 2}, ui.SortForOverview(items),
@@ -223,24 +224,24 @@ func TestMoveCursor_OverviewWalksSortedOrder(t *testing.T) {
 	// Down from "a": next overview position is "c" (Deleting) — skipped,
 	// and there is nothing after it, so no wrap: selection stays.
 	m.moveCursor(1)
-	assert.Same(t, a, m.list.GetSelectedInstance(), "Deleting is skipped and the grid does not wrap")
+	assert.Equal(t, idOf(m, a), selID(m.list), "Deleting is skipped and the grid does not wrap")
 
 	// Up from "a" walks the sorted order backwards: d, then b.
 	m.moveCursor(-1)
-	assert.Same(t, d, m.list.GetSelectedInstance())
+	assert.Equal(t, idOf(m, d), selID(m.list))
 	m.moveCursor(-1)
-	assert.Same(t, b, m.list.GetSelectedInstance())
+	assert.Equal(t, idOf(m, b), selID(m.list))
 
 	// Up from the first overview position: no wrap.
 	m.moveCursor(-1)
-	assert.Same(t, b, m.list.GetSelectedInstance())
+	assert.Equal(t, idOf(m, b), selID(m.list))
 
 	// Focus mode keeps plain list-order navigation (List.Down also
 	// skips Deleting, so b → d, passing over c).
 	m.viewMode = viewFocus
 	m.list.SetSelectedInstance(0)
 	m.moveCursor(1)
-	assert.Same(t, b, m.list.GetSelectedInstance(), "focus mode walks list order")
+	assert.Equal(t, idOf(m, b), selID(m.list), "focus mode walks list order")
 	m.moveCursor(1)
-	assert.Same(t, d, m.list.GetSelectedInstance(), "focus mode walks list order past Deleting")
+	assert.Equal(t, idOf(m, d), selID(m.list), "focus mode walks list order past Deleting")
 }

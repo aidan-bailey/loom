@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -191,7 +192,7 @@ func (t *TerminalPane) snapshotScrollByLocked(delta int) {
 // the live emulator screen (capture-pane fallback when no emulator); when
 // scrolled it windows the emulator's scrollback in-process (ScrollModel), or,
 // on the no-emulator path, tmux's authoritative history at the current offset.
-func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
+func (t *TerminalPane) UpdateContent(instance *core.InstanceView) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -199,15 +200,15 @@ func (t *TerminalPane) UpdateContent(instance *session.Instance) error {
 		t.setFallbackState("Select an instance to open a terminal")
 		return nil
 	}
-	if instance.GetStatus() == session.Paused {
+	if instance.Status == session.Paused {
 		t.setFallbackState("Session is paused. Resume to use terminal.")
 		return nil
 	}
-	if instance.GetStatus() == session.Recoverable {
+	if instance.Status == session.Recoverable {
 		t.setFallbackState("Recoverable session. Press 'r' to recover.")
 		return nil
 	}
-	if !instance.Started() {
+	if !instance.Started {
 		t.setFallbackState("Instance is not started yet.")
 		return nil
 	}
@@ -349,21 +350,14 @@ func (t *TerminalPane) updateContentSnapshotLocked(s *tmux.TmuxSession, rows int
 	return nil
 }
 
-// ensureSession creates or reuses a cached terminal tmux session for the given instance.
-func (t *TerminalPane) ensureSession(instance *session.Instance) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.ensureSessionLocked(instance)
-}
-
-// ensureSessionLocked is the lock-free implementation of ensureSession.
-// Caller must hold t.mu.
-func (t *TerminalPane) ensureSessionLocked(instance *session.Instance) error {
-	if instance == nil || !instance.Started() || instance.GetStatus() == session.Paused {
+// ensureSessionLocked creates or reuses a cached terminal tmux session for
+// the given instance. Caller must hold t.mu.
+func (t *TerminalPane) ensureSessionLocked(instance *core.InstanceView) error {
+	if instance == nil || !instance.Started || instance.Status == session.Paused {
 		return nil
 	}
 
-	worktreePath := instance.GetWorktreePath()
+	worktreePath := instance.WorktreePath
 	if worktreePath == "" {
 		return nil
 	}

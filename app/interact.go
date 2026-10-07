@@ -64,7 +64,7 @@ func (m *home) interactMouseRelease() tea.Cmd {
 // TUI agent registers a click on its own UI.
 func (m *home) forwardClickToFocused(pane, row, col int) {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !selected.Pane().TmuxAlive() {
+	if selected == nil || selected.Paused() || !m.tmuxAlive(selected) {
 		return
 	}
 	if pane != m.splitPane.GetFocusedPane() {
@@ -83,7 +83,7 @@ func (m *home) forwardClickToFocused(pane, row, col int) {
 // pasteToFocused sends pasted text into the focused pane as a bracketed paste.
 func (m *home) pasteToFocused(text string) {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !selected.Pane().TmuxAlive() {
+	if selected == nil || selected.Paused() || !m.tmuxAlive(selected) {
 		return
 	}
 	if m.splitPane.GetFocusedPane() == ui.FocusTerminal {

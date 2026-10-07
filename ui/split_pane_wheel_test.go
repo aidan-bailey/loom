@@ -60,8 +60,8 @@ func TestSplitPane_WheelScrollRerendersAgentImmediately(t *testing.T) {
 	sp := NewSplitPane(NewPreviewPane(), NewDiffPane(), NewTerminalPane())
 	sp.SetPanes(setup.panes)
 	sp.SetSize(120, 40)
-	sp.SetInstance(setup.instance)
-	require.NoError(t, sp.UpdateAgent(setup.instance))
+	sp.SetInstance(setup.view)
+	require.NoError(t, sp.UpdateAgent(setup.view))
 	live := sp.agent.previewState.text
 	require.Contains(t, live, "histline200")
 

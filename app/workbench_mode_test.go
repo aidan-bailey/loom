@@ -147,7 +147,7 @@ func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 		Config:  config.DefaultConfig(),
 		State:   stateB,
 	})
-	listB := ui.NewList(&m.spinner, wsB)
+	listB := fixtureList()
 	splitB := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	// The test home's own slot becomes tab ws-a, focused.
 	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) {

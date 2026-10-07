@@ -25,7 +25,11 @@ import (
 type workspaceSlot struct {
 	// ws is the workspace this slot shows; nil only in bare test homes.
 	ws *core.Workspace
-	// list is the session rail; it reads ws's instances.
+	// views is this workspace's instances as the model last published them
+	// (core.ViewsChanged), in display order. Read them through
+	// slotRows/rowsOf, which add the TUI's overlays.
+	views []core.InstanceView
+	// list is the session rail; it reads the slot's rows (slotRows).
 	list *ui.List
 	// splitPane displays the agent and terminal panes with diff overlay.
 	splitPane *ui.SplitPane
@@ -539,9 +543,10 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	// The global slot keeps the departing slot's splitPane and workbench:
 	// the panes are sized and wired already, and the closed tab no longer
 	// uses them.
-	list := ui.NewList(&m.spinner, global)
-	list.SetPanes(m.panes)
-	view := &workspaceSlot{ws: global, list: list, splitPane: m.splitPane, workbench: m.workbench}
+	view := &workspaceSlot{ws: global, splitPane: m.splitPane, workbench: m.workbench}
+	view.list = ui.NewList(&m.spinner, slotRows{m, view})
+	view.list.SetPanes(m.panes)
+	m.seedViews(view)
 
 	// Everything loaded so far is dropped: every tab, or — global mode
 	// entered from a classic workspace slot — that slot. The focused one's
@@ -612,10 +617,10 @@ func (m *home) updateTabBarStatuses() {
 	statuses := make([]ui.TabStatus, len(m.slots))
 	for i, slot := range m.slots {
 		for _, inst := range slot.list.GetInstances() {
-			if !inst.Started() {
+			if !inst.Started {
 				continue
 			}
-			ts := sessionToTabStatus(inst.GetStatus())
+			ts := sessionToTabStatus(inst.Status)
 			if ts > statuses[i] {
 				statuses[i] = ts
 			}

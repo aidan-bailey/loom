@@ -3,8 +3,8 @@ package app
 import (
 	"time"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -35,11 +35,11 @@ func exitInteract(m *home) (tea.Model, tea.Cmd) {
 // program exits, printing a final "[exited]" into the pane, and further
 // keystrokes would silently vanish into the dead PTY forever instead of
 // dropping back to nav.
-func focusedPaneAlive(m *home, selected *session.Instance) bool {
+func focusedPaneAlive(m *home, selected *core.InstanceView) bool {
 	if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
 		return m.splitPane.TerminalTmuxSession() != nil
 	}
-	return selected.Pane().TmuxAlive()
+	return m.tmuxAlive(selected)
 }
 
 // handleStateInlineAttachKey forwards raw key bytes to the focused tmux pane

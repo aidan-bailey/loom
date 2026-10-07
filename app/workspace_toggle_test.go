@@ -12,7 +12,6 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
-	"charm.land/bubbles/v2/spinner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,13 +49,12 @@ func TestApplyWorkspaceToggle_ClassicToGlobalPersists(t *testing.T) {
 	storage, err := session.NewStorage(rec, t.TempDir())
 	require.NoError(t, err)
 
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	ws := testWS(core.WorkspaceParts{
 		Ctx:     &config.WorkspaceContext{Name: "classic-ws", ConfigDir: t.TempDir()},
 		Storage: storage,
 		Config:  config.DefaultConfig(),
 	})
-	list := ui.NewList(&s, ws)
+	list := fixtureList()
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -96,9 +94,8 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 	storage, err := session.NewStorage(rec, t.TempDir())
 	require.NoError(t, err)
 
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	ws := testWS(core.WorkspaceParts{Storage: storage, Config: config.DefaultConfig()})
-	list := ui.NewList(&s, ws)
+	list := fixtureList()
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -137,9 +134,8 @@ func TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots(t *testing.T) {
 	globalDir := t.TempDir()
 	t.Setenv(config.EnvGlobalDir, globalDir)
 
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	ws := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "stale-ws"}, Config: config.DefaultConfig()})
-	list := ui.NewList(&s, ws)
+	list := fixtureList()
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -173,9 +169,8 @@ func TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots(t *testing.T) {
 func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, t.TempDir())
 
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	ws := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "stale-ws"}, Config: config.DefaultConfig()})
-	list := ui.NewList(&s, ws)
+	list := fixtureList()
 	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 
 	h := wireCore(t, &home{
@@ -217,21 +212,19 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 	globalDir := t.TempDir()
 	t.Setenv(config.EnvGlobalDir, globalDir)
 
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-
 	// Two slots, each with its own recording storage. Each one has
 	// to receive a SaveInstances call before being dropped.
 	slotRecA := &recordingInstanceStorage{}
 	storageA, err := session.NewStorage(slotRecA, t.TempDir())
 	require.NoError(t, err)
 	wsA := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}, Storage: storageA, Config: config.DefaultConfig()})
-	slotARecListings := ui.NewList(&s, wsA)
+	slotARecListings := fixtureList()
 
 	slotRecB := &recordingInstanceStorage{}
 	storageB, err := session.NewStorage(slotRecB, t.TempDir())
 	require.NoError(t, err)
 	wsB := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()}, Storage: storageB, Config: config.DefaultConfig()})
-	slotBRecListings := ui.NewList(&s, wsB)
+	slotBRecListings := fixtureList()
 
 	h := &home{
 		ctx:    context.Background(),
@@ -281,7 +274,6 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	corrupt := []byte(`{"help_screens_seen":0,"instances":{"not":"an array"}}`)
 	require.NoError(t, os.WriteFile(statePath, corrupt, 0o644))
 
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	recA := &recordingInstanceStorage{}
 	storageA, err := session.NewStorage(recA, t.TempDir())
 	require.NoError(t, err)
@@ -292,7 +284,7 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	ctxA := &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}
 	wsA := testWS(core.WorkspaceParts{Ctx: ctxA, Storage: storageA, Config: config.DefaultConfig()})
-	listA := ui.NewList(&s, wsA)
+	listA := fixtureList()
 	wsB := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()}, Storage: storageB, Config: config.DefaultConfig()})
 	h := &home{
 		ctx:    context.Background(),
@@ -305,7 +297,7 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 		&workspaceSlot{ws: wsA, list: listA, splitPane: split},
 		&workspaceSlot{
 			ws:        wsB,
-			list:      ui.NewList(&s, wsB),
+			list:      fixtureList(),
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		},
 	)
@@ -365,7 +357,7 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, entries, 1, "nothing is written to LOOM_HOME")
 
-	require.NoError(t, m.storage().SaveInstances(core.Persistable(m.list.GetInstances())))
+	require.NoError(t, m.storage().SaveInstances(core.Persistable(m.ws.Instances())))
 	raw, err := os.ReadFile(filepath.Join(globalDir, config.StateFileName))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "in-global", "global mode saves back to the global dir")
@@ -403,8 +395,8 @@ func TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram(t *testing.T) {
 	require.Empty(t, m.slots)
 	placeholder := m.list.GetInstanceByTitle("dirty")
 	require.NotNil(t, placeholder, "fixture: the orphan surfaces inline")
-	require.Equal(t, session.Recoverable, placeholder.GetStatus())
-	assert.Equal(t, "global-agent", placeholder.Program())
+	require.Equal(t, session.Recoverable, placeholder.Status)
+	assert.Equal(t, "global-agent", placeholder.Program)
 }
 
 // TestEnterGlobalMode_LoadsLikeStartup: enterGlobalMode ran only

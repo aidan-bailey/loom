@@ -69,7 +69,8 @@ func TestRunMergeSelected_BlocksOnDirtyTarget(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	m.ws.Add(target)
-	m.list.SelectInstance(target)
+	m.syncViews()
+	selectIn(m, m.list, target)
 
 	// Make the target worktree dirty.
 	targetWT, err := target.GetGitWorktree()
@@ -87,7 +88,8 @@ func TestRunMergeSelected_BlocksWhenNoEligibleSources(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	m.ws.Add(target)
-	m.list.SelectInstance(target)
+	m.syncViews()
+	selectIn(m, m.list, target)
 
 	_, cmd := runMergeSelected(m)
 	require.NotNil(t, cmd, "expected an error Cmd when there are no other sessions")
@@ -102,7 +104,8 @@ func TestRunMergeSelected_OpensPickerWithEligibleSources(t *testing.T) {
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
 	m.ws.Add(target)
 	m.ws.Add(source)
-	m.list.SelectInstance(target)
+	m.syncViews()
+	selectIn(m, m.list, target)
 
 	_, cmd := runMergeSelected(m)
 	assert.Nil(t, cmd)
@@ -144,7 +147,8 @@ func TestHandleStateMergePickerKey_EscCancelsWithoutMerging(t *testing.T) {
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
 	m.ws.Add(target)
 	m.ws.Add(source)
-	m.list.SelectInstance(target)
+	m.syncViews()
+	selectIn(m, m.list, target)
 
 	_, cmd := runMergeSelected(m)
 	require.Nil(t, cmd)
@@ -173,7 +177,8 @@ func TestHandleStateMergePickerKey_EnterMergesTheDisplayedTarget(t *testing.T) {
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
 	m.ws.Add(target)
 	m.ws.Add(source)
-	m.list.SelectInstance(target)
+	m.syncViews()
+	selectIn(m, m.list, target)
 
 	sourceWT, err := source.GetGitWorktree()
 	require.NoError(t, err)
@@ -216,7 +221,8 @@ func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) 
 	m.ws.Add(target)
 	m.ws.Add(source)
 	m.ws.Add(other)
-	m.list.SelectInstance(target)
+	m.syncViews()
+	selectIn(m, m.list, target)
 
 	sourceWT, err := source.GetGitWorktree()
 	require.NoError(t, err)
@@ -231,7 +237,7 @@ func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) 
 	// Simulate a background message reassigning the list's selection
 	// while the picker is open (m.state gates key routing, not Msg
 	// handling in Update()).
-	m.list.SelectInstance(other)
+	selectIn(m, m.list, other)
 
 	_, cmd = handleStateMergePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.NotNil(t, cmd)

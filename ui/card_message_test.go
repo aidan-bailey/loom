@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/hooks"
 
@@ -37,11 +38,11 @@ func TestBuildCardData_LastMessageReplacesTailWhenStopped(t *testing.T) {
 		LastAssistantMessage: "All tests pass.\nShould I push?", At: time.Now()})
 	require.NoError(t, inst.TransitionTo(session.Ready))
 
-	d := BuildCardData(inst, Pane{}, false, "", 2)
+	d := BuildCardData(core.ViewForTest(inst, 1), Pane{}, false, "", 2)
 	assert.Equal(t, []string{"All tests pass.", "Should I push?"}, d.TailLines)
 
 	require.NoError(t, inst.TransitionTo(session.Running))
-	d = BuildCardData(inst, Pane{}, false, "", 2)
+	d = BuildCardData(core.ViewForTest(inst, 1), Pane{}, false, "", 2)
 	assert.Empty(t, d.TailLines, "a working session shows the live tail (none here: no emulator)")
 }
 
@@ -52,6 +53,6 @@ func TestBuildCardData_PermissionRequestShowsLiveTail(t *testing.T) {
 		hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: now.Add(time.Second)})
 	require.NoError(t, inst.TransitionTo(session.Prompting))
 
-	d := BuildCardData(inst, Pane{}, false, "", 2)
+	d := BuildCardData(core.ViewForTest(inst, 1), Pane{}, false, "", 2)
 	assert.Empty(t, d.TailLines, "the stored message belongs to the previous turn; the dialog is on screen")
 }

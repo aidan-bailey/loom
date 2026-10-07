@@ -26,6 +26,7 @@ func newPausedInstanceHome(t *testing.T) (*home, *session.Instance) {
 	m.ws.Add(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 	require.NoError(t, inst.TransitionTo(session.Paused))
+	m.syncViews()
 	return m, inst
 }
 

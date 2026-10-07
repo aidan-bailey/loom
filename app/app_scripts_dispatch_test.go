@@ -64,6 +64,7 @@ func addReadyInstance(t *testing.T, h *home) *session.Instance {
 	}
 	ts := tmux.NewSessionWithDeps("a", "true", fakePtyFactory{t: t}, cmdExec)
 	inst.SetTmuxSession(ts)
+	h.syncViews()
 	return inst
 }
 
@@ -160,6 +161,7 @@ func TestHandleScriptIntentResume(t *testing.T) {
 	inst := addReadyInstance(t, m)
 	// Resume only transitions from Paused.
 	require.NoError(t, inst.TransitionTo(session.Paused))
+	m.syncViews()
 
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
@@ -186,6 +188,7 @@ func TestHandleScriptIntentRestartWithOptions(t *testing.T) {
 	m.ws.Add(inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
 	require.NoError(t, inst.TransitionTo(session.Paused))
+	m.syncViews()
 
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
@@ -259,7 +262,7 @@ func TestHandleScriptIntentInlineAttach(t *testing.T) {
 func TestHandleScriptIntentInlineAttachAgentResetsScroll(t *testing.T) {
 	m := homeWithAppState(t)
 	inst := addReadyInstance(t, m)
-	m.splitPane.SetInstance(inst)
+	m.splitPane.SetInstance(rowOf(t, m, inst))
 
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),

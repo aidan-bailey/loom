@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session/vt"
 )
 
@@ -22,7 +22,7 @@ func cursorLocal(pane int, agentHeight int, c vt.Cursor) (x, y int) {
 // should be shown: diff overlay up, focused pane scrolled off the live tail
 // or showing fallback text, no emulator-backed session, cursor hidden
 // (DECTCEM), or the cell out of the pane's bounds.
-func (s *SplitPane) CursorScreenPosition(instance *session.Instance) (x, y int, cur vt.Cursor, ok bool) {
+func (s *SplitPane) CursorScreenPosition(instance *core.InstanceView) (x, y int, cur vt.Cursor, ok bool) {
 	if s.diffVisible {
 		return 0, 0, vt.Cursor{}, false
 	}

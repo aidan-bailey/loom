@@ -3,7 +3,6 @@ package app
 import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 
 	tea "charm.land/bubbletea/v2"
@@ -34,7 +33,7 @@ import (
 //     right away is left to the tick for a moment (ui's quickExitHoldoff),
 //     or each exit's Dead event would attach it again at once.
 //
-// Only an active instance (activeInstance) gets a client: a paused,
+// Only an active instance (InstanceView.Active) gets a client: a paused,
 // Recoverable, Loading or Deleting one has nothing to display, and an
 // op in flight on it (a kill, a pause) closes its session.
 //
@@ -53,36 +52,42 @@ import (
 // client: those of the active instances of every loaded slot.
 func (m *home) livePaneNames() map[string]bool {
 	names := make(map[string]bool)
-	for _, inst := range m.core.ActiveInstances() {
-		if name := inst.Pane().TmuxSessionName(); name != "" {
+	for _, v := range m.activeViews() {
+		if name := v.TmuxSession; name != "" {
 			names[name] = true
 		}
 	}
 	return names
 }
 
-// ensurePane gives inst's session a client, re-attaching one whose PTY is
-// gone (ui.PaneClients.Ensure). A no-op for an inactive instance.
-func (m *home) ensurePane(inst *session.Instance) {
-	name := inst.Pane().TmuxSessionName()
-	if name == "" || !core.ActiveInstance(inst) {
+// ensurePane gives v's session a client, re-attaching one whose PTY is
+// gone (ui.PaneClients.Ensure). A no-op for nil or an inactive instance.
+func (m *home) ensurePane(v *core.InstanceView) {
+	if v == nil {
 		return
 	}
-	if err := m.panes.Ensure(name, inst.Pane().SessionProgram()); err != nil {
+	name := v.TmuxSession
+	if name == "" || !v.Active() {
+		return
+	}
+	if err := m.panes.Ensure(name, v.SessionProgram); err != nil {
 		log.For("app").Error("pane.attach_failed", "session", name, "err", err)
 	}
 }
 
-// replacePane gives inst's session, just (re)launched, a fresh client. It
+// replacePane gives v's session, just (re)launched, a fresh client. It
 // returns a Cmd closing the client it replaced, or nil when there was none.
-// A no-op for an inactive instance (a recover that could only mark its
-// record Paused, say): the next prune closes any client of its name.
-func (m *home) replacePane(inst *session.Instance) tea.Cmd {
-	name := inst.Pane().TmuxSessionName()
-	if name == "" || !core.ActiveInstance(inst) {
+// A no-op for nil or an inactive instance (a recover that could only mark
+// its record Paused, say): the next prune closes any client of its name.
+func (m *home) replacePane(v *core.InstanceView) tea.Cmd {
+	if v == nil {
 		return nil
 	}
-	old, err := m.panes.Replace(name, inst.Pane().SessionProgram())
+	name := v.TmuxSession
+	if name == "" || !v.Active() {
+		return nil
+	}
+	old, err := m.panes.Replace(name, v.SessionProgram)
 	if err != nil {
 		log.For("app").Error("pane.attach_failed", "session", name, "err", err)
 	}
@@ -94,8 +99,8 @@ func (m *home) replacePane(inst *session.Instance) tea.Cmd {
 
 // ensureSlotPanes gives every active instance of slot a client.
 func (m *home) ensureSlotPanes(slot *workspaceSlot) {
-	for _, inst := range slot.list.GetInstances() {
-		m.ensurePane(inst)
+	for _, v := range slot.list.GetInstances() {
+		m.ensurePane(&v)
 	}
 }
 

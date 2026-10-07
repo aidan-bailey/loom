@@ -4,6 +4,7 @@ import (
 	"fmt"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/files"
@@ -42,7 +43,7 @@ func selectedNotBusyNotWorkspace(m *home) bool {
 	if selected == nil || selected.IsWorkspaceTerminal {
 		return false
 	}
-	s := selected.GetStatus()
+	s := selected.Status
 	return s != session.Loading && s != session.Deleting
 }
 
@@ -54,7 +55,7 @@ func selectedResumableNotWorkspace(m *home) bool {
 	if selected == nil || selected.IsWorkspaceTerminal {
 		return false
 	}
-	s := selected.GetStatus()
+	s := selected.Status
 	return s == session.Paused || s == session.Recoverable
 }
 
@@ -68,17 +69,17 @@ func selectedPausedNotWorkspace(m *home) bool {
 	if selected == nil || selected.IsWorkspaceTerminal {
 		return false
 	}
-	return selected.GetStatus() == session.Paused
+	return selected.Status == session.Paused
 }
 
 // selectedReadyForInput gates attach/quick-input: the instance must
 // exist, have a live tmux pane, and not be mid-lifecycle.
 func selectedReadyForInput(m *home) bool {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !selected.Pane().TmuxAlive() {
+	if selected == nil || selected.Paused() || !m.tmuxAlive(selected) {
 		return false
 	}
-	s := selected.GetStatus()
+	s := selected.Status
 	return s != session.Loading && s != session.Deleting
 }
 
@@ -132,6 +133,7 @@ func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 	}
 
 	m.ws.Add(instance)
+	m.syncViews() // the row the add made, for the selection below
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.pendingNew = instance
 	m.state = stateNew
@@ -162,6 +164,7 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 	}
 
 	m.ws.Add(instance)
+	m.syncViews() // the row the add made, for the selection below
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.pendingNew = instance
 	m.state = stateNew
@@ -172,10 +175,15 @@ func runNewInstance(m *home) (tea.Model, tea.Cmd) {
 
 func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	preAction, job := m.core.KillInst(m.ws, selected, m.closeTerminalFor(selected.Title, "kill"))
+	// The instance, through the bridge until package C kills by request.
+	inst := m.instOf(selected.ID)
+	if inst == nil {
+		return m, nil
+	}
+	preAction, job := m.core.KillInst(m.ws, inst, m.closeTerminalFor(selected.Title, "kill"))
 	killAction := coreCmd(job)
 	message := fmt.Sprintf("[!] Kill session '%s'?", selected.Title)
-	if selected.GetStatus() == session.Recoverable {
+	if selected.Status == session.Recoverable {
 		message = fmt.Sprintf("[!] Discard recoverable session '%s'? Uncommitted changes are lost; the branch is kept.", selected.Title)
 	}
 	return m, m.confirmTask(message, overlay.ConfirmationTask{
@@ -189,15 +197,26 @@ func runKillSelected(m *home) (tea.Model, tea.Cmd) {
 // killAction. Used by cs.actions.kill_selected{confirm=false}.
 func runKillSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	preAction, job := m.core.KillInst(m.ws, selected, m.closeTerminalFor(selected.Title, "kill"))
+	// The instance, through the bridge until package C kills by request.
+	inst := m.instOf(selected.ID)
+	if inst == nil {
+		return m, nil
+	}
+	preAction, job := m.core.KillInst(m.ws, inst, m.closeTerminalFor(selected.Title, "kill"))
 	killAction := coreCmd(job)
 	preAction()
+	m.syncViews() // the Deleting it wrote, for the rest of this Update
 	return m, killAction
 }
 
 func runSubmitSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	pushAction := coreCmd(m.core.PushInst(selected))
+	// The instance, through the bridge until package C pushes by request.
+	inst := m.instOf(selected.ID)
+	if inst == nil {
+		return m, nil
+	}
+	pushAction := coreCmd(m.core.PushInst(inst))
 	message := fmt.Sprintf("[!] Push changes from session '%s'?", selected.Title)
 	return m, m.confirmAction(message, pushAction)
 }
@@ -206,7 +225,12 @@ func runSubmitSelected(m *home) (tea.Model, tea.Cmd) {
 // confirmation overlay. Used by cs.actions.push_selected{confirm=false}.
 func runSubmitSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	return m, coreCmd(m.core.PushInst(selected))
+	// The instance, through the bridge until package C pushes by request.
+	inst := m.instOf(selected.ID)
+	if inst == nil {
+		return m, nil
+	}
+	return m, coreCmd(m.core.PushInst(inst))
 }
 
 // runStashSelectedOpts is the parameterized pause path. confirm
@@ -217,19 +241,25 @@ func runSubmitSelectedNoConfirm(m *home) (tea.Model, tea.Cmd) {
 // renders immediately.
 func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	pauseAction := coreCmd(m.core.PauseInst(m.ws, selected, m.closeTerminalFor(selected.Title, "pause")))
+	// The instance, through the bridge until package C pauses by request.
+	inst := m.instOf(selected.ID)
+	if inst == nil {
+		return m, nil
+	}
+	pauseAction := coreCmd(m.core.PauseInst(m.ws, inst, m.closeTerminalFor(selected.Title, "pause")))
 
 	startPause := func() tea.Cmd {
 		if !confirm {
-			if err := selected.TransitionTo(session.Loading); err != nil {
+			if err := inst.TransitionTo(session.Loading); err != nil {
 				log.For("app").Warn("pause.preaction_transition_failed", "err", err)
 			}
+			m.syncViews() // the Loading it wrote, for the rest of this Update
 			return pauseAction
 		}
 		message := fmt.Sprintf("[!] Pause session '%s'?", selected.Title)
 		return m.confirmTask(message, overlay.ConfirmationTask{
 			Sync: func() {
-				if err := selected.TransitionTo(session.Loading); err != nil {
+				if err := inst.TransitionTo(session.Loading); err != nil {
 					log.For("app").Warn("pause.preaction_transition_failed", "err", err)
 				}
 			},
@@ -245,6 +275,11 @@ func runStashSelectedOpts(m *home, confirm, help bool) (tea.Model, tea.Cmd) {
 
 func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
+	// The instance, through the bridge until package C resumes by request.
+	inst := m.instOf(selected.ID)
+	if inst == nil {
+		return m, nil
+	}
 
 	// Flip to Loading immediately (core.Model.Resume) so the list shows
 	// the spinner while Resume's blocking worktree/tmux setup runs in a
@@ -252,17 +287,18 @@ func runResumeSelected(m *home) (tea.Model, tea.Cmd) {
 	// concurrent reconcile flip between the precondition check and this
 	// write can't leave us starting Resume on a non-Paused instance:
 	// Resume then returns no job.
-	job := m.core.ResumeInst(m.ws, selected)
+	job := m.core.ResumeInst(m.ws, inst)
 	if job == nil {
 		return m, nil
 	}
+	m.syncViews() // the Loading it wrote, for instanceChanged
 	return m, tea.Batch(tea.RequestWindowSize, m.instanceChanged(), coreCmd(job))
 }
 
 // runResumeOrRecover routes the 'r' key: Recoverable orphans are adopted
 // (recover), Paused instances are resumed.
 func runResumeOrRecover(m *home) (tea.Model, tea.Cmd) {
-	if m.list.GetSelectedInstance().GetStatus() == session.Recoverable {
+	if m.list.GetSelectedInstance().Status == session.Recoverable {
 		return runRecoverSelected(m)
 	}
 	return runResumeSelected(m)
@@ -277,36 +313,44 @@ func runResumeOrRecover(m *home) (tea.Model, tea.Cmd) {
 // (pendingLaunchOptionsCancel, not the creation flow's pop-and-kill).
 func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	selected := m.list.GetSelectedInstance()
-	opts, base := launch.Parse(selected.Program())
+	opts, base := launch.Parse(selected.Program)
 	// HeadroomProxy/CacheTTL1h are never baked into the program (see
 	// session.HeadroomProxyEnv/CacheTTL1hEnv) — launch.Parse can't
 	// recover them, so seed them from the instance's own settings instead.
-	opts.HeadroomProxy = selected.HeadroomProxy()
-	opts.CacheTTL1h = selected.CacheTTL1h()
+	opts.HeadroomProxy = selected.HeadroomProxy
+	opts.CacheTTL1h = selected.CacheTTL1h
 	// The account never reaches the program either; seed it from the
 	// instance so R preselects the session's own account.
-	opts.Account = accountOrDefault(selected.Account())
+	opts.Account = accountOrDefault(selected.Account)
 
 	m.pendingLaunchOptions = func(newOpts overlay.LaunchOptions) (tea.Model, tea.Cmd) {
+		// The instance, through the bridge until package C resumes by
+		// request (ResumeWith).
+		inst := m.instOf(selected.ID)
+		if inst == nil {
+			m.state = stateDefault
+			m.menu.SetState(ui.StateDefault)
+			return m, nil
+		}
 		// Snapshot the save and stamp the owner here, on the main
 		// goroutine — Async below runs on a Cmd goroutine and must not
 		// read the model.
-		resumeJob := m.core.ResumeIfLoadingInst(m.ws, selected)
+		resumeJob := m.core.ResumeIfLoadingInst(m.ws, inst)
 		resumeTask := overlay.ConfirmationTask{
 			Sync: func() {
-				m.applyChosenLaunch(selected, newOpts, base)
+				m.applyChosenLaunch(inst, newOpts, base)
 				m.state = stateDefault
 				m.menu.SetState(ui.StateDefault)
-				if err := selected.TransitionTo(session.Loading); err != nil {
+				if err := inst.TransitionTo(session.Loading); err != nil {
 					log.For("app").Warn("resume.skipped", "err", err)
 				}
 			},
 			Async: tea.Batch(tea.RequestWindowSize, coreCmd(resumeJob)),
 		}
-		if m.remoteControlBlockedOn(newOpts.Account, launch.EffectiveRemoteControl(newOpts), selected.Program()) {
+		if m.remoteControlBlockedOn(newOpts.Account, launch.EffectiveRemoteControl(newOpts), inst.Program()) {
 			return m, m.promptRestartRemoteControlBlocked(resumeTask, m.core.RCAuthFor(newOpts.Account).Reason)
 		}
-		return m, tea.Batch(resumeTask.Run(), m.instanceChanged())
+		return m, tea.Batch(m.runTask(resumeTask), m.instanceChanged())
 	}
 	m.pendingLaunchOptionsCancel = func() (tea.Model, tea.Cmd) {
 		m.state = stateDefault
@@ -317,7 +361,7 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 	lo, reloaded := m.newLaunchOptionsOverlay(opts, base)
 	// The branch already exists, so the prefix row shows it read-only rather
 	// than implying a rename that restarting cannot perform.
-	lo.SetBranchPrefixLocked(selected.GetBranch())
+	lo.SetBranchPrefixLocked(selected.Branch)
 	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
 	m.core.RequestUsageProbe()
@@ -330,10 +374,21 @@ func runRestartWithOptionsSelected(m *home) (tea.Model, tea.Cmd) {
 // off the UI goroutine. The list swap + persist happen when the model
 // delivers its result, on the main goroutine.
 func runRecoverSelected(m *home) (tea.Model, tea.Cmd) {
-	job := m.core.RecoverInst(m.ws, m.list.GetSelectedInstance())
+	// The instance, through the bridge until package C recovers by
+	// request.
+	sel := m.list.GetSelectedInstance()
+	if sel == nil {
+		return m, nil
+	}
+	inst := m.instOf(sel.ID)
+	if inst == nil {
+		return m, nil
+	}
+	job := m.core.RecoverInst(m.ws, inst)
 	if job == nil {
 		return m, nil
 	}
+	m.syncViews() // the Loading it wrote, for instanceChanged
 	return m, tea.Batch(coreCmd(job), m.instanceChanged())
 }
 
@@ -491,12 +546,12 @@ func runToggleFileExplorer(m *home) (tea.Model, tea.Cmd) {
 	case selected == nil:
 		root = m.repoPath()
 	case selected.IsWorkspaceTerminal:
-		root = selected.GetWorktreePath()
+		root = selected.WorktreePath
 		if root == "" {
 			root = m.repoPath()
 		}
 	default:
-		root = selected.GetWorktreePath()
+		root = selected.WorktreePath
 		if root == "" {
 			return m, m.handleError(fmt.Errorf("instance not ready"))
 		}
@@ -566,8 +621,13 @@ func runMergeSelected(m *home) (tea.Model, tea.Cmd) {
 		return m, m.handleError(fmt.Errorf("no session selected, or the selection can't be merged into"))
 	}
 	target := m.list.GetSelectedInstance()
+	// The worktree, through the bridge until package C merges by request.
+	targetInst := m.instOf(target.ID)
+	if targetInst == nil {
+		return m, nil
+	}
 
-	worktree, err := target.GetGitWorktree()
+	worktree, err := targetInst.GetGitWorktree()
 	if err != nil {
 		return m, m.handleError(fmt.Errorf("merge: %w", err))
 	}
@@ -585,7 +645,7 @@ func runMergeSelected(m *home) (tea.Model, tea.Cmd) {
 	}
 
 	m.pendingMergeTarget = target
-	m.pendingMergeSourceItems = make([]*session.Instance, len(m.list.GetInstances()))
+	m.pendingMergeSourceItems = make([]core.InstanceView, len(m.list.GetInstances()))
 	copy(m.pendingMergeSourceItems, m.list.GetInstances())
 
 	m.setOverlay(overlay.NewMergePicker(target.Title, rows), overlayMergePicker)
@@ -599,20 +659,20 @@ func runMergeSelected(m *home) (tea.Model, tea.Cmd) {
 // the target itself, labeled with its original position in items
 // (ui.DisplayIndex) so a typed digit matches what's on-screen in the
 // main list.
-func mergeSourceRows(items []*session.Instance, target *session.Instance) []overlay.MergePickerRow {
+func mergeSourceRows(items []core.InstanceView, target *core.InstanceView) []overlay.MergePickerRow {
 	var rows []overlay.MergePickerRow
 	for i, inst := range items {
-		if inst == target || inst.IsWorkspaceTerminal {
+		if inst.ID == target.ID || inst.IsWorkspaceTerminal {
 			continue
 		}
-		status := inst.GetStatus()
+		status := inst.Status
 		if status == session.Loading || status == session.Deleting {
 			continue
 		}
 		rows = append(rows, overlay.MergePickerRow{
 			Index:  ui.DisplayIndex(items, i),
 			Title:  inst.Title,
-			Branch: inst.GetBranch(),
+			Branch: inst.Branch,
 			Status: status.String(),
 		})
 	}
@@ -627,15 +687,15 @@ func mergeSourceRows(items []*session.Instance, target *session.Instance) []over
 // picker is open can't redirect the merge to a different session (see
 // runMergeSelected). The trade-off: if a source instance is killed or
 // otherwise removed from m.list between the picker opening and commit,
-// this can still resolve it from the snapshot; the subsequent git
-// merge attempt then simply fails with a normal surfaced git error
-// (e.g. a missing branch/worktree) rather than silently succeeding or
+// this can still resolve it from the snapshot; the merge then fails
+// with a surfaced error (the session is gone, see
+// handleStateMergePickerKey) rather than silently succeeding or
 // corrupting anything — an accepted, bounded failure mode, not a
 // re-validated precondition.
-func instanceByDisplayIndex(items []*session.Instance, idx int) *session.Instance {
-	for i, inst := range items {
+func instanceByDisplayIndex(items []core.InstanceView, idx int) *core.InstanceView {
+	for i := range items {
 		if ui.DisplayIndex(items, i) == idx {
-			return inst
+			return &items[i]
 		}
 	}
 	return nil

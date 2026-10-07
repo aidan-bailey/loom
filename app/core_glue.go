@@ -3,7 +3,6 @@ package app
 import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -23,8 +22,10 @@ func coreCmd(job core.Job) tea.Cmd {
 }
 
 // drainCore applies everything the model produced since the last drain:
-// each event in order (applyCoreEvent), and each job as a Cmd. Applying an
-// event can call the model again, so it drains until nothing is left.
+// the views that changed first (core.ViewsChanged, from core.Model.Sync),
+// then each event in order (applyCoreEvent), and each job as a Cmd.
+// Applying an event can call the model again, so it drains until nothing
+// is left.
 // Update runs it after every message. A caller whose later steps must see
 // an event's effect (a workspace transition) runs it right after the model
 // call. A bare test home without a model drains nothing.
@@ -33,7 +34,7 @@ func (m *home) drainCore() tea.Cmd {
 		return nil
 	}
 	var cmds []tea.Cmd
-	for out := m.core.Drain(); !out.Empty(); out = m.core.Drain() {
+	for out := m.core.Sync(); !out.Empty(); out = m.core.Sync() {
 		for _, ev := range out.Events {
 			cmds = append(cmds, m.applyCoreEvent(ev))
 		}
@@ -47,6 +48,13 @@ func (m *home) drainCore() tea.Cmd {
 // applyCoreEvent applies one model event to the view.
 func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 	switch ev := ev.(type) {
+	case core.ViewsChanged:
+		if s := m.slotFor(ev.Workspace); s != nil {
+			s.views = ev.Views
+			if s == m.workspaceSlot {
+				m.refreshSelection()
+			}
+		}
 	case core.Notice:
 		if ev.Err != nil {
 			return m.handleError(ev.Err)
@@ -61,9 +69,11 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 	case core.ClientsStale:
 		return m.prunePanes()
 	case core.SessionLaunched:
-		return m.replacePane(ev.Instance)
+		v, _ := m.viewByID(ev.ID)
+		return m.replacePane(v)
 	case core.Reactivated:
-		m.ensurePane(ev.Instance)
+		v, _ := m.viewByID(ev.ID)
+		m.ensurePane(v)
 	case core.Started:
 		return m.applyStarted(ev)
 	case core.Recovered:
@@ -71,8 +81,9 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 	case core.StatusesChanged:
 		m.updateTabBarStatuses()
 	case core.Alive:
-		for _, inst := range ev.Instances {
-			if inst == m.attachingInstance || m.panes.For(inst).Attached() {
+		for _, id := range ev.IDs {
+			v, _ := m.viewByID(id)
+			if v == nil || id == m.attachingID || m.panes.For(v).Attached() {
 				continue
 			}
 			// The session exists but its attach client is not attached (a
@@ -80,8 +91,8 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 			// client's pump hit EOF on a session that has since been
 			// relaunched under the same name). Self-heal here: the same
 			// shape as the workspace-terminal restart, at the client layer.
-			log.For("app").Warn("pane.client_dead_repairing", "title", inst.Title, "source", ev.Source)
-			m.ensurePane(inst)
+			log.For("app").Warn("pane.client_dead_repairing", "title", v.Title, "source", ev.Source)
+			m.ensurePane(v)
 		}
 	case core.HealthChecked:
 		// A user parked on the workbench's diff tab generates none of the
@@ -123,10 +134,12 @@ func (m *home) closeTerminalFor(title, op string) func() {
 }
 
 // newSlotView builds the view of a loaded workspace: a rail reading its
-// instances, a split pane and a workbench, sized when the terminal size is
-// known. Its agent sessions get their pane clients (ensureSlotPanes).
+// rows, a split pane and a workbench, sized when the terminal size is
+// known. Its store is seeded from the model (seedViews), and its agent
+// sessions get their pane clients (ensureSlotPanes).
 func (m *home) newSlotView(ws *core.Workspace) *workspaceSlot {
-	list := ui.NewList(&m.spinner, ws)
+	slot := &workspaceSlot{ws: ws}
+	list := ui.NewList(&m.spinner, slotRows{m, slot})
 	list.SetPanes(m.panes)
 	list.SetWorkspaceName(ws.Name())
 	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
@@ -139,12 +152,10 @@ func (m *home) newSlotView(ws *core.Workspace) *workspaceSlot {
 		list.SetSize(listWidth, contentHeight)
 		splitPane.SetSize(paneWidth, contentHeight)
 	}
-	slot := &workspaceSlot{
-		ws:        ws,
-		list:      list,
-		splitPane: splitPane,
-		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitPane.Terminal()),
-	}
+	slot.list = list
+	slot.splitPane = splitPane
+	slot.workbench = ui.NewWorkbench(ui.NewDiffPane(), splitPane.Terminal())
+	m.seedViews(slot)
 	m.ensureSlotPanes(slot)
 	return slot
 }
@@ -163,8 +174,8 @@ func (m *home) slotFor(ws *core.Workspace) *workspaceSlot {
 	return nil
 }
 
-// slotHolding returns the loaded slot whose workspace holds inst (by
-// identity), or nil.
-func (m *home) slotHolding(inst *session.Instance) *workspaceSlot {
-	return m.slotFor(m.core.Holding(inst))
+// slotHolding returns the open slot whose rows hold id, or nil.
+func (m *home) slotHolding(id core.InstanceID) *workspaceSlot {
+	_, s := m.viewByID(id)
+	return s
 }

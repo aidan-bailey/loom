@@ -52,6 +52,23 @@ func (m *Model) lookup(id InstanceID) (*session.Instance, *Workspace) {
 	return nil, nil
 }
 
+// InstanceOf resolves id to its instance, nil when no loaded workspace
+// holds it. A bridge: it serves the TUI's write paths until package C turns
+// them into requests, and the script host until package D. Deleted in D.
+func (m *Model) InstanceOf(id InstanceID) *session.Instance {
+	inst, _ := m.lookup(id)
+	return inst
+}
+
+// IDFor returns inst's ID, if a loaded workspace holds it. A bridge for the
+// script host's resumed instances until package D. Deleted in D.
+func (m *Model) IDFor(inst *session.Instance) (InstanceID, bool) {
+	if m.Holding(inst) == nil {
+		return 0, false
+	}
+	return m.idOf(inst), true
+}
+
 // viewOf copies inst's state into a view, under the instance's own locks.
 func (m *Model) viewOf(inst *session.Instance) InstanceView {
 	pane := inst.Pane()

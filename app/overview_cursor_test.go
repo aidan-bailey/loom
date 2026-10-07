@@ -31,11 +31,10 @@ func fleetSlot(t *testing.T, name string, titles ...string) *workspaceSlot {
 	for _, ti := range titles {
 		ws.Add(&session.Instance{Title: ti, Status: session.Ready})
 	}
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	return &workspaceSlot{
 		ws:        ws,
-		list:      ui.NewList(&s, ws),
+		list:      fixtureList(),
 		splitPane: sp,
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 	}

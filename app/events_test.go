@@ -24,15 +24,16 @@ func TestPaneDirtyRerendersScrolledAgent(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
-	require.Same(t, inst, m.list.GetSelectedInstance())
+	m.syncViews()
+	require.Equal(t, idOf(m, inst), selID(m.list))
 	m.splitPane.SetSize(100, 40)
-	m.splitPane.SetInstance(inst)
+	m.splitPane.SetInstance(rowOf(t, m, inst))
 
-	require.NoError(t, m.splitPane.UpdateAgent(inst))
+	require.NoError(t, m.splitPane.UpdateAgent(rowOf(t, m, inst)))
 	for i := 0; i < 30; i++ {
 		m.splitPane.ScrollAgentUp()
 	}
-	require.NoError(t, m.splitPane.UpdateAgent(inst))
+	require.NoError(t, m.splitPane.UpdateAgent(rowOf(t, m, inst)))
 	require.True(t, m.splitPane.IsAgentInScrollMode())
 
 	before := historyCaptures
@@ -52,6 +53,7 @@ func TestPaneQuietRunsStatusDetection(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 
 	// Quiet handler returns a statusDetectCmd; run it and feed the result
 	// message back through Update, as the Bubble Tea runtime would.
@@ -80,6 +82,7 @@ func TestPtyDeadVerifiesBeforePausing(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 
 	_, cmd := m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd, "dead event on a live instance must schedule verification")
@@ -107,16 +110,17 @@ func TestBellBadgesUnselectedInstance(t *testing.T) {
 	m := homeWithAppState(t)
 	m.ws.Add(inst1) // first add is auto-selected
 	m.ws.Add(inst2)
+	m.syncViews()
 
 	_, _ = m.Update(bellMsg{session: inst2.Pane().TmuxSessionName()})
-	require.True(t, inst2.BellPending(), "bell on unselected instance must badge it")
+	require.True(t, bell(m, inst2), "bell on unselected instance must badge it")
 
 	_, _ = m.Update(bellMsg{session: inst1.Pane().TmuxSessionName()})
-	require.False(t, inst1.BellPending(), "bell on the selected instance is not badged")
+	require.False(t, bell(m, inst1), "bell on the selected instance is not badged")
 
 	m.list.SetSelectedInstance(1) // select inst2
 	_ = m.instanceChanged()
-	require.False(t, inst2.BellPending(), "selecting a badged instance clears the badge")
+	require.False(t, bell(m, inst2), "selecting a badged instance clears the badge")
 }
 
 // TestStatusDetection_NoClientGivesNoOpinion: a pane with no client has
@@ -129,9 +133,10 @@ func TestStatusDetection_NoClientGivesNoOpinion(t *testing.T) {
 	m := newTestHome(t)
 	inst := liveInstance(t, "working")
 	m.ws.Add(inst)
+	m.syncViews()
 	name := inst.Pane().TmuxSessionName()
 	m.panes.Retain(nil) // its client was released
-	require.Nil(t, m.panes.For(inst).Client())
+	require.Nil(t, m.panes.For(rowOf(t, m, inst)).Client())
 
 	_, cmd := m.Update(redetectMsg{session: name})
 	if cmd != nil {

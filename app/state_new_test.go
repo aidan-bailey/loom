@@ -29,6 +29,7 @@ func newPendingTitleEntryHome(t *testing.T) *home {
 	})
 	require.NoError(t, err)
 	m.ws.Add(instance)
+	m.syncViews()
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.pendingNew = instance
 	m.state = stateNew
@@ -58,7 +59,7 @@ func TestNewInstanceFlowEndToEndComposesRealClosure(t *testing.T) {
 	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // opens the real modal + stashes the real closure
 
 	require.Equal(t, stateLaunchOptions, m.state)
-	instance := m.list.GetInstances()[m.list.NumInstances()-1]
+	instance := lastInst(m)
 
 	// Move to Model row (row 2), cycle it, then confirm through the real
 	// handleStateLaunchOptionsKey -> real pendingLaunchOptions closure

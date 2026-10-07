@@ -8,7 +8,6 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 
-	"charm.land/bubbles/v2/spinner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,16 +31,14 @@ func peerTestInstance(t *testing.T, title string) *session.Instance {
 // right bucket: Prompting and bell-pending → Attention, Running →
 // Running, unstarted (Ready) → Idle.
 func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	wsA := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-a"}})
 	wsB := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-b"}})
-	listA := ui.NewList(&s, wsA)
-	listB := ui.NewList(&s, wsB)
+	listA := fixtureList()
+	listB := fixtureList()
 
 	prompting := peerTestInstance(t, "prompting")
 	require.NoError(t, prompting.TransitionTo(session.Prompting))
 	belled := peerTestInstance(t, "belled")
-	belled.SetBellPending(true)
 	running := peerTestInstance(t, "running")
 	require.NoError(t, running.TransitionTo(session.Running))
 	idle := peerTestInstance(t, "idle")
@@ -56,6 +53,7 @@ func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 		&workspaceSlot{ws: wsB, list: listB},
 	)
 	wireCore(t, h)
+	ring(h, belled) // a bell is the TUI's: set once its home exists
 
 	h.refreshPeerSections()
 
@@ -67,9 +65,8 @@ func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 // TestRefreshPeerSections_SingleSlotClears verifies that dropping to a
 // single slot clears any previously set peer sections.
 func TestRefreshPeerSections_SingleSlotClears(t *testing.T) {
-	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	wsA := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-a"}})
-	listA := ui.NewList(&s, wsA)
+	listA := fixtureList()
 	listA.SetPeerSections([]ui.PeerSection{{Name: "stale", Idle: 1}})
 
 	h := &home{}

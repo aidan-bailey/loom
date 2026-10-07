@@ -22,7 +22,7 @@ import (
 // for an instance owned by a non-focused slot and asserts the row is gone.
 func TestKillResult_RemovesFromNonFocusedSlot(t *testing.T) {
 	m := fleetHome(t) // slot 0 "afocus" (f1,f2) focused; slot 1 "bpeer" (b1)
-	b1 := m.slots[1].list.GetInstanceByTitle("b1")
+	b1 := instByTitle(m, m.slots[1].list, "b1")
 	require.NotNil(t, b1)
 	require.NoError(t, b1.TransitionTo(session.Deleting))
 
@@ -39,14 +39,15 @@ func TestKillResult_DuplicateTitleAcrossSlots(t *testing.T) {
 	m := fleetHome(t)
 	dup := &session.Instance{Title: "b1", Status: session.Ready}
 	m.ws.Add(dup) // focused slot now also has a "b1"
-	b1 := m.slots[1].list.GetInstanceByTitle("b1")
+	m.syncViews()
+	b1 := instByTitle(m, m.slots[1].list, "b1")
 	require.NotNil(t, b1)
 	require.NoError(t, b1.TransitionTo(session.Deleting))
 
 	deliver(t, m, core.KillResult{Instance: b1, Title: "b1"})
 
 	assert.Nil(t, m.slots[1].list.GetInstanceByTitle("b1"), "peer slot's b1 removed")
-	assert.Same(t, dup, m.list.GetInstanceByTitle("b1"),
+	assert.Equal(t, idOf(m, dup), titleID(m.list, "b1"),
 		"focused slot's same-titled instance must survive")
 }
 
@@ -56,7 +57,7 @@ func TestKillResult_DuplicateTitleAcrossSlots(t *testing.T) {
 func TestOpFailed_RevertsInstanceInNonFocusedSlot(t *testing.T) {
 	m := fleetHome(t)
 	m.errBox = ui.NewErrBox() // a failed operation surfaces the error
-	b1 := m.slots[1].list.GetInstanceByTitle("b1")
+	b1 := instByTitle(m, m.slots[1].list, "b1")
 	require.NotNil(t, b1)
 	require.NoError(t, b1.TransitionTo(session.Deleting))
 

@@ -79,7 +79,7 @@ func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T)
 	m.core.SetGateForTest("github", false, time.Now())
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "Fix flaky test", URL: "https://x/12", Body: "do it"}})
 	require.Equal(t, before+1, m.list.NumInstances())
-	inst := m.list.GetInstances()[m.list.NumInstances()-1]
+	inst := lastInst(m)
 	assert.Equal(t, "gh-12-fix-flaky-test", inst.Title)
 	assert.Equal(t, 12, inst.IssueNumber())
 	assert.Contains(t, inst.Prompt(), "# Fix flaky test")
@@ -117,6 +117,7 @@ func TestIssuePickedMsg_RespectsInstanceLimit(t *testing.T) {
 		inst, err := session.NewInstance(session.InstanceOptions{Title: "x", Path: t.TempDir(), Program: "claude"})
 		require.NoError(t, err)
 		m.ws.Add(inst)
+		m.syncViews()
 	}
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 1, Title: "t"}})
 	assert.Equal(t, GlobalInstanceLimit, m.list.NumInstances())

@@ -5,8 +5,8 @@ import (
 	"math"
 	"strings"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 
 	"charm.land/lipgloss/v2"
@@ -74,7 +74,7 @@ type SplitPane struct {
 	height int
 	width  int
 
-	instance *session.Instance
+	instance *core.InstanceView
 	// panes is the attach-client registry the agent pane and the cursor read.
 	panes *PaneClients
 }
@@ -102,13 +102,15 @@ func (s *SplitPane) Terminal() *TerminalPane { return s.terminal }
 // render on the next UpdateAgent/UpdateDiff/UpdateTerminal call. The
 // child panes read their content from the instance, so switching here
 // without calling the Update* methods leaves the previously-rendered
-// content in place until the next tick.
-func (s *SplitPane) SetInstance(instance *session.Instance) {
+// content in place until the next tick. The pane keeps the copy it is
+// given: a change to the instance reaches it (the agent pane's title, the
+// scroll paths) only through another SetInstance.
+func (s *SplitPane) SetInstance(instance *core.InstanceView) {
 	s.instance = instance
 }
 
 // Instance returns the instance set by SetInstance (nil for none).
-func (s *SplitPane) Instance() *session.Instance { return s.instance }
+func (s *SplitPane) Instance() *core.InstanceView { return s.instance }
 
 // SetPanes sets the registry the agent pane and the hardware cursor read
 // attach clients from.
@@ -312,12 +314,12 @@ func (s *SplitPane) SelectedText(pane int) string {
 }
 
 // UpdateAgent updates the agent (preview) pane content. Always updates since it's always visible.
-func (s *SplitPane) UpdateAgent(instance *session.Instance) error {
+func (s *SplitPane) UpdateAgent(instance *core.InstanceView) error {
 	return s.agent.UpdateContent(instance)
 }
 
 // UpdateDiff updates the diff pane content. Only updates when the overlay is visible.
-func (s *SplitPane) UpdateDiff(instance *session.Instance) {
+func (s *SplitPane) UpdateDiff(instance *core.InstanceView) {
 	if !s.diffVisible {
 		return
 	}
@@ -327,12 +329,12 @@ func (s *SplitPane) UpdateDiff(instance *session.Instance) {
 // UpdateTerminal updates the terminal pane content. It intentionally
 // keeps updating while the pane is hidden so the content stays warm
 // for an instant unhide.
-func (s *SplitPane) UpdateTerminal(instance *session.Instance) error {
+func (s *SplitPane) UpdateTerminal(instance *core.InstanceView) error {
 	return s.terminal.UpdateContent(instance)
 }
 
 // ResetAgentToNormalMode resets the agent pane to normal mode.
-func (s *SplitPane) ResetAgentToNormalMode(instance *session.Instance) error {
+func (s *SplitPane) ResetAgentToNormalMode(instance *core.InstanceView) error {
 	return s.agent.ResetToNormalMode(instance)
 }
 
@@ -665,14 +667,14 @@ func (s *SplitPane) String() string {
 // (corners + 2 leading dashes + title) never exceeds the pane width.
 func (s *SplitPane) agentPaneTitle() string {
 	base := "Agent"
-	if s.instance != nil && s.instance.Started() {
+	if s.instance != nil && s.instance.Started {
 		if lbl := accountLabel(s.instance); lbl != "" {
 			base += " · @" + lbl
 		}
-		if br := s.instance.GetBranch(); br != "" {
+		if br := s.instance.Branch; br != "" {
 			base += " · " + br
 		}
-		if stat := s.instance.GetDiffStats(); stat != nil && stat.Error == nil && !stat.IsEmpty() {
+		if stat := s.instance.Diff; s.instance.HasDiff && stat.Error == nil && !stat.IsEmpty() {
 			base += fmt.Sprintf(" · +%d −%d", stat.Added, stat.Removed)
 		}
 	}

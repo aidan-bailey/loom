@@ -17,6 +17,7 @@ func TestJumpWaiting_OverviewMovesCursorOnly(t *testing.T) {
 	waiter := &session.Instance{Title: "b-wait", Status: session.Ready}
 	require.NoError(t, waiter.TransitionTo(session.Prompting))
 	m.slots[1].ws.Add(waiter)
+	m.syncViews()
 
 	m.jumpWaiting(1)
 

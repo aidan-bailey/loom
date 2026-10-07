@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
@@ -17,12 +18,13 @@ func withShowAccounts(t *testing.T, on bool) {
 	t.Cleanup(func() { SetShowAccounts(false) })
 }
 
-func claudeInstance(t *testing.T, program, acct string) *session.Instance {
+func claudeInstance(t *testing.T, program, acct string) *core.InstanceView {
 	t.Helper()
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "badge", Path: t.TempDir(), Program: program})
 	require.NoError(t, err)
 	inst.SetAccount(acct)
-	return inst
+	v := core.ViewForTest(inst, 1)
+	return &v
 }
 
 func TestAccountLabel(t *testing.T) {
@@ -38,7 +40,7 @@ func TestAccountLabel(t *testing.T) {
 
 func TestBuildCardData_CarriesTheAccount(t *testing.T) {
 	withShowAccounts(t, true)
-	d := BuildCardData(claudeInstance(t, "claude", "max-2"), Pane{}, false, "", 0)
+	d := BuildCardData(*claudeInstance(t, "claude", "max-2"), Pane{}, false, "", 0)
 	assert.Equal(t, "max-2", d.Account)
 }
 

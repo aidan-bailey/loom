@@ -73,13 +73,16 @@ type Started struct {
 func (Started) coreEvent() {}
 
 // Recovered reports an orphan adopted into its placeholder's row. Owner,
-// Loaded, ID and Title are as for Started.
+// Loaded, ID and Title are as for Started. Paused is set when adoption
+// could only mark the record Paused (its session and worktree were gone):
+// the notice says so even when no loaded workspace shows the row.
 type Recovered struct {
 	Instance *session.Instance
 	ID       InstanceID
 	Title    string
 	Owner    *Workspace
 	Loaded   bool
+	Paused   bool
 }
 
 func (Recovered) coreEvent() {}

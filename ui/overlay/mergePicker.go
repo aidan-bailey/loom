@@ -36,7 +36,7 @@ type MergePickerRow struct {
 // into the currently-focused ("target") session. Deliberately decoupled
 // from session.Instance (plain string/int fields only) so this package
 // doesn't need to import session — the caller (app.runMergeSelected)
-// re-resolves the chosen row back to an *session.Instance by its Index.
+// re-resolves the chosen row back to its core.InstanceView by its Index.
 type MergePicker struct {
 	targetTitle string
 	rows        []MergePickerRow

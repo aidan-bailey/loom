@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
@@ -59,10 +60,12 @@ func TestRenderCard_TruncatesLongTitles(t *testing.T) {
 }
 
 func TestSortForOverview_AttentionFirstStable(t *testing.T) {
-	mk := func(title string, st session.Status) *session.Instance {
-		return &session.Instance{Title: title, Status: st}
+	var nextID core.InstanceID
+	mk := func(title string, st session.Status) core.InstanceView {
+		nextID++
+		return core.InstanceView{ID: nextID, Title: title, Status: st}
 	}
-	items := []*session.Instance{
+	items := []core.InstanceView{
 		mk("d-paused", session.Paused),
 		mk("b-running", session.Running),
 		mk("a-prompting", session.Prompting),
@@ -78,11 +81,11 @@ func TestSortForOverview_AttentionFirstStable(t *testing.T) {
 }
 
 func TestSortForOverview_DeletingWithBellSortsLast(t *testing.T) {
-	deleting := &session.Instance{Title: "a-deleting", Status: session.Deleting}
-	deleting.SetBellPending(true) // stale bell must not float a mid-kill card into the attention tier
-	items := []*session.Instance{
+	deleting := core.InstanceView{ID: 1, Title: "a-deleting", Status: session.Deleting}
+	deleting.Bell = true // stale bell must not float a mid-kill card into the attention tier
+	items := []core.InstanceView{
 		deleting,
-		{Title: "b-ready", Status: session.Ready},
+		{ID: 2, Title: "b-ready", Status: session.Ready},
 	}
 	order := SortForOverview(items)
 	assert.Equal(t, "b-ready", items[order[0]].Title)
@@ -177,9 +180,9 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestSortForOverview_WorkspaceTerminalPinnedFirst(t *testing.T) {
-	items := []*session.Instance{
-		{Title: "wt", Status: session.Running, IsWorkspaceTerminal: true},
-		{Title: "a", Status: session.Prompting},
+	items := []core.InstanceView{
+		{ID: 1, Title: "wt", Status: session.Running, IsWorkspaceTerminal: true},
+		{ID: 2, Title: "a", Status: session.Prompting},
 	}
 	order := SortForOverview(items)
 	assert.Equal(t, 0, order[0], "workspace terminal stays pinned at display position 0")

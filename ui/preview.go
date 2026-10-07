@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 
 	"charm.land/lipgloss/v2"
@@ -155,12 +156,12 @@ func (p *PreviewPane) setFallbackState(message string) {
 }
 
 // liveTail sets the pane content to the live (offset 0) emulator screen.
-func (p *PreviewPane) liveTail(instance *session.Instance) error {
+func (p *PreviewPane) liveTail(instance *core.InstanceView) error {
 	content, err := p.panes.For(instance).Preview()
 	if err != nil {
 		return err
 	}
-	if len(content) == 0 && !instance.Started() {
+	if len(content) == 0 && !instance.Started {
 		p.setFallbackState("Please enter a name for the instance.")
 	} else {
 		p.previewState = previewState{fallback: false, text: content}
@@ -175,7 +176,7 @@ func (p *PreviewPane) liveTail(instance *session.Instance) error {
 // authoritative history (capture-pane -S -) at the current offset, anchoring the
 // view to its content as live output accrues below. Falls back to splash text
 // for nil/loading/paused instances and resets the offset on instance change.
-func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
+func (p *PreviewPane) UpdateContent(instance *core.InstanceView) error {
 	// Reset to live tail when the selected instance changes.
 	newTitle := ""
 	if instance != nil {
@@ -193,10 +194,10 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	case instance == nil:
 		p.setFallbackState("No agents running yet. Spin up a new instance with 'n' to get started!")
 		return nil
-	case instance.GetStatus() == session.Loading:
+	case instance.Status == session.Loading:
 		p.setFallbackState("Setting up workspace...")
 		return nil
-	case instance.GetStatus() == session.Paused:
+	case instance.Status == session.Paused:
 		p.setFallbackState(lipgloss.JoinVertical(lipgloss.Center,
 			"Session is paused. Press 'r' to resume.",
 			"",
@@ -204,18 +205,18 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 				Foreground(Highlight).
 				Render(fmt.Sprintf(
 					"The instance can be checked out at '%s' (copied to your clipboard)",
-					instance.GetBranch(),
+					instance.Branch,
 				)),
 		))
 		return nil
-	case instance.GetStatus() == session.Recoverable:
+	case instance.Status == session.Recoverable:
 		p.setFallbackState(lipgloss.JoinVertical(lipgloss.Center,
 			"Recoverable session (found on disk).",
 			"Its worktree may hold a live agent or uncommitted work.",
 			"",
 			lipgloss.NewStyle().
 				Foreground(Highlight).
-				Render(fmt.Sprintf("Branch: %s", instance.GetBranch())),
+				Render(fmt.Sprintf("Branch: %s", instance.Branch)),
 			"",
 			"Press 'r' to recover it, or 'D' to discard the worktree (branch is kept).",
 		))
@@ -254,7 +255,7 @@ func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 // output accrues below, and — unlike the emulator path — snaps back to the
 // live tail when the captured buffer SHRINKS (clear-history / alt-screen
 // flip / re-wrap), where the offset anchor is meaningless.
-func (p *PreviewPane) updateContentSnapshotScrolled(instance *session.Instance, rows int) error {
+func (p *PreviewPane) updateContentSnapshotScrolled(instance *core.InstanceView, rows int) error {
 	// Scrolled: window into tmux's authoritative buffer (scrollback + visible).
 	// The in-process emulator only mirrors the visible screen, so windowed
 	// history must come from tmux, not emu.Scrollback().
@@ -417,7 +418,7 @@ func (p *PreviewPane) SelectedText() string { return extractSelection(p.displaye
 // than shared) because the scroll methods must pick a branch (emulator vs.
 // snapshot probe/state) before acting, whereas UpdateContent can try the
 // emulator path and let AdvanceAndRender's ok fall through inline.
-func (p *PreviewPane) emulatorScroll(instance *session.Instance) (scrollSource, bool) {
+func (p *PreviewPane) emulatorScroll(instance *core.InstanceView) (scrollSource, bool) {
 	src, ok := p.panes.For(instance).scrollSource()
 	if !ok {
 		return nil, false
@@ -429,7 +430,7 @@ func (p *PreviewPane) emulatorScroll(instance *session.Instance) (scrollSource, 
 }
 
 // ScrollUp scrolls one line up into history (or forwards a damped wheel-up to a TUI agent).
-func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
+func (p *PreviewPane) ScrollUp(instance *core.InstanceView) error {
 	if src, ok := p.emulatorScroll(instance); ok {
 		return p.scroll.ScrollUp(src)
 	}
@@ -442,7 +443,7 @@ func (p *PreviewPane) ScrollUp(instance *session.Instance) error {
 }
 
 // ScrollDown scrolls one line down toward the live tail (or forwards a damped wheel-down).
-func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
+func (p *PreviewPane) ScrollDown(instance *core.InstanceView) error {
 	if src, ok := p.emulatorScroll(instance); ok {
 		return p.scroll.ScrollDown(src)
 	}
@@ -454,7 +455,7 @@ func (p *PreviewPane) ScrollDown(instance *session.Instance) error {
 }
 
 // PageUp scrolls up by half a pane height (or forwards a burst of wheel-ups).
-func (p *PreviewPane) PageUp(instance *session.Instance) error {
+func (p *PreviewPane) PageUp(instance *core.InstanceView) error {
 	if src, ok := p.emulatorScroll(instance); ok {
 		return p.scroll.PageUp(src, p.height)
 	}
@@ -466,7 +467,7 @@ func (p *PreviewPane) PageUp(instance *session.Instance) error {
 }
 
 // PageDown scrolls down by half a pane height (or forwards a burst of wheel-downs).
-func (p *PreviewPane) PageDown(instance *session.Instance) error {
+func (p *PreviewPane) PageDown(instance *core.InstanceView) error {
 	if src, ok := p.emulatorScroll(instance); ok {
 		return p.scroll.PageDown(src, p.height)
 	}
@@ -478,7 +479,7 @@ func (p *PreviewPane) PageDown(instance *session.Instance) error {
 }
 
 // GotoTop jumps to the oldest line of captured history (TUI: a large wheel-up burst).
-func (p *PreviewPane) GotoTop(instance *session.Instance) error {
+func (p *PreviewPane) GotoTop(instance *core.InstanceView) error {
 	if src, ok := p.emulatorScroll(instance); ok {
 		p.scroll.GotoTop(src)
 		return nil
@@ -491,7 +492,7 @@ func (p *PreviewPane) GotoTop(instance *session.Instance) error {
 }
 
 // GotoBottom returns to the live tail (TUI: a large wheel-down burst).
-func (p *PreviewPane) GotoBottom(instance *session.Instance) error {
+func (p *PreviewPane) GotoBottom(instance *core.InstanceView) error {
 	if _, ok := p.emulatorScroll(instance); ok {
 		p.scroll.Reset()
 		return nil
@@ -522,7 +523,7 @@ func (p *PreviewPane) IsScrolling() bool {
 }
 
 // ResetToNormalMode returns the pane to the live tail on both paths.
-func (p *PreviewPane) ResetToNormalMode(instance *session.Instance) error {
+func (p *PreviewPane) ResetToNormalMode(instance *core.InstanceView) error {
 	p.scroll.Reset()
 	p.snapFallback = snapshotScroll{}
 	p.newLinesBelowRender = 0
@@ -535,8 +536,8 @@ func (p *PreviewPane) ResetToNormalMode(instance *session.Instance) error {
 // — the old setOffset semantics on p.snapFallback. The real top-of-buffer
 // clamp happens in updateContentSnapshotScrolled, which has the captured line
 // count.
-func (p *PreviewPane) snapshotScrollBy(instance *session.Instance, delta int) {
-	if instance != nil && (instance.GetStatus() == session.Paused || instance.GetStatus() == session.Recoverable) {
+func (p *PreviewPane) snapshotScrollBy(instance *core.InstanceView, delta int) {
+	if instance != nil && (instance.Status == session.Paused || instance.Status == session.Recoverable) {
 		return
 	}
 	off := p.snapFallback.offset + delta

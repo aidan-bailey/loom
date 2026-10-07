@@ -4,6 +4,7 @@ import (
 	"github.com/aidan-bailey/loom/keys"
 	"strings"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 
 	"charm.land/lipgloss/v2"
@@ -48,7 +49,7 @@ type Menu struct {
 	options       []keys.KeyName
 	height, width int
 	state         MenuState
-	instance      *session.Instance
+	instance      *core.InstanceView
 
 	// keyDown is the key which is pressed. The default is -1.
 	keyDown keys.KeyName
@@ -101,10 +102,12 @@ func (m *Menu) SetState(state MenuState) {
 func (m *Menu) State() MenuState { return m.state }
 
 // Instance returns the instance the menu was last pointed at (nil for none).
-func (m *Menu) Instance() *session.Instance { return m.instance }
+func (m *Menu) Instance() *core.InstanceView { return m.instance }
 
-// SetInstance updates the current instance and refreshes menu options
-func (m *Menu) SetInstance(instance *session.Instance) {
+// SetInstance updates the current instance and refreshes menu options. It
+// keeps the copy it is given, so a change to the instance reaches the menu
+// only through another SetInstance.
+func (m *Menu) SetInstance(instance *core.InstanceView) {
 	m.instance = instance
 	// Only change the state if we're not in a special state (NewInstance or Prompt)
 	if m.state != StateNewInstance && m.state != StatePrompt && m.state != StateQuickInteract && m.state != StateInlineAttach {
@@ -143,7 +146,7 @@ func (m *Menu) updateOptions() {
 
 func (m *Menu) addInstanceOptions() {
 	// Loading instances only get minimal options
-	if m.instance != nil && m.instance.GetStatus() == session.Loading {
+	if m.instance != nil && m.instance.Status == session.Loading {
 		m.options = []keys.KeyName{keys.KeyNew, keys.KeyHelp, keys.KeyQuit}
 		return
 	}
@@ -151,7 +154,7 @@ func (m *Menu) addInstanceOptions() {
 	// Recoverable orphans have exactly two meaningful actions: adopt it
 	// (r) or discard the worktree keeping the branch (D). Stash/push/kill
 	// labels would mislead here — there is no attached agent or PTY yet.
-	if m.instance != nil && m.instance.GetStatus() == session.Recoverable {
+	if m.instance != nil && m.instance.Status == session.Recoverable {
 		m.options = []keys.KeyName{
 			keys.KeyNew,
 			keys.KeyRecover, keys.KeyDiscard,
@@ -170,7 +173,7 @@ func (m *Menu) addInstanceOptions() {
 	actionGroup := []keys.KeyName{}
 	if !m.instance.IsWorkspaceTerminal {
 		actionGroup = append(actionGroup, keys.KeySubmit)
-		if m.instance.GetStatus() == session.Paused {
+		if m.instance.Status == session.Paused {
 			actionGroup = append(actionGroup, keys.KeyResume)
 		} else {
 			actionGroup = append(actionGroup, keys.KeyStash)

@@ -46,7 +46,7 @@ func TestNewInstanceFlowAppliesBranchPrefixOverride(t *testing.T) {
 	}
 	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.Equal(t, stateLaunchOptions, m.state)
-	instance := m.list.GetInstances()[m.list.NumInstances()-1]
+	instance := lastInst(m)
 
 	editBranchPrefixTo(m, "aidanb/", "spike/")
 	require.Equal(t, stateLaunchOptions, m.state, "committing the edit must not close the modal")
@@ -68,7 +68,7 @@ func TestNewInstanceFlowRecordsPrefixEvenWhenUnedited(t *testing.T) {
 		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	instance := m.list.GetInstances()[m.list.NumInstances()-1]
+	instance := lastInst(m)
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	require.NotNil(t, instance.BranchPrefixOverride())
@@ -81,6 +81,7 @@ func TestNewInstanceFlowRecordsPrefixEvenWhenUnedited(t *testing.T) {
 func TestRestartWithOptionsLocksBranchPrefixRow(t *testing.T) {
 	m, inst := newPausedInstanceHome(t)
 	inst.Branch = "aidanb/restart-me"
+	m.syncViews()
 
 	runRestartWithOptionsSelected(m)
 

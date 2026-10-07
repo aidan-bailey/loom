@@ -3,17 +3,17 @@ package ui
 import (
 	"testing"
 
-	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/core"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDisplayIndex_NoWorkspaceTerminal(t *testing.T) {
-	items := []*session.Instance{
-		{Title: "a"},
-		{Title: "b"},
-		{Title: "c"},
+	items := []core.InstanceView{
+		{ID: 1, Title: "a"},
+		{ID: 2, Title: "b"},
+		{ID: 3, Title: "c"},
 	}
 	assert.Equal(t, 1, DisplayIndex(items, 0))
 	assert.Equal(t, 2, DisplayIndex(items, 1))
@@ -21,10 +21,10 @@ func TestDisplayIndex_NoWorkspaceTerminal(t *testing.T) {
 }
 
 func TestDisplayIndex_LeadingWorkspaceTerminalOffsetsTheRest(t *testing.T) {
-	items := []*session.Instance{
-		{Title: "root", IsWorkspaceTerminal: true},
-		{Title: "a"},
-		{Title: "b"},
+	items := []core.InstanceView{
+		{ID: 1, Title: "root", IsWorkspaceTerminal: true},
+		{ID: 2, Title: "a"},
+		{ID: 3, Title: "b"},
 	}
 	assert.Equal(t, 0, DisplayIndex(items, 0), "workspace terminal is numbered 0")
 	assert.Equal(t, 1, DisplayIndex(items, 1))

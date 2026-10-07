@@ -182,20 +182,24 @@ type home struct {
 	// keySent is used to manage underlining menu items
 	keySent bool
 
-	// attachingInstance is set for the duration of a full-screen attach
+	// attachingID is set for the duration of a full-screen attach
 	// (PausePreview -> tea.ExecProcess -> ensurePane; see
-	// startFullScreenAttachMsg/attachDoneMsg) and nil otherwise. The health
+	// startFullScreenAttachMsg/attachDoneMsg) and 0 otherwise. The health
 	// tick's ptmx self-heal (the core.Alive applier) must not re-attach this
 	// instance's pane client while it is set — PtmxAlive is expected to
 	// read false during that window, and racing a Restore against the
 	// in-flight ExecProcess would fight over the same tmux session's attach.
-	attachingInstance *session.Instance
+	attachingID core.InstanceID
 	// fullScreen is the full-screen attach's cancel, which a takeover
 	// request ends from the lock listener's goroutine (see takeover.go).
 	fullScreen *foregroundAttach
 	// takenOverBy is the loom that took over, set when a takeover quits
 	// this one; Run names it once the TUI is gone.
 	takenOverBy *takeover.Holder
+
+	// bells holds the instances whose pane rang a bell since they were last
+	// focused (TUI state; laid over rows as InstanceView.Bell).
+	bells map[core.InstanceID]bool
 
 	// -- UI Components --
 
@@ -250,9 +254,6 @@ type home struct {
 	pendingConfirmation overlay.ConfirmationTask
 	// pendingDir is the directory path awaiting workspace registration confirmation
 	pendingDir string
-	// pendingAttachTarget is the instance whose tmux session should be
-	// full-screen-attached after the attach help overlay is dismissed.
-	pendingAttachTarget *session.Instance
 	// pendingMergeTarget and pendingMergeSourceItems capture the merge
 	// target instance and a snapshot of the eligible source list at the
 	// moment the merge picker opens. A background message unrelated to
@@ -263,8 +264,8 @@ type home struct {
 	// is pressed would let such a background change silently swap which
 	// instances the merge acts on. Both fields are cleared once the
 	// picker closes.
-	pendingMergeTarget      *session.Instance
-	pendingMergeSourceItems []*session.Instance
+	pendingMergeTarget      *core.InstanceView
+	pendingMergeSourceItems []core.InstanceView
 
 	// -- Workspace slots --
 
@@ -465,7 +466,7 @@ func (m *home) applyUIPrefs() {
 // deterministic: switching to an instance always shows the same split
 // a fresh restart would, instead of inheriting whatever ratio the
 // previously selected instance left behind.
-func (m *home) applyStoredRatio(inst *session.Instance) {
+func (m *home) applyStoredRatio(inst *core.InstanceView) {
 	if m.appState() == nil || inst == nil {
 		return
 	}
@@ -670,8 +671,8 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.core.MarkOutput(msg.session)
 		selected := m.list.GetSelectedInstance()
 
-		if inst := m.core.InstanceForSession(msg.session); inst != nil {
-			m.core.PaneOutputInst(inst)
+		if v, _ := m.viewBySession(msg.session); v != nil {
+			m.core.PaneOutput(v.ID)
 			// Output arrived → the agent is doing something. Mirrors the old
 			// tick's updated→Running transition; Ready re-derives on the
 			// quiet event once the burst settles. Prompting is exempt:
@@ -682,14 +683,20 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// A Claude session whose hooks or roster reported a status is
 			// exempt too: the report owns the status, and output alone
 			// says nothing new.
-			st := inst.GetStatus()
-			if _, _, reported := inst.ClaudeStatus(); st == session.Ready && !reported {
-				if err := inst.TransitionTo(session.Running); err != nil {
-					log.For("app").Warn("event.transition_failed", "instance", inst.Title, "to", "Running", "err", err.Error())
+			// The promotion writes the instance, through the bridge until
+			// package C makes the ladder an overlay, and gates on it.
+			if inst := m.instOf(v.ID); inst != nil {
+				st := inst.GetStatus()
+				if _, _, reported := inst.ClaudeStatus(); st == session.Ready && !reported {
+					if err := inst.TransitionTo(session.Running); err != nil {
+						log.For("app").Warn("event.transition_failed", "instance", inst.Title, "to", "Running", "err", err.Error())
+					}
+					// The tab bar reads the stores: reread the write.
+					m.syncViews()
+					m.updateTabBarStatuses()
 				}
-				m.updateTabBarStatuses()
 			}
-			if selected != nil && inst == selected {
+			if selected != nil && v.ID == selected.ID {
 				if err := m.splitPane.UpdateAgent(selected); err != nil {
 					return m, m.handleError(err)
 				}
@@ -705,19 +712,21 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case paneQuietMsg:
-		inst := m.core.InstanceForSession(msg.session)
-		m.core.PaneQuietInst(inst)
-		if !core.StatusEligible(inst) {
+		v, _ := m.viewBySession(msg.session)
+		if v != nil {
+			m.core.PaneQuiet(v.ID)
+		}
+		if v == nil || !v.Active() {
 			// A quiet that lands mid-Start (Loading) is this burst's only
 			// settle signal — quiet never re-fires without new output, so
 			// dropping it would leave the unconditional Running set by
 			// Start/Resume uncorrected. Re-check after the start resolves.
-			if inst != nil && inst.GetStatus() == session.Loading {
+			if v != nil && v.Status == session.Loading {
 				return m, m.maybeRedetect(msg.session)
 			}
 			return m, nil
 		}
-		return m, statusDetectCmd(inst, m.panes.For(inst))
+		return m, statusDetectCmd(*v, m.panes.For(v))
 	case ratioSaveMsg:
 		// Throttled flush of resizeSplit's pending ratios — one persisted
 		// write per 750ms window instead of one per keystroke. A flush
@@ -729,14 +738,14 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case redetectMsg:
 		delete(m.redetectPending, msg.session)
-		inst := m.core.InstanceForSession(msg.session)
-		if !core.StatusEligible(inst) {
-			if inst != nil && inst.GetStatus() == session.Loading {
+		v, _ := m.viewBySession(msg.session)
+		if v == nil || !v.Active() {
+			if v != nil && v.Status == session.Loading {
 				return m, m.maybeRedetect(msg.session)
 			}
 			return m, nil
 		}
-		return m, statusDetectCmd(inst, m.panes.For(inst))
+		return m, statusDetectCmd(*v, m.panes.For(v))
 	case accountLoginDoneMsg:
 		// tea.ExecProcess has returned the terminal. Re-read the auth of the
 		// account that just logged in (and the default's, which the
@@ -754,11 +763,14 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case issueExpandedMsg:
 		return m.handleIssueExpanded(msg)
 	case statusDetectedMsg:
-		if !core.StatusEligible(msg.instance) {
+		// The ladder writes the instance, through the bridge until package
+		// C makes it an overlay, and gates on the instance it writes.
+		inst := m.instOf(msg.id)
+		if !core.StatusEligible(inst) {
 			return m, nil
 		}
 		if msg.err != nil {
-			log.WarnKV("app.event.capture_failed", "instance", msg.instance.Title, "err", msg.err.Error())
+			log.WarnKV("app.event.capture_failed", "instance", msg.title, "err", msg.err.Error())
 			return m, nil
 		}
 		// Claude reports its own status, through its hooks and the roster,
@@ -767,7 +779,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// re-detection chain: the ladder re-samples because one content
 		// hash cannot distinguish "still working" from "just finished",
 		// but the report says which it is.
-		target, authoritative := m.core.AdoptClaudeStatus(msg.instance)
+		target, authoritative := m.core.AdoptClaudeStatus(inst)
 		if !authoritative {
 			// Same transition ladder as the old metadata tick: still-changing →
 			// Running; settled with a prompt → Prompting; settled → Ready.
@@ -778,9 +790,11 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				target = session.Prompting
 			}
 		}
-		if err := msg.instance.TransitionTo(target); err != nil {
-			log.For("app").Warn("event.transition_failed", "instance", msg.instance.Title, "to", target.String(), "err", err.Error())
+		if err := inst.TransitionTo(target); err != nil {
+			log.For("app").Warn("event.transition_failed", "instance", msg.title, "to", target.String(), "err", err.Error())
 		}
+		// The tab bar reads the stores: reread the write.
+		m.syncViews()
 		m.updateTabBarStatuses()
 		if !authoritative && msg.updated {
 			// One sample of changed content cannot distinguish "still
@@ -789,7 +803,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// latched on idle agents (and masked visible prompts, since
 			// updated wins over hasPrompt). Re-sample until a detection
 			// sees unchanged content and settles to Ready/Prompting.
-			return m, m.maybeRedetect(msg.instance.Pane().TmuxSessionName())
+			return m, m.maybeRedetect(inst.Pane().TmuxSessionName())
 		}
 		return m, nil
 	case ptyDeadMsg:
@@ -804,18 +818,22 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, tea.RequestWindowSize)
 			}
 		}
-		inst := m.core.InstanceForSession(msg.session)
-		if inst == nil || inst == m.attachingInstance || !core.StatusEligible(inst) {
+		v, _ := m.viewBySession(msg.session)
+		if v == nil || v.ID == m.attachingID || !v.Active() {
 			if len(cmds) > 0 {
 				return m, tea.Batch(cmds...)
 			}
 			return m, nil
 		}
-		cmds = append(cmds, coreCmd(m.core.VerifyDeadInst(inst)))
+		m.core.VerifyDead(v.ID)
 		return m, tea.Batch(cmds...)
 	case bellMsg:
-		if inst := m.core.InstanceForSession(msg.session); inst != nil && inst != m.list.GetSelectedInstance() {
-			inst.SetBellPending(true)
+		sel := m.list.GetSelectedInstance()
+		if v, _ := m.viewBySession(msg.session); v != nil && (sel == nil || v.ID != sel.ID) {
+			if m.bells == nil {
+				m.bells = make(map[core.InstanceID]bool)
+			}
+			m.bells[v.ID] = true
 			// A bell from a background workspace is the canonical
 			// peer-attention signal — refresh the rail's peer summaries
 			// immediately instead of waiting for the next status event.
@@ -864,7 +882,11 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The model's half: liveness, parity, diff stats and the background
 		// jobs. Its probe's result re-arms this tick (core.HealthChecked),
 		// so ticks never overlap a probe still running.
-		m.core.TickInst(selected)
+		var selectedID core.InstanceID
+		if selected != nil {
+			selectedID = selected.ID
+		}
+		m.core.Tick(selectedID)
 
 		// The status ladder on the snapshot path reads each pane's screen,
 		// which only the TUI's clients have.
@@ -883,7 +905,11 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotStatusMsg:
 		m.snapshotScanning = false
 		for _, r := range msg.results {
-			if !core.StatusEligible(r.instance) {
+			// The ladder writes the instance, through the bridge until
+			// package C makes it an overlay, and gates on the instance it
+			// writes.
+			inst := m.instOf(r.id)
+			if !core.StatusEligible(inst) {
 				continue
 			}
 			// A failed capture is no opinion, as on the event path. Its
@@ -891,16 +917,16 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// ladder, it moved a dead session to Ready before the probe
 			// paused it.
 			if r.err != nil {
-				log.WarnKV("app.tick.capture_failed", "instance", r.instance.Title, "err", r.err.Error())
+				log.WarnKV("app.tick.capture_failed", "instance", r.title, "err", r.err.Error())
 				continue
 			}
 			// Output: the next tick refreshes the diff, whoever reports the
 			// status, as a pane event's output does (paneDirtyMsg).
 			if r.updated {
-				m.core.MarkOutput(r.instance.Pane().TmuxSessionName())
+				m.core.MarkOutput(inst.Pane().TmuxSessionName())
 			}
 			// A reported Claude status is the model's: its tick applies it.
-			if _, authoritative := m.core.AdoptClaudeStatus(r.instance); authoritative {
+			if _, authoritative := m.core.AdoptClaudeStatus(inst); authoritative {
 				continue
 			}
 			// Same transition ladder as the event path: still-changing →
@@ -911,10 +937,12 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if r.hasPrompt {
 				target = session.Prompting
 			}
-			if err := r.instance.TransitionTo(target); err != nil {
-				log.For("app").Warn("tick.transition_failed", "instance", r.instance.Title, "to", target.String(), "err", err.Error())
+			if err := inst.TransitionTo(target); err != nil {
+				log.For("app").Warn("tick.transition_failed", "instance", r.title, "to", target.String(), "err", err.Error())
 			}
 		}
+		// The tab bar reads the stores: reread the writes.
+		m.syncViews()
 		m.updateTabBarStatuses()
 		return m, nil
 	case wbScanMsg:
@@ -1045,7 +1073,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (The right-half panel scrolls above are local pane state
 			// and deliberately stay unguarded.)
 			selected := m.list.GetSelectedInstance()
-			if selected == nil || selected.GetStatus() == session.Paused {
+			if selected == nil || selected.Status == session.Paused {
 				return m, nil
 			}
 			if mouse.Button == tea.MouseWheelUp {
@@ -1081,7 +1109,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			selected := m.list.GetSelectedInstance()
-			if selected == nil || selected.GetStatus() == session.Paused {
+			if selected == nil || selected.Status == session.Paused {
 				return m, nil
 			}
 
@@ -1248,9 +1276,13 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		attachCtx, endAttach := context.WithCancel(context.Background())
 		switch msg.target {
 		case attachTargetAgent:
-			if s := msg.instance.TmuxSession(); s != nil {
-				attach = s.FullScreenAttachCmd(attachCtx)
-				preview = m.panes.For(msg.instance).Client()
+			// The tmux session, through the bridge until package C attaches
+			// by name.
+			if inst := m.instOf(msg.instance.ID); inst != nil {
+				if s := inst.TmuxSession(); s != nil {
+					attach = s.FullScreenAttachCmd(attachCtx)
+					preview = m.panes.For(msg.instance).Client()
+				}
 			}
 		case attachTargetTerminal:
 			if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
@@ -1269,7 +1301,10 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		inst := msg.instance
-		m.attachingInstance = inst
+		m.attachingID = 0
+		if inst != nil {
+			m.attachingID = inst.ID
+		}
 		m.fullScreen.set(endAttach)
 		return m, tea.ExecProcess(attach, func(err error) tea.Msg {
 			return attachDoneMsg{instance: inst, err: err}
@@ -1290,18 +1325,28 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tea.ExecProcess has restored the terminal. Re-attach the agent's
 		// client so live capture resumes. A failure is logged inside
 		// ensurePane, and the metadata tick's repair retries it once
-		// attachingInstance is cleared below.
+		// attachingID is cleared below.
 		m.fullScreen.set(nil)
 		if msg.instance != nil {
-			m.ensurePane(msg.instance)
+			// The attach held the event loop for its whole run, so the
+			// stores may lag what the model's jobs did meanwhile: reread
+			// them, and repair the row as it is now.
+			m.syncViews()
+			if v, _ := m.viewByID(msg.instance.ID); v != nil {
+				m.ensurePane(v)
+			}
 		}
 		if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
 			if err := ts.ResumePreview(); err != nil {
-				log.For("app").Error("terminal_preview.resume_failed", "title", msg.instance.Title, "err", err)
+				title := ""
+				if msg.instance != nil {
+					title = msg.instance.Title
+				}
+				log.For("app").Error("terminal_preview.resume_failed", "title", title, "err", err)
 			}
 		}
-		if m.attachingInstance == msg.instance {
-			m.attachingInstance = nil
+		if msg.instance != nil && m.attachingID == msg.instance.ID {
+			m.attachingID = 0
 		}
 		m.state = stateDefault
 		var cmds []tea.Cmd
@@ -1475,7 +1520,8 @@ func (m *home) instanceChanged() tea.Cmd {
 	// the enter/esc handlers flip viewMode to viewFocus before calling
 	// instanceChanged, so the landing itself performs the clear.
 	if selected != nil && m.viewMode != viewOverview {
-		selected.SetBellPending(false)
+		delete(m.bells, selected.ID)
+		selected.Bell = false // the copy the panes and menu get below
 	}
 
 	// Re-apply the newly selected instance's persisted split ratio (or
@@ -1513,7 +1559,7 @@ func (m *home) instanceChanged() tea.Cmd {
 	var wbRefresh tea.Cmd
 	if m.viewMode == viewWorkbench && selected != nil {
 		prevTitle := m.workbench.SessionTitle()
-		m.workbench.SetSession(selected.Title, selected.GetWorktreePath())
+		m.workbench.SetSession(selected.Title, selected.WorktreePath)
 		m.workbench.Diff().SetDiff(selected)
 		if prevTitle != selected.Title {
 			// SetSession dropped the workbench's half of the review-pane
@@ -1585,21 +1631,21 @@ const (
 // inside the help-dismiss closure because that would run inside Update and
 // we want the runtime to process the Cmd normally.
 type startFullScreenAttachMsg struct {
-	instance *session.Instance
+	instance *core.InstanceView
 	target   fullScreenAttachTarget
 }
 
 // attachDoneMsg is returned by tea.ExecProcess when the foreground tmux
 // attach-session child exits (user hit C-q, or the session died).
 type attachDoneMsg struct {
-	instance *session.Instance
+	instance *core.InstanceView
 	err      error
 }
 
 // startAttachCmd returns a Cmd that emits startFullScreenAttachMsg so Update
 // can hand off to tea.ExecProcess. It exists as a helper because the same
 // payload is needed from both the "help skipped" and "help dismissed" paths.
-func startAttachCmd(inst *session.Instance, target fullScreenAttachTarget) tea.Cmd {
+func startAttachCmd(inst *core.InstanceView, target fullScreenAttachTarget) tea.Cmd {
 	return func() tea.Msg {
 		return startFullScreenAttachMsg{instance: inst, target: target}
 	}
@@ -1743,6 +1789,17 @@ func (m *home) confirmTask(message string, task overlay.ConfirmationTask) tea.Cm
 	m.setOverlay(co, overlayConfirmation)
 
 	return nil
+}
+
+// runTask runs task's sync step and returns its async one, like
+// task.Run, then rereads the view stores (syncViews): a sync step writes
+// the model's instances directly (a kill's Deleting, a start's or
+// resume's Loading, a cancel's removal), and what follows it in the same
+// Update (instanceChanged) reads the change back.
+func (m *home) runTask(task overlay.ConfirmationTask) tea.Cmd {
+	cmd := task.Run()
+	m.syncViews()
+	return cmd
 }
 
 // confirmAction is a thin wrapper around confirmTask for callers

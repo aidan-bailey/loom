@@ -127,17 +127,18 @@ func TestPreviewTickRerendersScrolledAgent(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst) // first add is auto-selected
-	require.Same(t, inst, m.list.GetSelectedInstance())
+	m.syncViews()
+	require.Equal(t, idOf(m, inst), selID(m.list))
 
 	m.splitPane.SetSize(100, 40)
-	m.splitPane.SetInstance(inst)
+	m.splitPane.SetInstance(rowOf(t, m, inst))
 
 	// Prime at the live tail, then scroll up into history.
-	require.NoError(t, m.splitPane.UpdateAgent(inst))
+	require.NoError(t, m.splitPane.UpdateAgent(rowOf(t, m, inst)))
 	for i := 0; i < 30; i++ {
 		m.splitPane.ScrollAgentUp()
 	}
-	require.NoError(t, m.splitPane.UpdateAgent(inst))
+	require.NoError(t, m.splitPane.UpdateAgent(rowOf(t, m, inst)))
 	require.True(t, m.splitPane.IsAgentInScrollMode(), "agent pane should be scrolled into history")
 
 	// Make the preview-tick hash short-circuit fire: populate the content hash,

@@ -150,6 +150,7 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	}
 	instance.SetIssue(msg.issue.Number)
 	m.ws.Add(instance)
+	m.syncViews() // the row the add made, for the selection below
 	m.list.SetSelectedInstance(m.list.NumInstances() - 1)
 	m.core.ExpediteGitHub()
 	m.core.ApplyGitHubState()
@@ -221,7 +222,7 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 	if inst == nil || inst.Started() {
 		return m, nil
 	}
-	if m.slotHolding(inst) == nil {
+	if _, held := m.core.IDFor(inst); !held {
 		// Deleted (D) while the fetch ran: reopening the flow would re-arm
 		// pendingNew for an instance no list holds.
 		return m, m.handleError(fmt.Errorf("issue #%d not expanded: %q was deleted meanwhile", msg.number, inst.Title))
@@ -278,7 +279,7 @@ func (m *home) openLaunchOptionsForNew(instance *session.Instance, selectedBranc
 		if m.remoteControlBlockedOn(opts.Account, launch.EffectiveRemoteControl(opts), instance.Program()) {
 			return m, m.promptRemoteControlBlocked(startTask, m.core.RCAuthFor(opts.Account).Reason)
 		}
-		return m, tea.Batch(startTask.Run(), m.instanceChanged())
+		return m, tea.Batch(m.runTask(startTask), m.instanceChanged())
 	}
 	m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions

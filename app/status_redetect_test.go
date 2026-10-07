@@ -127,6 +127,7 @@ func TestStatusDetectionConvergesToReadyAfterSettle(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 
 	// First quiet after the burst: content changed since the previous sample,
 	// so detection concludes Running — and must arm a re-detection.
@@ -139,7 +140,7 @@ func TestStatusDetectionConvergesToReadyAfterSettle(t *testing.T) {
 
 	// While a re-detection is pending, another updated result must not stack
 	// a second chain for the same session.
-	_, dup := m.Update(statusDetectedMsg{instance: inst, updated: true})
+	_, dup := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 	require.Nil(t, dup, "re-detection must be deduped per session")
 
 	// The armed re-detection fires (tea.Tick waits out the delay), runs a
@@ -161,6 +162,7 @@ func TestStatusDetectionSurfacesPromptAfterSettle(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 
 	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
 	detected := detectionFrom(t, cmd)
@@ -188,8 +190,9 @@ func TestDirtyDoesNotDemotePrompting(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	m.splitPane.SetSize(100, 40)
-	m.splitPane.SetInstance(inst)
+	m.splitPane.SetInstance(rowOf(t, m, inst))
 	require.NoError(t, inst.TransitionTo(session.Prompting))
 
 	_, _ = m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
@@ -206,8 +209,9 @@ func TestDirtyPromotesReadyToRunning(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 	m.splitPane.SetSize(100, 40)
-	m.splitPane.SetInstance(inst)
+	m.splitPane.SetInstance(rowOf(t, m, inst))
 	require.NoError(t, inst.TransitionTo(session.Ready))
 
 	_, _ = m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
@@ -226,12 +230,14 @@ func TestQuietDuringLoadingSchedulesRedetect(t *testing.T) {
 
 	m := homeWithAppState(t)
 	m.ws.Add(inst)
+	m.syncViews()
 
 	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
 	require.NotNil(t, cmd, "quiet during Loading must arm a re-check, not drop")
 
 	// Start flow completes while the re-check is pending.
 	require.NoError(t, inst.TransitionTo(session.Running))
+	m.syncViews()
 
 	redetect := cmd()
 	_, detectCmd := m.Update(redetect)

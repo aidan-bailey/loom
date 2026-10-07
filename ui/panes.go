@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/session/vt"
 )
@@ -119,13 +119,13 @@ func (p *PaneClients) Alive(sessionName string) bool {
 	return c != nil && c.Attached()
 }
 
-// For returns inst's pane: its session's client here, when inst is started
-// and not paused; otherwise the zero Pane.
-func (p *PaneClients) For(inst *session.Instance) Pane {
-	if inst == nil || !inst.Started() || inst.Paused() {
+// For returns v's pane: its session's client here, when v is started
+// and not paused; otherwise the zero Pane (also for nil).
+func (p *PaneClients) For(v *core.InstanceView) Pane {
+	if v == nil || !v.Started || v.Paused() {
 		return Pane{}
 	}
-	return Pane{c: p.Get(inst.Pane().TmuxSessionName())}
+	return Pane{c: p.Get(v.TmuxSession)}
 }
 
 // SetDefaultSize records the agent pane size that clients attach at.

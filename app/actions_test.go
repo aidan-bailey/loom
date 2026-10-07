@@ -52,16 +52,21 @@ func TestSelectedNotBusyNotWorkspaceGuardsLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	h.ws.Add(instance)
+	h.syncViews()
 
 	_ = instance.TransitionTo(session.Loading)
+	h.syncViews()
 	assert.False(t, selectedNotBusyNotWorkspace(h), "Loading should block")
 
 	_ = instance.TransitionTo(session.Deleting)
+	h.syncViews()
 	assert.False(t, selectedNotBusyNotWorkspace(h), "Deleting should block")
 
 	_ = instance.TransitionTo(session.Running)
+	h.syncViews()
 	assert.True(t, selectedNotBusyNotWorkspace(h), "Running is a normal state")
 
 	instance.IsWorkspaceTerminal = true
+	h.syncViews()
 	assert.False(t, selectedNotBusyNotWorkspace(h), "workspace terminal blocks")
 }

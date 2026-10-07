@@ -144,9 +144,10 @@ func TestSlotOwnsState_MutationVisibleWithoutSave(t *testing.T) {
 	m := fleetHome(t)
 	inst := &session.Instance{Title: "added", Status: session.Ready}
 	m.ws.Add(inst)
-	assert.Same(t, inst, m.slots[0].list.GetInstanceByTitle("added"))
+	m.syncViews()
+	assert.Equal(t, idOf(m, inst), titleID(m.slots[0].list, "added"))
 
-	replacement := ui.NewList(&m.spinner, m.ws)
+	replacement := fixtureList()
 	m.list = replacement
 	assert.Same(t, replacement, m.slots[0].list, "a promoted-field write lands in the focused slot")
 
@@ -154,7 +155,8 @@ func TestSlotOwnsState_MutationVisibleWithoutSave(t *testing.T) {
 	require.NoError(t, m.checkSlotInvariant())
 	other := &session.Instance{Title: "peer-added", Status: session.Ready}
 	m.ws.Add(other)
-	assert.Same(t, other, m.slots[1].list.GetInstanceByTitle("peer-added"))
+	m.syncViews()
+	assert.Equal(t, idOf(m, other), titleID(m.slots[1].list, "peer-added"))
 	assert.Nil(t, m.slots[0].list.GetInstanceByTitle("peer-added"), "the other slot is untouched")
 }
 
@@ -365,6 +367,7 @@ func TestStartupPicker_FlushesPendingRatiosIntoClassicState(t *testing.T) {
 	isolateTmux(t)
 	m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
 	m.ws.Add(&session.Instance{Title: "main", Status: session.Running})
+	m.syncViews()
 	m.list.SetSelectedInstance(0)
 	m.pendingRatioSaves = map[string]float64{"main": 0.4}
 	classicState := m.appState()
