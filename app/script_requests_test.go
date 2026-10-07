@@ -153,7 +153,7 @@ func pausedRecordHome(t *testing.T) (m *home, a1 *session.Instance, recA *record
 		Worktree: session.GitWorktreeData{RepoPath: repo, WorktreePath: t.TempDir(), BranchName: "loom/a1", SessionName: "a1"},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.ws.AddForTest(a1)
+	m.ws().AddForTest(a1)
 	selectIn(m, m.list, a1)
 	seed, err := json.Marshal([]session.InstanceData{a1.ToInstanceData()})
 	require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestScriptPause_ShowsTheSpinnerAndSavesThePausedRecord(t *testing.T) {
 	isolateTmux(t)
 	m, recA, _ := ownerTestHome(t)
 	inst := startedInstanceWithProgram(t, "lua-paused", "claude", "idle")
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	selectIn(m, m.list, inst)
 	withScript(t, m, `cs.bind("Z", function(ctx) ctx:selected():pause() end)`)
 
@@ -241,7 +241,7 @@ func TestScriptResume_RecoversARecoverableSession(t *testing.T) {
 		Worktree: session.GitWorktreeData{RepoPath: t.TempDir(), WorktreePath: t.TempDir(), BranchName: "u/orphan"},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.ws.AddForTest(placeholder)
+	m.ws().AddForTest(placeholder)
 	selectIn(m, m.list, placeholder)
 	withScript(t, m, `cs.bind("Z", function(ctx) ctx:selected():resume() end)`)
 
@@ -268,7 +268,7 @@ func TestScriptResume_RefusedRaises(t *testing.T) {
 	m := homeWithAppState(t)
 	m.errBox.SetSize(400, 1)
 	term := &session.Instance{Title: "term", IsWorkspaceTerminal: true}
-	m.ws.AddForTest(term)
+	m.ws().AddForTest(term)
 	selectIn(m, m.list, term)
 	withScript(t, m, "cs.bind(\"Z\", function(ctx)\n  ctx:selected():resume()\n  ctx:notify(\"after\")\nend)")
 
@@ -326,7 +326,7 @@ func TestScriptKill_AJobFailureIsShownAndRaised(t *testing.T) {
 	// Never started: the kill's job can't get its worktree.
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "fresh", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	selectIn(m, m.list, inst)
 	withScript(t, m, `cs.bind("Z", function(ctx) ctx:selected():kill() end)`)
 
@@ -470,7 +470,7 @@ func TestScriptLifecycle_RefreshesTheInstance(t *testing.T) {
 		isolateTmux(t)
 		m, _, _ := ownerTestHome(t)
 		inst := startedInstanceWithProgram(t, "lua-cycle", "claude", "idle")
-		m.ws.AddForTest(inst)
+		m.ws().AddForTest(inst)
 		selectIn(m, m.list, inst)
 		withScript(t, m, `cs.bind("Z", function(ctx)
   local inst = ctx:selected()
@@ -534,7 +534,7 @@ end)`)
 func TestScriptError_RefusalsRaiseTheirOwnMessage(t *testing.T) {
 	m := homeWithAppState(t)
 	term := &session.Instance{Title: "term", IsWorkspaceTerminal: true}
-	m.ws.AddForTest(term)
+	m.ws().AddForTest(term)
 	m.syncViews()
 	id := idOf(m, term)
 
@@ -582,7 +582,7 @@ func TestScriptResume_ARecoveredInstanceTakesTheAdoptedView(t *testing.T) {
 		Worktree: session.GitWorktreeData{RepoPath: t.TempDir(), WorktreePath: t.TempDir(), BranchName: "u/orphan"},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.ws.AddForTest(placeholder)
+	m.ws().AddForTest(placeholder)
 	selectIn(m, m.list, placeholder)
 	placeholderID := idOf(m, placeholder)
 	withScript(t, m, `cs.bind("Z", function(ctx)
@@ -600,7 +600,7 @@ end)`)
 	adopted := &session.Instance{Title: "orphan", Status: session.Running}
 
 	reply := deliver(t, m, core.TrackedForTest(scriptReq(t, m), placeholderID,
-		core.RecoverResult{Placeholder: placeholder, Owner: m.ws, OldTitle: "orphan", Recovered: adopted}))
+		core.RecoverResult{Placeholder: placeholder, Owner: m.ws(), OldTitle: "orphan", Recovered: adopted}))
 
 	adoptedID := idOf(m, adopted)
 	require.NotEqual(t, placeholderID, adoptedID, "fixture: the adoption is a new instance")

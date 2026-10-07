@@ -181,7 +181,7 @@ func (m *home) focusCursorSlot() {
 // into a PeerSection for refreshPeerSections (rail). Main-goroutine
 // only.
 func (m *home) peerSectionFor(slot *workspaceSlot) ui.PeerSection {
-	p := ui.PeerSection{Name: slot.wsCtx().Name}
+	p := ui.PeerSection{Name: slot.name()}
 	for _, inst := range slot.list.GetInstances() {
 		st := inst.Status
 		switch {
@@ -202,8 +202,8 @@ func (m *home) peerSectionFor(slot *workspaceSlot) ui.PeerSection {
 // or unnamed) so the header never renders empty and `z` still has a
 // stable collapse key.
 func (m *home) overviewGroupName() string {
-	if m.wsCtx() != nil && m.wsCtx().Name != "" {
-		return m.wsCtx().Name
+	if m.name() != "" {
+		return m.name()
 	}
 	return "global"
 }
@@ -222,7 +222,7 @@ func (m *home) fleetSlotOrder() []int {
 		}
 	}
 	sort.SliceStable(rest, func(a, b int) bool {
-		return m.slots[rest[a]].wsCtx().Name < m.slots[rest[b]].wsCtx().Name
+		return m.slots[rest[a]].name() < m.slots[rest[b]].name()
 	})
 	return append(order, rest...)
 }
@@ -230,8 +230,8 @@ func (m *home) fleetSlotOrder() []int {
 // slotGroupName is the display name for a slot's overview group,
 // falling back to "global" for the unnamed classic slot.
 func (m *home) slotGroupName(slot *workspaceSlot) string {
-	if slot.wsCtx() != nil && slot.wsCtx().Name != "" {
-		return slot.wsCtx().Name
+	if slot.name() != "" {
+		return slot.name()
 	}
 	return "global"
 }

@@ -32,7 +32,7 @@ func TestScriptHost_ConcurrentNavAndRead(t *testing.T) {
 	}
 	list.SetSelectedInstance(0)
 
-	h := wireCore(t, &home{workspaceSlot: &workspaceSlot{ws: ws, list: list}})
+	h := wireCore(t, &home{workspaceSlot: slotWith(ws, &workspaceSlot{list: list})})
 	host := newScriptHost(h)
 
 	var wg sync.WaitGroup

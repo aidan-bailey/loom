@@ -187,10 +187,12 @@ func TestApplyUIPrefs_RestoresViewMode(t *testing.T) {
 	m := newTestHome(t)
 
 	require.NoError(t, m.appState().SetUIPrefs(config.UIPrefs{ViewMode: "overview"}))
+	m.syncWorkspaces()
 	m.applyUIPrefs()
 	assert.Equal(t, viewOverview, m.viewMode)
 
 	require.NoError(t, m.appState().SetUIPrefs(config.UIPrefs{ViewMode: ""}))
+	m.syncWorkspaces()
 	m.applyUIPrefs()
 	assert.Equal(t, viewFocus, m.viewMode)
 }

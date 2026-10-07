@@ -126,7 +126,7 @@ func TestPreviewTickRerendersScrolledAgent(t *testing.T) {
 	inst := startedInstanceWithHistory(t, &historyCaptures)
 
 	m := homeWithAppState(t)
-	m.ws.AddForTest(inst) // first add is auto-selected
+	m.ws().AddForTest(inst) // first add is auto-selected
 	m.syncViews()
 	require.Equal(t, idOf(m, inst), selID(m.list))
 

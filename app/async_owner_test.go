@@ -39,7 +39,7 @@ func startingInstance(t *testing.T, slot *workspaceSlot, title string) *session.
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Loading))
-	slot.ws.AddForTest(inst)
+	slot.ws().AddForTest(inst)
 	return inst
 }
 
@@ -75,7 +75,7 @@ func TestInstanceStarted_FailureAfterSwitchKillsOnlyTheFailedInstance(t *testing
 	m.switchWorkspaceSlot(1)
 	victim := selectTitle(t, m, "b1")
 
-	deliver(t, m, core.StartResult{Instance: starting, Err: errors.New("boom"), Owner: owner.ws})
+	deliver(t, m, core.StartResult{Instance: starting, Err: errors.New("boom"), Owner: owner.ws()})
 
 	assert.Equal(t, idOf(m, victim), titleID(m.slots[1].list, "b1"), "the focused workspace's selected session must be untouched")
 	assert.NotEqual(t, session.Deleting, victim.GetStatus())
@@ -96,7 +96,7 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 	m.switchWorkspaceSlot(1)
 	m.errBox.SetSize(400, 1)
 
-	pumpCore(t, m, deliver(t, m, core.StartResult{Instance: starting, Owner: owner.ws}))
+	pumpCore(t, m, deliver(t, m, core.StartResult{Instance: starting, Owner: owner.ws()}))
 
 	assert.Equal(t, stateDefault, m.state, "no inline attach into another workspace's pane")
 	assert.Equal(t, "bpeer", focusedName(m), "focus stays where the user put it")
@@ -115,7 +115,7 @@ func TestInstanceStarted_SuccessInFocusedWorkspaceAttaches(t *testing.T) {
 	starting := startingInstance(t, m.workspaceSlot, "new-one")
 	finishStart(t, starting)
 
-	deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws()})
 
 	assert.Equal(t, stateInlineAttach, m.state)
 	assert.Equal(t, idOf(m, starting), selID(m.list))
@@ -134,7 +134,7 @@ func TestInstanceStarted_InlineAttachWaitsForThePrompt(t *testing.T) {
 	starting.SetPrompt("do the thing")
 	finishStart(t, starting)
 
-	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws()})
 	assert.Equal(t, stateDefault, m.state, "no inline attach while the prompt is being sent")
 	assert.Empty(t, starting.Prompt(), "the prompt is cleared at once, so nothing re-sends it")
 
@@ -155,7 +155,7 @@ func TestInstanceStarted_KilledWhileThePromptIsSentIsNotAttached(t *testing.T) {
 	starting.SetPrompt("do the thing")
 	finishStart(t, starting)
 
-	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws()})
 	require.NoError(t, starting.TransitionTo(session.Deleting)) // a kill confirmed meanwhile
 	pumpCore(t, m, cmd)
 
@@ -175,7 +175,7 @@ func TestInstanceStarted_PausedWhileThePromptIsSentIsNotAttached(t *testing.T) {
 	starting.SetPrompt("do the thing")
 	finishStart(t, starting)
 
-	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws})
+	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws()})
 	require.NoError(t, starting.TransitionTo(session.Loading)) // a pause confirmed meanwhile
 	pumpCore(t, m, cmd)
 
@@ -199,12 +199,12 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	// attaches none).
 	started := liveInstance(t, "late")
 	m.panes.Retain(nil) // nothing attached it
-	owner.ws.AddForTest(started)
+	owner.ws().AddForTest(started)
 	m.syncViews()
 
 	m.errBox.SetSize(400, 1)
 
-	cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
+	cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws()})
 
 	assert.Contains(t, m.errBox.String(), "afocus, which is no longer open")
 	assert.Equal(t, stateDefault, m.state)
@@ -230,7 +230,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		}, t.TempDir())
 		require.NoError(t, err)
 		require.NoError(t, p.TransitionTo(session.Loading))
-		slot.ws.AddForTest(p)
+		slot.ws().AddForTest(p)
 		return p
 	}
 
@@ -245,7 +245,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		require.NoError(t, recovered.TransitionTo(session.Running))
 
 		placeholderID := idOf(m, placeholder) // captured while loaded: a removal forgets it
-		deliver(t, m, core.RecoverResult{OldTitle: "dup", Recovered: recovered, Placeholder: placeholder, Owner: owner.ws})
+		deliver(t, m, core.RecoverResult{OldTitle: "dup", Recovered: recovered, Placeholder: placeholder, Owner: owner.ws()})
 
 		assert.Equal(t, idOf(m, bystander), titleID(m.slots[1].list, "dup"), "the same-titled row elsewhere is untouched")
 		assert.NotContains(t, listIDs(m.slots[1].list), idOf(m, recovered))
@@ -262,7 +262,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		m.switchWorkspaceSlot(1)
 		bystander := startingInstance(t, m.workspaceSlot, "dup")
 
-		deliver(t, m, core.RecoverResult{OldTitle: "dup", Err: errors.New("boom"), Placeholder: placeholder, Owner: owner.ws})
+		deliver(t, m, core.RecoverResult{OldTitle: "dup", Err: errors.New("boom"), Placeholder: placeholder, Owner: owner.ws()})
 
 		assert.Equal(t, session.Recoverable, placeholder.GetStatus(), "the placeholder is back to Recoverable for a retry")
 		assert.Equal(t, session.Loading, bystander.GetStatus(), "the namesake is untouched")
@@ -280,10 +280,10 @@ func TestResumeDone_AfterOwnerDropped(t *testing.T) {
 	recB.calls = 0
 	resumed := liveInstance(t, "resumed")
 	m.panes.Retain(nil) // nothing attached it
-	owner.ws.AddForTest(resumed)
+	owner.ws().AddForTest(resumed)
 	m.syncViews()
 
-	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws})
+	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws()})
 
 	assert.Nil(t, m.list.GetInstanceByTitle("resumed"), "not filed under the focused workspace")
 	assert.Zero(t, recB.calls)
@@ -300,10 +300,10 @@ func TestResumeDone_OwnerReopened(t *testing.T) {
 	m, owner, twin, _, recC := reopenedHome(t, "res", wtPath, deadCmdExecForTest())
 	twinID := idOf(m, twin) // captured while loaded: a removal forgets it
 	resumed := startedWorktreeInstance(t, "res", wtPath, newFakeTmuxServer())
-	owner.ws.AddForTest(resumed)
+	owner.ws().AddForTest(resumed)
 	m.syncViews()
 
-	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws})
+	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws()})
 	drainCmd(cmd)
 
 	reopened := m.slots[1]
@@ -330,7 +330,7 @@ func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 			drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
 		}
 		resumed := liveInstance(t, "resumed")
-		owner.ws.AddForTest(resumed)
+		owner.ws().AddForTest(resumed)
 		m.syncViews()
 
 		cmd := deliver(t, m, failedResume(resumed))

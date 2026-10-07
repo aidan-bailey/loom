@@ -68,7 +68,7 @@ func TestRunMergeSelected_BlocksOnDirtyTarget(t *testing.T) {
 	m := newTestHome(t)
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
-	m.ws.AddForTest(target)
+	m.ws().AddForTest(target)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -87,7 +87,7 @@ func TestRunMergeSelected_BlocksWhenNoEligibleSources(t *testing.T) {
 	m := newTestHome(t)
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
-	m.ws.AddForTest(target)
+	m.ws().AddForTest(target)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -102,8 +102,8 @@ func TestRunMergeSelected_OpensPickerWithEligibleSources(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	m.ws.AddForTest(target)
-	m.ws.AddForTest(source)
+	m.ws().AddForTest(target)
+	m.ws().AddForTest(source)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -150,8 +150,8 @@ func TestHandleStateMergePickerKey_EscCancelsWithoutMerging(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	m.ws.AddForTest(target)
-	m.ws.AddForTest(source)
+	m.ws().AddForTest(target)
+	m.ws().AddForTest(source)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -180,8 +180,8 @@ func TestHandleStateMergePickerKey_EnterMergesTheDisplayedTarget(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	m.ws.AddForTest(target)
-	m.ws.AddForTest(source)
+	m.ws().AddForTest(target)
+	m.ws().AddForTest(source)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -223,9 +223,9 @@ func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
 	other := pausedInstanceWithRealWorktree(t, repoDir, "other", "other-branch")
-	m.ws.AddForTest(target)
-	m.ws.AddForTest(source)
-	m.ws.AddForTest(other)
+	m.ws().AddForTest(target)
+	m.ws().AddForTest(source)
+	m.ws().AddForTest(other)
 	m.syncViews()
 	selectIn(m, m.list, target)
 

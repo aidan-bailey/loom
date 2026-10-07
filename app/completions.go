@@ -22,7 +22,7 @@ import (
 // focused slot and no other flow is on screen; otherwise a notice says
 // where it started. Formerly app.handleInstanceStarted's view half.
 func (m *home) applyStarted(ev core.Started) tea.Cmd {
-	owner := ev.Owner
+	owner := ev.OwnerID
 	// The row, nil when no open slot shows the instance (its owner closed).
 	v, holder := m.viewByID(ev.ID)
 	var attach tea.Cmd
@@ -30,17 +30,17 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 		attach = m.replacePane(v)
 	}
 	switch {
-	case owner == nil:
+	case owner == 0:
 		// Unknown owner (unstamped, and no loaded workspace holds it):
 		// only the model's half applies.
 	case !ev.Loaded:
-		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", ev.Title, owner.Label(), m.core.ClosedNoteWS(owner)))
-	case owner != m.ws:
+		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", ev.Title, ev.OwnerLabel, ev.ClosedNote))
+	case owner != m.id:
 		// A background slot's selection drives no open flow.
 		if s := m.slotFor(owner); s != nil {
 			s.list.SelectID(ev.ID)
 		}
-		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", ev.Title, owner.Label()))
+		m.errBox.SetInfo(fmt.Sprintf("%s started in %s", ev.Title, ev.OwnerLabel))
 	case m.state != stateDefault || holder != m.workspaceSlot || !v.Active():
 		// Another flow owns the screen and acts on the selection; leave
 		// both alone. (The second test is a belt: the owner is stamped by
@@ -74,8 +74,8 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 // mark the record Paused, and resume rebuilds the worktree from the branch.
 // Formerly app.handleRecoverDone's view half.
 func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
-	owner := ev.Owner
-	if owner != nil && (owner != m.ws || m.state == stateDefault) {
+	owner := ev.OwnerID
+	if owner != 0 && (owner != m.id || m.state == stateDefault) {
 		if s := m.slotFor(owner); s != nil {
 			s.list.SelectID(ev.ID)
 		}
@@ -86,10 +86,10 @@ func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 		attach = m.replacePane(v)
 	}
 	where := ""
-	if owner != nil && owner != m.ws {
-		where = " in " + owner.Label()
+	if owner != 0 && owner != m.id {
+		where = " in " + ev.OwnerLabel
 		if !ev.Loaded {
-			where += ", " + m.core.ClosedNoteWS(owner)
+			where += ", " + ev.ClosedNote
 		}
 	}
 	if ev.Paused {

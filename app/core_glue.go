@@ -49,7 +49,7 @@ func (m *home) drainCore() tea.Cmd {
 func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 	switch ev := ev.(type) {
 	case core.ViewsChanged:
-		if s := m.slotFor(ev.Workspace); s != nil {
+		if s := m.slotFor(ev.WS); s != nil {
 			s.views = ev.Views
 			m.pruneBells()
 			m.pruneLadder()
@@ -125,11 +125,11 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 // rows, a split pane and a workbench, sized when the terminal size is
 // known. Its store is seeded from the model (seedViews), and its agent
 // sessions get their pane clients (ensureSlotPanes).
-func (m *home) newSlotView(ws *core.Workspace) *workspaceSlot {
-	slot := &workspaceSlot{ws: ws}
+func (m *home) newSlotView(v core.WorkspaceView) *workspaceSlot {
+	slot := &workspaceSlot{id: v.ID, info: v}
 	list := ui.NewList(&m.spinner, slotRows{m, slot})
 	list.SetPanes(m.panes)
-	list.SetWorkspaceName(ws.Name())
+	list.SetWorkspaceName(v.Name)
 	splitPane := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	splitPane.SetPanes(m.panes)
 	// Pre-size components if terminal dimensions are known.
@@ -148,14 +148,14 @@ func (m *home) newSlotView(ws *core.Workspace) *workspaceSlot {
 	return slot
 }
 
-// slotFor returns the loaded view of ws, or nil when no slot shows it
-// (its tab was closed).
-func (m *home) slotFor(ws *core.Workspace) *workspaceSlot {
-	if ws == nil {
+// slotFor returns the loaded view of the workspace id, or nil when no slot
+// shows it (its tab was closed).
+func (m *home) slotFor(id core.WorkspaceID) *workspaceSlot {
+	if id == 0 {
 		return nil
 	}
 	for _, s := range m.openSlots() {
-		if s.ws == ws {
+		if s.id == id {
 			return s
 		}
 	}

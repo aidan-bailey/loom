@@ -111,8 +111,8 @@ type home struct {
 	ctx context.Context
 
 	// *workspaceSlot is the focused workspace slot, embedded so its
-	// per-workspace state (m.wsCtx(), m.storage(), m.appConfig(), m.appState(),
-	// m.list, m.splitPane, m.workbench) reads and writes straight through
+	// per-workspace state (m.id, m.info and its accessors, m.list,
+	// m.splitPane, m.workbench) reads and writes straight through
 	// to the one slot that owns it — there is no copy on home to keep in
 	// sync. Invariant (checkSlotInvariant): with workspace tabs open
 	// (len(m.slots) > 0) it IS m.slots[m.focusedSlot]; in classic/global
@@ -363,6 +363,13 @@ type home struct {
 	// cleared when it lands. Update-goroutine only.
 	ratioTickArmed bool
 
+	// settingsEdit is the config the open settings overlay edits: the
+	// TUI's own, built from the focused workspace's published settings
+	// (config.FromSettings), never the model's. Each change is sent back
+	// whole (core.Model.SaveSettings). nil while no settings overlay is
+	// open.
+	settingsEdit *config.Config
+
 	// hostFocused mirrors the host terminal's focus state (via tea.FocusMsg/
 	// BlurMsg with ReportFocus on). Assumed focused at startup; used to
 	// synthesize correct focus events when panes/sessions switch.
@@ -462,11 +469,11 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 // Called at the end of newHome (classic startup), after a slot is
 // loaded/focused (loadSlot), and on entering global mode.
 func (m *home) applyUIPrefs() {
-	if m.appState() == nil {
+	if m.id == 0 {
 		// Bare test homes construct no app state; nothing to apply.
 		return
 	}
-	p := m.appState().GetUIPrefs()
+	p := m.uiPrefs()
 	if p.ViewMode == "overview" {
 		m.enterOverview()
 	} else {
@@ -486,7 +493,7 @@ func (m *home) applyUIPrefs() {
 // a fresh restart would, instead of inheriting whatever ratio the
 // previously selected instance left behind.
 func (m *home) applyStoredRatio(inst *core.InstanceView) {
-	if m.appState() == nil || inst == nil {
+	if m.id == 0 || inst == nil {
 		return
 	}
 	// A pending (not-yet-flushed) resize is the newest truth and must win
@@ -499,7 +506,7 @@ func (m *home) applyStoredRatio(inst *core.InstanceView) {
 		m.splitPane.SetAgentRatio(r)
 		return
 	}
-	if r, ok := m.appState().GetUIPrefs().SplitRatios[inst.Title]; ok {
+	if r, ok := m.uiPrefs().SplitRatios[inst.Title]; ok {
 		m.splitPane.SetAgentRatio(r)
 		return
 	}
@@ -562,20 +569,24 @@ func (m *home) flushPendingRatioSaves() {
 	})
 }
 
-// mutateUIPrefs applies fn to a copy of the prefs and persists; save
-// errors are logged, not surfaced (layout prefs are best-effort).
-// Persistence is a synchronous write-through to state.json — fine for
-// rare toggles; debounce burst callers (e.g. key-repeat ratio changes).
+// mutateUIPrefs applies fn to a copy of the focused workspace's prefs and
+// asks the model to persist it; on success the slot keeps the result, so
+// a read later in the same Update sees it. Save errors are logged, not
+// surfaced (layout prefs are best-effort). Persistence is a synchronous
+// write-through to state.json — fine for rare toggles; debounce burst
+// callers (e.g. key-repeat ratio changes).
 func (m *home) mutateUIPrefs(fn func(*config.UIPrefs)) {
-	if m.appState() == nil {
-		// Bare test homes construct no app state; nothing to persist.
+	if m.id == 0 {
+		// Bare test homes load no workspace; nothing to persist.
 		return
 	}
-	p := m.appState().GetUIPrefs()
+	p := m.uiPrefs()
 	fn(&p)
-	if err := m.appState().SetUIPrefs(p); err != nil {
+	if err := m.core.SetUIPrefs(m.id, p); err != nil {
 		log.For("app").Warn("ui_prefs_save_failed", "err", err)
+		return
 	}
+	m.info.UIPrefs = p
 }
 
 // Init implements tea.Model. It starts the spinner and kicks off the
@@ -1387,7 +1398,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// flushes the outgoing slot's pending split-ratio saves.
 		m.loadSlot(len(m.slots) - 1)
 		m.updateTabBarStatuses()
-		m.showRecoverySummary(m.ws.Recovery())
+		m.showRecoverySummary(m.recovery())
 
 		// instanceChanged repoints the panes and menu at the new slot's
 		// selection; release drops the classic slot's attach clients
@@ -1749,7 +1760,7 @@ func (m *home) handleError(err error) tea.Cmd {
 }
 
 func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
-	ti := overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig().GetProfiles())
+	ti := overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.settings().GetProfiles())
 	ti.SetBaseBranchName(m.baseBranchName)
 	return ti
 }
@@ -1760,7 +1771,7 @@ func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
 // runtime and Cmd bodies run concurrently with Update.
 func (m *home) resolveBaseBranchCmd() tea.Cmd {
 	repoDir := m.repoPath()
-	configured := m.appConfig().GetBaseBranch()
+	configured := m.settings().GetBaseBranch()
 	return func() tea.Msg {
 		_, name, err := git.ResolveBaseCommit(repoDir, configured, nil)
 		if err != nil {
@@ -1823,8 +1834,8 @@ func (m *home) confirmAction(message string, action tea.Cmd) tea.Cmd {
 // path; otherwise (classic/global mode, even with a startup workspace
 // context) it falls back to the process working directory.
 func (m *home) repoPath() string {
-	if len(m.slots) > 0 && m.wsCtx().RepoPath != "" {
-		return m.wsCtx().RepoPath
+	if len(m.slots) > 0 && m.info.RepoPath != "" {
+		return m.info.RepoPath
 	}
 	cwd, _ := os.Getwd()
 	return cwd
@@ -1835,12 +1846,7 @@ func (m *home) repoPath() string {
 // other slot's (so sessions created there get subagent hooks). Returns
 // empty string only for a nil context (bare test homes), which callers
 // resolve to config.GetConfigDir.
-func (m *home) configDir() string {
-	if m.wsCtx() != nil {
-		return m.wsCtx().ConfigDir
-	}
-	return ""
-}
+func (m *home) configDir() string { return m.info.ConfigDir }
 
 // View implements tea.Model.
 func (m *home) View() tea.View {

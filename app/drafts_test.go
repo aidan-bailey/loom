@@ -75,7 +75,7 @@ func TestCreateRefused_LeavesNoResidue(t *testing.T) {
 	m.errBox.SetSize(400, 1)
 	before := m.list.NumInstances()
 	d := m.newDraft("orphaned", "", 0)
-	d.slot = &workspaceSlot{ws: testWS(core.WorkspaceParts{}), list: m.list} // a workspace no longer loaded
+	d.slot = slotWith(testWS(core.WorkspaceParts{}), &workspaceSlot{list: m.list}) // a workspace no longer loaded
 
 	m.confirmDraft(d, overlay.LaunchOptions{})
 	m.drainCore()

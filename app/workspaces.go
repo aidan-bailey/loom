@@ -17,14 +17,19 @@ import (
 )
 
 // workspaceSlot is the TUI's view of one loaded workspace: the model's
-// workspace (ws) plus the view state over it, the rail, the split pane
-// and the workbench. The model (core) owns the workspace, its instances,
-// its storage, config and state; the slot never copies them. home embeds
-// the focused slot, so m.list, m.splitPane, m.workbench and the accessors
-// below resolve to the focused slot's. Slots are always handled by pointer.
+// view of the workspace (info, named by id) plus the view state over it,
+// the rail, the split pane and the workbench. The model (core) owns the
+// workspace, its instances, its storage, config and state; the slot holds
+// only the copies the model publishes. home embeds the focused slot, so
+// m.list, m.splitPane, m.workbench and the accessors below resolve to the
+// focused slot's. Slots are always handled by pointer.
 type workspaceSlot struct {
-	// ws is the workspace this slot shows; nil only in bare test homes.
-	ws *core.Workspace
+	// id names the workspace this slot shows; 0 only in bare test homes.
+	id core.WorkspaceID
+	// info is the workspace as the model last published it
+	// (core.WorkspacesChanged), or as this slot last wrote it
+	// (syncWorkspaces, mutateUIPrefs). Read it through the accessors below.
+	info core.WorkspaceView
 	// views is this workspace's instances as the model last published them
 	// (core.ViewsChanged), in display order. Read them through
 	// slotRows/rowsOf, which add the TUI's overlays.
@@ -40,37 +45,21 @@ type workspaceSlot struct {
 	workbench *ui.Workbench
 }
 
-// wsCtx is the workspace's context (see core.Workspace.Ctx).
-func (s *workspaceSlot) wsCtx() *config.WorkspaceContext {
-	if s.ws == nil {
-		return nil
-	}
-	return s.ws.Ctx()
-}
+// name is the workspace's registered name, "" for the global context.
+func (s *workspaceSlot) name() string { return s.info.Name }
 
-// storage persists the workspace's instances.
-func (s *workspaceSlot) storage() *session.Storage {
-	if s.ws == nil {
-		return nil
-	}
-	return s.ws.Storage()
-}
+// label names the workspace in notices: its name, or "global".
+func (s *workspaceSlot) label() string { return s.info.Label }
 
-// appConfig is the workspace's configuration.
-func (s *workspaceSlot) appConfig() *config.Config {
-	if s.ws == nil {
-		return nil
-	}
-	return s.ws.Config()
-}
+// settings is a copy of the workspace's config.json, as last published.
+func (s *workspaceSlot) settings() config.Settings { return s.info.Settings }
 
-// appState is the workspace's app state: help screens seen, UI prefs.
-func (s *workspaceSlot) appState() config.AppState {
-	if s.ws == nil {
-		return nil
-	}
-	return s.ws.State()
-}
+// uiPrefs is a deep copy of the workspace's UI prefs, safe to change: the
+// change reaches state.json only through mutateUIPrefs.
+func (s *workspaceSlot) uiPrefs() config.UIPrefs { return s.info.UIPrefs.Clone() }
+
+// recovery is the summary of the workspace's last orphan reconcile.
+func (s *workspaceSlot) recovery() core.RecoverySummary { return s.info.Recovery }
 
 // activateWorkspace opens a workspace as a new tab (core's OpenTab: load,
 // reconcile, crash restart, workspace terminal, orphan recovery) and
@@ -83,7 +72,15 @@ func (s *workspaceSlot) appState() config.AppState {
 // its pane clients (releaseSlotCmd, prunePanes) and is nil otherwise.
 // Callers must return it (or, before the program runs, run it).
 func (m *home) activateWorkspace(def config.Workspace) (tea.Cmd, error) {
-	ws, err := m.core.OpenTabWS(def)
+	if len(m.slots) == 0 {
+		// Leaving classic mode: the first tab drops the classic workspace
+		// from the model, after which its UI prefs can no longer be
+		// written. Tear the classic slot down (workbench, pending split
+		// ratios) while they still can; loadSlot's own teardown then finds
+		// nothing left to do.
+		m.leaveFocusedSlot()
+	}
+	v, err := m.core.OpenTab(def)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +88,7 @@ func (m *home) activateWorkspace(def config.Workspace) (tea.Cmd, error) {
 	// control) land before anything the caller shows next, as they did when
 	// the load set them itself.
 	notices := m.drainCore()
-	m.slots = append(m.slots, m.newSlotView(ws))
+	m.slots = append(m.slots, m.newSlotView(v))
 	var release tea.Cmd
 	if len(m.slots) == 1 {
 		// Leaving classic mode: the classic slot is not in m.slots, so the
@@ -121,11 +118,18 @@ func (m *home) activateWorkspace(def config.Workspace) (tea.Cmd, error) {
 // (releaseSlotCmd, prunePanes; nil when none is attached) and must be
 // returned to the runtime.
 func (m *home) deactivateWorkspace(name string) (tea.Cmd, error) {
-	idx := slices.IndexFunc(m.slots, func(s *workspaceSlot) bool { return s.ws.Name() == name })
+	idx := slices.IndexFunc(m.slots, func(s *workspaceSlot) bool { return s.name() == name })
 	if idx == -1 {
 		return nil, nil
 	}
-	if _, err := m.core.CloseTabWS(name); err != nil {
+	if idx == m.focusedSlot {
+		// Closing drops the workspace from the model, after which its UI
+		// prefs can no longer be written: tear the focused slot down
+		// (workbench, pending split ratios) first. loadSlot's own teardown
+		// then finds nothing left to do.
+		m.leaveFocusedSlot()
+	}
+	if err := m.core.CloseTab(name); err != nil {
 		return nil, err
 	}
 	slot := m.slots[idx]
@@ -241,16 +245,16 @@ func (m *home) checkSlotInvariant() error {
 	// The slots mirror the model's workspaces: the tabs in order, or with
 	// none open the classic workspace. A bare test home has no model.
 	if m.core != nil {
-		tabs := m.core.TabsWS()
+		tabs := m.core.Tabs()
 		if len(tabs) != len(m.slots) {
 			return fmt.Errorf("slot invariant: %d slots, but the model has %d tabs", len(m.slots), len(tabs))
 		}
 		for i, s := range m.slots {
-			if s.ws != tabs[i] {
+			if s.id != tabs[i].ID {
 				return fmt.Errorf("slot invariant: m.slots[%d] does not show the model's tab %d", i, i)
 			}
 		}
-		if len(m.slots) == 0 && m.ws != m.core.ClassicWS() {
+		if classic, _ := m.core.Classic(); len(m.slots) == 0 && m.id != classic.ID {
 			return errors.New("slot invariant: the focused slot does not show the model's classic workspace")
 		}
 	}
@@ -320,7 +324,7 @@ func (m *home) loadSlot(idx int) {
 	slot := m.slots[idx]
 	m.focusedSlot = idx
 	m.workspaceSlot = slot
-	m.list.SetWorkspaceName(slot.ws.Name())
+	m.list.SetWorkspaceName(slot.name())
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	// Resize immediately using the now-correct tab bar height. Without this,
 	// the first View() after a workspace switch uses components pre-sized when
@@ -330,7 +334,7 @@ func (m *home) loadSlot(idx int) {
 	// this interim resize survives only for bare test homes — a redundant
 	// SetSize here would loop tmux SetDetachedSize subprocess calls twice
 	// per workspace switch.
-	if m.appState() == nil && m.lastWidth > 0 && m.lastHeight > 0 {
+	if m.id == 0 && m.lastWidth > 0 && m.lastHeight > 0 {
 		listWidth := int(float32(m.lastWidth) * ui.ListWidthPercent)
 		paneWidth := m.lastWidth - listWidth
 		contentHeight := m.lastHeight - m.topChromeHeight() - 2
@@ -364,7 +368,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		return m.stayInGlobalMode()
 	}
 	if len(m.slots) == 0 {
-		err := m.core.SaveWS(m.ws)
+		err := m.core.Save(m.id)
 		switch {
 		case errors.Is(err, session.ErrStorageLoadFailed):
 			// The global payload is unreadable (typically the fail-closed
@@ -402,7 +406,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	// 1. Activate new workspaces first (safe — adds to slots without removing).
 	currentNames := make(map[string]bool, len(m.slots))
 	for _, slot := range m.slots {
-		currentNames[slot.ws.Name()] = true
+		currentNames[slot.name()] = true
 	}
 	for _, ws := range desired {
 		if !currentNames[ws.Name] {
@@ -420,13 +424,13 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	// Skipped when no desired workspace is open (every activation failed):
 	// closing the rest would leave no tab at all, which is enterGlobalMode's
 	// transition, not this one — keep the open tabs and report the failures.
-	if slices.ContainsFunc(m.slots, func(s *workspaceSlot) bool { return desiredNames[s.ws.Name()] }) {
+	if slices.ContainsFunc(m.slots, func(s *workspaceSlot) bool { return desiredNames[s.name()] }) {
 		for i := len(m.slots) - 1; i >= 0; i-- {
-			if !desiredNames[m.slots[i].ws.Name()] {
-				release, err := m.deactivateWorkspace(m.slots[i].ws.Name())
+			if !desiredNames[m.slots[i].name()] {
+				release, err := m.deactivateWorkspace(m.slots[i].name())
 				if err != nil {
 					deactivationErrors = append(deactivationErrors,
-						fmt.Sprintf("%s: %v", m.slots[i].ws.Name(), err))
+						fmt.Sprintf("%s: %v", m.slots[i].name(), err))
 				}
 				releases = append(releases, release)
 			}
@@ -442,7 +446,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	m.core.PersistOpenList()
 	if len(m.slots) > 0 {
-		m.showRecoverySummary(m.slots[m.focusedSlot].ws.Recovery())
+		m.showRecoverySummary(m.slots[m.focusedSlot].recovery())
 	}
 
 	// Point the panes and menu at the (possibly new) selection, so none
@@ -472,7 +476,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 // (`loom --workspace`, or launched inside one) is not: leaving it for
 // global mode is a real transition.
 func (m *home) inGlobalMode() bool {
-	return len(m.slots) == 0 && (m.wsCtx() == nil || m.wsCtx().Name == "")
+	return len(m.slots) == 0 && m.name() == ""
 }
 
 // stayInGlobalMode applies a picker commit with nothing selected (the
@@ -527,23 +531,24 @@ func (m *home) stayInGlobalMode() tea.Cmd {
 //     possibly-recoverable global state.json — the same rule
 //     activateWorkspace and the classic startup path follow.
 func (m *home) enterGlobalMode() tea.Cmd {
-	global, err := m.core.EnterGlobalWS(m.ws)
+	// Picker escape hatch (W → Global row) from a classic workspace slot
+	// reaches here with no leaveFocusedSlot of its own — clean up workbench
+	// residue (wbRatio flush, split-terminal restore) and flush pending
+	// ratios while the departing slot's workspace is still loaded (the
+	// transition drops it, and its prefs can no longer be written then),
+	// or handleQuit later flushes them into the new global state.json.
+	m.leaveFocusedSlot()
+
+	global, err := m.core.EnterGlobal(m.id)
 	if err != nil {
 		return m.handleError(err)
 	}
 	notices := m.drainCore()
 
-	// Picker escape hatch (W → Global row) from a classic workspace slot
-	// reaches here with no leaveFocusedSlot of its own — clean up workbench
-	// residue (wbRatio flush, split-terminal restore) and flush pending
-	// ratios while the departing slot's appState is still current, or
-	// handleQuit later flushes them into the new global state.json.
-	m.leaveFocusedSlot()
-
 	// The global slot keeps the departing slot's splitPane and workbench:
 	// the panes are sized and wired already, and the closed tab no longer
 	// uses them.
-	view := &workspaceSlot{ws: global, splitPane: m.splitPane, workbench: m.workbench}
+	view := &workspaceSlot{id: global.ID, info: global, splitPane: m.splitPane, workbench: m.workbench}
 	view.list = ui.NewList(&m.spinner, slotRows{m, view})
 	view.list.SetPanes(m.panes)
 	m.seedViews(view)
@@ -575,7 +580,7 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	}
 	staleTerminals := releaseClientsCmd(attachedClients(m.splitPane.Terminal().DetachExcept(keep)))
 
-	m.showRecoverySummary(global.Recovery())
+	m.showRecoverySummary(global.Recovery)
 
 	// Point the carried-over panes and the menu at the global selection,
 	// so none of them keeps a dropped instance, then release the drops.
@@ -655,7 +660,7 @@ func (m *home) persistFocusedWorkspace() {
 	if m.focusedSlot < 0 || m.focusedSlot >= len(m.slots) {
 		return
 	}
-	if err := m.core.SetLastUsed(m.slots[m.focusedSlot].ws.Name()); err != nil {
+	if err := m.core.SetLastUsed(m.slots[m.focusedSlot].name()); err != nil {
 		log.For("app").Error("persist_focused_workspace_failed", "err", err)
 	}
 }
@@ -665,7 +670,7 @@ func (m *home) persistFocusedWorkspace() {
 func (m *home) slotNames() []string {
 	names := make([]string, len(m.slots))
 	for i, slot := range m.slots {
-		names[i] = slot.ws.Name()
+		names[i] = slot.name()
 	}
 	return names
 }

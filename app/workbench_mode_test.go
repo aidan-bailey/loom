@@ -153,12 +153,11 @@ func TestWorkbench_SlotSwitchCleansUp(t *testing.T) {
 	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) {
 		p.Ctx = &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}
 	})
-	focusSlots(m, 0, m.workspaceSlot, &workspaceSlot{
-		ws:        wsB,
+	focusSlots(m, 0, m.workspaceSlot, slotWith(wsB, &workspaceSlot{
 		list:      listB,
 		splitPane: splitB,
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), splitB.Terminal()),
-	})
+	}))
 	wireCore(t, m)
 
 	departingSplit := m.splitPane

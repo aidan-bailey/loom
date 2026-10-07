@@ -89,7 +89,7 @@ func (m *home) confirmDraft(d *draft, opts launch.Options) {
 	if m.draft == d {
 		m.draft = nil
 	}
-	m.core.CreateWS(d.slot.ws, core.NewInstance{
+	m.core.Create(d.slot.id, core.NewInstance{
 		Title:   d.title,
 		Path:    d.path,
 		Program: d.program,

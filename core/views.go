@@ -133,7 +133,7 @@ func (m *Model) publishViews() []Event {
 		if prev, ok := m.published[ws]; !ok || !reflect.DeepEqual(prev, views) {
 			// The event gets its own copy: the TUI keeps it as its store, which
 			// must not alias the copy the next publish compares against.
-			events = append(events, ViewsChanged{Workspace: ws, Views: cloneViews(views)})
+			events = append(events, ViewsChanged{Workspace: ws, WS: m.wsIDOf(ws), Views: cloneViews(views)})
 		}
 	}
 	m.published = next

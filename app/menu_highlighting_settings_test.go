@@ -76,7 +76,7 @@ func typeBurstThroughHandleKeyPress(t *testing.T, m *home, s string) {
 // only the burst itself needs to exercise handleMenuHighlighting.
 func TestHandleKeyPress_SettingsProfilesNameBurstNotScrambled(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	so := overlay.NewSettingsOverlay(m.appConfig(), false, "")
+	so := settingsOverlayForTest(m)
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 
@@ -99,7 +99,7 @@ func TestHandleKeyPress_SettingsProfilesNameBurstNotScrambled(t *testing.T) {
 // → agent), which is where the sandbox actually observed the bug.
 func TestHandleKeyPress_SettingsAccountsNameBurstNotScrambled(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	so := overlay.NewSettingsOverlay(m.appConfig(), false, "")
+	so := settingsOverlayForTest(m)
 	so.SetAccountRows([]overlay.AccountRow{{Name: "default", IsDefault: true}})
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings

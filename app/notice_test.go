@@ -37,7 +37,7 @@ func TestResumeDone_ShowsNotice(t *testing.T) {
 	f1 := instByTitle(m, m.list, "f1")
 	require.NotNil(t, f1)
 
-	deliver(t, m, core.ResumeResult{Instance: f1, Owner: m.ws,
+	deliver(t, m, core.ResumeResult{Instance: f1, Owner: m.ws(),
 		Notice: session.NewNotice(errors.New("forgot stash abc"))})
 
 	assert.Contains(t, m.errBox.String(), "forgot stash abc")

@@ -42,7 +42,7 @@ func TestAccountRequest_RemoveIsRefusedWhileASessionUsesIt(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "on-max-2", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount("max-2")
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestRemove, Name: "max-2"})
@@ -162,7 +162,7 @@ func TestAccountRequest_RemoveCountsALoadedSessionOnce(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "on-max-2", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount("max-2")
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	require.NoError(t, os.WriteFile(filepath.Join(global, "state.json"),
 		[]byte(`{"instances":[{"title":"on-max-2","account":"max-2"}]}`), 0o644))

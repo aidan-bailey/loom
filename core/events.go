@@ -149,7 +149,9 @@ func (WorkspacesChanged) coreEvent() {}
 // views.
 type ViewsChanged struct {
 	Workspace *Workspace
-	Views     []InstanceView
+	// WS names the workspace (Workspace's ID): the TUI's slot for it.
+	WS    WorkspaceID
+	Views []InstanceView
 }
 
 func (ViewsChanged) coreEvent() {}

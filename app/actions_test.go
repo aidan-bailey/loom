@@ -51,7 +51,7 @@ func TestSelectedNotBusyNotWorkspaceGuardsLifecycle(t *testing.T) {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	h.ws.AddForTest(instance)
+	h.ws().AddForTest(instance)
 	h.syncViews()
 
 	_ = instance.TransitionTo(session.Loading)

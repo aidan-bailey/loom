@@ -117,7 +117,7 @@ func TestIssuePickedMsg_RespectsInstanceLimit(t *testing.T) {
 	for i := 0; i < GlobalInstanceLimit; i++ {
 		inst, err := session.NewInstance(session.InstanceOptions{Title: "x", Path: t.TempDir(), Program: "claude"})
 		require.NoError(t, err)
-		m.ws.AddForTest(inst)
+		m.ws().AddForTest(inst)
 		m.syncViews()
 	}
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 1, Title: "t"}})

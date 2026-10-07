@@ -88,8 +88,25 @@ func (m *home) setLadder(id core.InstanceID, st session.Status) {
 // workspace keeps). A slot built before its workspace loads is filled by
 // the first ViewsChanged after the load instead.
 func (m *home) seedViews(s *workspaceSlot) {
-	if m.core != nil && m.core.IsLoadedWS(s.ws) {
-		s.views = m.core.ViewsWS(s.ws)
+	if m.core != nil && m.core.IsLoaded(s.id) {
+		s.views = m.core.Views(s.id)
+	}
+}
+
+// syncWorkspaces rereads every open slot's workspace view from the model,
+// for a caller that changed one (a settings save) and reads it back in the
+// same Update: the workspace counterpart of syncViews.
+func (m *home) syncWorkspaces() {
+	if m.core == nil {
+		return
+	}
+	for _, s := range m.openSlots() {
+		if s == nil {
+			continue
+		}
+		if v, ok := m.core.Workspace(s.id); ok {
+			s.info = v
+		}
 	}
 }
 
@@ -107,7 +124,7 @@ func (m *home) syncViews() {
 	}
 	for _, s := range m.openSlots() {
 		if s != nil {
-			s.views = m.core.ViewsWS(s.ws)
+			s.views = m.core.Views(s.id)
 		}
 	}
 }

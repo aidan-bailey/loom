@@ -15,7 +15,7 @@ func TestOverviewData_GroupsFocusedFirstThenAlpha(t *testing.T) {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	mk := func(name, title string) *workspaceSlot {
 		ws := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: name}}, &session.Instance{Title: title, Status: session.Ready})
-		return &workspaceSlot{ws: ws, list: fixtureList(t)}
+		return slotWith(ws, &workspaceSlot{list: fixtureList(t)})
 	}
 	focused := mk("focused", "f1")
 	m := &home{

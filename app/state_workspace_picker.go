@@ -34,7 +34,7 @@ func handleStateWorkspaceKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			// departing slot's pending split ratios either way.
 			m.loadSlot(len(m.slots) - 1)
 			m.updateTabBarStatuses()
-			m.showRecoverySummary(m.ws.Recovery())
+			m.showRecoverySummary(m.recovery())
 			_ = m.core.SetLastUsed(selected.Name)
 			m.core.PersistOpenList()
 			// instanceChanged repoints the panes and menu at the new

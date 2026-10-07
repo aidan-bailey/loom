@@ -420,10 +420,12 @@ func runShowHelp(m *home) (tea.Model, tea.Cmd) {
 }
 
 func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
-	registry, err := config.LoadWorkspaceRegistry()
-	if err != nil {
+	// The model rereads the registry first: another process (`loom
+	// workspace add`, a second loom) may have registered one since.
+	if err := m.core.ReloadRegistry(); err != nil {
 		return m, m.handleError(fmt.Errorf("failed to load workspace registry: %w", err))
 	}
+	registry := m.core.Registry()
 	if len(registry.Workspaces) == 0 {
 		return m, m.handleError(fmt.Errorf("no workspaces registered"))
 	}
@@ -457,12 +459,16 @@ func (m *home) pickerActiveNames() map[string]bool {
 // config. authBlocked/authReason are passed as plain values (not
 // session.RemoteControlAuth) to keep ui/overlay decoupled from session.
 func runOpenSettings(m *home) (tea.Model, tea.Cmd) {
-	if m.appConfig() == nil {
+	if m.id == 0 {
 		return m, m.handleError(fmt.Errorf("no configuration loaded"))
 	}
 	m.core.ReloadAccounts()
 	reloaded := m.drainCore()
-	so := overlay.NewSettingsOverlay(m.appConfig(), m.core.RCAuth().Blocked(), m.core.RCAuth().Reason)
+	// The overlay edits a config of its own, built from the workspace's
+	// published settings; each change goes back to the model as a
+	// SaveSettings request (handleStateSettingsKey).
+	m.settingsEdit = config.FromSettings(m.settings())
+	so := overlay.NewSettingsOverlay(m.settingsEdit, m.core.RCAuth().Blocked(), m.core.RCAuth().Reason)
 	so.SetAccountRows(m.accountRows(m.accountStatuses()))
 	so.SetAccountNotice(m.accountsScreenNotice())
 	m.setOverlay(so, overlaySettings)

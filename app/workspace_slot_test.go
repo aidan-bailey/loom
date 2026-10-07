@@ -34,7 +34,7 @@ func focusSlots(h *home, focused int, slots ...*workspaceSlot) {
 	if h.core != nil {
 		var tabs []*core.Workspace
 		for _, s := range slots {
-			tabs = append(tabs, s.ws)
+			tabs = append(tabs, s.ws())
 		}
 		testModel(h).SetWorkspacesForTest(nil, tabs)
 	}
@@ -56,7 +56,7 @@ func TestSlotInvariant_HoldsAcrossSlotLifecycle(t *testing.T) {
 	isolateTmux(t)
 	globalDir := t.TempDir()
 	t.Setenv(config.EnvGlobalDir, globalDir) // enterGlobalMode's global storage
-	m := newRestoreHome(&recordingExec{})
+	m := newRestoreHome(t, &recordingExec{})
 	require.NoError(t, m.checkSlotInvariant(), "classic home")
 	classic := m.workspaceSlot
 
@@ -143,7 +143,7 @@ func TestSlotInvariant_ToggleKeepsTabsWhenEveryActivationFails(t *testing.T) {
 func TestSlotOwnsState_MutationVisibleWithoutSave(t *testing.T) {
 	m := fleetHome(t)
 	inst := &session.Instance{Title: "added", Status: session.Ready}
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	assert.Equal(t, idOf(m, inst), titleID(m.slots[0].list, "added"))
 
@@ -154,7 +154,7 @@ func TestSlotOwnsState_MutationVisibleWithoutSave(t *testing.T) {
 	m.switchWorkspaceSlot(1)
 	require.NoError(t, m.checkSlotInvariant())
 	other := &session.Instance{Title: "peer-added", Status: session.Ready}
-	m.ws.AddForTest(other)
+	m.ws().AddForTest(other)
 	m.syncViews()
 	assert.Equal(t, idOf(m, other), titleID(m.slots[1].list, "peer-added"))
 	assert.Nil(t, m.slots[0].list.GetInstanceByTitle("peer-added"), "the other slot is untouched")
@@ -245,7 +245,7 @@ func TestEnterGlobalMode_SlotSaveFailureAbortsCleanly(t *testing.T) {
 	require.NoError(t, err)
 
 	dead := &deadTmuxExec{}
-	m := newRestoreHome(dead)
+	m := newRestoreHome(t, dead)
 	m.errBox.SetSize(400, 1)
 	slotA := fleetSlot(t, "ws-a", "a1")
 	reworkspace(t, m, slotA, func(p *core.WorkspaceParts) { p.Storage = storageA })
@@ -383,7 +383,7 @@ func TestScriptDone_DropsInstanceWhenFocusChangedMidDispatch(t *testing.T) {
 func TestStartupPicker_FlushesPendingRatiosIntoClassicState(t *testing.T) {
 	isolateTmux(t)
 	m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
-	m.ws.AddForTest(&session.Instance{Title: "main", Status: session.Running})
+	m.ws().AddForTest(&session.Instance{Title: "main", Status: session.Running})
 	m.syncViews()
 	m.list.SetSelectedInstance(0)
 	m.pendingRatioSaves = map[string]float64{"main": 0.4}
@@ -400,4 +400,52 @@ func TestStartupPicker_FlushesPendingRatiosIntoClassicState(t *testing.T) {
 	assert.Equal(t, 0.4, classicState.GetUIPrefs().SplitRatios["main"], "flushed into the departing (classic) state")
 	_, leaked := m.appState().GetUIPrefs().SplitRatios["main"]
 	assert.False(t, leaked, "the new workspace's state must not receive the classic ratio")
+}
+
+// twoTabsWithPendingRatio opens tabs ws-a and ws-b (ws-a focused), adds a
+// "main" session to ws-a and records a pending split ratio for it, as a
+// resize just before a transition leaves one.
+func twoTabsWithPendingRatio(t *testing.T) (*home, config.Workspace) {
+	t.Helper()
+	isolateTmux(t)
+	m := newRestoreHome(t, &recordingExec{})
+	a, b := preservedTerminalWorkspace(t, "ws-a"), preservedTerminalWorkspace(t, "ws-b")
+	_, err := m.activateWorkspace(a)
+	require.NoError(t, err)
+	_, err = m.activateWorkspace(b)
+	require.NoError(t, err)
+	m.loadSlot(0)
+	require.Equal(t, "ws-a", m.name())
+	m.ws().AddForTest(&session.Instance{Title: "main", Status: session.Running})
+	m.syncViews()
+	m.pendingRatioSaves = map[string]float64{"main": 0.4}
+	return m, a
+}
+
+// TestCloseFocusedTab_FlushesPendingRatiosIntoItsState: closing the focused
+// tab drops its workspace from the model, after which its prefs can no
+// longer be written, so the pending ratio goes to its state.json first.
+func TestCloseFocusedTab_FlushesPendingRatiosIntoItsState(t *testing.T) {
+	m, a := twoTabsWithPendingRatio(t)
+
+	_, err := m.deactivateWorkspace("ws-a")
+	require.NoError(t, err)
+
+	assert.Empty(t, m.pendingRatioSaves)
+	saved := config.LoadStateFrom(config.WorkspaceConfigDir(&a)).GetUIPrefs().SplitRatios
+	assert.InDelta(t, 0.4, saved["main"], 0, "flushed into the closed tab's state")
+}
+
+// TestEnterGlobalMode_FlushesPendingRatiosIntoTheTabsState: the same for
+// leaving every tab for global mode.
+func TestEnterGlobalMode_FlushesPendingRatiosIntoTheTabsState(t *testing.T) {
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	m, a := twoTabsWithPendingRatio(t)
+
+	_ = m.enterGlobalMode()
+
+	require.Empty(t, m.slots, "now in global mode")
+	assert.Empty(t, m.pendingRatioSaves)
+	saved := config.LoadStateFrom(config.WorkspaceConfigDir(&a)).GetUIPrefs().SplitRatios
+	assert.InDelta(t, 0.4, saved["main"], 0, "flushed into the departing tab's state")
 }

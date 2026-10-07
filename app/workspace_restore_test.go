@@ -114,13 +114,13 @@ func preservedTerminalWorkspace(t *testing.T, name string) config.Workspace {
 // newRestoreHome is a bare home for the workspace load paths, with every
 // executor they build replaced by exec. Its model shows the classic slot's
 // workspace (what wireCore installs).
-func newRestoreHome(exec cmd2.Executor) *home {
+func newRestoreHome(t *testing.T, exec cmd2.Executor) *home {
+	t.Helper()
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()})
 	h := &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
@@ -130,6 +130,10 @@ func newRestoreHome(exec cmd2.Executor) *home {
 	}
 	h.list = ui.NewList(&h.spinner, slotRows{h, h.workspaceSlot})
 	testModel(h).SetWorkspacesForTest(ws, nil)
+	h.id = testModel(h).WorkspaceIDForTest(ws)
+	h.info, _ = testModel(h).Workspace(h.id)
+	wiredModel = testModel(h)
+	t.Cleanup(func() { wiredModel = nil })
 	h.syncViews()
 	return h
 }
@@ -143,7 +147,7 @@ func TestActivateWorkspace_PreservedTerminalIsNotReplaced(t *testing.T) {
 	isolateTmux(t)
 	ws := preservedTerminalWorkspace(t, "ws-term")
 	rec := &recordingExec{}
-	m := newRestoreHome(rec)
+	m := newRestoreHome(t, rec)
 
 	_, err := m.activateWorkspace(ws)
 	require.NoError(t, err)
@@ -155,7 +159,7 @@ func TestActivateWorkspace_PreservedTerminalIsNotReplaced(t *testing.T) {
 		assert.NotEqual(t, "ws-term", inst.Title, "no second workspace terminal under the preserved record's title")
 	}
 
-	require.NoError(t, slot.storage().SaveInstances(core.Persistable(slot.ws.InstancesForTest())))
+	require.NoError(t, slot.storage().SaveInstances(core.Persistable(slot.ws().InstancesForTest())))
 	raw, err := os.ReadFile(filepath.Join(config.WorkspaceConfigDir(&ws), config.StateFileName))
 	require.NoError(t, err)
 	var st struct {
@@ -183,7 +187,7 @@ func TestRestoreSavedWorkspaces_SkipsSweepWhenAWorkspaceFailsToLoad(t *testing.T
 
 	t.Run("control: every workspace loads, sweep runs", func(t *testing.T) {
 		rec := &recordingExec{}
-		m := newRestoreHome(rec)
+		m := newRestoreHome(t, rec)
 		m.restoreSavedWorkspaces([]config.Workspace{preservedTerminalWorkspace(t, "ws-good")})
 
 		require.Len(t, m.slots, 1)
@@ -192,7 +196,7 @@ func TestRestoreSavedWorkspaces_SkipsSweepWhenAWorkspaceFailsToLoad(t *testing.T
 
 	t.Run("one workspace fails, sweep skipped", func(t *testing.T) {
 		rec := &recordingExec{}
-		m := newRestoreHome(rec)
+		m := newRestoreHome(t, rec)
 		bad := writeWorkspaceState(t, "ws-bad", `{"not":"an array"}`)
 		m.restoreSavedWorkspaces([]config.Workspace{bad, preservedTerminalWorkspace(t, "ws-good")})
 
@@ -212,7 +216,7 @@ func restoreModeHome(t *testing.T, exec cmd2.Executor, instancesJSON string) (*h
 	appState := config.LoadStateFrom(dir)
 	storage, err := session.NewStorage(appState, dir)
 	require.NoError(t, err)
-	m := newRestoreHome(exec)
+	m := newRestoreHome(t, exec)
 	m.core.SetProgram("true")
 	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) {
 		p.Storage, p.State, p.Ctx = storage, appState, &config.WorkspaceContext{ConfigDir: dir}
@@ -477,7 +481,7 @@ func TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces(t *testing.T) {
 			var live *session.Instance
 			if !tc.latched { // a latched list stays empty (latchedStorageErr)
 				live = liveInstance(t, "g-live")
-				m.ws.AddForTest(live)
+				m.ws().AddForTest(live)
 				m.syncViews()
 				pointAt(m, live)
 			}

@@ -121,7 +121,7 @@ func openRestartOn(t *testing.T, m *home, acct string) *overlay.SessionLaunchOpt
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-removed", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount(acct)
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	runRestartWithOptionsSelected(m)
 	lo := m.launchOptionsOverlay()
@@ -203,7 +203,7 @@ func pausedForResumeWith(t *testing.T, m *home, title string) *session.Instance 
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Paused))
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	return inst
 }
@@ -250,7 +250,7 @@ func TestRestartWithOptions_PresetsTheSessionsAccount(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-restart", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount("max-3")
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	require.Equal(t, idOf(m, inst), selID(m.list))
 

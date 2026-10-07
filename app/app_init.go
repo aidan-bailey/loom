@@ -103,17 +103,26 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	// loom-context flags and writes the prompt files first. On the restore
 	// path the classic storage is never loaded unless no workspace
 	// activates (core.Model.RestoreSaved's fallback).
+	//
+	// The context, registry and config belong to the model from here on:
+	// newHome reads what it needs of them first, and the model's views and
+	// queries after.
+	startGlobal := wsCtx != nil && wsCtx.Name == ""
+	hasConfig := appConfig != nil
+	rcEnabled := hasConfig && appConfig.RemoteControlEnabled()
 	model, err := core.New(core.Options{Registry: registry, Program: program, Ctx: wsCtx, Config: appConfig})
 	if err != nil {
 		return nil, err
 	}
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
+	classic, _ := model.Classic()
 	h := &home{
 		ctx:        ctx,
 		core:       model,
 		fullScreen: &foregroundAttach{},
 		workspaceSlot: &workspaceSlot{
-			ws:        model.ClassicWS(),
+			id:        classic.ID,
+			info:      classic,
 			splitPane: sp,
 			workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 		},
@@ -133,8 +142,8 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	h.list = ui.NewList(&h.spinner, slotRows{h, h.workspaceSlot})
 	h.list.SetPanes(h.panes)
 	h.seedViews(h.workspaceSlot)
-	if wsCtx != nil && wsCtx.Name != "" {
-		h.list.SetWorkspaceName(wsCtx.Name)
+	if h.name() != "" {
+		h.list.SetWorkspaceName(h.name())
 	}
 
 	// Initialize the script engine and load user scripts. Errors are
@@ -145,10 +154,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	// Determine whether we'll restore a saved multi-tab set. If so, skip the
 	// classic-mode load below: activateWorkspace() will load each slot fresh,
 	// and doing both would re-attach tmux ptmx handles for the same sessions.
-	var savedOpen []config.Workspace
-	if registry != nil {
-		savedOpen = registry.GetOpenWorkspaces()
-	}
+	savedOpen := h.core.Registry().Open
 	willRestoreSlots := len(savedOpen) > 0 && pendingDir == ""
 
 	cmdExec := cmd2.MakeExecutor()
@@ -162,7 +168,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	// startup terminals aren't stripped of the flag by fail-closed timing.
 	// The identity it reads also locates the main config dir extra
 	// accounts link to, so it runs whenever one is registered too.
-	if appConfig != nil && (appConfig.RemoteControlEnabled() || h.core.HasExtraAccounts()) {
+	if rcEnabled || (hasConfig && h.core.HasExtraAccounts()) {
 		h.core.SetRCAuth(session.DetectClaudeRemoteControlAuth(program, cmdExec))
 	}
 	var startupRecovery core.RecoverySummary
@@ -178,7 +184,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		// remote control) land before the recovery summary below, as
 		// they did when the load set them itself.
 		h.initCmd = tea.Batch(h.initCmd, h.drainCore())
-		startupRecovery = h.ws.Recovery()
+		startupRecovery = h.recovery()
 	}
 
 	if willRestoreSlots {
@@ -209,7 +215,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			}
 			confirm.OnCancel = func() {
 				h.pendingConfirmation = overlay.ConfirmationTask{}
-				if reg := h.core.RegistryObj(); reg != nil && len(reg.Workspaces) > 0 {
+				if reg := h.core.Registry(); len(reg.Workspaces) > 0 {
 					h.setOverlay(overlay.NewStartupWorkspacePicker(reg.Workspaces), overlayWorkspacePickerStartup)
 					h.state = stateWorkspace
 				}
@@ -217,8 +223,8 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 			h.setOverlay(confirm, overlayConfirmation)
 			return
 		}
-		if !willRestoreSlots && wsCtx != nil && wsCtx.Name == "" && registry != nil && len(registry.Workspaces) > 0 {
-			h.setOverlay(overlay.NewStartupWorkspacePicker(registry.Workspaces), overlayWorkspacePickerStartup)
+		if reg := h.core.Registry(); !willRestoreSlots && startGlobal && len(reg.Workspaces) > 0 {
+			h.setOverlay(overlay.NewStartupWorkspacePicker(reg.Workspaces), overlayWorkspacePickerStartup)
 			h.state = stateWorkspace
 		}
 	}
@@ -269,15 +275,15 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		// Its load error (a notice) lands before the summary, as when the
 		// fallback set it itself.
 		m.initCmd = tea.Batch(m.initCmd, m.drainCore())
-		m.showRecoverySummary(m.ws.Recovery())
+		m.showRecoverySummary(m.recovery())
 		return
 	}
 	// The workspace terminals' notices land before the summary, as when
 	// each activation set its own.
 	m.initCmd = tea.Batch(m.initCmd, m.drainCore())
 	classic := m.workspaceSlot
-	for _, ws := range m.core.TabsWS() {
-		m.slots = append(m.slots, m.newSlotView(ws))
+	for _, v := range m.core.Tabs() {
+		m.slots = append(m.slots, m.newSlotView(v))
 	}
 	m.loadSlot(focus)
 	// The first tab dropped the classic slot, which this path never
@@ -286,5 +292,5 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	// notifier after newHome), so no pump can block on Send.
 	runNow(tea.Batch(releaseSlotCmd(classic), m.prunePanes()))
 	m.updateTabBarStatuses()
-	m.showRecoverySummary(m.slots[focus].ws.Recovery())
+	m.showRecoverySummary(m.slots[focus].recovery())
 }

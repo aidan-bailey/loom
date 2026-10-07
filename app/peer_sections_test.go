@@ -49,8 +49,8 @@ func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 
 	h := &home{}
 	focusSlots(h, 0,
-		&workspaceSlot{ws: wsA, list: listA},
-		&workspaceSlot{ws: wsB, list: listB},
+		slotWith(wsA, &workspaceSlot{list: listA}),
+		slotWith(wsB, &workspaceSlot{list: listB}),
 	)
 	wireCore(t, h)
 	ring(h, belled) // a bell is the TUI's: set once its home exists
@@ -70,7 +70,7 @@ func TestRefreshPeerSections_SingleSlotClears(t *testing.T) {
 	listA.SetPeerSections([]ui.PeerSection{{Name: "stale", Idle: 1}})
 
 	h := &home{}
-	focusSlots(h, 0, &workspaceSlot{ws: wsA, list: listA})
+	focusSlots(h, 0, slotWith(wsA, &workspaceSlot{list: listA}))
 	wireCore(t, h)
 
 	h.refreshPeerSections()

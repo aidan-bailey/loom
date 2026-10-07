@@ -29,7 +29,7 @@ func runningInstance(t *testing.T, m *home, title string) *session.Instance {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Running))
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	return inst
 }
@@ -47,7 +47,7 @@ func TestCompletionDuringNaming_CancelKillsOnlyThePendingInstance(t *testing.T) 
 	require.Equal(t, stateNew, m.state)
 	require.NotEqual(t, idOf(m, first), selID(m.list), "the draft's row (ID 0) is selected")
 
-	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws})
+	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws()})
 	assert.Equal(t, core.InstanceID(0), selID(m.list), "a completion must not move the selection under the naming flow")
 	assert.Equal(t, stateNew, m.state)
 	assert.Contains(t, m.errBox.String(), "first", "the start is still announced")
@@ -72,7 +72,7 @@ func TestCompletionDuringInlineAttach_KeepsTheAttachTarget(t *testing.T) {
 	selectIn(m, m.list, attached)
 	m.state = stateInlineAttach
 
-	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws})
+	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws()})
 	assert.Equal(t, idOf(m, attached), selID(m.list), "keys must keep going to the attached session")
 	assert.Equal(t, stateInlineAttach, m.state)
 }
@@ -87,7 +87,7 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	}, t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, placeholder.TransitionTo(session.Loading))
-	m.ws.AddForTest(placeholder)
+	m.ws().AddForTest(placeholder)
 	m.syncViews()
 	_, _ = runNewInstance(m)
 	pending := m.draft
@@ -95,7 +95,7 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, recovered.TransitionTo(session.Running))
 
-	deliver(t, m, core.RecoverResult{OldTitle: "orphan", Recovered: recovered, Placeholder: placeholder, Owner: m.ws})
+	deliver(t, m, core.RecoverResult{OldTitle: "orphan", Recovered: recovered, Placeholder: placeholder, Owner: m.ws()})
 	assert.Equal(t, core.InstanceID(0), selID(m.list), "the recover must not move the selection under the naming flow")
 
 	typeTitle(t, m, "x")
@@ -205,7 +205,7 @@ func reopenedHome(t *testing.T, title, twinWorktree string, reopenExec cmd_test.
 	twin, err = session.ReconcileAndRestore(worktreeRecord(title, twinWorktree, session.Loading), t.TempDir(), reopenExec)
 	require.NoError(t, err)
 	require.True(t, twin.Paused(), "fixture: a reconciled Loading record comes back Paused")
-	reopened.ws.AddForTest(twin)
+	reopened.ws().AddForTest(twin)
 	m.slots = append(m.slots, reopened)
 	wireCore(t, m)
 	recA.calls = 0
@@ -226,10 +226,10 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m, owner, twin, recA, recC := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
 		twinID := idOf(m, twin) // captured while loaded: a removal forgets it
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
-		owner.ws.AddForTest(started)
+		owner.ws().AddForTest(started)
 		m.syncViews()
 
-		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
+		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws()})
 		drainCmd(cmd)
 
 		reopened := m.slots[1]
@@ -244,10 +244,10 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m, owner, twin, _, _ := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
 		srv := newFakeTmuxServer()
 		started := startedWorktreeInstance(t, "late", wtPath, srv)
-		owner.ws.AddForTest(started)
+		owner.ws().AddForTest(started)
 		m.syncViews()
 
-		cmd := deliver(t, m, core.StartResult{Instance: started, Err: errors.New("boom"), Owner: owner.ws})
+		cmd := deliver(t, m, core.StartResult{Instance: started, Err: errors.New("boom"), Owner: owner.ws()})
 		drainCmd(cmd)
 
 		assert.False(t, srv.killed("late"), "not killed: the reopened record owns its worktree and branch")
@@ -259,10 +259,10 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m, owner, namesake, _, recC := reopenedHome(t, "late", filepath.Join(t.TempDir(), "other-wt"), deadCmdExecForTest())
 		m.errBox.SetSize(400, 1)
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
-		owner.ws.AddForTest(started)
+		owner.ws().AddForTest(started)
 		m.syncViews()
 
-		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
+		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws()})
 		drainCmd(cmd)
 
 		assert.Equal(t, idOf(m, namesake), titleID(m.slots[1].list, "late"), "an unrelated same-titled session is untouched")
@@ -281,10 +281,10 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		started := startedWorktreeInstance(t, "late", wtPath, srv)
 		m, owner, twin, _, recC := reopenedHome(t, "late", wtPath, srv.exec())
 		require.True(t, srv.killed("late"), "fixture: reconcile killed the live session")
-		owner.ws.AddForTest(started)
+		owner.ws().AddForTest(started)
 		m.syncViews()
 
-		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
+		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws()})
 		drainCmd(cmd)
 
 		assert.Equal(t, idOf(m, twin), titleID(m.slots[1].list, "late"), "the twin stays: its record is the live truth")
@@ -375,7 +375,7 @@ func TestKillAction_UsesTheDispatchSlotsStorage(t *testing.T) {
 		Worktree: session.GitWorktreeData{RepoPath: repo, WorktreePath: t.TempDir(), BranchName: "loom/a1", SessionName: "a1"},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.ws.AddForTest(a1)
+	m.ws().AddForTest(a1)
 	m.syncViews()
 	seed, err := json.Marshal([]session.InstanceData{a1.ToInstanceData()})
 	require.NoError(t, err)
@@ -445,7 +445,7 @@ func TestDiscardDraft_NeverKillsAStartedInstance(t *testing.T) {
 	isolateTmux(t)
 	m, _, _ := ownerTestHome(t)
 	live := liveInstance(t, "live")
-	m.ws.AddForTest(live)
+	m.ws().AddForTest(live)
 	m.syncViews()
 	m.newDraft("pending", "", 0)
 

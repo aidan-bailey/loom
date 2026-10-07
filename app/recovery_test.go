@@ -44,7 +44,7 @@ func TestSelectedResumableNotWorkspace_AllowsRecoverable(t *testing.T) {
 	ws := testWS(core.WorkspaceParts{}, inst)
 	list := fixtureList(t)
 
-	h := wireCore(t, &home{workspaceSlot: &workspaceSlot{ws: ws, list: list}})
+	h := wireCore(t, &home{workspaceSlot: slotWith(ws, &workspaceSlot{list: list})})
 	selectIn(h, list, inst)
 	assert.True(t, selectedResumableNotWorkspace(h), "'r' must be enabled for a Recoverable orphan")
 }

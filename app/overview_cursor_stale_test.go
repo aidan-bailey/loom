@@ -16,7 +16,7 @@ func TestJumpWaiting_OverviewMovesCursorOnly(t *testing.T) {
 	m := fleetHome(t) // viewOverview; focused "afocus" (f1,f2), peer "bpeer" (b1)
 	waiter := &session.Instance{Title: "b-wait", Status: session.Ready}
 	require.NoError(t, waiter.TransitionTo(session.Prompting))
-	m.slots[1].ws.AddForTest(waiter)
+	m.slots[1].ws().AddForTest(waiter)
 	m.syncViews()
 
 	m.jumpWaiting(1)

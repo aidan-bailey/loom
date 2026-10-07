@@ -112,11 +112,8 @@ func newScriptHost(m *home) *scriptHost {
 			}
 		}
 	}
-	// Locked accessor: the settings overlay mutates the same *Config
-	// through Config.Mutate.
-	if m.appConfig() != nil {
-		h.branchPrefix = m.appConfig().GetBranchPrefix()
-	}
+	// A copy of the workspace's settings, as last published.
+	h.branchPrefix = m.settings().GetBranchPrefix()
 	return h
 }
 
@@ -230,7 +227,7 @@ func (s *scriptHost) WorkspaceNext() {
 // switchWorkspaceSlot rotates the focused workspace slot by delta (-1 prev,
 // +1 next) via loadSlot. No-op with one slot. Runs on the main goroutine
 // via deferModelMutation, so the embedded focused-slot swap (m.list,
-// m.splitPane, m.storage(), … and m.focusedSlot) does not race the render
+// m.splitPane, m.info, … and m.focusedSlot) does not race the render
 // loop.
 func (m *home) switchWorkspaceSlot(delta int) {
 	if len(m.slots) <= 1 {
@@ -836,7 +833,7 @@ func (m *home) scriptCreate(p pendingIntent, i script.CreateInstanceIntent, slot
 		return m.resumeScript(p, script.ResumeValue{Err: fmt.Sprintf("new_instance: workspace changed while a script ran; not creating %s here", i.Title)})
 	}
 	req := m.newReq(pendingReq{script: &pendingScript{intent: p.id, trace: p.trace, op: "new_instance"}})
-	m.core.CreateWS(slot.ws, core.NewInstance{Title: i.Title, Path: i.Path, Program: i.Program, Prompt: i.Prompt, Branch: i.Branch}, req)
+	m.core.Create(slot.id, core.NewInstance{Title: i.Title, Path: i.Path, Program: i.Program, Prompt: i.Prompt, Branch: i.Branch}, req)
 	return nil
 }
 

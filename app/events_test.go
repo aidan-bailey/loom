@@ -23,7 +23,7 @@ func TestPaneDirtyRerendersScrolledAgent(t *testing.T) {
 	require.NotEmpty(t, inst.Pane().TmuxSessionName())
 
 	m := homeWithAppState(t)
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	require.Equal(t, idOf(m, inst), selID(m.list))
 	m.splitPane.SetSize(100, 40)
@@ -52,7 +52,7 @@ func TestPaneQuietRunsStatusDetection(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 
 	// Quiet handler returns a statusDetectCmd; run it and feed the result
@@ -81,7 +81,7 @@ func TestPtyDeadVerifiesBeforePausing(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 
 	_, cmd := m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
@@ -108,8 +108,8 @@ func TestBellBadgesUnselectedInstance(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.AddForTest(inst1) // first add is auto-selected
-	m.ws.AddForTest(inst2)
+	m.ws().AddForTest(inst1) // first add is auto-selected
+	m.ws().AddForTest(inst2)
 	m.syncViews()
 
 	_, _ = m.Update(bellMsg{session: inst2.Pane().TmuxSessionName()})
@@ -132,7 +132,7 @@ func TestStatusDetection_NoClientGivesNoOpinion(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
 	inst := liveInstance(t, "working")
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	name := inst.Pane().TmuxSessionName()
 	m.panes.Retain(nil) // its client was released

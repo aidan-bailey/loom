@@ -61,10 +61,8 @@ func (m *home) enterWorkbench() tea.Cmd {
 	// same-title pane cannot survive to here).
 	m.dropReviewPane()
 	m.wbRatio = 0
-	if m.appState() != nil {
-		if r, ok := m.appState().GetUIPrefs().WorkbenchRatios[sel.Title]; ok {
-			m.wbRatio = r
-		}
+	if r, ok := m.uiPrefs().WorkbenchRatios[sel.Title]; ok {
+		m.wbRatio = r
 	}
 	// Eagerly compute the left-column width so a wheel tick or `4` press
 	// arriving before the RequestWindowSize round-trip routes on the

@@ -261,7 +261,7 @@ func (m *home) openLaunchOptionsForNew(d *draft, selectedBranch string) (tea.Mod
 	}
 	m.pendingLaunchOptionsCancel = m.discardPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions
-	lo, reloaded := m.newLaunchOptionsOverlay(launch.FromConfig(m.appConfig()), d.program)
+	lo, reloaded := m.newLaunchOptionsOverlay(launch.FromSettings(m.settings()), d.program)
 	m.setOverlay(lo, overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)
 	m.core.RequestUsageProbe()

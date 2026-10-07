@@ -32,12 +32,11 @@ func fleetSlot(t *testing.T, name string, titles ...string) *workspaceSlot {
 		ws.AddForTest(&session.Instance{Title: ti, Status: session.Ready})
 	}
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
-	return &workspaceSlot{
-		ws:        ws,
+	return slotWith(ws, &workspaceSlot{
 		list:      fixtureList(t),
 		splitPane: sp,
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
-	}
+	})
 }
 
 // fleetHome wires a focused slot ("afocus", f1/f2) and a non-focused

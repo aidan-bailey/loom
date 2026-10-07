@@ -38,7 +38,7 @@ func TestKillResult_RemovesFromNonFocusedSlot(t *testing.T) {
 func TestKillResult_DuplicateTitleAcrossSlots(t *testing.T) {
 	m := fleetHome(t)
 	dup := &session.Instance{Title: "b1", Status: session.Ready}
-	m.ws.AddForTest(dup) // focused slot now also has a "b1"
+	m.ws().AddForTest(dup) // focused slot now also has a "b1"
 	m.syncViews()
 	b1 := instByTitle(m, m.slots[1].list, "b1")
 	require.NotNil(t, b1)

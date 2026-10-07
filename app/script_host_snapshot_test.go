@@ -50,7 +50,7 @@ func newSnapshotTestHome(t *testing.T) *home {
 	require.True(t, m.scripts.HasAction("Y"))
 
 	for _, title := range []string{"a", "b", "c"} {
-		m.ws.AddForTest(newSnapshotTestInstance(t, title))
+		m.ws().AddForTest(newSnapshotTestInstance(t, title))
 	}
 	m.syncViews()
 	m.list.SetSelectedInstance(0)
@@ -84,8 +84,8 @@ func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 	altSplit := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	extra := newSnapshotTestInstance(t, "extra")
 	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx = ctxA })
-	slotA, wsA := m.workspaceSlot, m.ws
-	slotB := &workspaceSlot{ws: wsB, list: altList, splitPane: altSplit}
+	slotA := m.workspaceSlot
+	slotB := slotWith(wsB, &workspaceSlot{list: altList, splitPane: altSplit})
 
 	cmd, ok := m.dispatchScript("X")
 	require.True(t, ok)
@@ -98,16 +98,14 @@ func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 		select {
 		case msg = <-done:
 		default:
-			m.ws.AddForTest(extra)
+			m.ws().AddForTest(extra)
 			m.syncViews()
 			m.list.SetSelectedInstance(i % 4)
-			m.ws.RemoveForTest(extra)
+			m.ws().RemoveForTest(extra)
 			if i%2 == 0 {
-				m.workspaceSlot = slotB
-				m.ws = wsB
+				m.workspaceSlot = slotB // slotWith gave it wsB
 			} else {
 				m.workspaceSlot = slotA
-				m.ws = wsA
 			}
 		}
 	}

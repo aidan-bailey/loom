@@ -30,7 +30,7 @@ func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 	m := newTestHome(t)
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "probed", Path: t.TempDir(), Program: "aider"})
 	require.NoError(t, err)
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	gone := false
 	cmdExec := cmd_test.MockCmdExec{
@@ -84,7 +84,7 @@ func snapshotHome(t *testing.T, title, program string) (*home, *session.Instance
 	t.Helper()
 	inst := startedInstanceWithProgram(t, title, program, "$ ")
 	m := homeWithAppState(t)
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	require.False(t, m.panes.For(rowOf(t, m, inst)).HasEmulator(), "fixture precondition: the snapshot path")
 	return m, inst
 }

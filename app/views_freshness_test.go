@@ -70,7 +70,7 @@ func TestViewsChanged_PrunesBellsOfGoneInstances(t *testing.T) {
 	ring(m, kept)
 	ring(m, gone)
 
-	m.ws.RemoveForTest(gone)
+	m.ws().RemoveForTest(gone)
 	m.Update(keyupMsg{}) // any Update drains, publishing the removal
 
 	assert.NotContains(t, m.bells, goneID, "a gone instance's bell is pruned")
@@ -85,9 +85,9 @@ func TestViewsChanged_KeepsOverlaysOfOtherSlots(t *testing.T) {
 	m := fleetHome(t)
 	m.viewMode = viewFocus
 	peer := liveInstance(t, "b-live")
-	m.slots[1].ws.AddForTest(peer)
+	m.slots[1].ws().AddForTest(peer)
 	gone := liveInstance(t, "f-gone")
-	m.slots[0].ws.AddForTest(gone)
+	m.slots[0].ws().AddForTest(gone)
 	m.syncViews()
 	peerID, goneID := idOf(m, peer), idOf(m, gone)
 	ring(m, peer)
@@ -95,7 +95,7 @@ func TestViewsChanged_KeepsOverlaysOfOtherSlots(t *testing.T) {
 	ring(m, gone)
 	m.setLadder(goneID, session.Ready)
 
-	m.slots[0].ws.RemoveForTest(gone)
+	m.slots[0].ws().RemoveForTest(gone)
 	m.Update(keyupMsg{}) // any Update drains, publishing the focused slot's change
 
 	assert.True(t, m.bells[peerID], "the unfocused slot's bell survives")
@@ -112,8 +112,8 @@ func TestViewsChanged_PrunesTheLadderOfInactiveAndReportedRows(t *testing.T) {
 	m := homeWithAppState(t)
 	paused := liveInstance(t, "paused")
 	reported := startedInstanceWithProgram(t, "reported", "claude", "x")
-	m.ws.AddForTest(paused)
-	m.ws.AddForTest(reported)
+	m.ws().AddForTest(paused)
+	m.ws().AddForTest(reported)
 	m.syncViews()
 	m.setLadder(idOf(m, paused), session.Prompting)
 	m.setLadder(idOf(m, reported), session.Ready)
@@ -140,7 +140,7 @@ func peerLiveHome(t *testing.T, st session.Status) (*home, *session.Instance) {
 	m.viewMode = viewFocus
 	inst := liveInstance(t, "b-live")
 	require.NoError(t, inst.TransitionTo(st))
-	m.slots[1].ws.AddForTest(inst)
+	m.slots[1].ws().AddForTest(inst)
 	m.syncViews()
 	m.updateTabBarStatuses()
 	return m, inst
@@ -249,7 +249,7 @@ func TestResumeAndRecover_ShowSettingUpWithinTheUpdate(t *testing.T) {
 			Worktree: session.GitWorktreeData{RepoPath: t.TempDir(), WorktreePath: t.TempDir(), BranchName: "u/orphan"},
 		}, t.TempDir())
 		require.NoError(t, err)
-		m.ws.AddForTest(placeholder)
+		m.ws().AddForTest(placeholder)
 		m.syncViews()
 		_ = m.instanceChanged()
 		require.Contains(t, agentPane(m), "Recoverable session", "fixture")
@@ -282,7 +282,7 @@ func TestAttachDone_RepairsTheRowAsItIsNow(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
 	inst := liveInstance(t, "fs")
-	m.ws.AddForTest(inst)
+	m.ws().AddForTest(inst)
 	m.syncViews()
 	name := inst.Pane().TmuxSessionName()
 	row := rowOf(t, m, inst)
@@ -306,7 +306,7 @@ func TestScriptDone_ReadsWhatTheScriptChanged(t *testing.T) {
 		m := homeWithAppState(t)
 		m.splitPane.SetSize(100, 40)
 		inst := startedInstanceWithProgram(t, "lua-paused", "claude", "idle")
-		m.ws.AddForTest(inst)
+		m.ws().AddForTest(inst)
 		selectIn(m, m.list, inst)
 		_ = m.instanceChanged()
 		withScript(t, m, `cs.bind("Z", function(ctx) ctx:selected():pause() end)`)

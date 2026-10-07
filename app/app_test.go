@@ -101,7 +101,7 @@ func runTests(m *testing.M) int {
 func TestConfirmationModalStateTransitions(t *testing.T) {
 	// Create a minimal home struct for testing state transitions
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{ws: testWS(core.WorkspaceParts{Config: config.DefaultConfig()})},
+		workspaceSlot: slotWith(testWS(core.WorkspaceParts{Config: config.DefaultConfig()}), &workspaceSlot{}),
 		ctx:           context.Background(),
 		state:         stateDefault,
 	})
@@ -184,11 +184,10 @@ func TestConfirmationModalKeyHandling(t *testing.T) {
 
 	// Create enough of home struct to test handleKeyPress in confirmation state
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 		ctx:   context.Background(),
 		state: stateConfirm,
 		menu:  ui.NewMenu(),
@@ -317,10 +316,9 @@ func TestConfirmationFlowSimulation(t *testing.T) {
 	list.SetSelectedInstance(0)
 
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:   ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list: list,
-		},
+		}),
 		ctx:   context.Background(),
 		state: stateDefault,
 		menu:  ui.NewMenu(),
@@ -348,7 +346,7 @@ func TestConfirmationFlowSimulation(t *testing.T) {
 // TestConfirmActionWithDifferentTypes tests that confirmAction works with different action types
 func TestConfirmActionWithDifferentTypes(t *testing.T) {
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{ws: testWS(core.WorkspaceParts{Config: config.DefaultConfig()})},
+		workspaceSlot: slotWith(testWS(core.WorkspaceParts{Config: config.DefaultConfig()}), &workspaceSlot{}),
 		ctx:           context.Background(),
 		state:         stateDefault,
 	})
@@ -441,7 +439,7 @@ func TestConfirmActionWithDifferentTypes(t *testing.T) {
 // TestMultipleConfirmationsDontInterfere tests that multiple confirmations don't interfere with each other
 func TestMultipleConfirmationsDontInterfere(t *testing.T) {
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{ws: testWS(core.WorkspaceParts{Config: config.DefaultConfig()})},
+		workspaceSlot: slotWith(testWS(core.WorkspaceParts{Config: config.DefaultConfig()}), &workspaceSlot{}),
 		ctx:           context.Background(),
 		state:         stateDefault,
 	})
@@ -542,11 +540,10 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 	list.SetSelectedInstance(0)
 
 	h := wirePanes(t, wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: splitPane,
-		},
+		}),
 		ctx:   context.Background(),
 		state: stateDefault,
 		menu:  menu,
@@ -567,7 +564,7 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 // TestConfirmationModalVisualAppearance tests that confirmation modal has distinct visual appearance
 func TestConfirmationModalVisualAppearance(t *testing.T) {
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{ws: testWS(core.WorkspaceParts{Config: config.DefaultConfig()})},
+		workspaceSlot: slotWith(testWS(core.WorkspaceParts{Config: config.DefaultConfig()}), &workspaceSlot{}),
 		ctx:           context.Background(),
 		state:         stateDefault,
 	})
@@ -613,11 +610,10 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	list.SetSelectedInstance(0)
 
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 		ctx:   context.Background(),
 		state: stateDefault,
 		menu:  ui.NewMenu(),
@@ -656,11 +652,10 @@ func TestOpFailedRevertsStatus(t *testing.T) {
 	list := fixtureList(t)
 
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
@@ -687,11 +682,10 @@ func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 	list := fixtureList(t)
 
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 		ctx:   context.Background(),
 		state: stateDefault,
 		menu:  ui.NewMenu(),
@@ -731,11 +725,10 @@ func TestHandleQuitStaysInTUIOnSaveError(t *testing.T) {
 	list := fixtureList(t)
 
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
@@ -774,11 +767,10 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 	ws := testWS(core.WorkspaceParts{Ctx: wsCtx, Storage: storage, Config: config.DefaultConfig(), State: state}, inst)
 	list := fixtureList(t)
 
-	slot := &workspaceSlot{
-		ws:        ws,
+	slot := slotWith(ws, &workspaceSlot{
 		list:      list,
 		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-	}
+	})
 
 	h := &home{
 		ctx:    context.Background(),

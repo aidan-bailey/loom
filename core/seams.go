@@ -109,6 +109,14 @@ func (m *Model) ApplyClaudeStatusForTest(inst *session.Instance) { m.applyClaude
 // slice; a test must not modify it).
 func (w *Workspace) InstancesForTest() []*session.Instance { return w.instances() }
 
+// WorkspaceForTest resolves a loaded workspace's ID to the model's
+// workspace, nil when none is loaded: app tests reach a fixture's
+// instances through it.
+func (m *Model) WorkspaceForTest(id WorkspaceID) *Workspace { return m.wsLookup(id) }
+
+// WorkspaceIDForTest is ws's ID, assigned on first use.
+func (m *Model) WorkspaceIDForTest(ws *Workspace) WorkspaceID { return m.wsIDOf(ws) }
+
 // UntrackedForTest is a job's result with a request's tracking removed: a
 // request's job (Kill, Merge, SendPrompt, …) answers with its operation's
 // result wrapped for its Reply; any other result comes back as it is.

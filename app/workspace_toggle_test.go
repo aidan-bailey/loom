@@ -57,11 +57,10 @@ func TestApplyWorkspaceToggle_ClassicToGlobalPersists(t *testing.T) {
 	list := fixtureList(t)
 
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
@@ -98,11 +97,10 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 	list := fixtureList(t)
 
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
@@ -138,11 +136,10 @@ func TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots(t *testing.T) {
 	list := fixtureList(t)
 
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
@@ -174,12 +171,11 @@ func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
 	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 
 	h := wireCore(t, &home{
-		workspaceSlot: &workspaceSlot{
-			ws:        ws,
+		workspaceSlot: slotWith(ws, &workspaceSlot{
 			list:      list,
 			splitPane: split,
 			workbench: ui.NewWorkbench(ui.NewDiffPane(), split.Terminal()),
-		},
+		}),
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
@@ -234,16 +230,14 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 		errBox: ui.NewErrBox(),
 	}
 	focusSlots(h, 0,
-		&workspaceSlot{
-			ws:        wsA,
+		slotWith(wsA, &workspaceSlot{
 			list:      slotARecListings,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
-		&workspaceSlot{
-			ws:        wsB,
+		}),
+		slotWith(wsB, &workspaceSlot{
 			list:      slotBRecListings,
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 	)
 	wireCore(t, h)
 
@@ -294,12 +288,11 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 		errBox: ui.NewErrBox(),
 	}
 	focusSlots(h, 0,
-		&workspaceSlot{ws: wsA, list: listA, splitPane: split},
-		&workspaceSlot{
-			ws:        wsB,
+		slotWith(wsA, &workspaceSlot{list: listA, splitPane: split}),
+		slotWith(wsB, &workspaceSlot{
 			list:      fixtureList(t),
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		},
+		}),
 	)
 	wireCore(t, h)
 	h.errBox.SetSize(400, 1)
@@ -357,7 +350,7 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, entries, 1, "nothing is written to LOOM_HOME")
 
-	require.NoError(t, m.storage().SaveInstances(core.Persistable(m.ws.InstancesForTest())))
+	require.NoError(t, m.storage().SaveInstances(core.Persistable(m.ws().InstancesForTest())))
 	raw, err := os.ReadFile(filepath.Join(globalDir, config.StateFileName))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "in-global", "global mode saves back to the global dir")

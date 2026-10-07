@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
@@ -60,16 +61,82 @@ func fixtureList(t *testing.T) *ui.List {
 
 // slotOver builds a fixture slot view over ws: a rail reading its rows,
 // plus the split pane and workbench every slot needs. wirePanes points the
-// rail and pane at the test's pane registry; wireCore fills the rows.
+// rail and pane at the test's pane registry; wireCore installs ws in the
+// model, names the slot after it and fills the rows.
 func slotOver(t *testing.T, ws *core.Workspace) *workspaceSlot {
 	t.Helper()
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
-	return &workspaceSlot{
-		ws:        ws,
+	return slotWith(ws, &workspaceSlot{
 		list:      fixtureList(t),
 		splitPane: sp,
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
+	})
+}
+
+// fixtureWS holds each fixture slot's workspace, the model's object the
+// slot shows, for tests that reach its instances or handles (ws). A slot
+// holds only the workspace's ID and view; wireCore installs this object in
+// the model and names the slot after it. Entries for slots wireCore saw
+// go when their test ends.
+var fixtureWS = map[*workspaceSlot]*core.Workspace{}
+
+// wiredModel is the model the running test's last wireCore installed: a
+// slot production code built during the test (activateWorkspace, say) has
+// no fixtureWS entry, and ws resolves it through this model by ID. Tests
+// in this package run one at a time.
+var wiredModel *core.Model
+
+// The model's handles of the workspace a slot shows, for tests that set up
+// or check the model's own state (its config, state.json, context or
+// storage). Production reads the slot's published view (info) and writes
+// through requests; a test that changes a handle and then reads through
+// the TUI calls m.syncWorkspaces() first, as production's writers do.
+
+func (s *workspaceSlot) wsCtx() *config.WorkspaceContext {
+	if ws := s.ws(); ws != nil {
+		return ws.Ctx()
 	}
+	return nil
+}
+
+func (s *workspaceSlot) storage() *session.Storage {
+	if ws := s.ws(); ws != nil {
+		return ws.Storage()
+	}
+	return nil
+}
+
+func (s *workspaceSlot) appConfig() *config.Config {
+	if ws := s.ws(); ws != nil {
+		return ws.Config()
+	}
+	return nil
+}
+
+func (s *workspaceSlot) appState() config.AppState {
+	if ws := s.ws(); ws != nil {
+		return ws.State()
+	}
+	return nil
+}
+
+// slotWith records ws as the fixture slot s's workspace and returns s.
+func slotWith(ws *core.Workspace, s *workspaceSlot) *workspaceSlot {
+	fixtureWS[s] = ws
+	return s
+}
+
+// ws is the model's workspace this slot shows, for tests: the fixture's
+// (fixtureWS), else the wired model's workspace with the slot's ID. nil
+// when neither knows the slot.
+func (s *workspaceSlot) ws() *core.Workspace {
+	if ws := fixtureWS[s]; ws != nil {
+		return ws
+	}
+	if wiredModel != nil && s.id != 0 {
+		return wiredModel.WorkspaceForTest(s.id)
+	}
+	return nil
 }
 
 // wireCore gives a fixture home the model production builds in newHome:
@@ -90,13 +157,19 @@ func wireCore(t *testing.T, m *home) *home {
 	if m.aliveProbe == nil {
 		m.aliveProbe = fixtureAlive(m)
 	}
-	for _, s := range append([]*workspaceSlot{m.workspaceSlot}, m.slots...) {
+	wiredModel = testModel(m)
+	t.Cleanup(func() { wiredModel = nil })
+	slots := append([]*workspaceSlot{m.workspaceSlot}, m.slots...)
+	for _, s := range slots {
 		if s == nil {
 			continue
 		}
-		if s.ws == nil {
-			s.ws = testWS(core.WorkspaceParts{})
+		if s.ws() == nil {
+			fixtureWS[s] = testWS(core.WorkspaceParts{})
+		} else {
+			fixtureWS[s] = s.ws()
 		}
+		t.Cleanup(func() { delete(fixtureWS, s) })
 		if s.list == nil {
 			s.list = ui.NewList(&m.spinner, slotRows{m, s})
 			s.list.SetPanes(m.panes)
@@ -107,13 +180,23 @@ func wireCore(t *testing.T, m *home) *home {
 	}
 	var tabs []*core.Workspace
 	for _, s := range m.slots {
-		tabs = append(tabs, s.ws)
+		tabs = append(tabs, s.ws())
 	}
 	var classic *core.Workspace
 	if m.workspaceSlot != nil {
-		classic = m.ws
+		classic = m.ws()
 	}
 	testModel(m).SetWorkspacesForTest(classic, tabs)
+	// Each slot is named after the workspace it shows, and holds its view.
+	for _, s := range slots {
+		if s == nil {
+			continue
+		}
+		s.id = testModel(m).WorkspaceIDForTest(s.ws())
+		if v, ok := testModel(m).Workspace(s.id); ok {
+			s.info = v
+		}
+	}
 	m.syncViews()
 	return m
 }
@@ -131,10 +214,10 @@ func fixtureAlive(m *home) func(string) bool {
 			return false
 		}
 		for _, s := range m.openSlots() {
-			if s == nil || s.ws == nil {
+			if s == nil || s.ws() == nil {
 				continue
 			}
-			for _, inst := range s.ws.InstancesForTest() {
+			for _, inst := range s.ws().InstancesForTest() {
 				if inst.Pane().TmuxSessionName() == name {
 					return inst.Pane().TmuxAlive()
 				}
@@ -154,13 +237,13 @@ func reworkspace(t *testing.T, m *home, slot *workspaceSlot, edit func(*core.Wor
 	t.Helper()
 	var p core.WorkspaceParts
 	var insts []*session.Instance
-	if slot.ws != nil {
-		p = core.WorkspaceParts{Ctx: slot.ws.Ctx(), Storage: slot.ws.Storage(), Config: slot.ws.Config(), State: slot.ws.State()}
-		insts = slot.ws.InstancesForTest()
+	if ws := slot.ws(); ws != nil {
+		p = core.WorkspaceParts{Ctx: ws.Ctx(), Storage: ws.Storage(), Config: ws.Config(), State: ws.State()}
+		insts = ws.InstancesForTest()
 	}
 	edit(&p)
 	old := slot.list
-	slot.ws = testWS(p, insts...)
+	fixtureWS[slot] = testWS(p, insts...)
 	slot.list = ui.NewList(&m.spinner, slotRows{m, slot})
 	slot.list.SetPanes(m.panes)
 	wireCore(t, m)

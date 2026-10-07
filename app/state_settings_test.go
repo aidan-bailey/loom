@@ -23,9 +23,17 @@ func newTestHomeWithWsCtx(t *testing.T) *home {
 	return m
 }
 
+// settingsOverlayForTest opens a settings overlay as runOpenSettings does,
+// over a config of the TUI's own built from the workspace's published
+// settings (home.settingsEdit), without the accounts reload around it.
+func settingsOverlayForTest(m *home) *overlay.SettingsOverlay {
+	m.settingsEdit = config.FromSettings(m.settings())
+	return overlay.NewSettingsOverlay(m.settingsEdit, false, "")
+}
+
 func TestHandleStateSettingsKeyRefreshesProgramShadow(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	so := overlay.NewSettingsOverlay(m.appConfig(), false, "")
+	so := settingsOverlayForTest(m)
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 
@@ -50,7 +58,7 @@ func TestHandleStateSettingsKeyRefreshesProgramShadow(t *testing.T) {
 
 func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	so := overlay.NewSettingsOverlay(m.appConfig(), false, "")
+	so := settingsOverlayForTest(m)
 	m.setOverlay(so, overlaySettings)
 	m.state = stateSettings
 

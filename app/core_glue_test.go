@@ -48,7 +48,7 @@ func TestRegisterWorkspace_RecoverySummaryWinsOverRCOffLine(t *testing.T) {
 				[]byte(`{"default_program":"`+fakeClaudeProgram(t)+`"}`), 0o644))
 			reg, err := config.LoadWorkspaceRegistry()
 			require.NoError(t, err)
-			m := newRestoreHome(&recordingExec{})
+			m := newRestoreHome(t, &recordingExec{})
 			testModel(m).SetRegistryForTest(reg)
 			m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 			m.ctx = cancelledCtx()
@@ -84,7 +84,7 @@ func TestCheckSlotInvariant_SlotsMustMirrorTheModel(t *testing.T) {
 	t.Run("classic slot over another workspace", func(t *testing.T) {
 		m := newTestHome(t)
 		require.NoError(t, m.checkSlotInvariant())
-		m.workspaceSlot.ws = testWS(core.WorkspaceParts{})
+		m.workspaceSlot.id = testModel(m).WorkspaceIDForTest(testWS(core.WorkspaceParts{}))
 
 		err := m.checkSlotInvariant()
 		require.Error(t, err)

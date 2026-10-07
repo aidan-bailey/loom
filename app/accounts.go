@@ -40,12 +40,13 @@ func (m *home) accountsScreenNotice() string {
 // accountStatuses builds the view of every account, default first, for the
 // strip, the Launch Options row and the Accounts screen.
 func (m *home) accountStatuses() []ui.AccountStatus {
-	if m.core.AccountsRegistry() == nil {
+	names := m.core.AccountNames()
+	if !names.Present {
 		return nil
 	}
-	def := m.core.AccountsRegistry().Default()
+	def := names.Default
 	var out []ui.AccountStatus
-	for _, name := range m.core.AccountsRegistry().Names() {
+	for _, name := range names.Names {
 		usage, usageErr := m.core.AccountUsage(name)
 		out = append(out, ui.AccountStatus{
 			Name:      name,
@@ -148,17 +149,17 @@ func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program strin
 	claude := session.IsClaudeProgram(program)
 	notice := ""
 	switch {
-	case !claude || m.core.AccountsRegistry() == nil:
+	case !claude || !m.core.AccountNames().Present:
 		opts.Account = ""
 	case opts.Account == "":
-		opts.Account = m.core.AccountsRegistry().Default()
+		opts.Account = m.core.AccountNames().Default
 	case opts.Account == account.DefaultName || !m.core.AccountsLoaded():
 		// Kept: the default, or a registry that can't tell whether the
 		// account still exists.
 	default:
 		if _, ok := m.core.Account(opts.Account); !ok {
 			removed := opts.Account
-			opts.Account = m.core.AccountsRegistry().Default()
+			opts.Account = m.core.AccountNames().Default
 			notice = removedAccountNotice(removed, opts.Account)
 		}
 	}
@@ -251,7 +252,7 @@ func (m *home) accountLoginCmd(acct string) tea.Cmd {
 // and the change refreshed the views themselves, so an open Accounts
 // screen is current when this returns.
 func (m *home) handleAccountRequest(req overlay.AccountRequest) tea.Cmd {
-	if m.core.AccountsRegistry() == nil {
+	if !m.core.AccountNames().Present {
 		return m.handleError(errors.New("the account registry is unavailable"))
 	}
 	login, err := m.carryOutAccountRequest(req)
