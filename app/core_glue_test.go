@@ -49,7 +49,7 @@ func TestRegisterWorkspace_RecoverySummaryWinsOverRCOffLine(t *testing.T) {
 			reg, err := config.LoadWorkspaceRegistry()
 			require.NoError(t, err)
 			m := newRestoreHome(&recordingExec{})
-			m.core.SetRegistryForTest(reg)
+			testModel(m).SetRegistryForTest(reg)
 			m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 			m.ctx = cancelledCtx()
 			m.errBox.SetSize(400, 1)

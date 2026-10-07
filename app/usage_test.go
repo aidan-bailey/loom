@@ -24,7 +24,7 @@ func TestUsageReady_KeepsTheLastGoodSampleOnError(t *testing.T) {
 	last, probeErr := m.core.AccountUsage("max-2")
 	assert.Equal(t, good, last, "display-only: a failed probe keeps the sample")
 	assert.Error(t, probeErr)
-	inFlight, _, _ := m.core.GateForTest("usage", time.Now())
+	inFlight, _, _ := testModel(m).GateForTest("usage", time.Now())
 	assert.False(t, inFlight)
 	st := m.accountStatuses()
 	assert.True(t, st[1].Failing)
@@ -38,7 +38,7 @@ func TestUsageReady_LoggedOutOutranksAProbedSample(t *testing.T) {
 	withAccounts(t, m, "max-2")
 	acct, ok := m.core.Account("max-2")
 	require.True(t, ok)
-	m.core.SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {
+	testModel(m).SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {
 		State:    session.RemoteControlAuthBlocked,
 		Identity: account.Identity{ConfigDir: acct.Dir, LoggedIn: false},
 	}})

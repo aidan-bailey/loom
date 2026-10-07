@@ -170,7 +170,7 @@ func (m *Model) rosterStatusFor(inst *session.Instance) (session.Status, string,
 	return status, entry.WaitingFor, authoritative
 }
 
-// AdoptClaudeStatus is the single place a Claude session's reported status
+// adoptClaudeStatus is the single place a Claude session's reported status
 // is applied to an instance. It returns the instance's merged hook and
 // roster observation (see session.Instance.ClaudeStatus) and, as a side
 // effect, records Claude's reason for blocking so the card can render it.
@@ -180,7 +180,7 @@ func (m *Model) rosterStatusFor(inst *session.Instance) (session.Status, string,
 // snapshot scan, and deliverHealth) must go through here, and so must applyClaudeStatus;
 // duplicating the set/clear at each call site is how they drift apart,
 // which is the lockstep hazard called out in CLAUDE.md.
-func (m *Model) AdoptClaudeStatus(inst *session.Instance) (session.Status, bool) {
+func (m *Model) adoptClaudeStatus(inst *session.Instance) (session.Status, bool) {
 	if inst == nil {
 		return session.Ready, false
 	}
@@ -196,13 +196,13 @@ func (m *Model) AdoptClaudeStatus(inst *session.Instance) (session.Status, bool)
 // applyClaudeStatus moves inst to the status its hooks or the roster last
 // reported, for a change that arrived outside the status paths: a hook
 // scan or a roster answer. It does nothing for an instance the status
-// pipelines may not drive (StatusEligible), and clears a stale wait reason
+// pipelines may not drive (statusEligible), and clears a stale wait reason
 // when neither source has an opinion.
 func (m *Model) applyClaudeStatus(inst *session.Instance) {
-	if !StatusEligible(inst) {
+	if !statusEligible(inst) {
 		return
 	}
-	target, ok := m.AdoptClaudeStatus(inst)
+	target, ok := m.adoptClaudeStatus(inst)
 	if !ok {
 		return
 	}
@@ -217,7 +217,7 @@ func (m *Model) applyClaudeStatus(inst *session.Instance) {
 // nil) loses a roster-sourced status but keeps a hook-sourced one.
 func (m *Model) observeRoster(at time.Time) {
 	changed := false
-	for _, inst := range m.ActiveInstances() {
+	for _, inst := range m.activeInstances() {
 		if !session.IsClaudeProgram(inst.Program()) {
 			continue
 		}
@@ -248,14 +248,14 @@ func (m *Model) maybeRosterQuerySoon() bool {
 		return false
 	}
 	g.expedite()
-	return m.maybeRosterQuery(m.ActiveInstances())
+	return m.maybeRosterQuery(m.activeInstances())
 }
 
-// StatusEligible reports whether the tick/event pipelines may drive this
+// statusEligible reports whether the tick/event pipelines may drive this
 // instance's status — the same guard set the health tick uses (Recoverable
 // placeholders and Loading rows are owned by explicit flows; see the comment
-// on ActiveInstances).
-func StatusEligible(inst *session.Instance) bool {
+// on activeInstances).
+func statusEligible(inst *session.Instance) bool {
 	if inst == nil || !inst.Started() || inst.Paused() {
 		return false
 	}
@@ -263,14 +263,14 @@ func StatusEligible(inst *session.Instance) bool {
 	return st != session.Deleting && st != session.Recoverable && st != session.Loading
 }
 
-// PaneOutputInst is the TUI's report that inst's pane produced output (a pane
+// paneOutputInst is the TUI's report that inst's pane produced output (a pane
 // dirty event). Answering a permission prompt makes output (the dialog
 // goes away) but fires no hook, and the roster reports busy at once, so a
 // Prompting Claude session asks the roster soon. While Claude works its
 // spinner keeps output flowing, so this also reads a UserPromptSubmit
 // within hookScanInterval. Call it before the TUI's own status ladder
 // moves inst: it reads the status the output arrived in.
-func (m *Model) PaneOutputInst(inst *session.Instance) {
+func (m *Model) paneOutputInst(inst *session.Instance) {
 	// Answering a permission prompt makes output (the dialog goes
 	// away) but fires no hook; the roster reports busy at once.
 	if inst.GetStatus() == session.Prompting && session.IsClaudeProgram(inst.Program()) {
@@ -279,15 +279,15 @@ func (m *Model) PaneOutputInst(inst *session.Instance) {
 	// While Claude works, its spinner keeps output flowing, so this
 	// reads a UserPromptSubmit within hookScanInterval.
 	if inst.HooksLaunched() {
-		m.maybeHookScan(m.ActiveInstances())
+		m.maybeHookScan(m.activeInstances())
 	}
 }
 
-// PaneQuietInst is the TUI's report that inst's pane went quiet (nil for a
+// paneQuietInst is the TUI's report that inst's pane went quiet (nil for a
 // pane no instance owns). Stop and PermissionRequest arrive as output
 // settles, often in a burst's last output, so it scans even inside
 // hookScanInterval or while a scan is in flight: request().
-func (m *Model) PaneQuietInst(inst *session.Instance) {
+func (m *Model) paneQuietInst(inst *session.Instance) {
 	if inst == nil || !inst.HooksLaunched() {
 		return
 	}
@@ -295,19 +295,19 @@ func (m *Model) PaneQuietInst(inst *session.Instance) {
 	// often a burst's last output, so it must scan even inside
 	// hookScanInterval or while a scan is in flight: request().
 	m.gate(gateHookScan).request()
-	m.maybeHookScan(m.ActiveInstances())
+	m.maybeHookScan(m.activeInstances())
 }
 
-// PaneOutput reports that id's pane produced output (PaneOutputInst).
+// PaneOutput reports that id's pane produced output (paneOutputInst).
 func (m *Model) PaneOutput(id InstanceID) {
 	if inst, _ := m.lookup(id); inst != nil {
-		m.PaneOutputInst(inst)
+		m.paneOutputInst(inst)
 	}
 }
 
-// PaneQuiet reports that id's pane went quiet (PaneQuietInst).
+// PaneQuiet reports that id's pane went quiet (paneQuietInst).
 func (m *Model) PaneQuiet(id InstanceID) {
 	if inst, _ := m.lookup(id); inst != nil {
-		m.PaneQuietInst(inst)
+		m.paneQuietInst(inst)
 	}
 }

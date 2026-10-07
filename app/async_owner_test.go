@@ -39,7 +39,7 @@ func startingInstance(t *testing.T, slot *workspaceSlot, title string) *session.
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Loading))
-	slot.ws.Add(inst)
+	slot.ws.AddForTest(inst)
 	return inst
 }
 
@@ -52,7 +52,7 @@ func finishStart(t *testing.T, inst *session.Instance) {
 	inst.SetTmuxSession(tmux.NewSessionWithDeps(inst.Title, inst.Program(), fakePtyFactory{t: t}, aliveCmdExecForTest()))
 	require.NoError(t, inst.EnsureRunning())
 	require.Equal(t, session.Running, inst.GetStatus(), "fixture: a start leaves the instance Running")
-	require.True(t, core.ActiveInstance(inst), "fixture: a start leaves the instance active")
+	require.True(t, core.ViewForTest(inst, 1).Active(), "fixture: a start leaves the instance active")
 }
 
 // selectTitle selects the instance titled title in m's focused list.
@@ -199,7 +199,7 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 	// attaches none).
 	started := liveInstance(t, "late")
 	m.panes.Retain(nil) // nothing attached it
-	owner.ws.Add(started)
+	owner.ws.AddForTest(started)
 	m.syncViews()
 
 	m.errBox.SetSize(400, 1)
@@ -230,7 +230,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		}, t.TempDir())
 		require.NoError(t, err)
 		require.NoError(t, p.TransitionTo(session.Loading))
-		slot.ws.Add(p)
+		slot.ws.AddForTest(p)
 		return p
 	}
 
@@ -280,7 +280,7 @@ func TestResumeDone_AfterOwnerDropped(t *testing.T) {
 	recB.calls = 0
 	resumed := liveInstance(t, "resumed")
 	m.panes.Retain(nil) // nothing attached it
-	owner.ws.Add(resumed)
+	owner.ws.AddForTest(resumed)
 	m.syncViews()
 
 	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws})
@@ -300,7 +300,7 @@ func TestResumeDone_OwnerReopened(t *testing.T) {
 	m, owner, twin, _, recC := reopenedHome(t, "res", wtPath, deadCmdExecForTest())
 	twinID := idOf(m, twin) // captured while loaded: a removal forgets it
 	resumed := startedWorktreeInstance(t, "res", wtPath, newFakeTmuxServer())
-	owner.ws.Add(resumed)
+	owner.ws.AddForTest(resumed)
 	m.syncViews()
 
 	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws})
@@ -330,7 +330,7 @@ func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 			drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "bpeer"}}))
 		}
 		resumed := liveInstance(t, "resumed")
-		owner.ws.Add(resumed)
+		owner.ws.AddForTest(resumed)
 		m.syncViews()
 
 		cmd := deliver(t, m, failedResume(resumed))

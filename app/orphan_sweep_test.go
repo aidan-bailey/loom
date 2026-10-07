@@ -80,7 +80,7 @@ func TestOrphanSweep_SparesWorkspacesThisProcessDidNotLoad(t *testing.T) {
 	t.Run("multi-tab restore", func(t *testing.T) {
 		rec := &listingExec{listing: listing}
 		m := newRestoreHome(rec)
-		m.core.SetRegistryForTest(reg)
+		testModel(m).SetRegistryForTest(reg)
 		m.restoreSavedWorkspaces([]config.Workspace{mine})
 
 		require.Len(t, m.slots, 1)
@@ -91,7 +91,7 @@ func TestOrphanSweep_SparesWorkspacesThisProcessDidNotLoad(t *testing.T) {
 	t.Run("classic startup", func(t *testing.T) {
 		rec := &listingExec{listing: listing}
 		m := newRestoreHome(rec)
-		m.core.SetRegistryForTest(reg)
+		testModel(m).SetRegistryForTest(reg)
 		wsCtx := config.WorkspaceContextFor(&mine)
 		state := config.LoadStateFrom(wsCtx.ConfigDir)
 		storage, err := session.NewStorage(state, wsCtx.ConfigDir)
@@ -131,7 +131,7 @@ func TestActivateWorkspace_TerminalOrphanKillIsOwnershipGated(t *testing.T) {
 			rec := &listingExec{listing: "loom_ws-term-v2\t" + ws.Path + "\n" +
 				"loom_ws-term\t" + tc.dir(ws) + "\n"}
 			m := newRestoreHome(rec)
-			m.core.SetRegistryForTest(&config.WorkspaceRegistry{})
+			testModel(m).SetRegistryForTest(&config.WorkspaceRegistry{})
 
 			_, err := m.activateWorkspace(ws)
 			require.NoError(t, err)

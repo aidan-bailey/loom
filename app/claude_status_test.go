@@ -27,9 +27,7 @@ func failRoster(m *home) {
 // reported, as the model does when a hook scan or roster answer lands, and
 // rereads the view stores, as the drain after that Update does.
 func applyClaudeStatus(m *home, inst *session.Instance) {
-	if target, ok := m.core.AdoptClaudeStatus(inst); ok {
-		_ = inst.TransitionTo(target)
-	}
+	testModel(m).ApplyClaudeStatusForTest(inst)
 	m.syncViews()
 }
 
@@ -47,7 +45,7 @@ func applyHookEvents(t *testing.T, inst *session.Instance, events ...hooks.Event
 func TestReportedReadyNotPromotedByOutput(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "reported-ready", "claude", "x")
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	m.splitPane.SetSize(100, 40)
 	m.splitPane.SetInstance(rowOf(t, m, inst))
@@ -67,7 +65,7 @@ func TestReportedStatusSuppressesRedetect(t *testing.T) {
 	inst := startedInstanceWithProgram(t, "hook-redetect", "claude", "working...")
 	t.Setenv("LOOM_PANE_RENDERER", "")
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: time.Now()})
 	// The model applies the report (a hook scan landing), not the TUI.

@@ -218,7 +218,7 @@ func hold(m *Model, insts ...*session.Instance) {
 		ws = m.tabs[0]
 	}
 	for _, inst := range insts {
-		ws.Add(inst)
+		ws.add(inst)
 	}
 }
 

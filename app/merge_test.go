@@ -68,7 +68,7 @@ func TestRunMergeSelected_BlocksOnDirtyTarget(t *testing.T) {
 	m := newTestHome(t)
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
-	m.ws.Add(target)
+	m.ws.AddForTest(target)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -87,7 +87,7 @@ func TestRunMergeSelected_BlocksWhenNoEligibleSources(t *testing.T) {
 	m := newTestHome(t)
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
-	m.ws.Add(target)
+	m.ws.AddForTest(target)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -102,8 +102,8 @@ func TestRunMergeSelected_OpensPickerWithEligibleSources(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	m.ws.Add(target)
-	m.ws.Add(source)
+	m.ws.AddForTest(target)
+	m.ws.AddForTest(source)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -129,8 +129,13 @@ func TestMerge_MergesBranchIntoTarget(t *testing.T) {
 	runGit(t, sourceWT.GetWorktreePath(), "add", ".")
 	runGit(t, sourceWT.GetWorktreePath(), "commit", "-qm", "add new.txt")
 
-	job := core.NewForTest(core.Options{}).MergeInst(target, source)
-	msg := job()
+	m := core.NewForTest(core.Options{})
+	ws := testWS(core.WorkspaceParts{}, target, source)
+	m.SetWorkspacesForTest(ws, nil)
+	m.Merge(m.IDForTest(target), m.IDForTest(source), 0)
+	jobs := m.Drain().Jobs
+	require.Len(t, jobs, 1, "the merge request's job")
+	msg := core.UntrackedForTest(jobs[0]())
 	assert.Equal(t, core.MergeResult{}, msg, "successful merge returns no error")
 
 	targetWT, err := target.GetGitWorktree()
@@ -145,8 +150,8 @@ func TestHandleStateMergePickerKey_EscCancelsWithoutMerging(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	m.ws.Add(target)
-	m.ws.Add(source)
+	m.ws.AddForTest(target)
+	m.ws.AddForTest(source)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -175,8 +180,8 @@ func TestHandleStateMergePickerKey_EnterMergesTheDisplayedTarget(t *testing.T) {
 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
-	m.ws.Add(target)
-	m.ws.Add(source)
+	m.ws.AddForTest(target)
+	m.ws.AddForTest(source)
 	m.syncViews()
 	selectIn(m, m.list, target)
 
@@ -218,9 +223,9 @@ func TestRunMergeSelected_TargetSurvivesConcurrentSelectionChange(t *testing.T) 
 	target := pausedInstanceWithRealWorktree(t, repoDir, "target", "target-branch")
 	source := pausedInstanceWithRealWorktree(t, repoDir, "source", "source-branch")
 	other := pausedInstanceWithRealWorktree(t, repoDir, "other", "other-branch")
-	m.ws.Add(target)
-	m.ws.Add(source)
-	m.ws.Add(other)
+	m.ws.AddForTest(target)
+	m.ws.AddForTest(source)
+	m.ws.AddForTest(other)
 	m.syncViews()
 	selectIn(m, m.list, target)
 

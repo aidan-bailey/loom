@@ -29,10 +29,10 @@ func TestRunNewFromIssue_OpensPickerFromSnapshot(t *testing.T) {
 func TestRunNewFromIssue_NoSnapshotShowsLoadingAndForcesPoll(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	deliver(t, m, core.GitHubResultForTest(true, "", nil, nil))
-	m.core.SetGateForTest("github", false, time.Now())
+	testModel(m).SetGateForTest("github", false, time.Now())
 	_, _ = runNewFromIssue(m)
 	require.Equal(t, stateIssuePicker, m.state)
-	_, _, due := m.core.GateForTest("github", time.Now())
+	_, _, due := testModel(m).GateForTest("github", time.Now())
 	assert.True(t, due)
 	assert.Contains(t, m.issuePicker().Render(), "loading")
 }
@@ -76,7 +76,7 @@ func TestIssuePickerEnter_DispatchesView(t *testing.T) {
 func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	before := m.list.NumInstances()
-	m.core.SetGateForTest("github", false, time.Now())
+	testModel(m).SetGateForTest("github", false, time.Now())
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 12, Title: "Fix flaky test", URL: "https://x/12", Body: "do it"}})
 	require.Equal(t, before+1, m.list.NumInstances())
 	d := m.draft // the session-to-be, until Launch Options confirms
@@ -87,7 +87,7 @@ func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T)
 	assert.Equal(t, stateLaunchOptions, m.state)
 	_, ok := m.activeOverlay.(*overlay.SessionLaunchOptions)
 	assert.True(t, ok)
-	_, _, due := m.core.GateForTest("github", time.Now())
+	_, _, due := testModel(m).GateForTest("github", time.Now())
 	assert.True(t, due, "an issue-born session forces the next poll")
 }
 
@@ -117,7 +117,7 @@ func TestIssuePickedMsg_RespectsInstanceLimit(t *testing.T) {
 	for i := 0; i < GlobalInstanceLimit; i++ {
 		inst, err := session.NewInstance(session.InstanceOptions{Title: "x", Path: t.TempDir(), Program: "claude"})
 		require.NoError(t, err)
-		m.ws.Add(inst)
+		m.ws.AddForTest(inst)
 		m.syncViews()
 	}
 	m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 1, Title: "t"}})

@@ -82,7 +82,7 @@ func TestTick_TheProbeRoundTrip(t *testing.T) {
 	m.SetGateForTest("github", true, time.Now())
 	probe := func() HealthResult {
 		t.Helper()
-		m.TickInst(nil)
+		m.tickInst(nil)
 		out := m.Drain()
 		require.Len(t, out.Jobs, 1, "the probe is the tick's only job")
 		r, ok := out.Jobs[0]().(HealthResult)
@@ -111,7 +111,7 @@ func TestTick_TheProbeRoundTrip(t *testing.T) {
 	assert.Same(t, idleDiff, idle.GetDiffStats(), "no output, no refresh")
 	assert.Equal(t, []Event{
 		StatusesChanged{},
-		Alive{Instances: []*session.Instance{busy, idle}, IDs: []InstanceID{m.idOf(busy), m.idOf(idle)}, Source: "tick"},
+		Alive{IDs: []InstanceID{m.idOf(busy), m.idOf(idle)}, Source: "tick"},
 		HealthChecked{},
 	}, m.Drain().Events)
 }
@@ -179,7 +179,7 @@ func TestHealthResult_ReportsTheLiveAndRearmsTheTick(t *testing.T) {
 
 	assert.Equal(t, []Event{
 		StatusesChanged{},
-		Alive{Instances: []*session.Instance{live}, IDs: []InstanceID{m.idOf(live)}, Source: "tick"},
+		Alive{IDs: []InstanceID{m.idOf(live)}, Source: "tick"},
 		HealthChecked{},
 	}, m.Drain().Events)
 }
@@ -198,7 +198,7 @@ func TestHealthResult_LeavesAnInstanceAnOpTookWhileTheProbeRan(t *testing.T) {
 			inst := activeInst(t, m, "probed")
 			applyHookEvents(t, inst, hooks.Event{Name: hooks.EventStop, HasTasks: true, At: time.Now()})
 			require.NoError(t, inst.TransitionTo(held), "the op confirmed while the probe ran")
-			target, authoritative := m.AdoptClaudeStatus(inst)
+			target, authoritative := m.adoptClaudeStatus(inst)
 			require.True(t, authoritative, "fixture precondition: the hooks reported a status")
 			require.Equal(t, session.Ready, target, "fixture precondition")
 
@@ -339,14 +339,14 @@ func TestHealthResult_ARestartedWorkspaceTerminalGetsAFreshClient(t *testing.T) 
 
 	m.Deliver(HealthResult{Results: []ProbeResult{{Instance: inst, TmuxLive: tmux.LivenessDead}}})
 
-	assert.Contains(t, m.Drain().Events, SessionLaunched{Instance: inst, ID: m.idOf(inst)})
+	assert.Contains(t, m.Drain().Events, SessionLaunched{ID: m.idOf(inst)})
 }
 
 func TestDeadVerified_ALiveSessionIsReportedForRepair(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := probedRunning(t, m)
 
-	job := m.VerifyDeadInst(inst)
+	job := m.verifyDeadInst(inst)
 	verified, ok := job().(DeadVerified)
 	require.True(t, ok)
 	require.Equal(t, tmux.LivenessAlive, verified.TmuxLive)
@@ -355,7 +355,7 @@ func TestDeadVerified_ALiveSessionIsReportedForRepair(t *testing.T) {
 	assert.Equal(t, session.Running, inst.GetStatus(), "a live session is not paused by a dead client")
 	assert.Equal(t, []Event{
 		StatusesChanged{},
-		Alive{Instances: []*session.Instance{inst}, IDs: []InstanceID{m.idOf(inst)}, Source: "dead_event"},
+		Alive{IDs: []InstanceID{m.idOf(inst)}, Source: "dead_event"},
 		InstancesChanged{},
 	}, m.Drain().Events)
 }

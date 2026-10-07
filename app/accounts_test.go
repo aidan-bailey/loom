@@ -25,10 +25,10 @@ func withAccounts(t *testing.T, m *home, names ...string) string {
 	if m.accountStrip == nil {
 		m.accountStrip = ui.NewAccountStrip()
 	}
-	m.core.AdoptAccountsForTest(reg)
+	testModel(m).AdoptAccountsForTest(reg)
 	// Publishing shows the badges (ui.SetShowAccounts), as it did before
 	// it became an event; the views refresh only when a test asks.
-	m.core.Drain()
+	testModel(m).Drain()
 	ui.SetShowAccounts(m.core.HasExtraAccounts())
 	t.Cleanup(func() {
 		session.SetAccountDirs(nil, nil)
@@ -50,14 +50,14 @@ func TestPublishAccounts_BadgesOnlyWithAnExtraAccount(t *testing.T) {
 	reg := account.LoadRegistry(t.TempDir())
 
 	ui.SetShowAccounts(true) // stale: the event must clear it
-	m.core.AdoptAccountsForTest(reg)
+	testModel(m).AdoptAccountsForTest(reg)
 	m.drainCore()
 	assert.False(t, ui.ShowAccounts())
 	assert.False(t, m.core.HasExtraAccounts())
 
 	_, _, err := reg.Create("max-2", t.TempDir())
 	require.NoError(t, err)
-	m.core.AdoptAccountsForTest(reg)
+	testModel(m).AdoptAccountsForTest(reg)
 	require.False(t, ui.ShowAccounts(), "not shown until the event is applied")
 	m.drainCore()
 	assert.True(t, ui.ShowAccounts())
@@ -87,7 +87,7 @@ func TestAccountStatuses_DefaultFirstAndMarked(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
 	require.NoError(t, m.core.Accounts().SetDefault("max-2"))
-	m.core.SetAccountAuthForTest(map[string]session.RemoteControlAuth{
+	testModel(m).SetAccountAuthForTest(map[string]session.RemoteControlAuth{
 		"max-2": {Identity: account.Identity{ConfigDir: "/acct", LoggedIn: false}},
 	})
 

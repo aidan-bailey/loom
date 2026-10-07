@@ -44,7 +44,7 @@ func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 	idle := peerTestInstance(t, "idle")
 
 	for _, inst := range []*session.Instance{prompting, belled, running, idle} {
-		wsB.Add(inst)
+		wsB.AddForTest(inst)
 	}
 
 	h := &home{}

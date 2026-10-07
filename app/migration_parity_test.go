@@ -139,7 +139,7 @@ func mustAddInstance(t *testing.T, m *home, title string) *session.Instance {
 		Program: "claude",
 	})
 	require.NoError(t, err)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	return inst
 }

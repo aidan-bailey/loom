@@ -65,7 +65,7 @@ func TestNewLaunchOptionsOverlay_NoAccountRowForANonClaudeProgram(t *testing.T) 
 func TestNewLaunchOptionsOverlay_AnUnloadableRegistryKeepsTheSessionsAccount(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m)
-	m.core.SetAccountsForTest(account.Unavailable(errors.New("accounts.json is corrupt")))
+	testModel(m).SetAccountsForTest(account.Unavailable(errors.New("accounts.json is corrupt")))
 
 	lo, _ := m.newLaunchOptionsOverlay(bareOpts("max-2"), "claude")
 
@@ -95,7 +95,7 @@ func TestRefreshAccountViews_KeepsTheModalsChoiceWhenTheRegistryFailsToLoad(t *t
 	m.setOverlay(lo, overlayLaunchOptions)
 	require.Equal(t, "max-2", lo.Options().Account)
 
-	m.core.SetAccountsForTest(account.Unavailable(errors.New("accounts.json is corrupt")))
+	testModel(m).SetAccountsForTest(account.Unavailable(errors.New("accounts.json is corrupt")))
 	m.refreshAccountViews()
 
 	assert.True(t, lo.AccountsShown())
@@ -109,7 +109,7 @@ func TestRefreshAccountViews_FollowsAnOpenClaudeModal(t *testing.T) {
 	m.setOverlay(lo, overlayLaunchOptions)
 	require.NotContains(t, lo.Render(), "12%")
 
-	m.core.SetAccountUsageForTest("max-2", account.Usage{Available: true, At: time.Now(), FiveHour: &account.Window{Pct: 12}}, nil)
+	testModel(m).SetAccountUsageForTest("max-2", account.Usage{Available: true, At: time.Now(), FiveHour: &account.Window{Pct: 12}}, nil)
 	m.refreshAccountViews()
 
 	assert.Contains(t, lo.Render(), "12%")
@@ -121,7 +121,7 @@ func openRestartOn(t *testing.T, m *home, acct string) *overlay.SessionLaunchOpt
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-removed", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount(acct)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	runRestartWithOptionsSelected(m)
 	lo := m.launchOptionsOverlay()
@@ -203,7 +203,7 @@ func pausedForResumeWith(t *testing.T, m *home, title string) *session.Instance 
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Paused))
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	return inst
 }
@@ -228,7 +228,7 @@ func TestResumeWith_UsesTheAccountsRemoteControlAuth(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
 	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthOK})
-	m.core.SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "logged out"}})
+	testModel(m).SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "logged out"}})
 	inst := pausedForResumeWith(t, m, "acct-rc")
 
 	opts := bareOpts("max-2")
@@ -250,7 +250,7 @@ func TestRestartWithOptions_PresetsTheSessionsAccount(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "acct-restart", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount("max-3")
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	require.Equal(t, idOf(m, inst), selID(m.list))
 

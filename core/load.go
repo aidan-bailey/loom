@@ -137,7 +137,7 @@ func (m *Model) reconcileOrphans(ws *Workspace, cfgDir, program string, cmdExec 
 				log.For("core").Warn("orphan_placeholder_failed", "title", cand.Title, "err", err)
 				continue
 			}
-			ws.Add(inst)
+			ws.add(inst)
 			summary.review++
 		}
 	}
@@ -236,7 +236,7 @@ func (m *Model) loadWorkspace(ws *Workspace, cfgDir string, sweepTmux bool) erro
 		if instance.IsWorkspaceTerminal {
 			hasWorkspaceTerminal = true
 		}
-		ws.Add(instance)
+		ws.add(instance)
 	}
 
 	// Restart crash-recovered instances
@@ -313,7 +313,7 @@ func (m *Model) loadWorkspace(ws *Workspace, cfgDir string, sweepTmux bool) erro
 		if wtErr != nil {
 			log.For("core").Error("workspace_terminal.create_failed", "err", wtErr)
 		} else {
-			ws.Add(wtInstance)
+			ws.add(wtInstance)
 			if err := wtInstance.Start(true); err != nil {
 				log.For("core").Error("workspace_terminal.start_failed", "err", err)
 			}

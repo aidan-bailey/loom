@@ -339,7 +339,7 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 	m := fleetHome(t)
 	m.ctx = cancelledCtx()
 	m.errBox = ui.NewErrBox()
-	m.core.SetExecForTest(&recordingExec{})
+	testModel(m).SetExecForTest(&recordingExec{})
 
 	drainCmd(m.applyWorkspaceToggle(nil))
 
@@ -357,7 +357,7 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, entries, 1, "nothing is written to LOOM_HOME")
 
-	require.NoError(t, m.storage().SaveInstances(core.Persistable(m.ws.Instances())))
+	require.NoError(t, m.storage().SaveInstances(core.Persistable(m.ws.InstancesForTest())))
 	raw, err := os.ReadFile(filepath.Join(globalDir, config.StateFileName))
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "in-global", "global mode saves back to the global dir")

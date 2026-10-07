@@ -28,7 +28,7 @@ func TestScriptHost_ConcurrentNavAndRead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ws.Add(inst)
+		ws.AddForTest(inst)
 	}
 	list.SetSelectedInstance(0)
 

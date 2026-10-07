@@ -18,7 +18,7 @@ import (
 func testWS(parts core.WorkspaceParts, insts ...*session.Instance) *core.Workspace {
 	ws := core.NewWorkspace(parts)
 	for _, inst := range insts {
-		ws.Add(inst)
+		ws.AddForTest(inst)
 	}
 	return ws
 }
@@ -113,7 +113,7 @@ func wireCore(t *testing.T, m *home) *home {
 	if m.workspaceSlot != nil {
 		classic = m.ws
 	}
-	m.core.SetWorkspacesForTest(classic, tabs)
+	testModel(m).SetWorkspacesForTest(classic, tabs)
 	m.syncViews()
 	return m
 }
@@ -134,7 +134,7 @@ func fixtureAlive(m *home) func(string) bool {
 			if s == nil || s.ws == nil {
 				continue
 			}
-			for _, inst := range s.ws.Instances() {
+			for _, inst := range s.ws.InstancesForTest() {
 				if inst.Pane().TmuxSessionName() == name {
 					return inst.Pane().TmuxAlive()
 				}
@@ -156,7 +156,7 @@ func reworkspace(t *testing.T, m *home, slot *workspaceSlot, edit func(*core.Wor
 	var insts []*session.Instance
 	if slot.ws != nil {
 		p = core.WorkspaceParts{Ctx: slot.ws.Ctx(), Storage: slot.ws.Storage(), Config: slot.ws.Config(), State: slot.ws.State()}
-		insts = slot.ws.Instances()
+		insts = slot.ws.InstancesForTest()
 	}
 	edit(&p)
 	old := slot.list
@@ -176,7 +176,7 @@ func reworkspace(t *testing.T, m *home, slot *workspaceSlot, edit func(*core.Wor
 // idOf is inst's ID in m's model, assigned on first use: what the TUI's
 // rows, messages and events name it by.
 func idOf(m *home, inst *session.Instance) core.InstanceID {
-	return m.core.IDForTest(inst)
+	return testModel(m).IDForTest(inst)
 }
 
 // rowOf rereads m's view stores (syncViews) and returns inst's row, which
@@ -272,6 +272,26 @@ func deliver(t *testing.T, m *home, result any) tea.Cmd {
 	t.Helper()
 	_, cmd := m.Update(coreResultMsg{msg: result})
 	return cmd
+}
+
+// testModel returns the home's model for its test seams.
+func testModel(m *home) *core.Model { return m.core.(*core.Model) }
+
+// requestJob drains m's model as Update's drain does (drainCore), applying
+// its events but dropping their Cmds, and returns the one job it queued as
+// the Cmd the runtime would run (coreCmd): what a request made outside an
+// Update (a handler called directly) queued.
+func requestJob(t *testing.T, m *home) tea.Cmd {
+	t.Helper()
+	var jobs []core.Job
+	for out := m.core.Sync(); !out.Empty(); out = m.core.Sync() {
+		for _, ev := range out.Events {
+			_ = m.applyCoreEvent(ev)
+		}
+		jobs = append(jobs, out.Jobs...)
+	}
+	require.Len(t, jobs, 1, "the request queued one job")
+	return coreCmd(jobs[0])
 }
 
 // requestResults drains m's model as Update's drain does (drainCore),

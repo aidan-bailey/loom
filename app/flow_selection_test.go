@@ -29,7 +29,7 @@ func runningInstance(t *testing.T, m *home, title string) *session.Instance {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	require.NoError(t, inst.TransitionTo(session.Running))
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	return inst
 }
@@ -87,7 +87,7 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	}, t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, placeholder.TransitionTo(session.Loading))
-	m.ws.Add(placeholder)
+	m.ws.AddForTest(placeholder)
 	m.syncViews()
 	_, _ = runNewInstance(m)
 	pending := m.draft
@@ -205,7 +205,7 @@ func reopenedHome(t *testing.T, title, twinWorktree string, reopenExec cmd_test.
 	twin, err = session.ReconcileAndRestore(worktreeRecord(title, twinWorktree, session.Loading), t.TempDir(), reopenExec)
 	require.NoError(t, err)
 	require.True(t, twin.Paused(), "fixture: a reconciled Loading record comes back Paused")
-	reopened.ws.Add(twin)
+	reopened.ws.AddForTest(twin)
 	m.slots = append(m.slots, reopened)
 	wireCore(t, m)
 	recA.calls = 0
@@ -226,7 +226,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m, owner, twin, recA, recC := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
 		twinID := idOf(m, twin) // captured while loaded: a removal forgets it
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
-		owner.ws.Add(started)
+		owner.ws.AddForTest(started)
 		m.syncViews()
 
 		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
@@ -244,7 +244,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m, owner, twin, _, _ := reopenedHome(t, "late", wtPath, deadCmdExecForTest())
 		srv := newFakeTmuxServer()
 		started := startedWorktreeInstance(t, "late", wtPath, srv)
-		owner.ws.Add(started)
+		owner.ws.AddForTest(started)
 		m.syncViews()
 
 		cmd := deliver(t, m, core.StartResult{Instance: started, Err: errors.New("boom"), Owner: owner.ws})
@@ -259,7 +259,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		m, owner, namesake, _, recC := reopenedHome(t, "late", filepath.Join(t.TempDir(), "other-wt"), deadCmdExecForTest())
 		m.errBox.SetSize(400, 1)
 		started := startedWorktreeInstance(t, "late", wtPath, newFakeTmuxServer())
-		owner.ws.Add(started)
+		owner.ws.AddForTest(started)
 		m.syncViews()
 
 		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
@@ -281,7 +281,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		started := startedWorktreeInstance(t, "late", wtPath, srv)
 		m, owner, twin, _, recC := reopenedHome(t, "late", wtPath, srv.exec())
 		require.True(t, srv.killed("late"), "fixture: reconcile killed the live session")
-		owner.ws.Add(started)
+		owner.ws.AddForTest(started)
 		m.syncViews()
 
 		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws})
@@ -375,15 +375,15 @@ func TestKillAction_UsesTheDispatchSlotsStorage(t *testing.T) {
 		Worktree: session.GitWorktreeData{RepoPath: repo, WorktreePath: t.TempDir(), BranchName: "loom/a1", SessionName: "a1"},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.ws.Add(a1)
+	m.ws.AddForTest(a1)
 	m.syncViews()
 	seed, err := json.Marshal([]session.InstanceData{a1.ToInstanceData()})
 	require.NoError(t, err)
 	recA.lastData = seed
 
-	_, killAction := m.core.KillInst(m.ws, a1, nil)
+	m.core.Kill(idOf(m, a1), 0)
 	m.switchWorkspaceSlot(1)
-	_ = killAction()
+	_ = requestJob(t, m)() // the kill's job, run after the switch
 
 	assert.GreaterOrEqual(t, recA.calls, 1, "the record is deleted from its own workspace")
 	assert.NotContains(t, string(recA.lastData), `"a1"`)
@@ -445,7 +445,7 @@ func TestDiscardDraft_NeverKillsAStartedInstance(t *testing.T) {
 	isolateTmux(t)
 	m, _, _ := ownerTestHome(t)
 	live := liveInstance(t, "live")
-	m.ws.Add(live)
+	m.ws.AddForTest(live)
 	m.syncViews()
 	m.newDraft("pending", "", 0)
 

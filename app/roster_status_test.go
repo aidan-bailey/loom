@@ -27,7 +27,7 @@ func TestRosterOverridesScrapedStatus(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
 
@@ -46,7 +46,7 @@ func TestRosterBusyMapsToRunning(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	deliverRoster(m, rosterFor(inst, session.RosterStatusBusy))
 
@@ -64,7 +64,7 @@ func TestRosterAbsentFallsBackToScraper(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 
 	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
@@ -80,7 +80,7 @@ func TestRosterUnknownStatusFallsBack(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	deliverRoster(m, rosterFor(inst, session.RosterStatusUnknown))
 
@@ -98,7 +98,7 @@ func TestRosterIgnoredForNonClaudeInstance(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
 
@@ -129,7 +129,7 @@ func TestRosterWaitReasonReachesInstance(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "sandbox request"))
 
@@ -147,7 +147,7 @@ func TestRosterWaitReasonClearedWhenNoLongerWaiting(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "dialog open"))
 	m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
@@ -168,7 +168,7 @@ func TestRosterWaitReasonClearedWhenRosterGoesAway(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	deliverRoster(m, rosterWithReason(inst, session.RosterStatusWaiting, "input needed"))
 	m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})

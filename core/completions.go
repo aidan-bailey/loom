@@ -25,7 +25,7 @@ import (
 // selection, so moving it would retarget the flow. The model has no focus,
 // so that rule is the TUI's job (app.applyStarted, app.applyRecovered).
 
-// StartResult is a start job's result (StartInst): the instance, Start's
+// StartResult is a start job's result (startInst): the instance, Start's
 // error, and the workspace that owned it at dispatch.
 type StartResult struct {
 	Instance *session.Instance
@@ -33,7 +33,7 @@ type StartResult struct {
 	Err      error
 }
 
-// ResumeResult is a resume that succeeded (ResumeInst, ResumeIfLoadingInst).
+// ResumeResult is a resume that succeeded (resumeIfLoadingInst).
 // Notice, when set, is what it found that the user must see: a stash it
 // forgot or could not drop (session.Notice). A failed resume is an
 // OpFailed.
@@ -85,7 +85,7 @@ type MergeResult struct {
 }
 
 // resumeSkipped is a resume whose job found the instance no longer
-// Loading when it ran (ResumeIfLoadingInst): something moved it after the
+// Loading when it ran (resumeIfLoadingInst): something moved it after the
 // caller's transition, and that move owns it now, so nothing is reverted.
 // It is only logged, as the skip always was (no notice), and its Reply
 // carries err, so a requester never reads a skip as a success.
@@ -112,7 +112,7 @@ func (m *Model) adoptIntoReopened(twin *session.Instance, reopened *Workspace, i
 	if !inst.Pane().TmuxAlive() {
 		return nil
 	}
-	reopened.Replace(twin, inst)
+	reopened.replace(twin, inst)
 	return reopened
 }
 
@@ -134,7 +134,7 @@ func (m *Model) reopenedTwin(owner *Workspace, inst *session.Instance) (*session
 		if s.Label() != owner.Label() {
 			continue
 		}
-		twin := s.ByTitle(inst.Title)
+		twin := s.byTitle(inst.Title)
 		if twin == nil || twin == inst || twin.GetWorktreePath() != wt {
 			continue
 		}
@@ -155,7 +155,7 @@ func (m *Model) owningWorkspace(stamped *Workspace, inst *session.Instance) *Wor
 	if stamped != nil {
 		return stamped
 	}
-	return m.Holding(inst)
+	return m.holding(inst)
 }
 
 // removeEverywhere removes inst (by identity) from every loaded
@@ -169,7 +169,7 @@ func (m *Model) removeEverywhere(inst *session.Instance) {
 		return
 	}
 	for _, ws := range m.Loaded() {
-		ws.Remove(inst)
+		ws.remove(inst)
 	}
 }
 
@@ -213,7 +213,7 @@ func (m *Model) deliverStart(r StartResult) {
 		// The save's error first: the start's is the one the error bar
 		// keeps, as when both were set in this order before.
 		if owner != nil {
-			owner.Remove(inst)
+			owner.remove(inst)
 			if err := m.Save(owner); err != nil {
 				m.notifyErr(err)
 			}
@@ -235,7 +235,7 @@ func (m *Model) deliverStart(r StartResult) {
 		m.spawn(sendInitialPrompt(inst, owner, prompt))
 		return
 	}
-	m.emit(Started{Instance: inst, ID: m.idOf(inst), Title: inst.Title, Owner: owner, Loaded: loaded})
+	m.emit(Started{ID: m.idOf(inst), Title: inst.Title, Owner: owner, Loaded: loaded})
 }
 
 // deliverPromptSent finishes a start whose initial prompt was sent first
@@ -243,7 +243,7 @@ func (m *Model) deliverStart(r StartResult) {
 // have closed while the prompt was sent, so whether it is still loaded is
 // asked again.
 func (m *Model) deliverPromptSent(r promptSent) {
-	m.emit(Started{Instance: r.inst, ID: m.idOf(r.inst), Title: r.inst.Title, Owner: r.owner, Loaded: m.IsLoaded(r.owner)})
+	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: r.owner, Loaded: m.IsLoaded(r.owner)})
 }
 
 // deliverResume finishes a resume. The owner may have been closed while
@@ -254,7 +254,7 @@ func (m *Model) deliverPromptSent(r promptSent) {
 // displays nothing and gets none. Formerly app.handleResumeDone.
 func (m *Model) deliverResume(r ResumeResult) {
 	m.notifyErr(r.Notice)
-	if inst := r.Instance; inst != nil && m.Holding(inst) == nil {
+	if inst := r.Instance; inst != nil && m.holding(inst) == nil {
 		var adopted *Workspace
 		if r.Owner != nil {
 			if twin, reopened := m.reopenedTwin(r.Owner, inst); twin != nil {
@@ -268,8 +268,8 @@ func (m *Model) deliverResume(r ResumeResult) {
 			m.notifyInfo(fmt.Sprintf("%s resumed in %s", inst.Title, adopted.Label()))
 		}
 	}
-	if inst := r.Instance; inst != nil && m.Holding(inst) != nil {
-		m.emit(SessionLaunched{Instance: inst, ID: m.idOf(inst)})
+	if inst := r.Instance; inst != nil && m.holding(inst) != nil {
+		m.emit(SessionLaunched{ID: m.idOf(inst)})
 	}
 	m.emit(InstancesChanged{Relayout: true})
 }
@@ -298,14 +298,14 @@ func (m *Model) deliverRecover(r RecoverResult) {
 	}
 	loaded := m.IsLoaded(owner)
 	if owner != nil {
-		if !owner.Replace(r.Placeholder, r.Recovered) {
-			owner.Add(r.Recovered)
+		if !owner.replace(r.Placeholder, r.Recovered) {
+			owner.add(r.Recovered)
 		}
 		if err := m.Save(owner); err != nil {
 			log.For("core").Error("recover.save_failed", "title", r.Recovered.Title, "err", err)
 		}
 	}
-	m.emit(Recovered{Instance: r.Recovered, ID: m.idOf(r.Recovered), Title: r.Recovered.Title, Owner: owner, Loaded: loaded,
+	m.emit(Recovered{ID: m.idOf(r.Recovered), Title: r.Recovered.Title, Owner: owner, Loaded: loaded,
 		Paused: r.Recovered.GetStatus() == session.Paused})
 }
 
@@ -313,7 +313,8 @@ func (m *Model) deliverRecover(r RecoverResult) {
 // identity: the kill ran for seconds, and the workspace the TUI showed may
 // have been switched or closed meanwhile, so a missed removal would leave
 // the row stuck in Deleting with its resources already gone. The terminal
-// session was already closed inside the kill's job (beforeKill).
+// pane's shell was already ended inside the kill's job (Instance.Kill closes
+// it by name), and the TUI's prune after ClientsStale releases its client.
 func (m *Model) deliverKill(r KillResult) {
 	m.removeEverywhere(r.Instance)
 	m.notifyErr(r.Notice)
@@ -343,7 +344,7 @@ func (m *Model) deliverOpFailed(r OpFailed) {
 		// a client, which a tick may have pruned while it was Deleting or
 		// Loading. A no-op unless it is active (a reverted discard is
 		// Recoverable, a reverted resume Paused).
-		m.emit(Reactivated{Instance: r.Instance, ID: m.idOf(r.Instance)})
+		m.emit(Reactivated{ID: m.idOf(r.Instance)})
 	}
 	log.For("core").Error("op_failed", "op", r.Op, "title", r.Title, "err", r.Err)
 	m.notifyErr(r.Err)

@@ -39,10 +39,10 @@ func (m *Model) Registry() *config.WorkspaceRegistry { return m.registry }
 // in the open list (see Model.restoreFailed).
 func (m *Model) RestoreFailed() []string { return m.restoreFailed }
 
-// Holding returns the loaded workspace holding inst (by identity), or nil.
-func (m *Model) Holding(inst *session.Instance) *Workspace {
+// holding returns the loaded workspace holding inst (by identity), or nil.
+func (m *Model) holding(inst *session.Instance) *Workspace {
 	for _, ws := range m.Loaded() {
-		if ws.Holds(inst) {
+		if ws.holds(inst) {
 			return ws
 		}
 	}
@@ -76,8 +76,8 @@ func (m *Model) ClosedNote(ws *Workspace) string {
 	return "which is no longer open"
 }
 
-// Instances returns every instance of every loaded workspace.
-func (m *Model) Instances() []*session.Instance {
+// allInstances returns every instance of every loaded workspace.
+func (m *Model) allInstances() []*session.Instance {
 	var out []*session.Instance
 	for _, ws := range m.Loaded() {
 		out = append(out, ws.insts...)
@@ -85,7 +85,7 @@ func (m *Model) Instances() []*session.Instance {
 	return out
 }
 
-// ActiveInstances returns the loaded instances the background jobs may
+// activeInstances returns the loaded instances the background jobs may
 // touch: started and not paused. Recoverable placeholders are ephemeral
 // orphan-review rows: they report Started() (so recover/discard can reach
 // their handles) but must never be driven by a background job, since the
@@ -95,52 +95,21 @@ func (m *Model) Instances() []*session.Instance {
 // them mid-setup reads a dead tmux session and force-flips them to Paused
 // under the op. Deleting rows are being torn down. The same set is what
 // keeps a pane client (livePaneNames).
-func (m *Model) ActiveInstances() []*session.Instance {
+func (m *Model) activeInstances() []*session.Instance {
 	var active []*session.Instance
-	for _, inst := range m.Instances() {
-		if ActiveInstance(inst) {
+	for _, inst := range m.allInstances() {
+		if activeInstance(inst) {
 			active = append(active, inst)
 		}
 	}
 	return active
 }
 
-// ActiveInstance reports whether the background jobs may touch inst (see
-// ActiveInstances).
-func ActiveInstance(inst *session.Instance) bool {
+// activeInstance reports whether the background jobs may touch inst (see
+// activeInstances).
+func activeInstance(inst *session.Instance) bool {
 	st := inst.GetStatus()
 	return inst.Started() && !inst.Paused() && st != session.Deleting && st != session.Recoverable && st != session.Loading
-}
-
-// InstanceForSession resolves a tmux session name (as carried by pane
-// events) to the owning instance across every loaded workspace, or nil for
-// terminal-pane sessions and unknown names.
-func (m *Model) InstanceForSession(name string) *session.Instance {
-	if name == "" {
-		return nil
-	}
-	check := func(ws *Workspace) *session.Instance {
-		for _, inst := range ws.insts {
-			if inst.Pane().TmuxSessionName() == name {
-				return inst
-			}
-		}
-		return nil
-	}
-	// Runs on every pane event: check classic mode's one workspace directly
-	// rather than through Loaded, which allocates there.
-	if len(m.tabs) == 0 {
-		if m.classic == nil {
-			return nil
-		}
-		return check(m.classic)
-	}
-	for _, ws := range m.tabs {
-		if inst := check(ws); inst != nil {
-			return inst
-		}
-	}
-	return nil
 }
 
 // OpenNames is the open set PersistOpenList persists and the picker shows
@@ -251,7 +220,7 @@ func (m *Model) OpenTab(def config.Workspace) (*Workspace, error) {
 		if inst.IsWorkspaceTerminal {
 			hasWorkspaceTerminal = true
 		}
-		ws.Add(inst)
+		ws.add(inst)
 	}
 
 	// Restart crash-recovered instances.
@@ -313,7 +282,7 @@ func (m *Model) OpenTab(def config.Workspace) (*Workspace, error) {
 		if wtErr != nil {
 			log.For("core").Error("workspace_terminal.create_failed", "workspace", def.Name, "err", wtErr)
 		} else {
-			ws.Add(wtInstance)
+			ws.add(wtInstance)
 			if startErr := wtInstance.Start(true); startErr != nil {
 				log.For("core").Error("workspace_terminal.start_failed", "workspace", def.Name, "err", startErr)
 			}

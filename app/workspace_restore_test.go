@@ -129,7 +129,7 @@ func newRestoreHome(exec cmd2.Executor) *home {
 		core:   core.NewForTest(core.Options{CmdExec: exec}),
 	}
 	h.list = ui.NewList(&h.spinner, slotRows{h, h.workspaceSlot})
-	h.core.SetWorkspacesForTest(ws, nil)
+	testModel(h).SetWorkspacesForTest(ws, nil)
 	h.syncViews()
 	return h
 }
@@ -155,7 +155,7 @@ func TestActivateWorkspace_PreservedTerminalIsNotReplaced(t *testing.T) {
 		assert.NotEqual(t, "ws-term", inst.Title, "no second workspace terminal under the preserved record's title")
 	}
 
-	require.NoError(t, slot.storage().SaveInstances(core.Persistable(slot.ws.Instances())))
+	require.NoError(t, slot.storage().SaveInstances(core.Persistable(slot.ws.InstancesForTest())))
 	raw, err := os.ReadFile(filepath.Join(config.WorkspaceConfigDir(&ws), config.StateFileName))
 	require.NoError(t, err)
 	var st struct {
@@ -310,7 +310,7 @@ func TestHandleQuit_LatchedFallbackQuitsAndKeepsOpenWorkspaces(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, reg.Add("ws-bad", bad.Path))
 	require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-bad"}))
-	m.core.SetRegistryForTest(reg)
+	testModel(m).SetRegistryForTest(reg)
 
 	m.restoreSavedWorkspaces(reg.GetOpenWorkspaces())
 	require.Empty(t, m.slots)
@@ -369,7 +369,7 @@ func TestRegisterPendingDir_RegistryWriteRunsOnUpdate(t *testing.T) {
 	m, err := newHome(context.Background(), &config.WorkspaceContext{ConfigDir: t.TempDir()}, reg, cfg, "true", dir, true)
 	require.NoError(t, err)
 	require.Equal(t, stateConfirm, m.state, "a pending dir opens the registration prompt")
-	m.core.SetExecForTest(&recordingExec{})
+	testModel(m).SetExecForTest(&recordingExec{})
 
 	cmd := m.pendingConfirmation.Run()
 	require.NotNil(t, cmd)
@@ -405,7 +405,7 @@ func TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected(t *testing.
 	require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-good", "ws-bad"}))
 
 	m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
-	m.core.SetRegistryForTest(reg)
+	testModel(m).SetRegistryForTest(reg)
 	m.ctx = cancelledCtx()
 	openList := func() []string {
 		t.Helper()
@@ -467,7 +467,7 @@ func TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, reg.Add("ws-bad", bad.Path))
 			require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-bad"}))
-			m.core.SetRegistryForTest(reg)
+			testModel(m).SetRegistryForTest(reg)
 			m.ctx = cancelledCtx()
 
 			m.restoreSavedWorkspaces(reg.GetOpenWorkspaces())
@@ -477,7 +477,7 @@ func TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces(t *testing.T) {
 			var live *session.Instance
 			if !tc.latched { // a latched list stays empty (latchedStorageErr)
 				live = liveInstance(t, "g-live")
-				m.ws.Add(live)
+				m.ws.AddForTest(live)
 				m.syncViews()
 				pointAt(m, live)
 			}

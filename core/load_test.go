@@ -73,7 +73,7 @@ func TestReconcileOrphans_CleanAutoRemoved_DirtyBecomesRecoverable(t *testing.T)
 	assert.NoDirExists(t, cleanWT, "clean worktree dir should be removed")
 	assert.DirExists(t, dirtyWT, "dirty worktree dir must be preserved")
 
-	insts := ws.Instances()
+	insts := ws.instances()
 	require.Len(t, insts, 1, "exactly the dirty orphan is added inline")
 	assert.Equal(t, session.Recoverable, insts[0].GetStatus())
 	assert.Equal(t, "dirty", insts[0].Title)
@@ -141,9 +141,9 @@ func TestClaimTitles_IncludesPreservedRecords(t *testing.T) {
 	}, t.TempDir())
 	require.NoError(t, err)
 	ws := NewWorkspace(WorkspaceParts{Storage: storage})
-	ws.Add(live)
+	ws.add(live)
 	listOnlyWS := NewWorkspace(WorkspaceParts{})
-	listOnlyWS.Add(live)
+	listOnlyWS.add(live)
 
 	claimed := map[string]bool{}
 	claimTitles(claimed, ws)

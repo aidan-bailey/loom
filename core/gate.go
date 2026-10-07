@@ -164,9 +164,9 @@ func (m *Model) deliverGated(r gatedResult) {
 func (m *Model) redispatch(kind gateKind) {
 	switch kind {
 	case gateRoster:
-		m.maybeRosterQuery(m.ActiveInstances())
+		m.maybeRosterQuery(m.activeInstances())
 	case gateHookScan:
-		m.maybeHookScan(m.ActiveInstances())
+		m.maybeHookScan(m.activeInstances())
 	case gateUsage:
 		m.maybeUsageProbe()
 	case gateAccountsRefresh:

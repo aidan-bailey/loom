@@ -127,8 +127,10 @@ type home struct {
 	// -- Storage and Configuration --
 
 	// core is the session model (package core): the loaded workspaces,
-	// their instances and everything lifecycle. Never nil after newHome.
-	core *core.Model
+	// their instances and everything lifecycle, through the methods the
+	// TUI calls (core.Core; *core.Model is its implementation). Never nil
+	// after newHome.
+	core core.Core
 	// initCmd holds the Cmds newHome drained from the model before the
 	// program ran (an error notice's hide timer); Init returns them.
 	initCmd tea.Cmd
@@ -789,7 +791,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Claude reports its own status, through its hooks and the roster,
 		// so prefer it over the pane ladder below, which can only infer one
 		// from screen text: the model applies it (its hook scans, roster
-		// answers and health tick, through core's AdoptClaudeStatus). A
+		// answers and health tick, through core's adoptClaudeStatus). A
 		// reported status also retires the re-detection chain: the ladder
 		// re-samples because one content hash cannot distinguish "still
 		// working" from "just finished", but the report says which it is.

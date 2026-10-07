@@ -48,7 +48,7 @@ func TestKill_RepliesWhenItFinishes(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := newInst(t, "x")
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 	id := m.idOf(inst)
 
@@ -73,7 +73,7 @@ func TestPause_AFailedPauseRevertsToTheStatusItHad(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := newInst(t, "x") // unstarted: Instance.Pause refuses it
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 	id := m.idOf(inst)
 
@@ -96,7 +96,7 @@ func TestResume_ShowsTheSpinnerAndRepliesOnlyWhenItFinishes(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 	m.Resume(m.idOf(inst), 8)
@@ -112,7 +112,7 @@ func TestRecover_RepliesWithTheAdoptedInstance(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	placeholder, adopted := pausedInst(t, "x"), pausedInst(t, "x")
-	ws.Add(placeholder)
+	ws.add(placeholder)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 	pid := m.idOf(placeholder)
 
@@ -125,7 +125,7 @@ func TestRecover_RepliesWithTheAdoptedInstance(t *testing.T) {
 	assert.NoError(t, rs[0].Err)
 	assert.Equal(t, m.idOf(adopted), rs[0].ID)
 	assert.NotEqual(t, pid, rs[0].ID)
-	assert.Same(t, adopted, ws.Instances()[0], "the adoption was applied before the reply")
+	assert.Same(t, adopted, ws.instances()[0], "the adoption was applied before the reply")
 }
 
 func TestCreate_RepliesWithTheNewIDAndStarts(t *testing.T) {
@@ -169,7 +169,7 @@ func TestCreate_AWorkspaceNoLongerLoadedIsRefused(t *testing.T) {
 	m.Create(closed, NewInstance{Title: "s", Path: t.TempDir(), Program: "claude", Start: true}, 2)
 	out := m.Drain()
 	assert.Empty(t, out.Jobs)
-	assert.Empty(t, closed.Instances())
+	assert.Empty(t, closed.instances())
 	rs := replies(out)
 	require.Len(t, rs, 1)
 	assert.Zero(t, rs[0].ID)
@@ -180,7 +180,7 @@ func TestResumeWith_AppliesTheLaunchOptions(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 	m.ResumeWith(m.idOf(inst), launch.Options{Model: "sonnet", Account: "default"}, "claude", 0)
@@ -302,7 +302,7 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 			programs := map[string]string{}
 			ids := map[string]InstanceID{}
 			for name, inst := range insts {
-				ws.Add(inst)
+				ws.add(inst)
 				before[name] = inst.GetStatus()
 				programs[name] = inst.Program()
 			}
@@ -332,7 +332,7 @@ func TestRequests_ARefusalWithoutAReqIDIsOnlyLogged(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	term := runningTerminal(t, "term")
-	ws.Add(term)
+	ws.add(term)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 	m.Kill(m.idOf(term), 0)
@@ -346,7 +346,7 @@ func TestMerge_AnUnknownSourceIsRefused(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	target := pausedInst(t, "t")
-	ws.Add(target)
+	ws.add(target)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 	id := m.idOf(target)
 
@@ -362,7 +362,7 @@ func TestKill_ASecondKillIsRefusedWhileTheFirstRuns(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 	id := m.idOf(inst)
 
@@ -384,7 +384,7 @@ func TestKill_AdmitsWhatTheTUIKills(t *testing.T) {
 			m := NewForTest(Options{})
 			ws := storedWorkspace(t, "a")
 			inst := statusInst(t, "x", st)
-			ws.Add(inst)
+			ws.add(inst)
 			m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 			m.Kill(m.idOf(inst), 1)
@@ -404,11 +404,11 @@ func TestInstJobs_ANilWorktreeIsAnErrorNotAPanic(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	term := runningTerminal(t, "term")
 	other := pausedInst(t, "other")
-	ws.Add(term)
-	ws.Add(other)
+	ws.add(term)
+	ws.add(other)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
-	_, kill := m.KillInst(ws, term, nil)
+	_, kill := m.killInst(ws, term)
 	var killed any
 	require.NotPanics(t, func() { killed = kill() })
 	failed, ok := killed.(OpFailed)
@@ -417,11 +417,11 @@ func TestInstJobs_ANilWorktreeIsAnErrorNotAPanic(t *testing.T) {
 	assert.Equal(t, session.Running, failed.Previous)
 
 	var pushed any
-	require.NotPanics(t, func() { pushed = m.PushInst(term)() })
+	require.NotPanics(t, func() { pushed = m.pushInst(term)() })
 	assert.Equal(t, pushResult{err: errors.New("push: term has no worktree")}, pushed)
 
 	var merged any
-	require.NotPanics(t, func() { merged = m.MergeInst(term, other)() })
+	require.NotPanics(t, func() { merged = m.mergeInst(term, other)() })
 	assert.Equal(t, MergeResult{Err: errors.New("merge: term has no worktree")}, merged)
 }
 
@@ -432,11 +432,11 @@ func TestResumeIfLoadingInst_ASkipRepliesWithAnError(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 	id := m.idOf(inst)
 
-	m.spawn(m.track(3, id, m.ResumeIfLoadingInst(ws, inst)))
+	m.spawn(m.track(3, id, m.resumeIfLoadingInst(ws, inst)))
 	out := run(m, m.Drain())
 	require.Len(t, out.Events, 1, "only the Reply: no notice")
 	rs := replies(out)
@@ -473,7 +473,7 @@ func TestPush_RepliesWithTheJobsError(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := newInst(t, "x")
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 	id := m.idOf(inst)
 
@@ -498,9 +498,9 @@ func TestMerge_RepliesWithTheOutcome(t *testing.T) {
 	source := pausedWorktreeInst(t, repo, "source", "loom-source")
 	ghost, err := session.FromInstanceData(session.InstanceData{Title: "ghost", Status: session.Paused, Branch: "no-such-branch", Program: "claude"}, t.TempDir())
 	require.NoError(t, err)
-	ws.Add(target)
-	ws.Add(source)
-	ws.Add(ghost)
+	ws.add(target)
+	ws.add(source)
+	ws.add(ghost)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 	tid := m.idOf(target)
 

@@ -50,7 +50,7 @@ type DeadVerified struct {
 	TmuxLive tmux.Liveness
 }
 
-// TickInst runs the health tick's model half: it queues the probe of every
+// tickInst runs the health tick's model half: it queues the probe of every
 // active instance (liveness, parity, diff stats; its result is applied by
 // deliverHealth, which ends with HealthChecked) and every background job
 // that is due: the roster query, the hook scan, the GitHub poll, the
@@ -60,8 +60,8 @@ type DeadVerified struct {
 // rides pane events; on the snapshot path it keeps the legacy 500ms
 // cadence. Formerly the lifecycle half of the tickUpdateMetadataMessage
 // case.
-func (m *Model) TickInst(selected *session.Instance) {
-	active := m.ActiveInstances()
+func (m *Model) tickInst(selected *session.Instance) {
+	active := m.activeInstances()
 	// Fan out I/O off the model's goroutine. A stalled tmux or git process
 	// must not block it: the probe waits for its goroutines inside the job.
 	m.spawn(probeJob(active, selected, m.takeDirty(), m.ghBases))
@@ -95,11 +95,11 @@ func (m *Model) TickInst(selected *session.Instance) {
 	m.maybeUsageProbe()
 }
 
-// Tick runs the health tick's model half (TickInst); selected is the
+// Tick runs the health tick's model half (tickInst); selected is the
 // TUI's selected instance, 0 for none.
 func (m *Model) Tick(selected InstanceID) {
 	inst, _ := m.lookup(selected)
-	m.TickInst(inst)
+	m.tickInst(inst)
 }
 
 // probeJob fans out the per-instance I/O (tmux liveness, parity, git
@@ -156,9 +156,8 @@ func probeJob(active []*session.Instance, selected *session.Instance, dirty map[
 // they landed; applying the report here again covers a move TransitionTo
 // refused then. TransitionTo still validates, so an illegal transition is
 // rejected rather than forced. The TUI's snapshot-path ladder never
-// overrides a reported status (it asks AdoptClaudeStatus first).
+// overrides a reported status (it asks adoptClaudeStatus first).
 func (m *Model) deliverHealth(r HealthResult) {
-	var alive []*session.Instance
 	var aliveIDs []InstanceID
 	for _, p := range r.Results {
 		// The probe only probes active instances, but a kill, pause or
@@ -168,7 +167,7 @@ func (m *Model) deliverHealth(r HealthResult) {
 		// terminal) under the op, and an alive one would ask for a client
 		// repair. A reported status would move it off Deleting or Loading,
 		// reopening the busy gate and keeping a dying record persistable.
-		if !StatusEligible(p.Instance) {
+		if !statusEligible(p.Instance) {
 			continue
 		}
 		if !m.applyLiveness(p.Instance, p.TmuxLive, fromTick) {
@@ -178,10 +177,9 @@ func (m *Model) deliverHealth(r HealthResult) {
 		// inconclusive one (LivenessUnknown) says nothing about the
 		// session, and applyLiveness left the instance untouched.
 		if p.TmuxLive == tmux.LivenessAlive {
-			alive = append(alive, p.Instance)
 			aliveIDs = append(aliveIDs, m.idOf(p.Instance))
 		}
-		if target, authoritative := m.AdoptClaudeStatus(p.Instance); authoritative {
+		if target, authoritative := m.adoptClaudeStatus(p.Instance); authoritative {
 			if err := p.Instance.TransitionTo(target); err != nil {
 				log.For("core").Warn("tick.transition_failed", "instance", p.Instance.Title, "to", target.String(), "err", err.Error())
 			}
@@ -191,39 +189,39 @@ func (m *Model) deliverHealth(r HealthResult) {
 		}
 	}
 	m.emit(StatusesChanged{})
-	m.emit(Alive{Instances: alive, IDs: aliveIDs, Source: string(fromTick)})
+	m.emit(Alive{IDs: aliveIDs, Source: string(fromTick)})
 	m.emit(HealthChecked{})
 }
 
-// VerifyDeadInst returns the probe a pane's Dead event asks for, on inst's
+// verifyDeadInst returns the probe a pane's Dead event asks for, on inst's
 // tmux session (a DeadVerified result). A dead attach PTY does not always
 // mean a dead session: a failed reattach leaves the session alive, and a
 // session relaunched under the same name leaves the old client's pump at
 // EOF. The probe tells pause-the-instance from repair-the-client.
-func (m *Model) VerifyDeadInst(inst *session.Instance) Job {
+func (m *Model) verifyDeadInst(inst *session.Instance) Job {
 	return func() any {
 		return DeadVerified{Instance: inst, TmuxLive: inst.Pane().TmuxLiveness()}
 	}
 }
 
 // VerifyDead queues the probe a pane's Dead event asks for on id's session
-// (VerifyDeadInst); its result is a DeadVerified as before.
+// (verifyDeadInst); its result is a DeadVerified as before.
 func (m *Model) VerifyDead(id InstanceID) {
 	if inst, _ := m.lookup(id); inst != nil {
-		m.spawn(m.VerifyDeadInst(inst))
+		m.spawn(m.verifyDeadInst(inst))
 	}
 }
 
 // deliverDeadVerified applies a Dead event's probe like a tick's, for one
 // instance.
 func (m *Model) deliverDeadVerified(r DeadVerified) {
-	if !StatusEligible(r.Instance) {
+	if !statusEligible(r.Instance) {
 		return
 	}
 	alive := m.applyLiveness(r.Instance, r.TmuxLive, fromDeadEvent)
 	m.emit(StatusesChanged{})
 	if alive && r.TmuxLive == tmux.LivenessAlive {
-		m.emit(Alive{Instances: []*session.Instance{r.Instance}, IDs: []InstanceID{m.idOf(r.Instance)}, Source: string(fromDeadEvent)})
+		m.emit(Alive{IDs: []InstanceID{m.idOf(r.Instance)}, Source: string(fromDeadEvent)})
 	}
 	m.emit(InstancesChanged{})
 }
@@ -237,7 +235,7 @@ func (m *Model) deliverDeadVerified(r DeadVerified) {
 // names the path the result came from, for the logs. Must run on the
 // Update goroutine.
 func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, source livenessSource) bool {
-	if m.Holding(inst) == nil {
+	if m.holding(inst) == nil {
 		// The probe was taken before inst's workspace was dropped. A
 		// workspace-terminal restart here would relaunch one nothing
 		// displays. Drop the result.
@@ -278,7 +276,7 @@ func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, so
 				log.For("core").Error("workspace_terminal.restart_failed", "title", inst.Title, "err", err)
 				return false
 			}
-			m.emit(SessionLaunched{Instance: inst, ID: m.idOf(inst)})
+			m.emit(SessionLaunched{ID: m.idOf(inst)})
 			return false
 		}
 		log.For("core").Warn("tick.tmux_gone_marking_paused", "title", inst.Title, "source", source)

@@ -11,11 +11,11 @@ import (
 func TestAccountLoginDone_RereadsTheAuth(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	m.core.SetGateForTest("accounts_refresh", true, time.Now())
+	testModel(m).SetGateForTest("accounts_refresh", true, time.Now())
 
 	m.Update(accountLoginDoneMsg{name: account.DefaultName})
 
-	_, pending, _ := m.core.GateForTest("accounts_refresh", time.Now())
+	_, pending, _ := testModel(m).GateForTest("accounts_refresh", time.Now())
 	assert.True(t, pending)
-	assert.True(t, m.core.RefreshDefaultAuthForTest())
+	assert.True(t, testModel(m).RefreshDefaultAuthForTest())
 }

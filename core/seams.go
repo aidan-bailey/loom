@@ -71,6 +71,23 @@ func (m *Model) SetAccountUsageForTest(name string, u account.Usage, err error) 
 // instances in the model and then find them through the TUI.
 func (m *Model) IDForTest(inst *session.Instance) InstanceID { return m.idOf(inst) }
 
+// AddForTest adds inst to w as the model's own edits do (Workspace.add):
+// for tests that build instances and install them in a fixture workspace.
+func (w *Workspace) AddForTest(inst *session.Instance) { w.add(inst) }
+
+// RemoveForTest removes inst from w by identity, as the model's own edits
+// do (Workspace.remove): for tests that stand in for a removal.
+func (w *Workspace) RemoveForTest(inst *session.Instance) bool { return w.remove(inst) }
+
+// ApplyClaudeStatusForTest moves inst to the status its hooks or the
+// roster last reported, as the model does when a hook scan or a roster
+// answer lands (applyClaudeStatus).
+func (m *Model) ApplyClaudeStatusForTest(inst *session.Instance) { m.applyClaudeStatus(inst) }
+
+// InstancesForTest returns w's instances, in display order (the model's own
+// slice; a test must not modify it).
+func (w *Workspace) InstancesForTest() []*session.Instance { return w.instances() }
+
 // UntrackedForTest is a job's result with a request's tracking removed: a
 // request's job (Kill, Merge, SendPrompt, …) answers with its operation's
 // result wrapped for its Reply; any other result comes back as it is.

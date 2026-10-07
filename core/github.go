@@ -116,7 +116,7 @@ func (m *Model) baseBranchByRepo() map[string]string {
 // linkedIssues lists the non-zero issue numbers of instances in repo.
 func (m *Model) linkedIssues(repo string) []int {
 	var out []int
-	for _, inst := range m.Instances() {
+	for _, inst := range m.allInstances() {
 		if inst.Path == repo && inst.IssueNumber() != 0 {
 			out = append(out, inst.IssueNumber())
 		}
@@ -213,7 +213,7 @@ func (m *Model) baseFor(repo string) string {
 // applyGitHubState joins ghState onto every instance. Cheap and pure,
 // so it also runs when a link is set outside a poll (issue pick).
 func (m *Model) applyGitHubState() {
-	for _, inst := range m.Instances() {
+	for _, inst := range m.allInstances() {
 		snap, known := m.ghState[inst.Path]
 		inst.SetGitHubState(github.StateFor(snap, known, inst.GetBranch(), inst.IssueNumber()))
 	}
@@ -250,10 +250,10 @@ func (m *Model) ExpediteGitHub() { m.gate(gateGH).expedite() }
 // failure, nil on success.
 type pushResult struct{ err error }
 
-// PushInst returns the job committing and pushing inst's worktree, reporting
+// pushInst returns the job committing and pushing inst's worktree, reporting
 // a pushResult: an error becomes a notice, a success expedites the GitHub
 // poll so the PR badge follows. Formerly app.pushActionFor.
-func (m *Model) PushInst(inst *session.Instance) Job {
+func (m *Model) pushInst(inst *session.Instance) Job {
 	selected := inst
 	return func() any {
 		commitMsg := fmt.Sprintf("[loom] update from '%s' on %s", selected.Title, time.Now().Format(time.RFC822))

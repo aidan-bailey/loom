@@ -62,7 +62,7 @@ type ladderState struct {
 
 // setLadder records st as id's scraped status. A repeat of the same status
 // keeps its since, and so does a first entry agreeing with the model's
-// status, as TransitionTo's self-transition did: the age shown counts from
+// status, as the model's self-transition did: the age shown counts from
 // when the status the row shows last changed.
 func (m *home) setLadder(id core.InstanceID, st session.Status) {
 	if m.ladder == nil {
@@ -226,17 +226,6 @@ func (m *home) refreshSelection() {
 	sel := m.list.GetSelectedInstance()
 	m.splitPane.SetInstance(sel)
 	m.menu.SetInstance(sel)
-}
-
-// instOf resolves id to its instance through the bridge
-// (core.Model.InstanceOf): nil when no loaded workspace holds it, or in a
-// bare test home. It serves the script host until package D, and nothing
-// else.
-func (m *home) instOf(id core.InstanceID) *session.Instance {
-	if m.core == nil {
-		return nil
-	}
-	return m.core.InstanceOf(id)
 }
 
 // sessionAlive reports whether the tmux session name exists (has-session,

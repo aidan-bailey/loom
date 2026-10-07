@@ -52,6 +52,6 @@ func TestOpenTab_BlockedRemoteControlEmitsTheRCOffNotice(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, m.Drain().Events, Event(Notice{Info: "remote control off: not logged in"}))
-	require.NotNil(t, ws.ByTitle(def.Name), "the workspace terminal the notice is about was created")
-	assert.NotContains(t, ws.ByTitle(def.Name).Program(), "--remote-control")
+	require.NotNil(t, ws.byTitle(def.Name), "the workspace terminal the notice is about was created")
+	assert.NotContains(t, ws.byTitle(def.Name).Program(), "--remote-control")
 }

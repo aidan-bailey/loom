@@ -36,7 +36,7 @@ func focusSlots(h *home, focused int, slots ...*workspaceSlot) {
 		for _, s := range slots {
 			tabs = append(tabs, s.ws)
 		}
-		h.core.SetWorkspacesForTest(nil, tabs)
+		testModel(h).SetWorkspacesForTest(nil, tabs)
 	}
 }
 
@@ -143,7 +143,7 @@ func TestSlotInvariant_ToggleKeepsTabsWhenEveryActivationFails(t *testing.T) {
 func TestSlotOwnsState_MutationVisibleWithoutSave(t *testing.T) {
 	m := fleetHome(t)
 	inst := &session.Instance{Title: "added", Status: session.Ready}
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	assert.Equal(t, idOf(m, inst), titleID(m.slots[0].list, "added"))
 
@@ -154,7 +154,7 @@ func TestSlotOwnsState_MutationVisibleWithoutSave(t *testing.T) {
 	m.switchWorkspaceSlot(1)
 	require.NoError(t, m.checkSlotInvariant())
 	other := &session.Instance{Title: "peer-added", Status: session.Ready}
-	m.ws.Add(other)
+	m.ws.AddForTest(other)
 	m.syncViews()
 	assert.Equal(t, idOf(m, other), titleID(m.slots[1].list, "peer-added"))
 	assert.Nil(t, m.slots[0].list.GetInstanceByTitle("peer-added"), "the other slot is untouched")
@@ -366,7 +366,7 @@ func TestScriptDone_DropsInstanceWhenFocusChangedMidDispatch(t *testing.T) {
 func TestStartupPicker_FlushesPendingRatiosIntoClassicState(t *testing.T) {
 	isolateTmux(t)
 	m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
-	m.ws.Add(&session.Instance{Title: "main", Status: session.Running})
+	m.ws.AddForTest(&session.Instance{Title: "main", Status: session.Running})
 	m.syncViews()
 	m.list.SetSelectedInstance(0)
 	m.pendingRatioSaves = map[string]float64{"main": 0.4}

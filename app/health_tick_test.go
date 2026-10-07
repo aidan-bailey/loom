@@ -30,7 +30,7 @@ func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 	m := newTestHome(t)
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "probed", Path: t.TempDir(), Program: "aider"})
 	require.NoError(t, err)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	gone := false
 	cmdExec := cmd_test.MockCmdExec{
@@ -49,12 +49,12 @@ func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 	// Classic mode polls GitHub for the cwd's repository: hold that poll
 	// in flight, so the probe is the tick's only job and nothing runs git
 	// or gh.
-	m.core.SetGateForTest("github", true, time.Now())
+	testModel(m).SetGateForTest("github", true, time.Now())
 
 	gone = true
 	m.syncViews()
 	m.core.Tick(m.list.GetSelectedInstance().ID)
-	out := m.core.Drain()
+	out := testModel(m).Drain()
 	require.Len(t, out.Jobs, 1, "the probe is the tick's only job")
 	msg, ok := coreCmd(out.Jobs[0])().(coreResultMsg)
 	require.True(t, ok)
@@ -66,7 +66,7 @@ func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 	assert.Equal(t, session.Paused, inst.GetStatus(), "the probe found the session gone")
 	var rearm tea.Cmd
 	checked := false
-	for _, ev := range m.core.Drain().Events {
+	for _, ev := range testModel(m).Drain().Events {
 		cmd := m.applyCoreEvent(ev)
 		if _, ok := ev.(core.HealthChecked); ok {
 			rearm, checked = cmd, true
@@ -84,7 +84,7 @@ func snapshotHome(t *testing.T, title, program string) (*home, *session.Instance
 	t.Helper()
 	inst := startedInstanceWithProgram(t, title, program, "$ ")
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	require.False(t, m.panes.For(rowOf(t, m, inst)).HasEmulator(), "fixture precondition: the snapshot path")
 	return m, inst
 }
@@ -123,7 +123,7 @@ func TestSnapshotStatus_Ladder(t *testing.T) {
 
 			assert.Equal(t, tc.want, shownStatus(t, m, inst), "the row shows the ladder's status")
 			assert.Equal(t, tc.from, inst.GetStatus(), "the ladder is the TUI's overlay: the model's status is unchanged")
-			assert.Equal(t, tc.marked, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()))
+			assert.Equal(t, tc.marked, testModel(m).OutputMarkedForTest(inst.Pane().TmuxSessionName()))
 		})
 	}
 }
@@ -138,7 +138,7 @@ func TestSnapshotStatus_AFailedCaptureIsNoOpinion(t *testing.T) {
 	deliverScan(t, m, snapshotStatus{id: idOf(m, inst), title: inst.Title, err: errors.New("can't find pane")})
 
 	assert.Equal(t, session.Running, inst.GetStatus())
-	assert.False(t, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()))
+	assert.False(t, testModel(m).OutputMarkedForTest(inst.Pane().TmuxSessionName()))
 }
 
 // TestSnapshotStatus_AReportedClaudeStatusIsTheModels: the model applies
@@ -156,7 +156,7 @@ func TestSnapshotStatus_AReportedClaudeStatusIsTheModels(t *testing.T) {
 	assert.Equal(t, session.Ready, inst.GetStatus(),
 		"neither the ladder's Running nor the reported Prompting: the model applies the report")
 	assert.NotContains(t, m.ladder, idOf(m, inst), "the ladder records nothing for a reported status")
-	assert.True(t, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()),
+	assert.True(t, testModel(m).OutputMarkedForTest(inst.Pane().TmuxSessionName()),
 		"output refreshes the diff whoever reports the status")
 
 	// The model adopts the report on its tick (deliverHealth), the TUI's
@@ -175,7 +175,7 @@ func TestSnapshotStatus_AnIneligibleInstanceIsSkipped(t *testing.T) {
 	deliverScan(t, m, snapshotStatus{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	assert.Equal(t, session.Paused, inst.GetStatus())
-	assert.False(t, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()))
+	assert.False(t, testModel(m).OutputMarkedForTest(inst.Pane().TmuxSessionName()))
 }
 
 // TestSnapshotScan_OneAtATime: the tick scans every pane whose client has
@@ -201,7 +201,7 @@ func TestSnapshotScan_OneAtATime(t *testing.T) {
 
 	assert.False(t, m.snapshotScanning)
 	assert.Equal(t, session.Running, shownStatus(t, m, inst))
-	assert.True(t, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()))
+	assert.True(t, testModel(m).OutputMarkedForTest(inst.Pane().TmuxSessionName()))
 	assert.NotNil(t, m.snapshotScan(), "the next tick scans again")
 }
 

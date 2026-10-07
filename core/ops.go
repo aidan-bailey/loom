@@ -16,35 +16,32 @@ import (
 // actions can change focus while a creation flow is open. Formerly
 // app.startOwner.
 func (m *Model) startOwner(inst *session.Instance, fallback *Workspace) *Workspace {
-	if ws := m.Holding(inst); ws != nil {
+	if ws := m.holding(inst); ws != nil {
 		return ws
 	}
 	return fallback
 }
 
-// StartInst returns the job launching inst (Instance.Start(true)), reporting a
+// startInst returns the job launching inst (Instance.Start(true)), reporting a
 // StartResult stamped with its owner: the loaded workspace holding it,
 // else fallback (the workspace the TUI shows). The owner is resolved now,
 // by identity, not when the start lands, because a script's deferred
 // action can change focus while a creation flow is open. Formerly
 // app.startOwner and the creation flows' Async bodies.
-func (m *Model) StartInst(inst *session.Instance, fallback *Workspace) Job {
+func (m *Model) startInst(inst *session.Instance, fallback *Workspace) Job {
 	owner := m.startOwner(inst, fallback)
 	return func() any {
 		return StartResult{Instance: inst, Owner: owner, Err: inst.Start(true)}
 	}
 }
 
-// KillInst returns the (synchronous pre-step, job) pair that both
-// runKillSelected variants share. preAction flips the instance to
-// Deleting; killAction handles I/O off the model's goroutine and returns
-// a KillResult, or an OpFailed. ws is the workspace the TUI shows, whose
-// storage holds the record. Formerly app.killActionFor.
-//
-// beforeKill, when set, runs in the job after the checks pass and before
-// the kill: the TUI closes its terminal pane's shell for the instance
-// there, which it can't hand to the model (the pane is the TUI's).
-func (m *Model) KillInst(ws *Workspace, selected *session.Instance, beforeKill func()) (pre func(), job Job) {
+// killInst returns the (synchronous pre-step, job) pair Kill runs.
+// preAction flips the instance to Deleting; killAction handles I/O off the
+// model's goroutine and returns a KillResult, or an OpFailed. ws is the
+// workspace holding the instance, whose storage holds the record. The
+// instance's Kill ends its terminal pane's shell too (by name), so the TUI
+// takes no step of its own. Formerly app.killActionFor.
+func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(), job Job) {
 	previousStatus := selected.GetStatus()
 	title := selected.Title
 	// The owning workspace's storage, captured here on the model's
@@ -84,10 +81,6 @@ func (m *Model) KillInst(ws *Workspace, selected *session.Instance, beforeKill f
 				Previous: previousStatus,
 				Err:      fmt.Errorf("instance %s is currently checked out", selected.Title),
 			}
-		}
-
-		if beforeKill != nil {
-			beforeKill()
 		}
 
 		// A notice is what the kill could not finish but the user must see
@@ -152,21 +145,16 @@ func (m *Model) saveSnapshot(ws *Workspace) func() error {
 	}
 }
 
-// PauseInst returns the job pausing selected (Instance.Pause: stash, kill the
-// session, remove the worktree, save ws's instances through
-// saveSnapshot), reporting a PauseResult, or an OpFailed reverting to the
-// status selected has now; the caller moves it to Loading. ws is the
-// workspace the TUI shows. beforePause, when set, runs first in the job:
-// the TUI closes its terminal pane's shell for the instance there, as for
-// KillInst's beforeKill. Formerly app.pauseActionFor.
-func (m *Model) PauseInst(ws *Workspace, selected *session.Instance, beforePause func()) Job {
+// pauseInst returns the job pausing selected (Instance.Pause: stash, kill the
+// session and its terminal pane's shell, remove the worktree, save ws's
+// instances through saveSnapshot), reporting a PauseResult, or an OpFailed
+// reverting to the status selected has now; the caller moves it to
+// Loading. ws is the workspace holding it. Formerly app.pauseActionFor.
+func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 	previousStatus := selected.GetStatus()
 	pauseTitle := selected.Title
 	saveFunc := m.saveSnapshot(ws)
 	return func() any {
-		if beforePause != nil {
-			beforePause()
-		}
 		if err := selected.Pause(saveFunc); err != nil {
 			return OpFailed{Instance: selected, Title: pauseTitle, Op: "pause", Previous: previousStatus, Err: err}
 		}
@@ -174,27 +162,7 @@ func (m *Model) PauseInst(ws *Workspace, selected *session.Instance, beforePause
 	}
 }
 
-// ResumeInst moves the Paused inst to Loading, so the list shows the spinner
-// while Resume's worktree and tmux setup runs, and returns the job
-// resuming it (a ResumeResult, or OpFailed). The caller must have checked
-// that inst is Paused and not a workspace terminal (the TUI's
-// selectedResumableNotWorkspace; the Resume request's precondition):
-// TransitionTo only validates the move against the state machine, and
-// every status may move to Loading, so it guards nothing here. A failed
-// resume reverts to Paused (resumeOutcome), which is right only for an
-// instance that was Paused. If the transition is refused all the same,
-// ResumeInst returns nil and nothing runs. ws is the workspace the TUI
-// shows: the save goes to its storage, and it stamps the result when no
-// loaded workspace holds inst. Formerly the core of app.runResumeSelected.
-func (m *Model) ResumeInst(ws *Workspace, inst *session.Instance) Job {
-	if err := inst.TransitionTo(session.Loading); err != nil {
-		log.For("core").Warn("resume.skipped", "err", err)
-		return nil
-	}
-	return m.ResumeIfLoadingInst(ws, inst)
-}
-
-// ResumeIfLoadingInst returns the job of a resume whose Loading transition the
+// resumeIfLoadingInst returns the job of a resume whose Loading transition the
 // caller makes itself (the restart-with-options flow's confirmation). The
 // save and the owner are taken now; the job resumes only if inst is
 // Loading when it runs (the caller's transition may have failed, e.g. a
@@ -202,7 +170,7 @@ func (m *Model) ResumeInst(ws *Workspace, inst *session.Instance) Job {
 // can't legally proceed from; the caller's confirmation step can't
 // otherwise tell the job to skip), and reports a resumeSkipped otherwise.
 // Formerly app.runRestartWithOptionsSelected's Async body.
-func (m *Model) ResumeIfLoadingInst(ws *Workspace, inst *session.Instance) Job {
+func (m *Model) resumeIfLoadingInst(ws *Workspace, inst *session.Instance) Job {
 	saveFunc := m.saveSnapshot(ws)
 	title := inst.Title
 	owner := m.startOwner(inst, ws)
@@ -227,7 +195,7 @@ func resumeOutcome(inst *session.Instance, title string, owner *Workspace, err e
 	return ResumeResult{Instance: inst, Owner: owner}
 }
 
-// RecoverInst moves the Recoverable placeholder inst to Loading, for the
+// recoverInst moves the Recoverable placeholder inst to Loading, for the
 // spinner, and returns the job adopting its orphan: it serializes the
 // placeholder, flips the record to Running and runs
 // session.ReconcileAndRestore (adopting the worktree, spawning tmux),
@@ -237,7 +205,7 @@ func resumeOutcome(inst *session.Instance, title string, owner *Workspace, err e
 // guards nothing here, since every status may move to Loading. nil when
 // the transition is refused all the same. Formerly the core of
 // app.runRecoverSelected.
-func (m *Model) RecoverInst(ws *Workspace, inst *session.Instance) Job {
+func (m *Model) recoverInst(ws *Workspace, inst *session.Instance) Job {
 	cfgDir := ""
 	if ws.ctx != nil {
 		cfgDir = ws.ctx.ConfigDir
@@ -260,13 +228,13 @@ func (m *Model) RecoverInst(ws *Workspace, inst *session.Instance) Job {
 	}
 }
 
-// MergeInst returns the job performing the actual git merge of source's
+// mergeInst returns the job performing the actual git merge of source's
 // branch into target once the user commits a selection in the merge
 // picker. Mirrors push: its MergeResult carries no error on success
 // (silent, matching push's convention of treating "no error" as
 // sufficient feedback) or the wrapped git error, which Deliver surfaces
 // as a notice. Formerly app.mergeActionFor.
-func (m *Model) MergeInst(target, source *session.Instance) Job {
+func (m *Model) mergeInst(target, source *session.Instance) Job {
 	return func() any {
 		worktree, err := target.GetGitWorktree()
 		if err != nil {
@@ -284,21 +252,6 @@ func (m *Model) MergeInst(target, source *session.Instance) Job {
 	}
 }
 
-// DropUnstarted removes a creation flow's never-started instance from the
-// workspace holding it, by identity, and returns the job killing it
-// (worktree, tmux) off the model's goroutine; nil when inst is nil or has
-// started (a started instance is no longer pending; never kill a live
-// session from a cancel). Formerly the core of app.dropPendingNew.
-func (m *Model) DropUnstarted(inst *session.Instance) Job {
-	if inst == nil || inst.Started() {
-		return nil
-	}
-	if ws := m.Holding(inst); ws != nil {
-		ws.Remove(inst)
-	}
-	return killUnstarted(inst)
-}
-
 // killUnstarted returns the job running the blocking Kill of an instance
 // already removed from every list (an aborted creation flow, a failed
 // start); a failure is only logged. Formerly app.backgroundKillCmd.
@@ -314,14 +267,14 @@ func killUnstarted(inst *session.Instance) Job {
 	}
 }
 
-// SendPromptInst returns the job typing prompt into inst's agent pane and
+// sendPromptInst returns the job typing prompt into inst's agent pane and
 // pressing Enter (Pane().SendPrompt: load-buffer, paste-buffer, a 100ms
 // pause, Enter: three tmux subprocesses that must not block the TUI). A
 // failure comes back as a notice naming the session: it arrives after the
 // overlay or bar that took the text has closed, so the user must resend.
 // For text the user sends to a running session: the prompt overlay, the
 // quick input bar, a workbench review.
-func (m *Model) SendPromptInst(inst *session.Instance, prompt string) Job {
+func (m *Model) sendPromptInst(inst *session.Instance, prompt string) Job {
 	return func() any {
 		if err := inst.Pane().SendPrompt(prompt); err != nil {
 			return promptFailed{err: fmt.Errorf("prompt not sent to %s: %w", inst.Title, err)}

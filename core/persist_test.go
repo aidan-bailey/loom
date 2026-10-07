@@ -98,7 +98,7 @@ func TestPersistableInstances_KeepsIdleSessions(t *testing.T) {
 func TestSave_WritesALoadedWorkspace(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
-	ws.Add(pausedInst(t, "kept"))
+	ws.add(pausedInst(t, "kept"))
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 	require.NoError(t, m.Save(ws))
@@ -134,7 +134,7 @@ func TestCloseTab_DropsTheTab(t *testing.T) {
 func TestSave_SkipsAClosedWorkspaceThatWasReopened(t *testing.T) {
 	m := NewForTest(Options{})
 	closed, reopened := storedWorkspace(t, "a"), storedWorkspace(t, "a")
-	closed.Add(pausedInst(t, "stale"))
+	closed.add(pausedInst(t, "stale"))
 	m.SetWorkspacesForTest(nil, []*Workspace{reopened, storedWorkspace(t, "b")})
 
 	require.NoError(t, m.Save(closed))

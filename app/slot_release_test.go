@@ -121,7 +121,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m := fleetHome(t)
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "b-live")
-		m.slots[1].ws.Add(live)
+		m.slots[1].ws.AddForTest(live)
 		m.syncViews()
 
 		cmd := m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}})
@@ -133,7 +133,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m := fleetHome(t)
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "a-live")
-		m.ws.Add(live)
+		m.ws.AddForTest(live)
 		m.syncViews()
 		pointAt(m, live)
 
@@ -147,8 +147,8 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m := fleetHome(t)
 		m.ctx = cancelledCtx()
 		focused, peer := liveInstance(t, "a-live"), liveInstance(t, "b-live")
-		m.ws.Add(focused)
-		m.slots[1].ws.Add(peer)
+		m.ws.AddForTest(focused)
+		m.slots[1].ws.AddForTest(peer)
 		m.syncViews()
 		pointAt(m, focused) // the carried-over splitPane must let go of it
 
@@ -161,7 +161,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "c-live")
-		m.ws.Add(live)
+		m.ws.AddForTest(live)
 		m.syncViews()
 		pointAt(m, live)
 
@@ -176,7 +176,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m.wsCtx().Name = "ws-classic" // launched inside a workspace, no tabs
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "g-live")
-		m.ws.Add(live)
+		m.ws.AddForTest(live)
 		m.syncViews()
 		pointAt(m, live)
 
@@ -192,8 +192,8 @@ func TestPrunePanes_ReleasesOnlyInactiveSessions(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
 	keep, gone := liveInstance(t, "keep"), liveInstance(t, "gone")
-	m.ws.Add(keep)
-	m.ws.Add(gone)
+	m.ws.AddForTest(keep)
+	m.ws.AddForTest(gone)
 	m.syncViews()
 	require.NoError(t, gone.TransitionTo(session.Paused))
 	m.syncViews()
@@ -218,7 +218,7 @@ func TestDroppedSlot_StaleProbeDoesNotReattach(t *testing.T) {
 	m := fleetHome(t)
 	m.ctx = cancelledCtx()
 	live := liveInstance(t, "b-live")
-	m.slots[1].ws.Add(live)
+	m.slots[1].ws.AddForTest(live)
 	m.syncViews()
 	drainCmd(m.applyWorkspaceToggle([]config.Workspace{{Name: "afocus"}}))
 	require.False(t, clientOf(t, live).PtmxAlive())
@@ -293,8 +293,8 @@ func TestPrune_ReleasesTheTerminalClientsOfGoneSessions(t *testing.T) {
 	isolateTmux(t)
 	m := newTestHome(t)
 	killed, kept := liveInstance(t, "killed"), liveInstance(t, "kept")
-	m.ws.Add(killed)
-	m.ws.Add(kept)
+	m.ws.AddForTest(killed)
+	m.ws.AddForTest(kept)
 	m.syncViews()
 	killedTerm, keptTerm := attachedTerminal(t, "killed"), attachedTerminal(t, "kept")
 	m.splitPane.Terminal().InjectSessionForTest("killed", killedTerm, t.TempDir())

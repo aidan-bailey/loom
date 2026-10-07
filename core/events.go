@@ -1,7 +1,6 @@
 package core
 
 import (
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 )
 
@@ -34,24 +33,22 @@ type ClientsStale struct{}
 
 func (ClientsStale) coreEvent() {}
 
-// SessionLaunched reports that Instance's tmux session was (re)launched
-// or reattached while a loaded workspace holds it, so any pane client
-// from before watched the session it replaced: the TUI gives it a fresh
-// one (replacePane). ID is the instance's.
+// SessionLaunched reports that the tmux session of the instance ID was
+// (re)launched or reattached while a loaded workspace holds it, so any
+// pane client from before watched the session it replaced: the TUI gives
+// it a fresh one (replacePane).
 type SessionLaunched struct {
-	Instance *session.Instance
-	ID       InstanceID
+	ID InstanceID
 }
 
 func (SessionLaunched) coreEvent() {}
 
-// Reactivated reports that a failed operation put Instance back to its
-// previous status. A tick may have pruned its client while it was
+// Reactivated reports that a failed operation put the instance ID back to
+// its previous status. A tick may have pruned its client while it was
 // Deleting or Loading, so the TUI ensures one (ensurePane, a no-op unless
-// the instance is active). ID is the instance's.
+// the instance is active).
 type Reactivated struct {
-	Instance *session.Instance
-	ID       InstanceID
+	ID InstanceID
 }
 
 func (Reactivated) coreEvent() {}
@@ -63,11 +60,10 @@ func (Reactivated) coreEvent() {}
 // notice, since a Started for an owner that was closed has no view left in
 // the TUI.
 type Started struct {
-	Instance *session.Instance
-	ID       InstanceID
-	Title    string
-	Owner    *Workspace
-	Loaded   bool
+	ID     InstanceID
+	Title  string
+	Owner  *Workspace
+	Loaded bool
 }
 
 func (Started) coreEvent() {}
@@ -77,12 +73,11 @@ func (Started) coreEvent() {}
 // could only mark the record Paused (its session and worktree were gone):
 // the notice says so even when no loaded workspace shows the row.
 type Recovered struct {
-	Instance *session.Instance
-	ID       InstanceID
-	Title    string
-	Owner    *Workspace
-	Loaded   bool
-	Paused   bool
+	ID     InstanceID
+	Title  string
+	Owner  *Workspace
+	Loaded bool
+	Paused bool
 }
 
 func (Recovered) coreEvent() {}
@@ -94,16 +89,15 @@ type StatusesChanged struct{}
 
 func (StatusesChanged) coreEvent() {}
 
-// Alive lists instances whose tmux session a probe found alive. The TUI
-// re-attaches the client of any whose client is not attached (a reattach
-// failed after a full-screen attach, or the client's pump hit EOF on a
-// session since relaunched under its name), unless a full-screen attach
-// owns it. IDs are the instances' IDs, in the same order. Source names
-// the probe for the TUI's log ("tick", "dead_event").
+// Alive lists the IDs of instances whose tmux session a probe found
+// alive. The TUI re-attaches the client of any whose client is not
+// attached (a reattach failed after a full-screen attach, or the client's
+// pump hit EOF on a session since relaunched under its name), unless a
+// full-screen attach owns it. Source names the probe for the TUI's log
+// ("tick", "dead_event").
 type Alive struct {
-	Instances []*session.Instance
-	IDs       []InstanceID
-	Source    string
+	IDs    []InstanceID
+	Source string
 }
 
 func (Alive) coreEvent() {}

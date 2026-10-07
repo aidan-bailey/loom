@@ -42,7 +42,7 @@ func TestAccountRequest_RemoveIsRefusedWhileASessionUsesIt(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "on-max-2", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount("max-2")
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestRemove, Name: "max-2"})
@@ -140,8 +140,8 @@ func TestAccountRows_LoggedOutIsSaidOnce(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
 	acct, _ := m.core.Accounts().Get("max-2")
-	m.core.SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {Identity: account.Identity{ConfigDir: acct.Dir, LoggedIn: false}}})
-	m.core.SetAccountSyncForTest("max-2", account.SyncReport{Diverged: []string{"settings.json"}})
+	testModel(m).SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {Identity: account.Identity{ConfigDir: acct.Dir, LoggedIn: false}}})
+	testModel(m).SetAccountSyncForTest("max-2", account.SyncReport{Diverged: []string{"settings.json"}})
 
 	rows := m.accountRows(m.accountStatuses())
 
@@ -162,7 +162,7 @@ func TestAccountRequest_RemoveCountsALoadedSessionOnce(t *testing.T) {
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "on-max-2", Path: t.TempDir(), Program: "claude"})
 	require.NoError(t, err)
 	inst.SetAccount("max-2")
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	require.NoError(t, os.WriteFile(filepath.Join(global, "state.json"),
 		[]byte(`{"instances":[{"title":"on-max-2","account":"max-2"}]}`), 0o644))

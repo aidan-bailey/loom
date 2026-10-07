@@ -13,7 +13,7 @@ func TestView_CopiesTheInstance(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 	views := m.Views(ws)
@@ -36,19 +36,19 @@ func TestIDs_StableNeverReusedAndForgotten(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	a, b := pausedInst(t, "a"), pausedInst(t, "b")
-	ws.Add(a)
-	ws.Add(b)
+	ws.add(a)
+	ws.add(b)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 	idA, idB := m.idOf(a), m.idOf(b)
 	assert.NotEqual(t, idA, idB)
 	assert.Equal(t, idA, m.idOf(a), "stable")
 
-	ws.Remove(a)
+	ws.remove(a)
 	m.Sync() // a is no longer loaded: forgotten
 	_, ok := m.View(idA)
 	assert.False(t, ok)
-	ws.Add(a)
+	ws.add(a)
 	assert.NotEqual(t, idA, m.idOf(a), "a forgotten instance gets a new ID, never an old one")
 	assert.Greater(t, m.idOf(a), idB)
 }
@@ -57,7 +57,7 @@ func TestSync_PublishesChangedWorkspacesFirst(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 	m.notifyInfo("hello")
@@ -82,7 +82,7 @@ func TestSync_PublishesChangedWorkspacesFirst(t *testing.T) {
 func TestSync_PublishedViewsDoNotAliasTheModel(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
-	ws.Add(pausedInst(t, "x"))
+	ws.add(pausedInst(t, "x"))
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 	out := m.Sync()
@@ -97,8 +97,8 @@ func TestSync_PublishedViewsDoNotAliasTheModel(t *testing.T) {
 func TestSync_ForgetsClosedWorkspaces(t *testing.T) {
 	m := NewForTest(Options{})
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
-	a.Add(pausedInst(t, "x"))
-	b.Add(pausedInst(t, "y"))
+	a.add(pausedInst(t, "x"))
+	b.add(pausedInst(t, "y"))
 	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
 	require.Len(t, m.Sync().Events, 2, "both published the first time")
 
@@ -115,7 +115,7 @@ func TestLookup_DoesNotAllocate(t *testing.T) {
 	m := NewForTest(Options{})
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
 	inst := pausedInst(t, "x")
-	b.Add(inst)
+	b.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
 	id := m.idOf(inst)
 

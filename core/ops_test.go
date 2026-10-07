@@ -3,9 +3,13 @@ package core
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"slices"
 	"testing"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,14 +22,14 @@ func TestDeliverStart_FailureRemovesSavesAndKills(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	inst := newInst(t, "x")
-	ws.Add(inst)
+	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws, storedWorkspace(t, "b")})
 
 	boom := errors.New("boom")
 	m.Deliver(StartResult{Instance: inst, Owner: ws, Err: boom})
 
 	out := m.Drain()
-	assert.False(t, ws.Holds(inst))
+	assert.False(t, ws.holds(inst))
 	require.NotEmpty(t, out.Events)
 	assert.Equal(t, Notice{Err: boom}, out.Events[len(out.Events)-2])
 	assert.Equal(t, InstancesChanged{}, out.Events[len(out.Events)-1])
@@ -53,7 +57,7 @@ func TestDeliverStart_SuccessSendsThePromptByJob(t *testing.T) {
 			ws := storedWorkspace(t, "a")
 			inst := newInst(t, "x")
 			inst.SetPrompt("do the thing")
-			ws.Add(inst)
+			ws.add(inst)
 			m.SetWorkspacesForTest(nil, []*Workspace{ws, storedWorkspace(t, "b")})
 
 			m.Deliver(StartResult{Instance: inst, Owner: ws})
@@ -70,7 +74,7 @@ func TestDeliverStart_SuccessSendsThePromptByJob(t *testing.T) {
 			// The fixture never started, so the send fails; the job logs
 			// that and reports the start finished all the same.
 			m.Deliver(out.Jobs[0]())
-			assert.Equal(t, []Event{Started{Instance: inst, ID: m.idOf(inst), Title: "x", Owner: ws, Loaded: tc.wantsLoaded}}, m.Drain().Events)
+			assert.Equal(t, []Event{Started{ID: m.idOf(inst), Title: "x", Owner: ws, Loaded: tc.wantsLoaded}}, m.Drain().Events)
 		})
 	}
 }
@@ -84,22 +88,27 @@ func TestDeliverOpFailed_Reverts(t *testing.T) {
 	err := errors.New("no")
 	m.Deliver(OpFailed{Instance: inst, Title: "x", Op: "resume", Previous: session.Paused, Err: err})
 	assert.Equal(t, session.Paused, inst.GetStatus())
-	assert.Equal(t, []Event{Reactivated{Instance: inst, ID: m.idOf(inst)}, Notice{Err: err}, InstancesChanged{}, ClientsStale{}}, m.Drain().Events)
+	assert.Equal(t, []Event{Reactivated{ID: m.idOf(inst)}, Notice{Err: err}, InstancesChanged{}, ClientsStale{}}, m.Drain().Events)
 }
 
-func TestDropUnstarted_RemovesAndKillsOnlyAnUnstartedInstance(t *testing.T) {
+// TestKillUnstarted_KillsTheFailedStartOnly: a failed start leaves its
+// owner by identity and its unstarted instance is killed by a job
+// (killUnstarted); nothing else is touched. It replaces DropUnstarted's
+// test: a creation flow's cancel has no instance to kill any more (drafts).
+func TestKillUnstarted_KillsTheFailedStartOnly(t *testing.T) {
 	m := NewForTest(Options{})
-	ws := NewWorkspace(WorkspaceParts{})
+	ws := storedWorkspace(t, "a")
 	pending, live := newInst(t, "pending"), pausedInst(t, "live")
-	ws.Add(pending)
-	ws.Add(live)
+	ws.add(pending)
+	ws.add(live)
 	m.SetWorkspacesForTest(ws, nil)
 
-	assert.NotNil(t, m.DropUnstarted(pending), "an unstarted instance is killed by a job")
-	assert.False(t, ws.Holds(pending))
-	assert.Nil(t, m.DropUnstarted(live), "a cancel never kills a started session")
-	assert.True(t, ws.Holds(live))
-	assert.Nil(t, m.DropUnstarted(nil))
+	assert.NotNil(t, killUnstarted(pending), "an unstarted instance is killed by a job")
+	m.Deliver(StartResult{Instance: pending, Owner: ws, Err: errors.New("boom")})
+	assert.False(t, ws.holds(pending))
+	assert.Len(t, m.Drain().Jobs, 1, "the failed start's kill, and no other")
+	assert.True(t, ws.holds(live))
+	assert.Nil(t, killUnstarted(nil))
 }
 
 // TestResumeOutcome: a resume that returns only a session.Notice succeeded
@@ -138,7 +147,7 @@ func TestStartOwner_ResolvesByIdentity(t *testing.T) {
 	m.SetWorkspacesForTest(nil, []*Workspace{focused, peer})
 	inst := newInst(t, "in-peer")
 	require.NoError(t, inst.TransitionTo(session.Loading))
-	peer.Add(inst)
+	peer.add(inst)
 	assert.Same(t, peer, m.startOwner(inst, focused))
 
 	loose, err := session.NewInstance(session.InstanceOptions{Title: "loose", Path: t.TempDir(), Program: "claude"})
@@ -146,26 +155,49 @@ func TestStartOwner_ResolvesByIdentity(t *testing.T) {
 	assert.Same(t, focused, m.startOwner(loose, focused), "an instance no workspace holds falls back to the one the TUI shows")
 }
 
-// TestKill_BeforeKillRunsAfterTheChecksAndBeforeTheKill pins where the
-// TUI's step (beforeKill: its terminal shell's close) runs in the kill's
-// job: never for a kill the checks refuse, and on a kill that proceeds,
-// once, while the instance's worktree is still there, i.e. before
-// Instance.Kill removes it.
-func TestKill_BeforeKillRunsAfterTheChecksAndBeforeTheKill(t *testing.T) {
+// terminalKills puts inst on a mock tmux session that records the
+// kill-session of its terminal pane's shell (loom_term_<title>), counting
+// them in *kills and noting in *worktreeThere whether wtPath existed when
+// the last one ran. No tmux server is contacted.
+func terminalKills(t *testing.T, inst *session.Instance, wtPath string, kills *int, worktreeThere *bool) {
+	t.Helper()
+	target := tmux.SessionTarget(tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title)))
+	rec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			if slices.Contains(c.Args, "kill-session") && slices.Contains(c.Args, target) {
+				*kills++
+				_, err := os.Stat(wtPath)
+				*worktreeThere = err == nil
+			}
+			return nil
+		},
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(inst.Title, "claude", fakePtyFactory{t: t}, rec))
+}
+
+// TestKill_EndsTheTerminalShellAfterTheChecksAndBeforeTheWorktree pins
+// where the terminal pane's shell ends in a kill's job, now that the TUI
+// takes no step of its own there (its beforeKill, closing the shell, is
+// gone): Instance.Kill ends it by name, never for a kill the checks
+// refuse, and on a kill that proceeds, once, while the instance's worktree
+// is still there.
+func TestKill_EndsTheTerminalShellAfterTheChecksAndBeforeTheWorktree(t *testing.T) {
 	refused := func(t *testing.T, inst *session.Instance, wantErr string) {
 		t.Helper()
 		m := NewForTest(Options{})
 		ws := storedWorkspace(t, "a")
-		ws.Add(inst)
+		ws.add(inst)
 		m.SetWorkspacesForTest(nil, []*Workspace{ws})
-		calls := 0
-		pre, job := m.KillInst(ws, inst, func() { calls++ })
+		calls, there := 0, false
+		terminalKills(t, inst, inst.GetWorktreePath(), &calls, &there)
+		pre, job := m.killInst(ws, inst)
 		pre()
 
 		failed, ok := job().(OpFailed)
 		require.True(t, ok, "the kill is refused")
 		assert.ErrorContains(t, failed.Err, wantErr)
-		assert.Zero(t, calls, "beforeKill must not run for a refused kill")
+		assert.Zero(t, calls, "the terminal shell must not be ended for a refused kill")
 	}
 
 	t.Run("no worktree", func(t *testing.T) {
@@ -190,21 +222,18 @@ func TestKill_BeforeKillRunsAfterTheChecksAndBeforeTheKill(t *testing.T) {
 		require.DirExists(t, wtPath, "fixture: the worktree exists")
 		m := NewForTest(Options{})
 		ws := storedWorkspace(t, "a")
-		ws.Add(inst)
+		ws.add(inst)
 		m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
 		calls, worktreeThere := 0, false
-		pre, job := m.KillInst(ws, inst, func() {
-			calls++
-			_, err := os.Stat(wtPath)
-			worktreeThere = err == nil
-		})
+		terminalKills(t, inst, wtPath, &calls, &worktreeThere)
+		pre, job := m.killInst(ws, inst)
 		pre()
 
 		_, ok := job().(KillResult)
 		require.True(t, ok, "the kill proceeds")
-		assert.Equal(t, 1, calls, "beforeKill runs once")
-		assert.True(t, worktreeThere, "beforeKill runs before Instance.Kill, while the worktree is still there")
+		assert.Equal(t, 1, calls, "the terminal shell is ended once")
+		assert.True(t, worktreeThere, "before the worktree is removed")
 		assert.NoDirExists(t, wtPath, "and Instance.Kill removed it afterwards")
 	})
 }
@@ -215,7 +244,7 @@ func TestKill_BeforeKillRunsAfterTheChecksAndBeforeTheKill(t *testing.T) {
 func TestSendPrompt_FailureNamesTheSession(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := newInst(t, "x") // never started, so the send fails
-	m.Deliver(m.SendPromptInst(inst, "hi")())
+	m.Deliver(m.sendPromptInst(inst, "hi")())
 
 	events := m.Drain().Events
 	require.Len(t, events, 1)

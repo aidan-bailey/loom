@@ -53,17 +53,21 @@ func (m *Model) lookup(id InstanceID) (*session.Instance, *Workspace) {
 }
 
 // InstanceOf resolves id to its instance, nil when no loaded workspace
-// holds it. A bridge: it serves the TUI's write paths until package C turns
-// them into requests, and the script host until package D. Deleted in D.
+// holds it. A bridge for the script host until package D. Deleted in D.
 func (m *Model) InstanceOf(id InstanceID) *session.Instance {
 	inst, _ := m.lookup(id)
 	return inst
 }
 
+// AdoptForScript adds an instance a script built (ctx:new_instance) to ws.
+// A bridge for the script host until package D routes ctx:new_instance
+// through Create. Deleted in D.
+func (m *Model) AdoptForScript(ws *Workspace, inst *session.Instance) { ws.add(inst) }
+
 // IDFor returns inst's ID, if a loaded workspace holds it. A bridge for the
 // script host's resumed instances until package D. Deleted in D.
 func (m *Model) IDFor(inst *session.Instance) (InstanceID, bool) {
-	if m.Holding(inst) == nil {
+	if m.holding(inst) == nil {
 		return 0, false
 	}
 	return m.idOf(inst), true

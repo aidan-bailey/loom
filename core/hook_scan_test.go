@@ -143,24 +143,24 @@ func TestHookScanOnOutputHonoursInterval(t *testing.T) {
 	inst := activeInst(t, m, "scan-dirty")
 	require.True(t, inst.HooksLaunched())
 
-	m.PaneOutputInst(inst)
+	m.paneOutputInst(inst)
 	require.True(t, m.gate(gateHookScan).inFlight, "output on a hooked session scans")
 
 	m.gate(gateHookScan).inFlight = false
-	m.PaneOutputInst(inst)
+	m.paneOutputInst(inst)
 	assert.False(t, m.gate(gateHookScan).inFlight, "a second scan inside hookScanInterval is not dispatched")
 }
 
 func TestHookScanOnQuietIgnoresInterval(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := activeInst(t, m, "scan-quiet")
-	require.True(t, m.maybeHookScan(m.ActiveInstances()))
+	require.True(t, m.maybeHookScan(m.activeInstances()))
 
-	m.PaneQuietInst(inst)
+	m.paneQuietInst(inst)
 	assert.True(t, m.gate(gateHookScan).pending, "a quiet during a scan asks for one more")
 
 	m.gate(gateHookScan).inFlight, m.gate(gateHookScan).pending = false, false
-	m.PaneQuietInst(inst)
+	m.paneQuietInst(inst)
 	assert.True(t, m.gate(gateHookScan).inFlight, "a quiet scans even inside hookScanInterval")
 }
 
@@ -177,7 +177,7 @@ func TestHookScanStatusChangeMovesInstanceAndAsksRoster(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(hooks.EventsDir(dir), name),
 		[]byte(`{"hook_event_name":"PermissionRequest","tool_name":"Bash"}`), 0o600))
 
-	dispatched := m.maybeHookScan(m.ActiveInstances())
+	dispatched := m.maybeHookScan(m.activeInstances())
 	require.True(t, dispatched)
 	m.Deliver(m.Drain().Jobs[0]())
 

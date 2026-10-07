@@ -43,7 +43,7 @@ func newReviewWorkbenchHome(t *testing.T) (*home, string) {
 		},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	m.list.SetSelectedInstance(0)
 
@@ -101,7 +101,7 @@ func newCodeReviewWorkbenchHome(t *testing.T, dirty bool) (*home, string) {
 		},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	m.list.SetSelectedInstance(0)
 
@@ -278,7 +278,7 @@ func TestWorkbenchReview_RetargetDropsPane(t *testing.T) {
 		},
 	}, t.TempDir())
 	require.NoError(t, err)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	m.list.SetSelectedInstance(1)
 	require.Equal(t, "b", m.list.GetSelectedInstance().Title)
@@ -321,7 +321,7 @@ func TestWorkbenchReview_PausedSessionNotifies(t *testing.T) {
 				},
 			}, t.TempDir())
 			require.NoError(t, err)
-			m.ws.Add(inst)
+			m.ws.AddForTest(inst)
 			m.syncViews()
 			m.list.SetSelectedInstance(0)
 

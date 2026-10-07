@@ -11,29 +11,29 @@ func TestWorkspace_TerminalFirstThenAddOrder(t *testing.T) {
 	w := NewWorkspace(WorkspaceParts{})
 	a, b := newInst(t, "a"), newInst(t, "b")
 	wt := newTerminal(t, "ws")
-	w.Add(a)
-	w.Add(wt)
-	w.Add(b)
-	assert.Equal(t, []string{"ws", "a", "b"}, titles(w.Instances()))
+	w.add(a)
+	w.add(wt)
+	w.add(b)
+	assert.Equal(t, []string{"ws", "a", "b"}, titles(w.instances()))
 }
 
 func TestWorkspace_EditsByIdentity(t *testing.T) {
 	w := NewWorkspace(WorkspaceParts{})
 	a, b, c := newInst(t, "a"), newInst(t, "b"), newInst(t, "c")
 	twin := newInst(t, "b") // same title, different instance
-	w.Add(a)
-	w.Add(b)
-	w.Add(c)
+	w.add(a)
+	w.add(b)
+	w.add(c)
 
-	assert.False(t, w.Remove(twin), "a same-titled instance is not the held one")
-	assert.True(t, w.Replace(b, twin))
-	assert.Equal(t, []string{"a", "b", "c"}, titles(w.Instances()))
-	assert.Same(t, twin, w.Instances()[1], "Replace keeps the row")
-	assert.True(t, w.Holds(twin))
-	assert.False(t, w.Holds(b))
-	assert.True(t, w.Remove(a))
-	assert.Same(t, twin, w.ByTitle("b"))
-	assert.Nil(t, w.ByTitle("a"))
+	assert.False(t, w.remove(twin), "a same-titled instance is not the held one")
+	assert.True(t, w.replace(b, twin))
+	assert.Equal(t, []string{"a", "b", "c"}, titles(w.instances()))
+	assert.Same(t, twin, w.instances()[1], "Replace keeps the row")
+	assert.True(t, w.holds(twin))
+	assert.False(t, w.holds(b))
+	assert.True(t, w.remove(a))
+	assert.Same(t, twin, w.byTitle("b"))
+	assert.Nil(t, w.byTitle("a"))
 }
 
 func TestWorkspace_Label(t *testing.T) {
@@ -54,6 +54,10 @@ func TestWorkspace_NameAndLabelAreNilSafe(t *testing.T) {
 	assert.Equal(t, "global", w.Label())
 }
 
-func TestModel_InstanceForSessionWithNothingLoaded(t *testing.T) {
-	assert.Nil(t, NewForTest(Options{}).InstanceForSession("loom_x"))
+// TestModel_LookupWithNothingLoaded: with no workspace loaded, no ID
+// resolves (lookup replaced InstanceForSession: the TUI resolves session
+// names to IDs in its own view store).
+func TestModel_LookupWithNothingLoaded(t *testing.T) {
+	inst, _ := NewForTest(Options{}).lookup(1)
+	assert.Nil(t, inst)
 }

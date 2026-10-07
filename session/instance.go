@@ -232,7 +232,7 @@ type Instance struct {
 	// waitReason is Claude's own account of what this session is blocked
 	// on ("permission: Bash" from a PermissionRequest hook, "sandbox
 	// request" from the roster's waitingFor). Only ever set while Claude's
-	// report drives a Prompting status (core.Model.AdoptClaudeStatus), and cleared
+	// report drives a Prompting status (core.Model.adoptClaudeStatus), and cleared
 	// the moment it does not, so a dismissed dialog cannot leave a label
 	// behind. Empty for non-Claude agents and whenever the scraper is
 	// deciding. Ephemeral: never serialized (absent from InstanceData).

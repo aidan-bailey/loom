@@ -50,7 +50,7 @@ func newSnapshotTestHome(t *testing.T) *home {
 	require.True(t, m.scripts.HasAction("Y"))
 
 	for _, title := range []string{"a", "b", "c"} {
-		m.ws.Add(newSnapshotTestInstance(t, title))
+		m.ws.AddForTest(newSnapshotTestInstance(t, title))
 	}
 	m.syncViews()
 	m.list.SetSelectedInstance(0)
@@ -98,10 +98,10 @@ func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 		select {
 		case msg = <-done:
 		default:
-			m.ws.Add(extra)
+			m.ws.AddForTest(extra)
 			m.syncViews()
 			m.list.SetSelectedInstance(i % 4)
-			m.ws.Remove(extra)
+			m.ws.RemoveForTest(extra)
 			if i%2 == 0 {
 				m.workspaceSlot = slotB
 				m.ws = wsB

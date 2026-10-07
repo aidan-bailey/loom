@@ -268,7 +268,7 @@ func TestPollGateRequest(t *testing.T) {
 func TestDeliverGatedRedispatchesPendingOnce(t *testing.T) {
 	m := NewForTest(Options{})
 	activeInst(t, m, "gate-redispatch")
-	require.True(t, m.maybeRosterQuery(m.ActiveInstances()))
+	require.True(t, m.maybeRosterQuery(m.activeInstances()))
 	m.gate(gateRoster).request()
 	m.Drain()
 

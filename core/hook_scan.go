@@ -98,5 +98,5 @@ func (m *Model) deliverHookScan(msg hookScanResults) {
 	}
 	m.emit(StatusesChanged{})
 	m.gate(gateRoster).request()
-	m.maybeRosterQuery(m.ActiveInstances())
+	m.maybeRosterQuery(m.activeInstances())
 }

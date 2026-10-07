@@ -17,7 +17,7 @@ func TestJumpWaiting_CrossesToPeerWorkspace(t *testing.T) {
 	peer := fleetSlot(t, "peer")               // one prompting instance below
 	waiter := &session.Instance{Title: "p-wait", Status: session.Ready}
 	require.NoError(t, waiter.TransitionTo(session.Prompting))
-	peer.ws.Add(waiter)
+	peer.ws.AddForTest(waiter)
 
 	m := &home{
 		spinner: spinner.New(spinner.WithSpinner(spinner.MiniDot)),

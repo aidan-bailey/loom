@@ -126,7 +126,7 @@ func TestStatusDetectionConvergesToReadyAfterSettle(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 
 	// First quiet after the burst: content changed since the previous sample,
@@ -163,7 +163,7 @@ func TestStatusDetectionSurfacesPromptAfterSettle(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 
 	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
@@ -191,7 +191,7 @@ func TestDirtyDoesNotDemotePrompting(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	m.splitPane.SetSize(100, 40)
 	m.splitPane.SetInstance(rowOf(t, m, inst))
@@ -211,7 +211,7 @@ func TestDirtyPromotesReadyToRunning(t *testing.T) {
 	t.Setenv("LOOM_PANE_RENDERER", "")
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 	m.splitPane.SetSize(100, 40)
 	m.splitPane.SetInstance(rowOf(t, m, inst))
@@ -234,7 +234,7 @@ func TestQuietDuringLoadingSchedulesRedetect(t *testing.T) {
 	require.NoError(t, inst.TransitionTo(session.Loading))
 
 	m := homeWithAppState(t)
-	m.ws.Add(inst)
+	m.ws.AddForTest(inst)
 	m.syncViews()
 
 	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})

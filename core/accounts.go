@@ -248,7 +248,7 @@ func (m *Model) ClaudeProgram() string {
 	if session.IsClaudeProgram(m.program) {
 		return m.program
 	}
-	for _, inst := range m.ActiveInstances() {
+	for _, inst := range m.activeInstances() {
 		if p := inst.Program(); session.IsClaudeProgram(p) {
 			return p
 		}

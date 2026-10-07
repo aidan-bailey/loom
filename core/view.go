@@ -77,8 +77,8 @@ func (v InstanceView) StatusAge() time.Duration {
 
 // Active reports whether the instance is running for the purposes of the
 // background jobs and the TUI's pane clients: started, and not Paused,
-// Deleting, Recoverable or Loading. It is ActiveInstance's and
-// StatusEligible's rule, for a view.
+// Deleting, Recoverable or Loading. It is activeInstance's and
+// statusEligible's rule, for a view.
 func (v InstanceView) Active() bool {
 	switch v.Status {
 	case session.Paused, session.Deleting, session.Recoverable, session.Loading:

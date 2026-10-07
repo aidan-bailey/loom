@@ -29,7 +29,7 @@ func fleetSlot(t *testing.T, name string, titles ...string) *workspaceSlot {
 		State:   st,
 	})
 	for _, ti := range titles {
-		ws.Add(&session.Instance{Title: ti, Status: session.Ready})
+		ws.AddForTest(&session.Instance{Title: ti, Status: session.Ready})
 	}
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	return &workspaceSlot{

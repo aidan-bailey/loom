@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
@@ -775,7 +776,7 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	var cmds []tea.Cmd
 	if adopt {
 		for _, inst := range msg.pendingInstances {
-			msg.slot.ws.Add(inst)
+			m.core.AdoptForScript(msg.slot.ws, inst)
 		}
 		m.syncViews() // the rows the adds made, for instanceChanged
 	} else if len(msg.pendingInstances) > 0 {
@@ -839,4 +840,15 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+// instOf resolves id to its instance through the bridge
+// (core.Model.InstanceOf): nil when no loaded workspace holds it, or in a
+// bare test home. It serves the script host until package D, and nothing
+// else.
+func (m *home) instOf(id core.InstanceID) *session.Instance {
+	if m.core == nil {
+		return nil
+	}
+	return m.core.InstanceOf(id)
 }

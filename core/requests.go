@@ -209,7 +209,7 @@ func (m *Model) reply(req ReqID, r Reply) {
 
 // Kill kills the session id: its pre-step moves it to Deleting at once (the
 // spinner shows), and its job checks, kills and deletes the record
-// (KillInst), answering with a KillResult or OpFailed. A Recoverable
+// (killInst), answering with a KillResult or OpFailed. A Recoverable
 // session is discarded. Refused for a workspace terminal and a busy
 // session (precondition), so a second Kill of the same session is refused
 // while the first runs.
@@ -218,7 +218,7 @@ func (m *Model) Kill(id InstanceID, req ReqID) {
 	if !ok {
 		return
 	}
-	pre, job := m.KillInst(ws, inst, nil)
+	pre, job := m.killInst(ws, inst)
 	pre()
 	m.spawn(m.track(req, id, job))
 }
@@ -226,7 +226,7 @@ func (m *Model) Kill(id InstanceID, req ReqID) {
 // Pause pauses the session id: it moves to Loading at once (a refused
 // transition is logged and the pause runs anyway, as the TUI's path always
 // did), then the job stashes, kills the session and removes the worktree
-// (PauseInst). PauseInst is called before the transition, as the TUI's
+// (pauseInst). pauseInst is called before the transition, as the TUI's
 // path does, so a failed pause reverts to the status the session had, not
 // to Loading. Refused for a workspace terminal and a busy session
 // (precondition).
@@ -235,7 +235,7 @@ func (m *Model) Pause(id InstanceID, req ReqID) {
 	if !ok {
 		return
 	}
-	job := m.PauseInst(ws, inst, nil)
+	job := m.pauseInst(ws, inst)
 	if err := inst.TransitionTo(session.Loading); err != nil {
 		log.For("core").Warn("pause.preaction_transition_failed", "err", err)
 	}
@@ -244,7 +244,7 @@ func (m *Model) Pause(id InstanceID, req ReqID) {
 
 // Resume resumes the session id, which must be Paused and not a workspace
 // terminal (precondition; a Recoverable one is Recover's): it moves to
-// Loading at once and the job resumes it (ResumeIfLoadingInst), answering
+// Loading at once and the job resumes it (resumeIfLoadingInst), answering
 // with a ResumeResult, or an OpFailed reverting to Paused. The transition
 // can't be refused from Paused; if it were, the request would be refused
 // too.
@@ -258,7 +258,7 @@ func (m *Model) Resume(id InstanceID, req ReqID) {
 		m.refuse(req, id, fmt.Errorf("resume %s: %w", inst.Title, err))
 		return
 	}
-	m.spawn(m.track(req, id, m.ResumeIfLoadingInst(ws, inst)))
+	m.spawn(m.track(req, id, m.resumeIfLoadingInst(ws, inst)))
 }
 
 // ResumeWith resumes the session id with new launch options (the R flow):
@@ -276,11 +276,11 @@ func (m *Model) ResumeWith(id InstanceID, opts launch.Options, base string, req 
 		m.refuse(req, id, fmt.Errorf("resume %s: %w", inst.Title, err))
 		return
 	}
-	m.spawn(m.track(req, id, m.ResumeIfLoadingInst(ws, inst)))
+	m.spawn(m.track(req, id, m.resumeIfLoadingInst(ws, inst)))
 }
 
 // Recover adopts the orphan id, which must be Recoverable (precondition):
-// RecoverInst moves it to Loading and its job adopts the worktree,
+// recoverInst moves it to Loading and its job adopts the worktree,
 // answering with a RecoverResult. Its Reply names the adopted instance,
 // which replaces id's row.
 func (m *Model) Recover(id InstanceID, req ReqID) {
@@ -288,7 +288,7 @@ func (m *Model) Recover(id InstanceID, req ReqID) {
 	if !ok {
 		return
 	}
-	job := m.RecoverInst(ws, inst)
+	job := m.recoverInst(ws, inst)
 	if job == nil {
 		m.refuse(req, id, fmt.Errorf("recover %s: its transition was refused", inst.Title))
 		return
@@ -296,7 +296,7 @@ func (m *Model) Recover(id InstanceID, req ReqID) {
 	m.spawn(m.track(req, id, job))
 }
 
-// Merge merges source's branch into target's worktree (MergeInst). Each
+// Merge merges source's branch into target's worktree (mergeInst). Each
 // must pass its precondition, and they must differ, as the merge picker
 // lists neither a busy session nor the target among the sources. The
 // Reply names target.
@@ -318,21 +318,21 @@ func (m *Model) Merge(target, source InstanceID, req ReqID) {
 		m.refuse(req, target, err)
 		return
 	}
-	m.spawn(m.track(req, target, m.MergeInst(t, s)))
+	m.spawn(m.track(req, target, m.mergeInst(t, s)))
 }
 
-// Push commits and pushes the session id's worktree (PushInst). Refused
+// Push commits and pushes the session id's worktree (pushInst). Refused
 // for a workspace terminal and a busy session (precondition).
 func (m *Model) Push(id InstanceID, req ReqID) {
 	inst, _, ok := m.admit(opPush, id, req)
 	if !ok {
 		return
 	}
-	m.spawn(m.track(req, id, m.PushInst(inst)))
+	m.spawn(m.track(req, id, m.pushInst(inst)))
 }
 
 // SendPrompt types text into the session id's pane and presses Enter
-// (SendPromptInst). A failure is a notice, and the Reply's Err; a success
+// (sendPromptInst). A failure is a notice, and the Reply's Err; a success
 // replies with none. Refused for a session not started or Paused
 // (precondition).
 func (m *Model) SendPrompt(id InstanceID, text string, req ReqID) {
@@ -340,7 +340,7 @@ func (m *Model) SendPrompt(id InstanceID, text string, req ReqID) {
 	if !ok {
 		return
 	}
-	m.spawn(m.track(req, id, m.SendPromptInst(inst, text)))
+	m.spawn(m.track(req, id, m.sendPromptInst(inst, text)))
 }
 
 // NewInstance describes an instance to create (Create).
@@ -399,14 +399,14 @@ func (m *Model) Create(ws *Workspace, spec NewInstance, req ReqID) {
 			log.For("core").Warn("create.transition_failed", "title", spec.Title, "err", err)
 		}
 	}
-	ws.Add(inst)
+	ws.add(inst)
 	if spec.Issue != 0 {
 		m.applyGitHubState()
 	}
 	id := m.idOf(inst)
 	m.reply(req, Reply{ID: id})
 	if spec.Start {
-		m.spawn(m.StartInst(inst, ws))
+		m.spawn(m.startInst(inst, ws))
 	}
 }
 
