@@ -4,7 +4,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/stretchr/testify/assert"
@@ -63,4 +65,51 @@ func TestRemoveOrphanWorktree_RemovesTitleSidecar(t *testing.T) {
 	err := RemoveOrphanWorktree(repo, wt)
 	assert.NoError(t, err)
 	assert.NoFileExists(t, sidecar, "orphan auto-clean must not leave a dangling .loom-title sidecar")
+}
+
+// orphanWorktree makes a repo with branch "feature" checked out in a
+// linked worktree, an orphan the auto-clean would remove.
+func orphanWorktree(t *testing.T) (repo, wt string) {
+	t.Helper()
+	repo = t.TempDir()
+	runGit(t, repo, "init", "-q")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "f"), []byte("x"), 0o644))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-qm", "init")
+	runGit(t, repo, "branch", "feature")
+	wt = filepath.Join(t.TempDir(), "feature_wt")
+	runGit(t, repo, "worktree", "add", wt, "feature")
+	return repo, wt
+}
+
+// worktreeLockFile is the lock file of the linked worktree wt.
+func worktreeLockFile(t *testing.T, wt string) string {
+	t.Helper()
+	gitfile, err := os.ReadFile(filepath.Join(wt, ".git"))
+	require.NoError(t, err)
+	return filepath.Join(strings.TrimSpace(strings.TrimPrefix(string(gitfile), "gitdir:")), "locked")
+}
+
+// TestRemoveOrphanWorktree_UnlocksAStaleInitializingLock: the kermit
+// lubm-benchmark tree, which failed the sweep at every start.
+func TestRemoveOrphanWorktree_UnlocksAStaleInitializingLock(t *testing.T) {
+	repo, wt := orphanWorktree(t)
+	lock := worktreeLockFile(t, wt)
+	require.NoError(t, os.WriteFile(lock, []byte("initializing"), 0o644))
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(lock, old, old))
+
+	require.NoError(t, RemoveOrphanWorktree(repo, wt))
+	assert.NoDirExists(t, wt)
+}
+
+func TestRemoveOrphanWorktree_KeepsAUserLockedTree(t *testing.T) {
+	repo, wt := orphanWorktree(t)
+	runGit(t, repo, "worktree", "lock", "--reason", "keep me", wt)
+
+	err := RemoveOrphanWorktree(repo, wt)
+
+	require.ErrorIs(t, err, git.ErrWorktreeLocked)
+	assert.Contains(t, err.Error(), "keep me")
+	assert.DirExists(t, wt)
 }

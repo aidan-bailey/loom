@@ -1748,7 +1748,13 @@ func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *
 		switch cand.Disposition() {
 		case session.DisposeClean:
 			if err := session.RemoveOrphanWorktree(cand.RepoPath, cand.WorktreePath); err != nil {
-				log.For("app").Warn("orphan_autoclean_failed", "worktree", cand.WorktreePath, "err", err)
+				// A lock loom respects is the user's call and lasts across
+				// starts: a debug line, not a warning at every load.
+				if errors.Is(err, git.ErrWorktreeLocked) {
+					log.For("app").Debug("orphan_autoclean_locked", "worktree", cand.WorktreePath, "err", err)
+				} else {
+					log.For("app").Warn("orphan_autoclean_failed", "worktree", cand.WorktreePath, "err", err)
+				}
 				continue
 			}
 			summary.cleaned++

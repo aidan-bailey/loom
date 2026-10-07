@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
@@ -195,4 +197,38 @@ func TestReconcileOrphans_KeepsHooksOfPreservedRecords(t *testing.T) {
 
 	assert.DirExists(t, preserved, "a preserved record's hooks folder must survive the sweep")
 	assert.NoDirExists(t, stray, "the sweep itself must still run")
+}
+
+// TestReconcileOrphans_Locks: a clean orphan left locked "initializing" by
+// an add killed long ago is unlocked and cleaned; one the user locked is
+// left alone and not counted as cleaned.
+func TestReconcileOrphans_Locks(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "f"), []byte("x"), 0o644))
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-qm", "init")
+
+	cfgDir := t.TempDir()
+	userDir := filepath.Join(cfgDir, "worktrees", "u")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+	staleWT := filepath.Join(userDir, "stale_18be000000000001")
+	keptWT := filepath.Join(userDir, "kept_18be000000000002")
+	runGit(t, repo, "worktree", "add", "-b", "u/stale", staleWT)
+	runGit(t, repo, "worktree", "add", "-b", "u/kept", keptWT)
+	gitfile, err := os.ReadFile(filepath.Join(staleWT, ".git"))
+	require.NoError(t, err)
+	lock := filepath.Join(strings.TrimSpace(strings.TrimPrefix(string(gitfile), "gitdir:")), "locked")
+	require.NoError(t, os.WriteFile(lock, []byte("initializing"), 0o644))
+	old := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(lock, old, old))
+	runGit(t, repo, "worktree", "lock", "--reason", "keep me", keptWT)
+
+	sp := spinner.New()
+	summary := (&home{}).reconcileOrphans(cfgDir, "true", ui.NewList(&sp), nil, cmd2.MakeExecutor())
+
+	assert.Equal(t, 1, summary.cleaned, "only the stale-locked orphan is cleaned")
+	assert.Zero(t, summary.review)
+	assert.NoDirExists(t, staleWT)
+	assert.DirExists(t, keptWT, "a lock the user set is respected")
 }
