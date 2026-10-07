@@ -34,7 +34,7 @@ func fleetSlot(t *testing.T, name string, titles ...string) *workspaceSlot {
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	return &workspaceSlot{
 		ws:        ws,
-		list:      fixtureList(),
+		list:      fixtureList(t),
 		splitPane: sp,
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 	}

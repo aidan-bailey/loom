@@ -27,7 +27,7 @@ func newTestHome(t *testing.T) *home {
 	require.NoError(t, err)
 
 	h := &home{
-		workspaceSlot: slotOver(testWS(core.WorkspaceParts{Storage: storage, Config: config.DefaultConfig(), State: state})),
+		workspaceSlot: slotOver(t, testWS(core.WorkspaceParts{Storage: storage, Config: config.DefaultConfig(), State: state})),
 		ctx:           context.Background(),
 		state:         stateDefault,
 		menu:          ui.NewMenu(),

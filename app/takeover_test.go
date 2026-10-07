@@ -29,7 +29,7 @@ func takeoverHome(t *testing.T, cfgDir string) *home {
 		errBox:     ui.NewErrBox(),
 		fullScreen: &foregroundAttach{},
 	}
-	focusSlots(h, 0, slotOver(testWS(core.WorkspaceParts{
+	focusSlots(h, 0, slotOver(t, testWS(core.WorkspaceParts{
 		Ctx:     &config.WorkspaceContext{Name: "ws", ConfigDir: cfgDir},
 		Storage: storage,
 		Config:  config.DefaultConfig(),

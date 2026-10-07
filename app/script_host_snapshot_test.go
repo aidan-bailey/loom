@@ -80,7 +80,7 @@ func TestScriptHost_ReadsDoNotRaceUpdate(t *testing.T) {
 	ctxA := &config.WorkspaceContext{ConfigDir: t.TempDir()}
 	ctxB := &config.WorkspaceContext{ConfigDir: t.TempDir()}
 	wsB := testWS(core.WorkspaceParts{Ctx: ctxB, Config: config.DefaultConfig()}, newSnapshotTestInstance(t, "other"))
-	altList := fixtureList()
+	altList := fixtureList(t)
 	altSplit := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	extra := newSnapshotTestInstance(t, "extra")
 	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx = ctxA })

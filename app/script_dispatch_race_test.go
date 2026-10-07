@@ -18,7 +18,7 @@ import (
 // `go test -race`.
 func TestScriptHost_ConcurrentNavAndRead(t *testing.T) {
 	ws := testWS(core.WorkspaceParts{})
-	list := fixtureList()
+	list := fixtureList(t)
 	for _, title := range []string{"a", "b", "c"} {
 		inst, err := session.NewInstance(session.InstanceOptions{
 			Title:   title,

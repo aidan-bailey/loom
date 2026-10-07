@@ -180,7 +180,7 @@ func TestConfirmationModalStateTransitions(t *testing.T) {
 func TestConfirmationModalKeyHandling(t *testing.T) {
 	// Import needed packages
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()})
-	list := fixtureList()
+	list := fixtureList(t)
 
 	// Create enough of home struct to test handleKeyPress in confirmation state
 	h := wireCore(t, &home{
@@ -313,7 +313,7 @@ func TestConfirmationFlowSimulation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()}, instance)
-	list := fixtureList()
+	list := fixtureList(t)
 	list.SetSelectedInstance(0)
 
 	h := wireCore(t, &home{
@@ -538,7 +538,7 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 	storage, err := session.NewStorage(&mockInstanceStorage{}, t.TempDir())
 	require.NoError(t, err)
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig(), Storage: storage}, instance)
-	list := fixtureList()
+	list := fixtureList(t)
 	list.SetSelectedInstance(0)
 
 	h := wirePanes(t, wireCore(t, &home{
@@ -609,7 +609,7 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 	require.NoError(t, err)
 	_ = instance.TransitionTo(session.Running)
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()}, instance)
-	list := fixtureList()
+	list := fixtureList(t)
 	list.SetSelectedInstance(0)
 
 	h := wireCore(t, &home{
@@ -653,7 +653,7 @@ func TestOpFailedRevertsStatus(t *testing.T) {
 	require.NoError(t, err)
 	_ = instance.TransitionTo(session.Deleting)
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()}, instance)
-	list := fixtureList()
+	list := fixtureList(t)
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -684,7 +684,7 @@ func TestOpFailedRevertsStatus(t *testing.T) {
 // can't leak into the next confirmation.
 func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()})
-	list := fixtureList()
+	list := fixtureList(t)
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -728,7 +728,7 @@ func TestHandleQuitStaysInTUIOnSaveError(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig(), Storage: storage, State: state}, inst)
-	list := fixtureList()
+	list := fixtureList(t)
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -772,7 +772,7 @@ func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
 
 	wsCtx := &config.WorkspaceContext{Name: "test-ws", ConfigDir: cfgDir}
 	ws := testWS(core.WorkspaceParts{Ctx: wsCtx, Storage: storage, Config: config.DefaultConfig(), State: state}, inst)
-	list := fixtureList()
+	list := fixtureList(t)
 
 	slot := &workspaceSlot{
 		ws:        ws,

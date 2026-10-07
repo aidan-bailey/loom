@@ -779,6 +779,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// re-detection chain: the ladder re-samples because one content
 		// hash cannot distinguish "still working" from "just finished",
 		// but the report says which it is.
+		before := inst.GetStatus()
 		target, authoritative := m.core.AdoptClaudeStatus(inst)
 		if !authoritative {
 			// Same transition ladder as the old metadata tick: still-changing →
@@ -793,8 +794,11 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err := inst.TransitionTo(target); err != nil {
 			log.For("app").Warn("event.transition_failed", "instance", msg.title, "to", target.String(), "err", err.Error())
 		}
-		// The tab bar reads the stores: reread the write.
-		m.syncViews()
+		// The tab bar reads the stores: reread the write, if it moved the
+		// status.
+		if inst.GetStatus() != before {
+			m.syncViews()
+		}
 		m.updateTabBarStatuses()
 		if !authoritative && msg.updated {
 			// One sample of changed content cannot distinguish "still
@@ -904,6 +908,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case snapshotStatusMsg:
 		m.snapshotScanning = false
+		moved := false
 		for _, r := range msg.results {
 			// The ladder writes the instance, through the bridge until
 			// package C makes it an overlay, and gates on the instance it
@@ -937,12 +942,17 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if r.hasPrompt {
 				target = session.Prompting
 			}
+			before := inst.GetStatus()
 			if err := inst.TransitionTo(target); err != nil {
 				log.For("app").Warn("tick.transition_failed", "instance", r.title, "to", target.String(), "err", err.Error())
 			}
+			moved = moved || inst.GetStatus() != before
 		}
-		// The tab bar reads the stores: reread the writes.
-		m.syncViews()
+		// The tab bar reads the stores: reread the writes, if any moved a
+		// status.
+		if moved {
+			m.syncViews()
+		}
 		m.updateTabBarStatuses()
 		return m, nil
 	case wbScanMsg:

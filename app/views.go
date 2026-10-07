@@ -118,6 +118,29 @@ func (m *home) activeViews() []core.InstanceView {
 	return out
 }
 
+// pruneBells forgets the bells of instances no open slot shows any more:
+// their IDs are never reused, so the entries would only accumulate. The
+// ViewsChanged applier runs it after replacing a store.
+func (m *home) pruneBells() {
+	if len(m.bells) == 0 {
+		return
+	}
+	shown := make(map[core.InstanceID]bool)
+	for _, s := range m.openSlots() {
+		if s == nil {
+			continue
+		}
+		for i := range s.views {
+			shown[s.views[i].ID] = true
+		}
+	}
+	for id := range m.bells {
+		if !shown[id] {
+			delete(m.bells, id)
+		}
+	}
+}
+
 // refreshSelection repoints the split pane and the menu at a fresh copy
 // of the selected row. They hold copies, so a change to the row (a
 // status, a diff, an overlay) reaches them only through this. It has

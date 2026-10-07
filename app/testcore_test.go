@@ -42,28 +42,31 @@ func (r *fixtureRows) Rows() []core.InstanceView {
 
 // fixtureSources holds each fixture list's source, by list, for wireCore
 // to bind to the slot showing the list and its home. Tests in this
-// package run one at a time.
+// package run one at a time; each entry goes when its test ends.
 var fixtureSources = map[*ui.List]*fixtureRows{}
 
 // fixtureList builds a rail for a fixture slot assembled before its home:
 // it shows the rows of the slot it ends up in (fixtureRows) once wireCore
 // has run.
-func fixtureList() *ui.List {
+func fixtureList(t *testing.T) *ui.List {
+	t.Helper()
 	src := &fixtureRows{}
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	l := ui.NewList(&s, src)
 	fixtureSources[l] = src
+	t.Cleanup(func() { delete(fixtureSources, l) })
 	return l
 }
 
 // slotOver builds a fixture slot view over ws: a rail reading its rows,
 // plus the split pane and workbench every slot needs. wirePanes points the
 // rail and pane at the test's pane registry; wireCore fills the rows.
-func slotOver(ws *core.Workspace) *workspaceSlot {
+func slotOver(t *testing.T, ws *core.Workspace) *workspaceSlot {
+	t.Helper()
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	return &workspaceSlot{
 		ws:        ws,
-		list:      fixtureList(),
+		list:      fixtureList(t),
 		splitPane: sp,
 		workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 	}

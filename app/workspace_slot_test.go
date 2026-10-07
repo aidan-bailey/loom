@@ -147,7 +147,7 @@ func TestSlotOwnsState_MutationVisibleWithoutSave(t *testing.T) {
 	m.syncViews()
 	assert.Equal(t, idOf(m, inst), titleID(m.slots[0].list, "added"))
 
-	replacement := fixtureList()
+	replacement := fixtureList(t)
 	m.list = replacement
 	assert.Same(t, replacement, m.slots[0].list, "a promoted-field write lands in the focused slot")
 

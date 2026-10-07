@@ -128,8 +128,9 @@ func newRestoreHome(exec cmd2.Executor) *home {
 		errBox: ui.NewErrBox(),
 		core:   core.NewForTest(core.Options{CmdExec: exec}),
 	}
-	h.list = fixtureList()
+	h.list = ui.NewList(&h.spinner, slotRows{h, h.workspaceSlot})
 	h.core.SetWorkspacesForTest(ws, nil)
+	h.syncViews()
 	return h
 }
 

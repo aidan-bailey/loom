@@ -42,7 +42,7 @@ func TestSelectedResumableNotWorkspace_AllowsRecoverable(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := testWS(core.WorkspaceParts{}, inst)
-	list := fixtureList()
+	list := fixtureList(t)
 
 	h := wireCore(t, &home{workspaceSlot: &workspaceSlot{ws: ws, list: list}})
 	selectIn(h, list, inst)

@@ -54,7 +54,7 @@ func TestApplyWorkspaceToggle_ClassicToGlobalPersists(t *testing.T) {
 		Storage: storage,
 		Config:  config.DefaultConfig(),
 	})
-	list := fixtureList()
+	list := fixtureList(t)
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -95,7 +95,7 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := testWS(core.WorkspaceParts{Storage: storage, Config: config.DefaultConfig()})
-	list := fixtureList()
+	list := fixtureList(t)
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -135,7 +135,7 @@ func TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, globalDir)
 
 	ws := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "stale-ws"}, Config: config.DefaultConfig()})
-	list := fixtureList()
+	list := fixtureList(t)
 
 	h := wireCore(t, &home{
 		workspaceSlot: &workspaceSlot{
@@ -170,7 +170,7 @@ func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, t.TempDir())
 
 	ws := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "stale-ws"}, Config: config.DefaultConfig()})
-	list := fixtureList()
+	list := fixtureList(t)
 	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 
 	h := wireCore(t, &home{
@@ -218,13 +218,13 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 	storageA, err := session.NewStorage(slotRecA, t.TempDir())
 	require.NoError(t, err)
 	wsA := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}, Storage: storageA, Config: config.DefaultConfig()})
-	slotARecListings := fixtureList()
+	slotARecListings := fixtureList(t)
 
 	slotRecB := &recordingInstanceStorage{}
 	storageB, err := session.NewStorage(slotRecB, t.TempDir())
 	require.NoError(t, err)
 	wsB := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()}, Storage: storageB, Config: config.DefaultConfig()})
-	slotBRecListings := fixtureList()
+	slotBRecListings := fixtureList(t)
 
 	h := &home{
 		ctx:    context.Background(),
@@ -284,7 +284,7 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 	split := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
 	ctxA := &config.WorkspaceContext{Name: "ws-a", ConfigDir: t.TempDir()}
 	wsA := testWS(core.WorkspaceParts{Ctx: ctxA, Storage: storageA, Config: config.DefaultConfig()})
-	listA := fixtureList()
+	listA := fixtureList(t)
 	wsB := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-b", ConfigDir: t.TempDir()}, Storage: storageB, Config: config.DefaultConfig()})
 	h := &home{
 		ctx:    context.Background(),
@@ -297,7 +297,7 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 		&workspaceSlot{ws: wsA, list: listA, splitPane: split},
 		&workspaceSlot{
 			ws:        wsB,
-			list:      fixtureList(),
+			list:      fixtureList(t),
 			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
 		},
 	)

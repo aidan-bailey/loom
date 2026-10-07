@@ -33,8 +33,8 @@ func peerTestInstance(t *testing.T, title string) *session.Instance {
 func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 	wsA := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-a"}})
 	wsB := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-b"}})
-	listA := fixtureList()
-	listB := fixtureList()
+	listA := fixtureList(t)
+	listB := fixtureList(t)
 
 	prompting := peerTestInstance(t, "prompting")
 	require.NoError(t, prompting.TransitionTo(session.Prompting))
@@ -66,7 +66,7 @@ func TestRefreshPeerSections_TwoSlots_Classification(t *testing.T) {
 // single slot clears any previously set peer sections.
 func TestRefreshPeerSections_SingleSlotClears(t *testing.T) {
 	wsA := testWS(core.WorkspaceParts{Ctx: &config.WorkspaceContext{Name: "ws-a"}})
-	listA := fixtureList()
+	listA := fixtureList(t)
 	listA.SetPeerSections([]ui.PeerSection{{Name: "stale", Idle: 1}})
 
 	h := &home{}
