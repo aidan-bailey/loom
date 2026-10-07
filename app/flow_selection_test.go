@@ -41,6 +41,7 @@ func TestCompletionDuringNaming_CancelKillsOnlyThePendingInstance(t *testing.T) 
 	m, _, _ := ownerTestHome(t)
 	m.errBox.SetSize(400, 1)
 	first := runningInstance(t, m, "first")
+	finishStart(t, first) // active, so only the open flow keeps the completion off the selection
 	_, _ = runNewInstance(m)
 	require.Equal(t, stateNew, m.state)
 	pending := m.list.GetSelectedInstance()
@@ -64,6 +65,10 @@ func TestCompletionDuringInlineAttach_KeepsTheAttachTarget(t *testing.T) {
 	m, _, _ := ownerTestHome(t)
 	attached := runningInstance(t, m, "attached")
 	first := runningInstance(t, m, "first")
+	// Both active, so only inline attach keeps the completion off the
+	// selection.
+	finishStart(t, attached)
+	finishStart(t, first)
 	m.list.SelectInstance(attached)
 	m.state = stateInlineAttach
 

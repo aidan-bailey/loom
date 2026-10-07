@@ -119,6 +119,7 @@ func TestInstanceStarted_SuccessInFocusedWorkspaceAttaches(t *testing.T) {
 
 	assert.Equal(t, stateInlineAttach, m.state)
 	assert.Same(t, starting, m.list.GetSelectedInstance())
+	assert.True(t, m.panes.Alive(starting.Pane().TmuxSessionName()), "its pane client is attached")
 	assert.GreaterOrEqual(t, recA.calls, 1)
 	assert.Zero(t, recB.calls)
 }
