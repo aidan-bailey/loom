@@ -261,6 +261,11 @@ func (m *Model) PushInst(inst *session.Instance) Job {
 		if err != nil {
 			return pushResult{err: err}
 		}
+		if worktree == nil {
+			// A started workspace terminal has none; a job must never
+			// panic.
+			return pushResult{err: fmt.Errorf("push: %s has no worktree", selected.Title)}
+		}
 		if err = worktree.PushChanges(commitMsg, true); err != nil {
 			return pushResult{err: err}
 		}

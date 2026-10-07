@@ -276,6 +276,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverOpFailed(msg)
 	case MergeResult:
 		m.notifyErr(msg.Err)
+	case resumeSkipped:
+		log.For("core").Warn("resume.skipped", "err", msg.err)
 	case promptFailed:
 		m.notifyErr(msg.err)
 	case promptSent:

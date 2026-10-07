@@ -21,16 +21,32 @@ func (m *Model) idOf(inst *session.Instance) InstanceID {
 }
 
 // lookup resolves id to its instance and the loaded workspace holding it,
-// or nil, nil when no loaded workspace holds it.
+// or nil, nil when no loaded workspace holds it. It runs on every pane
+// event (PaneOutput, PaneQuiet), so it walks the tabs, or the classic
+// workspace, directly rather than through Loaded, which allocates.
 func (m *Model) lookup(id InstanceID) (*session.Instance, *Workspace) {
 	if id == 0 {
 		return nil, nil
 	}
-	for _, ws := range m.Loaded() {
+	find := func(ws *Workspace) *session.Instance {
 		for _, inst := range ws.insts {
 			if m.ids[inst] == id {
-				return inst, ws
+				return inst
 			}
+		}
+		return nil
+	}
+	if len(m.tabs) == 0 {
+		if m.classic != nil {
+			if inst := find(m.classic); inst != nil {
+				return inst, m.classic
+			}
+		}
+		return nil, nil
+	}
+	for _, ws := range m.tabs {
+		if inst := find(ws); inst != nil {
+			return inst, ws
 		}
 	}
 	return nil, nil
@@ -71,7 +87,9 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 
 // Views returns ws's instances as views, in display order (a fresh slice).
 // The TUI seeds a new slot's store with it; afterwards ViewsChanged keeps
-// the store current.
+// the store current. ws must be loaded: the IDs it assigns to a workspace
+// that isn't are pruned by the next publish, and its instances get new
+// ones if it loads later.
 func (m *Model) Views(ws *Workspace) []InstanceView {
 	if ws == nil {
 		return nil
@@ -83,7 +101,8 @@ func (m *Model) Views(ws *Workspace) []InstanceView {
 	return out
 }
 
-// View returns the view of the loaded instance id.
+// View returns the view of the instance id, which a loaded workspace must
+// hold (false otherwise).
 func (m *Model) View(id InstanceID) (InstanceView, bool) {
 	inst, _ := m.lookup(id)
 	if inst == nil {
@@ -111,7 +130,7 @@ func (m *Model) publishViews() []Event {
 		if prev, ok := m.published[ws]; !ok || !reflect.DeepEqual(prev, views) {
 			// The event gets its own copy: the TUI keeps it as its store, which
 			// must not alias the copy the next publish compares against.
-			events = append(events, ViewsChanged{Workspace: ws, Views: slices.Clone(views)})
+			events = append(events, ViewsChanged{Workspace: ws, Views: cloneViews(views)})
 		}
 	}
 	m.published = next
@@ -121,6 +140,17 @@ func (m *Model) publishViews() []Event {
 		}
 	}
 	return events
+}
+
+// cloneViews deep-copies views: the slice and each view's Subagents, the
+// one field that refers to shared memory. Its other reference fields
+// (strings, Diff.Error, StatusSince's location) are immutable.
+func cloneViews(views []InstanceView) []InstanceView {
+	out := slices.Clone(views)
+	for i := range out {
+		out[i].Subagents = slices.Clone(out[i].Subagents)
+	}
+	return out
 }
 
 // Sync publishes the views that changed (ViewsChanged, first) and then

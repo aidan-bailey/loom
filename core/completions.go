@@ -25,7 +25,7 @@ import (
 // selection, so moving it would retarget the flow. The model has no focus,
 // so that rule is the TUI's job (app.applyStarted, app.applyRecovered).
 
-// StartResult is a start job's result (Start): the instance, Start's
+// StartResult is a start job's result (StartInst): the instance, Start's
 // error, and the workspace that owned it at dispatch.
 type StartResult struct {
 	Instance *session.Instance
@@ -33,7 +33,7 @@ type StartResult struct {
 	Err      error
 }
 
-// ResumeResult is a resume that succeeded (Resume, ResumeIfLoading).
+// ResumeResult is a resume that succeeded (ResumeInst, ResumeIfLoadingInst).
 // Notice, when set, is what it found that the user must see: a stash it
 // forgot or could not drop (session.Notice). A failed resume is an
 // OpFailed.
@@ -83,6 +83,13 @@ type OpFailed struct {
 type MergeResult struct {
 	Err error
 }
+
+// resumeSkipped is a resume whose job found the instance no longer
+// Loading when it ran (ResumeIfLoadingInst): something moved it after the
+// caller's transition, and that move owns it now, so nothing is reverted.
+// It is only logged, as the skip always was (no notice), and its Reply
+// carries err, so a requester never reads a skip as a success.
+type resumeSkipped struct{ err error }
 
 // promptFailed is a prompt send that failed (SendPrompt).
 type promptFailed struct{ err error }

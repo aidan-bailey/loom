@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -107,4 +108,37 @@ func TestSync_ForgetsClosedWorkspaces(t *testing.T) {
 	out := m.Sync()
 	require.Len(t, out.Events, 1)
 	assert.Same(t, b, out.Events[0].(ViewsChanged).Workspace, "reopened: published again")
+}
+
+// TestLookup_DoesNotAllocate: lookup runs on every pane event.
+func TestLookup_DoesNotAllocate(t *testing.T) {
+	m := NewForTest(Options{})
+	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
+	inst := pausedInst(t, "x")
+	b.Add(inst)
+	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
+	id := m.idOf(inst)
+
+	got, ws := m.lookup(id)
+	require.Same(t, inst, got)
+	require.Same(t, b, ws)
+	assert.Zero(t, testing.AllocsPerRun(100, func() { m.lookup(id) }))
+
+	m.SetWorkspacesForTest(b, nil)
+	got, ws = m.lookup(id)
+	require.Same(t, inst, got, "classic mode")
+	require.Same(t, b, ws)
+	assert.Zero(t, testing.AllocsPerRun(100, func() { m.lookup(id) }))
+}
+
+// TestCloneViews_CopiesSubagents: a published view's Subagents must not
+// share a backing array with the model's copy.
+func TestCloneViews_CopiesSubagents(t *testing.T) {
+	views := []InstanceView{{ID: 1, Subagents: []subagent.View{{Name: "a"}}}}
+	c := cloneViews(views)
+	c[0].Subagents[0].Name = "b"
+	c[0].Title = "t"
+	assert.Equal(t, "a", views[0].Subagents[0].Name)
+	assert.Empty(t, views[0].Title)
+	assert.Nil(t, cloneViews([]InstanceView{{}})[0].Subagents, "nil stays nil")
 }

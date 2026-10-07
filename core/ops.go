@@ -64,6 +64,12 @@ func (m *Model) KillInst(ws *Workspace, selected *session.Instance, beforeKill f
 		if err != nil {
 			return OpFailed{Instance: selected, Title: title, Op: "delete", Previous: previousStatus, Err: err}
 		}
+		if worktree == nil {
+			// A started workspace terminal has none (it runs in the
+			// repository itself). A job must never panic: it would take
+			// the TUI down from its Cmd goroutine.
+			return OpFailed{Instance: selected, Title: title, Op: "delete", Previous: previousStatus, Err: fmt.Errorf("instance %s has no worktree", title)}
+		}
 
 		checkedOut, err := worktree.IsBranchCheckedOut()
 		if err != nil {
@@ -152,7 +158,7 @@ func (m *Model) saveSnapshot(ws *Workspace) func() error {
 // status selected has now; the caller moves it to Loading. ws is the
 // workspace the TUI shows. beforePause, when set, runs first in the job:
 // the TUI closes its terminal pane's shell for the instance there, as for
-// Kill's beforeKill. Formerly app.pauseActionFor.
+// KillInst's beforeKill. Formerly app.pauseActionFor.
 func (m *Model) PauseInst(ws *Workspace, selected *session.Instance, beforePause func()) Job {
 	previousStatus := selected.GetStatus()
 	pauseTitle := selected.Title
@@ -170,13 +176,16 @@ func (m *Model) PauseInst(ws *Workspace, selected *session.Instance, beforePause
 
 // ResumeInst moves the Paused inst to Loading, so the list shows the spinner
 // while Resume's worktree and tmux setup runs, and returns the job
-// resuming it (a ResumeResult, or OpFailed). TransitionTo enforces
-// Paused→Loading atomically, so a concurrent reconcile flip between the
-// caller's precondition check and this write can't start a resume on a
-// non-Paused instance; when it refuses, ResumeInst returns nil and nothing
-// runs. ws is the workspace the TUI shows: the save goes to its storage,
-// and it stamps the result when no loaded workspace holds inst. Formerly
-// the core of app.runResumeSelected.
+// resuming it (a ResumeResult, or OpFailed). The caller must have checked
+// that inst is Paused and not a workspace terminal (the TUI's
+// selectedResumableNotWorkspace; the Resume request's precondition):
+// TransitionTo only validates the move against the state machine, and
+// every status may move to Loading, so it guards nothing here. A failed
+// resume reverts to Paused (resumeOutcome), which is right only for an
+// instance that was Paused. If the transition is refused all the same,
+// ResumeInst returns nil and nothing runs. ws is the workspace the TUI
+// shows: the save goes to its storage, and it stamps the result when no
+// loaded workspace holds inst. Formerly the core of app.runResumeSelected.
 func (m *Model) ResumeInst(ws *Workspace, inst *session.Instance) Job {
 	if err := inst.TransitionTo(session.Loading); err != nil {
 		log.For("core").Warn("resume.skipped", "err", err)
@@ -191,15 +200,15 @@ func (m *Model) ResumeInst(ws *Workspace, inst *session.Instance) Job {
 // Loading when it runs (the caller's transition may have failed, e.g. a
 // concurrent reconcile flip landed the instance somewhere that transition
 // can't legally proceed from; the caller's confirmation step can't
-// otherwise tell the job to skip), and returns nil otherwise. Formerly
-// app.runRestartWithOptionsSelected's Async body.
+// otherwise tell the job to skip), and reports a resumeSkipped otherwise.
+// Formerly app.runRestartWithOptionsSelected's Async body.
 func (m *Model) ResumeIfLoadingInst(ws *Workspace, inst *session.Instance) Job {
 	saveFunc := m.saveSnapshot(ws)
 	title := inst.Title
 	owner := m.startOwner(inst, ws)
 	return func() any {
-		if inst.GetStatus() != session.Loading {
-			return nil
+		if st := inst.GetStatus(); st != session.Loading {
+			return resumeSkipped{err: fmt.Errorf("resume skipped: %s is no longer loading (%s)", title, st)}
 		}
 		return resumeOutcome(inst, title, owner, inst.Resume(saveFunc))
 	}
@@ -222,8 +231,11 @@ func resumeOutcome(inst *session.Instance, title string, owner *Workspace, err e
 // spinner, and returns the job adopting its orphan: it serializes the
 // placeholder, flips the record to Running and runs
 // session.ReconcileAndRestore (adopting the worktree, spawning tmux),
-// reporting a RecoverResult owned by ws, the workspace showing inst. nil
-// when the transition is refused. Formerly the core of
+// reporting a RecoverResult owned by ws, the workspace showing inst. The
+// caller must have checked that inst is Recoverable (the TUI's
+// runResumeOrRecover; the Recover request's precondition): TransitionTo
+// guards nothing here, since every status may move to Loading. nil when
+// the transition is refused all the same. Formerly the core of
 // app.runRecoverSelected.
 func (m *Model) RecoverInst(ws *Workspace, inst *session.Instance) Job {
 	cfgDir := ""
@@ -259,6 +271,11 @@ func (m *Model) MergeInst(target, source *session.Instance) Job {
 		worktree, err := target.GetGitWorktree()
 		if err != nil {
 			return MergeResult{Err: fmt.Errorf("merge: %w", err)}
+		}
+		if worktree == nil {
+			// A started workspace terminal has none; a job must never
+			// panic.
+			return MergeResult{Err: fmt.Errorf("merge: %s has no worktree", target.Title)}
 		}
 		if err := worktree.Merge(source.GetBranch()); err != nil {
 			return MergeResult{Err: err}
