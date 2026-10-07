@@ -1,13 +1,11 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"sort"
 
 	tea "charm.land/bubbletea/v2"
 
-	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
@@ -79,7 +77,8 @@ func runNewFromIssue(m *home) (tea.Model, tea.Cmd) {
 }
 
 // handleStateIssuePickerKey drives the picker. Enter fetches the full
-// issue in a Cmd; the instance is created in handleIssuePicked.
+// issue through the model (core.FetchIssue); its Reply reaches
+// handleIssuePicked, where the draft is opened.
 func handleStateIssuePickerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	p := m.issuePicker()
 	if p == nil {
@@ -96,11 +95,16 @@ func handleStateIssuePickerKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	repo := m.repoPath()
-	n := row.Number
-	return m, func() tea.Msg {
-		is, err := github.View(context.Background(), repo, n, internalexec.Default{})
-		return issuePickedMsg{repo: repo, issue: is, err: err}
-	}
+	m.core.FetchIssue(repo, row.Number, m.newReq(pendingReq{issue: &pendingIssue{picked: &issuePickedMsg{repo: repo}}}))
+	return m, nil
+}
+
+// pendingIssue is an issue fetch waiting for its Reply: the picker's pick
+// (picked), or a "#n" prompt's expansion (expand, filled in as
+// issueExpandedMsg minus the issue and error).
+type pendingIssue struct {
+	picked *issuePickedMsg
+	expand *issueExpandedMsg
 }
 
 // handleIssuePicked opens a draft titled by the issue slug, seeds its
@@ -159,16 +163,6 @@ type issueExpandedMsg struct {
 	literal        string // original prompt, used when err != nil
 	selectedBranch string
 	err            error
-}
-
-// issueExpandCmd fetches issue n for the shorthand. It carries d back
-// untouched: the Cmd runs off the Update goroutine and must not read the
-// draft.
-func issueExpandCmd(repo string, n int, d *draft, rest, literal, selectedBranch string) tea.Cmd {
-	return func() tea.Msg {
-		is, err := github.View(context.Background(), repo, n, internalexec.Default{})
-		return issueExpandedMsg{draft: d, repo: repo, number: n, issue: is, rest: rest, literal: literal, selectedBranch: selectedBranch, err: err}
-	}
 }
 
 // issueExpandDropped explains a #n expansion that was dropped by a

@@ -52,27 +52,6 @@ func (m *Model) lookup(id InstanceID) (*session.Instance, *Workspace) {
 	return nil, nil
 }
 
-// InstanceOf resolves id to its instance, nil when no loaded workspace
-// holds it. A bridge for the script host until package D. Deleted in D.
-func (m *Model) InstanceOf(id InstanceID) *session.Instance {
-	inst, _ := m.lookup(id)
-	return inst
-}
-
-// AdoptForScript adds an instance a script built (ctx:new_instance) to ws.
-// A bridge for the script host until package D routes ctx:new_instance
-// through Create. Deleted in D.
-func (m *Model) AdoptForScript(ws *Workspace, inst *session.Instance) { ws.add(inst) }
-
-// IDFor returns inst's ID, if a loaded workspace holds it. A bridge for the
-// script host's resumed instances until package D. Deleted in D.
-func (m *Model) IDFor(inst *session.Instance) (InstanceID, bool) {
-	if m.holding(inst) == nil {
-		return 0, false
-	}
-	return m.idOf(inst), true
-}
-
 // viewOf copies inst's state into a view, under the instance's own locks.
 func (m *Model) viewOf(inst *session.Instance) InstanceView {
 	pane := inst.Pane()
@@ -96,6 +75,9 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 		CacheTTL1h:          inst.CacheTTL1h(),
 		IsWorkspaceTerminal: inst.IsWorkspaceTerminal,
 		Started:             inst.Started(),
+	}
+	if gw, err := inst.GetGitWorktree(); err == nil && gw != nil {
+		v.WorktreeRepoPath = gw.GetRepoPath()
 	}
 	_, _, v.StatusReported = inst.ClaudeStatus()
 	v.LastMessage, v.HasLastMessage = inst.LastMessage()

@@ -13,9 +13,7 @@ import (
 // InstanceView values, Reply. The workspace and account half still passes
 // the model's own objects (*Workspace, *config.WorkspaceRegistry,
 // *account.Registry, …), and stage 1D converts it to values before the
-// model moves to its own goroutine. InstanceOf, IDFor and AdoptForScript
-// are a bridge for the script host until package D. *Model is the only
-// implementation.
+// model moves to its own goroutine. *Model is the only implementation.
 type Core interface {
 	// The loop: the TUI drains the model after every message (Sync), hands
 	// it every job's result (Deliver), and starts its first background
@@ -54,6 +52,7 @@ type Core interface {
 	// Instances: their views, and every lifecycle action as a request by
 	// ID, answered by a Reply when it carries a ReqID.
 	Views(ws *Workspace) []InstanceView
+	View(id InstanceID) (InstanceView, bool)
 	Create(ws *Workspace, spec NewInstance, req ReqID)
 	Kill(id InstanceID, req ReqID)
 	Pause(id InstanceID, req ReqID)
@@ -63,10 +62,7 @@ type Core interface {
 	Merge(target, source InstanceID, req ReqID)
 	Push(id InstanceID, req ReqID)
 	SendPrompt(id InstanceID, text string, req ReqID)
-	// The script host's bridge until package D.
-	InstanceOf(id InstanceID) *session.Instance
-	IDFor(inst *session.Instance) (InstanceID, bool)
-	AdoptForScript(ws *Workspace, inst *session.Instance)
+	FetchIssue(repo string, n int, req ReqID)
 
 	// Claude status and the tick: the health tick, and what the TUI's pane
 	// events tell the model.

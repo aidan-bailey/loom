@@ -302,7 +302,9 @@ func newScriptSlotHome(t *testing.T) *home {
 }
 
 // runScript dispatches key, lets between run on the Update goroutine
-// while the script is in flight, then delivers the result.
+// while the script is in flight, then delivers the result and pumps what
+// follows: the requests its intents make, their Replies and the resumes
+// (pumpRequests).
 func runScript(t *testing.T, m *home, key string, between func()) {
 	t.Helper()
 	cmd, ok := m.dispatchScript(key)
@@ -314,14 +316,15 @@ func runScript(t *testing.T, m *home, key string, between func()) {
 	done, ok := msg.(scriptDoneMsg)
 	require.True(t, ok, "got %T", msg)
 	require.NoError(t, done.err)
-	_, _ = m.Update(done)
+	pumpRequests(t, m, func() tea.Msg { return done })
 }
 
 // TestScriptDone_DropsInstanceWhenFocusChangedMidDispatch: ctx:new_instance
-// builds its instance from the dispatch-time slot (ConfigDir, repo path).
+// builds its instance from the dispatch-time slot (its repo path).
 // handleScriptDone used to add it to whichever slot was focused when the
 // result arrived, so switching workspace while a script ran filed one
-// workspace's session under another.
+// workspace's session under another. It creates in the dispatch-time slot,
+// and is refused (it raises) when focus moved before its result landed.
 func TestScriptDone_DropsInstanceWhenFocusChangedMidDispatch(t *testing.T) {
 	t.Run("control: focus unchanged, instance adopted", func(t *testing.T) {
 		m := newScriptSlotHome(t)

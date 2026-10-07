@@ -26,10 +26,10 @@ var instanceNames = map[string]bool{
 	"InstanceOptions":  true,
 }
 
-// bridgeNames are the model's bridge from an InstanceID to an instance and
-// back, and the script host's own wrapper of it (app's instOf, which
-// returns the instance), which only the script host may call until stage
-// 1C package D.
+// bridgeNames are the model's former bridge from an InstanceID to an
+// instance and back, and the script host's former wrapper of it (app's
+// instOf), deleted in stage 1C package D: flagged anywhere, in case one
+// comes back.
 var bridgeNames = map[string]bool{
 	"InstanceOf":     true,
 	"IDFor":          true,
@@ -38,23 +38,22 @@ var bridgeNames = map[string]bool{
 }
 
 // TestTUIHoldsNoInstance fails when the TUI (app, ui and its subpackages)
-// names a session instance in production code: the type, its constructors
-// or its options. The TUI sees instances only as core.InstanceView values
-// and changes them only by request. The script host (app/app_scripts.go)
-// is exempt until stage 1C package D. Test files are exempt.
+// or the script engine (script) names a session instance in production
+// code: the type, its constructors or its options. The TUI and Lua see
+// instances only as core.InstanceView values and change them only by
+// request. Test files are exempt.
 func TestTUIHoldsNoInstance(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 	require.FileExists(t, filepath.Join(root, "go.mod"))
 
-	exempt := filepath.Join(root, "app", "app_scripts.go")
 	var offenders []string
-	for _, dir := range []string{"app", "ui"} {
+	for _, dir := range []string{"app", "ui", "script"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || path == exempt {
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
 			offenders = append(offenders, instanceUses(t, path)...)

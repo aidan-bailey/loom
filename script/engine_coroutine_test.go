@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/core"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,7 +60,8 @@ func TestEngineResumeContinuesCoroutine(t *testing.T) {
 // resume host across a yield. The app drains each host once, right
 // after its Dispatch or ResumeWithHost returns, so ctx calls after a
 // yield must land on the resume host: reads see its snapshot, and
-// notices and queued instances reach the buffers that get drained.
+// notices and the intents ctx:new_instance enqueues reach the buffers
+// that get drained.
 func TestResumeWithHostRebindsCtx(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()
@@ -75,27 +76,25 @@ func TestResumeWithHostRebindsCtx(t *testing.T) {
 	`))
 	e.EndLoad()
 
-	newInst := func(title string) *session.Instance {
-		inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: t.TempDir(), Program: "claude"})
-		require.NoError(t, err)
-		return inst
-	}
-	dispatchHost := &fakeHost{selected: newInst("a"), repoPath: t.TempDir(), defaultProgram: "claude"}
-	resumeHost := &fakeHost{selected: newInst("b"), repoPath: t.TempDir(), defaultProgram: "claude"}
+	dispatchHost := &fakeHost{selected: &core.InstanceView{ID: 1, Title: "a"}, repoPath: t.TempDir(), defaultProgram: "claude"}
+	resumeHost := &fakeHost{selected: &core.InstanceView{ID: 2, Title: "b"}, repoPath: t.TempDir(), defaultProgram: "claude"}
 
 	_, err := e.Dispatch(context.Background(), "x", dispatchHost)
 	require.NoError(t, err)
 	require.Len(t, dispatchHost.enqueuedIDs, 1, "show_help must yield on an intent")
 
-	require.NoError(t, e.ResumeWithHost(context.Background(), dispatchHost.enqueuedIDs[0], resumeHost))
+	require.NoError(t, e.ResumeWithHost(context.Background(), dispatchHost.enqueuedIDs[0], resumeHost, ResumeValue{}))
 
 	assert.Equal(t, []string{"before:a"}, dispatchHost.notices,
 		"post-resume calls must not land on the already-drained dispatch host")
-	assert.Empty(t, dispatchHost.queuedInstances)
+	assert.Equal(t, []Intent{ShowHelpIntent{}}, dispatchHost.enqueued,
+		"ctx:new_instance after the resume must not land on the dispatch host")
 	assert.Equal(t, []string{"after:b"}, resumeHost.notices,
 		"ctx:selected() after a resume reads the resume host's snapshot")
-	require.Len(t, resumeHost.queuedInstances, 1)
-	assert.Equal(t, "made-after", resumeHost.queuedInstances[0].Title)
+	require.Len(t, resumeHost.enqueued, 1)
+	assert.Equal(t, "made-after", resumeHost.enqueued[0].(CreateInstanceIntent).Title)
+	assert.Equal(t, resumeHost.repoPath, resumeHost.enqueued[0].(CreateInstanceIntent).Path,
+		"its defaults come from the resume host too")
 }
 
 // stashedThread returns the coroutine a handler saved in a Lua global
@@ -150,7 +149,7 @@ func TestDroppedCoroutineCancelsItsContext(t *testing.T) {
 		co := stashedThread(t, e, "co")
 		require.NoError(t, co.Context().Err(), "a parked coroutine keeps a live context")
 
-		err = e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], &fakeHost{})
+		err = e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], &fakeHost{}, ResumeValue{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "non-numeric intent id")
 		assert.Empty(t, e.coroutines)

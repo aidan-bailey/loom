@@ -60,7 +60,7 @@ func TestConfirmDraft_SelectsTheCreatedRow(t *testing.T) {
 	assert.NotZero(t, sel.ID, "a session's row, not the draft's")
 	assert.Equal(t, "fresh", sel.Title)
 	assert.Equal(t, session.Loading, sel.Status, "the start is under way")
-	inst := m.core.InstanceOf(sel.ID)
+	inst := testModel(m).InstanceForTest(sel.ID)
 	require.NotNil(t, inst)
 	assert.Equal(t, "do it", inst.Prompt())
 	assert.Equal(t, "claude --permission-mode acceptEdits", inst.Program())

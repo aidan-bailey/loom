@@ -11,7 +11,7 @@
 package script
 
 import (
-	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/core"
 )
 
 // Host is the facade script userdata uses to touch live TUI state.
@@ -22,14 +22,14 @@ import (
 // a snapshot taken on the Update goroutine when the dispatch or resume
 // began (a handler never sees later changes, including its own
 // deferred ones) and records mutations for Update to apply. Returned
-// instances are shared: session.Instance locks internally.
+// instances are views: core.InstanceView values copied at the snapshot.
 type Host interface {
 	// SelectedInstance returns the instance focused in the list panel
-	// when the dispatch or resume began, or nil if the list was empty.
-	SelectedInstance() *session.Instance
+	// when the dispatch or resume began, or false if the list was empty.
+	SelectedInstance() (core.InstanceView, bool)
 	// Instances returns every instance the list tracked when the
 	// dispatch or resume began. Callers must not mutate the slice.
-	Instances() []*session.Instance
+	Instances() []core.InstanceView
 	// ConfigDir returns the resolved workspace config directory for
 	// the currently focused workspace.
 	ConfigDir() string
@@ -43,17 +43,6 @@ type Host interface {
 	// BranchPrefix returns the branch prefix configured for the
 	// focused workspace (e.g. "alice/").
 	BranchPrefix() string
-	// QueueInstance asks the main goroutine to finalize the given
-	// instance into the list. The engine calls this from userdata
-	// methods like ctx:new_instance{}. The actual list mutation is
-	// deferred to Update — see app.scriptDoneMsg.
-	QueueInstance(inst *session.Instance)
-	// InstanceResumed reports that a script's inst:resume() relaunched or
-	// reattached inst's tmux session, so the main goroutine gives it a
-	// fresh pane client (session lifecycle attaches none). Called from
-	// the resume userdata method after a successful Resume; deferred to
-	// Update like QueueInstance.
-	InstanceResumed(inst *session.Instance)
 	// Notify posts a transient message to the TUI's error/info bar.
 	// Called from script userdata through ctx:notify().
 	Notify(msg string)
@@ -128,5 +117,5 @@ type Host interface {
 	// currently displayed. Returns an error if no session is cached
 	// (e.g. the user has not yet visited that instance's terminal pane,
 	// or the instance is paused).
-	SendTerminalKeys(inst *session.Instance, text string) error
+	SendTerminalKeys(v core.InstanceView, text string) error
 }

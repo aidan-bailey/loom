@@ -67,7 +67,11 @@ func handleStatePromptKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					// The flow is suspended until the expansion lands; the
 					// draft stays open, its row shown, and
 					// handleIssueExpanded reopens the flow on it.
-					return m, issueExpandCmd(m.repoPath(), n, d, rest, prompt, selectedBranch)
+					repo := m.repoPath()
+					m.core.FetchIssue(repo, n, m.newReq(pendingReq{issue: &pendingIssue{expand: &issueExpandedMsg{
+						draft: d, repo: repo, number: n, rest: rest, literal: prompt, selectedBranch: selectedBranch,
+					}}}))
+					return m, nil
 				}
 
 				return m.openLaunchOptionsForNew(d, selectedBranch)

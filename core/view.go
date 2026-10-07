@@ -27,7 +27,13 @@ type InstanceView struct {
 	// RepoPath is the repository the session works in (Instance.Path).
 	RepoPath     string
 	WorktreePath string
-	Branch       string
+	// WorktreeRepoPath is the repository root its worktree belongs to, as
+	// git resolved it when the worktree was made (GitWorktree.GetRepoPath):
+	// RepoPath through symlinks, or the root above a subdirectory. "" until
+	// the instance has started, and for a workspace terminal. Lua's
+	// worktree handle is built on it.
+	WorktreeRepoPath string
+	Branch           string
 	// TmuxSession is the agent's tmux session name ("" before it has one);
 	// pane clients attach by it. SessionProgram is the program that session
 	// was launched with, which picks the client's adapter (trust-prompt and

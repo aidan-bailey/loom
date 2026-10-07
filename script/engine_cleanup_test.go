@@ -203,7 +203,7 @@ func TestInFlight_TracksDispatchAndResume(t *testing.T) {
 
 	bh := &blockingHost{fakeHost: &fakeHost{}, entered: make(chan struct{}), release: make(chan struct{})}
 	resumed := make(chan error, 1)
-	go func() { resumed <- e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], bh) }()
+	go func() { resumed <- e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], bh, ResumeValue{}) }()
 	<-bh.entered
 
 	busy := e.inFlight.Load()

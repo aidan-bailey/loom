@@ -372,16 +372,18 @@ func (e *Engine) Dispatch(ctx context.Context, key string, h Host) (matched bool
 // still reach a live Host, and rebinds the handler's ctx to h so ctx
 // reads after the yield see h's state and ctx side effects (notify,
 // new_instance) reach h rather than the already-drained dispatch
-// host. The engine always resumes with lua.LNil — handlers that need
-// a typed value should keep their state in closures rather than in
-// await's return. Errors propagate from the underlying Resume.
+// host. The call that yielded returns v (luaValue): nothing for an
+// intent, the outcome for a lifecycle call or ctx:new_instance.
+// Handlers that need any other typed value should keep their state in
+// closures rather than in await's return. Errors propagate from the
+// underlying Resume.
 //
 // curHost swap and the resume itself run under a single critical
 // section so a concurrent Dispatch can't observe the host slot during
 // the window between "curHost = h" and the coroutine actually using
 // it. The resume body runs via resumeLocked, not Resume, to avoid
 // double-locking.
-func (e *Engine) ResumeWithHost(ctx context.Context, id IntentID, h Host) error {
+func (e *Engine) ResumeWithHost(ctx context.Context, id IntentID, h Host, v ResumeValue) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -397,11 +399,27 @@ func (e *Engine) ResumeWithHost(ctx context.Context, id IntentID, h Host) error 
 
 	trace := log.TraceID(ctx)
 	log.For("script").Debug("handler.resume", "trace", trace, "intent_id", int(id))
-	_, err := e.resumeLocked(id, lua.LNil)
+	_, err := e.resumeLocked(id, e.luaValue(v))
 	if err != nil {
 		log.For("script").Debug("handler.resume_err", "trace", trace, "intent_id", int(id), "err", err.Error())
 	}
 	return err
+}
+
+// luaValue turns a resume value into the Lua value the yielding call
+// returns. Built inside the engine's lock: the Lua state is not
+// goroutine-safe. A closed engine gets nil, which resumeLocked refuses
+// anyway.
+func (e *Engine) luaValue(v ResumeValue) lua.LValue {
+	switch {
+	case e.L == nil:
+		return lua.LNil
+	case v.Err != "":
+		return lua.LString(v.Err)
+	case v.Instance != nil:
+		return pushInstance(e.L, v.Instance)
+	}
+	return lua.LNil
 }
 
 // errString formats err for DebugKV attributes. Returns "" for nil so

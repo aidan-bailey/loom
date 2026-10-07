@@ -3,6 +3,7 @@ package script
 import (
 	"bytes"
 	"context"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/aidan-bailey/loom/log"
 	"log/slog"
@@ -62,9 +63,10 @@ func TestEngineRegistersAndDispatches(t *testing.T) {
 }
 
 // TestCtxNewInstancePassesPromptThroughConstructor pins ctx:new_instance's
-// options reaching the queued instance: prompt and program go through
-// session.InstanceOptions, and instance:program() reads the same value
-// back through the locked getter.
+// options reaching the instance it creates: prompt and program go into the
+// CreateInstanceIntent the host creates it from, defaulting to the host's
+// program and repo, and the call returns the created instance, whose
+// instance:program() reads the same value back.
 func TestCtxNewInstancePassesPromptThroughConstructor(t *testing.T) {
 	e := NewEngine(nil)
 	defer e.Close()
@@ -83,13 +85,23 @@ func TestCtxNewInstancePassesPromptThroughConstructor(t *testing.T) {
 	matched, err := e.Dispatch(context.Background(), "ctrl+n", h)
 	require.NoError(t, err)
 	require.True(t, matched)
-	require.Len(t, h.queuedInstances, 2)
+	require.Len(t, h.enqueued, 1, "ctx:new_instance yields until the instance exists")
+	first, ok := h.enqueued[0].(CreateInstanceIntent)
+	require.True(t, ok, "got %T", h.enqueued[0])
+	assert.Equal(t, CreateInstanceIntent{Title: "scripted", Program: "aider", Path: h.repoPath, Prompt: "fix the build"}, first,
+		"path defaults to the host's repo")
 
-	assert.Equal(t, "fix the build", h.queuedInstances[0].Prompt())
-	assert.Equal(t, "aider", h.queuedInstances[0].Program())
-	assert.Equal(t, []string{"aider"}, h.notices, "instance:program() reads the constructor's program")
-	assert.Empty(t, h.queuedInstances[1].Prompt(), "prompt is optional")
-	assert.Equal(t, "claude", h.queuedInstances[1].Program(), "program defaults to the host's")
+	// The host resumes the call with the instance the model created.
+	created := &core.InstanceView{ID: 7, Title: first.Title, Program: first.Program}
+	require.NoError(t, e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{Instance: created}))
+	require.Len(t, h.enqueued, 2)
+	second := h.enqueued[1].(CreateInstanceIntent)
+
+	assert.Equal(t, "fix the build", first.Prompt)
+	assert.Equal(t, "aider", first.Program)
+	assert.Equal(t, []string{"aider"}, h.notices, "instance:program() reads the created instance's program")
+	assert.Empty(t, second.Prompt, "prompt is optional")
+	assert.Equal(t, "claude", second.Program, "program defaults to the host's")
 }
 
 // TestEngineNotifyStandaloneRoutesToHost confirms cs.notify (the
@@ -385,7 +397,7 @@ func TestLogScript_RuntimeLinesCarryTheActionFile(t *testing.T) {
 	_, err := e.Dispatch(context.Background(), "x", h)
 	require.NoError(t, err)
 	require.Len(t, h.enqueuedIDs, 1)
-	require.NoError(t, e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], &fakeHost{}))
+	require.NoError(t, e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], &fakeHost{}, ResumeValue{}))
 
 	out := buf.String()
 	assert.Contains(t, logLineContaining(out, "logged at dispatch"), "file=runtime.lua")

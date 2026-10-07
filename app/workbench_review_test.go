@@ -447,7 +447,7 @@ func TestWorkbenchReview_SendOpensConfirm(t *testing.T) {
 	m, doc := newReviewWorkbenchHome(t)
 	sel := m.list.GetSelectedInstance()
 	require.NotNil(t, sel)
-	inst := m.core.InstanceOf(sel.ID)
+	inst := testModel(m).InstanceForTest(sel.ID)
 	inst.SetTmuxSession(aliveTmuxSessionForTest(t, "a"))
 	require.True(t, inst.Pane().TmuxAlive(), "fixture precondition")
 	m.syncViews()

@@ -67,9 +67,23 @@ func (m *Model) SetAccountUsageForTest(name string, u account.Usage, err error) 
 	m.usage[name] = accountUsage{last: u, err: err}
 }
 
-// IDForTest returns inst's ID (assigning one): for tests that build
+// IDOfForTest returns inst's ID (assigning one): for tests that build
 // instances in the model and then find them through the TUI.
-func (m *Model) IDForTest(inst *session.Instance) InstanceID { return m.idOf(inst) }
+func (m *Model) IDOfForTest(inst *session.Instance) InstanceID { return m.idOf(inst) }
+
+// InstanceForTest returns the instance id names, nil when no loaded
+// workspace holds it: for tests that act on the instance behind a row.
+func (m *Model) InstanceForTest(id InstanceID) *session.Instance {
+	inst, _ := m.lookup(id)
+	return inst
+}
+
+// FetchedIssueForTest is the result FetchIssue's job delivers for request
+// req: issue, or err. A test delivers it in place of running the job, whose
+// gh call it can't make.
+func FetchedIssueForTest(req ReqID, issue github.Issue, err error) any {
+	return tracked{req: req, result: issueResult{issue: issue, err: err}}
+}
 
 // AddForTest adds inst to w as the model's own edits do (Workspace.add):
 // for tests that build instances and install them in a fixture workspace.

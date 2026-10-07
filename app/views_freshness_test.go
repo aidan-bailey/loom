@@ -295,20 +295,23 @@ func TestAttachDone_RepairsTheRowAsItIsNow(t *testing.T) {
 	assert.False(t, m.panes.Alive(name), "a session paused during the attach gets no client back")
 }
 
-// TestScriptDone_ReadsWhatTheScriptChanged: a script changes instances on
-// its own goroutine (inst:pause()), so its completion reads them afresh
-// before refreshing the panes; and a session it created
-// (ctx:new_instance) is the row instanceChanged shows when it is the
-// only one.
+// TestScriptDone_ReadsWhatTheScriptChanged: a script changes instances
+// through the model (inst:pause(), ctx:new_instance), so what its calls
+// did is in the stores by the time it finishes: a session it paused shows
+// as paused, and a session it created is the row instanceChanged shows
+// when it is the only one.
 func TestScriptDone_ReadsWhatTheScriptChanged(t *testing.T) {
 	t.Run("an instance the script paused", func(t *testing.T) {
+		isolateTmux(t)
 		m := homeWithAppState(t)
 		m.splitPane.SetSize(100, 40)
-		inst := addReadyInstance(t, m)
+		inst := startedInstanceWithProgram(t, "lua-paused", "claude", "idle")
+		m.ws.AddForTest(inst)
+		selectIn(m, m.list, inst)
 		_ = m.instanceChanged()
+		withScript(t, m, `cs.bind("Z", function(ctx) ctx:selected():pause() end)`)
 
-		require.NoError(t, inst.TransitionTo(session.Paused))
-		m.Update(scriptDoneMsg{})
+		require.NoError(t, lastErr(t, runKey(t, m, "Z")))
 
 		assert.Contains(t, agentPane(m), "Session is paused")
 	})
@@ -317,10 +320,9 @@ func TestScriptDone_ReadsWhatTheScriptChanged(t *testing.T) {
 		m.splitPane.SetSize(100, 40)
 		_ = m.instanceChanged()
 		require.Contains(t, agentPane(m), "No agents running yet", "fixture")
-		inst, err := session.NewInstance(session.InstanceOptions{Title: "scripted", Path: t.TempDir(), Program: "claude"})
-		require.NoError(t, err)
+		withScript(t, m, `cs.bind("Z", function(ctx) ctx:new_instance{title = "scripted"} end)`)
 
-		m.Update(scriptDoneMsg{slot: m.workspaceSlot, pendingInstances: []*session.Instance{inst}})
+		require.NoError(t, lastErr(t, runKey(t, m, "Z")))
 
 		assert.Contains(t, agentPane(m), "Please enter a name for the instance")
 	})

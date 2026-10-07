@@ -11,19 +11,17 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 // scriptDoneMsg is dispatched when a script action finishes (success
-// or failure). pendingInstances carries any instances the script
-// created via ctx:new_instance{} so Update can finalize them into the
-// dispatch slot's list on the main goroutine. pendingIntents carries
-// the Intents a handler enqueued (via cs.await(cs.actions.foo()))
-// before yielding — handleScriptDone dispatches each one and the
-// matching runXYZ schedules a scriptResumeMsg when done.
+// or failure). pendingIntents carries the Intents a handler enqueued
+// (via cs.await(cs.actions.foo()), a lifecycle call or ctx:new_instance)
+// before yielding — handleScriptDone dispatches each one, and the
+// matching runXYZ, or the model's Reply, schedules a scriptResumeMsg
+// when done.
 //
 // trace is the correlation ID minted at key-dispatch time; propagating
 // it through the message lets every downstream log record (intent
@@ -31,43 +29,43 @@ import (
 // identifier.
 //
 // slot is the slot that was focused when the host snapshot was taken
-// (see scriptHost.slot): the one pendingInstances were built for.
-//
-// resumedInstances are the instances the script's inst:resume() brought
-// back: each loaded one gets a fresh pane client (replacePane).
+// (see scriptHost.slot): the one a ctx:new_instance among
+// pendingIntents creates in.
 type scriptDoneMsg struct {
-	err              error
-	pendingInstances []*session.Instance
-	resumedInstances []*session.Instance
-	pendingActions   []func(*home)
-	notices          []string
-	pendingIntents   []pendingIntent
-	trace            string
-	key              string
-	slot             *workspaceSlot
+	err            error
+	pendingActions []func(*home)
+	notices        []string
+	pendingIntents []pendingIntent
+	trace          string
+	key            string
+	slot           *workspaceSlot
 }
 
 // scriptResumeMsg feeds a value back into a suspended handler
 // coroutine keyed by id. Carries no Lua-specific state so the app
-// layer stays independent of gopher-lua; the engine resumes with nil
-// internally. trace is the originating dispatch's trace ID so the
-// resumed work continues to correlate with the triggering key press.
+// layer stays independent of gopher-lua; the engine turns value (nothing,
+// an error message or an instance, script.ResumeValue) into the Lua value
+// the yielding call returns. trace is the originating dispatch's trace
+// ID so the resumed work continues to correlate with the triggering key
+// press.
 type scriptResumeMsg struct {
 	id    script.IntentID
 	trace string
+	value script.ResumeValue
 }
 
 // scriptHost implements script.Host for *home. newScriptHost allocates
-// a fresh one per dispatch and per resume so pending instances,
-// notices, and intents don't leak across script invocations.
+// a fresh one per dispatch and per resume so notices, intents and
+// deferred actions don't leak across script invocations.
 //
 // It deliberately holds no *home: its methods run on the Lua dispatch
 // goroutine, concurrently with Update/View, so reads come from a
 // snapshot taken on the Update goroutine and writes are deferred (see
 // deferModelMutation).
 type scriptHost struct {
-	selected       *session.Instance
-	instances      []*session.Instance
+	selected       core.InstanceView
+	hasSelected    bool
+	instances      []core.InstanceView
 	configDir      string
 	repoPath       string
 	defaultProgram string
@@ -75,15 +73,13 @@ type scriptHost struct {
 	// splitPane is the focused slot's pane at snapshot time. Only its
 	// terminal is used, which is fixed at construction and locks itself.
 	splitPane *ui.SplitPane
-	// slot is the focused slot at snapshot time, whose ConfigDir and repo
-	// path ctx:new_instance builds from. Identity only: carried into
-	// scriptDoneMsg and compared on the Update goroutine, never
-	// dereferenced by the host.
+	// slot is the focused slot at snapshot time, whose repo path
+	// ctx:new_instance defaults to and whose workspace it creates in.
+	// Identity only: carried into scriptDoneMsg and compared on the Update
+	// goroutine, never dereferenced by the host.
 	slot *workspaceSlot
 
 	mu      sync.Mutex
-	pending []*session.Instance
-	resumed []*session.Instance
 	notices []string
 	intents []pendingIntent
 	// actions holds model mutations recorded by the "sync" primitives
@@ -95,7 +91,7 @@ type scriptHost struct {
 
 // newScriptHost snapshots the model state the script.Host read methods
 // expose. It must run on the Update goroutine (dispatchScript,
-// handleScriptResume); the instance slice is the host's own.
+// handleScriptResume); the view slice is the host's own.
 func newScriptHost(m *home) *scriptHost {
 	h := &scriptHost{
 		configDir:      m.configDir(),
@@ -105,14 +101,14 @@ func newScriptHost(m *home) *scriptHost {
 		slot:           m.workspaceSlot,
 	}
 	if m.list != nil {
-		// Lua still holds instances until package D: the rows map to
-		// them through the bridge.
-		if sel := m.list.GetSelectedInstance(); sel != nil {
-			h.selected = m.instOf(sel.ID)
+		// A creation flow's draft row (ID 0) is no instance yet: a
+		// script sees only the model's.
+		if sel := m.list.GetSelectedInstance(); sel != nil && sel.ID != 0 {
+			h.selected, h.hasSelected = *sel, true
 		}
 		for _, v := range m.list.GetInstances() {
-			if inst := m.instOf(v.ID); inst != nil {
-				h.instances = append(h.instances, inst)
+			if v.ID != 0 {
+				h.instances = append(h.instances, v)
 			}
 		}
 	}
@@ -125,12 +121,12 @@ func newScriptHost(m *home) *scriptHost {
 }
 
 // SelectedInstance implements script.Host.
-func (s *scriptHost) SelectedInstance() *session.Instance {
-	return s.selected
+func (s *scriptHost) SelectedInstance() (core.InstanceView, bool) {
+	return s.selected, s.hasSelected
 }
 
 // Instances implements script.Host.
-func (s *scriptHost) Instances() []*session.Instance {
+func (s *scriptHost) Instances() []core.InstanceView {
 	return s.instances
 }
 
@@ -152,29 +148,6 @@ func (s *scriptHost) DefaultProgram() string {
 // BranchPrefix implements script.Host.
 func (s *scriptHost) BranchPrefix() string {
 	return s.branchPrefix
-}
-
-// QueueInstance stages an instance for finalization on the main
-// goroutine. We can't call h.ws.Add here because the workspace
-// isn't goroutine-safe.
-func (s *scriptHost) QueueInstance(inst *session.Instance) {
-	if inst == nil {
-		return
-	}
-	s.mu.Lock()
-	s.pending = append(s.pending, inst)
-	s.mu.Unlock()
-}
-
-// InstanceResumed stages a script-resumed instance for a fresh pane
-// client, attached on the main goroutine in handleScriptDone.
-func (s *scriptHost) InstanceResumed(inst *session.Instance) {
-	if inst == nil {
-		return
-	}
-	s.mu.Lock()
-	s.resumed = append(s.resumed, inst)
-	s.mu.Unlock()
 }
 
 // Notify queues a message for the error/info bar. Routed through
@@ -203,7 +176,7 @@ func (s *scriptHost) Enqueue(intent script.Intent) script.IntentID {
 // runs inside a tea.Cmd goroutine that Bubble Tea executes concurrently
 // with Update and View, and ui.List / ui.SplitPane have no internal
 // locking. Recording the mutation and applying it on the main loop (the
-// same pattern QueueInstance uses for ws.Add) removes the race.
+// same pattern Enqueue uses for intents) removes the race.
 // Reads come from the newScriptHost snapshot, so a handler does not see
 // its own deferred mutations; this matches how Intents already defer
 // their effects.
@@ -429,14 +402,11 @@ func (s *scriptHost) ResizeSplitDown() {
 }
 
 // SendTerminalKeys implements script.Host.
-func (s *scriptHost) SendTerminalKeys(inst *session.Instance, text string) error {
-	if inst == nil {
-		return fmt.Errorf("send_terminal_keys: nil instance")
-	}
+func (s *scriptHost) SendTerminalKeys(v core.InstanceView, text string) error {
 	if s.splitPane == nil {
 		return fmt.Errorf("send_terminal_keys: no terminal pane")
 	}
-	return s.splitPane.SendTerminalKeysToInstance(inst.Title, text)
+	return s.splitPane.SendTerminalKeysToInstance(v.Title, text)
 }
 
 // pendingIntent ties a caller-provided intent to the id the script
@@ -449,25 +419,21 @@ type pendingIntent struct {
 	trace  string
 }
 
-// drain returns and clears the pending instances, notices, intents, and
-// deferred model actions. Called from dispatchScript after the Lua call
-// returns and from scriptResumeMsg handling after each Resume — any call
-// that wakes a coroutine may leave fresh Intents or actions in the host
+// drain returns and clears the pending notices, intents, and deferred
+// model actions. Called from dispatchScript after the Lua call returns
+// and from scriptResumeMsg handling after each Resume — any call that
+// wakes a coroutine may leave fresh Intents or actions in the host
 // buffer.
-func (s *scriptHost) drain() ([]*session.Instance, []string, []pendingIntent, []func(*home), []*session.Instance) {
+func (s *scriptHost) drain() ([]string, []pendingIntent, []func(*home)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p := s.pending
 	n := s.notices
 	in := s.intents
 	ac := s.actions
-	r := s.resumed
-	s.pending = nil
 	s.notices = nil
 	s.intents = nil
 	s.actions = nil
-	s.resumed = nil
-	return p, n, in, ac, r
+	return n, in, ac
 }
 
 // initScripts wires a fresh engine onto h and loads the global
@@ -560,7 +526,7 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 
 	return func() tea.Msg {
 		_, err := engine.Dispatch(ctx, key, host)
-		pending, notices, intents, actions, resumed := host.drain()
+		notices, intents, actions := host.drain()
 		// Stamp trace on every intent so handleScriptIntent can
 		// log under the same ID. Engine.Dispatch already produced
 		// traced handler.begin/end records; this carries the trace
@@ -569,15 +535,13 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 			intents[i].trace = trace
 		}
 		return scriptDoneMsg{
-			err:              err,
-			pendingInstances: pending,
-			resumedInstances: resumed,
-			pendingActions:   actions,
-			notices:          notices,
-			pendingIntents:   intents,
-			trace:            trace,
-			key:              key,
-			slot:             host.slot,
+			err:            err,
+			pendingActions: actions,
+			notices:        notices,
+			pendingIntents: intents,
+			trace:          trace,
+			key:            key,
+			slot:           host.slot,
 		}
 	}, true
 }
@@ -592,10 +556,20 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 // confirmation must arrange their own signal path. Quit routes
 // through handleQuit to preserve the save-on-exit path the legacy
 // "q" key used.
-func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
+//
+// A lifecycle call or ctx:new_instance is a request to the model
+// instead, and its coroutine resumes when the model replies
+// (scriptInstanceOp, scriptCreate). slot is the workspace a
+// ctx:new_instance creates in: the script's snapshot slot while it was
+// still focused, nil when focus had moved (handleScriptDone).
+func (m *home) handleScriptIntent(p pendingIntent, slot *workspaceSlot) tea.Cmd {
 	log.For("script").Debug("intent", "trace", p.trace, "intent_id", int(p.id), "kind", fmt.Sprintf("%T", p.intent))
 	var cmd tea.Cmd
 	switch i := p.intent.(type) {
+	case script.InstanceOpIntent:
+		return m.scriptInstanceOp(p, i) // resumed by the Reply (scriptReplied)
+	case script.CreateInstanceIntent:
+		return m.scriptCreate(p, i, slot)
 	case script.QuitIntent:
 		// handleQuit returns tea.Quit on success. On SaveInstances
 		// failure (any slot in multi-slot mode, or the root storage in
@@ -700,9 +674,9 @@ func (m *home) handleScriptIntent(p pendingIntent) tea.Cmd {
 // msg.id. A fresh scriptHost (with a fresh snapshot) is allocated per
 // resume so any intents the resumed coroutine enqueues on its way to
 // the next yield are drained into a follow-up scriptDoneMsg. The
-// engine resumes with nil internally (callers don't pass Lua values
-// across the app boundary). Errors flow through handleError on the
-// next tick.
+// engine resumes with msg.value, which it turns into the Lua value
+// itself (callers don't pass Lua values across the app boundary).
+// Errors flow through handleError on the next tick.
 func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 	if m.scripts == nil {
 		return nil
@@ -721,50 +695,44 @@ func (m *home) handleScriptResume(msg scriptResumeMsg) tea.Cmd {
 		ctx = log.WithValueForTrace(ctx, msg.trace)
 	}
 	return func() tea.Msg {
-		err := engine.ResumeWithHost(ctx, msg.id, host)
-		pending, notices, intents, actions, resumed := host.drain()
+		err := engine.ResumeWithHost(ctx, msg.id, host, msg.value)
+		notices, intents, actions := host.drain()
 		for i := range intents {
 			intents[i].trace = msg.trace
 		}
 		return scriptDoneMsg{
-			err:              err,
-			pendingInstances: pending,
-			resumedInstances: resumed,
-			pendingActions:   actions,
-			notices:          notices,
-			pendingIntents:   intents,
-			trace:            msg.trace,
-			slot:             host.slot,
+			err:            err,
+			pendingActions: actions,
+			notices:        notices,
+			pendingIntents: intents,
+			trace:          msg.trace,
+			slot:           host.slot,
 		}
 	}
 }
 
-// handleScriptDone processes a scriptDoneMsg: finalizes any pending
-// instances into the list of the slot they were built for (or drops
-// them with a notice if the user switched workspace mid-dispatch),
-// routes a failure through handleError, and surfaces script notices via
-// errBox so users see them inline. Instances the script resumed get a
-// fresh pane client (replacePane). The ordering keeps instance adoption
-// prior to error display so that, e.g., a script that creates an
-// instance and then errors still leaves the new session visible.
-// instanceChanged fires unconditionally on dispatch so sync primitives
-// (CursorUp/Down/ToggleDiff) that used to trigger a refresh in the
-// legacy runXYZ now still do.
+// handleScriptDone processes a scriptDoneMsg: runs the script's
+// deferred actions, routes a failure through handleError, surfaces
+// script notices via errBox so users see them inline, and dispatches the
+// intents the script yielded on, a ctx:new_instance's among them, which
+// creates in the slot the script's snapshot was taken on, provided that
+// slot was still focused when the result arrived (or is refused, if the
+// user switched workspace mid-dispatch). instanceChanged fires
+// unconditionally on dispatch so sync primitives (CursorUp/Down/
+// ToggleDiff) that used to trigger a refresh in the legacy runXYZ now
+// still do.
 func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
-	// The script ran on its own goroutine and may have changed instances
-	// directly (inst:pause()), which the stores see only at the drain:
-	// reread them for the deferred actions and instanceChanged below, as
-	// they read the shared instances before.
-	m.syncViews()
-	// Pending instances were built from the snapshot of the slot focused
-	// at dispatch (its ConfigDir and repo path). If the user switched
-	// workspace while the script ran, adding them to the slot focused now
-	// would file one workspace's session under another, so they are
-	// dropped with a notice (like handleIssuePicked's repo guard). Decide
+	// A ctx:new_instance defaults to the snapshot slot's repo path. If the
+	// user switched workspace while the script ran, creating it in the
+	// slot focused now would file one workspace's session under another,
+	// so it is refused (like handleIssuePicked's repo guard). Decide
 	// before the deferred actions run: one of them may be the script's own
-	// workspace switch, after which the instance still belongs to — and
-	// is added to — the slot it was built for.
-	adopt := msg.slot != nil && msg.slot == m.workspaceSlot
+	// workspace switch, after which the instance still belongs to — and is
+	// created in — the slot it was built for.
+	var owner *workspaceSlot
+	if msg.slot != nil && msg.slot == m.workspaceSlot {
+		owner = msg.slot
+	}
 	// Apply deferred model mutations from the script "sync" primitives
 	// (cursor/scroll/diff/workspace navigation) first, on the main
 	// goroutine. They were recorded — not executed — during dispatch to
@@ -774,34 +742,6 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 		act(m)
 	}
 	var cmds []tea.Cmd
-	if adopt {
-		for _, inst := range msg.pendingInstances {
-			m.core.AdoptForScript(msg.slot.ws, inst)
-		}
-		m.syncViews() // the rows the adds made, for instanceChanged
-	} else if len(msg.pendingInstances) > 0 {
-		titles := make([]string, len(msg.pendingInstances))
-		for i, inst := range msg.pendingInstances {
-			titles[i] = inst.Title
-		}
-		log.For("script").Warn("pending_instances_dropped", "trace", msg.trace, "titles", titles)
-		cmds = append(cmds, m.handleError(fmt.Errorf("workspace changed while a script ran; not creating %s here", strings.Join(titles, ", "))))
-	}
-	// Session lifecycle attaches no pane client, so a session a script
-	// resumed (relaunched or reattached) gets a fresh one here, as a
-	// resume completion's does. One no loaded slot holds displays
-	// nothing and gets none; replacePane skips an inactive instance.
-	for _, inst := range msg.resumedInstances {
-		id, ok := m.core.IDFor(inst)
-		if !ok {
-			continue
-		}
-		if v, _ := m.viewByID(id); v != nil {
-			if c := m.replacePane(v); c != nil {
-				cmds = append(cmds, c)
-			}
-		}
-	}
 	// Notices surface through the error bar so they auto-clear on
 	// the same 3s schedule as real errors. ErrBox has no info-style
 	// channel yet; adding one is deferred to a follow-up change.
@@ -828,11 +768,12 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	}
 	cmds = append(cmds, m.instanceChanged())
 	// Dispatch any yielded intents. handleScriptIntent mutates state
-	// synchronously (opens overlays, flips m.state, etc.) and returns a
-	// Cmd that batches the intent's side-effect Cmd with a resume
-	// message for the awaiting coroutine.
+	// synchronously (opens overlays, flips m.state, sends a request to
+	// the model, etc.) and returns a Cmd that batches the intent's
+	// side-effect Cmd with a resume message for the awaiting coroutine,
+	// or nil for a request, whose Reply resumes it.
 	for _, p := range msg.pendingIntents {
-		if c := m.handleScriptIntent(p); c != nil {
+		if c := m.handleScriptIntent(p, owner); c != nil {
 			cmds = append(cmds, c)
 		}
 	}
@@ -842,13 +783,63 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// instOf resolves id to its instance through the bridge
-// (core.Model.InstanceOf): nil when no loaded workspace holds it, or in a
-// bare test home. It serves the script host until package D, and nothing
-// else.
-func (m *home) instOf(id core.InstanceID) *session.Instance {
-	if m.core == nil {
-		return nil
+// scriptInstanceOp runs a Lua lifecycle call (inst:kill(), :pause(),
+// :resume(), :send_prompt()) as a request to the model. Its coroutine
+// resumes when the Reply lands (scriptReplied), or at once with the error
+// when the TUI refuses the call itself. Three rules carry the methods'
+// behaviour from when they called the instance directly, and the keys':
+//   - pause refuses a Paused session, as Instance.Pause did; the model
+//     admits one, as the s key does.
+//   - resume on a Recoverable session recovers it, as r does
+//     (runResumeOrRecover); the model's Resume refuses one.
+//   - send_prompt holds input to the session until its Reply, as the
+//     TUI's own sends do (sendPrompt), and is refused while another send
+//     to it is in flight.
+func (m *home) scriptInstanceOp(p pendingIntent, i script.InstanceOpIntent) tea.Cmd {
+	ps := &pendingScript{intent: p.id, trace: p.trace, op: i.Op}
+	v, _ := m.viewByID(i.ID)
+	switch i.Op {
+	case "kill":
+		m.core.Kill(i.ID, m.newReq(pendingReq{script: ps}))
+	case "pause":
+		if v != nil && v.Paused() {
+			return m.resumeScript(p, script.ResumeValue{Err: "pause: instance is already paused"})
+		}
+		m.core.Pause(i.ID, m.newReq(pendingReq{script: ps}))
+	case "resume":
+		if v != nil && v.Status == session.Recoverable {
+			m.core.Recover(i.ID, m.newReq(pendingReq{script: ps}))
+		} else {
+			m.core.Resume(i.ID, m.newReq(pendingReq{script: ps}))
+		}
+	case "send_prompt":
+		if m.sending[i.ID] {
+			return m.resumeScript(p, script.ResumeValue{Err: fmt.Sprintf("send_prompt: still sending the last prompt to %s", i.Title)})
+		}
+		m.holdInput(i.ID)
+		ps.held = i.ID
+		m.core.SendPrompt(i.ID, i.Text, m.newReq(pendingReq{script: ps}))
+	default:
+		return m.resumeScript(p, script.ResumeValue{Err: fmt.Sprintf("%s: unknown operation", i.Op)})
 	}
-	return m.core.InstanceOf(id)
+	return nil
+}
+
+// scriptCreate runs ctx:new_instance as a Create, unstarted, in slot's
+// workspace: the script's snapshot slot, or nil when focus moved while
+// the script ran (handleScriptDone), which refuses it. Its coroutine
+// resumes with the new instance when the Reply lands (scriptReplied).
+func (m *home) scriptCreate(p pendingIntent, i script.CreateInstanceIntent, slot *workspaceSlot) tea.Cmd {
+	if slot == nil {
+		log.For("script").Warn("new_instance_dropped", "trace", p.trace, "title", i.Title)
+		return m.resumeScript(p, script.ResumeValue{Err: fmt.Sprintf("new_instance: workspace changed while a script ran; not creating %s here", i.Title)})
+	}
+	req := m.newReq(pendingReq{script: &pendingScript{intent: p.id, trace: p.trace, op: "new_instance"}})
+	m.core.Create(slot.ws, core.NewInstance{Title: i.Title, Path: i.Path, Program: i.Program, Prompt: i.Prompt, Branch: i.Branch}, req)
+	return nil
+}
+
+// resumeScript resumes p's coroutine with v.
+func (m *home) resumeScript(p pendingIntent, v script.ResumeValue) tea.Cmd {
+	return func() tea.Msg { return scriptResumeMsg{id: p.id, trace: p.trace, value: v} }
 }

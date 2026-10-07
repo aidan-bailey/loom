@@ -6,17 +6,19 @@ import (
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/script"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 // pendingReq is what the TUI asked for with a ReqID, so its Reply can find
-// the flow waiting on it. Exactly one field is set. (Package D adds
-// script, a Lua call waiting to resume, and issue, an issue fetch.)
+// the flow waiting on it. Exactly one field is set.
 type pendingReq struct {
 	create *pendingCreate // a creation flow's Create (drafts.go)
 	send   *pendingSend   // a prompt send (sendPrompt)
 	op     *pendingOp     // a lifecycle request the user made (opReq)
+	script *pendingScript // a Lua call waiting to resume (app_scripts.go)
+	issue  *pendingIssue  // an issue fetch (state_issue_picker.go)
 }
 
 // newReq records p and returns the ReqID to send with its request.
@@ -44,6 +46,18 @@ func (m *home) handleReply(r core.Reply) tea.Cmd {
 		return m.sendReplied(p.send, r)
 	case p.op != nil:
 		return m.refusal(p.op.op+" "+p.op.title, r)
+	case p.script != nil:
+		return m.scriptReplied(p.script, r)
+	case p.issue != nil && p.issue.picked != nil:
+		msg := *p.issue.picked
+		msg.issue, msg.err = r.Issue, r.Err
+		_, cmd := m.handleIssuePicked(msg)
+		return cmd
+	case p.issue != nil && p.issue.expand != nil:
+		msg := *p.issue.expand
+		msg.issue, msg.err = r.Issue, r.Err
+		_, cmd := m.handleIssueExpanded(msg)
+		return cmd
 	}
 	return nil
 }
@@ -89,11 +103,17 @@ type pendingSend struct {
 // sendPrompt sends text to v's agent through the model, holding further
 // input to v until the send's Reply.
 func (m *home) sendPrompt(v *core.InstanceView, text string) {
+	m.holdInput(v.ID)
+	m.core.SendPrompt(v.ID, text, m.newReq(pendingReq{send: &pendingSend{id: v.ID, title: v.Title}}))
+}
+
+// holdInput holds input to the instance id while a prompt send to it is
+// in flight (sendingTo); the send's Reply releases it.
+func (m *home) holdInput(id core.InstanceID) {
 	if m.sending == nil {
 		m.sending = make(map[core.InstanceID]bool)
 	}
-	m.sending[v.ID] = true
-	m.core.SendPrompt(v.ID, text, m.newReq(pendingReq{send: &pendingSend{id: v.ID, title: v.Title}}))
+	m.sending[id] = true
 }
 
 // sendReplied releases the hold. The model has already shown a failed send
@@ -112,4 +132,37 @@ func (m *home) sendingTo(v *core.InstanceView) bool {
 	}
 	m.errBox.SetInfo(fmt.Sprintf("still sending the last prompt to %s", v.Title))
 	return true
+}
+
+// pendingScript is a Lua call waiting on the model: its coroutine resumes
+// when the Reply lands. held is the instance a send_prompt holds input to
+// until then (holdInput), 0 for the other calls.
+type pendingScript struct {
+	intent script.IntentID
+	trace  string
+	op     string
+	held   core.InstanceID
+}
+
+// scriptReplied resumes the Lua call a Reply answers: with "<op>: <err>" on
+// failure (the method raises it, as it raised before the model ran Lua's
+// calls), with the new instance for new_instance, and with nothing
+// otherwise. A Reply's Notice resumes it with nothing too: the model has
+// shown it already. A send_prompt's hold is released first.
+func (m *home) scriptReplied(p *pendingScript, r core.Reply) tea.Cmd {
+	if p.held != 0 {
+		delete(m.sending, p.held)
+	}
+	var v script.ResumeValue
+	switch {
+	case r.Err != nil:
+		v.Err = fmt.Sprintf("%s: %s", p.op, r.Err)
+	case p.op == "new_instance":
+		if row, _ := m.viewByID(r.ID); row != nil {
+			v.Instance = row
+		} else if cv, ok := m.core.View(r.ID); ok {
+			v.Instance = &cv
+		}
+	}
+	return func() tea.Msg { return scriptResumeMsg{id: p.intent, trace: p.trace, value: v} }
 }

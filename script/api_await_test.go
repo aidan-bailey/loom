@@ -142,7 +142,7 @@ func TestAwait_WrappingIntentAction_ContinuesAfterResume(t *testing.T) {
 	assert.Empty(t, dispatchHost.notices, "the notice comes after the await")
 
 	resumeHost := &fakeHost{}
-	require.NoError(t, e.ResumeWithHost(context.Background(), dispatchHost.enqueuedIDs[0], resumeHost))
+	require.NoError(t, e.ResumeWithHost(context.Background(), dispatchHost.enqueuedIDs[0], resumeHost, ResumeValue{}))
 	assert.Equal(t, []string{"after"}, resumeHost.notices,
 		"code after cs.await must run once the host resumes the handler")
 	assert.Empty(t, e.coroutines, "the handler finished, so nothing stays parked")

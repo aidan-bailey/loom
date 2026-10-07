@@ -231,14 +231,7 @@ func installSyncActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 // cs.await, the yield leaves the coroutine parked cleanly rather than
 // racing ahead into host-owned state.
 func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
-	enqueue := func(L *lua.LState, intent Intent) int {
-		if e.curHost == nil {
-			return 0
-		}
-		id := e.curHost.Enqueue(intent)
-		e.lastEnqueued = id
-		return L.Yield(lua.LNumber(id))
-	}
+	enqueue := e.enqueueAndYield
 
 	actions.RawSetString("quit", L.NewFunction(func(L *lua.LState) int {
 		return enqueue(L, QuitIntent{})
@@ -320,6 +313,20 @@ func installDeferredActions(L *lua.LState, e *Engine, actions *lua.LTable) {
 	actions.RawSetString("new_from_issue", L.NewFunction(func(L *lua.LState) int {
 		return enqueue(L, NewFromIssueIntent{})
 	}))
+}
+
+// enqueueAndYield enqueues intent on the current host, records its id on
+// e.lastEnqueued so a bare cs.await() can consume it, and yields the
+// running coroutine with the id. Without a host (no dispatch) it does
+// nothing. The deferred cs.actions.* primitives and the yielding
+// instance and ctx methods (lifecycleOp, ctxNewInstance) share it.
+func (e *Engine) enqueueAndYield(L *lua.LState, intent Intent) int {
+	if e.curHost == nil {
+		return 0
+	}
+	id := e.curHost.Enqueue(intent)
+	e.lastEnqueued = id
+	return L.Yield(lua.LNumber(id))
 }
 
 // optBool reads a boolean field from the single table argument at

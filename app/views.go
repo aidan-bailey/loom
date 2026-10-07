@@ -14,8 +14,8 @@ import (
 // built. The rail and every other reader see them through slotRows, which
 // lays the TUI's own overlays (bells, the pane ladder) over them and
 // appends the creation flow's draft row. Nothing in app holds a
-// *session.Instance once package D lands; until then the script host
-// does, and its writes reach instances through the bridge (instOf).
+// *session.Instance: the script host snapshots views too, and every write
+// is a request to the model.
 
 // slotRows is a slot's list source (ui.InstanceSource): its views with the
 // TUI's overlays applied.
@@ -99,9 +99,8 @@ func (m *home) seedViews(s *workspaceSlot) {
 // does the TUI itself when the rest of the same Update reads back a change
 // the model made at once: a request's pre-step (a kill's Deleting; a
 // pause's, resume's or recover's Loading; a confirmation's task, runTask),
-// a script's writes (until package D), and whatever the model's jobs did
-// while a full-screen attach held the event loop. The stores otherwise
-// catch up only at the drain.
+// and whatever the model's jobs did while a full-screen attach held the
+// event loop. The stores otherwise catch up only at the drain.
 func (m *home) syncViews() {
 	if m.core == nil {
 		return

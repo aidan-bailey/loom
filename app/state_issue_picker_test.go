@@ -67,10 +67,10 @@ func TestIssuePickerEnter_DispatchesView(t *testing.T) {
 	deliver(t, m, core.GitHubResultForTest(true, "",
 		map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{12: {Number: 12, Title: "Fix"}}}}, nil))
 	_, _ = runNewFromIssue(m)
-	_, cmd := handleStateIssuePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, _ = handleStateIssuePickerKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, stateDefault, m.state)
 	assert.Nil(t, m.activeOverlay)
-	assert.NotNil(t, cmd)
+	assert.NotNil(t, requestJob(t, m), "the fetch is a request: the model queued its job")
 }
 
 func TestIssuePickedMsg_CreatesLinkedInstanceAndOpensLaunchOptions(t *testing.T) {
@@ -147,4 +147,58 @@ func TestIssuePickedMsg_DoesNotClobberAnotherFlow(t *testing.T) {
 	_, cmd := m.Update(issuePickedMsg{repo: m.repoPath(), issue: github.Issue{Number: 13, Title: "Second"}})
 	assert.Equal(t, first, m.list.NumInstances(), "a second result must not create a rival instance")
 	assert.NotNil(t, cmd, "and says so")
+}
+
+// issueReq is the ReqID of the one issue fetch m is waiting on.
+func issueReq(t *testing.T, m *home) core.ReqID {
+	t.Helper()
+	var reqs []core.ReqID
+	for req, p := range m.pending {
+		if p.issue != nil {
+			reqs = append(reqs, req)
+		}
+	}
+	require.Len(t, reqs, 1, "one issue fetch is in flight")
+	return reqs[0]
+}
+
+// TestIssuePickerEnter_TheFetchsReplyOpensTheDraft: the pick is a request
+// (core.FetchIssue); the Reply carrying the issue reaches
+// handleIssuePicked, which opens the draft and Launch Options, as the
+// fetch's own message did. Its job is delivered as its result, since its
+// gh call can't run here.
+func TestIssuePickerEnter_TheFetchsReplyOpensTheDraft(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	deliver(t, m, core.GitHubResultForTest(true, "",
+		map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{12: {Number: 12, Title: "Fix"}}}}, nil))
+	_, _ = runNewFromIssue(m)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Equal(t, stateDefault, m.state, "the picker closed while the issue is fetched")
+	req := issueReq(t, m)
+
+	deliver(t, m, core.FetchedIssueForTest(req, github.Issue{Number: 12, Title: "Fix flaky test", URL: "https://x/12", Body: "do it"}, nil))
+
+	assert.Empty(t, m.pending, "the Reply was handled")
+	require.NotNil(t, m.draft)
+	assert.Equal(t, "gh-12-fix-flaky-test", m.draft.title)
+	assert.Equal(t, 12, m.draft.issue)
+	assert.Equal(t, stateLaunchOptions, m.state)
+}
+
+// TestIssuePickerEnter_AFailedFetchCreatesNothing: a fetch whose Reply
+// carries an error reaches handleIssuePicked's error branch.
+func TestIssuePickerEnter_AFailedFetchCreatesNothing(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	m.errBox.SetSize(400, 1)
+	deliver(t, m, core.GitHubResultForTest(true, "",
+		map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{12: {Number: 12, Title: "Fix"}}}}, nil))
+	_, _ = runNewFromIssue(m)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	req := issueReq(t, m)
+
+	deliver(t, m, core.FetchedIssueForTest(req, github.Issue{}, errors.New("boom")))
+
+	assert.Nil(t, m.draft)
+	assert.Equal(t, stateDefault, m.state)
+	assert.Contains(t, m.errBox.String(), "fetch issue: boom")
 }

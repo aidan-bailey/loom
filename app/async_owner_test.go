@@ -61,7 +61,7 @@ func selectTitle(t *testing.T, m *home, title string) *session.Instance {
 	v := m.list.GetInstanceByTitle(title)
 	require.NotNil(t, v)
 	m.list.SelectID(v.ID)
-	return m.core.InstanceOf(v.ID)
+	return testModel(m).InstanceForTest(v.ID)
 }
 
 // TestInstanceStarted_FailureAfterSwitchKillsOnlyTheFailedInstance: a failed

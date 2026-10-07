@@ -74,7 +74,7 @@ func TestHandleScriptIntentQuit(t *testing.T) {
 	cmd := m.handleScriptIntent(pendingIntent{
 		id:     id,
 		intent: script.QuitIntent{},
-	})
+	}, m.workspaceSlot)
 	require.NotNil(t, cmd)
 
 	// QuitIntent batches tea.Quit with a resume for the awaiting
@@ -105,7 +105,7 @@ func TestHandleScriptIntentPushSelectedConfirm(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.PushSelectedIntent{Confirm: true},
-	})
+	}, m.workspaceSlot)
 	assert.Equal(t, stateConfirm, m.state, "confirm=true opens confirmation overlay")
 }
 
@@ -116,7 +116,7 @@ func TestHandleScriptIntentPushSelectedNoConfirm(t *testing.T) {
 	cmd := m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.PushSelectedIntent{Confirm: false},
-	})
+	}, m.workspaceSlot)
 	assert.NotEqual(t, stateConfirm, m.state, "confirm=false skips overlay")
 	require.NotNil(t, cmd, "no-confirm push still enqueues push Cmd")
 }
@@ -128,7 +128,7 @@ func TestHandleScriptIntentKillSelectedConfirm(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.KillSelectedIntent{Confirm: true},
-	})
+	}, m.workspaceSlot)
 	assert.Equal(t, stateConfirm, m.state)
 }
 
@@ -139,7 +139,7 @@ func TestHandleScriptIntentKillSelectedNoConfirm(t *testing.T) {
 	cmd := m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.KillSelectedIntent{Confirm: false},
-	})
+	}, m.workspaceSlot)
 	assert.NotEqual(t, stateConfirm, m.state)
 	require.NotNil(t, cmd)
 }
@@ -151,7 +151,7 @@ func TestHandleScriptIntentStash(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.StashIntent{Confirm: true, Help: true},
-	})
+	}, m.workspaceSlot)
 	// help=true opens the help screen first (unseen flag).
 	assert.Equal(t, stateHelp, m.state)
 }
@@ -166,7 +166,7 @@ func TestHandleScriptIntentResume(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.ResumeIntent{},
-	})
+	}, m.workspaceSlot)
 	assert.Equal(t, session.Loading, inst.GetStatus(), "resume flips selected to Loading")
 }
 
@@ -177,7 +177,7 @@ func TestHandleScriptIntentRestartWithOptions_NotPausedIsNoOp(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.RestartWithOptionsIntent{},
-	})
+	}, m.workspaceSlot)
 	assert.Equal(t, stateDefault, m.state)
 }
 
@@ -193,7 +193,7 @@ func TestHandleScriptIntentRestartWithOptions(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.RestartWithOptionsIntent{},
-	})
+	}, m.workspaceSlot)
 	assert.Equal(t, stateLaunchOptions, m.state)
 }
 
@@ -203,7 +203,7 @@ func TestHandleScriptIntentNewInstance(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.NewInstanceIntent{Prompt: false},
-	})
+	}, m.workspaceSlot)
 	assert.Equal(t, stateNew, m.state)
 }
 
@@ -213,7 +213,7 @@ func TestHandleScriptIntentNewInstancePrompt(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.NewInstanceIntent{Prompt: true},
-	})
+	}, m.workspaceSlot)
 	assert.Equal(t, stateNew, m.state)
 	assert.True(t, m.promptAfterName)
 }
@@ -224,7 +224,7 @@ func TestHandleScriptIntentShowHelp(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.ShowHelpIntent{},
-	})
+	}, m.workspaceSlot)
 	assert.Equal(t, stateHelp, m.state)
 }
 
@@ -244,7 +244,7 @@ func TestHandleScriptIntentInlineAttach(t *testing.T) {
 			m.handleScriptIntent(pendingIntent{
 				id:     script.NewIntentID(),
 				intent: script.InlineAttachIntent{Pane: tc.pane},
-			})
+			}, m.workspaceSlot)
 			assert.Equal(t, stateInlineAttach, m.state)
 		})
 	}
@@ -267,7 +267,7 @@ func TestHandleScriptIntentInlineAttachAgentResetsScroll(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.InlineAttachIntent{Pane: script.AttachPaneAgent},
-	})
+	}, m.workspaceSlot)
 	assert.False(t, m.splitPane.IsAgentInScrollMode(), "inline-attach must leave the agent pane at the live tail")
 	assert.Equal(t, stateInlineAttach, m.state)
 }
@@ -279,7 +279,7 @@ func TestHandleScriptIntentFullscreenAttach(t *testing.T) {
 	m.handleScriptIntent(pendingIntent{
 		id:     script.NewIntentID(),
 		intent: script.FullscreenAttachIntent{Pane: script.AttachPaneAgent},
-	})
+	}, m.workspaceSlot)
 	// Help screen opens first (unseen attach-help flag).
 	assert.Equal(t, stateHelp, m.state)
 }
@@ -300,7 +300,7 @@ func TestHandleScriptIntentQuickInput(t *testing.T) {
 			m.handleScriptIntent(pendingIntent{
 				id:     script.NewIntentID(),
 				intent: script.QuickInputIntent{Pane: tc.pane},
-			})
+			}, m.workspaceSlot)
 			assert.Equal(t, stateQuickInteract, m.state)
 		})
 	}
@@ -317,7 +317,7 @@ func TestHandleScriptIntentResumeMessageEmitted(t *testing.T) {
 	cmd := m.handleScriptIntent(pendingIntent{
 		id:     id,
 		intent: script.ShowHelpIntent{},
-	})
+	}, m.workspaceSlot)
 	require.NotNil(t, cmd)
 
 	// Drain the batch and look for the resume message. tea.Batch returns

@@ -176,7 +176,7 @@ func reworkspace(t *testing.T, m *home, slot *workspaceSlot, edit func(*core.Wor
 // idOf is inst's ID in m's model, assigned on first use: what the TUI's
 // rows, messages and events name it by.
 func idOf(m *home, inst *session.Instance) core.InstanceID {
-	return testModel(m).IDForTest(inst)
+	return testModel(m).IDOfForTest(inst)
 }
 
 // rowOf rereads m's view stores (syncViews) and returns inst's row, which
@@ -212,7 +212,7 @@ func instByTitle(m *home, list *ui.List, title string) *session.Instance {
 	if v == nil {
 		return nil
 	}
-	return m.core.InstanceOf(v.ID)
+	return testModel(m).InstanceForTest(v.ID)
 }
 
 // titleID is the ID of list's row titled title, 0 when it shows none.
@@ -227,7 +227,7 @@ func titleID(list *ui.List, title string) core.InstanceID {
 // model: the one a creation flow appended.
 func lastInst(m *home) *session.Instance {
 	rows := m.list.GetInstances()
-	return m.core.InstanceOf(rows[len(rows)-1].ID)
+	return testModel(m).InstanceForTest(rows[len(rows)-1].ID)
 }
 
 // selID is the ID of list's selected row, 0 when nothing is selected.

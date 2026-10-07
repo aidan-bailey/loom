@@ -1,6 +1,10 @@
 package script
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+
+	"github.com/aidan-bailey/loom/core"
+)
 
 // IntentID is the handle a script uses to await an intent's
 // completion. The engine yields it from cs.actions.* primitives; the
@@ -117,6 +121,32 @@ type MergeSessionsIntent struct{}
 // chosen issue seeds a new session's title and prompt.
 type NewFromIssueIntent struct{}
 
+// InstanceOpIntent runs a lifecycle operation on an instance through the
+// model: inst:kill(), inst:pause(), inst:resume() and inst:send_prompt().
+// The host resumes the coroutine with the outcome once the model replies:
+// nothing on success, an error message the Lua method raises otherwise.
+type InstanceOpIntent struct {
+	ID    core.InstanceID
+	Title string
+	Op    string // "kill", "pause", "resume", "send_prompt"
+	Text  string // send_prompt's text
+}
+
+// CreateInstanceIntent creates an instance, unstarted, in the workspace
+// the dispatch began in (ctx:new_instance). The host resumes the coroutine
+// with the new instance, or an error message ctx:new_instance raises.
+type CreateInstanceIntent struct {
+	Title, Program, Path, Prompt, Branch string
+}
+
+// ResumeValue is what the call that yielded returns when its coroutine is
+// resumed: nothing (the zero value), an error message (Err, which the
+// yielding method raises), or an instance (ctx:new_instance's result).
+type ResumeValue struct {
+	Err      string
+	Instance *core.InstanceView
+}
+
 func (QuitIntent) intent()               {}
 func (PushSelectedIntent) intent()       {}
 func (KillSelectedIntent) intent()       {}
@@ -134,3 +164,5 @@ func (QuickInputIntent) intent()         {}
 func (ToggleFileExplorerIntent) intent() {}
 func (MergeSessionsIntent) intent()      {}
 func (NewFromIssueIntent) intent()       {}
+func (InstanceOpIntent) intent()         {}
+func (CreateInstanceIntent) intent()     {}

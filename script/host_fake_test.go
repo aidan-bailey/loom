@@ -1,25 +1,23 @@
 package script
 
 import (
-	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/core"
 )
 
 // fakeHost is a minimal Host implementation for tests that never
 // touches real TUI state. Fields are exposed so individual tests can
 // set expectations directly.
 type fakeHost struct {
-	instances       []*session.Instance
-	selected        *session.Instance
-	configDir       string
-	repoPath        string
-	defaultProgram  string
-	branchPrefix    string
-	queuedInstances []*session.Instance
-	resumed         []*session.Instance
-	notices         []string
-	enqueued        []Intent
-	enqueuedIDs     []IntentID
-	terminalKeys    []terminalKeysCall
+	instances      []core.InstanceView
+	selected       *core.InstanceView
+	configDir      string
+	repoPath       string
+	defaultProgram string
+	branchPrefix   string
+	notices        []string
+	enqueued       []Intent
+	enqueuedIDs    []IntentID
+	terminalKeys   []terminalKeysCall
 
 	// Fleet primitive counters — asserted by
 	// TestSyncActions_FleetPrimitivesReachHost.
@@ -32,20 +30,17 @@ type fakeHost struct {
 	resizeSplitDownCalls    int
 }
 
-func (f *fakeHost) SelectedInstance() *session.Instance { return f.selected }
-func (f *fakeHost) Instances() []*session.Instance      { return f.instances }
-func (f *fakeHost) ConfigDir() string                   { return f.configDir }
-func (f *fakeHost) RepoPath() string                    { return f.repoPath }
-func (f *fakeHost) DefaultProgram() string              { return f.defaultProgram }
-func (f *fakeHost) BranchPrefix() string                { return f.branchPrefix }
-
-func (f *fakeHost) QueueInstance(inst *session.Instance) {
-	f.queuedInstances = append(f.queuedInstances, inst)
+func (f *fakeHost) SelectedInstance() (core.InstanceView, bool) {
+	if f.selected == nil {
+		return core.InstanceView{}, false
+	}
+	return *f.selected, true
 }
-
-func (f *fakeHost) InstanceResumed(inst *session.Instance) {
-	f.resumed = append(f.resumed, inst)
-}
+func (f *fakeHost) Instances() []core.InstanceView { return f.instances }
+func (f *fakeHost) ConfigDir() string              { return f.configDir }
+func (f *fakeHost) RepoPath() string               { return f.repoPath }
+func (f *fakeHost) DefaultProgram() string         { return f.defaultProgram }
+func (f *fakeHost) BranchPrefix() string           { return f.branchPrefix }
 
 func (f *fakeHost) Notify(msg string) {
 	f.notices = append(f.notices, msg)
@@ -97,11 +92,11 @@ func (f *fakeHost) ResizeSplitDown()    { f.resizeSplitDownCalls++ }
 // assert the right instance and text reached the host without standing
 // up a real terminal pane.
 type terminalKeysCall struct {
-	inst *session.Instance
+	inst core.InstanceView
 	text string
 }
 
-func (f *fakeHost) SendTerminalKeys(inst *session.Instance, text string) error {
-	f.terminalKeys = append(f.terminalKeys, terminalKeysCall{inst: inst, text: text})
+func (f *fakeHost) SendTerminalKeys(v core.InstanceView, text string) error {
+	f.terminalKeys = append(f.terminalKeys, terminalKeysCall{inst: v, text: text})
 	return nil
 }

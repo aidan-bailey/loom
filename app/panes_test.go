@@ -13,6 +13,7 @@ import (
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/testpty"
+	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 
@@ -157,10 +158,12 @@ func TestTransitionFailed_ReattachesARevertedInstance(t *testing.T) {
 }
 
 // TestScriptResume_ReplacesThePaneClient: session lifecycle attaches no
-// client, so a Lua inst:resume() must hand the resumed instance to Update
-// for a fresh one. Without it the pane stayed blank until the next tick,
-// or, after a liveness pause the prune had not reached yet, stayed on the
-// dead session's client forever: its PTY still reads open.
+// client, so a Lua inst:resume() must give the resumed session a fresh
+// one. Without it the pane stayed blank until the next tick, or, after a
+// liveness pause the prune had not reached yet, stayed on the dead
+// session's client forever: its PTY still reads open. The call is a
+// request to the model now, whose completion replaces the client
+// (core.SessionLaunched) before its Reply resumes the script.
 func TestScriptResume_ReplacesThePaneClient(t *testing.T) {
 	isolateTmux(t)
 	dir := t.TempDir()
@@ -186,19 +189,29 @@ end)
 	done, ok := cmd().(scriptDoneMsg)
 	require.True(t, ok)
 	require.NoError(t, done.err)
-	require.Equal(t, session.Running, inst.GetStatus(), "precondition: the script resumed it")
-	require.Equal(t, []*session.Instance{inst}, done.resumedInstances)
+	require.Equal(t, []script.Intent{script.InstanceOpIntent{ID: idOf(m, inst), Title: inst.Title, Op: "resume"}},
+		intentsOf(done), "the script's resume is a request for inst")
 
-	_, release := m.Update(done)
+	// The intent: core.Resume, whose job runs off Update.
+	_, next := m.Update(done)
+	results := coreResults(t, next)
+	require.Len(t, results, 1, "the resume's job")
+	require.Equal(t, session.Running, inst.GetStatus(), "precondition: the script resumed it")
+
+	// Its result: the client is replaced; the Reply resumes the script.
+	_, release := m.Update(results[0])
 
 	fresh := m.panes.Get(name)
 	require.NotNil(t, fresh)
 	assert.NotSame(t, old, fresh, "the resumed session gets a fresh client")
 	assert.True(t, fresh.PtmxAlive())
 	assert.True(t, old.PtmxAlive(), "the old one is closed by the returned Cmd, not on Update")
-	drainCmd(release)
+	finished := pumpRequests(t, m, release)
 	assert.False(t, old.PtmxAlive())
 	assert.Same(t, fresh, m.panes.Get(name))
+	require.Len(t, finished, 1, "the Reply resumed the script once")
+	assert.NoError(t, finished[0].err, "and its resume() returned")
+	assert.Empty(t, finished[0].pendingIntents, "the handler ran to its end")
 }
 
 // peerPty is fakePtyFactory keeping each attach's peer: closing one ends

@@ -2,7 +2,6 @@ package script
 
 import (
 	"fmt"
-	"github.com/aidan-bailey/loom/session"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -20,7 +19,9 @@ type ctxState struct {
 
 func registerCtxType(L *lua.LState) {
 	mt := L.NewTypeMetatable(ctxTypeName)
-	L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), ctxMethods))
+	idx := L.SetFuncs(L.NewTable(), ctxMethods)
+	raiseReturnedErrors(L, idx, []string{"new_instance"})
+	L.SetField(mt, "__index", idx)
 }
 
 // pushCtx creates a fresh ctx userdata for the given dispatch and
@@ -58,7 +59,12 @@ var ctxMethods = map[string]lua.LGFunction{
 
 func ctxSelected(L *lua.LState) int {
 	c := checkCtx(L, 1)
-	L.Push(pushInstance(L, c.host.SelectedInstance()))
+	v, ok := c.host.SelectedInstance()
+	if !ok {
+		L.Push(lua.LNil)
+		return 1
+	}
+	L.Push(pushInstance(L, &v))
 	return 1
 }
 
@@ -67,10 +73,10 @@ func ctxSelected(L *lua.LState) int {
 // list — mutations must go through per-instance methods.
 func ctxInstances(L *lua.LState) int {
 	c := checkCtx(L, 1)
-	insts := c.host.Instances()
-	t := L.CreateTable(len(insts), 0)
-	for _, inst := range insts {
-		t.Append(pushInstance(L, inst))
+	views := c.host.Instances()
+	t := L.CreateTable(len(views), 0)
+	for i := range views {
+		t.Append(pushInstance(L, &views[i]))
 	}
 	L.Push(t)
 	return 1
@@ -101,37 +107,60 @@ func ctxBranchPrefix(L *lua.LState) int {
 }
 
 // ctxNewInstance accepts a table with at least a `title` key and
-// optional `program`, `prompt`, `branch`, and `path` fields. It creates
-// the instance immediately and queues it with the host so the main
-// goroutine can finalize its addition to the list.
+// optional `program`, `prompt`, `branch`, and `path` fields. It asks the
+// host to create the instance, unstarted, through the model
+// (CreateInstanceIntent) and yields until it exists; the wrapper
+// (raiseReturnedErrors) then returns the instance, or raises the error
+// the host resumed it with. Like the lifecycle methods it returns its own
+// errors (a bad argument, no host) for the wrapper to raise.
 func ctxNewInstance(L *lua.LState) int {
-	c := checkCtx(L, 1)
-	opts := L.CheckTable(2)
-
-	title := luaTableString(opts, "title", "")
-	if title == "" {
-		L.ArgError(2, "new_instance: title is required")
+	c, bad := ctxArg(L, "new_instance")
+	var opts *lua.LTable
+	if bad == "" {
+		opts, bad = tableArg(L, 2, "new_instance")
+	}
+	title := ""
+	if bad == "" {
+		if title = luaTableString(opts, "title", ""); title == "" {
+			bad = argError(2, "new_instance", "new_instance: title is required")
+		}
+	}
+	if bad == "" && c.engine.curHost == nil {
+		bad = "new_instance: no host context"
+	}
+	if bad != "" {
+		L.Push(lua.LString(bad))
+		return 1
 	}
 	program := luaTableString(opts, "program", c.host.DefaultProgram())
 	path := luaTableString(opts, "path", c.host.RepoPath())
 	prompt := luaTableString(opts, "prompt", "")
 	branch := luaTableString(opts, "branch", "")
 
-	inst, err := session.NewInstance(session.InstanceOptions{
-		Title:     title,
-		Path:      path,
-		Program:   program,
-		Prompt:    prompt,
-		Branch:    branch,
-		ConfigDir: c.host.ConfigDir(),
-	})
-	if err != nil {
-		L.RaiseError("new_instance: %s", err.Error())
-		return 0
+	return c.engine.enqueueAndYield(L, CreateInstanceIntent{Title: title, Program: program, Path: path, Prompt: prompt, Branch: branch})
+}
+
+// ctxArg is checkCtx (argument 1) for ctx's yielding method: the error
+// comes back as the message it would raise (see argError).
+func ctxArg(L *lua.LState, method string) (*ctxState, string) {
+	ud, ok := L.Get(1).(*lua.LUserData)
+	if !ok {
+		return nil, typeError(L, 1, method, lua.LTUserData)
 	}
-	c.host.QueueInstance(inst)
-	L.Push(pushInstance(L, inst))
-	return 1
+	c, ok := ud.Value.(*ctxState)
+	if !ok {
+		return nil, argError(1, method, "context expected")
+	}
+	return c, ""
+}
+
+// tableArg is L.CheckTable for ctx's yielding method, likewise.
+func tableArg(L *lua.LState, n int, method string) (*lua.LTable, string) {
+	t, ok := L.Get(n).(*lua.LTable)
+	if !ok {
+		return nil, typeError(L, n, method, lua.LTTable)
+	}
+	return t, ""
 }
 
 // ctxLog routes script log output through the engine's logScript sink
@@ -158,9 +187,10 @@ func ctxNotify(L *lua.LState) int {
 func ctxFind(L *lua.LState) int {
 	c := checkCtx(L, 1)
 	needle := L.CheckString(2)
-	for _, inst := range c.host.Instances() {
-		if inst.Title == needle {
-			L.Push(pushInstance(L, inst))
+	views := c.host.Instances()
+	for i := range views {
+		if views[i].Title == needle {
+			L.Push(pushInstance(L, &views[i]))
 			return 1
 		}
 	}

@@ -32,8 +32,8 @@ func TestPromptShorthand_DispatchesExpansion(t *testing.T) {
 	// the branch/profile pickers add — same idiom as
 	// TestHandleStatePromptKeySubmitOpensLaunchOptionsInsteadOfStartingImmediately.
 	handleStatePromptKey(m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	_, cmd := handleStatePromptKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	assert.NotNil(t, cmd)
+	_, _ = handleStatePromptKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.NotNil(t, requestJob(t, m), "the expansion is a request: the model queued its fetch")
 	assert.Equal(t, stateDefault, m.state, "waits for the expansion before launch options")
 }
 
@@ -115,4 +115,28 @@ func TestIssueExpandedMsg_DroppedResultReportsFetchError(t *testing.T) {
 	assert.Contains(t, got, "gh exploded", "the real failure must survive the guard")
 	assert.Contains(t, got, `"shorthand" discarded`, "and say what became of the draft")
 	assert.NotContains(t, got, "expanded for another workspace", "and not claim an expansion that never happened")
+}
+
+// TestPromptShorthand_TheFetchsReplyExpandsThePrompt: the #n expansion is
+// a request (core.FetchIssue); the Reply carrying the issue reaches
+// handleIssueExpanded, which seeds the draft's prompt and links the issue,
+// as the fetch's own message did.
+func TestPromptShorthand_TheFetchsReplyExpandsThePrompt(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	deliver(t, m, core.GitHubResultForTest(true, "", nil, nil))
+	promptOverlayForNewInstance(t, m)
+	d := m.draft
+	m.textInput().SetValue("#12 and tidy tests")
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Equal(t, stateDefault, m.state, "waits for the expansion")
+
+	deliver(t, m, core.FetchedIssueForTest(issueReq(t, m), github.Issue{Number: 12, Title: "Fix", URL: "https://x/12", Body: "b"}, nil))
+
+	assert.Empty(t, m.pending, "the Reply was handled")
+	assert.Same(t, d, m.draft)
+	assert.Equal(t, 12, d.issue)
+	assert.Contains(t, d.prompt, "# Fix")
+	assert.Contains(t, d.prompt, "and tidy tests")
+	assert.Equal(t, stateLaunchOptions, m.state)
 }
