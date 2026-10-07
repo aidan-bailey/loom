@@ -402,6 +402,11 @@ type home struct {
 	// intervals come from gateIntervals. Update-goroutine only.
 	gates [numGateKinds]pollGate
 
+	// claudeTmpPending holds the Claude temp-dir sweeps workspace loads
+	// queued (requestClaudeTmpSweep), keyed by config dir, until the
+	// health tick dispatches them. Update-goroutine only.
+	claudeTmpPending map[string]claudeTmpJob
+
 	// ghAvailable caches gh's install/auth check, resolved by the first
 	// poll. Until checked, polls proceed (the poll itself checks).
 	ghAvailable ghAvailability
@@ -1055,6 +1060,12 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, usage)
 		}
 
+		// Claude temp-dir sweeps queued by workspace loads (see
+		// requestClaudeTmpSweep). nil when none is queued or one runs.
+		if sweep := m.maybeClaudeTmpSweep(); sweep != nil {
+			cmds = append(cmds, sweep)
+		}
+
 		// Workbench follow scan rides the health tick: cheap stat-walk
 		// of the selected worktree, guarded stale on delivery.
 		if m.viewMode == viewWorkbench {
@@ -1067,6 +1078,16 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Apply results on main thread.
 		var releases []tea.Cmd
 		for _, r := range msg.results {
+			// A result is a snapshot from dispatch time. An instance that
+			// an explicit flow has since taken over (a Pause owns it as
+			// Loading, a kill as Deleting) must not be moved by it: a probe
+			// sent while it ran and answered Dead after Pause closed its
+			// tmux session would mark it Paused mid-pause. deadVerifiedMsg
+			// drops these the same way. Paused and live results still go
+			// through: applyLiveness repairs a live session's client.
+			if !tickMayApply(r.instance) {
+				continue
+			}
 			alive, release := m.applyLiveness(r.instance, r.tmuxLive, r.ptmxAlive, fromTick)
 			releases = append(releases, release)
 			if !alive {
@@ -1777,6 +1798,10 @@ func (m *home) reconcileOrphans(cfgDir, program string, list *ui.List, storage *
 		summary.failed = len(storage.UnrecoveredTitles())
 		summary.undecodable = storage.UndecodableCount()
 	}
+	// Claude's temp dirs of sessions that are gone, the worktrees just
+	// auto-cleaned included: archived off the Update goroutine once the
+	// next health tick dispatches the sweep.
+	m.requestClaudeTmpSweep(cfgDir, list, storage)
 	// Preserved records may come back on a later load (or under a newer
 	// loom); claimTitles keeps their hooks folders.
 	claimed := make(map[string]bool)

@@ -264,6 +264,22 @@ func killActionFor(m *home, selected *session.Instance) (func(), tea.Cmd) {
 						err:            fmt.Errorf("discard %s: %w", title, err),
 					}
 				}
+				// A worktree lock loom respects (the user's, or a young
+				// "initializing" one) refused the cleanup before anything on
+				// disk was touched: the worktree and branch remain. Keep the
+				// row, like the discard above, and show the error, which
+				// names the `git worktree unlock` that lets D be pressed
+				// again. The agent's tmux session is already gone, so the
+				// health tick pauses a Running row.
+				if errors.Is(err, git.ErrWorktreeLocked) {
+					return transitionFailedMsg{
+						inst:           selected,
+						title:          title,
+						op:             "delete",
+						previousStatus: previousStatus,
+						err:            err,
+					}
+				}
 			}
 		}
 

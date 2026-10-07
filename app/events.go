@@ -395,6 +395,20 @@ func statusEligible(inst *session.Instance) bool {
 	return st != session.Deleting && st != session.Recoverable && st != session.Loading
 }
 
+// tickMayApply reports whether a health-tick result may be applied to inst:
+// false while an explicit flow owns it (Loading, Deleting, Recoverable: the
+// statuses statusEligible excludes for that reason; see the comment on the
+// tickUpdateMetadataMessage case). It is narrower than statusEligible on
+// purpose: a result for a Paused or not-started instance still goes through,
+// because applyLiveness repairs a live session's client.
+func tickMayApply(inst *session.Instance) bool {
+	if inst == nil {
+		return false
+	}
+	st := inst.GetStatus()
+	return st != session.Deleting && st != session.Recoverable && st != session.Loading
+}
+
 // markDirty records that a session produced output since the last health
 // tick — the tick uses this to gate diff-stat refreshes.
 func (m *home) markDirty(sessionName string) {
