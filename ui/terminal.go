@@ -585,28 +585,6 @@ func (t *TerminalPane) DetachExcept(keep map[string]bool) []*tmux.TmuxSession {
 	return out
 }
 
-// DetachSessionForInstance removes the cached terminal entry for the given title
-// and returns the extracted tmux session so the caller can Close() it off the
-// update goroutine. Returns nil if no session was cached. This is pure state
-// bookkeeping — no blocking I/O — so it is safe to call from Update.
-func (t *TerminalPane) DetachSessionForInstance(title string) *tmux.TmuxSession {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	var ts *tmux.TmuxSession
-	if s, ok := t.sessions[title]; ok {
-		ts = s.tmuxSession
-		delete(t.sessions, title)
-	}
-	if t.currentTitle == title {
-		t.currentTitle = ""
-		t.content = ""
-		t.fallback = false
-		t.fallbackText = ""
-	}
-	return ts
-}
-
 func (t *TerminalPane) String() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()

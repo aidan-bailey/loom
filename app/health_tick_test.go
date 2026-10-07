@@ -128,6 +128,42 @@ func TestSnapshotStatus_Ladder(t *testing.T) {
 	}
 }
 
+// TestLadder_SurvivesAFailedPauseOrKill: a pause or kill moves the row to
+// Loading or Deleting, and one that fails reverts the model to the
+// session's previous status: Running, for a non-Claude session. The
+// ladder's status must still be there then. With the client attached
+// nothing scrapes an idle pane again, so a pruned entry left the row
+// showing Running where it showed Ready (and a Prompting one without its
+// badge) until its next output.
+func TestLadder_SurvivesAFailedPauseOrKill(t *testing.T) {
+	for _, op := range []struct {
+		name    string
+		request func(m *home, id core.InstanceID)
+		busy    session.Status
+	}{
+		{"pause", func(m *home, id core.InstanceID) { m.core.Pause(id, 0) }, session.Loading},
+		{"kill", func(m *home, id core.InstanceID) { m.core.Kill(id, 0) }, session.Deleting},
+	} {
+		t.Run(op.name, func(t *testing.T) {
+			m, inst := snapshotHome(t, "ladder", "bash")
+			require.NoError(t, inst.TransitionTo(session.Running))
+			m.syncViews()
+			id := idOf(m, inst)
+			deliverScan(t, m, snapshotStatus{id: id, title: inst.Title})
+			require.Equal(t, session.Ready, shownStatus(t, m, inst), "fixture: the ladder shows the idle pane Ready")
+
+			op.request(m, id)
+			_ = requestJob(t, m) // the drain: the busy row's views reach the TUI
+			require.Equal(t, op.busy, shownStatus(t, m, inst), "the busy row shows the model's status")
+
+			deliver(t, m, core.OpFailed{Instance: inst, Title: inst.Title, Op: op.name, Previous: session.Running, Err: errors.New("boom")})
+
+			assert.Equal(t, session.Running, inst.GetStatus(), "the model reverted to Running")
+			assert.Equal(t, session.Ready, shownStatus(t, m, inst), "and the row shows the ladder's Ready again")
+		})
+	}
+}
+
 // TestSnapshotStatus_AFailedCaptureIsNoOpinion: a failed capture leaves
 // the status alone, as on the event path. Read as "settled, no prompt",
 // its zero result moved a dead session to Ready before the probe paused

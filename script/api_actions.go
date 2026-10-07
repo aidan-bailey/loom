@@ -331,12 +331,14 @@ func (e *Engine) enqueueAndYield(L *lua.LState, intent Intent) int {
 
 // waitIn is enqueueAndYield for the yielding method op (lifecycleOp,
 // ctxNewInstance), which has checked for a host already: it also records
-// op under the intent's id (waitingIn), so a shutdown raises in the method
-// rather than returning from it as if the TUI had replied.
-func (e *Engine) waitIn(L *lua.LState, op string, intent Intent) int {
+// op, and inst, the instance userdata a lifecycle call acts on (nil for
+// ctx:new_instance), under the intent's id (waitingIn), so a shutdown
+// raises in the method rather than returning from it as if the TUI had
+// replied, and the reply's view refreshes inst (luaValue).
+func (e *Engine) waitIn(L *lua.LState, op string, inst *lua.LUserData, intent Intent) int {
 	id := e.curHost.Enqueue(intent)
 	e.lastEnqueued = id
-	e.waitingIn[id] = op
+	e.waitingIn[id] = waiting{op: op, inst: inst}
 	return L.Yield(lua.LNumber(id))
 }
 

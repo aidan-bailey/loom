@@ -73,9 +73,11 @@ type Engine struct {
 	// waitingIn names the yielding method (lifecycleOp, ctxNewInstance)
 	// a coroutine parked under an IntentID waits in, so a shutdown resumes
 	// it with an error rather than with nothing, which the method would
-	// return as a success (cleanupAllCoroutinesLocked). An entry lives
-	// until its coroutine is resumed. Access always under e.mu.
-	waitingIn map[IntentID]string
+	// return as a success (cleanupAllCoroutinesLocked), and, for a
+	// lifecycle call, the instance it acts on, whose view the resume
+	// refreshes (luaValue). An entry lives until its coroutine is resumed.
+	// Access always under e.mu.
+	waitingIn map[IntentID]waiting
 
 	// lastEnqueued records the most recent IntentID the active Lua
 	// callback enqueued via the host. A bare cs.await() consumes it, so
@@ -123,6 +125,14 @@ func (s coroutineSlot) drop() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+}
+
+// waiting is what a coroutine parked in a yielding method waits in: the
+// method (op) and, for a lifecycle call, the instance userdata it was
+// called on (nil for ctx:new_instance).
+type waiting struct {
+	op   string
+	inst *lua.LUserData
 }
 
 // inFlightAction names a running handler for Shutdown's busy warning.
@@ -199,7 +209,7 @@ func NewEngine(reserved map[string]bool) *Engine {
 		actions:    map[string]*scriptAction{},
 		reserved:   reserved,
 		coroutines: map[IntentID]coroutineSlot{},
-		waitingIn:  map[IntentID]string{},
+		waitingIn:  map[IntentID]waiting{},
 		cancel:     cancel,
 	}
 
@@ -306,9 +316,9 @@ func (e *Engine) cleanupAllCoroutinesLocked() {
 		unmark := e.markInFlight(slot.key, slot.file)
 		restoreFile := e.enterActionFile(slot.file)
 		var value lua.LValue = lua.LNil
-		if op, ok := e.waitingIn[id]; ok {
+		if w, ok := e.waitingIn[id]; ok {
 			delete(e.waitingIn, id)
-			value = lua.LString(op + ": loom is shutting down")
+			value = lua.LString(w.op + ": loom is shutting down")
 		}
 		st, rerr, _ := e.L.Resume(slot.co, nil, value)
 		restoreFile()
@@ -428,7 +438,7 @@ func (e *Engine) ResumeWithHost(ctx context.Context, id IntentID, h Host, v Resu
 
 	trace := log.TraceID(ctx)
 	log.For("script").Debug("handler.resume", "trace", trace, "intent_id", int(id))
-	_, err := e.resumeLocked(id, e.luaValue(v))
+	_, err := e.resumeLocked(id, e.luaValue(id, v))
 	if err != nil {
 		log.For("script").Debug("handler.resume_err", "trace", trace, "intent_id", int(id), "err", err.Error())
 	}
@@ -436,16 +446,23 @@ func (e *Engine) ResumeWithHost(ctx context.Context, id IntentID, h Host, v Resu
 }
 
 // luaValue turns a resume value into the Lua value the yielding call
-// returns. Built inside the engine's lock: the Lua state is not
-// goroutine-safe. A closed engine gets nil, which resumeLocked refuses
-// anyway.
-func (e *Engine) luaValue(v ResumeValue) lua.LValue {
+// parked under id returns. Built inside the engine's lock: the Lua state
+// is not goroutine-safe. A closed engine gets nil, which resumeLocked
+// refuses anyway. A lifecycle call returns nothing: the instance it comes
+// back with is the view of the one it acted on as the model left it, which
+// replaces that userdata's view, so inst:status() after inst:pause()
+// reads Paused (waitingIn). ctx:new_instance returns its instance.
+func (e *Engine) luaValue(id IntentID, v ResumeValue) lua.LValue {
 	switch {
 	case e.L == nil:
 		return lua.LNil
 	case v.Err != "":
 		return lua.LString(v.Err)
 	case v.Instance != nil:
+		if inst := e.waitingIn[id].inst; inst != nil {
+			inst.Value = *v.Instance
+			return lua.LNil
+		}
 		return pushInstance(e.L, v.Instance)
 	}
 	return lua.LNil

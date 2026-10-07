@@ -165,12 +165,18 @@ func (m *home) activeViews() []core.InstanceView {
 }
 
 // pruneLadder forgets the scraped status of every instance no open slot
-// shows any more (IDs are never reused), and of every one whose view is
-// inactive or has a reported status: a ladder status must not resurface
-// after a pause and resume, or once Claude's report goes quiet. It walks
-// every open slot, not only the one whose views changed, so an entry in
-// another slot survives a change to this one. The ViewsChanged applier
-// runs it after replacing a store.
+// shows any more (IDs are never reused), and of every one whose view has
+// not started, is Paused or Recoverable, or has a reported status: a
+// ladder status must not resurface after a pause and resume, or once
+// Claude's report goes quiet. It keeps the entry of a Loading or Deleting
+// row (overlay ignores it there): a pause or kill that fails reverts the
+// model to the session's previous status, Running for a non-Claude
+// session, and with its client attached nothing would scrape the idle
+// pane again, so the row would show Running where it showed Ready, and a
+// Prompting one would lose its badge. It walks every open slot, not only
+// the one whose views changed, so an entry in another slot survives a
+// change to this one. The ViewsChanged applier runs it after replacing a
+// store.
 func (m *home) pruneLadder() {
 	if len(m.ladder) == 0 {
 		return
@@ -181,7 +187,8 @@ func (m *home) pruneLadder() {
 			continue
 		}
 		for i := range s.views {
-			if v := &s.views[i]; v.Active() && !v.StatusReported {
+			v := &s.views[i]
+			if v.Started && !v.Paused() && v.Status != session.Recoverable && !v.StatusReported {
 				keep[v.ID] = true
 			}
 		}

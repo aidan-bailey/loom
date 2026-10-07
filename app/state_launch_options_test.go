@@ -38,7 +38,7 @@ func newPendingLaunchOptionsHome(t *testing.T, initial overlay.LaunchOptions) (*
 		m.menu.SetState(ui.StateDefault)
 		return m, nil
 	}
-	m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
+	m.pendingLaunchOptionsCancel = m.discardPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions
 	m.setOverlay(overlay.NewSessionLaunchOptions(initial, m.core.RCAuth().Blocked(), m.core.RCAuth().Reason), overlayLaunchOptions)
 	m.menu.SetState(ui.StateNewInstance)

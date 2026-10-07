@@ -591,13 +591,6 @@ func (s *SplitPane) CleanupTerminal() {
 	s.terminal.Close()
 }
 
-// DetachTerminalForInstance removes the cached terminal entry for the given
-// instance title and returns the popped tmux session, so the caller can Close
-// it off the update goroutine. Returns nil if nothing was cached.
-func (s *SplitPane) DetachTerminalForInstance(title string) *tmux.TmuxSession {
-	return s.terminal.DetachSessionForInstance(title)
-}
-
 // SendTerminalPrompt sends text followed by Enter to the terminal pane's tmux session.
 func (s *SplitPane) SendTerminalPrompt(text string) error {
 	return s.terminal.SendPrompt(text)

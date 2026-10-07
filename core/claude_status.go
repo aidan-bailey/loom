@@ -176,10 +176,13 @@ func (m *Model) rosterStatusFor(inst *session.Instance) (session.Status, string,
 // effect, records Claude's reason for blocking so the card can render it.
 //
 // The reason lives exactly as long as the reported wait: any other
-// outcome clears it. Every status path (the TUI's statusDetectedMsg and
-// snapshot scan, and deliverHealth) must go through here, and so must applyClaudeStatus;
-// duplicating the set/clear at each call site is how they drift apart,
-// which is the lockstep hazard called out in CLAUDE.md.
+// outcome clears it. Only the model writes a reported status, and every
+// path that does (deliverHealth, and applyClaudeStatus for a hook scan or
+// a roster answer) must go through here; the TUI's pane ladder
+// (statusDetectedMsg, the snapshot scan) only reads StatusReported and
+// overlays its own status. Duplicating the set/clear at each call site is
+// how they drift apart, which is the lockstep hazard called out in
+// CLAUDE.md.
 func (m *Model) adoptClaudeStatus(inst *session.Instance) (session.Status, bool) {
 	if inst == nil {
 		return session.Ready, false

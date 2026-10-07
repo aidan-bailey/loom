@@ -46,7 +46,7 @@ func handleStateLaunchOptionsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 // cancelLaunchOptions dismisses the Session Launch Options modal
 // without confirming and runs whatever pendingLaunchOptionsCancel the
 // opening flow stashed — discard the draft for creation
-// (killPendingLaunchOptionsCancel), or a no-op dismiss for restart
+// (discardPendingLaunchOptionsCancel), or a no-op dismiss for restart
 // (runRestartWithOptionsSelected).
 func (m *home) cancelLaunchOptions() (tea.Model, tea.Cmd) {
 	cancel := m.pendingLaunchOptionsCancel
@@ -60,11 +60,11 @@ func (m *home) cancelLaunchOptions() (tea.Model, tea.Cmd) {
 	return cancel()
 }
 
-// killPendingLaunchOptionsCancel is the creation flow's
+// discardPendingLaunchOptionsCancel is the creation flow's
 // pendingLaunchOptionsCancel: discard the draft (discardDraft) and return
 // to stateDefault — the same shape as handleStateNewKey's Esc/ctrl+c
 // handling.
-func (m *home) killPendingLaunchOptionsCancel() (tea.Model, tea.Cmd) {
+func (m *home) discardPendingLaunchOptionsCancel() (tea.Model, tea.Cmd) {
 	m.discardDraft()
 	m.state = stateDefault
 	// Before instanceChanged, whose menu refresh leaves the new-instance

@@ -124,7 +124,9 @@ type NewFromIssueIntent struct{}
 // InstanceOpIntent runs a lifecycle operation on an instance through the
 // model: inst:kill(), inst:pause(), inst:resume() and inst:send_prompt().
 // The host resumes the coroutine with the outcome once the model replies:
-// nothing on success, an error message the Lua method raises otherwise.
+// on success the session's view after it, which becomes the view of the
+// instance the method was called on (the method returns nothing), an
+// error message the Lua method raises otherwise.
 type InstanceOpIntent struct {
 	ID    core.InstanceID
 	Title string
@@ -141,7 +143,8 @@ type CreateInstanceIntent struct {
 
 // ResumeValue is what the call that yielded returns when its coroutine is
 // resumed: nothing (the zero value), an error message (Err, which the
-// yielding method raises), or an instance (ctx:new_instance's result).
+// yielding method raises), or an instance: ctx:new_instance's result, or
+// the view a lifecycle call's instance takes (Engine.luaValue).
 type ResumeValue struct {
 	Err      string
 	Instance *core.InstanceView

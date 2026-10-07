@@ -800,6 +800,7 @@ func (m *home) scriptInstanceOp(p pendingIntent, i script.InstanceOpIntent) tea.
 	v, _ := m.viewByID(i.ID)
 	switch i.Op {
 	case "kill":
+		ps.killed = v
 		m.core.Kill(i.ID, m.newReq(pendingReq{script: ps}))
 	case "pause":
 		if v != nil && v.Paused() {

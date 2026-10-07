@@ -161,9 +161,3 @@ func (m *home) slotFor(ws *core.Workspace) *workspaceSlot {
 	}
 	return nil
 }
-
-// slotHolding returns the open slot whose rows hold id, or nil.
-func (m *home) slotHolding(id core.InstanceID) *workspaceSlot {
-	_, s := m.viewByID(id)
-	return s
-}

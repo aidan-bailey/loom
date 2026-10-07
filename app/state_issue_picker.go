@@ -237,7 +237,7 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 // openLaunchOptionsForNew shows the Session Launch Options modal for a
 // draft. Confirming creates and starts its session with the chosen
 // options (confirmDraft); cancelling discards it
-// (killPendingLaunchOptionsCancel). selectedBranch, when set, is the
+// (discardPendingLaunchOptionsCancel). selectedBranch, when set, is the
 // branch picker's choice, recorded on the draft (the prompt flow sets it
 // there too, before any issue expansion).
 func (m *home) openLaunchOptionsForNew(d *draft, selectedBranch string) (tea.Model, tea.Cmd) {
@@ -259,7 +259,7 @@ func (m *home) openLaunchOptionsForNew(d *draft, selectedBranch string) (tea.Mod
 		}
 		return m, tea.Batch(m.runTask(startTask), m.instanceChanged())
 	}
-	m.pendingLaunchOptionsCancel = m.killPendingLaunchOptionsCancel
+	m.pendingLaunchOptionsCancel = m.discardPendingLaunchOptionsCancel
 	m.state = stateLaunchOptions
 	lo, reloaded := m.newLaunchOptionsOverlay(launch.FromConfig(m.appConfig()), d.program)
 	m.setOverlay(lo, overlayLaunchOptions)

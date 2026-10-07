@@ -219,10 +219,6 @@ func (m *Model) applyGitHubState() {
 	}
 }
 
-// ApplyGitHubState joins the latest poll's state onto every instance, for
-// a link set outside a poll (an issue pick).
-func (m *Model) ApplyGitHubState() { m.applyGitHubState() }
-
 // GitHubSnapshot returns the latest poll's snapshot of repo, if the last
 // poll of it succeeded.
 func (m *Model) GitHubSnapshot(repo string) (github.Snapshot, bool) {

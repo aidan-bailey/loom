@@ -49,8 +49,9 @@ func registerInstanceType(L *lua.LState, e *Engine) {
 
 // lifecycleOp is the yielding half of inst:kill(), :pause(), :resume() and
 // :send_prompt(): it enqueues the operation for the host, which runs it
-// through the model and resumes this coroutine with its outcome. Without a
-// host (no dispatch) it raises.
+// through the model and resumes this coroutine with its outcome, the
+// session's view after it on success, which this instance takes (waitIn,
+// Engine.luaValue). Without a host (no dispatch) it raises.
 //
 // It raises through the wrapper raiseReturnedErrors installs: an error
 // found here (a bad argument, no host) is returned as its message, as the
@@ -73,7 +74,7 @@ func lifecycleOp(e *Engine, op string) lua.LGFunction {
 			L.Push(lua.LString(bad))
 			return 1
 		}
-		return e.waitIn(L, op, InstanceOpIntent{ID: v.ID, Title: v.Title, Op: op, Text: text})
+		return e.waitIn(L, op, L.CheckUserData(1), InstanceOpIntent{ID: v.ID, Title: v.Title, Op: op, Text: text})
 	}
 }
 
@@ -264,8 +265,9 @@ func instanceTitle(L *lua.LState) int {
 	return 1
 }
 
-// instanceStatus returns the status as a lowercase string so scripts
-// can compare against literals without importing a Go-side constant.
+// instanceStatus returns the status's name ("Running", "Paused", …, as
+// session.Status.String spells it) so scripts can compare against
+// literals without importing a Go-side constant.
 func instanceStatus(L *lua.LState) int {
 	v := checkInstance(L, 1)
 	L.Push(lua.LString(v.Status.String()))

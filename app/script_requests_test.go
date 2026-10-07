@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -260,8 +261,9 @@ func TestScriptResume_RecoversARecoverableSession(t *testing.T) {
 
 // TestScriptResume_RefusedRaises: a resume the model refuses (here a
 // workspace terminal, which Instance.Resume refused too) answers at once.
-// Its Reply resumes the script exactly once, and inst:resume() raises
-// "resume: …" at the script's line.
+// Its Reply resumes the script exactly once, and inst:resume() raises the
+// refusal's own message ("resume term: …", which names the request) at
+// the script's line.
 func TestScriptResume_RefusedRaises(t *testing.T) {
 	m := homeWithAppState(t)
 	m.errBox.SetSize(400, 1)
@@ -275,7 +277,8 @@ func TestScriptResume_RefusedRaises(t *testing.T) {
 	require.Len(t, done, 2, "the dispatch, then one resume")
 	err := lastErr(t, done)
 	require.Error(t, err, "a workspace terminal cannot be resumed")
-	assert.Contains(t, err.Error(), "resume: resume term: not allowed on a workspace terminal")
+	assert.Contains(t, err.Error(), "resume term: not allowed on a workspace terminal")
+	assert.NotContains(t, err.Error(), "resume: resume", "a refusal raises its own message, which names the request")
 	assert.Contains(t, err.Error(), ":2:", "raised at the script's line")
 	assert.Contains(t, err.Error(), "lua.lua: ", "in the script's file")
 	assert.Empty(t, done[1].notices, "nothing after the call ran")
@@ -286,9 +289,10 @@ func TestScriptResume_RefusedRaises(t *testing.T) {
 // TestScriptReplied_ANoticeAloneResumesWithNothing: a kill or resume that
 // succeeded with something to report (a stash it forgot or could not drop)
 // used to raise in Lua, or reach the host's Notify. The model shows the
-// notice now (a core.Notice event); its Reply resumes the call with
-// nothing, and the TUI adds no notice of its own. A failure resumes it
-// with "<op>: <err>", which the method raises.
+// notice now (a core.Notice event); its Reply resumes the call as a
+// success, with the session's row (none here) and no error, and the TUI
+// adds no notice of its own. A failed job resumes it with "<op>: <err>",
+// which the method raises.
 func TestScriptReplied_ANoticeAloneResumesWithNothing(t *testing.T) {
 	m := homeWithAppState(t)
 	m.errBox.SetSize(400, 1)
@@ -451,4 +455,103 @@ end)`)
 
 	require.NoError(t, done.err)
 	assert.Equal(t, []string{"nil", "1"}, done.notices, "no draft: nothing selected, one instance")
+}
+
+// TestScriptLifecycle_RefreshesTheInstance: a Lua instance is a view, and
+// a lifecycle call used to leave it as it was before the call, so
+// inst:status() after inst:pause() read Running while ctx:selected() read
+// Paused (when the method changed the instance itself, it read Paused). A
+// successful call's Reply carries the session's row now, which the
+// instance takes: Paused after a pause, Loading or Running after a
+// resume, current after a send. A kill leaves no row: the instance keeps
+// its view, marked Deleting.
+func TestScriptLifecycle_RefreshesTheInstance(t *testing.T) {
+	t.Run("pause, then resume", func(t *testing.T) {
+		isolateTmux(t)
+		m, _, _ := ownerTestHome(t)
+		inst := startedInstanceWithProgram(t, "lua-cycle", "claude", "idle")
+		m.ws.AddForTest(inst)
+		selectIn(m, m.list, inst)
+		withScript(t, m, `cs.bind("Z", function(ctx)
+  local inst = ctx:selected()
+  ctx:notify("before " .. inst:status())
+  local r = inst:pause()
+  ctx:notify("paused " .. inst:status() .. " " .. tostring(inst:paused()) .. " " .. tostring(r))
+  inst:resume()
+  ctx:notify("resumed " .. inst:status() .. " " .. tostring(inst:paused()))
+end)`)
+
+		done := runKey(t, m, "Z")
+
+		require.NoError(t, lastErr(t, done))
+		var notices []string
+		for _, d := range done {
+			notices = append(notices, d.notices...)
+		}
+		require.Len(t, notices, 3)
+		assert.Equal(t, "before Running", notices[0])
+		assert.Equal(t, "paused Paused true nil", notices[1], "the instance reads Paused, and the call returned nothing")
+		assert.Contains(t, []string{"resumed Loading false", "resumed Running false"}, notices[2])
+	})
+	t.Run("send_prompt", func(t *testing.T) {
+		m := homeWithAppState(t)
+		inst := addReadyInstance(t, m)
+		require.NoError(t, inst.EnsureRunning())
+		m.syncViews()
+		withScript(t, m, `cs.bind("Z", function(ctx)
+  local inst = ctx:selected()
+  inst:send_prompt("hi")
+  ctx:notify(inst:title() .. " " .. inst:status() .. " " .. tostring(inst:started()))
+end)`)
+
+		done := runKey(t, m, "Z")
+
+		require.NoError(t, lastErr(t, done))
+		assert.Equal(t, []string{inst.Title + " " + shownStatus(t, m, inst).String() + " true"}, done[len(done)-1].notices,
+			"the instance reads its row as it is after the send")
+	})
+	t.Run("kill", func(t *testing.T) {
+		m, _, _ := pausedRecordHome(t)
+		withScript(t, m, `cs.bind("Z", function(ctx)
+  local inst = ctx:selected()
+  inst:kill()
+  ctx:notify(inst:title() .. " " .. inst:status() .. " " .. tostring(inst:paused()))
+end)`)
+
+		done := runKey(t, m, "Z")
+
+		require.NoError(t, lastErr(t, done))
+		assert.Nil(t, m.list.GetInstanceByTitle("a1"), "fixture: the kill removed the row")
+		assert.Equal(t, []string{"a1 Deleting false"}, done[len(done)-1].notices,
+			"a killed instance keeps its view, marked Deleting")
+	})
+}
+
+// TestScriptError_RefusalsRaiseTheirOwnMessage: a refusal names its
+// request and session already ("kill x: …"), so it raises as it is; a
+// failed job, a gone session and every ctx:new_instance error keep the
+// "<op>: " prefix they always had.
+func TestScriptError_RefusalsRaiseTheirOwnMessage(t *testing.T) {
+	m := homeWithAppState(t)
+	term := &session.Instance{Title: "term", IsWorkspaceTerminal: true}
+	m.ws.AddForTest(term)
+	m.syncViews()
+	id := idOf(m, term)
+
+	m.core.Kill(id, m.newReq(pendingReq{script: &pendingScript{intent: 1, op: "kill"}}))
+	m.core.Kill(999, m.newReq(pendingReq{script: &pendingScript{intent: 2, op: "kill"}}))
+	var values []script.ResumeValue
+	for _, msg := range runCmds(t, m.drainCore()) {
+		if rm, ok := msg.(scriptResumeMsg); ok {
+			values = append(values, rm.value)
+		}
+	}
+
+	require.Len(t, values, 2)
+	assert.Equal(t, "kill term: not allowed on a workspace terminal", values[0].Err)
+	assert.Equal(t, "kill: no such session", values[1].Err, "a gone session's refusal names no request: the op is added")
+	assert.Equal(t, "kill: boom", scriptError("kill", errors.New("boom")), "a failed job keeps the prefix")
+	refused := fmt.Errorf("create x: its workspace is no longer open: %w", core.ErrRefused)
+	assert.Equal(t, "new_instance: "+refused.Error(), scriptError("new_instance", refused),
+		"ctx:new_instance keeps its prefix, refusals included")
 }

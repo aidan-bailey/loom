@@ -492,3 +492,28 @@ cs.bind("Z", function(ctx) kill(ctx:selected()) end)`},
 		})
 	}
 }
+
+// TestLifecycleMethods_TakeTheViewTheyAreResumedWith: a lifecycle call
+// resumed with a view returns nothing, and the instance it was called on
+// takes that view, so it reads the session as the call left it. Only that
+// instance changes: ctx:selected() still reads the host's snapshot.
+func TestLifecycleMethods_TakeTheViewTheyAreResumedWith(t *testing.T) {
+	e := NewEngine(nil)
+	defer e.Close()
+	require.NoError(t, e.LoadFromString("view.lua", `cs.bind("Z", function(ctx)
+  local inst = ctx:selected()
+  local r = inst:pause()
+  ctx:notify(tostring(r) .. " " .. inst:status() .. " " .. tostring(inst:paused()))
+  ctx:notify(ctx:selected():status())
+end)`))
+	h := &fakeHost{selected: &core.InstanceView{ID: 3, Title: "x", Status: session.Running, Started: true}}
+	_, err := e.Dispatch(context.Background(), "Z", h)
+	require.NoError(t, err)
+	require.Len(t, h.enqueuedIDs, 1)
+
+	paused := &core.InstanceView{ID: 3, Title: "x", Status: session.Paused, Started: true}
+	require.NoError(t, e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{Instance: paused}))
+
+	assert.Equal(t, []string{"nil Paused true", "Running"}, h.notices)
+	assert.Empty(t, e.waitingIn)
+}

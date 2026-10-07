@@ -373,61 +373,6 @@ func TestTerminalPane_AltScreenScrollForwards(t *testing.T) {
 		"alt-screen scroll must not engage the emulator scroll model")
 }
 
-func TestTerminalDetachSessionForInstance(t *testing.T) {
-	_ = log.Initialize("", false)
-	defer log.Close()
-
-	tp := NewTerminalPane()
-	tp.SetSize(80, 30)
-
-	content := "some content"
-	cmdExec := mockCmdExec(content, true)
-
-	instance1 := makeStartedInstance(t, "close1")
-	defer func() { _ = instance1.Kill() }()
-	instance2 := makeStartedInstance(t, "close2")
-	defer func() { _ = instance2.Kill() }()
-
-	ts1 := newMockTmuxSession(t, "close-test-1", cmdExec)
-	ts2 := newMockTmuxSession(t, "close-test-2", cmdExec)
-
-	injectSession(tp, instance1.Title, ts1, t.TempDir())
-	tp.mu.Lock()
-	tp.sessions[instance2.Title] = &terminalSession{
-		tmuxSession:  ts2,
-		worktreePath: t.TempDir(),
-	}
-	tp.mu.Unlock()
-
-	// Verify both sessions exist
-	tp.mu.Lock()
-	require.Len(t, tp.sessions, 2)
-	tp.mu.Unlock()
-
-	// Detach instance1's session
-	popped := tp.DetachSessionForInstance(instance1.Title)
-	require.NotNil(t, popped, "should return the popped session")
-	require.Same(t, ts1, popped, "should return the session previously cached for instance1")
-
-	// Only instance2 should remain
-	tp.mu.Lock()
-	require.Len(t, tp.sessions, 1, "should have only 1 session after detaching instance1")
-	_, exists := tp.sessions[instance1.Title]
-	require.False(t, exists, "instance1 session should be removed from cache")
-	_, exists = tp.sessions[instance2.Title]
-	require.True(t, exists, "instance2 session should still exist")
-	require.Empty(t, tp.currentTitle, "currentTitle should be cleared when detaching current instance")
-	tp.mu.Unlock()
-
-	// Detaching a non-existent instance should return nil and not panic
-	popped = tp.DetachSessionForInstance("non-existent")
-	require.Nil(t, popped, "non-existent detach should return nil")
-
-	tp.mu.Lock()
-	require.Len(t, tp.sessions, 1, "non-existent detach should not affect existing sessions")
-	tp.mu.Unlock()
-}
-
 // TestTerminalPane_ProbesRunOffLock pins that the session-resolving
 // methods hold t.mu only for the cache lookup. A has-session probe that
 // never answers must not block String() (the render path) — the script
@@ -515,7 +460,9 @@ func TestTerminalPane_DetachAllHandsOverWithoutKilling(t *testing.T) {
 	got := pane.DetachAll()
 
 	require.ElementsMatch(t, []*tmux.TmuxSession{a, b}, got)
-	require.Nil(t, pane.DetachSessionForInstance("a"), "the cache is empty")
+	pane.mu.Lock()
+	require.Empty(t, pane.sessions, "the cache is empty")
+	pane.mu.Unlock()
 	require.Nil(t, pane.CurrentTmuxSession())
 	require.False(t, killed, "DetachAll must not kill the shells")
 	require.Empty(t, pane.DetachAll())

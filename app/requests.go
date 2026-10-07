@@ -7,6 +7,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/script"
+	"github.com/aidan-bailey/loom/session"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -136,19 +137,27 @@ func (m *home) sendingTo(v *core.InstanceView) bool {
 
 // pendingScript is a Lua call waiting on the model: its coroutine resumes
 // when the Reply lands. held is the instance a send_prompt holds input to
-// until then (holdInput), 0 for the other calls.
+// until then (holdInput), 0 for the other calls. killed is a kill's
+// session as it was when the kill was asked for, nil for the other calls
+// (scriptReplied).
 type pendingScript struct {
 	intent script.IntentID
 	trace  string
 	op     string
 	held   core.InstanceID
+	killed *core.InstanceView
 }
 
-// scriptReplied resumes the Lua call a Reply answers: with "<op>: <err>" on
-// failure (the method raises it, as it raised before the model ran Lua's
-// calls), with the new instance for new_instance, and with nothing
-// otherwise. A Reply's Notice resumes it with nothing too: the model has
-// shown it already. A send_prompt's hold is released first.
+// scriptReplied resumes the Lua call a Reply answers. A failure resumes it
+// with the error the method raises (scriptError). A success resumes it
+// with the session's row as the model left it: new_instance returns it,
+// and a lifecycle call's instance takes it as its view (the method
+// returns nothing), so inst:status() after inst:pause() reads Paused, as
+// it did when the method changed the instance itself. A kill leaves no
+// row: its instance keeps the view it had when the kill was asked for,
+// marked Deleting, the last status the session had. A Reply's Notice
+// changes none of this: the model has shown it already. A send_prompt's
+// hold is released first.
 func (m *home) scriptReplied(p *pendingScript, r core.Reply) tea.Cmd {
 	if p.held != 0 {
 		delete(m.sending, p.held)
@@ -156,13 +165,30 @@ func (m *home) scriptReplied(p *pendingScript, r core.Reply) tea.Cmd {
 	var v script.ResumeValue
 	switch {
 	case r.Err != nil:
-		v.Err = fmt.Sprintf("%s: %s", p.op, r.Err)
-	case p.op == "new_instance":
+		v.Err = scriptError(p.op, r.Err)
+	default:
 		if row, _ := m.viewByID(r.ID); row != nil {
 			v.Instance = row
 		} else if cv, ok := m.core.View(r.ID); ok {
 			v.Instance = &cv
+		} else if p.killed != nil {
+			gone := *p.killed
+			gone.Status = session.Deleting
+			v.Instance = &gone
 		}
 	}
 	return func() tea.Msg { return scriptResumeMsg{id: p.intent, trace: p.trace, value: v} }
+}
+
+// scriptError is the message a failed Lua call raises. A refusal raises
+// its own, which names the request and the session ("kill x: not allowed
+// on a workspace terminal"); anything else is "<op>: <err>", as the
+// methods raised before the model ran them: a failed job's error, a gone
+// session's (ErrNoSession names neither), and every ctx:new_instance
+// error ("new_instance: …").
+func scriptError(op string, err error) string {
+	if op != "new_instance" && errors.Is(err, core.ErrRefused) && !errors.Is(err, core.ErrNoSession) {
+		return err.Error()
+	}
+	return fmt.Sprintf("%s: %s", op, err)
 }
