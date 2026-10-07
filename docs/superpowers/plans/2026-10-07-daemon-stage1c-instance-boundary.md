@@ -2175,3 +2175,71 @@ Check:
 ### E3. Outcome (coordinator, after the final review)
 
 - [ ] Append an "Outcome and follow-ups" section to this plan (the 1B format), and update the `loom-scrum-daemon-direction` memory: 1C is done, and the next step is plan 1D.
+
+---
+
+## Outcome and follow-ups
+
+Executed 2026-10-07 as 19 commits, fdd4531..8ca4555, on `aidanb/daemon`:
+- **A:** fdd4531, 13560e2
+- **B:** c40fc4c, e8e8f32
+- **C:** 2d81191, 4360709, 569d86e, 8bdeb58, 4223730, 7329cbb
+- **D:** eb789eb, 82d9300, e9bdb8d, ccbb7e4, 7d800b9
+- **E:** d7c983c, 811b972
+- **Final fixes:** 9af5b24, 8ca4555
+
+One standing reviewer did the spec and quality review of every package, and each fix round went back to the reviewer who filed its findings. A fresh final cross-cutting review and a sandbox smoke run came last. Final state:
+- **Checks:** `go vet`, `go test ./...`, `-race ./...` and the e2e suite are green, and gofmt is clean.
+- **Enforcement:** `TestTUIHoldsNoInstance` covers `app/`, `ui/` and `script/` with no exemption.
+- **Assertions:** the count rose from 7268 to 7823. None was weakened. Every assertion whose meaning changed is mapped in its commit's report, and the one deleted test (`TestTerminalDetachSessionForInstance`) went with the function it tested.
+- **Smoke run** (811b972, plus a `base1b` sandbox built from 9030942): every 1B check and every new 1C check passed, with no regressions.
+  - Drafts, the ladder overlay on both render paths, the send hold, and the Lua script: kill, pause, resume, new_instance, send, preview, the pcall refusal and refused kills.
+  - It confirmed the Lua bugs 1C fixes: on base1b a Lua kill left the row and its record, and a Lua kill on a workspace terminal silently killed it.
+
+### What the reviews changed beyond the plan
+- **Preconditions live in the model.** Every request runs `admit`, a precondition taken from the TUI predicates, before it changes anything, and refuses with a Reply. Without it, Kill or Push on a workspace terminal panicked its job (a nil worktree), and Resume on a running terminal stranded it as Paused. The jobs also guard against a nil worktree.
+- **Refusals are visible.** `core.ErrRefused` marks refusals. Every user-started request carries a ReqID, and `refusal()` shows a refusal, while a job failure stays the model's own notice. The plan's C1 assumption ("the TUI's predicates already gate") was wrong wherever a dialog is open. For example, a prompt typed while the agent exited was dropped without a word.
+- **Pause calls `PauseInst` before Loading.** This was a plan bug: a failed pause would have reverted to Loading.
+- **Stale copies.** Copies of a view go stale, so B pinned every place the TUI rereads after its own write (`app/views_freshness_test.go`). `refreshSelection` runs on each focused `ViewsChanged`. Lua instance values refresh after a lifecycle call (the final review's Important finding): a script that read `inst:status()` after `inst:pause()` saw "Running".
+- **`tmux.NewSessionNamed`.** This was a plan bug: `tmux.NewSession(v.TmuxSession, …)` prefixes the name a second time.
+- **The terminal keep rule.** `keepsTerminal` keeps the terminal client of a started row that is neither Paused nor Recoverable. Keeping only `Active()` rows blanked the pane during every op and churned the client on the snapshot path.
+- **The ladder survives a failed kill or pause.** `pruneLadder` keeps Loading and Deleting rows.
+- **Lua:**
+  - Yielding calls refuse inside pcall or a callback (gopher-lua can't yield across a Go frame).
+  - `resume()` on an orphan recovers it.
+  - `pause()` on a Paused session still raises.
+  - Lua sends hold input too.
+  - A call parked at shutdown raises "loom is shutting down".
+  - Resumed errors name their file, and a tail call raises without a position.
+  - A refusal raises its own message.
+  - A killed handle reaches no pane.
+  - `ctx:new_instance` decides its workspace before the script's deferred actions run, as the old adopt rule did.
+- **`InstanceView.WorktreeRepoPath`.** The worktree userdata needs the repo root git resolved when it made the worktree.
+
+### Follow-ups, none blocking
+1. **The send hold has gaps.** It doesn't cover full-screen attach (alt+a) or Lua `send_keys`/`tap_enter`, nor a Lua `send_prompt` while the user is already inline-attached. The N flow's initial prompt is not a `SendPrompt` request, so `i`/`a` between Running and Started isn't held; that predates 1C.
+2. **A dying shell's frozen frame.** During a kill or pause, the terminal pane shows the dying shell's last frame until the op completes. `closeTerminalFor` used to clear it. This is cosmetic.
+3. **A shell can leak into a removed worktree (predates 1C).** `ensureSessionLocked` (`ui/terminal.go`) can start a fresh `loom_term_` shell for a selected Loading or Deleting row; on the snapshot path this happens on its 100ms tick. That shell leaks into a worktree being removed. Fix: create shells only for `Active()` rows, and only reattach for busy ones.
+4. **`cs.actions.*` under pcall** still run unawaited, then toast "no coroutine awaiting intent". `Engine.yieldable` is the fix.
+5. **Decision 6 edges.**
+   - A Claude session with no hook or roster report: its ladder Prompting no longer triggers `maybeRosterQuerySoon`.
+   - A report recorded while the row was Loading applies at the next tick (up to 3s), not the next quiet.
+   - A non-Claude session shows Running for about 1s after a restart, until the first quiet.
+6. **Error naming.** A model refusal is named after the request, not the Lua method. `send_prompt` can raise "send a prompt to x: …" and `resume()` can raise "recover x: …". The pcall refusal says "pcall or a callback" for a precondition or a script coroutine too.
+7. **Lifecycle errors in the log lack the key.** Script errors from lifecycle calls log `key=""`: the resume path builds `scriptDoneMsg` without the dispatch's key, as every `cs.await` resume always has. The trace ID still correlates them. Thread the key through `pendingIntent`/`scriptResumeMsg`.
+8. **Untested branches.**
+   - `recover`'s terminal check has no test (orphan discovery never builds a terminal placeholder).
+   - `resumeSkipped` is log-only, as before.
+   - A merge source that vanishes in a race reads "merge into <target>: no such session".
+9. **Seen in the smoke run, all predating 1C** (reproduced on `base1b`):
+   - Discarding a dead-tmux orphan fails "failed to close tmux session" and leaves the row Recoverable until a restart; the worktree is removed.
+   - An unstarted `ctx:new_instance` row can't be killed ("cannot get git worktree…"); in 1C a Lua kill now raises this instead of doing nothing.
+   - Cancelling a draft selects the last row, not the one selected before.
+   - Killing a recovered orphan keeps its branch.
+   - After the agent exits, `state.json` keeps the old status until the next save.
+   - After a pause and resume with a stash, an untracked file comes back staged.
+10. **For 1D:**
+    - `handleReply` for an issue fetch reaches `newLaunchOptionsOverlay`, which drains the model inside `applyCoreEvent` (a nested drain). It is harmless today, but the goroutine split must not rely on it.
+    - `core.Core`'s workspace and account half is still pointer-typed.
+    - The merge dirty check (git I/O) still runs on the Update goroutine.
+11. **Unverified here:** real Claude (the smoke run used the fake agent), the issue picker (the toy repo has no GitHub remote), a real failed pause, and an account login.
