@@ -85,7 +85,7 @@ func lifecycleOp(e *Engine, op string) lua.LGFunction {
 // returned: the operation would run while the script went on unaware, and
 // its Reply would find no coroutine to resume. So the method refuses
 // before it enqueues anything.
-const errNotYieldable = "cannot wait for loom inside pcall, a callback, a precondition or a coroutine of the script's own; call it from the handler itself"
+const errNotYieldable = "cannot be called inside pcall or a callback (it waits for the TUI)"
 
 // yieldable reports whether the Go function running on L can yield its
 // handler's coroutine: L is the handler coroutine the engine is running

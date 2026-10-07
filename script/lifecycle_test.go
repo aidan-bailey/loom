@@ -294,6 +294,62 @@ end)`},
 		})
 	}
 
+	t.Run("pcall around each method", func(t *testing.T) {
+		calls := map[string]string{
+			"kill":         "pcall(inst.kill, inst)",
+			"pause":        "pcall(inst.pause, inst)",
+			"resume":       "pcall(inst.resume, inst)",
+			"send_prompt":  `pcall(inst.send_prompt, inst, "hi")`,
+			"new_instance": `pcall(ctx.new_instance, ctx, {title = "made"})`,
+		}
+		for method, call := range calls {
+			e := NewEngine(nil)
+			require.NoError(t, e.LoadFromString("pc.lua", `cs.bind("Z", function(ctx)
+  local inst = ctx:selected()
+  local ok, err = `+call+`
+  ctx:notify(tostring(ok) .. "|" .. tostring(err))
+end)`))
+			h := &fakeHost{selected: &core.InstanceView{ID: 3, Title: "x"}}
+
+			_, err := e.Dispatch(context.Background(), "Z", h)
+
+			require.NoError(t, err, method)
+			assert.Empty(t, h.enqueued, "%s: nothing was enqueued", method)
+			require.Len(t, h.notices, 1, method)
+			assert.Contains(t, h.notices[0], "false|", "%s: pcall returns false", method)
+			assert.Contains(t, h.notices[0], method+": cannot be called inside pcall or a callback (it waits for the TUI)", method)
+			e.Close()
+		}
+	})
+
+	t.Run("a plain call from the handler still yields", func(t *testing.T) {
+		calls := map[string]string{
+			"kill":         "inst:kill()",
+			"pause":        "inst:pause()",
+			"resume":       "inst:resume()",
+			"send_prompt":  `inst:send_prompt("hi")`,
+			"new_instance": `ctx:new_instance{title = "made"}`,
+		}
+		for method, call := range calls {
+			e := NewEngine(nil)
+			require.NoError(t, e.LoadFromString("plain.lua", `cs.bind("Z", function(ctx)
+  local inst = ctx:selected()
+  `+call+`
+  ctx:notify("after")
+end)`))
+			h := &fakeHost{selected: &core.InstanceView{ID: 3, Title: "x"}}
+
+			_, err := e.Dispatch(context.Background(), "Z", h)
+
+			require.NoError(t, err, method)
+			require.Len(t, h.enqueued, 1, "%s yields on an intent", method)
+			assert.Empty(t, h.notices, "%s: parked until the host resumes it", method)
+			require.NoError(t, e.ResumeWithHost(context.Background(), h.enqueuedIDs[0], h, ResumeValue{}), method)
+			assert.Equal(t, []string{"after"}, h.notices, method)
+			e.Close()
+		}
+	})
+
 	t.Run("a precondition", func(t *testing.T) {
 		e := NewEngine(nil)
 		defer e.Close()
