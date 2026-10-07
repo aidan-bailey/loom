@@ -52,7 +52,7 @@ func TestClaudeTmpSweep_QueuedByEveryLoadPath(t *testing.T) {
 		def := preservedTerminalWorkspace(t, "ws-sweep")
 		m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: noTmuxExec()})
 
-		_, err := m.OpenTabWS(def)
+		_, err := m.openTabWS(def)
 		require.NoError(t, err)
 
 		assert.Contains(t, m.claudeTmpPending, config.WorkspaceConfigDir(&def))

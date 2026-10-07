@@ -15,7 +15,7 @@ import (
 // account` run in another terminal sees it.
 func otherTerminal(t *testing.T, m *home) *account.Registry {
 	t.Helper()
-	return account.LoadRegistry(filepath.Dir(m.core.AccountsRegistry().Path()))
+	return account.LoadRegistry(filepath.Dir(testModel(m).AccountsRegistryForTest().Path()))
 }
 
 func TestHealthTick_RemovingTheLastExtraAccountElsewhereHidesTheStrip(t *testing.T) {
@@ -52,7 +52,7 @@ func TestHealthTick_AnAccountAddedElsewhereShowsTheStrip(t *testing.T) {
 func TestHealthTick_ACorruptFileSurfacesOneErrorNotOnePerTick(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	require.NoError(t, os.WriteFile(m.core.AccountsRegistry().Path(), []byte("not json"), 0o644))
+	require.NoError(t, os.WriteFile(testModel(m).AccountsRegistryForTest().Path(), []byte("not json"), 0o644))
 
 	m.Update(tickUpdateMetadataMessage{})
 	require.Contains(t, m.errBox.String(), "accounts")
@@ -63,8 +63,8 @@ func TestHealthTick_ACorruptFileSurfacesOneErrorNotOnePerTick(t *testing.T) {
 	assert.NotContains(t, m.errBox.String(), "accounts", "an unchanged corrupt file is not re-reported")
 
 	// Still corrupt, differently: the error was already surfaced.
-	require.NoError(t, os.WriteFile(m.core.AccountsRegistry().Path(), []byte("still not json"), 0o644))
+	require.NoError(t, os.WriteFile(testModel(m).AccountsRegistryForTest().Path(), []byte("still not json"), 0o644))
 	m.Update(tickUpdateMetadataMessage{})
 	assert.NotContains(t, m.errBox.String(), "accounts")
-	assert.Error(t, m.core.AccountsRegistry().LoadErr())
+	assert.Error(t, testModel(m).AccountsRegistryForTest().LoadErr())
 }

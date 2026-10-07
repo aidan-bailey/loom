@@ -53,8 +53,8 @@ type Reactivated struct {
 
 func (Reactivated) coreEvent() {}
 
-// Started reports a start that succeeded. Owner is the workspace that
-// holds the instance (nil when unknown), Loaded whether it is still
+// Started reports a start that succeeded. Owner names the workspace that
+// holds the instance (0 when unknown), Loaded whether it is still
 // loaded. The TUI attaches its client when Loaded, and selects it or says
 // where it started. ID and Title are the instance's: the title is for the
 // notice, since a Started for an owner that was closed has no view left in
@@ -62,12 +62,11 @@ func (Reactivated) coreEvent() {}
 type Started struct {
 	ID     InstanceID
 	Title  string
-	Owner  *Workspace
+	Owner  WorkspaceID
 	Loaded bool
-	// OwnerID and OwnerLabel name the owner (0 and "global" when unknown).
+	// OwnerLabel names the owner in notices ("global" when unknown).
 	// ClosedNote, set when !Loaded, says where the owner went ("which is no
 	// longer open", or "which was closed and reopened meanwhile").
-	OwnerID    WorkspaceID
 	OwnerLabel string
 	ClosedNote string
 }
@@ -81,11 +80,10 @@ func (Started) coreEvent() {}
 type Recovered struct {
 	ID     InstanceID
 	Title  string
-	Owner  *Workspace
+	Owner  WorkspaceID
 	Loaded bool
 	Paused bool
-	// OwnerID, OwnerLabel and ClosedNote are as for Started.
-	OwnerID    WorkspaceID
+	// OwnerLabel and ClosedNote are as for Started.
 	OwnerLabel string
 	ClosedNote string
 }
@@ -148,8 +146,7 @@ func (WorkspacesChanged) coreEvent() {}
 // events it returns, so the appliers of the events that follow see the new
 // views.
 type ViewsChanged struct {
-	Workspace *Workspace
-	// WS names the workspace (Workspace's ID): the TUI's slot for it.
+	// WS names the workspace: the TUI's slot for it.
 	WS    WorkspaceID
 	Views []InstanceView
 }

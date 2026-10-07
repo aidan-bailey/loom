@@ -22,7 +22,7 @@ import (
 // focused slot and no other flow is on screen; otherwise a notice says
 // where it started. Formerly app.handleInstanceStarted's view half.
 func (m *home) applyStarted(ev core.Started) tea.Cmd {
-	owner := ev.OwnerID
+	owner := ev.Owner
 	// The row, nil when no open slot shows the instance (its owner closed).
 	v, holder := m.viewByID(ev.ID)
 	var attach tea.Cmd
@@ -74,7 +74,7 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 // mark the record Paused, and resume rebuilds the worktree from the branch.
 // Formerly app.handleRecoverDone's view half.
 func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
-	owner := ev.OwnerID
+	owner := ev.Owner
 	if owner != 0 && (owner != m.id || m.state == stateDefault) {
 		if s := m.slotFor(owner); s != nil {
 			s.list.SelectID(ev.ID)

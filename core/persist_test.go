@@ -101,7 +101,7 @@ func TestSave_WritesALoadedWorkspace(t *testing.T) {
 	ws.add(pausedInst(t, "kept"))
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
-	require.NoError(t, m.SaveWS(ws))
+	require.NoError(t, m.saveWS(ws))
 	data, err := ws.storage.LoadInstanceData()
 	require.NoError(t, err)
 	require.Len(t, data, 1)
@@ -112,20 +112,20 @@ func TestCloseTab_RefusesTheLastTab(t *testing.T) {
 	m := NewForTest(Options{})
 	a := storedWorkspace(t, "a")
 	m.SetWorkspacesForTest(nil, []*Workspace{a})
-	_, err := m.CloseTabWS("a")
+	_, err := m.closeTabWS("a")
 	require.Error(t, err)
-	assert.Equal(t, []*Workspace{a}, m.TabsWS())
+	assert.Equal(t, []*Workspace{a}, m.tabs)
 }
 
 func TestCloseTab_DropsTheTab(t *testing.T) {
 	m := NewForTest(Options{})
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
 	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
-	closed, err := m.CloseTabWS("a")
+	closed, err := m.closeTabWS("a")
 	require.NoError(t, err)
 	assert.Same(t, a, closed)
-	assert.Equal(t, []*Workspace{b}, m.TabsWS())
-	assert.False(t, m.IsLoadedWS(a))
+	assert.Equal(t, []*Workspace{b}, m.tabs)
+	assert.False(t, m.isLoadedWS(a))
 }
 
 // TestSave_SkipsAClosedWorkspaceThatWasReopened: a dropped workspace's
@@ -137,7 +137,7 @@ func TestSave_SkipsAClosedWorkspaceThatWasReopened(t *testing.T) {
 	closed.add(pausedInst(t, "stale"))
 	m.SetWorkspacesForTest(nil, []*Workspace{reopened, storedWorkspace(t, "b")})
 
-	require.NoError(t, m.SaveWS(closed))
+	require.NoError(t, m.saveWS(closed))
 	data, err := closed.storage.LoadInstanceData()
 	require.NoError(t, err)
 	assert.Empty(t, data, "the closed copy was not written")

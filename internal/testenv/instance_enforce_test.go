@@ -14,16 +14,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// sessionPkg is the import path of the package defining session.Instance.
-const sessionPkg = "github.com/aidan-bailey/loom/session"
+const module = "github.com/aidan-bailey/loom"
 
-// instanceNames are the session package's names for an instance: the type,
-// its constructors and its options.
-var instanceNames = map[string]bool{
-	"Instance":         true,
-	"NewInstance":      true,
-	"FromInstanceData": true,
-	"InstanceOptions":  true,
+// modelObjects are, by import path, the names a TUI file must not use: the
+// model's own objects (whose memory the model owns), their constructors,
+// and the process-wide toggles only the model sets.
+//   - session: an instance (the type, its constructors and options), the
+//     storage instances persist to, and the launch toggles the model sets
+//     on a settings save (core.Model.SaveSettings).
+//   - core: a loaded workspace and the model itself (the TUI holds a
+//     core.Core, built with core.New).
+//   - config: the workspace registry and state.json (the TUI reads
+//     core.RegistryView and core.WorkspaceView copies), and the config
+//     save (the model writes config.json).
+//   - account: the account registry (the TUI reads core.AccountNames).
+var modelObjects = map[string]map[string]bool{
+	module + "/session": {
+		"Instance": true, "NewInstance": true, "FromInstanceData": true, "InstanceOptions": true,
+		"Storage": true, "NewStorage": true,
+		"SetLoomContextEnabled": true, "SetSubagentTrackingEnabled": true,
+	},
+	module + "/core": {
+		"Workspace": true, "WorkspaceParts": true, "NewWorkspace": true, "Model": true,
+	},
+	module + "/config": {
+		"WorkspaceRegistry": true, "LoadWorkspaceRegistry": true,
+		"AppState": true, "State": true, "LoadStateFrom": true,
+		"SaveConfigTo": true,
+	},
+	module + "/account": {
+		"Registry": true, "LoadRegistry": true,
+	},
+}
+
+// handover exempts, by file and function, the names a function may use to
+// hand the startup objects main.go builds to core.New: Run and newHome
+// take the workspace registry as a parameter and pass it on, reading none
+// of it after the model is built.
+var handover = map[string]map[string]map[string]bool{
+	"app/app_init.go": {
+		"Run":     {module + "/config.WorkspaceRegistry": true},
+		"newHome": {module + "/config.WorkspaceRegistry": true},
+	},
 }
 
 // bridgeNames are the model's former bridge from an InstanceID to an
@@ -37,12 +69,16 @@ var bridgeNames = map[string]bool{
 	"instOf":         true,
 }
 
-// TestTUIHoldsNoInstance fails when the TUI (app, ui and its subpackages)
-// or the script engine (script) names a session instance in production
-// code: the type, its constructors or its options. The TUI and Lua see
-// instances only as core.InstanceView values and change them only by
-// request. Test files are exempt.
-func TestTUIHoldsNoInstance(t *testing.T) {
+// TestTUIHoldsNoModelObject fails when the TUI (app, ui and its
+// subpackages) or the script engine (script) names one of the model's own
+// objects in production code (modelObjects): a session instance, its
+// storage, a loaded workspace, the model, the workspace or account
+// registry, state.json, the config save or the launch toggles. It grew
+// from TestTUIHoldsNoInstance (daemon stage 1C), which covered instances
+// only. The TUI and Lua see the model only as values (core.InstanceView,
+// core.WorkspaceView, …) and change it only by request. Test files are
+// exempt, and so is the startup handover (handover).
+func TestTUIHoldsNoModelObject(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
 	require.FileExists(t, filepath.Join(root, "go.mod"))
@@ -56,57 +92,72 @@ func TestTUIHoldsNoInstance(t *testing.T) {
 			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			offenders = append(offenders, instanceUses(t, path)...)
+			rel, err := filepath.Rel(root, path)
+			require.NoError(t, err)
+			offenders = append(offenders, modelObjectUses(t, path, filepath.ToSlash(rel))...)
 			return nil
 		})
 		require.NoError(t, err)
 	}
-	assert.Empty(t, offenders, "the TUI must hold no session instance: it reads core.InstanceView values and acts by request")
+	assert.Empty(t, offenders, "the TUI must hold none of the model's objects: it reads values and acts by request")
 }
 
-// instanceUses lists path's uses of an instance name (instanceNames)
-// through its import of the session package, under whatever name the file
-// imports it, and of a bridge method (bridgeNames) on anything.
-func instanceUses(t *testing.T, path string) []string {
+// modelObjectUses lists path's uses of a forbidden name (modelObjects)
+// through its import of the package defining it, under whatever name the
+// file imports it (a dot import included), and of a bridge method
+// (bridgeNames) on anything. rel is path relative to the module root, for
+// the handover exemption.
+func modelObjectUses(t *testing.T, path, rel string) []string {
 	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 	require.NoError(t, err)
-	sessionName := ""
+	// local import name → import path, for the packages modelObjects names.
+	imported := map[string]string{}
 	for _, imp := range file.Imports {
 		p, err := strconv.Unquote(imp.Path.Value)
 		require.NoError(t, err)
-		if p != sessionPkg {
+		if modelObjects[p] == nil {
 			continue
 		}
-		sessionName = "session"
+		name := p[strings.LastIndex(p, "/")+1:]
 		if imp.Name != nil {
-			sessionName = imp.Name.Name
+			name = imp.Name.Name
 		}
+		imported[name] = p
 	}
 	var uses []string
-	ast.Inspect(file, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if bridgeNames[sel.Sel.Name] {
-			uses = append(uses, fset.Position(sel.Pos()).String()+": "+sel.Sel.Name)
-			return true
-		}
-		if pkg, ok := sel.X.(*ast.Ident); ok && sessionName != "" && pkg.Name == sessionName && instanceNames[sel.Sel.Name] {
-			uses = append(uses, fset.Position(sel.Pos()).String()+": "+pkg.Name+"."+sel.Sel.Name)
-		}
-		return true
-	})
-	// A dot import puts the names in the file's own scope.
-	if sessionName == "." {
-		ast.Inspect(file, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok && instanceNames[id.Name] {
-				uses = append(uses, fset.Position(id.Pos()).String()+": "+id.Name)
+	check := func(n ast.Node, exempt map[string]bool) {
+		ast.Inspect(n, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.SelectorExpr:
+				if bridgeNames[x.Sel.Name] {
+					uses = append(uses, fset.Position(x.Pos()).String()+": "+x.Sel.Name)
+					return true
+				}
+				pkg, ok := x.X.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				ip, ok := imported[pkg.Name]
+				if ok && ip != "" && modelObjects[ip][x.Sel.Name] && !exempt[ip+"."+x.Sel.Name] {
+					uses = append(uses, fset.Position(x.Pos()).String()+": "+pkg.Name+"."+x.Sel.Name)
+				}
+			case *ast.Ident:
+				// A dot import puts the names in the file's own scope.
+				if ip, ok := imported["."]; ok && modelObjects[ip][x.Name] && !exempt[ip+"."+x.Name] {
+					uses = append(uses, fset.Position(x.Pos()).String()+": "+x.Name)
+				}
 			}
 			return true
 		})
+	}
+	for _, d := range file.Decls {
+		exempt := map[string]bool{}
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil {
+			exempt = handover[rel][fn.Name.Name]
+		}
+		check(d, exempt)
 	}
 	return uses
 }

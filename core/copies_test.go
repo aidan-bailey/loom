@@ -60,11 +60,15 @@ func TestRestoreFailed_IsACopy(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, m.RestoreFailed())
 }
 
-func TestTabsWS_IsACopy(t *testing.T) {
+func TestTabs_IsACopy(t *testing.T) {
 	m := NewForTest(Options{})
-	a, b := NewWorkspace(WorkspaceParts{}), NewWorkspace(WorkspaceParts{})
+	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
 	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
-	got := m.TabsWS()
-	got[0] = nil
-	assert.Equal(t, []*Workspace{a, b}, m.TabsWS())
+	got := m.Tabs()
+	got[0].Name = "changed"
+	got[0].PreservedTitles = append(got[0].PreservedTitles, "x")
+	again := m.Tabs()
+	assert.Equal(t, "a", again[0].Name)
+	assert.Empty(t, again[0].PreservedTitles)
+	assert.Equal(t, []*Workspace{a, b}, m.tabs)
 }

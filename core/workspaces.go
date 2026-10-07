@@ -10,13 +10,6 @@ import (
 	"github.com/aidan-bailey/loom/session/launch"
 )
 
-// ClassicWS is the workspace shown while no tab is open; nil while one is.
-func (m *Model) ClassicWS() *Workspace { return m.classic }
-
-// TabsWS are the open workspace tabs, in tab order: a fresh slice the
-// caller may keep.
-func (m *Model) TabsWS() []*Workspace { return slices.Clone(m.tabs) }
-
 // Loaded is every loaded workspace: the tabs, or the classic one alone. It
 // returns a fresh slice, so a caller may keep iterating it while calling
 // back into the model (which can close a tab).
@@ -29,10 +22,6 @@ func (m *Model) Loaded() []*Workspace {
 	}
 	return slices.Clone(m.tabs)
 }
-
-// RegistryObj is the workspace registry (nil in bare tests). The TUI reads
-// it for the picker; writes go through the model.
-func (m *Model) RegistryObj() *config.WorkspaceRegistry { return m.registry }
 
 // RestoreFailed names the workspaces that failed to restore and are kept
 // in the open list (see Model.restoreFailed).
@@ -48,9 +37,9 @@ func (m *Model) holding(inst *session.Instance) *Workspace {
 	return nil
 }
 
-// IsLoadedWS reports whether ws is still part of the model: an open tab, or
+// isLoadedWS reports whether ws is still part of the model: an open tab, or
 // the classic workspace.
-func (m *Model) IsLoadedWS(ws *Workspace) bool {
+func (m *Model) isLoadedWS(ws *Workspace) bool {
 	return ws != nil && slices.Contains(m.Loaded(), ws)
 }
 
@@ -66,9 +55,9 @@ func (m *Model) Reopened(ws *Workspace) bool {
 	return false
 }
 
-// ClosedNoteWS describes, for a completion's notice, an owner workspace
+// closedNoteWS describes, for a completion's notice, an owner workspace
 // that was closed while the operation ran.
-func (m *Model) ClosedNoteWS(ws *Workspace) string {
+func (m *Model) closedNoteWS(ws *Workspace) string {
 	if m.Reopened(ws) {
 		return "which was closed and reopened meanwhile"
 	}
@@ -176,7 +165,7 @@ func (m *Model) Register(name, dir string) (config.Workspace, error) {
 	return *ws, nil
 }
 
-// OpenTabWS loads a workspace as a new tab: its state, config and
+// openTabWS loads a workspace as a new tab: its state, config and
 // instances, reconciled against tmux and disk, crash-recovered sessions
 // relaunched, its workspace terminal created when it has none, and orphan
 // worktrees surfaced inline (reconcileOrphans). The first tab opened
@@ -184,7 +173,7 @@ func (m *Model) Register(name, dir string) (config.Workspace, error) {
 // opens nothing and leaves state.json untouched. Formerly the lifecycle
 // half of app.activateWorkspace; the TUI builds the tab's view over the
 // returned workspace.
-func (m *Model) OpenTabWS(def config.Workspace) (*Workspace, error) {
+func (m *Model) openTabWS(def config.Workspace) (*Workspace, error) {
 	wsCtx := config.WorkspaceContextFor(&def)
 	state := config.LoadStateFrom(wsCtx.ConfigDir)
 	appConfig := config.LoadConfigFrom(wsCtx.ConfigDir)
@@ -302,12 +291,12 @@ func (m *Model) OpenTabWS(def config.Workspace) (*Workspace, error) {
 	return ws, nil
 }
 
-// CloseTabWS saves and closes the tab named name, returning it (nil, nil
+// closeTabWS saves and closes the tab named name, returning it (nil, nil
 // when no tab has that name). A failed save keeps the tab open, so its
 // unsaved state stays reachable (silent data loss on teardown is worse
 // than a sticky tab), and the last tab is never closed: leaving no tab
 // means global mode, which only EnterGlobal builds.
-func (m *Model) CloseTabWS(name string) (*Workspace, error) {
+func (m *Model) closeTabWS(name string) (*Workspace, error) {
 	idx := slices.IndexFunc(m.tabs, func(w *Workspace) bool { return w.Name() == name })
 	if idx == -1 {
 		return nil, nil
@@ -324,7 +313,7 @@ func (m *Model) CloseTabWS(name string) (*Workspace, error) {
 	return ws, nil
 }
 
-// EnterGlobalWS replaces every loaded workspace with the global one (the
+// enterGlobalWS replaces every loaded workspace with the global one (the
 // picker's Global row). It saves every tab, then loads the global context
 // like classic startup (loadWorkspace, without the tmux sweep: the
 // closing tabs' sessions are unclaimed here), and only then drops what was
@@ -334,7 +323,7 @@ func (m *Model) CloseTabWS(name string) (*Workspace, error) {
 // hooks folders); that is why every save comes first. focused is the
 // workspace the TUI shows: an aborted load puts its config's session flags
 // back. Returns the global workspace, now Classic.
-func (m *Model) EnterGlobalWS(focused *Workspace) (*Workspace, error) {
+func (m *Model) enterGlobalWS(focused *Workspace) (*Workspace, error) {
 	// Persist every workspace tab before touching global state. A tab
 	// whose save fails keeps its unpersisted state reachable only while
 	// open, so abort — with nothing global loaded yet.
@@ -416,7 +405,7 @@ func (m *Model) RestoreSaved(saved []config.Workspace) int {
 
 	var failed []string
 	for _, def := range desired {
-		if _, err := m.OpenTabWS(def); err != nil {
+		if _, err := m.openTabWS(def); err != nil {
 			log.For("core").Error("workspace.restore_failed", "name", def.Name, "err", err)
 			failed = append(failed, def.Name)
 			if slices.ContainsFunc(saved, func(s config.Workspace) bool { return s.Name == def.Name }) {

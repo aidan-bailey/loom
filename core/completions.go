@@ -196,7 +196,7 @@ func (m *Model) removeEverywhere(inst *session.Instance) {
 func (m *Model) deliverStart(r StartResult) {
 	inst := r.Instance
 	owner := m.owningWorkspace(r.Owner, inst)
-	if owner != nil && !m.IsLoadedWS(owner) {
+	if owner != nil && !m.isLoadedWS(owner) {
 		if twin, reopened := m.reopenedTwin(owner, inst); twin != nil {
 			if r.Err != nil {
 				m.notifyErr(r.Err)
@@ -207,14 +207,14 @@ func (m *Model) deliverStart(r StartResult) {
 			}
 		}
 	}
-	loaded := m.IsLoadedWS(owner)
+	loaded := m.isLoadedWS(owner)
 
 	if r.Err != nil {
 		// The save's error first: the start's is the one the error bar
 		// keeps, as when both were set in this order before.
 		if owner != nil {
 			owner.remove(inst)
-			if err := m.SaveWS(owner); err != nil {
+			if err := m.saveWS(owner); err != nil {
 				m.notifyErr(err)
 			}
 		}
@@ -225,7 +225,7 @@ func (m *Model) deliverStart(r StartResult) {
 	}
 
 	if owner != nil {
-		if err := m.SaveWS(owner); err != nil {
+		if err := m.saveWS(owner); err != nil {
 			m.notifyErr(err)
 			return
 		}
@@ -236,8 +236,8 @@ func (m *Model) deliverStart(r StartResult) {
 		return
 	}
 	ownerID, label, note := m.ownerFields(owner, loaded)
-	m.emit(Started{ID: m.idOf(inst), Title: inst.Title, Owner: owner, Loaded: loaded,
-		OwnerID: ownerID, OwnerLabel: label, ClosedNote: note})
+	m.emit(Started{ID: m.idOf(inst), Title: inst.Title, Owner: ownerID, Loaded: loaded,
+		OwnerLabel: label, ClosedNote: note})
 }
 
 // deliverPromptSent finishes a start whose initial prompt was sent first
@@ -245,10 +245,10 @@ func (m *Model) deliverStart(r StartResult) {
 // have closed while the prompt was sent, so whether it is still loaded is
 // asked again.
 func (m *Model) deliverPromptSent(r promptSent) {
-	loaded := m.IsLoadedWS(r.owner)
+	loaded := m.isLoadedWS(r.owner)
 	ownerID, label, note := m.ownerFields(r.owner, loaded)
-	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: r.owner, Loaded: loaded,
-		OwnerID: ownerID, OwnerLabel: label, ClosedNote: note})
+	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: ownerID, Loaded: loaded,
+		OwnerLabel: label, ClosedNote: note})
 }
 
 // deliverResume finishes a resume. The owner may have been closed while
@@ -267,7 +267,7 @@ func (m *Model) deliverResume(r ResumeResult) {
 			}
 		}
 		if adopted != nil {
-			if err := m.SaveWS(adopted); err != nil {
+			if err := m.saveWS(adopted); err != nil {
 				m.notifyErr(err)
 			}
 			m.notifyInfo(fmt.Sprintf("%s resumed in %s", inst.Title, adopted.Label()))
@@ -301,18 +301,18 @@ func (m *Model) deliverRecover(r RecoverResult) {
 		m.notifyErr(fmt.Errorf("recover %s: %w", r.OldTitle, r.Err))
 		return
 	}
-	loaded := m.IsLoadedWS(owner)
+	loaded := m.isLoadedWS(owner)
 	if owner != nil {
 		if !owner.replace(r.Placeholder, r.Recovered) {
 			owner.add(r.Recovered)
 		}
-		if err := m.SaveWS(owner); err != nil {
+		if err := m.saveWS(owner); err != nil {
 			log.For("core").Error("recover.save_failed", "title", r.Recovered.Title, "err", err)
 		}
 	}
 	ownerID, label, note := m.ownerFields(owner, loaded)
-	m.emit(Recovered{ID: m.idOf(r.Recovered), Title: r.Recovered.Title, Owner: owner, Loaded: loaded,
-		Paused: r.Recovered.GetStatus() == session.Paused, OwnerID: ownerID, OwnerLabel: label, ClosedNote: note})
+	m.emit(Recovered{ID: m.idOf(r.Recovered), Title: r.Recovered.Title, Owner: ownerID, Loaded: loaded,
+		Paused: r.Recovered.GetStatus() == session.Paused, OwnerLabel: label, ClosedNote: note})
 }
 
 // deliverKill removes a killed instance from every loaded workspace, by

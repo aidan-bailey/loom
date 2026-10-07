@@ -572,7 +572,3 @@ func (m *Model) AccountUsage(name string) (account.Usage, error) {
 	u := m.usage[name]
 	return u.last.Clone(), u.err
 }
-
-// AccountsRegistry is the registry for the TUI's views to read (nil before
-// InitAccounts); writes go through the requests above.
-func (m *Model) AccountsRegistry() *account.Registry { return m.accounts }

@@ -48,7 +48,7 @@ func TestOpenTab_BlockedRemoteControlEmitsTheRCOffNotice(t *testing.T) {
 	m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: noTmux})
 	m.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 
-	ws, err := m.OpenTabWS(def)
+	ws, err := m.openTabWS(def)
 	require.NoError(t, err)
 
 	assert.Contains(t, m.Drain().Events, Event(Notice{Info: "remote control off: not logged in"}))

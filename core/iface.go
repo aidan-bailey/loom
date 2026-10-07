@@ -9,11 +9,14 @@ import (
 )
 
 // Core is the session model as its clients use it: every method the TUI
-// calls. In stage 1C the instance half is final: requests by InstanceID,
-// InstanceView values, Reply. The workspace and account half still passes
-// the model's own objects (*Workspace, *config.WorkspaceRegistry,
-// *account.Registry, …), and stage 1D converts it to values before the
-// model moves to its own goroutine. *Model is the only implementation.
+// calls. It is value-typed: every parameter and result, and every Event,
+// is plain data a client could be sent from another process, never the
+// model's own objects (TestCoreIsValueTyped). Instances are named by
+// InstanceID and seen as InstanceView values, workspaces by WorkspaceID
+// and WorkspaceView; the registry and accounts cross as copies, and every
+// change is a request. The exceptions are Sync's Out.Jobs and Deliver, the
+// job plumbing stage 1E moves into the model when it gets its own
+// goroutine. *Model is the only implementation.
 type Core interface {
 	// The loop: the TUI drains the model after every message (Sync), hands
 	// it every job's result (Deliver), and starts its first background
@@ -30,13 +33,6 @@ type Core interface {
 
 	// Workspaces: the loaded ones, their transitions, saves and the
 	// registry.
-	ClassicWS() *Workspace
-	TabsWS() []*Workspace
-	IsLoadedWS(ws *Workspace) bool
-	ClosedNoteWS(ws *Workspace) string
-	OpenTabWS(def config.Workspace) (*Workspace, error)
-	CloseTabWS(name string) (*Workspace, error)
-	EnterGlobalWS(focused *Workspace) (*Workspace, error)
 	StayGlobal()
 	RestoreSaved(saved []config.Workspace) int
 	RestoreFailed() []string
@@ -44,15 +40,12 @@ type Core interface {
 	OpenNames() []string
 	PersistOpenList()
 	Register(name, dir string) (config.Workspace, error)
-	RegistryObj() *config.WorkspaceRegistry
 	SetLastUsed(name string) error
-	SaveWS(ws *Workspace) error
 	SaveForQuit() error
 
-	// Workspaces by ID (stage 1D): their views, transitions and saves,
-	// the registry as a copy, and the requests that change a workspace's
-	// settings, UI prefs and help screens. The ...WS versions above go in
-	// package C of the 1D plan.
+	// Workspaces by ID: their views, transitions and saves, the registry
+	// as a copy, and the requests that change a workspace's settings, UI
+	// prefs and help screens.
 	Workspace(id WorkspaceID) (WorkspaceView, bool)
 	Classic() (WorkspaceView, bool)
 	Tabs() []WorkspaceView
@@ -69,10 +62,8 @@ type Core interface {
 
 	// Instances: their views, and every lifecycle action as a request by
 	// ID, answered by a Reply when it carries a ReqID.
-	ViewsWS(ws *Workspace) []InstanceView
 	Views(id WorkspaceID) []InstanceView
 	View(id InstanceID) (InstanceView, bool)
-	CreateWS(ws *Workspace, spec NewInstance, req ReqID)
 	Create(id WorkspaceID, spec NewInstance, req ReqID)
 	Kill(id InstanceID, req ReqID)
 	Pause(id InstanceID, req ReqID)
@@ -107,7 +98,6 @@ type Core interface {
 	// Accounts: the registry, each account's auth, sync, usage and env,
 	// and the account requests.
 	AccountNames() AccountNames
-	AccountsRegistry() *account.Registry
 	AccountsLoaded() bool
 	HasExtraAccounts() bool
 	Account(name string) (account.Account, bool)

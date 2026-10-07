@@ -88,12 +88,12 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 	return v
 }
 
-// ViewsWS returns ws's instances as views, in display order (a fresh slice).
+// viewsWS returns ws's instances as views, in display order (a fresh slice).
 // The TUI seeds a new slot's store with it; afterwards ViewsChanged keeps
 // the store current. ws must be loaded: the IDs it assigns to a workspace
 // that isn't are pruned by the next publish, and its instances get new
 // ones if it loads later.
-func (m *Model) ViewsWS(ws *Workspace) []InstanceView {
+func (m *Model) viewsWS(ws *Workspace) []InstanceView {
 	if ws == nil {
 		return nil
 	}
@@ -133,7 +133,7 @@ func (m *Model) publishViews() []Event {
 		if prev, ok := m.published[ws]; !ok || !reflect.DeepEqual(prev, views) {
 			// The event gets its own copy: the TUI keeps it as its store, which
 			// must not alias the copy the next publish compares against.
-			events = append(events, ViewsChanged{Workspace: ws, WS: m.wsIDOf(ws), Views: cloneViews(views)})
+			events = append(events, ViewsChanged{WS: m.wsIDOf(ws), Views: cloneViews(views)})
 		}
 	}
 	m.published = next

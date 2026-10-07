@@ -109,6 +109,10 @@ func (m *Model) ApplyClaudeStatusForTest(inst *session.Instance) { m.applyClaude
 // slice; a test must not modify it).
 func (w *Workspace) InstancesForTest() []*session.Instance { return w.instances() }
 
+// AccountsRegistryForTest is the model's account registry (nil before
+// InitAccounts): app tests check what an account request did to it.
+func (m *Model) AccountsRegistryForTest() *account.Registry { return m.accounts }
+
 // WorkspaceForTest resolves a loaded workspace's ID to the model's
 // workspace, nil when none is loaded: app tests reach a fixture's
 // instances through it.

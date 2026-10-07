@@ -20,7 +20,7 @@ func TestAccountRequest_SetDefault(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestSetDefault, Name: "max-2"})
-	assert.Equal(t, "max-2", m.core.AccountsRegistry().Default())
+	assert.Equal(t, "max-2", testModel(m).AccountsRegistryForTest().Default())
 }
 
 func TestAccountRequest_AddCreatesAndLogsIn(t *testing.T) {
@@ -31,7 +31,7 @@ func TestAccountRequest_AddCreatesAndLogsIn(t *testing.T) {
 	cmd := m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestAdd, Name: "max-3"})
 
 	require.NotNil(t, cmd, "the login runs next")
-	_, ok := m.core.AccountsRegistry().Get("max-3")
+	_, ok := testModel(m).AccountsRegistryForTest().Get("max-3")
 	assert.True(t, ok)
 	assert.True(t, m.core.HasExtraAccounts())
 }
@@ -47,18 +47,18 @@ func TestAccountRequest_RemoveIsRefusedWhileASessionUsesIt(t *testing.T) {
 
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestRemove, Name: "max-2"})
 
-	_, ok := m.core.AccountsRegistry().Get("max-2")
+	_, ok := testModel(m).AccountsRegistryForTest().Get("max-2")
 	assert.True(t, ok, "in use: not removed")
 }
 
 func TestAccountRequest_RemoveDeletesAnUnusedAccount(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	acct, _ := m.core.AccountsRegistry().Get("max-2")
+	acct, _ := testModel(m).AccountsRegistryForTest().Get("max-2")
 
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestRemove, Name: "max-2"})
 
-	_, ok := m.core.AccountsRegistry().Get("max-2")
+	_, ok := testModel(m).AccountsRegistryForTest().Get("max-2")
 	assert.False(t, ok)
 	_, err := os.Stat(acct.Dir)
 	assert.True(t, os.IsNotExist(err))
@@ -71,14 +71,14 @@ func TestAccountRequest_RemoveDeletesAnUnusedAccount(t *testing.T) {
 func TestAccountRequest_RemoveKeepsAnAccountHoldingUnsharedFiles(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	acct, ok := m.core.AccountsRegistry().Get("max-2")
+	acct, ok := testModel(m).AccountsRegistryForTest().Get("max-2")
 	require.True(t, ok)
 	settings := filepath.Join(acct.Dir, "settings.json")
 	require.NoError(t, os.WriteFile(settings, []byte(`{"theme":"dark"}`), 0o644))
 
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestRemove, Name: "max-2"})
 
-	_, ok = m.core.AccountsRegistry().Get("max-2")
+	_, ok = testModel(m).AccountsRegistryForTest().Get("max-2")
 	assert.True(t, ok, "kept: its settings.json is not shared")
 	_, err := os.Stat(settings)
 	assert.NoError(t, err, "nothing deleted")
@@ -94,13 +94,13 @@ func TestAccountRequest_RemoveKeepsAnAccountHoldingUnsharedFiles(t *testing.T) {
 func TestAccountRequest_ReloadsTheRegistryFirst(t *testing.T) {
 	m := newTestHome(t)
 	main := withAccounts(t, m)
-	other := account.LoadRegistry(filepath.Dir(m.core.AccountsRegistry().AccountsDir()))
+	other := account.LoadRegistry(filepath.Dir(testModel(m).AccountsRegistryForTest().AccountsDir()))
 	_, _, err := other.Create("max-2", main)
 	require.NoError(t, err)
 
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestSetDefault, Name: "max-2"})
 
-	assert.Equal(t, "max-2", m.core.AccountsRegistry().Default())
+	assert.Equal(t, "max-2", testModel(m).AccountsRegistryForTest().Default())
 }
 
 // TestHandleStateSettingsKey_CarriesOutAnAccountsScreenRequest drives the
@@ -121,7 +121,7 @@ func TestHandleStateSettingsKey_CarriesOutAnAccountsScreenRequest(t *testing.T) 
 	press(tea.KeyDown)  // default → max-2
 	press(tea.KeyEnter) // make it the default
 
-	assert.Equal(t, "max-2", m.core.AccountsRegistry().Default())
+	assert.Equal(t, "max-2", testModel(m).AccountsRegistryForTest().Default())
 	assert.Contains(t, m.settingsOverlay().Render(), "* max-2", "the open screen is refreshed")
 }
 
@@ -139,7 +139,7 @@ func TestRunOpenSettings_ListsTheAccounts(t *testing.T) {
 func TestAccountRows_LoggedOutIsSaidOnce(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	acct, _ := m.core.AccountsRegistry().Get("max-2")
+	acct, _ := testModel(m).AccountsRegistryForTest().Get("max-2")
 	testModel(m).SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {Identity: account.Identity{ConfigDir: acct.Dir, LoggedIn: false}}})
 	testModel(m).SetAccountSyncForTest("max-2", account.SyncReport{Diverged: []string{"settings.json"}})
 
@@ -170,7 +170,7 @@ func TestAccountRequest_RemoveCountsALoadedSessionOnce(t *testing.T) {
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestRemove, Name: "max-2"})
 
 	assert.Contains(t, m.errBox.String(), "1 session(s) use max-2")
-	_, ok := m.core.AccountsRegistry().Get("max-2")
+	_, ok := testModel(m).AccountsRegistryForTest().Get("max-2")
 	assert.True(t, ok)
 }
 
@@ -179,7 +179,7 @@ func TestAccountRequest_RemoveCountsALoadedSessionOnce(t *testing.T) {
 func TestAccountRequest_LoginRefusesAMissingAccountDir(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	acct, ok := m.core.AccountsRegistry().Get("max-2")
+	acct, ok := testModel(m).AccountsRegistryForTest().Get("max-2")
 	require.True(t, ok)
 	require.NoError(t, os.RemoveAll(acct.Dir))
 
@@ -210,7 +210,7 @@ func TestAccountRequest_AddRefusesAnUnsafeMainDir(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m)
 	editRCAuth(m, func(a *session.RemoteControlAuth) {
-		a.Identity = account.Identity{LoggedIn: true, ConfigDir: filepath.Dir(m.core.AccountsRegistry().AccountsDir())}
+		a.Identity = account.Identity{LoggedIn: true, ConfigDir: filepath.Dir(testModel(m).AccountsRegistryForTest().AccountsDir())}
 	})
 
 	m.handleAccountRequest(overlay.AccountRequest{Kind: overlay.AccountRequestAdd, Name: "max-3"})
@@ -218,8 +218,8 @@ func TestAccountRequest_AddRefusesAnUnsafeMainDir(t *testing.T) {
 	toast := m.errBox.String()
 	assert.Contains(t, toast, "main config dir")
 	assert.Contains(t, toast, "refusing to link")
-	_, ok := m.core.AccountsRegistry().Get("max-3")
+	_, ok := testModel(m).AccountsRegistryForTest().Get("max-3")
 	assert.False(t, ok, "not registered")
-	_, err := os.Stat(filepath.Join(m.core.AccountsRegistry().AccountsDir(), "max-3"))
+	_, err := os.Stat(filepath.Join(testModel(m).AccountsRegistryForTest().AccountsDir(), "max-3"))
 	assert.True(t, os.IsNotExist(err), "no account dir made")
 }

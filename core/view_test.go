@@ -16,7 +16,7 @@ func TestView_CopiesTheInstance(t *testing.T) {
 	ws.add(inst)
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
-	views := m.ViewsWS(ws)
+	views := m.viewsWS(ws)
 	require.Len(t, views, 1)
 	v := views[0]
 	assert.NotZero(t, v.ID)
@@ -67,7 +67,7 @@ func TestSync_PublishesChangedWorkspacesFirst(t *testing.T) {
 	require.True(t, ok, "workspace views first")
 	vc, ok := out.Events[1].(ViewsChanged)
 	require.True(t, ok, "instance views next")
-	assert.Same(t, ws, vc.Workspace)
+	assert.Equal(t, m.wsIDOf(ws), vc.WS)
 	assert.Equal(t, Notice{Info: "hello"}, out.Events[2])
 
 	assert.Empty(t, m.Sync().Events, "nothing changed")
@@ -109,7 +109,7 @@ func TestSync_ForgetsClosedWorkspaces(t *testing.T) {
 	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
 	out := instanceEvents(m.Sync().Events)
 	require.Len(t, out, 1)
-	assert.Same(t, b, out[0].(ViewsChanged).Workspace, "reopened: published again")
+	assert.Equal(t, m.wsIDOf(b), out[0].(ViewsChanged).WS, "reopened: published again")
 }
 
 // TestLookup_DoesNotAllocate: lookup runs on every pane event.

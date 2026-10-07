@@ -165,7 +165,7 @@ func TestCreate_RepliesWithTheNewIDAndStarts(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
-	m.CreateWS(ws, NewInstance{Title: "new", Path: t.TempDir(), Program: "claude", Prompt: "hi", Start: true,
+	m.createWS(ws, NewInstance{Title: "new", Path: t.TempDir(), Program: "claude", Prompt: "hi", Start: true,
 		Launch: launch.Options{BranchPrefix: "me/"}}, 3)
 	out := m.Drain()
 	rs := replies(out)
@@ -183,7 +183,7 @@ func TestCreate_WithoutStartLeavesItUnstarted(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
-	m.CreateWS(ws, NewInstance{Title: "s", Path: t.TempDir(), Program: "claude"}, 4)
+	m.createWS(ws, NewInstance{Title: "s", Path: t.TempDir(), Program: "claude"}, 4)
 	out := m.Drain()
 	rs := replies(out)
 	require.Len(t, rs, 1)
@@ -198,7 +198,7 @@ func TestCreate_AWorkspaceNoLongerLoadedIsRefused(t *testing.T) {
 	ws, closed := storedWorkspace(t, "a"), storedWorkspace(t, "b")
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
 
-	m.CreateWS(closed, NewInstance{Title: "s", Path: t.TempDir(), Program: "claude", Start: true}, 2)
+	m.createWS(closed, NewInstance{Title: "s", Path: t.TempDir(), Program: "claude", Start: true}, 2)
 	out := m.Drain()
 	assert.Empty(t, out.Jobs)
 	assert.Empty(t, closed.instances())
@@ -556,7 +556,7 @@ func TestCreate_WithAnIssueJoinsGitHubState(t *testing.T) {
 	repo := t.TempDir()
 	m.ghState = map[string]github.Snapshot{repo: {Issues: map[int]github.Issue{7: {Number: 7, Title: "Fix it"}}}}
 
-	m.CreateWS(ws, NewInstance{Title: "i", Path: repo, Program: "claude", Issue: 7}, 1)
+	m.createWS(ws, NewInstance{Title: "i", Path: repo, Program: "claude", Issue: 7}, 1)
 	rs := replies(m.Drain())
 	require.Len(t, rs, 1)
 	v, ok := m.View(rs[0].ID)

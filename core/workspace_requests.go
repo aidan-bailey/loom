@@ -19,7 +19,7 @@ func (m *Model) ownerFields(owner *Workspace, loaded bool) (WorkspaceID, string,
 	}
 	note := ""
 	if !loaded {
-		note = m.ClosedNoteWS(owner)
+		note = m.closedNoteWS(owner)
 	}
 	return m.wsIDOf(owner), owner.Label(), note
 }
@@ -47,7 +47,7 @@ func (m *Model) IsLoaded(id WorkspaceID) bool { return m.wsLookup(id) != nil }
 
 // OpenTab loads def as a new tab (OpenTabWS) and returns its view.
 func (m *Model) OpenTab(def config.Workspace) (WorkspaceView, error) {
-	ws, err := m.OpenTabWS(def)
+	ws, err := m.openTabWS(def)
 	if err != nil || ws == nil {
 		return WorkspaceView{}, err
 	}
@@ -56,7 +56,7 @@ func (m *Model) OpenTab(def config.Workspace) (WorkspaceView, error) {
 
 // CloseTab saves and closes the tab named name (CloseTabWS).
 func (m *Model) CloseTab(name string) error {
-	_, err := m.CloseTabWS(name)
+	_, err := m.closeTabWS(name)
 	return err
 }
 
@@ -64,7 +64,7 @@ func (m *Model) CloseTab(name string) error {
 // (EnterGlobalWS) and returns its view. focused is the workspace the
 // caller had focused, 0 for none.
 func (m *Model) EnterGlobal(focused WorkspaceID) (WorkspaceView, error) {
-	ws, err := m.EnterGlobalWS(m.wsLookup(focused))
+	ws, err := m.enterGlobalWS(m.wsLookup(focused))
 	if err != nil || ws == nil {
 		return WorkspaceView{}, err
 	}
@@ -78,7 +78,7 @@ func (m *Model) Save(id WorkspaceID) error {
 	if ws == nil {
 		return fmt.Errorf("save: the workspace is no longer open")
 	}
-	return m.SaveWS(ws)
+	return m.saveWS(ws)
 }
 
 // Views returns the workspace id's instances as views (ViewsWS); nil for
@@ -88,13 +88,13 @@ func (m *Model) Views(id WorkspaceID) []InstanceView {
 	if ws == nil {
 		return nil
 	}
-	return m.ViewsWS(ws)
+	return m.viewsWS(ws)
 }
 
 // Create builds an instance in the workspace id (CreateWS), which refuses
 // a workspace that is not loaded.
 func (m *Model) Create(id WorkspaceID, spec NewInstance, req ReqID) {
-	m.CreateWS(m.wsLookup(id), spec, req)
+	m.createWS(m.wsLookup(id), spec, req)
 }
 
 // Registry is a copy of the workspace registry: the registered workspaces
