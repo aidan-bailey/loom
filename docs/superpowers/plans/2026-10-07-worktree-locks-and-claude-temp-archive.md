@@ -3245,6 +3245,8 @@ The final cross-cutting review (over `c8fb3b0..2911f6c`) found two Important sea
   - Add one sentence: loom computes Claude's root from its own environment, so if the tmux server's TMPDIR or CLAUDE_CODE_TMPDIR differs, archiving finds nothing (safe); `loom debug` prints the root loom uses.
   - Fix the PurgePartials doc comment ("an hour is generous") to match the sweep's 24h.
 
+- **F-7 (from the final smoke run, on real tmux).** (a) Kill calls `git.RefuseLocked` before it closes the agent's tmux session, drops a stash or removes hooks, restoring its snapshot on refusal. Without that, a lock-refused Kill kept its row (F-3a) but had already killed the live agent. (b) `LockedError` leads with the reason and names the worktree once, as `git -C '<wt>' worktree unlock .`, so the remedy fits the 160-column error bar.
+
 Follow-ups, not in this branch:
 - Kill still runs Cleanup when it can't confirm the agent is gone (pre-existing; Pause aborts in that case).
 - Read Claude's root from the tmux server's environment.
@@ -3256,7 +3258,6 @@ Follow-ups, not in this branch:
 - `loom workspace migrate` strands parked zips.
 - The terminal pane opens in `~` after a rebuild-resume (pre-existing race).
 - `opsInFlight` doesn't cover Kill: a Lua `inst:kill()`, or D on a reopened twin, during a Pause or Resume of the same tree (pre-existing; sits next to M-6).
-- A lock-refused Kill has already dropped a pending paused stash before cleanup refuses. This is harmless (the tree is intact and holds that content; Resume forgets the reference with a notice), and rare since F-3(b).
 - Stray `*.partial` and `.loom-restore-*` files from a crash are reaped only by a sweep, so a workspace that never reloads keeps them.
 
 ## Spec coverage
