@@ -3250,7 +3250,7 @@ The final cross-cutting review (over `c8fb3b0..2911f6c`) found two Important sea
 Follow-ups, not in this branch:
 - Kill still runs Cleanup when it can't confirm the agent is gone (pre-existing; Pause aborts in that case).
 - Read Claude's root from the tmux server's environment.
-- The error bar truncates a long zip path.
+- The 160-column error bar truncates long messages: a restore notice's zip path, and a lock remedy whose worktree path alone is longer than the room left (verified on bb3918d; the full text is in loom.log). Wrapping, or a detail view, would fix both.
 - Notices are logged as `handle_error` at ERROR.
 - A gutted tree with a stale lock can't be killed.
 - Root ownership checks.
