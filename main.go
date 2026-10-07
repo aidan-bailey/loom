@@ -10,6 +10,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/claudetmp"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"os"
@@ -260,6 +261,19 @@ var (
 				socket = "default (" + tmux.EnvTmuxSocket + " unset)"
 			}
 			fmt.Printf("Tmux socket: %s\n", socket)
+			if root, ok := claudetmp.Root(); ok {
+				fmt.Printf("Claude temp root: %s\n", root)
+			} else {
+				fmt.Printf("Claude temp root: %s (absent)\n", root)
+			}
+			switch root, err := cfg.ClaudeTmpArchiveRoot(); {
+			case err != nil:
+				fmt.Printf("Claude temp archives: %s (claude_tmp_archive_dir ignored: %v; a workspace's: <repo>/.loom/archive/claude-tmp)\n", claudetmp.ArchiveDir(wsCtx.ConfigDir), err)
+			case root != "":
+				fmt.Printf("Claude temp archives: %s (claude_tmp_archive_dir: each workspace in its own subfolder of %s)\n", session.ClaudeTmpArchiveDir(wsCtx.ConfigDir), root)
+			default:
+				fmt.Printf("Claude temp archives: %s (a workspace's: <repo>/.loom/archive/claude-tmp; set claude_tmp_archive_dir in %s to move them)\n", claudetmp.ArchiveDir(wsCtx.ConfigDir), filepath.Join(wsCtx.ConfigDir, config.ConfigFileName))
+			}
 			if globalDir, err := config.GetGlobalConfigDir(); err != nil {
 				fmt.Printf("Global dir: error: %v\n", err)
 			} else {

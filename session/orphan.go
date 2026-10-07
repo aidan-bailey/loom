@@ -420,7 +420,14 @@ func readWorktreeHEAD(worktreePath string) (string, error) {
 // but never the branch). Used to auto-clean stale leftovers during
 // reconciliation. -f is required because the worktree may hold tracked
 // edits we have already decided to discard, or git may consider it dirty.
+//
+// A stale "initializing" lock (an interrupted `git worktree add`) is
+// removed first; any lock loom respects returns a *git.LockedError
+// (errors.Is git.ErrWorktreeLocked) with the tree untouched.
 func RemoveOrphanWorktree(repoPath, worktreePath string) error {
+	if err := git.RefuseLocked(repoPath, worktreePath, nil); err != nil {
+		return err
+	}
 	// Not orphanProbeTimeout: that bounds cheap probes. A remove walks and
 	// unlinks the whole tree, and killing it at a short deadline leaves a
 	// half-removed worktree (.git gone, sources partly present) — see

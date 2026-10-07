@@ -256,6 +256,7 @@ A session moves through these states:
 3. Worktree directory is removed (saves disk space)
 4. Branch is preserved in git — all work is safe
 5. Branch name is copied to your clipboard
+6. Claude's temp dir for the session (its scratchpad and task output under `/tmp/claude-<uid>/`) is zipped into the archive and removed — see [Claude Temp-Dir Archives](#claude-temp-dir-archives)
 
 **Paused → Running** (on resume, `r`):
 1. Worktree recreated from the preserved branch
@@ -263,12 +264,14 @@ A session moves through these states:
 3. Tmux session restored or recreated
 4. Diff baseline preserved — you see cumulative changes since session creation
 5. Agent picks up where it left off
+6. Claude's archived scratchpad is restored before the agent starts
 
 **Running/Paused → Killed** (on kill, `D`):
 1. Tmux session destroyed
 2. Worktree removed
 3. Branch deleted (unless it was a pre-existing branch you selected at creation)
 4. Instance removed from storage
+5. Claude's temp dir is archived (a paused session's archive simply stays)
 
 There is one more state that appears only after a crash or lost state
 file: **Recoverable** (`⟲`) — a worktree found on disk that Loom isn't
@@ -514,6 +517,7 @@ Loom scans `~/.loom/worktrees/` for directories it isn't tracking:
 - **Stale leftovers** (no live agent, no uncommitted changes) are removed
   automatically. A summary line reports the count — the branch itself is
   never deleted by this cleanup.
+- **Locked worktrees** are left alone: a worktree you locked with `git worktree lock` is never auto-cleaned (or removed by pause or kill, which tell you to run `git worktree unlock`). A worktree left locked "initializing" by an interrupted `git worktree add` is unlocked and cleaned once the lock is older than six minutes.
 - **Worktrees with a live agent or uncommitted work** appear in the
   session list as recoverable entries, marked with an orange `⟲` icon.
 
@@ -683,6 +687,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | `theme` | string | `"afterglow"` | UI color theme (`"afterglow"` or `"legacy"`) |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
+| `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) |
 
 ### Example config.json
 
@@ -745,6 +750,23 @@ Loom shows the subagents and agent-team teammates a Claude session has spawned: 
 - Sessions whose program already passes `--settings`, and sessions on Windows, get no hooks: they show no subagent rows, and their status comes from Claude's session list and the screen.
 - Restarting loom keeps the rows: loom replays the events it already collected for sessions that are still running.
 - Event files live in the `hooks/` folder inside the workspace's loom config folder: `<repo>/.loom/hooks/` for a registered workspace, otherwise `~/.loom/hooks/`. They are cleared at each launch and removed when you kill the session.
+
+### Claude Temp-Dir Archives
+
+Claude Code keeps a temp directory for every session, outside the worktree: `/tmp/claude-<uid>/<the session's directory, encoded>/<session id>/`, holding its scratchpad and background-task output (`$CLAUDE_CODE_TMPDIR`, `$TMPDIR`, `$TMP` or `$TEMP` move it). On many Linux systems `/tmp` is in RAM, and nothing removes these directories when a session ends, so loom archives them:
+
+- **Pause** zips the session's temp dir and removes it; **resume** puts it back before the agent starts. If the restore fails, you see why, the archive is kept, and the session starts without it.
+- **Kill** zips it and removes it.
+- **At every workspace load**, loom sweeps the temp dirs of its sessions that no longer exist and haven't been touched for a day (worktrees it auto-cleaned, sessions killed before this feature) into the archive.
+- Archives live in the workspace's loom folder: `<repo>/.loom/archive/claude-tmp/` for a registered workspace, otherwise `~/.loom/archive/claude-tmp/`. To keep them somewhere else (a bigger disk, say), set `claude_tmp_archive_dir` in the global `~/.loom/config.json` to an absolute path (or one starting with `~/`):
+
+  ```json
+  { "claude_tmp_archive_dir": "~/claude-archives" }
+  ```
+
+  Every workspace's archives then go under that folder, each workspace in its own subfolder named after its loom config folder (e.g. `~/claude-archives/home-you-projects-my-app--loom/`). It applies to the next archive, no restart needed. Archives already made stay where they are, and a session paused before the change still gets its scratchpad back on resume. A relative path is ignored (with a warning in `loom.log`). A workspace's own `config.json` doesn't set this. `loom debug` prints the temp root and the archive folder in effect.
+- Directories marked with a valid `CACHEDIR.TAG` (cargo's `target/`, for example) are left out; the archive's `.loom-archive.json` lists what was skipped and how big it was. Symlinks are stored as links.
+- Loom never deletes an archive. Prune `archive/claude-tmp/` by hand when you no longer need them. To look inside one: `unzip -l <file>.zip`.
 
 ### Claude Fullscreen Renderer
 

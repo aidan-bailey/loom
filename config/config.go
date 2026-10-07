@@ -135,6 +135,14 @@ type Config struct {
 	// Empty (pre-existing config files) means the default theme.
 	// Read through GetTheme.
 	Theme string `json:"theme,omitempty"`
+	// ClaudeTmpArchiveDir relocates the zips loom archives Claude's
+	// per-session temp dirs into (session.ClaudeTmpArchiveDir): every
+	// workspace's archives go under it, each workspace in its own
+	// subfolder. Read from the global config.json only. Empty (the
+	// default) keeps each workspace's archives in its own loom config
+	// folder. Absolute, or starting with ~. Read through
+	// ClaudeTmpArchiveRoot.
+	ClaudeTmpArchiveDir string `json:"claude_tmp_archive_dir,omitempty"`
 	// HeadroomProxy controls whether new Claude sessions launch with
 	// ANTHROPIC_BASE_URL pointed at Headroom's proxy (see
 	// session.HeadroomProxyEnv). A no-op for agents other than Claude.
@@ -265,6 +273,20 @@ func (c *Config) GetTheme() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Theme
+}
+
+// ClaudeTmpArchiveRoot returns ClaudeTmpArchiveDir with a leading ~
+// expanded, or "" when it is unset. A value that is not absolute after
+// expansion is an error: the caller keeps the default location rather than
+// archive relative to whatever directory loom runs in.
+func (c *Config) ClaudeTmpArchiveRoot() (string, error) {
+	c.mu.RLock()
+	dir := c.ClaudeTmpArchiveDir
+	c.mu.RUnlock()
+	if dir == "" {
+		return "", nil
+	}
+	return resolveEnvDir("claude_tmp_archive_dir", dir)
 }
 
 // RemoteControlEnabled reports whether new Claude sessions should launch

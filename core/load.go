@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/launch"
 )
 
@@ -125,7 +127,13 @@ func (m *Model) reconcileOrphans(ws *Workspace, cfgDir, program string, cmdExec 
 		switch cand.Disposition() {
 		case session.DisposeClean:
 			if err := session.RemoveOrphanWorktree(cand.RepoPath, cand.WorktreePath); err != nil {
-				log.For("core").Warn("orphan_autoclean_failed", "worktree", cand.WorktreePath, "err", err)
+				// A lock loom respects is the user's call and lasts across
+				// starts: a debug line, not a warning at every load.
+				if errors.Is(err, git.ErrWorktreeLocked) {
+					log.For("core").Debug("orphan_autoclean_locked", "worktree", cand.WorktreePath, "err", err)
+				} else {
+					log.For("core").Warn("orphan_autoclean_failed", "worktree", cand.WorktreePath, "err", err)
+				}
 				continue
 			}
 			summary.cleaned++
@@ -148,6 +156,10 @@ func (m *Model) reconcileOrphans(ws *Workspace, cfgDir, program string, cmdExec 
 		summary.failed = len(ws.storage.UnrecoveredTitles())
 		summary.undecodable = ws.storage.UndecodableCount()
 	}
+	// Claude's temp dirs of sessions that are gone, the worktrees just
+	// auto-cleaned included: archived off the model's goroutine once the
+	// next health tick dispatches the sweep.
+	m.requestClaudeTmpSweep(ws, cfgDir)
 	// Preserved records may come back on a later load (or under a newer
 	// loom); claimTitles keeps their hooks folders.
 	claimed := make(map[string]bool)

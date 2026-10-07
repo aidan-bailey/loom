@@ -491,6 +491,12 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 
 	// Check if worktree path exists before attempting removal
 	if _, err := os.Stat(g.worktreePath); err == nil {
+		// A lock loom respects stops the whole cleanup, before the branch
+		// is deleted or the title sidecar dropped: the tree stays, and so
+		// must what lets a later run recover it.
+		if err := RefuseLocked(g.repoPath, g.worktreePath, g.runner); err != nil {
+			return err
+		}
 		// Remove the worktree using git command
 		if _, err := g.removeWorktree(); err != nil {
 			errs = append(errs, err)
@@ -526,8 +532,12 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 	return nil
 }
 
-// Remove removes the worktree but keeps the branch
+// Remove removes the worktree but keeps the branch. A lock loom respects
+// refuses it with a *LockedError (see RefuseLocked).
 func (g *GitWorktree) Remove() error {
+	if err := RefuseLocked(g.repoPath, g.worktreePath, g.runner); err != nil {
+		return err
+	}
 	// Remove the worktree using git command
 	if _, err := g.removeWorktree(); err != nil {
 		return fmt.Errorf("failed to remove worktree: %w", err)

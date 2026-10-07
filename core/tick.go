@@ -93,6 +93,10 @@ func (m *Model) tickInst(selected *session.Instance) {
 	// maybeUsageProbe). nil when not due, in flight, or no extra
 	// account is registered.
 	m.maybeUsageProbe()
+
+	// Claude temp-dir sweeps queued by workspace loads (see
+	// requestClaudeTmpSweep). Nothing when none is queued or one runs.
+	m.maybeClaudeTmpSweep()
 }
 
 // Tick runs the health tick's model half (tickInst); selected is the

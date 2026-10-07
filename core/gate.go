@@ -20,6 +20,9 @@ const (
 	// gateAccountsRefresh keeps one account auth refresh in flight
 	// (maybeAccountsRefresh).
 	gateAccountsRefresh
+	// gateClaudeTmp keeps one Claude temp-dir sweep in flight
+	// (maybeClaudeTmpSweep).
+	gateClaudeTmp
 
 	numGateKinds
 )
@@ -37,6 +40,8 @@ func (k gateKind) String() string {
 		return "usage"
 	case gateAccountsRefresh:
 		return "accounts_refresh"
+	case gateClaudeTmp:
+		return "claude_tmp"
 	}
 	return "unknown"
 }
@@ -51,6 +56,7 @@ var gateIntervals = [numGateKinds]time.Duration{
 	gateUsage:    usageInterval,
 	// gateAccountsRefresh stays 0: refreshes run on events (an account
 	// appeared, a login, a probe losing access), never on a cadence.
+	// gateClaudeTmp stays 0 too: sweeps run when a workspace loads.
 }
 
 // pollGate throttles one background job: at most one dispatch in flight,
@@ -171,5 +177,7 @@ func (m *Model) redispatch(kind gateKind) {
 		m.maybeUsageProbe()
 	case gateAccountsRefresh:
 		m.maybeAccountsRefresh()
+	case gateClaudeTmp:
+		m.maybeClaudeTmpSweep()
 	}
 }

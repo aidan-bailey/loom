@@ -7,6 +7,7 @@ import (
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/git"
 )
 
 // startOwner is the workspace an instance about to start or resume
@@ -105,6 +106,22 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 						Op:       "discard",
 						Previous: previousStatus,
 						Err:      fmt.Errorf("discard %s: %w", title, err),
+					}
+				}
+				// A worktree lock loom respects (the user's, or a young
+				// "initializing" one) refused the kill before anything was
+				// touched (Instance.Kill checks it before closing the
+				// agent's tmux session): the agent, worktree and branch all
+				// remain. Keep the row, like the discard above, and show the
+				// error, which names the `git worktree unlock` that lets D
+				// be pressed again.
+				if errors.Is(err, git.ErrWorktreeLocked) {
+					return OpFailed{
+						Instance: selected,
+						Title:    title,
+						Op:       "delete",
+						Previous: previousStatus,
+						Err:      err,
 					}
 				}
 			}

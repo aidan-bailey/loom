@@ -75,6 +75,11 @@ type Model struct {
 	// gateIntervals. Update-goroutine only.
 	gates [numGateKinds]pollGate
 
+	// claudeTmpPending holds the Claude temp-dir sweeps workspace loads
+	// queued (requestClaudeTmpSweep), keyed by config dir, until the
+	// health tick dispatches them. Update-goroutine only.
+	claudeTmpPending map[string]claudeTmpJob
+
 	// dirtySessions records tmux session names that emitted output since the
 	// last health tick (event mode only). Consumed by takeDirty to gate
 	// diff-stat refreshes. Update-goroutine only.

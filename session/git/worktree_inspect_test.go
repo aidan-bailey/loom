@@ -308,6 +308,10 @@ func TestDropStash_ConcurrentPushKeepsOtherEntry(t *testing.T) {
 // index; the worktree's own index, staged changes included, is untouched
 // and no scratch file is left behind.
 func TestStashOnDisk_LeavesRealIndexAlone(t *testing.T) {
+	// A private temp dir: the scratch index and the leak check below both
+	// use it, so a scratch file another process creates in the shared
+	// os.TempDir() during the test cannot read as a leak.
+	t.Setenv("TMPDIR", t.TempDir())
 	gw := newStashTestRepo(t)
 	dir := gw.GetWorktreePath()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v2\n"), 0644))
