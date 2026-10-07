@@ -17,7 +17,7 @@ func handleStateQuickInteractKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.C
 	}
 
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !m.tmuxAlive(selected) {
+	if selected == nil || selected.Paused() || !m.sessionAlive(selected.TmuxSession) {
 		m.quickInputBar = nil
 		m.state = stateDefault
 		m.menu.SetState(ui.StateDefault)

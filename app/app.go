@@ -201,6 +201,10 @@ type home struct {
 	// bells holds the instances whose pane rang a bell since they were last
 	// focused (TUI state; laid over rows as InstanceView.Bell).
 	bells map[core.InstanceID]bool
+	// ladder holds the status the pane ladder scraped for each instance
+	// (TUI state; laid over an active, unreported row's status, see
+	// overlay). Pruned with the views (pruneLadder).
+	ladder map[core.InstanceID]ladderState
 
 	// pending holds the requests the TUI made with a ReqID, by ReqID, until
 	// their Reply (handleReply); nextReq is the last ReqID it chose.
@@ -328,6 +332,10 @@ type home struct {
 	lastPreviewHash []byte
 	// lastPreviewTitle tracks which instance the hash belongs to.
 	lastPreviewTitle string
+
+	// aliveProbe replaces the tmux has-session probe behind sessionAlive in
+	// tests; nil in production.
+	aliveProbe func(name string) bool
 
 	// redetectPending tracks sessions with an armed delayed re-detection
 	// (see maybeRedetect), so inconclusive detections cannot stack parallel
@@ -689,18 +697,12 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// A Claude session whose hooks or roster reported a status is
 			// exempt too: the report owns the status, and output alone
 			// says nothing new.
-			// The promotion writes the instance, through the bridge until
-			// package C makes the ladder an overlay, and gates on it.
-			if inst := m.instOf(v.ID); inst != nil {
-				st := inst.GetStatus()
-				if _, _, reported := inst.ClaudeStatus(); st == session.Ready && !reported {
-					if err := inst.TransitionTo(session.Running); err != nil {
-						log.For("app").Warn("event.transition_failed", "instance", inst.Title, "to", "Running", "err", err.Error())
-					}
-					// The tab bar reads the stores: reread the write.
-					m.syncViews()
-					m.updateTabBarStatuses()
-				}
+			// The promotion is the ladder's, a display overlay (setLadder),
+			// read from the row as the user sees it (v, overlaid): the
+			// status promoted is the one shown.
+			if v.Status == session.Ready && !v.StatusReported {
+				m.setLadder(v.ID, session.Running)
+				m.updateTabBarStatuses()
 			}
 			if selected != nil && v.ID == selected.ID {
 				if err := m.splitPane.UpdateAgent(selected); err != nil {
@@ -769,10 +771,12 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case issueExpandedMsg:
 		return m.handleIssueExpanded(msg)
 	case statusDetectedMsg:
-		// The ladder writes the instance, through the bridge until package
-		// C makes it an overlay, and gates on the instance it writes.
-		inst := m.instOf(msg.id)
-		if !core.StatusEligible(inst) {
+		// The ladder is a display overlay (setLadder): it never writes the
+		// model, and gates on the row. The overlay only swaps one active
+		// status for another, so Active and StatusReported read the same on
+		// the row as on the model's view.
+		v, _ := m.viewByID(msg.id)
+		if v == nil || !v.Active() {
 			return m, nil
 		}
 		if msg.err != nil {
@@ -781,39 +785,33 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Claude reports its own status, through its hooks and the roster,
 		// so prefer it over the pane ladder below, which can only infer one
-		// from screen text. A reported status also retires the
-		// re-detection chain: the ladder re-samples because one content
-		// hash cannot distinguish "still working" from "just finished",
-		// but the report says which it is.
-		before := inst.GetStatus()
-		target, authoritative := m.core.AdoptClaudeStatus(inst)
-		if !authoritative {
-			// Same transition ladder as the old metadata tick: still-changing →
-			// Running; settled with a prompt → Prompting; settled → Ready.
-			target = session.Ready
-			if msg.updated {
-				target = session.Running
-			} else if msg.hasPrompt {
-				target = session.Prompting
-			}
+		// from screen text: the model applies it (its hook scans, roster
+		// answers and health tick, through core's AdoptClaudeStatus). A
+		// reported status also retires the re-detection chain: the ladder
+		// re-samples because one content hash cannot distinguish "still
+		// working" from "just finished", but the report says which it is.
+		if v.StatusReported {
+			m.updateTabBarStatuses()
+			return m, nil
 		}
-		if err := inst.TransitionTo(target); err != nil {
-			log.For("app").Warn("event.transition_failed", "instance", msg.title, "to", target.String(), "err", err.Error())
+		// Same transition ladder as the old metadata tick: still-changing →
+		// Running; settled with a prompt → Prompting; settled → Ready.
+		target := session.Ready
+		if msg.updated {
+			target = session.Running
+		} else if msg.hasPrompt {
+			target = session.Prompting
 		}
-		// The tab bar reads the stores: reread the write, if it moved the
-		// status.
-		if inst.GetStatus() != before {
-			m.syncViews()
-		}
+		m.setLadder(msg.id, target)
 		m.updateTabBarStatuses()
-		if !authoritative && msg.updated {
+		if msg.updated {
 			// One sample of changed content cannot distinguish "still
 			// working" from "finished a burst and idled" — under the
 			// emulator this was the only sample per burst, so Running
 			// latched on idle agents (and masked visible prompts, since
 			// updated wins over hasPrompt). Re-sample until a detection
 			// sees unchanged content and settles to Ready/Prompting.
-			return m, m.maybeRedetect(inst.Pane().TmuxSessionName())
+			return m, m.maybeRedetect(v.TmuxSession)
 		}
 		return m, nil
 	case ptyDeadMsg:
@@ -914,13 +912,11 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case snapshotStatusMsg:
 		m.snapshotScanning = false
-		moved := false
 		for _, r := range msg.results {
-			// The ladder writes the instance, through the bridge until
-			// package C makes it an overlay, and gates on the instance it
-			// writes.
-			inst := m.instOf(r.id)
-			if !core.StatusEligible(inst) {
+			// The ladder is a display overlay (setLadder), gated on the
+			// row, as on the event path.
+			v, _ := m.viewByID(r.id)
+			if v == nil || !v.Active() {
 				continue
 			}
 			// A failed capture is no opinion, as on the event path. Its
@@ -934,10 +930,10 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Output: the next tick refreshes the diff, whoever reports the
 			// status, as a pane event's output does (paneDirtyMsg).
 			if r.updated {
-				m.core.MarkOutput(inst.Pane().TmuxSessionName())
+				m.core.MarkOutput(v.TmuxSession)
 			}
 			// A reported Claude status is the model's: its tick applies it.
-			if _, authoritative := m.core.AdoptClaudeStatus(inst); authoritative {
+			if v.StatusReported {
 				continue
 			}
 			// Same transition ladder as the event path: still-changing →
@@ -948,16 +944,7 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if r.hasPrompt {
 				target = session.Prompting
 			}
-			before := inst.GetStatus()
-			if err := inst.TransitionTo(target); err != nil {
-				log.For("app").Warn("tick.transition_failed", "instance", r.title, "to", target.String(), "err", err.Error())
-			}
-			moved = moved || inst.GetStatus() != before
-		}
-		// The tab bar reads the stores: reread the writes, if any moved a
-		// status.
-		if moved {
-			m.syncViews()
+			m.setLadder(r.id, target)
 		}
 		m.updateTabBarStatuses()
 		return m, nil
@@ -1292,13 +1279,15 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		attachCtx, endAttach := context.WithCancel(context.Background())
 		switch msg.target {
 		case attachTargetAgent:
-			// The tmux session, through the bridge until package C attaches
-			// by name.
-			if inst := m.instOf(msg.instance.ID); inst != nil {
-				if s := inst.TmuxSession(); s != nil {
-					attach = s.FullScreenAttachCmd(attachCtx)
-					preview = m.panes.For(msg.instance).Client()
-				}
+			// The tmux session, by name (the TUI holds no instance), of the
+			// row as it is now: none when it left every open slot.
+			var v *core.InstanceView
+			if msg.instance != nil {
+				v, _ = m.viewByID(msg.instance.ID)
+			}
+			if v != nil && v.TmuxSession != "" {
+				attach = tmux.NewSessionNamed(v.TmuxSession, v.SessionProgram).FullScreenAttachCmd(attachCtx)
+				preview = m.panes.For(v).Client()
 			}
 		case attachTargetTerminal:
 			if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
@@ -1808,10 +1797,10 @@ func (m *home) confirmTask(message string, task overlay.ConfirmationTask) tea.Cm
 }
 
 // runTask runs task's sync step and returns its async one, like
-// task.Run, then rereads the view stores (syncViews): a sync step writes
-// the model's instances directly (a kill's Deleting, a start's or
-// resume's Loading, a cancel's removal), and what follows it in the same
-// Update (instanceChanged) reads the change back.
+// task.Run, then rereads the view stores (syncViews): a sync step makes a
+// request whose pre-step changes the model's instances at once (a kill's
+// Deleting, a create's new row, a resume's Loading), and what follows it
+// in the same Update (instanceChanged) reads the change back.
 func (m *home) runTask(task overlay.ConfirmationTask) tea.Cmd {
 	cmd := task.Run()
 	m.syncViews()

@@ -442,7 +442,7 @@ func (m *home) sendReviewCmd() tea.Cmd {
 	if sel == nil || rv == nil {
 		return nil
 	}
-	if sel.Paused() || !m.tmuxAlive(sel) {
+	if sel.Paused() || !m.sessionAlive(sel.TmuxSession) {
 		m.errBox.SetInfo("agent is not running — resume the session first")
 		return nil
 	}

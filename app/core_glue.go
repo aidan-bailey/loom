@@ -52,6 +52,7 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 		if s := m.slotFor(ev.Workspace); s != nil {
 			s.views = ev.Views
 			m.pruneBells()
+			m.pruneLadder()
 			if s == m.workspaceSlot {
 				m.refreshSelection()
 			}

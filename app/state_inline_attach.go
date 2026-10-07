@@ -39,7 +39,7 @@ func focusedPaneAlive(m *home, selected *core.InstanceView) bool {
 	if m.splitPane.GetFocusedPane() == ui.FocusTerminal {
 		return m.splitPane.TerminalTmuxSession() != nil
 	}
-	return m.tmuxAlive(selected)
+	return m.sessionAlive(selected.TmuxSession)
 }
 
 // handleStateInlineAttachKey forwards raw key bytes to the focused tmux pane

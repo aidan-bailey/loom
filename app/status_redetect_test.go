@@ -135,7 +135,7 @@ func TestStatusDetectionConvergesToReadyAfterSettle(t *testing.T) {
 	detected := detectionFrom(t, cmd)
 	require.True(t, detected.updated, "first sample after a burst hashes new content")
 	_, follow := m.Update(detected)
-	require.Equal(t, session.Running, inst.GetStatus())
+	require.Equal(t, session.Running, shownStatus(t, m, inst))
 	require.NotNil(t, follow, "updated→Running must schedule a re-detection, not latch")
 
 	// While a re-detection is pending, another updated result must not stack
@@ -147,8 +147,10 @@ func TestStatusDetectionConvergesToReadyAfterSettle(t *testing.T) {
 	// second detection against now-static content, and settles to Ready.
 	redetect := follow()
 	_ = runDetection(t, m, redetect)
-	require.Equal(t, session.Ready, inst.GetStatus(),
+	require.Equal(t, session.Ready, shownStatus(t, m, inst),
 		"a silent pane must settle to Ready on the follow-up detection")
+	require.Equal(t, session.Running, inst.GetStatus(),
+		"the ladder is the TUI's overlay: a non-Claude session stays Running in the model")
 }
 
 // TestStatusDetectionSurfacesPromptAfterSettle: a permission prompt arrives
@@ -169,12 +171,12 @@ func TestStatusDetectionSurfacesPromptAfterSettle(t *testing.T) {
 	require.True(t, detected.updated)
 	require.True(t, detected.hasPrompt, "claude adapter must detect the permission prompt")
 	_, follow := m.Update(detected)
-	require.Equal(t, session.Running, inst.GetStatus())
+	require.Equal(t, session.Running, shownStatus(t, m, inst))
 	require.NotNil(t, follow, "prompt masked by updated=true must trigger re-detection")
 
 	redetect := follow()
 	_ = runDetection(t, m, redetect)
-	require.Equal(t, session.Prompting, inst.GetStatus(),
+	require.Equal(t, session.Prompting, shownStatus(t, m, inst),
 		"the follow-up detection must surface the waiting permission prompt")
 }
 
@@ -194,9 +196,10 @@ func TestDirtyDoesNotDemotePrompting(t *testing.T) {
 	m.splitPane.SetSize(100, 40)
 	m.splitPane.SetInstance(rowOf(t, m, inst))
 	require.NoError(t, inst.TransitionTo(session.Prompting))
+	m.syncViews()
 
 	_, _ = m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
-	require.Equal(t, session.Prompting, inst.GetStatus(),
+	require.Equal(t, session.Prompting, shownStatus(t, m, inst),
 		"a focus/selection repaint must not relabel a waiting prompt as Running")
 }
 
@@ -213,9 +216,11 @@ func TestDirtyPromotesReadyToRunning(t *testing.T) {
 	m.splitPane.SetSize(100, 40)
 	m.splitPane.SetInstance(rowOf(t, m, inst))
 	require.NoError(t, inst.TransitionTo(session.Ready))
+	m.syncViews()
 
 	_, _ = m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
-	require.Equal(t, session.Running, inst.GetStatus())
+	require.Equal(t, session.Running, shownStatus(t, m, inst))
+	require.Equal(t, session.Ready, inst.GetStatus(), "the promotion is the TUI's overlay, not the model's")
 }
 
 // TestQuietDuringLoadingSchedulesRedetect: a quiet event that lands while the

@@ -1,16 +1,19 @@
 package app
 
 import (
+	"time"
+
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 )
 
 // The TUI's view of instances: each slot keeps its workspace's
 // core.InstanceView values (workspaceSlot.views), replaced wholesale by
 // core.ViewsChanged and seeded from core.Model.Views when the slot is
 // built. The rail and every other reader see them through slotRows, which
-// lays the TUI's own overlays (bells; the pane ladder from package C) over
-// them and appends the creation flow's draft row. Nothing in app holds a
+// lays the TUI's own overlays (bells, the pane ladder) over them and
+// appends the creation flow's draft row. Nothing in app holds a
 // *session.Instance once package D lands; until then the script host
 // does, and its writes reach instances through the bridge (instOf).
 
@@ -39,9 +42,45 @@ func (m *home) rowsOf(s *workspaceSlot) []core.InstanceView {
 }
 
 // overlay lays the TUI's own state over a copied view: every row a reader
-// sees goes through it (rowsOf, findRow).
+// sees goes through it (rowsOf, findRow). The ladder's status shows only
+// for an active row with no reported status: it never overrides a
+// lifecycle status (Paused, Loading, …) or one Claude reported.
 func (m *home) overlay(v *core.InstanceView) {
 	v.Bell = m.bells[v.ID]
+	if l, ok := m.ladder[v.ID]; ok && v.Active() && !v.StatusReported {
+		v.Status, v.StatusSince = l.status, l.since
+	}
+}
+
+// ladderState is a status the TUI scraped from a pane (its content
+// ladder), shown in place of the model's status for an active instance
+// whose view has no reported status (decision 6). The model never sees it.
+type ladderState struct {
+	status session.Status
+	since  time.Time
+}
+
+// setLadder records st as id's scraped status. A repeat of the same status
+// keeps its since, and so does a first entry agreeing with the model's
+// status, as TransitionTo's self-transition did: the age shown counts from
+// when the status the row shows last changed.
+func (m *home) setLadder(id core.InstanceID, st session.Status) {
+	if m.ladder == nil {
+		m.ladder = make(map[core.InstanceID]ladderState)
+	}
+	prev, ok := m.ladder[id]
+	if ok && prev.status == st {
+		return
+	}
+	since := time.Now()
+	if !ok {
+		// No entry yet, so the row shows the model's status.
+		if v, _ := m.viewByID(id); v != nil && v.Status == st {
+			since = v.StatusSince
+		}
+	}
+	m.ladder[id] = ladderState{status: st, since: since}
+	m.refreshSelection()
 }
 
 // seedViews fills a new slot's store from the model, when the model already
@@ -57,12 +96,12 @@ func (m *home) seedViews(s *workspaceSlot) {
 // syncViews reseeds every open slot's store from the model. Production
 // keeps the stores current through ViewsChanged; tests that change the
 // model outside an Update call this before reading through the TUI. So
-// does the TUI itself after it changes the model's instances directly
-// (a write through the bridge, core.Model.InstanceOf, a pointer
-// operation, a workspace edit, a script's), when the rest of the same
-// Update reads the change back: the stores otherwise catch up only at the
-// drain, and those reads used to see the shared instance. Package C's
-// requests and overlays retire those calls.
+// does the TUI itself when the rest of the same Update reads back a change
+// the model made at once: a request's pre-step (a kill's Deleting; a
+// pause's, resume's or recover's Loading; a confirmation's task, runTask),
+// a script's writes (until package D), and whatever the model's jobs did
+// while a full-screen attach held the event loop. The stores otherwise
+// catch up only at the drain.
 func (m *home) syncViews() {
 	if m.core == nil {
 		return
@@ -126,6 +165,35 @@ func (m *home) activeViews() []core.InstanceView {
 	return out
 }
 
+// pruneLadder forgets the scraped status of every instance no open slot
+// shows any more (IDs are never reused), and of every one whose view is
+// inactive or has a reported status: a ladder status must not resurface
+// after a pause and resume, or once Claude's report goes quiet. It walks
+// every open slot, not only the one whose views changed, so an entry in
+// another slot survives a change to this one. The ViewsChanged applier
+// runs it after replacing a store.
+func (m *home) pruneLadder() {
+	if len(m.ladder) == 0 {
+		return
+	}
+	keep := make(map[core.InstanceID]bool)
+	for _, s := range m.openSlots() {
+		if s == nil {
+			continue
+		}
+		for i := range s.views {
+			if v := &s.views[i]; v.Active() && !v.StatusReported {
+				keep[v.ID] = true
+			}
+		}
+	}
+	for id := range m.ladder {
+		if !keep[id] {
+			delete(m.ladder, id)
+		}
+	}
+}
+
 // pruneBells forgets the bells of instances no open slot shows any more:
 // their IDs are never reused, so the entries would only accumulate. The
 // ViewsChanged applier runs it after replacing a store.
@@ -162,8 +230,8 @@ func (m *home) refreshSelection() {
 
 // instOf resolves id to its instance through the bridge
 // (core.Model.InstanceOf): nil when no loaded workspace holds it, or in a
-// bare test home. It serves the writes and tmux probes package C turns
-// into requests and by-name probes, and nothing else.
+// bare test home. It serves the script host until package D, and nothing
+// else.
 func (m *home) instOf(id core.InstanceID) *session.Instance {
 	if m.core == nil {
 		return nil
@@ -171,9 +239,12 @@ func (m *home) instOf(id core.InstanceID) *session.Instance {
 	return m.core.InstanceOf(id)
 }
 
-// tmuxAlive reports whether v's agent tmux session is alive (a has-session
-// probe, through the bridge); false when no loaded workspace holds it.
-func (m *home) tmuxAlive(v *core.InstanceView) bool {
-	inst := m.instOf(v.ID)
-	return inst != nil && inst.Pane().TmuxAlive()
+// sessionAlive reports whether the tmux session name exists (has-session,
+// exact target), as AgentPane.TmuxAlive did through the instance. Tests
+// replace the probe (aliveProbe); production asks tmux.
+func (m *home) sessionAlive(name string) bool {
+	if m.aliveProbe != nil {
+		return m.aliveProbe(name)
+	}
+	return name != "" && tmux.NewSessionNamed(name, "").DoesSessionExist()
 }

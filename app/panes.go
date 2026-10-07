@@ -47,6 +47,14 @@ import (
 // (Ensure builds a new one). Nothing else closes a registered client: a
 // kill or pause ends the session and leaves its client to the prune that
 // follows the completion.
+//
+// The terminal pane's clients (each slot's ui.TerminalPane, attached to
+// its loom_term_* shells by instance title) are released by the same
+// prune: per open slot, it detaches those of titles the slot has no
+// active row for. A kill or pause ends the shell itself (Instance.Kill
+// and Pause close it by name), so the TUI needs no step of its own in
+// their jobs; the shell's client reads EOF and the prune after the
+// completion releases it.
 
 // livePaneNames is the set of tmux session names that should have a
 // client: those of the active instances of every loaded slot.
@@ -105,7 +113,23 @@ func (m *home) ensureSlotPanes(slot *workspaceSlot) {
 }
 
 // prunePanes drops the clients of sessions no loaded instance is active
-// on, and returns a Cmd closing them.
+// on, and the terminal pane clients of titles their slot has no active row
+// for, and returns a Cmd closing them. A terminal client is only detached
+// (DetachExcept, then PausePreview in the release), never closed: that
+// would kill a shell the user may come back to.
 func (m *home) prunePanes() tea.Cmd {
-	return releaseClientsCmd(attachedClients(m.panes.Retain(m.livePaneNames())))
+	cmds := []tea.Cmd{releaseClientsCmd(attachedClients(m.panes.Retain(m.livePaneNames())))}
+	for _, s := range m.openSlots() {
+		if s == nil || s.splitPane == nil {
+			continue
+		}
+		keep := make(map[string]bool)
+		for _, v := range m.rowsOf(s) {
+			if v.Active() {
+				keep[v.Title] = true
+			}
+		}
+		cmds = append(cmds, releaseClientsCmd(attachedClients(s.splitPane.Terminal().DetachExcept(keep))))
+	}
+	return tea.Batch(cmds...)
 }

@@ -77,7 +77,8 @@ func slotOver(t *testing.T, ws *core.Workspace) *workspaceSlot {
 // otherwise the tabs are m.slots' workspaces in order. A slot with no
 // workspace gets an empty one (and a list reading its rows, if it had
 // none). It keeps a model the test installed (m.core set beforehand, e.g.
-// with a registry), and ends by filling every slot's view store from the
+// with a registry), and a liveness probe it set (m.aliveProbe), else gives
+// it fixtureAlive. It ends by filling every slot's view store from the
 // model (syncViews). Call it after assembling the slots and before
 // exercising m; a test that changes the model's instances afterwards calls
 // m.syncViews() before reading them through the TUI.
@@ -85,6 +86,9 @@ func wireCore(t *testing.T, m *home) *home {
 	t.Helper()
 	if m.core == nil {
 		m.core = core.NewForTest(core.Options{})
+	}
+	if m.aliveProbe == nil {
+		m.aliveProbe = fixtureAlive(m)
 	}
 	for _, s := range append([]*workspaceSlot{m.workspaceSlot}, m.slots...) {
 		if s == nil {
@@ -112,6 +116,32 @@ func wireCore(t *testing.T, m *home) *home {
 	m.core.SetWorkspacesForTest(classic, tabs)
 	m.syncViews()
 	return m
+}
+
+// fixtureAlive is a fixture home's tmux liveness probe (home.aliveProbe):
+// the has-session answer of the tmux session of the loaded instance whose
+// agent session has that name. Fixtures build those sessions on a mock
+// executor (aliveCmdExecForTest, deadCmdExecForTest, …), so this is the
+// answer the TUI got when it probed through the instance
+// (AgentPane.TmuxAlive). A name no loaded instance's session has reads
+// dead.
+func fixtureAlive(m *home) func(string) bool {
+	return func(name string) bool {
+		if name == "" {
+			return false
+		}
+		for _, s := range m.openSlots() {
+			if s == nil || s.ws == nil {
+				continue
+			}
+			for _, inst := range s.ws.Instances() {
+				if inst.Pane().TmuxSessionName() == name {
+					return inst.Pane().TmuxAlive()
+				}
+			}
+		}
+		return false
+	}
 }
 
 // reworkspace rebuilds slot's workspace with its handles edited by edit,
@@ -159,6 +189,13 @@ func rowOf(t *testing.T, m *home, inst *session.Instance) *core.InstanceView {
 		t.Fatalf("fixture: no open slot shows %q", inst.Title)
 	}
 	return v
+}
+
+// shownStatus is inst's status as the TUI shows it: its row's, with the
+// overlays (the pane ladder) applied, after rereading the view stores.
+func shownStatus(t *testing.T, m *home, inst *session.Instance) session.Status {
+	t.Helper()
+	return rowOf(t, m, inst).Status
 }
 
 // selectIn rereads m's view stores (syncViews) and selects inst's row in

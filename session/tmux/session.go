@@ -50,6 +50,15 @@ func NewSession(name, program string, env ...string) *Session {
 	return newSanitizedSession(ToLoomTmuxName(name), program, MakePtyFactory(), internalexec.Default{}, env...)
 }
 
+// NewSessionNamed is NewSession for a name that is already a loom tmux
+// session name (Session.SessionName's, as a client that holds only the name
+// carries it): the name is used as it is, where NewSession would prefix and
+// sanitize it again. The TUI's full-screen attach and liveness probe use
+// it, so they reach the session by name rather than through an instance.
+func NewSessionNamed(name, program string) *Session {
+	return newSanitizedSession(name, program, MakePtyFactory(), internalexec.Default{})
+}
+
 // NewSessionWithDeps is NewSession with injected dependencies, so tests
 // never spawn tmux or allocate a PTY.
 func NewSessionWithDeps(name, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor, env ...string) *Session {

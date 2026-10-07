@@ -2,10 +2,12 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
+	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 
@@ -75,6 +77,60 @@ func TestViewsChanged_PrunesBellsOfGoneInstances(t *testing.T) {
 	assert.True(t, m.bells[keptID], "a shown instance keeps its bell")
 }
 
+// TestViewsChanged_KeepsOverlaysOfOtherSlots: the overlays are pruned
+// against every open slot's views, not only the slot whose views changed,
+// so a bell and a ladder status on a row of an unfocused slot survive a
+// change to the focused one; the changed slot's gone row loses both.
+func TestViewsChanged_KeepsOverlaysOfOtherSlots(t *testing.T) {
+	m := fleetHome(t)
+	m.viewMode = viewFocus
+	peer := liveInstance(t, "b-live")
+	m.slots[1].ws.Add(peer)
+	gone := liveInstance(t, "f-gone")
+	m.slots[0].ws.Add(gone)
+	m.syncViews()
+	peerID, goneID := idOf(m, peer), idOf(m, gone)
+	ring(m, peer)
+	m.setLadder(peerID, session.Prompting)
+	ring(m, gone)
+	m.setLadder(goneID, session.Ready)
+
+	m.slots[0].ws.Remove(gone)
+	m.Update(keyupMsg{}) // any Update drains, publishing the focused slot's change
+
+	assert.True(t, m.bells[peerID], "the unfocused slot's bell survives")
+	assert.Contains(t, m.ladder, peerID, "and so does its ladder status")
+	assert.NotContains(t, m.bells, goneID, "a gone row's bell is pruned")
+	assert.NotContains(t, m.ladder, goneID, "and its ladder status")
+}
+
+// TestViewsChanged_PrunesTheLadderOfInactiveAndReportedRows: a ladder
+// status never overrides a lifecycle status or one Claude reports, and
+// must not resurface after a pause and resume, or once the report goes
+// quiet; the views that say so prune it.
+func TestViewsChanged_PrunesTheLadderOfInactiveAndReportedRows(t *testing.T) {
+	m := homeWithAppState(t)
+	paused := liveInstance(t, "paused")
+	reported := startedInstanceWithProgram(t, "reported", "claude", "x")
+	m.ws.Add(paused)
+	m.ws.Add(reported)
+	m.syncViews()
+	m.setLadder(idOf(m, paused), session.Prompting)
+	m.setLadder(idOf(m, reported), session.Ready)
+
+	require.NoError(t, paused.TransitionTo(session.Paused))
+	applyHookEvents(t, reported, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: time.Now()})
+	applyClaudeStatus(m, reported) // rereads the stores, without the applier's prune
+	require.Contains(t, m.ladder, idOf(m, paused), "fixture: not pruned yet")
+	assert.Equal(t, session.Paused, shownStatus(t, m, paused), "the overlay never covers a lifecycle status")
+	assert.Equal(t, session.Prompting, shownStatus(t, m, reported), "nor a reported one")
+
+	m.Update(keyupMsg{})
+
+	assert.NotContains(t, m.ladder, idOf(m, paused), "an inactive row loses its ladder status")
+	assert.NotContains(t, m.ladder, idOf(m, reported), "and so does a reported one")
+}
+
 // peerLiveHome is a two-tab home whose peer tab ("bpeer") shows b1
 // (Ready) and a live session in status st, plus that session.
 func peerLiveHome(t *testing.T, st session.Status) (*home, *session.Instance) {
@@ -101,7 +157,7 @@ func TestLadderWrites_ReachTheTabBarWithinTheUpdate(t *testing.T) {
 
 		m.Update(paneDirtyMsg{session: inst.Pane().TmuxSessionName()})
 
-		require.Equal(t, session.Running, inst.GetStatus())
+		require.Equal(t, session.Running, m.ladder[idOf(m, inst)].status, "the ladder promoted the shown status")
 		assert.Equal(t, []ui.PeerSection{{Name: "bpeer", Running: 1, Idle: 1}}, m.list.PeerSections())
 	})
 	t.Run("an event-path detection", func(t *testing.T) {
@@ -110,7 +166,7 @@ func TestLadderWrites_ReachTheTabBarWithinTheUpdate(t *testing.T) {
 
 		m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, hasPrompt: true})
 
-		require.Equal(t, session.Prompting, inst.GetStatus())
+		require.Equal(t, session.Prompting, m.ladder[idOf(m, inst)].status, "the ladder recorded the prompt")
 		assert.Equal(t, []ui.PeerSection{{Name: "bpeer", Attention: 1, Idle: 1}}, m.list.PeerSections())
 	})
 	t.Run("a snapshot-path scan", func(t *testing.T) {
@@ -118,7 +174,7 @@ func TestLadderWrites_ReachTheTabBarWithinTheUpdate(t *testing.T) {
 
 		m.Update(snapshotStatusMsg{results: []snapshotStatus{{id: idOf(m, inst), title: inst.Title, hasPrompt: true}}})
 
-		require.Equal(t, session.Prompting, inst.GetStatus())
+		require.Equal(t, session.Prompting, m.ladder[idOf(m, inst)].status, "the ladder recorded the prompt")
 		assert.Equal(t, []ui.PeerSection{{Name: "bpeer", Attention: 1, Idle: 1}}, m.list.PeerSections())
 	})
 }

@@ -77,7 +77,7 @@ func selectedPausedNotWorkspace(m *home) bool {
 // exist, have a live tmux pane, and not be mid-lifecycle.
 func selectedReadyForInput(m *home) bool {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.Paused() || !m.tmuxAlive(selected) {
+	if selected == nil || selected.Paused() || !m.sessionAlive(selected.TmuxSession) {
 		return false
 	}
 	s := selected.Status
@@ -548,16 +548,14 @@ func runMergeSelected(m *home) (tea.Model, tea.Cmd) {
 		return m, m.handleError(fmt.Errorf("no session selected, or the selection can't be merged into"))
 	}
 	target := m.list.GetSelectedInstance()
-	// The worktree, through the bridge until package C merges by request.
-	targetInst := m.instOf(target.ID)
-	if targetInst == nil {
-		return m, nil
+	if !target.Started {
+		return m, m.handleError(fmt.Errorf("merge: cannot get git worktree for instance that has not been started"))
 	}
 
-	worktree, err := targetInst.GetGitWorktree()
-	if err != nil {
-		return m, m.handleError(fmt.Errorf("merge: %w", err))
-	}
+	// The dirty check reads only the worktree directory, which the view
+	// carries. It still runs git on the Update goroutine, as it always
+	// has (a follow-up for the model's own goroutine, stage 1D).
+	worktree := git.NewGitWorktreeFromStorage(target.RepoPath, target.WorktreePath, target.TmuxSession, target.Branch, "", false, "")
 	dirty, err := worktree.IsDirty()
 	if err != nil {
 		return m, m.handleError(fmt.Errorf("merge: failed to check worktree status: %w", err))
@@ -615,11 +613,12 @@ func mergeSourceRows(items []core.InstanceView, target *core.InstanceView) []ove
 // picker is open can't redirect the merge to a different session (see
 // runMergeSelected). The trade-off: if a source instance is killed or
 // otherwise removed from m.list between the picker opening and commit,
-// this can still resolve it from the snapshot; the merge then fails
-// with a surfaced error (the session is gone, see
-// handleStateMergePickerKey) rather than silently succeeding or
-// corrupting anything — an accepted, bounded failure mode, not a
-// re-validated precondition.
+// this can still resolve it from the snapshot; the commit then re-resolves
+// both sides by ID and fails with a surfaced error (the session is gone,
+// see handleStateMergePickerKey) rather than silently succeeding or
+// corrupting anything. The model's Merge request re-checks the rest of
+// the precondition (neither side busy), and refuses a merge whose source
+// or target became busy meanwhile.
 func instanceByDisplayIndex(items []core.InstanceView, idx int) *core.InstanceView {
 	for i := range items {
 		if ui.DisplayIndex(items, i) == idx {

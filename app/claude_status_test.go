@@ -24,11 +24,13 @@ func failRoster(m *home) {
 }
 
 // applyClaudeStatus moves inst to the status its hooks or the roster last
-// reported, as the model does when a hook scan or roster answer lands.
+// reported, as the model does when a hook scan or roster answer lands, and
+// rereads the view stores, as the drain after that Update does.
 func applyClaudeStatus(m *home, inst *session.Instance) {
 	if target, ok := m.core.AdoptClaudeStatus(inst); ok {
 		_ = inst.TransitionTo(target)
 	}
+	m.syncViews()
 }
 
 // applyHookEvents feeds events to inst as a replayed scan would. The test
@@ -68,10 +70,14 @@ func TestReportedStatusSuppressesRedetect(t *testing.T) {
 	m.ws.Add(inst)
 	m.syncViews()
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: time.Now()})
+	// The model applies the report (a hook scan landing), not the TUI.
+	applyClaudeStatus(m, inst)
 
 	_, follow := m.Update(statusDetectedMsg{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	assert.Equal(t, session.Prompting, inst.GetStatus())
 	assert.Equal(t, "permission: Bash", inst.WaitReason())
 	assert.Nil(t, follow)
+	assert.NotContains(t, m.ladder, idOf(m, inst), "the ladder has no say over a reported status")
+	assert.Equal(t, session.Prompting, shownStatus(t, m, inst))
 }

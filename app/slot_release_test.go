@@ -243,7 +243,8 @@ func attachedTerminal(t *testing.T, title string) *tmux.TmuxSession {
 // pane kept an attach client open on every loom_term_* shell it had shown.
 // The release detaches them (the shells keep running). The pane
 // enterGlobalMode carries into the global slot keeps only the clients of
-// sessions the global list holds.
+// sessions the global list holds, and the prune that follows (prunePanes)
+// only those of its active rows.
 func TestDroppedSlot_ReleasesTerminalPaneClients(t *testing.T) {
 	isolateTmux(t)
 
@@ -278,6 +279,33 @@ func TestDroppedSlot_ReleasesTerminalPaneClients(t *testing.T) {
 		require.NotNil(t, m.list.GetInstanceByTitle("shared"))
 		assert.False(t, dropped.PtmxAlive(), "the other tab's terminal client must be detached")
 		assert.False(t, stale.PtmxAlive(), "the carried pane's client for a closed session must be detached")
-		assert.True(t, shared.PtmxAlive(), "a terminal the global list can show again stays")
+		assert.False(t, shared.PtmxAlive(),
+			"the global list holds it, but paused: the prune releases a terminal client no active row shows")
 	})
+}
+
+// TestPrune_ReleasesTheTerminalClientsOfGoneSessions: kill and pause take
+// no TUI step in their job any more (the instance ends its terminal shell
+// by name, CloseRelatedSession). The prune after the completion
+// (ClientsStale) detaches the terminal pane's client of a session no
+// longer active, and keeps an active one's.
+func TestPrune_ReleasesTheTerminalClientsOfGoneSessions(t *testing.T) {
+	isolateTmux(t)
+	m := newTestHome(t)
+	killed, kept := liveInstance(t, "killed"), liveInstance(t, "kept")
+	m.ws.Add(killed)
+	m.ws.Add(kept)
+	m.syncViews()
+	killedTerm, keptTerm := attachedTerminal(t, "killed"), attachedTerminal(t, "kept")
+	m.splitPane.Terminal().InjectSessionForTest("killed", killedTerm, t.TempDir())
+	m.splitPane.Terminal().InjectSessionForTest("kept", keptTerm, t.TempDir())
+
+	cmd := deliver(t, m, core.KillResult{Instance: killed, Title: killed.Title})
+	assert.True(t, killedTerm.PtmxAlive(), "detached on Update; closed only in the Cmd")
+	drainCmd(cmd)
+	assert.False(t, killedTerm.PtmxAlive(), "the killed session's terminal client is released")
+	assert.True(t, keptTerm.PtmxAlive(), "an active session's terminal client is kept")
+
+	drainCmd(m.prunePanes()) // the health tick's
+	assert.True(t, keptTerm.PtmxAlive(), "and the tick's prune keeps it too")
 }

@@ -116,11 +116,13 @@ func TestSnapshotStatus_Ladder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m, inst := snapshotHome(t, "ladder", "bash")
 			require.NoError(t, inst.TransitionTo(tc.from))
+			m.syncViews()
 			tc.result.id, tc.result.title = idOf(m, inst), inst.Title
 
 			deliverScan(t, m, tc.result)
 
-			assert.Equal(t, tc.want, inst.GetStatus())
+			assert.Equal(t, tc.want, shownStatus(t, m, inst), "the row shows the ladder's status")
+			assert.Equal(t, tc.from, inst.GetStatus(), "the ladder is the TUI's overlay: the model's status is unchanged")
 			assert.Equal(t, tc.marked, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()))
 		})
 	}
@@ -147,14 +149,20 @@ func TestSnapshotStatus_AReportedClaudeStatusIsTheModels(t *testing.T) {
 	m, inst := snapshotHome(t, "reported", "claude")
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: time.Now()})
 	require.NoError(t, inst.TransitionTo(session.Ready))
+	m.syncViews()
 
 	deliverScan(t, m, snapshotStatus{id: idOf(m, inst), title: inst.Title, updated: true})
 
 	assert.Equal(t, session.Ready, inst.GetStatus(),
 		"neither the ladder's Running nor the reported Prompting: the model applies the report")
-	assert.Equal(t, "permission: Bash", inst.WaitReason(), "the report was adopted")
+	assert.NotContains(t, m.ladder, idOf(m, inst), "the ladder records nothing for a reported status")
 	assert.True(t, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()),
 		"output refreshes the diff whoever reports the status")
+
+	// The model adopts the report on its tick (deliverHealth), the TUI's
+	// scan no longer does.
+	deliver(t, m, core.HealthResult{Results: []core.ProbeResult{{Instance: inst, TmuxLive: tmux.LivenessAlive}}})
+	assert.Equal(t, "permission: Bash", inst.WaitReason(), "the report was adopted")
 }
 
 // TestSnapshotStatus_AnIneligibleInstanceIsSkipped: a scan landing after
@@ -162,6 +170,7 @@ func TestSnapshotStatus_AReportedClaudeStatusIsTheModels(t *testing.T) {
 func TestSnapshotStatus_AnIneligibleInstanceIsSkipped(t *testing.T) {
 	m, inst := snapshotHome(t, "paused", "bash")
 	require.NoError(t, inst.TransitionTo(session.Paused))
+	m.syncViews()
 
 	deliverScan(t, m, snapshotStatus{id: idOf(m, inst), title: inst.Title, updated: true})
 
@@ -175,6 +184,7 @@ func TestSnapshotStatus_AnIneligibleInstanceIsSkipped(t *testing.T) {
 func TestSnapshotScan_OneAtATime(t *testing.T) {
 	m, inst := snapshotHome(t, "scan", "bash")
 	require.NoError(t, inst.TransitionTo(session.Ready))
+	m.syncViews()
 
 	scan := m.snapshotScan()
 	require.NotNil(t, scan)
@@ -190,7 +200,7 @@ func TestSnapshotScan_OneAtATime(t *testing.T) {
 	m.Update(msg)
 
 	assert.False(t, m.snapshotScanning)
-	assert.Equal(t, session.Running, inst.GetStatus())
+	assert.Equal(t, session.Running, shownStatus(t, m, inst))
 	assert.True(t, m.core.OutputMarkedForTest(inst.Pane().TmuxSessionName()))
 	assert.NotNil(t, m.snapshotScan(), "the next tick scans again")
 }
