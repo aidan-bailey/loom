@@ -369,9 +369,17 @@ func (t *TerminalPane) ensureSessionLocked(instance *core.InstanceView) error {
 		if s.tmuxSession != nil && s.tmuxSession.DoesSessionExist() {
 			return nil
 		}
-		// Session died, remove stale entry and recreate below
-		delete(t.sessions, instance.Title)
 	}
+	// Only an active row gets a new shell. A kill (Deleting) or a pause
+	// (Loading) ends the shell in its job while the row still reads so, and
+	// a shell started meanwhile would outlive the row: the prune after it
+	// only detaches. A resume or recover (Loading) may have no worktree to
+	// start one in yet. A dead entry stays for that prune to release.
+	if !instance.Active() {
+		return nil
+	}
+	// Session died (or never started): remove any stale entry and create below
+	delete(t.sessions, instance.Title)
 
 	shell := os.Getenv("SHELL")
 	if shell == "" {

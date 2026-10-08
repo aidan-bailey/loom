@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -466,4 +468,76 @@ func TestTerminalPane_DetachAllHandsOverWithoutKilling(t *testing.T) {
 	require.Nil(t, pane.CurrentTmuxSession())
 	require.False(t, killed, "DetachAll must not kill the shells")
 	require.Empty(t, pane.DetachAll())
+}
+
+// TestTerminalPane_NoNewShellForInactiveRow: only an active row gets a new
+// terminal shell. A kill (Deleting) or a pause (Loading) ends the row's
+// shell in its job while the row still reads Deleting or Loading, and the
+// pane refreshes meanwhile; a shell started then outlived the row, since
+// the prune that follows only detaches its client (a fast D, y kill hit
+// that window every time once the model moved behind the wire). A resume
+// or recover (Loading) has no worktree to start one in yet. A live shell
+// the row already has stays on show, and the Running row is the control:
+// the same ended shell is replaced there, on the same tmux server.
+func TestTerminalPane_NoNewShellForInactiveRow(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not found in PATH; skipping real-tmux test")
+	}
+	// The control's shell attaches a client, which needs a usable TERM on
+	// tty-less runners.
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("SHELL", "/bin/sh")
+
+	const (
+		none  = iota // no shell cached
+		ended        // a cached shell the operation has since ended
+		live         // a cached shell still running
+	)
+	cases := []struct {
+		name      string
+		status    session.Status
+		cache     int
+		wantShell bool // a new shell started on the server
+	}{
+		{"deleting, shell ended", session.Deleting, ended, false},
+		{"deleting, none cached", session.Deleting, none, false},
+		{"loading, shell ended", session.Loading, ended, false},
+		{"loading, none cached", session.Loading, none, false},
+		{"deleting, shell live", session.Deleting, live, false},
+		{"running, shell ended", session.Running, ended, true},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			title := fmt.Sprintf("inactive-%d", i)
+			name := tmux.ToLoomTmuxName(tmux.TerminalSessionName(title))
+			tp := NewTerminalPane()
+			tp.SetSize(80, 24)
+			t.Cleanup(func() {
+				_ = tmux.Command(context.Background(), "kill-session", "-t", tmux.SessionTarget(name)).Run()
+				for _, ts := range tp.DetachAll() {
+					_ = ts.PausePreview()
+				}
+			})
+			switch tc.cache {
+			case ended:
+				tp.InjectSessionForTest(title, newMockTmuxSession(t, title, mockCmdExec("", false)), t.TempDir())
+			case live:
+				tp.InjectSessionForTest(title, newMockTmuxSession(t, title, mockCmdExec("live shell", true)), t.TempDir())
+			}
+
+			v := &core.InstanceView{Title: title, Started: true, Status: tc.status, WorktreePath: t.TempDir()}
+			require.NoError(t, tp.UpdateContent(v))
+
+			require.Equal(t, tc.wantShell, tmux.NewSessionNamed(name, "").DoesSessionExist(),
+				"a new shell on the server for a %s row", tc.status)
+			if tc.wantShell {
+				return
+			}
+			if tc.cache == live {
+				require.Contains(t, tp.String(), "live shell", "the live shell stays on show")
+			} else {
+				require.True(t, tp.ShowingFallback(), "no shell to show")
+			}
+		})
+	}
 }
