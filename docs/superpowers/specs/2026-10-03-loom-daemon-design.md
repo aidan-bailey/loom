@@ -45,7 +45,7 @@ without a client starting the daemon.
 |---|---|
 | 1 | **Full split.** `loom serve` owns every workspace; the TUI, the agent CLI and the subcommands are clients. A daemon only for scrum workspaces was considered and rejected: it adds a second ownership model inside the TUI and still has to grow into this. |
 | 2 | **On demand, like tmux's server.** The first client that finds no daemon spawns one. It keeps running after every client leaves and exits only on `loom serve stop` or a signal. |
-| 3 | **Every registered workspace, always loaded,** plus the global context. Open tabs become a per-client view preference. |
+| 3 | **Every registered workspace, always loaded,** plus the global context. Open tabs become a per-client view preference. (Amended 2026-10-08 by stage 3A: this now holds, in process. The model loads the global workspace and every registered one when it boots and never drops one, and each client keeps its own tabs, the workspace it shows while none is open, and its selection.) |
 | 4 | **The boundary is a Go interface,** `core.Core`, with an in-process and a socket-backed implementation. Clients never call `session` lifecycle methods. |
 | 5 | **Transport:** newline-delimited JSON over a unix socket, request/reply with ids plus server-pushed events. No gRPC. |
 | 6 | **Status comes from roster and hooks,** which need no pane. The TUI keeps its content-scrape ladder as a display-only fallback and sends the daemon nothing from the pane. |
@@ -134,7 +134,13 @@ dotted names this section's grouping suggested.) Grouped:
 - *Workspaces:* list, add, remove, rename, use, set mode and account
   (for the scrum spec), set the open tabs. The open list stays the one
   registry value it is today, written by the daemon on request; the
-  daemon never acts on it.
+  daemon never acts on it. (Amended 2026-10-08 by stage 3A, which built
+  this part: `Workspaces` lists every served workspace, `Open` is a
+  client showing one (it retries a failed load and, on the workspace's
+  first open, starts its terminal), `Register` returns the new
+  workspace's view, and `PersistOpenList` writes the open list a client
+  hands it. The tab methods (`OpenTab`, `CloseTab`, `EnterGlobal`, …)
+  left `Core`: which workspaces a client shows is the client's.)
 - *Instances:* list (with runtime status, work state, diff stats, GitHub
   state, parity, subagent rows), new (title, prompt, issue, launch
   options), start, pause, resume (with options), recover, discard, kill,
@@ -168,7 +174,20 @@ re-dials, and the snapshot a server sends every new connection
 call. The events are the model's `core.Event`s, named by Go type: the
 state events (`WorkspacesChanged`, `ModelChanged`, `AccountsChanged`,
 `GitHubChanged`, `ViewsChanged`) carry the published state, and the
-rest include `Notice` and `Reply`.)
+rest include `Notice` and `Reply`.) (Amended 2026-10-08 by stage 3A:
+not every event goes to every client. `Started`, `Recovered` and
+`Notice` carry `Req`, the request whose job they report on (the model
+stamps them while it applies that request's result, `Model.cause`, and
+the jobs it spawns meanwhile inherit it, so a `Create`'s `Started` still
+names the `Create`). Each client numbers its requests from 1, below
+2^32; the server puts the connection's number in the high 32 bits of
+every request ID it hands the model and takes it out on the way back, so
+it routes without a table: a `Reply`, and a request's `Notice`, go to the
+client that made the request alone; `Started` and `Recovered` go to every
+client, since each attaches the session's pane, naming the request only
+to the one that made it, which alone selects the row and attaches
+inline. Events naming no request go to every client. See the "Request
+IDs" section of `docs/specs/protocol.md`.)
 
 **`InstanceView`** is the value type the daemon publishes, as built in
 stage 1C (`core/view.go`): `ID`; `Title`; `RepoPath` (the repository the
@@ -344,7 +363,7 @@ runs against a stale daemon:
 | Two clients act on one instance | Serialized by the model loop; the second gets a reply reflecting the first ("already killed"). |
 | Version mismatch | §6. |
 | A nested dev loom | `loomdev` sets `LOOM_GLOBAL_DIR`, so the sandbox's daemon owns its own socket, lock, registry and tmux server. The nesting guard refuses a daemon that would share a tmux server with its host. |
-| A workspace fails to load (latched storage) | As today: marked failed, its titles unknown so the sweep skips it, writes refused. Reported as a `notice` and shown in the picker. |
+| A workspace fails to load (latched storage) | As today: marked failed, its titles unknown so the sweep skips it, writes refused. Reported as a `notice` and shown in the picker. (Amended 2026-10-08 by stage 3A: the workspace stays served, empty and latched, its error published (`WorkspaceView.LoadErr`); the sweep leaves only its roots out of the owned set and still sweeps every other workspace; every `Open` rereads it from disk. It is not reported as a notice: the boot only logs it (`workspace.load_failed`), and the TUI reads its own failed opens (`failedOpen`), not `LoadErr`, so a failed workspace that isn't in the open list shows nowhere until a client opens it.) |
 | A request names a workspace the daemon hasn't loaded | `not_found`: the registry changed. Clients re-list on `registry changed`. |
 | A slow client | Its queue coalesces state events, so it holds at most one of each kind; replies and other events are never dropped (§4, amended by stage 2). |
 | Reboot | No daemon until the first `loom` start or agent CLI call. A sprint stalls until then. A systemd user unit is a possible later add-on. |
@@ -405,7 +424,7 @@ end:
    messages it gets today. `home` holds a `Core` backed by that loop over
    channels. No socket, no behaviour change. Through stage 1 the model
    loads the TUI's open tabs as it does today; loading every registered
-   workspace starts with stage 3.
+   workspace starts with stage 3 (3A).
 
    Planned on 2026-10-03 as four plans, each leaving the TUI working end
    to end:
@@ -502,7 +521,63 @@ end:
    a restarted daemon's new IDs included. The newer-side-wins handshake
    (§6) replaces stage 2's refusal of another protocol, and several
    clients need a selection each (`SetSelected` is one model-wide value
-   in stage 2).
+   in stage 2; 3A merges each connection's into a set).
+
+   Split on 2026-10-08 into three plans, each leaving the TUI working end
+   to end:
+
+   - **3A, the multi-client model**
+     ([plan](../plans/2026-10-08-daemon-stage3a-multi-client-model.md)).
+     Still in one process, the model serves every registered workspace
+     and several clients at once. It boots before any client connects
+     (`Model.Boot`: the account registry, the remote-control detection,
+     then the global workspace and every registered one, and one orphan
+     sweep) and never drops a workspace. A workspace's first open
+     (`Core.Open`) starts its terminal and its GitHub polling. A failed
+     load is kept, latched, left out of the sweep's owned roots (every
+     other workspace is still swept), and reread from disk on open.
+     `Core` loses the tab and startup methods (`LoadClassic`,
+     `RestoreSaved`, `OpenTab`, `CloseTab`, `EnterGlobal`, `Tabs`,
+     `Classic`, `Begin`, …) and gains `Open`, `Workspaces` and
+     `PersistOpenList`: each client keeps its own tabs, classic workspace
+     and failed opens (decision 3 now holds). The wire routes a request's
+     answer to the client that made it, by the connection's number in the
+     request ID's high 32 bits (§2), and merges each connection's
+     selection into the model's set (`Backend.SetSelection`). Reconcile
+     proves a live session is the record's (by its start directory)
+     before restoring onto it or killing it, since another workspace's
+     session can carry its name, and marks the record Paused when it
+     can't; kill and discard leave such a session running, and resume
+     refuses it; a workspace terminal's relaunch asks first who holds its
+     name (`session.HeldElsewhere`, which fails closed and is retried by
+     the tick when tmux leaves it unanswered). Workspaces are one per
+     canonical config dir, so a directory registered twice is served
+     once; the TUI opens the served twin in a twin's place at startup
+     and refuses a twin or a rename made while loom runs in the picker.
+     The session launch flags are kept per config dir. `Protocol` is 2.
+   - **3B, the daemon process:** `loom serve`, the lock, spawn on demand,
+     the handshake, reconnect and respawn, `serve.log`, the nesting
+     guard's move, and the takeover lock's retirement. Left by 3A: a
+     daemon's notices while no client is connected (`Boot`'s are handed
+     to the first client by hand), the sticky fatal, the GitHub poll's
+     start directory for the global workspace, and a guard for two
+     global dirs that register the same repository.
+   - **3C, the subcommands as clients,** plus the duties a daemon has
+     with no TUI (trust prompts and hook scans, Assumption 4) and
+     unloading a workspace removed or renamed in the registry (until
+     then it stays served until restart, under its old name: a client
+     can't open it by its new one).
+
+   The user's decisions (2026-10-08):
+
+   - **The split** into 3A, 3B and 3C above.
+   - **A workspace's terminal starts on a client's first open of the
+     workspace,** and is relaunched on death from then on; a live one is
+     always kept (Assumption 5).
+   - **Several TUIs may connect at once,** and the takeover lock is
+     retired in 3B. Two TUIs attach pane clients to the same agent
+     sessions, and tmux sizes each window to the most recently active
+     client.
 4. **Cleanup.** Delete the TUI's dead lifecycle code, rewrite the
    CLAUDE.md gotchas, update USAGE.md, bump the version.
 
@@ -547,5 +622,5 @@ The scrum workflow starts after stage 3.
 | 1 | A detached child started from a TUI process (new session, stdio closed) keeps running after the TUI exits and after its tmux pane closes. | Stage 3's end-to-end test. |
 | 2 | `$XDG_RUNTIME_DIR` is set in the environments loom runs in (a tmux pane under a systemd user session; a plain ssh login may lack it). | Stage 3 falls back to `<globalDir>/run/`; the test covers both. |
 | 3 | The fallback socket path fits `sun_path`: 108 bytes on Linux, 104 on macOS. A deep `LOOM_GLOBAL_DIR`, such as a sandbox under a long temp dir, overflows it, and `connect` fails with "File name too long" (hit while probing for 1A). | Stage 3: hash into a short path, or bind relative to the dir, and test with a 100-byte global dir. |
-| 4 | With no pane events, the daemon still answers trust prompts and reads hook events promptly. 1A keeps trust detection in the TUI's status scrape and hook scans on pane events. Since 1E the model ticks on its own timer, so its hook backstop scan runs with no TUI, at the tick's cadence. | Stage 3: a launch watch (`capture-pane` for N seconds after each launch) and a faster hook-scan timer (~250ms; no file-watch library is vendored). |
-| 5 | Loading every registered workspace (decision 3) does not start a Claude workspace terminal in each one. Today activating a workspace auto-creates its terminal. | Decide before stage 3. Suggested rule: create on a client's first open of the workspace, then relaunch on death as today. |
+| 4 | With no pane events, the daemon still answers trust prompts and reads hook events promptly. 1A keeps trust detection in the TUI's status scrape and hook scans on pane events. Since 1E the model ticks on its own timer, so its hook backstop scan runs with no TUI, at the tick's cadence. | Stage 3 (3C, since the split): a launch watch (`capture-pane` for N seconds after each launch) and a faster hook-scan timer (~250ms; no file-watch library is vendored). |
+| 5 | Loading every registered workspace (decision 3) does not start a Claude workspace terminal in each one. Today activating a workspace auto-creates its terminal. | Decide before stage 3. Suggested rule: create on a client's first open of the workspace, then relaunch on death as today. **Resolved 2026-10-08 by stage 3A (the user's decision): the suggested rule.** A workspace's first open since the model started (`Core.Open`) creates its terminal, or relaunches one that died while nobody had the workspace open or that its restart breaker stopped; a live one is kept. Until then the terminal is dormant: the health tick neither probes, relaunches nor pauses it. |
