@@ -49,10 +49,15 @@ type Model struct {
 	program  string
 	cmdExec  cmd2.Executor
 
+	// workspaces are every workspace the model serves, loaded once (boot):
+	// the startup context's, the global one, and each registered one, in
+	// that order, plus any registered or reread later. None is ever
+	// dropped: the TUI's tabs and classic workspace below are only which
+	// of them it shows.
+	workspaces []*Workspace
+	booted     bool
 	// classic is the workspace shown while no tab is open: the startup
-	// context's (classic startup, or the fallback when no tab could be
-	// restored) or the global one EnterGlobal built. nil while tabs are
-	// open: the first tab opened replaces it.
+	// context's, or the global one after EnterGlobal.
 	classic *Workspace
 	// tabs are the open workspace tabs, in tab order.
 	tabs []*Workspace
@@ -210,6 +215,7 @@ func New(o Options) (*Model, error) {
 	}
 	m := newModel(o)
 	m.classic = NewWorkspace(WorkspaceParts{Ctx: o.Ctx, Storage: storage, Config: o.Config, State: state})
+	m.workspaces = []*Workspace{m.classic}
 	return m, nil
 }
 
@@ -229,15 +235,20 @@ func newModel(o Options) *Model {
 // installs its fixture's workspaces with SetWorkspacesForTest.
 func NewForTest(o Options) *Model { return newModel(o) }
 
-// SetWorkspacesForTest installs a fixture's workspaces: classic when tabs
-// is empty, else tabs in order (classic is then ignored, as the first tab
-// replaces it).
+// SetWorkspacesForTest installs a fixture's workspaces, served and opened:
+// classic, the one shown while no tab is open, and tabs, in order. A nil
+// classic with tabs is none. The model has not booted: the first
+// LoadClassic or RestoreSaved loads the classic workspace's storage, as
+// startup does, and the global and registered workspaces with it.
 func (m *Model) SetWorkspacesForTest(classic *Workspace, tabs []*Workspace) {
-	if len(tabs) > 0 {
-		m.classic, m.tabs = nil, append([]*Workspace(nil), tabs...)
-		return
+	m.classic, m.tabs = classic, append([]*Workspace(nil), tabs...)
+	m.workspaces = nil
+	for _, ws := range append([]*Workspace{classic}, tabs...) {
+		if ws != nil && !slices.Contains(m.workspaces, ws) {
+			ws.opened = true
+			m.workspaces = append(m.workspaces, ws)
+		}
 	}
-	m.classic, m.tabs = classic, nil
 }
 
 // SetExecForTest replaces the executor of the workspace load paths.

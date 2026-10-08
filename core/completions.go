@@ -102,52 +102,6 @@ type promptSent struct {
 	owner *Workspace
 }
 
-// adoptIntoReopened swaps inst in for its reopened twin (reopenedTwin) and
-// returns the reopened workspace, or nil when inst's tmux session did not
-// survive the reopen: a session already up when the reopen reconciled the
-// Loading record was killed there (ActionKillAndPause), so the twin's
-// record is the truth and inst stays with its closed owner. The probe runs
-// a tmux subprocess, but only on this rare path.
-func (m *Model) adoptIntoReopened(twin *session.Instance, reopened *Workspace, inst *session.Instance) *Workspace {
-	if !inst.Pane().TmuxAlive() {
-		return nil
-	}
-	reopened.replace(twin, inst)
-	return reopened
-}
-
-// reopenedTwin finds, for an instance whose owner workspace was dropped
-// while it started, the copy a reopened tab of the same workspace loaded
-// from the record the start left behind. Reconcile turns that
-// Loading record into a Paused instance with no attach client
-// (ActionMarkPaused, or ActionKillAndPause if the session was already up),
-// so the twin is matched on the record's identity: the same title,
-// worktree path and (when both are known) branch — which rules out an
-// unrelated same-titled session — plus Paused (a paused instance has no
-// pane client). nil when there is none.
-func (m *Model) reopenedTwin(owner *Workspace, inst *session.Instance) (*session.Instance, *Workspace) {
-	wt := inst.GetWorktreePath()
-	if wt == "" {
-		return nil, nil
-	}
-	for _, s := range m.Loaded() {
-		if s.Label() != owner.Label() {
-			continue
-		}
-		twin := s.byTitle(inst.Title)
-		if twin == nil || twin == inst || twin.GetWorktreePath() != wt {
-			continue
-		}
-		if b1, b2 := twin.GetBranch(), inst.GetBranch(); b1 != "" && b2 != "" && b1 != b2 {
-			continue
-		}
-		if twin.Paused() {
-			return twin, s
-		}
-	}
-	return nil, nil
-}
-
 // owningWorkspace resolves the workspace an async completion belongs to:
 // the workspace stamped at dispatch, or — for an unstamped result — the
 // loaded workspace that holds inst. nil when neither is known.
@@ -174,40 +128,23 @@ func (m *Model) removeEverywhere(inst *session.Instance) {
 }
 
 // deliverStart applies an async start's result to the workspace that owns
-// the instance (see the note at the top of this file).
+// the instance (see the note at the top of this file). The owner is always
+// served: the model never drops a workspace.
 //
 //   - Failure: the instance is removed from its owner by identity, the
 //     owner saved, and the instance killed (worktree, tmux) off the
 //     model's goroutine.
 //   - Success: the owner is saved and the pending prompt (N flow) sent by
-//     a job; both belong to the instance, wherever it lives. Started tells
-//     the TUI, which attaches the instance's client when the owner is
-//     loaded and moves its selection only when that can't retarget a flow.
-//     With a prompt, Started waits for the send (deliverPromptSent): the
-//     TUI's inline attach forwards keys to the agent, and a key typed
-//     before the prompt's paste and Enter would join the prompt.
-//   - Owner closed and its workspace reopened meanwhile: the reopened
-//     workspace reconciled the record into a Paused twin, which the
-//     instance replaces on success if its tmux session survived the
-//     reopen (adoptIntoReopened); on failure the twin's record owns the
-//     worktree and branch, so nothing is killed.
+//     a job. Started tells the TUI, which attaches the instance's client
+//     and moves its selection only when that can't retarget a flow. With a
+//     prompt, Started waits for the send (deliverPromptSent): the TUI's
+//     inline attach forwards keys to the agent, and a key typed before the
+//     prompt's paste and Enter would join the prompt.
 //
 // Formerly app.handleInstanceStarted's model half.
 func (m *Model) deliverStart(r StartResult) {
 	inst := r.Instance
 	owner := m.owningWorkspace(r.Owner, inst)
-	if owner != nil && !m.isLoadedWS(owner) {
-		if twin, reopened := m.reopenedTwin(owner, inst); twin != nil {
-			if r.Err != nil {
-				m.notifyErr(r.Err)
-				return
-			}
-			if adopted := m.adoptIntoReopened(twin, reopened, inst); adopted != nil {
-				owner = adopted
-			}
-		}
-	}
-	loaded := m.isLoadedWS(owner)
 
 	if r.Err != nil {
 		// The save's error first: the start's is the one the error bar
@@ -235,44 +172,22 @@ func (m *Model) deliverStart(r StartResult) {
 		m.spawn(sendInitialPrompt(inst, owner, prompt))
 		return
 	}
-	ownerID, label, note := m.ownerFields(owner, loaded)
-	m.emit(Started{ID: m.idOf(inst), Title: inst.Title, Owner: ownerID, Loaded: loaded,
-		OwnerLabel: label, ClosedNote: note})
+	ownerID, label := m.ownerFields(owner)
+	m.emit(Started{ID: m.idOf(inst), Title: inst.Title, Owner: ownerID, OwnerLabel: label})
 }
 
 // deliverPromptSent finishes a start whose initial prompt was sent first
-// (deliverStart): only now does the TUI hear of it (Started). The owner may
-// have closed while the prompt was sent, so whether it is still loaded is
-// asked again.
+// (deliverStart): only now does the TUI hear of it (Started).
 func (m *Model) deliverPromptSent(r promptSent) {
-	loaded := m.isLoadedWS(r.owner)
-	ownerID, label, note := m.ownerFields(r.owner, loaded)
-	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: ownerID, Loaded: loaded,
-		OwnerLabel: label, ClosedNote: note})
+	ownerID, label := m.ownerFields(r.owner)
+	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: ownerID, OwnerLabel: label})
 }
 
-// deliverResume finishes a resume. The owner may have been closed while
-// it ran, so an instance no loaded workspace holds is swapped into a
-// reopened copy of its workspace when there is one and its session
-// survived the reopen (adoptIntoReopened). An instance a loaded workspace
-// holds gets a fresh pane client (SessionLaunched); one nothing holds
-// displays nothing and gets none. Formerly app.handleResumeDone.
+// deliverResume finishes a resume: an instance a served workspace still
+// holds (a kill may have removed it meanwhile) gets a fresh pane client
+// (SessionLaunched). Formerly app.handleResumeDone.
 func (m *Model) deliverResume(r ResumeResult) {
 	m.notifyErr(r.Notice)
-	if inst := r.Instance; inst != nil && m.holding(inst) == nil {
-		var adopted *Workspace
-		if r.Owner != nil {
-			if twin, reopened := m.reopenedTwin(r.Owner, inst); twin != nil {
-				adopted = m.adoptIntoReopened(twin, reopened, inst)
-			}
-		}
-		if adopted != nil {
-			if err := m.saveWS(adopted); err != nil {
-				m.notifyErr(err)
-			}
-			m.notifyInfo(fmt.Sprintf("%s resumed in %s", inst.Title, adopted.Label()))
-		}
-	}
 	if inst := r.Instance; inst != nil && m.holding(inst) != nil {
 		m.emit(SessionLaunched{ID: m.idOf(inst)})
 	}
@@ -282,12 +197,8 @@ func (m *Model) deliverResume(r ResumeResult) {
 // deliverRecover puts the adopted instance in its placeholder's row in
 // the workspace that owns it, by identity, so the order and the
 // selection's row are unchanged, and saves. A failure reverts the
-// placeholder to Recoverable so the user can retry r. An adoption whose
-// owner was closed meanwhile is saved to the closed owner's storage
-// unless its workspace has been reopened (Save skips a stale copy then);
-// nothing is lost either way: the adopted session keeps running on its
-// worktree, which the reopened workspace's orphan discovery re-offers as
-// Recoverable. Formerly app.handleRecoverDone's model half.
+// placeholder to Recoverable so the user can retry r. Formerly
+// app.handleRecoverDone's model half.
 func (m *Model) deliverRecover(r RecoverResult) {
 	owner := m.owningWorkspace(r.Owner, r.Placeholder)
 	if r.Err != nil {
@@ -301,7 +212,6 @@ func (m *Model) deliverRecover(r RecoverResult) {
 		m.notifyErr(fmt.Errorf("recover %s: %w", r.OldTitle, r.Err))
 		return
 	}
-	loaded := m.isLoadedWS(owner)
 	if owner != nil {
 		if !owner.replace(r.Placeholder, r.Recovered) {
 			owner.add(r.Recovered)
@@ -310,9 +220,9 @@ func (m *Model) deliverRecover(r RecoverResult) {
 			log.For("core").Error("recover.save_failed", "title", r.Recovered.Title, "err", err)
 		}
 	}
-	ownerID, label, note := m.ownerFields(owner, loaded)
-	m.emit(Recovered{ID: m.idOf(r.Recovered), Title: r.Recovered.Title, Owner: ownerID, Loaded: loaded,
-		Paused: r.Recovered.GetStatus() == session.Paused, OwnerLabel: label, ClosedNote: note})
+	ownerID, label := m.ownerFields(owner)
+	m.emit(Recovered{ID: m.idOf(r.Recovered), Title: r.Recovered.Title, Owner: ownerID,
+		Paused: r.Recovered.GetStatus() == session.Paused, OwnerLabel: label})
 }
 
 // deliverKill removes a killed instance from every loaded workspace, by

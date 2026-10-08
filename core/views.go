@@ -20,10 +20,10 @@ func (m *Model) idOf(inst *session.Instance) InstanceID {
 	return m.nextID
 }
 
-// lookup resolves id to its instance and the loaded workspace holding it,
-// or nil, nil when no loaded workspace holds it. It runs on every pane
-// event (PaneOutput, PaneQuiet), so it walks the tabs, or the classic
-// workspace, directly rather than through Loaded, which allocates.
+// lookup resolves id to its instance and the served workspace holding it,
+// or nil, nil when none holds it. It runs on every pane event (PaneOutput,
+// PaneQuiet), so it walks the workspaces directly rather than through
+// Loaded, which allocates.
 func (m *Model) lookup(id InstanceID) (*session.Instance, *Workspace) {
 	if id == 0 {
 		return nil, nil
@@ -36,15 +36,7 @@ func (m *Model) lookup(id InstanceID) (*session.Instance, *Workspace) {
 		}
 		return nil
 	}
-	if len(m.tabs) == 0 {
-		if m.classic != nil {
-			if inst := find(m.classic); inst != nil {
-				return inst, m.classic
-			}
-		}
-		return nil, nil
-	}
-	for _, ws := range m.tabs {
+	for _, ws := range m.workspaces {
 		if inst := find(ws); inst != nil {
 			return inst, ws
 		}
@@ -107,27 +99,31 @@ func (m *Model) viewsWS(ws *Workspace) []InstanceView {
 // View returns the view of the instance id, which a loaded workspace must
 // hold (false otherwise).
 func (m *Model) View(id InstanceID) (InstanceView, bool) {
-	inst, _ := m.lookup(id)
-	if inst == nil {
+	inst, ws := m.lookup(id)
+	if inst == nil || !slices.Contains(m.shown(), ws) {
 		return InstanceView{}, false
 	}
 	return m.viewOf(inst), true
 }
 
 // publishViews builds every loaded workspace's views and returns a
-// ViewsChanged for each workspace whose views differ from the last
+// ViewsChanged for each shown workspace whose views differ from the last
 // published ones (always for a workspace not published before). It then
-// forgets the published views of workspaces no longer loaded and the IDs
-// of instances no loaded workspace holds.
+// forgets the published views of workspaces no longer shown and the IDs of
+// instances no served workspace holds.
 func (m *Model) publishViews() []Event {
 	var events []Event
 	next := make(map[*Workspace][]InstanceView, len(m.published))
 	live := make(map[*session.Instance]bool, len(m.ids))
-	for _, ws := range m.Loaded() {
+	for _, ws := range m.workspaces {
+		for _, inst := range ws.insts {
+			live[inst] = true
+		}
+	}
+	for _, ws := range m.shown() {
 		views := make([]InstanceView, len(ws.insts))
 		for i, inst := range ws.insts {
 			views[i] = m.viewOf(inst)
-			live[inst] = true
 		}
 		next[ws] = views
 		if prev, ok := m.published[ws]; !ok || !reflect.DeepEqual(prev, views) {

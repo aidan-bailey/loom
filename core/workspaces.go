@@ -7,20 +7,26 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
-	"github.com/aidan-bailey/loom/session/launch"
 )
 
-// Loaded is every loaded workspace: the tabs, or the classic one alone. It
-// returns a fresh slice, so a caller may keep iterating it while calling
-// back into the model (which can close a tab).
-func (m *Model) Loaded() []*Workspace {
-	if len(m.tabs) == 0 {
-		if m.classic == nil {
-			return nil
-		}
-		return []*Workspace{m.classic}
+// Loaded is every workspace the model serves (boot): it never drops one,
+// so this is more than the TUI shows (its tabs, or the classic workspace).
+// It returns a fresh slice, so a caller may keep iterating it while calling
+// back into the model.
+func (m *Model) Loaded() []*Workspace { return slices.Clone(m.workspaces) }
+
+// shown is the workspaces the TUI shows: its tabs, or the classic
+// workspace alone. The published state (WorkspacesChanged, ViewsChanged)
+// covers these, as if they were all the model loaded, while the model
+// serves every workspace (Loaded).
+func (m *Model) shown() []*Workspace {
+	if len(m.tabs) > 0 {
+		return slices.Clone(m.tabs)
 	}
-	return slices.Clone(m.tabs)
+	if m.classic == nil {
+		return nil
+	}
+	return []*Workspace{m.classic}
 }
 
 // RestoreFailed names the workspaces that failed to restore and are kept
@@ -37,31 +43,9 @@ func (m *Model) holding(inst *session.Instance) *Workspace {
 	return nil
 }
 
-// isLoadedWS reports whether ws is still part of the model: an open tab, or
-// the classic workspace.
+// isLoadedWS reports whether the model serves ws.
 func (m *Model) isLoadedWS(ws *Workspace) bool {
-	return ws != nil && slices.Contains(m.Loaded(), ws)
-}
-
-// Reopened reports whether ws's workspace is open in a loaded workspace
-// other than ws itself: for one no longer loaded, whether the user has
-// reopened it since.
-func (m *Model) Reopened(ws *Workspace) bool {
-	for _, w := range m.Loaded() {
-		if w != ws && w.Label() == ws.Label() {
-			return true
-		}
-	}
-	return false
-}
-
-// closedNoteWS describes, for a completion's notice, an owner workspace
-// that was closed while the operation ran.
-func (m *Model) closedNoteWS(ws *Workspace) string {
-	if m.Reopened(ws) {
-		return "which was closed and reopened meanwhile"
-	}
-	return "which is no longer open"
+	return ws != nil && slices.Contains(m.workspaces, ws)
 }
 
 // allInstances returns every instance of every loaded workspace.
@@ -83,11 +67,18 @@ func (m *Model) allInstances() []*session.Instance {
 // them mid-setup reads a dead tmux session and force-flips them to Paused
 // under the op. Deleting rows are being torn down. The same set is what
 // keeps a pane client (livePaneNames).
+//
+// A workspace terminal is left out until its workspace is first opened:
+// it is not started then (ensureTerminal), and one restored from disk
+// with its session gone must not be found dead and relaunched, or paused,
+// for a workspace nobody has looked at.
 func (m *Model) activeInstances() []*session.Instance {
 	var active []*session.Instance
-	for _, inst := range m.allInstances() {
-		if activeInstance(inst) {
-			active = append(active, inst)
+	for _, ws := range m.Loaded() {
+		for _, inst := range ws.insts {
+			if activeInstance(inst) && (ws.opened || !inst.IsWorkspaceTerminal) {
+				active = append(active, inst)
+			}
 		}
 	}
 	return active
@@ -162,140 +153,40 @@ func (m *Model) Register(name, dir string) (config.Workspace, error) {
 	if ws == nil {
 		return config.Workspace{}, fmt.Errorf("workspace not found after registration")
 	}
+	// Served from now on, like every registered workspace. A load error is
+	// the open's to report: OpenTab retries it.
+	_, _ = m.ensureLoaded(*ws)
 	return *ws, nil
 }
 
-// openTabWS loads a workspace as a new tab: its state, config and
-// instances, reconciled against tmux and disk, crash-recovered sessions
-// relaunched, its workspace terminal created when it has none, and orphan
-// worktrees surfaced inline (reconcileOrphans). The first tab opened
-// replaces the classic workspace (Classic is nil on return). A load error
-// opens nothing and leaves state.json untouched. Formerly the lifecycle
-// half of app.activateWorkspace; the TUI builds the tab's view over the
-// returned workspace.
+// openTabWS shows def's workspace as a new tab: the model serves it
+// already (boot, or ensureLoaded for one registered since), so opening
+// loads nothing but retries a load that failed. Its first open starts its
+// workspace terminal (open). A load error opens nothing and leaves
+// state.json untouched. Formerly the lifecycle half of
+// app.activateWorkspace; the TUI builds the tab's view over the returned
+// workspace.
 func (m *Model) openTabWS(def config.Workspace) (*Workspace, error) {
-	wsCtx := config.WorkspaceContextFor(&def)
-	state := config.LoadStateFrom(wsCtx.ConfigDir)
-	appConfig := config.LoadConfigFrom(wsCtx.ConfigDir)
-	// Loom-context injection: keep the config-dir prompt files current and
-	// sync the global enabled flag on every workspace load, before any
-	// Claude session (workspace terminal, crash-restart, resume) launches.
-	applySessionConfig(appConfig, wsCtx.ConfigDir)
-	storage, err := session.NewStorage(state, wsCtx.ConfigDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create storage for workspace %s: %w", def.Name, err)
+	ws, err := m.ensureLoaded(def)
+	if ws == nil {
+		return nil, err
 	}
-
-	cmdExec := m.executor()
-	instances, err := storage.LoadAndReconcile(cmdExec)
-	if err != nil {
-		// Fail closed: do NOT proceed to build an empty slot. Continuing
-		// here would append a slot with zero instances, and the next
-		// SaveInstances for it would overwrite a possibly-recoverable
-		// (e.g. transiently unreadable or corrupt) state.json with only
-		// the survivors — silent per-workspace data loss. The classic
-		// startup path already fails closed this way; mirror it. The slot
-		// is simply not opened, leaving state.json on disk untouched.
-		return nil, fmt.Errorf("load instances for workspace %s: %w", def.Name, err)
+	if err := m.retryLoad(ws); err != nil {
+		return nil, err
 	}
-	// Orphan discovery runs here so every workspace-load path (startup
-	// picker, mid-session toggle, restore, registration) surfaces
-	// recovered sessions identically — no restart required.
-
-	ws := NewWorkspace(WorkspaceParts{Ctx: wsCtx, Storage: storage, Config: appConfig, State: state})
-	hasWorkspaceTerminal := false
-	for _, inst := range instances {
-		if inst.IsWorkspaceTerminal {
-			hasWorkspaceTerminal = true
-		}
-		ws.add(inst)
+	if !slices.Contains(m.tabs, ws) {
+		m.tabs = append(m.tabs, ws)
 	}
-
-	// Restart crash-recovered instances.
-	for _, inst := range instances {
-		if !inst.CrashRecovered() {
-			continue
-		}
-		if err := inst.CrashRestart(); err != nil {
-			log.For("core").Error("crash_recovery.restart_failed", "instance", inst.Title, "err", err)
-			if tErr := inst.TransitionTo(session.Paused); tErr != nil {
-				log.For("core").Warn("crash_recovery.transition_failed", "instance", inst.Title, "err", tErr)
-			}
-		}
-		inst.SetCrashRecovered(false)
-	}
-
-	// Auto-create workspace terminal if none exists. A record storage
-	// preserves but could not load (after a downgrade every record is
-	// undecodable, the terminal included) may already own the title: then
-	// the terminal exists, just not in this binary's list, and killing its
-	// session plus creating a second same-titled record would clobber it.
-	wtTitle := def.Name
-	if wtTitle == "" {
-		wtTitle = "Workspace Terminal"
-	}
-	if !hasWorkspaceTerminal && wsCtx.RepoPath != "" && !slices.Contains(storage.PreservedTitles(), wtTitle) {
-		// A prior non-clean exit may have left a tmux session named
-		// loom_<wtTitle> alive without persisting the instance. The
-		// multi-tab restore sweep (CleanupOrphanedSessions in
-		// RestoreSaved) only runs AFTER every tab has
-		// opened — but the workspace-terminal Start below happens now,
-		// during OpenTab, and would fail with "session already exists"
-		// against that orphan. Kill it here first so Start gets a clean
-		// name; the later sweep handles any other stragglers. Only if it
-		// is this workspace's, by the sweep's own ownership test: the
-		// tmux server is shared, and another loom's session (a workspace
-		// elsewhere with the same name) can carry this title. Anything
-		// else is left running, and Start then fails on the name.
-		scope := session.NewSweepScope([]*config.WorkspaceContext{wsCtx}, m.registry)
-		if killed, err := session.KillOwnedTmuxSession(wtTitle, scope, cmdExec); err != nil {
-			log.For("core").Warn("workspace_terminal.orphan_kill_skipped", "workspace", def.Name, "err", err.Error())
-		} else if killed {
-			log.For("core").Info("workspace_terminal.orphan_killed", "workspace", def.Name, "title", wtTitle)
-		}
-
-		wtOpts := launch.FromConfig(appConfig)
-		if launch.RemoteControlBlocked(m.rcAuth, launch.EffectiveRemoteControl(wtOpts), appConfig.GetProgram()) {
-			m.notifyInfo("remote control off: " + m.rcAuth.Reason)
-		}
-		wtInstance, wtErr := session.NewInstance(session.InstanceOptions{
-			Title:               wtTitle,
-			Path:                wsCtx.RepoPath,
-			Program:             launch.Compose(wtOpts, m.rcAuth, appConfig.GetProgram(), wtTitle),
-			HeadroomProxy:       wtOpts.HeadroomProxy,
-			CacheTTL1h:          wtOpts.CacheTTL1h,
-			IsWorkspaceTerminal: true,
-			ConfigDir:           wsCtx.ConfigDir,
-		})
-		if wtErr != nil {
-			log.For("core").Error("workspace_terminal.create_failed", "workspace", def.Name, "err", wtErr)
-		} else {
-			ws.add(wtInstance)
-			if startErr := wtInstance.Start(true); startErr != nil {
-				log.For("core").Error("workspace_terminal.start_failed", "workspace", def.Name, "err", startErr)
-			}
-		}
-	}
-
-	ws.recovery = m.reconcileOrphans(ws, wsCtx.ConfigDir, appConfig.GetProgram(), cmdExec)
-	if len(m.tabs) == 0 {
-		m.classic = nil // the first tab replaces the classic workspace
-	}
-	m.tabs = append(m.tabs, ws)
 	// Opened at last: no longer a restore failure to retry.
 	m.restoreFailed = slices.DeleteFunc(m.restoreFailed, func(n string) bool { return n == def.Name })
-	// Force the next health tick to poll: a newly opened workspace's repo
-	// wasn't in openRepoPaths() until just now, and without this the
-	// poller stays silent on it until the ambient ghInterval next elapses.
-	m.ExpediteGitHub()
+	m.open(ws)
 	return ws, nil
 }
 
-// closeTabWS saves and closes the tab named name, returning it (nil, nil
-// when no tab has that name). A failed save keeps the tab open, so its
-// unsaved state stays reachable (silent data loss on teardown is worse
-// than a sticky tab), and the last tab is never closed: leaving no tab
-// means global mode, which only EnterGlobal builds.
+// closeTabWS closes the tab named name, returning it (nil, nil when no tab
+// has that name). The workspace stays served: closing a tab only stops
+// showing it. The last tab is never closed: leaving no tab means global
+// mode, which only EnterGlobal sets up.
 func (m *Model) closeTabWS(name string) (*Workspace, error) {
 	idx := slices.IndexFunc(m.tabs, func(w *Workspace) bool { return w.Name() == name })
 	if idx == -1 {
@@ -305,55 +196,21 @@ func (m *Model) closeTabWS(name string) (*Workspace, error) {
 		return nil, fmt.Errorf("cannot close %s, the last open workspace: return to global mode instead", name)
 	}
 	ws := m.tabs[idx]
-	if err := ws.storage.SaveInstances(Persistable(ws.insts)); err != nil {
-		log.For("core").Error("workspace.save_failed", "name", name, "err", err)
-		return nil, fmt.Errorf("failed to save workspace %s: %w", name, err)
-	}
 	m.tabs = slices.Delete(m.tabs, idx, idx+1)
 	return ws, nil
 }
 
-// enterGlobalWS replaces every loaded workspace with the global one (the
-// picker's Global row). It saves every tab, then loads the global context
-// like classic startup (loadWorkspace, without the tmux sweep: the
-// closing tabs' sessions are unclaimed here), and only then drops what was
-// loaded, so a failure (a save or the load) switches nothing. The load has
-// side effects an abort could not undo (it relaunches crash-recovered
-// agents, writes the loom-context files, cleans orphan worktrees, sweeps
-// hooks folders); that is why every save comes first. focused, the
-// workspace the TUI shows, is unused: the session flags are kept per config
-// dir, so an aborted load has none to put back. Returns the global
-// workspace, now Classic.
+// enterGlobalWS shows the global workspace in place of the tabs (the
+// picker's Global row): it is the classic workspace from now on. The model
+// served it all along, so nothing loads, saves or is dropped; a load of it
+// that failed is retried, and still failing switches nothing. focused, the
+// workspace the TUI shows, is unused. Returns the global workspace.
 func (m *Model) enterGlobalWS(focused *Workspace) (*Workspace, error) {
-	// Persist every workspace tab before touching global state. A tab
-	// whose save fails keeps its unpersisted state reachable only while
-	// open, so abort — with nothing global loaded yet.
-	for _, ws := range m.tabs {
-		if err := ws.storage.SaveInstances(Persistable(ws.insts)); err != nil {
-			log.For("core").Error("workspace.save_failed", "name", ws.Name(), "err", err)
-			return nil, fmt.Errorf("failed to save workspace %s (staying in workspace mode): %w", ws.Name(), err)
-		}
+	global, err := m.globalWS()
+	if global == nil {
+		return nil, err
 	}
-
-	// Reconstruct global storage in the global config dir — resolved up
-	// front, since orphan discovery and the hooks sweep need the directory
-	// itself.
-	globalCtx, err := config.GlobalWorkspaceContext()
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve the global config dir: %w", err)
-	}
-	cfgDir := globalCtx.ConfigDir
-	appState := config.LoadStateFrom(cfgDir)
-	appConfig := config.LoadConfigFrom(cfgDir)
-	storage, err := session.NewStorage(appState, cfgDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to construct global storage: %w", err)
-	}
-	global := NewWorkspace(WorkspaceParts{Ctx: globalCtx, Storage: storage, Config: appConfig, State: appState})
-	// Sessions the load (re)starts launch under the global config's
-	// settings, like OpenTab's.
-	applySessionConfig(appConfig, cfgDir)
-	if err := m.loadWorkspace(global, cfgDir, false); err != nil {
+	if err := m.retryLoad(global); err != nil {
 		return nil, fmt.Errorf("failed to load global sessions (staying in workspace mode): %w", err)
 	}
 	m.tabs = nil
@@ -368,21 +225,21 @@ func (m *Model) enterGlobalWS(focused *Workspace) (*Workspace, error) {
 			log.For("core").Warn("clear_open_workspaces_failed", "err", err)
 		}
 	}
+	m.open(global)
 	return global, nil
 }
 
-// RestoreSaved opens saved (the registry's open tabs from the last run)
-// as tabs, plus the startup workspace (the classic context's name) when
-// it is not among them, then sweeps orphan tmux sessions across the open
-// tabs. A workspace that fails to open is logged; one that was open last
-// time stays in the open list to be retried (RestoreFailed), and any
-// failure skips the sweep, since that workspace's titles are unknown and
-// the sweep would kill its live sessions. With no tab open it loads the
-// classic workspace instead (loadClassicFallback). Returns the index of
-// the tab to focus (the startup workspace's, else the registry's last
-// used, else 0), or -1 when no tab opened. Formerly the lifecycle half of
-// app.restoreSavedWorkspaces.
+// RestoreSaved boots the model (boot, whose sweep covers every workspace)
+// and shows saved (the registry's open tabs from the last run) as tabs,
+// plus the startup workspace (the classic context's name) when it is not
+// among them. A workspace that fails to open is logged; one that was open
+// last time stays in the open list to be retried (RestoreFailed). With no
+// tab open it shows the classic workspace instead (loadClassicFallback).
+// Returns the index of the tab to focus (the startup workspace's, else the
+// registry's last used, else 0), or -1 when no tab opened. Formerly the
+// lifecycle half of app.restoreSavedWorkspaces.
 func (m *Model) RestoreSaved(saved []config.Workspace) int {
+	m.boot()
 	explicit := m.classic.Name()
 
 	desired := saved
@@ -401,47 +258,13 @@ func (m *Model) RestoreSaved(saved []config.Workspace) int {
 		}
 	}
 
-	var failed []string
 	for _, def := range desired {
 		if _, err := m.openTabWS(def); err != nil {
 			log.For("core").Error("workspace.restore_failed", "name", def.Name, "err", err)
-			failed = append(failed, def.Name)
 			if slices.ContainsFunc(saved, func(s config.Workspace) bool { return s.Name == def.Name }) {
 				// Was open: keep it open, to be retried (restoreFailed).
 				m.restoreFailed = append(m.restoreFailed, def.Name)
 			}
-		}
-	}
-
-	// Sweep orphan tmux sessions left by prior crashes. The classic
-	// startup path does this inline in loadWorkspace; the
-	// multi-tab restore path historically did not, so stale
-	// loom_*/claudesquad_* sessions accumulated across restarts. Each
-	// tab's OpenTab call above already ran reconcileOrphans,
-	// which adds recovered-but-undecided orphans as Recoverable rows
-	// directly into the workspace — so the claimed set here (built from every
-	// tab's live instances, Recoverable included, plus the records each
-	// tab's storage preserves outside its list) is complete without a
-	// separate pending-orphans accumulator. The sweep only considers
-	// sessions started under an open tab's repo or worktrees dir: those
-	// of workspaces this process did not open may belong to another
-	// running loom.
-	//
-	// Fail closed when any workspace failed to load: its titles are
-	// unreadable, so the sweep can't spare them and would kill its live
-	// sessions. Skipping only defers stale-session cleanup to a later run.
-	if len(failed) > 0 {
-		log.For("core").Warn("orphan_cleanup_skipped", "reason", "workspace_load_failed", "workspaces", failed)
-	} else {
-		claimedTitles := make(map[string]bool)
-		owned := make([]*config.WorkspaceContext, 0, len(m.tabs))
-		for _, ws := range m.tabs {
-			claimTitles(claimedTitles, ws)
-			owned = append(owned, ws.ctx)
-		}
-		scope := session.NewSweepScope(owned, m.registry)
-		if _, err := session.CleanupOrphanedSessions(claimedTitles, scope, m.executor()); err != nil {
-			log.For("core").Error("orphan_cleanup_failed", "err", err)
 		}
 	}
 

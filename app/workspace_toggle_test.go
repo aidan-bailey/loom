@@ -198,18 +198,15 @@ func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
 		"wbRatio residue must be cleared so handleQuit can't flush it into global state.json")
 }
 
-// TestEnterGlobalMode_WithSlots_PersistsAndDeactivates verifies the
-// workspace → global transition properly fires deactivateWorkspace
-// (which saves each slot's instances via slot.storage()) before the
-// slot is dropped. The pre-fix path didn't iterate slots in
-// enterGlobalMode at all; this test guards against regressing to a
-// version that drops slots without persisting.
-func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
+// TestEnterGlobalMode_WithSlots_Deactivates verifies the workspace →
+// global transition drops every slot and lands on the global workspace.
+// Nothing needs saving first: the model keeps serving the workspaces whose
+// tabs closed (daemon stage 3A), so no unsaved state is dropped with them.
+func TestEnterGlobalMode_WithSlots_Deactivates(t *testing.T) {
 	globalDir := t.TempDir()
 	t.Setenv(config.EnvGlobalDir, globalDir)
 
-	// Two slots, each with its own recording storage. Each one has
-	// to receive a SaveInstances call before being dropped.
+	// Two slots, each with its own recording storage.
 	slotRecA := &recordingInstanceStorage{}
 	storageA, err := session.NewStorage(slotRecA, t.TempDir())
 	require.NoError(t, err)
@@ -243,8 +240,6 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 
 	h.enterGlobalMode()
 
-	assert.GreaterOrEqual(t, slotRecA.calls, 1, "slot ws-a must be persisted before dropping")
-	assert.GreaterOrEqual(t, slotRecB.calls, 1, "slot ws-b must be persisted before dropping")
 	assert.Empty(t, h.slots, "all slots dropped after enterGlobalMode")
 	require.NotNil(t, h.wsCtx())
 	assert.Equal(t, globalDir, h.wsCtx().ConfigDir)
@@ -257,8 +252,8 @@ func TestEnterGlobalMode_WithSlots_PersistsAndDeactivates(t *testing.T) {
 // on with an empty list — whose next save rewrote the global state.json
 // with nothing. The global load now runs before anything is torn down, and
 // a failure must leave the slots, storage and global state.json untouched.
-// (The tabs are saved first — before the load, whose side effects an
-// abort couldn't undo — which closes nothing and costs nothing.) Driven
+// (The model serves the global workspace from boot; entering global mode
+// retries a load that failed, and aborts if it fails again.) Driven
 // through applyWorkspaceToggle(nil), enterGlobalMode's only caller (the
 // picker's Global row), so the path is the real one.
 func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {

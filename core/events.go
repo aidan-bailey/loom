@@ -58,42 +58,33 @@ type Reactivated struct {
 func (Reactivated) coreEvent() {}
 
 // Started reports a start that succeeded. Owner names the workspace that
-// holds the instance (0 when unknown), Loaded whether it is still
-// loaded. The TUI attaches its client when Loaded, and selects it or says
-// where it started. ID and Title are the instance's: the title is for the
-// notice, since a Started for an owner that was closed has no view left in
-// the TUI. Req is the request that started it (a Create), 0 for none: only
-// the client that asked selects the row and attaches inline, while every
+// holds the instance (0 when unknown); the TUI attaches its client, and
+// selects it or says where it started. ID and Title are the instance's.
+// Req is the request that started it (a Create), 0 for none: only the
+// client that asked selects the row and attaches inline, while every
 // client attaches its pane.
 type Started struct {
-	Req    ReqID
-	ID     InstanceID
-	Title  string
-	Owner  WorkspaceID
-	Loaded bool
+	Req   ReqID
+	ID    InstanceID
+	Title string
+	Owner WorkspaceID
 	// OwnerLabel names the owner in notices ("global" when unknown).
-	// ClosedNote, set when !Loaded, says where the owner went ("which is no
-	// longer open", or "which was closed and reopened meanwhile").
 	OwnerLabel string
-	ClosedNote string
 }
 
 func (Started) coreEvent() {}
 
 // Recovered reports an orphan adopted into its placeholder's row. Req,
-// Owner, Loaded, ID and Title are as for Started. Paused is set when adoption
-// could only mark the record Paused (its session and worktree were gone):
-// the notice says so even when no loaded workspace shows the row.
+// Owner, ID and Title are as for Started. Paused is set when adoption
+// could only mark the record Paused (its session and worktree were gone).
 type Recovered struct {
 	Req    ReqID
 	ID     InstanceID
 	Title  string
 	Owner  WorkspaceID
-	Loaded bool
 	Paused bool
-	// OwnerLabel and ClosedNote are as for Started.
+	// OwnerLabel is as for Started.
 	OwnerLabel string
-	ClosedNote string
 }
 
 func (Recovered) coreEvent() {}

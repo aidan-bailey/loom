@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +14,6 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
-	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"github.com/stretchr/testify/assert"
@@ -215,66 +213,6 @@ func (d *deadTmuxExec) Run(c *exec.Cmd) error {
 		return exec.ErrNotFound
 	}
 	return nil
-}
-
-// TestEnterGlobalMode_SlotSaveFailureAbortsCleanly: enterGlobalMode used
-// to ignore deactivateWorkspace's error, so a tab whose save failed stayed
-// open while home switched to the global slot anyway — half-switched,
-// with an open tab that was no longer the focused slot. A failed save
-// must abort the transition with nothing switched, and with nothing
-// loaded: the global load crash-restarts agents, writes the loom-context
-// files and sweeps orphan worktrees and hooks, and it used to run before
-// the tab saves, so an abort left relaunched global agents running that
-// nothing displayed.
-func TestEnterGlobalMode_SlotSaveFailureAbortsCleanly(t *testing.T) {
-	isolateTmux(t)
-	globalDir := t.TempDir()
-	t.Setenv(config.EnvGlobalDir, globalDir)
-	t.Setenv("LOOM_HOME", globalDir)
-	// A Running workspace terminal whose tmux session is gone: loading the
-	// global state crash-restarts it.
-	const gterm = "gterm"
-	require.NoError(t, os.WriteFile(filepath.Join(globalDir, config.StateFileName), []byte(fmt.Sprintf(
-		`{"instances":[{"title":%q,"status":0,"program":"sleep 30","is_workspace_terminal":true,"path":%q,"worktree":{}}]}`,
-		gterm, t.TempDir())), 0o644))
-
-	failing := &failingInstanceStorage{}
-	storageA, err := session.NewStorage(failing, t.TempDir())
-	require.NoError(t, err)
-	recB := &recordingInstanceStorage{}
-	storageB, err := session.NewStorage(recB, t.TempDir())
-	require.NoError(t, err)
-
-	dead := &deadTmuxExec{}
-	m := newRestoreHome(t, dead)
-	m.errBox.SetSize(400, 1)
-	slotA := fleetSlot(t, "ws-a", "a1")
-	reworkspace(t, m, slotA, func(p *core.WorkspaceParts) { p.Storage = storageA })
-	slotB := fleetSlot(t, "ws-b", "b1")
-	reworkspace(t, m, slotB, func(p *core.WorkspaceParts) { p.Storage = storageB })
-	focusSlots(m, 0, slotA, slotB)
-	wireCore(t, m)
-
-	cmd := m.applyWorkspaceToggle(nil)
-
-	require.NotNil(t, cmd, "the failure must be surfaced")
-	assert.Contains(t, m.errBox.String(), "ws-a")
-	assert.GreaterOrEqual(t, failing.calls, 1, "the failing tab's save was attempted")
-	require.NoError(t, m.checkSlotInvariant())
-	assert.Equal(t, []string{"ws-a", "ws-b"}, m.slotNames(), "no tab may be closed")
-	assert.Same(t, slotA, m.workspaceSlot, "focus stays on the tab it was on")
-	assert.Equal(t, "ws-a", focusedName(m))
-
-	assert.Empty(t, dead.args, "nothing may be loaded: no reconcile probe, orphan discovery or hooks sweep")
-	assert.Error(t, tmux.Command(context.Background(), "has-session", "-t="+tmux.ToLoomTmuxName(gterm)).Run(),
-		"the global workspace terminal must not be crash-restarted")
-	entries, err := os.ReadDir(globalDir)
-	require.NoError(t, err)
-	var names []string
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	assert.Equal(t, []string{config.StateFileName}, names, "nothing may be written to the global dir")
 }
 
 // scriptSlotTestScript creates an instance, and in Y also switches to the

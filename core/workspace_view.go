@@ -2,10 +2,10 @@ package core
 
 import "github.com/aidan-bailey/loom/config"
 
-// WorkspaceID names a loaded workspace. The model assigns it the first
-// time it reports the workspace and never reuses it, so a workspace closed
-// and reopened is a new workspace with a new ID (its completions tell the
-// two apart, as ClosedNote did by identity). 0 means none.
+// WorkspaceID names a workspace the model serves. The model assigns it the
+// first time it reports the workspace and never reuses it; a workspace
+// keeps its ID while the model serves it, which is until the model stops
+// (a tab closed and reopened shows the same workspace). 0 means none.
 type WorkspaceID uint64
 
 // WorkspaceView is a loaded workspace as its clients see it: a value the

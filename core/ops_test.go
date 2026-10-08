@@ -41,17 +41,15 @@ func TestDeliverStart_FailureRemovesSavesAndKills(t *testing.T) {
 // re-sends it) and typed by a job. The TUI hears of the start (Started)
 // only once that job has sent it, as when the completion sent it inline
 // before attaching: a key typed into the attached pane must not land
-// ahead of the prompt. Whether the owner is loaded is asked again then:
-// it may have closed while the prompt was sent.
+// ahead of the prompt. Its owner's tab may close while the prompt is sent;
+// the model still serves the workspace, so Started names it all the same.
 func TestDeliverStart_SuccessSendsThePromptByJob(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		closeOwner  bool
-		wantsLoaded bool
-		wantsNote   string
+		name       string
+		closeOwner bool
 	}{
-		{"owner still open", false, true, ""},
-		{"owner closed while the prompt was sent", true, false, "which is no longer open"},
+		{"owner still open", false},
+		{"owner's tab closed while the prompt was sent", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewForTest(Options{})
@@ -75,8 +73,8 @@ func TestDeliverStart_SuccessSendsThePromptByJob(t *testing.T) {
 			// The fixture never started, so the send fails; the job logs
 			// that and reports the start finished all the same.
 			m.Deliver(out.Jobs[0]())
-			assert.Equal(t, []Event{Started{ID: m.idOf(inst), Title: "x", Owner: m.wsIDOf(ws), Loaded: tc.wantsLoaded,
-				OwnerLabel: "a", ClosedNote: tc.wantsNote}}, m.Drain().Events)
+			assert.Equal(t, []Event{Started{ID: m.idOf(inst), Title: "x", Owner: m.wsIDOf(ws), OwnerLabel: "a"}},
+				m.Drain().Events)
 		})
 	}
 }

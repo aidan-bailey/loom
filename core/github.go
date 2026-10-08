@@ -68,47 +68,60 @@ type ghPollRequest struct {
 	check      bool // run CheckCLI first
 }
 
-// openRepoPaths lists the repo path of every open workspace (or the
-// classic single repo), deduplicated, in slot order.
-func (m *Model) openRepoPaths() []string {
+// openedRepo is an opened workspace's repository and its own configured
+// base branch.
+type openedRepo struct{ path, base string }
+
+// openedRepos are the repositories of every opened workspace (one a client
+// has shown since the model started), deduplicated, in the order the model
+// serves them, each with its own workspace's config.BaseBranch: every
+// workspace has its own config.json, so one setting applied across the
+// batch would resolve the others' repos against the wrong workspace's. An
+// opened workspace with no repository (the global one) stands for the
+// directory loom was started in, as classic mode always polled.
+func (m *Model) openedRepos() []openedRepo {
 	seen := map[string]bool{}
-	var out []string
-	add := func(p string) {
-		if p != "" && !seen[p] {
-			seen[p] = true
-			out = append(out, p)
+	var out []openedRepo
+	for _, ws := range m.workspaces {
+		if !ws.opened {
+			continue
 		}
-	}
-	if len(m.tabs) == 0 {
-		cwd, _ := os.Getwd()
-		add(cwd)
-		return out
-	}
-	for _, ws := range m.tabs {
+		repo := ""
 		if ws.ctx != nil {
-			add(ws.ctx.RepoPath)
+			repo = ws.ctx.RepoPath
 		}
+		if repo == "" {
+			repo, _ = os.Getwd()
+		}
+		if repo == "" || seen[repo] {
+			continue
+		}
+		seen[repo] = true
+		base := ""
+		if ws.cfg != nil {
+			base = ws.cfg.GetBaseBranch()
+		}
+		out = append(out, openedRepo{path: repo, base: base})
 	}
 	return out
 }
 
-// baseBranchByRepo maps each open repo to ITS OWN configured base
-// branch. Classic mode has a single config; slot mode reads each
-// slot's, since m.appConfig() only ever reflects the focused slot.
+// openRepoPaths lists the repository of every opened workspace
+// (openedRepos).
+func (m *Model) openRepoPaths() []string {
+	var out []string
+	for _, r := range m.openedRepos() {
+		out = append(out, r.path)
+	}
+	return out
+}
+
+// baseBranchByRepo maps each opened repository to its own workspace's
+// configured base branch (openedRepos).
 func (m *Model) baseBranchByRepo() map[string]string {
 	out := map[string]string{}
-	if len(m.tabs) == 0 {
-		if m.classic != nil && m.classic.cfg != nil {
-			cwd, _ := os.Getwd()
-			out[cwd] = m.classic.cfg.GetBaseBranch()
-		}
-		return out
-	}
-	for _, ws := range m.tabs {
-		if ws.ctx == nil || ws.cfg == nil {
-			continue
-		}
-		out[ws.ctx.RepoPath] = ws.cfg.GetBaseBranch()
+	for _, r := range m.openedRepos() {
+		out[r.path] = r.base
 	}
 	return out
 }

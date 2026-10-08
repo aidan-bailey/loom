@@ -10,18 +10,13 @@ import (
 // The workspace half of the boundary by ID (daemon stage 1D): each wraps
 // the pointer version it replaces. Package C of the plan deletes those.
 
-// ownerFields names a completion's owner for its event: its ID and label,
-// and, when it is no longer loaded, where it went (ClosedNoteWS). A nil
-// owner is 0, "global" and no note.
-func (m *Model) ownerFields(owner *Workspace, loaded bool) (WorkspaceID, string, string) {
+// ownerFields names a completion's owner for its event: its ID and label.
+// A nil owner is 0 and "global".
+func (m *Model) ownerFields(owner *Workspace) (WorkspaceID, string) {
 	if owner == nil {
-		return 0, owner.Label(), ""
+		return 0, owner.Label()
 	}
-	note := ""
-	if !loaded {
-		note = m.closedNoteWS(owner)
-	}
-	return m.wsIDOf(owner), owner.Label(), note
+	return m.wsIDOf(owner), owner.Label()
 }
 
 // Classic is the view of the workspace shown while no tab is open; false
@@ -43,9 +38,10 @@ func (m *Model) Tabs() []WorkspaceView {
 }
 
 // IsLoaded reports whether the workspace id is still loaded.
-func (m *Model) IsLoaded(id WorkspaceID) bool { return m.wsLookup(id) != nil }
+func (m *Model) IsLoaded(id WorkspaceID) bool { return m.shownLookup(id) != nil }
 
-// OpenTab loads def as a new tab (OpenTabWS) and returns its view.
+// OpenTab shows def's workspace as a new tab (OpenTabWS) and returns its
+// view.
 func (m *Model) OpenTab(def config.Workspace) (WorkspaceView, error) {
 	ws, err := m.openTabWS(def)
 	if err != nil || ws == nil {
@@ -54,15 +50,16 @@ func (m *Model) OpenTab(def config.Workspace) (WorkspaceView, error) {
 	return m.wsViewOf(ws), nil
 }
 
-// CloseTab saves and closes the tab named name (CloseTabWS).
+// CloseTab closes the tab named name (CloseTabWS); the workspace stays
+// served.
 func (m *Model) CloseTab(name string) error {
 	_, err := m.closeTabWS(name)
 	return err
 }
 
-// EnterGlobal replaces every loaded workspace with the global one
+// EnterGlobal shows the global workspace in place of the tabs
 // (EnterGlobalWS) and returns its view. focused is the workspace the
-// caller had focused, 0 for none.
+// caller had focused, 0 for none (unused).
 func (m *Model) EnterGlobal(focused WorkspaceID) (WorkspaceView, error) {
 	ws, err := m.enterGlobalWS(m.wsLookup(focused))
 	if err != nil || ws == nil {
@@ -84,7 +81,7 @@ func (m *Model) Save(id WorkspaceID) error {
 // Views returns the workspace id's instances as views (ViewsWS); nil for
 // an unknown id.
 func (m *Model) Views(id WorkspaceID) []InstanceView {
-	ws := m.wsLookup(id)
+	ws := m.shownLookup(id)
 	if ws == nil {
 		return nil
 	}
@@ -112,12 +109,21 @@ func (m *Model) Registry() RegistryView {
 
 // ReloadRegistry rereads the workspace registry from disk, for a caller
 // about to show it (the workspace picker): another process may have
-// registered a workspace since.
+// registered a workspace since, which the model then serves too. One no
+// longer registered stays served until the next start.
 func (m *Model) ReloadRegistry() error {
 	if m.registry == nil {
 		return fmt.Errorf("no workspace registry")
 	}
-	return m.registry.Reload()
+	if err := m.registry.Reload(); err != nil {
+		return err
+	}
+	if m.booted {
+		for _, def := range m.registry.Workspaces {
+			_, _ = m.ensureLoaded(def)
+		}
+	}
+	return nil
 }
 
 // AccountNames are the registered accounts, default first; Present is

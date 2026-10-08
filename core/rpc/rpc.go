@@ -31,7 +31,7 @@ import (
 // peer ignores a field it does not know, and an event it does not know is
 // dropped. Removing or renaming a method, event or field, or changing what
 // a field means or a frame's shape, is incompatible and bumps it.
-const Protocol = 1
+const Protocol = 2
 
 // pingMethod is the request that publishes and replies, and nothing else:
 // a client's barrier (every frame the server wrote before the reply has

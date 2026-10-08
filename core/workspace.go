@@ -20,6 +20,19 @@ type Workspace struct {
 	state    config.AppState
 	insts    []*session.Instance
 	recovery RecoverySummary
+	// opened is set the first time a client shows the workspace
+	// (Model.open). The model loads every workspace when it boots, but
+	// starts a workspace's terminal, probes it, and polls GitHub for its
+	// repository only once someone has looked at it.
+	opened bool
+	// loaded is set once its storage has been loaded (loadWS), or tried:
+	// boot loads the startup workspace only if nothing has.
+	loaded bool
+	// loadErr is what the workspace's storage failed to load with, nil
+	// once it loaded. A workspace that failed is kept, empty, its storage
+	// latched shut (no write can overwrite the unreadable payload), and a
+	// client opening it retries the load (Model.retryLoad).
+	loadErr error
 }
 
 // WorkspaceParts are a workspace's fixed handles. Any may be nil, as in a
@@ -118,6 +131,34 @@ func (w *Workspace) holds(inst *session.Instance) bool {
 func (w *Workspace) byTitle(title string) *session.Instance {
 	for _, inst := range w.insts {
 		if inst.Title == title {
+			return inst
+		}
+	}
+	return nil
+}
+
+// configDir is the directory the workspace's state and config live in;
+// "" for a bare test fixture.
+func (w *Workspace) configDir() string {
+	if w.ctx == nil {
+		return ""
+	}
+	return w.ctx.ConfigDir
+}
+
+// terminalTitle is the title of the workspace's terminal: its name, or
+// "Workspace Terminal" for a nameless context.
+func (w *Workspace) terminalTitle() string {
+	if w.ctx != nil && w.ctx.Name != "" {
+		return w.ctx.Name
+	}
+	return "Workspace Terminal"
+}
+
+// terminal is the workspace's terminal instance, nil when it has none.
+func (w *Workspace) terminal() *session.Instance {
+	for _, inst := range w.insts {
+		if inst.IsWorkspaceTerminal {
 			return inst
 		}
 	}

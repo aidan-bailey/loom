@@ -177,12 +177,14 @@ func TestActivateWorkspace_PreservedTerminalIsNotReplaced(t *testing.T) {
 	assert.Equal(t, 1, count, "exactly the preserved record may carry the terminal's title")
 }
 
-// TestRestoreSavedWorkspaces_SkipsSweepWhenAWorkspaceFailsToLoad: the
-// restore-time orphan sweep spares only the titles it can see (within the
-// roots it owns). A workspace whose load failed contributes none — they
-// can't be read — so sweeping could kill that workspace's live sessions.
-// Fail closed: skip.
-func TestRestoreSavedWorkspaces_SkipsSweepWhenAWorkspaceFailsToLoad(t *testing.T) {
+// TestRestoreSavedWorkspaces_AFailedWorkspaceDoesNotStopTheSweep: the
+// startup sweep spares only the titles it can see. A workspace whose load
+// failed contributes none (they can't be read), so its roots are left out
+// of the sweep, which then still runs for every other workspace: with every
+// registered workspace loaded, skipping it would leave every orphan behind
+// for as long as one workspace stays broken. What the sweep kills and
+// spares is TestOrphanSweep_SparesWhatThisLoomCannotVouchFor's.
+func TestRestoreSavedWorkspaces_AFailedWorkspaceDoesNotStopTheSweep(t *testing.T) {
 	isolateTmux(t)
 
 	t.Run("control: every workspace loads, sweep runs", func(t *testing.T) {
@@ -194,14 +196,14 @@ func TestRestoreSavedWorkspaces_SkipsSweepWhenAWorkspaceFailsToLoad(t *testing.T
 		assert.True(t, rec.ran("ls"), "with every workspace loaded the sweep must still run")
 	})
 
-	t.Run("one workspace fails, sweep skipped", func(t *testing.T) {
+	t.Run("one workspace fails, the sweep still runs", func(t *testing.T) {
 		rec := &recordingExec{}
 		m := newRestoreHome(t, rec)
 		bad := writeWorkspaceState(t, "ws-bad", `{"not":"an array"}`)
 		m.restoreSavedWorkspaces([]config.Workspace{bad, preservedTerminalWorkspace(t, "ws-good")})
 
 		require.Len(t, m.slots, 1, "the good workspace still opens")
-		assert.False(t, rec.ran("ls"), "the sweep must not run while a workspace's titles are unknown")
+		assert.True(t, rec.ran("ls"), "the others are still swept")
 	})
 }
 
@@ -242,13 +244,12 @@ func listTitles(m *home) []string {
 	return titles
 }
 
-// TestRestoreSavedWorkspaces_AllFail_LoadsStartupStorage: in restore mode
-// newHome never loads the startup storage. When every workspace failed to
-// restore, the user used to land in global mode over that never-loaded
-// storage with an empty list, and the first save (here: quit) replaced its
-// readable records with nothing. The fallback now loads it like classic
-// startup does — minus the orphan sweep, since the failed workspaces'
-// sessions are still unidentifiable.
+// TestRestoreSavedWorkspaces_AllFail_LoadsStartupStorage: when every
+// workspace failed to restore, the user used to land in global mode over a
+// never-loaded startup storage with an empty list, and the first save
+// (here: quit) replaced its readable records with nothing. The model now
+// loads the startup storage when it boots, whatever restores, so the
+// fallback shows it.
 func TestRestoreSavedWorkspaces_AllFail_LoadsStartupStorage(t *testing.T) {
 	isolateTmux(t)
 	rec := &recordingExec{}
@@ -259,7 +260,6 @@ func TestRestoreSavedWorkspaces_AllFail_LoadsStartupStorage(t *testing.T) {
 
 	require.Empty(t, m.slots)
 	assert.Contains(t, listTitles(m), "keeper", "the global list must show its real sessions")
-	assert.False(t, rec.ran("ls"), "the fallback must not run the orphan sweep either")
 
 	_, _ = m.handleQuit()
 	raw, err := os.ReadFile(statePath)

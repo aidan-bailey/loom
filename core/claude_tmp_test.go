@@ -59,14 +59,15 @@ func TestClaudeTmpSweep_QueuedByEveryLoadPath(t *testing.T) {
 		assert.True(t, m.maybeClaudeTmpSweep(), "the next health tick dispatches it")
 	})
 
-	t.Run("classic load", func(t *testing.T) {
+	t.Run("boot", func(t *testing.T) {
 		def := preservedTerminalWorkspace(t, "ws-classic")
 		ctx := config.WorkspaceContextFor(&def)
 		state := config.LoadStateFrom(ctx.ConfigDir)
 		storage, err := session.NewStorage(state, ctx.ConfigDir)
 		require.NoError(t, err)
 		m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: noTmuxExec()})
-		m.SetWorkspacesForTest(NewWorkspace(WorkspaceParts{Ctx: ctx, Storage: storage, Config: config.DefaultConfig(), State: state}), nil)
+		ws := NewWorkspace(WorkspaceParts{Ctx: ctx, Storage: storage, Config: config.DefaultConfig(), State: state})
+		m.classic, m.workspaces = ws, []*Workspace{ws} // as New builds it, not booted
 
 		require.NoError(t, m.LoadClassic(false))
 

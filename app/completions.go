@@ -17,7 +17,7 @@ import (
 // acts on the selection, so moving it would retarget the flow.
 
 // applyStarted follows a successful start in the view: the instance's
-// client is attached when its owner is loaded, and the selection moves to
+// client is attached when a slot shows it, and the selection moves to
 // it (focusing the agent pane in inline attach) only when its owner is the
 // focused slot and no other flow is on screen; otherwise a notice says
 // where it started. All but the attach is for the client that asked for the
@@ -26,20 +26,16 @@ import (
 // view half.
 func (m *home) applyStarted(ev core.Started) tea.Cmd {
 	owner := ev.Owner
-	// The row, nil when no open slot shows the instance (its owner closed).
+	// The row, nil when no open slot shows the instance (its owner's tab
+	// was closed: the model still serves the workspace).
 	v, holder := m.viewByID(ev.ID)
-	var attach tea.Cmd
-	if ev.Loaded {
-		attach = m.replacePane(v)
-	}
+	attach := m.replacePane(v)
 	switch {
 	case ev.Req == 0:
 		// Another client's start: its selection and notice are that client's.
 	case owner == 0:
 		// Unknown owner (unstamped, and no loaded workspace holds it):
 		// only the model's half applies.
-	case !ev.Loaded:
-		m.errBox.SetInfo(fmt.Sprintf("%s started in %s, %s", ev.Title, ev.OwnerLabel, ev.ClosedNote))
 	case owner != m.id:
 		// A background slot's selection drives no open flow.
 		if s := m.slotFor(owner); s != nil {
@@ -73,18 +69,15 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 
 // applyRecovered follows an adoption in the view: the recovered instance
 // is selected where that can't retarget an open flow, its client attached
-// when its owner is loaded, and the recovery confirmed, since it is
+// when a slot shows it, and the recovery confirmed, since it is
 // otherwise invisible when fast. The degraded case is spelled out: when
 // the tmux session and worktree were both already gone, adoption could only
 // mark the record Paused, and resume rebuilds the worktree from the branch.
 // Formerly app.handleRecoverDone's view half.
 func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 	owner := ev.Owner
-	var attach tea.Cmd
-	if ev.Loaded {
-		v, _ := m.viewByID(ev.ID)
-		attach = m.replacePane(v)
-	}
+	v, _ := m.viewByID(ev.ID)
+	attach := m.replacePane(v)
 	if ev.Req == 0 {
 		// Another client's recovery: as for Started, only the pane is ours.
 		return tea.Batch(m.instanceChanged(), attach)
@@ -97,9 +90,6 @@ func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 	where := ""
 	if owner != 0 && owner != m.id {
 		where = " in " + ev.OwnerLabel
-		if !ev.Loaded {
-			where += ", " + ev.ClosedNote
-		}
 	}
 	if ev.Paused {
 		m.errBox.SetInfo(fmt.Sprintf("Recovered '%s'%s as paused — its session and worktree were gone; branch preserved, press r to resume", ev.Title, where))

@@ -43,55 +43,41 @@ func quitSkipsSave(err error) bool {
 	return errors.Is(err, session.ErrStorageLoadFailed)
 }
 
-// saveWS persists ws's instances after a change. A workspace no longer
-// loaded is saved only if no loaded workspace holds the same workspace:
-// that one reloaded state.json into its own, newer copy, which a save from
-// the dropped one's stale copy would overwrite. Formerly app.saveSlot.
+// saveWS persists ws's instances after a change. Formerly app.saveSlot.
 func (m *Model) saveWS(ws *Workspace) error {
-	if !m.isLoadedWS(ws) && m.Reopened(ws) {
-		log.For("core").Warn("closed_slot_save_skipped", "workspace", ws.Label(), "reason", "workspace_reopened")
-		return nil
-	}
 	return ws.storage.SaveInstances(Persistable(ws.insts))
 }
 
-// SaveForQuit saves every loaded workspace and the registry's open list
-// before the TUI exits. A failed save is returned, and the TUI then
-// refuses to quit so the user can fix the cause and retry (silent data
+// SaveForQuit saves every workspace the model serves and the registry's
+// open list before the TUI exits. A failed save is returned, and the TUI
+// then refuses to quit so the user can fix the cause and retry (silent data
 // loss on exit is worse than a sticky quit), except the storage's write
 // latch (quitSkipsSave), which no retry could clear. With no tab open the
 // open list is written only if it holds something: it then keeps just
 // the workspaces that failed to restore. Formerly handleQuit's saves.
 func (m *Model) SaveForQuit() error {
-	if len(m.tabs) > 0 {
-		var firstErr error
-		for _, ws := range m.tabs {
-			if err := ws.storage.SaveInstances(Persistable(ws.insts)); err != nil {
-				if quitSkipsSave(err) {
-					log.For("core").Warn("quit.save_skipped", "name", ws.Name(), "reason", "storage_load_failed", "err", err)
-					continue
-				}
-				log.For("core").Error("workspace.save_failed", "name", ws.Name(), "err", err)
-				if firstErr == nil {
-					firstErr = fmt.Errorf("failed to save workspace %s: %w", ws.Name(), err)
-				}
+	var firstErr error
+	for _, ws := range m.workspaces {
+		if ws.storage == nil {
+			continue
+		}
+		if err := ws.storage.SaveInstances(Persistable(ws.insts)); err != nil {
+			if quitSkipsSave(err) {
+				log.For("core").Warn("quit.save_skipped", "name", ws.Name(), "reason", "storage_load_failed", "err", err)
+				continue
+			}
+			log.For("core").Error("workspace.save_failed", "name", ws.Name(), "err", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("failed to save workspace %s: %w", ws.Label(), err)
 			}
 		}
-		if firstErr != nil {
-			return firstErr
-		}
-		m.PersistOpenList()
-		return nil
 	}
-	if err := m.classic.storage.SaveInstances(Persistable(m.classic.insts)); err != nil {
-		if !quitSkipsSave(err) {
-			return err
-		}
-		log.For("core").Warn("quit.save_skipped", "reason", "storage_load_failed", "err", err)
+	if firstErr != nil {
+		return firstErr
 	}
 	// Classic/global mode has no open tabs: this clears the list,
 	// except for workspaces that failed to restore (restoreFailed).
-	if m.registry != nil && len(m.registry.OpenWorkspaces) > 0 {
+	if len(m.tabs) > 0 || (m.registry != nil && len(m.registry.OpenWorkspaces) > 0) {
 		m.PersistOpenList()
 	}
 	return nil

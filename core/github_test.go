@@ -36,21 +36,49 @@ func readyInst(t *testing.T, m *Model) *session.Instance {
 	return inst
 }
 
-func TestGHQueryDispatchesOnFirstCall(t *testing.T) {
+// ghModel is a model with one opened workspace and no repository of its
+// own, so the poll covers the directory the test runs in, as global mode
+// polls the one loom started in.
+func ghModel(t *testing.T) *Model {
+	t.Helper()
 	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(storedWorkspace(t, "a"), nil)
+	return m
+}
+
+// TestGHQuery_OnlyOpenedWorkspacesArePolled: the model serves every
+// workspace, but polls GitHub only for the ones a client has opened: a git
+// fetch and gh calls per registered repository every minute would cost far
+// more than the badges nobody is looking at are worth.
+func TestGHQuery_OnlyOpenedWorkspacesArePolled(t *testing.T) {
+	m := NewForTest(Options{})
+	assert.False(t, m.maybeGHQuery(), "nothing opened, nothing to poll")
+
+	ws := storedWorkspace(t, "a")
+	ws.ctx.RepoPath = t.TempDir()
+	m.SetWorkspacesForTest(ws, nil)
+	ws.opened = false
+	assert.Empty(t, m.openRepoPaths(), "served but never opened")
+
+	m.open(ws)
+	assert.Equal(t, []string{ws.ctx.RepoPath}, m.openRepoPaths())
+}
+
+func TestGHQueryDispatchesOnFirstCall(t *testing.T) {
+	m := ghModel(t)
 	require.True(t, m.maybeGHQuery())
 	assert.True(t, m.gate(gateGH).inFlight)
 }
 
 func TestGHQueryThrottledWithinInterval(t *testing.T) {
-	m := NewForTest(Options{})
+	m := ghModel(t)
 	require.True(t, m.maybeGHQuery())
 	m.gate(gateGH).inFlight = false
 	assert.False(t, m.maybeGHQuery())
 }
 
 func TestGHQueryResumesAfterInterval(t *testing.T) {
-	m := NewForTest(Options{})
+	m := ghModel(t)
 	require.True(t, m.maybeGHQuery())
 	m.gate(gateGH).inFlight = false
 	m.gate(gateGH).last = time.Now().Add(-ghInterval - time.Second)
@@ -58,7 +86,7 @@ func TestGHQueryResumesAfterInterval(t *testing.T) {
 }
 
 func TestGHQueryNotStackedWhileInFlight(t *testing.T) {
-	m := NewForTest(Options{})
+	m := ghModel(t)
 	require.True(t, m.maybeGHQuery())
 	m.gate(gateGH).last = time.Now().Add(-ghInterval - time.Second)
 	assert.False(t, m.maybeGHQuery())
@@ -72,7 +100,7 @@ func TestGHQueryDisabledWhenCLIUnavailable(t *testing.T) {
 }
 
 func TestGHQueryRechecksAfterBackoff(t *testing.T) {
-	m := NewForTest(Options{})
+	m := ghModel(t)
 	m.ghAvailable = ghAvailability{checked: true, ok: false, reason: "no gh", checkedAt: time.Now().Add(-ghRecheckInterval - time.Second)}
 	assert.True(t, m.maybeGHQuery(), "an unavailable gh is re-probed after the backoff, not disabled forever")
 }

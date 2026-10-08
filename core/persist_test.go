@@ -117,6 +117,8 @@ func TestCloseTab_RefusesTheLastTab(t *testing.T) {
 	assert.Equal(t, []*Workspace{a}, m.tabs)
 }
 
+// TestCloseTab_DropsTheTab: closing a tab only stops showing it; the
+// model still serves the workspace.
 func TestCloseTab_DropsTheTab(t *testing.T) {
 	m := NewForTest(Options{})
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
@@ -125,20 +127,6 @@ func TestCloseTab_DropsTheTab(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, a, closed)
 	assert.Equal(t, []*Workspace{b}, m.tabs)
-	assert.False(t, m.isLoadedWS(a))
-}
-
-// TestSave_SkipsAClosedWorkspaceThatWasReopened: a dropped workspace's
-// copy is stale once its workspace is open again, so saving it would
-// overwrite the reopened copy's newer state.json.
-func TestSave_SkipsAClosedWorkspaceThatWasReopened(t *testing.T) {
-	m := NewForTest(Options{})
-	closed, reopened := storedWorkspace(t, "a"), storedWorkspace(t, "a")
-	closed.add(pausedInst(t, "stale"))
-	m.SetWorkspacesForTest(nil, []*Workspace{reopened, storedWorkspace(t, "b")})
-
-	require.NoError(t, m.saveWS(closed))
-	data, err := closed.storage.LoadInstanceData()
-	require.NoError(t, err)
-	assert.Empty(t, data, "the closed copy was not written")
+	assert.True(t, m.isLoadedWS(a), "still served")
+	assert.Equal(t, []*Workspace{b}, m.shown(), "no longer shown")
 }

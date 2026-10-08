@@ -45,7 +45,8 @@ func TestCloseTab_ByName(t *testing.T) {
 	idA := m.wsIDOf(a)
 
 	require.NoError(t, m.CloseTab("a"))
-	assert.False(t, m.IsLoaded(idA))
+	assert.False(t, m.IsLoaded(idA), "no longer shown, so not loaded as a client sees it")
+	assert.True(t, m.isLoadedWS(a), "the model still serves it")
 	require.Error(t, m.CloseTab("b"), "the last tab stays")
 	assert.Len(t, m.Tabs(), 1)
 }
@@ -130,22 +131,11 @@ func TestOwnerFields_NameTheOwner(t *testing.T) {
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
 	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
 
-	id, label, note := m.ownerFields(a, true)
+	id, label := m.ownerFields(a)
 	assert.Equal(t, m.wsIDOf(a), id)
 	assert.Equal(t, "a", label)
-	assert.Empty(t, note, "a loaded owner needs no note")
 
-	closed := storedWorkspace(t, "c")
-	_, label, note = m.ownerFields(closed, false)
-	assert.Equal(t, "c", label)
-	assert.Equal(t, "which is no longer open", note)
-
-	reopenedOld := storedWorkspace(t, "b")
-	_, _, note = m.ownerFields(reopenedOld, false)
-	assert.Equal(t, "which was closed and reopened meanwhile", note)
-
-	id, label, note = m.ownerFields(nil, false)
+	id, label = m.ownerFields(nil)
 	assert.Zero(t, id)
 	assert.Equal(t, "global", label)
-	assert.Empty(t, note)
 }

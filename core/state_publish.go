@@ -8,12 +8,12 @@ import (
 	"github.com/aidan-bailey/loom/session/github"
 )
 
-// workspacesView is every loaded workspace's view, and whether they are
-// the classic workspace.
+// workspacesView is every shown workspace's view, and whether they are the
+// classic workspace.
 func (m *Model) workspacesView() WorkspacesView {
-	loaded := m.Loaded()
-	views := make([]WorkspaceView, len(loaded))
-	for i, ws := range loaded {
+	shown := m.shown()
+	views := make([]WorkspaceView, len(shown))
+	for i, ws := range shown {
 		views[i] = m.wsViewOf(ws)
 	}
 	return WorkspacesView{Views: views, Classic: m.classicShown()}
@@ -141,7 +141,7 @@ func (m *Model) Snapshot() []Event {
 		AccountsChanged{View: m.accountsView()},
 		GitHubChanged{View: m.githubView()},
 	}
-	for _, w := range m.Loaded() {
+	for _, w := range m.shown() {
 		views := make([]InstanceView, len(w.insts))
 		for i, inst := range w.insts {
 			views[i] = m.viewOf(inst)

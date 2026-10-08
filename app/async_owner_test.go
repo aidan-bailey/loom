@@ -2,7 +2,6 @@ package app
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
@@ -202,11 +201,12 @@ func TestInstanceStarted_PausedWhileThePromptIsSentIsNotAttached(t *testing.T) {
 	assert.Contains(t, m.errBox.String(), "new-one started")
 }
 
-// TestInstanceStarted_AfterOwnerDropped: the owner tab was closed while
-// the start ran. Nothing displays the instance, so its completion attaches
-// nothing, and the owner's storage is still saved so the record isn't
-// left at Loading.
-func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
+// TestInstanceStarted_AfterOwnersTabClosed: the owner's tab was closed
+// while the start ran. The model still serves the workspace, so the start
+// lands there and its storage is saved (the record isn't left at Loading),
+// but nothing displays the instance: its completion attaches nothing and
+// says where it started.
+func TestInstanceStarted_AfterOwnersTabClosed(t *testing.T) {
 	isolateTmux(t)
 	m, recA, recB := ownerTestHome(t)
 	owner := m.workspaceSlot
@@ -224,10 +224,11 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 
 	cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: started, Owner: owner.ws()}))
 
-	assert.Contains(t, m.errBox.String(), "afocus, which is no longer open")
+	assert.Contains(t, m.errBox.String(), "late started in afocus")
+	assert.NotContains(t, m.errBox.String(), "no longer open", "its workspace is still served")
 	assert.Equal(t, stateDefault, m.state)
 	assert.Nil(t, m.list.GetInstanceByTitle("late"), "not filed under the focused workspace")
-	assert.GreaterOrEqual(t, recA.calls, 1, "the closed owner's record is saved")
+	assert.GreaterOrEqual(t, recA.calls, 1, "the owner's record is saved")
 	assert.Contains(t, string(recA.lastData), "late")
 	assert.Zero(t, recB.calls)
 	drainCmd(cmd)
@@ -307,28 +308,6 @@ func TestResumeDone_AfterOwnerDropped(t *testing.T) {
 	assert.Zero(t, recB.calls)
 	drainCmd(cmd)
 	assert.Nil(t, m.panes.Get(resumed.Pane().TmuxSessionName()), "nothing displays it, so nothing attaches it")
-}
-
-// TestResumeDone_OwnerReopened: the owner was closed and its workspace
-// reopened mid-resume. The reopened slot reconciled the record into a
-// Paused twin; a resumed session that survived the reopen takes its place.
-func TestResumeDone_OwnerReopened(t *testing.T) {
-	isolateTmux(t)
-	wtPath := filepath.Join(t.TempDir(), "res-wt")
-	m, owner, twin, _, recC := reopenedHome(t, "res", wtPath, deadCmdExecForTest())
-	twinID := idOf(m, twin) // captured while loaded: a removal forgets it
-	resumed := startedWorktreeInstance(t, "res", wtPath, newFakeTmuxServer())
-	owner.ws().AddForTest(resumed)
-	m.syncViews()
-
-	cmd := deliver(t, m, core.ResumeResult{Instance: resumed, Owner: owner.ws()})
-	drainCmd(cmd)
-
-	reopened := m.slots[1]
-	assert.Equal(t, idOf(m, resumed), titleID(reopened.list, "res"))
-	assert.NotContains(t, listIDs(reopened.list), twinID)
-	assert.GreaterOrEqual(t, recC.calls, 1, "the reopened slot is saved")
-	assert.True(t, m.panes.Alive(resumed.Pane().TmuxSessionName()), "displayed again, so it gets a client")
 }
 
 // TestResumeFailed_RevertsAndLeavesNoClient: a resume whose checkpoint save

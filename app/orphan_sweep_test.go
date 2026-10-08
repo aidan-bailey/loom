@@ -48,13 +48,15 @@ func (e *listingExec) killed() []string {
 
 var _ cmd2.Executor = (*listingExec)(nil)
 
-// TestOrphanSweep_SparesWorkspacesThisProcessDidNotLoad is the app-level
-// regression for the incident: a loom that started while another was
-// running killed every loom session on the shared server, because every
-// session of a workspace it had not loaded looked unclaimed. Both sweep
-// sites must pass the loaded workspaces' roots as owned and the rest of
-// the registry, and the global worktrees dir, as foreign.
-func TestOrphanSweep_SparesWorkspacesThisProcessDidNotLoad(t *testing.T) {
+// TestOrphanSweep_SparesWhatThisLoomCannotVouchFor: the model serves every
+// registered workspace and the global one (daemon stage 3A), and one loom
+// runs per global dir (the takeover lock), so the startup sweep owns all
+// their roots and kills an unclaimed session under any of them. It still
+// spares what it cannot vouch for: the sessions of a registered workspace
+// whose load failed, whose titles it could not read, and any session
+// started outside every root it serves (a loom with another global dir, a
+// user's own). Both startup paths boot the model, so both sweep alike.
+func TestOrphanSweep_SparesWhatThisLoomCannotVouchFor(t *testing.T) {
 	isolateTmux(t)
 	globalDir := t.TempDir()
 	t.Setenv(config.EnvGlobalDir, globalDir)
@@ -62,20 +64,21 @@ func TestOrphanSweep_SparesWorkspacesThisProcessDidNotLoad(t *testing.T) {
 	// A preserved terminal record keeps activation from starting a real
 	// workspace terminal.
 	mine := preservedTerminalWorkspace(t, "ws-mine")
-	theirs := writeWorkspaceState(t, "ws-theirs", `[]`)
+	broken := writeWorkspaceState(t, "ws-broken", `{"not":"an array"}`)
 	reg, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
 	require.NoError(t, reg.Add("ws-mine", mine.Path))
-	require.NoError(t, reg.Add("ws-theirs", theirs.Path))
+	require.NoError(t, reg.Add("ws-broken", broken.Path))
 
 	listing := strings.Join([]string{
 		"loom_mine-stale\t" + filepath.Join(config.WorkspaceConfigDir(&mine), "worktrees", "stale"),
-		"loom_theirs-agent\t" + filepath.Join(config.WorkspaceConfigDir(&theirs), "worktrees", "agent"),
-		"loom_term_theirs-agent\t" + filepath.Join(config.WorkspaceConfigDir(&theirs), "worktrees", "agent"),
-		"loom_ws-theirs\t" + theirs.Path,
-		"loom_global-agent\t" + filepath.Join(globalDir, "worktrees", "global-agent"),
+		"loom_broken-agent\t" + filepath.Join(config.WorkspaceConfigDir(&broken), "worktrees", "agent"),
+		"loom_term_broken-agent\t" + filepath.Join(config.WorkspaceConfigDir(&broken), "worktrees", "agent"),
+		"loom_ws-broken\t" + broken.Path,
+		"loom_global-stale\t" + filepath.Join(globalDir, "worktrees", "global-stale"),
+		"loom_elsewhere\t" + t.TempDir(),
 	}, "\n") + "\n"
-	want := []string{"=loom_mine-stale"}
+	want := []string{"=loom_mine-stale", "=loom_global-stale"}
 
 	t.Run("multi-tab restore", func(t *testing.T) {
 		rec := &listingExec{listing: listing}

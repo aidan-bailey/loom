@@ -31,6 +31,16 @@ func (m *Model) wsLookup(id WorkspaceID) *Workspace {
 	return nil
 }
 
+// shownLookup is wsLookup over the shown workspaces alone: the queries a
+// client answers from its replica (IsLoaded, Workspace, Views, View) answer
+// for what is published, as the replica does.
+func (m *Model) shownLookup(id WorkspaceID) *Workspace {
+	if ws := m.wsLookup(id); ws != nil && slices.Contains(m.shown(), ws) {
+		return ws
+	}
+	return nil
+}
+
 // wsViewOf copies ws's state into a view. Every handle locks itself
 // (Config.Snapshot, the state's getters, the storage's), and every
 // reference field is a fresh copy.
@@ -56,23 +66,25 @@ func (m *Model) wsViewOf(ws *Workspace) WorkspaceView {
 // Workspace is the view of the loaded workspace id; false when no loaded
 // workspace has it (closed, or never reported).
 func (m *Model) Workspace(id WorkspaceID) (WorkspaceView, bool) {
-	ws := m.wsLookup(id)
+	ws := m.shownLookup(id)
 	if ws == nil {
 		return WorkspaceView{}, false
 	}
 	return m.wsViewOf(ws), true
 }
 
-// publishWorkspaces returns a WorkspacesChanged with every loaded
-// workspace's view, in Loaded order, when any of them differs from the
-// last publish (or the loaded set changed), and forgets the IDs of
-// workspaces no longer loaded.
+// publishWorkspaces returns a WorkspacesChanged with every shown
+// workspace's view, in shown order, when any of them differs from the last
+// publish (or the shown set changed), and forgets the IDs of workspaces no
+// longer served.
 func (m *Model) publishWorkspaces() []Event {
-	loaded := m.Loaded()
-	views := make([]WorkspaceView, len(loaded))
-	live := make(map[*Workspace]bool, len(loaded))
-	for i, ws := range loaded {
+	shown := m.shown()
+	views := make([]WorkspaceView, len(shown))
+	for i, ws := range shown {
 		views[i] = m.wsViewOf(ws)
+	}
+	live := make(map[*Workspace]bool, len(m.workspaces))
+	for _, ws := range m.workspaces {
 		live[ws] = true
 	}
 	for ws := range m.wsIDs {
