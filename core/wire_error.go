@@ -21,8 +21,12 @@ const (
 	CodeError = "error"
 	// CodePanic: the model panicked (LoopPanic); the client re-raises it.
 	CodePanic = "panic"
-	// CodeProtocol: a frame the other side could not use.
+	// CodeProtocol: a frame the other side could not use. The two sides
+	// disagree about the wire, so a client treats it as fatal.
 	CodeProtocol = "protocol"
+	// CodeUnsupported: the peer does not know the method. An ordinary
+	// error, never fatal, so a newer client can probe an older server.
+	CodeUnsupported = "unsupported"
 	// CodeMismatch: the two sides speak different protocol versions.
 	CodeMismatch = "mismatch"
 )

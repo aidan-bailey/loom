@@ -260,10 +260,18 @@ func (l *Loop) Begin() {
 	})
 }
 
-// Snapshot is the model's whole published state as events
-// (Model.Snapshot): what a server sends a client that subscribes, before
-// the diffs.
-func (l *Loop) Snapshot() []Event { return get(l, (*Model).Snapshot) }
+// SyncAndSnapshot is a Sync and a Snapshot in one call on the loop, with
+// nothing between them: the events published since the last Sync, then the
+// whole state as it stands after them. A server uses it when a client
+// connects: it sends the first to the connections it has and the second to
+// the new one, whose replica then starts from exactly the state the next
+// Sync diffs against. (A job landing between a Sync and a Snapshot made as
+// two calls could change the model and undo the change before the next
+// Sync, which would show in no diff and leave the new replica stale.) It
+// serves servers: it is not part of Core.
+func (l *Loop) SyncAndSnapshot() (published, snapshot []Event) {
+	return get2(l, func(m *Model) ([]Event, []Event) { return m.syncEvents(), m.Snapshot() })
+}
 
 // do runs f on the loop and waits for it. A panic in f, or one an earlier
 // step raised, is re-raised here. After Stop, f does not run.

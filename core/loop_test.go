@@ -115,6 +115,35 @@ func TestLoop_SyncReturnsEventsAndTheJobsRun(t *testing.T) {
 	assert.NotContains(t, l.Sync(), Event(Notice{Info: "hello"}), "Sync forgets what it returned")
 }
 
+// TestLoop_SyncAndSnapshotIsOneCall: the first result is what a Sync would
+// have published (a pending change), the second the whole state after it,
+// and the baseline moves with them, so a Sync after finds nothing new.
+func TestLoop_SyncAndSnapshotIsOneCall(t *testing.T) {
+	l := StartForTest(NewForTest(Options{Program: "a"}))
+	t.Cleanup(l.Stop)
+	l.Sync() // the baseline
+	l.SetProgram("b")
+
+	programOf := func(events []Event) []string {
+		var out []string
+		for _, ev := range events {
+			if m, ok := ev.(ModelChanged); ok {
+				out = append(out, m.View.Program)
+			}
+		}
+		return out
+	}
+	published, snapshot := l.SyncAndSnapshot()
+	assert.Equal(t, []string{"b"}, programOf(published), "the pending change, as Sync would have published it")
+	var kinds []string
+	for _, ev := range snapshot {
+		kinds = append(kinds, reflect.TypeOf(ev).Name())
+	}
+	assert.Equal(t, []string{"WorkspacesChanged", "ModelChanged", "AccountsChanged", "GitHubChanged"}, kinds, "the whole state")
+	assert.Equal(t, []string{"b"}, programOf(snapshot), "as it stands after the change")
+	assert.Empty(t, programOf(l.Sync()), "the baseline moved with the snapshot")
+}
+
 // TestLoop_PanicInACallReachesItsCaller: the caller panics with the
 // loop's stack, and every later call re-raises it.
 func TestLoop_PanicInACallReachesItsCaller(t *testing.T) {
