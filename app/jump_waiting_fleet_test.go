@@ -21,7 +21,7 @@ func TestJumpWaiting_CrossesToPeerWorkspace(t *testing.T) {
 
 	m := &home{
 		spinner: spinner.New(spinner.WithSpinner(spinner.MiniDot)),
-		core:    core.NewForTest(core.Options{Registry: &config.WorkspaceRegistry{}}),
+		core:    testLoop(t, core.NewForTest(core.Options{Registry: &config.WorkspaceRegistry{}})),
 		tabBar:  ui.NewWorkspaceTabBar(), overview: ui.NewOverview(),
 	}
 	focusSlots(m, 0, focus, peer)

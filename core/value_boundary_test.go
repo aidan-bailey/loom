@@ -98,19 +98,11 @@ func plainProblem(typ reflect.Type, path string, seen map[reflect.Type]bool) str
 // TestCoreIsValueTyped fails when a core.Core method, or an Event the
 // model emits, carries anything but plain data (plainProblem): values a
 // client in another process could receive (stage 2 serializes them)
-// without sharing the model's memory. Sync and Deliver carry the job
-// plumbing stage 1E moves into the model, and are exempt until then.
+// without sharing the model's memory.
 func TestCoreIsValueTyped(t *testing.T) {
-	exempt := map[string]string{
-		"Sync":    "returns Out.Jobs (funcs) until stage 1E runs jobs in the model",
-		"Deliver": "takes a job's result (any) until stage 1E",
-	}
 	iface := reflect.TypeOf((*Core)(nil)).Elem()
 	for i := 0; i < iface.NumMethod(); i++ {
 		m := iface.Method(i)
-		if _, ok := exempt[m.Name]; ok {
-			continue
-		}
 		for j := 0; j < m.Type.NumIn(); j++ {
 			if p := plainProblem(m.Type.In(j), fmt.Sprintf("%s param %d", m.Name, j), map[reflect.Type]bool{}); p != "" {
 				t.Error(p)

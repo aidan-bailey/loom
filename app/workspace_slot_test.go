@@ -174,6 +174,7 @@ func TestClassicSlot_NonNilAndOutsideSlots(t *testing.T) {
 		cfg.ClaudeRemoteControl = &off // no claude auth probe
 		m, err := newHome(context.Background(), &config.WorkspaceContext{ConfigDir: t.TempDir()}, nil, cfg, "true", "", true)
 		require.NoError(t, err)
+		t.Cleanup(m.stopCore)
 		require.NotNil(t, m.workspaceSlot)
 		assert.Empty(t, m.slots)
 		assert.NotNil(t, m.list)

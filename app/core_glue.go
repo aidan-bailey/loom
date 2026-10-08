@@ -8,41 +8,56 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// coreResultMsg carries a core job's result back to Update, which hands it
-// to the model (core.Model.Deliver).
-type coreResultMsg struct{ msg any }
+// coreWakeMsg says the model did something unprompted (a job's result
+// landed, its tick fired): the drain Update runs after every message
+// (drainCore) applies what it produced. forwardWakes sends it.
+type coreWakeMsg struct{}
 
-// coreCmd runs job as a tea.Cmd: off the Update goroutine, its result
-// coming back as a coreResultMsg. nil for a nil job.
-func coreCmd(job core.Job) tea.Cmd {
-	if job == nil {
-		return nil
+// forwardWakes sends a coreWakeMsg for each of the model loop's wakes
+// until they end (the loop stopped). It runs on a goroutine of its own:
+// send blocks until Update takes the message, and the model's goroutine
+// must never wait on the TUI.
+func forwardWakes(wakes <-chan struct{}, send func(tea.Msg)) {
+	for range wakes {
+		send(coreWakeMsg{})
 	}
-	return func() tea.Msg { return coreResultMsg{msg: job()} }
 }
 
 // drainCore applies everything the model produced since the last drain:
-// the views that changed first (core.ViewsChanged, from core.Model.Sync),
-// then each event in order (applyCoreEvent), and each job as a Cmd.
-// Applying an event can call the model again, so it drains until nothing
-// is left.
-// Update runs it after every message. A caller whose later steps must see
-// an event's effect (a workspace transition) runs it right after the model
-// call. A bare test home without a model drains nothing.
+// the views that changed first (core.ViewsChanged, from core.Core.Sync),
+// then each event in order (applyCoreEvent). Applying an event can call
+// the model again, so it drains until nothing is left. Update runs it
+// after every message, a wake (coreWakeMsg) included. A caller whose later
+// steps must see an event's effect (a workspace transition) runs it right
+// after the model call. A bare test home without a model drains nothing.
 func (m *home) drainCore() tea.Cmd {
 	if m.core == nil {
 		return nil
 	}
 	var cmds []tea.Cmd
-	for out := m.core.Sync(); !out.Empty(); out = m.core.Sync() {
-		for _, ev := range out.Events {
+	for events := m.core.Sync(); len(events) > 0; events = m.core.Sync() {
+		for _, ev := range events {
 			cmds = append(cmds, m.applyCoreEvent(ev))
-		}
-		for _, job := range out.Jobs {
-			cmds = append(cmds, coreCmd(job))
 		}
 	}
 	return tea.Batch(cmds...)
+}
+
+// publishSelection tells the model which row is selected, when that
+// changed since the last Update: its health probe refreshes that session's
+// full diff (core.Core.SetSelected). None, or a draft row, is 0.
+func (m *home) publishSelection() {
+	if m.core == nil || m.workspaceSlot == nil || m.list == nil {
+		return
+	}
+	var id core.InstanceID
+	if sel := m.list.GetSelectedInstance(); sel != nil {
+		id = sel.ID
+	}
+	if id != m.sentSelected {
+		m.core.SetSelected(id)
+		m.sentSelected = id
+	}
 }
 
 // applyCoreEvent applies one model event to the view.
@@ -110,13 +125,13 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 		// A user parked on the workbench's diff tab generates none of the
 		// nav traffic that refreshes the diff in focus mode, so ride the
 		// health tick: re-render from the just-updated diff stats so the
-		// tab tracks the agent's work live.
+		// tab tracks the agent's work live. The model's loop re-arms its own
+		// tick; the TUI's re-arms itself.
 		if m.viewMode == viewWorkbench && m.workbench != nil && m.workbench.Tab() == ui.WbTabDiff {
 			if selected := m.list.GetSelectedInstance(); selected != nil {
 				m.workbench.Diff().SetDiff(selected)
 			}
 		}
-		return tickUpdateMetadataCmd
 	case core.GitHubChanged:
 		if p := m.issuePicker(); p != nil {
 			p.SetRows(m.issueRows())

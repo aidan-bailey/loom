@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -258,5 +259,6 @@ func TestLoopForwardsEachMethodToItsNamesake(t *testing.T) {
 		})
 		assert.Equal(t, map[string]bool{want: true}, called, "%s forwards to its namesake only", fn.Name.Name)
 	}
-	assert.Greater(t, n, 60, "loop_core.go holds the forwarders")
+	assert.Equal(t, reflect.TypeOf((*Core)(nil)).Elem().NumMethod()-1, n,
+		"every Core method but Begin (loop.go) is a forwarder in loop_core.go")
 }

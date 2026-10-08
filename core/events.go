@@ -111,7 +111,8 @@ type Alive struct {
 func (Alive) coreEvent() {}
 
 // HealthChecked reports that a health tick's probe landed and was
-// applied: the TUI arms the next tick then, so probes never overlap.
+// applied. The loop arms the next tick then, so probes never overlap; the
+// TUI refreshes the workbench's diff tab.
 type HealthChecked struct{}
 
 func (HealthChecked) coreEvent() {}

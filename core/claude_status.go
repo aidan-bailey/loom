@@ -107,7 +107,7 @@ const rosterInterval = 3 * time.Second
 // The in-flight guard matters because a slow or hung CLI is bounded only
 // by claudeRosterTimeout (5s) — without it, ticks would stack concurrent
 // subprocesses. Reports false when nothing should run, including when no
-// Claude agent is present. Must be called on the Update goroutine.
+// Claude agent is present. Must be called on the loop goroutine.
 func (m *Model) maybeRosterQuery(active []*session.Instance) bool {
 	return m.dispatchGated(gateRoster, time.Now(), func() Job {
 		return rosterQueryJob(active, m.accountDirs())

@@ -128,9 +128,17 @@ type home struct {
 
 	// core is the session model (package core): the loaded workspaces,
 	// their instances and everything lifecycle, through the methods the
-	// TUI calls (core.Core; *core.Model is its implementation). Never nil
-	// after newHome.
+	// TUI calls (core.Core; *core.Loop, the model on its own goroutine, is
+	// its implementation). Never nil after newHome.
 	core core.Core
+	// wakes is the model loop's wake signal (core.Loop.Wakes), which Run
+	// forwards into the program (forwardWakes), and stopCore stops the
+	// loop. Both are nil in fixtures, whose loops run no job on their own.
+	wakes    <-chan struct{}
+	stopCore func()
+	// sentSelected is the selection last published to the model
+	// (publishSelection).
+	sentSelected core.InstanceID
 	// initCmd holds the Cmds newHome drained from the model before the
 	// program ran (an error notice's hide timer); Init returns them.
 	initCmd tea.Cmd
@@ -607,17 +615,20 @@ func (m *home) Init() tea.Cmd {
 }
 
 // Update implements tea.Model: the message's handler (update), then
-// whatever the model produced meanwhile (drainCore).
+// whatever the model produced meanwhile (drainCore), then the selection,
+// if it moved (publishSelection).
 func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
-	return model, tea.Batch(cmd, m.drainCore())
+	cmd = tea.Batch(cmd, m.drainCore())
+	m.publishSelection()
+	return model, cmd
 }
 
 // update is Update's message handler.
 func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case coreResultMsg:
-		m.core.Deliver(msg.msg)
+	case coreWakeMsg:
+		// The model's loop woke the TUI: Update's drain does the rest.
 		return m, nil
 	case hideErrMsg:
 		m.errBox.Clear()
@@ -887,9 +898,11 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// because time passed with no other activity.
 		m.errBox.ExpireIfDue(time.Now())
 
-		// Close the clients of sessions that stopped being active since the
-		// last tick (paused, killed, exited, or their slot closed).
-		cmds := []tea.Cmd{m.prunePanes()}
+		// The TUI's half of the health tick re-arms itself. The model's half
+		// runs on its own loop, at the same cadence (core.Loop). Close the
+		// clients of sessions that stopped being active since the last tick
+		// (paused, killed, exited, or their slot closed).
+		cmds := []tea.Cmd{tickUpdateMetadataCmd, m.prunePanes()}
 
 		selected := m.list.GetSelectedInstance()
 		// Inline-attach liveness backstop (the preview tick used to check
@@ -902,15 +915,6 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, tea.RequestWindowSize)
 			}
 		}
-
-		// The model's half: liveness, parity, diff stats and the background
-		// jobs. Its probe's result re-arms this tick (core.HealthChecked),
-		// so ticks never overlap a probe still running.
-		var selectedID core.InstanceID
-		if selected != nil {
-			selectedID = selected.ID
-		}
-		m.core.Tick(selectedID)
 
 		// The status ladder on the snapshot path reads each pane's screen,
 		// which only the TUI's clients have.
@@ -1723,10 +1727,13 @@ func (m *home) runBranchSearch(filter string, version uint64) tea.Cmd {
 	}
 }
 
-// tickUpdateMetadataCmd drives the health tick. In event mode (emulator
-// path) it is a slow belt-and-braces sweep — liveness, ptmx self-heal, and
-// diff stats — because status detection rides pane events instead. On the
-// snapshot path it keeps the legacy 500ms cadence and does everything.
+// tickUpdateMetadataCmd drives the TUI's half of the health tick: toast
+// expiry, pane-client prune and repair backstops, and the snapshot and
+// workbench scans. It re-arms itself; the model's half (liveness, parity,
+// diff stats, background jobs) runs on its loop's own timer at the same
+// cadence (core.tickInterval). In event mode (emulator path) it is a slow
+// belt-and-braces sweep, because status detection rides pane events
+// instead; on the snapshot path it keeps the legacy 500ms cadence.
 var tickUpdateMetadataCmd = func() tea.Msg {
 	if tmux.EmulatorEnabled() {
 		time.Sleep(3 * time.Second)

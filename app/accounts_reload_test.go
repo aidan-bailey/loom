@@ -26,7 +26,7 @@ func TestHealthTick_RemovingTheLastExtraAccountElsewhereHidesTheStrip(t *testing
 
 	_, err := otherTerminal(t, m).Remove("max-2", false)
 	require.NoError(t, err)
-	m.Update(tickUpdateMetadataMessage{})
+	tickModel(t, m)
 
 	assert.Equal(t, 0, m.accountStrip.Height(), "the strip follows the file on the next tick")
 	assert.False(t, ui.ShowAccounts(), "and the badges with it")
@@ -54,17 +54,17 @@ func TestHealthTick_ACorruptFileSurfacesOneErrorNotOnePerTick(t *testing.T) {
 	withAccounts(t, m, "max-2")
 	require.NoError(t, os.WriteFile(testModel(m).AccountsRegistryForTest().Path(), []byte("not json"), 0o644))
 
-	m.Update(tickUpdateMetadataMessage{})
+	tickModel(t, m)
 	require.Contains(t, m.errBox.String(), "accounts")
 	m.errBox.Clear()
 
-	m.Update(tickUpdateMetadataMessage{})
-	m.Update(tickUpdateMetadataMessage{})
+	tickModel(t, m)
+	tickModel(t, m)
 	assert.NotContains(t, m.errBox.String(), "accounts", "an unchanged corrupt file is not re-reported")
 
 	// Still corrupt, differently: the error was already surfaced.
 	require.NoError(t, os.WriteFile(testModel(m).AccountsRegistryForTest().Path(), []byte("still not json"), 0o644))
-	m.Update(tickUpdateMetadataMessage{})
+	tickModel(t, m)
 	assert.NotContains(t, m.errBox.String(), "accounts")
 	assert.Error(t, testModel(m).AccountsRegistryForTest().LoadErr())
 }

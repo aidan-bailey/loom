@@ -22,8 +22,9 @@ const module = "github.com/aidan-bailey/loom"
 //   - session: an instance (the type, its constructors and options), the
 //     storage instances persist to, and the launch toggles the model sets
 //     on a settings save (core.Model.SaveSettings).
-//   - core: a loaded workspace and the model itself (the TUI holds a
-//     core.Core, built with core.New).
+//   - core: a loaded workspace, the model and its loop, and the jobs and
+//     output it keeps to itself (the TUI holds a core.Core, built with
+//     core.New and started in newHome, and handles no job).
 //   - config: the workspace registry and state.json (the TUI reads
 //     core.RegistryView and core.WorkspaceView copies), and the config
 //     save (the model writes config.json).
@@ -36,6 +37,7 @@ var modelObjects = map[string]map[string]bool{
 	},
 	module + "/core": {
 		"Workspace": true, "WorkspaceParts": true, "NewWorkspace": true, "Model": true,
+		"Loop": true, "Job": true, "Out": true,
 	},
 	module + "/config": {
 		"WorkspaceRegistry": true, "LoadWorkspaceRegistry": true,

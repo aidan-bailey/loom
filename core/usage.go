@@ -61,7 +61,7 @@ func usageProbeJob(program, mainDir string, targets []usageTarget, r internalexe
 // account exists, and a Claude CLI is configured. It reads the registry as
 // the health tick last reloaded it (maybeReloadAccounts): a builder that
 // returns nil leaves the gate due, so it runs again on the very next tick.
-// Update goroutine only.
+// Loop goroutine only.
 func (m *Model) maybeUsageProbe() bool {
 	return m.dispatchGated(gateUsage, time.Now(), func() Job {
 		if !m.HasExtraAccounts() {

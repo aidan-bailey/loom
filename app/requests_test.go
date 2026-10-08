@@ -186,13 +186,13 @@ func TestRefusal_AJobsFailureIsShownOnce(t *testing.T) {
 	m := homeWithAppState(t)
 	addReadyInstance(t, m) // never started: the kill's job fails (no worktree)
 	_, _ = runKillSelectedNoConfirm(m)
-	res, ok := requestJob(t, m)().(coreResultMsg)
-	require.True(t, ok)
-	testModel(m).Deliver(res.msg)
+	res := requestJob(t, m)()
+	require.NotNil(t, res, "the kill's job returned a result")
+	loopOf(m).DeliverForTest(res)
 
 	notices, replies := 0, 0
 	var replyCmd tea.Cmd
-	for _, ev := range m.core.Sync().Events {
+	for _, ev := range m.core.Sync() {
 		switch ev.(type) {
 		case core.Notice:
 			notices++

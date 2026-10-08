@@ -126,7 +126,7 @@ func newRestoreHome(t *testing.T, exec cmd2.Executor) *home {
 		menu:   ui.NewMenu(),
 		tabBar: ui.NewWorkspaceTabBar(),
 		errBox: ui.NewErrBox(),
-		core:   core.NewForTest(core.Options{CmdExec: exec}),
+		core:   testLoop(t, core.NewForTest(core.Options{CmdExec: exec})),
 	}
 	h.list = ui.NewList(&h.spinner, slotRows{h, h.workspaceSlot})
 	testModel(h).SetWorkspacesForTest(ws, nil)
@@ -372,6 +372,7 @@ func TestRegisterPendingDir_RegistryWriteRunsOnUpdate(t *testing.T) {
 	cfg.ClaudeRemoteControl = &off // no claude auth probe
 	m, err := newHome(context.Background(), &config.WorkspaceContext{ConfigDir: t.TempDir()}, reg, cfg, "true", dir, true)
 	require.NoError(t, err)
+	t.Cleanup(m.stopCore)
 	require.Equal(t, stateConfirm, m.state, "a pending dir opens the registration prompt")
 	testModel(m).SetExecForTest(&recordingExec{})
 

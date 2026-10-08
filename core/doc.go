@@ -3,12 +3,15 @@
 // loading and saving, reconcile and the sweeps, the lifecycle operations
 // and their completions, the health tick and the background jobs.
 //
-// In daemon stage 1B the TUI (package app) drives the model synchronously
-// on its Update goroutine, so every Model method must be called there. A
-// Job is the one thing that runs elsewhere: it reads no model state and
-// returns its result, which the caller hands back with Deliver. The model
-// reports to the TUI through Events, which the caller drains (Drain)
-// after each call and applies to its view.
+// Since daemon stage 1E the model runs on a goroutine of its own: a Loop
+// owns it, serves every Core method as a round trip over that goroutine,
+// starts the Jobs the model queues on goroutines of their own and
+// delivers their results on the loop (Deliver), and fires the health tick
+// from its own timer. A Job reads no model state. The model reports to
+// its client (the TUI, package app) through Events, which the client
+// drains (Sync) when the loop wakes it (Loop.Wakes) and after each of its
+// own messages. Core's own tests drive a Model directly, on their own
+// goroutine, with Sync, Drain and Deliver.
 //
 // core imports nothing of the TUI (TestCoreImportsNoUI): the daemon will
 // run it with no terminal. Focus is the TUI's: where an operation needs

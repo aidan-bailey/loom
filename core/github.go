@@ -126,7 +126,7 @@ func (m *Model) linkedIssues(repo string) []int {
 
 // maybeGHQuery dispatches a poll when one is due: gh not known
 // unavailable, and gateGH due (none in flight, and ghInterval since the
-// last dispatch). Update goroutine only.
+// last dispatch). Loop goroutine only.
 func (m *Model) maybeGHQuery() bool {
 	// A gh that reported unavailable is re-probed on ghRecheckInterval
 	// rather than never again.

@@ -109,7 +109,7 @@ func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
 		// Keep activation off tmux entirely: a recording executor, and a
 		// workspace whose terminal record already exists (preserved), so
 		// no workspace terminal is created and started.
-		core: core.NewForTest(core.Options{CmdExec: &recordingExec{}}),
+		core: testLoop(t, core.NewForTest(core.Options{CmdExec: &recordingExec{}})),
 	})
 
 	// Non-empty desired forces the bug's actual code path:

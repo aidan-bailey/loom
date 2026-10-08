@@ -30,7 +30,7 @@ func TestRemoteControlBlocked(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &home{core: core.NewForTest(core.Options{})}
+			m := &home{core: testLoop(t, core.NewForTest(core.Options{}))}
 			m.core.SetRCAuth(tc.auth)
 			assert.Equal(t, tc.want, m.remoteControlBlockedOn("", tc.rcEnabled, tc.program))
 		})
@@ -42,7 +42,7 @@ func TestRemoteControlBlockedAgreesWithComposedCommandWhenHeadroomProxyForcesRCO
 	// RemoteControl and HeadroomProxy true must not report "blocked" for
 	// a conflict the composed command doesn't actually have.
 	opts := overlay.LaunchOptions{RemoteControl: true, HeadroomProxy: true}
-	m := &home{core: core.NewForTest(core.Options{})}
+	m := &home{core: testLoop(t, core.NewForTest(core.Options{}))}
 	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked})
 	assert.False(t, m.remoteControlBlockedOn("", launch.EffectiveRemoteControl(opts), "claude"))
 }

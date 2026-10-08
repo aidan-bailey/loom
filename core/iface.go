@@ -14,15 +14,14 @@ import (
 // model's own objects (TestCoreIsValueTyped). Instances are named by
 // InstanceID and seen as InstanceView values, workspaces by WorkspaceID
 // and WorkspaceView; the registry and accounts cross as copies, and every
-// change is a request. The exceptions are Sync's Out.Jobs and Deliver, the
-// job plumbing stage 1E moves into the model when it gets its own
-// goroutine. *Model is the only implementation.
+// change is a request. *Loop, the model on its own goroutine, is the only
+// implementation: every call is a round trip over that goroutine, the
+// model runs its own jobs and tick, and Loop.Wakes says when to Sync.
 type Core interface {
-	// The loop: the TUI drains the model after every message (Sync), hands
-	// it every job's result (Deliver), and starts its first background
-	// jobs (Begin).
-	Sync() Out
-	Deliver(msg any)
+	// The loop: the TUI drains the model when the loop wakes it and after
+	// every message (Sync), and starts its first background jobs and its
+	// health tick (Begin).
+	Sync() []Event
 	Begin()
 
 	// Startup: the classic workspace's load, the account registry and the
@@ -75,9 +74,9 @@ type Core interface {
 	SendPrompt(id InstanceID, text string, req ReqID)
 	FetchIssue(repo string, n int, req ReqID)
 
-	// Claude status and the tick: the health tick, and what the TUI's pane
-	// events tell the model.
-	Tick(selected InstanceID)
+	// Claude status and the tick: what the TUI's pane events tell the
+	// model, and the selected row the model's health tick favours.
+	SetSelected(id InstanceID)
 	MarkOutput(sessionName string)
 	PaneOutput(id InstanceID)
 	PaneQuiet(id InstanceID)
@@ -115,4 +114,4 @@ type Core interface {
 	SetDefaultAccount(name string) error
 }
 
-var _ Core = (*Model)(nil)
+var _ Core = (*Loop)(nil)

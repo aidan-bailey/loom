@@ -68,8 +68,9 @@ type DeadVerified struct {
 // active instance (liveness, parity, diff stats; its result is applied by
 // deliverHealth, which ends with HealthChecked) and every background job
 // that is due: the roster query, the hook scan, the GitHub poll, the
-// accounts file check and the usage probe. selected is the TUI's selected
-// instance, whose full diff the probe refreshes. In event mode (the
+// accounts file check and the usage probe. selected is the instance
+// SetSelected named (the TUI's selected row), whose full diff the probe
+// refreshes. In event mode (the
 // emulator path) the tick is a slow belt-and-braces sweep, because status
 // rides pane events; on the snapshot path it keeps the legacy 500ms
 // cadence. Formerly the lifecycle half of the tickUpdateMetadataMessage
@@ -81,7 +82,7 @@ func (m *Model) tickInst(selected *session.Instance) {
 	m.spawn(probeJob(active, selected, m.takeDirty(), m.ghBases))
 
 	// One `claude agents --json` for the whole fleet (~100ms, off the
-	// Update goroutine), on its OWN cadence rather than the tick's —
+	// loop goroutine), on its OWN cadence rather than the tick's —
 	// this tick runs at 500ms on the snapshot path, which would keep a
 	// claude process alive most of the time. Claude reports its own
 	// busy/idle/waiting state, which beats inferring it from pane text
@@ -114,7 +115,8 @@ func (m *Model) tickInst(selected *session.Instance) {
 }
 
 // Tick runs the health tick's model half (tickInst); selected is the
-// TUI's selected instance, 0 for none.
+// instance whose full diff the probe refreshes, 0 for none. The loop's
+// timer calls it with the one SetSelected named.
 func (m *Model) Tick(selected InstanceID) {
 	inst, _ := m.lookup(selected)
 	m.tickInst(inst)
@@ -251,7 +253,7 @@ func (m *Model) deliverDeadVerified(r DeadVerified) {
 // returns false when the instance was found dead (so callers can stop
 // treating it as running) or is no longer in any loaded workspace. source
 // names the path the result came from, for the logs. Must run on the
-// Update goroutine.
+// loop goroutine.
 func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, source livenessSource) bool {
 	if m.holding(inst) == nil {
 		// The probe was taken before inst's workspace was dropped. A

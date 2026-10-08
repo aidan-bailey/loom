@@ -17,7 +17,6 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,30 +85,28 @@ func TestFullScreenAttach_PausesAndRestoresThePaneClient(t *testing.T) {
 // closed only once the registry has dropped it. The kill and pause Cmds
 // used to close it while it was still registered, so Update could
 // re-attach it (the tick's repair of a same-named session) or release it
-// (the tick's prune) at the same time, racing its pump. Now the Cmd leaves
+// (the tick's prune) at the same time, racing its pump. Now the job leaves
 // the client alone, and the completion's prune drops it from the registry
 // and closes it in the returned Cmd.
 func TestKillAndPause_CloseTheClientOnlyAfterTheRegistryDrops(t *testing.T) {
 	isolateTmux(t)
 	for _, op := range []struct {
 		name   string
-		action func(m *home, inst *session.Instance) tea.Cmd
-		done   func(t *testing.T, msg tea.Msg)
+		action func(m *home, inst *session.Instance) core.Job
+		done   func(t *testing.T, result any)
 	}{
-		{"kill", func(m *home, inst *session.Instance) tea.Cmd {
+		{"kill", func(m *home, inst *session.Instance) core.Job {
 			m.core.Kill(idOf(m, inst), 0) // its pre-step, then its job
 			return requestJob(t, m)
-		}, func(t *testing.T, msg tea.Msg) {
-			res, _ := msg.(coreResultMsg)
-			require.IsType(t, core.KillResult{}, core.UntrackedForTest(res.msg))
+		}, func(t *testing.T, result any) {
+			require.IsType(t, core.KillResult{}, core.UntrackedForTest(result))
 		}},
-		{"pause", func(m *home, inst *session.Instance) tea.Cmd {
+		{"pause", func(m *home, inst *session.Instance) core.Job {
 			m.core.Pause(idOf(m, inst), 0)
 			require.Equal(t, session.Loading, inst.GetStatus(), "the request moved it to Loading, as the pause's confirm does")
 			return requestJob(t, m)
-		}, func(t *testing.T, msg tea.Msg) {
-			res, _ := msg.(coreResultMsg)
-			require.IsType(t, core.PauseResult{}, core.UntrackedForTest(res.msg), "%v", msg)
+		}, func(t *testing.T, result any) {
+			require.IsType(t, core.PauseResult{}, core.UntrackedForTest(result), "%v", result)
 		}},
 	} {
 		t.Run(op.name, func(t *testing.T) {
@@ -121,12 +118,12 @@ func TestKillAndPause_CloseTheClientOnlyAfterTheRegistryDrops(t *testing.T) {
 			c := clientOf(t, inst)
 			require.True(t, c.PtmxAlive(), "fixture: the client is attached")
 
-			msg := op.action(m, inst)() // off the Update goroutine, as the runtime runs it
-			op.done(t, msg)
-			assert.Same(t, c, m.panes.Get(name), "the Cmd leaves the registry to Update")
-			assert.True(t, c.PtmxAlive(), "the Cmd must not close a registered client")
+			result := op.action(m, inst)() // off the loop, as the runtime runs it
+			op.done(t, result)
+			assert.Same(t, c, m.panes.Get(name), "the job leaves the registry to Update")
+			assert.True(t, c.PtmxAlive(), "the job must not close a registered client")
 
-			_, cmd := m.Update(msg)
+			cmd := deliver(t, m, result)
 			assert.Nil(t, m.panes.Get(name), "the completion drops it from the registry")
 			assert.True(t, c.PtmxAlive(), "and closes it only in the returned Cmd")
 			drainCmd(cmd)
@@ -194,12 +191,12 @@ end)
 
 	// The intent: core.Resume, whose job runs off Update.
 	_, next := m.Update(done)
-	results := coreResults(t, next)
+	results := coreResults(t, m, next)
 	require.Len(t, results, 1, "the resume's job")
 	require.Equal(t, session.Running, inst.GetStatus(), "precondition: the script resumed it")
 
 	// Its result: the client is replaced; the Reply resumes the script.
-	_, release := m.Update(results[0])
+	release := deliver(t, m, results[0])
 
 	fresh := m.panes.Get(name)
 	require.NotNil(t, fresh)
@@ -275,17 +272,19 @@ func relaunchedUnderItsName(t *testing.T, title string) (inst *session.Instance,
 }
 
 // healThroughDeadEvent delivers the Dead event for inst's session as the
-// runtime would: the probe Cmd runs off Update, its answer back through it.
+// runtime would: the probe job runs off the loop, its answer back through
+// it and a wake.
 func healThroughDeadEvent(t *testing.T, m *home, inst *session.Instance) {
 	t.Helper()
-	_, cmd := m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
-	require.NotNil(t, cmd)
-	result, ok := cmd().(coreResultMsg)
-	require.True(t, ok)
-	verified, ok := result.msg.(core.DeadVerified)
+	_, _ = m.Update(ptyDeadMsg{session: inst.Pane().TmuxSessionName()})
+	jobs := loopOf(m).JobsForTest()
+	require.Len(t, jobs, 1, "the Dead event scheduled the verification")
+	result := jobs[0]()
+	require.NotNil(t, result)
+	verified, ok := result.(core.DeadVerified)
 	require.True(t, ok)
 	require.Equal(t, tmux.LivenessAlive, verified.TmuxLive, "the relaunched session is alive")
-	_, _ = m.Update(result)
+	deliver(t, m, verified)
 }
 
 // requireShowsNewSession checks that inst's pane is attached to the
@@ -446,9 +445,10 @@ func TestDeadEvent_RepairOfAClientThatExitsOnAttachIsBounded(t *testing.T) {
 
 	for deadline := time.Now().Add(500 * time.Millisecond); time.Now().Before(deadline); {
 		_, cmd := m.Update(ptyDeadMsg{session: name})
-		require.NotNil(t, cmd)
-		if result, ok := cmd().(coreResultMsg); ok {
-			_, _ = m.Update(result)
+		jobs := loopOf(m).JobsForTest()
+		require.True(t, cmd != nil || len(jobs) > 0, "the Dead event asked for something")
+		for _, job := range jobs {
+			deliver(t, m, job())
 		}
 	}
 

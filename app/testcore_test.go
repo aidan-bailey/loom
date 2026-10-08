@@ -144,7 +144,7 @@ func (s *workspaceSlot) ws() *core.Workspace {
 // otherwise the tabs are m.slots' workspaces in order. A slot with no
 // workspace gets an empty one (and a list reading its rows, if it had
 // none). It keeps a model the test installed (m.core set beforehand, e.g.
-// with a registry), and a liveness probe it set (m.aliveProbe), else gives
+// with a registry, wrapped in testLoop), and a liveness probe it set (m.aliveProbe), else gives
 // it fixtureAlive. It ends by filling every slot's view store from the
 // model (syncViews). Call it after assembling the slots and before
 // exercising m; a test that changes the model's instances afterwards calls
@@ -152,7 +152,7 @@ func (s *workspaceSlot) ws() *core.Workspace {
 func wireCore(t *testing.T, m *home) *home {
 	t.Helper()
 	if m.core == nil {
-		m.core = core.NewForTest(core.Options{})
+		m.core = testLoop(t, core.NewForTest(core.Options{}))
 	}
 	if m.aliveProbe == nil {
 		m.aliveProbe = fixtureAlive(m)
@@ -349,50 +349,73 @@ func editRCAuth(m *home, edit func(*session.RemoteControlAuth)) {
 	m.core.SetRCAuth(a)
 }
 
-// deliver hands m a core job's result as the runtime would, returning the
-// Cmd the update produced (handler plus drained events).
+// deliver hands m a core job's result as the runtime would (the loop
+// delivers it, then wakes the TUI), returning the Cmd the wake's update
+// produced (handler plus drained events).
 func deliver(t *testing.T, m *home, result any) tea.Cmd {
 	t.Helper()
-	_, cmd := m.Update(coreResultMsg{msg: result})
+	loopOf(m).DeliverForTest(result)
+	_, cmd := m.Update(coreWakeMsg{})
 	return cmd
 }
 
-// testModel returns the home's model for its test seams.
-func testModel(m *home) *core.Model { return m.core.(*core.Model) }
-
-// requestJob drains m's model as Update's drain does (drainCore), applying
-// its events but dropping their Cmds, and returns the one job it queued as
-// the Cmd the runtime would run (coreCmd): what a request made outside an
-// Update (a handler called directly) queued.
-func requestJob(t *testing.T, m *home) tea.Cmd {
+// testLoop runs model on a loop that keeps its jobs for the test
+// (core.StartForTest), stopped when the test ends.
+func testLoop(t *testing.T, model *core.Model) core.Core {
 	t.Helper()
-	var jobs []core.Job
-	for out := m.core.Sync(); !out.Empty(); out = m.core.Sync() {
-		for _, ev := range out.Events {
-			_ = m.applyCoreEvent(ev)
-		}
-		jobs = append(jobs, out.Jobs...)
-	}
-	require.Len(t, jobs, 1, "the request queued one job")
-	return coreCmd(jobs[0])
+	l := core.StartForTest(model)
+	t.Cleanup(l.Stop)
+	return l
 }
 
-// requestResults drains m's model as Update's drain does (drainCore),
-// applying its events but dropping their Cmds, and runs its jobs as the
-// runtime would, off the drain. It returns their results, each with a
-// request's tracking removed (core.UntrackedForTest), without delivering
-// them: what a request made outside an Update (a handler called directly)
-// queued.
-func requestResults(t *testing.T, m *home) []any {
-	t.Helper()
-	var results []any
-	for out := m.core.Sync(); !out.Empty(); out = m.core.Sync() {
-		for _, ev := range out.Events {
+// loopOf returns the home's loop, for its seams.
+func loopOf(m *home) *core.Loop { return m.core.(*core.Loop) }
+
+// testModel returns the home's model, for its seams. Its loop is idle
+// between calls (core.StartForTest), so the test may reach it directly.
+func testModel(m *home) *core.Model { return loopOf(m).ModelForTest() }
+
+// applyDrain drains m's model as Update's drain does (drainCore), applying
+// its events but dropping their Cmds.
+func applyDrain(m *home) {
+	for events := m.core.Sync(); len(events) > 0; events = m.core.Sync() {
+		for _, ev := range events {
 			_ = m.applyCoreEvent(ev)
 		}
-		for _, job := range out.Jobs {
-			results = append(results, core.UntrackedForTest(job()))
-		}
+	}
+}
+
+// tickModel runs the model's health tick as its loop's timer would
+// (TickForTest), then drains as a wake's Update does.
+func tickModel(t *testing.T, m *home) tea.Cmd {
+	t.Helper()
+	loopOf(m).TickForTest()
+	_, cmd := m.Update(coreWakeMsg{})
+	return cmd
+}
+
+// requestJob drains m's model as Update's drain does (applyDrain) and
+// returns the one job the model kept: what a request made outside an
+// Update (a handler called directly) queued. Calling it runs the job on
+// the test's goroutine and returns its result, undelivered.
+func requestJob(t *testing.T, m *home) core.Job {
+	t.Helper()
+	applyDrain(m)
+	jobs := loopOf(m).JobsForTest()
+	require.Len(t, jobs, 1, "the request queued one job")
+	return jobs[0]
+}
+
+// requestResults drains m's model as Update's drain does (applyDrain), runs
+// every job the model kept, and returns their results, each with a
+// request's tracking removed (core.UntrackedForTest), undelivered: what a
+// request made outside an Update (a handler called directly) queued.
+func requestResults(t *testing.T, m *home) []any {
+	t.Helper()
+	applyDrain(m)
+	var results []any
+	for _, job := range loopOf(m).JobsForTest() {
+		results = append(results, core.UntrackedForTest(job()))
 	}
 	return results
 }
@@ -405,18 +428,27 @@ var sequenceMsgType = reflect.TypeOf(tea.Sequence(
 	func() tea.Msg { return nil },
 )())
 
-// pumpCore models only the core-result feedback loop of the runtime: it
-// runs cmd, then every Cmd it produces, serially in FIFO order, expanding
-// tea.Batch and handing each coreResultMsg back through Update, whose Cmd
-// joins the queue, so a core job that follows another (a start's
-// initial-prompt send) lands too. Every other message is dropped, and a
-// tea.Sequence is not expanded: meeting one fails the test, since the
-// order it promises is not modelled.
+// pumpCore models the runtime's job loop: it runs cmd, then every Cmd it
+// produces, serially in FIFO order, expanding tea.Batch and dropping every
+// other message. Before each, it runs every job the model kept and
+// delivers its result (deliver), whose Cmd joins the queue, so a job that
+// follows another (a start's initial-prompt send) lands too. A
+// tea.Sequence fails the test, since the order it promises is not
+// modelled.
 func pumpCore(t *testing.T, m *home, cmd tea.Cmd) {
 	t.Helper()
 	queue := []tea.Cmd{cmd}
-	for steps := 0; len(queue) > 0; steps++ {
+	for steps := 0; ; steps++ {
 		require.Less(t, steps, 100, "core pump did not settle")
+		if jobs := loopOf(m).JobsForTest(); len(jobs) > 0 {
+			for _, job := range jobs {
+				queue = append(queue, deliver(t, m, job()))
+			}
+			continue
+		}
+		if len(queue) == 0 {
+			return
+		}
 		c := queue[0]
 		queue = queue[1:]
 		if c == nil {
@@ -426,12 +458,8 @@ func pumpCore(t *testing.T, m *home, cmd tea.Cmd) {
 		if reflect.TypeOf(msg) == sequenceMsgType {
 			t.Fatalf("pumpCore met a tea.Sequence, whose ordering it does not model")
 		}
-		switch msg := msg.(type) {
-		case tea.BatchMsg:
-			queue = append(queue, msg...)
-		case coreResultMsg:
-			_, next := m.Update(msg)
-			queue = append(queue, next)
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			queue = append(queue, batch...)
 		}
 	}
 }

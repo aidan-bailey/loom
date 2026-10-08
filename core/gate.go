@@ -73,7 +73,7 @@ var gateIntervals = [numGateKinds]time.Duration{
 //     forget to.
 //
 // Breaking either latches the job off for the rest of the session. The
-// zero value is a gate that has never dispatched. Update-goroutine only.
+// zero value is a gate that has never dispatched. Loop-goroutine only.
 type pollGate struct {
 	last     time.Time
 	inFlight bool

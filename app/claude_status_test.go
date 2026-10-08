@@ -15,12 +15,14 @@ import (
 // deliverRoster lands a roster answer the way a finished query does,
 // stamped now.
 func deliverRoster(m *home, entries map[string]session.RosterEntry) {
-	m.Update(coreResultMsg{msg: core.RosterResultForTest(entries, nil, time.Now())})
+	loopOf(m).DeliverForTest(core.RosterResultForTest(entries, nil, time.Now()))
+	m.Update(coreWakeMsg{})
 }
 
 // failRoster lands a failed roster query.
 func failRoster(m *home) {
-	m.Update(coreResultMsg{msg: core.RosterResultForTest(nil, errAssertRoster, time.Now())})
+	loopOf(m).DeliverForTest(core.RosterResultForTest(nil, errAssertRoster, time.Now()))
+	m.Update(coreWakeMsg{})
 }
 
 // applyClaudeStatus moves inst to the status its hooks or the roster last

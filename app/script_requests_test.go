@@ -54,25 +54,25 @@ func runCmds(t *testing.T, cmd tea.Cmd) []tea.Msg {
 	return out
 }
 
-// coreResults runs cmd (runCmds) and returns the model's job results among
-// its messages, undelivered.
-func coreResults(t *testing.T, cmd tea.Cmd) []tea.Msg {
+// coreResults runs cmd (runCmds), then every job the model kept, and
+// returns their results, undelivered and still tracked.
+func coreResults(t *testing.T, m *home, cmd tea.Cmd) []any {
 	t.Helper()
-	var out []tea.Msg
-	for _, msg := range runCmds(t, cmd) {
-		if _, ok := msg.(coreResultMsg); ok {
-			out = append(out, msg)
-		}
+	runCmds(t, cmd)
+	var out []any
+	for _, job := range loopOf(m).JobsForTest() {
+		out = append(out, job())
 	}
 	return out
 }
 
-// pumpRequests feeds cmd's script and model messages back through Update
-// until none is left: a script's dispatch and resumes (scriptDoneMsg,
-// scriptResumeMsg) and the model's job results (coreResultMsg), so a Lua
-// call that waits on the model runs to its end. It returns the
-// scriptDoneMsgs it delivered, in order. The error bar's hide timer waits
-// on m.ctx, which it cancels for its run, so the timer returns at once.
+// pumpRequests feeds cmd's script messages back through Update, and
+// delivers every job the model kept (deliver), until none is left: a
+// script's dispatch and resumes (scriptDoneMsg, scriptResumeMsg) and the
+// model's job results, so a Lua call that waits on the model runs to its
+// end. It returns the scriptDoneMsgs it delivered, in order. The error
+// bar's hide timer waits on m.ctx, which it cancels for its run, so the
+// timer returns at once.
 func pumpRequests(t *testing.T, m *home, cmd tea.Cmd) []scriptDoneMsg {
 	t.Helper()
 	prev := m.ctx
@@ -80,8 +80,17 @@ func pumpRequests(t *testing.T, m *home, cmd tea.Cmd) []scriptDoneMsg {
 	defer func() { m.ctx = prev }()
 	var done []scriptDoneMsg
 	queue := []tea.Cmd{cmd}
-	for steps := 0; len(queue) > 0; steps++ {
+	for steps := 0; ; steps++ {
 		require.Less(t, steps, 200, "request pump did not settle")
+		if jobs := loopOf(m).JobsForTest(); len(jobs) > 0 {
+			for _, job := range jobs {
+				queue = append(queue, deliver(t, m, job()))
+			}
+			continue
+		}
+		if len(queue) == 0 {
+			return done
+		}
 		c := queue[0]
 		queue = queue[1:]
 		if c == nil {
@@ -98,12 +107,11 @@ func pumpRequests(t *testing.T, m *home, cmd tea.Cmd) []scriptDoneMsg {
 			done = append(done, msg)
 			_, next := m.Update(msg)
 			queue = append(queue, next)
-		case scriptResumeMsg, coreResultMsg:
+		case scriptResumeMsg:
 			_, next := m.Update(msg)
 			queue = append(queue, next)
 		}
 	}
-	return done
 }
 
 // withScript loads src as m's only user script.
@@ -252,9 +260,9 @@ func TestScriptResume_RecoversARecoverableSession(t *testing.T) {
 	_, next := m.Update(first)
 
 	assert.Equal(t, session.Loading, placeholder.GetStatus(), "Recover moved it to Loading")
-	results := coreResults(t, next)
+	results := coreResults(t, m, next)
 	require.Len(t, results, 1)
-	assert.IsType(t, core.RecoverResult{}, core.UntrackedForTest(results[0].(coreResultMsg).msg),
+	assert.IsType(t, core.RecoverResult{}, core.UntrackedForTest(results[0]),
 		"the request was a Recover, not a Resume")
 	require.Len(t, m.pending, 1, "the script waits on the Recover's Reply")
 }
@@ -335,9 +343,9 @@ func TestScriptKill_AJobFailureIsShownAndRaised(t *testing.T) {
 	first, ok := cmd().(scriptDoneMsg)
 	require.True(t, ok)
 	_, next := m.Update(first)
-	results := coreResults(t, next)
+	results := coreResults(t, m, next)
 	require.Len(t, results, 1)
-	_, resume := m.Update(results[0])
+	resume := deliver(t, m, results[0])
 
 	assert.Contains(t, m.errBox.String(), "cannot get git worktree", "the model's notice")
 	assert.NotContains(t, m.errBox.String(), "kill:")

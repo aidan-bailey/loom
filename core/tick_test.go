@@ -68,7 +68,7 @@ func tickedInst(t *testing.T, m *Model, title string, gone *bool) *session.Insta
 // filled and hands it to one probe of the active instances. Delivered,
 // the probe's result pauses the session it found gone, keeps the live
 // ones, refreshes the diff of the one with output only, and ends with
-// HealthChecked, the event that re-arms the TUI's tick (app's
+// HealthChecked, the event that says the loop re-armed its tick (app's
 // TestHealthTick_ProbeRoundTrip applies it).
 func TestTick_TheProbeRoundTrip(t *testing.T) {
 	m := NewForTest(Options{})

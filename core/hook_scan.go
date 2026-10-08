@@ -60,7 +60,7 @@ func hookScanJob(active []*session.Instance) Job {
 // maybeHookScan dispatches a scan when gateHookScan is due, following
 // maybeRosterQuery: none in flight, and at least hookScanInterval since
 // the last dispatch. Reports false when not due or nothing wants a scan.
-// Call on the Update goroutine.
+// Call on the loop goroutine.
 func (m *Model) maybeHookScan(active []*session.Instance) bool {
 	return m.dispatchGated(gateHookScan, time.Now(), func() Job {
 		return hookScanJob(active)

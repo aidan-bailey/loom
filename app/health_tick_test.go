@@ -3,7 +3,6 @@ package app
 import (
 	"errors"
 	"os/exec"
-	"reflect"
 	"testing"
 	"time"
 
@@ -20,12 +19,13 @@ import (
 )
 
 // TestHealthTick_ProbeRoundTrip drives the model's half of the health tick
-// through the TUI: the probe core.Model.Tick queues runs as a Cmd, its
-// result lands through Update's handler and pauses the session it found
-// gone, and HealthChecked, the event every probe ends with, re-arms the
-// tick. tickUpdateMetadataCmd sleeps before it ticks (3s; 500ms on the
-// snapshot path), so the re-arm is compared with it, never run. core's
-// TestTick_TheProbeRoundTrip covers the dirty set and the diff refresh.
+// as its loop runs it: the probe the tick queues runs off the loop, its
+// result lands on the loop and pauses the session it found gone, and
+// HealthChecked, the event every probe ends with, re-arms no TUI tick (the
+// loop re-arms its own: core's TestLoop_TickRearmsOnlyAfterItsProbeLands;
+// the TUI's re-arms itself: TestTUITick_RearmsItselfAndTicksNoModel).
+// core's TestTick_TheProbeRoundTrip covers the dirty set and the diff
+// refresh.
 func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 	m := newTestHome(t)
 	inst, err := session.NewInstance(session.InstanceOptions{Title: "probed", Path: t.TempDir(), Program: "aider"})
@@ -53,29 +53,28 @@ func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 
 	gone = true
 	m.syncViews()
-	m.core.Tick(m.list.GetSelectedInstance().ID)
-	out := testModel(m).Drain()
-	require.Len(t, out.Jobs, 1, "the probe is the tick's only job")
-	msg, ok := coreCmd(out.Jobs[0])().(coreResultMsg)
-	require.True(t, ok)
-	require.IsType(t, core.HealthResult{}, msg.msg)
+	m.publishSelection()
+	loopOf(m).TickForTest()
+	jobs := loopOf(m).JobsForTest()
+	require.Len(t, jobs, 1, "the probe is the tick's only job")
+	result := jobs[0]()
+	require.NotNil(t, result)
+	require.IsType(t, core.HealthResult{}, result)
 
-	// Update's handler delivers the result; the events it produced are then
-	// applied one by one, as drainCore does, to pick out the re-arm.
-	m.update(msg)
+	// The loop delivers the result; the events it produced are then
+	// applied one by one, as drainCore does, to pick out HealthChecked's.
+	loopOf(m).DeliverForTest(result)
 	assert.Equal(t, session.Paused, inst.GetStatus(), "the probe found the session gone")
 	var rearm tea.Cmd
 	checked := false
-	for _, ev := range testModel(m).Drain().Events {
+	for _, ev := range m.core.Sync() {
 		cmd := m.applyCoreEvent(ev)
 		if _, ok := ev.(core.HealthChecked); ok {
 			rearm, checked = cmd, true
 		}
 	}
 	require.True(t, checked, "every probe ends with HealthChecked")
-	require.NotNil(t, rearm, "HealthChecked re-arms the tick")
-	assert.Equal(t, reflect.ValueOf(tickUpdateMetadataCmd).Pointer(), reflect.ValueOf(rearm).Pointer(),
-		"the re-arm is the tick's own Cmd")
+	assert.Nil(t, rearm, "HealthChecked re-arms no TUI tick: the model's loop re-arms its own, and the TUI's re-arms itself")
 }
 
 // snapshotHome returns a home holding one started instance running

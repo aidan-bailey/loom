@@ -43,6 +43,13 @@ const scriptShutdownTimeout = 1500 * time.Millisecond
 //     when another loom asks to take over (see internal/takeover). Nil
 //     when it couldn't be taken: loom then runs unlocked and serves no
 //     takeovers.
+//
+// startModel puts the model on its own loop: core.Start, which runs its
+// jobs on goroutines of their own and ticks on its own timer. App's tests
+// replace it with core.StartForTest, whose loop keeps every job for the
+// test to run.
+var startModel = core.Start
+
 func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, pendingDir string, noScripts bool, uiLock *takeover.Lock) error {
 	// Activate the configured theme before any component renders.
 	// Package-init styles are theme-hooked (ui.RegisterThemeHook), so
@@ -58,6 +65,9 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 	if err != nil {
 		return err
 	}
+	// The model's loop stops when Run returns, after the program quit; a
+	// result landing later is dropped, as a Cmd's was.
+	defer h.stopCore()
 	// Shutdown hook: drain any suspended script coroutines then close
 	// the Lua state. The engine's "every coroutine gets resumed" contract
 	// would otherwise be violated on process exit — including on the
@@ -72,6 +82,9 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 		}
 	}()
 	p := tea.NewProgram(h) // alt-screen + mouse mode are set on the tea.View (see View())
+	// The model's wakes (a job's result landed, its tick fired) reach the
+	// program as coreWakeMsg; forwardWakes ends when the loop stops.
+	go forwardWakes(h.wakes, p.Send)
 	// Pane events: the output pumps push dirty/quiet/bell/dead into the
 	// program from their own goroutines; Send is goroutine-safe by design.
 	// Torn down before Run returns so a late timer can't Send into a dead
@@ -114,11 +127,15 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	if err != nil {
 		return nil, err
 	}
+	// From here on only the loop touches the model.
+	loop := startModel(model)
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
-	classic, _ := model.Classic()
+	classic, _ := loop.Classic()
 	h := &home{
 		ctx:        ctx,
-		core:       model,
+		core:       loop,
+		wakes:      loop.Wakes(),
+		stopCore:   loop.Stop,
 		fullScreen: &foregroundAttach{},
 		workspaceSlot: &workspaceSlot{
 			id:        classic.ID,
@@ -174,6 +191,7 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	var startupRecovery core.RecoverySummary
 	if !willRestoreSlots {
 		if err := h.core.LoadClassic(true); err != nil {
+			h.stopCore()
 			return nil, fmt.Errorf("load instances: %w", err)
 		}
 		// The load filled the workspace: the store reads it before the

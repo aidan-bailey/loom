@@ -169,7 +169,7 @@ func (m *Model) accountDirs() map[string]string {
 
 // publishAccounts hands the registry to session (launch env) and the TUI
 // (badges, through AccountsChanged). Call after every registry change.
-// Update goroutine only.
+// Loop goroutine only.
 func (m *Model) publishAccounts() {
 	var loadErr error
 	if m.accounts != nil {

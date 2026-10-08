@@ -32,6 +32,10 @@ func runTests(m *testing.M) int {
 	_ = log.Initialize("", false)
 	defer log.Close()
 
+	// Every home's model runs on a loop that keeps its jobs for the test
+	// (newHome included): core.StartForTest.
+	startModel = core.StartForTest
+
 	// Belt and suspenders: LOOM_TMUX_SOCKET is the only variable
 	// tmux.Command consults (an explicit -L outranks $TMUX), but any test
 	// that clears it — deliberately or by accident — would otherwise fall
@@ -550,12 +554,11 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 	}))
 
 	// Simulate a start's result (no prompt, no error)
-	msg := coreResultMsg{msg: core.StartResult{
+	deliver(t, h, core.StartResult{
 		Instance: instance,
 		Err:      nil,
-	}}
-	model, _ := h.Update(msg)
-	homeModel := model.(*home)
+	})
+	homeModel := h
 
 	assert.Equal(t, stateInlineAttach, homeModel.state, "should auto-focus into inline attach")
 	assert.Equal(t, ui.FocusAgent, homeModel.splitPane.GetFocusedPane(), "should focus agent pane")
@@ -619,13 +622,11 @@ func TestKillSetsStatusToDeletingImmediately(t *testing.T) {
 		menu:  ui.NewMenu(),
 	})
 
-	// Set up a task like the kill handler does
+	// Set up a task like the kill handler does: its Sync step is the
+	// request, whose job the model runs.
 	h.confirmTask("[!] Kill session 'test-delete'?", overlay.ConfirmationTask{
 		Sync: func() {
 			_ = instance.TransitionTo(session.Deleting)
-		},
-		Async: func() tea.Msg {
-			return coreResultMsg{msg: core.KillResult{Instance: instance, Title: "test-delete"}}
 		},
 	})
 

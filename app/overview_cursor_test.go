@@ -51,7 +51,7 @@ func fleetHome(t *testing.T) *home {
 		overview: ui.NewOverview(), // fleetOrder() reads m.overview.IsCollapsed
 		tabBar:   ui.NewWorkspaceTabBar(),
 		menu:     ui.NewMenu(),
-		core:     core.NewForTest(core.Options{Registry: &config.WorkspaceRegistry{}}),
+		core:     testLoop(t, core.NewForTest(core.Options{Registry: &config.WorkspaceRegistry{}})),
 	}
 	focusSlots(m, 0, focus, peer)
 	m.seedOverviewCursor()

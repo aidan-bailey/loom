@@ -11,9 +11,9 @@ import (
 	"github.com/aidan-bailey/loom/session/github"
 )
 
-// Job is work the model hands its caller to run off the model's
+// Job is work the model queues for its loop to run off the model's
 // goroutine. It reads no model state and returns one message (nil for
-// none), which the caller hands back to Deliver.
+// none), which the loop (Loop) delivers back to Deliver.
 type Job func() any
 
 // Out is what the model produced since the last Drain: events for the
@@ -42,7 +42,7 @@ type Options struct {
 }
 
 // Model is the session model (see the package doc). Methods must be
-// called on one goroutine: in stage 1B, the TUI's Update goroutine.
+// called on one goroutine: its loop's (Loop), or a core test's.
 type Model struct {
 	registry *config.WorkspaceRegistry
 	program  string
@@ -76,29 +76,29 @@ type Model struct {
 	// query, subagent scan, GitHub poll, account usage probe, accounts
 	// refresh), one pollGate per gateKind (see gate.go; resolve with
 	// m.gate). The zero value is ready to use: intervals come from
-	// gateIntervals. Update-goroutine only.
+	// gateIntervals. Loop-goroutine only.
 	gates [numGateKinds]pollGate
 
 	// claudeTmpPending holds the Claude temp-dir sweeps workspace loads
 	// queued (requestClaudeTmpSweep), keyed by config dir, until the
-	// health tick dispatches them. Update-goroutine only.
+	// health tick dispatches them. Loop-goroutine only.
 	claudeTmpPending map[string]claudeTmpJob
 
 	// dirtySessions records tmux session names that emitted output since the
 	// last health tick (event mode only). Consumed by takeDirty to gate
-	// diff-stat refreshes. Update-goroutine only.
+	// diff-stat refreshes. Loop-goroutine only.
 	dirtySessions map[string]bool
 
 	// roster is Claude's own view of its live sessions, keyed by working
 	// directory, refreshed once per health tick (see rosterQueryJob). It is
 	// authoritative where the pane scraper is inferential, so status events
 	// consult it first and fall back when it has no entry for a session.
-	// Update-goroutine only.
+	// Loop-goroutine only.
 	roster map[string]session.RosterEntry
 	// rosterByAccount is each extra account's roster, keyed by account then
 	// working directory: `claude agents --json` lists only its own config
 	// dir's sessions, so each account is queried as itself. The default
-	// account's stays in roster. Update-goroutine only.
+	// account's stays in roster. Loop-goroutine only.
 	rosterByAccount map[string]map[string]session.RosterEntry
 
 	// ghAvailable caches gh's install/auth check, resolved by the first
@@ -118,7 +118,7 @@ type Model struct {
 	ghBases map[string]string
 
 	// accounts is the Claude account registry (account/), loaded from the
-	// global config dir at startup. Update-goroutine only: launches read the
+	// global config dir at startup. Loop-goroutine only: launches read the
 	// published dir map (session.SetAccountDirs) instead.
 	accounts *account.Registry
 	// accountAuth is each extra account's remote-control auth, with the
