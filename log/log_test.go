@@ -199,7 +199,7 @@ func TestInitialize_ReturnsErrorWhenLogFileUnopenable(t *testing.T) {
 // closed fd. io.Discard is the safe sink.
 func TestInitialize_DaemonFallbackUsesDiscard(t *testing.T) {
 	dir := t.TempDir()
-	blocker := filepath.Join(dir, logFileName)
+	blocker := filepath.Join(dir, serveLogFileName)
 	require.NoError(t, os.Mkdir(blocker, 0755))
 
 	err := Initialize(dir, true)
@@ -516,4 +516,16 @@ func TestEvery_ShouldLog_ConcurrentSafe(t *testing.T) {
 	// through if the goroutines straddle the first timer fire.
 	assert.GreaterOrEqual(t, allowed, int64(1), "at least one concurrent call must win the rate limit")
 	assert.Less(t, allowed, int64(goroutines), "rate limiter must drop most concurrent calls within the window")
+}
+
+// TestInitialize_TheDaemonWritesServeLog: `loom serve` (daemon stage 3B)
+// logs to serve.log beside the TUI's loom.log, so the two never interleave.
+func TestInitialize_TheDaemonWritesServeLog(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, Initialize(dir, true))
+	t.Cleanup(Close)
+	assert.Equal(t, filepath.Join(dir, serveLogFileName), LogFilePath())
+	Structured.Info("from the daemon")
+	assert.FileExists(t, filepath.Join(dir, serveLogFileName))
+	assert.NoFileExists(t, filepath.Join(dir, logFileName))
 }

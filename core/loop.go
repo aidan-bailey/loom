@@ -49,6 +49,11 @@ type Loop struct {
 	fatal *LoopPanic
 	// began is set by the first Begin, which arms the tick.
 	began bool
+	// pending counts the foreground jobs started and not yet delivered: a
+	// job's result, and the jobs its delivery starts, count until they land
+	// (Quiesce waits for none). quiet is set by Quiesce: no tick fires.
+	pending int
+	quiet   bool
 	// armed counts the ticks armed (armTick), for tests.
 	armed int
 }
@@ -60,11 +65,19 @@ type call struct {
 	done chan *LoopPanic
 }
 
-// jobDone is a job's result, posted by the goroutine that ran it.
-type jobDone struct{ result any }
+// jobDone is a job's result, posted by the goroutine that ran it. fg marks
+// a foreground job, which posts even a nil result so the loop can count it
+// landed (pending).
+type jobDone struct {
+	result any
+	fg     bool
+}
 
 // jobPanicked is a job's panic, posted by the goroutine that ran it.
-type jobPanicked struct{ p *LoopPanic }
+type jobPanicked struct {
+	p  *LoopPanic
+	fg bool
+}
 
 // tickDue is the health tick's timer firing.
 type tickDue struct{}
@@ -158,11 +171,19 @@ func (l *Loop) step(f func()) (p *LoopPanic) {
 func (l *Loop) handle(msg any) {
 	switch msg := msg.(type) {
 	case jobDone:
+		if msg.fg {
+			defer func() { l.pending-- }()
+		}
 		l.deliverResult(msg.result)
 	case jobPanicked:
+		if msg.fg {
+			l.pending--
+		}
 		panic(msg.p)
 	case tickDue:
-		l.m.Tick()
+		if !l.quiet {
+			l.m.Tick()
+		}
 	}
 }
 
@@ -178,7 +199,7 @@ func (l *Loop) deliverResult(result any) {
 // armTick fires the next tick one interval from now; a loop without an
 // interval never ticks on its own.
 func (l *Loop) armTick() {
-	if l.interval <= 0 {
+	if l.interval <= 0 || l.quiet {
 		return
 	}
 	l.armed++
@@ -188,27 +209,33 @@ func (l *Loop) armTick() {
 // startJobs starts every job the model queued: each on a goroutine of its
 // own, or kept for the test (hold).
 func (l *Loop) startJobs() {
-	for _, j := range l.m.takeJobs() {
-		if l.hold {
-			l.heldMu.Lock()
-			l.held = append(l.held, j)
-			l.heldMu.Unlock()
-			continue
-		}
-		go l.runJob(j)
+	fg, bg := l.m.takeJobsSplit()
+	if l.hold {
+		l.heldMu.Lock()
+		l.held = append(l.held, append(fg, bg...)...)
+		l.heldMu.Unlock()
+		return
+	}
+	for _, j := range fg {
+		l.pending++
+		go l.runJob(j, true)
+	}
+	for _, j := range bg {
+		go l.runJob(j, false)
 	}
 }
 
-// runJob runs j off the loop and posts its result (none for nil), or its
-// panic, to the loop.
-func (l *Loop) runJob(j Job) {
+// runJob runs j off the loop and posts its result, or its panic, to the
+// loop. A background job's nil result is not posted; a foreground job's is,
+// so the loop counts it landed.
+func (l *Loop) runJob(j Job, fg bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			l.post(jobPanicked{p: newLoopPanic(r)})
+			l.post(jobPanicked{p: newLoopPanic(r), fg: fg})
 		}
 	}()
-	if result := j(); result != nil {
-		l.post(jobDone{result: result})
+	if result := j(); result != nil || fg {
+		l.post(jobDone{result: result, fg: fg})
 	}
 }
 
@@ -246,6 +273,28 @@ func (l *Loop) Stop() {
 		<-l.exited
 		close(l.wake)
 	})
+}
+
+// Quiesce readies the loop to stop: no tick fires from now on, and it
+// waits until every foreground job has landed (the lifecycle operations a
+// request started, and the jobs their results start), or timeout passes.
+// Background work (polls, probes, scans) is not waited for: its result is
+// dropped at Stop. It reports whether everything landed. A server stopping
+// calls it after it has stopped taking requests, then saves (SaveForQuit),
+// then Stops, so a pause or a kill is never cut off mid-step.
+func (l *Loop) Quiesce(timeout time.Duration) bool {
+	l.do(func(*Model) { l.quiet = true })
+	deadline := time.Now().Add(timeout)
+	for {
+		if get(l, func(*Model) int { return l.pending }) == 0 {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			log.For("core").Warn("loop.quiesce_timed_out", "pending", get(l, func(*Model) int { return l.pending }))
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // Begin starts the model's first background jobs (Model.Begin) and, the

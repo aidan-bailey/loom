@@ -175,7 +175,11 @@ type Model struct {
 	// view unchanged (the same probe failing again).
 	usageGen, usagePublishedGen uint64
 
-	out Out
+	// out holds the events and the jobs queued since the last take; bgJobs
+	// the background jobs (spawnBackground), kept apart so a loop stopping
+	// can wait for the others alone (takeJobsSplit).
+	out    Out
+	bgJobs []Job
 }
 
 // New builds the model, serving no workspace yet: Boot loads them, before
@@ -271,7 +275,7 @@ func (m *Model) spawn(j Job) {
 // request even when one's delivery queues it.
 func (m *Model) spawnBackground(j Job) {
 	if j != nil {
-		m.out.Jobs = append(m.out.Jobs, j)
+		m.bgJobs = append(m.bgJobs, j)
 	}
 }
 
@@ -310,9 +314,18 @@ func (m *Model) SetSelection(ids []InstanceID) { m.selected = slices.Clone(ids) 
 // takeJobs returns the jobs queued since the last take, and forgets them.
 // The loop starts them after every step.
 func (m *Model) takeJobs() []Job {
-	jobs := m.out.Jobs
-	m.out.Jobs = nil
-	return jobs
+	fg, bg := m.takeJobsSplit()
+	return append(fg, bg...)
+}
+
+// takeJobsSplit takes the jobs queued, the ones serving a request or a
+// change of the model's own (spawn) apart from its background work
+// (spawnBackground): a loop stopping waits for the first (Loop.Quiesce) and
+// drops the second.
+func (m *Model) takeJobsSplit() (fg, bg []Job) {
+	fg, bg = m.out.Jobs, m.bgJobs
+	m.out.Jobs, m.bgJobs = nil, nil
+	return fg, bg
 }
 
 // notifyErr queues err for the error bar.
@@ -328,7 +341,8 @@ func (m *Model) notifyInfo(s string) { m.emit(Notice{Info: s}) }
 // Drain returns everything produced since the last Drain, and forgets it.
 func (m *Model) Drain() Out {
 	out := m.out
-	m.out = Out{}
+	out.Jobs = append(out.Jobs, m.bgJobs...)
+	m.out, m.bgJobs = Out{}, nil
 	return out
 }
 

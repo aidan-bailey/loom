@@ -92,7 +92,13 @@ var (
 	levelVar = new(slog.LevelVar)
 )
 
-const logFileName = "loom.log"
+// logFileName is the TUI's log; serveLogFileName is the daemon's (`loom
+// serve`, daemon stage 3B), which Initialize writes when its daemon flag is
+// set.
+const (
+	logFileName      = "loom.log"
+	serveLogFileName = "serve.log"
+)
 
 // maxLogSize is the rotation threshold in bytes. Declared as var (not
 // const) so tests can shrink it to trigger rotation without writing
@@ -110,6 +116,9 @@ var (
 // logDir specifies the directory for the log file. If empty, os.TempDir() is used.
 // When non-empty, the directory is created if it does not exist.
 //
+// daemon is set for `loom serve`: it writes serve.log instead of loom.log,
+// tags its records, and has no terminal to fall back to.
+//
 // Returns a non-nil error when the log file could not be opened. Callers
 // may still use the package-level loggers after an error — Initialize
 // falls back to stderr (or io.Discard when daemon is true, for a
@@ -125,7 +134,11 @@ func Initialize(logDir string, daemon bool) error {
 		}
 	}
 
-	logFilePath = filepath.Join(logDir, logFileName)
+	name := logFileName
+	if daemon {
+		name = serveLogFileName
+	}
+	logFilePath = filepath.Join(logDir, name)
 	rotateIfNeeded(logFilePath)
 
 	prefix := ""

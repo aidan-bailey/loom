@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
@@ -20,6 +21,12 @@ type Backend interface {
 	SetSelection(ids []core.InstanceID)
 	Wakes() <-chan struct{}
 }
+
+// helloTimeout bounds how long a connection may take to say hello.
+var helloTimeout = 10 * time.Second
+
+// maxBacklog bounds the notices kept for the next connection.
+const maxBacklog = 50
 
 // Server serves a Backend to any number of connections. After every call
 // and every wake it publishes (Backend.Sync) to every connection, but an
@@ -42,6 +49,13 @@ type Server struct {
 	open   map[uint64]io.ReadWriteCloser
 	nextNC uint64
 	fatal  *core.WireError
+	// fatalCh is closed when fatal is set, so whatever runs the server (a
+	// daemon) can stop: the model is as good as gone.
+	fatalCh chan struct{}
+	// backlog holds the notices that reached no client: raised while none
+	// was connected, or the Notice of a request whose client has gone. The
+	// next connection is sent them after its snapshot (keep).
+	backlog []core.Notice
 
 	// selMu orders the selection: each connection's selected row (its
 	// SetSelected), merged for the model (setSelected).
@@ -56,7 +70,7 @@ type Server struct {
 // NewServer serves b; it starts publishing on b's wakes.
 func NewServer(b Backend) *Server {
 	s := &Server{b: b, conns: map[*serverConn]bool{}, open: map[uint64]io.ReadWriteCloser{},
-		selected: map[*serverConn]core.InstanceID{}, done: make(chan struct{})}
+		selected: map[*serverConn]core.InstanceID{}, fatalCh: make(chan struct{}), done: make(chan struct{})}
 	s.wg.Add(1)
 	go s.wakeLoop()
 	return s
@@ -129,9 +143,18 @@ func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 	c.n = n
 	defer c.close()
 	dec := json.NewDecoder(nc)
+	// A peer that never says hello must not hold a server goroutine (and
+	// its connection) for good.
+	deadline, _ := nc.(interface{ SetReadDeadline(time.Time) error })
+	if deadline != nil {
+		_ = deadline.SetReadDeadline(time.Now().Add(helloTimeout))
+	}
 	var hello Frame
 	if err := dec.Decode(&hello); err != nil {
 		return
+	}
+	if deadline != nil {
+		_ = deadline.SetReadDeadline(time.Time{})
 	}
 	if hello.Hello == nil || hello.Hello.Protocol != Protocol {
 		c.sendFrame(Frame{Error: mismatchError()})
@@ -172,6 +195,8 @@ func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 	}
 	if s.fatal != nil {
 		c.sendFrame(Frame{Fatal: s.fatal})
+	} else {
+		s.flushBacklogLocked(c)
 	}
 	s.conns[c] = true
 	s.mu.Unlock()
@@ -257,10 +282,13 @@ func (s *Server) publishLocked() {
 }
 
 // sendLocked sends events to every connection, an event naming a request
-// as forConn says; one that will not encode is fatal. s.mu is held.
+// as forConn says; one that will not encode is fatal. A Notice that reaches
+// no connection is kept for the next (keepLocked). s.mu is held.
 func (s *Server) sendLocked(events []core.Event) {
 	for _, ev := range events {
+		notice, isNotice := ev.(core.Notice)
 		if routed(ev) {
+			sent := false
 			for c := range s.conns {
 				e, ok := forConn(ev, c.n)
 				if !ok {
@@ -272,7 +300,17 @@ func (s *Server) sendLocked(events []core.Event) {
 					return
 				}
 				c.enqueue(f, "")
+				sent = true
 			}
+			if isNotice && !sent {
+				// Its client has gone: whoever comes next is told.
+				notice.Req = 0
+				s.keepLocked(notice)
+			}
+			continue
+		}
+		if isNotice && len(s.conns) == 0 {
+			s.keepLocked(notice)
 			continue
 		}
 		f, err := encodeEvent(ev)
@@ -284,6 +322,58 @@ func (s *Server) sendLocked(events []core.Event) {
 			c.enqueue(f, coalesceKey(ev))
 		}
 	}
+}
+
+// Keep holds notices for the next connection, as if raised while none was
+// connected: a daemon's boot raises them before any client can be
+// (core.Model.Boot).
+func (s *Server) Keep(notices ...core.Notice) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, n := range notices {
+		s.keepLocked(n)
+	}
+}
+
+// keepLocked adds n to the backlog, which holds the newest maxBacklog
+// notices, and logs it, so even a notice no client ever reads is on
+// record. s.mu is held.
+func (s *Server) keepLocked(n core.Notice) {
+	log.For("rpc").Info("server.notice_kept", "info", n.Info, "err", n.Err)
+	s.backlog = append(s.backlog, n)
+	if over := len(s.backlog) - maxBacklog; over > 0 {
+		log.For("rpc").Warn("server.notice_backlog_full", "dropped", over)
+		s.backlog = s.backlog[over:]
+	}
+}
+
+// flushBacklogLocked sends c the notices no connection was there for, and
+// forgets them. s.mu is held.
+func (s *Server) flushBacklogLocked(c *serverConn) {
+	for _, n := range s.backlog {
+		f, err := encodeEvent(n)
+		if err != nil {
+			s.setFatalLocked(encodeFatal(n, err))
+			return
+		}
+		c.enqueue(f, "")
+	}
+	s.backlog = nil
+}
+
+// Fatal is closed once the model is as good as gone (it panicked, or an
+// event would not encode): whatever runs the server should stop.
+// FatalError says why.
+func (s *Server) Fatal() <-chan struct{} { return s.fatalCh }
+
+// FatalError is the error that made the server fatal, nil while it is not.
+func (s *Server) FatalError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fatal == nil {
+		return nil
+	}
+	return s.fatal
 }
 
 // sync is the backend's Sync, or the panic it raised.
@@ -303,6 +393,7 @@ func (s *Server) setFatalLocked(p *core.WireError) {
 		return
 	}
 	s.fatal = p
+	close(s.fatalCh)
 	for c := range s.conns {
 		c.sendFrame(Frame{Fatal: p})
 	}

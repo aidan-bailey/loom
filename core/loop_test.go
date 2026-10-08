@@ -294,3 +294,62 @@ func TestLoopForwardsEachMethodToItsNamesake(t *testing.T) {
 	assert.Equal(t, reflect.TypeOf((*Core)(nil)).Elem().NumMethod(), n,
 		"every Core method is a forwarder in loop_core.go")
 }
+
+// TestLoop_QuiesceWaitsForForegroundJobs: a loop stopping must not cut a
+// lifecycle operation off mid-step (a pause between its stash and its
+// worktree removal, say). Quiesce waits for every foreground job to land,
+// the jobs their results start included; background work does not hold it.
+func TestLoop_QuiesceWaitsForForegroundJobs(t *testing.T) {
+	t.Run("a foreground job, and the job its result starts", func(t *testing.T) {
+		l := startLoop(NewForTest(Options{}), false, 0)
+		t.Cleanup(l.Stop)
+		release := make(chan struct{})
+		var landed []any
+		l.do(func(m *Model) {
+			l.deliver = func(r any) {
+				landed = append(landed, r)
+				if r == "first" {
+					m.spawn(func() any { <-release; return "second" })
+				}
+			}
+			m.spawn(func() any { <-release; return "first" })
+		})
+		done := make(chan bool)
+		go func() { done <- l.Quiesce(5 * time.Second) }()
+		select {
+		case <-done:
+			t.Fatal("Quiesce returned with a foreground job in flight")
+		case <-time.After(50 * time.Millisecond):
+		}
+		close(release)
+		require.True(t, <-done)
+		assert.Equal(t, []any{"first", "second"}, get(l, func(*Model) []any { return landed }))
+	})
+
+	t.Run("background work does not hold it", func(t *testing.T) {
+		l := startLoop(NewForTest(Options{}), false, 0)
+		t.Cleanup(l.Stop)
+		block := make(chan struct{})
+		t.Cleanup(func() { close(block) })
+		l.do(func(m *Model) { m.spawnBackground(func() any { <-block; return nil }) })
+		assert.True(t, l.Quiesce(time.Second))
+	})
+
+	t.Run("a job that never lands times out", func(t *testing.T) {
+		l := startLoop(NewForTest(Options{}), false, 0)
+		t.Cleanup(l.Stop)
+		block := make(chan struct{})
+		t.Cleanup(func() { close(block) })
+		l.do(func(m *Model) { m.spawn(func() any { <-block; return nil }) })
+		assert.False(t, l.Quiesce(50*time.Millisecond))
+	})
+
+	t.Run("no tick fires after it", func(t *testing.T) {
+		l := startLoop(NewForTest(Options{}), false, time.Millisecond)
+		t.Cleanup(l.Stop)
+		require.True(t, l.Quiesce(time.Second))
+		l.Begin()
+		time.Sleep(20 * time.Millisecond)
+		assert.Zero(t, get(l, func(*Model) int { return l.armed }), "Begin arms no tick on a quiet loop")
+	})
+}

@@ -103,6 +103,10 @@ type Hello struct {
 
 // build names the binary: its module version and VCS revision, as Go
 // stamps them.
+// Build names this binary: its module version, VCS revision and whether
+// the tree was modified. A daemon records it in its lock.
+func Build() string { return build() }
+
 func build() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {

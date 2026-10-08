@@ -1,0 +1,165 @@
+// Package daemon runs `loom serve`, the process that owns a global config
+// dir's sessions (daemon stage 3B), and finds it for its clients.
+//
+// One daemon serves one global dir. It holds an flock on <globalDir>/loom.lock
+// for its whole life (the OS releases it when the process exits, crash
+// included) and records in it who it is and where it listens (Record):
+// clients read the socket's path from there rather than computing it, since
+// their environment may differ from the daemon's. The lock lives in the
+// global dir, not beside the socket, so two processes whose environments
+// would put the socket in different places still exclude each other; and it
+// is the path the TUI's own takeover lock used, so a loom from before the
+// daemon and a daemon exclude each other too.
+package daemon
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/gofrs/flock"
+)
+
+const lockFile = "loom.lock"
+
+// ErrHeld is TryAcquire's answer while another process holds the lock.
+var ErrHeld = errors.New("another loom process holds the lock")
+
+// Record is what the lock file says about the process holding it. A daemon
+// fills Socket and Build; a loom TUI from before the daemon wrote only the
+// first three, in the same JSON, so a record with no Socket is such a TUI.
+type Record struct {
+	PID     int       `json:"pid"`
+	TTY     string    `json:"tty,omitempty"`
+	Started time.Time `json:"started"`
+	// Socket is the unix socket the daemon listens on.
+	Socket string `json:"socket,omitempty"`
+	// Build names the daemon's binary (rpc.Build).
+	Build string `json:"build,omitempty"`
+}
+
+// IsDaemon reports whether r is a daemon's record.
+func (r Record) IsDaemon() bool { return r.Socket != "" }
+
+// String describes r for a message: "pid 3713275 on /dev/pts/2, since 06:23".
+func (r Record) String() string { return r.describe(time.Now()) }
+
+func (r Record) describe(now time.Time) string {
+	s := fmt.Sprintf("pid %d", r.PID)
+	if r.TTY != "" {
+		s += " on " + r.TTY
+	}
+	if !r.Started.IsZero() {
+		layout := "Jan 2 15:04"
+		if y, m, d := r.Started.Date(); y == now.Year() && m == now.Month() && d == now.Day() {
+			layout = "15:04"
+		}
+		s += ", since " + r.Started.Format(layout)
+	}
+	return s
+}
+
+// self is this process's record, with no socket yet.
+func self(build string) Record {
+	return Record{PID: os.Getpid(), TTY: ownTTY(), Started: time.Now(), Build: build}
+}
+
+// ownTTY is the terminal on this process's stdin, "" when unknown (it is
+// read from /proc, so Linux only).
+func ownTTY() string {
+	tty, err := os.Readlink("/proc/self/fd/0")
+	if err != nil || !strings.HasPrefix(tty, "/dev/") || tty == os.DevNull {
+		return ""
+	}
+	return tty
+}
+
+// LockPath is the lock file of globalDir's daemon.
+func LockPath(globalDir string) string { return filepath.Join(globalDir, lockFile) }
+
+// Lock is a held lock.
+type Lock struct {
+	path string
+	fl   *flock.Flock
+}
+
+// TryAcquire takes globalDir's lock and records rec in it. While another
+// process holds it, it returns ErrHeld and that process's record (zero when
+// it can't be read).
+func TryAcquire(globalDir string, rec Record) (*Lock, Record, error) {
+	if err := os.MkdirAll(globalDir, 0o755); err != nil {
+		return nil, Record{}, err
+	}
+	path := LockPath(globalDir)
+	fl := flock.New(path)
+	ok, err := fl.TryLock()
+	if err != nil {
+		_ = fl.Close()
+		return nil, Record{}, fmt.Errorf("lock %s: %w", path, err)
+	}
+	if !ok {
+		_ = fl.Close()
+		return nil, readRecord(path), ErrHeld
+	}
+	l := &Lock{path: path, fl: fl}
+	if err := l.Write(rec); err != nil {
+		_ = fl.Close()
+		return nil, Record{}, err
+	}
+	return l, Record{}, nil
+}
+
+// Wait polls for globalDir's lock until it is free or timeout passes
+// (ErrHeld, with the holder's record).
+func Wait(globalDir string, rec Record, timeout time.Duration) (*Lock, Record, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		l, holder, err := TryAcquire(globalDir, rec)
+		if !errors.Is(err, ErrHeld) || !time.Now().Before(deadline) {
+			return l, holder, err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Write replaces the record the held lock carries.
+func (l *Lock) Write(rec Record) error {
+	data, err := json.Marshal(rec)
+	if err == nil {
+		err = os.WriteFile(l.path, data, 0o644)
+	}
+	if err != nil {
+		return fmt.Errorf("record lock holder: %w", err)
+	}
+	return nil
+}
+
+// Close releases the lock. The file stays: a contender waiting on its
+// inode and a holder of a recreated one would both "hold" it.
+func (l *Lock) Close() error { return l.fl.Close() }
+
+// ReadRecord reads globalDir's lock record, whoever holds it (zero when it
+// can't be read). Held reports whether a process holds the lock now.
+func ReadRecord(globalDir string) (rec Record, held bool) {
+	path := LockPath(globalDir)
+	fl := flock.New(path)
+	ok, err := fl.TryLock()
+	if err == nil && ok {
+		_ = fl.Close()
+		return readRecord(path), false
+	}
+	_ = fl.Close()
+	return readRecord(path), err == nil
+}
+
+func readRecord(path string) Record {
+	var r Record
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &r)
+	}
+	return r
+}
