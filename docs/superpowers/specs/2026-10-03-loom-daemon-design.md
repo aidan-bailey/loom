@@ -379,15 +379,25 @@ end:
      as copies, and every query hands out copies. `core.Core` is
      value-typed (`TestCoreIsValueTyped`), apart from the job plumbing
      (`Sync`'s jobs, `Deliver`).
-   - **1E, the model's own goroutine.** The model runs on its own loop
-     and runs its own jobs, so `Deliver` and the jobs leave the boundary;
-     it wakes the TUI (a coalesced message) when it has events to drain.
-     The TUI's calls stay synchronous round trips over the loop, so the
-     read-after-write sites (`syncViews`, `syncWorkspaces`, the drains
-     after a transition) keep their meaning; stage 2's transport must
-     revisit them.
+   - **1E, the model's own goroutine**
+     ([plan](../plans/2026-10-08-daemon-stage1e-model-loop.md)).
+     `core.Loop` runs the model on its own goroutine and runs its own
+     jobs, so `Deliver` and the jobs leave the boundary (`Sync` returns
+     events only); it wakes the TUI (a coalesced message) when it has
+     events to drain, and forwards a panic to the next caller so the TUI
+     still restores the terminal. Amended 2026-10-08: the model also
+     fires its own health tick from the loop's timer (the user's choice;
+     the TUI keeps a tick for its own half and names its selection with
+     `SetSelected`), and calls are serialized one at a time, not per
+     Update. The TUI's calls stay synchronous round trips over the loop,
+     so the read-after-write sites (`syncViews`, `syncWorkspaces`, the
+     drains after a transition) keep their meaning.
 2. **Codec and transport.** `core/rpc`. The TUI uses the socket client
-   against an in-process server over `net.Pipe`.
+   against an in-process server over `net.Pipe`. Its calls must stay
+   synchronous round trips, or the read-after-write sites 1E kept
+   (`syncViews`, `syncWorkspaces`, the drains after a transition, the
+   nested drain in `newLaunchOptionsOverlay`) must be revisited; the
+   loop's wake becomes a pushed event.
 3. **The daemon process.** `loom serve`, the lock, spawn on demand, the
    handshake, reconnect and respawn, `serve.log`, the nesting guard move.
    The subcommands become clients. `loomdev` runs a sandbox daemon.
@@ -435,5 +445,5 @@ The scrum workflow starts after stage 3.
 | 1 | A detached child started from a TUI process (new session, stdio closed) keeps running after the TUI exits and after its tmux pane closes. | Stage 3's end-to-end test. |
 | 2 | `$XDG_RUNTIME_DIR` is set in the environments loom runs in (a tmux pane under a systemd user session; a plain ssh login may lack it). | Stage 3 falls back to `<globalDir>/run/`; the test covers both. |
 | 3 | The fallback socket path fits `sun_path`: 108 bytes on Linux, 104 on macOS. A deep `LOOM_GLOBAL_DIR`, such as a sandbox under a long temp dir, overflows it, and `connect` fails with "File name too long" (hit while probing for 1A). | Stage 3: hash into a short path, or bind relative to the dir, and test with a 100-byte global dir. |
-| 4 | With no pane events, the daemon still answers trust prompts and reads hook events promptly. 1A keeps trust detection in the TUI's status scrape and hook scans on pane events. | Stage 3: a launch watch (`capture-pane` for N seconds after each launch) and a hook-scan timer (~250ms; no file-watch library is vendored). |
+| 4 | With no pane events, the daemon still answers trust prompts and reads hook events promptly. 1A keeps trust detection in the TUI's status scrape and hook scans on pane events. Since 1E the model ticks on its own timer, so its hook backstop scan runs with no TUI, at the tick's cadence. | Stage 3: a launch watch (`capture-pane` for N seconds after each launch) and a faster hook-scan timer (~250ms; no file-watch library is vendored). |
 | 5 | Loading every registered workspace (decision 3) does not start a Claude workspace terminal in each one. Today activating a workspace auto-creates its terminal. | Decide before stage 3. Suggested rule: create on a client's first open of the workspace, then relaunch on death as today. |
