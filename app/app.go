@@ -1946,7 +1946,7 @@ func (m *home) View() tea.View {
 				m.activeOverlay.View()))
 		}
 		switch m.state {
-		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateSettings, stateMergePicker, stateLaunchOptions:
+		case statePrompt, stateHelp, stateConfirm, stateWorkspace, stateSettings, stateMergePicker, stateLaunchOptions, stateIssuePicker:
 			return asView(overlay.PlaceOverlay(0, 0, m.activeOverlay.View(), mainView, true))
 		}
 	}

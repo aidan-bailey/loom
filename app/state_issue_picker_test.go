@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/ui/overlay"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,6 +26,24 @@ func TestRunNewFromIssue_OpensPickerFromSnapshot(t *testing.T) {
 	p := m.issuePicker()
 	require.NotNil(t, p)
 	assert.Equal(t, []int{12}, p.VisibleNumbers(), "closed issues are not offered")
+}
+
+// TestView_DrawsTheIssuePicker: View places the open picker over the
+// screen, as it does every other modal's overlay. It was left out of that
+// list, so the picker took keys while nothing showed it.
+func TestView_DrawsTheIssuePicker(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	m.updateHandleWindowSizeEvent(tea.WindowSizeMsg{Width: 120, Height: 40})
+	deliver(t, m, core.GitHubResultForTest(true, "", map[string]github.Snapshot{m.repoPath(): {Issues: map[int]github.Issue{
+		12: {Number: 12, Title: "Fix the frobnicator"},
+	}}}, nil))
+	_, _ = runNewFromIssue(m)
+	require.Equal(t, stateIssuePicker, m.state)
+
+	screen := ansi.Strip(m.View().Content)
+	assert.Contains(t, screen, "New session from GitHub issue")
+	assert.Contains(t, screen, "Fix the frobnicator")
+	assert.Len(t, strings.Split(screen, "\n"), 40, "drawn over the screen, not below it")
 }
 
 func TestRunNewFromIssue_NoSnapshotShowsLoadingAndForcesPoll(t *testing.T) {
