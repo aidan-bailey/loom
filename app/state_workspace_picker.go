@@ -36,7 +36,7 @@ func handleStateWorkspaceKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.updateTabBarStatuses()
 			m.showRecoverySummary(m.recovery())
 			_ = m.core.SetLastUsed(selected.Name)
-			m.core.PersistOpenList()
+			m.persistOpenList()
 			// instanceChanged repoints the panes and menu at the new
 			// slot's selection; release drops the classic slot's attach
 			// clients.

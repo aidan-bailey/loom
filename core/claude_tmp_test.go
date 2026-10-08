@@ -48,11 +48,11 @@ func noTmuxExec() cmd_test.MockCmdExec {
 // TestClaudeTmpSweep_QueuedByEveryLoadPath: both workspace-load paths run
 // reconcileOrphans, which queues a sweep of the loaded config dir.
 func TestClaudeTmpSweep_QueuedByEveryLoadPath(t *testing.T) {
-	t.Run("open tab", func(t *testing.T) {
+	t.Run("a workspace served later", func(t *testing.T) {
 		def := preservedTerminalWorkspace(t, "ws-sweep")
 		m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: noTmuxExec()})
 
-		_, err := m.openTabWS(def)
+		_, err := m.ensureLoaded(def)
 		require.NoError(t, err)
 
 		assert.Contains(t, m.claudeTmpPending, config.WorkspaceConfigDir(&def))
@@ -60,18 +60,12 @@ func TestClaudeTmpSweep_QueuedByEveryLoadPath(t *testing.T) {
 	})
 
 	t.Run("boot", func(t *testing.T) {
-		def := preservedTerminalWorkspace(t, "ws-classic")
-		ctx := config.WorkspaceContextFor(&def)
-		state := config.LoadStateFrom(ctx.ConfigDir)
-		storage, err := session.NewStorage(state, ctx.ConfigDir)
-		require.NoError(t, err)
-		m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: noTmuxExec()})
-		ws := NewWorkspace(WorkspaceParts{Ctx: ctx, Storage: storage, Config: config.DefaultConfig(), State: state})
-		m.classic, m.workspaces = ws, []*Workspace{ws} // as New builds it, not booted
+		def := preservedTerminalWorkspace(t, "ws-boot")
+		m := NewForTest(Options{Registry: &config.WorkspaceRegistry{Workspaces: []config.Workspace{def}}, CmdExec: noTmuxExec()})
 
-		require.NoError(t, m.LoadClassic(false))
+		m.boot()
 
-		assert.Contains(t, m.claudeTmpPending, ctx.ConfigDir)
+		assert.Contains(t, m.claudeTmpPending, config.WorkspaceConfigDir(&def))
 	})
 }
 

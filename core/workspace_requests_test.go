@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenTab_ReturnsTheTabsView(t *testing.T) {
+func TestOpen_ReturnsTheWorkspacesView(t *testing.T) {
 	def := config.Workspace{Name: "by-id", Path: t.TempDir()}
 	cfgDir := config.WorkspaceConfigDir(&def)
 	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
@@ -25,49 +25,25 @@ func TestOpenTab_ReturnsTheTabsView(t *testing.T) {
 		_ = tmux.Command(context.Background(), "kill-session", "-t", tmux.SessionTarget(tmux.ToLoomTmuxName(def.Name))).Run()
 	})
 	m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: aliveExec()})
+	ws, err := m.ensureLoaded(def)
+	require.NoError(t, err)
 
-	v, err := m.OpenTab(def)
+	v, err := m.Open(m.wsIDOf(ws))
 	require.NoError(t, err)
 	require.NotZero(t, v.ID)
 	assert.Equal(t, "by-id", v.Name)
 	got, ok := m.Workspace(v.ID)
 	require.True(t, ok)
-	assert.Equal(t, v, got, "the returned view is the tab's")
+	assert.Equal(t, v, got, "the returned view is the workspace's")
 	assert.True(t, m.IsLoaded(v.ID))
-	require.Len(t, m.Tabs(), 1)
-	assert.Equal(t, v.ID, m.Tabs()[0].ID)
-}
-
-func TestCloseTab_ByName(t *testing.T) {
-	m := NewForTest(Options{})
-	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
-	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
-	idA := m.wsIDOf(a)
-
-	require.NoError(t, m.CloseTab("a"))
-	assert.False(t, m.IsLoaded(idA), "no longer shown, so not loaded as a client sees it")
-	assert.True(t, m.isLoadedWS(a), "the model still serves it")
-	require.Error(t, m.CloseTab("b"), "the last tab stays")
-	assert.Len(t, m.Tabs(), 1)
-}
-
-func TestEnterGlobal_FromNothingFocused(t *testing.T) {
-	m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: aliveExec()})
-	v, err := m.EnterGlobal(0)
-	require.NoError(t, err)
-	require.NotZero(t, v.ID)
-	assert.Equal(t, "global", v.Label)
-	c, ok := m.Classic()
-	require.True(t, ok, "the global workspace is the classic one")
-	assert.Equal(t, v.ID, c.ID)
-	assert.Empty(t, m.Tabs())
 }
 
 func TestByID_UnknownWorkspaces(t *testing.T) {
 	m := NewForTest(Options{})
-	m.SetWorkspacesForTest(nil, []*Workspace{storedWorkspace(t, "a")})
+	m.SetWorkspacesForTest(storedWorkspace(t, "a"))
 
-	assert.Error(t, m.Save(99), "an unknown workspace has nothing to save")
+	_, err := m.Open(99)
+	assert.Error(t, err, "an unknown workspace has nothing to open")
 	assert.Nil(t, m.Views(99))
 	assert.False(t, m.IsLoaded(99))
 	_, ok := m.Workspace(99)
@@ -129,7 +105,7 @@ func TestAccountNames(t *testing.T) {
 func TestOwnerFields_NameTheOwner(t *testing.T) {
 	m := NewForTest(Options{})
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
-	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
+	m.SetWorkspacesForTest(a, b)
 
 	id, label := m.ownerFields(a)
 	assert.Equal(t, m.wsIDOf(a), id)

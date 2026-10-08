@@ -102,7 +102,17 @@ func TestBoot_AnUnopenedWorkspacesTerminalIsDormant(t *testing.T) {
 	assert.Contains(t, m.activeInstances(), term, "an opened workspace's terminal is probed")
 }
 
-// Opening a workspace the first time starts its terminal, once.
+// openDef opens def's served workspace (Open) and returns its view.
+func openDef(t *testing.T, m *Model, def config.Workspace) (WorkspaceView, error) {
+	t.Helper()
+	ws := served(m, def)
+	require.NotNil(t, ws, "the model serves %s", def.Name)
+	return m.Open(m.wsIDOf(ws))
+}
+
+// Opening a workspace the first time starts its terminal, once; a later
+// open (another tab, another client) shows the same workspace, under the
+// same ID.
 func TestOpen_StartsTheWorkspaceTerminalOnTheFirstOpen(t *testing.T) {
 	a := workspaceDef(t, "term-a", `[]`, fakeClaude(t))
 	killSessionAtEnd(t, "term-a")
@@ -111,16 +121,24 @@ func TestOpen_StartsTheWorkspaceTerminalOnTheFirstOpen(t *testing.T) {
 	ws := served(m, a)
 	require.Nil(t, ws.terminal())
 
-	_, err := m.OpenTab(a)
+	v, err := openDef(t, m, a)
 	require.NoError(t, err)
 	term := ws.terminal()
 	require.NotNil(t, term, "the first open created it")
 	assert.True(t, term.Started())
 
-	require.NoError(t, m.CloseTab("x")) // no such tab: nothing happens
-	_, err = m.OpenTab(a)
+	again, err := openDef(t, m, a)
 	require.NoError(t, err)
 	assert.Len(t, ws.insts, 1, "a later open creates no second terminal")
+	assert.Equal(t, v.ID, again.ID, "the same workspace, the same ID")
+}
+
+// An unknown workspace ID opens nothing.
+func TestOpen_AnUnknownWorkspaceIsAnError(t *testing.T) {
+	m := bootModel(t)
+	m.boot()
+	_, err := m.Open(99)
+	assert.Error(t, err)
 }
 
 // A terminal its restart breaker stopped stays Paused, since nothing can
@@ -140,7 +158,7 @@ func TestEnsureTerminal_ATrippedTerminalIsRelaunched(t *testing.T) {
 	ws.ctx.RepoPath = repo
 	ws.add(term)
 	m := NewForTest(Options{})
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	m.Drain()
 
 	m.ensureTerminal(ws)
@@ -150,47 +168,32 @@ func TestEnsureTerminal_ATrippedTerminalIsRelaunched(t *testing.T) {
 	assert.Contains(t, m.Drain().Events, Event(SessionLaunched{ID: m.idOf(term)}))
 }
 
-// Opening a workspace whose load failed loads it again: the user may have
-// fixed what broke it.
-func TestOpenTab_RetriesAFailedLoad(t *testing.T) {
+// Opening a workspace whose load failed loads it again, rereading it from
+// disk: the user may have fixed what broke it. Until then the open reports
+// the load's error, and the workspace's view carries it (LoadErr).
+func TestOpen_RetriesAFailedLoadAndReportsItsError(t *testing.T) {
 	def := workspaceDef(t, "flaky", `{"not":"an array"}`, "true")
 	m := bootModel(t, def)
 	m.boot()
 	require.Error(t, served(m, def).loadErr)
+	id := m.wsIDOf(served(m, def))
+	v, ok := m.Workspace(id)
+	require.True(t, ok, "a failed workspace is still served")
+	assert.Contains(t, v.LoadErr, "flaky", "its view names the failure")
 
-	_, err := m.OpenTab(def)
+	_, err := m.Open(id)
 	require.Error(t, err, "still broken")
-	assert.Empty(t, m.Tabs())
+	assert.Contains(t, err.Error(), "load instances for workspace flaky")
+	assert.False(t, served(m, def).opened, "a failed open is no first open")
 
 	require.NoError(t, os.WriteFile(filepath.Join(config.WorkspaceConfigDir(&def), config.StateFileName),
 		[]byte(`{"instances":[{"title":"x","status":3,"program":"claude"}]}`), 0o644))
-	v, err := m.OpenTab(def)
+	v, err = m.Open(id)
 	require.NoError(t, err)
-	assert.Equal(t, v.ID, m.Tabs()[0].ID)
-	assert.NotNil(t, served(m, def).byTitle("x"), "loaded at last")
+	assert.Equal(t, id, v.ID)
+	assert.Empty(t, v.LoadErr, "loaded at last")
+	assert.NotNil(t, served(m, def).byTitle("x"))
 	assert.False(t, served(m, def).storage.WritesRefused())
-}
-
-// Closing a tab only stops showing its workspace: reopening it shows the
-// very workspace the model kept serving, under the same ID, with whatever
-// happened to it meanwhile.
-func TestOpenTab_AReopenedTabIsTheSameWorkspace(t *testing.T) {
-	a := workspaceDef(t, "a", `[]`, "true")
-	b := workspaceDef(t, "b", `[]`, "true")
-	m := bootModel(t, a, b)
-	m.boot()
-	va, err := m.OpenTab(a)
-	require.NoError(t, err)
-	_, err = m.OpenTab(b)
-	require.NoError(t, err)
-	require.NoError(t, m.CloseTab("a"))
-	m.Sync() // published while closed
-	served(m, a).add(pausedInst(t, "landed-meanwhile"))
-
-	again, err := m.OpenTab(a)
-	require.NoError(t, err)
-	assert.Equal(t, va.ID, again.ID, "the same workspace, the same ID")
-	assert.NotNil(t, served(m, a).byTitle("landed-meanwhile"))
 }
 
 // A workspace registered, or found registered on a reread, is served from
@@ -201,10 +204,12 @@ func TestRegisterAndReloadRegistry_LoadTheNewWorkspace(t *testing.T) {
 	n := len(m.Loaded())
 
 	repo := t.TempDir()
-	def, err := m.Register("new", repo)
+	v, err := m.Register("new", repo)
 	require.NoError(t, err)
 	assert.Len(t, m.Loaded(), n+1)
-	assert.NotNil(t, served(m, def))
+	assert.Equal(t, "new", v.Name)
+	assert.True(t, m.IsLoaded(v.ID), "its view names the served workspace")
+	assert.NotNil(t, served(m, config.Workspace{Name: "new", Path: repo}))
 
 	other := workspaceDef(t, "elsewhere", `[]`, "true")
 	elsewhere, err := config.LoadWorkspaceRegistry() // another process's
@@ -214,33 +219,36 @@ func TestRegisterAndReloadRegistry_LoadTheNewWorkspace(t *testing.T) {
 	assert.NotNil(t, served(m, other))
 }
 
-// Global mode shows the global workspace the model has served since boot:
-// nothing loads or is dropped, and the tabs' workspaces stay served.
-func TestEnterGlobal_ShowsTheServedGlobalWorkspace(t *testing.T) {
+// Opening the global workspace, as a client entering global mode does,
+// shows the one the model has served since boot: nothing loads or is
+// dropped, and the workspaces the client stops showing stay served.
+func TestOpen_TheGlobalWorkspaceIsTheServedOne(t *testing.T) {
 	a := workspaceDef(t, "a", `[]`, "true")
 	m := bootModel(t, a)
 	m.boot()
 	global, err := m.globalWS()
 	require.NoError(t, err)
-	_, err = m.OpenTab(a)
+	_, err = openDef(t, m, a)
+	require.NoError(t, err)
+	n := len(m.Loaded())
+
+	v, err := m.Open(m.wsIDOf(global))
 	require.NoError(t, err)
 
-	v, err := m.EnterGlobal(0)
-	require.NoError(t, err)
-
-	assert.Empty(t, m.Tabs())
-	assert.Same(t, global, m.classic)
 	assert.Equal(t, m.wsIDOf(global), v.ID)
-	assert.True(t, m.isLoadedWS(served(m, a)), "the closed tab's workspace is still served")
+	assert.Equal(t, "global", v.Label)
+	assert.Len(t, m.Loaded(), n, "nothing loads")
+	assert.True(t, m.isLoadedWS(served(m, a)), "the workspace no longer shown is still served")
 }
 
-// Quitting saves every workspace the model serves, not only the shown ones.
+// Quitting saves every workspace the model serves, not only the opened
+// ones.
 func TestSaveForQuit_SavesEveryServedWorkspace(t *testing.T) {
 	a := workspaceDef(t, "a", `[]`, "true")
 	b := workspaceDef(t, "b", `[]`, "true")
 	m := bootModel(t, a, b)
 	m.boot()
-	_, err := m.OpenTab(a)
+	_, err := openDef(t, m, a)
 	require.NoError(t, err)
 	served(m, b).add(pausedInst(t, "unshown"))
 
@@ -251,26 +259,106 @@ func TestSaveForQuit_SavesEveryServedWorkspace(t *testing.T) {
 	assert.Contains(t, string(data), `"unshown"`)
 }
 
-// The published state is what the TUI shows: the model serves more, but
-// publishes only the shown workspaces and their instances, as if they
-// were all it loaded (until the TUI keeps its own tabs).
-func TestPublish_OnlyTheShownWorkspaces(t *testing.T) {
+// The published state is every served workspace and its instances, in
+// serve order (Workspaces): which of them a client shows is its own.
+func TestPublish_EveryServedWorkspace(t *testing.T) {
 	a := workspaceDef(t, "a", `[]`, "true")
 	b := workspaceDef(t, "b", `[{"title":"x","status":3,"program":"claude"}]`, "true")
-	m := bootModel(t, a, b)
+	broken := workspaceDef(t, "broken", `{"not":"an array"}`, "true")
+	m := bootModel(t, a, b, broken)
 	m.boot()
-	va, err := m.OpenTab(a)
+	global, err := m.globalWS()
 	require.NoError(t, err)
+
+	views := m.Workspaces()
+	require.Len(t, views, 4)
+	for i, ws := range []*Workspace{global, served(m, a), served(m, b), served(m, broken)} {
+		assert.Equal(t, m.wsIDOf(ws), views[i].ID, "serve order: the global workspace, then the registry's")
+	}
+	assert.Empty(t, views[1].LoadErr)
+	assert.NotEmpty(t, views[3].LoadErr, "a failed load is published with its error")
 
 	out := m.Sync()
 	wc := workspacesEvent(out.Events)
 	require.NotNil(t, wc)
-	require.Len(t, wc.Views, 1)
-	assert.Equal(t, va.ID, wc.Views[0].ID)
+	assert.Equal(t, views, wc.Views)
+	var vb *ViewsChanged
 	for _, ev := range out.Events {
-		if vc, ok := ev.(ViewsChanged); ok {
-			assert.Equal(t, va.ID, vc.WS, "views of the shown workspace only")
+		if vc, ok := ev.(ViewsChanged); ok && vc.WS == m.wsIDOf(served(m, b)) {
+			vb = &vc
 		}
 	}
-	assert.False(t, m.IsLoaded(m.wsIDOf(served(m, b))), "a client sees only what is shown")
+	require.NotNil(t, vb, "an unopened workspace's instances are published too")
+	require.Len(t, vb.Views, 1)
+	assert.Equal(t, "x", vb.Views[0].Title)
+	assert.True(t, m.IsLoaded(m.wsIDOf(served(m, b))))
+}
+
+// Which workspaces a client shows is its own state (daemon stage 3A): an
+// open publishes nothing tab-like, so one client opening a workspace
+// changes nothing another client shows. The workspace views carry nothing
+// of who opened what, and an open of a workspace that loaded publishes no
+// workspace view at all.
+func TestOpen_PublishesNothingTabLike(t *testing.T) {
+	a := preservedTerminalWorkspace(t, "ws-a") // its terminal record is preserved: no launch
+	b := preservedTerminalWorkspace(t, "ws-b")
+	m := bootModel(t, a, b)
+	m.boot()
+	before := m.Workspaces()
+	m.Sync()
+
+	_, err := openDef(t, m, a)
+	require.NoError(t, err)
+
+	assert.Equal(t, before, m.Workspaces(), "no view says a is open")
+	assert.Nil(t, workspacesEvent(m.Sync().Events), "the open published no workspace view")
+}
+
+// PersistOpenList writes exactly the names a client gives, in its order:
+// the open list is the client's, and the model keeps none of its own.
+func TestPersistOpenList_WritesExactlyTheNamesGiven(t *testing.T) {
+	a := workspaceDef(t, "a", `[]`, "true")
+	b := workspaceDef(t, "b", `[]`, "true")
+	c := workspaceDef(t, "c", `[]`, "true")
+	m := bootModel(t)
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	for _, def := range []config.Workspace{a, b, c} {
+		require.NoError(t, reg.Add(def.Name, def.Path))
+	}
+	m.SetRegistryForTest(reg)
+	onDisk := func() []string {
+		t.Helper()
+		fresh, err := config.LoadWorkspaceRegistry()
+		require.NoError(t, err)
+		return fresh.OpenWorkspaces
+	}
+
+	m.PersistOpenList([]string{"c", "a"})
+	assert.Equal(t, []string{"c", "a"}, onDisk())
+
+	m.PersistOpenList(nil)
+	assert.Empty(t, onDisk(), "an empty list clears it")
+}
+
+// Boot loads the account registry before anything else and hands back
+// the notices it raised, since no client is connected yet to be sent
+// them; it leaves none behind for the first Sync.
+func TestBoot_ReturnsTheAccountRegistrysNotices(t *testing.T) {
+	m := bootModel(t)
+	global, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(global, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(global, "accounts.json"), []byte(`{not json`), 0o644))
+
+	notices := m.Boot()
+
+	require.Len(t, notices, 1)
+	n, ok := notices[0].(Notice)
+	require.True(t, ok)
+	assert.Contains(t, n.Err.Error(), "accounts:")
+	assert.True(t, m.booted, "and boots")
+	for _, ev := range m.Sync().Events {
+		assert.NotEqual(t, notices[0], ev, "nothing left for the first Sync")
+	}
 }

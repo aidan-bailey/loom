@@ -52,7 +52,7 @@ func TestRequests_RefusalsMatchErrRefused(t *testing.T) {
 	require.NoError(t, busy.TransitionTo(session.Loading))
 	ws.add(busy)
 	ws.add(unstarted)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.Kill(99, 1)
 	m.Kill(m.idOf(busy), 2)
@@ -81,7 +81,7 @@ func TestKill_RepliesWhenItFinishes(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := newInst(t, "x")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	id := m.idOf(inst)
 
 	m.Kill(id, 7)
@@ -106,7 +106,7 @@ func TestPause_AFailedPauseRevertsToTheStatusItHad(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := newInst(t, "x") // unstarted: Instance.Pause refuses it
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	id := m.idOf(inst)
 
 	m.Pause(id, 6)
@@ -129,7 +129,7 @@ func TestResume_ShowsTheSpinnerAndRepliesOnlyWhenItFinishes(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.Resume(m.idOf(inst), 8)
 	out := m.Drain()
@@ -145,7 +145,7 @@ func TestRecover_RepliesWithTheAdoptedInstance(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	placeholder, adopted := pausedInst(t, "x"), pausedInst(t, "x")
 	ws.add(placeholder)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	pid := m.idOf(placeholder)
 
 	m.spawn(m.track(4, pid, func() any {
@@ -172,7 +172,7 @@ func TestRecover_RepliesWithTheAdoptedInstance(t *testing.T) {
 func TestCreate_RepliesWithTheNewIDAndStarts(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.createWS(ws, NewInstance{Title: "new", Path: t.TempDir(), Program: "claude", Prompt: "hi", Start: true,
 		Launch: launch.Options{BranchPrefix: "me/"}}, 3)
@@ -190,7 +190,7 @@ func TestCreate_RepliesWithTheNewIDAndStarts(t *testing.T) {
 func TestCreate_WithoutStartLeavesItUnstarted(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.createWS(ws, NewInstance{Title: "s", Path: t.TempDir(), Program: "claude"}, 4)
 	out := m.Drain()
@@ -205,7 +205,7 @@ func TestCreate_WithoutStartLeavesItUnstarted(t *testing.T) {
 func TestCreate_AWorkspaceNoLongerLoadedIsRefused(t *testing.T) {
 	m := NewForTest(Options{})
 	ws, closed := storedWorkspace(t, "a"), storedWorkspace(t, "b")
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.createWS(closed, NewInstance{Title: "s", Path: t.TempDir(), Program: "claude", Start: true}, 2)
 	out := m.Drain()
@@ -222,7 +222,7 @@ func TestResumeWith_AppliesTheLaunchOptions(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.ResumeWith(m.idOf(inst), launch.Options{Model: "sonnet", Account: "default"}, "claude", 0)
 	assert.Contains(t, inst.Program(), "sonnet")
@@ -348,7 +348,7 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 				before[name] = inst.GetStatus()
 				programs[name] = inst.Program()
 			}
-			m.SetWorkspacesForTest(nil, []*Workspace{ws})
+			m.SetWorkspacesForTest(ws)
 			for name, inst := range insts {
 				ids[name] = m.idOf(inst)
 			}
@@ -375,7 +375,7 @@ func TestRequests_ARefusalWithoutAReqIDIsOnlyLogged(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	term := runningTerminal(t, "term")
 	ws.add(term)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.Kill(m.idOf(term), 0)
 	assert.True(t, m.Drain().Empty())
@@ -389,7 +389,7 @@ func TestMerge_AnUnknownSourceIsRefused(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	target := pausedInst(t, "t")
 	ws.add(target)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	id := m.idOf(target)
 
 	m.Merge(id, 99, 2)
@@ -405,7 +405,7 @@ func TestKill_ASecondKillIsRefusedWhileTheFirstRuns(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	id := m.idOf(inst)
 
 	m.Kill(id, 1)
@@ -427,7 +427,7 @@ func TestKill_AdmitsWhatTheTUIKills(t *testing.T) {
 			ws := storedWorkspace(t, "a")
 			inst := statusInst(t, "x", st)
 			ws.add(inst)
-			m.SetWorkspacesForTest(nil, []*Workspace{ws})
+			m.SetWorkspacesForTest(ws)
 
 			m.Kill(m.idOf(inst), 1)
 			out := m.Drain()
@@ -448,7 +448,7 @@ func TestInstJobs_ANilWorktreeIsAnErrorNotAPanic(t *testing.T) {
 	other := pausedInst(t, "other")
 	ws.add(term)
 	ws.add(other)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	_, kill := m.killInst(ws, term)
 	var killed any
@@ -475,7 +475,7 @@ func TestResumeIfLoadingInst_ASkipRepliesWithAnError(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	id := m.idOf(inst)
 
 	m.spawn(m.track(3, id, m.resumeIfLoadingInst(ws, inst)))
@@ -516,7 +516,7 @@ func TestPush_RepliesWithTheJobsError(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := newInst(t, "x")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	id := m.idOf(inst)
 
 	m.Push(id, 4)
@@ -543,7 +543,7 @@ func TestMerge_RepliesWithTheOutcome(t *testing.T) {
 	ws.add(target)
 	ws.add(source)
 	ws.add(ghost)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	tid := m.idOf(target)
 
 	m.Merge(tid, m.idOf(source), 5)
@@ -562,7 +562,7 @@ func TestMerge_RepliesWithTheOutcome(t *testing.T) {
 func TestCreate_WithAnIssueJoinsGitHubState(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	repo := t.TempDir()
 	m.ghState = map[string]github.Snapshot{repo: {Issues: map[int]github.Issue{7: {Number: 7, Title: "Fix it"}}}}
 

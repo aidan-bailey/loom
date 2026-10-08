@@ -13,119 +13,13 @@ import (
 	"github.com/aidan-bailey/loom/session/launch"
 )
 
-// BeginParams are Begin's parameters on the wire.
-type BeginParams struct {
+// WorkspacesParams are Workspaces's parameters on the wire.
+type WorkspacesParams struct {
 }
 
-// BeginResult is Begin's result on the wire; an error travels in the reply.
-type BeginResult struct {
-}
-
-// LoadClassicParams are LoadClassic's parameters on the wire.
-type LoadClassicParams struct {
-	SweepTmux bool `json:"sweepTmux"`
-}
-
-// LoadClassicResult is LoadClassic's result on the wire; an error travels in the reply.
-type LoadClassicResult struct {
-}
-
-// InitAccountsParams are InitAccounts's parameters on the wire.
-type InitAccountsParams struct {
-}
-
-// InitAccountsResult is InitAccounts's result on the wire; an error travels in the reply.
-type InitAccountsResult struct {
-}
-
-// SetRCAuthParams are SetRCAuth's parameters on the wire.
-type SetRCAuthParams struct {
-	Auth session.RemoteControlAuth `json:"auth"`
-}
-
-// SetRCAuthResult is SetRCAuth's result on the wire; an error travels in the reply.
-type SetRCAuthResult struct {
-}
-
-// StayGlobalParams are StayGlobal's parameters on the wire.
-type StayGlobalParams struct {
-}
-
-// StayGlobalResult is StayGlobal's result on the wire; an error travels in the reply.
-type StayGlobalResult struct {
-}
-
-// RestoreSavedParams are RestoreSaved's parameters on the wire.
-type RestoreSavedParams struct {
-	Saved []config.Workspace `json:"saved"`
-}
-
-// RestoreSavedResult is RestoreSaved's result on the wire; an error travels in the reply.
-type RestoreSavedResult struct {
-	Value int `json:"value"`
-}
-
-// RestoreFailedParams are RestoreFailed's parameters on the wire.
-type RestoreFailedParams struct {
-}
-
-// RestoreFailedResult is RestoreFailed's result on the wire; an error travels in the reply.
-type RestoreFailedResult struct {
-	Value []string `json:"value"`
-}
-
-// KeepRestoreFailedParams are KeepRestoreFailed's parameters on the wire.
-type KeepRestoreFailedParams struct {
-	Desired map[string]bool `json:"desired"`
-}
-
-// KeepRestoreFailedResult is KeepRestoreFailed's result on the wire; an error travels in the reply.
-type KeepRestoreFailedResult struct {
-}
-
-// OpenNamesParams are OpenNames's parameters on the wire.
-type OpenNamesParams struct {
-}
-
-// OpenNamesResult is OpenNames's result on the wire; an error travels in the reply.
-type OpenNamesResult struct {
-	Value []string `json:"value"`
-}
-
-// PersistOpenListParams are PersistOpenList's parameters on the wire.
-type PersistOpenListParams struct {
-}
-
-// PersistOpenListResult is PersistOpenList's result on the wire; an error travels in the reply.
-type PersistOpenListResult struct {
-}
-
-// RegisterParams are Register's parameters on the wire.
-type RegisterParams struct {
-	Name string `json:"name"`
-	Dir  string `json:"dir"`
-}
-
-// RegisterResult is Register's result on the wire; an error travels in the reply.
-type RegisterResult struct {
-	Value config.Workspace `json:"value"`
-}
-
-// SetLastUsedParams are SetLastUsed's parameters on the wire.
-type SetLastUsedParams struct {
-	Name string `json:"name"`
-}
-
-// SetLastUsedResult is SetLastUsed's result on the wire; an error travels in the reply.
-type SetLastUsedResult struct {
-}
-
-// SaveForQuitParams are SaveForQuit's parameters on the wire.
-type SaveForQuitParams struct {
-}
-
-// SaveForQuitResult is SaveForQuit's result on the wire; an error travels in the reply.
-type SaveForQuitResult struct {
+// WorkspacesResult is Workspaces's result on the wire; an error travels in the reply.
+type WorkspacesResult struct {
+	Value []core.WorkspaceView `json:"value"`
 }
 
 // WorkspaceParams are Workspace's parameters on the wire.
@@ -139,25 +33,6 @@ type WorkspaceResult struct {
 	OK    bool               `json:"ok"`
 }
 
-// ClassicParams are Classic's parameters on the wire.
-type ClassicParams struct {
-}
-
-// ClassicResult is Classic's result on the wire; an error travels in the reply.
-type ClassicResult struct {
-	Value core.WorkspaceView `json:"value"`
-	OK    bool               `json:"ok"`
-}
-
-// TabsParams are Tabs's parameters on the wire.
-type TabsParams struct {
-}
-
-// TabsResult is Tabs's result on the wire; an error travels in the reply.
-type TabsResult struct {
-	Value []core.WorkspaceView `json:"value"`
-}
-
 // IsLoadedParams are IsLoaded's parameters on the wire.
 type IsLoadedParams struct {
 	ID core.WorkspaceID `json:"id"`
@@ -168,42 +43,22 @@ type IsLoadedResult struct {
 	Value bool `json:"value"`
 }
 
-// OpenTabParams are OpenTab's parameters on the wire.
-type OpenTabParams struct {
-	Workspace config.Workspace `json:"workspace"`
-}
-
-// OpenTabResult is OpenTab's result on the wire; an error travels in the reply.
-type OpenTabResult struct {
-	Value core.WorkspaceView `json:"value"`
-}
-
-// CloseTabParams are CloseTab's parameters on the wire.
-type CloseTabParams struct {
-	Name string `json:"name"`
-}
-
-// CloseTabResult is CloseTab's result on the wire; an error travels in the reply.
-type CloseTabResult struct {
-}
-
-// EnterGlobalParams are EnterGlobal's parameters on the wire.
-type EnterGlobalParams struct {
-	Focused core.WorkspaceID `json:"focused"`
-}
-
-// EnterGlobalResult is EnterGlobal's result on the wire; an error travels in the reply.
-type EnterGlobalResult struct {
-	Value core.WorkspaceView `json:"value"`
-}
-
-// SaveParams are Save's parameters on the wire.
-type SaveParams struct {
+// OpenParams are Open's parameters on the wire.
+type OpenParams struct {
 	ID core.WorkspaceID `json:"id"`
 }
 
-// SaveResult is Save's result on the wire; an error travels in the reply.
-type SaveResult struct {
+// OpenResult is Open's result on the wire; an error travels in the reply.
+type OpenResult struct {
+	Value core.WorkspaceView `json:"value"`
+}
+
+// SaveForQuitParams are SaveForQuit's parameters on the wire.
+type SaveForQuitParams struct {
+}
+
+// SaveForQuitResult is SaveForQuit's result on the wire; an error travels in the reply.
+type SaveForQuitResult struct {
 }
 
 // RegistryParams are Registry's parameters on the wire.
@@ -221,6 +76,35 @@ type ReloadRegistryParams struct {
 
 // ReloadRegistryResult is ReloadRegistry's result on the wire; an error travels in the reply.
 type ReloadRegistryResult struct {
+}
+
+// RegisterParams are Register's parameters on the wire.
+type RegisterParams struct {
+	Name string `json:"name"`
+	Dir  string `json:"dir"`
+}
+
+// RegisterResult is Register's result on the wire; an error travels in the reply.
+type RegisterResult struct {
+	Value core.WorkspaceView `json:"value"`
+}
+
+// PersistOpenListParams are PersistOpenList's parameters on the wire.
+type PersistOpenListParams struct {
+	Names []string `json:"names"`
+}
+
+// PersistOpenListResult is PersistOpenList's result on the wire; an error travels in the reply.
+type PersistOpenListResult struct {
+}
+
+// SetLastUsedParams are SetLastUsed's parameters on the wire.
+type SetLastUsedParams struct {
+	Name string `json:"name"`
+}
+
+// SetLastUsedResult is SetLastUsed's result on the wire; an error travels in the reply.
+type SetLastUsedResult struct {
 }
 
 // SaveSettingsParams are SaveSettings's parameters on the wire.
@@ -423,24 +307,6 @@ type VerifyDeadParams struct {
 
 // VerifyDeadResult is VerifyDead's result on the wire; an error travels in the reply.
 type VerifyDeadResult struct {
-}
-
-// ProgramParams are Program's parameters on the wire.
-type ProgramParams struct {
-}
-
-// ProgramResult is Program's result on the wire; an error travels in the reply.
-type ProgramResult struct {
-	Value string `json:"value"`
-}
-
-// SetProgramParams are SetProgram's parameters on the wire.
-type SetProgramParams struct {
-	Program string `json:"program"`
-}
-
-// SetProgramResult is SetProgram's result on the wire; an error travels in the reply.
-type SetProgramResult struct {
 }
 
 // RCAuthParams are RCAuth's parameters on the wire.
@@ -652,29 +518,16 @@ type SetDefaultAccountResult struct {
 // methods are the Core methods the wire carries, in iface.go's order, with
 // how a client serves each (its line comment there).
 var methods = []methodInfo{
-	{Name: "Begin", Kind: kindRequest, Params: BeginParams{}, Result: BeginResult{}},
-	{Name: "LoadClassic", Kind: kindRequest, Params: LoadClassicParams{}, Result: LoadClassicResult{}},
-	{Name: "InitAccounts", Kind: kindRequest, Params: InitAccountsParams{}, Result: InitAccountsResult{}},
-	{Name: "SetRCAuth", Kind: kindRequest, Params: SetRCAuthParams{}, Result: SetRCAuthResult{}},
-	{Name: "StayGlobal", Kind: kindRequest, Params: StayGlobalParams{}, Result: StayGlobalResult{}},
-	{Name: "RestoreSaved", Kind: kindRequest, Params: RestoreSavedParams{}, Result: RestoreSavedResult{}},
-	{Name: "RestoreFailed", Kind: kindLocal, Params: RestoreFailedParams{}, Result: RestoreFailedResult{}},
-	{Name: "KeepRestoreFailed", Kind: kindRequest, Params: KeepRestoreFailedParams{}, Result: KeepRestoreFailedResult{}},
-	{Name: "OpenNames", Kind: kindLocal, Params: OpenNamesParams{}, Result: OpenNamesResult{}},
-	{Name: "PersistOpenList", Kind: kindRequest, Params: PersistOpenListParams{}, Result: PersistOpenListResult{}},
-	{Name: "Register", Kind: kindRequest, Params: RegisterParams{}, Result: RegisterResult{}},
-	{Name: "SetLastUsed", Kind: kindRequest, Params: SetLastUsedParams{}, Result: SetLastUsedResult{}},
-	{Name: "SaveForQuit", Kind: kindRequest, Params: SaveForQuitParams{}, Result: SaveForQuitResult{}},
+	{Name: "Workspaces", Kind: kindLocal, Params: WorkspacesParams{}, Result: WorkspacesResult{}},
 	{Name: "Workspace", Kind: kindLocal, Params: WorkspaceParams{}, Result: WorkspaceResult{}},
-	{Name: "Classic", Kind: kindLocal, Params: ClassicParams{}, Result: ClassicResult{}},
-	{Name: "Tabs", Kind: kindLocal, Params: TabsParams{}, Result: TabsResult{}},
 	{Name: "IsLoaded", Kind: kindLocal, Params: IsLoadedParams{}, Result: IsLoadedResult{}},
-	{Name: "OpenTab", Kind: kindRequest, Params: OpenTabParams{}, Result: OpenTabResult{}},
-	{Name: "CloseTab", Kind: kindRequest, Params: CloseTabParams{}, Result: CloseTabResult{}},
-	{Name: "EnterGlobal", Kind: kindRequest, Params: EnterGlobalParams{}, Result: EnterGlobalResult{}},
-	{Name: "Save", Kind: kindRequest, Params: SaveParams{}, Result: SaveResult{}},
+	{Name: "Open", Kind: kindRequest, Params: OpenParams{}, Result: OpenResult{}},
+	{Name: "SaveForQuit", Kind: kindRequest, Params: SaveForQuitParams{}, Result: SaveForQuitResult{}},
 	{Name: "Registry", Kind: kindLocal, Params: RegistryParams{}, Result: RegistryResult{}},
 	{Name: "ReloadRegistry", Kind: kindRequest, Params: ReloadRegistryParams{}, Result: ReloadRegistryResult{}},
+	{Name: "Register", Kind: kindRequest, Params: RegisterParams{}, Result: RegisterResult{}},
+	{Name: "PersistOpenList", Kind: kindRequest, Params: PersistOpenListParams{}, Result: PersistOpenListResult{}},
+	{Name: "SetLastUsed", Kind: kindRequest, Params: SetLastUsedParams{}, Result: SetLastUsedResult{}},
 	{Name: "SaveSettings", Kind: kindRequest, Params: SaveSettingsParams{}, Result: SaveSettingsResult{}},
 	{Name: "SetUIPrefs", Kind: kindRequest, Params: SetUIPrefsParams{}, Result: SetUIPrefsResult{}},
 	{Name: "SetHelpScreensSeen", Kind: kindRequest, Params: SetHelpScreensSeenParams{}, Result: SetHelpScreensSeenResult{}},
@@ -695,8 +548,6 @@ var methods = []methodInfo{
 	{Name: "PaneOutput", Kind: kindCast, Params: PaneOutputParams{}, Result: PaneOutputResult{}},
 	{Name: "PaneQuiet", Kind: kindCast, Params: PaneQuietParams{}, Result: PaneQuietResult{}},
 	{Name: "VerifyDead", Kind: kindCast, Params: VerifyDeadParams{}, Result: VerifyDeadResult{}},
-	{Name: "Program", Kind: kindLocal, Params: ProgramParams{}, Result: ProgramResult{}},
-	{Name: "SetProgram", Kind: kindRequest, Params: SetProgramParams{}, Result: SetProgramResult{}},
 	{Name: "RCAuth", Kind: kindLocal, Params: RCAuthParams{}, Result: RCAuthResult{}},
 	{Name: "GitHubSnapshot", Kind: kindLocal, Params: GitHubSnapshotParams{}, Result: GitHubSnapshotResult{}},
 	{Name: "GitHubErr", Kind: kindLocal, Params: GitHubErrParams{}, Result: GitHubErrResult{}},
@@ -727,94 +578,12 @@ var methods = []methodInfo{
 // into the server's, which names the connection (see Server).
 func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core.ReqID) error) (result any, err error, found bool) {
 	switch method {
-	case "Begin":
-		var p BeginParams
+	case "Workspaces":
+		var p WorkspacesParams
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
-		b.Begin()
-		return BeginResult{}, nil, true
-	case "LoadClassic":
-		var p LoadClassicParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		err := b.LoadClassic(p.SweepTmux)
-		return LoadClassicResult{}, err, true
-	case "InitAccounts":
-		var p InitAccountsParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		b.InitAccounts()
-		return InitAccountsResult{}, nil, true
-	case "SetRCAuth":
-		var p SetRCAuthParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		b.SetRCAuth(p.Auth)
-		return SetRCAuthResult{}, nil, true
-	case "StayGlobal":
-		var p StayGlobalParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		b.StayGlobal()
-		return StayGlobalResult{}, nil, true
-	case "RestoreSaved":
-		var p RestoreSavedParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		return RestoreSavedResult{Value: b.RestoreSaved(p.Saved)}, nil, true
-	case "RestoreFailed":
-		var p RestoreFailedParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		return RestoreFailedResult{Value: b.RestoreFailed()}, nil, true
-	case "KeepRestoreFailed":
-		var p KeepRestoreFailedParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		b.KeepRestoreFailed(p.Desired)
-		return KeepRestoreFailedResult{}, nil, true
-	case "OpenNames":
-		var p OpenNamesParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		return OpenNamesResult{Value: b.OpenNames()}, nil, true
-	case "PersistOpenList":
-		var p PersistOpenListParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		b.PersistOpenList()
-		return PersistOpenListResult{}, nil, true
-	case "Register":
-		var p RegisterParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		v, err := b.Register(p.Name, p.Dir)
-		return RegisterResult{Value: v}, err, true
-	case "SetLastUsed":
-		var p SetLastUsedParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		err := b.SetLastUsed(p.Name)
-		return SetLastUsedResult{}, err, true
-	case "SaveForQuit":
-		var p SaveForQuitParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		err := b.SaveForQuit()
-		return SaveForQuitResult{}, err, true
+		return WorkspacesResult{Value: b.Workspaces()}, nil, true
 	case "Workspace":
 		var p WorkspaceParams
 		if err := decodeParams(params, &p); err != nil {
@@ -822,53 +591,26 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		v, ok := b.Workspace(p.ID)
 		return WorkspaceResult{Value: v, OK: ok}, nil, true
-	case "Classic":
-		var p ClassicParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		v, ok := b.Classic()
-		return ClassicResult{Value: v, OK: ok}, nil, true
-	case "Tabs":
-		var p TabsParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		return TabsResult{Value: b.Tabs()}, nil, true
 	case "IsLoaded":
 		var p IsLoadedParams
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
 		return IsLoadedResult{Value: b.IsLoaded(p.ID)}, nil, true
-	case "OpenTab":
-		var p OpenTabParams
+	case "Open":
+		var p OpenParams
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
-		v, err := b.OpenTab(p.Workspace)
-		return OpenTabResult{Value: v}, err, true
-	case "CloseTab":
-		var p CloseTabParams
+		v, err := b.Open(p.ID)
+		return OpenResult{Value: v}, err, true
+	case "SaveForQuit":
+		var p SaveForQuitParams
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
-		err := b.CloseTab(p.Name)
-		return CloseTabResult{}, err, true
-	case "EnterGlobal":
-		var p EnterGlobalParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		v, err := b.EnterGlobal(p.Focused)
-		return EnterGlobalResult{Value: v}, err, true
-	case "Save":
-		var p SaveParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		err := b.Save(p.ID)
-		return SaveResult{}, err, true
+		err := b.SaveForQuit()
+		return SaveForQuitResult{}, err, true
 	case "Registry":
 		var p RegistryParams
 		if err := decodeParams(params, &p); err != nil {
@@ -882,6 +624,27 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		err := b.ReloadRegistry()
 		return ReloadRegistryResult{}, err, true
+	case "Register":
+		var p RegisterParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		v, err := b.Register(p.Name, p.Dir)
+		return RegisterResult{Value: v}, err, true
+	case "PersistOpenList":
+		var p PersistOpenListParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		b.PersistOpenList(p.Names)
+		return PersistOpenListResult{}, nil, true
+	case "SetLastUsed":
+		var p SetLastUsedParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		err := b.SetLastUsed(p.Name)
+		return SetLastUsedResult{}, err, true
 	case "SaveSettings":
 		var p SaveSettingsParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1051,19 +814,6 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.VerifyDead(p.ID)
 		return VerifyDeadResult{}, nil, true
-	case "Program":
-		var p ProgramParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		return ProgramResult{Value: b.Program()}, nil, true
-	case "SetProgram":
-		var p SetProgramParams
-		if err := decodeParams(params, &p); err != nil {
-			return nil, err, true
-		}
-		b.SetProgram(p.Program)
-		return SetProgramResult{}, nil, true
 	case "RCAuth":
 		var p RCAuthParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1213,86 +963,11 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 	return nil, nil, false
 }
 
-// Begin is core.Core's Begin (request).
-func (c *Client) Begin() {
-	var r BeginResult
-	c.requestNoErr("Begin", BeginParams{}, &r)
-}
-
-// LoadClassic is core.Core's LoadClassic (request).
-func (c *Client) LoadClassic(sweepTmux bool) error {
-	var r LoadClassicResult
-	return c.request("LoadClassic", LoadClassicParams{SweepTmux: sweepTmux}, &r)
-}
-
-// InitAccounts is core.Core's InitAccounts (request).
-func (c *Client) InitAccounts() {
-	var r InitAccountsResult
-	c.requestNoErr("InitAccounts", InitAccountsParams{}, &r)
-}
-
-// SetRCAuth is core.Core's SetRCAuth (request).
-func (c *Client) SetRCAuth(auth session.RemoteControlAuth) {
-	var r SetRCAuthResult
-	c.requestNoErr("SetRCAuth", SetRCAuthParams{Auth: auth}, &r)
-}
-
-// StayGlobal is core.Core's StayGlobal (request).
-func (c *Client) StayGlobal() {
-	var r StayGlobalResult
-	c.requestNoErr("StayGlobal", StayGlobalParams{}, &r)
-}
-
-// RestoreSaved is core.Core's RestoreSaved (request).
-func (c *Client) RestoreSaved(saved []config.Workspace) int {
-	var r RestoreSavedResult
-	c.requestNoErr("RestoreSaved", RestoreSavedParams{Saved: saved}, &r)
-	return r.Value
-}
-
-// RestoreFailed is core.Core's RestoreFailed (local).
-func (c *Client) RestoreFailed() []string {
-	var v0 []string
-	c.local(func(r *replica) { v0 = r.RestoreFailed() })
+// Workspaces is core.Core's Workspaces (local).
+func (c *Client) Workspaces() []core.WorkspaceView {
+	var v0 []core.WorkspaceView
+	c.local(func(r *replica) { v0 = r.Workspaces() })
 	return v0
-}
-
-// KeepRestoreFailed is core.Core's KeepRestoreFailed (request).
-func (c *Client) KeepRestoreFailed(desired map[string]bool) {
-	var r KeepRestoreFailedResult
-	c.requestNoErr("KeepRestoreFailed", KeepRestoreFailedParams{Desired: desired}, &r)
-}
-
-// OpenNames is core.Core's OpenNames (local).
-func (c *Client) OpenNames() []string {
-	var v0 []string
-	c.local(func(r *replica) { v0 = r.OpenNames() })
-	return v0
-}
-
-// PersistOpenList is core.Core's PersistOpenList (request).
-func (c *Client) PersistOpenList() {
-	var r PersistOpenListResult
-	c.requestNoErr("PersistOpenList", PersistOpenListParams{}, &r)
-}
-
-// Register is core.Core's Register (request).
-func (c *Client) Register(name string, dir string) (config.Workspace, error) {
-	var r RegisterResult
-	err := c.request("Register", RegisterParams{Name: name, Dir: dir}, &r)
-	return r.Value, err
-}
-
-// SetLastUsed is core.Core's SetLastUsed (request).
-func (c *Client) SetLastUsed(name string) error {
-	var r SetLastUsedResult
-	return c.request("SetLastUsed", SetLastUsedParams{Name: name}, &r)
-}
-
-// SaveForQuit is core.Core's SaveForQuit (request).
-func (c *Client) SaveForQuit() error {
-	var r SaveForQuitResult
-	return c.request("SaveForQuit", SaveForQuitParams{}, &r)
 }
 
 // Workspace is core.Core's Workspace (local).
@@ -1303,21 +978,6 @@ func (c *Client) Workspace(id core.WorkspaceID) (core.WorkspaceView, bool) {
 	return v0, v1
 }
 
-// Classic is core.Core's Classic (local).
-func (c *Client) Classic() (core.WorkspaceView, bool) {
-	var v0 core.WorkspaceView
-	var v1 bool
-	c.local(func(r *replica) { v0, v1 = r.Classic() })
-	return v0, v1
-}
-
-// Tabs is core.Core's Tabs (local).
-func (c *Client) Tabs() []core.WorkspaceView {
-	var v0 []core.WorkspaceView
-	c.local(func(r *replica) { v0 = r.Tabs() })
-	return v0
-}
-
 // IsLoaded is core.Core's IsLoaded (local).
 func (c *Client) IsLoaded(id core.WorkspaceID) bool {
 	var v0 bool
@@ -1325,30 +985,17 @@ func (c *Client) IsLoaded(id core.WorkspaceID) bool {
 	return v0
 }
 
-// OpenTab is core.Core's OpenTab (request).
-func (c *Client) OpenTab(workspace config.Workspace) (core.WorkspaceView, error) {
-	var r OpenTabResult
-	err := c.request("OpenTab", OpenTabParams{Workspace: workspace}, &r)
+// Open is core.Core's Open (request).
+func (c *Client) Open(id core.WorkspaceID) (core.WorkspaceView, error) {
+	var r OpenResult
+	err := c.request("Open", OpenParams{ID: id}, &r)
 	return r.Value, err
 }
 
-// CloseTab is core.Core's CloseTab (request).
-func (c *Client) CloseTab(name string) error {
-	var r CloseTabResult
-	return c.request("CloseTab", CloseTabParams{Name: name}, &r)
-}
-
-// EnterGlobal is core.Core's EnterGlobal (request).
-func (c *Client) EnterGlobal(focused core.WorkspaceID) (core.WorkspaceView, error) {
-	var r EnterGlobalResult
-	err := c.request("EnterGlobal", EnterGlobalParams{Focused: focused}, &r)
-	return r.Value, err
-}
-
-// Save is core.Core's Save (request).
-func (c *Client) Save(id core.WorkspaceID) error {
-	var r SaveResult
-	return c.request("Save", SaveParams{ID: id}, &r)
+// SaveForQuit is core.Core's SaveForQuit (request).
+func (c *Client) SaveForQuit() error {
+	var r SaveForQuitResult
+	return c.request("SaveForQuit", SaveForQuitParams{}, &r)
 }
 
 // Registry is core.Core's Registry (local).
@@ -1362,6 +1009,25 @@ func (c *Client) Registry() core.RegistryView {
 func (c *Client) ReloadRegistry() error {
 	var r ReloadRegistryResult
 	return c.request("ReloadRegistry", ReloadRegistryParams{}, &r)
+}
+
+// Register is core.Core's Register (request).
+func (c *Client) Register(name string, dir string) (core.WorkspaceView, error) {
+	var r RegisterResult
+	err := c.request("Register", RegisterParams{Name: name, Dir: dir}, &r)
+	return r.Value, err
+}
+
+// PersistOpenList is core.Core's PersistOpenList (request).
+func (c *Client) PersistOpenList(names []string) {
+	var r PersistOpenListResult
+	c.requestNoErr("PersistOpenList", PersistOpenListParams{Names: names}, &r)
+}
+
+// SetLastUsed is core.Core's SetLastUsed (request).
+func (c *Client) SetLastUsed(name string) error {
+	var r SetLastUsedResult
+	return c.request("SetLastUsed", SetLastUsedParams{Name: name}, &r)
 }
 
 // SaveSettings is core.Core's SaveSettings (request).
@@ -1480,19 +1146,6 @@ func (c *Client) PaneQuiet(id core.InstanceID) {
 // VerifyDead is core.Core's VerifyDead (cast).
 func (c *Client) VerifyDead(id core.InstanceID) {
 	c.cast("VerifyDead", VerifyDeadParams{ID: id})
-}
-
-// Program is core.Core's Program (local).
-func (c *Client) Program() string {
-	var v0 string
-	c.local(func(r *replica) { v0 = r.Program() })
-	return v0
-}
-
-// SetProgram is core.Core's SetProgram (request).
-func (c *Client) SetProgram(program string) {
-	var r SetProgramResult
-	c.requestNoErr("SetProgram", SetProgramParams{Program: program}, &r)
 }
 
 // RCAuth is core.Core's RCAuth (local).

@@ -61,30 +61,41 @@ func (s *workspaceSlot) uiPrefs() config.UIPrefs { return s.info.UIPrefs.Clone()
 // recovery is the summary of the workspace's last orphan reconcile.
 func (s *workspaceSlot) recovery() core.RecoverySummary { return s.info.Recovery }
 
-// activateWorkspace opens a workspace as a new tab (core's OpenTab: load,
-// reconcile, crash restart, workspace terminal, orphan recovery) and
-// builds its view. The first tab opened from classic/global mode takes
-// focus at once (see the invariant on home.workspaceSlot); later ones open
-// in the background, and callers that want to show one focus it with
-// loadSlot.
+// activateWorkspace opens the workspace def names as a new tab (openTab):
+// the served workspace of that name, found after a reread of the registry
+// when the model does not serve it yet (openNamed).
+func (m *home) activateWorkspace(def config.Workspace) (tea.Cmd, error) {
+	id, err := m.servedID(def.Name)
+	if err != nil {
+		return nil, err
+	}
+	return m.openTab(id)
+}
+
+// openTab opens the served workspace id as a new tab (core's Open: a load
+// that failed retried; on its first open, its workspace terminal) and
+// builds its view. A workspace this TUI failed to open at startup is one
+// no longer (failedOpen). The first tab opened from classic/global mode
+// takes focus at once (see the invariant on home.workspaceSlot); later
+// ones open in the background, and callers that want to show one focus it
+// with loadSlot.
 //
 // Focusing the first tab drops the classic slot; the returned Cmd releases
 // its pane clients (releaseSlotCmd, prunePanes) and is nil otherwise.
 // Callers must return it (or, before the program runs, run it).
-func (m *home) activateWorkspace(def config.Workspace) (tea.Cmd, error) {
+func (m *home) openTab(id core.WorkspaceID) (tea.Cmd, error) {
 	if len(m.slots) == 0 {
-		// Leaving classic mode: the first tab drops the classic workspace
-		// from the model, after which its UI prefs can no longer be
-		// written. Tear the classic slot down (workbench, pending split
-		// ratios) while they still can; loadSlot's own teardown then finds
-		// nothing left to do.
+		// Leaving classic mode: tear the classic slot down (workbench,
+		// pending split ratios) while its UI prefs are still the ones m.*
+		// writes; loadSlot's own teardown then finds nothing left to do.
 		m.leaveFocusedSlot()
 	}
-	v, err := m.core.OpenTab(def)
+	v, err := m.core.Open(id)
 	if err != nil {
 		return nil, err
 	}
-	// The load's notices (a workspace terminal launched without remote
+	m.failedOpen = slices.DeleteFunc(m.failedOpen, func(n string) bool { return n == v.Name })
+	// The open's notices (a workspace terminal launched without remote
 	// control) land before anything the caller shows next, as they did when
 	// the load set them itself.
 	notices := m.drainCore()
@@ -102,17 +113,53 @@ func (m *home) activateWorkspace(def config.Workspace) (tea.Cmd, error) {
 	return tea.Batch(notices, release), nil
 }
 
-// deactivateWorkspace saves and closes a workspace tab by name.
-// Returns an error if SaveInstances fails; in that case the slot is
-// kept in memory so the user can retry rather than losing access to
-// unpersisted session state. This matches handleQuit's policy that
-// silent data loss on slot teardown is worse than a sticky tab.
+// servedNamed is the view of the served workspace called name ("" for the
+// global one), from the published workspaces; false when the model serves
+// none by that name.
+func (m *home) servedNamed(name string) (core.WorkspaceView, bool) {
+	for _, v := range m.core.Workspaces() {
+		if v.Name == name {
+			return v, true
+		}
+	}
+	return core.WorkspaceView{}, false
+}
+
+// servedID is the ID of the served workspace called name. One the model
+// does not serve yet (registered by another process since the registry was
+// last read) is looked for again after a reread (ReloadRegistry), which
+// serves it.
+func (m *home) servedID(name string) (core.WorkspaceID, error) {
+	if v, ok := m.servedNamed(name); ok {
+		return v.ID, nil
+	}
+	if err := m.core.ReloadRegistry(); err != nil {
+		return 0, fmt.Errorf("workspace %s: %w", labelOf(name), err)
+	}
+	if v, ok := m.servedNamed(name); ok {
+		return v.ID, nil
+	}
+	return 0, fmt.Errorf("workspace %s is not registered", labelOf(name))
+}
+
+// openNamed opens the served workspace called name (servedID, then core's
+// Open) and returns its view.
+func (m *home) openNamed(name string) (core.WorkspaceView, error) {
+	id, err := m.servedID(name)
+	if err != nil {
+		return core.WorkspaceView{}, err
+	}
+	return m.core.Open(id)
+}
+
+// deactivateWorkspace closes a workspace tab by name: the TUI stops
+// showing it, while the model keeps serving it. The last open tab is never
+// closed: leaving no tab means leaving workspace mode, and only
+// enterGlobalMode builds the slot that must take focus then.
 //
 // The invariant on home.workspaceSlot holds on return. Closing the
-// focused tab refocuses, via loadSlot, the tab that slides into its
-// index (or the new last tab). The last open tab is never closed here:
-// leaving no tab means leaving workspace mode, and only enterGlobalMode
-// builds the slot that must take focus then.
+// focused tab refocuses, via loadSlot, the tab that slides into its index
+// (or the new last tab).
 //
 // The returned Cmd releases the closed slot's pane clients
 // (releaseSlotCmd, prunePanes; nil when none is attached) and must be
@@ -122,15 +169,8 @@ func (m *home) deactivateWorkspace(name string) (tea.Cmd, error) {
 	if idx == -1 {
 		return nil, nil
 	}
-	if idx == m.focusedSlot {
-		// Closing drops the workspace from the model, after which its UI
-		// prefs can no longer be written: tear the focused slot down
-		// (workbench, pending split ratios) first. loadSlot's own teardown
-		// then finds nothing left to do.
-		m.leaveFocusedSlot()
-	}
-	if err := m.core.CloseTab(name); err != nil {
-		return nil, err
+	if len(m.slots) == 1 {
+		return nil, fmt.Errorf("cannot close %s, the last open workspace: return to global mode instead", name)
 	}
 	slot := m.slots[idx]
 	wasFocused := idx == m.focusedSlot
@@ -224,8 +264,8 @@ func (m *home) openSlots() []*workspaceSlot {
 
 // checkSlotInvariant reports a violation of the embedded-focused-slot
 // invariant (see home.workspaceSlot): the focused slot is never nil, no
-// slot appears in m.slots twice, and with tabs open the focused slot is
-// m.slots[m.focusedSlot]. In classic/global mode (no tabs) the focused
+// slot appears in m.slots twice, every slot shows a workspace the model
+// serves, and with tabs open the focused slot is m.slots[m.focusedSlot]. In classic/global mode (no tabs) the focused
 // slot is the classic slot, outside m.slots by construction.
 // Tests call it after every slot transition.
 func (m *home) checkSlotInvariant() error {
@@ -242,20 +282,16 @@ func (m *home) checkSlotInvariant() error {
 		}
 		seen[s] = i
 	}
-	// The slots mirror the model's workspaces: the tabs in order, or with
-	// none open the classic workspace. A bare test home has no model.
+	// Every slot shows a workspace the model serves: the tabs, or with
+	// none open the classic slot. A bare test home has no model.
 	if m.core != nil {
-		tabs := m.core.Tabs()
-		if len(tabs) != len(m.slots) {
-			return fmt.Errorf("slot invariant: %d slots, but the model has %d tabs", len(m.slots), len(tabs))
-		}
-		for i, s := range m.slots {
-			if s.id != tabs[i].ID {
-				return fmt.Errorf("slot invariant: m.slots[%d] does not show the model's tab %d", i, i)
+		for i, s := range m.openSlots() {
+			if !m.core.IsLoaded(s.id) {
+				if len(m.slots) == 0 {
+					return errors.New("slot invariant: the classic slot shows no workspace the model serves")
+				}
+				return fmt.Errorf("slot invariant: m.slots[%d] shows no workspace the model serves", i)
 			}
-		}
-		if classic, _ := m.core.Classic(); len(m.slots) == 0 && m.id != classic.ID {
-			return errors.New("slot invariant: the focused slot does not show the model's classic workspace")
 		}
 	}
 	if len(m.slots) == 0 {
@@ -305,7 +341,7 @@ func (m *home) loadSlot(idx int) {
 	}
 	if slot := m.slots[idx]; slot == m.workspaceSlot {
 		// Nothing departs, only the tab set around the slot may have
-		// changed: activateWorkspace focused the first tab and the caller
+		// changed: openTab focused the first tab and the caller
 		// now focuses it again, a toggle whose deactivation already
 		// refocused ends by re-focusing, or tabs came and went beside it.
 		// Skip the teardown and the layout pass below (it loops tmux
@@ -354,40 +390,20 @@ func (m *home) loadSlot(idx int) {
 // workspace is still available.
 //
 // An empty desired list from global mode switches nothing: see
-// stayInGlobalMode.
-//
-// Classic-slot persistence: when entering this function with len(m.slots)
-// == 0, the focused slot is the classic one (global, or the startup
-// workspace). The first tab to open — or enterGlobalMode's fresh global
-// slot — drops it, and with it any in-flight changes the user hadn't
-// quit-flushed yet. Persist it before the transition so the reverse
-// direction (enterGlobalMode) reads back what the user was just looking
-// at.
+// stayInGlobalMode. Nothing needs saving first: the model keeps serving
+// every workspace a transition stops showing.
 func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	if len(desired) == 0 && m.inGlobalMode() {
 		return m.stayInGlobalMode()
 	}
-	if len(m.slots) == 0 {
-		err := m.core.Save(m.id)
-		switch {
-		case errors.Is(err, session.ErrStorageLoadFailed):
-			// The global payload is unreadable (typically the fail-closed
-			// case of core.Model.RestoreSaved's fallback), so the storage refuses
-			// every write and no save here could ever succeed: blocking
-			// would strand the user in an unwritable global mode. Leave
-			// the file untouched and switch.
-			log.For("app").Warn("global_save_skipped", "reason", "storage_load_failed", "err", err)
-		case err != nil:
-			return m.handleError(fmt.Errorf("failed to save global state before workspace transition: %w", err))
-		}
-	} else {
+	if len(m.slots) > 0 {
 		m.leaveFocusedSlot()
 	}
 
 	// Empty desired = explicit return to global mode (e.g. user picked
 	// the Global row in the mid-session picker). Handled by a dedicated
-	// helper because the inverse transition needs to reconstruct global
-	// storage and clear OpenWorkspaces from the registry.
+	// helper because the inverse transition builds the global slot and
+	// clears the registry's open list.
 	if len(desired) == 0 {
 		return m.enterGlobalMode()
 	}
@@ -397,7 +413,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 		desiredNames[ws.Name] = true
 	}
 	// A failed-to-restore workspace left unchecked was explicitly closed.
-	m.core.KeepRestoreFailed(desiredNames)
+	m.failedOpen = slices.DeleteFunc(m.failedOpen, func(n string) bool { return !desiredNames[n] })
 
 	var activationErrors []string
 	var deactivationErrors []string
@@ -420,7 +436,6 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	}
 
 	// 2. Deactivate slots not in desired (reverse order to keep indices stable).
-	// Slots whose save fails stay in m.slots; the user is told via handleError below.
 	// Skipped when no desired workspace is open (every activation failed):
 	// closing the rest would leave no tab at all, which is enterGlobalMode's
 	// transition, not this one — keep the open tabs and report the failures.
@@ -444,7 +459,7 @@ func (m *home) applyWorkspaceToggle(desired []config.Workspace) tea.Cmd {
 	m.loadSlot(m.focusedSlot)
 
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
-	m.core.PersistOpenList()
+	m.persistOpenList()
 	if len(m.slots) > 0 {
 		m.showRecoverySummary(m.slots[m.focusedSlot].recovery())
 	}
@@ -481,67 +496,51 @@ func (m *home) inGlobalMode() bool {
 
 // stayInGlobalMode applies a picker commit with nothing selected (the
 // Global row, or every workspace unchecked) made from global mode. The
-// focused slot already is the global slot, so nothing is rebuilt: a reload
-// would attach a second client to every live session (then release the
-// first), crash-restart and orphan-recover all over again, and on a
-// latched global storage fail with nothing to fall back to — leaving the
-// workspaces that failed to restore, the only thing such a commit can
-// change, impossible to deselect. It closes those (restoreFailed) and
-// persists the now-empty open list, after the teardown every picker
-// commit runs on the focused slot (leaveFocusedSlot).
+// focused slot already is the global slot, so nothing is rebuilt: a
+// rebuild would attach a second client to every live session (then
+// release the first). It closes the workspaces that failed to restore
+// (failedOpen), the only thing such a commit can change, and persists the
+// now-empty open list, after the teardown every picker commit runs on the
+// focused slot (leaveFocusedSlot).
 func (m *home) stayInGlobalMode() tea.Cmd {
 	m.leaveFocusedSlot()
-	m.core.StayGlobal()
+	m.failedOpen = nil
+	m.persistOpenList()
 	return tea.RequestWindowSize
 }
 
 // enterGlobalMode transitions from workspace-tab mode, or from a classic
 // workspace slot, to global (no-workspace) mode; from global mode itself
-// applyWorkspaceToggle runs stayInGlobalMode instead. Builds a fresh
-// global slot for config.GlobalWorkspaceContext — the context classic
-// global startup uses, so both resolve the same directory
-// (LOOM_GLOBAL_DIR, else ~/.loom; never LOOM_HOME) and the slot carries
-// that context like the startup one does — loaded by the same loader as
-// classic startup (core.Model.EnterGlobal: reconcile, crash restarts, inline
-// orphan recovery), minus the orphan tmux sweep: the closing tabs'
-// sessions are unclaimed here.
+// applyWorkspaceToggle runs stayInGlobalMode instead. It opens the global
+// workspace (core's Open: config.GlobalWorkspaceContext's, the one global
+// startup shows, so both resolve LOOM_GLOBAL_DIR, else ~/.loom; never
+// LOOM_HOME), which the model has served since it booted, and builds the
+// classic slot over it. The workspaces it stops showing stay served.
+// Returning to global mode closes the workspaces that failed to restore
+// (failedOpen) and clears the registry's open list, so the next launch
+// lands in global mode rather than restoring tabs the user just closed.
 //
-// Tmux note: closing the tabs doesn't kill their tmux sessions. Session
-// names are loom_<title>, keyed by title alone, so a global instance whose
-// title matches one in a closing tab shares its tmux session, and the load
-// attaches a second client to it while the tab's is still attached. The
-// overlap is brief: the release Cmds returned below detach every dropped
-// instance's client.
+// Tmux note: session names are loom_<title>, keyed by title alone, so a
+// global instance whose title matches one in a closing tab shares its tmux
+// session, and the global slot attaches a second client to it while the
+// tab's is still attached. The overlap is brief: the release Cmds returned
+// below detach every dropped instance's client.
 //
-// Fails closed, with nothing switched: no tab closed, storage and list
-// unswapped, and the registry unchanged (workbench mode may already have
-// been exited — applyWorkspaceToggle runs leaveFocusedSlot first). That
-// covers two failures, checked in this order:
-//   - Saving any open tab. Every tab is saved before the global state is
-//     even read: the load has side effects (it relaunches crash-recovered
-//     agents, writes the loom-context files, auto-cleans orphan worktrees
-//     and sweeps hooks folders), so an abort after it would leave global
-//     agents running that nothing displays. The saves have none beyond
-//     the tabs' own state.json and are idempotent, so a later abort (the
-//     load) costs nothing. Every tab is also saved before any is closed,
-//     so a failure can't leave a half-switched home (an open tab that is
-//     no longer the focused slot).
-//   - The global load, which still runs before anything is torn down.
-//     Carrying on with an empty list would let its next save overwrite a
-//     possibly-recoverable global state.json — the same rule
-//     activateWorkspace and the classic startup path follow.
+// Fails closed, with nothing switched, when the global workspace's load
+// failed and fails again: no tab closed, the list unswapped and the
+// registry unchanged (workbench mode may already have been exited —
+// applyWorkspaceToggle runs leaveFocusedSlot first).
 func (m *home) enterGlobalMode() tea.Cmd {
 	// Picker escape hatch (W → Global row) from a classic workspace slot
 	// reaches here with no leaveFocusedSlot of its own — clean up workbench
 	// residue (wbRatio flush, split-terminal restore) and flush pending
-	// ratios while the departing slot's workspace is still loaded (the
-	// transition drops it, and its prefs can no longer be written then),
-	// or handleQuit later flushes them into the new global state.json.
+	// ratios while the departing slot is still the one m.* writes, or
+	// handleQuit later flushes them into the global state.json.
 	m.leaveFocusedSlot()
 
-	global, err := m.core.EnterGlobal(m.id)
+	global, err := m.openNamed("")
 	if err != nil {
-		return m.handleError(err)
+		return m.handleError(fmt.Errorf("failed to load global sessions (staying in workspace mode): %w", err))
 	}
 	notices := m.drainCore()
 
@@ -553,7 +552,7 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	view.list.SetPanes(m.panes)
 	m.seedViews(view)
 
-	// Everything loaded so far is dropped: every tab, or — global mode
+	// Everything shown so far is dropped: every tab, or — global mode
 	// entered from a classic workspace slot — that slot. The focused one's
 	// panes live on in the global slot.
 	dropped, carried := m.openSlots(), m.workspaceSlot
@@ -561,6 +560,8 @@ func (m *home) enterGlobalMode() tea.Cmd {
 	m.focusedSlot = 0
 	m.workspaceSlot = view
 	m.ensureSlotPanes(view)
+	m.failedOpen = nil
+	m.persistOpenList()
 
 	m.tabBar.SetWorkspaces(nil, 0)
 
@@ -666,7 +667,7 @@ func (m *home) persistFocusedWorkspace() {
 }
 
 // slotNames returns the names of all active workspace slots — the set
-// the tab bar shows and core.Model.PersistOpenList persists.
+// the tab bar shows, and the head of the open list (openList).
 func (m *home) slotNames() []string {
 	names := make([]string, len(m.slots))
 	for i, slot := range m.slots {
@@ -674,3 +675,20 @@ func (m *home) slotNames() []string {
 	}
 	return names
 }
+
+// openList is the open list this TUI persists (persistOpenList) and the
+// workspace picker shows checked: its tabs' names, in tab order, then the
+// workspaces it failed to open and keeps open (failedOpen).
+func (m *home) openList() []string {
+	names := m.slotNames()
+	for _, name := range m.failedOpen {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// persistOpenList writes this TUI's open list to the registry
+// (core.Core.PersistOpenList), so the next launch restores it.
+func (m *home) persistOpenList() { m.core.PersistOpenList(m.openList()) }

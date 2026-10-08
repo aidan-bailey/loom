@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +64,7 @@ func TestLoop_SerializesCalls(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	assert.Len(t, l.Program(), 50)
+	assert.Len(t, get(l, func(m *Model) string { return m.program }), 50)
 }
 
 // TestLoop_RunsJobsAndDeliversTheirResults: a job runs off the loop (the
@@ -119,41 +120,42 @@ func TestLoop_SyncReturnsEventsAndTheJobsRun(t *testing.T) {
 // have published (a pending change), the second the whole state after it,
 // and the baseline moves with them, so a Sync after finds nothing new.
 func TestLoop_SyncAndSnapshotIsOneCall(t *testing.T) {
-	l := StartForTest(NewForTest(Options{Program: "a"}))
+	l := StartForTest(NewForTest(Options{}))
 	t.Cleanup(l.Stop)
+	l.do(func(m *Model) { m.SetRCAuth(session.RemoteControlAuth{Reason: "a"}) })
 	l.Sync() // the baseline
-	l.SetProgram("b")
+	l.do(func(m *Model) { m.SetRCAuth(session.RemoteControlAuth{Reason: "b"}) })
 
-	programOf := func(events []Event) []string {
+	reasonsOf := func(events []Event) []string {
 		var out []string
 		for _, ev := range events {
 			if m, ok := ev.(ModelChanged); ok {
-				out = append(out, m.View.Program)
+				out = append(out, m.View.RCAuth.Reason)
 			}
 		}
 		return out
 	}
 	published, snapshot := l.SyncAndSnapshot()
-	assert.Equal(t, []string{"b"}, programOf(published), "the pending change, as Sync would have published it")
+	assert.Equal(t, []string{"b"}, reasonsOf(published), "the pending change, as Sync would have published it")
 	var kinds []string
 	for _, ev := range snapshot {
 		kinds = append(kinds, reflect.TypeOf(ev).Name())
 	}
 	assert.Equal(t, []string{"WorkspacesChanged", "ModelChanged", "AccountsChanged", "GitHubChanged"}, kinds, "the whole state")
-	assert.Equal(t, []string{"b"}, programOf(snapshot), "as it stands after the change")
-	assert.Empty(t, programOf(l.Sync()), "the baseline moved with the snapshot")
+	assert.Equal(t, []string{"b"}, reasonsOf(snapshot), "as it stands after the change")
+	assert.Empty(t, reasonsOf(l.Sync()), "the baseline moved with the snapshot")
 }
 
 // TestLoop_PanicInACallReachesItsCaller: the caller panics with the
 // loop's stack, and every later call re-raises it.
 func TestLoop_PanicInACallReachesItsCaller(t *testing.T) {
-	l := StartForTest(NewForTest(Options{Program: "p"}))
+	l := StartForTest(NewForTest(Options{}))
 	t.Cleanup(l.Stop)
 	p := catch(t, func() { l.do(func(*Model) { panic("boom") }) })
 	require.NotNil(t, p, "the caller panics")
 	assert.Equal(t, "boom", p.Value)
 	assert.Contains(t, p.Stack, "loop_test.go", "the stack is where it panicked")
-	assert.Same(t, p, catch(t, func() { _ = l.Program() }), "every later call re-raises it")
+	assert.Same(t, p, catch(t, func() { _ = l.RCAuth() }), "every later call re-raises it")
 }
 
 // TestLoop_PanicInAJobReachesTheNextCall: a job's panic wakes the client,
@@ -186,10 +188,11 @@ func TestLoop_PanicInADeliveryReachesTheNextCall(t *testing.T) {
 // TestLoop_StopEndsCallsAndDropsLateResults: after Stop a call runs
 // nothing, a late result never blocks its goroutine, and Wakes is closed.
 func TestLoop_StopEndsCallsAndDropsLateResults(t *testing.T) {
-	l := startLoop(NewForTest(Options{Program: "p"}), false, 0)
+	l := startLoop(NewForTest(Options{}), false, 0)
+	l.do(func(m *Model) { m.SetRCAuth(session.RemoteControlAuth{Reason: "p"}) })
 	l.Stop()
 	l.Stop() // idempotent
-	assert.Equal(t, "", l.Program(), "a call after Stop runs nothing")
+	assert.Zero(t, l.RCAuth(), "a call after Stop runs nothing")
 	returned := make(chan struct{})
 	go func() {
 		l.post(jobDone{result: "late"})
@@ -288,6 +291,6 @@ func TestLoopForwardsEachMethodToItsNamesake(t *testing.T) {
 		})
 		assert.Equal(t, map[string]bool{want: true}, called, "%s forwards to its namesake only", fn.Name.Name)
 	}
-	assert.Equal(t, reflect.TypeOf((*Core)(nil)).Elem().NumMethod()-1, n,
-		"every Core method but Begin (loop.go) is a forwarder in loop_core.go")
+	assert.Equal(t, reflect.TypeOf((*Core)(nil)).Elem().NumMethod(), n,
+		"every Core method is a forwarder in loop_core.go")
 }

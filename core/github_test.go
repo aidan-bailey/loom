@@ -42,7 +42,7 @@ func readyInst(t *testing.T, m *Model) *session.Instance {
 func ghModel(t *testing.T) *Model {
 	t.Helper()
 	m := NewForTest(Options{})
-	m.SetWorkspacesForTest(storedWorkspace(t, "a"), nil)
+	m.SetWorkspacesForTest(storedWorkspace(t, "a"))
 	return m
 }
 
@@ -56,11 +56,11 @@ func TestGHQuery_OnlyOpenedWorkspacesArePolled(t *testing.T) {
 
 	ws := storedWorkspace(t, "a")
 	ws.ctx.RepoPath = t.TempDir()
-	m.SetWorkspacesForTest(ws, nil)
+	m.SetWorkspacesForTest(ws)
 	ws.opened = false
 	assert.Empty(t, m.openRepoPaths(), "served but never opened")
 
-	m.open(ws)
+	require.NoError(t, m.open(ws))
 	assert.Equal(t, []string{ws.ctx.RepoPath}, m.openRepoPaths())
 }
 
@@ -312,11 +312,11 @@ func TestDeliverPush_SuccessExpeditesGitHubAndAnErrorIsANotice(t *testing.T) {
 	assert.Equal(t, Notice{Err: errors.New("rejected")}, out.Events[0])
 }
 
-// TestOpenTabExpeditesGitHub: a newly opened workspace's repo was not in
-// openRepoPaths until now, so OpenTab makes the next tick poll. The load
+// TestOpenExpeditesGitHub: a newly opened workspace's repo was not in
+// openRepoPaths until now, so its first open makes the next tick poll. The load
 // runs on a mock executor; its workspace terminal (a fake claude) starts
 // on the private tmux server TestMain sets up.
-func TestOpenTabExpeditesGitHub(t *testing.T) {
+func TestOpenExpeditesGitHub(t *testing.T) {
 	def := config.Workspace{Name: "gh-expedite", Path: t.TempDir()}
 	cfgDir := config.WorkspaceConfigDir(&def)
 	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
@@ -327,10 +327,12 @@ func TestOpenTabExpeditesGitHub(t *testing.T) {
 		_ = tmux.Command(context.Background(), "kill-session", "-t", tmux.SessionTarget(tmux.ToLoomTmuxName(def.Name))).Run()
 	})
 	m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: aliveExec()})
+	ws, err := m.ensureLoaded(def)
+	require.NoError(t, err)
 	m.gate(gateGH).last = time.Now()
 	require.False(t, m.gateDue(gateGH, time.Now()))
 
-	_, err := m.openTabWS(def)
+	_, err = m.Open(m.wsIDOf(ws))
 	require.NoError(t, err)
 
 	assert.True(t, m.gateDue(gateGH, time.Now()), "a newly opened workspace's repo is polled on the next tick")

@@ -8,30 +8,9 @@ import (
 	"github.com/aidan-bailey/loom/session/github"
 )
 
-// workspacesView is every shown workspace's view, and whether they are the
-// classic workspace.
-func (m *Model) workspacesView() WorkspacesView {
-	shown := m.shown()
-	views := make([]WorkspaceView, len(shown))
-	for i, ws := range shown {
-		views[i] = m.wsViewOf(ws)
-	}
-	return WorkspacesView{Views: views, Classic: m.classicShown()}
-}
-
-// classicShown reports that the loaded workspace is the classic one: no
-// tab is open.
-func (m *Model) classicShown() bool { return len(m.tabs) == 0 && m.classic != nil }
-
 // modelView is the model's own state as a client sees it.
 func (m *Model) modelView() ModelView {
-	return ModelView{
-		Program:       m.program,
-		RCAuth:        m.rcAuth,
-		Registry:      m.Registry(),
-		RestoreFailed: m.RestoreFailed(),
-		OpenNames:     m.OpenNames(),
-	}
+	return ModelView{RCAuth: m.rcAuth, Registry: m.Registry()}
 }
 
 // accountsView is the account state as a client sees it. AccountsView's
@@ -130,18 +109,17 @@ func (m *Model) publishState() []Event {
 }
 
 // Snapshot is the whole published state as events, in Sync's order: the
-// workspace views, the model, account and GitHub views, and every loaded
+// workspace views, the model, account and GitHub views, and every served
 // workspace's instance views. It leaves what the next Sync diffs against
 // alone: it is what a client needs when it subscribes, before the diffs.
 func (m *Model) Snapshot() []Event {
-	ws := m.workspacesView()
 	events := []Event{
-		WorkspacesChanged{Views: ws.Views, Classic: ws.Classic},
+		WorkspacesChanged{Views: m.Workspaces()},
 		ModelChanged{View: m.modelView()},
 		AccountsChanged{View: m.accountsView()},
 		GitHubChanged{View: m.githubView()},
 	}
-	for _, w := range m.shown() {
+	for _, w := range m.workspaces {
 		views := make([]InstanceView, len(w.insts))
 		for i, inst := range w.insts {
 			views[i] = m.viewOf(inst)

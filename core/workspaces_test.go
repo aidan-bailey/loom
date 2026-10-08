@@ -25,13 +25,13 @@ func fakeClaude(t *testing.T) string {
 	return p
 }
 
-// TestOpenTab_BlockedRemoteControlEmitsTheRCOffNotice: the workspace
-// terminal OpenTab creates launches without remote control when the
+// TestOpen_BlockedRemoteControlEmitsTheRCOffNotice: the workspace
+// terminal a first open creates launches without remote control when the
 // default account's auth is blocked, and the model says so with an info
 // notice (formerly the load's own errBox.SetInfo), queued before the
 // terminal starts. The load paths run on a mock executor; the terminal
 // starts on the private tmux server TestMain sets up.
-func TestOpenTab_BlockedRemoteControlEmitsTheRCOffNotice(t *testing.T) {
+func TestOpen_BlockedRemoteControlEmitsTheRCOffNotice(t *testing.T) {
 	def := config.Workspace{Name: "rc-ws", Path: t.TempDir()}
 	cfgDir := config.WorkspaceConfigDir(&def)
 	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
@@ -48,7 +48,9 @@ func TestOpenTab_BlockedRemoteControlEmitsTheRCOffNotice(t *testing.T) {
 	m := NewForTest(Options{Registry: &config.WorkspaceRegistry{}, CmdExec: noTmux})
 	m.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 
-	ws, err := m.openTabWS(def)
+	ws, err := m.ensureLoaded(def)
+	require.NoError(t, err)
+	_, err = m.Open(m.wsIDOf(ws))
 	require.NoError(t, err)
 
 	assert.Contains(t, m.Drain().Events, Event(Notice{Info: "remote control off: not logged in"}))

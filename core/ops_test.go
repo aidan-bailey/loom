@@ -23,7 +23,7 @@ func TestDeliverStart_FailureRemovesSavesAndKills(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := newInst(t, "x")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws, storedWorkspace(t, "b")})
+	m.SetWorkspacesForTest(ws, storedWorkspace(t, "b"))
 
 	boom := errors.New("boom")
 	m.Deliver(StartResult{Instance: inst, Owner: ws, Err: boom})
@@ -41,42 +41,27 @@ func TestDeliverStart_FailureRemovesSavesAndKills(t *testing.T) {
 // re-sends it) and typed by a job. The TUI hears of the start (Started)
 // only once that job has sent it, as when the completion sent it inline
 // before attaching: a key typed into the attached pane must not land
-// ahead of the prompt. Its owner's tab may close while the prompt is sent;
-// the model still serves the workspace, so Started names it all the same.
+// ahead of the prompt.
 func TestDeliverStart_SuccessSendsThePromptByJob(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		closeOwner bool
-	}{
-		{"owner still open", false},
-		{"owner's tab closed while the prompt was sent", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m := NewForTest(Options{})
-			ws := storedWorkspace(t, "a")
-			inst := newInst(t, "x")
-			inst.SetPrompt("do the thing")
-			ws.add(inst)
-			m.SetWorkspacesForTest(nil, []*Workspace{ws, storedWorkspace(t, "b")})
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	inst := newInst(t, "x")
+	inst.SetPrompt("do the thing")
+	ws.add(inst)
+	m.SetWorkspacesForTest(ws, storedWorkspace(t, "b"))
 
-			m.Deliver(StartResult{Instance: inst, Owner: ws})
+	m.Deliver(StartResult{Instance: inst, Owner: ws})
 
-			out := m.Drain()
-			assert.Empty(t, inst.Prompt())
-			require.Len(t, out.Jobs, 1)
-			assert.Empty(t, out.Events, "no Started until the prompt is sent")
+	out := m.Drain()
+	assert.Empty(t, inst.Prompt())
+	require.Len(t, out.Jobs, 1)
+	assert.Empty(t, out.Events, "no Started until the prompt is sent")
 
-			if tc.closeOwner {
-				_, err := m.closeTabWS("a")
-				require.NoError(t, err)
-			}
-			// The fixture never started, so the send fails; the job logs
-			// that and reports the start finished all the same.
-			m.Deliver(out.Jobs[0]())
-			assert.Equal(t, []Event{Started{ID: m.idOf(inst), Title: "x", Owner: m.wsIDOf(ws), OwnerLabel: "a"}},
-				m.Drain().Events)
-		})
-	}
+	// The fixture never started, so the send fails; the job logs that and
+	// reports the start finished all the same.
+	m.Deliver(out.Jobs[0]())
+	assert.Equal(t, []Event{Started{ID: m.idOf(inst), Title: "x", Owner: m.wsIDOf(ws), OwnerLabel: "a"}},
+		m.Drain().Events)
 }
 
 // TestDeliverOpFailed_Reverts pins a failed resume's revert (Loading back
@@ -101,7 +86,7 @@ func TestKillUnstarted_KillsTheFailedStartOnly(t *testing.T) {
 	pending, live := newInst(t, "pending"), pausedInst(t, "live")
 	ws.add(pending)
 	ws.add(live)
-	m.SetWorkspacesForTest(ws, nil)
+	m.SetWorkspacesForTest(ws)
 
 	assert.NotNil(t, killUnstarted(pending), "an unstarted instance is killed by a job")
 	m.Deliver(StartResult{Instance: pending, Owner: ws, Err: errors.New("boom")})
@@ -144,7 +129,7 @@ func TestResumeOutcome(t *testing.T) {
 func TestStartOwner_ResolvesByIdentity(t *testing.T) {
 	m := NewForTest(Options{})
 	focused, peer := storedWorkspace(t, "afocus"), storedWorkspace(t, "bpeer")
-	m.SetWorkspacesForTest(nil, []*Workspace{focused, peer})
+	m.SetWorkspacesForTest(focused, peer)
 	inst := newInst(t, "in-peer")
 	require.NoError(t, inst.TransitionTo(session.Loading))
 	peer.add(inst)
@@ -188,7 +173,7 @@ func TestKill_EndsTheTerminalShellAfterTheChecksAndBeforeTheWorktree(t *testing.
 		m := NewForTest(Options{})
 		ws := storedWorkspace(t, "a")
 		ws.add(inst)
-		m.SetWorkspacesForTest(nil, []*Workspace{ws})
+		m.SetWorkspacesForTest(ws)
 		calls, there := 0, false
 		terminalKills(t, inst, inst.GetWorktreePath(), &calls, &there)
 		pre, job := m.killInst(ws, inst)
@@ -223,7 +208,7 @@ func TestKill_EndsTheTerminalShellAfterTheChecksAndBeforeTheWorktree(t *testing.
 		m := NewForTest(Options{})
 		ws := storedWorkspace(t, "a")
 		ws.add(inst)
-		m.SetWorkspacesForTest(nil, []*Workspace{ws})
+		m.SetWorkspacesForTest(ws)
 
 		calls, worktreeThere := 0, false
 		terminalKills(t, inst, wtPath, &calls, &worktreeThere)

@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
 	"reflect"
 	"sync"
 	"testing"
 
+	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
@@ -141,9 +143,10 @@ func (s *workspaceSlot) ws() *core.Workspace {
 	return nil
 }
 
-// wireCore gives a fixture home the model production builds in newHome:
-// with no tab open the focused slot's workspace is the classic one,
-// otherwise the tabs are m.slots' workspaces in order. A slot with no
+// wireCore gives a fixture home the model production builds in newHome,
+// serving every slot's workspace (the tabs in order, then the focused
+// slot's), unbooted: a test that needs the global or registered
+// workspaces served boots it (bootFixture). A slot with no
 // workspace gets an empty one (and a list reading its rows, if it had
 // none). It keeps a model the test installed (m.core set beforehand, e.g.
 // with a registry, wrapped in testLoop), and a liveness probe it set (m.aliveProbe), else gives
@@ -180,15 +183,16 @@ func wireCore(t *testing.T, m *home) *home {
 			src.m, src.s = m, s
 		}
 	}
-	var tabs []*core.Workspace
+	// The model serves every slot's workspace: the tabs in order, then the
+	// focused slot's (the classic one when no tab is open).
+	var served []*core.Workspace
 	for _, s := range m.slots {
-		tabs = append(tabs, s.ws())
+		served = append(served, s.ws())
 	}
-	var classic *core.Workspace
 	if m.workspaceSlot != nil {
-		classic = m.ws()
+		served = append(served, m.ws())
 	}
-	testModel(m).SetWorkspacesForTest(classic, tabs)
+	testModel(m).SetWorkspacesForTest(served...)
 	// Each slot is named after the workspace it shows, and holds its view.
 	for _, s := range slots {
 		if s == nil {
@@ -348,7 +352,66 @@ func bell(m *home, inst *session.Instance) bool { return m.bells[idOf(m, inst)] 
 func editRCAuth(m *home, edit func(*session.RemoteControlAuth)) {
 	a := m.core.RCAuth()
 	edit(&a)
-	m.core.SetRCAuth(a)
+	loopOf(m).SetRCAuthForTest(a)
+}
+
+// bootFixture boots m's model as newHome does before its loop starts
+// (core.Model.Boot), after wireCore installed the fixture's workspaces:
+// the global workspace (LOOM_GLOBAL_DIR) and every registered one load
+// beside them, and one orphan sweep covers them all. The loop is idle
+// between calls, so the test may boot its model in place. The boot's
+// notices are dropped. A wireCore after it drops the booted workspaces.
+func bootFixture(t *testing.T, m *home) {
+	t.Helper()
+	testModel(m).Boot()
+	m.syncWorkspaces()
+	m.syncViews()
+}
+
+// registerWorkspaces registers defs in the workspace registry under the
+// test's LOOM_GLOBAL_DIR, which the test must have set to a directory of
+// its own, and installs the registry in m's model; an activation reads it
+// back (ReloadRegistry) to serve them. Returns the registry.
+func registerWorkspaces(t *testing.T, m *home, defs ...config.Workspace) *config.WorkspaceRegistry {
+	t.Helper()
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	for _, def := range defs {
+		require.NoError(t, reg.Add(def.Name, def.Path))
+	}
+	testModel(m).SetRegistryForTest(reg)
+	return reg
+}
+
+// startupHome builds a TUI as newHome does (startHome), over a model with
+// exec as its executor (nil: the production one) and reg as its registry
+// (nil: none), booted and served to a test client: startupName names the
+// workspace it starts on ("" the global one, LOOM_GLOBAL_DIR's), and
+// pendingDir a directory awaiting registration. Its drafts default to
+// "true".
+func startupHome(t *testing.T, exec cmd2.Executor, reg *config.WorkspaceRegistry, startupName, pendingDir string) *home {
+	t.Helper()
+	m, err := tryStartupHome(t, exec, reg, startupName, pendingDir)
+	require.NoError(t, err)
+	return m
+}
+
+// tryStartupHome is startupHome, returning startHome's error.
+func tryStartupHome(t *testing.T, exec cmd2.Executor, reg *config.WorkspaceRegistry, startupName, pendingDir string) (*home, error) {
+	t.Helper()
+	model := core.NewForTest(core.Options{Registry: reg, Program: "true", CmdExec: exec})
+	notices := model.Boot()
+	client, stop, err := startTestCore(model)
+	require.NoError(t, err)
+	t.Cleanup(stop)
+	m, err := startHome(context.Background(), client, stop, notices, startupName, "true", pendingDir, true)
+	if err != nil {
+		return nil, err
+	}
+	m.errBox.SetSize(400, 1)
+	wiredModel = testModel(m)
+	t.Cleanup(func() { wiredModel = nil })
+	return m, nil
 }
 
 // deliver hands m a core job's result as the runtime would (the loop

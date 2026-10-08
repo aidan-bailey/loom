@@ -34,7 +34,7 @@ func focusSlots(h *home, focused int, slots ...*workspaceSlot) {
 		for _, s := range slots {
 			tabs = append(tabs, s.ws())
 		}
-		testModel(h).SetWorkspacesForTest(nil, tabs)
+		testModel(h).SetWorkspacesForTest(tabs...)
 	}
 }
 
@@ -59,7 +59,9 @@ func TestSlotInvariant_HoldsAcrossSlotLifecycle(t *testing.T) {
 	classic := m.workspaceSlot
 
 	for _, name := range []string{"ws-a", "ws-b", "ws-c"} {
-		_, err := m.activateWorkspace(preservedTerminalWorkspace(t, name))
+		def := preservedTerminalWorkspace(t, name)
+		registerWorkspaces(t, m, def)
+		_, err := m.activateWorkspace(def)
 		require.NoError(t, err)
 		require.NoError(t, m.checkSlotInvariant(), "after activating %s", name)
 	}
@@ -72,11 +74,15 @@ func TestSlotInvariant_HoldsAcrossSlotLifecycle(t *testing.T) {
 	require.Equal(t, "ws-b", focusedName(m))
 
 	// Closing the focused tab refocuses the tab that slid into its index.
+	// The model keeps serving the closed tab's workspace: only this TUI
+	// stopped showing it.
+	idB := m.id
 	_, err := m.deactivateWorkspace("ws-b")
 	require.NoError(t, err)
 	require.NoError(t, m.checkSlotInvariant(), "after closing the focused tab")
 	assert.Equal(t, []string{"ws-a", "ws-c"}, m.slotNames())
 	assert.Equal(t, "ws-c", focusedName(m))
+	assert.True(t, m.core.IsLoaded(idB), "the closed tab's workspace is still served")
 
 	// Closing a tab left of focus shifts the index, not the focus.
 	_, err = m.deactivateWorkspace("ws-a")
@@ -87,6 +93,7 @@ func TestSlotInvariant_HoldsAcrossSlotLifecycle(t *testing.T) {
 	// The last tab only closes through global mode.
 	_, err = m.deactivateWorkspace("ws-c")
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the last open workspace")
 	require.NoError(t, m.checkSlotInvariant(), "after refusing to close the last tab")
 	require.Len(t, m.slots, 1)
 
@@ -106,6 +113,7 @@ func TestSlotInvariant_ToggleClosingFocusedTabRefocuses(t *testing.T) {
 	m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
 	wsA := preservedTerminalWorkspace(t, "ws-a")
 	wsB := preservedTerminalWorkspace(t, "ws-b")
+	registerWorkspaces(t, m, wsA, wsB)
 	_ = m.applyWorkspaceToggle([]config.Workspace{wsA, wsB})
 	require.NoError(t, m.checkSlotInvariant())
 	require.Equal(t, "ws-a", focusedName(m))
@@ -123,10 +131,12 @@ func TestSlotInvariant_ToggleClosingFocusedTabRefocuses(t *testing.T) {
 func TestSlotInvariant_ToggleKeepsTabsWhenEveryActivationFails(t *testing.T) {
 	isolateTmux(t)
 	m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
-	_ = m.applyWorkspaceToggle([]config.Workspace{preservedTerminalWorkspace(t, "ws-a")})
+	wsA, bad := preservedTerminalWorkspace(t, "ws-a"), corruptWorkspaces(t, "ws-bad")
+	registerWorkspaces(t, m, append(bad, wsA)...)
+	_ = m.applyWorkspaceToggle([]config.Workspace{wsA})
 	require.Equal(t, []string{"ws-a"}, m.slotNames())
 
-	cmd := m.applyWorkspaceToggle(corruptWorkspaces(t, "ws-bad"))
+	cmd := m.applyWorkspaceToggle(bad)
 	require.NotNil(t, cmd)
 	require.NoError(t, m.checkSlotInvariant())
 	assert.Equal(t, []string{"ws-a"}, m.slotNames(), "the open tab must survive a toggle that opened nothing")
@@ -160,17 +170,15 @@ func TestSlotOwnsState_MutationVisibleWithoutSave(t *testing.T) {
 
 // TestClassicSlot_NonNilAndOutsideSlots: classic startup focuses a slot
 // that is not an open tab, and a restore where every workspace failed
-// keeps that same slot focused.
+// keeps the classic slot focused.
 func TestClassicSlot_NonNilAndOutsideSlots(t *testing.T) {
 	isolateTmux(t)
 	t.Setenv("LOOM_HOME", t.TempDir())
 	t.Setenv(config.EnvGlobalDir, t.TempDir())
 
 	t.Run("classic startup", func(t *testing.T) {
-		cfg := config.DefaultConfig()
-		off := false
-		cfg.ClaudeRemoteControl = &off // no claude auth probe
-		m, err := newHome(context.Background(), &config.WorkspaceContext{ConfigDir: t.TempDir()}, nil, cfg, "true", "", true)
+		// The "true" program is no Claude: the boot probes no auth.
+		m, err := newHome(context.Background(), &config.WorkspaceContext{ConfigDir: t.TempDir()}, nil, "true", "", true)
 		require.NoError(t, err)
 		t.Cleanup(m.stopCore)
 		require.NotNil(t, m.workspaceSlot)
@@ -182,11 +190,10 @@ func TestClassicSlot_NonNilAndOutsideSlots(t *testing.T) {
 	})
 
 	t.Run("restore fallback keeps the classic slot", func(t *testing.T) {
-		m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
-		classic := m.workspaceSlot
-		m.restoreSavedWorkspaces(corruptWorkspaces(t, "ws-bad"))
+		m, _ := restoreModeHome(t, &recordingExec{}, `[]`, corruptWorkspaces(t, "ws-bad")...)
 		require.Empty(t, m.slots)
-		assert.Same(t, classic, m.workspaceSlot)
+		require.NotNil(t, m.workspaceSlot)
+		assert.Empty(t, m.name(), "the classic slot shows the global workspace")
 		require.NoError(t, m.checkSlotInvariant())
 	})
 }
@@ -329,6 +336,7 @@ func TestStartupPicker_FlushesPendingRatiosIntoClassicState(t *testing.T) {
 	classicState := m.appState()
 
 	ws := preservedTerminalWorkspace(t, "ws-a")
+	registerWorkspaces(t, m, ws)
 	m.setOverlay(overlay.NewStartupWorkspacePicker([]config.Workspace{ws}), overlayWorkspacePickerStartup)
 	m.state = stateWorkspace
 	_, _ = handleStateWorkspaceKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -347,8 +355,10 @@ func TestStartupPicker_FlushesPendingRatiosIntoClassicState(t *testing.T) {
 func twoTabsWithPendingRatio(t *testing.T) (*home, config.Workspace) {
 	t.Helper()
 	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
 	m := newRestoreHome(t, &recordingExec{})
 	a, b := preservedTerminalWorkspace(t, "ws-a"), preservedTerminalWorkspace(t, "ws-b")
+	registerWorkspaces(t, m, a, b)
 	_, err := m.activateWorkspace(a)
 	require.NoError(t, err)
 	_, err = m.activateWorkspace(b)
@@ -362,8 +372,8 @@ func twoTabsWithPendingRatio(t *testing.T) (*home, config.Workspace) {
 }
 
 // TestCloseFocusedTab_FlushesPendingRatiosIntoItsState: closing the focused
-// tab drops its workspace from the model, after which its prefs can no
-// longer be written, so the pending ratio goes to its state.json first.
+// tab flushes its pending ratio into its own state.json, not into that of
+// the tab that takes focus.
 func TestCloseFocusedTab_FlushesPendingRatiosIntoItsState(t *testing.T) {
 	m, a := twoTabsWithPendingRatio(t)
 
@@ -378,7 +388,6 @@ func TestCloseFocusedTab_FlushesPendingRatiosIntoItsState(t *testing.T) {
 // TestEnterGlobalMode_FlushesPendingRatiosIntoTheTabsState: the same for
 // leaving every tab for global mode.
 func TestEnterGlobalMode_FlushesPendingRatiosIntoTheTabsState(t *testing.T) {
-	t.Setenv(config.EnvGlobalDir, t.TempDir())
 	m, a := twoTabsWithPendingRatio(t)
 
 	_ = m.enterGlobalMode()

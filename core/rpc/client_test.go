@@ -93,7 +93,7 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	model := core.NewForTest(core.Options{Program: "claude"})
 	x, y := running(t, "x"), running(t, "y")
 	a, b := workspace(t, "a", x), workspace(t, "b", y)
-	model.SetWorkspacesForTest(nil, []*core.Workspace{a, b})
+	model.SetWorkspacesForTest(a, b)
 	reg := account.LoadRegistry(t.TempDir())
 	_, _, err := reg.Create("max-2", t.TempDir())
 	require.NoError(t, err)
@@ -108,7 +108,7 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	c := pair(t, loop)
 
 	wsIDs := []core.WorkspaceID{0, 99}
-	for _, v := range loop.Tabs() {
+	for _, v := range loop.Workspaces() {
 		wsIDs = append(wsIDs, v.ID)
 	}
 	var instIDs []core.InstanceID
@@ -125,8 +125,7 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 		assert.Equal(t, normalize(ask(loop)), normalize(ask(c)), name)
 	}
 	errText := func(err error) string { return fmt.Sprint(err) }
-	same("Tabs", func(k core.Core) []any { return []any{k.Tabs()} })
-	same("Classic", func(k core.Core) []any { v, ok := k.Classic(); return []any{v, ok} })
+	same("Workspaces", func(k core.Core) []any { return []any{k.Workspaces()} })
 	for _, id := range wsIDs {
 		same(fmt.Sprintf("Workspace(%d)", id), func(k core.Core) []any { v, ok := k.Workspace(id); return []any{v, ok} })
 		same(fmt.Sprintf("IsLoaded(%d)", id), func(k core.Core) []any { return []any{k.IsLoaded(id)} })
@@ -136,9 +135,6 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 		same(fmt.Sprintf("View(%d)", id), func(k core.Core) []any { v, ok := k.View(id); return []any{v, ok} })
 	}
 	same("Registry", func(k core.Core) []any { return []any{k.Registry()} })
-	same("RestoreFailed", func(k core.Core) []any { return []any{k.RestoreFailed()} })
-	same("OpenNames", func(k core.Core) []any { return []any{k.OpenNames()} })
-	same("Program", func(k core.Core) []any { return []any{k.Program()} })
 	same("RCAuth", func(k core.Core) []any { return []any{k.RCAuth()} })
 	same("AccountNames", func(k core.Core) []any { return []any{k.AccountNames()} })
 	same("AccountsLoaded", func(k core.Core) []any { return []any{k.AccountsLoaded()} })
@@ -165,7 +161,7 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 func TestRequest_ItsEventsArriveBeforeItsReply(t *testing.T) {
 	model := core.NewForTest(core.Options{})
 	x := running(t, "x")
-	model.SetWorkspacesForTest(workspace(t, "a", x), nil)
+	model.SetWorkspacesForTest(workspace(t, "a", x))
 	loop := core.StartForTest(model)
 	c := pair(t, loop)
 	id := model.IDOfForTest(x)
@@ -190,23 +186,32 @@ func TestCast_ReachesTheModel(t *testing.T) {
 // TestSync_CoalescesStateAndKeepsTheRestInOrder: Sync hands out the newest
 // state, once per kind, ahead of the other events in the order they came.
 func TestSync_CoalescesStateAndKeepsTheRestInOrder(t *testing.T) {
-	model := core.NewForTest(core.Options{Program: "a"})
+	model := core.NewForTest(core.Options{})
+	ws := workspace(t, "a")
+	model.SetWorkspacesForTest(ws)
+	id := model.WorkspaceIDForTest(ws)
 	loop := core.StartForTest(model)
 	c := pair(t, loop)
 	c.Sync() // the snapshot
 
-	c.SetProgram("b")
+	save := func(program string) {
+		t.Helper()
+		s := ws.Config().Snapshot()
+		s.DefaultProgram = program
+		require.NoError(t, c.SaveSettings(id, s))
+	}
+	save("b")
 	loop.DeliverForTest(core.RosterResultForTest(nil, errors.New("no roster"), time.Now()))
-	c.SetProgram("c")
+	save("c")
 	events := c.Sync()
-	var models []string
+	var programs []string
 	for _, ev := range events {
-		if m, ok := ev.(core.ModelChanged); ok {
-			models = append(models, m.View.Program)
+		if wc, ok := ev.(core.WorkspacesChanged); ok {
+			programs = append(programs, wc.Views[0].Settings.DefaultProgram)
 		}
 	}
-	assert.Equal(t, []string{"c"}, models, "one ModelChanged, the newest")
-	_, first := events[0].(core.ModelChanged)
+	assert.Equal(t, []string{"c"}, programs, "one WorkspacesChanged, the newest")
+	_, first := events[0].(core.WorkspacesChanged)
 	assert.True(t, first, "state first")
 }
 
@@ -238,10 +243,10 @@ func TestWake_ALoopResultReachesTheClient(t *testing.T) {
 	}
 }
 
-// panicky is a backend whose SetProgram panics.
+// panicky is a backend whose PersistOpenList panics.
 type panicky struct{ *core.Loop }
 
-func (panicky) SetProgram(string) { panic("boom") }
+func (panicky) PersistOpenList([]string) { panic("boom") }
 
 // TestPanic_ReachesTheCallerAndEveryLaterCall: the model's panic is raised
 // in the caller, and every call after it panics too, a cast and a request
@@ -260,13 +265,13 @@ func TestPanic_ReachesTheCallerAndEveryLaterCall(t *testing.T) {
 			c, err := dial(b, synchronous)
 			require.NoError(t, err)
 
-			p := catch(func() { c.SetProgram("x") })
+			p := catch(func() { c.PersistOpenList(nil) })
 			require.NotNil(t, p, "the caller panics")
 			w, ok := p.(*core.WireError)
 			require.True(t, ok, "with the wire's panic, got %T", p)
 			assert.Equal(t, core.CodePanic, w.Code)
 			assert.Contains(t, w.Message, "boom")
-			assert.NotNil(t, raised(t, "a local read", func() { c.Program() }), "a later local read panics")
+			assert.NotNil(t, raised(t, "a local read", func() { c.RCAuth() }), "a later local read panics")
 			assert.NotNil(t, raised(t, "Sync", func() { c.Sync() }), "and Sync")
 			assert.NotNil(t, raised(t, "a cast", func() { c.MarkOutput("x") }), "and a cast")
 			assert.NotNil(t, raised(t, "a request", func() { c.Kill(1, 0) }), "and a request")
@@ -300,7 +305,7 @@ func TestConnectionLost_IsFatal(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the loss did not wake the client")
 	}
-	p := catch(func() { c.Program() })
+	p := catch(func() { c.RCAuth() })
 	w, ok := p.(*core.WireError)
 	require.True(t, ok, "the next call panics with the wire's error, got %T", p)
 	assert.Equal(t, core.CodeError, w.Code)
@@ -320,7 +325,7 @@ func TestClose_IsNotALoss(t *testing.T) {
 	c, err := Dial(b)
 	require.NoError(t, err)
 	within(t, 5*time.Second, "Close", c.Close)
-	assert.Nil(t, catch(func() { c.Program() }), "a read after Close is not a panic")
+	assert.Nil(t, catch(func() { c.RCAuth() }), "a read after Close is not a panic")
 	assert.Nil(t, catch(func() { c.Kill(1, 0) }), "nor a request")
 }
 
@@ -381,8 +386,8 @@ func TestEncodeFailure_IsFatal(t *testing.T) {
 		c, err := Dial(b)
 		require.NoError(t, err)
 		bk.sync.Store(true)
-		c.SetProgram("x") // the request's publish meets the event
-		fatalOf(t, catch(func() { c.Program() }))
+		c.PersistOpenList(nil) // the request's publish meets the event
+		fatalOf(t, catch(func() { c.RCAuth() }))
 		within(t, 5*time.Second, "Close", c.Close)
 	})
 	t.Run("snapshot", func(t *testing.T) {
@@ -395,7 +400,7 @@ func TestEncodeFailure_IsFatal(t *testing.T) {
 			fatalOf(t, w)
 			return
 		}
-		fatalOf(t, catch(func() { c.Program() }))
+		fatalOf(t, catch(func() { c.RCAuth() }))
 		within(t, 5*time.Second, "Close", c.Close)
 	})
 }
@@ -437,7 +442,7 @@ func TestClosed_CallsReturn(t *testing.T) {
 		defer close(done)
 		catch(func() { c.Kill(1, 0) })
 		var err error
-		p := catch(func() { err = c.Save(1) })
+		p := catch(func() { _, err = c.Open(1) })
 		assert.True(t, err != nil || p != nil, "a call on a closed connection fails: it returns an error or raises the loss")
 	}()
 	select {

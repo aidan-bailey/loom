@@ -25,9 +25,6 @@ type Workspace struct {
 	// starts a workspace's terminal, probes it, and polls GitHub for its
 	// repository only once someone has looked at it.
 	opened bool
-	// loaded is set once its storage has been loaded (loadWS), or tried:
-	// boot loads the startup workspace only if nothing has.
-	loaded bool
 	// loadErr is what the workspace's storage failed to load with, nil
 	// once it loaded. A workspace that failed is kept, empty, its storage
 	// latched shut (no write can overwrite the unreadable payload), and a

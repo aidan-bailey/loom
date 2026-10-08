@@ -385,7 +385,7 @@ func TestAccountUsers_CountsAnUnloadedWorkspacesSessions(t *testing.T) {
 		[]byte(`{"instances":[{"title":"x","account":"max-2"},{"title":"y","account":"max-2"}]}`), 0o644))
 	m := NewForTest(Options{})
 	withAccounts(t, m, "max-2")
-	m.SetWorkspacesForTest(NewWorkspace(WorkspaceParts{Ctx: &config.WorkspaceContext{ConfigDir: global}}), nil)
+	m.SetWorkspacesForTest(NewWorkspace(WorkspaceParts{Ctx: &config.WorkspaceContext{ConfigDir: global}}))
 
 	n, err := m.accountUsers("max-2")
 

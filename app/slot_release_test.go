@@ -145,6 +145,7 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 	t.Run("entering global mode drops every tab", func(t *testing.T) {
 		t.Setenv(config.EnvGlobalDir, t.TempDir())
 		m := fleetHome(t)
+		bootFixture(t, m) // the global workspace, served from boot
 		m.ctx = cancelledCtx()
 		focused, peer := liveInstance(t, "a-live"), liveInstance(t, "b-live")
 		m.ws().AddForTest(focused)
@@ -164,17 +165,23 @@ func TestDroppedSlot_ReleasesPreviewPTYs(t *testing.T) {
 		m.ws().AddForTest(live)
 		m.syncViews()
 		pointAt(m, live)
+		wsA := preservedTerminalWorkspace(t, "ws-a")
+		registerWorkspaces(t, m, wsA)
 
-		cmd := m.applyWorkspaceToggle([]config.Workspace{preservedTerminalWorkspace(t, "ws-a")})
+		cmd := m.applyWorkspaceToggle([]config.Workspace{wsA})
 		require.Equal(t, []string{"ws-a"}, m.slotNames())
 		assertReleased(t, m, cmd, live)
 	})
 
 	t.Run("global mode entered from a classic workspace slot", func(t *testing.T) {
 		t.Setenv(config.EnvGlobalDir, t.TempDir())
-		m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
-		m.wsCtx().Name = "ws-classic" // launched inside a workspace, no tabs
-		m.syncWorkspaces()
+		// Launched inside a workspace, with no tabs to restore.
+		classic := preservedTerminalWorkspace(t, "ws-classic")
+		reg, err := config.LoadWorkspaceRegistry()
+		require.NoError(t, err)
+		require.NoError(t, reg.Add(classic.Name, classic.Path))
+		m := wirePanes(t, startupHome(t, &recordingExec{}, reg, "ws-classic", ""))
+		require.Equal(t, "ws-classic", m.name())
 		m.ctx = cancelledCtx()
 		live := liveInstance(t, "g-live")
 		m.ws().AddForTest(live)
@@ -268,6 +275,8 @@ func TestDroppedSlot_ReleasesTerminalPaneClients(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(globalDir, config.StateFileName),
 			[]byte(`{"instances":[{"title":"shared","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/loom-test-shared"}}]}`), 0o644))
 		m := fleetHome(t)
+		testModel(m).SetExecForTest(&recordingExec{})
+		bootFixture(t, m) // the global workspace, served from boot
 		m.ctx = cancelledCtx()
 		carriedPane := m.splitPane
 		stale, shared, dropped := attachedTerminal(t, "f1"), attachedTerminal(t, "shared"), attachedTerminal(t, "b1")

@@ -96,33 +96,29 @@ func (m *Model) viewsWS(ws *Workspace) []InstanceView {
 	return out
 }
 
-// View returns the view of the instance id, which a loaded workspace must
+// View returns the view of the instance id, which a served workspace must
 // hold (false otherwise).
 func (m *Model) View(id InstanceID) (InstanceView, bool) {
-	inst, ws := m.lookup(id)
-	if inst == nil || !slices.Contains(m.shown(), ws) {
+	inst, _ := m.lookup(id)
+	if inst == nil {
 		return InstanceView{}, false
 	}
 	return m.viewOf(inst), true
 }
 
-// publishViews builds every loaded workspace's views and returns a
-// ViewsChanged for each shown workspace whose views differ from the last
-// published ones (always for a workspace not published before). It then
-// forgets the published views of workspaces no longer shown and the IDs of
-// instances no served workspace holds.
+// publishViews builds every served workspace's views and returns a
+// ViewsChanged for each whose views differ from the last published ones
+// (always for a workspace not published before). It then forgets the
+// published views of workspaces no longer served and the IDs of instances
+// no served workspace holds.
 func (m *Model) publishViews() []Event {
 	var events []Event
 	next := make(map[*Workspace][]InstanceView, len(m.published))
 	live := make(map[*session.Instance]bool, len(m.ids))
 	for _, ws := range m.workspaces {
-		for _, inst := range ws.insts {
-			live[inst] = true
-		}
-	}
-	for _, ws := range m.shown() {
 		views := make([]InstanceView, len(ws.insts))
 		for i, inst := range ws.insts {
+			live[inst] = true
 			views[i] = m.viewOf(inst)
 		}
 		next[ws] = views

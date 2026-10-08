@@ -131,7 +131,7 @@ func TestMerge_MergesBranchIntoTarget(t *testing.T) {
 
 	m := core.NewForTest(core.Options{})
 	ws := testWS(core.WorkspaceParts{}, target, source)
-	m.SetWorkspacesForTest(ws, nil)
+	m.SetWorkspacesForTest(ws)
 	m.Merge(m.IDOfForTest(target), m.IDOfForTest(source), 0)
 	jobs := m.Drain().Jobs
 	require.Len(t, jobs, 1, "the merge request's job")

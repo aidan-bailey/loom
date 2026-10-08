@@ -13,22 +13,29 @@ import (
 
 // The published state a client keeps a replica of (daemon stage 2): every
 // query in Core is answered from these views, the instance views
-// (ViewsChanged) and the workspace views (WorkspacesChanged). The model
-// publishes each when it changes (publishState, at Sync) and all of them
-// on demand (Snapshot). Their methods replicate the logic of the model's
+// (ViewsChanged) and the workspace views (WorkspacesChanged), each served
+// workspace's. The model publishes each when it changes (publishState, at
+// Sync) and all of them on demand (Snapshot). Their methods replicate the logic of the model's
 // own query methods, which stay as they are (several run on every tick,
 // and building a view for each would be waste).
 // TestStateViews_AnswerAsTheModel keeps the two in step, so a replica
 // answers exactly as the model would.
 
-// WorkspacesView is every loaded workspace's view in Loaded order;
-// Classic says they are the classic workspace (no tab is open).
+// WorkspacesView is every served workspace's view, in serve order.
 type WorkspacesView struct {
-	Views   []WorkspaceView
-	Classic bool
+	Views []WorkspaceView
 }
 
-// Workspace is the view of the loaded workspace id (Core.Workspace).
+// Workspaces are the served workspaces' views, in serve order
+// (Core.Workspaces): never nil.
+func (w WorkspacesView) Workspaces() []WorkspaceView {
+	if len(w.Views) == 0 {
+		return []WorkspaceView{}
+	}
+	return cloneWorkspaceViews(w.Views)
+}
+
+// Workspace is the view of the served workspace id (Core.Workspace).
 func (w WorkspacesView) Workspace(id WorkspaceID) (WorkspaceView, bool) {
 	if id == 0 {
 		return WorkspaceView{}, false
@@ -41,38 +48,17 @@ func (w WorkspacesView) Workspace(id WorkspaceID) (WorkspaceView, bool) {
 	return WorkspaceView{}, false
 }
 
-// ClassicView is the classic workspace's view while no tab is open
-// (Core.Classic).
-func (w WorkspacesView) ClassicView() (WorkspaceView, bool) {
-	if !w.Classic || len(w.Views) == 0 {
-		return WorkspaceView{}, false
-	}
-	return cloneWorkspaceViews(w.Views[:1])[0], true
-}
-
-// Tabs are the open tabs' views, in tab order (Core.Tabs): never nil.
-func (w WorkspacesView) Tabs() []WorkspaceView {
-	if w.Classic || len(w.Views) == 0 {
-		return []WorkspaceView{}
-	}
-	return cloneWorkspaceViews(w.Views)
-}
-
-// IsLoaded reports whether the workspace id is loaded (Core.IsLoaded).
+// IsLoaded reports whether the workspace id is served (Core.IsLoaded).
 func (w WorkspacesView) IsLoaded(id WorkspaceID) bool {
 	_, ok := w.Workspace(id)
 	return ok
 }
 
-// ModelView is the model's own state: the agent program, the default
-// account's remote-control auth, the workspace registry, and the
-// workspaces that failed to restore (published as ModelChanged).
+// ModelView is the model's own state: the default account's remote-control
+// auth and the workspace registry (published as ModelChanged).
 type ModelView struct {
-	Program       string
-	RCAuth        session.RemoteControlAuth
-	Registry      RegistryView
-	RestoreFailed []string
-	OpenNames     []string
+	RCAuth   session.RemoteControlAuth
+	Registry RegistryView
 }
 
 // Clone deep-copies v's slices.
@@ -81,8 +67,6 @@ func (v ModelView) Clone() ModelView {
 		Workspaces: slices.Clone(v.Registry.Workspaces),
 		Open:       slices.Clone(v.Registry.Open),
 	}
-	v.RestoreFailed = slices.Clone(v.RestoreFailed)
-	v.OpenNames = slices.Clone(v.OpenNames)
 	return v
 }
 

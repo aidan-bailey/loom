@@ -31,16 +31,6 @@ func (m *Model) wsLookup(id WorkspaceID) *Workspace {
 	return nil
 }
 
-// shownLookup is wsLookup over the shown workspaces alone: the queries a
-// client answers from its replica (IsLoaded, Workspace, Views, View) answer
-// for what is published, as the replica does.
-func (m *Model) shownLookup(id WorkspaceID) *Workspace {
-	if ws := m.wsLookup(id); ws != nil && slices.Contains(m.shown(), ws) {
-		return ws
-	}
-	return nil
-}
-
 // wsViewOf copies ws's state into a view. Every handle locks itself
 // (Config.Snapshot, the state's getters, the storage's), and every
 // reference field is a fresh copy.
@@ -60,31 +50,31 @@ func (m *Model) wsViewOf(ws *Workspace) WorkspaceView {
 		v.WritesRefused = ws.storage.WritesRefused()
 		v.PreservedTitles = ws.storage.PreservedTitles()
 	}
+	if ws.loadErr != nil {
+		v.LoadErr = ws.loadErr.Error()
+	}
 	return v
 }
 
-// Workspace is the view of the loaded workspace id; false when no loaded
-// workspace has it (closed, or never reported).
+// Workspace is the view of the served workspace id; false when the model
+// serves none with it.
 func (m *Model) Workspace(id WorkspaceID) (WorkspaceView, bool) {
-	ws := m.shownLookup(id)
+	ws := m.wsLookup(id)
 	if ws == nil {
 		return WorkspaceView{}, false
 	}
 	return m.wsViewOf(ws), true
 }
 
-// publishWorkspaces returns a WorkspacesChanged with every shown
-// workspace's view, in shown order, when any of them differs from the last
-// publish (or the shown set changed), and forgets the IDs of workspaces no
+// publishWorkspaces returns a WorkspacesChanged with every served
+// workspace's view, in serve order, when any of them differs from the last
+// publish (or the served set changed), and forgets the IDs of workspaces no
 // longer served.
 func (m *Model) publishWorkspaces() []Event {
-	shown := m.shown()
-	views := make([]WorkspaceView, len(shown))
-	for i, ws := range shown {
-		views[i] = m.wsViewOf(ws)
-	}
+	views := make([]WorkspaceView, len(m.workspaces))
 	live := make(map[*Workspace]bool, len(m.workspaces))
-	for _, ws := range m.workspaces {
+	for i, ws := range m.workspaces {
+		views[i] = m.wsViewOf(ws)
 		live[ws] = true
 	}
 	for ws := range m.wsIDs {
@@ -92,14 +82,13 @@ func (m *Model) publishWorkspaces() []Event {
 			delete(m.wsIDs, ws)
 		}
 	}
-	classic := m.classicShown()
-	if m.publishedWS != nil && m.publishedClassic == classic && reflect.DeepEqual(m.publishedWS, views) {
+	if m.publishedWS != nil && reflect.DeepEqual(m.publishedWS, views) {
 		return nil
 	}
-	m.publishedWS, m.publishedClassic = views, classic
+	m.publishedWS = views
 	// The event gets its own copy, as ViewsChanged does: the TUI keeps
 	// the views, which must not alias what the next publish compares.
-	return []Event{WorkspacesChanged{Views: cloneWorkspaceViews(views), Classic: classic}}
+	return []Event{WorkspacesChanged{Views: cloneWorkspaceViews(views)}}
 }
 
 // cloneWorkspaceViews deep-copies views: the slice and every field that

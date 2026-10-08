@@ -19,7 +19,7 @@ func newTestHomeWithWsCtx(t *testing.T) *home {
 	t.Helper()
 	m := newTestHome(t)
 	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx = &config.WorkspaceContext{ConfigDir: t.TempDir()} })
-	m.core.SetProgram(m.appConfig().DefaultProgram)
+	m.program = m.appConfig().DefaultProgram
 	return m
 }
 
@@ -39,7 +39,7 @@ func TestHandleStateSettingsKeyRefreshesProgramShadow(t *testing.T) {
 
 	// Default Program starts at whatever DefaultConfig resolved (an
 	// absolute path GetClaudeCommand found on PATH, not a short fixed
-	// string); edit it to a distinct value and confirm m.core.Program()
+	// string); edit it to a distinct value and confirm m.program
 	// follows. The textarea pre-fills with the current value and
 	// leaves the cursor at the end, so the existing text must be
 	// cleared before typing or "aider" would land appended to it.
@@ -53,7 +53,7 @@ func TestHandleStateSettingsKeyRefreshesProgramShadow(t *testing.T) {
 	handleStateSettingsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // submit
 
 	assert.Equal(t, "aider", m.appConfig().DefaultProgram)
-	assert.Equal(t, "aider", m.core.Program(), "m.core.Program() must be refreshed, not left stale")
+	assert.Equal(t, "aider", m.program, "m.program must be refreshed, not left stale")
 }
 
 func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
@@ -80,7 +80,7 @@ func TestHandleStateSettingsKeyPersistsToDisk(t *testing.T) {
 
 func TestSettingsDrillsIntoClaudePreferences(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
-	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
+	loopOf(m).SetRCAuthForTest(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	_, _ = runOpenSettings(m)
 
 	so := m.settingsOverlay()

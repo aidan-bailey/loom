@@ -197,8 +197,8 @@ func startedInst(t *testing.T, title, program string) *session.Instance {
 }
 
 // activeInst builds a started, Running instance titled title on a mock
-// tmux session (no tmux server contacted), held by a workspace installed
-// in m as its classic one.
+// tmux session (no tmux server contacted), held by m's first workspace
+// (hold).
 func activeInst(t *testing.T, m *Model, title string) *session.Instance {
 	t.Helper()
 	inst := startedInst(t, title, "claude")
@@ -207,16 +207,13 @@ func activeInst(t *testing.T, m *Model, title string) *session.Instance {
 	return inst
 }
 
-// hold adds insts to m's classic workspace, installing an empty one first
-// when m has no workspace: what app's fixtures did with m.ws.Add.
+// hold adds insts to m's first served workspace, installing an empty one
+// first when m serves none: what app's fixtures did with m.ws.Add.
 func hold(m *Model, insts ...*session.Instance) {
-	ws := m.classic
-	if ws == nil && len(m.tabs) == 0 {
-		ws = NewWorkspace(WorkspaceParts{})
-		m.SetWorkspacesForTest(ws, nil)
-	} else if ws == nil {
-		ws = m.tabs[0]
+	if len(m.workspaces) == 0 {
+		m.SetWorkspacesForTest(NewWorkspace(WorkspaceParts{}))
 	}
+	ws := m.workspaces[0]
 	for _, inst := range insts {
 		ws.add(inst)
 	}

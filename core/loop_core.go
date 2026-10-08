@@ -8,59 +8,33 @@ import (
 	"github.com/aidan-bailey/loom/session/launch"
 )
 
-// The Core methods of Loop, but Begin (loop.go): each runs its namesake on
-// the model, on the loop's goroutine, and returns its results to the
-// caller (TestLoopForwardsEachMethodToItsNamesake). Sync runs syncEvents,
-// since the loop starts the jobs itself.
+// The Core methods of Loop: each runs its namesake on the model, on the
+// loop's goroutine, and returns its results to the caller
+// (TestLoopForwardsEachMethodToItsNamesake). Sync runs syncEvents, since
+// the loop starts the jobs itself.
 
 func (l *Loop) Sync() []Event { return get(l, (*Model).syncEvents) }
 
-func (l *Loop) LoadClassic(sweepTmux bool) error {
-	return get(l, func(m *Model) error { return m.LoadClassic(sweepTmux) })
-}
-func (l *Loop) InitAccounts()                         { l.do((*Model).InitAccounts) }
-func (l *Loop) SetRCAuth(a session.RemoteControlAuth) { l.do(func(m *Model) { m.SetRCAuth(a) }) }
-
-func (l *Loop) StayGlobal() { l.do((*Model).StayGlobal) }
-func (l *Loop) RestoreSaved(saved []config.Workspace) int {
-	return get(l, func(m *Model) int { return m.RestoreSaved(saved) })
-}
-func (l *Loop) RestoreFailed() []string { return get(l, (*Model).RestoreFailed) }
-func (l *Loop) KeepRestoreFailed(desired map[string]bool) {
-	l.do(func(m *Model) { m.KeepRestoreFailed(desired) })
-}
-func (l *Loop) OpenNames() []string { return get(l, (*Model).OpenNames) }
-func (l *Loop) PersistOpenList()    { l.do((*Model).PersistOpenList) }
-func (l *Loop) Register(name, dir string) (config.Workspace, error) {
-	return get2(l, func(m *Model) (config.Workspace, error) { return m.Register(name, dir) })
-}
-func (l *Loop) SetLastUsed(name string) error {
-	return get(l, func(m *Model) error { return m.SetLastUsed(name) })
-}
-func (l *Loop) SaveForQuit() error { return get(l, (*Model).SaveForQuit) }
-
+func (l *Loop) Workspaces() []WorkspaceView { return get(l, (*Model).Workspaces) }
 func (l *Loop) Workspace(id WorkspaceID) (WorkspaceView, bool) {
 	return get2(l, func(m *Model) (WorkspaceView, bool) { return m.Workspace(id) })
 }
-func (l *Loop) Classic() (WorkspaceView, bool) { return get2(l, (*Model).Classic) }
-func (l *Loop) Tabs() []WorkspaceView          { return get(l, (*Model).Tabs) }
 func (l *Loop) IsLoaded(id WorkspaceID) bool {
 	return get(l, func(m *Model) bool { return m.IsLoaded(id) })
 }
-func (l *Loop) OpenTab(def config.Workspace) (WorkspaceView, error) {
-	return get2(l, func(m *Model) (WorkspaceView, error) { return m.OpenTab(def) })
+func (l *Loop) Open(id WorkspaceID) (WorkspaceView, error) {
+	return get2(l, func(m *Model) (WorkspaceView, error) { return m.Open(id) })
 }
-func (l *Loop) CloseTab(name string) error {
-	return get(l, func(m *Model) error { return m.CloseTab(name) })
-}
-func (l *Loop) EnterGlobal(focused WorkspaceID) (WorkspaceView, error) {
-	return get2(l, func(m *Model) (WorkspaceView, error) { return m.EnterGlobal(focused) })
-}
-func (l *Loop) Save(id WorkspaceID) error {
-	return get(l, func(m *Model) error { return m.Save(id) })
-}
+func (l *Loop) SaveForQuit() error     { return get(l, (*Model).SaveForQuit) }
 func (l *Loop) Registry() RegistryView { return get(l, (*Model).Registry) }
 func (l *Loop) ReloadRegistry() error  { return get(l, (*Model).ReloadRegistry) }
+func (l *Loop) Register(name, dir string) (WorkspaceView, error) {
+	return get2(l, func(m *Model) (WorkspaceView, error) { return m.Register(name, dir) })
+}
+func (l *Loop) PersistOpenList(names []string) { l.do(func(m *Model) { m.PersistOpenList(names) }) }
+func (l *Loop) SetLastUsed(name string) error {
+	return get(l, func(m *Model) error { return m.SetLastUsed(name) })
+}
 func (l *Loop) SaveSettings(id WorkspaceID, s config.Settings) error {
 	return get(l, func(m *Model) error { return m.SaveSettings(id, s) })
 }
@@ -104,8 +78,6 @@ func (l *Loop) PaneOutput(id InstanceID)      { l.do(func(m *Model) { m.PaneOutp
 func (l *Loop) PaneQuiet(id InstanceID)       { l.do(func(m *Model) { m.PaneQuiet(id) }) }
 func (l *Loop) VerifyDead(id InstanceID)      { l.do(func(m *Model) { m.VerifyDead(id) }) }
 
-func (l *Loop) Program() string                   { return get(l, (*Model).Program) }
-func (l *Loop) SetProgram(p string)               { l.do(func(m *Model) { m.SetProgram(p) }) }
 func (l *Loop) RCAuth() session.RemoteControlAuth { return get(l, (*Model).RCAuth) }
 
 func (l *Loop) GitHubSnapshot(repo string) (github.Snapshot, bool) {

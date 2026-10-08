@@ -14,7 +14,7 @@ import (
 func TestSaveSettings_WritesAppliesAndPublishes(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	id := m.wsIDOf(ws)
 	m.Sync()
 
@@ -28,7 +28,7 @@ func TestSaveSettings_WritesAppliesAndPublishes(t *testing.T) {
 	session.SetSubagentTrackingEnabled(dir, false)
 	require.NoError(t, m.SaveSettings(id, s))
 
-	assert.Equal(t, "aider --yes", m.Program(), "the agent program follows")
+	assert.Equal(t, "aider --yes", m.program, "the accounts' program follows")
 	assert.False(t, session.LoomContextEnabled(dir), "the workspace's loom-context toggle follows")
 	assert.True(t, session.SubagentTrackingEnabled(dir), "the workspace's subagent-tracking toggle follows")
 	data, err := os.ReadFile(filepath.Join(ws.ctx.ConfigDir, config.ConfigFileName))
@@ -52,7 +52,7 @@ func TestSettingsRequests_RefuseAnUnknownWorkspace(t *testing.T) {
 func TestSetUIPrefsAndHelpScreens_Persist(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	id := m.wsIDOf(ws)
 
 	prefs := config.UIPrefs{RailHidden: true, SplitRatios: map[string]float64{"x": 0.4}}
@@ -72,7 +72,7 @@ func TestSetUIPrefsAndHelpScreens_Persist(t *testing.T) {
 func TestSaveSettings_SessionFlagsArePerWorkspace(t *testing.T) {
 	m := NewForTest(Options{})
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
-	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
+	m.SetWorkspacesForTest(a, b)
 	session.SetLoomContextEnabled(b.ctx.ConfigDir, true)
 	session.SetSubagentTrackingEnabled(b.ctx.ConfigDir, true)
 

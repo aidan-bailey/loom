@@ -1,8 +1,6 @@
 package rpc
 
 import (
-	"slices"
-
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
@@ -33,7 +31,7 @@ type state struct {
 func (r *replica) apply(ev core.Event, changed *state) bool {
 	switch ev := ev.(type) {
 	case core.WorkspacesChanged:
-		r.workspaces = core.WorkspacesView{Views: ev.Views, Classic: ev.Classic}
+		r.workspaces = core.WorkspacesView{Views: ev.Views}
 		loaded := map[core.WorkspaceID]bool{}
 		for _, v := range ev.Views {
 			loaded[v.ID] = true
@@ -51,12 +49,13 @@ func (r *replica) apply(ev core.Event, changed *state) bool {
 	case core.GitHubChanged:
 		r.github, changed.github = ev.View, true
 	case core.ViewsChanged:
-		// A workspace that is not loaded has no views to keep. The queue
-		// coalesces a WorkspacesChanged in place, so one that closes a
-		// workspace can come ahead of a ViewsChanged queued for it, which
-		// would bring a closed tab's views back for good. A ViewsChanged never
-		// comes ahead of the WorkspacesChanged that loads its workspace: the
-		// server publishes them in that order.
+		// A workspace the replica does not hold has no views to keep. The
+		// queue coalesces a WorkspacesChanged in place, so one that drops a
+		// workspace (a test's, or a future unregister) can come ahead of a
+		// ViewsChanged queued for it, which would bring the dropped
+		// workspace's views back for good. A ViewsChanged never comes ahead
+		// of the WorkspacesChanged that serves its workspace: the server
+		// publishes them in that order.
 		if !r.workspaces.IsLoaded(ev.WS) {
 			break
 		}
@@ -81,7 +80,7 @@ func (r *replica) apply(ev core.Event, changed *state) bool {
 func (r *replica) events(changed state) []core.Event {
 	var out []core.Event
 	if changed.workspaces {
-		out = append(out, core.WorkspacesChanged{Views: core.CloneWorkspaceViews(r.workspaces.Views), Classic: r.workspaces.Classic})
+		out = append(out, core.WorkspacesChanged{Views: core.CloneWorkspaceViews(r.workspaces.Views)})
 	}
 	if changed.model {
 		out = append(out, core.ModelChanged{View: r.model.Clone()})
@@ -102,18 +101,15 @@ func (r *replica) events(changed state) []core.Event {
 
 // The rpc:local queries (core.Core), answered from the replica.
 
-func (r *replica) RestoreFailed() []string { return slices.Clone(r.model.RestoreFailed) }
-func (r *replica) OpenNames() []string     { return slices.Clone(r.model.OpenNames) }
+func (r *replica) Workspaces() []core.WorkspaceView { return r.workspaces.Workspaces() }
 func (r *replica) Workspace(id core.WorkspaceID) (core.WorkspaceView, bool) {
 	return r.workspaces.Workspace(id)
 }
-func (r *replica) Classic() (core.WorkspaceView, bool) { return r.workspaces.ClassicView() }
-func (r *replica) Tabs() []core.WorkspaceView          { return r.workspaces.Tabs() }
-func (r *replica) IsLoaded(id core.WorkspaceID) bool   { return r.workspaces.IsLoaded(id) }
-func (r *replica) Registry() core.RegistryView         { return r.model.Clone().Registry }
+func (r *replica) IsLoaded(id core.WorkspaceID) bool { return r.workspaces.IsLoaded(id) }
+func (r *replica) Registry() core.RegistryView       { return r.model.Clone().Registry }
 
-// Views is the loaded workspace id's instance views; nil for one not
-// loaded, as the model answers.
+// Views is the served workspace id's instance views; nil for one not
+// served, as the model answers.
 func (r *replica) Views(id core.WorkspaceID) []core.InstanceView {
 	if !r.workspaces.IsLoaded(id) {
 		return nil
@@ -125,7 +121,7 @@ func (r *replica) Views(id core.WorkspaceID) []core.InstanceView {
 	return core.CloneViews(views)
 }
 
-// View is the view of the instance id, which a loaded workspace holds.
+// View is the view of the instance id, which a served workspace holds.
 func (r *replica) View(id core.InstanceID) (core.InstanceView, bool) {
 	for _, w := range r.workspaces.Views {
 		for _, v := range r.views[w.ID] {
@@ -137,7 +133,6 @@ func (r *replica) View(id core.InstanceID) (core.InstanceView, bool) {
 	return core.InstanceView{}, false
 }
 
-func (r *replica) Program() string                   { return r.model.Program }
 func (r *replica) RCAuth() session.RemoteControlAuth { return r.model.RCAuth }
 func (r *replica) GitHubSnapshot(repo string) (github.Snapshot, bool) {
 	return r.github.GitHubSnapshot(repo)

@@ -6,12 +6,16 @@ import (
 	"github.com/aidan-bailey/loom/core"
 )
 
-// InProcess runs model as a daemon will (stage 3), inside this process:
-// on its own loop (core.Start), served by a Server over one end of an
-// in-memory pipe, with a Client on the other. It returns the client,
-// which implements core.Core, and the function that stops all three.
+// InProcess runs model, booted already (core.Model.Boot), as a daemon will
+// (stage 3), inside this process: on its own loop (core.Start), which
+// starts its background work at once (core.Loop.Begin), served by a Server
+// over one end of an in-memory pipe, with a Client on the other. It
+// returns the client, which implements core.Core, and the function that
+// stops all three.
 func InProcess(model *core.Model) (*Client, func(), error) {
-	return inProcess(core.Start(model), false)
+	loop := core.Start(model)
+	loop.Begin()
+	return inProcess(loop, false)
 }
 
 // inProcess serves loop to a client over a pipe; synchronous makes the

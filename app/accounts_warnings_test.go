@@ -42,11 +42,12 @@ func globalAccounts(t *testing.T, names ...string) *account.Registry {
 	return reg
 }
 
-// initAccounts loads the account registry as newHome does: the strip,
-// then the model's load, whose notices land at once.
+// initAccounts loads the account registry as the model's boot does
+// (core.Model.Boot), then drains: the strip, then the model's load, whose
+// notices land at once.
 func initAccounts(m *home) {
 	m.accountStrip = ui.NewAccountStrip()
-	m.core.InitAccounts()
+	testModel(m).InitAccounts()
 	m.drainCore()
 }
 

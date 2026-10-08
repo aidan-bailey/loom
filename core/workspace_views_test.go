@@ -21,19 +21,19 @@ func workspacesEvent(events []Event) *WorkspacesChanged {
 func TestWorkspaceIDs_StableAndNeverReused(t *testing.T) {
 	m := NewForTest(Options{})
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
-	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
+	m.SetWorkspacesForTest(a, b)
 
 	idA, idB := m.wsIDOf(a), m.wsIDOf(b)
 	assert.NotEqual(t, idA, idB)
 	assert.Equal(t, idA, m.wsIDOf(a), "stable")
 
-	m.SetWorkspacesForTest(nil, []*Workspace{b})
+	m.SetWorkspacesForTest(b)
 	m.Sync() // a is no longer loaded: forgotten
 	_, ok := m.Workspace(idA)
 	assert.False(t, ok, "a closed workspace has no view")
 
 	reopened := storedWorkspace(t, "a")
-	m.SetWorkspacesForTest(nil, []*Workspace{b, reopened})
+	m.SetWorkspacesForTest(b, reopened)
 	assert.Greater(t, m.wsIDOf(reopened), idB, "a reopened workspace gets a new ID, never an old one")
 }
 
@@ -41,7 +41,7 @@ func TestWorkspaceView_CopiesTheWorkspace(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	ws.recovery = RecoverySummary{Cleaned: 2}
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	v, ok := m.Workspace(m.wsIDOf(ws))
 	require.True(t, ok)
@@ -53,7 +53,7 @@ func TestWorkspaceView_CopiesTheWorkspace(t *testing.T) {
 	assert.False(t, v.WritesRefused)
 
 	global := NewWorkspace(WorkspaceParts{})
-	m.SetWorkspacesForTest(global, nil)
+	m.SetWorkspacesForTest(global)
 	gv, ok := m.Workspace(m.wsIDOf(global))
 	require.True(t, ok)
 	assert.Equal(t, "", gv.Name)
@@ -64,7 +64,7 @@ func TestSync_PublishesWorkspacesFirstAndOnlyOnChange(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	ws.add(pausedInst(t, "x"))
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	out := m.Sync()
 	require.NotEmpty(t, out.Events)
@@ -91,7 +91,7 @@ func TestSync_PublishesWorkspacesFirstAndOnlyOnChange(t *testing.T) {
 	assert.NotNil(t, workspacesEvent(m.Sync().Events), "a new recovery summary republishes")
 
 	other := storedWorkspace(t, "b")
-	m.SetWorkspacesForTest(nil, []*Workspace{ws, other})
+	m.SetWorkspacesForTest(ws, other)
 	got = workspacesEvent(m.Sync().Events)
 	require.NotNil(t, got, "a change to the loaded set republishes")
 	assert.Len(t, got.Views, 2)
@@ -107,7 +107,7 @@ func TestSync_PublishedWorkspacesDoNotAliasTheModel(t *testing.T) {
 	prefs := ws.state.GetUIPrefs()
 	prefs.SplitRatios = map[string]float64{"x": 0.5}
 	require.NoError(t, ws.state.SetUIPrefs(prefs))
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	wc := workspacesEvent(m.Sync().Events)
 	require.NotNil(t, wc)

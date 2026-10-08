@@ -148,21 +148,20 @@ func (ModelChanged) coreEvent() {}
 
 func (AccountsChanged) coreEvent() {}
 
-// WorkspacesChanged carries every loaded workspace's view, in Loaded
-// order, whenever any of them (or the loaded set) changed since the last
-// Sync. Sync puts it first, ahead of ViewsChanged, so the appliers of
-// everything after it see the new workspace views.
+// WorkspacesChanged carries every served workspace's view, in serve order,
+// whenever any of them (or the served set) changed since the last Sync.
+// Sync puts it first, ahead of ViewsChanged, so the appliers of everything
+// after it see the new workspace views. Which of them a client shows is
+// its own state.
 type WorkspacesChanged struct {
 	Views []WorkspaceView
-	// Classic says Views is the classic workspace alone (no tab is open).
-	Classic bool
 }
 
 func (WorkspacesChanged) coreEvent() {}
 
-// ViewsChanged carries a loaded workspace's instance views, in display
+// ViewsChanged carries a served workspace's instance views, in display
 // order, whenever any of them changed since the last Sync. The TUI replaces
-// its store for that workspace with Views. Sync puts these first in the
+// its store for that workspace with Views, when it shows the workspace. Sync puts these first in the
 // events it returns, so the appliers of the events that follow see the new
 // views.
 type ViewsChanged struct {

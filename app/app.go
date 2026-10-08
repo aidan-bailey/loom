@@ -119,8 +119,8 @@ type home struct {
 	// mode (no tabs) it is the classic slot, which is not in m.slots.
 	// Never nil after newHome. Only loadSlot and enterGlobalMode
 	// reassign it, and every m.slots mutation restores the invariant
-	// before returning (activateWorkspace focuses the first tab opened
-	// from classic mode; deactivateWorkspace refocuses when it closes the
+	// before returning (openTab focuses the first tab opened from
+	// classic mode; deactivateWorkspace refocuses when it closes the
 	// focused tab and never closes the last one).
 	*workspaceSlot
 
@@ -138,6 +138,11 @@ type home struct {
 	// loops run no job on their own.
 	wakes    <-chan struct{}
 	stopCore func()
+	// program is the agent program this TUI's drafts and scripts default
+	// to: the one the process started with (the -p flag, else the startup
+	// workspace's), until this TUI saves another default program
+	// (handleStateSettingsKey).
+	program string
 	// sentSelected is the selection last published to the model
 	// (publishSelection).
 	sentSelected core.InstanceID
@@ -301,6 +306,19 @@ type home struct {
 	// focusedSlot is the index into slots for the currently displayed
 	// workspace; meaningless (0) when slots is empty.
 	focusedSlot int
+	// startupName names the workspace this TUI started on, which its
+	// classic slot shows until a tab opens: "" for the global workspace, a
+	// registered name for `loom <dir>` or --workspace. The startup restore
+	// opens it beside the saved tabs and focuses it
+	// (restoreSavedWorkspaces).
+	startupName string
+	// failedOpen names the workspaces of the registry's open list whose
+	// Open failed at startup (restoreSavedWorkspaces). They stay in the
+	// open list this TUI persists (openList), and the picker shows them
+	// checked and labelled "(failed to load)", until one opens
+	// (openTab) or the user deselects it (applyWorkspaceToggle);
+	// global mode (enterGlobalMode, stayInGlobalMode) closes them all.
+	failedOpen []string
 	// tabBar renders workspace tabs at the top of the TUI
 	tabBar *ui.WorkspaceTabBar
 	// lastWidth and lastHeight cache the terminal size for sizing new slots
@@ -603,7 +621,6 @@ func (m *home) mutateUIPrefs(fn func(*config.UIPrefs)) {
 // preview and metadata tick loops — those loops re-arm themselves by
 // returning the same tick message, so Init fires exactly once per Run.
 func (m *home) Init() tea.Cmd {
-	m.core.Begin()
 	cmds := []tea.Cmd{m.spinner.Tick, tickUpdateMetadataCmd, m.initCmd, m.drainCore()}
 	// Event mode renders on paneDirtyMsg; the timer poll only survives for
 	// the snapshot/Windows path, which has no emulator to emit events.
@@ -1384,21 +1401,22 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case registerWorkspaceMsg:
 		// The registry has no lock, so the Add runs here on Update, never
-		// in the confirmation's Cmd.
-		def, err := m.core.Register(msg.name, msg.dir)
+		// in the confirmation's Cmd. The model serves the workspace from
+		// then on, and this TUI opens it as a tab.
+		v, err := m.core.Register(msg.name, msg.dir)
 		if err != nil {
 			return m, m.handleError(err)
 		}
-		release, err := m.activateWorkspace(def)
+		release, err := m.openTab(v.ID)
 		if err != nil {
 			return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))
 		}
-		if err := m.core.SetLastUsed(def.Name); err != nil {
-			log.For("app").Debug("registry.update_last_used_failed", "workspace", def.Name, "err", err)
+		if err := m.core.SetLastUsed(v.Name); err != nil {
+			log.For("app").Debug("registry.update_last_used_failed", "workspace", v.Name, "err", err)
 		}
 
 		// Focus the just-registered slot so the user sees its
-		// instances immediately. activateWorkspace appends to the
+		// instances immediately. openTab appends to the
 		// end, so the new slot is at len-1 (not 0 — the prior
 		// loadSlot(0) would have surfaced an unrelated tab). loadSlot
 		// flushes the outgoing slot's pending split-ratio saves.
@@ -1456,10 +1474,12 @@ func (m *home) saveForQuit() error {
 	if len(m.slots) > 0 {
 		m.leaveFocusedSlot()
 	}
-	if err := m.core.SaveForQuit(); err != nil {
-		return err
+	// With no tab open the open list is written only if the registry holds
+	// one: it then keeps just the workspaces that failed to restore.
+	if len(m.slots) > 0 || len(m.core.Registry().Open) > 0 {
+		m.persistOpenList()
 	}
-	return nil
+	return m.core.SaveForQuit()
 }
 
 func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnEarly bool) {

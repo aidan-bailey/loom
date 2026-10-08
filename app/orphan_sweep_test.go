@@ -10,8 +10,6 @@ import (
 
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
-	"github.com/aidan-bailey/loom/core"
-	"github.com/aidan-bailey/loom/session"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,12 +48,13 @@ var _ cmd2.Executor = (*listingExec)(nil)
 
 // TestOrphanSweep_SparesWhatThisLoomCannotVouchFor: the model serves every
 // registered workspace and the global one (daemon stage 3A), and one loom
-// runs per global dir (the takeover lock), so the startup sweep owns all
+// runs per global dir (the takeover lock), so the boot's sweep owns all
 // their roots and kills an unclaimed session under any of them. It still
 // spares what it cannot vouch for: the sessions of a registered workspace
 // whose load failed, whose titles it could not read, and any session
 // started outside every root it serves (a loom with another global dir, a
-// user's own). Both startup paths boot the model, so both sweep alike.
+// user's own). The model boots before the TUI decides what to show, so a
+// restore of saved tabs and a startup on one workspace sweep alike.
 func TestOrphanSweep_SparesWhatThisLoomCannotVouchFor(t *testing.T) {
 	isolateTmux(t)
 	globalDir := t.TempDir()
@@ -81,29 +80,22 @@ func TestOrphanSweep_SparesWhatThisLoomCannotVouchFor(t *testing.T) {
 	want := []string{"=loom_mine-stale", "=loom_global-stale"}
 
 	t.Run("multi-tab restore", func(t *testing.T) {
+		require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-mine"}))
 		rec := &listingExec{listing: listing}
-		m := newRestoreHome(t, rec)
-		testModel(m).SetRegistryForTest(reg)
-		m.restoreSavedWorkspaces([]config.Workspace{mine})
+		m := startupHome(t, rec, reg, "", "")
 
 		require.Len(t, m.slots, 1)
 		require.True(t, rec.ran("ls"), "the sweep must run")
 		assert.Equal(t, want, rec.killed())
 	})
 
-	t.Run("classic startup", func(t *testing.T) {
+	t.Run("startup on one workspace", func(t *testing.T) {
+		require.NoError(t, reg.SetOpenWorkspaces(nil))
 		rec := &listingExec{listing: listing}
-		m := newRestoreHome(t, rec)
-		testModel(m).SetRegistryForTest(reg)
-		wsCtx := config.WorkspaceContextFor(&mine)
-		state := config.LoadStateFrom(wsCtx.ConfigDir)
-		storage, err := session.NewStorage(state, wsCtx.ConfigDir)
-		require.NoError(t, err)
-		reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) { p.Ctx, p.State, p.Storage = wsCtx, state, storage })
+		m := startupHome(t, rec, reg, "ws-mine", "")
 
-		err = m.core.LoadClassic(true)
-		require.NoError(t, err)
-
+		require.Empty(t, m.slots)
+		assert.Equal(t, "ws-mine", m.name())
 		require.True(t, rec.ran("ls"), "the sweep must run")
 		assert.Equal(t, want, rec.killed())
 	})
@@ -134,7 +126,8 @@ func TestActivateWorkspace_TerminalOrphanKillIsOwnershipGated(t *testing.T) {
 			rec := &listingExec{listing: "loom_ws-term-v2\t" + ws.Path + "\n" +
 				"loom_ws-term\t" + tc.dir(ws) + "\n"}
 			m := newRestoreHome(t, rec)
-			testModel(m).SetRegistryForTest(&config.WorkspaceRegistry{})
+			t.Setenv(config.EnvGlobalDir, t.TempDir())
+			registerWorkspaces(t, m, ws)
 
 			_, err := m.activateWorkspace(ws)
 			require.NoError(t, err)

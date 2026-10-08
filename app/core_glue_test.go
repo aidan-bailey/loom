@@ -50,7 +50,7 @@ func TestRegisterWorkspace_RecoverySummaryWinsOverRCOffLine(t *testing.T) {
 			require.NoError(t, err)
 			m := newRestoreHome(t, &recordingExec{})
 			testModel(m).SetRegistryForTest(reg)
-			m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
+			loopOf(m).SetRCAuthForTest(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 			m.ctx = cancelledCtx()
 			m.errBox.SetSize(400, 1)
 
@@ -64,30 +64,27 @@ func TestRegisterWorkspace_RecoverySummaryWinsOverRCOffLine(t *testing.T) {
 	}
 }
 
-// TestCheckSlotInvariant_SlotsMustMirrorTheModel: the slots are views
-// over the model's workspaces, so slots that no longer show the model's
-// tabs in order, or a classic slot that doesn't show the model's classic
-// workspace, are a broken invariant even when focus is consistent.
-func TestCheckSlotInvariant_SlotsMustMirrorTheModel(t *testing.T) {
-	t.Run("tabs out of order", func(t *testing.T) {
+// TestCheckSlotInvariant_SlotsShowServedWorkspaces: the slots are views
+// over the model's workspaces, so a tab, or a classic slot, over a
+// workspace the model does not serve is a broken invariant even when focus
+// is consistent.
+func TestCheckSlotInvariant_SlotsShowServedWorkspaces(t *testing.T) {
+	t.Run("a tab over an unserved workspace", func(t *testing.T) {
 		m := fleetHome(t)
 		require.NoError(t, m.checkSlotInvariant())
-		// Swap the views without telling the model, keeping focus on the
-		// same slot so only the mirror is broken.
-		m.slots[0], m.slots[1] = m.slots[1], m.slots[0]
-		m.focusedSlot = 1
+		m.slots[1].id = testModel(m).WorkspaceIDForTest(testWS(core.WorkspaceParts{}))
 
 		err := m.checkSlotInvariant()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "does not show the model's tab")
+		assert.Contains(t, err.Error(), "m.slots[1] shows no workspace the model serves")
 	})
-	t.Run("classic slot over another workspace", func(t *testing.T) {
+	t.Run("the classic slot over an unserved workspace", func(t *testing.T) {
 		m := newTestHome(t)
 		require.NoError(t, m.checkSlotInvariant())
 		m.workspaceSlot.id = testModel(m).WorkspaceIDForTest(testWS(core.WorkspaceParts{}))
 
 		err := m.checkSlotInvariant()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "classic workspace")
+		assert.Contains(t, err.Error(), "the classic slot")
 	})
 }

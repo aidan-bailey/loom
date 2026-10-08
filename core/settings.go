@@ -9,9 +9,10 @@ import (
 // SaveSettings replaces the workspace's settings with s and writes its
 // config.json: to its context's config dir, or to the default config dir
 // for a bare context. Then it applies what a settings change does at
-// once: the agent program (SetProgram) and the two launch toggles the
-// session package keeps per config dir (SetLoomContextEnabled,
-// SetSubagentTrackingEnabled). An unknown id is an error. Moved from
+// once: the agent program the accounts' Claude commands run with
+// (ClaudeProgram) and the two launch toggles the session package keeps per
+// config dir (SetLoomContextEnabled, SetSubagentTrackingEnabled). The
+// program a client's drafts default to is the client's to follow. An unknown id is an error. Moved from
 // app/state_settings.go, which did this to the model's own config.
 func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 	ws := m.wsLookup(id)
@@ -36,7 +37,7 @@ func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 			return fmt.Errorf("save settings: %w", err)
 		}
 	}
-	m.SetProgram(ws.cfg.GetProgram())
+	m.program = ws.cfg.GetProgram()
 	// Re-sync the session flags so an in-place change takes effect on the
 	// workspace's next session launch. Keyed by the context's config dir,
 	// which its instances carry, not the dir the settings were saved to.

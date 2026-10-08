@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,7 +91,7 @@ func TestEvents_AnUnknownOneIsDroppedAKnownOneThatWillNotDecodeIsFatal(t *testin
 
 	s.send(Frame{Event: "FromTheFuture", Data: json.RawMessage(`{"Anything":1}`)})
 	require.NoError(t, c.FlushForTest(), "the barrier follows the event: it has been read")
-	assert.Equal(t, "", c.Program(), "the client still works")
+	assert.Zero(t, c.RCAuth(), "the client still works")
 	assert.Empty(t, c.Sync(), "and queued nothing")
 
 	s.send(Frame{Event: "ModelChanged", Data: json.RawMessage(`"not an object"`)})
@@ -99,7 +100,7 @@ func TestEvents_AnUnknownOneIsDroppedAKnownOneThatWillNotDecodeIsFatal(t *testin
 	case <-time.After(5 * time.Second):
 		t.Fatal("the bad event did not wake the client")
 	}
-	p := catch(func() { c.Program() })
+	p := catch(func() { c.RCAuth() })
 	w, ok := p.(*core.WireError)
 	require.True(t, ok, "the next call panics with the wire's error, got %T", p)
 	assert.Equal(t, core.CodeProtocol, w.Code)
@@ -120,14 +121,16 @@ func TestReply_AProtocolErrorIsFatal(t *testing.T) {
 	w, ok := p.(*core.WireError)
 	require.True(t, ok, "the caller panics with the wire's error, got %T", p)
 	assert.Equal(t, core.CodeProtocol, w.Code)
-	assert.NotNil(t, catch(func() { c.Program() }), "and every later call")
+	assert.NotNil(t, catch(func() { c.RCAuth() }), "and every later call")
 }
 
 // TestReply_AnUnknownMethodIsAnOrdinaryError: a method the server does not
 // know comes back as an unsupported error, which a newer client can probe
 // for: it is not fatal, and the client goes on.
 func TestReply_AnUnknownMethodIsAnOrdinaryError(t *testing.T) {
-	loop := core.StartForTest(core.NewForTest(core.Options{Program: "a"}))
+	model := core.NewForTest(core.Options{})
+	model.SetRCAuth(session.RemoteControlAuth{Reason: "a"})
+	loop := core.StartForTest(model)
 	c := pair(t, loop)
 
 	var err error
@@ -137,7 +140,7 @@ func TestReply_AnUnknownMethodIsAnOrdinaryError(t *testing.T) {
 	require.ErrorAs(t, err, &w)
 	assert.Equal(t, core.CodeUnsupported, w.Code)
 	assert.Contains(t, w.Message, "NoSuchMethod")
-	assert.Equal(t, "a", c.Program())
+	assert.Equal(t, "a", c.RCAuth().Reason)
 	assert.NoError(t, c.FlushForTest(), "and goes on")
 }
 
@@ -150,7 +153,7 @@ func TestReply_AnErrorIsTheMethodsOwn(t *testing.T) {
 	})
 
 	var err error
-	assert.Nil(t, catch(func() { err = c.Save(1) }))
+	assert.Nil(t, catch(func() { _, err = c.Open(1) }))
 	assert.EqualError(t, err, "save failed")
-	assert.Nil(t, catch(func() { c.Program() }), "the client goes on")
+	assert.Nil(t, catch(func() { c.RCAuth() }), "the client goes on")
 }

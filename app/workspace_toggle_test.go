@@ -16,9 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// recordingInstanceStorage counts SaveInstances calls so tests can
-// observe whether home.applyWorkspaceToggle persisted state before
-// mutating the slot configuration.
+// recordingInstanceStorage records SaveInstances calls, standing in for a
+// workspace's state.json.
 type recordingInstanceStorage struct {
 	calls    int
 	lastData json.RawMessage
@@ -32,97 +31,6 @@ func (r *recordingInstanceStorage) SaveInstances(data json.RawMessage) error {
 
 func (r *recordingInstanceStorage) GetInstances() json.RawMessage { return r.lastData }
 func (r *recordingInstanceStorage) DeleteAllInstances() error     { return nil }
-
-// TestApplyWorkspaceToggle_ClassicToGlobalPersists is the smaller of
-// the two leak-fix tests. From a classic workspace slot, empty desired
-// triggers enterGlobalMode (which replaces the slot) after the leak-fix's
-// preemptive save, so the only SaveInstances call that hits the test
-// recorder is the one the bug was missing. (From global mode there is no
-// transition: see TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces.)
-func TestApplyWorkspaceToggle_ClassicToGlobalPersists(t *testing.T) {
-	// LOOM_GLOBAL_DIR redirects enterGlobalMode's reconstruction of
-	// global storage away from the real ~/.loom — tests must not write
-	// to the user's home dir.
-	t.Setenv(config.EnvGlobalDir, t.TempDir())
-
-	rec := &recordingInstanceStorage{}
-	storage, err := session.NewStorage(rec, t.TempDir())
-	require.NoError(t, err)
-
-	ws := testWS(core.WorkspaceParts{
-		Ctx:     &config.WorkspaceContext{Name: "classic-ws", ConfigDir: t.TempDir()},
-		Storage: storage,
-		Config:  config.DefaultConfig(),
-	})
-	list := fixtureList(t)
-
-	h := wireCore(t, &home{
-		workspaceSlot: slotWith(ws, &workspaceSlot{
-			list:      list,
-			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		}),
-		ctx:    context.Background(),
-		state:  stateDefault,
-		menu:   ui.NewMenu(),
-		tabBar: ui.NewWorkspaceTabBar(),
-		errBox: ui.NewErrBox(),
-		// registry = nil, slots = nil — classic mode.,
-	})
-
-	require.Equal(t, 0, rec.calls, "no save calls before invoke")
-
-	// Empty desired triggers classic → global with enterGlobalMode.
-	_ = h.applyWorkspaceToggle(nil)
-	require.NotNil(t, h.wsCtx())
-	require.Empty(t, h.wsCtx().Name, "fixture: the transition ran")
-
-	assert.GreaterOrEqual(t, rec.calls, 1,
-		"global storage must be saved at least once during transition (leak-fix regression)")
-}
-
-// TestApplyWorkspaceToggle_GlobalToWorkspacePersists is the precise
-// regression test for the user-reported bug: switching from global
-// mode to a workspace tab via the picker silently dropped the in-
-// memory list. We verify the leak-fix's save call happens BEFORE the
-// downstream activation work runs (which we don't actually require to
-// succeed in tests — tmux/git side effects are out of scope).
-func TestApplyWorkspaceToggle_GlobalToWorkspacePersists(t *testing.T) {
-	t.Setenv("LOOM_HOME", t.TempDir())
-
-	rec := &recordingInstanceStorage{}
-	storage, err := session.NewStorage(rec, t.TempDir())
-	require.NoError(t, err)
-
-	ws := testWS(core.WorkspaceParts{Storage: storage, Config: config.DefaultConfig()})
-	list := fixtureList(t)
-
-	h := wireCore(t, &home{
-		workspaceSlot: slotWith(ws, &workspaceSlot{
-			list:      list,
-			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		}),
-		ctx:    context.Background(),
-		state:  stateDefault,
-		menu:   ui.NewMenu(),
-		tabBar: ui.NewWorkspaceTabBar(),
-		errBox: ui.NewErrBox(),
-		// Keep activation off tmux entirely: a recording executor, and a
-		// workspace whose terminal record already exists (preserved), so
-		// no workspace terminal is created and started.
-		core: testLoop(t, core.NewForTest(core.Options{CmdExec: &recordingExec{}})),
-	})
-
-	// Non-empty desired forces the bug's actual code path:
-	// len(m.slots)==0 → leak-fix → activate → loadSlot. Whether
-	// activateWorkspace succeeds is irrelevant for this test — the
-	// invariant under test is "the save call happens unconditionally
-	// before activation."
-	desired := []config.Workspace{preservedTerminalWorkspace(t, "test-ws")}
-	_ = h.applyWorkspaceToggle(desired)
-
-	assert.GreaterOrEqual(t, rec.calls, 1,
-		"global m.list must be saved before activateWorkspace runs (leak-fix regression — pre-fix this was 0)")
-}
 
 // TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots verifies the post-
 // conditions of enterGlobalMode: workspace tabs are gone, the active
@@ -147,6 +55,7 @@ func TestEnterGlobalMode_SetsGlobalCtxAndClearsSlots(t *testing.T) {
 		errBox: ui.NewErrBox(),
 		// registry = nil so the SetOpenWorkspaces side effect is skipped.,
 	})
+	bootFixture(t, h) // the global workspace, served from boot
 
 	h.enterGlobalMode()
 
@@ -182,6 +91,7 @@ func TestEnterGlobalMode_CleansUpWorkbench(t *testing.T) {
 		tabBar: ui.NewWorkspaceTabBar(),
 		errBox: ui.NewErrBox(),
 	})
+	bootFixture(t, h) // the global workspace, served from boot
 	// Simulate an active workbench: terminal force-hidden, non-default ratio.
 	h.viewMode = viewWorkbench
 	h.wbPrevTerminalHidden = false
@@ -237,6 +147,7 @@ func TestEnterGlobalMode_WithSlots_Deactivates(t *testing.T) {
 		}),
 	)
 	wireCore(t, h)
+	bootFixture(t, h) // the global workspace, served from boot
 
 	h.enterGlobalMode()
 
@@ -250,10 +161,10 @@ func TestEnterGlobalMode_WithSlots_Deactivates(t *testing.T) {
 // regression guard for the global-list wipe: enterGlobalMode used to tear
 // down every workspace slot first, then log a failed global load and carry
 // on with an empty list — whose next save rewrote the global state.json
-// with nothing. The global load now runs before anything is torn down, and
-// a failure must leave the slots, storage and global state.json untouched.
-// (The model serves the global workspace from boot; entering global mode
-// retries a load that failed, and aborts if it fails again.) Driven
+// with nothing. A failure must leave the slots, storage and global
+// state.json untouched. (The model serves the global workspace from boot;
+// entering global mode opens it, which retries a load that failed, and
+// aborts if it fails again.) Driven
 // through applyWorkspaceToggle(nil), enterGlobalMode's only caller (the
 // picker's Global row), so the path is the real one.
 func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
@@ -290,6 +201,7 @@ func TestEnterGlobalMode_LoadFailureLeavesWorkspaceModeIntact(t *testing.T) {
 		}),
 	)
 	wireCore(t, h)
+	bootFixture(t, h) // its global load fails, latched
 	h.errBox.SetSize(400, 1)
 
 	cmd := h.applyWorkspaceToggle(nil)
@@ -328,6 +240,7 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 	m.ctx = cancelledCtx()
 	m.errBox = ui.NewErrBox()
 	testModel(m).SetExecForTest(&recordingExec{})
+	bootFixture(t, m) // the global workspace, served from boot
 
 	drainCmd(m.applyWorkspaceToggle(nil))
 
@@ -352,11 +265,10 @@ func TestEnterGlobalMode_LoadsTheGlobalDir(t *testing.T) {
 }
 
 // TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram: the shared
-// loader gave Recoverable orphan placeholders the startup program
-// (core.Model.Program) — the one the process started with, possibly a
-// workspace's — rather than the program
-// of the config the slot loaded, as activateWorkspace does. Recovering one
-// then relaunched it with another workspace's agent.
+// loader gave Recoverable orphan placeholders the program the process
+// started with, possibly a workspace's, rather than the program of the
+// config the workspace loaded. Recovering one then relaunched it with
+// another workspace's agent.
 func TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram(t *testing.T) {
 	isolateTmux(t)
 	globalDir := t.TempDir()
@@ -376,7 +288,8 @@ func TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram(t *testing.T) {
 	m := fleetHome(t)
 	m.ctx = cancelledCtx()
 	m.errBox = ui.NewErrBox()
-	m.core.SetProgram("startup-agent")
+	m.program = "startup-agent"
+	bootFixture(t, m) // the global workspace, served from boot
 
 	drainCmd(m.applyWorkspaceToggle(nil))
 
@@ -401,6 +314,7 @@ func TestEnterGlobalMode_LoadsLikeStartup(t *testing.T) {
 	m.ctx = cancelledCtx()
 	m.errBox = ui.NewErrBox()
 	m.errBox.SetSize(400, 1)
+	bootFixture(t, m) // the global workspace, served from boot
 
 	drainCmd(m.applyWorkspaceToggle(nil))
 

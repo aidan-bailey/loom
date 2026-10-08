@@ -97,8 +97,8 @@ func newLoopPanic(v any) *LoopPanic {
 }
 
 // Start runs m on a goroutine of its own and returns the loop serving it.
-// From here on only the loop touches m. The health tick starts with Begin;
-// Stop ends the loop.
+// From here on only the loop touches m, which is booted already
+// (Model.Boot). The health tick starts with Begin; Stop ends the loop.
 func Start(m *Model) *Loop { return startLoop(m, false, tickInterval()) }
 
 // startLoop starts a loop over m: hold keeps its jobs for the test, and
@@ -248,8 +248,9 @@ func (l *Loop) Stop() {
 	})
 }
 
-// Begin starts the background jobs the client's first frame wants
-// (Model.Begin) and, the first time, the health tick.
+// Begin starts the model's first background jobs (Model.Begin) and, the
+// first time, the health tick. Whatever serves the loop calls it once,
+// when it starts serving (rpc.InProcess); it is not in Core.
 func (l *Loop) Begin() {
 	l.do(func(m *Model) {
 		m.Begin()

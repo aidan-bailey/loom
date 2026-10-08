@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,7 +17,6 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
-	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -111,31 +111,17 @@ func preservedTerminalWorkspace(t *testing.T, name string) config.Workspace {
 	return writeWorkspaceState(t, name, "["+string(rec)+"]")
 }
 
-// newRestoreHome is a bare home for the workspace load paths, with every
-// executor they build replaced by exec. Its model shows the classic slot's
-// workspace (what wireCore installs).
+// newRestoreHome is a home as newHome leaves it with no saved tab to
+// restore (startupHome), over a model whose every executor is exec: its
+// classic slot shows the global workspace of the test's own
+// LOOM_GLOBAL_DIR, which the caller sets first, and its registry is the
+// one there. A test registers the workspaces it activates
+// (registerWorkspaces).
 func newRestoreHome(t *testing.T, exec cmd2.Executor) *home {
 	t.Helper()
-	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig()})
-	h := &home{
-		workspaceSlot: slotWith(ws, &workspaceSlot{
-			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		}),
-		ctx:    context.Background(),
-		state:  stateDefault,
-		menu:   ui.NewMenu(),
-		tabBar: ui.NewWorkspaceTabBar(),
-		errBox: ui.NewErrBox(),
-		core:   testLoop(t, core.NewForTest(core.Options{CmdExec: exec})),
-	}
-	h.list = ui.NewList(&h.spinner, slotRows{h, h.workspaceSlot})
-	testModel(h).SetWorkspacesForTest(ws, nil)
-	h.id = testModel(h).WorkspaceIDForTest(ws)
-	h.info, _ = testModel(h).Workspace(h.id)
-	wiredModel = testModel(h)
-	t.Cleanup(func() { wiredModel = nil })
-	h.syncViews()
-	return h
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	return startupHome(t, exec, reg, "", "")
 }
 
 // TestActivateWorkspace_PreservedTerminalIsNotReplaced: after a downgrade the
@@ -145,9 +131,11 @@ func newRestoreHome(t *testing.T, exec cmd2.Executor) *home {
 // record under the same title, and both were persisted.
 func TestActivateWorkspace_PreservedTerminalIsNotReplaced(t *testing.T) {
 	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
 	ws := preservedTerminalWorkspace(t, "ws-term")
 	rec := &recordingExec{}
 	m := newRestoreHome(t, rec)
+	registerWorkspaces(t, m, ws)
 
 	_, err := m.activateWorkspace(ws)
 	require.NoError(t, err)
@@ -177,20 +165,19 @@ func TestActivateWorkspace_PreservedTerminalIsNotReplaced(t *testing.T) {
 	assert.Equal(t, 1, count, "exactly the preserved record may carry the terminal's title")
 }
 
-// TestRestoreSavedWorkspaces_AFailedWorkspaceDoesNotStopTheSweep: the
-// startup sweep spares only the titles it can see. A workspace whose load
-// failed contributes none (they can't be read), so its roots are left out
-// of the sweep, which then still runs for every other workspace: with every
+// TestStartupRestore_AFailedWorkspaceDoesNotStopTheSweep: the startup
+// sweep spares only the titles it can see. A workspace whose load failed
+// contributes none (they can't be read), so its roots are left out of the
+// sweep, which then still runs for every other workspace: with every
 // registered workspace loaded, skipping it would leave every orphan behind
 // for as long as one workspace stays broken. What the sweep kills and
 // spares is TestOrphanSweep_SparesWhatThisLoomCannotVouchFor's.
-func TestRestoreSavedWorkspaces_AFailedWorkspaceDoesNotStopTheSweep(t *testing.T) {
+func TestStartupRestore_AFailedWorkspaceDoesNotStopTheSweep(t *testing.T) {
 	isolateTmux(t)
 
 	t.Run("control: every workspace loads, sweep runs", func(t *testing.T) {
 		rec := &recordingExec{}
-		m := newRestoreHome(t, rec)
-		m.restoreSavedWorkspaces([]config.Workspace{preservedTerminalWorkspace(t, "ws-good")})
+		m, _ := restoreModeHome(t, rec, `[]`, preservedTerminalWorkspace(t, "ws-good"))
 
 		require.Len(t, m.slots, 1)
 		assert.True(t, rec.ran("ls"), "with every workspace loaded the sweep must still run")
@@ -198,33 +185,35 @@ func TestRestoreSavedWorkspaces_AFailedWorkspaceDoesNotStopTheSweep(t *testing.T
 
 	t.Run("one workspace fails, the sweep still runs", func(t *testing.T) {
 		rec := &recordingExec{}
-		m := newRestoreHome(t, rec)
 		bad := writeWorkspaceState(t, "ws-bad", `{"not":"an array"}`)
-		m.restoreSavedWorkspaces([]config.Workspace{bad, preservedTerminalWorkspace(t, "ws-good")})
+		m, _ := restoreModeHome(t, rec, `[]`, bad, preservedTerminalWorkspace(t, "ws-good"))
 
 		require.Len(t, m.slots, 1, "the good workspace still opens")
 		assert.True(t, rec.ran("ls"), "the others are still swept")
 	})
 }
 
-// restoreModeHome is a home as newHome leaves it in restore mode: the
-// startup (global) storage — a real state.json holding instancesJSON — is
-// on m.storage() but has never been loaded; restoreSavedWorkspaces owns that.
-func restoreModeHome(t *testing.T, exec cmd2.Executor, instancesJSON string) (*home, string) {
+// restoreModeHome is a home as newHome leaves it at startup (startupHome)
+// over a fresh global dir whose state.json — instancesJSON — the global
+// workspace loads, with saved registered and in the registry's open list:
+// the startup restores them as tabs (restoreSavedWorkspaces), and with
+// none saved or none opening shows the global workspace. Returns the
+// global state.json's path.
+func restoreModeHome(t *testing.T, exec cmd2.Executor, instancesJSON string, saved ...config.Workspace) (*home, string) {
 	t.Helper()
 	dir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, dir)
 	statePath := filepath.Join(dir, config.StateFileName)
 	require.NoError(t, os.WriteFile(statePath, []byte(`{"instances":`+instancesJSON+`}`), 0o644))
-	appState := config.LoadStateFrom(dir)
-	storage, err := session.NewStorage(appState, dir)
+	reg, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
-	m := newRestoreHome(t, exec)
-	m.core.SetProgram("true")
-	reworkspace(t, m, m.workspaceSlot, func(p *core.WorkspaceParts) {
-		p.Storage, p.State, p.Ctx = storage, appState, &config.WorkspaceContext{ConfigDir: dir}
-	})
-	m.errBox.SetSize(400, 1)
-	return wirePanes(t, m), statePath
+	var names []string
+	for _, def := range saved {
+		require.NoError(t, reg.Add(def.Name, def.Path))
+		names = append(names, def.Name)
+	}
+	require.NoError(t, reg.SetOpenWorkspaces(names))
+	return wirePanes(t, newRestoreHome(t, exec)), statePath
 }
 
 func corruptWorkspaces(t *testing.T, names ...string) []config.Workspace {
@@ -244,19 +233,18 @@ func listTitles(m *home) []string {
 	return titles
 }
 
-// TestRestoreSavedWorkspaces_AllFail_LoadsStartupStorage: when every
+// TestStartupRestore_AllFail_ShowsTheGlobalWorkspace: when every
 // workspace failed to restore, the user used to land in global mode over a
 // never-loaded startup storage with an empty list, and the first save
-// (here: quit) replaced its readable records with nothing. The model now
-// loads the startup storage when it boots, whatever restores, so the
-// fallback shows it.
-func TestRestoreSavedWorkspaces_AllFail_LoadsStartupStorage(t *testing.T) {
+// (here: quit) replaced its readable records with nothing. The model loads
+// every workspace when it boots, whatever restores, so the fallback shows
+// the global workspace's real sessions.
+func TestStartupRestore_AllFail_ShowsTheGlobalWorkspace(t *testing.T) {
 	isolateTmux(t)
 	rec := &recordingExec{}
 	m, statePath := restoreModeHome(t, rec,
-		`[{"title":"keeper","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/wt-keeper"}}]`)
-
-	m.restoreSavedWorkspaces(corruptWorkspaces(t, "ws-bad-1", "ws-bad-2"))
+		`[{"title":"keeper","status":3,"program":"claude","worktree":{"worktree_path":"/tmp/wt-keeper"}}]`,
+		corruptWorkspaces(t, "ws-bad-1", "ws-bad-2")...)
 
 	require.Empty(t, m.slots)
 	assert.Contains(t, listTitles(m), "keeper", "the global list must show its real sessions")
@@ -267,19 +255,15 @@ func TestRestoreSavedWorkspaces_AllFail_LoadsStartupStorage(t *testing.T) {
 	assert.Contains(t, string(raw), `"keeper"`, "quitting must not drop the global record")
 }
 
-// TestRestoreSavedWorkspaces_AllFail_StartupLoadFailsClosed: when the startup
-// storage is unreadable too, the fallback fails closed — the error is shown,
-// nothing is written, and the user can still open a workspace (which saves
-// the global storage first; its refusal must not block the transition, as
-// there is nothing loaded to lose).
-func TestRestoreSavedWorkspaces_AllFail_StartupLoadFailsClosed(t *testing.T) {
+// TestStartupRestore_AllFail_GlobalLoadFailsClosed: when the global
+// storage is unreadable too, the fallback fails closed — the error is
+// shown, nothing is written, and the user can still open a workspace.
+func TestStartupRestore_AllFail_GlobalLoadFailsClosed(t *testing.T) {
 	isolateTmux(t)
 	rec := &recordingExec{}
-	m, statePath := restoreModeHome(t, rec, `{"not":"an array"}`)
+	m, statePath := restoreModeHome(t, rec, `{"not":"an array"}`, corruptWorkspaces(t, "ws-bad")...)
 	before, err := os.ReadFile(statePath)
 	require.NoError(t, err)
-
-	m.restoreSavedWorkspaces(corruptWorkspaces(t, "ws-bad"))
 
 	require.Empty(t, m.slots)
 	assert.Empty(t, listTitles(m))
@@ -288,9 +272,11 @@ func TestRestoreSavedWorkspaces_AllFail_StartupLoadFailsClosed(t *testing.T) {
 	_, _ = m.handleQuit()
 	after, err := os.ReadFile(statePath)
 	require.NoError(t, err)
-	assert.Equal(t, before, after, "the unreadable startup state.json must be untouched")
+	assert.Equal(t, before, after, "the unreadable global state.json must be untouched")
 
-	m.applyWorkspaceToggle([]config.Workspace{preservedTerminalWorkspace(t, "ws-good")})
+	good := preservedTerminalWorkspace(t, "ws-good")
+	registerWorkspaces(t, m, good)
+	m.applyWorkspaceToggle([]config.Workspace{good})
 	require.Len(t, m.slots, 1, "the user must still be able to open a workspace")
 	assert.Equal(t, "ws-good", m.slots[0].wsCtx().Name)
 }
@@ -304,26 +290,14 @@ func TestRestoreSavedWorkspaces_AllFail_StartupLoadFailsClosed(t *testing.T) {
 // them (they were not closed by the user).
 func TestHandleQuit_LatchedFallbackQuitsAndKeepsOpenWorkspaces(t *testing.T) {
 	isolateTmux(t)
-	t.Setenv(config.EnvGlobalDir, t.TempDir())
-	m, statePath := restoreModeHome(t, &recordingExec{}, `{"not":"an array"}`)
+	m, statePath := restoreModeHome(t, &recordingExec{}, `{"not":"an array"}`, corruptWorkspaces(t, "ws-bad")...)
 	before, err := os.ReadFile(statePath)
 	require.NoError(t, err)
-
-	bad := corruptWorkspaces(t, "ws-bad")[0]
-	reg, err := config.LoadWorkspaceRegistry()
-	require.NoError(t, err)
-	require.NoError(t, reg.Add("ws-bad", bad.Path))
-	require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-bad"}))
-	testModel(m).SetRegistryForTest(reg)
-
-	m.restoreSavedWorkspaces(reg.GetOpenWorkspaces())
 	require.Empty(t, m.slots)
 
 	// A cancelled ctx makes handleError's toast Cmd return at once, so the
 	// assertion below can run the Cmd whichever branch handleQuit takes.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	m.ctx = ctx
+	m.ctx = cancelledCtx()
 	_, cmd := m.handleQuit()
 	require.NotNil(t, cmd)
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "q must quit even though nothing can be saved")
@@ -334,6 +308,61 @@ func TestHandleQuit_LatchedFallbackQuitsAndKeepsOpenWorkspaces(t *testing.T) {
 	fresh, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ws-bad"}, fresh.OpenWorkspaces, "the failed workspace is retried on the next launch")
+}
+
+// TestStartupRestore_KeepsAFailedSavedTabAndPersistsIt: a saved tab that
+// fails to open at startup is this TUI's to keep open (failedOpen): the
+// restore persists it in the open list beside the tabs that opened, and the
+// picker shows it checked.
+func TestStartupRestore_KeepsAFailedSavedTabAndPersistsIt(t *testing.T) {
+	isolateTmux(t)
+	good := preservedTerminalWorkspace(t, "ws-good")
+	bad := corruptWorkspaces(t, "ws-bad")[0]
+	m, _ := restoreModeHome(t, &recordingExec{}, `[]`, bad, good)
+
+	assert.Equal(t, []string{"ws-good"}, m.slotNames())
+	assert.Equal(t, []string{"ws-bad"}, m.failedOpen)
+	fresh, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ws-good", "ws-bad"}, fresh.OpenWorkspaces, "the tabs, then the failed one")
+	assert.True(t, m.pickerActiveNames()["ws-bad"])
+}
+
+// TestStartupHome_ShowsTheBootsNotices: the model boots before any client
+// connects, so the notices its boot raised (the account registry's) come
+// to the TUI by hand, and the error bar shows them.
+func TestStartupHome_ShowsTheBootsNotices(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	model := core.NewForTest(core.Options{CmdExec: &recordingExec{}})
+	model.Boot()
+	client, stop, err := startTestCore(model)
+	require.NoError(t, err)
+	t.Cleanup(stop)
+
+	m, err := startHome(context.Background(), client, stop,
+		[]core.Event{core.Notice{Err: errors.New("accounts: the registry is unreadable")}}, "", "true", "", true)
+	require.NoError(t, err)
+	m.errBox.SetSize(400, 1)
+
+	assert.Contains(t, m.errBox.String(), "the registry is unreadable")
+}
+
+// TestStartupHome_AWorkspaceThatWillNotLoad: started on a workspace whose
+// load fails, with no saved tabs to restore, the TUI has nothing to show,
+// and says why.
+func TestStartupHome_AWorkspaceThatWillNotLoad(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	bad := corruptWorkspaces(t, "ws-bad")[0]
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	require.NoError(t, reg.Add(bad.Name, bad.Path))
+
+	_, err = tryStartupHome(t, &recordingExec{}, reg, "ws-bad", "")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load instances: ")
 }
 
 // TestRegisterPendingDir_RegistryWriteRunsOnUpdate: confirming the startup
@@ -367,14 +396,8 @@ func TestRegisterPendingDir_RegistryWriteRunsOnUpdate(t *testing.T) {
 
 	reg, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
-	cfg := config.DefaultConfig()
-	off := false
-	cfg.ClaudeRemoteControl = &off // no claude auth probe
-	m, err := newHome(context.Background(), &config.WorkspaceContext{ConfigDir: t.TempDir()}, reg, cfg, "true", dir, true)
-	require.NoError(t, err)
-	t.Cleanup(m.stopCore)
+	m := startupHome(t, &recordingExec{}, reg, "", dir)
 	require.Equal(t, stateConfirm, m.state, "a pending dir opens the registration prompt")
-	testModel(m).SetExecForTest(&recordingExec{})
 
 	cmd := m.pendingConfirmation.Run()
 	require.NotNil(t, cmd)
@@ -400,17 +423,9 @@ func TestRegisterPendingDir_RegistryWriteRunsOnUpdate(t *testing.T) {
 // until it is opened or explicitly deselected.
 func TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected(t *testing.T) {
 	isolateTmux(t)
-	t.Setenv(config.EnvGlobalDir, t.TempDir())
 	good := preservedTerminalWorkspace(t, "ws-good")
 	bad := corruptWorkspaces(t, "ws-bad")[0]
-	reg, err := config.LoadWorkspaceRegistry()
-	require.NoError(t, err)
-	require.NoError(t, reg.Add("ws-good", good.Path))
-	require.NoError(t, reg.Add("ws-bad", bad.Path))
-	require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-good", "ws-bad"}))
-
-	m, _ := restoreModeHome(t, &recordingExec{}, `[]`)
-	testModel(m).SetRegistryForTest(reg)
+	m, _ := restoreModeHome(t, &recordingExec{}, `[]`, good, bad)
 	m.ctx = cancelledCtx()
 	openList := func() []string {
 		t.Helper()
@@ -419,7 +434,6 @@ func TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected(t *testing.
 		return fresh.OpenWorkspaces
 	}
 
-	m.restoreSavedWorkspaces(reg.GetOpenWorkspaces())
 	require.Equal(t, []string{"ws-good"}, m.slotNames())
 	assert.ElementsMatch(t, []string{"ws-good", "ws-bad"}, openList(), "restore keeps the failed workspace open")
 	assert.True(t, m.pickerActiveNames()["ws-bad"], "the picker shows it still selected")
@@ -463,19 +477,9 @@ func TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateTmux(t)
 			rec := &recordingExec{}
-			m, _ := restoreModeHome(t, rec, tc.global)
-			// The startup context is the global one: a reload would read
-			// the same directory.
-			t.Setenv(config.EnvGlobalDir, m.wsCtx().ConfigDir)
-			bad := corruptWorkspaces(t, "ws-bad")[0]
-			reg, err := config.LoadWorkspaceRegistry()
-			require.NoError(t, err)
-			require.NoError(t, reg.Add("ws-bad", bad.Path))
-			require.NoError(t, reg.SetOpenWorkspaces([]string{"ws-bad"}))
-			testModel(m).SetRegistryForTest(reg)
+			m, _ := restoreModeHome(t, rec, tc.global, corruptWorkspaces(t, "ws-bad")...)
 			m.ctx = cancelledCtx()
 
-			m.restoreSavedWorkspaces(reg.GetOpenWorkspaces())
 			require.Empty(t, m.slots)
 			require.True(t, m.pickerActiveNames()["ws-bad"], "fixture: the failed workspace is still open")
 			require.Equal(t, tc.latched, m.storage().WritesRefused())
@@ -487,12 +491,14 @@ func TestGlobalCommitFromGlobalMode_OnlyClosesFailedWorkspaces(t *testing.T) {
 				pointAt(m, live)
 			}
 			slot, list, storage := m.workspaceSlot, m.list, m.storage()
+			rec.mu.Lock()
 			rec.args = nil
+			rec.mu.Unlock()
 			m.errBox.Clear()
 
 			drainCmd(m.applyWorkspaceToggle(nil))
 
-			assert.Empty(t, m.core.RestoreFailed())
+			assert.Empty(t, m.failedOpen)
 			assert.False(t, m.pickerActiveNames()["ws-bad"], "the failed workspace is closed")
 			fresh, err := config.LoadWorkspaceRegistry()
 			require.NoError(t, err)

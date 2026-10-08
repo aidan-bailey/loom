@@ -437,7 +437,7 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 	// Restore failures stay checked so their live sessions survive; the
 	// picker warns that closing one gives them up to the next launch's
 	// orphan sweep.
-	picker.MarkFailedToLoad(m.core.RestoreFailed()...)
+	picker.MarkFailedToLoad(m.failedOpen...)
 	m.setOverlay(picker, overlayWorkspacePicker)
 	m.state = stateWorkspace
 	return m, nil
@@ -449,7 +449,7 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 // checked retries it and unchecking it is the explicit close.
 func (m *home) pickerActiveNames() map[string]bool {
 	active := make(map[string]bool, len(m.slots))
-	for _, name := range m.core.OpenNames() {
+	for _, name := range m.openList() {
 		active[name] = true
 	}
 	return active

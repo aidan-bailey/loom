@@ -99,34 +99,11 @@ func TestSave_WritesALoadedWorkspace(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	ws.add(pausedInst(t, "kept"))
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	require.NoError(t, m.saveWS(ws))
 	data, err := ws.storage.LoadInstanceData()
 	require.NoError(t, err)
 	require.Len(t, data, 1)
 	assert.Equal(t, "kept", data[0].Title)
-}
-
-func TestCloseTab_RefusesTheLastTab(t *testing.T) {
-	m := NewForTest(Options{})
-	a := storedWorkspace(t, "a")
-	m.SetWorkspacesForTest(nil, []*Workspace{a})
-	_, err := m.closeTabWS("a")
-	require.Error(t, err)
-	assert.Equal(t, []*Workspace{a}, m.tabs)
-}
-
-// TestCloseTab_DropsTheTab: closing a tab only stops showing it; the
-// model still serves the workspace.
-func TestCloseTab_DropsTheTab(t *testing.T) {
-	m := NewForTest(Options{})
-	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
-	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
-	closed, err := m.closeTabWS("a")
-	require.NoError(t, err)
-	assert.Same(t, a, closed)
-	assert.Equal(t, []*Workspace{b}, m.tabs)
-	assert.True(t, m.isLoadedWS(a), "still served")
-	assert.Equal(t, []*Workspace{b}, m.shown(), "no longer shown")
 }

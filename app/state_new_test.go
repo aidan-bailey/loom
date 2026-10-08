@@ -17,7 +17,7 @@ import (
 // newPendingTitleEntryHome mirrors what runNewInstance (app/intents.go)
 // does when 'n' is pressed: open a blank draft and enter stateNew — with
 // its repo a temp dir and the config's default program rather than the
-// repoPath()/core.Program() runNewInstance itself reads.
+// repoPath()/m.program runNewInstance itself reads.
 func newPendingTitleEntryHome(t *testing.T) *home {
 	t.Helper()
 	m := newTestHome(t)
@@ -70,7 +70,7 @@ func TestNewInstanceFlowEndToEndComposesRealClosure(t *testing.T) {
 
 func TestNewInstanceFlowRemoteControlBlockedViaModalPromptsConfirm(t *testing.T) {
 	m := newPendingTitleEntryHome(t)
-	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
+	loopOf(m).SetRCAuthForTest(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 
 	for _, r := range "my-task" {
 		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})

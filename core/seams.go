@@ -225,6 +225,13 @@ func (l *Loop) SelectedForTest() []InstanceID {
 	return ids
 }
 
+// SetRCAuthForTest records the default account's remote-control auth on
+// the loop (Model.SetRCAuth), as Boot's detection does: a change straight
+// to the model, which only the next publish sends to its clients.
+func (l *Loop) SetRCAuthForTest(a session.RemoteControlAuth) {
+	l.do(func(m *Model) { m.SetRCAuth(a) })
+}
+
 // TickForTest runs the model's health tick on the loop, as its timer
 // would.
 func (l *Loop) TickForTest() {

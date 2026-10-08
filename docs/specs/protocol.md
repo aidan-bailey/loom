@@ -59,61 +59,43 @@ can probe an older server) and `mismatch` (a refused hello). Examples, a `Notice
 
 ## Methods
 
-### Begin (request)
-
-Params: `{}`
-
-Result: `{}`
-
-### LoadClassic (request)
-
-Params: `{"sweepTmux":false}`
-
-Result: `{}`
-
-### InitAccounts (request)
-
-Params: `{}`
-
-Result: `{}`
-
-### SetRCAuth (request)
-
-Params: `{"auth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}}}`
-
-Result: `{}`
-
-### StayGlobal (request)
-
-Params: `{}`
-
-Result: `{}`
-
-### RestoreSaved (request)
-
-Params: `{"saved":null}`
-
-Result: `{"value":0}`
-
-### RestoreFailed (local)
+### Workspaces (local)
 
 Params: `{}`
 
 Result: `{"value":null}`
 
-### KeepRestoreFailed (request)
+### Workspace (local)
 
-Params: `{"desired":null}`
+Params: `{"id":0}`
 
-Result: `{}`
+Result: `{"value":{"ID":0,"Name":"","Label":"","RepoPath":"","ConfigDir":"","Settings":{"default_program":"","branch_prefix":""},"UIPrefs":{},"HelpScreensSeen":0,"WritesRefused":false,"PreservedTitles":null,"Recovery":{"Cleaned":0,"Review":0,"Failed":0,"Undecodable":0},"LoadErr":""},"ok":false}`
 
-### OpenNames (local)
+### IsLoaded (local)
+
+Params: `{"id":0}`
+
+Result: `{"value":false}`
+
+### Open (request)
+
+Params: `{"id":0}`
+
+Result: `{"value":{"ID":0,"Name":"","Label":"","RepoPath":"","ConfigDir":"","Settings":{"default_program":"","branch_prefix":""},"UIPrefs":{},"HelpScreensSeen":0,"WritesRefused":false,"PreservedTitles":null,"Recovery":{"Cleaned":0,"Review":0,"Failed":0,"Undecodable":0},"LoadErr":""}}`
+
+### SaveForQuit (request)
 
 Params: `{}`
 
-Result: `{"value":null}`
+Result: `{}`
 
-### PersistOpenList (request)
+### Registry (local)
+
+Params: `{}`
+
+Result: `{"value":{"Workspaces":null,"Open":null,"LastUsed":""}}`
+
+### ReloadRegistry (request)
 
 Params: `{}`
 
@@ -123,77 +105,17 @@ Result: `{}`
 
 Params: `{"name":"","dir":""}`
 
-Result: `{"value":{"name":"","path":"","added_at":"0001-01-01T00:00:00Z"}}`
+Result: `{"value":{"ID":0,"Name":"","Label":"","RepoPath":"","ConfigDir":"","Settings":{"default_program":"","branch_prefix":""},"UIPrefs":{},"HelpScreensSeen":0,"WritesRefused":false,"PreservedTitles":null,"Recovery":{"Cleaned":0,"Review":0,"Failed":0,"Undecodable":0},"LoadErr":""}}`
+
+### PersistOpenList (request)
+
+Params: `{"names":null}`
+
+Result: `{}`
 
 ### SetLastUsed (request)
 
 Params: `{"name":""}`
-
-Result: `{}`
-
-### SaveForQuit (request)
-
-Params: `{}`
-
-Result: `{}`
-
-### Workspace (local)
-
-Params: `{"id":0}`
-
-Result: `{"value":{"ID":0,"Name":"","Label":"","RepoPath":"","ConfigDir":"","Settings":{"default_program":"","branch_prefix":""},"UIPrefs":{},"HelpScreensSeen":0,"WritesRefused":false,"PreservedTitles":null,"Recovery":{"Cleaned":0,"Review":0,"Failed":0,"Undecodable":0}},"ok":false}`
-
-### Classic (local)
-
-Params: `{}`
-
-Result: `{"value":{"ID":0,"Name":"","Label":"","RepoPath":"","ConfigDir":"","Settings":{"default_program":"","branch_prefix":""},"UIPrefs":{},"HelpScreensSeen":0,"WritesRefused":false,"PreservedTitles":null,"Recovery":{"Cleaned":0,"Review":0,"Failed":0,"Undecodable":0}},"ok":false}`
-
-### Tabs (local)
-
-Params: `{}`
-
-Result: `{"value":null}`
-
-### IsLoaded (local)
-
-Params: `{"id":0}`
-
-Result: `{"value":false}`
-
-### OpenTab (request)
-
-Params: `{"workspace":{"name":"","path":"","added_at":"0001-01-01T00:00:00Z"}}`
-
-Result: `{"value":{"ID":0,"Name":"","Label":"","RepoPath":"","ConfigDir":"","Settings":{"default_program":"","branch_prefix":""},"UIPrefs":{},"HelpScreensSeen":0,"WritesRefused":false,"PreservedTitles":null,"Recovery":{"Cleaned":0,"Review":0,"Failed":0,"Undecodable":0}}}`
-
-### CloseTab (request)
-
-Params: `{"name":""}`
-
-Result: `{}`
-
-### EnterGlobal (request)
-
-Params: `{"focused":0}`
-
-Result: `{"value":{"ID":0,"Name":"","Label":"","RepoPath":"","ConfigDir":"","Settings":{"default_program":"","branch_prefix":""},"UIPrefs":{},"HelpScreensSeen":0,"WritesRefused":false,"PreservedTitles":null,"Recovery":{"Cleaned":0,"Review":0,"Failed":0,"Undecodable":0}}}`
-
-### Save (request)
-
-Params: `{"id":0}`
-
-Result: `{}`
-
-### Registry (local)
-
-Params: `{}`
-
-Result: `{"value":{"Workspaces":null,"Open":null}}`
-
-### ReloadRegistry (request)
-
-Params: `{}`
 
 Result: `{}`
 
@@ -314,18 +236,6 @@ Result: `{}`
 ### VerifyDead (cast)
 
 Params: `{"id":0}`
-
-Result: `{}`
-
-### Program (local)
-
-Params: `{}`
-
-Result: `{"value":""}`
-
-### SetProgram (request)
-
-Params: `{"program":""}`
 
 Result: `{}`
 
@@ -489,7 +399,7 @@ Result: `{}`
 
 ### ModelChanged
 
-`{"View":{"Program":"","RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null},"RestoreFailed":null,"OpenNames":null}}`
+`{"View":{"RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null,"LastUsed":""}}}`
 
 ### Notice
 
@@ -525,5 +435,5 @@ Result: `{}`
 
 ### WorkspacesChanged
 
-`{"Views":null,"Classic":false}`
+`{"Views":null}`
 

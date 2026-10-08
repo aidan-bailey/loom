@@ -156,7 +156,7 @@ func TestApplyLiveness_DeadStillPauses(t *testing.T) {
 func TestApplyLiveness_ADroppedWorkspacesProbeIsIgnored(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := probedRunning(t, m)
-	m.SetWorkspacesForTest(NewWorkspace(WorkspaceParts{}), nil)
+	m.SetWorkspacesForTest(NewWorkspace(WorkspaceParts{}))
 
 	assert.False(t, m.applyLiveness(inst, tmux.LivenessDead, fromTick))
 	assert.Equal(t, session.Running, inst.GetStatus(), "untouched: no workspace holds it")
@@ -390,7 +390,7 @@ func TestTick_EverySelectedInstanceIsProbedInFull(t *testing.T) {
 	a, b := newInst(t, "a"), newInst(t, "b")
 	ws.add(a)
 	ws.add(b)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.SetSelection([]InstanceID{m.idOf(a), 99, m.idOf(b)})
 	assert.Equal(t, []*session.Instance{a, b}, m.selectedInstances(), "an unknown ID is skipped")

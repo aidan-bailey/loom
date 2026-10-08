@@ -128,7 +128,7 @@ func TestServe_ARequestsEventsNameItOnlyToItsClient(t *testing.T) {
 	unstarted := running(t, "u")
 	ws := workspace(t, "a", inst)
 	m := core.NewForTest(core.Options{})
-	m.SetWorkspacesForTest(nil, []*core.Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	loop := core.StartForTest(m)
 	t.Cleanup(loop.Stop)
 	a, b := twoClients(t, loop)

@@ -6,9 +6,10 @@ import (
 
 // handleStateSettingsKey drives the settings overlay. Every key press
 // may report a field change; when it does, the overlay's copy of the
-// settings goes to the model (core.Model.SaveSettings), which persists it
-// and refreshes the program new instances launch, so new-instance creation
-// picks up the new value immediately instead of using a stale cached copy.
+// settings goes to the model (core.Model.SaveSettings), which persists it,
+// and this TUI's drafts default to the saved program from then on
+// (m.program), so new-instance creation picks up the new value immediately
+// instead of using a stale cached copy.
 func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	so := m.settingsOverlay()
 	if so == nil {
@@ -27,10 +28,12 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if changed {
 		// The model saves config.json beside the workspace's state (the
 		// global dir in global mode) and applies the change at once: the
-		// agent program and the launch toggles (core.Model.SaveSettings).
-		if err := m.core.SaveSettings(m.id, m.settingsEdit.Snapshot()); err != nil {
+		// launch toggles (core.Model.SaveSettings).
+		settings := m.settingsEdit.Snapshot()
+		if err := m.core.SaveSettings(m.id, settings); err != nil {
 			return m, m.handleError(err)
 		}
+		m.program = settings.GetProgram()
 		m.syncWorkspaces()
 	}
 

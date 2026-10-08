@@ -52,23 +52,15 @@ func TestAccountSync_IsACopy(t *testing.T) {
 	assert.Equal(t, []string{"b"}, again.Diverged)
 }
 
-func TestRestoreFailed_IsACopy(t *testing.T) {
-	m := NewForTest(Options{})
-	m.restoreFailed = []string{"a", "b"}
-	got := m.RestoreFailed()
-	got[0] = "changed"
-	assert.Equal(t, []string{"a", "b"}, m.RestoreFailed())
-}
-
-func TestTabs_IsACopy(t *testing.T) {
+func TestWorkspaces_IsACopy(t *testing.T) {
 	m := NewForTest(Options{})
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
-	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
-	got := m.Tabs()
+	m.SetWorkspacesForTest(a, b)
+	got := m.Workspaces()
 	got[0].Name = "changed"
 	got[0].PreservedTitles = append(got[0].PreservedTitles, "x")
-	again := m.Tabs()
+	again := m.Workspaces()
 	assert.Equal(t, "a", again[0].Name)
 	assert.Empty(t, again[0].PreservedTitles)
-	assert.Equal(t, []*Workspace{a, b}, m.tabs)
+	assert.Equal(t, []*Workspace{a, b}, m.workspaces)
 }

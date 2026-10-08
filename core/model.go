@@ -31,15 +31,15 @@ func (o Out) Empty() bool { return len(o.Events) == 0 && len(o.Jobs) == 0 }
 type Options struct {
 	// Registry is the workspace registry; nil in bare tests.
 	Registry *config.WorkspaceRegistry
-	// Program is the agent command the process was started with (-p).
+	// Program is the agent program the process was started with: the -p
+	// flag, else the startup workspace's. The model detects the default
+	// account's remote-control auth with it (Boot) and runs the accounts'
+	// Claude commands with it (ClaudeProgram) until a settings save
+	// replaces it; each client keeps the program its own drafts default to.
 	Program string
 	// CmdExec replaces cmd.MakeExecutor() on the workspace load paths: a
 	// test seam. nil in production.
 	CmdExec cmd2.Executor
-	// Ctx and Config are the startup context and its config: the classic
-	// workspace's, shown while no tab is open.
-	Ctx    *config.WorkspaceContext
-	Config *config.Config
 }
 
 // Model is the session model (see the package doc). Methods must be
@@ -49,28 +49,16 @@ type Model struct {
 	program  string
 	cmdExec  cmd2.Executor
 
-	// workspaces are every workspace the model serves, loaded once (boot):
-	// the startup context's, the global one, and each registered one, in
-	// that order, plus any registered or reread later. None is ever
-	// dropped: the TUI's tabs and classic workspace below are only which
-	// of them it shows.
+	// workspaces are every workspace the model serves, loaded once (Boot):
+	// the global one and each registered one, in that order, plus any
+	// registered or reread later. None is ever dropped, and every one is
+	// published: which of them a client shows (its tabs, or the workspace
+	// it shows while none is open) is the client's own state.
 	workspaces []*Workspace
 	booted     bool
-	// classic is the workspace shown while no tab is open: the startup
-	// context's, or the global one after EnterGlobal.
-	classic *Workspace
-	// tabs are the open workspace tabs, in tab order.
-	tabs []*Workspace
-	// restoreFailed names the workspaces the registry's open list held but
-	// RestoreSaved could not open. Their live sessions were spared only
-	// because that launch skipped the orphan sweep, so they stay in the
-	// persisted open list (PersistOpenList) until one opens (OpenTab) or
-	// is deselected (KeepRestoreFailed); EnterGlobal and StayGlobal clear
-	// them all.
-	restoreFailed []string
 
 	// rcAuth is the default account's remote-control auth: detected at
-	// startup (SetRCAuth) and refreshed by the accounts refresh
+	// boot (Boot) and refreshed by the accounts refresh
 	// (deliverAccountsRefreshed), and read by every launch decision.
 	rcAuth session.RemoteControlAuth
 
@@ -168,11 +156,9 @@ type Model struct {
 	// never reused (nextWSID only grows).
 	wsIDs    map[*Workspace]WorkspaceID
 	nextWSID WorkspaceID
-	// publishedWS is every loaded workspace's view as last published
-	// (Sync), in Loaded order, and publishedClassic whether they were the
-	// classic workspace.
-	publishedWS      []WorkspaceView
-	publishedClassic bool
+	// publishedWS is every served workspace's view as last published
+	// (Sync), in Loaded order.
+	publishedWS []WorkspaceView
 	// publishedModel and publishedAccounts are the model and account views
 	// as last published (publishState); nil before the first.
 	publishedModel    *ModelView
@@ -192,32 +178,9 @@ type Model struct {
 	out Out
 }
 
-// New builds the model and its classic workspace: the startup context's
-// state and storage, not yet loaded (LoadClassic loads it, or
-// RestoreSaved's fallback). It first syncs the process-wide session flags
-// from Config and writes the loom-context prompt files, covering both the
-// classic path and the tab path (OpenTab re-syncs per workspace); without
-// it a classic launch would never set the flag. Formerly the start of
-// app.newHome.
-func New(o Options) (*Model, error) {
-	cfgDir := ""
-	if o.Ctx != nil {
-		cfgDir = o.Ctx.ConfigDir
-	}
-	syncSessionFlags(o.Config, cfgDir)
-	if err := session.WriteLoomContextFiles(cfgDir); err != nil {
-		log.For("core").Warn("loom_context.write_failed", "err", err.Error())
-	}
-	state := config.LoadStateFrom(cfgDir)
-	storage, err := session.NewStorage(state, cfgDir)
-	if err != nil {
-		return nil, fmt.Errorf("initialize storage: %w", err)
-	}
-	m := newModel(o)
-	m.classic = NewWorkspace(WorkspaceParts{Ctx: o.Ctx, Storage: storage, Config: o.Config, State: state})
-	m.workspaces = []*Workspace{m.classic}
-	return m, nil
-}
+// New builds the model, serving no workspace yet: Boot loads them, before
+// the model's loop starts.
+func New(o Options) *Model { return newModel(o) }
 
 // newModel builds a model with no workspace and no side effects.
 func newModel(o Options) *Model {
@@ -235,15 +198,12 @@ func newModel(o Options) *Model {
 // installs its fixture's workspaces with SetWorkspacesForTest.
 func NewForTest(o Options) *Model { return newModel(o) }
 
-// SetWorkspacesForTest installs a fixture's workspaces, served and opened:
-// classic, the one shown while no tab is open, and tabs, in order. A nil
-// classic with tabs is none. The model has not booted: the first
-// LoadClassic or RestoreSaved loads the classic workspace's storage, as
-// startup does, and the global and registered workspaces with it.
-func (m *Model) SetWorkspacesForTest(classic *Workspace, tabs []*Workspace) {
-	m.classic, m.tabs = classic, append([]*Workspace(nil), tabs...)
+// SetWorkspacesForTest installs a fixture's workspaces, served and opened,
+// in serve order (a nil one and a repeat are skipped). The model has not
+// booted: a Boot loads the global and registered workspaces beside them.
+func (m *Model) SetWorkspacesForTest(wss ...*Workspace) {
 	m.workspaces = nil
-	for _, ws := range append([]*Workspace{classic}, tabs...) {
+	for _, ws := range wss {
 		if ws != nil && !slices.Contains(m.workspaces, ws) {
 			ws.opened = true
 			m.workspaces = append(m.workspaces, ws)
@@ -257,9 +217,6 @@ func (m *Model) SetExecForTest(e cmd2.Executor) { m.cmdExec = e }
 // SetRegistryForTest replaces the workspace registry.
 func (m *Model) SetRegistryForTest(r *config.WorkspaceRegistry) { m.registry = r }
 
-// SetRestoreFailedForTest replaces the workspaces that failed to restore.
-func (m *Model) SetRestoreFailedForTest(names []string) { m.restoreFailed = names }
-
 // executor returns the executor for the workspace load paths: the test
 // seam when set, the production executor otherwise.
 func (m *Model) executor() cmd2.Executor {
@@ -269,18 +226,11 @@ func (m *Model) executor() cmd2.Executor {
 	return cmd2.MakeExecutor()
 }
 
-// Program is the agent command new sessions launch: the one the process
-// was started with (-p), until a settings save replaces it (SetProgram).
-func (m *Model) Program() string { return m.program }
-
-// SetProgram replaces the agent command new sessions launch (a settings
-// save of the default program).
-func (m *Model) SetProgram(p string) { m.program = p }
-
 // RCAuth is the default account's remote-control auth.
 func (m *Model) RCAuth() session.RemoteControlAuth { return m.rcAuth }
 
-// SetRCAuth records the default account's remote-control auth.
+// SetRCAuth records the default account's remote-control auth, as Boot's
+// detection does.
 func (m *Model) SetRCAuth(a session.RemoteControlAuth) { m.rcAuth = a }
 
 // emit queues an event for the TUI.
@@ -436,8 +386,9 @@ func (m *Model) Deliver(msg any) {
 	}
 }
 
-// Begin starts the background jobs the TUI's first frame wants, each when
-// due: an accounts refresh and a usage probe.
+// Begin starts the model's first background jobs, each when due: an
+// accounts refresh and a usage probe. Its loop runs it when it starts
+// serving (Loop.Begin).
 func (m *Model) Begin() {
 	m.maybeAccountsRefresh()
 	m.maybeUsageProbe()

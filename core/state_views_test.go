@@ -40,10 +40,10 @@ func TestPublishState_OnceThenOnChange(t *testing.T) {
 	model, accounts, gh = stateEvents(m.Sync().Events)
 	assert.Equal(t, [3]int{0, 0, 0}, [3]int{model, accounts, gh}, "nothing changed")
 
-	m.SetProgram("claude")
+	m.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	model, accounts, gh = stateEvents(m.Sync().Events)
-	assert.Equal(t, 1, model, "the program is the model's state")
-	assert.Equal(t, 1, accounts, "and the Claude program the accounts run with changed too")
+	assert.Equal(t, 1, model, "the default account's auth is the model's state")
+	assert.Equal(t, 1, accounts, "and the account view's too")
 	assert.Zero(t, gh)
 
 	m.Deliver(GitHubResultForTest(true, "", map[string]github.Snapshot{"/r": {}}, nil))
@@ -74,48 +74,19 @@ func TestPublishState_EveryUsageRoundRepublishes(t *testing.T) {
 // TestPublishState_CarriesTheState: each event carries the view a replica
 // answers from.
 func TestPublishState_CarriesTheState(t *testing.T) {
-	m := NewForTest(Options{Program: "aider"})
+	m := NewForTest(Options{})
+	m.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "not logged in"})
 	m.Deliver(GitHubResultForTest(false, "gh is not logged in", nil, map[string]error{"/r": errors.New("boom")}))
 	for _, ev := range m.Sync().Events {
 		switch ev := ev.(type) {
 		case ModelChanged:
-			assert.Equal(t, "aider", ev.View.Program)
+			assert.Equal(t, "not logged in", ev.View.RCAuth.Reason)
 		case GitHubChanged:
 			assert.True(t, ev.View.Unavailable)
 			assert.Equal(t, "gh is not logged in", ev.View.Reason)
 			assert.Equal(t, map[string]string{"/r": "boom"}, ev.View.Errs)
 		}
 	}
-}
-
-// TestWorkspacesChanged_SaysWhenClassic: the published workspaces say
-// whether they are the classic workspace or the tabs, and a workspace that
-// moves between the two is published again though its own view is the
-// same.
-func TestWorkspacesChanged_SaysWhenClassic(t *testing.T) {
-	published := func(m *Model) []WorkspacesChanged {
-		var out []WorkspacesChanged
-		for _, ev := range m.Sync().Events {
-			if wc, ok := ev.(WorkspacesChanged); ok {
-				out = append(out, wc)
-			}
-		}
-		return out
-	}
-	m := NewForTest(Options{})
-	ws := storedWorkspace(t, "a")
-
-	m.SetWorkspacesForTest(ws, nil)
-	evs := published(m)
-	require.Len(t, evs, 1)
-	assert.True(t, evs[0].Classic)
-	require.Len(t, evs[0].Views, 1)
-
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
-	evs = published(m)
-	require.Len(t, evs, 1, "the same workspace as a tab is a change")
-	assert.False(t, evs[0].Classic)
-	require.Len(t, evs[0].Views, 1)
 }
 
 // TestSnapshot_IsTheWholeStateAndLeavesTheDiffAlone: Snapshot carries
@@ -125,15 +96,15 @@ func TestSnapshot_IsTheWholeStateAndLeavesTheDiffAlone(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	ws.add(pausedInst(t, "x"))
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 	m.Sync()
-	m.SetProgram("codex")
+	m.SetRCAuth(session.RemoteControlAuth{Reason: "codex"})
 
 	snap := m.Snapshot()
 	require.Len(t, snap, 5)
 	assert.IsType(t, WorkspacesChanged{}, snap[0])
 	require.IsType(t, ModelChanged{}, snap[1])
-	assert.Equal(t, "codex", snap[1].(ModelChanged).View.Program, "the state as it is now, not as last published")
+	assert.Equal(t, "codex", snap[1].(ModelChanged).View.RCAuth.Reason, "the state as it is now, not as last published")
 	assert.IsType(t, AccountsChanged{}, snap[2])
 	assert.IsType(t, GitHubChanged{}, snap[3])
 	vc := snap[4].(ViewsChanged)
@@ -142,7 +113,7 @@ func TestSnapshot_IsTheWholeStateAndLeavesTheDiffAlone(t *testing.T) {
 	assert.Equal(t, "x", vc.Views[0].Title)
 
 	model, accounts, gh := stateEvents(m.Sync().Events)
-	assert.Equal(t, [3]int{1, 0, 0}, [3]int{model, accounts, gh}, "a snapshot is no publish: the program change still goes out at the next Sync")
+	assert.Equal(t, [3]int{1, 1, 0}, [3]int{model, accounts, gh}, "a snapshot is no publish: the auth change still goes out at the next Sync")
 	assert.Empty(t, m.Sync().Events, "and only once")
 }
 
@@ -217,40 +188,33 @@ func TestStateViews_AnswerAsTheModel(t *testing.T) {
 }
 
 // TestWorkspacesView_AnswersAsTheModel: the workspace queries a replica
-// answers from the published workspaces give what the model gives.
+// answers from the published workspaces give what the model gives, a
+// workspace whose load failed included.
 func TestWorkspacesView_AnswersAsTheModel(t *testing.T) {
-	for _, tabs := range []bool{false, true} {
-		m := NewForTest(Options{})
-		a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
-		if tabs {
-			m.SetWorkspacesForTest(nil, []*Workspace{a, b})
-		} else {
-			m.SetWorkspacesForTest(a, nil)
-		}
-		w := m.workspacesView()
-		c, ok := m.Classic()
-		vc, vok := w.ClassicView()
-		assert.Equal(t, [2]any{c, ok}, [2]any{vc, vok}, "Classic, tabs=%v", tabs)
-		assert.Equal(t, m.Tabs(), w.Tabs(), "Tabs, tabs=%v", tabs)
-		for _, id := range []WorkspaceID{0, m.wsIDOf(a), m.wsIDOf(b), 99} {
-			v, ok := m.Workspace(id)
-			vv, vok := w.Workspace(id)
-			assert.Equal(t, [2]any{v, ok}, [2]any{vv, vok}, "Workspace(%d), tabs=%v", id, tabs)
-			assert.Equal(t, m.IsLoaded(id), w.IsLoaded(id), "IsLoaded(%d), tabs=%v", id, tabs)
-		}
+	m := NewForTest(Options{})
+	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
+	b.loadErr = errors.New("load instances for workspace b: corrupt")
+	m.SetWorkspacesForTest(a, b)
+	w := WorkspacesView{Views: m.Workspaces()}
+	assert.Equal(t, m.Workspaces(), w.Workspaces())
+	for _, id := range []WorkspaceID{0, m.wsIDOf(a), m.wsIDOf(b), 99} {
+		v, ok := m.Workspace(id)
+		vv, vok := w.Workspace(id)
+		assert.Equal(t, [2]any{v, ok}, [2]any{vv, vok}, "Workspace(%d)", id)
+		assert.Equal(t, m.IsLoaded(id), w.IsLoaded(id), "IsLoaded(%d)", id)
 	}
 }
 
-// TestWorkspacesView_TabsIsNeverNil: Tabs answers an empty slice, never
-// nil, as the model does, whether the view is classic, empty or the zero
-// value (what a client holds before its first snapshot, or decodes from a
-// view with no workspaces).
-func TestWorkspacesView_TabsIsNeverNil(t *testing.T) {
-	for _, w := range []WorkspacesView{{}, {Classic: true}, {Views: []WorkspaceView{}}} {
-		assert.NotNil(t, w.Tabs(), "%+v", w)
-		assert.Empty(t, w.Tabs(), "%+v", w)
+// TestWorkspacesView_WorkspacesIsNeverNil: Workspaces answers an empty
+// slice, never nil, as the model does, whether the view is empty or the
+// zero value (what a client holds before its first snapshot, or decodes
+// from a view with no workspaces).
+func TestWorkspacesView_WorkspacesIsNeverNil(t *testing.T) {
+	for _, w := range []WorkspacesView{{}, {Views: []WorkspaceView{}}} {
+		assert.NotNil(t, w.Workspaces(), "%+v", w)
+		assert.Empty(t, w.Workspaces(), "%+v", w)
 	}
-	assert.Equal(t, NewForTest(Options{}).Tabs(), WorkspacesView{}.Tabs(), "as the model with nothing loaded")
+	assert.Equal(t, NewForTest(Options{}).Workspaces(), WorkspacesView{}.Workspaces(), "as the model serving nothing")
 }
 
 // TestWireError_KeepsTheSentinels: an error that crossed the wire still

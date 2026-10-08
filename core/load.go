@@ -195,49 +195,48 @@ func syncSessionFlags(cfg *config.Config, cfgDir string) {
 	session.SetSubagentTrackingEnabled(cfgDir, cfg.SubagentTrackingEnabled())
 }
 
-// LoadClassic boots the model (boot), then shows the startup context's
-// workspace while no tab is open, which opens it (open): its workspace
-// terminal starts. Its load error is returned: classic startup has nothing
-// else to show. sweepTmux is unused: boot's sweep covers every workspace.
-// Formerly app.loadStartupStorage.
-func (m *Model) LoadClassic(sweepTmux bool) error {
-	m.boot()
-	if err := m.classic.loadErr; err != nil {
-		return err
+// Boot readies the model to serve, before its loop starts (the model is
+// single-goroutine until then). In order, it loads the account registry
+// (InitAccounts); detects the default account's remote-control auth, when
+// the global config enables remote control or an extra account is
+// registered (the identity it reads also locates the main config dir the
+// accounts link to); and loads every workspace the model serves (boot). The
+// detection runs once, up front, so every launch decision after it is
+// synchronous. Boot returns the events it raised (the account registry's
+// notices): no client is connected yet to be sent them, so the caller
+// shows them to its own. A client never boots the model: Boot is not in
+// Core.
+func (m *Model) Boot() []Event {
+	m.InitAccounts()
+	if remoteControlConfigured() || m.HasExtraAccounts() {
+		m.SetRCAuth(session.DetectClaudeRemoteControlAuth(m.program, m.executor()))
 	}
-	m.open(m.classic)
-	return nil
+	m.boot()
+	events := m.out.Events
+	m.out.Events = nil
+	return events
 }
 
-// loadClassicFallback runs when no workspace could be restored: the user
-// lands on the startup context's workspace, which boot loaded. If that
-// load failed it fails closed: the storage's write latch refuses every
-// save, and the error is a notice rather than an exit, so the user can
-// still open a workspace from the picker. Formerly
-// app.loadStartupStorageFallback.
-func (m *Model) loadClassicFallback() {
-	if err := m.classic.loadErr; err != nil {
-		m.notifyErr(fmt.Errorf("no workspace could be restored, and loading sessions failed (nothing will be saved): %w", err))
-		return
+// remoteControlConfigured reports whether the global config enables remote
+// control; false when the global config dir can't be resolved.
+func remoteControlConfigured() bool {
+	ctx, err := config.GlobalWorkspaceContext()
+	if err != nil {
+		return false
 	}
-	m.open(m.classic)
+	return config.LoadConfigFrom(ctx.ConfigDir).RemoteControlEnabled()
 }
 
 // boot loads, once, every workspace the model serves (daemon stage 3A): the
-// startup context's (m.classic, which New built), the global one, and each
-// registered workspace, one per config dir. Then one orphan tmux sweep
-// covers them all (sweepOrphans). A workspace that fails to load is kept,
-// latched (loadWS). The first LoadClassic or RestoreSaved boots the model;
-// a workspace registered later is loaded when it is registered (Register),
-// reread (ReloadRegistry) or opened (OpenTab).
+// global one and each registered one, one per config dir. Then one orphan
+// tmux sweep covers them all (sweepOrphans). A workspace that fails to load
+// is kept, latched (loadWS). A workspace registered later is loaded when it
+// is registered (Register) or reread (ReloadRegistry).
 func (m *Model) boot() {
 	if m.booted {
 		return
 	}
 	m.booted = true
-	if m.classic != nil && !m.classic.loaded {
-		_ = m.loadWS(m.classic)
-	}
 	if _, err := m.globalWS(); err != nil {
 		log.For("core").Error("workspace.global_load_failed", "err", err)
 	}
@@ -318,12 +317,11 @@ func (m *Model) globalWS() (*Workspace, error) {
 // for the workspace's first open (ensureTerminal). A load error leaves ws
 // empty, its storage's write latch engaged so nothing can overwrite the
 // unreadable payload, and is kept in ws.loadErr for an open to retry
-// (retryLoad). Formerly loadWorkspace and the load half of openTabWS.
+// (retryLoad). Formerly loadWorkspace.
 func (m *Model) loadWS(ws *Workspace) error {
 	if ws.storage == nil {
 		return nil
 	}
-	ws.loaded = true
 	cfgDir := ws.configDir()
 	// Loom-context injection: keep the config dir's prompt files current
 	// and its session flags in step with its config, before any Claude
@@ -393,16 +391,22 @@ func (m *Model) retryLoad(ws *Workspace) error {
 	return m.loadWS(ws)
 }
 
-// open is a client showing ws. On its first open since the model started,
-// its workspace terminal starts (ensureTerminal), the health tick probes
-// it, and the GitHub poll covers its repository from the next tick on.
-func (m *Model) open(ws *Workspace) {
-	if ws == nil || ws.opened {
-		return
+// open is a client showing ws. A workspace whose load failed is loaded
+// again first (retryLoad), and its error returned when it still fails. On
+// its first open since the model started, its workspace terminal starts
+// (ensureTerminal), the health tick probes it, and the GitHub poll covers
+// its repository from the next tick on.
+func (m *Model) open(ws *Workspace) error {
+	if err := m.retryLoad(ws); err != nil {
+		return err
+	}
+	if ws.opened {
+		return nil
 	}
 	ws.opened = true
 	m.ensureTerminal(ws)
 	m.ExpediteGitHub()
+	return nil
 }
 
 // ensureTerminal gives an opened workspace with a repository its workspace

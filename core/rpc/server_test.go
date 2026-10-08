@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -117,7 +118,9 @@ func TestServe_ALateJoinerIsNotSentWhatWasPublishedBeforeItJoined(t *testing.T) 
 // the next diff starts from. The late joiner is driven by hand: Dial's own
 // barrier would publish before the undo.
 func TestServe_ALateJoinerStartsFromThePublishedBaseline(t *testing.T) {
-	loop := core.StartForTest(core.NewForTest(core.Options{Program: "a"}))
+	model := core.NewForTest(core.Options{})
+	model.SetRCAuth(session.RemoteControlAuth{Reason: "a"})
+	loop := core.StartForTest(model)
 	t.Cleanup(loop.Stop)
 	srv := NewServer(loop)
 	t.Cleanup(srv.Close)
@@ -127,11 +130,11 @@ func TestServe_ALateJoinerStartsFromThePublishedBaseline(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(first.Close)
 
-	loop.SetProgram("b") // straight to the model: nothing publishes it
+	loop.SetRCAuthForTest(session.RemoteControlAuth{Reason: "b"}) // straight to the model: nothing publishes it
 	a2, b2 := net.Pipe()
 	srv.Serve(a2)
 	t.Cleanup(func() { b2.Close() })
-	programs := make(chan string, 8) // each ModelChanged the late joiner is sent
+	reasons := make(chan string, 8) // each ModelChanged the late joiner is sent
 	go func() {
 		dec := json.NewDecoder(b2)
 		for {
@@ -143,7 +146,7 @@ func TestServe_ALateJoinerStartsFromThePublishedBaseline(t *testing.T) {
 				continue
 			}
 			if ev, err := decodeEvent(f); err == nil {
-				programs <- ev.(core.ModelChanged).View.Program
+				reasons <- ev.(core.ModelChanged).View.RCAuth.Reason
 			}
 		}
 	}()
@@ -151,7 +154,7 @@ func TestServe_ALateJoinerStartsFromThePublishedBaseline(t *testing.T) {
 	next := func(what string) string {
 		t.Helper()
 		select {
-		case p := <-programs:
+		case p := <-reasons:
 			return p
 		case <-time.After(5 * time.Second):
 			t.Fatalf("no ModelChanged for %s", what)
@@ -160,9 +163,9 @@ func TestServe_ALateJoinerStartsFromThePublishedBaseline(t *testing.T) {
 	}
 	assert.Equal(t, "b", next("the snapshot"))
 	require.NoError(t, first.FlushForTest())
-	assert.Equal(t, "b", first.Program(), "the connection already here is sent what was published")
+	assert.Equal(t, "b", first.RCAuth().Reason, "the connection already here is sent what was published")
 
-	loop.SetProgram("a") // undone before the next publish
+	loop.SetRCAuthForTest(session.RemoteControlAuth{Reason: "a"}) // undone before the next publish
 	require.NoError(t, first.FlushForTest())
 	assert.Equal(t, "a", next("the undo"), "the late joiner follows the undo")
 }

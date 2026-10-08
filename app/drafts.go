@@ -59,7 +59,7 @@ func (m *home) newDraft(title, prompt string, issue int) *draft {
 		path:    m.repoPath(),
 		title:   title,
 		prompt:  prompt,
-		program: m.core.Program(),
+		program: m.program,
 		issue:   issue,
 		created: time.Now(),
 	}

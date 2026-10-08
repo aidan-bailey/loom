@@ -3,8 +3,6 @@ package core
 import (
 	"fmt"
 	"slices"
-
-	"github.com/aidan-bailey/loom/config"
 )
 
 // The workspace half of the boundary by ID (daemon stage 1D): each wraps
@@ -19,69 +17,42 @@ func (m *Model) ownerFields(owner *Workspace) (WorkspaceID, string) {
 	return m.wsIDOf(owner), owner.Label()
 }
 
-// Classic is the view of the workspace shown while no tab is open; false
-// while one is (or before any loads).
-func (m *Model) Classic() (WorkspaceView, bool) {
-	if m.classic == nil || len(m.tabs) > 0 {
-		return WorkspaceView{}, false
-	}
-	return m.wsViewOf(m.classic), true
-}
-
-// Tabs are the open tabs' views, in tab order.
-func (m *Model) Tabs() []WorkspaceView {
-	out := make([]WorkspaceView, len(m.tabs))
-	for i, ws := range m.tabs {
+// Workspaces are the views of every workspace the model serves, in serve
+// order: what a client opens one by (Open) and shows a failed load from
+// (LoadErr).
+func (m *Model) Workspaces() []WorkspaceView {
+	out := make([]WorkspaceView, len(m.workspaces))
+	for i, ws := range m.workspaces {
 		out[i] = m.wsViewOf(ws)
 	}
 	return out
 }
 
-// IsLoaded reports whether the workspace id is still loaded.
-func (m *Model) IsLoaded(id WorkspaceID) bool { return m.shownLookup(id) != nil }
+// IsLoaded reports whether the model serves the workspace id.
+func (m *Model) IsLoaded(id WorkspaceID) bool { return m.wsLookup(id) != nil }
 
-// OpenTab shows def's workspace as a new tab (OpenTabWS) and returns its
-// view.
-func (m *Model) OpenTab(def config.Workspace) (WorkspaceView, error) {
-	ws, err := m.openTabWS(def)
-	if err != nil || ws == nil {
-		return WorkspaceView{}, err
-	}
-	return m.wsViewOf(ws), nil
-}
-
-// CloseTab closes the tab named name (CloseTabWS); the workspace stays
-// served.
-func (m *Model) CloseTab(name string) error {
-	_, err := m.closeTabWS(name)
-	return err
-}
-
-// EnterGlobal shows the global workspace in place of the tabs
-// (EnterGlobalWS) and returns its view. focused is the workspace the
-// caller had focused, 0 for none (unused).
-func (m *Model) EnterGlobal(focused WorkspaceID) (WorkspaceView, error) {
-	ws, err := m.enterGlobalWS(m.wsLookup(focused))
-	if err != nil || ws == nil {
-		return WorkspaceView{}, err
-	}
-	return m.wsViewOf(ws), nil
-}
-
-// Save persists the workspace id's instances (SaveWS). An unknown id is an
-// error: there is nothing loaded to save.
-func (m *Model) Save(id WorkspaceID) error {
+// Open is a client showing the workspace id, as a tab or as the workspace
+// it shows while none is open, and returns its view. A workspace whose
+// load failed is loaded again first, and its error returned when it still
+// fails: the client then shows nothing of it. The first open of a
+// workspace starts its terminal (open). An unknown id is an error. Which
+// workspaces a client shows is its own state: an open publishes nothing
+// tab-like, so it changes nothing another client shows.
+func (m *Model) Open(id WorkspaceID) (WorkspaceView, error) {
 	ws := m.wsLookup(id)
 	if ws == nil {
-		return fmt.Errorf("save: the workspace is no longer open")
+		return WorkspaceView{}, fmt.Errorf("open: the model serves no such workspace")
 	}
-	return m.saveWS(ws)
+	if err := m.open(ws); err != nil {
+		return WorkspaceView{}, err
+	}
+	return m.wsViewOf(ws), nil
 }
 
 // Views returns the workspace id's instances as views (ViewsWS); nil for
 // an unknown id.
 func (m *Model) Views(id WorkspaceID) []InstanceView {
-	ws := m.shownLookup(id)
+	ws := m.wsLookup(id)
 	if ws == nil {
 		return nil
 	}
@@ -94,9 +65,9 @@ func (m *Model) Create(id WorkspaceID, spec NewInstance, req ReqID) {
 	m.createWS(m.wsLookup(id), spec, req)
 }
 
-// Registry is a copy of the workspace registry: the registered workspaces
-// and the open list (resolved, as GetOpenWorkspaces resolves it). Zero in
-// bare tests.
+// Registry is a copy of the workspace registry: the registered
+// workspaces, the open list (resolved, as GetOpenWorkspaces resolves it)
+// and the last used workspace. Zero in bare tests.
 func (m *Model) Registry() RegistryView {
 	if m.registry == nil {
 		return RegistryView{}
@@ -104,13 +75,15 @@ func (m *Model) Registry() RegistryView {
 	return RegistryView{
 		Workspaces: slices.Clone(m.registry.Workspaces),
 		Open:       m.registry.GetOpenWorkspaces(),
+		LastUsed:   m.registry.LastUsed,
 	}
 }
 
 // ReloadRegistry rereads the workspace registry from disk, for a caller
-// about to show it (the workspace picker): another process may have
-// registered a workspace since, which the model then serves too. One no
-// longer registered stays served until the next start.
+// about to show it (the workspace picker) or open a workspace it lacks:
+// another process may have registered a workspace since, which the model
+// then serves too. One no longer registered stays served until the next
+// start.
 func (m *Model) ReloadRegistry() error {
 	if m.registry == nil {
 		return fmt.Errorf("no workspace registry")
@@ -118,10 +91,8 @@ func (m *Model) ReloadRegistry() error {
 	if err := m.registry.Reload(); err != nil {
 		return err
 	}
-	if m.booted {
-		for _, def := range m.registry.Workspaces {
-			_, _ = m.ensureLoaded(def)
-		}
+	for _, def := range m.registry.Workspaces {
+		_, _ = m.ensureLoaded(def)
 	}
 	return nil
 }

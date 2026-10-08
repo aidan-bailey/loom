@@ -46,7 +46,7 @@ func TestCause_EventsNameTheRequestTheirResultServes(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := newInst(t, "s")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.Deliver(caused{req: 7, result: StartResult{Instance: inst, Owner: ws}})
 	started := startedEvents(m.Drain().Events)
@@ -77,7 +77,7 @@ func startedEvents(evs []Event) []Started {
 func TestCause_ACreatesStartServesTheCreate(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.createWS(ws, NewInstance{Title: "new", Path: t.TempDir(), Program: "claude", Start: true}, 3)
 	out := m.Drain()

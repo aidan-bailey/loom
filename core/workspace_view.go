@@ -8,7 +8,7 @@ import "github.com/aidan-bailey/loom/config"
 // (a tab closed and reopened shows the same workspace). 0 means none.
 type WorkspaceID uint64
 
-// WorkspaceView is a loaded workspace as its clients see it: a value the
+// WorkspaceView is a served workspace as its clients see it: a value the
 // model publishes (WorkspacesChanged) and answers queries with. Every
 // field is a copy.
 type WorkspaceView struct {
@@ -31,14 +31,21 @@ type WorkspaceView struct {
 	PreservedTitles []string
 	// Recovery is the summary of its last orphan reconcile.
 	Recovery RecoverySummary
+	// LoadErr is the text of the error its storage failed to load with,
+	// "" once it loaded. A client shows such a workspace as failed (the
+	// picker's "(failed to load)"), and opening it retries the load
+	// (Core.Open).
+	LoadErr string
 }
 
 // RegistryView is a copy of the workspace registry: every registered
-// workspace, and the open tabs to restore (the open list resolved to its
-// registered workspaces, in order, as GetOpenWorkspaces resolves it).
+// workspace, the open tabs to restore (the open list resolved to its
+// registered workspaces, in order, as GetOpenWorkspaces resolves it), and
+// the workspace last focused, which a restore focuses.
 type RegistryView struct {
 	Workspaces []config.Workspace
 	Open       []config.Workspace
+	LastUsed   string
 }
 
 // AccountNames are the registered accounts, default first. Present is

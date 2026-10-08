@@ -68,7 +68,7 @@ func TestKill_LockedWorktreeKeepsTheRowAndShowsTheRemedy(t *testing.T) {
 			ws.add(inst)
 			require.NoError(t, ws.Storage().SaveInstances([]*session.Instance{inst}))
 			m := NewForTest(Options{})
-			m.SetWorkspacesForTest(nil, []*Workspace{ws})
+			m.SetWorkspacesForTest(ws)
 
 			pre, job := m.killInst(ws, inst)
 			pre()
@@ -150,7 +150,7 @@ func TestKill_DiscardsARecoverableOrphanWhoseTmuxSessionIsGone(t *testing.T) {
 
 			ws := storedWorkspace(t, "a")
 			m := NewForTest(Options{})
-			m.SetWorkspacesForTest(nil, []*Workspace{ws})
+			m.SetWorkspacesForTest(ws)
 			summary := m.reconcileOrphans(ws, cfgDir, "true", cmd2.MakeExecutor())
 			require.Equal(t, 1, summary.Review, "fixture: the orphan surfaces as Recoverable")
 			placeholder := ws.byTitle("x")

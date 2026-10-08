@@ -48,13 +48,12 @@ func (m *Model) saveWS(ws *Workspace) error {
 	return ws.storage.SaveInstances(Persistable(ws.insts))
 }
 
-// SaveForQuit saves every workspace the model serves and the registry's
-// open list before the TUI exits. A failed save is returned, and the TUI
-// then refuses to quit so the user can fix the cause and retry (silent data
-// loss on exit is worse than a sticky quit), except the storage's write
-// latch (quitSkipsSave), which no retry could clear. With no tab open the
-// open list is written only if it holds something: it then keeps just
-// the workspaces that failed to restore. Formerly handleQuit's saves.
+// SaveForQuit saves every workspace the model serves before the TUI exits
+// (the TUI persists its own open list first: PersistOpenList). A failed
+// save is returned, and the TUI then refuses to quit so the user can fix
+// the cause and retry (silent data loss on exit is worse than a sticky
+// quit), except the storage's write latch (quitSkipsSave), which no retry
+// could clear. Formerly handleQuit's saves.
 func (m *Model) SaveForQuit() error {
 	var firstErr error
 	for _, ws := range m.workspaces {
@@ -72,13 +71,5 @@ func (m *Model) SaveForQuit() error {
 			}
 		}
 	}
-	if firstErr != nil {
-		return firstErr
-	}
-	// Classic/global mode has no open tabs: this clears the list,
-	// except for workspaces that failed to restore (restoreFailed).
-	if len(m.tabs) > 0 || (m.registry != nil && len(m.registry.OpenWorkspaces) > 0) {
-		m.PersistOpenList()
-	}
-	return nil
+	return firstErr
 }

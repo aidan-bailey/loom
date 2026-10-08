@@ -227,7 +227,7 @@ func TestResumeWith_RecordsTheAccount(t *testing.T) {
 func TestResumeWith_UsesTheAccountsRemoteControlAuth(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")
-	m.core.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthOK})
+	loopOf(m).SetRCAuthForTest(session.RemoteControlAuth{State: session.RemoteControlAuthOK})
 	testModel(m).SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "logged out"}})
 	inst := pausedForResumeWith(t, m, "acct-rc")
 

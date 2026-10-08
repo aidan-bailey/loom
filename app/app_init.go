@@ -3,17 +3,16 @@ package app
 import (
 	"context"
 	"fmt"
-	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/internal/takeover"
 	"github.com/aidan-bailey/loom/log"
-	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -30,10 +29,12 @@ const scriptShutdownTimeout = 1500 * time.Millisecond
 // non-nil return means tea.Program.Run failed.
 //
 // Parameters:
-//   - wsCtx is the resolved workspace context; nil falls back to the
-//     global config directory.
-//   - registry is the workspace registry for the startup workspace picker.
-//   - appConfig is the pre-loaded config from the resolved workspace dir.
+//   - wsCtx is the resolved workspace context, whose name picks the
+//     workspace the TUI starts on ("" or nil: the global one).
+//   - registry is the workspace registry, which the model owns from here
+//     on: it serves every registered workspace.
+//   - appConfig is the pre-loaded config from the resolved workspace dir,
+//     read for its theme.
 //   - program overrides the default agent command for new instances
 //     (empty string uses appConfig.GetProgram()).
 //   - pendingDir is an optional directory to seed the new-instance
@@ -64,7 +65,7 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 	if !ui.ApplyTheme(themeName) && themeName != "" {
 		log.For("ui").Warn("unknown_theme", "name", themeName, "fallback", ui.DefaultThemeName)
 	}
-	h, err := newHome(ctx, wsCtx, registry, appConfig, program, pendingDir, noScripts)
+	h, err := newHome(ctx, wsCtx, registry, program, pendingDir, noScripts)
 	if err != nil {
 		return err
 	}
@@ -113,40 +114,45 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 	return err
 }
 
-func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, pendingDir string, noScripts bool) (*home, error) {
-	// The model, and its classic workspace: the startup context's state,
-	// focused until (and unless) a workspace tab opens. core.New syncs the
-	// loom-context flags and writes the prompt files first. On the restore
-	// path the classic storage is never loaded unless no workspace
-	// activates (core.Model.RestoreSaved's fallback).
-	//
-	// The context, registry and config belong to the model from here on:
-	// newHome reads what it needs of them first, and the model's views and
-	// queries after.
-	startGlobal := wsCtx != nil && wsCtx.Name == ""
-	hasConfig := appConfig != nil
-	rcEnabled := hasConfig && appConfig.RemoteControlEnabled()
-	model, err := core.New(core.Options{Registry: registry, Program: program, Ctx: wsCtx, Config: appConfig})
-	if err != nil {
-		return nil, err
-	}
+func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, program string, pendingDir string, noScripts bool) (*home, error) {
+	// The model serves every workspace: Boot loads the account registry,
+	// detects the default account's remote-control auth and loads the
+	// global and every registered workspace, before its loop starts (the
+	// model is single-goroutine until then). The registry belongs to the
+	// model from here on.
+	model := core.New(core.Options{Registry: registry, Program: program})
+	notices := model.Boot()
 	// From here on only the model's loop touches the model, and the TUI
 	// reaches it through the client.
 	client, stopCore, err := startCore(model)
 	if err != nil {
 		return nil, err
 	}
+	startupName := ""
+	if wsCtx != nil {
+		startupName = wsCtx.Name
+	}
+	return startHome(ctx, client, stopCore, notices, startupName, program, pendingDir, noScripts)
+}
+
+// startHome builds the TUI over client, a model booted and served (see
+// newHome), whose boot raised notices: it shows the workspace named
+// startupName ("" for the global one) while no tab is open, restores the
+// registry's saved tabs unless a pendingDir awaits registration, and opens
+// the startup overlays. program is what this TUI's drafts default to. On
+// an error it stops the client (stopCore).
+func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices []core.Event, startupName, program, pendingDir string, noScripts bool) (*home, error) {
+	startGlobal := startupName == ""
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
-	classic, _ := client.Classic()
 	h := &home{
-		ctx:        ctx,
-		core:       client,
-		wakes:      client.Wakes(),
-		stopCore:   stopCore,
-		fullScreen: &foregroundAttach{},
+		ctx:         ctx,
+		core:        client,
+		wakes:       client.Wakes(),
+		stopCore:    stopCore,
+		program:     program,
+		startupName: startupName,
+		fullScreen:  &foregroundAttach{},
 		workspaceSlot: &workspaceSlot{
-			id:        classic.ID,
-			info:      classic,
 			splitPane: sp,
 			workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
 		},
@@ -161,6 +167,14 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 		panes:       ui.NewPaneClients(),
 		bells:       make(map[core.InstanceID]bool),
 	}
+	// The classic slot shows the startup workspace, which the model has
+	// served since it booted.
+	classic, ok := h.servedNamed(startupName)
+	if !ok {
+		stopCore()
+		return nil, fmt.Errorf("initialize storage: the %s workspace could not be loaded (see loom.log)", labelOf(startupName))
+	}
+	h.id, h.info = classic.ID, classic
 	sp.SetPanes(h.panes)
 	// Built after h so the list can point at h.spinner and read h's rows.
 	h.list = ui.NewList(&h.spinner, slotRows{h, h.workspaceSlot})
@@ -176,36 +190,33 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	initScripts(h)
 
 	// Determine whether we'll restore a saved multi-tab set. If so, skip the
-	// classic-mode load below: activateWorkspace() will load each slot fresh,
-	// and doing both would re-attach tmux ptmx handles for the same sessions.
+	// classic-mode open below: restoreSavedWorkspaces opens each tab, and
+	// the classic workspace only when none opens.
 	savedOpen := h.core.Registry().Open
 	willRestoreSlots := len(savedOpen) > 0 && pendingDir == ""
 
-	cmdExec := cmd2.MakeExecutor()
 	h.accountStrip = ui.NewAccountStrip()
-	h.core.InitAccounts()
-	// The registry's notices (a load error, loom running as an account)
-	// land before the startup load's, as they did when set directly.
+	// The published state (the account strip's), then the boot's notices
+	// (the account registry's: a load error, loom running as an account),
+	// land before the startup open's, as they did when the TUI loaded the
+	// account registry itself.
 	h.initCmd = tea.Batch(h.initCmd, h.drainCore())
-	// Probe Claude auth once up front (before any workspace terminal is
-	// created) so remote-control launch decisions are synchronous and
-	// startup terminals aren't stripped of the flag by fail-closed timing.
-	// The identity it reads also locates the main config dir extra
-	// accounts link to, so it runs whenever one is registered too.
-	if rcEnabled || (hasConfig && h.core.HasExtraAccounts()) {
-		h.core.SetRCAuth(session.DetectClaudeRemoteControlAuth(program, cmdExec))
+	for _, ev := range notices {
+		h.initCmd = tea.Batch(h.initCmd, h.applyCoreEvent(ev))
 	}
 	var startupRecovery core.RecoverySummary
 	if !willRestoreSlots {
-		if err := h.core.LoadClassic(true); err != nil {
+		// The first open starts the workspace's terminal. A workspace
+		// whose load failed has nothing else to show.
+		if _, err := h.core.Open(h.id); err != nil {
 			h.stopCore()
 			return nil, fmt.Errorf("load instances: %w", err)
 		}
-		// The load filled the workspace: the store reads it before the
-		// drain below, so the attach sees its rows.
+		// The open may have filled the workspace: the store reads it
+		// before the drain below, so the attach sees its rows.
 		h.seedViews(h.workspaceSlot)
 		h.ensureSlotPanes(h.workspaceSlot)
-		// The load's notices (a workspace terminal launched without
+		// The open's notices (a workspace terminal launched without
 		// remote control) land before the recovery summary below, as
 		// they did when the load set them itself.
 		h.initCmd = tea.Batch(h.initCmd, h.drainCore())
@@ -271,6 +282,15 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	return h, nil
 }
 
+// labelOf names the workspace called name in notices: its name, or
+// "global" for "".
+func labelOf(name string) string {
+	if name == "" {
+		return "global"
+	}
+	return name
+}
+
 // runNow runs cmd on the calling goroutine, with every Cmd of a
 // tea.BatchMsg it yields, recursively, and discards their messages. A
 // batched Cmd called directly only returns the BatchMsg the runtime
@@ -287,19 +307,50 @@ func runNow(cmd tea.Cmd) {
 	}
 }
 
-// restoreSavedWorkspaces opens the registry's saved tabs (core's
-// RestoreSaved: the activations, the restore-failure bookkeeping, the
-// orphan sweep, and the classic fallback when none opens) and builds their
-// views, then focuses the startup workspace's tab, else the last used.
+// restoreSavedWorkspaces opens the registry's saved tabs (saved, the open
+// list from the last run) as tabs, plus the startup workspace when it is
+// registered and not among them, and focuses the startup workspace's tab,
+// else the last used, else the first. A saved tab that fails to open is
+// logged and kept in the open list to be retried (failedOpen); the list is
+// then persisted, and the focused tab recorded as the last used. With no
+// tab open, the classic slot shows the startup workspace instead: opening
+// it fails closed, with the error shown rather than an exit, so the user
+// can still open a workspace from the picker (its storage's write latch
+// refuses every save). Formerly core.Model.RestoreSaved and its classic
+// fallback.
 func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
-	focus := m.core.RestoreSaved(saved)
-	if focus < 0 {
-		// No tab opened: the classic workspace was loaded in their place.
+	inSaved := func(name string) bool {
+		return slices.ContainsFunc(saved, func(w config.Workspace) bool { return w.Name == name })
+	}
+	desired := slices.Clone(saved)
+	if name := m.startupName; name != "" && !inSaved(name) {
+		if i := slices.IndexFunc(m.core.Registry().Workspaces, func(w config.Workspace) bool { return w.Name == name }); i >= 0 {
+			desired = append(desired, m.core.Registry().Workspaces[i])
+		}
+	}
+	var opened []core.WorkspaceView
+	for _, def := range desired {
+		v, err := m.openNamed(def.Name)
+		if err != nil {
+			log.For("app").Error("workspace.restore_failed", "name", def.Name, "err", err)
+			if inSaved(def.Name) {
+				// Was open: keep it open, to be retried.
+				m.failedOpen = append(m.failedOpen, def.Name)
+			}
+			continue
+		}
+		opened = append(opened, v)
+	}
+
+	if len(opened) == 0 {
+		// No tab opened: the classic workspace is shown in their place.
+		_, err := m.core.Open(m.id)
 		m.seedViews(m.workspaceSlot)
 		m.ensureSlotPanes(m.workspaceSlot)
-		// Its load error (a notice) lands before the summary, as when the
-		// fallback set it itself.
 		m.initCmd = tea.Batch(m.initCmd, m.drainCore())
+		if err != nil {
+			m.initCmd = tea.Batch(m.initCmd, m.handleError(fmt.Errorf("no workspace could be restored, and loading sessions failed (nothing will be saved): %w", err)))
+		}
 		m.showRecoverySummary(m.recovery())
 		return
 	}
@@ -307,15 +358,27 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	// each activation set its own.
 	m.initCmd = tea.Batch(m.initCmd, m.drainCore())
 	classic := m.workspaceSlot
-	for _, v := range m.core.Tabs() {
+	for _, v := range opened {
 		m.slots = append(m.slots, m.newSlotView(v))
+	}
+	focus := 0
+	focusName := m.startupName
+	if focusName == "" {
+		focusName = m.core.Registry().LastUsed
+	}
+	if i := slices.IndexFunc(m.slots, func(s *workspaceSlot) bool { return focusName != "" && s.name() == focusName }); i >= 0 {
+		focus = i
 	}
 	m.loadSlot(focus)
 	// The first tab dropped the classic slot, which this path never
-	// loaded, so the release is nil in practice. Were it not, running it
+	// opened, so the release is nil in practice. Were it not, running it
 	// here is safe: the program is not running yet (Run installs the pane
 	// notifier after newHome), so no pump can block on Send.
 	runNow(tea.Batch(releaseSlotCmd(classic), m.prunePanes()))
+	m.persistOpenList()
+	if err := m.core.SetLastUsed(m.name()); err != nil {
+		log.For("app").Debug("registry.update_last_used_failed", "workspace", m.name(), "err", err)
+	}
 	m.updateTabBarStatuses()
-	m.showRecoverySummary(m.slots[focus].recovery())
+	m.showRecoverySummary(m.recovery())
 }

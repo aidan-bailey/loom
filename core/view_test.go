@@ -14,7 +14,7 @@ func TestView_CopiesTheInstance(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	views := m.viewsWS(ws)
 	require.Len(t, views, 1)
@@ -38,7 +38,7 @@ func TestIDs_StableNeverReusedAndForgotten(t *testing.T) {
 	a, b := pausedInst(t, "a"), pausedInst(t, "b")
 	ws.add(a)
 	ws.add(b)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	idA, idB := m.idOf(a), m.idOf(b)
 	assert.NotEqual(t, idA, idB)
@@ -58,7 +58,7 @@ func TestSync_PublishesChangedWorkspacesFirst(t *testing.T) {
 	ws := storedWorkspace(t, "a")
 	inst := pausedInst(t, "x")
 	ws.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	m.notifyInfo("hello")
 	out := m.Sync()
@@ -91,7 +91,7 @@ func TestSync_PublishedViewsDoNotAliasTheModel(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	ws.add(pausedInst(t, "x"))
-	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+	m.SetWorkspacesForTest(ws)
 
 	out := instanceEvents(m.Sync().Events)
 	require.Len(t, out, 1)
@@ -107,12 +107,12 @@ func TestSync_ForgetsClosedWorkspaces(t *testing.T) {
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
 	a.add(pausedInst(t, "x"))
 	b.add(pausedInst(t, "y"))
-	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
+	m.SetWorkspacesForTest(a, b)
 	require.Len(t, instanceEvents(m.Sync().Events), 2, "both published the first time")
 
-	m.SetWorkspacesForTest(nil, []*Workspace{a})
+	m.SetWorkspacesForTest(a)
 	assert.Empty(t, instanceEvents(m.Sync().Events), "a closed workspace publishes nothing")
-	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
+	m.SetWorkspacesForTest(a, b)
 	out := instanceEvents(m.Sync().Events)
 	require.Len(t, out, 1)
 	assert.Equal(t, m.wsIDOf(b), out[0].(ViewsChanged).WS, "reopened: published again")
@@ -124,7 +124,7 @@ func TestLookup_DoesNotAllocate(t *testing.T) {
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
 	inst := pausedInst(t, "x")
 	b.add(inst)
-	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
+	m.SetWorkspacesForTest(a, b)
 	id := m.idOf(inst)
 
 	got, ws := m.lookup(id)
@@ -132,7 +132,7 @@ func TestLookup_DoesNotAllocate(t *testing.T) {
 	require.Same(t, b, ws)
 	assert.Zero(t, testing.AllocsPerRun(100, func() { m.lookup(id) }))
 
-	m.SetWorkspacesForTest(b, nil)
+	m.SetWorkspacesForTest(b)
 	got, ws = m.lookup(id)
 	require.Same(t, inst, got, "classic mode")
 	require.Same(t, b, ws)

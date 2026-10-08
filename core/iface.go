@@ -17,7 +17,9 @@ import (
 // change is a request. *Loop, the model on its own goroutine, implements
 // it in process: every call is a round trip over that goroutine, the
 // model runs its own jobs and tick, and Loop.Wakes says when to Sync. The
-// core/rpc client implements it over a connection (daemon stage 2).
+// core/rpc client implements it over a connection (daemon stage 2). The
+// model is booted before any client connects (Model.Boot) and starts its
+// background work when its loop does (Loop.Begin): neither is a client's.
 //
 // The rpc package is generated from this file. A method's line comment
 // says how a client serves it:
@@ -34,42 +36,25 @@ import (
 // Parameter names are the wire's field names.
 type Core interface {
 	// The loop: the TUI drains the model when the loop wakes it and after
-	// every message (Sync), and starts its first background jobs and its
-	// health tick (Begin).
+	// every message.
 	Sync() []Event // rpc:client
-	Begin()
 
-	// Startup: the classic workspace's load, the account registry and the
-	// default account's remote-control auth, which newHome sets up.
-	LoadClassic(sweepTmux bool) error
-	InitAccounts()
-	SetRCAuth(auth session.RemoteControlAuth)
-
-	// Workspaces: the loaded ones, their transitions, saves and the
-	// registry.
-	StayGlobal()
-	RestoreSaved(saved []config.Workspace) int
-	RestoreFailed() []string // rpc:local
-	KeepRestoreFailed(desired map[string]bool)
-	OpenNames() []string // rpc:local
-	PersistOpenList()
-	Register(name, dir string) (config.Workspace, error)
-	SetLastUsed(name string) error
-	SaveForQuit() error
-
-	// Workspaces by ID: their views, transitions and saves, the registry
-	// as a copy, and the requests that change a workspace's settings, UI
-	// prefs and help screens.
+	// Workspaces: every one the model serves, by ID, and the requests that
+	// open one, save them all, register one and write the registry. Which
+	// of them a client shows (its tabs, or the workspace it shows while
+	// none is open) is the client's own state.
+	Workspaces() []WorkspaceView                    // rpc:local
 	Workspace(id WorkspaceID) (WorkspaceView, bool) // rpc:local
-	Classic() (WorkspaceView, bool)                 // rpc:local
-	Tabs() []WorkspaceView                          // rpc:local
 	IsLoaded(id WorkspaceID) bool                   // rpc:local
-	OpenTab(workspace config.Workspace) (WorkspaceView, error)
-	CloseTab(name string) error
-	EnterGlobal(focused WorkspaceID) (WorkspaceView, error)
-	Save(id WorkspaceID) error
+	Open(id WorkspaceID) (WorkspaceView, error)
+	SaveForQuit() error
 	Registry() RegistryView // rpc:local
 	ReloadRegistry() error
+	Register(name, dir string) (WorkspaceView, error)
+	PersistOpenList(names []string)
+	SetLastUsed(name string) error
+
+	// A workspace's settings, UI prefs and help screens.
 	SaveSettings(id WorkspaceID, settings config.Settings) error
 	SetUIPrefs(id WorkspaceID, prefs config.UIPrefs) error
 	SetHelpScreensSeen(id WorkspaceID, seen uint32) error
@@ -97,9 +82,8 @@ type Core interface {
 	PaneQuiet(id InstanceID)       // rpc:cast
 	VerifyDead(id InstanceID)      // rpc:cast
 
-	// The agent program, and the remote-control auth it launches with.
-	Program() string // rpc:local
-	SetProgram(program string)
+	// The default account's remote-control auth, which sessions launch
+	// with.
 	RCAuth() session.RemoteControlAuth // rpc:local
 
 	// GitHub: the poll's results, and a poll sooner.
