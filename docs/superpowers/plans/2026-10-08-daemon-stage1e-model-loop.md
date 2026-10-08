@@ -1684,3 +1684,78 @@ A job's result can now land between two calls the TUI makes in one Update. This 
 - [ ] Append "Outcome and follow-ups" to this plan, and update the `loom-scrum-daemon-direction` memory: 1E is done, and the next step is the stage 2 plan (codec and transport).
 
 ---
+
+## Outcome and follow-ups
+
+Executed inline on 2026-10-08 as three commits on `aidanb/daemon-1e-onwards`, 188cb7e..4bf3aac:
+
+| Package | Commit |
+|---|---|
+| A | a0411ce |
+| B | caad4a3 |
+| C | 4bf3aac (docs), and this outcome |
+
+Final state:
+- **Checks.**
+  - `go vet` and `go test ./...` are green, and gofmt is clean.
+  - `-race ./...` is green on all 30 packages, and so is `-race -count=5` on core and app.
+  - The `TestLoop` race tests passed `-count=20`.
+  - e2e passed, including `TestE2E_FakeClaudeHooksDriveStatus`, which drives a hook status change through the production wake path. Here e2e needs `CGO_ENABLED=0`, since there is no gcc.
+- **Assertions.** The count went from 8586 to 8618:
+  - +27 in `core/loop_test.go`;
+  - +6 in `app/core_wake_test.go`;
+  - −1 where the health tick's re-arm assertions merged (below).
+- **Enforcement.** Each new rule was shown to bite.
+  - Four loop mutations, each caught: no wake, no recover in `runJob` (the panic killed the test binary), the tick armed on `tickDue`, and a swapped forwarder.
+  - Four app mutations, each caught: no `publishSelection`, the `HealthChecked` re-arm, no TUI self-re-arm, and the TUI tick still ticking the model.
+  - `Deliver(any)` on `Core`, and `core.Job` or `*core.Loop` in an app file.
+
+### Smoke run
+
+It used sandbox `smoke1e`, built once at 4bf3aac, and baseline `base1e`, built from d071973 (a `git archive` in the scratchpad, made a throwaway repo because loomdev needs a checkout). `CLAUDE_CONFIG_DIR` pointed at a throwaway dir. Unless noted, every check pressed nothing after its action.
+
+1. **Kill (`D`, `y`).** The row was gone 40ms after `y`, and its tmux session, terminal shell, worktree and branch were all removed.
+2. **Create (`N` with prompt `work 3`).** Loading went to Running, the prompt landed, and the TUI auto-attached. Confirm-to-attach took 0.32s, the same as the baseline (two runs each).
+3. **Diff stats.** `+5 −0` appeared in the pane title after the agent printed output (see *changes* below).
+4. **Hook status (fake-claude).** After its `Stop` hook, the card switched to Claude's last message ("fakeagent finished: work 2").
+5. **Dead agent.** I killed the agent's process from outside, and the row was Paused 20ms later.
+6. **Full-screen attach.** Not runnable headless (see *changes* below).
+7. **Idle CPU.** Over 31s, 7 sessions took 3.00% CPU, against 2.77% for the baseline's 6. Nothing spins on wakes.
+8. **Snapshot path** (`LOOM_PANE_RENDERER=snapshot`, confirmed in loom's environ). A kill's row was gone in 40ms. A `work 2` went running at +0.4s and settled to `✓ idle` at +2.9s.
+9. **Quit with a kill in flight.** `D`, `y`, `q` back to back: loom exited 0.06s after `y`. The kill completed (tmux session and worktree gone, and the record absent from `state.json`), and the next start listed the five live sessions.
+
+Also checked:
+- **Lifecycle.** Pause took 30ms (worktree removed, session gone). Resume took 140ms, rebuilding the worktree. Recover worked: an orphaned worktree showed "Recovery: 1 session needs review" at start, `r` brought it back, and it was saved again.
+- **Settings.** A theme cycle was written to `config.json` at once.
+- **UI prefs.** The rail toggle was written to `state.json`, and toggled back.
+- **Help screens.** They are recorded as seen.
+- **Registry.** A workspace added by `loom workspace add` from a second shell was listed in `W`.
+- **Corrupt `state.json`.** Classic startup aborted printing the load error, identical on the baseline. That exit runs 1E's new `stopCore` on `newHome`'s error path.
+
+### What execution changed beyond the plan
+
+- **The 1E tests live in `app/core_wake_test.go`.** The plan listed `app/core_glue_test.go` as new, but it already held two tests (`TestRegisterWorkspace_RecoverySummaryWinsOverRCOffLine`, `TestCheckSlotInvariant_SlotsMustMirrorTheModel`). The first write replaced them; `git status` showed the file as modified, and it was restored from HEAD before the commit. Lesson: check a plan's "(new)" files against the tree.
+- **`TestHealthChecked_ArmsNoTUITick` was dropped.** Its assertion lives in `TestHealthTick_ProbeRoundTrip`, which already applies `HealthChecked` in context.
+  - The test's old `NotNil(rearm)` and pointer-equality assertions became one `Nil(rearm)` ("HealthChecked re-arms no TUI tick").
+  - The re-arm itself is pinned by `TestLoop_TickRearmsOnlyAfterItsProbeLands` (the loop's) and `TestTUITick_RearmsItselfAndTicksNoModel` (the TUI's).
+- **Assertion conversions** where a job no longer rides Update's Cmd:
+  - `require.NotNil(t, cmd)` became `require.Len(t, jobs, 1)` plus `require.NotNil(t, result)` (`events_test.go`, `healThroughDeadEvent`).
+  - In the Dead-event retry loop it became `require.True(t, cmd != nil || len(jobs) > 0)`, the same condition, since the old Cmd carried the job.
+  - In `panes_test.go`, the kill/pause messages' "the Cmd …" became "the job …".
+- **More stale comments than the plan listed.** `core/doc.go` and the "Update goroutine only" comments in `core/accounts.go`, `claude_status.go`, `github.go`, `hook_scan.go`, `usage.go`, `gate.go` and `tick.go` now name the loop's goroutine. CLAUDE.md's roster and stamping sentences were fixed likewise.
+- **The audit's premise holds.** Only `openTabWS`, `closeTabWS` and `enterGlobalWS` write the tab list, and only the `OpenTab`/`CloseTab`/`EnterGlobal`/`RestoreSaved` requests reach them. No delivery does.
+- **Smoke check 3's premise was wrong.** The probe re-diffs only a session that printed output, has no stats yet, or is selected with short stats (`Instance.ShouldRefreshDiff`). So an edit made outside an idle agent never shows, at 1D as well. The check was run with agent output instead.
+- **Smoke check 6 can't run headless.** In the loomdev driver, full-screen attach's nested `tmux attach` exits 1 ("exit status 1", after the 2s `PausePreview` stall). The baseline is identical. The model keeping on ticking during an attach is covered by design, not by a run.
+
+### Follow-ups, none blocking
+
+1. **Stage 2.** Keep calls synchronous, or revisit the read-after-write sites (decision 12). The loop's wake becomes a pushed event.
+2. **Stage 3.**
+   - The selection is one value; a multi-client daemon needs one per client.
+   - Hook scans need their own faster timer, and trust prompts a launch watch (spec assumption 4).
+3. **Diff stats.** An idle session's stats don't follow edits made outside the agent. The model's own tick could re-diff idle sessions on a slow cadence. This predates 1E.
+4. **loomdev can't exercise full-screen attach.** Unsetting `TMUX` for the attach in a sandbox, or a nested-attach mode, would make check 6 runnable.
+5. **The full-screen attach `PausePreview` stalls Update for 2s** (pre-existing, the pollable-PTY stage). The model now keeps running through it.
+6. **Smoke-recipe gotchas.**
+   - The `N` overlay's focus starts on Profile (Enter advances to the prompt, Tab then reaches Branch and Enter).
+   - zsh's `=word` expansion mangles tmux's `-t =name` in shell one-liners; quote it.
