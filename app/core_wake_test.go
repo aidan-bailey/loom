@@ -1,11 +1,12 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,30 +63,38 @@ func TestSelection_ReachesTheModel(t *testing.T) {
 	assert.Equal(t, idOf(m, inst), testModel(m).SelectedForTest())
 }
 
-// TestRealLoop_AJobsResultReachesTheTUIByWake: on a production loop, a
-// request's job runs on a goroutine of its own, its result lands on the
-// loop, and the loop's wake brings it to the TUI, with no test-driven
-// delivery. Run it under -race.
+// TestRealLoop_AJobsResultReachesTheTUIByWake: on the production stack
+// (rpc.InProcess), a request's job runs on a goroutine of its own, its
+// result lands on the loop, the server publishes on the loop's wake, and
+// the client's wake brings it to the TUI, with no test-driven delivery.
+// The kill request's own publish wakes the TUI first (its Deleting), so the
+// test waits for the wake that carries the failure, not the first one. Run
+// it under -race.
 func TestRealLoop_AJobsResultReachesTheTUIByWake(t *testing.T) {
 	m := homeWithAppState(t)
 	addReadyInstance(t, m) // never started: the kill's job fails (no worktree)
 	m.errBox.SetSize(400, 1)
 	m.syncViews()
-	held := loopOf(m)
-	model := held.ModelForTest()
-	held.Stop()
-	l := core.Start(model)
-	t.Cleanup(l.Stop)
-	m.core, m.wakes = l, l.Wakes()
+	model := testModel(m)
+	stackOf(m).stop()
+	testStacks.Delete(m.core)
+	c, stop, err := rpc.InProcess(model)
+	require.NoError(t, err)
+	t.Cleanup(stop)
+	m.core, m.wakes = c, c.Wakes()
 	m.aliveProbe = func(string) bool { return true } // the TUI's probe must not read the model's instances while its loop runs
 
 	_, _ = runKillSelectedNoConfirm(m)
-	select {
-	case <-m.wakes:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the kill's result never woke the TUI")
+	// The first wake is the request's own publish (the row's Deleting), long
+	// before the job has run; wait for the wake that brings the failure.
+	const notice = "cannot get git worktree"
+	deadline := time.After(10 * time.Second)
+	for !strings.Contains(m.errBox.String(), notice) {
+		select {
+		case <-m.wakes:
+			_, _ = m.Update(coreWakeMsg{})
+		case <-deadline:
+			t.Fatalf("the kill's failure never reached the error bar; it holds %q", m.errBox.String())
+		}
 	}
-	_, _ = m.Update(coreWakeMsg{})
-	require.NotNil(t, m.errBox)
-	assert.NotEmpty(t, m.errBox.String(), "the model's notice of the failed kill reached the error bar")
 }

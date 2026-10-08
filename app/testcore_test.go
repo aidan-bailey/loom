@@ -2,10 +2,12 @@ package app
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/stretchr/testify/require"
@@ -359,17 +361,53 @@ func deliver(t *testing.T, m *home, result any) tea.Cmd {
 	return cmd
 }
 
-// testLoop runs model on a loop that keeps its jobs for the test
-// (core.StartForTest), stopped when the test ends.
-func testLoop(t *testing.T, model *core.Model) core.Core {
-	t.Helper()
-	l := core.StartForTest(model)
-	t.Cleanup(l.Stop)
-	return l
+// testStack is a test client's loop (for its seams) and the function
+// stopping the client, its server and the loop.
+type testStack struct {
+	loop *core.Loop
+	stop func()
 }
 
-// loopOf returns the home's loop, for its seams.
-func loopOf(m *home) *core.Loop { return m.core.(*core.Loop) }
+// testStacks maps each test client (a home's core) to its stack.
+var testStacks sync.Map
+
+// startTestCore is startCore for app's tests: rpc.InProcessForTest, whose
+// loop keeps its jobs for the test and whose client is synchronous (a ping
+// before every read and after every cast), so the TUI meets the model as
+// it did in stage 1E. It records the stack for loopOf.
+func startTestCore(model *core.Model) (*rpc.Client, func(), error) {
+	c, loop, stop, err := rpc.InProcessForTest(model)
+	if err != nil {
+		return nil, nil, err
+	}
+	testStacks.Store(core.Core(c), testStack{loop: loop, stop: stop})
+	return c, func() {
+		testStacks.Delete(core.Core(c))
+		stop()
+	}, nil
+}
+
+// testLoop serves model to a test client (startTestCore), stopped when
+// the test ends.
+func testLoop(t *testing.T, model *core.Model) core.Core {
+	t.Helper()
+	c, stop, err := startTestCore(model)
+	require.NoError(t, err)
+	t.Cleanup(stop)
+	return c
+}
+
+// stackOf returns the stack behind the home's client.
+func stackOf(m *home) testStack {
+	s, ok := testStacks.Load(m.core)
+	if !ok {
+		panic("the home's core is no test client (testLoop)")
+	}
+	return s.(testStack)
+}
+
+// loopOf returns the loop behind the home's client, for its seams.
+func loopOf(m *home) *core.Loop { return stackOf(m).loop }
 
 // testModel returns the home's model, for its seams. Its loop is idle
 // between calls (core.StartForTest), so the test may reach it directly.

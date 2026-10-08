@@ -16,7 +16,9 @@ import (
 func TestUsageReady_KeepsTheLastGoodSampleOnError(t *testing.T) {
 	m := homeWithAppState(t)
 	withAccounts(t, m, "max-2")
-	good := account.Usage{Available: true, At: time.Now(), FiveHour: &account.Window{Pct: 12}}
+	// Round(0): over the wire a time keeps its instant but not its
+	// monotonic reading, which reflect.DeepEqual compares.
+	good := account.Usage{Available: true, At: time.Now().Round(0), FiveHour: &account.Window{Pct: 12}}
 
 	deliver(t, m, core.UsageResultForTest(map[string]account.Usage{"max-2": good}, nil))
 	deliver(t, m, core.UsageResultForTest(nil, map[string]error{"max-2": errors.New("timeout")}))

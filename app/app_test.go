@@ -32,9 +32,10 @@ func runTests(m *testing.M) int {
 	_ = log.Initialize("", false)
 	defer log.Close()
 
-	// Every home's model runs on a loop that keeps its jobs for the test
-	// (newHome included): core.StartForTest.
-	startModel = core.StartForTest
+	// Every home's model runs on a loop that keeps its jobs for the test,
+	// served to a client that pings before every read (newHome included):
+	// rpc.InProcessForTest, through startTestCore.
+	startCore = startTestCore
 
 	// Belt and suspenders: LOOM_TMUX_SOCKET is the only variable
 	// tmux.Command consults (an explicit -L outranks $TMUX), but any test

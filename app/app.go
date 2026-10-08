@@ -128,12 +128,14 @@ type home struct {
 
 	// core is the session model (package core): the loaded workspaces,
 	// their instances and everything lifecycle, through the methods the
-	// TUI calls (core.Core; *core.Loop, the model on its own goroutine, is
-	// its implementation). Never nil after newHome.
+	// TUI calls (core.Core; *rpc.Client, from startCore, is its
+	// implementation: it keeps a replica of the state the model on its own
+	// loop publishes). Never nil after newHome.
 	core core.Core
-	// wakes is the model loop's wake signal (core.Loop.Wakes), which Run
+	// wakes is the client's wake signal (rpc.Client.Wakes), which Run
 	// forwards into the program (forwardWakes), and stopCore stops the
-	// loop. Both are nil in fixtures, whose loops run no job on their own.
+	// client, the server and the loop. Both are nil in fixtures, whose
+	// loops run no job on their own.
 	wakes    <-chan struct{}
 	stopCore func()
 	// sentSelected is the selection last published to the model

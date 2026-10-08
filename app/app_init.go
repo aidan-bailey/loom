@@ -6,6 +6,7 @@ import (
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/internal/takeover"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
@@ -44,11 +45,13 @@ const scriptShutdownTimeout = 1500 * time.Millisecond
 //     when it couldn't be taken: loom then runs unlocked and serves no
 //     takeovers.
 //
-// startModel puts the model on its own loop: core.Start, which runs its
-// jobs on goroutines of their own and ticks on its own timer. App's tests
-// replace it with core.StartForTest, whose loop keeps every job for the
-// test to run.
-var startModel = core.Start
+// startCore starts the model as the TUI talks to it: rpc.InProcess runs
+// it on its own loop, serves it over an in-memory pipe, and returns the
+// client (a core.Core keeping a replica of the model's published state)
+// and the function that stops all three. App's tests replace it with
+// rpc.InProcessForTest, whose loop keeps every job for the test to run and
+// whose client is synchronous.
+var startCore = rpc.InProcess
 
 func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, pendingDir string, noScripts bool, uiLock *takeover.Lock) error {
 	// Activate the configured theme before any component renders.
@@ -127,15 +130,19 @@ func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *conf
 	if err != nil {
 		return nil, err
 	}
-	// From here on only the loop touches the model.
-	loop := startModel(model)
+	// From here on only the model's loop touches the model, and the TUI
+	// reaches it through the client.
+	client, stopCore, err := startCore(model)
+	if err != nil {
+		return nil, err
+	}
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
-	classic, _ := loop.Classic()
+	classic, _ := client.Classic()
 	h := &home{
 		ctx:        ctx,
-		core:       loop,
-		wakes:      loop.Wakes(),
-		stopCore:   loop.Stop,
+		core:       client,
+		wakes:      client.Wakes(),
+		stopCore:   stopCore,
 		fullScreen: &foregroundAttach{},
 		workspaceSlot: &workspaceSlot{
 			id:        classic.ID,
