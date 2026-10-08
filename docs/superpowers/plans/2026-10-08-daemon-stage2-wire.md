@@ -3870,3 +3870,106 @@ index 046a59a..e4785f6 100644
 ### D3. Outcome
 
 - [ ] Append "Outcome and follow-ups" to this plan. Update the `loom-scrum-daemon-direction` memory: stage 2 is done, and the next step is the stage 3 plan (the daemon process).
+
+## Outcome and follow-ups
+
+Executed subagent-driven on 2026-10-08, after the plan commit 2206107. Sonnet implementers transcribed A, B and C byte-exact; the coordinator's byte comparison against the verified prototype replaced spec review (0 files differed in every package). A standing Opus reviewer reviewed each package and re-checked every fix wave. A fresh Opus reviewer did the cross-cutting pass, and an Opus agent ran a 15-check sandbox smoke run against a 58261b9 baseline, then a re-verification. The fixups were autosquashed into their packages (the tree was identical before and after), and each package commit builds, vets and passes core's tests on its own.
+
+| Commit | What |
+|---|---|
+| b377256 | A: the published state |
+| a329102 | B: core/rpc |
+| 48a897e | C: the TUI over the pipe |
+| deed8c0 | fix(ui): no terminal shell for a session being killed |
+| cfc8cd8 | fix(app): draw the issue picker |
+| 4bcb9e7 | D: docs (CLAUDE.md, the spec) |
+
+Final state at 4bcb9e7:
+- **Checks:** `go vet`, `go test ./...` (`-count=1`), `-race ./...` on every package, e2e (`-count=1`), and gofmt all pass.
+- **Assertions:** 8618 → 8847. None was weakened. Three changed meaning and are listed below.
+- **Protocol reference:** `docs/specs/protocol.md`, generated, with 67 methods and 16 events.
+
+### What each mechanism found
+
+- **Per-package review of A.**
+  - An Important regression: a repeated, identical usage-probe failure no longer refreshed the account rows, so a sample's age froze. Fixed with `usageGen`.
+  - Two tests couldn't fail as written (the Snapshot baseline, the Classic diff).
+  - Typed-nil assertions that couldn't fail.
+  - `ToWire` dropped wrapping context.
+- **Per-package review of B.**
+  - An Important hang: after a model panic, `request` and `cast` panicked while holding `c.mu`, so `Client.Close`, and loom's exit, hung.
+  - Minors: `Server.Close` didn't close connections still in hello; the late joiner's baseline; a lost connection wasn't fatal; encode failures were dropped; the generator ignored doc-comment directives; the parity test was blind to fields the codec drops.
+- **Per-package review of C.** The only production-stack app test, `TestRealLoop`, couldn't fail: it passed on the kill request's own wake, and on an error bar that merely rendered padding.
+- **The smoke run.**
+  - A regression: a fast `D`,`y` respawned the killed session's terminal shell, 7 of 7 times against 0 of 7 on the baseline. `ensureSessionLocked` recreated a shell for a Deleting row, and stage 2's extra hop widened the window.
+  - A pre-existing bug, since a35ded0: the issue picker never drew, because `stateIssuePicker` was missing from `View()`'s overlay list.
+  - The re-verification passed all 5 checks: 0/7 respawns, the picker draws, 4 clean quits, the shell lifecycle across pause, resume, recover and create, and timings in line with the baseline.
+- **The final cross-cutting review.** No Critical or Important findings. Its Minors were all fixed:
+  - a client that dropped a known event it couldn't decode (now fatal);
+  - void requests that discarded wire errors (now logged, and `protocol` is fatal);
+  - no test pinning that the coalescing keys and the replica's state events agree;
+  - a closed tab's `ViewsChanged` re-adding its views, through in-place coalescing;
+  - an incomplete protocol reference;
+  - the late joiner's publish and snapshot in two loop calls (now `Loop.SyncAndSnapshot`).
+
+  Its re-check raised one decision: "unknown method" shared the fatal `protocol` code, which would have made adding any method an incompatible change. It got its own non-fatal code, `unsupported`.
+
+### What execution changed beyond the plan
+
+- **Model and replica.**
+  - `usageGen`: every usage probe round republishes `AccountsChanged`.
+  - `replica.apply` ignores a `ViewsChanged` for a workspace that isn't loaded.
+  - `WorkspacesView.Tabs` never returns nil.
+- **Errors.**
+  - `ToWire` keeps the inner code with the full wrapped message.
+  - `CodeUnsupported` is new: an unknown method's code, an ordinary error. `Protocol`'s comment now says adding a method or an optional field is compatible, while removing, renaming or changing one needs a bump.
+- **The client.**
+  - It never holds its lock while panicking.
+  - A lost connection is fatal (`Close` marks the client as closing first).
+  - A known event that won't decode is fatal, while an unknown name is dropped.
+  - A `protocol` reply is fatal.
+  - Void requests log their errors (`requestNoErr`).
+  - `Dial`'s best-effort `handshake` turns a fatal frame met during its ping into Dial's error.
+- **The server.**
+  - It tracks every connection from `Serve` on, and `Serve` after `Close` closes at once.
+  - A refused hello's flush gives up on a peer that never reads.
+  - An event that won't encode is fatal.
+  - A late joiner is served from one loop call, with the publish to the existing connections before its snapshot. `Backend.SyncAndSnapshot` replaced `Backend.Snapshot`, and `Loop.Snapshot` was deleted.
+- **The generator.** It rejects `rpc:` in a doc comment.
+- **New tests.**
+  - `TestWire_EveryFieldSurvives`, which fills every field by reflection.
+  - Parity against the raw model answers (`normalize`, `Round(0).UTC()`), replacing `overWire`.
+  - `TestCoalesceKeys_MatchTheReplicasStateEvents`.
+  - The late joiner's registration order.
+  - Both synchronous modes in the panic test.
+- **TUI fixes.**
+  - `ui/terminal.go` creates a terminal shell only for an `Active()` row. A Loading row (resume, recover) gets its shell from the completion's refresh.
+  - `View()`'s overlay list gained `stateIssuePicker`. CLAUDE.md gained a rule: every modal state that sets an overlay must be in that list.
+- **Assertions whose meaning changed.**
+  - `TestClosed_CallsReturn` accepts an error or a raise: a lost connection is now fatal, and which comes first is a race.
+  - `TestRealLoop`'s `NotNil` and `NotEmpty` became a stricter deadline loop with `t.Fatalf`, which removed two assertion calls.
+  - `TestHealthTick`'s and 1E's changes stand as they were.
+- **Commit trailers.** Implementer commits carry a Sonnet trailer, the model that did the work, not the brief's Opus line.
+
+### Follow-ups, none blocking
+
+1. **Stage 3, multi-client.**
+   - Replies, `Started`/`Recovered` (which focus and inline-attach) and Notices are broadcast, but belong to the requesting client. Route them.
+   - Tabs are shared: the `WorkspacesChanged` applier refreshes only existing slots, so another client's `OpenTab` or `CloseTab` desyncs `m.slots`.
+   - `newHome` assumes a fresh model: it loads, inits accounts, sets RC auth and calls Begin. A second TUI attaching to a running daemon must not.
+   - The selection is one value; make it one per client.
+2. **Stage 3, the daemon.**
+   - Events published while no client is connected are lost: the outbox drains with no connections. That matters for a daemon's startup notices.
+   - A fatal error is sticky for the whole server; the daemon should exit or respawn.
+   - The server doesn't check a frame's kind: a request-kind method sent without an id publishes nothing.
+   - The non-state queues are unbounded. `StatusesChanged`, `Alive` and `HealthChecked` could coalesce.
+   - Across hosts, times keep only their wall clock, so ages skew. `ViewsChanged` resends the selected diff on any change in its workspace; per-instance deltas would trim that.
+   - A `*Client` can't be a `Backend` (it has no `SyncAndSnapshot`). A hub relaying hosts needs one built from the replica.
+3. **Pre-existing, found by the smoke runs** (same on the baseline):
+   - after an agent dies from outside, its terminal-pane client is never really detached;
+   - fast repeated `j`/`k` drop keys;
+   - in classic mode, `W` then Esc drops you into Global mode with an empty list;
+   - paused cards show no age after a restart;
+   - the draft row reads "idle" while its creation overlay is open.
+4. **Pre-existing, found in review.** On the active path, `ensureSessionLocked` drops a dead cached terminal client without closing it, an fd bounded by GC. A proper fix hands it to `releaseClientsCmd`.
+5. **Open coverage gap.** No test pins `handshake`'s conversion; it is best-effort by design.
