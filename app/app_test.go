@@ -555,10 +555,10 @@ func TestAutoFocusAgentAfterInstanceStart(t *testing.T) {
 	}))
 
 	// Simulate a start's result (no prompt, no error)
-	deliver(t, h, core.StartResult{
+	deliver(t, h, core.CausedForTest(1, core.StartResult{
 		Instance: instance,
 		Err:      nil,
-	})
+	}))
 	homeModel := h
 
 	assert.Equal(t, stateInlineAttach, homeModel.state, "should auto-focus into inline attach")

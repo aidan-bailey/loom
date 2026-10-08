@@ -75,7 +75,7 @@ func TestInstanceStarted_FailureAfterSwitchKillsOnlyTheFailedInstance(t *testing
 	m.switchWorkspaceSlot(1)
 	victim := selectTitle(t, m, "b1")
 
-	deliver(t, m, core.StartResult{Instance: starting, Err: errors.New("boom"), Owner: owner.ws()})
+	deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: starting, Err: errors.New("boom"), Owner: owner.ws()}))
 
 	assert.Equal(t, idOf(m, victim), titleID(m.slots[1].list, "b1"), "the focused workspace's selected session must be untouched")
 	assert.NotEqual(t, session.Deleting, victim.GetStatus())
@@ -96,7 +96,7 @@ func TestInstanceStarted_SuccessAfterSwitchStaysInItsWorkspace(t *testing.T) {
 	m.switchWorkspaceSlot(1)
 	m.errBox.SetSize(400, 1)
 
-	pumpCore(t, m, deliver(t, m, core.StartResult{Instance: starting, Owner: owner.ws()}))
+	pumpCore(t, m, deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: starting, Owner: owner.ws()})))
 
 	assert.Equal(t, stateDefault, m.state, "no inline attach into another workspace's pane")
 	assert.Equal(t, "bpeer", focusedName(m), "focus stays where the user put it")
@@ -115,13 +115,31 @@ func TestInstanceStarted_SuccessInFocusedWorkspaceAttaches(t *testing.T) {
 	starting := startingInstance(t, m.workspaceSlot, "new-one")
 	finishStart(t, starting)
 
-	deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws()})
+	deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: starting, Owner: m.ws()}))
 
 	assert.Equal(t, stateInlineAttach, m.state)
 	assert.Equal(t, idOf(m, starting), selID(m.list))
 	assert.True(t, m.panes.Alive(starting.Pane().TmuxSessionName()), "its pane client is attached")
 	assert.GreaterOrEqual(t, recA.calls, 1)
 	assert.Zero(t, recB.calls)
+}
+
+// TestInstanceStarted_AnotherClientsStartOnlyAttachesItsPane: a start
+// another client asked for (a server names no request to this one) gets its
+// pane client here, but neither moves the selection nor attaches inline:
+// the user here did not ask for it, and may be doing anything.
+func TestInstanceStarted_AnotherClientsStartOnlyAttachesItsPane(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	before := selID(m.list)
+	starting := startingInstance(t, m.workspaceSlot, "theirs")
+	finishStart(t, starting)
+
+	deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws()})
+
+	assert.Equal(t, stateDefault, m.state, "no inline attach")
+	assert.Equal(t, before, selID(m.list), "the selection stays")
+	assert.NotContains(t, m.errBox.String(), "theirs", "nor is it announced here")
+	assert.True(t, m.panes.Alive(starting.Pane().TmuxSessionName()), "its pane client is attached")
 }
 
 // TestInstanceStarted_InlineAttachWaitsForThePrompt: the N flow's prompt
@@ -134,7 +152,7 @@ func TestInstanceStarted_InlineAttachWaitsForThePrompt(t *testing.T) {
 	starting.SetPrompt("do the thing")
 	finishStart(t, starting)
 
-	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws()})
+	cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: starting, Owner: m.ws()}))
 	assert.Equal(t, stateDefault, m.state, "no inline attach while the prompt is being sent")
 	assert.Empty(t, starting.Prompt(), "the prompt is cleared at once, so nothing re-sends it")
 
@@ -155,7 +173,7 @@ func TestInstanceStarted_KilledWhileThePromptIsSentIsNotAttached(t *testing.T) {
 	starting.SetPrompt("do the thing")
 	finishStart(t, starting)
 
-	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws()})
+	cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: starting, Owner: m.ws()}))
 	require.NoError(t, starting.TransitionTo(session.Deleting)) // a kill confirmed meanwhile
 	pumpCore(t, m, cmd)
 
@@ -175,7 +193,7 @@ func TestInstanceStarted_PausedWhileThePromptIsSentIsNotAttached(t *testing.T) {
 	starting.SetPrompt("do the thing")
 	finishStart(t, starting)
 
-	cmd := deliver(t, m, core.StartResult{Instance: starting, Owner: m.ws()})
+	cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: starting, Owner: m.ws()}))
 	require.NoError(t, starting.TransitionTo(session.Loading)) // a pause confirmed meanwhile
 	pumpCore(t, m, cmd)
 
@@ -204,7 +222,7 @@ func TestInstanceStarted_AfterOwnerDropped(t *testing.T) {
 
 	m.errBox.SetSize(400, 1)
 
-	cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws()})
+	cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: started, Owner: owner.ws()}))
 
 	assert.Contains(t, m.errBox.String(), "afocus, which is no longer open")
 	assert.Equal(t, stateDefault, m.state)
@@ -245,7 +263,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		require.NoError(t, recovered.TransitionTo(session.Running))
 
 		placeholderID := idOf(m, placeholder) // captured while loaded: a removal forgets it
-		deliver(t, m, core.RecoverResult{OldTitle: "dup", Recovered: recovered, Placeholder: placeholder, Owner: owner.ws()})
+		deliver(t, m, core.CausedForTest(1, core.RecoverResult{OldTitle: "dup", Recovered: recovered, Placeholder: placeholder, Owner: owner.ws()}))
 
 		assert.Equal(t, idOf(m, bystander), titleID(m.slots[1].list, "dup"), "the same-titled row elsewhere is untouched")
 		assert.NotContains(t, listIDs(m.slots[1].list), idOf(m, recovered))
@@ -262,7 +280,7 @@ func TestRecoverDone_AfterSwitchActsOnTheOwnerByIdentity(t *testing.T) {
 		m.switchWorkspaceSlot(1)
 		bystander := startingInstance(t, m.workspaceSlot, "dup")
 
-		deliver(t, m, core.RecoverResult{OldTitle: "dup", Err: errors.New("boom"), Placeholder: placeholder, Owner: owner.ws()})
+		deliver(t, m, core.CausedForTest(1, core.RecoverResult{OldTitle: "dup", Err: errors.New("boom"), Placeholder: placeholder, Owner: owner.ws()}))
 
 		assert.Equal(t, session.Recoverable, placeholder.GetStatus(), "the placeholder is back to Recoverable for a retry")
 		assert.Equal(t, session.Loading, bystander.GetStatus(), "the namesake is untouched")

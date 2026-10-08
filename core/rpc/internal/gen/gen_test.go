@@ -39,6 +39,18 @@ func TestGenerate_NoRequestDiscardsItsError(t *testing.T) {
 	assert.Contains(t, string(out), `return c.request("Foo"`, "an error result is returned")
 }
 
+// TestGenerate_TagsEveryRequestID: the server's dispatch hands every
+// request ID a call carries to tag first, which names the connection in it,
+// so a Reply reaches the client that made the request (rpc.tagReq).
+func TestGenerate_TagsEveryRequestID(t *testing.T) {
+	out, err := Generate(iface("\tFoo(id InstanceID, req ReqID, other ReqID)"))
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "tag func(*core.ReqID) error")
+	assert.Contains(t, string(out), "if err := tag(&p.Req); err != nil {")
+	assert.Contains(t, string(out), "if err := tag(&p.Other); err != nil {")
+	assert.NotContains(t, string(out), "tag(&p.ID)", "only request IDs")
+}
+
 // TestGenerate_RefusesADirectiveInADocComment: a directive above the method
 // is not read, so the method would silently become a request.
 func TestGenerate_RefusesADirectiveInADocComment(t *testing.T) {

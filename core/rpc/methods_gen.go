@@ -723,8 +723,9 @@ var methods = []methodInfo{
 
 // dispatch calls method on b with params decoded, returning its result
 // for the reply and its error; found is false for a method the wire does
-// not carry.
-func dispatch(b core.Core, method string, params json.RawMessage) (result any, err error, found bool) {
+// not carry. tag rewrites every request ID (core.ReqID) the params carry
+// into the server's, which names the connection (see Server).
+func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core.ReqID) error) (result any, err error, found bool) {
 	switch method {
 	case "Begin":
 		var p BeginParams
@@ -920,11 +921,17 @@ func dispatch(b core.Core, method string, params json.RawMessage) (result any, e
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
 		b.Create(p.ID, p.Spec, p.Req)
 		return CreateResult{}, nil, true
 	case "Kill":
 		var p KillParams
 		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
 			return nil, err, true
 		}
 		b.Kill(p.ID, p.Req)
@@ -934,11 +941,17 @@ func dispatch(b core.Core, method string, params json.RawMessage) (result any, e
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
 		b.Pause(p.ID, p.Req)
 		return PauseResult{}, nil, true
 	case "Resume":
 		var p ResumeParams
 		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
 			return nil, err, true
 		}
 		b.Resume(p.ID, p.Req)
@@ -948,11 +961,17 @@ func dispatch(b core.Core, method string, params json.RawMessage) (result any, e
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
 		b.ResumeWith(p.ID, p.Opts, p.Base, p.Req)
 		return ResumeWithResult{}, nil, true
 	case "Recover":
 		var p RecoverParams
 		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
 			return nil, err, true
 		}
 		b.Recover(p.ID, p.Req)
@@ -962,11 +981,17 @@ func dispatch(b core.Core, method string, params json.RawMessage) (result any, e
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
 		b.Merge(p.Target, p.Source, p.Req)
 		return MergeResult{}, nil, true
 	case "Push":
 		var p PushParams
 		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
 			return nil, err, true
 		}
 		b.Push(p.ID, p.Req)
@@ -976,11 +1001,17 @@ func dispatch(b core.Core, method string, params json.RawMessage) (result any, e
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
 		b.SendPrompt(p.ID, p.Text, p.Req)
 		return SendPromptResult{}, nil, true
 	case "FetchIssue":
 		var p FetchIssueParams
 		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
 			return nil, err, true
 		}
 		b.FetchIssue(p.Repo, p.Number, p.Req)

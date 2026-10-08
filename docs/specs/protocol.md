@@ -18,6 +18,14 @@ replica of the published state; the server answers it as a request too).
 replies `{}`, so every frame the server wrote before the reply has been read when it arrives.
 `{"id":1,"method":"rpc.Ping","params":{}}`
 
+## Request IDs
+
+A client numbers the requests that want a `Reply` itself (the `req` params, `core.ReqID`), from 1 and below
+2^32; 0 asks for no Reply. A server serves several clients, so it hands the model each request ID with the
+connection's number in its high 32 bits, and the events naming a request come back to its client with the
+client's own ID: a `Reply`, and the `Notice` of a request's job, go to that client alone; `Started` and
+`Recovered` go to every client, naming the request (`Req`) only to the one that made it.
+
 ## Refused hello
 
 A server answers a hello of another protocol with an error frame that has no id, then closes:

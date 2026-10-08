@@ -260,6 +260,11 @@ func (l *Loop) Begin() {
 	})
 }
 
+// SetSelection names every client's selected row at once (Model.SetSelection):
+// a server serving several clients keeps each one's SetSelected and sets
+// their union. It serves the server and is not in Core.
+func (l *Loop) SetSelection(ids []InstanceID) { l.do(func(m *Model) { m.SetSelection(ids) }) }
+
 // SyncAndSnapshot is a Sync and a Snapshot in one call on the loop, with
 // nothing between them: the events published since the last Sync, then the
 // whole state as it stands after them. A server uses it when a client

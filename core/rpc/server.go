@@ -11,11 +11,13 @@ import (
 )
 
 // Backend is what a Server serves: the model's Core, a Sync and the whole
-// state in one call for a client that connects (SyncAndSnapshot), and its
-// wakes (core.Loop has all three).
+// state in one call for a client that connects (SyncAndSnapshot), every
+// client's selected row at once (SetSelection), and its wakes (core.Loop
+// has them all).
 type Backend interface {
 	core.Core
 	SyncAndSnapshot() (published, snapshot []core.Event)
+	SetSelection(ids []core.InstanceID)
 	Wakes() <-chan struct{}
 }
 
@@ -38,6 +40,11 @@ type Server struct {
 	nextNC uint64
 	fatal  *core.WireError
 
+	// selMu orders the selection: each connection's selected row (its
+	// SetSelected), merged for the model (setSelected).
+	selMu    sync.Mutex
+	selected map[*serverConn]core.InstanceID
+
 	done      chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
@@ -45,7 +52,8 @@ type Server struct {
 
 // NewServer serves b; it starts publishing on b's wakes.
 func NewServer(b Backend) *Server {
-	s := &Server{b: b, conns: map[*serverConn]bool{}, open: map[uint64]io.ReadWriteCloser{}, done: make(chan struct{})}
+	s := &Server{b: b, conns: map[*serverConn]bool{}, open: map[uint64]io.ReadWriteCloser{},
+		selected: map[*serverConn]core.InstanceID{}, done: make(chan struct{})}
 	s.wg.Add(1)
 	go s.wakeLoop()
 	return s
@@ -106,14 +114,16 @@ func (s *Server) Serve(nc io.ReadWriteCloser) {
 			delete(s.open, n)
 			s.mu.Unlock()
 		}()
-		s.serveConn(nc)
+		s.serveConn(nc, uint32(n))
 	}()
 }
 
-// serveConn serves one connection until it closes: the hello, the
-// snapshot, then each request and cast in the order they arrive.
-func (s *Server) serveConn(nc io.ReadWriteCloser) {
+// serveConn serves connection n until it closes: the hello, the snapshot,
+// then each request and cast in the order they arrive. n names the
+// connection in the request IDs it hands the model (tagReq).
+func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 	c := newServerConn(nc)
+	c.n = n
 	defer c.close()
 	dec := json.NewDecoder(nc)
 	var hello Frame
@@ -173,6 +183,7 @@ func (s *Server) serveConn(nc io.ReadWriteCloser) {
 	s.mu.Lock()
 	delete(s.conns, c)
 	s.mu.Unlock()
+	s.dropSelection(c)
 }
 
 // handle runs one request, then publishes, then replies; or runs one
@@ -185,7 +196,7 @@ func (s *Server) handle(c *serverConn, f Frame) {
 	var err error
 	if f.Method != pingMethod {
 		var found bool
-		result, err, found = s.call(f.Method, f.Params)
+		result, err, found = s.call(c, f.Method, f.Params)
 		if !found {
 			err = &core.WireError{Code: core.CodeUnsupported, Message: fmt.Sprintf("rpc: unknown method %q", f.Method)}
 		}
@@ -202,9 +213,9 @@ func (s *Server) handle(c *serverConn, f Frame) {
 	c.sendReply(f.ID, result, err)
 }
 
-// call dispatches method, turning a panic into a fatal error that is also
-// the call's error.
-func (s *Server) call(method string, params json.RawMessage) (result any, err error, found bool) {
+// call dispatches connection c's call of method, turning a panic into a
+// fatal error that is also the call's error.
+func (s *Server) call(c *serverConn, method string, params json.RawMessage) (result any, err error, found bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			p := panicWire(r)
@@ -214,7 +225,7 @@ func (s *Server) call(method string, params json.RawMessage) (result any, err er
 			result, err, found = nil, p, true
 		}
 	}()
-	return dispatch(s.b, method, params)
+	return dispatch(connBackend{Backend: s.b, s: s, c: c}, method, params, tagReq(c.n))
 }
 
 // syncAndSnapshot is the backend's SyncAndSnapshot, or the panic it raised.
@@ -242,10 +253,25 @@ func (s *Server) publishLocked() {
 	s.sendLocked(events)
 }
 
-// sendLocked sends events to every connection; one that will not encode is
-// fatal. s.mu is held.
+// sendLocked sends events to every connection, an event naming a request
+// as forConn says; one that will not encode is fatal. s.mu is held.
 func (s *Server) sendLocked(events []core.Event) {
 	for _, ev := range events {
+		if routed(ev) {
+			for c := range s.conns {
+				e, ok := forConn(ev, c.n)
+				if !ok {
+					continue
+				}
+				f, err := encodeEvent(e)
+				if err != nil {
+					s.setFatalLocked(encodeFatal(e, err))
+					return
+				}
+				c.enqueue(f, "")
+			}
+			continue
+		}
 		f, err := encodeEvent(ev)
 		if err != nil {
 			s.setFatalLocked(encodeFatal(ev, err))

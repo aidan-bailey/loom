@@ -20,7 +20,10 @@ import (
 // client is attached when its owner is loaded, and the selection moves to
 // it (focusing the agent pane in inline attach) only when its owner is the
 // focused slot and no other flow is on screen; otherwise a notice says
-// where it started. Formerly app.handleInstanceStarted's view half.
+// where it started. All but the attach is for the client that asked for the
+// start (ev.Req): another client's start, which a server sends with no
+// request named, only gets its pane. Formerly app.handleInstanceStarted's
+// view half.
 func (m *home) applyStarted(ev core.Started) tea.Cmd {
 	owner := ev.Owner
 	// The row, nil when no open slot shows the instance (its owner closed).
@@ -30,6 +33,8 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 		attach = m.replacePane(v)
 	}
 	switch {
+	case ev.Req == 0:
+		// Another client's start: its selection and notice are that client's.
 	case owner == 0:
 		// Unknown owner (unstamped, and no loaded workspace holds it):
 		// only the model's half applies.
@@ -75,15 +80,19 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 // Formerly app.handleRecoverDone's view half.
 func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 	owner := ev.Owner
-	if owner != 0 && (owner != m.id || m.state == stateDefault) {
-		if s := m.slotFor(owner); s != nil {
-			s.list.SelectID(ev.ID)
-		}
-	}
 	var attach tea.Cmd
 	if ev.Loaded {
 		v, _ := m.viewByID(ev.ID)
 		attach = m.replacePane(v)
+	}
+	if ev.Req == 0 {
+		// Another client's recovery: as for Started, only the pane is ours.
+		return tea.Batch(m.instanceChanged(), attach)
+	}
+	if owner != 0 && (owner != m.id || m.state == stateDefault) {
+		if s := m.slotFor(owner); s != nil {
+			s.list.SelectID(ev.ID)
+		}
 	}
 	where := ""
 	if owner != 0 && owner != m.id {

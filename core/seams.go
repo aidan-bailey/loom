@@ -124,13 +124,25 @@ func (m *Model) WorkspaceIDForTest(ws *Workspace) WorkspaceID { return m.wsIDOf(
 
 // UntrackedForTest is a job's result with a request's tracking removed: a
 // request's job (Kill, Merge, SendPrompt, …) answers with its operation's
-// result wrapped for its Reply; any other result comes back as it is.
+// result wrapped for its Reply, and a job serving a request (a Create's
+// start) with its result wrapped as caused; any other result comes back as
+// it is.
 func UntrackedForTest(result any) any {
-	if t, ok := result.(tracked); ok {
-		return t.result
+	switch r := result.(type) {
+	case tracked:
+		return UntrackedForTest(r.result)
+	case caused:
+		return UntrackedForTest(r.result)
 	}
 	return result
 }
+
+// CausedForTest is result as a job serving the request req delivers it:
+// the Started, Recovered and Notice events it produces name req, as when
+// the TUI's own Create or Recover lands. A test that hands the model an
+// operation's result directly wraps it so, or the TUI treats the result
+// as another client's.
+func CausedForTest(req ReqID, result any) any { return caused{req: req, result: result} }
 
 // ViewForTest is the view the model would publish for inst, with ID id:
 // for ui tests that build an instance and render it.
@@ -203,6 +215,14 @@ func (l *Loop) JobsForTest() []Job {
 // tick), and returns once it is applied. Its client is not woken.
 func (l *Loop) DeliverForTest(result any) {
 	l.do(func(*Model) { l.deliverResult(result) })
+}
+
+// SelectedForTest is the model's selection (Model.SelectedForTest), read
+// on the loop, so a test may read it while a server is calling the loop.
+func (l *Loop) SelectedForTest() []InstanceID {
+	var ids []InstanceID
+	l.do(func(m *Model) { ids = m.SelectedForTest() })
+	return ids
 }
 
 // TickForTest runs the model's health tick on the loop, as its timer

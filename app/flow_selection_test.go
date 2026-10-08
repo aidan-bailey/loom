@@ -47,7 +47,7 @@ func TestCompletionDuringNaming_CancelKillsOnlyThePendingInstance(t *testing.T) 
 	require.Equal(t, stateNew, m.state)
 	require.NotEqual(t, idOf(m, first), selID(m.list), "the draft's row (ID 0) is selected")
 
-	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws()})
+	deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: first, Owner: m.ws()}))
 	assert.Equal(t, core.InstanceID(0), selID(m.list), "a completion must not move the selection under the naming flow")
 	assert.Equal(t, stateNew, m.state)
 	assert.Contains(t, m.errBox.String(), "first", "the start is still announced")
@@ -72,7 +72,7 @@ func TestCompletionDuringInlineAttach_KeepsTheAttachTarget(t *testing.T) {
 	selectIn(m, m.list, attached)
 	m.state = stateInlineAttach
 
-	deliver(t, m, core.StartResult{Instance: first, Owner: m.ws()})
+	deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: first, Owner: m.ws()}))
 	assert.Equal(t, idOf(m, attached), selID(m.list), "keys must keep going to the attached session")
 	assert.Equal(t, stateInlineAttach, m.state)
 }
@@ -95,7 +95,7 @@ func TestRecoverDuringNaming_LeavesThePendingInstanceAlone(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, recovered.TransitionTo(session.Running))
 
-	deliver(t, m, core.RecoverResult{OldTitle: "orphan", Recovered: recovered, Placeholder: placeholder, Owner: m.ws()})
+	deliver(t, m, core.CausedForTest(1, core.RecoverResult{OldTitle: "orphan", Recovered: recovered, Placeholder: placeholder, Owner: m.ws()}))
 	assert.Equal(t, core.InstanceID(0), selID(m.list), "the recover must not move the selection under the naming flow")
 
 	typeTitle(t, m, "x")
@@ -229,7 +229,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		owner.ws().AddForTest(started)
 		m.syncViews()
 
-		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws()})
+		cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: started, Owner: owner.ws()}))
 		drainCmd(cmd)
 
 		reopened := m.slots[1]
@@ -247,7 +247,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		owner.ws().AddForTest(started)
 		m.syncViews()
 
-		cmd := deliver(t, m, core.StartResult{Instance: started, Err: errors.New("boom"), Owner: owner.ws()})
+		cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: started, Err: errors.New("boom"), Owner: owner.ws()}))
 		drainCmd(cmd)
 
 		assert.False(t, srv.killed("late"), "not killed: the reopened record owns its worktree and branch")
@@ -262,7 +262,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		owner.ws().AddForTest(started)
 		m.syncViews()
 
-		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws()})
+		cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: started, Owner: owner.ws()}))
 		drainCmd(cmd)
 
 		assert.Equal(t, idOf(m, namesake), titleID(m.slots[1].list, "late"), "an unrelated same-titled session is untouched")
@@ -284,7 +284,7 @@ func TestInstanceStarted_OwnerReopened(t *testing.T) {
 		owner.ws().AddForTest(started)
 		m.syncViews()
 
-		cmd := deliver(t, m, core.StartResult{Instance: started, Owner: owner.ws()})
+		cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: started, Owner: owner.ws()}))
 		drainCmd(cmd)
 
 		assert.Equal(t, idOf(m, twin), titleID(m.slots[1].list, "late"), "the twin stays: its record is the live truth")

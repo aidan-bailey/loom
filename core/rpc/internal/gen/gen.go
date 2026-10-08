@@ -250,7 +250,7 @@ func emit(methods []method, imports map[string]string, used map[string]bool) ([]
 	}
 	p("}\n\n")
 
-	p("// dispatch calls method on b with params decoded, returning its result\n// for the reply and its error; found is false for a method the wire does\n// not carry.\nfunc dispatch(b core.Core, method string, params json.RawMessage) (result any, err error, found bool) {\n\tswitch method {\n")
+	p("// dispatch calls method on b with params decoded, returning its result\n// for the reply and its error; found is false for a method the wire does\n// not carry. tag rewrites every request ID (core.ReqID) the params carry\n// into the server's, which names the connection (see Server).\nfunc dispatch(b core.Core, method string, params json.RawMessage, tag func(*core.ReqID) error) (result any, err error, found bool) {\n\tswitch method {\n")
 	for _, m := range methods {
 		if m.kind == kindClient {
 			continue
@@ -259,6 +259,9 @@ func emit(methods []method, imports map[string]string, used map[string]bool) ([]
 		var args []string
 		for _, a := range m.params {
 			args = append(args, "p."+field(a.name))
+			if a.typ == "core.ReqID" {
+				p("\t\tif err := tag(&p.%s); err != nil {\n\t\t\treturn nil, err, true\n\t\t}\n", field(a.name))
+			}
 		}
 		call := fmt.Sprintf("b.%s(%s)", m.name, strings.Join(args, ", "))
 		switch {

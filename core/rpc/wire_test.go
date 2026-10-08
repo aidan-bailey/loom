@@ -83,6 +83,13 @@ func TestProtocolReference(t *testing.T) {
 	p("replies `{}`, so every frame the server wrote before the reply has been read when it arrives.\n")
 	p("`%s`\n\n", compact(t, Frame{ID: 1, Method: pingMethod, Params: json.RawMessage("{}")}))
 
+	p("## Request IDs\n\n")
+	p("A client numbers the requests that want a `Reply` itself (the `req` params, `core.ReqID`), from 1 and below\n")
+	p("2^32; 0 asks for no Reply. A server serves several clients, so it hands the model each request ID with the\n")
+	p("connection's number in its high 32 bits, and the events naming a request come back to its client with the\n")
+	p("client's own ID: a `Reply`, and the `Notice` of a request's job, go to that client alone; `Started` and\n")
+	p("`Recovered` go to every client, naming the request (`Req`) only to the one that made it.\n\n")
+
 	p("## Refused hello\n\n")
 	p("A server answers a hello of another protocol with an error frame that has no id, then closes:\n")
 	p("`%s`\n\n", compact(t, Frame{Error: mismatchError()}))

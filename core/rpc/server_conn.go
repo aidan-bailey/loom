@@ -22,6 +22,9 @@ var closeFlushTimeout = 5 * time.Second
 // their order.
 type serverConn struct {
 	nc io.ReadWriteCloser
+	// n is the connection's number, which the request IDs it sends the
+	// model carry (tagReq).
+	n uint32
 
 	mu     sync.Mutex
 	queue  []queued
