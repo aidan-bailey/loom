@@ -172,3 +172,44 @@ func (m *Model) RefreshDefaultAuthForTest() bool { return m.refreshDefaultAuth }
 // OutputMarkedForTest reports whether sessionName's output is recorded
 // for the next health tick's diff refresh (MarkOutput).
 func (m *Model) OutputMarkedForTest(sessionName string) bool { return m.dirtySessions[sessionName] }
+
+// StartForTest runs m on a loop that keeps every job for the test to run
+// (JobsForTest, then DeliverForTest) and never ticks on its own
+// (TickForTest). Between calls its goroutine is idle, so the test may
+// also reach m directly (ModelForTest): the loop's channel operations
+// order those accesses for the race detector.
+func StartForTest(m *Model) *Loop { return startLoop(m, true, 0) }
+
+// ModelForTest returns the loop's model, for its seams. Only a loop that
+// is idle between calls (StartForTest, or a production loop with nothing
+// in flight) may be reached this way.
+func (l *Loop) ModelForTest() *Model { return l.m }
+
+// JobsForTest starts what the model has queued (a seam called on it
+// directly may have queued jobs no step has taken yet), then takes the
+// jobs a StartForTest loop kept, in the order queued.
+func (l *Loop) JobsForTest() []Job {
+	l.do(func(*Model) {})
+	l.heldMu.Lock()
+	defer l.heldMu.Unlock()
+	jobs := l.held
+	l.held = nil
+	return jobs
+}
+
+// DeliverForTest delivers a job's result on the loop, as the goroutine
+// that ran the job would (the health probe's result arming the next
+// tick), and returns once it is applied. Its client is not woken.
+func (l *Loop) DeliverForTest(result any) {
+	l.do(func(*Model) { l.deliverResult(result) })
+}
+
+// TickForTest runs the model's health tick on the loop, as its timer
+// would.
+func (l *Loop) TickForTest() {
+	l.do(func(m *Model) { m.Tick(m.selected) })
+}
+
+// SelectedForTest returns the instance the probe refreshes the full diff
+// of (SetSelected).
+func (m *Model) SelectedForTest() InstanceID { return m.selected }

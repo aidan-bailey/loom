@@ -2,6 +2,7 @@ package core
 
 import (
 	"sync"
+	"time"
 
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
@@ -13,12 +14,25 @@ import (
 // retry a dead tmux session before giving up and marking it Paused instead.
 // Without this, a permanently broken Program (e.g. a stale command left
 // over from a since-changed launch mechanism) restart-loops forever at
-// tick cadence — 500ms tickUpdateMetadataCmd below, so ~1.5s of thrash
+// tick cadence — 500ms on the snapshot path (tickInterval), so ~1.5s of thrash
 // before this trips. Restart's own Start(true) blocks until the session is
 // confirmed up before returning, so a genuinely successful restart should
 // never even reach 2 consecutive misses; this is slack for one flaky
 // blip, not a real recovery window.
 const maxWorkspaceTerminalRestartFailures = 3
+
+// tickInterval is the health tick's period: a slow belt-and-braces sweep
+// in event mode (the emulator path), where status rides pane events, and
+// the legacy 500ms on the snapshot path. The loop arms the next tick this
+// long after the previous probe lands (Loop.armTick). Formerly the sleep
+// in app's tickUpdateMetadataCmd, which keeps the same cadence for the
+// TUI's own half.
+func tickInterval() time.Duration {
+	if tmux.EmulatorEnabled() {
+		return 3 * time.Second
+	}
+	return 500 * time.Millisecond
+}
 
 // livenessSource names the path a liveness result reached applyLiveness
 // by, for its logs: the health tick's probe or a pane's Dead event.

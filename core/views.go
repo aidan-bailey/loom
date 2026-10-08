@@ -156,13 +156,20 @@ func cloneViews(views []InstanceView) []InstanceView {
 	return out
 }
 
-// Sync publishes the workspace views that changed (WorkspacesChanged,
-// first), then the instance views that changed (ViewsChanged), and then
-// returns everything else produced since the last call (Drain). The TUI
-// calls it where it drained; core's own tests may still call Drain.
-func (m *Model) Sync() Out {
+// syncEvents publishes the workspace views that changed (WorkspacesChanged,
+// first), then the instance views that changed (ViewsChanged), and returns
+// them ahead of every other event produced since the last call, which it
+// forgets. It leaves the jobs: the loop starts those after every step.
+func (m *Model) syncEvents() []Event {
 	published := append(m.publishWorkspaces(), m.publishViews()...)
-	out := m.Drain()
-	out.Events = append(published, out.Events...)
-	return out
+	events := m.out.Events
+	m.out.Events = nil
+	return append(published, events...)
+}
+
+// Sync is syncEvents plus the jobs queued since the last call: everything
+// the model produced, for a caller that runs its jobs itself (core's own
+// tests; until stage 1E, the TUI). The loop (Loop.Sync) uses syncEvents.
+func (m *Model) Sync() Out {
+	return Out{Events: m.syncEvents(), Jobs: m.takeJobs()}
 }

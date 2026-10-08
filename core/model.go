@@ -68,6 +68,10 @@ type Model struct {
 	// (deliverAccountsRefreshed), and read by every launch decision.
 	rcAuth session.RemoteControlAuth
 
+	// selected is the instance whose full diff the health tick's probe
+	// refreshes: the TUI's selected row (SetSelected), 0 for none.
+	selected InstanceID
+
 	// gates throttle the background jobs riding the health tick (roster
 	// query, subagent scan, GitHub poll, account usage probe, accounts
 	// refresh), one pollGate per gateKind (see gate.go; resolve with
@@ -252,6 +256,19 @@ func (m *Model) spawn(j Job) {
 	if j != nil {
 		m.out.Jobs = append(m.out.Jobs, j)
 	}
+}
+
+// SetSelected names the instance whose full diff the health tick's probe
+// refreshes: the TUI's selected row, 0 for none. The loop's tick reads it
+// (Loop).
+func (m *Model) SetSelected(id InstanceID) { m.selected = id }
+
+// takeJobs returns the jobs queued since the last take, and forgets them.
+// The loop starts them after every step.
+func (m *Model) takeJobs() []Job {
+	jobs := m.out.Jobs
+	m.out.Jobs = nil
+	return jobs
 }
 
 // notifyErr queues err for the error bar.
