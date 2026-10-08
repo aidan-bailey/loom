@@ -459,11 +459,13 @@ func wsStateDir(ws *Workspace) string {
 	return dir
 }
 
-// canonicalDir resolves dir's symlinks when it can, so two spellings of one
-// directory compare equal.
+// canonicalDir resolves dir's symlinks (session.CanonicalPath: through
+// its nearest existing ancestor when dir does not exist yet), so two
+// spellings of one directory compare equal; an empty or relative dir is
+// only cleaned.
 func canonicalDir(dir string) string {
-	if r, err := filepath.EvalSymlinks(dir); err == nil {
-		return r
+	if c := session.CanonicalPath(dir); c != "" {
+		return c
 	}
 	return filepath.Clean(dir)
 }

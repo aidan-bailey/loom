@@ -51,6 +51,34 @@ func TestGenerate_TagsEveryRequestID(t *testing.T) {
 	assert.NotContains(t, string(out), "tag(&p.ID)", "only request IDs")
 }
 
+// TestGenerate_RefusesARequestIDTheServerCannotTag: dispatch tags only a
+// parameter of type ReqID with the connection's number, so one nested in a
+// slice, a map, a pointer or a core struct's field, at any depth, would
+// reach the model as the client numbered it. The generator refuses it.
+func TestGenerate_RefusesARequestIDTheServerCannotTag(t *testing.T) {
+	core := []byte("package core\n\n" +
+		"type Spec struct {\n\tTitle string\n\tReq ReqID\n}\n" +
+		"type Outer struct {\n\tIn Inner\n}\n" +
+		"type Inner struct {\n\tReqs []*ReqID\n}\n" +
+		"type Plain struct {\n\tTitle string\n\tSettings config.Settings\n}\n")
+	for _, method := range []string{
+		"\tFoo(reqs []ReqID)",
+		"\tFoo(byName map[string]ReqID)",
+		"\tFoo(req *ReqID)",
+		"\tFoo(spec Spec)",
+		"\tFoo(outer Outer)",
+	} {
+		_, err := Generate(iface(method), core)
+		if assert.Error(t, err, "method %q", method) {
+			assert.Contains(t, err.Error(), "request ID", "method %q", method)
+		}
+	}
+	for _, method := range []string{"\tFoo(req ReqID)", "\tFoo(plain Plain, req ReqID)"} {
+		_, err := Generate(iface(method), core)
+		assert.NoError(t, err, "method %q", method)
+	}
+}
+
 // TestGenerate_RefusesADirectiveInADocComment: a directive above the method
 // is not read, so the method would silently become a request.
 func TestGenerate_RefusesADirectiveInADocComment(t *testing.T) {

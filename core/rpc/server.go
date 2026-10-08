@@ -22,7 +22,10 @@ type Backend interface {
 }
 
 // Server serves a Backend to any number of connections. After every call
-// and every wake it publishes (Backend.Sync) to every connection, and a
+// and every wake it publishes (Backend.Sync) to every connection, but an
+// event naming a request as forConn routes it: a Reply, or a request's
+// Notice, only to the connection that made the request, and Started or
+// Recovered to every connection, naming the request to that one alone. A
 // request's reply follows the events its call produced. A connection is
 // sent the whole state (Backend.SyncAndSnapshot) when it connects.
 type Server struct {

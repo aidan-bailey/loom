@@ -61,12 +61,10 @@ type ModelView struct {
 	Registry RegistryView
 }
 
-// Clone deep-copies v's slices.
+// Clone deep-copies v's slices; every other field is a value already.
 func (v ModelView) Clone() ModelView {
-	v.Registry = RegistryView{
-		Workspaces: slices.Clone(v.Registry.Workspaces),
-		Open:       slices.Clone(v.Registry.Open),
-	}
+	v.Registry.Workspaces = slices.Clone(v.Registry.Workspaces)
+	v.Registry.Open = slices.Clone(v.Registry.Open)
 	return v
 }
 

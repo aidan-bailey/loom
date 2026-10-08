@@ -25,6 +25,11 @@ type Workspace struct {
 	// starts a workspace's terminal, probes it, and polls GitHub for its
 	// repository only once someone has looked at it.
 	opened bool
+	// terminalUnsettled is set while the workspace terminal waits for a
+	// relaunch that a name check tmux left unanswered held back
+	// (settleTerminal); terminalChecking while the health tick's retry of
+	// that check is in flight (maybeSettleTerminals).
+	terminalUnsettled, terminalChecking bool
 	// loadErr is what the workspace's storage failed to load with, nil
 	// once it loaded. A workspace that failed is kept, empty, its storage
 	// latched shut (no write can overwrite the unreadable payload), and a

@@ -434,9 +434,9 @@ func runOpenWorkspacePicker(m *home) (tea.Model, tea.Cmd) {
 	// mode without quitting. Required to round-trip the global ↔
 	// workspace transition that applyWorkspaceToggle now handles.
 	picker := overlay.NewWorkspacePicker(registry.Workspaces, activeNames, true)
-	// Restore failures stay checked so their live sessions survive; the
-	// picker warns that closing one gives them up to the next launch's
-	// orphan sweep.
+	// Restore failures stay checked, so loom keeps retrying them at start;
+	// the picker warns that closing one drops it from the open list, which
+	// ends the retries.
 	picker.MarkFailedToLoad(m.failedOpen...)
 	m.setOverlay(picker, overlayWorkspacePicker)
 	m.state = stateWorkspace

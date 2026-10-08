@@ -12,8 +12,8 @@ import (
 // InstanceID names one instance for the life of the process. The model
 // assigns it the first time it reports the instance (idOf) and never reuses
 // it, so a request naming an ID can't reach another instance: a same-titled
-// one in another workspace, or a reopened workspace's fresh copy of the same
-// record. 0 is never assigned; the TUI uses it for a draft row.
+// one in another workspace, or one created under the title of an instance
+// killed meanwhile. 0 is never assigned; the TUI uses it for a draft row.
 type InstanceID uint64
 
 // InstanceView is an instance as a client sees it: a value copied out of the

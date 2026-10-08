@@ -559,7 +559,7 @@ func TestScriptError_RefusalsRaiseTheirOwnMessage(t *testing.T) {
 	assert.Equal(t, "kill term: not allowed on a workspace terminal", values[0].Err)
 	assert.Equal(t, "kill: no such session", values[1].Err, "a gone session's refusal names no request: the op is added")
 	assert.Equal(t, "kill: boom", scriptError("kill", errors.New("boom")), "a failed job keeps the prefix")
-	refused := fmt.Errorf("create x: its workspace is no longer open: %w", core.ErrRefused)
+	refused := fmt.Errorf("create x: its workspace is not served: %w", core.ErrRefused)
 	assert.Equal(t, "new_instance: "+refused.Error(), scriptError("new_instance", refused),
 		"ctx:new_instance keeps its prefix, refusals included")
 }

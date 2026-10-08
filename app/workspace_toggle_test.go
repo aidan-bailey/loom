@@ -288,7 +288,10 @@ func TestEnterGlobalMode_OrphanPlaceholdersUseTheGlobalProgram(t *testing.T) {
 	m := fleetHome(t)
 	m.ctx = cancelledCtx()
 	m.errBox = ui.NewErrBox()
-	m.program = "startup-agent"
+	// The model's own program is the one the process started with (-p, or
+	// a workspace's): what the loader must not give the placeholders.
+	m.core = testLoop(t, core.NewForTest(core.Options{Registry: &config.WorkspaceRegistry{}, Program: "startup-agent"}))
+	wireCore(t, m)
 	bootFixture(t, m) // the global workspace, served from boot
 
 	drainCmd(m.applyWorkspaceToggle(nil))

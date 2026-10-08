@@ -9,16 +9,16 @@ import (
 
 // Async lifecycle completions (start, recover, resume) run for seconds with
 // the TUI live: by the time their result arrives the user may have
-// switched workspace, or closed the one the instance belongs to. Their
-// handlers therefore act on the workspace that owns the instance — stamped
-// into the result at dispatch — and on the instance by identity, never on
-// the focused workspace's list, storage or selection. (Kill, pause and
-// transition failures carry the instance and act by identity; the TUI's
-// pane clients of a killed, paused or reverted instance are closed by the
-// prune that follows each of them, ClientsStale.) A completion whose owner
-// was closed meanwhile attaches nothing (nothing displays it); one landing
-// in a loaded workspace attaches the instance's client (the TUI's
-// replacePane, on SessionLaunched, Started or Recovered).
+// switched workspace, or closed the tab of the one the instance belongs to.
+// Their handlers therefore act on the workspace that owns the instance —
+// stamped into the result at dispatch — and on the instance by identity,
+// never on a client's focused workspace, list or selection. (Kill, pause
+// and transition failures carry the instance and act by identity; the
+// TUI's pane clients of a killed, paused or reverted instance are closed by
+// the prune that follows each of them, ClientsStale.) The model never
+// drops a workspace, so the owner is always served, and every client
+// attaches the instance's pane client (the TUI's replacePane, on
+// SessionLaunched, Started or Recovered) whichever workspace it shows.
 //
 // Nor do they move the focused workspace's selection while another flow is
 // on screen: a creation flow, an inline attach or a prompt acts on the

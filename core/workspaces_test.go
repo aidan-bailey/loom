@@ -32,6 +32,7 @@ func fakeClaude(t *testing.T) string {
 // terminal starts. The load paths run on a mock executor; the terminal
 // starts on the private tmux server TestMain sets up.
 func TestOpen_BlockedRemoteControlEmitsTheRCOffNotice(t *testing.T) {
+	isolateTmux(t)
 	def := config.Workspace{Name: "rc-ws", Path: t.TempDir()}
 	cfgDir := config.WorkspaceConfigDir(&def)
 	require.NoError(t, os.MkdirAll(cfgDir, 0o755))

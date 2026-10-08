@@ -2,7 +2,9 @@ package core
 
 import (
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -150,13 +152,14 @@ func TestApplyLiveness_DeadStillPauses(t *testing.T) {
 		"an answered has-session failure must still pause the instance")
 }
 
-// TestApplyLiveness_ADroppedWorkspacesProbeIsIgnored: a probe taken before
-// its workspace was dropped lands on an instance no workspace holds; a
-// workspace-terminal restart there would relaunch one nothing displays.
-func TestApplyLiveness_ADroppedWorkspacesProbeIsIgnored(t *testing.T) {
+// TestApplyLiveness_AProbeOfAnInstanceNoWorkspaceHoldsIsIgnored: a probe
+// taken before its instance left its workspace (a kill, a recover's
+// replacement) lands on an instance no workspace holds; a workspace-terminal
+// restart there would relaunch a session no record holds.
+func TestApplyLiveness_AProbeOfAnInstanceNoWorkspaceHoldsIsIgnored(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := probedRunning(t, m)
-	m.SetWorkspacesForTest(NewWorkspace(WorkspaceParts{}))
+	require.True(t, m.workspaces[0].remove(inst))
 
 	assert.False(t, m.applyLiveness(inst, tmux.LivenessDead, fromTick))
 	assert.Equal(t, session.Running, inst.GetStatus(), "untouched: no workspace holds it")
@@ -399,4 +402,52 @@ func TestTick_EverySelectedInstanceIsProbedInFull(t *testing.T) {
 	assert.Equal(t, []*session.Instance{b}, m.selectedInstances(), "SetSelected names one")
 	m.SetSelected(0)
 	assert.Empty(t, m.selectedInstances(), "0 selects none")
+}
+
+// The tick's probe gives every selected instance (SetSelection, a row per
+// client) its full diff: each one's cached counts, recorded without
+// content, are upgraded, not only the first named.
+func TestTick_GivesEverySelectedInstanceItsFullDiff(t *testing.T) {
+	m := NewForTest(Options{})
+	a, b := startedInst(t, "a", "aider"), startedInst(t, "b", "aider")
+	hold(m, a, b)
+	m.SetGateForTest("github", true, time.Now()) // no poll: the probe is the only job
+	for _, inst := range []*session.Instance{a, b} {
+		wt, err := inst.GetGitWorktree()
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(wt.GetWorktreePath(), "f.txt"), []byte("changed\n"), 0o644))
+		require.NoError(t, inst.UpdateDiffStatsShort())
+		require.NotZero(t, inst.GetDiffStats().Added, "fixture: a change")
+		require.Empty(t, inst.GetDiffStats().Content, "fixture: counts only, as an unselected row caches")
+	}
+	m.SetSelection([]InstanceID{m.idOf(a), m.idOf(b)})
+
+	m.Tick()
+	out := m.Drain()
+	require.Len(t, out.Jobs, 1, "the probe")
+	m.Deliver(out.Jobs[0]())
+
+	assert.NotEmpty(t, a.GetDiffStats().Content, "the first selected gets its full diff")
+	assert.NotEmpty(t, b.GetDiffStats().Content, "and so does every other one")
+}
+
+// An unopened workspace's terminal is dormant, but its agents are not: they
+// are live sessions, crash-restarted at boot, and the tick probes them like
+// any other (a dead one is paused).
+func TestTick_AnUnopenedWorkspacesAgentsAreProbed(t *testing.T) {
+	m := NewForTest(Options{})
+	agent := tickedInst(t, m, "agent", nil)
+	m.workspaces[0].opened = false
+
+	m.Tick()
+	out := m.Drain()
+	require.Len(t, out.Jobs, 1, "the probe")
+	r, ok := out.Jobs[0]().(HealthResult)
+	require.True(t, ok)
+
+	var probed []*session.Instance
+	for _, p := range r.Results {
+		probed = append(probed, p.Instance)
+	}
+	assert.Contains(t, probed, agent)
 }

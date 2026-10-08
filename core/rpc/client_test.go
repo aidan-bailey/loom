@@ -90,7 +90,11 @@ func raised(t *testing.T, what string, f func()) (p any) {
 // from its replica gives what the model gives, over the wire, for known
 // names and misses alike.
 func TestReplica_AnswersAsTheModel(t *testing.T) {
-	model := core.NewForTest(core.Options{Program: "claude"})
+	model := core.NewForTest(core.Options{Program: "claude", Registry: &config.WorkspaceRegistry{
+		Workspaces:     []config.Workspace{{Name: "a", Path: "/a"}, {Name: "b", Path: "/b"}},
+		OpenWorkspaces: []string{"b", "a"},
+		LastUsed:       "b",
+	}})
 	x, y := running(t, "x"), running(t, "y")
 	a, b := workspace(t, "a", x), workspace(t, "b", y)
 	model.SetWorkspacesForTest(a, b)
@@ -213,6 +217,35 @@ func TestSync_CoalescesStateAndKeepsTheRestInOrder(t *testing.T) {
 	assert.Equal(t, []string{"c"}, programs, "one WorkspacesChanged, the newest")
 	_, first := events[0].(core.WorkspacesChanged)
 	assert.True(t, first, "state first")
+}
+
+// TestInProcess_BeginsTheLoop: the model production serves starts its
+// background work (core.Loop.Begin): its health tick fires with nothing
+// else asking, and the probe's HealthChecked reaches the client. A loop
+// that never began would never tick, and the TUI would see no session
+// die, no diff change and no account refresh.
+func TestInProcess_BeginsTheLoop(t *testing.T) {
+	t.Setenv("LOOM_PANE_RENDERER", "snapshot") // the 500ms tick
+	model := core.NewForTest(core.Options{})
+	// Hold the GitHub poll, so nothing runs git or gh.
+	model.SetGateForTest("github", true, time.Now())
+	c, stop, err := InProcess(model)
+	require.NoError(t, err)
+	t.Cleanup(stop)
+
+	deadline := time.After(10 * time.Second)
+	for {
+		for _, ev := range c.Sync() {
+			if _, ok := ev.(core.HealthChecked); ok {
+				return
+			}
+		}
+		select {
+		case <-c.Wakes():
+		case <-deadline:
+			t.Fatal("no health tick: the loop never began")
+		}
+	}
 }
 
 // TestWake_ALoopResultReachesTheClient: on a production loop, a job's

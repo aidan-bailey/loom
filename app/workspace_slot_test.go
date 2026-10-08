@@ -177,8 +177,10 @@ func TestClassicSlot_NonNilAndOutsideSlots(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, t.TempDir())
 
 	t.Run("classic startup", func(t *testing.T) {
-		// The "true" program is no Claude: the boot probes no auth.
-		m, err := newHome(context.Background(), &config.WorkspaceContext{ConfigDir: t.TempDir()}, nil, "true", "", true)
+		// A nameless startup context is global startup's: its name is all
+		// newHome reads. The "true" program is no Claude: the boot probes
+		// no auth.
+		m, err := newHome(context.Background(), &config.WorkspaceContext{}, nil, "true", "", true)
 		require.NoError(t, err)
 		t.Cleanup(m.stopCore)
 		require.NotNil(t, m.workspaceSlot)
@@ -396,4 +398,106 @@ func TestEnterGlobalMode_FlushesPendingRatiosIntoTheTabsState(t *testing.T) {
 	assert.Empty(t, m.pendingRatioSaves)
 	saved := config.LoadStateFrom(config.WorkspaceConfigDir(&a)).GetUIPrefs().SplitRatios
 	assert.InDelta(t, 0.4, saved["main"], 0, "flushed into the departing tab's state")
+}
+
+// TestActivateWorkspace_ARenamedWorkspaceIsRefused: renamed while loom
+// runs (`loom workspace rename`), a workspace stays served under the name
+// it had when the model first served it. The TUI keys its tabs and the open
+// list on names, so a tab opened for the new name would show the old one,
+// be closed by the next picker commit and be dropped from the open list.
+// Opening it by its new name is refused, naming both, with nothing opened
+// or persisted, until a restart serves it under its new name.
+func TestActivateWorkspace_ARenamedWorkspaceIsRefused(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	old, other := preservedTerminalWorkspace(t, "ws-old"), preservedTerminalWorkspace(t, "ws-other")
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	require.NoError(t, reg.Add(old.Name, old.Path))
+	require.NoError(t, reg.Add(other.Name, other.Path))
+	m := newRestoreHome(t, &recordingExec{})
+	m.ctx = cancelledCtx()
+	_, ok := m.servedNamed("ws-old")
+	require.True(t, ok, "fixture: the model serves it from boot")
+	_ = m.applyWorkspaceToggle([]config.Workspace{other})
+	require.Equal(t, []string{"ws-other"}, m.slotNames())
+
+	renamer, err := config.LoadWorkspaceRegistry() // another process's
+	require.NoError(t, err)
+	require.NoError(t, renamer.Rename("ws-old", "ws-new"))
+	require.NoError(t, m.core.ReloadRegistry(), "the picker rereads the registry before it lists it")
+	renamed := config.Workspace{Name: "ws-new", Path: old.Path}
+
+	_, err = m.activateWorkspace(renamed)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ws-new is the workspace loom serves as ws-old")
+	assert.Contains(t, err.Error(), "restart loom", "a rename is not a twin: ws-old is no longer registered")
+	assert.Equal(t, []string{"ws-other"}, m.slotNames(), "no tab opens")
+
+	// A picker commit that keeps ws-other and checks ws-new opens nothing
+	// more, and keeps the tab it kept.
+	_ = m.applyWorkspaceToggle([]config.Workspace{other, renamed})
+	assert.Equal(t, []string{"ws-other"}, m.slotNames(), "the kept tab stays, and nothing else opens")
+	assert.Contains(t, m.errBox.String(), "restart loom")
+	fresh, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ws-other"}, fresh.OpenWorkspaces, "the open list is the tabs, unchanged")
+	require.NoError(t, m.checkSlotInvariant())
+}
+
+// TestActivateWorkspace_ASecondNameForOneDirectoryIsRefused: two names
+// registered for one directory, one through a symlink, are one workspace,
+// which the model serves once, under the first name. Opening it under the
+// second is refused, pointing at the first; a tab under the second would be
+// keyed on a name the model does not serve.
+func TestActivateWorkspace_ASecondNameForOneDirectoryIsRefused(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	first := preservedTerminalWorkspace(t, "ws-first")
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(first.Path, link))
+	second := config.Workspace{Name: "ws-second", Path: link}
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	require.NoError(t, reg.Add(first.Name, first.Path))
+	require.NoError(t, reg.Add(second.Name, second.Path))
+	m := newRestoreHome(t, &recordingExec{})
+	_, ok := m.servedNamed("ws-second")
+	require.False(t, ok, "fixture: one directory is served once")
+
+	_, err = m.activateWorkspace(second)
+	require.Error(t, err)
+	assert.Equal(t, "ws-second is the same directory as ws-first, which loom serves: open ws-first", err.Error())
+	assert.Empty(t, m.slots)
+}
+
+// TestReopenedTab_IsTheSameWorkspace: closing a tab only stops this TUI
+// showing its workspace, which the model keeps serving. Reopening it shows
+// that very workspace, under the same ID, with whatever happened to it
+// meanwhile (here a session that landed while it was closed).
+func TestReopenedTab_IsTheSameWorkspace(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	m := newRestoreHome(t, &recordingExec{})
+	a, b := preservedTerminalWorkspace(t, "ws-a"), preservedTerminalWorkspace(t, "ws-b")
+	registerWorkspaces(t, m, a, b)
+	_, err := m.activateWorkspace(a)
+	require.NoError(t, err)
+	_, err = m.activateWorkspace(b)
+	require.NoError(t, err)
+	idA := m.slots[0].id
+
+	_, err = m.deactivateWorkspace("ws-a")
+	require.NoError(t, err)
+	require.Equal(t, []string{"ws-b"}, m.slotNames())
+	landed := &session.Instance{Title: "landed-meanwhile", Status: session.Paused}
+	testModel(m).WorkspaceForTest(idA).AddForTest(landed)
+
+	_, err = m.activateWorkspace(a)
+	require.NoError(t, err)
+	require.Equal(t, []string{"ws-b", "ws-a"}, m.slotNames())
+	reopened := m.slots[1]
+	assert.Equal(t, idA, reopened.id, "the same workspace, the same ID")
+	assert.NotNil(t, reopened.list.GetInstanceByTitle("landed-meanwhile"), "with what landed while it was closed")
+	require.NoError(t, m.checkSlotInvariant())
 }

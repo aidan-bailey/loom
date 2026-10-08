@@ -1407,6 +1407,19 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err != nil {
 			return m, m.handleError(err)
 		}
+		if v.Name == "" {
+			// A workspace at $HOME has the global config dir, which the
+			// model serves once, as the global workspace: no tab. Show it
+			// the way global mode does.
+			var cmd tea.Cmd
+			if !m.inGlobalMode() {
+				cmd = m.enterGlobalMode()
+			}
+			if m.inGlobalMode() {
+				m.errBox.SetInfo(twinNote(msg.name, ""))
+			}
+			return m, tea.Batch(tea.RequestWindowSize, cmd)
+		}
 		release, err := m.openTab(v.ID)
 		if err != nil {
 			return m, m.handleError(fmt.Errorf("failed to activate workspace: %w", err))

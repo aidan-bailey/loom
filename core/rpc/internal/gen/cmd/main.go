@@ -10,12 +10,12 @@ import (
 )
 
 func main() {
-	src, err := os.ReadFile("../iface.go")
+	src, pkg, err := gen.CoreSources("..")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	out, err := gen.Generate(src)
+	out, err := gen.Generate(src, pkg...)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		os.Exit(1)

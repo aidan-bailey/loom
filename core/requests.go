@@ -386,7 +386,7 @@ type NewInstance struct {
 // refused.
 func (m *Model) createWS(ws *Workspace, spec NewInstance, req ReqID) {
 	if !m.isLoadedWS(ws) {
-		m.refuse(req, 0, fmt.Errorf("create %s: its workspace is no longer open", spec.Title))
+		m.refuse(req, 0, fmt.Errorf("create %s: its workspace is not served", spec.Title))
 		return
 	}
 	cfgDir := ""

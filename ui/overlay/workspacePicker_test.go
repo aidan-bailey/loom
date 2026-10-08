@@ -181,9 +181,9 @@ func TestWorkspacePickerMidSessionGlobalRow(t *testing.T) {
 }
 
 // TestWorkspacePickerFailedToLoadWarning: a workspace that failed to
-// restore stays checked so its live sessions survive the next launch's
-// orphan sweep. Unchecking it (or picking Global) closes it, and the next
-// launch then ends those sessions, so the picker says so.
+// restore stays checked, so loom keeps retrying it at start. Unchecking it
+// (or picking Global) closes it, dropping it from the open list, which ends
+// the retries, so the picker says so.
 func TestWorkspacePickerFailedToLoadWarning(t *testing.T) {
 	workspaces := []config.Workspace{
 		{Name: "alpha", Path: "/a"},
@@ -198,7 +198,7 @@ func TestWorkspacePickerFailedToLoadWarning(t *testing.T) {
 		output := p.Render()
 		assert.Contains(t, output, "beta (failed to load)")
 		assert.NotContains(t, output, "alpha (failed to load)")
-		assert.Contains(t, output, "live sessions")
+		assert.Contains(t, output, "stops retrying it at start")
 	})
 
 	t.Run("no warning without failed workspaces", func(t *testing.T) {
@@ -206,6 +206,6 @@ func TestWorkspacePickerFailedToLoadWarning(t *testing.T) {
 		p.SetWidth(200)
 		output := p.Render()
 		assert.NotContains(t, output, "failed to load")
-		assert.NotContains(t, output, "live sessions")
+		assert.NotContains(t, output, "stops retrying")
 	})
 }

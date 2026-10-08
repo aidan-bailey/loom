@@ -64,6 +64,29 @@ func TestGHQuery_OnlyOpenedWorkspacesArePolled(t *testing.T) {
 	assert.Equal(t, []string{ws.ctx.RepoPath}, m.openRepoPaths())
 }
 
+// Started in a registered repository's directory, the opened global
+// workspace stands for that same repository: the repository's own
+// workspace wins, so it is polled once, against its own base branch,
+// however the start directory is spelled.
+func TestOpenedRepos_ARepositorysOwnWorkspaceWinsOverTheStartDirectory(t *testing.T) {
+	repo := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(repo, link))
+	for name, cwd := range map[string]string{"started in it": repo, "started through a symlink to it": link} {
+		t.Run(name, func(t *testing.T) {
+			t.Chdir(cwd)
+			global := storedWorkspace(t, "") // no repository: it stands for the start directory
+			x := storedWorkspace(t, "x")
+			x.ctx.RepoPath = repo
+			x.cfg.BaseBranch = "develop"
+			m := NewForTest(Options{})
+			m.SetWorkspacesForTest(global, x) // the global workspace is served first
+
+			assert.Equal(t, []openedRepo{{path: repo, base: "develop"}}, m.openedRepos())
+		})
+	}
+}
+
 func TestGHQueryDispatchesOnFirstCall(t *testing.T) {
 	m := ghModel(t)
 	require.True(t, m.maybeGHQuery())

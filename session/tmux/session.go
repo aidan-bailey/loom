@@ -461,6 +461,28 @@ func (s *Session) SessionLiveness() Liveness {
 	return LivenessAlive
 }
 
+// StartDir lists the server's sessions and returns the directory this
+// session was started in (session_path: the -c directory of its
+// new-session, which a cd in the pane does not change); found is false when
+// no session has its name. err is the listing's failure, no server running
+// included. A session's name is unique per server, not per workspace, so the
+// directory is what says whose session holds the name.
+func (s *Session) StartDir() (dir string, found bool, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	out, err := s.cmdExec.Output(Command(ctx, "ls", "-F", "#{session_name}\t#{session_path}"))
+	if err != nil {
+		return "", false, err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		name, d, _ := strings.Cut(line, "\t")
+		if name == s.sanitizedName {
+			return d, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 // DoesSessionExist reports whether the session is known to be alive on
 // the tmux server. Used as a sanity check before attach and for orphan
 // detection during reconcile. An inconclusive probe reads as false here,

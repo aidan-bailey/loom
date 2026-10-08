@@ -135,11 +135,10 @@ type AccountsChanged struct {
 	View AccountsView
 }
 
-// ModelChanged carries the model's own state (the agent program, the
-// default account's remote-control auth, the registry, the workspaces
-// that failed to restore, the names of the open workspaces) whenever it
-// changed, and on the first Sync. The TUI does nothing with it; a replica
-// answers those queries from it.
+// ModelChanged carries the model's own state (the default account's
+// remote-control auth and the workspace registry) whenever it changed, and
+// on the first Sync. The TUI does nothing with it; a replica answers those
+// queries from it.
 type ModelChanged struct {
 	View ModelView
 }

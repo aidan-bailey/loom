@@ -365,6 +365,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverHealth(msg)
 	case DeadVerified:
 		m.deliverDeadVerified(msg)
+	case terminalChecked:
+		m.deliverTerminalChecked(msg)
 	case rosterResult:
 		m.deliverRoster(msg)
 	case hookScanResults:

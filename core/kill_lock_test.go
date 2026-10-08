@@ -127,6 +127,7 @@ func TestKill_DiscardsARecoverableOrphanWhoseTmuxSessionIsGone(t *testing.T) {
 		{"no session of its name", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			isolateTmux(t)
 			if tc.otherSession {
 				// A server that is up but has no session of the orphan's
 				// name: tmux answers "can't find session" rather than "no

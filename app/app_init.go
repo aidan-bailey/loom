@@ -168,8 +168,16 @@ func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices
 		bells:       make(map[core.InstanceID]bool),
 	}
 	// The classic slot shows the startup workspace, which the model has
-	// served since it booted.
+	// served since it booted: under the startup name, or, for a name
+	// registered for a directory another name was registered for first
+	// (through a symlink, say), under that twin's.
+	var notes []string
 	classic, ok := h.servedNamed(startupName)
+	if !ok {
+		if classic, ok = h.twinOf(startupName); ok {
+			notes = addNote(notes, twinNote(startupName, classic.Name))
+		}
+	}
 	if !ok {
 		stopCore()
 		return nil, fmt.Errorf("initialize storage: the %s workspace could not be loaded (see loom.log)", labelOf(startupName))
@@ -224,7 +232,7 @@ func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices
 	}
 
 	if willRestoreSlots {
-		h.restoreSavedWorkspaces(savedOpen)
+		h.restoreSavedWorkspaces(savedOpen, notes)
 	}
 
 	// Capture the deferred startup-overlay decision in a closure so the
@@ -269,7 +277,9 @@ func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices
 	// the startup overlay chain (workspace registration confirm / picker).
 	registerNextOverlay()
 
-	h.showRecoverySummary(startupRecovery)
+	if !willRestoreSlots {
+		h.showStartupInfo(notes, startupRecovery)
+	}
 
 	// Apply persisted layout prefs on every startup path. The slot-restore
 	// path already applied them via loadSlot — re-applying is idempotent.
@@ -310,15 +320,19 @@ func runNow(cmd tea.Cmd) {
 // restoreSavedWorkspaces opens the registry's saved tabs (saved, the open
 // list from the last run) as tabs, plus the startup workspace when it is
 // registered and not among them, and focuses the startup workspace's tab,
-// else the last used, else the first. A saved tab that fails to open is
-// logged and kept in the open list to be retried (failedOpen); the list is
-// then persisted, and the focused tab recorded as the last used. With no
-// tab open, the classic slot shows the startup workspace instead: opening
-// it fails closed, with the error shown rather than an exit, so the user
-// can still open a workspace from the picker (its storage's write latch
-// refuses every save). Formerly core.Model.RestoreSaved and its classic
-// fallback.
-func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
+// else the last used, else the first. A saved name whose directory loom
+// serves under another registered name opens that twin instead, with a
+// note (twinNote), and one whose config dir is the global workspace's (a
+// workspace registered at $HOME) opens nothing; one workspace is one tab. A saved tab that fails to open is logged
+// and kept in the open list to be retried (failedOpen); the list is then
+// persisted, and the focused tab recorded as the last used. With no tab
+// open, the classic slot shows the startup workspace instead: opening it
+// fails closed, with the error shown rather than an exit, so the user can
+// still open a workspace from the picker (its storage's write latch
+// refuses every save). notes are the startup's info notes so far, shown
+// with this one's and the recovery summary (showStartupInfo). Formerly
+// core.Model.RestoreSaved and its classic fallback.
+func (m *home) restoreSavedWorkspaces(saved []config.Workspace, notes []string) {
 	inSaved := func(name string) bool {
 		return slices.ContainsFunc(saved, func(w config.Workspace) bool { return w.Name == name })
 	}
@@ -330,13 +344,33 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	}
 	var opened []core.WorkspaceView
 	for _, def := range desired {
-		v, err := m.openNamed(def.Name)
-		if err != nil {
+		var v core.WorkspaceView
+		var err error
+		if twin, ok := m.twinOf(def.Name); ok {
+			// Its twin's tab, never a failed name: no retry would open a
+			// second tab over one directory.
+			if twin.Name == "" {
+				// The global workspace is no tab: it is what shows while
+				// none is open.
+				notes = addNote(notes, fmt.Sprintf("%s shares its config dir with the global workspace; not restored as a tab", def.Name))
+				continue
+			}
+			notes = addNote(notes, twinNote(def.Name, twin.Name))
+			if v, err = m.core.Open(twin.ID); err != nil {
+				log.For("app").Error("workspace.restore_failed", "name", twin.Name, "err", err)
+				continue
+			}
+		} else if v, err = m.openNamed(def.Name); err != nil {
 			log.For("app").Error("workspace.restore_failed", "name", def.Name, "err", err)
-			if inSaved(def.Name) {
+			if inSaved(def.Name) && !slices.Contains(m.failedOpen, def.Name) {
 				// Was open: keep it open, to be retried.
 				m.failedOpen = append(m.failedOpen, def.Name)
 			}
+			continue
+		}
+		if slices.ContainsFunc(opened, func(o core.WorkspaceView) bool { return o.ID == v.ID }) {
+			// The open list names it twice (or a name and its twin): one
+			// workspace, one tab.
 			continue
 		}
 		opened = append(opened, v)
@@ -351,7 +385,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		if err != nil {
 			m.initCmd = tea.Batch(m.initCmd, m.handleError(fmt.Errorf("no workspace could be restored, and loading sessions failed (nothing will be saved): %w", err)))
 		}
-		m.showRecoverySummary(m.recovery())
+		m.showStartupInfo(notes, m.recovery())
 		return
 	}
 	// The workspace terminals' notices land before the summary, as when
@@ -366,8 +400,10 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 	if focusName == "" {
 		focusName = m.core.Registry().LastUsed
 	}
-	if i := slices.IndexFunc(m.slots, func(s *workspaceSlot) bool { return focusName != "" && s.name() == focusName }); i >= 0 {
-		focus = i
+	if v, _, ok := m.servedFor(focusName); ok && focusName != "" {
+		if i := slices.IndexFunc(m.slots, func(s *workspaceSlot) bool { return s.id == v.ID }); i >= 0 {
+			focus = i
+		}
 	}
 	m.loadSlot(focus)
 	// The first tab dropped the classic slot, which this path never
@@ -380,5 +416,5 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace) {
 		log.For("app").Debug("registry.update_last_used_failed", "workspace", m.name(), "err", err)
 	}
 	m.updateTabBarStatuses()
-	m.showRecoverySummary(m.recovery())
+	m.showStartupInfo(notes, m.recovery())
 }

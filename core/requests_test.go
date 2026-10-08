@@ -214,7 +214,7 @@ func TestCreate_AWorkspaceNoLongerLoadedIsRefused(t *testing.T) {
 	rs := replies(out)
 	require.Len(t, rs, 1)
 	assert.Zero(t, rs[0].ID)
-	assert.ErrorContains(t, rs[0].Err, "no longer open")
+	assert.ErrorContains(t, rs[0].Err, "not served")
 }
 
 func TestResumeWith_AppliesTheLaunchOptions(t *testing.T) {

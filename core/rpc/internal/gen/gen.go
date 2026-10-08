@@ -12,6 +12,8 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,12 +45,24 @@ var builtin = map[string]bool{
 }
 
 // Generate returns methods_gen.go for the Core interface in src
-// (core/iface.go's source).
-func Generate(src []byte) ([]byte, error) {
+// (core/iface.go's source). pkg is the source of core's other files
+// (CoreSources), whose type declarations it reads to refuse a request ID
+// nested in a parameter (nestedReqID).
+func Generate(src []byte, pkg ...[]byte) ([]byte, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "iface.go", src, parser.ParseComments)
 	if err != nil {
 		return nil, err
+	}
+	types := typeDecls(file)
+	for i, other := range pkg {
+		f, err := parser.ParseFile(fset, fmt.Sprintf("core file %d", i), other, 0)
+		if err != nil {
+			return nil, err
+		}
+		for name, t := range typeDecls(f) {
+			types[name] = t
+		}
 	}
 	imports := map[string]string{}
 	for _, imp := range file.Imports {
@@ -98,6 +112,9 @@ func Generate(src []byte) ([]byte, error) {
 			if len(p.Names) == 0 {
 				return nil, fmt.Errorf("%s: unnamed parameter: its name is its wire field", m.name)
 			}
+			if nestedReqID(p.Type, types, map[string]bool{}) {
+				return nil, fmt.Errorf("%s: parameter %s carries a request ID inside %s: the server tags only a parameter of type ReqID, so this one would reach the model untagged", m.name, p.Names[0].Name, typ)
+			}
 			for _, n := range p.Names {
 				m.params = append(m.params, param{name: n.Name, typ: typ})
 			}
@@ -129,6 +146,91 @@ func Generate(src []byte) ([]byte, error) {
 		methods = append(methods, m)
 	}
 	return emit(methods, imports, used)
+}
+
+// CoreSources reads the core package in dir: iface.go, and the source of
+// every other non-test file, for Generate.
+func CoreSources(dir string) (iface []byte, pkg [][]byte, err error) {
+	iface, err = os.ReadFile(filepath.Join(dir, "iface.go"))
+	if err != nil {
+		return nil, nil, err
+	}
+	paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, path := range paths {
+		base := filepath.Base(path)
+		if base == "iface.go" || strings.HasSuffix(base, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		pkg = append(pkg, src)
+	}
+	return iface, pkg, nil
+}
+
+// typeDecls are the types file declares, by name.
+func typeDecls(file *ast.File) map[string]ast.Expr {
+	types := map[string]ast.Expr{}
+	for _, d := range file.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, s := range gd.Specs {
+			if ts, ok := s.(*ast.TypeSpec); ok {
+				types[ts.Name.Name] = ts.Type
+			}
+		}
+	}
+	return types
+}
+
+// nestedReqID reports whether e, a parameter's type, carries a request ID
+// (core's ReqID) anywhere but as the type itself: as a slice's, map's or
+// pointer's element, or as a field of a core type it names, at any depth.
+// The server's dispatch tags only a parameter of type ReqID with the
+// connection's number (rpc.tagReq), so a nested one would reach the model
+// as the client numbered it, colliding with other clients' requests. Other
+// packages' types cannot name core's. types are core's type declarations.
+func nestedReqID(e ast.Expr, types map[string]ast.Expr, seen map[string]bool) bool {
+	if id, ok := e.(*ast.Ident); ok && id.Name == "ReqID" {
+		return false
+	}
+	return mentionsReqID(e, types, seen)
+}
+
+// mentionsReqID reports whether e names core's ReqID at any depth.
+func mentionsReqID(e ast.Expr, types map[string]ast.Expr, seen map[string]bool) bool {
+	switch e := e.(type) {
+	case *ast.Ident:
+		if e.Name == "ReqID" {
+			return true
+		}
+		t, ok := types[e.Name]
+		if !ok || seen[e.Name] {
+			return false
+		}
+		seen[e.Name] = true
+		return mentionsReqID(t, types, seen)
+	case *ast.ArrayType:
+		return mentionsReqID(e.Elt, types, seen)
+	case *ast.MapType:
+		return mentionsReqID(e.Key, types, seen) || mentionsReqID(e.Value, types, seen)
+	case *ast.StarExpr:
+		return mentionsReqID(e.X, types, seen)
+	case *ast.StructType:
+		for _, f := range e.Fields.List {
+			if mentionsReqID(f.Type, types, seen) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // findCore returns the Core interface's type.

@@ -17,7 +17,7 @@ import (
 func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 	ws := m.wsLookup(id)
 	if ws == nil || ws.cfg == nil {
-		return fmt.Errorf("save settings: the workspace is no longer open")
+		return fmt.Errorf("save settings: workspace %d is not served", id)
 	}
 	ws.cfg.ReplaceSettings(s)
 	dir := ""
@@ -53,7 +53,7 @@ func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 func (m *Model) SetUIPrefs(id WorkspaceID, p config.UIPrefs) error {
 	ws := m.wsLookup(id)
 	if ws == nil || ws.state == nil {
-		return fmt.Errorf("save UI prefs: the workspace is no longer open")
+		return fmt.Errorf("save UI prefs: workspace %d is not served", id)
 	}
 	return ws.state.SetUIPrefs(p.Clone())
 }
@@ -63,7 +63,7 @@ func (m *Model) SetUIPrefs(id WorkspaceID, p config.UIPrefs) error {
 func (m *Model) SetHelpScreensSeen(id WorkspaceID, seen uint32) error {
 	ws := m.wsLookup(id)
 	if ws == nil || ws.state == nil {
-		return fmt.Errorf("save help screens: the workspace is no longer open")
+		return fmt.Errorf("save help screens: workspace %d is not served", id)
 	}
 	return ws.state.SetHelpScreensSeen(seen)
 }

@@ -2,10 +2,16 @@ package core
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
@@ -82,6 +88,33 @@ func TestBoot_LoadsEveryRegisteredWorkspaceOnce(t *testing.T) {
 	assert.Same(t, global, m.Loaded()[0], "the global workspace first: no startup context here")
 }
 
+// Two registry entries can name one directory through a symlink (the
+// registry dedups by the path as spelled): the model serves it once, or a
+// stale twin's quit save would overwrite the other's changes.
+func TestBoot_ADirectoryRegisteredTwiceThroughASymlinkIsServedOnce(t *testing.T) {
+	a := workspaceDef(t, "a", `[{"title":"x","status":3,"program":"claude"}]`, "true")
+	// fresh has no config dir yet (registered, never used): its two
+	// spellings resolve through the repository.
+	fresh := config.Workspace{Name: "fresh", Path: t.TempDir()}
+	links := t.TempDir()
+	twin := func(def config.Workspace) config.Workspace {
+		link := filepath.Join(links, def.Name)
+		require.NoError(t, os.Symlink(def.Path, link))
+		return config.Workspace{Name: def.Name + "-via-link", Path: link}
+	}
+	aTwin, freshTwin := twin(a), twin(fresh)
+	m := bootModel(t, a, aTwin, fresh, freshTwin)
+
+	m.boot()
+
+	assert.Len(t, m.Loaded(), 3, "the global workspace, a and fresh, each once")
+	require.NotNil(t, served(m, aTwin))
+	assert.Same(t, served(m, a), served(m, aTwin))
+	assert.Len(t, served(m, a).insts, 1, "its records loaded once")
+	require.NotNil(t, served(m, freshTwin))
+	assert.Same(t, served(m, fresh), served(m, freshTwin))
+}
+
 // A workspace terminal is the workspace's first open's to start: booting
 // loads every workspace but starts no terminal, and a terminal record whose
 // session died waits for that open to be relaunched, rather than being
@@ -102,6 +135,93 @@ func TestBoot_AnUnopenedWorkspacesTerminalIsDormant(t *testing.T) {
 	assert.Contains(t, m.activeInstances(), term, "an opened workspace's terminal is probed")
 }
 
+// Loading a workspace sets the session flags of its own config dir from
+// its own config: every served workspace launches with its own settings,
+// not whichever loaded last.
+func TestBoot_EachWorkspaceSetsItsOwnSessionFlags(t *testing.T) {
+	off := workspaceDef(t, "flags-off", `[]`, "true")
+	on := workspaceDef(t, "flags-on", `[]`, "true")
+	for def, v := range map[*config.Workspace]string{&off: "false", &on: "true"} {
+		require.NoError(t, os.WriteFile(filepath.Join(config.WorkspaceConfigDir(def), config.ConfigFileName),
+			[]byte(`{"default_program":"true","claude_loom_context":`+v+`,"claude_subagent_tracking":`+v+`}`), 0o644))
+	}
+	offDir, onDir := config.WorkspaceConfigDir(&off), config.WorkspaceConfigDir(&on)
+	// Each dir starts at the opposite of its config, so a load that sets
+	// some other dir's flags shows.
+	session.SetLoomContextEnabled(offDir, true)
+	session.SetSubagentTrackingEnabled(offDir, true)
+	session.SetLoomContextEnabled(onDir, false)
+	session.SetSubagentTrackingEnabled(onDir, false)
+	m := bootModel(t, off, on)
+
+	m.boot()
+
+	assert.False(t, session.LoomContextEnabled(offDir))
+	assert.False(t, session.SubagentTrackingEnabled(offDir))
+	assert.True(t, session.LoomContextEnabled(onDir))
+	assert.True(t, session.SubagentTrackingEnabled(onDir))
+}
+
+// The boot sweep claims every served workspace's terminal title: a live
+// terminal with no record (its workspace not opened yet) waits for that
+// open, which replaces it, rather than being killed as an orphan. An
+// unclaimed session under the same roots is still swept.
+func TestBoot_TheSweepSparesEveryWorkspacesTerminal(t *testing.T) {
+	a := workspaceDef(t, "sweep-a", `[]`, "true")
+	b := workspaceDef(t, "sweep-b", `[]`, "true")
+	list := tmux.ToLoomTmuxName(a.Name) + "\t" + a.Path + "\n" +
+		tmux.ToLoomTmuxName(b.Name) + "\t" + b.Path + "\n" +
+		"loom_stray\t" + a.Path + "\n"
+	var killed []string
+	server := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			if slices.Contains(c.Args, "kill-session") {
+				killed = append(killed, c.Args[len(c.Args)-1])
+				return nil
+			}
+			return &exec.ExitError{} // has-session: no record's session runs
+		},
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			if c.Args[0] == "tmux" && slices.Contains(c.Args, "ls") {
+				return []byte(list), nil
+			}
+			return nil, nil
+		},
+	}
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	m := NewForTest(Options{Registry: &config.WorkspaceRegistry{Workspaces: []config.Workspace{a, b}}, CmdExec: server})
+
+	m.boot()
+
+	assert.Equal(t, []string{tmux.SessionTarget("loom_stray")}, killed, "only the unclaimed session")
+}
+
+// A workspace that loaded is not loaded again when it is opened: only a
+// failed load is retried (retryLoad). Reloading would add every record a
+// second time on each open.
+func TestOpen_DoesNotReloadAWorkspaceThatLoaded(t *testing.T) {
+	def := workspaceDef(t, "loaded-once", `[]`, "true")
+	recs, err := json.Marshal([]map[string]any{
+		// A newer loom's terminal record: preserved, so the open starts no
+		// terminal here.
+		{"schema_version": 99, "title": def.Name, "program": "claude", "is_workspace_terminal": true, "worktree": map[string]any{}},
+		{"title": "x", "status": int(session.Paused), "program": "claude"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(config.WorkspaceConfigDir(&def), config.StateFileName), []byte(`{"instances":`+string(recs)+`}`), 0o644))
+	m := bootModel(t, def)
+	m.boot()
+	ws := served(m, def)
+	require.Len(t, ws.insts, 1, "fixture: x loaded")
+
+	for range 2 {
+		_, err := openDef(t, m, def)
+		require.NoError(t, err)
+	}
+
+	assert.Len(t, ws.insts, 1, "x once, however often the workspace is opened")
+}
+
 // openDef opens def's served workspace (Open) and returns its view.
 func openDef(t *testing.T, m *Model, def config.Workspace) (WorkspaceView, error) {
 	t.Helper()
@@ -114,6 +234,7 @@ func openDef(t *testing.T, m *Model, def config.Workspace) (WorkspaceView, error
 // open (another tab, another client) shows the same workspace, under the
 // same ID.
 func TestOpen_StartsTheWorkspaceTerminalOnTheFirstOpen(t *testing.T) {
+	isolateTmux(t)
 	a := workspaceDef(t, "term-a", `[]`, fakeClaude(t))
 	killSessionAtEnd(t, "term-a")
 	m := bootModel(t, a)
@@ -141,10 +262,194 @@ func TestOpen_AnUnknownWorkspaceIsAnError(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// A name check tmux leaves unanswered (its listing timed out under load) is
+// no evidence: the first open changes and saves nothing, rather than pausing
+// the terminal for good (only a first open relaunches one), and the health
+// tick asks again until tmux answers, then relaunches it.
+func TestEnsureTerminal_AnUnansweredNameCheckIsRetriedByTheTick(t *testing.T) {
+	for _, crashed := range []bool{true, false} {
+		name := map[bool]string{true: "crash-recovered", false: "paused"}[crashed]
+		t.Run(name, func(t *testing.T) {
+			f := newUnsettledTerminal(t, name, crashed)
+			status := f.term.GetStatus()
+
+			f.m.ensureTerminal(f.ws)
+
+			assert.Equal(t, status, f.term.GetStatus(), "no answer, no change")
+			assert.Equal(t, crashed, f.term.CrashRecovered())
+			assert.NoFileExists(t, filepath.Join(f.ws.ctx.ConfigDir, config.StateFileName), "nothing saved")
+
+			f.m.Tick()
+			out := f.m.Drain()
+			*f.starved = false
+			for _, job := range out.Jobs {
+				f.m.Deliver(job())
+			}
+
+			assert.Equal(t, session.Running, f.term.GetStatus(), "the tick asked again and relaunched it")
+			assert.False(t, f.term.CrashRecovered())
+			assert.True(t, f.term.Pane().TmuxAlive())
+			recs := savedRecords(t, f.ws.ctx.ConfigDir)
+			require.Len(t, recs, 1)
+			assert.Equal(t, session.Running, recs[0].Status)
+			assert.False(t, f.ws.terminalUnsettled, "settled")
+		})
+	}
+}
+
+// unsettledTerminal is an opened workspace whose terminal waits for a
+// relaunch (crash-recovered, or Paused by its breaker), on a model whose
+// tmux listings go unanswered while *starved is true and then answer that
+// nothing holds the terminal's name.
+type unsettledTerminal struct {
+	m       *Model
+	ws      *Workspace
+	term    *session.Instance
+	starved *bool
+}
+
+func newUnsettledTerminal(t *testing.T, name string, crashed bool) unsettledTerminal {
+	t.Helper()
+	isolateTmux(t)
+	killSessionAtEnd(t, name)
+	repo := t.TempDir()
+	status := session.Paused
+	if crashed {
+		status = session.Running
+	}
+	term, err := session.FromInstanceData(session.InstanceData{
+		Title: name, Path: repo, Status: status, Program: fakeClaude(t), IsWorkspaceTerminal: true,
+	}, t.TempDir())
+	require.NoError(t, err)
+	term.SetCrashRecovered(crashed)
+	ws := storedWorkspace(t, name)
+	ws.ctx.RepoPath = repo
+	ws.add(term)
+	starved := true
+	server := cmd_test.MockCmdExec{
+		RunFunc: func(*exec.Cmd) error { return nil },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) {
+			if starved {
+				return nil, errors.New("signal: killed")
+			}
+			return nil, nil // answered: no session holds the name
+		},
+	}
+	m := NewForTest(Options{CmdExec: server})
+	m.SetWorkspacesForTest(ws)
+	m.SetGateForTest("github", true, time.Now())
+	m.Drain()
+	return unsettledTerminal{m: m, ws: ws, term: term, starved: &starved}
+}
+
+// tickAndDeliver runs the model's tick and delivers what its jobs return,
+// reporting how many of them were name checks.
+func (f unsettledTerminal) tickAndDeliver() (checks int) {
+	f.m.Tick()
+	for _, job := range f.m.Drain().Jobs {
+		r := job()
+		if _, ok := r.(terminalChecked); ok {
+			checks++
+		}
+		f.m.Deliver(r)
+	}
+	return checks
+}
+
+// The tick keeps asking while tmux keeps not answering: each answer that
+// is no answer frees the next tick to ask again, so a terminal is never
+// left waiting for a check nobody makes.
+func TestSettleTerminals_AsksAgainAfterEveryUnansweredCheck(t *testing.T) {
+	f := newUnsettledTerminal(t, "asks-again", false)
+	f.m.ensureTerminal(f.ws)
+
+	for i := range 2 {
+		assert.Equal(t, 1, f.tickAndDeliver(), "tick %d asks", i+1)
+	}
+	require.Equal(t, session.Paused, f.term.GetStatus(), "fixture: still no answer")
+	*f.starved = false
+	assert.Equal(t, 1, f.tickAndDeliver())
+
+	assert.Equal(t, session.Running, f.term.GetStatus())
+}
+
+// One check per workspace in flight: a tick while one is still running
+// asks nothing more.
+func TestSettleTerminals_OneCheckInFlight(t *testing.T) {
+	f := newUnsettledTerminal(t, "one-check", false)
+	f.m.ensureTerminal(f.ws)
+
+	f.m.Tick()
+	f.m.Tick()
+	checks := 0
+	for _, job := range f.m.Drain().Jobs {
+		if _, ok := job().(terminalChecked); ok {
+			checks++
+		}
+	}
+
+	assert.Equal(t, 1, checks)
+}
+
+// A check's answer settles only the terminal it was about: one killed
+// while the check ran is not relaunched.
+func TestSettleTerminals_AnAnswerForAGoneTerminalSettlesNothing(t *testing.T) {
+	f := newUnsettledTerminal(t, "gone", false)
+	f.m.ensureTerminal(f.ws)
+	f.m.Tick()
+	jobs := f.m.Drain().Jobs
+	require.True(t, f.ws.remove(f.term), "killed while the check ran")
+	*f.starved = false
+
+	for _, job := range jobs {
+		f.m.Deliver(job())
+	}
+
+	assert.Equal(t, session.Paused, f.term.GetStatus(), "not relaunched")
+	assert.NotContains(t, f.m.Drain().Events, Event(SessionLaunched{ID: f.m.idOf(f.term)}))
+}
+
+// Boot detects the default account's remote-control auth (a `claude auth
+// status` run) only when the global config enables remote control (or an
+// extra account is registered): the global config's setting, whatever the
+// startup config dir's says.
+func TestBoot_DetectsRemoteControlAuthByTheGlobalConfig(t *testing.T) {
+	for _, globalOn := range []bool{true, false} {
+		t.Run(map[bool]string{true: "enabled", false: "disabled"}[globalOn], func(t *testing.T) {
+			global, home := t.TempDir(), t.TempDir()
+			t.Setenv(config.EnvGlobalDir, global)
+			t.Setenv(config.EnvHome, home)
+			write := func(dir string, on bool) {
+				data := fmt.Sprintf(`{"claude_remote_control":%t}`, on)
+				require.NoError(t, os.WriteFile(filepath.Join(dir, config.ConfigFileName), []byte(data), 0o644))
+			}
+			write(global, globalOn)
+			write(home, !globalOn) // the startup config dir says the opposite
+			asked := false
+			server := cmd_test.MockCmdExec{
+				RunFunc: func(*exec.Cmd) error { return &exec.ExitError{} },
+				OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+					if slices.Contains(c.Args, "auth") && slices.Contains(c.Args, "status") {
+						asked = true
+						return []byte(`{"loggedIn":true,"authMethod":"claude.ai"}`), nil
+					}
+					return nil, nil
+				},
+			}
+			m := NewForTest(Options{Program: "claude", Registry: &config.WorkspaceRegistry{}, CmdExec: server})
+
+			m.Boot()
+
+			assert.Equal(t, globalOn, asked)
+		})
+	}
+}
+
 // A terminal its restart breaker stopped stays Paused, since nothing can
 // resume a workspace terminal: the first open after a start is the user
 // asking for it again, so it relaunches with its breaker reset.
 func TestEnsureTerminal_ATrippedTerminalIsRelaunched(t *testing.T) {
+	isolateTmux(t)
 	repo := t.TempDir()
 	killSessionAtEnd(t, "tripped")
 	term, err := session.FromInstanceData(session.InstanceData{
@@ -166,6 +471,151 @@ func TestEnsureTerminal_ATrippedTerminalIsRelaunched(t *testing.T) {
 	assert.Equal(t, session.Running, term.GetStatus())
 	assert.Zero(t, term.RestartFailureCount(), "its breaker is reset")
 	assert.Contains(t, m.Drain().Events, Event(SessionLaunched{ID: m.idOf(term)}))
+	recs := savedRecords(t, ws.ctx.ConfigDir)
+	require.Len(t, recs, 1)
+	assert.Equal(t, session.Running, recs[0].Status, "saved at once")
+}
+
+// startForeignSession starts title's tmux session in dir, standing in for
+// another workspace's (or another loom's) session that holds the same name,
+// and kills it when the test ends. The test runs on a server of its own
+// (isolateTmux), which this new-session starts.
+func startForeignSession(t *testing.T, title, dir string) {
+	t.Helper()
+	killSessionAtEnd(t, title)
+	out, err := tmux.Command(context.Background(), "new-session", "-d", "-s", tmux.ToLoomTmuxName(title), "-c", dir, "sleep 300").CombinedOutput()
+	require.NoError(t, err, "%s", out)
+}
+
+// sessionPath is the start directory of title's live tmux session on the
+// test's private server, "" when it is not running.
+func sessionPath(t *testing.T, title string) string {
+	t.Helper()
+	out, err := tmux.Command(context.Background(), "display-message", "-p", "-t", tmux.PaneTarget(tmux.ToLoomTmuxName(title)), "#{session_path}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// A workspace terminal's name is unique per tmux server, not per
+// workspace: another workspace's session (or another loom's) can hold it,
+// and so can an agent of this workspace titled after it, whose worktree
+// lies in the repository (<repo>/.loom/worktrees), or the terminal of a
+// workspace nested in the repository: a terminal's own session starts in
+// the repository itself, nowhere below it. A first open must
+// neither kill that session to relaunch the terminal nor adopt it: the
+// terminal stays Paused and the other session runs on. Both starts of the
+// reproduction: a terminal saved Running whose name reconcile finds held,
+// and one saved Paused (the first start's outcome).
+func TestOpen_ATerminalNameHeldElsewhereIsLeftRunning(t *testing.T) {
+	for _, where := range []string{"another directory", "its agents' worktrees", "a nested workspace's repo"} {
+		for _, status := range []session.Status{session.Running, session.Paused} {
+			t.Run(where+"/"+status.String(), func(t *testing.T) {
+				isolateTmux(t)
+				name := "held-" + strings.ToLower(status.String())
+				def := workspaceDef(t, name, `[]`, "true")
+				elsewhere := t.TempDir()
+				switch where {
+				case "its agents' worktrees":
+					elsewhere = filepath.Join(config.WorkspaceConfigDir(&def), "worktrees", name+"_1")
+				case "a nested workspace's repo":
+					// Another workspace whose repository lies inside this one
+					// (a submodule, say), its terminal titled like this one's.
+					elsewhere = filepath.Join(def.Path, "nested")
+				}
+				require.NoError(t, os.MkdirAll(elsewhere, 0o755))
+				startForeignSession(t, name, elsewhere)
+				rec, err := json.Marshal([]map[string]any{{
+					"title": name, "path": def.Path, "status": int(status), "program": fakeClaude(t), "is_workspace_terminal": true,
+				}})
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(config.WorkspaceConfigDir(&def), config.StateFileName), []byte(`{"instances":`+string(rec)+`}`), 0o644))
+				t.Setenv(config.EnvGlobalDir, t.TempDir())
+				// The production executor: reconcile, the sweep and the open
+				// all see the private server's sessions.
+				m := NewForTest(Options{Registry: &config.WorkspaceRegistry{Workspaces: []config.Workspace{def}}})
+				m.boot()
+				term := served(m, def).terminal()
+				require.NotNil(t, term)
+				require.Equal(t, session.Paused, term.GetStatus(), "reconcile pauses a record whose name another session holds")
+
+				_, err = openDef(t, m, def)
+				require.NoError(t, err)
+
+				assert.Equal(t, canonical(t, elsewhere), canonical(t, sessionPath(t, name)), "the other session still runs, where it started")
+				assert.Equal(t, session.Paused, term.GetStatus(), "the terminal stays Paused")
+				assert.False(t, term.CrashRecovered())
+			})
+		}
+	}
+}
+
+// savedRecords reads the instance records dir's state.json holds.
+func savedRecords(t *testing.T, dir string) []session.InstanceData {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, config.StateFileName))
+	require.NoError(t, err)
+	var st struct {
+		Instances []session.InstanceData `json:"instances"`
+	}
+	require.NoError(t, json.Unmarshal(data, &st))
+	return st.Instances
+}
+
+// A first open that creates, relaunches or pauses the workspace terminal
+// saves the workspace at once. Waiting for the next save (a Create, or
+// quit) left a live terminal with no record after a crash, which the next
+// first open killed and recreated, losing its conversation.
+func TestOpen_SavesTheTerminalItChanged(t *testing.T) {
+	t.Run("created", func(t *testing.T) {
+		isolateTmux(t)
+		def := workspaceDef(t, "saved-new", `[]`, fakeClaude(t))
+		killSessionAtEnd(t, def.Name)
+		m := bootModel(t, def)
+		m.boot()
+
+		_, err := openDef(t, m, def)
+		require.NoError(t, err)
+
+		recs := savedRecords(t, config.WorkspaceConfigDir(&def))
+		require.Len(t, recs, 1)
+		assert.Equal(t, def.Name, recs[0].Title)
+		assert.True(t, recs[0].IsWorkspaceTerminal)
+	})
+
+	t.Run("paused, its name held elsewhere", func(t *testing.T) {
+		isolateTmux(t)
+		def := workspaceDef(t, "saved-held", `[]`, "true")
+		rec, err := json.Marshal([]map[string]any{{
+			"title": def.Name, "path": def.Path, "status": int(session.Running), "program": fakeClaude(t), "is_workspace_terminal": true,
+		}})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(config.WorkspaceConfigDir(&def), config.StateFileName), []byte(`{"instances":`+string(rec)+`}`), 0o644))
+		t.Setenv(config.EnvGlobalDir, t.TempDir())
+		m := NewForTest(Options{Registry: &config.WorkspaceRegistry{Workspaces: []config.Workspace{def}}})
+		m.boot()
+		require.True(t, served(m, def).terminal().CrashRecovered(), "fixture: its session died with loom")
+		startForeignSession(t, def.Name, t.TempDir()) // taken while nobody had it open
+
+		_, err = openDef(t, m, def)
+		require.NoError(t, err)
+
+		recs := savedRecords(t, config.WorkspaceConfigDir(&def))
+		require.Len(t, recs, 1)
+		assert.Equal(t, session.Paused, recs[0].Status)
+	})
+}
+
+// canonical resolves p's symlinks (a temp dir may be reached through one).
+func canonical(t *testing.T, p string) string {
+	t.Helper()
+	if p == "" {
+		return ""
+	}
+	r, err := filepath.EvalSymlinks(p)
+	require.NoError(t, err)
+	return r
 }
 
 // Opening a workspace whose load failed loads it again, rereading it from
@@ -244,6 +694,7 @@ func TestOpen_TheGlobalWorkspaceIsTheServedOne(t *testing.T) {
 // Quitting saves every workspace the model serves, not only the opened
 // ones.
 func TestSaveForQuit_SavesEveryServedWorkspace(t *testing.T) {
+	isolateTmux(t) // the open starts a's terminal
 	a := workspaceDef(t, "a", `[]`, "true")
 	b := workspaceDef(t, "b", `[]`, "true")
 	m := bootModel(t, a, b)
@@ -257,6 +708,31 @@ func TestSaveForQuit_SavesEveryServedWorkspace(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(config.WorkspaceConfigDir(&b), config.StateFileName))
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"unshown"`)
+}
+
+// A workspace nobody opened in this run must not hold quit hostage: one
+// whose repository is gone is skipped, its config dir never recreated, and
+// one whose save fails is only logged. A workspace a client opened keeps
+// the sticky quit, so the user can fix the cause and retry.
+func TestSaveForQuit_AnUnopenedWorkspaceNeverBlocksQuit(t *testing.T) {
+	gone := workspaceDef(t, "gone", `[]`, "true")
+	stuck := workspaceDef(t, "stuck", `[]`, "true")
+	m := bootModel(t, gone, stuck)
+	m.boot()
+	require.NoError(t, os.RemoveAll(gone.Path), "a deleted (or unmounted) repository")
+	// A directory where state.json goes: the save's rename fails, as on a
+	// read-only path, for root too.
+	statePath := filepath.Join(config.WorkspaceConfigDir(&stuck), config.StateFileName)
+	require.NoError(t, os.Remove(statePath))
+	require.NoError(t, os.MkdirAll(filepath.Join(statePath, "x"), 0o755))
+
+	assert.NoError(t, m.SaveForQuit(), "nobody opened either")
+	assert.NoDirExists(t, config.WorkspaceConfigDir(&gone), "a quit never recreates a vanished config dir")
+
+	served(m, stuck).opened = true
+	err := m.SaveForQuit()
+	require.Error(t, err, "an opened workspace's failed save still refuses the quit")
+	assert.Contains(t, err.Error(), "stuck")
 }
 
 // The published state is every served workspace and its instances, in

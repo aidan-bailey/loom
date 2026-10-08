@@ -197,8 +197,35 @@ func TestServe_EveryClientsSelectionReachesTheModel(t *testing.T) {
 
 	b.SetSelected(9)
 	require.NoError(t, b.FlushForTest())
+	a.SetSelected(0)
+	require.NoError(t, a.FlushForTest())
+	assert.Equal(t, []core.InstanceID{9}, loop.SelectedForTest(), "a client that selects nothing drops its row")
+
+	a.SetSelected(7)
+	require.NoError(t, a.FlushForTest())
 	a.Close()
 	require.Eventually(t, func() bool {
 		return reflect.DeepEqual([]core.InstanceID{9}, loop.SelectedForTest())
 	}, 5*time.Second, time.Millisecond, "a client that goes takes its selection with it")
+}
+
+// TestServe_AConnectionClosingAfterAModelPanicIsNoCrash: after the model
+// panicked, every loop call re-raises its LoopPanic. A client closing then
+// makes the server drop its selection, a loop call on the connection's own
+// goroutine: the panic must become the server's fatal error, not escape
+// that goroutine and end the process.
+func TestServe_AConnectionClosingAfterAModelPanicIsNoCrash(t *testing.T) {
+	loop := core.StartForTest(core.NewForTest(core.Options{}))
+	t.Cleanup(loop.Stop)
+	srv := NewServer(loop)
+	a, b := net.Pipe()
+	srv.Serve(a)
+	c, err := Dial(b)
+	require.NoError(t, err)
+	c.SetSelected(7)
+	require.NoError(t, c.FlushForTest())
+	require.NotNil(t, catch(func() { loop.DeliverForTest(core.StartResult{}) }), "fixture: the model panics")
+
+	within(t, 5*time.Second, "the client's Close", c.Close)
+	within(t, 5*time.Second, "the server's Close", srv.Close)
 }

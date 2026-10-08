@@ -141,36 +141,134 @@ func KillOwnedTmuxSession(title string, scope SweepScope, cmdExec internalexec.E
 	return false, nil
 }
 
-// startedElsewhere reports whether the live tmux session of the record
-// titled title was started outside own, the directory the record's session
-// starts in (its worktree, or its repository for a workspace terminal).
-// Session names are unique per tmux server, not per workspace, so another
-// workspace's session can carry this record's name: reconcile must neither
-// restore this record onto it nor kill it. Only positive evidence counts:
-// an unreadable listing, a session with no start directory or a record with
-// no directory of its own reads as false, which keeps reconcile's old
-// behaviour.
-func startedElsewhere(title, own string, cmdExec internalexec.Executor) bool {
-	ownDir := canonicalPath(own)
-	if ownDir == "" {
+// SessionHome is where a record's own tmux session starts. A workspace
+// terminal's starts in its repository itself (loom launches it with -c
+// <repo>), so only an exact match is its own: the repository also holds
+// <repo>/.loom/worktrees, where an agent titled after the workspace starts
+// its session under the terminal's tmux name. Any other record's session
+// starts in its worktree or below it.
+type SessionHome struct {
+	// Dir is the record's repository (a workspace terminal's) or worktree.
+	Dir string
+	// Exact means only Dir itself, not a directory below it.
+	Exact bool
+}
+
+// sessionHome is the SessionHome of a record.
+func sessionHome(isTerminal bool, path, worktreePath string) SessionHome {
+	if isTerminal {
+		return SessionHome{Dir: path, Exact: true}
+	}
+	return SessionHome{Dir: worktreePath}
+}
+
+// SessionHome is where i's own tmux session starts (see the type).
+func (i *Instance) SessionHome() SessionHome {
+	wt := ""
+	if gw := i.getGitWorktree(); gw != nil {
+		wt = gw.GetWorktreePath()
+	}
+	return sessionHome(i.IsWorkspaceTerminal, i.Path, wt)
+}
+
+// holds reports whether dir, a session's start directory, is where h's
+// session starts: Dir itself or, unless Exact, below it. An empty or
+// relative dir or Dir holds nothing.
+func (h SessionHome) holds(dir string) bool {
+	d, o := canonicalPath(dir), canonicalPath(h.Dir)
+	if d == "" || o == "" {
 		return false
 	}
+	if h.Exact {
+		return d == o
+	}
+	return pathWithin(d, o)
+}
+
+// startedElsewhere reports whether the live tmux session of the record
+// titled title was started anywhere but where its own session starts
+// (home). Session names are unique per tmux server, not per workspace, so
+// another workspace's session, or an agent's titled after a workspace
+// terminal, can carry this record's name: reconcile must neither restore
+// this record onto it nor kill it. Only positive evidence counts: an
+// unreadable listing, a session with no start directory or a record with no
+// directory of its own reads as false, which keeps reconcile's old
+// behaviour.
+func startedElsewhere(title string, home SessionHome, cmdExec internalexec.Executor) bool {
+	if canonicalPath(home.Dir) == "" {
+		return false
+	}
+	dir, found, err := sessionStartDir(title, cmdExec)
+	if err != nil || !found || canonicalPath(dir) == "" {
+		return false
+	}
+	return !home.holds(dir)
+}
+
+// HeldElsewhere reports whether a live tmux session holds the name of the
+// record titled title without being provably the record's own, that is
+// started where its own session starts (home, Instance.SessionHome). A
+// caller about to kill or replace whatever runs under that name (a
+// workspace terminal's Restart or CrashRestart) checks it first, since
+// another workspace's session, another loom's, or an agent titled after the
+// workspace can carry the same name. Unlike reconcile's startedElsewhere it
+// fails closed on what tmux answers: a session with no start directory, or
+// a record with no directory of its own, reads as held. No session of that
+// name, or no server, is false. A listing that can't be read (a timeout on a
+// loaded server) is an error: no answer at all, so the caller should change
+// nothing and ask again later.
+func HeldElsewhere(title string, home SessionHome, cmdExec internalexec.Executor) (bool, error) {
+	dir, found, err := sessionStartDir(title, cmdExec)
+	return heldElsewhere(tmux.ToLoomTmuxName(title), home, dir, found, err)
+}
+
+// heldElsewhere is HeldElsewhere's verdict on a listing's answer (dir,
+// found, err) about the session named name.
+func heldElsewhere(name string, home SessionHome, dir string, found bool, err error) (bool, error) {
+	if err != nil {
+		if isNoTmuxServer(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("list tmux sessions to check who holds %s: %w", name, err)
+	}
+	if !found {
+		return false, nil
+	}
+	return !home.holds(dir), nil
+}
+
+// sessionHeldElsewhere is HeldElsewhere for the session ts names, asked on
+// ts's server (the session a Kill is about to close or a Resume to
+// reattach), against home, where the record's own session starts. It
+// returns the directory the session under the name was started in, for the
+// caller's message. The caller passes home from its own snapshot of the
+// record's handles: Kill clears the instance's worktree before it asks, and
+// Instance.SessionHome read then would give an agent no home at all, so
+// that its own session read as another's.
+func sessionHeldElsewhere(ts *tmux.Session, home SessionHome) (held bool, dir string, err error) {
+	dir, found, err := ts.StartDir()
+	held, err = heldElsewhere(ts.SessionName(), home, dir, found, err)
+	return held, dir, err
+}
+
+// sessionStartDir lists the tmux sessions and returns the start directory
+// (session_path) of the one named for title; found is false when none is.
+// err is the listing's failure, no server running included.
+func sessionStartDir(title string, cmdExec internalexec.Executor) (dir string, found bool, err error) {
 	name := tmux.ToLoomTmuxName(title)
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
 	output, err := cmdExec.Output(tmux.Command(ctx, "ls", "-F", sweepListFormat))
 	cancel()
 	if err != nil {
-		return false
+		return "", false, err
 	}
 	for _, line := range strings.Split(string(output), "\n") {
-		sessionName, dir, _ := strings.Cut(line, "\t")
-		if sessionName != name {
-			continue
+		sessionName, d, _ := strings.Cut(line, "\t")
+		if sessionName == name {
+			return d, true, nil
 		}
-		d := canonicalPath(dir)
-		return d != "" && !pathWithin(d, ownDir)
 	}
-	return false
+	return "", false, nil
 }
 
 // isNoTmuxServer reports whether err, from a tmux command, says no server
@@ -248,20 +346,20 @@ func DetermineRecoveryAction(status Status, tmuxAlive, worktreeExists, isWorkspa
 // of its tmux session and worktree, and takes the appropriate recovery action.
 func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalexec.Executor) (*Instance, error) {
 	tmuxAlive := CheckTmuxAlive(data.Title, cmdExec)
-	own := data.Worktree.WorktreePath
-	if data.IsWorkspaceTerminal {
-		own = data.Path
-	}
-	if tmuxAlive && data.Status != Paused && startedElsewhere(data.Title, own, cmdExec) {
-		// Another workspace's session holds this record's name. Treated as
-		// dead for this record: a restart then fails on the name and pauses
-		// it, and nothing kills the other workspace's agent. (A Paused
-		// record is left as it is whatever tmux holds, so it needs no check.)
-		log.For("reconcile").Warn("foreign_session", "title", data.Title, "own", own)
-		tmuxAlive = false
-	}
+	home := sessionHome(data.IsWorkspaceTerminal, data.Path, data.Worktree.WorktreePath)
 	wtExists := CheckWorktreeExists(data.Worktree.WorktreePath)
 	action := DetermineRecoveryAction(data.Status, tmuxAlive, wtExists, data.IsWorkspaceTerminal)
+	if tmuxAlive && data.Status != Paused && startedElsewhere(data.Title, home, cmdExec) {
+		// Another session holds this record's name (another workspace's,
+		// or an agent's titled after a workspace terminal): nothing may
+		// restore this record onto it or kill it, and a crash-restart under
+		// a name known to be taken can only fail (or, if its probe times
+		// out, adopt the other session). Paused, workspace terminals
+		// included. (A Paused record is left as it is whatever tmux holds,
+		// so it needs no check.)
+		log.For("reconcile").Warn("foreign_session", "title", data.Title, "home", home.Dir, "exact", home.Exact)
+		action = ActionMarkPaused
+	}
 	logRecoveryAction(data.Title, action)
 
 	switch action {
@@ -488,6 +586,11 @@ func canonicalPath(p string) string {
 		p = parent
 	}
 }
+
+// CanonicalPath is canonicalPath for other packages: p with its symlinks
+// resolved, through its nearest existing ancestor when p is gone; "" for
+// an empty or relative path.
+func CanonicalPath(p string) string { return canonicalPath(p) }
 
 // pathWithin reports whether p is root or lies beneath it. Both must be
 // canonical, and root must not be a filesystem root: a component-wise

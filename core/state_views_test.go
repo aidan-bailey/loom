@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/stretchr/testify/assert"
@@ -203,6 +204,27 @@ func TestWorkspacesView_AnswersAsTheModel(t *testing.T) {
 		assert.Equal(t, [2]any{v, ok}, [2]any{vv, vok}, "Workspace(%d)", id)
 		assert.Equal(t, m.IsLoaded(id), w.IsLoaded(id), "IsLoaded(%d)", id)
 	}
+}
+
+// TestModelView_CloneKeepsEveryField: a replica answers Registry from a
+// clone of the published model view, so a field the clone drops is a field
+// every client loses (the last used workspace a restore focuses, say).
+func TestModelView_CloneKeepsEveryField(t *testing.T) {
+	m := NewForTest(Options{Registry: &config.WorkspaceRegistry{
+		Workspaces:     []config.Workspace{{Name: "a", Path: "/a"}, {Name: "b", Path: "/b"}},
+		OpenWorkspaces: []string{"b", "a"},
+		LastUsed:       "b",
+	}})
+	m.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "r"})
+	v := m.modelView()
+	require.Equal(t, "b", v.Registry.LastUsed, "fixture: the view holds every field")
+	require.Len(t, v.Registry.Open, 2)
+
+	c := v.Clone()
+	assert.Equal(t, v, c)
+	assert.Equal(t, m.Registry(), c.Registry, "as the model answers")
+	c.Registry.Workspaces[0].Name = "changed"
+	assert.Equal(t, "a", v.Registry.Workspaces[0].Name, "a deep copy")
 }
 
 // TestWorkspacesView_WorkspacesIsNeverNil: Workspaces answers an empty

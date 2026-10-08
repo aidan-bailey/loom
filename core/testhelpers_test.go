@@ -1,12 +1,14 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aidan-bailey/loom/account"
@@ -17,6 +19,22 @@ import (
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/require"
 )
+
+// isolateTmuxCounter numbers isolateTmux's servers within this process.
+var isolateTmuxCounter atomic.Int64
+
+// isolateTmux points every tmux.Command in this test at a fresh private
+// server, killed when the test ends (app's helper of the same name). A test
+// that starts real sessions needs one: on the package's shared server, the
+// previous test's cleanup may have killed the last session, and a tmux
+// server exits when it has none, so a new-session that reaches it while it
+// exits fails with "server exited unexpectedly" (often under load).
+func isolateTmux(t *testing.T) {
+	t.Helper()
+	sock := fmt.Sprintf("lt-c-%d-%d", os.Getpid(), isolateTmuxCounter.Add(1))
+	t.Setenv(tmux.EnvTmuxSocket, sock)
+	t.Cleanup(func() { _ = tmux.CommandOnSocket(context.Background(), sock, "kill-server").Run() })
+}
 
 // newInst builds an unstarted instance titled title in a temp dir.
 func newInst(t *testing.T, title string) *session.Instance {

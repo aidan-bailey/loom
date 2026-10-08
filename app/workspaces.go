@@ -9,6 +9,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -125,21 +126,118 @@ func (m *home) servedNamed(name string) (core.WorkspaceView, bool) {
 	return core.WorkspaceView{}, false
 }
 
-// servedID is the ID of the served workspace called name. One the model
-// does not serve yet (registered by another process since the registry was
-// last read) is looked for again after a reread (ReloadRegistry), which
-// serves it.
+// servedID is the ID of the served workspace called name, for a client
+// that opens it by name (the picker). One the model does not serve yet
+// (registered by another process since the registry was last read) is
+// looked for again after a reread (ReloadRegistry), which serves it. One
+// whose directory the model serves under another name is refused
+// (servedFor): the TUI keys its tabs, the picker and the open list it
+// persists on names, so a tab under the other name would be closed by the
+// next picker commit and dropped from the open list, which keeps
+// registered names only. A twin (the other name is registered too) is to
+// be opened by that name; a rename while loom runs waits for a restart,
+// which serves the workspace under its new name (until a rename can reload
+// a workspace, daemon stage 3C).
 func (m *home) servedID(name string) (core.WorkspaceID, error) {
-	if v, ok := m.servedNamed(name); ok {
+	v, twin, ok := m.servedFor(name)
+	if !ok {
+		if err := m.core.ReloadRegistry(); err != nil {
+			return 0, fmt.Errorf("workspace %s: %w", labelOf(name), err)
+		}
+		v, twin, ok = m.servedFor(name)
+	}
+	switch {
+	case !ok:
+		return 0, fmt.Errorf("workspace %s is not registered", labelOf(name))
+	case v.Name == name:
 		return v.ID, nil
+	case twin && v.Name == "":
+		return 0, fmt.Errorf("%s shares its config dir with the global workspace, which loom serves: pick Global", name)
+	case twin:
+		return 0, fmt.Errorf("%s is the same directory as %s, which loom serves: open %s", name, v.Name, v.Name)
+	default:
+		return 0, fmt.Errorf("%s is the workspace loom serves as %s (renamed while loom runs, or registered twice for one directory): restart loom to open it as %s",
+			name, labelOf(v.Name), name)
 	}
-	if err := m.core.ReloadRegistry(); err != nil {
-		return 0, fmt.Errorf("workspace %s: %w", labelOf(name), err)
+}
+
+// servedFor is the served workspace the registered name stands for: the
+// one called name, else the one whose directory is name's registry
+// entry's, which the model serves under another name (it serves one
+// workspace per directory, under the name it first served it by). twin
+// reports, for the latter, that the other name is still registered (one
+// directory registered twice, as through a symlink) or is the global
+// workspace's (a workspace registered at $HOME, whose config dir is the
+// global one); otherwise name is the workspace's new name (renamed while
+// loom runs). false when the model serves neither.
+func (m *home) servedFor(name string) (v core.WorkspaceView, twin, ok bool) {
+	if v, ok := m.servedNamed(name); ok || name == "" {
+		return v, false, ok
 	}
-	if v, ok := m.servedNamed(name); ok {
-		return v.ID, nil
+	reg := m.core.Registry()
+	registered := func(n string) bool {
+		return slices.ContainsFunc(reg.Workspaces, func(w config.Workspace) bool { return w.Name == n })
 	}
-	return 0, fmt.Errorf("workspace %s is not registered", labelOf(name))
+	i := slices.IndexFunc(reg.Workspaces, func(w config.Workspace) bool { return w.Name == name })
+	if i < 0 {
+		return core.WorkspaceView{}, false, false
+	}
+	dir := config.WorkspaceConfigDir(&reg.Workspaces[i])
+	for _, v := range m.core.Workspaces() {
+		if v.ConfigDir != "" && sameDir(v.ConfigDir, dir) {
+			return v, v.Name == "" || registered(v.Name), true
+		}
+	}
+	return core.WorkspaceView{}, false, false
+}
+
+// twinOf is the served workspace whose directory the registered name's is,
+// when the model serves it under another, still-registered name, or as the
+// global workspace (servedFor). At startup such a name is that workspace:
+// the TUI shows the twin in its place (twinNote).
+func (m *home) twinOf(name string) (core.WorkspaceView, bool) {
+	v, twin, ok := m.servedFor(name)
+	return v, ok && twin
+}
+
+// twinNote is the startup's note that name is shown as served, its twin
+// (twinOf), "" being the global workspace.
+func twinNote(name, served string) string {
+	if served == "" {
+		return fmt.Sprintf("%s shares its config dir with the global workspace; showing global", name)
+	}
+	return fmt.Sprintf("%s is the same directory as %s; showing %s", name, served, served)
+}
+
+// addNote adds note to the startup's info notes once, logging it the first
+// time.
+func addNote(notes []string, note string) []string {
+	if slices.Contains(notes, note) {
+		return notes
+	}
+	log.For("app").Info("workspace.startup_note", "note", note)
+	return append(notes, note)
+}
+
+// showStartupInfo shows the startup's info line: its notes (a twin shown in
+// a name's place), then the recovery summary s, on one line.
+func (m *home) showStartupInfo(notes []string, s core.RecoverySummary) {
+	if !s.Empty() {
+		notes = append(slices.Clone(notes), s.String())
+	}
+	if len(notes) > 0 {
+		m.errBox.SetInfo(strings.Join(notes, " · "))
+	}
+}
+
+// sameDir reports whether a and b name one directory, as the model decides
+// it serves one workspace per directory: equal once their symlinks are
+// resolved (session.CanonicalPath), or once cleaned.
+func sameDir(a, b string) bool {
+	if ca := session.CanonicalPath(a); ca != "" && ca == session.CanonicalPath(b) {
+		return true
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 // openNamed opens the served workspace called name (servedID, then core's
@@ -264,8 +362,9 @@ func (m *home) openSlots() []*workspaceSlot {
 
 // checkSlotInvariant reports a violation of the embedded-focused-slot
 // invariant (see home.workspaceSlot): the focused slot is never nil, no
-// slot appears in m.slots twice, every slot shows a workspace the model
-// serves, and with tabs open the focused slot is m.slots[m.focusedSlot]. In classic/global mode (no tabs) the focused
+// slot appears in m.slots twice, no two tabs show the same workspace, every
+// slot shows a workspace the model serves, and with tabs open the focused
+// slot is m.slots[m.focusedSlot]. In classic/global mode (no tabs) the focused
 // slot is the classic slot, outside m.slots by construction.
 // Tests call it after every slot transition.
 func (m *home) checkSlotInvariant() error {
@@ -273,6 +372,7 @@ func (m *home) checkSlotInvariant() error {
 		return errors.New("slot invariant: focused slot is nil")
 	}
 	seen := make(map[*workspaceSlot]int, len(m.slots))
+	shows := make(map[core.WorkspaceID]int, len(m.slots))
 	for i, s := range m.slots {
 		if s == nil {
 			return fmt.Errorf("slot invariant: m.slots[%d] is nil", i)
@@ -281,6 +381,10 @@ func (m *home) checkSlotInvariant() error {
 			return fmt.Errorf("slot invariant: m.slots[%d] and m.slots[%d] are the same slot", j, i)
 		}
 		seen[s] = i
+		if j, dup := shows[s.id]; dup && s.id != 0 {
+			return fmt.Errorf("slot invariant: m.slots[%d] and m.slots[%d] show the same workspace", j, i)
+		}
+		shows[s.id] = i
 	}
 	// Every slot shows a workspace the model serves: the tabs, or with
 	// none open the classic slot. A bare test home has no model.

@@ -3,7 +3,6 @@ package core
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -262,11 +261,14 @@ func newWS(ctx *config.WorkspaceContext) (*Workspace, error) {
 
 // wsByConfigDir is the served workspace whose config dir is dir, nil when
 // none is. A workspace is one config dir: the registry may name it
-// differently (a rename) or the startup context may be one of its entries.
+// differently (a rename), the startup context may be one of its entries,
+// or two entries may reach it through a symlink (the registry dedups by the
+// path as spelled), so dirs compare canonically. Serving one directory
+// twice would let a stale copy's quit save overwrite the other's changes.
 func (m *Model) wsByConfigDir(dir string) *Workspace {
-	dir = filepath.Clean(dir)
+	dir = canonicalDir(dir)
 	for _, ws := range m.workspaces {
-		if filepath.Clean(ws.configDir()) == dir {
+		if canonicalDir(ws.configDir()) == dir {
 			return ws
 		}
 	}
@@ -411,29 +413,21 @@ func (m *Model) open(ws *Workspace) error {
 
 // ensureTerminal gives an opened workspace with a repository its workspace
 // terminal: it relaunches one that died while nobody had the workspace
-// open (CrashRestart) or that its restart breaker stopped (Paused), and
-// creates one when there is none, unless a record storage preserves but
-// could not load already owns the title (after a downgrade every record is
-// undecodable, the terminal included: the terminal exists, just not in this
-// binary's list, and a second same-titled record would clobber it).
+// open (CrashRestart) or that is Paused (its restart breaker stopped it),
+// unless a session it can't prove its own holds the terminal's tmux name
+// (session.HeldElsewhere; settleTerminal). It creates one when there is none, unless a
+// record storage preserves but could not load already owns the title
+// (after a downgrade every record is undecodable, the terminal included:
+// the terminal exists, just not in this binary's list, and a second
+// same-titled record would clobber it).
 func (m *Model) ensureTerminal(ws *Workspace) {
 	if ws.ctx == nil || ws.ctx.RepoPath == "" || ws.loadErr != nil {
 		return
 	}
 	if t := ws.terminal(); t != nil {
-		switch {
-		case t.CrashRecovered():
-			crashRestart(t)
-		case t.Paused():
-			// Its breaker gave up (applyLiveness), and nothing can resume a
-			// workspace terminal: a new open of the workspace is the user
-			// asking for it again.
-			t.ResetRestartFailures()
-			if err := t.Restart(); err != nil {
-				log.For("core").Error("workspace_terminal.restart_failed", "title", t.Title, "err", err)
-				return
-			}
-			m.emit(SessionLaunched{ID: m.idOf(t)})
+		if t.CrashRecovered() || t.Paused() {
+			held, err := session.HeldElsewhere(t.Title, t.SessionHome(), m.executor())
+			m.settleTerminal(ws, t, held, err)
 		}
 		return
 	}
@@ -476,6 +470,110 @@ func (m *Model) ensureTerminal(ws *Workspace) {
 	ws.add(inst)
 	if err := inst.Start(true); err != nil {
 		log.For("core").Error("workspace_terminal.start_failed", "workspace", ws.Label(), "err", err)
+	}
+	m.saveTerminal(ws)
+}
+
+// settleTerminal relaunches ws's terminal t, dead (CrashRecovered) or
+// Paused, once session.HeldElsewhere has answered held (or err) about its
+// tmux name. Both relaunches act on whatever holds that name: Restart kills
+// it first, and CrashRestart's start can adopt it when its probe times
+// out. The name is unique per tmux server, not per workspace, so another
+// workspace's session (a global agent titled after this workspace, another
+// loom's terminal) can hold it; one the record can't prove its own is left
+// running, and the terminal stays Paused.
+//
+// A check tmux left unanswered (err: a listing that timed out under load)
+// is no evidence either way, so nothing changes or is saved: Paused for
+// good would leave the terminal stuck until loom restarts, since only a
+// first open relaunches one. The workspace stays unsettled, and the health
+// tick asks again (maybeSettleTerminals) until tmux answers.
+func (m *Model) settleTerminal(ws *Workspace, t *session.Instance, held bool, err error) {
+	ws.terminalUnsettled = err != nil
+	switch {
+	case err != nil:
+		log.For("core").Warn("workspace_terminal.name_check_unanswered", "workspace", ws.Label(), "title", t.Title, "err", err)
+	case held:
+		log.For("core").Warn("workspace_terminal.name_held_elsewhere", "workspace", ws.Label(), "title", t.Title)
+		if t.CrashRecovered() {
+			t.SetCrashRecovered(false)
+			if err := t.TransitionTo(session.Paused); err != nil {
+				log.For("core").Warn("workspace_terminal.transition_failed", "title", t.Title, "err", err.Error())
+			}
+			m.saveTerminal(ws)
+		}
+	case t.CrashRecovered():
+		crashRestart(t)
+		m.saveTerminal(ws)
+	default:
+		// Its breaker gave up (applyLiveness), or reconcile found its name
+		// held: nothing can resume a workspace terminal, so a new open of
+		// the workspace is the user asking for it again.
+		t.ResetRestartFailures()
+		if err := t.Restart(); err != nil {
+			log.For("core").Error("workspace_terminal.restart_failed", "title", t.Title, "err", err)
+			return
+		}
+		m.emit(SessionLaunched{ID: m.idOf(t)})
+		m.saveTerminal(ws)
+	}
+}
+
+// terminalChecked is the answer of a name check maybeSettleTerminals
+// queued for ws's terminal inst.
+type terminalChecked struct {
+	ws   *Workspace
+	inst *session.Instance
+	held bool
+	err  error
+}
+
+// maybeSettleTerminals asks again, off the model's goroutine, who holds the
+// tmux name of each terminal settleTerminal left unsettled, one check per
+// workspace in flight; the answer settles it (deliverTerminalChecked). The
+// health tick calls it.
+func (m *Model) maybeSettleTerminals() {
+	cmdExec := m.executor()
+	for _, ws := range m.workspaces {
+		if !ws.terminalUnsettled || ws.terminalChecking {
+			continue
+		}
+		t := ws.terminal()
+		if t == nil {
+			ws.terminalUnsettled = false // killed meanwhile
+			continue
+		}
+		ws.terminalChecking = true
+		title, home := t.Title, t.SessionHome()
+		m.spawnBackground(func() any {
+			held, err := session.HeldElsewhere(title, home, cmdExec)
+			return terminalChecked{ws: ws, inst: t, held: held, err: err}
+		})
+	}
+}
+
+// deliverTerminalChecked settles the terminal a name check was about,
+// unless it left its workspace or stopped needing a relaunch meanwhile.
+func (m *Model) deliverTerminalChecked(r terminalChecked) {
+	r.ws.terminalChecking = false
+	if r.ws.terminal() != r.inst {
+		return // the next tick looks again
+	}
+	if !r.inst.CrashRecovered() && !r.inst.Paused() {
+		r.ws.terminalUnsettled = false
+		return
+	}
+	m.settleTerminal(r.ws, r.inst, r.held, r.err)
+}
+
+// saveTerminal saves ws after ensureTerminal created, relaunched or paused
+// its terminal. Otherwise the record waits for the next save (a Create, or
+// quit), and after a crash the next start finds a live terminal with no
+// record, which the next first open kills and recreates, losing its
+// conversation. A failure is logged: the terminal runs either way.
+func (m *Model) saveTerminal(ws *Workspace) {
+	if err := m.saveWS(ws); err != nil {
+		log.For("core").Warn("workspace_terminal.save_failed", "workspace", ws.Label(), "err", err)
 	}
 }
 

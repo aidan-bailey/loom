@@ -95,13 +95,12 @@ func TestLaunchProgram_ReattachLeavesFolderAlone(t *testing.T) {
 func TestLaunchProgram_SkipsHooks(t *testing.T) {
 	cases := []struct {
 		name    string
-		enabled bool
 		program string
 		noDir   bool
 	}{
-		{"non-claude", true, "aider", false},
-		{"user settings", true, "claude --settings /mine.json", false},
-		{"no config dir", true, "claude", true},
+		{"non-claude", "aider", false},
+		{"user settings", "claude --settings /mine.json", false},
+		{"no config dir", "claude", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

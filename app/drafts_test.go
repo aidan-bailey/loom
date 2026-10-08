@@ -86,3 +86,16 @@ func TestCreateRefused_LeavesNoResidue(t *testing.T) {
 	assert.Empty(t, m.pending)
 	assert.Nil(t, m.list.GetInstanceByTitle("orphaned"))
 }
+
+// TestDraftsAndScripts_DefaultToTheTUIsProgram: a draft, and a script's
+// ctx:new_instance, launch the program this TUI started with (-p, else the
+// startup workspace's), which follows only this TUI's own settings saves:
+// neither the focused workspace's config nor the model's program.
+func TestDraftsAndScripts_DefaultToTheTUIsProgram(t *testing.T) {
+	m := newTestHome(t)
+	m.program = "tui-agent"
+	require.NotEqual(t, m.program, m.settings().GetProgram(), "fixture: the workspace's program differs")
+
+	assert.Equal(t, "tui-agent", m.newDraft("", "", 0).program)
+	assert.Equal(t, "tui-agent", newScriptHost(m).DefaultProgram())
+}

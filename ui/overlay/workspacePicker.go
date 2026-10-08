@@ -250,7 +250,7 @@ func (w *WorkspacePicker) Render() string {
 
 	if !w.isStartup && w.anyFailedToLoad() {
 		warnStyle := lipgloss.NewStyle().Foreground(ui.ErrorColor)
-		content += "\n" + warnStyle.Render("! closing a workspace that failed to load (unchecking it, or Global) lets the next launch end its live sessions")
+		content += "\n" + warnStyle.Render("! closing a workspace that failed to load (unchecking it, or Global) drops it from the open list: loom stops retrying it at start")
 	}
 
 	helpStyle := lipgloss.NewStyle().Foreground(ui.Faint)
@@ -277,8 +277,9 @@ func (w *WorkspacePicker) SetWidth(width int) {
 // MarkFailedToLoad flags names as workspaces that are open but failed to
 // load (the caller's restore failures). They render labelled, with a
 // footer warning: closing one — unchecking it, or picking Global — drops
-// it from the open list, and the next launch's orphan sweep then ends its
-// live sessions, which only its staying open spares.
+// it from the open list, so loom stops retrying it at start. Its live
+// sessions are spared either way: the startup sweep leaves a workspace
+// whose load failed alone.
 func (w *WorkspacePicker) MarkFailedToLoad(names ...string) {
 	if w.failedToLoad == nil {
 		w.failedToLoad = make(map[string]bool, len(names))

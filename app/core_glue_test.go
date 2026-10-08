@@ -66,8 +66,8 @@ func TestRegisterWorkspace_RecoverySummaryWinsOverRCOffLine(t *testing.T) {
 
 // TestCheckSlotInvariant_SlotsShowServedWorkspaces: the slots are views
 // over the model's workspaces, so a tab, or a classic slot, over a
-// workspace the model does not serve is a broken invariant even when focus
-// is consistent.
+// workspace the model does not serve, or two tabs over one workspace, are a
+// broken invariant even when focus is consistent.
 func TestCheckSlotInvariant_SlotsShowServedWorkspaces(t *testing.T) {
 	t.Run("a tab over an unserved workspace", func(t *testing.T) {
 		m := fleetHome(t)
@@ -77,6 +77,15 @@ func TestCheckSlotInvariant_SlotsShowServedWorkspaces(t *testing.T) {
 		err := m.checkSlotInvariant()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "m.slots[1] shows no workspace the model serves")
+	})
+	t.Run("two tabs over one workspace", func(t *testing.T) {
+		m := fleetHome(t)
+		require.NoError(t, m.checkSlotInvariant())
+		m.slots[1].id = m.slots[0].id
+
+		err := m.checkSlotInvariant()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "show the same workspace")
 	})
 	t.Run("the classic slot over an unserved workspace", func(t *testing.T) {
 		m := newTestHome(t)

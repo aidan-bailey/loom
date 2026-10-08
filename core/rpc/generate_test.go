@@ -14,9 +14,9 @@ import (
 // TestGenerated_IsFresh fails when methods_gen.go no longer matches
 // core/iface.go: run `go generate ./core/rpc` after changing core.Core.
 func TestGenerated_IsFresh(t *testing.T) {
-	src, err := os.ReadFile("../iface.go")
+	src, pkg, err := gen.CoreSources("..")
 	require.NoError(t, err)
-	want, err := gen.Generate(src)
+	want, err := gen.Generate(src, pkg...)
 	require.NoError(t, err)
 	got, err := os.ReadFile("methods_gen.go")
 	require.NoError(t, err)

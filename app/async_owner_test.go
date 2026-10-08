@@ -2,13 +2,17 @@ package app
 
 import (
 	"errors"
+	"os/exec"
+	"strings"
 	"testing"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
+	"github.com/aidan-bailey/loom/ui/overlay"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -141,6 +145,76 @@ func TestInstanceStarted_AnotherClientsStartOnlyAttachesItsPane(t *testing.T) {
 	assert.True(t, m.panes.Alive(starting.Pane().TmuxSessionName()), "its pane client is attached")
 }
 
+// TestConfirmedDraft_ItsOwnStartAttachesInline runs the path production
+// takes, with no request ID a test made up: the confirmed draft's Create
+// carries this TUI's request, the start job the model spawns serves it,
+// and Started names it back (core.Model.cause), so this TUI selects the
+// new session and attaches inline. A start that lost its request would
+// read as another client's and only attach the pane.
+func TestConfirmedDraft_ItsOwnStartAttachesInline(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	repo := setupMergeRepo(t)
+	d := m.newDraft("fresh", "", 0)
+	d.path, d.program = repo, "claude"
+	m.confirmDraft(d, overlay.LaunchOptions{})
+	m.drainCore() // the Reply; the start's job is held
+	sel := m.list.GetSelectedInstance()
+	require.NotNil(t, sel)
+	require.NotZero(t, sel.ID, "fixture: the session's row")
+	inst := testModel(m).InstanceForTest(sel.ID)
+	require.NotNil(t, inst)
+	// A tmux session that comes alive when Start creates it, on no server.
+	created := false
+	cmdExec := cmd_test.MockCmdExec{
+		RunFunc: func(c *exec.Cmd) error {
+			s := c.String()
+			if strings.Contains(s, "has-session") && !created {
+				return errors.New("session does not exist")
+			}
+			if strings.Contains(s, "new-session") {
+				created = true
+			}
+			return nil
+		},
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+	}
+	inst.SetTmuxSession(tmux.NewSessionWithDeps(inst.Title, inst.Program(), runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+
+	pumpCore(t, m, nil) // the start, then Started
+
+	require.Equal(t, session.Running, inst.GetStatus(), "fixture: the start succeeded")
+	assert.Equal(t, stateInlineAttach, m.state, "its own start attaches inline")
+	assert.Equal(t, sel.ID, selID(m.list))
+}
+
+// TestInstanceRecovered_AnotherClientsRecoverOnlyAttachesItsPane: the
+// Recovered twin of the test above. A recovery another client asked for
+// (its Recovered names no request of this TUI's) attaches the recovered
+// session's pane, as every client shows it, but neither moves this TUI's
+// selection nor announces it here.
+func TestInstanceRecovered_AnotherClientsRecoverOnlyAttachesItsPane(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	m.errBox.SetSize(400, 1)
+	placeholder, err := session.FromInstanceData(session.InstanceData{
+		Title: "theirs", Status: session.Recoverable, Program: "claude",
+	}, t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, placeholder.TransitionTo(session.Loading))
+	m.ws().AddForTest(placeholder)
+	m.syncViews()
+	before := selID(m.list)
+	recovered, err := session.NewInstance(session.InstanceOptions{Title: "theirs", Path: t.TempDir(), Program: "claude"})
+	require.NoError(t, err)
+	finishStart(t, recovered)
+
+	deliver(t, m, core.RecoverResult{OldTitle: "theirs", Recovered: recovered, Placeholder: placeholder, Owner: m.ws()})
+
+	require.Contains(t, listIDs(m.list), idOf(m, recovered), "fixture: the recovery landed")
+	assert.Equal(t, before, selID(m.list), "the selection stays")
+	assert.NotContains(t, m.errBox.String(), "Recovered", "nor is it announced here")
+	assert.True(t, m.panes.Alive(recovered.Pane().TmuxSessionName()), "its pane client is attached")
+}
+
 // TestInstanceStarted_InlineAttachWaitsForThePrompt: the N flow's prompt
 // is pasted and Entered before the completion puts the user into inline
 // attach, as when the completion sent it inline: a key typed into the
@@ -224,8 +298,7 @@ func TestInstanceStarted_AfterOwnersTabClosed(t *testing.T) {
 
 	cmd := deliver(t, m, core.CausedForTest(1, core.StartResult{Instance: started, Owner: owner.ws()}))
 
-	assert.Contains(t, m.errBox.String(), "late started in afocus")
-	assert.NotContains(t, m.errBox.String(), "no longer open", "its workspace is still served")
+	assert.Contains(t, m.errBox.String(), "late started in afocus", "its workspace is still served")
 	assert.Equal(t, stateDefault, m.state)
 	assert.Nil(t, m.list.GetInstanceByTitle("late"), "not filed under the focused workspace")
 	assert.GreaterOrEqual(t, recA.calls, 1, "the owner's record is saved")

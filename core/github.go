@@ -73,35 +73,41 @@ type ghPollRequest struct {
 type openedRepo struct{ path, base string }
 
 // openedRepos are the repositories of every opened workspace (one a client
-// has shown since the model started), deduplicated, in the order the model
-// serves them, each with its own workspace's config.BaseBranch: every
-// workspace has its own config.json, so one setting applied across the
-// batch would resolve the others' repos against the wrong workspace's. An
-// opened workspace with no repository (the global one) stands for the
-// directory loom was started in, as classic mode always polled.
+// has shown since the model started), deduplicated, each with its own
+// workspace's config.BaseBranch: every workspace has its own config.json,
+// so one setting applied across the batch would resolve the others' repos
+// against the wrong workspace's. An opened workspace with no repository
+// (the global one) stands for the directory loom was started in, as
+// classic mode always polled. The workspaces with a repository of their own
+// come first, in the order the model serves them, then the stand-ins: when
+// loom starts in a registered repository's directory, the stand-in names
+// that repository too (compared canonically), and the repository's own
+// workspace, with its base branch, must win.
 func (m *Model) openedRepos() []openedRepo {
 	seen := map[string]bool{}
 	var out []openedRepo
-	for _, ws := range m.workspaces {
-		if !ws.opened {
-			continue
+	add := func(ws *Workspace, repo string) {
+		key := canonicalDir(repo)
+		if repo == "" || seen[key] {
+			return
 		}
-		repo := ""
-		if ws.ctx != nil {
-			repo = ws.ctx.RepoPath
-		}
-		if repo == "" {
-			repo, _ = os.Getwd()
-		}
-		if repo == "" || seen[repo] {
-			continue
-		}
-		seen[repo] = true
+		seen[key] = true
 		base := ""
 		if ws.cfg != nil {
 			base = ws.cfg.GetBaseBranch()
 		}
 		out = append(out, openedRepo{path: repo, base: base})
+	}
+	for _, ws := range m.workspaces {
+		if ws.opened && ws.ctx != nil && ws.ctx.RepoPath != "" {
+			add(ws, ws.ctx.RepoPath)
+		}
+	}
+	for _, ws := range m.workspaces {
+		if ws.opened && (ws.ctx == nil || ws.ctx.RepoPath == "") {
+			cwd, _ := os.Getwd()
+			add(ws, cwd)
+		}
 	}
 	return out
 }

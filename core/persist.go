@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
@@ -36,9 +37,11 @@ func Persistable(instances []*session.Instance) []*session.Instance {
 
 // quitSkipsSave reports whether a save error on quit is the storage's write
 // latch (ErrStorageLoadFailed). The sticky-quit policy exists so the user can
-// fix the cause and retry, but a latched storage is never reloaded by the
-// TUI, so no retry could succeed; its list is also empty by construction
-// (latchedStorageErr), and the unreadable file is left untouched. Quit.
+// fix the cause and retry, but a latched storage refuses every write: only
+// an open of its workspace clears it, by reading the workspace afresh
+// (retryLoad), so no retried quit could succeed. Its list is also empty by
+// construction (the TUI's latchedStorageErr), and the unreadable file is
+// left untouched. Quit.
 func quitSkipsSave(err error) bool {
 	return errors.Is(err, session.ErrStorageLoadFailed)
 }
@@ -50,21 +53,40 @@ func (m *Model) saveWS(ws *Workspace) error {
 
 // SaveForQuit saves every workspace the model serves before the TUI exits
 // (the TUI persists its own open list first: PersistOpenList). A failed
-// save is returned, and the TUI then refuses to quit so the user can fix
-// the cause and retry (silent data loss on exit is worse than a sticky
-// quit), except the storage's write latch (quitSkipsSave), which no retry
-// could clear. Formerly handleQuit's saves.
+// save of a workspace a client opened in this run is returned, and the TUI
+// then refuses to quit so the user can fix the cause and retry (silent data
+// loss on exit is worse than a sticky quit), except the storage's write
+// latch (quitSkipsSave), which no retry could clear.
+//
+// A workspace nobody opened is still saved, since its records change
+// without a client (its agents are crash-restarted at boot and paused by
+// the tick), but it must not hold quit hostage: a registered repository on
+// an unmounted or read-only path would refuse every quit, and every
+// takeover would time out. So its failure is only logged, and when its
+// config dir is gone (a deleted or unmounted repository) it is skipped,
+// since the save would create the dir. Formerly handleQuit's saves.
 func (m *Model) SaveForQuit() error {
 	var firstErr error
 	for _, ws := range m.workspaces {
 		if ws.storage == nil {
 			continue
 		}
-		if err := ws.storage.SaveInstances(Persistable(ws.insts)); err != nil {
-			if quitSkipsSave(err) {
-				log.For("core").Warn("quit.save_skipped", "name", ws.Name(), "reason", "storage_load_failed", "err", err)
-				continue
+		if !ws.opened {
+			if dir := ws.configDir(); dir != "" {
+				if _, err := os.Stat(dir); err != nil {
+					log.For("core").Warn("quit.save_skipped", "name", ws.Name(), "reason", "config_dir_unavailable", "err", err)
+					continue
+				}
 			}
+		}
+		err := ws.storage.SaveInstances(Persistable(ws.insts))
+		switch {
+		case err == nil:
+		case quitSkipsSave(err):
+			log.For("core").Warn("quit.save_skipped", "name", ws.Name(), "reason", "storage_load_failed", "err", err)
+		case !ws.opened:
+			log.For("core").Warn("quit.save_failed_unopened", "name", ws.Name(), "err", err)
+		default:
 			log.For("core").Error("workspace.save_failed", "name", ws.Name(), "err", err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("failed to save workspace %s: %w", ws.Label(), err)

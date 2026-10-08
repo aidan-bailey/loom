@@ -59,7 +59,7 @@ func TestByID_UnknownWorkspaces(t *testing.T) {
 	}
 	require.NotNil(t, reply, "the refused Create replies")
 	require.Error(t, reply.Err)
-	assert.Contains(t, reply.Err.Error(), "no longer open")
+	assert.Contains(t, reply.Err.Error(), "not served")
 }
 
 func TestRegistry_IsACopyAndReloads(t *testing.T) {

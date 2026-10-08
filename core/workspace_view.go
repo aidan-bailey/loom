@@ -32,9 +32,9 @@ type WorkspaceView struct {
 	// Recovery is the summary of its last orphan reconcile.
 	Recovery RecoverySummary
 	// LoadErr is the text of the error its storage failed to load with,
-	// "" once it loaded. A client shows such a workspace as failed (the
-	// picker's "(failed to load)"), and opening it retries the load
-	// (Core.Open).
+	// "" once it loaded: what a client can show a failed workspace with.
+	// Opening it retries the load (Core.Open), which reports the error
+	// again if it still fails.
 	LoadErr string
 }
 

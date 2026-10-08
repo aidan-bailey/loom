@@ -233,6 +233,353 @@ func listTitles(m *home) []string {
 	return titles
 }
 
+// savedRegistry registers defs in the registry under the test's own
+// LOOM_GLOBAL_DIR, with open as its open list and lastUsed as the
+// workspace last focused ("" for none), as a previous run left it.
+func savedRegistry(t *testing.T, open []string, lastUsed string, defs ...config.Workspace) *config.WorkspaceRegistry {
+	t.Helper()
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	for _, def := range defs {
+		require.NoError(t, reg.Add(def.Name, def.Path))
+	}
+	require.NoError(t, reg.SetOpenWorkspaces(open))
+	if lastUsed != "" {
+		require.NoError(t, reg.UpdateLastUsed(lastUsed))
+	}
+	return reg
+}
+
+// lastUsedOnDisk is the registry's last used workspace as the next launch
+// reads it.
+func lastUsedOnDisk(t *testing.T) string {
+	t.Helper()
+	fresh, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	return fresh.LastUsed
+}
+
+// TestStartupRestore_FocusesTheLastUsedTab: a plain `loom` restores the
+// saved tabs and focuses the one last used, and records it as the last
+// used again. The client's replica of the registry once dropped LastUsed,
+// so the restore focused the first tab and then wrote it as the last used.
+func TestStartupRestore_FocusesTheLastUsedTab(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	a, b := preservedTerminalWorkspace(t, "ws-a"), preservedTerminalWorkspace(t, "ws-b")
+	reg := savedRegistry(t, []string{"ws-a", "ws-b"}, "ws-b", a, b)
+
+	m := startupHome(t, &recordingExec{}, reg, "", "")
+
+	assert.Equal(t, []string{"ws-a", "ws-b"}, m.slotNames())
+	assert.Equal(t, "ws-b", m.name(), "the last used tab takes focus")
+	assert.Equal(t, "ws-b", lastUsedOnDisk(t))
+}
+
+// TestStartupRestore_TheStartupWorkspaceTakesFocus: `loom <dir>` or
+// --workspace names the workspace this TUI starts on. The restore opens it
+// beside the saved tabs when it is not among them, focuses it over the last
+// used tab, and records it as the last used.
+func TestStartupRestore_TheStartupWorkspaceTakesFocus(t *testing.T) {
+	isolateTmux(t)
+
+	t.Run("not among the saved tabs: opened beside them", func(t *testing.T) {
+		t.Setenv(config.EnvGlobalDir, t.TempDir())
+		a, b, c := preservedTerminalWorkspace(t, "ws-a"), preservedTerminalWorkspace(t, "ws-b"), preservedTerminalWorkspace(t, "ws-c")
+		reg := savedRegistry(t, []string{"ws-a", "ws-b"}, "ws-b", a, b, c)
+
+		m := startupHome(t, &recordingExec{}, reg, "ws-c", "")
+
+		assert.Equal(t, []string{"ws-a", "ws-b", "ws-c"}, m.slotNames())
+		assert.Equal(t, "ws-c", m.name(), "the startup workspace takes focus")
+		assert.Equal(t, "ws-c", lastUsedOnDisk(t))
+	})
+
+	t.Run("among the saved tabs: focused over the last used", func(t *testing.T) {
+		t.Setenv(config.EnvGlobalDir, t.TempDir())
+		a, b := preservedTerminalWorkspace(t, "ws-a"), preservedTerminalWorkspace(t, "ws-b")
+		reg := savedRegistry(t, []string{"ws-a", "ws-b"}, "ws-b", a, b)
+
+		m := startupHome(t, &recordingExec{}, reg, "ws-a", "")
+
+		assert.Equal(t, []string{"ws-a", "ws-b"}, m.slotNames())
+		assert.Equal(t, "ws-a", m.name())
+		assert.Equal(t, "ws-a", lastUsedOnDisk(t), "the focused tab is the last used from now on")
+	})
+}
+
+// TestEnterGlobalMode_ClosesTheOpenList: returning to global mode closes
+// every tab and the workspaces that failed to restore, and clears the
+// registry's open list, so the next launch lands in global mode rather than
+// restoring what the user just closed.
+func TestEnterGlobalMode_ClosesTheOpenList(t *testing.T) {
+	isolateTmux(t)
+	good := preservedTerminalWorkspace(t, "ws-good")
+	bad := corruptWorkspaces(t, "ws-bad")[0]
+	m, _ := restoreModeHome(t, &recordingExec{}, `[]`, good, bad)
+	m.ctx = cancelledCtx()
+	require.Equal(t, []string{"ws-good"}, m.slotNames())
+	require.Equal(t, []string{"ws-bad"}, m.failedOpen)
+
+	drainCmd(m.applyWorkspaceToggle(nil))
+
+	require.Empty(t, m.slots)
+	assert.Empty(t, m.failedOpen)
+	fresh, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Empty(t, fresh.OpenWorkspaces)
+}
+
+// TestOpenTab_AFailedWorkspaceThatOpensIsNoLongerFailed: a workspace that
+// failed to restore and opens later (its cause fixed, then checked in the
+// picker) is an ordinary tab from then on, no longer marked failed.
+func TestOpenTab_AFailedWorkspaceThatOpensIsNoLongerFailed(t *testing.T) {
+	isolateTmux(t)
+	good := preservedTerminalWorkspace(t, "ws-good")
+	bad := corruptWorkspaces(t, "ws-bad")[0]
+	m, _ := restoreModeHome(t, &recordingExec{}, `[]`, good, bad)
+	m.ctx = cancelledCtx()
+	require.Equal(t, []string{"ws-bad"}, m.failedOpen)
+	require.NoError(t, os.WriteFile(filepath.Join(config.WorkspaceConfigDir(&bad), config.StateFileName),
+		[]byte(`{"instances":[]}`), 0o644))
+
+	drainCmd(m.applyWorkspaceToggle([]config.Workspace{good, bad}))
+
+	assert.Equal(t, []string{"ws-good", "ws-bad"}, m.slotNames())
+	assert.Empty(t, m.failedOpen)
+	_, _ = runOpenWorkspacePicker(m)
+	require.NotNil(t, m.workspacePicker())
+	m.workspacePicker().SetWidth(200)
+	assert.NotContains(t, m.workspacePicker().Render(), "(failed to load)")
+}
+
+// TestHandleQuit_PersistsTheOpenList: quitting writes this TUI's tabs as
+// the registry's open list, whatever another process wrote there since, so
+// the next launch restores what was open at quit.
+func TestHandleQuit_PersistsTheOpenList(t *testing.T) {
+	isolateTmux(t)
+	a, b := preservedTerminalWorkspace(t, "ws-a"), preservedTerminalWorkspace(t, "ws-b")
+	m, _ := restoreModeHome(t, &recordingExec{}, `[]`, a, b)
+	m.ctx = cancelledCtx()
+	require.Equal(t, []string{"ws-a", "ws-b"}, m.slotNames())
+	other, err := config.LoadWorkspaceRegistry() // another process's
+	require.NoError(t, err)
+	require.NoError(t, other.SetOpenWorkspaces([]string{"ws-b"}))
+
+	_, cmd := m.handleQuit()
+	require.NotNil(t, cmd)
+	assert.IsType(t, tea.QuitMsg{}, cmd())
+
+	fresh, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ws-a", "ws-b"}, fresh.OpenWorkspaces)
+}
+
+// TestStartupRestore_OnlyASavedTabIsKeptAsFailed: the restore also opens
+// the startup workspace when the saved tabs lack it. If that one fails, it
+// was never open, so it is not kept open to be retried (failedOpen): the
+// open list stays the tabs that were.
+func TestStartupRestore_OnlyASavedTabIsKeptAsFailed(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	good := preservedTerminalWorkspace(t, "ws-good")
+	bad := corruptWorkspaces(t, "ws-bad")[0]
+	reg := savedRegistry(t, []string{"ws-good"}, "", good, bad)
+
+	m := startupHome(t, &recordingExec{}, reg, "ws-bad", "")
+
+	assert.Equal(t, []string{"ws-good"}, m.slotNames())
+	assert.Empty(t, m.failedOpen, "the startup workspace was not saved open")
+	fresh, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ws-good"}, fresh.OpenWorkspaces)
+}
+
+// TestStartupRestore_ANameListedTwiceIsOneTab: an open list naming a
+// workspace twice (a hand edit, a race between two writers) restores it as
+// one tab, and the list persisted after names it once.
+func TestStartupRestore_ANameListedTwiceIsOneTab(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	a, b := preservedTerminalWorkspace(t, "ws-a"), preservedTerminalWorkspace(t, "ws-b")
+	reg := savedRegistry(t, []string{"ws-a", "ws-a", "ws-b"}, "", a, b)
+	require.Len(t, reg.GetOpenWorkspaces(), 3, "fixture: the open list holds a name twice")
+
+	m := startupHome(t, &recordingExec{}, reg, "", "")
+
+	assert.Equal(t, []string{"ws-a", "ws-b"}, m.slotNames())
+	require.NoError(t, m.checkSlotInvariant())
+	fresh, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ws-a", "ws-b"}, fresh.OpenWorkspaces)
+}
+
+// twinRegistry registers ws-first, and ws-second for the same directory
+// through a symlink, under the test's own LOOM_GLOBAL_DIR, with open as the
+// open list. The model serves the directory once, as ws-first.
+func twinRegistry(t *testing.T, open ...string) *config.WorkspaceRegistry {
+	t.Helper()
+	first := preservedTerminalWorkspace(t, "ws-first")
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(first.Path, link))
+	return savedRegistry(t, open, "", first, config.Workspace{Name: "ws-second", Path: link})
+}
+
+// TestStartupHome_OnATwinShowsItsServedWorkspace: `loom --workspace
+// ws-second` (or `loom <link>`) names a directory loom serves as ws-first.
+// It starts on ws-first, saying so, rather than refusing to start.
+func TestStartupHome_OnATwinShowsItsServedWorkspace(t *testing.T) {
+	isolateTmux(t)
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	reg := twinRegistry(t)
+
+	m := startupHome(t, &recordingExec{}, reg, "ws-second", "")
+
+	assert.Empty(t, m.slots)
+	assert.Equal(t, "ws-first", m.name(), "the classic slot shows the served twin")
+	assert.Contains(t, m.errBox.String(), "ws-second is the same directory as ws-first; showing ws-first")
+	require.NoError(t, m.checkSlotInvariant())
+}
+
+// TestStartupRestore_ATwinInTheOpenListOpensItsServedWorkspace: a saved
+// tab named for a directory loom serves under another registered name
+// opens that workspace's tab, once, saying so; it is never kept as a
+// failed name, which no retry could open.
+func TestStartupRestore_ATwinInTheOpenListOpensItsServedWorkspace(t *testing.T) {
+	isolateTmux(t)
+
+	t.Run("the twin alone", func(t *testing.T) {
+		t.Setenv(config.EnvGlobalDir, t.TempDir())
+		reg := twinRegistry(t, "ws-second")
+
+		m := startupHome(t, &recordingExec{}, reg, "", "")
+
+		assert.Equal(t, []string{"ws-first"}, m.slotNames())
+		assert.Empty(t, m.failedOpen)
+		assert.Contains(t, m.errBox.String(), "ws-second is the same directory as ws-first; showing ws-first")
+		fresh, err := config.LoadWorkspaceRegistry()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"ws-first"}, fresh.OpenWorkspaces, "the open list heals")
+	})
+
+	t.Run("both names: one tab", func(t *testing.T) {
+		t.Setenv(config.EnvGlobalDir, t.TempDir())
+		reg := twinRegistry(t, "ws-first", "ws-second")
+
+		m := startupHome(t, &recordingExec{}, reg, "", "")
+
+		assert.Equal(t, []string{"ws-first"}, m.slotNames())
+		assert.Empty(t, m.failedOpen)
+		require.NoError(t, m.checkSlotInvariant())
+	})
+}
+
+// homeWorkspace registers "home", a workspace at the directory whose .loom
+// is the global config dir (as $HOME's is), with open as the open list.
+// The model serves that config dir once, as the global workspace.
+func homeWorkspace(t *testing.T, open ...string) (config.Workspace, *config.WorkspaceRegistry) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, filepath.Join(home, ".loom"))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".loom"), 0o755))
+	def := config.Workspace{Name: "home", Path: home}
+	return def, savedRegistry(t, open, "", def)
+}
+
+// TestHomeWorkspace_IsTheGlobalWorkspace: a workspace registered at $HOME
+// has the global config dir, so the model serves it as the global
+// workspace. `loom --workspace home` starts on the global workspace, saying
+// why, where it refused to start; a saved tab of it opens nothing; and the
+// picker refuses it with that reason, not a restart that cannot help.
+func TestHomeWorkspace_IsTheGlobalWorkspace(t *testing.T) {
+	isolateTmux(t)
+
+	t.Run("startup", func(t *testing.T) {
+		_, reg := homeWorkspace(t)
+
+		m := startupHome(t, &recordingExec{}, reg, "home", "")
+
+		assert.Empty(t, m.slots)
+		assert.Empty(t, m.name(), "the classic slot shows the global workspace")
+		assert.Contains(t, m.errBox.String(), "home shares its config dir with the global workspace; showing global")
+		require.NoError(t, m.checkSlotInvariant())
+	})
+
+	t.Run("a saved tab", func(t *testing.T) {
+		_, reg := homeWorkspace(t)
+		good := preservedTerminalWorkspace(t, "ws-good")
+		require.NoError(t, reg.Add(good.Name, good.Path))
+		require.NoError(t, reg.SetOpenWorkspaces([]string{"home", "ws-good"}))
+
+		m := startupHome(t, &recordingExec{}, reg, "", "")
+
+		assert.Equal(t, []string{"ws-good"}, m.slotNames())
+		assert.Empty(t, m.failedOpen)
+		assert.Contains(t, m.errBox.String(), "home shares its config dir with the global workspace; not restored as a tab")
+		fresh, err := config.LoadWorkspaceRegistry()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"ws-good"}, fresh.OpenWorkspaces, "the open list heals")
+	})
+
+	t.Run("the picker", func(t *testing.T) {
+		def, _ := homeWorkspace(t)
+		m := newRestoreHome(t, &recordingExec{})
+
+		_, err := m.activateWorkspace(def)
+
+		require.Error(t, err)
+		assert.Equal(t, "home shares its config dir with the global workspace, which loom serves: pick Global", err.Error())
+		assert.Empty(t, m.slots)
+	})
+}
+
+// TestRegisterHome_ShowsTheGlobalWorkspace: registering the directory
+// whose .loom is the global config dir (`loom ~`, with $HOME unregistered)
+// gives the global workspace, which the model serves once and which is no
+// tab. The TUI stays on global mode, or switches to it, saying why, rather
+// than opening the global workspace as a tab named "".
+func TestRegisterHome_ShowsTheGlobalWorkspace(t *testing.T) {
+	isolateTmux(t)
+	home := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		t.Setenv(config.EnvGlobalDir, filepath.Join(dir, ".loom"))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, ".loom"), 0o755))
+		return dir
+	}
+
+	t.Run("from global mode: the startup prompt", func(t *testing.T) {
+		dir := home(t)
+		reg, err := config.LoadWorkspaceRegistry()
+		require.NoError(t, err)
+		m := startupHome(t, &recordingExec{}, reg, "", dir)
+		require.Equal(t, stateConfirm, m.state, "fixture: the registration prompt")
+
+		m.Update(m.pendingConfirmation.Run()())
+
+		assert.Empty(t, m.slots, "no tab")
+		assert.Empty(t, m.name(), "the global workspace shows")
+		assert.Contains(t, m.errBox.String(), filepath.Base(dir)+" shares its config dir with the global workspace; showing global")
+		require.NoError(t, m.checkSlotInvariant())
+	})
+
+	t.Run("from a tab", func(t *testing.T) {
+		dir := home(t)
+		a := preservedTerminalWorkspace(t, "ws-a")
+		reg := savedRegistry(t, []string{"ws-a"}, "", a)
+		m := startupHome(t, &recordingExec{}, reg, "", "")
+		m.ctx = cancelledCtx()
+		require.Equal(t, []string{"ws-a"}, m.slotNames())
+
+		m.Update(registerWorkspaceMsg{name: "home", dir: dir})
+
+		assert.Empty(t, m.slots, "switched to global mode")
+		assert.Empty(t, m.name())
+		assert.Contains(t, m.errBox.String(), "home shares its config dir with the global workspace; showing global")
+		require.NoError(t, m.checkSlotInvariant())
+	})
+}
+
 // TestStartupRestore_AllFail_ShowsTheGlobalWorkspace: when every
 // workspace failed to restore, the user used to land in global mode over a
 // never-loaded startup storage with an empty list, and the first save
@@ -416,11 +763,11 @@ func TestRegisterPendingDir_RegistryWriteRunsOnUpdate(t *testing.T) {
 }
 
 // TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected: a
-// workspace that failed to restore skipped this launch's orphan sweep,
-// but restore rewrote the registry's open list without it, and so did the
-// next picker commit or quit. The next launch then never loaded it, ran
-// the sweep, and killed its live agents. It must stay in the open list
-// until it is opened or explicitly deselected.
+// workspace that failed to restore is still one the user has open, but
+// restore rewrote the registry's open list without it, and so did the next
+// picker commit or quit, so the next launch never retried it (and, before
+// the model served every workspace, its sweep killed the live agents). It
+// must stay in the open list until it is opened or explicitly deselected.
 func TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected(t *testing.T) {
 	isolateTmux(t)
 	good := preservedTerminalWorkspace(t, "ws-good")
@@ -440,8 +787,9 @@ func TestRestoreFailure_KeepsTheWorkspaceOpenUntilOpenedOrDeselected(t *testing.
 	_, _ = runOpenWorkspacePicker(m)
 	require.NotNil(t, m.workspacePicker())
 	m.workspacePicker().SetWidth(200)
-	assert.Contains(t, m.workspacePicker().Render(), "ws-bad (failed to load)",
-		"and warns that closing it condemns its live sessions")
+	rendered := m.workspacePicker().Render()
+	assert.Contains(t, rendered, "ws-bad (failed to load)", "labelled")
+	assert.Contains(t, rendered, "stops retrying it at start", "with a warning that closing it ends the retries")
 	m.dismissOverlay()
 	m.state = stateDefault
 

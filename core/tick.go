@@ -113,6 +113,10 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	// Claude temp-dir sweeps queued by workspace loads (see
 	// requestClaudeTmpSweep). Nothing when none is queued or one runs.
 	m.maybeClaudeTmpSweep()
+
+	// Workspace terminals whose relaunch waits on a name check tmux left
+	// unanswered (see settleTerminal). Nothing when none waits.
+	m.maybeSettleTerminals()
 }
 
 // Tick runs the health tick's model half (tickInst), refreshing the full
@@ -266,9 +270,10 @@ func (m *Model) deliverDeadVerified(r DeadVerified) {
 // loop goroutine.
 func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, source livenessSource) bool {
 	if m.holding(inst) == nil {
-		// The probe was taken before inst's workspace was dropped. A
-		// workspace-terminal restart here would relaunch one nothing
-		// displays. Drop the result.
+		// inst left its workspace while the probe ran (a kill, or a
+		// recover's replacement; the model never drops a workspace). A
+		// workspace-terminal restart here would relaunch a session no
+		// record holds. Drop the result.
 		return false
 	}
 	if tmuxLive == tmux.LivenessUnknown {
@@ -291,10 +296,10 @@ func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, so
 				// instance would. RestartWithOptions/Resume are both
 				// gated off for workspace terminals (see
 				// selectedPausedNotWorkspace/selectedResumableNotWorkspace
-				// in intents.go), so recovering today means killing
-				// this instance (a fresh one is auto-created from
-				// current config on next workspace activation) or
-				// fixing Program on disk and relaunching Loom.
+				// in intents.go), so it stays Paused until its
+				// workspace's first open after loom next starts, which
+				// relaunches it with its breaker reset (ensureTerminal):
+				// fix a broken Program on disk before that.
 				log.For("core").Error("workspace_terminal.restart_circuit_tripped", "title", inst.Title, "consecutive_failures", failures)
 				if err := inst.TransitionTo(session.Paused); err != nil {
 					log.For("core").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
