@@ -167,16 +167,15 @@ func (m *Model) accountDirs() map[string]string {
 	return m.accounts.Dirs()
 }
 
-// publishAccounts hands the registry to session (launch env) and the TUI
-// (badges, through AccountsChanged). Call after every registry change.
-// Loop goroutine only.
+// publishAccounts hands the registry to session (launch env); the TUI
+// learns of the change from the next Sync's AccountsChanged. Call after
+// every registry change. Loop goroutine only.
 func (m *Model) publishAccounts() {
 	var loadErr error
 	if m.accounts != nil {
 		loadErr = m.accounts.LoadErr()
 	}
 	session.SetAccountDirs(m.accountDirs(), loadErr)
-	m.emit(AccountsChanged{})
 }
 
 // ReloadAccounts re-reads accounts.json, which another loom or a `loom
@@ -404,7 +403,6 @@ func (m *Model) deliverAccountsRefreshed(msg accountsRefreshed) {
 	for name, err := range msg.errs {
 		log.For("account").Warn("sync.failed", "account", name, "err", err.Error())
 	}
-	m.emit(AccountsChanged{})
 }
 
 // AccountsLoaded reports whether the registry exists and loaded, so its

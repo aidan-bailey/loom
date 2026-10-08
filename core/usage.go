@@ -94,7 +94,11 @@ func (m *Model) RequestUsageProbe() {
 // rereads the account's auth: an expired login probes as not available,
 // the same as API-key auth, and only `claude auth status` can tell the
 // strip to say "logged out" rather than "n/a".
+//
+// Every round bumps usageGen, which republishes AccountsChanged even when
+// the round changed nothing the account view holds (publishState).
 func (m *Model) deliverUsage(msg usageResult) {
+	m.usageGen++
 	m.ensureAccountMaps()
 	reread, rereadDefault := false, false
 	for name, u := range msg.results {
@@ -110,7 +114,6 @@ func (m *Model) deliverUsage(msg usageResult) {
 		m.usage[name] = cur
 		log.For("account").Debug("usage.probe_failed", "account", name, "err", err.Error())
 	}
-	m.emit(AccountsChanged{})
 	if reread {
 		m.RequestAccountsRefresh(rereadDefault)
 	}

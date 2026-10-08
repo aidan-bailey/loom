@@ -117,17 +117,35 @@ type HealthChecked struct{}
 
 func (HealthChecked) coreEvent() {}
 
-// GitHubChanged reports a GitHub poll applied: the TUI refreshes an open
-// issue picker.
-type GitHubChanged struct{}
+// GitHubChanged carries the GitHub poll's state whenever a poll lands
+// (and on the first Sync): the TUI refreshes an open issue picker, and a
+// replica answers the GitHub queries from it.
+type GitHubChanged struct {
+	View GitHubView
+}
 
 func (GitHubChanged) coreEvent() {}
 
-// AccountsChanged reports that the account registry, an account's auth,
-// sync report or usage changed: the TUI refreshes every view showing
-// accounts (refreshAccountViews) and whether account UI shows at all
-// (ui.SetShowAccounts).
-type AccountsChanged struct{}
+// AccountsChanged carries the account state whenever the registry, an
+// account's auth, sync report or usage, or the Claude program changed
+// (and on the first Sync): the TUI refreshes every view showing accounts
+// (refreshAccountViews) and whether account UI shows at all
+// (ui.SetShowAccounts), and a replica answers the account queries from
+// it.
+type AccountsChanged struct {
+	View AccountsView
+}
+
+// ModelChanged carries the model's own state (the agent program, the
+// default account's remote-control auth, the registry, the workspaces
+// that failed to restore, the names of the open workspaces) whenever it
+// changed, and on the first Sync. The TUI does nothing with it; a replica
+// answers those queries from it.
+type ModelChanged struct {
+	View ModelView
+}
+
+func (ModelChanged) coreEvent() {}
 
 func (AccountsChanged) coreEvent() {}
 
@@ -137,6 +155,8 @@ func (AccountsChanged) coreEvent() {}
 // everything after it see the new workspace views.
 type WorkspacesChanged struct {
 	Views []WorkspaceView
+	// Classic says Views is the classic workspace alone (no tab is open).
+	Classic bool
 }
 
 func (WorkspacesChanged) coreEvent() {}
@@ -170,3 +190,15 @@ type Reply struct {
 }
 
 func (Reply) coreEvent() {}
+
+// EventTypes returns a zero value of every concrete Event type: what a
+// codec decodes events into, by type name. TestAllEventsListsEveryEvent
+// keeps it complete.
+func EventTypes() []Event {
+	return []Event{
+		AccountsChanged{}, Alive{}, ClientsStale{}, GitHubChanged{},
+		HealthChecked{}, InstancesChanged{}, ModelChanged{}, Notice{},
+		Reactivated{}, Recovered{}, Reply{}, SessionLaunched{}, Started{},
+		StatusesChanged{}, ViewsChanged{}, WorkspacesChanged{},
+	}
+}

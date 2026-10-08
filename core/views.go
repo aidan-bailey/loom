@@ -157,11 +157,15 @@ func cloneViews(views []InstanceView) []InstanceView {
 }
 
 // syncEvents publishes the workspace views that changed (WorkspacesChanged,
-// first), then the instance views that changed (ViewsChanged), and returns
-// them ahead of every other event produced since the last call, which it
-// forgets. It leaves the jobs: the loop starts those after every step.
+// first), then the model, account and GitHub views that changed
+// (publishState), then the instance views that changed (ViewsChanged), and
+// returns them ahead of every other event produced since the last call,
+// which it forgets. It leaves the jobs: the loop starts those after every
+// step.
 func (m *Model) syncEvents() []Event {
-	published := append(m.publishWorkspaces(), m.publishViews()...)
+	published := m.publishWorkspaces()
+	published = append(published, m.publishState()...)
+	published = append(published, m.publishViews()...)
 	events := m.out.Events
 	m.out.Events = nil
 	return append(published, events...)

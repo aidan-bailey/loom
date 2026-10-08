@@ -260,6 +260,11 @@ func (l *Loop) Begin() {
 	})
 }
 
+// Snapshot is the model's whole published state as events
+// (Model.Snapshot): what a server sends a client that subscribes, before
+// the diffs.
+func (l *Loop) Snapshot() []Event { return get(l, (*Model).Snapshot) }
+
 // do runs f on the loop and waits for it. A panic in f, or one an earlier
 // step raised, is re-raised here. After Stop, f does not run.
 func (l *Loop) do(f func(*Model)) {

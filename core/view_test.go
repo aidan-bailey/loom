@@ -62,13 +62,19 @@ func TestSync_PublishesChangedWorkspacesFirst(t *testing.T) {
 
 	m.notifyInfo("hello")
 	out := m.Sync()
-	require.Len(t, out.Events, 3)
+	require.Len(t, out.Events, 6)
 	_, ok := out.Events[0].(WorkspacesChanged)
 	require.True(t, ok, "workspace views first")
-	vc, ok := out.Events[1].(ViewsChanged)
+	_, ok = out.Events[1].(ModelChanged)
+	require.True(t, ok, "then the model's state")
+	_, ok = out.Events[2].(AccountsChanged)
+	require.True(t, ok, "the account state")
+	_, ok = out.Events[3].(GitHubChanged)
+	require.True(t, ok, "and the GitHub state, each published the first time")
+	vc, ok := out.Events[4].(ViewsChanged)
 	require.True(t, ok, "instance views next")
 	assert.Equal(t, m.wsIDOf(ws), vc.WS)
-	assert.Equal(t, Notice{Info: "hello"}, out.Events[2])
+	assert.Equal(t, Notice{Info: "hello"}, out.Events[5])
 
 	assert.Empty(t, m.Sync().Events, "nothing changed")
 
@@ -145,12 +151,15 @@ func TestCloneViews_CopiesSubagents(t *testing.T) {
 	assert.Nil(t, cloneViews([]InstanceView{{}})[0].Subagents, "nil stays nil")
 }
 
-// instanceEvents drops the WorkspacesChanged events from events: the
+// instanceEvents drops the workspace and state events (WorkspacesChanged,
+// ModelChanged, AccountsChanged, GitHubChanged) from events: the
 // instance-view tests count only what they publish.
 func instanceEvents(events []Event) []Event {
 	var out []Event
 	for _, ev := range events {
-		if _, ok := ev.(WorkspacesChanged); !ok {
+		switch ev.(type) {
+		case WorkspacesChanged, ModelChanged, AccountsChanged, GitHubChanged:
+		default:
 			out = append(out, ev)
 		}
 	}

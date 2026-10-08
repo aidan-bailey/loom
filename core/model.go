@@ -156,8 +156,25 @@ type Model struct {
 	wsIDs    map[*Workspace]WorkspaceID
 	nextWSID WorkspaceID
 	// publishedWS is every loaded workspace's view as last published
-	// (Sync), in Loaded order.
-	publishedWS []WorkspaceView
+	// (Sync), in Loaded order, and publishedClassic whether they were the
+	// classic workspace.
+	publishedWS      []WorkspaceView
+	publishedClassic bool
+	// publishedModel and publishedAccounts are the model and account views
+	// as last published (publishState); nil before the first.
+	publishedModel    *ModelView
+	publishedAccounts *AccountsView
+	// ghGen counts the GitHub polls applied (deliverGH), and
+	// ghPublishedGen is the count GitHubChanged last published (ghPublished
+	// once it has been).
+	ghGen, ghPublishedGen uint64
+	ghPublished           bool
+	// usageGen counts the usage probe rounds applied (deliverUsage), and
+	// usagePublishedGen is the count AccountsChanged last published. The
+	// TUI renders a usage sample's age when it refreshes its account
+	// views, so every round must reach it, even one that left the account
+	// view unchanged (the same probe failing again).
+	usageGen, usagePublishedGen uint64
 
 	out Out
 }

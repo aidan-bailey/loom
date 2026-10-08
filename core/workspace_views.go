@@ -80,13 +80,14 @@ func (m *Model) publishWorkspaces() []Event {
 			delete(m.wsIDs, ws)
 		}
 	}
-	if m.publishedWS != nil && reflect.DeepEqual(m.publishedWS, views) {
+	classic := m.classicShown()
+	if m.publishedWS != nil && m.publishedClassic == classic && reflect.DeepEqual(m.publishedWS, views) {
 		return nil
 	}
-	m.publishedWS = views
+	m.publishedWS, m.publishedClassic = views, classic
 	// The event gets its own copy, as ViewsChanged does: the TUI keeps
 	// the views, which must not alias what the next publish compares.
-	return []Event{WorkspacesChanged{Views: cloneWorkspaceViews(views)}}
+	return []Event{WorkspacesChanged{Views: cloneWorkspaceViews(views), Classic: classic}}
 }
 
 // cloneWorkspaceViews deep-copies views: the slice and every field that

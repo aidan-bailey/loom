@@ -189,7 +189,8 @@ func ghPollJob(req ghPollRequest, r internalexec.Executor) Job {
 }
 
 // deliverGH applies a poll result: replaces ghState wholesale and
-// re-joins every instance.
+// re-joins every instance. It is the one place the GitHub state changes,
+// so it bumps ghGen, which republishes GitHubChanged.
 func (m *Model) deliverGH(msg ghResult) {
 	m.ghAvailable = msg.available
 	for repo, err := range msg.errs {
@@ -201,7 +202,7 @@ func (m *Model) deliverGH(msg ghResult) {
 		m.ghBases = msg.bases
 	}
 	m.applyGitHubState()
-	m.emit(GitHubChanged{})
+	m.ghGen++
 }
 
 // baseFor returns the resolved base ref for repo, or "" before the

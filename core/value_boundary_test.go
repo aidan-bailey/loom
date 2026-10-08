@@ -18,14 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// allEvents holds a zero value of every concrete Event type, for
-// TestCoreIsValueTyped; TestAllEventsListsEveryEvent keeps it complete.
-var allEvents = []Event{
-	AccountsChanged{}, Alive{}, ClientsStale{}, GitHubChanged{},
-	HealthChecked{}, InstancesChanged{}, Notice{}, Reactivated{},
-	Recovered{}, Reply{}, SessionLaunched{}, Started{},
-	StatusesChanged{}, ViewsChanged{}, WorkspacesChanged{},
-}
+// allEvents holds a zero value of every concrete Event type (EventTypes),
+// for TestCoreIsValueTyped; TestAllEventsListsEveryEvent keeps it
+// complete.
+var allEvents = EventTypes()
 
 // modelOwned are the named types a client must never receive: the model's
 // own objects, whose memory it shares with the model.
@@ -146,8 +142,9 @@ func TestPlainProblem_Bites(t *testing.T) {
 	}
 }
 
-// TestAllEventsListsEveryEvent keeps allEvents complete: every type in the
-// package's non-test files with a coreEvent method is in it.
+// TestAllEventsListsEveryEvent keeps EventTypes (allEvents) complete:
+// every type in the package's non-test files with a coreEvent method is in
+// it, once.
 func TestAllEventsListsEveryEvent(t *testing.T) {
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(".")
@@ -176,5 +173,5 @@ func TestAllEventsListsEveryEvent(t *testing.T) {
 	}
 	sort.Strings(declared)
 	sort.Strings(listed)
-	assert.Equal(t, declared, listed, "allEvents must list every Event type")
+	assert.Equal(t, declared, listed, "EventTypes must list every Event type, once")
 }

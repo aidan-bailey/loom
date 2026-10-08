@@ -227,17 +227,17 @@ func TestMaybeReloadAccounts_AnUnchangedFileIsNotReread(t *testing.T) {
 }
 
 // TestReloadAccounts_AChangeIsReportedOnce: a change another process made
-// reaches the TUI as one AccountsChanged (publishAccounts emits it), and
-// a reload that finds nothing changed as none.
+// reaches the TUI as one AccountsChanged (the next Sync publishes the
+// changed account view), and a reload that finds nothing changed as none.
 func TestReloadAccounts_AChangeIsReportedOnce(t *testing.T) {
 	m := NewForTest(Options{})
 	main := withAccounts(t, m)
-	m.Drain()
+	m.Sync()
 	_, _, err := otherTerminal(t, m).Create("max-2", main)
 	require.NoError(t, err)
 	accountsChanged := func() int {
 		n := 0
-		for _, ev := range m.Drain().Events {
+		for _, ev := range m.Sync().Events {
 			if _, ok := ev.(AccountsChanged); ok {
 				n++
 			}
@@ -404,8 +404,8 @@ func TestAccountRequests_RefuseWithoutARegistry(t *testing.T) {
 }
 
 // TestInitAccounts_FillsTheStripOnce: the startup publication tells the
-// TUI once (AccountsChanged), which fills the strip when newHome drains;
-// a second event only repeated the same refresh.
+// TUI once (AccountsChanged, at the first Sync), which fills the strip
+// when newHome drains; a second event only repeated the same refresh.
 func TestInitAccounts_FillsTheStripOnce(t *testing.T) {
 	noCredentialOverride(t)
 	global := t.TempDir()
@@ -419,7 +419,7 @@ func TestInitAccounts_FillsTheStripOnce(t *testing.T) {
 	m.InitAccounts()
 
 	changed := 0
-	for _, ev := range m.Drain().Events {
+	for _, ev := range m.Sync().Events {
 		if _, ok := ev.(AccountsChanged); ok {
 			changed++
 		}

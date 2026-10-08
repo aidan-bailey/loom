@@ -2,6 +2,8 @@ package git
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -56,6 +58,36 @@ type DiffStats struct {
 	// Error holds any error that occurred during diff computation
 	// This allows propagating setup errors (like missing base commit) without breaking the flow
 	Error error
+}
+
+// diffStatsJSON is DiffStats as it crosses a process boundary: the error
+// as its message, which is all a client shows of it.
+type diffStatsJSON struct {
+	Content        string
+	Added, Removed int
+	Error          string `json:",omitempty"`
+}
+
+// MarshalJSON encodes d with its error as text.
+func (d DiffStats) MarshalJSON() ([]byte, error) {
+	j := diffStatsJSON{Content: d.Content, Added: d.Added, Removed: d.Removed}
+	if d.Error != nil {
+		j.Error = d.Error.Error()
+	}
+	return json.Marshal(j)
+}
+
+// UnmarshalJSON decodes a DiffStats MarshalJSON encoded.
+func (d *DiffStats) UnmarshalJSON(b []byte) error {
+	var j diffStatsJSON
+	if err := json.Unmarshal(b, &j); err != nil {
+		return err
+	}
+	*d = DiffStats{Content: j.Content, Added: j.Added, Removed: j.Removed}
+	if j.Error != "" {
+		d.Error = errors.New(j.Error)
+	}
+	return nil
 }
 
 // IsEmpty reports whether the diff contains no added lines, no
