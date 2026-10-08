@@ -162,7 +162,7 @@ func (l *Loop) handle(msg any) {
 	case jobPanicked:
 		panic(msg.p)
 	case tickDue:
-		l.m.Tick(l.m.selected)
+		l.m.Tick()
 	}
 }
 

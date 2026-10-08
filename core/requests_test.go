@@ -70,7 +70,7 @@ func TestRequests_RefusalsMatchErrRefused(t *testing.T) {
 	require.Len(t, rs, 1)
 	require.Error(t, rs[0].Err)
 	assert.NotErrorIs(t, rs[0].Err, ErrRefused, "a job's failure is no refusal")
-	assert.Contains(t, out.Events, Event(Notice{Err: rs[0].Err}), "the model reported it itself")
+	assert.Contains(t, out.Events, Event(Notice{Err: rs[0].Err, Req: 3}), "the model reported it itself, naming the request")
 }
 
 // TestKill_RepliesWhenItFinishes: an unstarted instance has no worktree, so
@@ -151,11 +151,20 @@ func TestRecover_RepliesWithTheAdoptedInstance(t *testing.T) {
 	m.spawn(m.track(4, pid, func() any {
 		return RecoverResult{Placeholder: placeholder, Owner: ws, OldTitle: "x", Recovered: adopted}
 	}))
-	rs := replies(run(m, m.Drain()))
+	out := run(m, m.Drain())
+	rs := replies(out)
 	require.Len(t, rs, 1)
 	assert.Equal(t, ReqID(4), rs[0].Req)
 	assert.NoError(t, rs[0].Err)
 	assert.Equal(t, m.idOf(adopted), rs[0].ID)
+	var rec []Recovered
+	for _, ev := range out.Events {
+		if r, ok := ev.(Recovered); ok {
+			rec = append(rec, r)
+		}
+	}
+	require.Len(t, rec, 1)
+	assert.Equal(t, ReqID(4), rec[0].Req, "Recovered names the request, for the client that made it")
 	assert.NotEqual(t, pid, rs[0].ID)
 	assert.Same(t, adopted, ws.instances()[0], "the adoption was applied before the reply")
 }
@@ -248,7 +257,8 @@ func TestIDTriggers_IgnoreAnUnknownID(t *testing.T) {
 	m.PaneQuiet(42)
 	m.VerifyDead(42)
 	assert.True(t, m.Drain().Empty())
-	m.Tick(42)
+	m.SetSelected(42)
+	m.Tick()
 	assert.NotEmpty(t, m.Drain().Jobs, "the probe is queued with no selection")
 }
 

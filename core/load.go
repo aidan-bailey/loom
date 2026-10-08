@@ -168,16 +168,15 @@ func (m *Model) reconcileOrphans(ws *Workspace, cfgDir, program string, cmdExec 
 	return summary
 }
 
-// applySessionConfig syncs the process-wide session flags (loom-context
-// injection, subagent tracking) from cfg and, when cfgDir is non-empty,
-// rewrites that config dir's loom-context prompt files — the per-load
-// setup every Claude session launched afterwards relies on.
+// applySessionConfig sets cfgDir's session flags from cfg
+// (syncSessionFlags) and, when cfgDir is non-empty, rewrites that config
+// dir's loom-context prompt files — the per-load setup every Claude
+// session launched afterwards relies on.
 func applySessionConfig(cfg *config.Config, cfgDir string) {
 	if cfg == nil {
 		return
 	}
-	session.SetLoomContextEnabled(cfg.LoomContextEnabled())
-	session.SetSubagentTrackingEnabled(cfg.SubagentTrackingEnabled())
+	syncSessionFlags(cfg, cfgDir)
 	if cfgDir == "" {
 		return
 	}
@@ -191,6 +190,15 @@ func applySessionConfig(cfg *config.Config, cfgDir string) {
 // RestoreSaved's fallback passes false, because the workspaces that failed
 // to load still have live sessions whose titles it cannot read. Formerly
 // app.loadStartupStorage.
+// syncSessionFlags sets the session flags (loom-context injection,
+// subagent tracking) of the sessions whose config dir is cfgDir from cfg.
+// They are kept per config dir: every loaded workspace launches with its
+// own config's.
+func syncSessionFlags(cfg *config.Config, cfgDir string) {
+	session.SetLoomContextEnabled(cfgDir, cfg.LoomContextEnabled())
+	session.SetSubagentTrackingEnabled(cfgDir, cfg.SubagentTrackingEnabled())
+}
+
 func (m *Model) LoadClassic(sweepTmux bool) error {
 	cfgDir := ""
 	if m.classic.ctx != nil {
@@ -207,13 +215,6 @@ func (m *Model) LoadClassic(sweepTmux bool) error {
 // rather than an exit, so the user can still open a workspace from the
 // picker. Formerly app.loadStartupStorageFallback.
 func (m *Model) loadClassicFallback() {
-	// Each failed OpenTab re-synced these process-wide flags from its own
-	// workspace's config; put the startup config's values back before
-	// anything below launches a session.
-	if cfg := m.classic.cfg; cfg != nil {
-		session.SetLoomContextEnabled(cfg.LoomContextEnabled())
-		session.SetSubagentTrackingEnabled(cfg.SubagentTrackingEnabled())
-	}
 	if err := m.LoadClassic(false); err != nil {
 		m.notifyErr(fmt.Errorf("no workspace could be restored, and loading sessions failed (nothing will be saved): %w", err))
 	}

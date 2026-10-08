@@ -4,14 +4,13 @@ import (
 	"fmt"
 
 	"github.com/aidan-bailey/loom/config"
-	"github.com/aidan-bailey/loom/session"
 )
 
 // SaveSettings replaces the workspace's settings with s and writes its
 // config.json: to its context's config dir, or to the default config dir
 // for a bare context. Then it applies what a settings change does at
 // once: the agent program (SetProgram) and the two launch toggles the
-// session package reads globally (SetLoomContextEnabled,
+// session package keeps per config dir (SetLoomContextEnabled,
 // SetSubagentTrackingEnabled). An unknown id is an error. Moved from
 // app/state_settings.go, which did this to the model's own config.
 func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
@@ -38,10 +37,14 @@ func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 		}
 	}
 	m.SetProgram(ws.cfg.GetProgram())
-	// Re-sync the loom-context toggle so an in-place change takes effect on
-	// the next session launch without a workspace switch.
-	session.SetLoomContextEnabled(ws.cfg.LoomContextEnabled())
-	session.SetSubagentTrackingEnabled(ws.cfg.SubagentTrackingEnabled())
+	// Re-sync the session flags so an in-place change takes effect on the
+	// workspace's next session launch. Keyed by the context's config dir,
+	// which its instances carry, not the dir the settings were saved to.
+	flagsDir := ""
+	if ws.ctx != nil {
+		flagsDir = ws.ctx.ConfigDir
+	}
+	syncSessionFlags(ws.cfg, flagsDir)
 	return nil
 }
 

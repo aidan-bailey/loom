@@ -1,6 +1,7 @@
 package core
 
 import (
+	"slices"
 	"time"
 
 	"github.com/aidan-bailey/loom/account"
@@ -207,9 +208,9 @@ func (l *Loop) DeliverForTest(result any) {
 // TickForTest runs the model's health tick on the loop, as its timer
 // would.
 func (l *Loop) TickForTest() {
-	l.do(func(m *Model) { m.Tick(m.selected) })
+	l.do(func(m *Model) { m.Tick() })
 }
 
-// SelectedForTest returns the instance the probe refreshes the full diff
-// of (SetSelected).
-func (m *Model) SelectedForTest() InstanceID { return m.selected }
+// SelectedForTest returns the instances the probe refreshes the full diff
+// of (SetSelected, SetSelection).
+func (m *Model) SelectedForTest() []InstanceID { return slices.Clone(m.selected) }

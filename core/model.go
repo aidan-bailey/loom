@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/aidan-bailey/loom/account"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
@@ -68,9 +69,16 @@ type Model struct {
 	// (deliverAccountsRefreshed), and read by every launch decision.
 	rcAuth session.RemoteControlAuth
 
-	// selected is the instance whose full diff the health tick's probe
-	// refreshes: the TUI's selected row (SetSelected), 0 for none.
-	selected InstanceID
+	// cause is the request on whose behalf the model is applying a job's
+	// result (a tracked job's, or one a job serving that request spawned),
+	// 0 for none. The Started, Recovered and Notice events emitted
+	// meanwhile carry it (emit), so a server can route them to the client
+	// that made the request, and jobs spawned meanwhile serve it too
+	// (spawn).
+	cause ReqID
+	// selected are the instances whose full diff the health tick's probe
+	// refreshes: each client's selected row (SetSelected, SetSelection).
+	selected []InstanceID
 
 	// gates throttle the background jobs riding the health tick (roster
 	// query, subagent scan, GitHub poll, account usage probe, accounts
@@ -191,8 +199,7 @@ func New(o Options) (*Model, error) {
 	if o.Ctx != nil {
 		cfgDir = o.Ctx.ConfigDir
 	}
-	session.SetLoomContextEnabled(o.Config.LoomContextEnabled())
-	session.SetSubagentTrackingEnabled(o.Config.SubagentTrackingEnabled())
+	syncSessionFlags(o.Config, cfgDir)
 	if err := session.WriteLoomContextFiles(cfgDir); err != nil {
 		log.For("core").Warn("loom_context.write_failed", "err", err.Error())
 	}
@@ -266,19 +273,78 @@ func (m *Model) RCAuth() session.RemoteControlAuth { return m.rcAuth }
 func (m *Model) SetRCAuth(a session.RemoteControlAuth) { m.rcAuth = a }
 
 // emit queues an event for the TUI.
-func (m *Model) emit(e Event) { m.out.Events = append(m.out.Events, e) }
+func (m *Model) emit(e Event) {
+	if m.cause != 0 {
+		switch ev := e.(type) {
+		case Notice:
+			ev.Req = m.cause
+			e = ev
+		case Started:
+			ev.Req = m.cause
+			e = ev
+		case Recovered:
+			ev.Req = m.cause
+			e = ev
+		}
+	}
+	m.out.Events = append(m.out.Events, e)
+}
 
-// spawn queues a job for the caller to run; nil is ignored.
+// spawn queues a job for the caller to run; nil is ignored. A job spawned
+// on a request's behalf (m.cause) serves that request too: its result is
+// delivered as caused, so the chain's last event (a Create's start, then
+// its prompt send, then Started) still names the request.
 func (m *Model) spawn(j Job) {
+	if j == nil {
+		return
+	}
+	if req := m.cause; req != 0 {
+		inner := j
+		j = func() any { return caused{req: req, result: inner()} }
+	}
+	m.out.Jobs = append(m.out.Jobs, j)
+}
+
+// spawnBackground queues a job the model runs on its own behalf (the
+// tick's probe, a gated job, a dead-session check), which serves no
+// request even when one's delivery queues it.
+func (m *Model) spawnBackground(j Job) {
 	if j != nil {
 		m.out.Jobs = append(m.out.Jobs, j)
 	}
 }
 
+// caused is a job's result delivered on behalf of the request req: see
+// spawn and Model.cause.
+type caused struct {
+	req    ReqID
+	result any
+}
+
+// causedBy runs f on behalf of req: the Started, Recovered and Notice
+// events f emits carry req, and the jobs it spawns serve req too.
+func (m *Model) causedBy(req ReqID, f func()) {
+	prev := m.cause
+	m.cause = req
+	defer func() { m.cause = prev }()
+	f()
+}
+
 // SetSelected names the instance whose full diff the health tick's probe
 // refreshes: the TUI's selected row, 0 for none. The loop's tick reads it
-// (Loop).
-func (m *Model) SetSelected(id InstanceID) { m.selected = id }
+// (Loop). With several clients a server sets them all (SetSelection).
+func (m *Model) SetSelected(id InstanceID) {
+	if id == 0 {
+		m.SetSelection(nil)
+		return
+	}
+	m.SetSelection([]InstanceID{id})
+}
+
+// SetSelection names every instance whose full diff the health tick's
+// probe refreshes: each client's selected row. A server serving several
+// clients keeps each one's SetSelected and sets their union here.
+func (m *Model) SetSelection(ids []InstanceID) { m.selected = slices.Clone(ids) }
 
 // takeJobs returns the jobs queued since the last take, and forgets them.
 // The loop starts them after every step.
@@ -310,6 +376,8 @@ func (m *Model) Drain() Out {
 func (m *Model) Deliver(msg any) {
 	switch msg := msg.(type) {
 	case nil:
+	case caused:
+		m.causedBy(msg.req, func() { m.Deliver(msg.result) })
 	case StartResult:
 		m.deliverStart(msg)
 	case ResumeResult:

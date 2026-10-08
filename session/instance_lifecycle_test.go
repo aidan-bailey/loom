@@ -489,11 +489,9 @@ func (f recordingPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
 // session restored after a loom restart (built from the bare program)
 // relaunched with no hooks and no loom context at all.
 func TestInstance_RestartIsARealLaunch(t *testing.T) {
-	withTracking(t, true)
 	configDir := t.TempDir()
 	require.NoError(t, WriteLoomContextFiles(configDir))
-	SetLoomContextEnabled(true)
-	t.Cleanup(func() { SetLoomContextEnabled(false) })
+	SetLoomContextEnabled(configDir, true)
 
 	var hasSessionCalls int
 	cmdExec := cmd_test.MockCmdExec{

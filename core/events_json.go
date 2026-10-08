@@ -13,11 +13,12 @@ import (
 type noticeJSON struct {
 	Err  *WireError `json:",omitempty"`
 	Info string     `json:",omitempty"`
+	Req  ReqID      `json:",omitempty"`
 }
 
 // MarshalJSON encodes n with its error as a WireError.
 func (n Notice) MarshalJSON() ([]byte, error) {
-	return json.Marshal(noticeJSON{Err: ToWire(n.Err), Info: n.Info})
+	return json.Marshal(noticeJSON{Err: ToWire(n.Err), Info: n.Info, Req: n.Req})
 }
 
 // UnmarshalJSON decodes a Notice MarshalJSON encoded.
@@ -26,7 +27,7 @@ func (n *Notice) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &j); err != nil {
 		return err
 	}
-	*n = Notice{Err: FromWire(j.Err), Info: j.Info}
+	*n = Notice{Err: FromWire(j.Err), Info: j.Info, Req: j.Req}
 	return nil
 }
 

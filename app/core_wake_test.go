@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,7 +61,7 @@ func TestSelection_ReachesTheModel(t *testing.T) {
 	inst := addReadyInstance(t, m)
 	m.syncViews()
 	m.Update(coreWakeMsg{})
-	assert.Equal(t, idOf(m, inst), testModel(m).SelectedForTest())
+	assert.Equal(t, []core.InstanceID{idOf(m, inst)}, testModel(m).SelectedForTest())
 }
 
 // TestRealLoop_AJobsResultReachesTheTUIByWake: on the production stack

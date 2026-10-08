@@ -9,10 +9,14 @@ import (
 type Event interface{ coreEvent() }
 
 // Notice is a line for the error bar: Err as an error (shown longer the
-// longer it is, and logged), or else Info as an info line.
+// longer it is, and logged), or else Info as an info line. Req names the
+// request whose job it reports on (a failed job, a stash it forgot), 0 for
+// one the model raised on its own: a server sends a request's notices to
+// the client that made it alone.
 type Notice struct {
 	Err  error
 	Info string
+	Req  ReqID
 }
 
 func (Notice) coreEvent() {}
@@ -58,8 +62,11 @@ func (Reactivated) coreEvent() {}
 // loaded. The TUI attaches its client when Loaded, and selects it or says
 // where it started. ID and Title are the instance's: the title is for the
 // notice, since a Started for an owner that was closed has no view left in
-// the TUI.
+// the TUI. Req is the request that started it (a Create), 0 for none: only
+// the client that asked selects the row and attaches inline, while every
+// client attaches its pane.
 type Started struct {
+	Req    ReqID
 	ID     InstanceID
 	Title  string
 	Owner  WorkspaceID
@@ -73,11 +80,12 @@ type Started struct {
 
 func (Started) coreEvent() {}
 
-// Recovered reports an orphan adopted into its placeholder's row. Owner,
-// Loaded, ID and Title are as for Started. Paused is set when adoption
+// Recovered reports an orphan adopted into its placeholder's row. Req,
+// Owner, Loaded, ID and Title are as for Started. Paused is set when adoption
 // could only mark the record Paused (its session and worktree were gone):
 // the notice says so even when no loaded workspace shows the row.
 type Recovered struct {
+	Req    ReqID
 	ID     InstanceID
 	Title  string
 	Owner  WorkspaceID

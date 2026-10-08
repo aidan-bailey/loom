@@ -11,18 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// restoreSessionToggles puts the two process-wide launch toggles back as a
-// test found them.
-func restoreSessionToggles(t *testing.T) {
-	loomCtx, tracking := session.LoomContextEnabled(), session.SubagentTrackingEnabled()
-	t.Cleanup(func() {
-		session.SetLoomContextEnabled(loomCtx)
-		session.SetSubagentTrackingEnabled(tracking)
-	})
-}
-
 func TestSaveSettings_WritesAppliesAndPublishes(t *testing.T) {
-	restoreSessionToggles(t)
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	m.SetWorkspacesForTest(nil, []*Workspace{ws})
@@ -34,12 +23,14 @@ func TestSaveSettings_WritesAppliesAndPublishes(t *testing.T) {
 	off, on := false, true
 	s.ClaudeLoomContext = &off
 	s.ClaudeSubagentTracking = &on
-	session.SetSubagentTrackingEnabled(false)
+	dir := ws.ctx.ConfigDir
+	session.SetLoomContextEnabled(dir, true)
+	session.SetSubagentTrackingEnabled(dir, false)
 	require.NoError(t, m.SaveSettings(id, s))
 
 	assert.Equal(t, "aider --yes", m.Program(), "the agent program follows")
-	assert.False(t, session.LoomContextEnabled(), "the loom-context toggle follows")
-	assert.True(t, session.SubagentTrackingEnabled(), "the subagent-tracking toggle follows")
+	assert.False(t, session.LoomContextEnabled(dir), "the workspace's loom-context toggle follows")
+	assert.True(t, session.SubagentTrackingEnabled(dir), "the workspace's subagent-tracking toggle follows")
 	data, err := os.ReadFile(filepath.Join(ws.ctx.ConfigDir, config.ConfigFileName))
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"default_program": "aider --yes"`, "config.json is written")
@@ -73,4 +64,25 @@ func TestSetUIPrefsAndHelpScreens_Persist(t *testing.T) {
 	assert.True(t, reloaded.GetUIPrefs().RailHidden, "state.json holds the prefs")
 	assert.InDelta(t, 0.4, reloaded.GetUIPrefs().SplitRatios["x"], 0, "the model kept its own copy")
 	assert.Equal(t, uint32(5), reloaded.GetHelpScreensSeen())
+}
+
+// Saving one workspace's settings changes only its own sessions' flags:
+// the session package keeps them per config dir, since every loaded
+// workspace launches with its own config's.
+func TestSaveSettings_SessionFlagsArePerWorkspace(t *testing.T) {
+	m := NewForTest(Options{})
+	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
+	m.SetWorkspacesForTest(nil, []*Workspace{a, b})
+	session.SetLoomContextEnabled(b.ctx.ConfigDir, true)
+	session.SetSubagentTrackingEnabled(b.ctx.ConfigDir, true)
+
+	s := a.cfg.Snapshot()
+	off := false
+	s.ClaudeLoomContext, s.ClaudeSubagentTracking = &off, &off
+	require.NoError(t, m.SaveSettings(m.wsIDOf(a), s))
+
+	assert.False(t, session.LoomContextEnabled(a.ctx.ConfigDir))
+	assert.False(t, session.SubagentTrackingEnabled(a.ctx.ConfigDir))
+	assert.True(t, session.LoomContextEnabled(b.ctx.ConfigDir), "another workspace's toggle is untouched")
+	assert.True(t, session.SubagentTrackingEnabled(b.ctx.ConfigDir), "another workspace's toggle is untouched")
 }

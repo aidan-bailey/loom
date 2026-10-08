@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync/atomic"
+	"sync"
 
 	"github.com/aidan-bailey/loom/config"
 )
@@ -26,17 +26,33 @@ var loomContextWorktreeBytes []byte
 //go:embed claude-loom-context-workspace.md
 var loomContextWorkspaceBytes []byte
 
-// loomContextEnabled mirrors config.LoomContextEnabled(); the app sets it
-// from config (SetLoomContextEnabled) on startup, workspace activation,
-// and after a settings toggle. atomic.Bool keeps the launch-time read
-// race-safe against the main-goroutine writes.
-var loomContextEnabled atomic.Bool
+// dirFlags is a boolean setting kept per config dir. Each workspace has its
+// own config, and the model keeps several workspaces loaded at once, so a
+// launch reads the setting of its own instance's config dir. Safe for a
+// launch job's read against the model's writes.
+type dirFlags struct{ m sync.Map }
 
-// SetLoomContextEnabled updates the global loom-context toggle.
-func SetLoomContextEnabled(enabled bool) { loomContextEnabled.Store(enabled) }
+func (f *dirFlags) set(dir string, v bool) { f.m.Store(dir, v) }
 
-// LoomContextEnabled reports the global loom-context toggle.
-func LoomContextEnabled() bool { return loomContextEnabled.Load() }
+// get is dir's setting, or def for a dir never set.
+func (f *dirFlags) get(dir string, def bool) bool {
+	if v, ok := f.m.Load(dir); ok {
+		return v.(bool)
+	}
+	return def
+}
+
+// loomContextOn mirrors config.LoomContextEnabled() per config dir; the
+// model sets it from each workspace's config when it loads the workspace
+// and after a settings change. A dir never set reads as off.
+var loomContextOn dirFlags
+
+// SetLoomContextEnabled sets the loom-context toggle of the sessions whose
+// config dir is configDir.
+func SetLoomContextEnabled(configDir string, enabled bool) { loomContextOn.set(configDir, enabled) }
+
+// LoomContextEnabled reports configDir's loom-context toggle.
+func LoomContextEnabled(configDir string) bool { return loomContextOn.get(configDir, false) }
 
 // WriteLoomContextFiles writes both embedded prompt files into configDir,
 // (re)writing a file only when it is missing or its bytes differ from the
@@ -79,7 +95,7 @@ func BuildLoomContextCommand(program, filePath string) string {
 // terminals, else the worktree variant. Non-Claude programs are a no-op
 // via BuildLoomContextCommand.
 func loomContextProgram(program, configDir string, isWorkspaceTerminal bool) string {
-	if !loomContextEnabled.Load() || configDir == "" {
+	if configDir == "" || !LoomContextEnabled(configDir) {
 		return program
 	}
 	name := loomContextFileWorktree

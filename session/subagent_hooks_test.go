@@ -18,11 +18,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func withTracking(t *testing.T, enabled bool) {
+// withTracking sets dir's subagent-tracking toggle for the test. A dir
+// never set reads as enabled, so only turning it off needs this.
+func withTracking(t *testing.T, dir string, enabled bool) {
 	t.Helper()
-	prev := !subagentRowsHidden.Load()
-	SetSubagentTrackingEnabled(enabled)
-	t.Cleanup(func() { SetSubagentTrackingEnabled(prev) })
+	prev := SubagentTrackingEnabled(dir)
+	SetSubagentTrackingEnabled(dir, enabled)
+	t.Cleanup(func() { SetSubagentTrackingEnabled(dir, prev) })
 }
 
 func hooksInstance(t *testing.T, program string) *Instance {
@@ -63,7 +65,6 @@ func TestRemoveSubagentHooks_LeavesSlashSiblingAlone(t *testing.T) {
 }
 
 func TestLaunchProgram_AddsHooksWhenLaunching(t *testing.T) {
-	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 
 	got := inst.launchProgram("claude", true)
@@ -78,7 +79,6 @@ func TestLaunchProgram_AddsHooksWhenLaunching(t *testing.T) {
 }
 
 func TestLaunchProgram_ReattachLeavesFolderAlone(t *testing.T) {
-	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
 	launchID := inst.hookLaunchID
@@ -105,7 +105,6 @@ func TestLaunchProgram_SkipsHooks(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			withTracking(t, tc.enabled)
 			inst := hooksInstance(t, tc.program)
 			if tc.noDir {
 				inst.ConfigDir = ""
@@ -123,7 +122,6 @@ func TestLaunchProgram_SkipsHooks(t *testing.T) {
 }
 
 func TestLaunchProgram_UntrackedRelaunchClearsState(t *testing.T) {
-	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
 	oldLaunchID := inst.hookLaunchID
@@ -145,7 +143,6 @@ func TestLaunchProgram_UntrackedRelaunchClearsState(t *testing.T) {
 }
 
 func TestLaunchProgram_RelaunchResetsWarmTracker(t *testing.T) {
-	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
 	firstID := inst.hookLaunchID
@@ -162,7 +159,6 @@ func TestLaunchProgram_RelaunchResetsWarmTracker(t *testing.T) {
 }
 
 func TestRecoveryLaunch_AddsHooks(t *testing.T) {
-	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	inst.SetLaunchOptions("claude", true, true)
 
@@ -205,7 +201,6 @@ func scanAndApply(t *testing.T, inst *Instance) bool {
 }
 
 func TestSubagents_EndToEndAndRestart(t *testing.T) {
-	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
 	transcript := fakeTranscript(t, "amate-1", `{"agentType":"mate","name":"mate","description":"implement","taskKind":"in_process_teammate"}`)
@@ -232,7 +227,6 @@ func TestSubagents_EndToEndAndRestart(t *testing.T) {
 }
 
 func TestApplyHookScan_Gates(t *testing.T) {
-	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
 	start := hooks.Event{Name: hooks.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}
@@ -253,7 +247,6 @@ func TestApplyHookScan_Gates(t *testing.T) {
 // A tracked launch whose folder disappears mid-run (deleted by hand, or by
 // another loom process's sweep) must not keep its last rows forever.
 func TestForgetSubagentsWithoutHooks(t *testing.T) {
-	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	inst.launchProgram("claude", true)
 	transcript := fakeTranscript(t, "a1", `{"agentType":"Explore","description":"map code"}`)
@@ -338,7 +331,6 @@ func TestNextHookScan(t *testing.T) {
 }
 
 func TestKill_RemovesHooksFolder(t *testing.T) {
-	withTracking(t, true)
 	inst := newTestStartedInstance(t)
 	inst.SetProgram("claude")
 	inst.ConfigDir = t.TempDir()
@@ -390,8 +382,8 @@ func TestSweepSubagentHooks_SlashTitles(t *testing.T) {
 }
 
 func TestLaunchProgram_HooksInstalledWithTrackingOff(t *testing.T) {
-	withTracking(t, false)
 	inst := hooksInstance(t, "claude")
+	withTracking(t, inst.ConfigDir, false)
 
 	got := inst.launchProgram("claude", true)
 
@@ -399,16 +391,15 @@ func TestLaunchProgram_HooksInstalledWithTrackingOff(t *testing.T) {
 }
 
 func TestSubagents_HiddenWhenTrackingOff(t *testing.T) {
-	withTracking(t, true)
 	inst := hooksInstance(t, "claude")
 	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true,
 		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
 	require.Len(t, inst.Subagents(), 1)
 
-	withTracking(t, false)
+	withTracking(t, inst.ConfigDir, false)
 	assert.Nil(t, inst.Subagents())
-	withTracking(t, true)
+	withTracking(t, inst.ConfigDir, true)
 	assert.Len(t, inst.Subagents(), 1, "the tracker kept running, so the rows return at once")
 }
 

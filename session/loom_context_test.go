@@ -51,11 +51,10 @@ func TestLoomContextProgram(t *testing.T) {
 	wsPath := filepath.Join(dir, "claude-loom-context-workspace.md")
 
 	// disabled => unchanged
-	SetLoomContextEnabled(false)
+	SetLoomContextEnabled(dir, false)
 	assert.Equal(t, "claude", loomContextProgram("claude", dir, false))
 
-	SetLoomContextEnabled(true)
-	t.Cleanup(func() { SetLoomContextEnabled(false) })
+	SetLoomContextEnabled(dir, true)
 
 	// worktree instance => worktree file
 	assert.Equal(t,
@@ -75,4 +74,18 @@ func TestLoomContextProgram(t *testing.T) {
 
 	// missing file => unchanged (fail-safe)
 	assert.Equal(t, "claude", loomContextProgram("claude", t.TempDir(), false))
+}
+
+// Each workspace has its own config, and several are loaded at once: a
+// launch reads the toggle of its own config dir, not the last one set.
+func TestLoomContextProgram_ReadsItsOwnConfigDirsToggle(t *testing.T) {
+	on, off := t.TempDir(), t.TempDir()
+	assert.NoError(t, WriteLoomContextFiles(on))
+	assert.NoError(t, WriteLoomContextFiles(off))
+	SetLoomContextEnabled(on, true)
+	SetLoomContextEnabled(off, false)
+
+	assert.Contains(t, loomContextProgram("claude", on, false), "--append-system-prompt-file")
+	assert.Equal(t, "claude", loomContextProgram("claude", off, false))
+	assert.Equal(t, "claude", loomContextProgram("claude", t.TempDir(), false), "a dir never set reads as off")
 }

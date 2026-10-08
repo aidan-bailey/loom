@@ -247,7 +247,7 @@ func TestLoop_TickProbesTheSelection(t *testing.T) {
 	l := StartForTest(NewForTest(Options{}))
 	t.Cleanup(l.Stop)
 	l.SetSelected(7)
-	assert.Equal(t, InstanceID(7), get(l, (*Model).SelectedForTest))
+	assert.Equal(t, []InstanceID{7}, get(l, (*Model).SelectedForTest))
 }
 
 // TestLoopForwardsEachMethodToItsNamesake: every method in loop_core.go

@@ -320,9 +320,10 @@ func (m *Model) closeTabWS(name string) (*Workspace, error) {
 // loaded, so a failure (a save or the load) switches nothing. The load has
 // side effects an abort could not undo (it relaunches crash-recovered
 // agents, writes the loom-context files, cleans orphan worktrees, sweeps
-// hooks folders); that is why every save comes first. focused is the
-// workspace the TUI shows: an aborted load puts its config's session flags
-// back. Returns the global workspace, now Classic.
+// hooks folders); that is why every save comes first. focused, the
+// workspace the TUI shows, is unused: the session flags are kept per config
+// dir, so an aborted load has none to put back. Returns the global
+// workspace, now Classic.
 func (m *Model) enterGlobalWS(focused *Workspace) (*Workspace, error) {
 	// Persist every workspace tab before touching global state. A tab
 	// whose save fails keeps its unpersisted state reachable only while
@@ -350,12 +351,9 @@ func (m *Model) enterGlobalWS(focused *Workspace) (*Workspace, error) {
 	}
 	global := NewWorkspace(WorkspaceParts{Ctx: globalCtx, Storage: storage, Config: appConfig, State: appState})
 	// Sessions the load (re)starts launch under the global config's
-	// settings, like OpenTab's; an abort puts the focused workspace's back.
+	// settings, like OpenTab's.
 	applySessionConfig(appConfig, cfgDir)
 	if err := m.loadWorkspace(global, cfgDir, false); err != nil {
-		if focused != nil {
-			applySessionConfig(focused.cfg, "")
-		}
 		return nil, fmt.Errorf("failed to load global sessions (staying in workspace mode): %w", err)
 	}
 	m.tabs = nil

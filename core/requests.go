@@ -62,7 +62,7 @@ func (m *Model) track(req ReqID, id InstanceID, job Job) Job {
 // deliverTracked handles a request's result as if it had arrived on its
 // own, then answers the request (when it asked for a Reply).
 func (m *Model) deliverTracked(t tracked) {
-	m.Deliver(t.result)
+	m.causedBy(t.req, func() { m.Deliver(t.result) })
 	if t.req == 0 {
 		return
 	}
@@ -424,7 +424,7 @@ func (m *Model) createWS(ws *Workspace, spec NewInstance, req ReqID) {
 	id := m.idOf(inst)
 	m.reply(req, Reply{ID: id})
 	if spec.Start {
-		m.spawn(m.startInst(inst, ws))
+		m.causedBy(req, func() { m.spawn(m.startInst(inst, ws)) })
 	}
 }
 

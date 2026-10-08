@@ -1,6 +1,7 @@
 package core
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -68,18 +69,18 @@ type DeadVerified struct {
 // active instance (liveness, parity, diff stats; its result is applied by
 // deliverHealth, which ends with HealthChecked) and every background job
 // that is due: the roster query, the hook scan, the GitHub poll, the
-// accounts file check and the usage probe. selected is the instance
-// SetSelected named (the TUI's selected row), whose full diff the probe
-// refreshes. In event mode (the
+// accounts file check and the usage probe. selected are the instances
+// SetSelection named (each client's selected row), whose full diff the
+// probe refreshes. In event mode (the
 // emulator path) the tick is a slow belt-and-braces sweep, because status
 // rides pane events; on the snapshot path it keeps the legacy 500ms
 // cadence. Formerly the lifecycle half of the tickUpdateMetadataMessage
 // case.
-func (m *Model) tickInst(selected *session.Instance) {
+func (m *Model) tickInst(selected []*session.Instance) {
 	active := m.activeInstances()
 	// Fan out I/O off the model's goroutine. A stalled tmux or git process
 	// must not block it: the probe waits for its goroutines inside the job.
-	m.spawn(probeJob(active, selected, m.takeDirty(), m.ghBases))
+	m.spawnBackground(probeJob(active, selected, m.takeDirty(), m.ghBases))
 
 	// One `claude agents --json` for the whole fleet (~100ms, off the
 	// loop goroutine), on its OWN cadence rather than the tick's —
@@ -114,12 +115,21 @@ func (m *Model) tickInst(selected *session.Instance) {
 	m.maybeClaudeTmpSweep()
 }
 
-// Tick runs the health tick's model half (tickInst); selected is the
-// instance whose full diff the probe refreshes, 0 for none. The loop's
-// timer calls it with the one SetSelected named.
-func (m *Model) Tick(selected InstanceID) {
-	inst, _ := m.lookup(selected)
-	m.tickInst(inst)
+// Tick runs the health tick's model half (tickInst), refreshing the full
+// diff of every selected instance (SetSelection) that a loaded workspace
+// holds. The loop's timer calls it.
+func (m *Model) Tick() { m.tickInst(m.selectedInstances()) }
+
+// selectedInstances are the selected instances (SetSelection) a loaded
+// workspace holds, in the order named.
+func (m *Model) selectedInstances() []*session.Instance {
+	var out []*session.Instance
+	for _, id := range m.selected {
+		if inst, _ := m.lookup(id); inst != nil {
+			out = append(out, inst)
+		}
+	}
+	return out
 }
 
 // probeJob fans out the per-instance I/O (tmux liveness, parity, git
@@ -133,7 +143,7 @@ func (m *Model) Tick(selected InstanceID) {
 // On the snapshot path the TUI's status scan reports output through
 // MarkOutput, so a change it sees refreshes the diff on the next tick.
 // Formerly gatherMetadataCmd, minus the pane reads, which are the TUI's.
-func probeJob(active []*session.Instance, selected *session.Instance, dirty map[string]bool, bases map[string]string) Job {
+func probeJob(active []*session.Instance, selected []*session.Instance, dirty map[string]bool, bases map[string]string) Job {
 	return func() any {
 		results := make([]ProbeResult, len(active))
 		var wg sync.WaitGroup
@@ -154,7 +164,7 @@ func probeJob(active []*session.Instance, selected *session.Instance, dirty map[
 				// false. One local rev-list, no network.
 				instance.UpdateParity(bases[instance.Path])
 
-				wantFull := instance == selected
+				wantFull := slices.Contains(selected, instance)
 				if !instance.ShouldRefreshDiff(dirty[instance.Pane().TmuxSessionName()], wantFull) {
 					return
 				}
@@ -228,7 +238,7 @@ func (m *Model) verifyDeadInst(inst *session.Instance) Job {
 // (verifyDeadInst); its result is a DeadVerified as before.
 func (m *Model) VerifyDead(id InstanceID) {
 	if inst, _ := m.lookup(id); inst != nil {
-		m.spawn(m.verifyDeadInst(inst))
+		m.spawnBackground(m.verifyDeadInst(inst))
 	}
 }
 

@@ -493,7 +493,7 @@ Result: `{}`
 
 ### Recovered
 
-`{"ID":0,"Title":"","Owner":0,"Loaded":false,"Paused":false,"OwnerLabel":"","ClosedNote":""}`
+`{"Req":0,"ID":0,"Title":"","Owner":0,"Loaded":false,"Paused":false,"OwnerLabel":"","ClosedNote":""}`
 
 ### Reply
 
@@ -505,7 +505,7 @@ Result: `{}`
 
 ### Started
 
-`{"ID":0,"Title":"","Owner":0,"Loaded":false,"OwnerLabel":"","ClosedNote":""}`
+`{"Req":0,"ID":0,"Title":"","Owner":0,"Loaded":false,"OwnerLabel":"","ClosedNote":""}`
 
 ### StatusesChanged
 

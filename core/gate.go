@@ -147,7 +147,7 @@ func (m *Model) dispatchGated(kind gateKind, now time.Time, build func() Job) bo
 	g := m.gate(kind)
 	g.inFlight = true
 	g.last = now
-	m.spawn(func() any { return gatedResult{kind: kind, result: job()} })
+	m.spawnBackground(func() any { return gatedResult{kind: kind, result: job()} })
 	return true
 }
 

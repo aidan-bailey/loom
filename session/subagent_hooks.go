@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
@@ -19,14 +18,14 @@ import (
 )
 
 // subagentRowsHidden is the inverse of config.SubagentTrackingEnabled(),
-// so its zero value matches the config's default (nil means enabled). The
-// app sets it through SetSubagentTrackingEnabled at the same points as
-// SetLoomContextEnabled. It only decides whether Subagents returns the
-// tracked rows: every Claude launch gets hooks, because they also carry
-// the session's status, ID and last message, and the tracker keeps
-// running with the setting off, so turning it back on shows the current
-// agents at once.
-var subagentRowsHidden atomic.Bool
+// per config dir (see dirFlags), so a dir never set matches the config's
+// default (nil means enabled). The model sets it through
+// SetSubagentTrackingEnabled at the same points as SetLoomContextEnabled.
+// It only decides whether Subagents returns the tracked rows: every Claude
+// launch gets hooks, because they also carry the session's status, ID and
+// last message, and the tracker keeps running with the setting off, so
+// turning it back on shows the current agents at once.
+var subagentRowsHidden dirFlags
 
 // noHooksLaunchID is the hookLaunchID a launch starts with before
 // prepareHooks runs. hooks.Prepare's launch IDs are 16
@@ -36,11 +35,14 @@ var subagentRowsHidden atomic.Bool
 // (if any) sets a real ID for the new launch.
 const noHooksLaunchID = "-"
 
-// SetSubagentTrackingEnabled updates the global subagent-tracking toggle.
-func SetSubagentTrackingEnabled(enabled bool) { subagentRowsHidden.Store(!enabled) }
+// SetSubagentTrackingEnabled sets the subagent-tracking toggle of the
+// sessions whose config dir is configDir.
+func SetSubagentTrackingEnabled(configDir string, enabled bool) {
+	subagentRowsHidden.set(configDir, !enabled)
+}
 
-// SubagentTrackingEnabled reports the global subagent-tracking toggle.
-func SubagentTrackingEnabled() bool { return !subagentRowsHidden.Load() }
+// SubagentTrackingEnabled reports configDir's subagent-tracking toggle.
+func SubagentTrackingEnabled(configDir string) bool { return !subagentRowsHidden.get(configDir, false) }
 
 // hooksRoot holds every instance's hooks folder. It is deliberately outside
 // worktrees/: DiscoverOrphans descends into any directory there that lacks
@@ -259,7 +261,7 @@ func (i *Instance) ForgetSubagentsWithoutHooks() {
 func (i *Instance) Subagents() []subagent.View {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
-	if i.subagents == nil || !subagentLive(i.Status) || subagentRowsHidden.Load() {
+	if i.subagents == nil || !subagentLive(i.Status) || subagentRowsHidden.get(i.ConfigDir, false) {
 		return nil
 	}
 	return i.subagents.Visible()

@@ -141,6 +141,38 @@ func KillOwnedTmuxSession(title string, scope SweepScope, cmdExec internalexec.E
 	return false, nil
 }
 
+// startedElsewhere reports whether the live tmux session of the record
+// titled title was started outside own, the directory the record's session
+// starts in (its worktree, or its repository for a workspace terminal).
+// Session names are unique per tmux server, not per workspace, so another
+// workspace's session can carry this record's name: reconcile must neither
+// restore this record onto it nor kill it. Only positive evidence counts:
+// an unreadable listing, a session with no start directory or a record with
+// no directory of its own reads as false, which keeps reconcile's old
+// behaviour.
+func startedElsewhere(title, own string, cmdExec internalexec.Executor) bool {
+	ownDir := canonicalPath(own)
+	if ownDir == "" {
+		return false
+	}
+	name := tmux.ToLoomTmuxName(title)
+	ctx, cancel := context.WithTimeout(context.Background(), reconcileTmuxTimeout)
+	output, err := cmdExec.Output(tmux.Command(ctx, "ls", "-F", sweepListFormat))
+	cancel()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		sessionName, dir, _ := strings.Cut(line, "\t")
+		if sessionName != name {
+			continue
+		}
+		d := canonicalPath(dir)
+		return d != "" && !pathWithin(d, ownDir)
+	}
+	return false
+}
+
 // isNoTmuxServer reports whether err, from a tmux command, says no server
 // is running: there is nothing on it to list or kill. tmux prints "no
 // server running on <socket>" for a dead socket and "error connecting to
@@ -216,6 +248,18 @@ func DetermineRecoveryAction(status Status, tmuxAlive, worktreeExists, isWorkspa
 // of its tmux session and worktree, and takes the appropriate recovery action.
 func ReconcileAndRestore(data InstanceData, configDir string, cmdExec internalexec.Executor) (*Instance, error) {
 	tmuxAlive := CheckTmuxAlive(data.Title, cmdExec)
+	own := data.Worktree.WorktreePath
+	if data.IsWorkspaceTerminal {
+		own = data.Path
+	}
+	if tmuxAlive && data.Status != Paused && startedElsewhere(data.Title, own, cmdExec) {
+		// Another workspace's session holds this record's name. Treated as
+		// dead for this record: a restart then fails on the name and pauses
+		// it, and nothing kills the other workspace's agent. (A Paused
+		// record is left as it is whatever tmux holds, so it needs no check.)
+		log.For("reconcile").Warn("foreign_session", "title", data.Title, "own", own)
+		tmuxAlive = false
+	}
 	wtExists := CheckWorktreeExists(data.Worktree.WorktreePath)
 	action := DetermineRecoveryAction(data.Status, tmuxAlive, wtExists, data.IsWorkspaceTerminal)
 	logRecoveryAction(data.Title, action)

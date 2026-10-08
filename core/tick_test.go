@@ -380,3 +380,23 @@ func TestDeadVerified_AnInconclusiveProbeAsksForNoRepair(t *testing.T) {
 	assert.Equal(t, session.Running, inst.GetStatus())
 	assert.Equal(t, []Event{StatusesChanged{}, InstancesChanged{}}, m.Drain().Events)
 }
+
+// Several clients select a row each: the probe refreshes the full diff of
+// every selected instance a loaded workspace holds, not only the last one
+// named.
+func TestTick_EverySelectedInstanceIsProbedInFull(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	a, b := newInst(t, "a"), newInst(t, "b")
+	ws.add(a)
+	ws.add(b)
+	m.SetWorkspacesForTest(nil, []*Workspace{ws})
+
+	m.SetSelection([]InstanceID{m.idOf(a), 99, m.idOf(b)})
+	assert.Equal(t, []*session.Instance{a, b}, m.selectedInstances(), "an unknown ID is skipped")
+
+	m.SetSelected(m.idOf(b))
+	assert.Equal(t, []*session.Instance{b}, m.selectedInstances(), "SetSelected names one")
+	m.SetSelected(0)
+	assert.Empty(t, m.selectedInstances(), "0 selects none")
+}
