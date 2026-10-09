@@ -39,7 +39,10 @@ func editBranchPrefixTo(m *home, current, value string) {
 
 func TestNewInstanceFlowAppliesBranchPrefixOverride(t *testing.T) {
 	m := newPendingTitleEntryHome(t)
-	m.appConfig().BranchPrefix = "aidanb/"
+	// Not the user's name: the default prefix is "<user>/", so a fixture
+	// equal to it would pass even if the modal never saw this config.
+	m.appConfig().BranchPrefix = "team/"
+	m.syncWorkspaces() // the modal reads the slot's published settings
 
 	for _, r := range "my-task" {
 		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
@@ -47,7 +50,7 @@ func TestNewInstanceFlowAppliesBranchPrefixOverride(t *testing.T) {
 	handleStateNewKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.Equal(t, stateLaunchOptions, m.state)
 
-	editBranchPrefixTo(m, "aidanb/", "spike/")
+	editBranchPrefixTo(m, "team/", "spike/")
 	require.Equal(t, stateLaunchOptions, m.state, "committing the edit must not close the modal")
 
 	handleStateLaunchOptionsKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // confirm
@@ -62,7 +65,8 @@ func TestNewInstanceFlowAppliesBranchPrefixOverride(t *testing.T) {
 // than sometimes the instance and sometimes a re-read of config.json.
 func TestNewInstanceFlowRecordsPrefixEvenWhenUnedited(t *testing.T) {
 	m := newPendingTitleEntryHome(t)
-	m.appConfig().BranchPrefix = "aidanb/"
+	m.appConfig().BranchPrefix = "team/"
+	m.syncWorkspaces()
 
 	for _, r := range "my-task" {
 		handleStateNewKey(m, tea.KeyPressMsg{Code: r, Text: string(r)})
@@ -72,7 +76,7 @@ func TestNewInstanceFlowRecordsPrefixEvenWhenUnedited(t *testing.T) {
 	instance := lastInst(m) // the confirm's Create made it
 
 	require.NotNil(t, instance.BranchPrefixOverride())
-	assert.Equal(t, "aidanb/", *instance.BranchPrefixOverride())
+	assert.Equal(t, "team/", *instance.BranchPrefixOverride())
 }
 
 // TestRestartWithOptionsLocksBranchPrefixRow pins that the restart path shows
