@@ -300,11 +300,9 @@ func TestAutoLoaded(t *testing.T) {
 	const why = "loads in every session or bypasses the budgets; the conventions keep rules in <dir>/CLAUDE.md"
 	assert.Contains(t, problems(t, with(minimal(), ".claude/CLAUDE.md", "x"), config{}), ".claude/CLAUDE.md: "+why)
 	assert.Contains(t, problems(t, with(minimal(), ".claude/rules/go.md", "x"), config{}), ".claude/rules: "+why)
-	assert.Contains(t, problems(t, with(minimal(), "CLAUDE.local.md", "x"), config{}), "CLAUDE.local.md: "+why)
-	assert.Contains(t, problems(t, with(minimal(), "pkg/CLAUDE.local.md", "x"), config{}), "pkg/CLAUDE.local.md: "+why)
 	fine := with(minimal(), ".claude/skills/dev/SKILL.md", "x", "CLAUDE.md", "- **Skills:** `dev`\n",
-		"vendor/v/CLAUDE.local.md", "x", "pkg/testdata/CLAUDE.local.md", "x")
-	assert.Empty(t, problems(t, fine, config{}), "skills load on demand; vendor/ and testdata/ are not ours")
+		"CLAUDE.local.md", "see README", "pkg/CLAUDE.local.md", "x")
+	assert.Empty(t, problems(t, fine, config{}), "skills load on demand; a CLAUDE.local.md is personal, so it is neither flagged nor read")
 }
 
 func TestOrphans(t *testing.T) {

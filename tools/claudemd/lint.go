@@ -138,7 +138,7 @@ func check(root string, cfg config) ([]problem, error) {
 	}
 	ps = append(ps, cov...)
 	ps = append(ps, orphans(found.claude, guides, linked)...)
-	ps = append(ps, autoLoaded(root, found.locals)...)
+	ps = append(ps, autoLoaded(root)...)
 	par, err := listParity(root)
 	if err != nil {
 		return nil, err
@@ -194,11 +194,9 @@ func ours(name string) bool {
 type docFiles struct {
 	claude  []string // every CLAUDE.md, the root's first
 	readmes []string // every README.md but the root's, which is for users
-	locals  []string // every CLAUDE.local.md
 }
 
-// findDocs walks the tree (see ours) for CLAUDE.md, README.md and
-// CLAUDE.local.md files.
+// findDocs walks the tree (see ours) for CLAUDE.md and README.md files.
 func findDocs(root string) (docFiles, error) {
 	var d docFiles
 	err := walk(root, ours, func(rel string) error {
@@ -209,8 +207,6 @@ func findDocs(root string) (docFiles, error) {
 			if rel != "README.md" {
 				d.readmes = append(d.readmes, rel)
 			}
-		case "CLAUDE.local.md":
-			d.locals = append(d.locals, rel)
 		}
 		return nil
 	})
@@ -224,19 +220,17 @@ func findDocs(root string) (docFiles, error) {
 }
 
 // autoLoaded flags the files Claude Code loads that the other checks never
-// see: .claude/CLAUDE.md and .claude/rules/ (the walk skips dot dirs) and
-// CLAUDE.local.md files. Each loads without the budgets and shape checks, so
-// rules there bypass the conventions.
-func autoLoaded(root string, locals []string) []problem {
+// see: .claude/CLAUDE.md and .claude/rules/ (the walk skips dot dirs). Each
+// loads without the budgets and shape checks, so rules there bypass the
+// conventions. CLAUDE.local.md is left to its owner: it is personal by
+// design, and one untracked in a checkout must not fail the run.
+func autoLoaded(root string) []problem {
 	const why = "loads in every session or bypasses the budgets; the conventions keep rules in <dir>/CLAUDE.md"
 	var ps []problem
 	for _, p := range []string{".claude/CLAUDE.md", ".claude/rules"} {
 		if exists(root, p) {
 			ps = append(ps, problem{p, 0, why})
 		}
-	}
-	for _, f := range locals {
-		ps = append(ps, problem{f, 0, why})
 	}
 	return ps
 }

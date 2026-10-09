@@ -4,8 +4,8 @@
 // every rule saying what guards it; a CLAUDE.md covering every Go package;
 // local links that resolve; no orphan docs/claude guides; a skills list
 // matching .claude/skills; code fences that close (an open one hides the rest
-// of its file); no .claude/CLAUDE.md, .claude/rules/ or CLAUDE.local.md, which
-// load without these checks; exemptions and idents.allow entries that still
+// of its file); no .claude/CLAUDE.md or .claude/rules/, which load without
+// these checks; exemptions and idents.allow entries that still
 // earn their place; and the identifiers it can check without false positives
 // (repo paths, globs, file.go:Symbol, Go test names). With -idents it also
 // reports other backticked symbols it can't find in source, which is advisory
