@@ -81,6 +81,43 @@ state's own prompt text before sending the next keys.
 - Interactive, for a human: `go run ./tools/loomdev run`. The host loom intercepts `ctrl+q` and double-`esc`, so test the dev loom's interact-exit from a plain OS terminal.
 - End-to-end suite: `go test -tags e2e ./e2e/...` (the daemon's lifecycle is in `e2e/daemon_test.go`).
 
+## Smoke runs
+
+A live run in the sandbox finds bugs no unit test can: an earlier smoke run
+found that fast typing into a modal's text field reordered characters
+("toy" → "oyt"), so type at speed (`keys -l …`) into every text field you
+touch.
+
+- **Pin the binary.** `start` and `run` rebuild from the working tree unless
+  `--no-build`, so fix commits landing in the same worktree change the binary
+  mid-run. Run `up` once while the tree is clean at a SHA you name in your
+  report, then use `start --no-build` (and `run --no-build`) for the rest of
+  the run. When fix rounds are landing, wait for the SHA to test before
+  rebuilding.
+- **Build the base commit into a second sandbox** to tell a regression from
+  an old bug: reproduce every oddity there before reporting it as new.
+  loomdev builds from the git checkout it runs in, so extract the base
+  without a worktree: `git archive <sha> | tar -x -C <scratch>/base`, then
+  `git init` there (loomdev needs a git top level holding loom's `go.mod`)
+  and build with `GOFLAGS=-buildvcs=false`. Compile loomdev once
+  (`go build -o <scratch>/loomdev ./tools/loomdev`) and run that binary from
+  `<scratch>/base` with its own sandbox name (`-s base…`), so neither
+  sandbox's tool changes under you.
+- **The clipboard is not isolated.** A drag-select in the sandboxed loom
+  writes the host's clipboard (Wayland or OSC 52); don't leave secrets on it,
+  and expect your own clipboard to change.
+- **Accounts are not isolated either.** The sandbox overlays only
+  `LOOM_TMUX_SOCKET`, `LOOM_GLOBAL_DIR` and `LOOM_HOME`; `CLAUDE_CONFIG_DIR`
+  and `PATH` are yours. Before driving `loom account` or the Accounts screen,
+  point `CLAUDE_CONFIG_DIR` at a throwaway main config dir and put a `claude`
+  that resolves to the sandbox's fakeagent first on `PATH`, or adding an
+  account links into your real `~/.claude`. Set both in the environment you
+  run `loomdev start` from, before the sandbox's tmux server first starts (a
+  fresh sandbox, or after `down`): the server keeps the environment it started
+  with, the driver loom inherits it, and the sandbox's daemon inherits the
+  driver's. For the CLI, run it through `loomdev env` in a subshell with the
+  same two variables set.
+
 ## Rules
 
 - Never run `./loom`, `go run .`, or `loom reset` directly in a loom pane.

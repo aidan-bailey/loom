@@ -1,0 +1,40 @@
+# account
+
+Extra Claude accounts, so sessions can be spread across several subscriptions. An account is a `CLAUDE_CONFIG_DIR` under `<globalDir>/accounts/<name>/`, registered in `<globalDir>/accounts.json`. `default` is Claude with no override: it is never stored. The package imports nothing from `app`, `ui` or `session`, and runs its subprocesses through an injected executor.
+
+## On disk
+
+- `accounts.json` (global dir): the extra accounts (`name`, `dir`) and the `default` new sessions preselect.
+- `accounts/<name>/` (global dir): each extra account's `CLAUDE_CONFIG_DIR`, with its own `.credentials.json`, `.claude.json` and runtime dirs, and everything else symlinked to the main config dir.
+
+## Files
+
+- `registry.go` — `Registry` (`LoadRegistry`, `Reload`, `Get`, `Names`, `Dirs`, `Env`, `SetDefault`, `ValidName`): reload-before-save, so a concurrent writer's change is merged, and latched shut (`ErrRegistryLoadFailed`, `Unavailable`) when the file fails to load or a loaded entry fails validation. `LoadRegistry` refuses any entry whose stored `Dir` is not in `filepath.Clean` form or does not resolve (`resolvedOrClean`) to `<AccountsDir>/<name>`, then canonicalizes every loaded `Dir` in memory (`canonicalizeDirs`), so a respelled global dir still loads but the stored spelling never reaches a launch, `Sync` or `Remove`. A hand-edited "bring your own directory" entry is out of scope.
+- `link.go` — `Create` (`Registry.Create`, which runs `ValidateMainDir` before any linking, so the TUI's account-add path is covered too), `Sync`, `ValidateMainDir`, `Unshared`, `OwnedDir`, `Remove`. An account's dir symlinks every top-level entry of the main config dir except a deny-list (`sharedDenyList`, `shared`): `.credentials.json*`, `.claude.json*`, `sessions`, `daemon`, `daemon.log`, `session-env`, `ide`, `debug`, `cache`, `backups`, `shell-snapshots`, `statsig`, `jobs`, `stats-cache.json`, `.last-cleanup`, and each session's own `security_warnings_state_<uuid>.json`. So `projects/` (transcripts, auto-memory) is shared, and `--resume` works across accounts. `Create` seeds the main dir's own `projects/` (only when the main dir exists) before linking. `Sync` links new main-dir entries, never replaces a real file, and reports one that replaced a link as diverged (`SyncReport.Diverged`). `OwnedDir` returns `filepath.Join(AccountsDir, name)`, recomputed from the name, and says whether `Remove` may delete it or only unregister it; `Remove` and `Unshared` act only on that path.
+- `auth.go` — `AuthStatus` and `LoginCmd` wrap `claude auth`; `Identity` is what `auth status` reports. `LoginCmd` hands back a bare interactive `*exec.Cmd` for `tea.ExecProcess` or the CLI's own foreground `Run()`, not a captured `Output()` call, so it cannot refuse a missing dir itself: both callers `os.Stat` the dir first and refuse, saying to remove the account and add it again (`loom account remove`, then `add`).
+- `command.go` — `account.Command`, the one way an account-scoped `claude` subprocess that captures output is built (`AuthStatus`, `ProbeUsage`, and session's roster query `session.QueryClaudeRosterEnv`): it refuses a missing `CLAUDE_CONFIG_DIR` up front (`ErrAccountDirMissing`).
+- `usage.go` — `account.ProbeUsage` reads plan usage, polled by the model on `gateUsage` and expedited when a picker opens: a headless `claude -p` stream-json run answering the SDK's **experimental** `get_usage` control request (`skip_behaviors`, `--setting-sources ""`, `--strict-mcp-config`, no model call). `TestRealClaude_UsageProbe` (opt-in, free) pins its shape. An expired login probes the same as API-key auth (`Usage.Available=false`), which is why core re-reads auth when an account loses plan access. The probe's working directory becomes a project entry in Claude's own config, so callers pass a deliberate one.
+- `users.go` — `CountUsers` and `KnownStateDirs` answer "is this account in use" read-only, from `state.json` files.
+- `onboard.go` — `account.EnsureOnboarded`: `claude auth login` stores the credentials and `oauthAccount` but leaves `.claude.json`'s `hasCompletedOnboarding` unset, and the interactive CLI runs its onboarding (login screen included) whenever that flag is missing. Every launch on an account calls it (`launchEnv(true)` in `session`); it sets the flag only for a logged-in account (`oauthAccount` or `.credentials.json`), keeps every other key, and never rewrites a file it can't parse.
+- `override.go` — `CredentialOverrides` and `ActiveCredentialOverride` (below).
+
+## Who uses it
+
+- `loom account` (`cmd/account.go`) is the CLI over it; the model (`core/accounts.go`, `core/usage.go`) holds the registry, auth, sync and usage, reloads `accounts.json` when its stat moves and before every user action that reads it, re-syncs existing accounts in the background (`accountsRefreshJob`, which applies `ValidateMainDir` through `syncMainDir` and logs a refusal once), and publishes it all to the TUI (`app/accounts.go`).
+- Every real launch resolves an instance's account name to its dir and fails closed; that resolution lives in `session`.
+- Usage is display-only: a failed probe keeps the last sample, shown dimmed with its age, because nothing acts on it.
+- `remove --force` on an account a live session still uses can lose a race with that session's own Claude process, which can recreate a bare, unlinked dir right after the delete; a later `add` of the same name then fails ("already exists") until the leftover dir is cleared by hand.
+
+## Credential overrides
+
+`account.CredentialOverrides` lists `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`, the env vars the Claude CLI checks before it reads a config dir's own stored credentials, and `ActiveCredentialOverride` returns the first one set in its own process's environment. With one set, every account session runs and bills as that credential whatever `CLAUDE_CONFIG_DIR` loom launches it with, so switching accounts is a no-op the UI can't hide.
+
+- The process that counts is the daemon, whose environment was frozen when it was spawned: the model reads it (`Core.CredentialOverride`, a local query answered from `AccountsView.CredentialOverride`), its usage probes and auth reads inherit it, and every client warns by it, never by its own environment.
+- The TUI's strip leads with "`⚠ $VAR set: all accounts use it`" (`ui.AccountStrip.SetWarning`, fed by the app's `credentialOverrideWarning`), and the Accounts screen shows the same text as a screen-wide notice above its rows while an extra account exists (`SettingsOverlay.SetAccountNotice` → `AccountsManager.SetNotice`; hidden with only `default`, since there is no choice for it to void). `loom account add`, `login` and `list` each print the same warning from their own environment (`use` and `sync` don't, since neither runs a session).
+- Agents don't take these variables from the daemon: they inherit `ANTHROPIC_*`, and the default account's `CLAUDE_CONFIG_DIR`, from the tmux server's global environment, which is the daemon's only when the daemon started that server. A daemon reusing the user's own tmux server, or the previous daemon's (`daemon.TmuxServer`), gives its agents that server's environment, while the warning reflects the daemon's.
+- Core's `extraAccountAuth` (`core/accounts.go`) leaves an override-caused remote-control block's reason untouched, since no login would fix it, rather than adding the "run `loom account login <name>`, or Settings → Accounts → l" hint it attaches to every other blocked reason.
+- Separately, core's `noteRunningAsAccount` checks at boot whether the model's own `$CLAUDE_CONFIG_DIR` (the daemon's: a daemon spawned from an account's agent pane, say) already resolves inside its accounts dir, and if so records a warning that "default" is actually that account's login, usage and sessions. It holds for the model's whole life, so it is published state (`Core.RunningAsAccount`, `AccountsView.RunningAsAccount`) that every client shows.
+
+## Tests
+
+`testmain_test.go` isolates the loom dirs. `usage_real_test.go` holds the opt-in real-CLI probe; `testdata/` holds a recorded `get_usage` response.
