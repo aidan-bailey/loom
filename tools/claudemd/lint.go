@@ -36,11 +36,13 @@ const (
 // deferring matches phrases that send the reader elsewhere instead of
 // stating the rule: to a file that doesn't auto-load, or to a passage that
 // may now live in another file. Matched case-insensitively outside code, so
-// a rule can still quote one.
+// a rule can still quote one. A match followed by a number ("keep this
+// section below 100 lines") or a hyphenated compound ("as above-average") is
+// no pointer: see notPointer.
 var deferring = []*regexp.Regexp{
-	regexp.MustCompile(`\bsee (the )?readme\b`),
-	regexp.MustCompile(`\b(described|documented|explained) in (the )?readme\b`),
-	regexp.MustCompile(`\bas (described |mentioned |noted )?(above|below)\b`),
+	regexp.MustCompile(`\bsee (the )?\[?readme\b`),
+	regexp.MustCompile(`\b(described|documented|explained) in (the )?\[?readme\b`),
+	regexp.MustCompile(`\b(as (described |mentioned |noted )?|(described|mentioned|noted) )(above|below)\b`),
 	regexp.MustCompile(`\b(see|cf\.?) (above|below)\b`),
 	regexp.MustCompile(`\bdescribed elsewhere\b`),
 	regexp.MustCompile(`\bsee the (\S+ ){0,6}(gotcha|bullet)s?\b`),
@@ -51,8 +53,9 @@ var deferring = []*regexp.Regexp{
 // config is what differs between the repo and a test's fixture tree.
 type config struct {
 	// exempt maps a Go package dir (slash path from the root) that needs no
-	// CLAUDE.md to the reason. An entry whose dir holds no package is a
-	// problem.
+	// CLAUDE.md to the reason. An entry is a problem when it has no reason,
+	// when its dir holds no package, or when a CLAUDE.md covers the dir
+	// anyway.
 	exempt map[string]string
 }
 
@@ -66,6 +69,8 @@ var (
 	codeSpan   = regexp.MustCompile("`[^`\n]*`")
 	backticked = regexp.MustCompile("`([^`\n]+)`")
 	mdLink     = regexp.MustCompile(`\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
+	notPointer = regexp.MustCompile(`^(\s*[0-9]|-[A-Za-z0-9])`)
+	ruleBullet = regexp.MustCompile(`^([-*+]|[0-9]+\.) `)
 )
 
 // problem is one finding, printed as path:line: msg (path: msg for line 0).
@@ -84,11 +89,11 @@ func (p problem) String() string {
 
 // check runs every structural check over the repo at root.
 func check(root string, cfg config) ([]problem, error) {
-	claude, err := claudeFiles(root)
+	found, err := findDocs(root)
 	if err != nil {
 		return nil, err
 	}
-	docs, guides, err := docSet(root, claude)
+	docs, guides, err := docSet(root, found)
 	if err != nil {
 		return nil, err
 	}
@@ -101,10 +106,14 @@ func check(root string, cfg config) ([]problem, error) {
 		return nil, err
 	}
 	linked := map[string][]string{} // doc -> the local files it links, slash paths from the root
+	used := map[string]bool{}       // allow-list tokens that hid a finding
 	for _, f := range docs {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(f)))
 		if err != nil {
 			return nil, err
+		}
+		if n := unclosedFence(data); n > 0 {
+			ps = append(ps, problem{f, n, "unclosed code fence: the checks skip the rest of the file"})
 		}
 		if path.Base(f) == "CLAUDE.md" {
 			ps = append(ps, budget(f, data)...)
@@ -116,14 +125,20 @@ func check(root string, cfg config) ([]problem, error) {
 		targets, broken := links(root, f, data)
 		linked[f] = targets
 		ps = append(ps, broken...)
-		ps = append(ps, identProblems(root, f, data, allow, idx, true)...)
+		ps = append(ps, identProblems(root, f, data, allow, used, idx, true)...)
 	}
-	cov, err := coverage(root, claude, cfg)
+	for token, line := range allow {
+		if !used[token] {
+			ps = append(ps, problem{allowFile, line, "allowed token " + token + " hides no finding in any doc: drop the entry"})
+		}
+	}
+	cov, err := coverage(root, found.claude, cfg)
 	if err != nil {
 		return nil, err
 	}
 	ps = append(ps, cov...)
-	ps = append(ps, orphans(claude, guides, linked)...)
+	ps = append(ps, orphans(found.claude, guides, linked)...)
+	ps = append(ps, autoLoaded(root, found.locals)...)
 	par, err := listParity(root)
 	if err != nil {
 		return nil, err
@@ -174,22 +189,56 @@ func ours(name string) bool {
 	return name == "vendor" || name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }
 
-// claudeFiles returns every CLAUDE.md under root, the root's first.
-func claudeFiles(root string) ([]string, error) {
-	var out []string
+// docFiles are the Markdown files the checks look for in the tree, found in
+// one walk.
+type docFiles struct {
+	claude  []string // every CLAUDE.md, the root's first
+	readmes []string // every README.md but the root's, which is for users
+	locals  []string // every CLAUDE.local.md
+}
+
+// findDocs walks the tree (see ours) for CLAUDE.md, README.md and
+// CLAUDE.local.md files.
+func findDocs(root string) (docFiles, error) {
+	var d docFiles
 	err := walk(root, ours, func(rel string) error {
-		if path.Base(rel) == "CLAUDE.md" {
-			out = append(out, rel)
+		switch path.Base(rel) {
+		case "CLAUDE.md":
+			d.claude = append(d.claude, rel)
+		case "README.md":
+			if rel != "README.md" {
+				d.readmes = append(d.readmes, rel)
+			}
+		case "CLAUDE.local.md":
+			d.locals = append(d.locals, rel)
 		}
 		return nil
 	})
-	sort.Slice(out, func(i, j int) bool {
-		if out[i] == "CLAUDE.md" || out[j] == "CLAUDE.md" {
-			return out[i] == "CLAUDE.md"
+	sort.Slice(d.claude, func(i, j int) bool {
+		if d.claude[i] == "CLAUDE.md" || d.claude[j] == "CLAUDE.md" {
+			return d.claude[i] == "CLAUDE.md"
 		}
-		return out[i] < out[j]
+		return d.claude[i] < d.claude[j]
 	})
-	return out, err
+	return d, err
+}
+
+// autoLoaded flags the files Claude Code loads that the other checks never
+// see: .claude/CLAUDE.md and .claude/rules/ (the walk skips dot dirs) and
+// CLAUDE.local.md files. Each loads without the budgets and shape checks, so
+// rules there bypass the conventions.
+func autoLoaded(root string, locals []string) []problem {
+	const why = "loads in every session or bypasses the budgets; the conventions keep rules in <dir>/CLAUDE.md"
+	var ps []problem
+	for _, p := range []string{".claude/CLAUDE.md", ".claude/rules"} {
+		if exists(root, p) {
+			ps = append(ps, problem{p, 0, why})
+		}
+	}
+	for _, f := range locals {
+		ps = append(ps, problem{f, 0, why})
+	}
+	return ps
 }
 
 // guideFiles returns the Markdown files in docs/claude, INDEX.md included.
@@ -210,16 +259,10 @@ func guideFiles(root string) ([]string, error) {
 	return out, nil
 }
 
-// docSet returns the docs the checks read (every CLAUDE.md, the README.md
-// beside each but the root's, which is for users, docs/ARCHITECTURE.md and
-// the guides), and the guides alone.
-func docSet(root string, claude []string) ([]string, []string, error) {
-	docs := append([]string{}, claude...)
-	for _, f := range claude {
-		if d := path.Dir(f); d != "." && exists(root, d+"/README.md") {
-			docs = append(docs, d+"/README.md")
-		}
-	}
+// docSet returns the docs the checks read (every CLAUDE.md, every README.md
+// but the root's, docs/ARCHITECTURE.md and the guides), and the guides alone.
+func docSet(root string, found docFiles) ([]string, []string, error) {
+	docs := append(append([]string{}, found.claude...), found.readmes...)
 	if exists(root, archFile) {
 		docs = append(docs, archFile)
 	}
@@ -227,7 +270,15 @@ func docSet(root string, claude []string) ([]string, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return append(docs, guides...), guides, nil
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range append(docs, guides...) {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out, guides, nil
 }
 
 // limits returns f's line and byte budget.
@@ -267,12 +318,12 @@ func budget(f string, data []byte) []problem {
 
 // headroom describes each CLAUDE.md's use of its budget, for -v.
 func headroom(root string) ([]string, error) {
-	claude, err := claudeFiles(root)
+	found, err := findDocs(root)
 	if err != nil {
 		return nil, err
 	}
 	var out []string
-	for _, f := range claude {
+	for _, f := range found.claude {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(f)))
 		if err != nil {
 			return nil, err
@@ -283,19 +334,55 @@ func headroom(root string) ([]string, error) {
 	return out, nil
 }
 
+// fenceRun reads line as a code fence: the fence character, the length of
+// its run (three or more backticks or tildes, after any indentation) and what
+// follows the run. ch is 0 when line is no fence.
+func fenceRun(line string) (ch byte, n int, rest string) {
+	s := strings.TrimLeft(line, " \t")
+	if s == "" || (s[0] != '`' && s[0] != '~') {
+		return 0, 0, ""
+	}
+	for n < len(s) && s[n] == s[0] {
+		n++
+	}
+	if n < 3 {
+		return 0, 0, ""
+	}
+	return s[0], n, s[n:]
+}
+
 // mdLines calls fn with each line of a Markdown file outside fenced code
-// blocks and its 1-based number.
-func mdLines(data []byte, fn func(n int, line string)) {
-	fenced := false
+// blocks and its 1-based number, and returns the line that opened a fence
+// still open at the end (0 when none). As in CommonMark, a fence closes on
+// the same character in a run at least as long as the opener's, with nothing
+// after it, so a longer fence can hold a shorter one; a backtick fence's info
+// string holds no backtick, so "```x``` y" is a code span, not a fence.
+func mdLines(data []byte, fn func(n int, line string)) int {
+	var open byte
+	openLen, openAt := 0, 0
 	for i, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			fenced = !fenced
-			continue
-		}
-		if !fenced {
+		ch, n, rest := fenceRun(line)
+		switch {
+		case open != 0:
+			if ch == open && n >= openLen && strings.TrimSpace(rest) == "" {
+				open = 0
+			}
+		case ch != 0 && !(ch == '`' && strings.Contains(rest, "`")):
+			open, openLen, openAt = ch, n, i+1
+		default:
 			fn(i+1, line)
 		}
 	}
+	if open != 0 {
+		return openAt
+	}
+	return 0
+}
+
+// unclosedFence returns the line of a code fence that never closes, which
+// hides the rest of the file from every check, or 0.
+func unclosedFence(data []byte) int {
+	return mdLines(data, func(int, string) {})
 }
 
 // prose is mdLines with inline code spans blanked out.
@@ -303,14 +390,34 @@ func prose(data []byte, fn func(n int, line string)) {
 	mdLines(data, func(n int, line string) { fn(n, codeSpan.ReplaceAllString(line, "``")) })
 }
 
-// phrases flags self-deferring phrases in a CLAUDE.md.
+// phraseLines is mdLines with the inline code spans that hold whitespace
+// blanked out, since a quoted phrase ("see README") is a mention, not a use.
+// A span of one token keeps its content, without the backticks, so "see
+// `README.md`" still reads as the phrase it is.
+func phraseLines(data []byte, fn func(n int, line string)) {
+	mdLines(data, func(n int, line string) {
+		fn(n, codeSpan.ReplaceAllStringFunc(line, func(span string) string {
+			if inner := span[1 : len(span)-1]; !strings.ContainsAny(inner, " \t") {
+				return inner
+			}
+			return "``"
+		}))
+	})
+}
+
+// phrases flags self-deferring phrases in a CLAUDE.md: the first match of
+// each phrase per line that notPointer doesn't rule out.
 func phrases(f string, data []byte) []problem {
 	var ps []problem
-	prose(data, func(n int, line string) {
+	phraseLines(data, func(n int, line string) {
 		lower := strings.ToLower(line)
 		for _, re := range deferring {
-			if m := re.FindString(lower); m != "" {
-				ps = append(ps, problem{f, n, fmt.Sprintf("self-deferring phrase %q: state the rule inline", m)})
+			for _, at := range re.FindAllStringIndex(lower, -1) {
+				if notPointer.MatchString(lower[at[1]:]) {
+					continue
+				}
+				ps = append(ps, problem{f, n, fmt.Sprintf("self-deferring phrase %q: state the rule inline", lower[at[0]:at[1]])})
+				break
 			}
 		}
 	})
@@ -318,7 +425,8 @@ func phrases(f string, data []byte) []problem {
 }
 
 // shape checks a package CLAUDE.md's skeleton: its title names its dir, and
-// every rule under its "## Rules" heading says what guards it.
+// every rule under its "## Rules" heading, up to the next title or "##"
+// heading, says what guards it.
 func shape(f string, data []byte) []problem {
 	var ps []problem
 	want := "# " + path.Dir(f)
@@ -327,11 +435,11 @@ func shape(f string, data []byte) []problem {
 	}
 	inRules := false
 	mdLines(data, func(n int, line string) {
-		if strings.HasPrefix(line, "## ") {
+		if strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "## ") {
 			inRules = strings.HasPrefix(line, rulesHeading)
 			return
 		}
-		if inRules && strings.HasPrefix(line, "- ") &&
+		if inRules && ruleBullet.MatchString(line) &&
 			!strings.Contains(line, "**Enforced**") && !strings.Contains(line, "**Convention**") {
 			ps = append(ps, problem{f, n, "rule without **Enforced** or **Convention**: say what guards it"})
 		}
@@ -404,24 +512,32 @@ func coverage(root string, claude []string, cfg config) ([]problem, error) {
 	for _, f := range claude {
 		have[path.Dir(f)] = true
 	}
+	covered := func(dir string) bool {
+		for d := dir; d != "."; d = path.Dir(d) {
+			if have[d] {
+				return true
+			}
+		}
+		return false
+	}
 	var ps []problem
-	for dir := range cfg.exempt {
-		if !pkgs[dir] {
+	for dir, reason := range cfg.exempt {
+		switch {
+		case !pkgs[dir]:
 			ps = append(ps, problem{dir, 0, "exempt from coverage, but no Go package lives here any more: drop the exemption"})
+			continue
+		case covered(dir):
+			ps = append(ps, problem{dir, 0, "exempt from coverage, but a CLAUDE.md here or in a parent already covers it: drop the exemption"})
+		}
+		if strings.TrimSpace(reason) == "" {
+			ps = append(ps, problem{dir, 0, "exempt from coverage with no reason: say why"})
 		}
 	}
 	for dir := range pkgs {
 		if _, ok := cfg.exempt[dir]; ok {
 			continue
 		}
-		covered := false
-		for d := dir; d != "."; d = path.Dir(d) {
-			if have[d] {
-				covered = true
-				break
-			}
-		}
-		if !covered {
+		if !covered(dir) {
 			ps = append(ps, problem{dir, 0, "Go package with no CLAUDE.md here or in a parent below the root"})
 		}
 	}
@@ -521,20 +637,21 @@ func dirNames(root, dir string, keep func(fs.DirEntry) (string, bool)) (map[stri
 	return names, true, nil
 }
 
-// parity checks that exactly one line of the root CLAUDE.md starts with
-// anchor and that the backticked names on it match want, both ways.
+// parity checks that exactly one line of the root CLAUDE.md, outside code
+// fences, starts with anchor and that the backticked names on it match want,
+// both ways.
 func parity(data []byte, anchor, dir string, want map[string]bool) []problem {
 	var at []int
 	listed := map[string]bool{}
-	for i, line := range strings.Split(string(data), "\n") {
+	mdLines(data, func(n int, line string) {
 		if !strings.HasPrefix(line, anchor) {
-			continue
+			return
 		}
-		at = append(at, i+1)
+		at = append(at, n)
 		for _, m := range backticked.FindAllStringSubmatch(line, -1) {
 			listed[m[1]] = true
 		}
-	}
+	})
 	switch {
 	case len(at) == 0:
 		return []problem{{"CLAUDE.md", 0, fmt.Sprintf("no line starting %q to list %s", anchor, dir)}}
