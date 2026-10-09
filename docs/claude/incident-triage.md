@@ -10,13 +10,13 @@
 
 - `loom debug` prints the TUI's log, the daemon's (`logs/serve.log` in the global dir), the daemon's pid and its tmux server.
 - `serve.log` holds the lifecycle: `subsystem=core` (the health tick: `tick.tmux_gone_marking_paused`, `workspace_terminal.tmux_died_restarting`, `workspace_terminal.restart_failed`, `diff_stats_update_failed`), `subsystem=tmux` (`liveness.probe_timeout`), `subsystem=reconcile` (the orphan sweep: `orphan_tmux.kill_begin`, `orphan_tmux.sweep_done`), `subsystem=session` (boot reconcile: `reconcile.tmux_probe_inconclusive`) and `subsystem=serve` (start and stop).
-- Restart markers: `serve.listening` ends a daemon's boot (its orphan sweep runs before it); `loader.loaded` marks a TUI starting. Compare them with `ps -o lstart= -p <pid>` to tell a restart from a quiet process.
+- Restart markers: `serve.listening` ends a daemon's boot (its orphan sweep runs before it). A TUI's start leaves no single marker (`loader.loaded` is logged once per user script, and only when there are scripts), so compare process start times with `ps -o lstart= -p <pid>` to tell a restart from a quiet process.
 
 ## Which failure is it?
 
 | Signature | Failure |
 |---|---|
-| Every session marked gone in one tick; afterwards `tmux ls` shows every session created at the same instant (the server restarted); a burst of `orphan_tmux.kill_begin` in some process's log | An external kill: another process's orphan sweep, or the tmux server itself died |
+| Every session marked gone in one tick; afterwards `tmux -S <socket> ls` (the daemon's tmux server, from `loom debug`; a bare `tmux ls` asks whatever server your shell would reach) shows every session created at the same instant (the server restarted); a burst of `orphan_tmux.kill_begin` in some process's log | An external kill: another process's orphan sweep, or the tmux server itself died |
 | Pauses or restarts scattered over minutes; `liveness.probe_timeout` warnings; `diff_stats_update_failed` git timeouts in the same window; a restart failing with "already exists" | Load: probes and git timing out. The tell is "already exists": a dead session can't already exist |
 | One session marked gone, the rest fine | Its agent exited (`/exit`, a crash); its worktree is intact |
 
@@ -54,17 +54,21 @@ A gutted worktree is a directory with no `.git`: a `git worktree remove` that fa
 
 - **The danger.** git run inside it walks up to the enclosing repository, the main checkout: its log and reflog are main's, and a `git reset --hard` from an agent still there resets main. Check with `git -C <dir> rev-parse --show-toplevel`.
 - **In the app.** Resume classifies the tree (`decideResume`): a gutted one is rebuilt from the branch after its leftovers are moved to `<path>.orphaned` (`git.worktree_leftover_preserved` in `serve.log` names it). Salvage uncommitted work from that copy with a diff.
-- **By hand**, to repair the gutted directory in place (used on 2026-08-21; copy any known-dirty file to scratch first, and run nothing while an agent or a resume can touch the tree):
+- **By hand**, to repair the gutted directory in place (used on 2026-08-21). Run nothing while an agent or a resume can touch the tree. `git status` inside a gutted directory reports the main checkout, so it can't tell you what is dirty there: back up the whole directory instead. Every git command in a gutted directory walks up to the main checkout until its `.git` is back, so a step that runs after a failed one would unstage main's index and restore files deleted there; hence the `&&` chain and the toplevel check before the reset. `worktree prune` acts on the whole repository, so look at what it would drop first.
   ```sh
-  git -C <repo> worktree prune
-  git -C <repo> worktree add --no-checkout "$S/<same-basename>" <branch>
-  mv "$S/<same-basename>/.git" <gutted>/.git
-  git -C <repo> worktree repair <gutted>
-  git -C <gutted> reset -q
-  git -C <gutted> ls-files -d -z | xargs -0 git -C <gutted> checkout --
+  cp -a <gutted> "$S/backup" &&
+  git -C <repo> worktree prune --dry-run -v
+  # every entry listed loses its registry entry: go on only if that is fine
+  git -C <repo> worktree prune &&
+  git -C <repo> worktree add --no-checkout "$S/<same-basename>" <branch> &&
+  mv "$S/<same-basename>/.git" <gutted>/.git &&
+  git -C <repo> worktree repair <gutted> &&
+  test "$(git -C <gutted> rev-parse --show-toplevel)" = "$(cd <gutted> && pwd -P)" &&
+  git -C <gutted> reset -q &&
+  git -C <gutted> ls-files -d -z | xargs -0 -r git -C <gutted> checkout --
   ```
-  `$S` is a scratch dir, and the scratch checkout takes the gutted directory's basename, which names git's admin entry for it. The `reset -q` rebuilds the index from HEAD and leaves the files alone; the last line restores only deleted tracked files, so modified ones keep their uncommitted work.
-- **Then register it.** A raw `git worktree add` registers nothing with loom. If the session's record is gone from `state.json`, the next boot's reconcile treats the tree as an orphan: a clean one whose session is dead is removed (the branch stays), anything else shows as Recoverable, which `r` adopts.
+  `$S` is a scratch dir, and the scratch checkout takes the gutted directory's basename, which names git's admin entry for it. The `test` stops the chain unless git now answers for the gutted directory itself. The `reset -q` rebuilds the index from HEAD and leaves the files alone; the last line restores only deleted tracked files, so modified ones keep their uncommitted work. Compare the result with `$S/backup` before deleting the backup.
+- **Then register it.** A raw `git worktree add` registers nothing with loom. If the session's record is gone from `state.json`, the next daemon start (`loom serve stop`, then `loom`; outside any loom pane) reconciles the tree as an orphan: a clean one whose session is dead is removed (the branch stays), anything else shows as Recoverable, which `r` adopts.
 
 ## Reflog noise
 

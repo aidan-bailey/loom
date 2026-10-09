@@ -14,8 +14,8 @@ The wire: `core.Core` over newline-delimited JSON between the TUI and the daemon
 ### Publishing
 
 - **A cast changes no published state.** The server publishes nothing after a cast (pane events cast many times a second), so a change a cast made reaches clients only with some later publish; a method that changes published state is a request. **Convention** — a client that shows the old state until an unrelated event; `core/iface.go` states the rule.
-- **Publish a request's events before queueing its reply.** Clients rely on reading a request's effect from their replica the moment it returns (`syncViews` and the TUI's drains). **Enforced** by `TestRequest_ItsEventsArriveBeforeItsReply`.
-- **Coalesce only state events; never drop or reorder a reply or any other event.** A state event replaces a queued one of the same kind (`coalesceKey`), but a resync can't rebuild a lost `Reply`, and a script waiting on one hangs. **Enforced** by `TestCoalesceKeys_MatchTheReplicasStateEvents` and `TestSync_CoalescesStateAndKeepsTheRestInOrder`.
+- **Publish a request's events before queueing its reply.** Clients rely on reading a request's effect from their replica the moment it returns (`syncViews` and the TUI's drains). **Enforced** by `TestRequest_ItsEventsArriveBeforeItsReply`, which checks a read right after the request and so can pass by timing alone; the order in the server is **Convention** — a read that sometimes misses the request's effect.
+- **Coalesce only state events; never drop or reorder a reply or any other event.** A state event replaces a queued one of the same kind (`coalesceKey`), but a resync can't rebuild a lost `Reply`, and a script waiting on one hangs. **Enforced** by `TestServerConn_CoalescesQueuedState` and, for which events are state, `TestCoalesceKeys_MatchTheReplicasStateEvents`.
 - **Never write to a connection from the server's own goroutine.** Each connection's writer goroutine drains its queue (`serverConn`), so a slow or stalled client never blocks the loop or the other clients. **Convention** — one frozen client freezes every TUI.
 
 ### Routing
@@ -28,14 +28,14 @@ The wire: `core.Core` over newline-delimited JSON between the TUI and the daemon
 - **Treat an event that won't encode as fatal, never drop it.** Dropping it could strand a `Reply`'s requester; the server sends `Fatal` with `CodeProtocol` (`server.encode_event_failed`). **Enforced** by `TestEncodeFailure_IsFatal`.
 - **Give every new fatal path a check that a normal shutdown can't trip it.** A client closing itself is not a loss (`Close` marks closing first), and a connection closing after a model panic is no crash. **Enforced** for today's paths by `TestClose_IsNotALoss` and `TestServe_AConnectionClosingAfterAModelPanicIsNoCrash`; a new path needs its own.
 - **Keep an unknown method an ordinary `unsupported` error, and an unknown event logged and dropped.** A newer client probes an older server this way; making either fatal ends every session of a mixed pair. A known event that fails to decode stays fatal, since it may be a Reply someone waits for. **Enforced** by `TestReply_AnUnknownMethodIsAnOrdinaryError` and `TestEvents_AnUnknownOneIsDroppedAKnownOneThatWillNotDecodeIsFatal`.
-- **In `request` and `cast`, copy the fatal and closed state under `c.mu` and panic only after unlocking.** A panic holding the lock blocked the reader and hung `Close`. **Convention** — a TUI that never exits after losing the daemon.
+- **In `request` and `cast`, copy the fatal and closed state under `c.mu` and panic only after unlocking.** A panic holding the lock blocked the reader and hung `Close`. **Enforced** by `TestPanic_ReachesTheCallerAndEveryLaterCall`, which closes the client after the panics.
 - **A daemon's client (`Dial`) never panics: it records the loss in `Err` and wakes the TUI; only an in-process client raises.** A panic in the TUI's process skips restoring the terminal. **Enforced** by `TestPanic_ADaemonsClientReportsIt`, `TestConnectionLost_IsFatal` and `TestInProcess_RaisesTheModelsPanic`.
 
 ### Replica and tests
 
 - **Let the replica ignore a `ViewsChanged` for a workspace it doesn't hold.** A coalesced `WorkspacesChanged` that dropped a workspace can arrive ahead of a views event queued for it, which would otherwise bring the dropped workspace back for good. **Enforced** by `TestReplica_IgnoresViewsOfAWorkspaceThatIsNotLoaded`.
-- **Begin the loop only after the in-process client has dialled.** Anything the first jobs publish before a connection exists goes nowhere. **Enforced** by `TestInProcess_BeginsTheLoop`.
-- **Test with production (non-synchronous) clients, and compare times that crossed the wire as `time.Now().Round(0)` values.** A synchronous client hides ordering bugs, and JSON drops the monotonic reading that `assert.Equal` compares. **Convention** — tests that pass against behaviour the TUI never sees.
+- **Have whatever serves a loop begin it (`Loop.Begin`); `InProcess` does so once its client has dialled.** A loop that never began never ticks, so no session dies, no diff changes and no account refreshes. **Enforced** by `TestInProcess_BeginsTheLoop`, which waits for a tick; the order after the dial is **Convention**, since the notice backlog keeps a notice published before any connection.
+- **Test this package with production (non-synchronous) clients, and compare times that crossed the wire as `time.Now().Round(0)` values.** A synchronous client (`InProcessForTest`, which `app`'s tests use) pings before every read and hides ordering bugs, and JSON drops the monotonic reading that `assert.Equal` compares. **Convention** — tests that pass against behaviour the TUI never sees.
 
 ## Pointers
 

@@ -10,9 +10,9 @@ Two processes writing one workspace's sessions overwrite each other: `Storage.Sa
 
 | File | Holds |
 |---|---|
-| `lock.go` | the lock, `Record`, `ReadRecord`, `acquire`, `liveHolder`, `servesLoom`, `TmuxServer` |
+| `lock.go` | the lock, `Record`, `ReadRecord`, `acquire`, `liveHolder` |
 | `paths.go` | `SocketPath`, `privateDir`, `maxSocketPath` |
-| `serve.go` | `Serve`, `Options`, `stopModel`, `Stop`, `StopPID` |
+| `serve.go` | `Serve`, `Options`, `stopModel`, `Stop`, `StopPID`, `servesLoom`, `TmuxServer` |
 | `connect.go` | `Connect`, `spawn`, `LogPath`, `CrashLogPath` |
 | `proc_unix.go`, `proc_windows.go` | `recordPath`, `terminate`, process probes per platform |
 
@@ -43,6 +43,8 @@ The holder's `Record` (`pid`, `tty`, `started`, `socket` once it listens, `build
 
 Every `Options.WatchInterval` it checks that the socket file is still its own (`os.SameFile`) and, when it is gone or replaced (a runtime dir removed at logout, a tmp cleaner), listens again wherever `SocketPath` finds room now and rewrites the record; a failed `Accept` (EMFILE) is waited out.
 
+`Serve`'s own failures (a pre-daemon holder, no place for the socket, a failed listen or record write) return to its caller and reach stderr, which a spawned daemon has none of: only the root's tmux-server and nesting refusals are logged, so `Connect` can quote nothing for the others.
+
 When `Options.Stop` closes it closes the listener and the server, waits for foreground jobs and saves (`stopModel`: `Loop.Quiesce`, bounded by `Options.QuiesceTimeout`, then `SaveForQuit`), stops the loop and removes the socket. When the model fails (`Server.Fatal()`) it exits without saving (`serve.model_gone`), since the model's state is unknown, and the next `loom` spawns a fresh daemon.
 
 ## The root's serve.go
@@ -53,9 +55,9 @@ The root's `serve.go` finds the tmux server (`TmuxServer`), runs the nesting gua
 
 ## Stop
 
-`Stop` (`loom serve stop`, and a newer TUI replacing the daemon) signals the pid the record names rather than asking over the socket, so it stops a daemon of any protocol. It refuses another host's record (`Host`), signals only a pid whose arguments say `serve` (`servesLoom`), sends SIGTERM (`terminate`) and waits until that process has gone, whoever holds the lock by then (`TestStop_ReturnsOnceItsProcessHasGone`).
+`Stop` (`loom serve stop`) signals the pid the record names rather than asking over the socket, so it stops a daemon of any protocol. It refuses another host's record (`Host`), signals only a pid whose arguments say `serve` (`servesLoom`), sends SIGTERM (`terminate`) and waits until that process has gone, whoever holds the lock by then (`TestStop_ReturnsOnceItsProcessHasGone`).
 
-`StopPID`, a TUI replacing a daemon, stops only the daemon it dialed and compared (the record's pid when it dialed): when the lock is free by then, another process holds it, or the pid has died (its record outlives it while a probe or the next daemon holds the lock), it signals nothing and answers `ErrNotRunning`. Two new TUIs starting together both dial the old daemon, and the second must not stop the daemon the first just started (`TestStopPID_StopsOnlyTheDaemonItNames`). Windows has no graceful stop, and `Stop` says so.
+`StopPID`, which a newer TUI replacing a daemon calls (`daemon_client.go`), goes through the same signalling but stops only the daemon it dialed and compared (the record's pid when it dialed): when the lock is free by then, another process holds it, or the pid has died (its record outlives it while a probe or the next daemon holds the lock), it signals nothing and answers `ErrNotRunning`. Two new TUIs starting together both dial the old daemon, and the second must not stop the daemon the first just started (`TestStopPID_StopsOnlyTheDaemonItNames`). Windows has no graceful stop, and `Stop` says so.
 
 ## Connect
 
@@ -75,7 +77,7 @@ The spawner takes no lock: two clients starting a daemon each is harmless, since
 ## Joining (root `daemon_client.go`)
 
 `joinDaemon` builds a `daemonLink` (with seams for tests), whose `join`:
-1. dials (`dialDaemon`: `daemon.Connect`, then `handshake`, `rpc.Dial` under the connect's deadline, so a daemon that accepts and never answers can't hang loom; after a short silence it prints "loom: waiting for the loom daemon (it loads every workspace as it starts)…");
+1. dials (`dialDaemon`: `daemon.Connect`, then `handshake`, `rpc.Dial` under a fresh `connectTimeout` of its own, so a daemon that accepts and never answers can't hang loom; after a short silence it prints "loom: waiting for the loom daemon (it loads every workspace as it starts)…");
 2. compares builds (`rpc.CompareBuilds`).
 
 The same build is used, with its tmux server pinned (`tmux.UseServer(peer.Tmux)`). A newer daemon is refused ("the loom daemon is X, newer than this loom (Y): upgrade loom, or run `loom serve stop`"). An older one is replaced once, announced on stderr ("loom: replacing the loom daemon (…) with this build…"): `daemon.StopPID` of the daemon dialed (`dialDaemon` returns the pid from `Connect`'s record), then a connect that spawns this build. Unless `replaceGuard` refuses: from a `loom_*` or `claudesquad_*` tmux session on the daemon's own tmux server (compared cleaned, then through symlinks, `tmux.SameServer`), or on any server when the daemon named none, unless `LOOM_GLOBAL_DIR` is set; a session it can't name there counts as loom's. A loomdev sandbox still replaces its own daemon, whose server is the sandbox's.

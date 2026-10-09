@@ -72,11 +72,11 @@ A request returns the method's error (`core.FromWire`). A request for a method w
 
 ## In process
 
-`InProcess(model)` (`inprocess.go`) takes a model booted already (`core.Model.Boot`) and runs `core.Start(model)`, `NewServer`, `net.Pipe` and a raising client, then `Loop.Begin` once the client has dialled, so nothing the first jobs publish goes to no connection (`TestInProcess_BeginsTheLoop`). It returns the client and a stop function that closes the client, the server and the loop. No production code calls it; tests use it for the production stack in one process (`app`'s `TestRealLoop_…`, this package's client tests). `InProcessForTest` (`seams.go`) is the same over a `core.StartForTest` loop, which holds its jobs and is returned for its seams, with a synchronous client; `FlushForTest` is the ping.
+`InProcess(model)` (`inprocess.go`) takes a model booted already (`core.Model.Boot`) and runs `core.Start(model)`, `NewServer`, `net.Pipe` and a raising client, then `Loop.Begin` once the client has dialled (`TestInProcess_BeginsTheLoop` checks that the loop ticks). It returns the client and a stop function that closes the client, the server and the loop. No production code calls it; tests use it for the production stack in one process (`app`'s `TestRealLoop_…`, this package's client tests). `InProcessForTest` (`seams.go`) is the same over a `core.StartForTest` loop, which holds its jobs and is returned for its seams, with a synchronous client; `FlushForTest` is the ping.
 
 ## Tests
 
-Tests run production (non-synchronous) clients.
+This package's tests run production (non-synchronous) clients; `app`'s use the synchronous `InProcessForTest` client.
 - `TestReplica_AnswersAsTheModel` compares every local query through the client with the loop's raw answer (times as UTC instants, errors as text), so a field the codec drops shows.
 - `TestWire_EveryFieldSurvives` fills every field of every event and state view by reflection and round-trips it.
 - `TestCoalesceKeys_MatchTheReplicasStateEvents` keeps the server's coalescing keys in step with the events the replica keeps.

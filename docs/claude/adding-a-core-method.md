@@ -21,25 +21,25 @@ A comment in the method's doc comment instead of on its line, or an unknown `rpc
 
 1. **Declare it in `core.Core`** (`core/iface.go`) with its line comment. Parameters and results are plain data: no func, chan, `sync` type, interface but `error`/`Event`, or model object. *Enforced:* `TestCoreIsValueTyped` (`core/value_boundary_test.go`).
 2. **Implement it on `*core.Model`**, under the same name (`Sync` is `syncEvents`). A request that names an instance runs `admit`, and its `precondition` mirrors the key's gate in `app/intents.go`; a `ReqID` parameter gets a `Reply` (`track` when a job answers it). *Silent* until you add a case to `TestRequests_RefuseWhatTheTUIRefuses` (`core/requests_test.go`).
-3. **Forward it from `*core.Loop`** in `core/loop_core.go`, calling only its namesake. *Compiler-enforced* (`var _ Core = (*Loop)(nil)` in `core/iface.go`); *enforced* that it calls the namesake and nothing else by `TestLoopForwardsEachMethodToItsNamesake`.
+3. **Forward it from `*core.Loop`** in `core/loop_core.go`, calling only its namesake. *Compiler-enforced* that one exists (`var _ Core = (*Loop)(nil)` in `core/iface.go`); *enforced* by `TestLoopForwardsEachMethodToItsNamesake` that each forwarder calls its namesake and nothing else, and that `core/loop_core.go` holds exactly as many forwarders as `Core` has methods.
 4. **Regenerate the wire:** `go generate ./core/rpc`. Never edit `core/rpc/methods_gen.go` by hand. *Enforced:* `TestGenerated_IsFresh`, `TestMethods_CoverCore`; `*rpc.Client` is *compiler-checked* against `Core` (`core/rpc/client.go`).
 5. **A `ReqID` travels only as a parameter of its own type**, never inside a slice, map, pointer or struct: dispatch tags only a top-level `ReqID` with the connection's number. *Enforced:* the generator refuses it (`TestGenerate_RefusesARequestIDTheServerCannotTag`).
 6. **For `rpc:local`:**
-   - put the data in a published view (`ModelView`, `AccountsView`, `GitHubView` in `core/state_views.go`, or the workspace views), set where the model changes it, so `publishState` or `syncEvents` diffs it out; a field `Clone` drops reaches no client (*enforced only for fields the fixtures set* by `TestModelView_CloneKeepsEveryField`, `TestGitHubView_CloneKeepsEveryField`);
+   - put the data in a published view (`ModelView`, `AccountsView`, `GitHubView` in `core/state_views.go`, or the workspace views), set where the model changes it, so it publishes. `ModelView` and `AccountsView` are diffed whole by `publishState` (`core/state_publish.go`; `AccountsView` also republishes when `usageGen` moves), and the workspace views by `syncEvents`, but `GitHubView` republishes only when `ghGen` moves, which only `deliverGH` (`core/github.go`) bumps: a GitHub field set anywhere else never reaches a client (*silent*). A field `Clone` drops reaches no client either: *enforced only for the fields their fixtures set* by `TestModelView_CloneKeepsEveryField` and `TestGitHubView_CloneKeepsEveryField`; `AccountsView.Clone` has no such test (*silent*);
    - add the view method, replicating the model's own query;
    - add the replica method in `core/rpc/replica.go` that calls it (*compiler-enforced*: the generated client calls `r.<Name>`);
    - add cases to `TestStateViews_AnswerAsTheModel` or `TestWorkspacesView_AnswersAsTheModel` (`core/state_views_test.go`) and to `TestReplica_AnswersAsTheModel` (`core/rpc/client_test.go`), misses included. *Silent* until the cases exist: a view method that disagrees with the model compiles and answers wrongly through the daemon only.
 7. **For a cast:** check it changes no published state. *Silent:* the change would reach clients only with some later, unrelated publish.
 8. **Rewrite the protocol reference:** `go test ./core/rpc -run TestProtocolReference -update`. *Enforced:* `TestProtocolReference`, which also runs in the Nix build.
 9. **Bump `rpc.Protocol`** (`core/rpc/rpc.go`) only if you removed or renamed a method or parameter, or changed what one means; adding a method is compatible (an older server answers `unsupported`). *Silent:* a rename without a bump decodes as zero values between mixed builds.
-10. **Call it from the TUI** through `home.core`. A read right after a request sees its effect (the server sends a request's events before its reply); a read after a cast does not.
+10. **Call it from the TUI** through `home.core`. A request that should answer with a `Reply` takes a `ReqID` from the TUI's request book (`m.newReq`, or `m.opReq` for a lifecycle request, `app/requests.go`), which routes the Reply to whatever waits on it; a Reply with an ID the book doesn't hold is dropped and logged as `reply.unexpected` (*silent* to the user). A read right after a request sees its effect (the server sends a request's events before its reply); a read after a cast does not.
 
 ## Traps
 
 - **The model's own query and the view method are two implementations.** The model's stays because several run on every tick; the parity tests are the only link between them.
 - **A `time.Time` loses its monotonic reading on the wire.** Fixtures compared after the wire use `time.Now().Round(0)`.
 - **An error result crosses as a `core.WireError`**: only `ErrNoSession`, `ErrRefused` and `session.ErrStorageLoadFailed` survive `errors.Is`; any other error keeps only its message.
-- **Removing a method** also leaves its forwarder, view method, replica method and parity cases behind; the compiler finds the forwarder, not the rest.
+- **Removing a method** leaves its forwarder, view method, replica method and parity cases behind. The compiler accepts a leftover forwarder (an extra method on `*Loop` is legal); `TestLoopForwardsEachMethodToItsNamesake`'s count catches it, and `TestGenerated_IsFresh` the wire. A leftover view or replica method is caught by nothing (its parity cases stop compiling only if they call the removed model method).
 
 ## What the gates won't tell you
 

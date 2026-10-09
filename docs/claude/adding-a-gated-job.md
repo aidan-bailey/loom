@@ -8,15 +8,17 @@
 
 ## Checklist
 
-1. **Add a `gateKind`** in `core/gate.go` (before `numGateKinds`) and its name in `String()`, which the logs use.
-2. **Add its interval to `gateIntervals`**, keyed by kind, as a constant beside the job (`rosterInterval`, `ghInterval`, …). Leave it 0 for a job that runs on events, not a cadence: a zero interval only dedupes. Keyed by kind, so even a zero-value `core.Model` is throttled. *Enforced* for today's kinds by `TestGateIntervalsUseEachJobsInterval`.
+1. **Add a `gateKind`** in `core/gate.go` (before `numGateKinds`) and its name in `String()`, which the logs use. *Silent:* a kind missing from `String()` logs as "unknown".
+2. **Add its interval to `gateIntervals`**, keyed by kind, as a constant beside the job (`rosterInterval`, `ghInterval`, …). Leave it 0 for a job that runs on events, not a cadence: a zero interval only dedupes. Keyed by kind, so even a zero-value `core.Model` is throttled. *Enforced* by `TestGateIntervalsUseEachJobsInterval` only for the kinds it lists, which leave out `gateClaudeTmp`: add yours.
 3. **Write `maybe<Job>()`**, the dispatcher: `return m.dispatchGated(gate<Job>, time.Now(), func() Job { … })`. The builder runs on the model's goroutine and may read model state; it returns `nil` when there is nothing to do (no Claude agent, nothing queued), which arms nothing. The `Job` it returns must not read model state: capture its inputs in the builder. *Enforced* that a nil build arms nothing by `TestDispatchGatedNilBuildArmsNothing`.
-4. **Write the job**: blocking I/O only, returning one result value of a type of its own. `dispatchGated` spawns it with `spawnBackground`, so it serves no request and `Loop.Quiesce` doesn't wait for it at a stop.
-5. **Route the result in `Deliver`** (`core/model.go`): a `case <job>Result:` calling `deliver<Job>`. `deliverGated` disarms the gate first, then calls `Deliver` with your inner result, so your handler never touches the gate. A result type with no case is logged as `deliver.unknown_result` and dropped, though the gate still disarms.
+4. **Write the job**: blocking I/O only, returning one result value of a type of its own, or `nil` when nothing comes back to apply (the Claude temp-dir sweep only logs, `core/claude_tmp.go`; `deliverGated` disarms on a nil result too). `dispatchGated` spawns it with `spawnBackground`, so it serves no request and `Loop.Quiesce` doesn't wait for it at a stop.
+5. **Route the result in `Deliver`** (`core/model.go`): a `case <job>Result:` calling `deliver<Job>`. `deliverGated` disarms the gate first, then calls `Deliver` with your inner result, so your handler never touches the gate. A result type with no case is logged as `deliver.unknown_result` and dropped, though the gate still disarms. If the handler changes:
+   - a persisted field the model changed on its own, save it through `saveUnprompted` (`core/persist.go`), or a daemon killed before the next request-driven save loses it (*silent*);
+   - what `GitHubView` or `AccountsView` publishes, bump `ghGen` or `usageGen` the way `deliverGH` and `deliverUsage` do: `GitHubView` republishes only when `ghGen` moves (*silent* otherwise).
 6. **Call `maybe<Job>()` from the tick** (`tickInst` in `core/tick.go`), and from any event that should run it sooner.
-7. **For "run as soon as possible" triggers**, call `m.gate(gate<Job>).request()` then `maybe<Job>()`: a request made while a dispatch is in flight dispatches once more after that flight lands. Add the kind to `redispatch` (`core/gate.go`), or a mid-flight request is lost. *Enforced* for today's kinds by `TestDeliverGatedRedispatchesPendingOnce`.
+7. **For "run as soon as possible" triggers**, call `m.gate(gate<Job>).request()` then `maybe<Job>()`: a request made while a dispatch is in flight dispatches once more after that flight lands. Add the kind to `redispatch` (`core/gate.go`), or a mid-flight request is lost. *Enforced* only for `gateRoster`, by `TestDeliverGatedRedispatchesPendingOnce`; a new kind's case is *silent* until you add one.
 8. **For "run at the next tick" triggers**, call `expedite()`, as `ExpediteGitHub` does; an in-flight dispatch still lands first.
-9. **Add your kind to `TestProductionGatedJobsYieldOneResult`** (`core/gate_test.go`), which runs each production job and checks it yields exactly one `gatedResult` of its own type. *Silent* until you do.
+9. **Add your kind to `TestProductionGatedJobsYieldOneResult`** and `TestGatedDeliveryDisarmsFirst` (`core/gate_test.go`), which check that each production job yields exactly one `gatedResult` of its own type and that delivery disarms its gate. Both leave out `gateClaudeTmp` today. *Silent* until you do, and neither checks that the disarm happens before the handler runs.
 
 ## Traps
 

@@ -28,7 +28,7 @@ The session model (`core/`): everything that acts on sessions without a terminal
 | `events.go`, `events_json.go`, `wire_error.go` | every `core.Event`, `EventTypes()`, the JSON forms of `Notice` and `Reply`, `core.WireError` |
 | `iface.go` | `core.Core`, the wire's source |
 | `loop.go`, `loop_core.go` | `core.Loop` and its `Core` forwarders |
-| `seams.go` | the test-only exports (`…ForTest`) |
+| `seams.go` | the test-only exports (`…ForTest`); the model's own (`NewForTest`, `SetWorkspacesForTest`, `SetExecForTest`, `SetRegistryForTest`) are in `model.go` |
 
 ## Workspaces and boot
 
@@ -61,7 +61,7 @@ The TUI's side (`Workspace.loadErr` reaches it only as `LoadErr`): a classic sta
 
 Every lifecycle action is a request, by ID where it names an instance, with an optional `ReqID` (`core/requests.go`): `Kill`, `Pause`, `Resume`, `ResumeWith` (the `R` flow: the new launch options applied, then a resume), `Recover`, `Merge`, `Push`, `SendPrompt`, `Create(ws, NewInstance, req)` (builds and adds an instance and, with `Start`, configures and starts it) and `FetchIssue`. A non-zero `ReqID` is answered by a `Reply` (`Req`, `ID`, `Err`, `Notice`, `Issue`): at once for a refusal or a `Create`, otherwise when the request's job lands (`track`, `deliverTracked`).
 
-Each request first runs `admit`: a served workspace must hold the ID (else `ErrNoSession`), and the instance must pass `precondition`, which mirrors the keys' gates in `app/intents.go` (no kill, pause or push of a workspace terminal or a busy session, no resume of one not Paused, …). A refusal's error matches `core.ErrRefused` (`ErrNoSession` does too); with `ReqID` 0 it is only logged (`request.refused`). A failed job is not a refusal: the model has already shown it as a `Notice`, and the Reply's `Err` carries it too.
+Each request that names an instance first runs `admit` (`Create`, which names a workspace, refuses one no longer served instead): a served workspace must hold the ID (else `ErrNoSession`), and the instance must pass `precondition`, which mirrors the keys' gates in `app/intents.go` (a gate that needs a pane, such as the send's liveness check, stays in the TUI) (no kill, pause or push of a workspace terminal or a busy session, no resume of one not Paused, …). A refusal's error matches `core.ErrRefused` (`ErrNoSession` does too); with `ReqID` 0 it is only logged (`request.refused`). A failed job is not a refusal: the model has already shown it as a `Notice`, and the Reply's `Err` carries it too.
 
 The pane triggers name instances by ID as well (`SetSelected`, `PaneOutput`, `PaneQuiet`, `VerifyDead`); `MarkOutput` takes the session name.
 
@@ -156,7 +156,7 @@ The daemon saves on requests, after the changes the model makes on its own (`sav
 
 ## Boundaries
 
-`TestCoreImportsNoUI` (`core/boundary_test.go`) walks the import graph and fails on `app`, `ui/...`, `script`, `keys` or a `charm.land` package reached from `core`, directly or through another loom package. `seams.go` holds the test-only exports, and `TestNoProductionCallsOfTestSeams` (`internal/testenv/seams_enforce_test.go`) fails on any production use of one, a call or a reference taken as a value. `core/doc.go` holds the package comment.
+`TestCoreImportsNoUI` (`core/boundary_test.go`) walks the import graph and fails on `app`, `ui/...`, `script`, `keys` or a `charm.land` package reached from `core`, directly or through another loom package. `seams.go` and `model.go` hold the test-only exports, and `TestNoProductionCallsOfTestSeams` (`internal/testenv/seams_enforce_test.go`) fails on any production use of one, a call or a reference taken as a value. `core/doc.go` holds the package comment.
 
 ## Tests
 
