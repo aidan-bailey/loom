@@ -243,10 +243,22 @@ func backupStateIfRequested(dir string, backup bool) error {
 	return nil
 }
 
+// StateWriteGuard, when set, runs before a command that writes a
+// workspace's state.json itself (workspace migrate), and its error refuses
+// the command. main sets it to refuse while the loom daemon serves the
+// global dir, which would overwrite what the command wrote; cmd cannot ask
+// the daemon itself (the daemon's package imports this one).
+var StateWriteGuard func() error
+
 var workspaceMigrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Move global instances to their matching workspace directories",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if StateWriteGuard != nil {
+			if err := StateWriteGuard(); err != nil {
+				return err
+			}
+		}
 		globalDir, err := config.GetGlobalConfigDir()
 		if err != nil {
 			return err

@@ -32,11 +32,6 @@ func runTests(m *testing.M) int {
 	_ = log.Initialize("", false)
 	defer log.Close()
 
-	// Every home's model runs on a loop that keeps its jobs for the test,
-	// served to a client that pings before every read (newHome included):
-	// rpc.InProcessForTest, through startTestCore.
-	startCore = startTestCore
-
 	// Belt and suspenders: LOOM_TMUX_SOCKET is the only variable
 	// tmux.Command consults (an explicit -L outranks $TMUX), but any test
 	// that clears it — deliberately or by accident — would otherwise fall
@@ -708,89 +703,53 @@ func TestPendingConfirmationClearedOnCancel(t *testing.T) {
 	assert.Nil(t, h.pendingConfirmation.Async, "pendingConfirmation.Async should be nil after cancel")
 }
 
-// TestHandleQuitStaysInTUIOnSaveError verifies that when SaveInstances
-// fails in the single-slot path, handleQuit refuses to quit and surfaces
-// the error instead. This branch was already correct before the F2 fix;
-// this test is a regression guard.
-func TestHandleQuitStaysInTUIOnSaveError(t *testing.T) {
-	cfgDir := t.TempDir()
-	state := config.LoadStateFrom(cfgDir)
-	storage, err := session.NewStorage(state, cfgDir)
-	require.NoError(t, err)
-
-	inst, err := session.NewInstance(session.InstanceOptions{
-		Title: "a", Path: t.TempDir(), Program: "claude",
-	})
-	require.NoError(t, err)
-
-	ws := testWS(core.WorkspaceParts{Config: config.DefaultConfig(), Storage: storage, State: state}, inst)
-	list := fixtureList(t)
-
-	h := wireCore(t, &home{
-		workspaceSlot: slotWith(ws, &workspaceSlot{
-			list:      list,
-			splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-		}),
-		ctx:    context.Background(),
-		state:  stateDefault,
-		menu:   ui.NewMenu(),
-		errBox: ui.NewErrBox(),
-	})
-
-	// Make the config dir read-only so the next SaveInstances fails.
-	require.NoError(t, os.Chmod(cfgDir, 0o500))
-	t.Cleanup(func() { _ = os.Chmod(cfgDir, 0o700) })
-
-	_, cmd := h.handleQuit()
-	require.NotNil(t, cmd, "handleQuit must return a Cmd even on save failure")
-	msg := cmd()
-	_, isQuit := msg.(tea.QuitMsg)
-	assert.False(t, isQuit, "handleQuit must not quit when SaveInstances fails")
+// quitWatch is a home's Core that records a SaveForQuit.
+type quitWatch struct {
+	core.Core
+	saved bool
 }
 
-// TestHandleQuitStaysInTUIOnSaveErrorMultiSlot drives the F2 fix. Before
-// the fix, the multi-slot branch logged SaveInstances errors and still
-// returned tea.Quit — silent data loss. After the fix, both branches
-// share the same policy: surface the error and keep the user in the TUI
-// so they can fix the underlying issue (e.g. disk full) without losing
-// unsaved state.
-func TestHandleQuitStaysInTUIOnSaveErrorMultiSlot(t *testing.T) {
+func (q *quitWatch) SaveForQuit() error {
+	q.saved = true
+	return q.Core.SaveForQuit()
+}
+
+// TestHandleQuit_SavesNoSession: quitting the TUI saves no session (the
+// daemon serves them on, and saves them as they change and when it
+// stops), so a workspace whose state can't be written no longer holds the
+// quit. The TUI writes only its own state, the open list
+// (TestHandleQuit_PersistsTheOpenList).
+func TestHandleQuit_SavesNoSession(t *testing.T) {
 	cfgDir := t.TempDir()
 	state := config.LoadStateFrom(cfgDir)
 	storage, err := session.NewStorage(state, cfgDir)
 	require.NoError(t, err)
-
 	inst, err := session.NewInstance(session.InstanceOptions{
 		Title: "a", Path: t.TempDir(), Program: "claude",
 	})
 	require.NoError(t, err)
-
 	wsCtx := &config.WorkspaceContext{Name: "test-ws", ConfigDir: cfgDir}
 	ws := testWS(core.WorkspaceParts{Ctx: wsCtx, Storage: storage, Config: config.DefaultConfig(), State: state}, inst)
-	list := fixtureList(t)
-
-	slot := slotWith(ws, &workspaceSlot{
-		list:      list,
-		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
-	})
-
 	h := &home{
 		ctx:    context.Background(),
 		state:  stateDefault,
 		menu:   ui.NewMenu(),
 		errBox: ui.NewErrBox(),
 	}
-	focusSlots(h, 0, slot)
+	focusSlots(h, 0, slotWith(ws, &workspaceSlot{
+		list:      fixtureList(t),
+		splitPane: ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane()),
+	}))
 	wireCore(t, h)
-
+	watch := &quitWatch{Core: h.core}
+	h.core = watch
 	require.NoError(t, os.Chmod(cfgDir, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(cfgDir, 0o700) })
 
 	_, cmd := h.handleQuit()
-	require.NotNil(t, cmd, "handleQuit must return a Cmd even on save failure")
-	msg := cmd()
-	_, isQuit := msg.(tea.QuitMsg)
-	assert.False(t, isQuit, "handleQuit must not quit when SaveInstances fails in multi-slot path")
+	require.NotNil(t, cmd)
+	assert.IsType(t, tea.QuitMsg{}, cmd(), "the quit is not held by a workspace it does not save")
+	assert.False(t, watch.saved, "the TUI saves no session")
 }
 
 // TestRunNow_RunsEveryCmdOfABatch: a batched Cmd called directly only

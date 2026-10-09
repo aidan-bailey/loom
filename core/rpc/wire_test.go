@@ -90,8 +90,18 @@ func TestProtocolReference(t *testing.T) {
 	p("client's own ID: a `Reply`, and the `Notice` of a request's job, go to that client alone; `Started` and\n")
 	p("`Recovered` go to every client, naming the request (`Req`) only to the one that made it.\n\n")
 
+	p("## Hello\n\n")
+	p("A hello names the side's build, which a client compares with the server's (`rpc.CompareBuilds`: the\n")
+	p("newer side wins): its release (`version`), its commit's time and whether its tree was modified (`time`,\n")
+	p("`modified`), and the SHA-256 of its executable (`exe`). A server's also names the tmux server its\n")
+	p("sessions run on (`tmux`, its socket's path), which its clients use too. Every field after `build` is\n")
+	p("optional:\n")
+	p("`%s`\n\n", compact(t, Frame{Hello: &Hello{Protocol: Protocol, Build: "v0.13.1 ad199a3…", Version: "0.13.0",
+		Time: "2026-10-08T17:54:55Z", Exe: "e3b0c442…", Tmux: "/run/user/1000/tmux-1000/default"}}))
+
 	p("## Refused hello\n\n")
-	p("A server answers a hello of another protocol with an error frame that has no id, then closes:\n")
+	p("A server answers a hello of another protocol with its own hello, so the client still learns its\n")
+	p("build, then an error frame that has no id, then closes:\n")
 	p("`%s`\n\n", compact(t, Frame{Error: mismatchError()}))
 
 	var stateEvents []string

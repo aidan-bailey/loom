@@ -299,7 +299,7 @@ func (l *Loop) Quiesce(timeout time.Duration) bool {
 
 // Begin starts the model's first background jobs (Model.Begin) and, the
 // first time, the health tick. Whatever serves the loop calls it once,
-// when it starts serving (rpc.InProcess); it is not in Core.
+// when it starts serving (the daemon, rpc.InProcess); it is not in Core.
 func (l *Loop) Begin() {
 	l.do(func(m *Model) {
 		m.Begin()

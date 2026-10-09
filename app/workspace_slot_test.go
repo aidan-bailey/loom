@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -177,12 +176,9 @@ func TestClassicSlot_NonNilAndOutsideSlots(t *testing.T) {
 	t.Setenv(config.EnvGlobalDir, t.TempDir())
 
 	t.Run("classic startup", func(t *testing.T) {
-		// A nameless startup context is global startup's: its name is all
-		// newHome reads. The "true" program is no Claude: the boot probes
-		// no auth.
-		m, err := newHome(context.Background(), &config.WorkspaceContext{}, nil, "true", "", true)
-		require.NoError(t, err)
-		t.Cleanup(m.stopCore)
+		// No startup name is global startup. The "true" program is no
+		// Claude: the boot probes no auth.
+		m := startupHome(t, nil, nil, "", "")
 		require.NotNil(t, m.workspaceSlot)
 		assert.Empty(t, m.slots)
 		assert.NotNil(t, m.list)

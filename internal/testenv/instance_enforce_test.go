@@ -22,9 +22,10 @@ const module = "github.com/aidan-bailey/loom"
 //   - session: an instance (the type, its constructors and options), the
 //     storage instances persist to, and the launch toggles the model sets
 //     on a settings save (core.Model.SaveSettings).
-//   - core: a loaded workspace, the model and its loop, and the jobs and
-//     output it keeps to itself (the TUI holds a core.Core, built with
-//     core.New and started in newHome, and handles no job).
+//   - core: a loaded workspace, the model and its loop, their
+//     constructors, and the jobs and output it keeps to itself (the TUI
+//     holds a core.Core, a client of the daemon, which builds and runs the
+//     model, and handles no job).
 //   - config: the workspace registry and state.json (the TUI reads
 //     core.RegistryView and core.WorkspaceView copies), and the config
 //     save (the model writes config.json).
@@ -37,7 +38,7 @@ var modelObjects = map[string]map[string]bool{
 	},
 	module + "/core": {
 		"Workspace": true, "WorkspaceParts": true, "NewWorkspace": true, "Model": true,
-		"Loop": true, "Job": true, "Out": true,
+		"New": true, "Loop": true, "Start": true, "Job": true, "Out": true,
 	},
 	module + "/config": {
 		"WorkspaceRegistry": true, "LoadWorkspaceRegistry": true,
@@ -46,17 +47,6 @@ var modelObjects = map[string]map[string]bool{
 	},
 	module + "/account": {
 		"Registry": true, "LoadRegistry": true,
-	},
-}
-
-// handover exempts, by file and function, the names a function may use to
-// hand the startup objects main.go builds to core.New: Run and newHome
-// take the workspace registry as a parameter and pass it on, reading none
-// of it after the model is built.
-var handover = map[string]map[string]map[string]bool{
-	"app/app_init.go": {
-		"Run":     {module + "/config.WorkspaceRegistry": true},
-		"newHome": {module + "/config.WorkspaceRegistry": true},
 	},
 }
 
@@ -79,7 +69,7 @@ var bridgeNames = map[string]bool{
 // from TestTUIHoldsNoInstance (daemon stage 1C), which covered instances
 // only. The TUI and Lua see the model only as values (core.InstanceView,
 // core.WorkspaceView, …) and change it only by request. Test files are
-// exempt, and so is the startup handover (handover).
+// exempt.
 func TestTUIHoldsNoModelObject(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, err)
@@ -94,9 +84,7 @@ func TestTUIHoldsNoModelObject(t *testing.T) {
 			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			rel, err := filepath.Rel(root, path)
-			require.NoError(t, err)
-			offenders = append(offenders, modelObjectUses(t, path, filepath.ToSlash(rel))...)
+			offenders = append(offenders, modelObjectUses(t, path)...)
 			return nil
 		})
 		require.NoError(t, err)
@@ -107,9 +95,8 @@ func TestTUIHoldsNoModelObject(t *testing.T) {
 // modelObjectUses lists path's uses of a forbidden name (modelObjects)
 // through its import of the package defining it, under whatever name the
 // file imports it (a dot import included), and of a bridge method
-// (bridgeNames) on anything. rel is path relative to the module root, for
-// the handover exemption.
-func modelObjectUses(t *testing.T, path, rel string) []string {
+// (bridgeNames) on anything.
+func modelObjectUses(t *testing.T, path string) []string {
 	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
@@ -129,8 +116,8 @@ func modelObjectUses(t *testing.T, path, rel string) []string {
 		imported[name] = p
 	}
 	var uses []string
-	check := func(n ast.Node, exempt map[string]bool) {
-		ast.Inspect(n, func(n ast.Node) bool {
+	for _, d := range file.Decls {
+		ast.Inspect(d, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.SelectorExpr:
 				if bridgeNames[x.Sel.Name] {
@@ -142,24 +129,17 @@ func modelObjectUses(t *testing.T, path, rel string) []string {
 					return true
 				}
 				ip, ok := imported[pkg.Name]
-				if ok && ip != "" && modelObjects[ip][x.Sel.Name] && !exempt[ip+"."+x.Sel.Name] {
+				if ok && ip != "" && modelObjects[ip][x.Sel.Name] {
 					uses = append(uses, fset.Position(x.Pos()).String()+": "+pkg.Name+"."+x.Sel.Name)
 				}
 			case *ast.Ident:
 				// A dot import puts the names in the file's own scope.
-				if ip, ok := imported["."]; ok && modelObjects[ip][x.Name] && !exempt[ip+"."+x.Name] {
+				if ip, ok := imported["."]; ok && modelObjects[ip][x.Name] {
 					uses = append(uses, fset.Position(x.Pos()).String()+": "+x.Name)
 				}
 			}
 			return true
 		})
-	}
-	for _, d := range file.Decls {
-		exempt := map[string]bool{}
-		if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil {
-			exempt = handover[rel][fn.Name.Name]
-		}
-		check(d, exempt)
 	}
 	return uses
 }

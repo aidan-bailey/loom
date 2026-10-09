@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/session/tmux"
 )
 
@@ -131,11 +132,13 @@ func (s *Sandbox) OriginDir() string { return filepath.Join(s.Dir, "origin.git")
 // WorkspaceConfigDir is the toy workspace's .loom directory.
 func (s *Sandbox) WorkspaceConfigDir() string { return filepath.Join(s.RepoDir(), ".loom") }
 
-// LogFiles lists the loom.log files a sandboxed loom writes.
+// LogFiles lists the log files a sandboxed loom writes: its TUI's
+// loom.log files and its daemon's serve.log.
 func (s *Sandbox) LogFiles() []string {
 	return []string{
 		filepath.Join(s.HomeDir(), "logs", "loom.log"),
 		filepath.Join(s.WorkspaceConfigDir(), "logs", "loom.log"),
+		daemon.LogPath(s.GlobalDir()),
 	}
 }
 
@@ -185,8 +188,13 @@ func (s *Sandbox) serverAlive() bool {
 	return tmux.CommandOnSocket(ctx, s.Socket(), "list-sessions").Run() == nil
 }
 
-// Down kills the sandbox's private tmux server and deletes its directory.
-// It refuses any Dir that is not <BaseDir>/<Name>.
+// daemonStopTimeout bounds Down's wait for the sandbox's daemon, which
+// waits for in-flight lifecycle jobs, then saves.
+const daemonStopTimeout = 60 * time.Second
+
+// Down stops the sandbox's loom daemon (a sandboxed loom started it, with
+// the sandbox's global dir), kills its private tmux server and deletes its
+// directory. It refuses any Dir that is not <BaseDir>/<Name>.
 func (s *Sandbox) Down() error {
 	base, err := BaseDir()
 	if err != nil {
@@ -194,6 +202,9 @@ func (s *Sandbox) Down() error {
 	}
 	if !validName.MatchString(s.Name) || s.Dir != filepath.Join(base, s.Name) {
 		return fmt.Errorf("refusing to remove %s: not the sandbox directory %s", s.Dir, filepath.Join(base, s.Name))
+	}
+	if err := daemon.Stop(s.GlobalDir(), daemonStopTimeout); err != nil && !errors.Is(err, daemon.ErrNotRunning) {
+		return fmt.Errorf("stop the sandbox's loom daemon: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

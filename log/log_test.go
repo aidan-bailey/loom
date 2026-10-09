@@ -199,7 +199,7 @@ func TestInitialize_ReturnsErrorWhenLogFileUnopenable(t *testing.T) {
 // closed fd. io.Discard is the safe sink.
 func TestInitialize_DaemonFallbackUsesDiscard(t *testing.T) {
 	dir := t.TempDir()
-	blocker := filepath.Join(dir, serveLogFileName)
+	blocker := filepath.Join(dir, ServeLogFileName)
 	require.NoError(t, os.Mkdir(blocker, 0755))
 
 	err := Initialize(dir, true)
@@ -524,8 +524,8 @@ func TestInitialize_TheDaemonWritesServeLog(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, Initialize(dir, true))
 	t.Cleanup(Close)
-	assert.Equal(t, filepath.Join(dir, serveLogFileName), LogFilePath())
+	assert.Equal(t, filepath.Join(dir, ServeLogFileName), LogFilePath())
 	Structured.Info("from the daemon")
-	assert.FileExists(t, filepath.Join(dir, serveLogFileName))
+	assert.FileExists(t, filepath.Join(dir, ServeLogFileName))
 	assert.NoFileExists(t, filepath.Join(dir, logFileName))
 }

@@ -7,7 +7,6 @@ import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
-	"github.com/aidan-bailey/loom/internal/takeover"
 	"github.com/aidan-bailey/loom/keys"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/script"
@@ -117,7 +116,7 @@ type home struct {
 	// sync. Invariant (checkSlotInvariant): with workspace tabs open
 	// (len(m.slots) > 0) it IS m.slots[m.focusedSlot]; in classic/global
 	// mode (no tabs) it is the classic slot, which is not in m.slots.
-	// Never nil after newHome. Only loadSlot and enterGlobalMode
+	// Never nil after startHome. Only loadSlot and enterGlobalMode
 	// reassign it, and every m.slots mutation restores the invariant
 	// before returning (openTab focuses the first tab opened from
 	// classic mode; deactivateWorkspace refocuses when it closes the
@@ -128,16 +127,23 @@ type home struct {
 
 	// core is the session model (package core): the loaded workspaces,
 	// their instances and everything lifecycle, through the methods the
-	// TUI calls (core.Core; *rpc.Client, from startCore, is its
-	// implementation: it keeps a replica of the state the model on its own
-	// loop publishes). Never nil after newHome.
+	// TUI calls (core.Core; *rpc.Client, connected to the loom daemon, is
+	// its implementation: it keeps a replica of the state the model
+	// publishes). Never nil after startHome.
 	core core.Core
 	// wakes is the client's wake signal (rpc.Client.Wakes), which Run
-	// forwards into the program (forwardWakes), and stopCore stops the
-	// client, the server and the loop. Both are nil in fixtures, whose
-	// loops run no job on their own.
+	// forwards into the program (forwardWakes), and stopCore closes the
+	// client. Both are nil in fixtures, whose loops run no job on their
+	// own.
 	wakes    <-chan struct{}
 	stopCore func()
+	// coreLost reports the client's loss of the model (rpc.Client.Err):
+	// the daemon stopped, or the model it serves failed. Update checks it
+	// first and quits. Nil in fixtures.
+	coreLost func() error
+	// exitErr is why the TUI quit on its own (the model lost, wrapped in
+	// ErrDaemonGone), which Run returns once the terminal is restored.
+	exitErr error
 	// program is the agent program this TUI's drafts and scripts default
 	// to: the one the process started with (the -p flag, else the startup
 	// workspace's), until this TUI saves another default program
@@ -146,14 +152,14 @@ type home struct {
 	// sentSelected is the selection last published to the model
 	// (publishSelection).
 	sentSelected core.InstanceID
-	// initCmd holds the Cmds newHome drained from the model before the
+	// initCmd holds the Cmds startHome drained from the model before the
 	// program ran (an error notice's hide timer); Init returns them.
 	initCmd tea.Cmd
 	// panes holds the TUI's attach clients, one per live agent tmux session
 	// (ui.PaneClients). Everything that renders an agent pane, scrolls it,
 	// forwards input to it or scrapes its screen for status goes through
 	// it. It is shared by every slot's list and split pane, and is never
-	// nil after newHome.
+	// nil after startHome.
 	panes *ui.PaneClients
 
 	// -- State --
@@ -208,12 +214,6 @@ type home struct {
 	// read false during that window, and racing a Restore against the
 	// in-flight ExecProcess would fight over the same tmux session's attach.
 	attachingID core.InstanceID
-	// fullScreen is the full-screen attach's cancel, which a takeover
-	// request ends from the lock listener's goroutine (see takeover.go).
-	fullScreen *foregroundAttach
-	// takenOverBy is the loom that took over, set when a takeover quits
-	// this one; Run names it once the TUI is gone.
-	takenOverBy *takeover.Holder
 
 	// bells holds the instances whose pane rang a bell since they were last
 	// focused (TUI state; laid over rows as InstanceView.Bell).
@@ -494,7 +494,7 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 }
 
 // applyUIPrefs pushes persisted layout prefs onto the components.
-// Called at the end of newHome (classic startup), after a slot is
+// Called at the end of startHome (classic startup), after a slot is
 // loaded/focused (loadSlot), and on entering global mode.
 func (m *home) applyUIPrefs() {
 	if m.id == 0 {
@@ -635,8 +635,22 @@ func (m *home) Init() tea.Cmd {
 
 // Update implements tea.Model: the message's handler (update), then
 // whatever the model produced meanwhile (drainCore), then the selection,
-// if it moved (publishSelection).
+// if it moved (publishSelection). First, though, a model the client has
+// lost (the daemon stopped, or its model failed) quits the TUI: the
+// client's wake brings the loss here (coreWakeMsg), and Run says why once
+// the terminal is restored. Nothing panics meanwhile: the client answers
+// local reads, View's included, from its last replica.
 func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.exitErr != nil {
+		return m, nil
+	}
+	if m.coreLost != nil {
+		if err := m.coreLost(); err != nil {
+			log.For("app").Error("core.lost", "err", err)
+			m.exitErr = fmt.Errorf("%w: %w", ErrDaemonGone, err)
+			return m, tea.Quit
+		}
+	}
 	model, cmd := m.update(msg)
 	cmd = tea.Batch(cmd, m.drainCore())
 	m.publishSelection()
@@ -1315,7 +1329,6 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// whose preview PTY must let go of it for the duration.
 		var attach *exec.Cmd
 		var preview *tmux.TmuxSession
-		attachCtx, endAttach := context.WithCancel(context.Background())
 		switch msg.target {
 		case attachTargetAgent:
 			// The tmux session, by name (the TUI holds no instance), of the
@@ -1325,22 +1338,20 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				v, _ = m.viewByID(msg.instance.ID)
 			}
 			if v != nil && v.TmuxSession != "" {
-				attach = tmux.NewSessionNamed(v.TmuxSession, v.SessionProgram).FullScreenAttachCmd(attachCtx)
+				attach = tmux.NewSessionNamed(v.TmuxSession, v.SessionProgram).FullScreenAttachCmd()
 				preview = m.panes.For(v).Client()
 			}
 		case attachTargetTerminal:
 			if ts := m.splitPane.TerminalTmuxSession(); ts != nil {
-				attach, preview = ts.FullScreenAttachCmd(attachCtx), ts
+				attach, preview = ts.FullScreenAttachCmd(), ts
 			}
 		}
 		if attach == nil {
-			endAttach()
 			return m, m.handleError(fmt.Errorf("no tmux session available for attach"))
 		}
 		// Close the preview PTY so the foreground tmux attach owns the tty.
 		if preview != nil {
 			if err := preview.PausePreview(); err != nil {
-				endAttach()
 				return m, m.handleError(err)
 			}
 		}
@@ -1349,7 +1360,6 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if inst != nil {
 			m.attachingID = inst.ID
 		}
-		m.fullScreen.set(endAttach)
 		return m, tea.ExecProcess(attach, func(err error) tea.Msg {
 			return attachDoneMsg{instance: inst, err: err}
 		})
@@ -1363,14 +1373,11 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, tea.RequestWindowSize, m.instanceChanged())
 		return m, tea.Batch(cmds...)
-	case takeoverMsg:
-		return m.handleTakeover(msg)
 	case attachDoneMsg:
 		// tea.ExecProcess has restored the terminal. Re-attach the agent's
 		// client so live capture resumes. A failure is logged inside
 		// ensurePane, and the metadata tick's repair retries it once
 		// attachingID is cleared below.
-		m.fullScreen.set(nil)
 		if msg.instance != nil {
 			// The attach held the event loop for its whole run, so the
 			// stores may lag what the model's jobs did meanwhile: reread
@@ -1458,26 +1465,11 @@ func (m *home) showRecoverySummary(s core.RecoverySummary) {
 	m.errBox.SetInfo(s.String())
 }
 
-// handleQuit persists session state and terminates the TUI. Policy:
-// if SaveInstances fails for ANY slot (or for the storage in the
-// single-slot path), we refuse to quit and surface the error via
-// handleError. The user stays in the TUI so they can fix the underlying
-// issue (disk full, read-only mount, etc.) and retry — silent data
-// loss on exit is worse than a sticky quit. Both branches share this
-// policy; the multi-slot branch used to log-and-quit, which is the
-// bug this function comment now documents has been fixed. The saves and
-// that policy are core.Model.SaveForQuit's.
+// handleQuit ends the TUI. It saves no session: the daemon serves them
+// on, and saves them as they change and when it stops. It writes only the
+// TUI's own state (the split ratios, the workbench's, the open list); Run
+// closes the client once the program has stopped.
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
-	if err := m.saveForQuit(); err != nil {
-		return m, m.handleError(err)
-	}
-	return m, tea.Quit
-}
-
-// saveForQuit persists everything handleQuit saves, returning the first
-// failure that must keep loom running (see handleQuit's policy). The
-// takeover quit shares it.
-func (m *home) saveForQuit() error {
 	// Persist any not-yet-flushed split resize before exit (the throttle
 	// tick may still be in flight; covers the classic path too, which
 	// runs no leaveFocusedSlot). The workbench ratio flushes the same
@@ -1492,7 +1484,7 @@ func (m *home) saveForQuit() error {
 	if len(m.slots) > 0 || len(m.core.Registry().Open) > 0 {
 		m.persistOpenList()
 	}
-	return m.core.SaveForQuit()
+	return m, tea.Quit
 }
 
 func (m *home) handleMenuHighlighting(msg tea.KeyPressMsg) (cmd tea.Cmd, returnEarly bool) {

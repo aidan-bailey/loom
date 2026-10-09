@@ -47,8 +47,8 @@ func (e *listingExec) killed() []string {
 var _ cmd2.Executor = (*listingExec)(nil)
 
 // TestOrphanSweep_SparesWhatThisLoomCannotVouchFor: the model serves every
-// registered workspace and the global one (daemon stage 3A), and one loom
-// runs per global dir (the takeover lock), so the boot's sweep owns all
+// registered workspace and the global one (daemon stage 3A), and one
+// daemon runs per global dir (its lock), so the boot's sweep owns all
 // their roots and kills an unclaimed session under any of them. It still
 // spares what it cannot vouch for: the sessions of a registered workspace
 // whose load failed, whose titles it could not read, and any session

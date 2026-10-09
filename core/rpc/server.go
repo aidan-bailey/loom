@@ -56,6 +56,9 @@ type Server struct {
 	// was connected, or the Notice of a request whose client has gone. The
 	// next connection is sent them after its snapshot (keep).
 	backlog []core.Notice
+	// tmux is the tmux server the model's sessions run on, for the hello
+	// (SetTmux).
+	tmux string
 
 	// selMu orders the selection: each connection's selected row (its
 	// SetSelected), merged for the model (setSelected).
@@ -108,6 +111,24 @@ func (s *Server) Close() {
 	s.wg.Wait()
 }
 
+// SetTmux names, in the hello every later connection is sent, the tmux
+// server the model's sessions run on (its socket's path): the daemon's,
+// which its clients must use too, whatever their own environment says.
+func (s *Server) SetTmux(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tmux = path
+}
+
+// hello is the hello the server sends: its build and tmux server.
+func (s *Server) hello() *Hello {
+	h := Self()
+	s.mu.Lock()
+	h.Tmux = s.tmux
+	s.mu.Unlock()
+	return &h
+}
+
 // Serve serves nc on a goroutine of its own until it closes (serveConn).
 // After Close it closes nc at once and serves nothing.
 func (s *Server) Serve(nc io.ReadWriteCloser) {
@@ -137,7 +158,9 @@ func (s *Server) Serve(nc io.ReadWriteCloser) {
 
 // serveConn serves connection n until it closes: the hello, the snapshot,
 // then each request and cast in the order they arrive. n names the
-// connection in the request IDs it hands the model (tagReq).
+// connection in the request IDs it hands the model (tagReq). The server's
+// hello goes even to a peer of another protocol, ahead of the mismatch
+// error, so the peer can tell which build is newer.
 func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 	c := newServerConn(nc)
 	c.n = n
@@ -156,11 +179,11 @@ func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 	if deadline != nil {
 		_ = deadline.SetReadDeadline(time.Time{})
 	}
+	c.sendFrame(Frame{Hello: s.hello()})
 	if hello.Hello == nil || hello.Hello.Protocol != Protocol {
 		c.sendFrame(Frame{Error: mismatchError()})
 		return
 	}
-	c.sendFrame(Frame{Hello: &Hello{Protocol: Protocol, Build: build()}})
 
 	s.mu.Lock()
 	select {

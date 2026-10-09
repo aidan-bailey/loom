@@ -22,9 +22,13 @@ var errClosed = errors.New("rpc: connection closed")
 // returns the events received since the last Sync, the state events
 // coalesced to the newest state. Wakes signals when events arrive.
 //
-// A panic the model raised reaches the caller that met it, and every
-// call after it panics too, so the TUI's own recovery restores the
-// terminal.
+// Losing the model (the connection lost, or the model failed: a panic, or
+// a frame either side could not use) is fatal, and Wakes signals it. A
+// daemon's client (Dial) then reports it (Err) and panics nowhere: local
+// reads answer from the last replica, requests fail with it and casts are
+// dropped, so the TUI can quit cleanly. An in-process client (InProcess)
+// raises it instead: the caller that met it panics, and every call after
+// it, so a model's own panic reaches its caller's recovery.
 type Client struct {
 	nc  io.ReadWriteCloser
 	wmu sync.Mutex
@@ -35,6 +39,10 @@ type Client struct {
 	// ping after, so it has reached the model when it returns: a test seam
 	// (InProcessForTest), for tests that change or read the model directly.
 	synchronous bool
+	// raise makes the model's loss panic in every call (InProcess).
+	raise bool
+	// peer is the server's hello.
+	peer Hello
 
 	mu      sync.Mutex
 	rep     replica
@@ -56,20 +64,26 @@ type Client struct {
 }
 
 // Dial says hello on nc, starts reading, and returns once the replica
-// holds the server's snapshot.
-func Dial(nc io.ReadWriteCloser) (*Client, error) { return dial(nc, false) }
+// holds the server's snapshot: a daemon's client, which reports the
+// model's loss rather than raising it (Err). A server of another protocol
+// is a *MismatchError, carrying its hello when it sent one.
+func Dial(nc io.ReadWriteCloser) (*Client, error) { return dial(nc, false, false) }
 
-func dial(nc io.ReadWriteCloser, synchronous bool) (*Client, error) {
+// dial is Dial; synchronous and raise set the client's fields of those
+// names.
+func dial(nc io.ReadWriteCloser, synchronous, raise bool) (*Client, error) {
 	c := &Client{
 		nc:          nc,
 		enc:         json.NewEncoder(nc),
 		synchronous: synchronous,
+		raise:       raise,
 		pending:     map[uint64]chan Frame{},
 		wake:        make(chan struct{}, 1),
 		done:        make(chan struct{}),
 		readerDone:  make(chan struct{}),
 	}
-	if err := c.write(Frame{Hello: &Hello{Protocol: Protocol, Build: build()}}); err != nil {
+	self := Self()
+	if err := c.write(Frame{Hello: &self}); err != nil {
 		nc.Close()
 		return nil, err
 	}
@@ -79,14 +93,21 @@ func dial(nc io.ReadWriteCloser, synchronous bool) (*Client, error) {
 		nc.Close()
 		return nil, fmt.Errorf("rpc: read hello: %w", err)
 	}
-	if hello.Error != nil {
+	switch {
+	case hello.Error != nil && hello.Error.Code == core.CodeMismatch:
+		nc.Close()
+		return nil, &MismatchError{}
+	case hello.Error != nil:
 		nc.Close()
 		return nil, hello.Error
-	}
-	if hello.Hello == nil || hello.Hello.Protocol != Protocol {
+	case hello.Hello == nil:
 		nc.Close()
-		return nil, &core.WireError{Code: core.CodeMismatch, Message: "rpc: the server speaks another protocol"}
+		return nil, &core.WireError{Code: core.CodeProtocol, Message: "rpc: the server sent no hello"}
+	case hello.Hello.Protocol != Protocol:
+		nc.Close()
+		return nil, &MismatchError{Peer: hello.Hello}
 	}
+	c.peer = *hello.Hello
 	go c.read(dec)
 	if err := c.handshake(); err != nil {
 		c.Close()
@@ -96,10 +117,10 @@ func dial(nc io.ReadWriteCloser, synchronous bool) (*Client, error) {
 }
 
 // handshake is the barrier that completes Dial. A fatal error that arrives
-// meanwhile (the model panicked, or the connection was lost) is Dial's
-// error rather than a panic in its caller. It is best-effort: a Fatal frame
-// that lands after the ping has checked for one gives a Dial that succeeds,
-// whose first call panics with it.
+// first (the model panicked, or the connection was lost) is Dial's error
+// rather than a panic in its caller: the server sends one ahead of the
+// ping's reply, so it is never missed. One that lands later is the
+// client's loss as usual.
 func (c *Client) handshake() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -110,7 +131,25 @@ func (c *Client) handshake() (err error) {
 			err = w
 		}
 	}()
-	return c.ping()
+	if err := c.ping(); err != nil {
+		return err
+	}
+	return c.Err()
+}
+
+// Peer is the server's hello.
+func (c *Client) Peer() Hello { return c.peer }
+
+// Err is the model's loss: the connection lost, or the model failed (a
+// panic, or a frame either side could not use). Nil while the model is
+// reachable, and after Close.
+func (c *Client) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.fatal == nil {
+		return nil
+	}
+	return c.fatal
 }
 
 // read is the client's reader: it applies each event to the replica (or
@@ -171,9 +210,9 @@ func (c *Client) read(dec *json.Decoder) {
 
 // fail ends the client after its connection failed or was closed: every
 // waiting call returns errClosed. A connection the client did not close
-// itself is lost, and the model with it: that is fatal, so the next call
-// panics (and the TUI's own recovery restores the terminal) rather than
-// the TUI running on against a model it cannot reach.
+// itself is lost, and the model with it: that is fatal (Err, or the next
+// call's panic), so the TUI does not run on against a model it cannot
+// reach.
 func (c *Client) fail(err error) {
 	c.mu.Lock()
 	c.closed = true
@@ -220,18 +259,18 @@ func (c *Client) write(f Frame) error {
 	return c.enc.Encode(f)
 }
 
-// checkFatalLocked re-raises the model's panic. c.mu is held, and released
-// by the caller's defer: a caller that unlocks by hand copies c.fatal and
-// panics after unlocking instead.
+// checkFatalLocked raises the model's loss, when the client raises it. c.mu
+// is held, and released by the caller's defer: a caller that unlocks by
+// hand copies c.fatal and panics after unlocking instead.
 func (c *Client) checkFatalLocked() {
-	if c.fatal != nil {
+	if c.fatal != nil && c.raise {
 		panic(c.fatal)
 	}
 }
 
 // request sends method with params, waits for its reply and decodes its
-// result into result; it returns the method's error. A panic the model
-// raised is re-raised here.
+// result into result; it returns the method's error. Once the model is
+// lost, it returns the loss, or raises it when the client raises.
 func (c *Client) request(method string, params, result any) error {
 	data, err := json.Marshal(params)
 	if err != nil {
@@ -249,7 +288,10 @@ func (c *Client) request(method string, params, result any) error {
 	}
 	c.mu.Unlock()
 	if fatal != nil {
-		panic(fatal)
+		if c.raise {
+			panic(fatal)
+		}
+		return fatal
 	}
 	if closed {
 		log.For("rpc").Warn("client.call_after_close", "method", method)
@@ -269,12 +311,18 @@ func (c *Client) request(method string, params, result any) error {
 	}
 	if reply.Error != nil && (reply.Error.Code == core.CodePanic || reply.Error.Code == core.CodeProtocol) {
 		// A panic ends the model; a protocol error means the two sides
-		// disagree about the wire. Neither can be told to the caller as the
-		// method's own error.
+		// disagree about the wire. Neither is the method's own error: the
+		// model is lost.
 		c.mu.Lock()
-		c.fatal = reply.Error
+		if c.fatal == nil {
+			c.fatal = reply.Error
+		}
 		c.mu.Unlock()
-		panic(reply.Error)
+		c.signal()
+		if c.raise {
+			panic(reply.Error)
+		}
+		return reply.Error
 	}
 	if result != nil && len(reply.Result) > 0 {
 		if err := json.Unmarshal(reply.Result, result); err != nil {
@@ -293,7 +341,8 @@ func (c *Client) requestNoErr(method string, params, result any) {
 	}
 }
 
-// cast sends method with params one way.
+// cast sends method with params one way; once the model is lost, it is
+// dropped, or the loss raised when the client raises.
 func (c *Client) cast(method string, params any) {
 	data, err := json.Marshal(params)
 	if err != nil {
@@ -303,10 +352,10 @@ func (c *Client) cast(method string, params any) {
 	c.mu.Lock()
 	fatal, closed := c.fatal, c.closed
 	c.mu.Unlock()
-	if fatal != nil {
+	if fatal != nil && c.raise {
 		panic(fatal)
 	}
-	if closed {
+	if fatal != nil || closed {
 		return
 	}
 	_ = c.write(Frame{Method: method, Params: data})

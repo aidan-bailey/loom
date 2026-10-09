@@ -78,6 +78,26 @@ func within(t *testing.T, d time.Duration, what string, f func()) {
 	}
 }
 
+// assertLost asserts that c, a daemon's client (Dial), has lost the model
+// with code, and reports it without panicking: Err says so, a local read
+// answers from the last replica, a request fails with the loss, and a cast
+// is dropped. It returns the loss.
+func assertLost(t *testing.T, c *Client, code string) *core.WireError {
+	t.Helper()
+	var w *core.WireError
+	require.ErrorAs(t, c.Err(), &w)
+	assert.Equal(t, code, w.Code)
+	assert.Nil(t, raised(t, "a local read", func() { c.RCAuth() }), "a local read does not panic")
+	assert.Nil(t, raised(t, "Sync", func() { c.Sync() }), "nor Sync")
+	assert.Nil(t, raised(t, "a cast", func() { c.MarkOutput("x") }), "nor a cast")
+	var err error
+	assert.Nil(t, raised(t, "a request", func() { _, err = c.Open(1) }), "nor a request")
+	var got *core.WireError
+	require.ErrorAs(t, err, &got, "the request fails with the loss")
+	assert.Equal(t, code, got.Code)
+	return w
+}
+
 // raised is the value f panicked with, nil if it returned; f hanging fails
 // the test.
 func raised(t *testing.T, what string, f func()) (p any) {
@@ -281,11 +301,11 @@ type panicky struct{ *core.Loop }
 
 func (panicky) PersistOpenList([]string) { panic("boom") }
 
-// TestPanic_ReachesTheCallerAndEveryLaterCall: the model's panic is raised
-// in the caller, and every call after it panics too, a cast and a request
-// included, without leaving the client's lock held: Close waits for the
-// reader, which needs it. A synchronous client pings before a local read, so
-// it takes the request's path on every read.
+// TestPanic_ReachesTheCallerAndEveryLaterCall: an in-process client raises
+// the model's panic in the caller, and every call after it panics too, a
+// cast and a request included, without leaving the client's lock held:
+// Close waits for the reader, which needs it. A synchronous client pings
+// before a local read, so it takes the request's path on every read.
 func TestPanic_ReachesTheCallerAndEveryLaterCall(t *testing.T) {
 	for _, synchronous := range []bool{false, true} {
 		t.Run(fmt.Sprintf("synchronous=%v", synchronous), func(t *testing.T) {
@@ -295,7 +315,7 @@ func TestPanic_ReachesTheCallerAndEveryLaterCall(t *testing.T) {
 			t.Cleanup(srv.Close)
 			a, b := net.Pipe()
 			srv.Serve(a)
-			c, err := dial(b, synchronous)
+			c, err := dial(b, synchronous, true)
 			require.NoError(t, err)
 
 			p := catch(func() { c.PersistOpenList(nil) })
@@ -313,38 +333,95 @@ func TestPanic_ReachesTheCallerAndEveryLaterCall(t *testing.T) {
 	}
 }
 
-// TestConnectionLost_IsFatal: a connection the client did not close is the
-// model lost, which the next call raises, and Wakes tells the TUI to make.
-// A void request returning errClosed in silence would let the TUI run on
-// against a model it cannot reach.
-func TestConnectionLost_IsFatal(t *testing.T) {
+// TestPanic_ADaemonsClientReportsIt: a daemon's client (Dial) reports the
+// model's panic instead of raising it, so the TUI can quit cleanly: the
+// call that met it fails with it, and Wakes tells the TUI to look.
+func TestPanic_ADaemonsClientReportsIt(t *testing.T) {
 	loop := core.StartForTest(core.NewForTest(core.Options{}))
 	t.Cleanup(loop.Stop)
-	srv := NewServer(loop)
+	srv := NewServer(panicky{loop})
 	t.Cleanup(srv.Close)
 	a, b := net.Pipe()
 	srv.Serve(a)
 	c, err := Dial(b)
 	require.NoError(t, err)
-	c.Sync()
 	select {
 	case <-c.Wakes():
 	default:
 	}
 
-	a.Close() // the server's end, not the client's Close
+	assert.Nil(t, raised(t, "the call", func() { c.PersistOpenList(nil) }), "the caller does not panic")
 	select {
 	case <-c.Wakes():
 	case <-time.After(5 * time.Second):
-		t.Fatal("the loss did not wake the client")
+		t.Fatal("the panic did not wake the client")
 	}
-	p := catch(func() { c.RCAuth() })
+	w := assertLost(t, c, core.CodePanic)
+	assert.Contains(t, w.Message, "boom")
+	within(t, 5*time.Second, "Close after a panic", c.Close)
+}
+
+// TestInProcess_RaisesTheModelsPanic: an in-process client raises the
+// model's panic in the call that meets it, so a model bug fails the test
+// (or reaches the recovery) of whoever called.
+func TestInProcess_RaisesTheModelsPanic(t *testing.T) {
+	c, loop, stop, err := InProcessForTest(core.NewForTest(core.Options{}))
+	require.NoError(t, err)
+	t.Cleanup(stop)
+	catch(func() { loop.DeliverForTest(core.StartResult{}) }) // a nil instance panics the model
+	p := raised(t, "a local read", func() { c.RCAuth() })
 	w, ok := p.(*core.WireError)
-	require.True(t, ok, "the next call panics with the wire's error, got %T", p)
-	assert.Equal(t, core.CodeError, w.Code)
-	assert.Contains(t, w.Message, "connection to the model lost")
-	assert.NotNil(t, catch(func() { c.Kill(1, 0) }), "and so does a request")
-	within(t, 5*time.Second, "Close after the loss", c.Close)
+	require.True(t, ok, "the call panics with the wire's error, got %T", p)
+	assert.Equal(t, core.CodePanic, w.Code)
+}
+
+// TestConnectionLost_IsFatal: a connection the client did not close is the
+// model lost, and Wakes tells the TUI. A daemon's client reports it (Err);
+// an in-process one raises it in the next call. A void request returning
+// errClosed in silence would let the TUI run on against a model it cannot
+// reach.
+func TestConnectionLost_IsFatal(t *testing.T) {
+	lose := func(t *testing.T, raise bool) *Client {
+		loop := core.StartForTest(core.NewForTest(core.Options{}))
+		t.Cleanup(loop.Stop)
+		srv := NewServer(loop)
+		t.Cleanup(srv.Close)
+		a, b := net.Pipe()
+		srv.Serve(a)
+		c, err := dial(b, false, raise)
+		require.NoError(t, err)
+		c.Sync()
+		select {
+		case <-c.Wakes():
+		default:
+		}
+		require.NoError(t, c.Err())
+
+		a.Close() // the server's end, not the client's Close
+		select {
+		case <-c.Wakes():
+		case <-time.After(5 * time.Second):
+			t.Fatal("the loss did not wake the client")
+		}
+		return c
+	}
+
+	t.Run("a daemon's client reports it", func(t *testing.T) {
+		c := lose(t, false)
+		w := assertLost(t, c, core.CodeError)
+		assert.Contains(t, w.Message, "connection to the model lost")
+		within(t, 5*time.Second, "Close after the loss", c.Close)
+	})
+	t.Run("an in-process client raises it", func(t *testing.T) {
+		c := lose(t, true)
+		p := catch(func() { c.RCAuth() })
+		w, ok := p.(*core.WireError)
+		require.True(t, ok, "the next call panics with the wire's error, got %T", p)
+		assert.Equal(t, core.CodeError, w.Code)
+		assert.Contains(t, w.Message, "connection to the model lost")
+		assert.NotNil(t, catch(func() { c.Kill(1, 0) }), "and so does a request")
+		within(t, 5*time.Second, "Close after the loss", c.Close)
+	})
 }
 
 // TestClose_IsNotALoss: a client that closes itself raises nothing after.
@@ -355,11 +432,12 @@ func TestClose_IsNotALoss(t *testing.T) {
 	t.Cleanup(srv.Close)
 	a, b := net.Pipe()
 	srv.Serve(a)
-	c, err := Dial(b)
+	c, err := dial(b, false, true)
 	require.NoError(t, err)
 	within(t, 5*time.Second, "Close", c.Close)
 	assert.Nil(t, catch(func() { c.RCAuth() }), "a read after Close is not a panic")
 	assert.Nil(t, catch(func() { c.Kill(1, 0) }), "nor a request")
+	assert.NoError(t, c.Err(), "nor a loss")
 }
 
 // breaker is a backend that publishes an event no codec can carry: a NaN
@@ -395,11 +473,8 @@ func (b *breaker) SyncAndSnapshot() (published, snapshot []core.Event) {
 // for every client: dropped, a Reply would strand its requester and a state
 // event would leave a replica stale.
 func TestEncodeFailure_IsFatal(t *testing.T) {
-	fatalOf := func(t *testing.T, p any) {
+	namesTheEvent := func(t *testing.T, w *core.WireError) {
 		t.Helper()
-		w, ok := p.(*core.WireError)
-		require.True(t, ok, "the call panics with the wire's error, got %T", p)
-		assert.Equal(t, core.CodeProtocol, w.Code)
 		assert.Contains(t, w.Message, "AccountsChanged", "it names the event")
 	}
 	serve := func(t *testing.T, bk *breaker) (net.Conn, *Server) {
@@ -420,39 +495,99 @@ func TestEncodeFailure_IsFatal(t *testing.T) {
 		require.NoError(t, err)
 		bk.sync.Store(true)
 		c.PersistOpenList(nil) // the request's publish meets the event
-		fatalOf(t, catch(func() { c.RCAuth() }))
+		require.Eventually(t, func() bool { return c.Err() != nil }, 5*time.Second, 10*time.Millisecond)
+		namesTheEvent(t, assertLost(t, c, core.CodeProtocol))
 		within(t, 5*time.Second, "Close", c.Close)
 	})
 	t.Run("snapshot", func(t *testing.T) {
 		bk := &breaker{snapshot: true}
 		b, _ := serve(t, bk)
-		c, err := Dial(b)
-		if err != nil { // the fatal frame beat Dial's barrier
-			var w *core.WireError
-			require.ErrorAs(t, err, &w)
-			fatalOf(t, w)
-			return
-		}
-		fatalOf(t, catch(func() { c.RCAuth() }))
-		within(t, 5*time.Second, "Close", c.Close)
+		_, err := Dial(b)
+		var w *core.WireError
+		require.ErrorAs(t, err, &w, "the fatal frame comes ahead of Dial's barrier: Dial fails")
+		assert.Equal(t, core.CodeProtocol, w.Code)
+		namesTheEvent(t, w)
 	})
 }
 
 // TestHello_RefusesAnotherProtocol: a server answers a client speaking
-// another protocol with a mismatch.
+// another protocol with its own hello, so the client learns its build,
+// then a mismatch.
 func TestHello_RefusesAnotherProtocol(t *testing.T) {
 	loop := core.StartForTest(core.NewForTest(core.Options{}))
 	t.Cleanup(loop.Stop)
 	srv := NewServer(loop)
+	srv.SetTmux("/tmp/tmux-1000/default")
 	t.Cleanup(srv.Close)
 	a, b := net.Pipe()
 	srv.Serve(a)
 	t.Cleanup(func() { b.Close() })
 	require.NoError(t, json.NewEncoder(b).Encode(Frame{Hello: &Hello{Protocol: Protocol + 1}}))
-	var f Frame
-	require.NoError(t, json.NewDecoder(b).Decode(&f))
-	require.NotNil(t, f.Error)
-	assert.Equal(t, core.CodeMismatch, f.Error.Code)
+	dec := json.NewDecoder(b)
+	var hello, refusal Frame
+	require.NoError(t, dec.Decode(&hello))
+	require.NotNil(t, hello.Hello, "the server's hello comes first")
+	assert.Equal(t, Protocol, hello.Hello.Protocol)
+	assert.Equal(t, Self().Exe, hello.Hello.Exe)
+	assert.Equal(t, "/tmp/tmux-1000/default", hello.Hello.Tmux)
+	require.NoError(t, dec.Decode(&refusal))
+	require.NotNil(t, refusal.Error)
+	assert.Equal(t, core.CodeMismatch, refusal.Error.Code)
+}
+
+// TestDial_TheServersHello: a client learns the server's build and tmux
+// server from its hello, and a server of another protocol is a
+// MismatchError carrying it, so the client can still tell which is newer.
+func TestDial_TheServersHello(t *testing.T) {
+	t.Run("same protocol", func(t *testing.T) {
+		loop := core.StartForTest(core.NewForTest(core.Options{}))
+		t.Cleanup(loop.Stop)
+		srv := NewServer(loop)
+		srv.SetTmux("/run/user/1000/tmux-1000/default")
+		t.Cleanup(srv.Close)
+		a, b := net.Pipe()
+		srv.Serve(a)
+		c, err := Dial(b)
+		require.NoError(t, err)
+		t.Cleanup(c.Close)
+		assert.Equal(t, "/run/user/1000/tmux-1000/default", c.Peer().Tmux)
+		assert.Equal(t, SameBuild, CompareBuilds(Self(), c.Peer()), "one process, one build")
+	})
+
+	t.Run("another protocol", func(t *testing.T) {
+		a, b := net.Pipe()
+		t.Cleanup(func() { a.Close() })
+		go func() {
+			dec, enc := json.NewDecoder(a), json.NewEncoder(a)
+			var hello Frame
+			if dec.Decode(&hello) != nil {
+				return
+			}
+			_ = enc.Encode(Frame{Hello: &Hello{Protocol: Protocol + 1, Version: "9.0.0"}})
+			_ = enc.Encode(Frame{Error: &core.WireError{Code: core.CodeMismatch, Message: "rpc: protocol mismatch"}})
+		}()
+		_, err := Dial(b)
+		var mm *MismatchError
+		require.ErrorAs(t, err, &mm)
+		require.NotNil(t, mm.Peer)
+		assert.Equal(t, "9.0.0", mm.Peer.Version)
+	})
+
+	t.Run("another protocol, from before servers said hello first", func(t *testing.T) {
+		a, b := net.Pipe()
+		t.Cleanup(func() { a.Close() })
+		go func() {
+			var hello Frame
+			if json.NewDecoder(a).Decode(&hello) != nil {
+				return
+			}
+			_ = json.NewEncoder(a).Encode(Frame{Error: &core.WireError{Code: core.CodeMismatch, Message: "rpc: protocol mismatch"}})
+		}()
+		_, err := Dial(b)
+		var mm *MismatchError
+		require.ErrorAs(t, err, &mm)
+		assert.Nil(t, mm.Peer)
+	})
 }
 
 // TestClosed_CallsReturn: once the server is gone, calls return at once. A

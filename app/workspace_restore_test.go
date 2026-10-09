@@ -111,7 +111,7 @@ func preservedTerminalWorkspace(t *testing.T, name string) config.Workspace {
 	return writeWorkspaceState(t, name, "["+string(rec)+"]")
 }
 
-// newRestoreHome is a home as newHome leaves it with no saved tab to
+// newRestoreHome is a home as startHome leaves it with no saved tab to
 // restore (startupHome), over a model whose every executor is exec: its
 // classic slot shows the global workspace of the test's own
 // LOOM_GLOBAL_DIR, which the caller sets first, and its registry is the
@@ -193,7 +193,7 @@ func TestStartupRestore_AFailedWorkspaceDoesNotStopTheSweep(t *testing.T) {
 	})
 }
 
-// restoreModeHome is a home as newHome leaves it at startup (startupHome)
+// restoreModeHome is a home as startHome leaves it at startup (startupHome)
 // over a fresh global dir whose state.json — instancesJSON — the global
 // workspace loads, with saved registered and in the registry's open list:
 // the startup restores them as tabs (restoreSavedWorkspaces), and with

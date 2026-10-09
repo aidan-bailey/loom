@@ -2,11 +2,11 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
-	"github.com/aidan-bailey/loom/internal/takeover"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/aidan-bailey/loom/ui"
@@ -23,38 +23,32 @@ import (
 // to drain and close (see script.Engine.Shutdown).
 const scriptShutdownTimeout = 1500 * time.Millisecond
 
-// Run starts the Bubble Tea program and blocks until the user quits or
-// ctx is cancelled. It wires the home model, installs a shutdown hook
-// that drains suspended Lua coroutines, and swallows no errors — a
-// non-nil return means tea.Program.Run failed.
+// ErrDaemonGone is Run's error when the TUI quit because it lost the
+// model: the daemon stopped (or was replaced by a newer one), or the model
+// it serves failed. The sessions keep running, and the next loom starts a
+// daemon again.
+var ErrDaemonGone = errors.New("the loom daemon is gone")
+
+// Run starts the Bubble Tea program over client, a connection to the loom
+// daemon, and blocks until the user quits, ctx is cancelled, or the daemon
+// goes (ErrDaemonGone). It installs a shutdown hook that drains suspended
+// Lua coroutines, closes the client when the program has stopped, and
+// swallows no errors: any other non-nil return means tea.Program.Run
+// failed.
 //
 // Parameters:
-//   - wsCtx is the resolved workspace context, whose name picks the
-//     workspace the TUI starts on ("" or nil: the global one).
-//   - registry is the workspace registry, which the model owns from here
-//     on: it serves every registered workspace.
+//   - client is the daemon's client, connected and handshaken; Run owns it
+//     from here on, and closes it on return.
+//   - startupName names the workspace the TUI starts on ("": the global
+//     one).
 //   - appConfig is the pre-loaded config from the resolved workspace dir,
 //     read for its theme.
-//   - program overrides the default agent command for new instances
-//     (empty string uses appConfig.GetProgram()).
+//   - program is the agent command this TUI's new instances default to.
 //   - pendingDir is an optional directory to seed the new-instance
 //     overlay with (used by `loom` invoked from a non-workspace dir).
 //   - noScripts disables loading user scripts from ~/.loom/scripts;
 //     embedded defaults still load so core keybindings work.
-//   - uiLock is the takeover lock main holds; the TUI saves and quits
-//     when another loom asks to take over (see internal/takeover). Nil
-//     when it couldn't be taken: loom then runs unlocked and serves no
-//     takeovers.
-//
-// startCore starts the model as the TUI talks to it: rpc.InProcess runs
-// it on its own loop, serves it over an in-memory pipe, and returns the
-// client (a core.Core keeping a replica of the model's published state)
-// and the function that stops all three. App's tests replace it with
-// rpc.InProcessForTest, whose loop keeps every job for the test to run and
-// whose client is synchronous.
-var startCore = rpc.InProcess
-
-func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, appConfig *config.Config, program string, pendingDir string, noScripts bool, uiLock *takeover.Lock) error {
+func Run(ctx context.Context, client *rpc.Client, startupName string, appConfig *config.Config, program string, pendingDir string, noScripts bool) error {
 	// Activate the configured theme before any component renders.
 	// Package-init styles are theme-hooked (ui.RegisterThemeHook), so
 	// this rebuild-on-apply is what makes config-selected themes stick.
@@ -65,12 +59,14 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 	if !ui.ApplyTheme(themeName) && themeName != "" {
 		log.For("ui").Warn("unknown_theme", "name", themeName, "fallback", ui.DefaultThemeName)
 	}
-	h, err := newHome(ctx, wsCtx, registry, program, pendingDir, noScripts)
+	// The daemon booted the model, and keeps the notices its boot raised
+	// for the first client: they arrive over the wire with the snapshot.
+	h, err := startHome(ctx, client, client.Close, nil, startupName, program, pendingDir, noScripts)
 	if err != nil {
 		return err
 	}
-	// The model's loop stops when Run returns, after the program quit; a
-	// result landing later is dropped, as a Cmd's was.
+	// The client closes when Run returns, after the program quit; the
+	// daemon serves the sessions on.
 	defer h.stopCore()
 	// Shutdown hook: drain any suspended script coroutines then close
 	// the Lua state. The engine's "every coroutine gets resumed" contract
@@ -86,8 +82,8 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 		}
 	}()
 	p := tea.NewProgram(h) // alt-screen + mouse mode are set on the tea.View (see View())
-	// The model's wakes (a job's result landed, its tick fired) reach the
-	// program as coreWakeMsg; forwardWakes ends when the loop stops.
+	// The client's wakes (events arrived, or the model was lost) reach the
+	// program as coreWakeMsg; forwardWakes ends when the client closes.
 	go forwardWakes(h.wakes, p.Send)
 	// Pane events: the output pumps push dirty/quiet/bell/dead into the
 	// program from their own goroutines; Send is goroutine-safe by design.
@@ -100,47 +96,22 @@ func Run(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.W
 		Dead:   func(s string) { p.Send(ptyDeadMsg{session: s}) },
 	})
 	defer tmux.SetNotifier(tmux.Notifier{})
-	if uiLock != nil {
-		if err := uiLock.Listen(takeoverListener(h.fullScreen, p.Send)); err != nil {
-			// Not fatal: this loom still holds the lock, so a second one
-			// is refused rather than overwriting its sessions.
-			log.For("app").Warn("takeover.listen_failed", "err", err)
-		}
+	if _, err := p.Run(); err != nil {
+		return err
 	}
-	_, err = p.Run()
-	if h.takenOverBy != nil {
-		fmt.Printf("loom: saved and quit; taken over by %s\n", h.takenOverBy)
-	}
-	return err
+	return h.exitErr
 }
 
-func newHome(ctx context.Context, wsCtx *config.WorkspaceContext, registry *config.WorkspaceRegistry, program string, pendingDir string, noScripts bool) (*home, error) {
-	// The model serves every workspace: Boot loads the account registry,
-	// detects the default account's remote-control auth and loads the
-	// global and every registered workspace, before its loop starts (the
-	// model is single-goroutine until then). The registry belongs to the
-	// model from here on.
-	model := core.New(core.Options{Registry: registry, Program: program})
-	notices := model.Boot()
-	// From here on only the model's loop touches the model, and the TUI
-	// reaches it through the client.
-	client, stopCore, err := startCore(model)
-	if err != nil {
-		return nil, err
-	}
-	startupName := ""
-	if wsCtx != nil {
-		startupName = wsCtx.Name
-	}
-	return startHome(ctx, client, stopCore, notices, startupName, program, pendingDir, noScripts)
-}
-
-// startHome builds the TUI over client, a model booted and served (see
-// newHome), whose boot raised notices: it shows the workspace named
-// startupName ("" for the global one) while no tab is open, restores the
-// registry's saved tabs unless a pendingDir awaits registration, and opens
-// the startup overlays. program is what this TUI's drafts default to. On
-// an error it stops the client (stopCore).
+// startHome builds the TUI over client, a model booted and served, plus
+// the notices its boot raised that the client will not be sent (a test's
+// model, booted by hand; the daemon keeps its own for the first client):
+// it shows the workspace named startupName ("" for the global one) while
+// no tab is open, restores the registry's saved tabs unless a pendingDir
+// awaits registration, and opens the startup overlays. It rereads the
+// registry first, so a workspace registered since the model booted is
+// served, and records a named startup workspace as the last used. program
+// is what this TUI's drafts default to. On an error it stops the client
+// (stopCore).
 func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices []core.Event, startupName, program, pendingDir string, noScripts bool) (*home, error) {
 	startGlobal := startupName == ""
 	sp := ui.NewSplitPane(ui.NewPreviewPane(), ui.NewDiffPane(), ui.NewTerminalPane())
@@ -149,9 +120,9 @@ func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices
 		core:        client,
 		wakes:       client.Wakes(),
 		stopCore:    stopCore,
+		coreLost:    client.Err,
 		program:     program,
 		startupName: startupName,
-		fullScreen:  &foregroundAttach{},
 		workspaceSlot: &workspaceSlot{
 			splitPane: sp,
 			workbench: ui.NewWorkbench(ui.NewDiffPane(), sp.Terminal()),
@@ -167,10 +138,16 @@ func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices
 		panes:       ui.NewPaneClients(),
 		bells:       make(map[core.InstanceID]bool),
 	}
-	// The classic slot shows the startup workspace, which the model has
-	// served since it booted: under the startup name, or, for a name
-	// registered for a directory another name was registered for first
-	// (through a symlink, say), under that twin's.
+	// The model serves every registered workspace, but reads the registry
+	// only when asked: one registered since it booted (`loom workspace add`,
+	// then `loom -w`) is served once it rereads it.
+	if err := h.core.ReloadRegistry(); err != nil {
+		log.For("app").Warn("registry.reload_failed", "err", err)
+	}
+	// The classic slot shows the startup workspace, which the model
+	// serves: under the startup name, or, for a name registered for a
+	// directory another name was registered for first (through a symlink,
+	// say), under that twin's.
 	var notes []string
 	classic, ok := h.servedNamed(startupName)
 	if !ok {
@@ -183,6 +160,12 @@ func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices
 		return nil, fmt.Errorf("initialize storage: the %s workspace could not be loaded (see loom.log)", labelOf(startupName))
 	}
 	h.id, h.info = classic.ID, classic
+	if startupName != "" {
+		// The registry is the daemon's: it records what the TUI names.
+		if err := h.core.SetLastUsed(startupName); err != nil {
+			log.For("app").Debug("registry.update_last_used_failed", "workspace", startupName, "err", err)
+		}
+	}
 	sp.SetPanes(h.panes)
 	// Built after h so the list can point at h.spinner and read h's rows.
 	h.list = ui.NewList(&h.spinner, slotRows{h, h.workspaceSlot})
@@ -409,7 +392,7 @@ func (m *home) restoreSavedWorkspaces(saved []config.Workspace, notes []string) 
 	// The first tab dropped the classic slot, which this path never
 	// opened, so the release is nil in practice. Were it not, running it
 	// here is safe: the program is not running yet (Run installs the pane
-	// notifier after newHome), so no pump can block on Send.
+	// notifier after startHome), so no pump can block on Send.
 	runNow(tea.Batch(releaseSlotCmd(classic), m.prunePanes()))
 	m.persistOpenList()
 	if err := m.core.SetLastUsed(m.name()); err != nil {

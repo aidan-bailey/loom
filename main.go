@@ -8,6 +8,8 @@ import (
 	"github.com/aidan-bailey/loom/app"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/claudetmp"
@@ -43,9 +45,9 @@ var (
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := nestingCheck(); err != nil {
-				return err
-			}
+			// From here an error is loom's, not a usage mistake: main
+			// prints it once, with no usage text after it.
+			cmd.SilenceUsage, cmd.SilenceErrors = true, true
 			ctx := context.Background()
 			configDir, err := config.GetConfigDir()
 			if err != nil {
@@ -59,21 +61,13 @@ var (
 			}
 			defer log.Close()
 
-			// One TUI per global dir (see internal/takeover): take the
-			// lock, or take over from the loom holding it, before any
-			// state is read, so this loom loads what that one saved.
-			if globalDir, err := config.GetGlobalConfigDir(); err == nil {
-				lock, err := acquireUILock(globalDir, os.Stdin, os.Stdout, os.Stderr, stdinIsTerminal())
-				if errors.Is(err, errTakeoverDeclined) {
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-				uiLock = lock
+			globalDir, err := config.GetGlobalConfigDir()
+			if err != nil {
+				return fmt.Errorf("failed to get global config dir: %w", err)
 			}
 
-			// Resolve workspace context.
+			// Resolve workspace context. The registry is the daemon's: it
+			// is only read here, to resolve the startup workspace.
 			registry, regErr := config.LoadWorkspaceRegistry()
 			if regErr != nil {
 				log.For("main").Error("workspace_registry_load_failed", "err", regErr)
@@ -131,11 +125,6 @@ var (
 				}
 			}
 
-			// Update LastUsed when a workspace is selected.
-			if wsCtx.Name != "" && regErr == nil {
-				_ = registry.UpdateLastUsed(wsCtx.Name)
-			}
-
 			// Enforce git repo requirement only when no workspaces are registered
 			// and no directory arg was given.
 			currentDir, err := filepath.Abs(".")
@@ -155,7 +144,21 @@ var (
 				program = programFlag
 			}
 
-			return app.Run(ctx, wsCtx, registry, cfg, program, pendingDir, noScriptsFlag, uiLock)
+			// The TUI is a client of the daemon, which owns the sessions
+			// and is started here when none runs. A TUI inside a loom pane
+			// is one too: the nesting guard is the daemon's.
+			client, err := joinDaemon(globalDir)
+			if err != nil {
+				return err
+			}
+			// Before anything here touches tmux: the daemon's sessions are
+			// on its server, whatever this environment would pick.
+			tmux.UseServer(client.Peer().Tmux)
+			err = app.Run(ctx, client, wsCtx.Name, cfg, program, pendingDir, noScriptsFlag)
+			if errors.Is(err, app.ErrDaemonGone) {
+				return fmt.Errorf("loom: the daemon stopped (see %s); your sessions keep running. Run loom again.", daemon.LogPath(globalDir))
+			}
+			return err
 		},
 	}
 
@@ -170,6 +173,11 @@ var (
 			"removing any worktree. This cannot be undone; it requires --force.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := nestingCheck(); err != nil {
+				return err
+			}
+			// Reset writes state.json itself, which the daemon would
+			// overwrite, until reset is the daemon's client (stage 3C).
+			if err := refuseWhileServed(); err != nil {
 				return err
 			}
 			if !resetForceFlag {
@@ -261,6 +269,11 @@ var (
 				socket = "default (" + tmux.EnvTmuxSocket + " unset)"
 			}
 			fmt.Printf("Tmux socket: %s\n", socket)
+			if server, err := tmux.ResolveServer(); err != nil {
+				fmt.Printf("Tmux server: error: %v\n", err)
+			} else {
+				fmt.Printf("Tmux server: %s (a daemon started here uses it, and its TUIs with it)\n", server)
+			}
 			if root, ok := claudetmp.Root(); ok {
 				fmt.Printf("Claude temp root: %s\n", root)
 			} else {
@@ -278,6 +291,17 @@ var (
 				fmt.Printf("Global dir: error: %v\n", err)
 			} else {
 				fmt.Printf("Global dir: %s (env %s)\n", globalDir, config.EnvGlobalDir)
+				switch rec, held := daemon.ReadRecord(globalDir); {
+				case !held:
+					fmt.Println("Daemon: not running")
+				case rec.IsPreDaemon():
+					fmt.Printf("Daemon: none; a loom from before the daemon holds the lock (%s)\n", rec)
+				case rec.IsDaemon():
+					fmt.Printf("Daemon: %s, socket %s, build %s\n", rec, rec.Socket, rec.Build)
+				default:
+					fmt.Printf("Daemon: %s, starting, build %s\n", rec, rec.Build)
+				}
+				fmt.Printf("Daemon log: %s\n", daemon.LogPath(globalDir))
 			}
 			if err := nestingCheck(); err != nil {
 				fmt.Printf("Nesting guard: would refuse — %v\n", err)
@@ -300,7 +324,8 @@ var (
 )
 
 // nestingCheck guards the commands whose startup sweeps tmux sessions (the
-// TUI and reset). A package var so tests can stub the environment probe.
+// daemon and reset), and keeps a TUI inside a loom pane from replacing the
+// daemon. A package var so tests can stub the environment probe.
 var nestingCheck = tmux.CheckNestingFromEnv
 
 // resolveResetWorkspace resolves the workspace context for the reset
@@ -328,6 +353,8 @@ func resolveResetWorkspace() (*config.WorkspaceContext, error) {
 }
 
 func init() {
+	rpc.SetVersion(version)
+
 	// Match the `loom version` subcommand format so `--version` and the
 	// subcommand emit identical output. The default Cobra template is a
 	// single "Name version X" line; we add the releases URL to match.
@@ -354,6 +381,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resetCmd)
 	rootCmd.AddCommand(cmd2.WorkspaceCmd)
+	cmd2.StateWriteGuard = refuseWhileServed
 	rootCmd.AddCommand(cmd2.AccountCmd)
 }
 

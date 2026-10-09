@@ -51,18 +51,16 @@ func (m *Model) saveWS(ws *Workspace) error {
 	return ws.storage.SaveInstances(Persistable(ws.insts))
 }
 
-// SaveForQuit saves every workspace the model serves before the TUI exits
-// (the TUI persists its own open list first: PersistOpenList). A failed
-// save of a workspace a client opened in this run is returned, and the TUI
-// then refuses to quit so the user can fix the cause and retry (silent data
-// loss on exit is worse than a sticky quit), except the storage's write
-// latch (quitSkipsSave), which no retry could clear.
+// SaveForQuit saves every workspace the model serves, as the daemon's last
+// step when it stops (internal/daemon; a TUI quitting saves no session). A
+// failed save of a workspace a client opened in this run is returned, for
+// the daemon to log, except the storage's write latch (quitSkipsSave),
+// which no retry could clear.
 //
 // A workspace nobody opened is still saved, since its records change
 // without a client (its agents are crash-restarted at boot and paused by
-// the tick), but it must not hold quit hostage: a registered repository on
-// an unmounted or read-only path would refuse every quit, and every
-// takeover would time out. So its failure is only logged, and when its
+// the tick), but a registered repository on an unmounted or read-only path
+// is no failure of the stop: its failure is only logged, and when its
 // config dir is gone (a deleted or unmounted repository) it is skipped,
 // since the save would create the dir. Formerly handleQuit's saves.
 func (m *Model) SaveForQuit() error {

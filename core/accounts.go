@@ -28,7 +28,7 @@ type accountUsage struct {
 var errNoRegistry = errors.New("the account registry is unavailable")
 
 // InitAccounts loads the account registry and publishes it. Called once
-// from newHome, before the startup auth probe.
+// by the boot (Boot), before the startup auth probe.
 func (m *Model) InitAccounts() {
 	m.ensureAccountMaps()
 	var reg *account.Registry

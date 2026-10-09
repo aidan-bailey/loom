@@ -375,11 +375,11 @@ func removeTree(dir string) error {
 //
 // Neither holds anything that is not safe elsewhere. Archive renames its
 // source to a tombstone only after the zip is in place, so a tombstone holds
-// content already archived; one survives when a quit or takeover interrupted
+// content already archived; one survives when a stop or crash interrupted
 // the delete, or the delete failed. Restore extracts into a staging
 // directory and deletes its zip only after renaming that into place, so a
-// staging directory left by a quit, takeover or crash is a partial copy of
-// a zip that still exists. Nothing else would retry either.
+// staging directory left by a stop or crash is a partial copy of a zip
+// that still exists. Nothing else would retry either.
 //
 // Removal is best effort; failures are logged at debug. The time is the
 // directory's own mtime, which moves only when its direct entries do, and

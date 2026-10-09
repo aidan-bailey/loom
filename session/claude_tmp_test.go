@@ -626,7 +626,7 @@ func TestForeignWorktreePrefixes_SkipsEmptyAndOwnEntries(t *testing.T) {
 }
 
 // TestSweepClaudeTemp_ReapsOldTombstones: Archive deletes through a
-// ".loom-trash-" tombstone, and one a quit or takeover interrupted is
+// ".loom-trash-" tombstone, and one a stop or crash interrupted is
 // otherwise never retried. The sweep clears the old ones, even when it has
 // nothing to archive, and leaves a fresh one that may still be deleting.
 func TestSweepClaudeTemp_ReapsOldTombstones(t *testing.T) {

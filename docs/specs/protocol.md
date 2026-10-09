@@ -26,9 +26,19 @@ connection's number in its high 32 bits, and the events naming a request come ba
 client's own ID: a `Reply`, and the `Notice` of a request's job, go to that client alone; `Started` and
 `Recovered` go to every client, naming the request (`Req`) only to the one that made it.
 
+## Hello
+
+A hello names the side's build, which a client compares with the server's (`rpc.CompareBuilds`: the
+newer side wins): its release (`version`), its commit's time and whether its tree was modified (`time`,
+`modified`), and the SHA-256 of its executable (`exe`). A server's also names the tmux server its
+sessions run on (`tmux`, its socket's path), which its clients use too. Every field after `build` is
+optional:
+`{"hello":{"protocol":2,"build":"v0.13.1 ad199a3…","version":"0.13.0","time":"2026-10-08T17:54:55Z","exe":"e3b0c442…","tmux":"/run/user/1000/tmux-1000/default"}}`
+
 ## Refused hello
 
-A server answers a hello of another protocol with an error frame that has no id, then closes:
+A server answers a hello of another protocol with its own hello, so the client still learns its
+build, then an error frame that has no id, then closes:
 `{"error":{"code":"mismatch","message":"rpc: protocol mismatch: this server speaks 2"}}`
 
 ## State events

@@ -3,7 +3,9 @@ package tmux
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -66,4 +68,81 @@ func TestEnclosingSessionName_AsksTheTmuxEnvServer(t *testing.T) {
 	name, err := EnclosingSessionName()
 	require.NoError(t, err)
 	assert.Equal(t, "loom_term_probe", name)
+}
+
+// TestUseServer_PinsEveryCommand: once a server is pinned, every Command
+// reaches it by its socket's path, whatever LOOM_TMUX_SOCKET says; an
+// explicit socket (CommandOnSocket) still reaches its own, and "" lifts
+// the pin.
+func TestUseServer_PinsEveryCommand(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(EnvTmuxSocket, "from-env")
+	UseServer("/run/user/1000/tmux-1000/default")
+	t.Cleanup(func() { UseServer("") })
+
+	assert.Equal(t, []string{"tmux", "-S", "/run/user/1000/tmux-1000/default", "ls"}, Command(ctx, "ls").Args)
+	assert.Equal(t, []string{"tmux", "-S", "/run/user/1000/tmux-1000/default", "attach-session", "-t", "=loom_x"},
+		NewTmuxSession("x", "sh").FullScreenAttachCmd().Args, "the full-screen attach too")
+	assert.Equal(t, []string{"tmux", "-L", "explicit", "ls"}, CommandOnSocket(ctx, "explicit", "ls").Args)
+
+	UseServer("")
+	assert.Equal(t, []string{"tmux", "-L", "from-env", "ls"}, Command(ctx, "ls").Args)
+}
+
+// TestResolveServer: the socket path is the one tmux itself would use in
+// this environment: LOOM_TMUX_SOCKET's socket, else $TMUX's server, else
+// the default socket, in tmux-<uid> under an absolute $TMUX_TMPDIR, else
+// under /tmp.
+func TestResolveServer(t *testing.T) {
+	dir := func(base string) string { return filepath.Join(base, fmt.Sprintf("tmux-%d", os.Getuid())) }
+	for _, tc := range []struct {
+		name                 string
+		socket, tmux, tmpdir string
+		want                 string
+	}{
+		{"a private socket", "loomdev-x", "/tmp/tmux-1000/default,1,0", "/run/user/1000", filepath.Join(dir("/run/user/1000"), "loomdev-x")},
+		{"a private socket, no tmpdir", "loomdev-x", "", "", filepath.Join(dir("/tmp"), "loomdev-x")},
+		{"inside tmux", "", "/run/user/1000/tmux-1000/work,4242,0", "/elsewhere", "/run/user/1000/tmux-1000/work"},
+		{"the default socket", "", "", "/run/user/1000", filepath.Join(dir("/run/user/1000"), "default")},
+		{"a relative tmpdir is ignored, as tmux does", "", "", "rel", filepath.Join(dir("/tmp"), "default")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(EnvTmuxSocket, tc.socket)
+			t.Setenv("TMUX", tc.tmux)
+			t.Setenv("TMUX_TMPDIR", tc.tmpdir)
+			got, err := ResolveServer()
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	t.Run("a $TMUX naming no server", func(t *testing.T) {
+		t.Setenv(EnvTmuxSocket, "")
+		t.Setenv("TMUX", "garbage")
+		_, err := ResolveServer()
+		assert.Error(t, err)
+	})
+}
+
+// TestResolveServer_IsTheServerTmuxUses_RealTmux: the resolved path is the
+// socket of the server a plain `tmux -L` reaches, and a command pinned to
+// it reaches that server with no LOOM_TMUX_SOCKET at all.
+func TestResolveServer_IsTheServerTmuxUses_RealTmux(t *testing.T) {
+	privateTmux(t, "rs")
+	newRawSession(t, "loom_probe", "sleep 60")
+	out, err := Command(context.Background(), "display-message", "-p", "-t", PaneTarget("loom_probe"), "#{socket_path}").Output()
+	require.NoError(t, err)
+
+	path, err := ResolveServer()
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
+	require.NoError(t, err)
+	got, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+
+	UseServer(path)
+	t.Cleanup(func() { UseServer("") })
+	t.Setenv(EnvTmuxSocket, "")
+	assert.NoError(t, Command(context.Background(), "has-session", "-t", SessionTarget("loom_probe")).Run())
 }

@@ -92,12 +92,13 @@ var (
 	levelVar = new(slog.LevelVar)
 )
 
-// logFileName is the TUI's log; serveLogFileName is the daemon's (`loom
+// logFileName is the TUI's log; ServeLogFileName is the daemon's (`loom
 // serve`, daemon stage 3B), which Initialize writes when its daemon flag is
 // set.
 const (
-	logFileName      = "loom.log"
-	serveLogFileName = "serve.log"
+	logFileName = "loom.log"
+	// ServeLogFileName is the daemon's log, in its log dir.
+	ServeLogFileName = "serve.log"
 )
 
 // maxLogSize is the rotation threshold in bytes. Declared as var (not
@@ -136,7 +137,7 @@ func Initialize(logDir string, daemon bool) error {
 
 	name := logFileName
 	if daemon {
-		name = serveLogFileName
+		name = ServeLogFileName
 	}
 	logFilePath = filepath.Join(logDir, name)
 	rotateIfNeeded(logFilePath)

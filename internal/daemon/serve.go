@@ -30,6 +30,10 @@ type Options struct {
 	NewModel func() (*core.Model, error)
 	// Build names this binary in the lock record (rpc.Build).
 	Build string
+	// Tmux is the tmux server the model's sessions run on (its socket's
+	// path), which the daemon's hello names so its clients use it too. The
+	// caller pins it for this process first (tmux.UseServer).
+	Tmux string
 	// Stop is closed to stop the daemon gracefully (on SIGTERM, from
 	// `loom serve stop` or a newer loom replacing it).
 	Stop <-chan struct{}
@@ -69,10 +73,11 @@ func Serve(o Options) error {
 	rec := self(o.Build)
 	lock, holder, err := Wait(o.GlobalDir, rec, o.LockWait)
 	if errors.Is(err, ErrHeld) {
-		if holder.IsDaemon() {
-			return fmt.Errorf("%w (%s)", ErrRunning, holder)
+		if holder.IsPreDaemon() {
+			return fmt.Errorf("a loom from before the daemon is running (%s): quit it first", holder)
 		}
-		return fmt.Errorf("a loom from before the daemon is running (%s): quit it first", holder)
+		// A daemon, maybe still booting: two clients started one each.
+		return fmt.Errorf("%w (%s)", ErrRunning, holder)
 	}
 	if err != nil {
 		return err
@@ -86,6 +91,7 @@ func Serve(o Options) error {
 	notices := model.Boot()
 	loop := core.Start(model)
 	srv := rpc.NewServer(loop)
+	srv.SetTmux(o.Tmux)
 	for _, ev := range notices {
 		if n, ok := ev.(core.Notice); ok {
 			srv.Keep(n)
@@ -109,7 +115,7 @@ func Serve(o Options) error {
 	if err := lock.Write(rec); err != nil {
 		log.For("serve").Warn("serve.record_failed", "err", err)
 	}
-	log.For("serve").Info("serve.listening", "socket", socket, "pid", rec.PID, "build", o.Build)
+	log.For("serve").Info("serve.listening", "socket", socket, "pid", rec.PID, "build", o.Build, "tmux", o.Tmux)
 	if o.Serving != nil {
 		o.Serving(loop, socket)
 	}
@@ -274,7 +280,7 @@ func Stop(globalDir string, timeout time.Duration) error {
 	if !held {
 		return ErrNotRunning
 	}
-	if !rec.IsDaemon() {
+	if rec.IsPreDaemon() {
 		return fmt.Errorf("the lock is held by a loom from before the daemon (%s): quit it first", rec)
 	}
 	if rec.PID <= 0 {

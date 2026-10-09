@@ -30,8 +30,9 @@ const lockFile = "loom.lock"
 var ErrHeld = errors.New("another loom process holds the lock")
 
 // Record is what the lock file says about the process holding it. A daemon
-// fills Socket and Build; a loom TUI from before the daemon wrote only the
-// first three, in the same JSON, so a record with no Socket is such a TUI.
+// fills Build when it takes the lock and Socket once it listens; a loom TUI
+// from before the daemon wrote only the first three, in the same JSON, so a
+// record with neither is such a TUI (IsPreDaemon).
 type Record struct {
 	PID     int       `json:"pid"`
 	TTY     string    `json:"tty,omitempty"`
@@ -42,8 +43,14 @@ type Record struct {
 	Build string `json:"build,omitempty"`
 }
 
-// IsDaemon reports whether r is a daemon's record.
+// IsDaemon reports whether r is the record of a daemon that listens. One
+// still booting has written its build but no socket yet.
 func (r Record) IsDaemon() bool { return r.Socket != "" }
+
+// IsPreDaemon reports whether r is the record of a loom TUI from before the
+// daemon: it names a process, but neither a socket nor a build. A record
+// read mid-write names no process, and is neither this nor a daemon's.
+func (r Record) IsPreDaemon() bool { return r.PID != 0 && r.Socket == "" && r.Build == "" }
 
 // String describes r for a message: "pid 3713275 on /dev/pts/2, since 06:23".
 func (r Record) String() string { return r.describe(time.Now()) }
@@ -63,8 +70,12 @@ func (r Record) describe(now time.Time) string {
 	return s
 }
 
-// self is this process's record, with no socket yet.
+// self is this process's record, with no socket yet. Its build is never
+// empty, since a record with none is a pre-daemon TUI's (IsPreDaemon).
 func self(build string) Record {
+	if build == "" {
+		build = "unknown"
+	}
 	return Record{PID: os.Getpid(), TTY: ownTTY(), Started: time.Now(), Build: build}
 }
 

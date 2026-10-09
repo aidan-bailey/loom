@@ -405,7 +405,7 @@ func TestAccountRequests_RefuseWithoutARegistry(t *testing.T) {
 
 // TestInitAccounts_FillsTheStripOnce: the startup publication tells the
 // TUI once (AccountsChanged, at the first Sync), which fills the strip
-// when newHome drains; a second event only repeated the same refresh.
+// when startHome drains; a second event only repeated the same refresh.
 func TestInitAccounts_FillsTheStripOnce(t *testing.T) {
 	noCredentialOverride(t)
 	global := t.TempDir()

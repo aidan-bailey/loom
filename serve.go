@@ -16,6 +16,7 @@ import (
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/tmux"
 
 	"github.com/spf13/cobra"
 )
@@ -34,19 +35,31 @@ quits, until 'loom serve stop' or a signal. It logs to logs/serve.log in the
 global config dir.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// The daemon sweeps tmux sessions, so the nesting guard is its.
-		if err := nestingCheck(); err != nil {
-			return err
-		}
 		globalDir, err := config.GetGlobalConfigDir()
 		if err != nil {
 			return err
 		}
-		logDir := filepath.Join(globalDir, "logs")
+		logDir := filepath.Dir(daemon.LogPath(globalDir))
 		if logErr := log.Initialize(logDir, true); logErr != nil {
 			fmt.Fprintf(os.Stderr, "loom: %v\n", logErr)
 		}
 		defer log.Close()
+		// The daemon sweeps tmux sessions, so the nesting guard is its. It
+		// logs the refusal too: a daemon a client started has no stderr,
+		// and the client quotes the log (daemon.Connect).
+		if err := nestingCheck(); err != nil {
+			log.For("serve").Error("serve.refused", "err", err)
+			return err
+		}
+		// Pinned before the boot touches tmux, and named in the hello, so
+		// the daemon and every client use one server whatever their
+		// environments say.
+		server, err := tmux.ResolveServer()
+		if err != nil {
+			log.For("serve").Error("serve.refused", "err", err)
+			return fmt.Errorf("find the tmux server: %w", err)
+		}
+		tmux.UseServer(server)
 		// A runtime crash (a concurrent map write, a goroutine's unrecovered
 		// panic) goes to stderr, which a daemon started on demand has none
 		// of: keep it in a file beside serve.log.
@@ -70,6 +83,7 @@ global config dir.`,
 		err = daemon.Serve(daemon.Options{
 			GlobalDir: globalDir,
 			Build:     rpc.Build(),
+			Tmux:      server,
 			Stop:      stop,
 			NewModel: func() (*core.Model, error) {
 				registry, err := config.LoadWorkspaceRegistry()

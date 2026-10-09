@@ -551,8 +551,7 @@ func (m *home) dispatchScript(key string) (tea.Cmd, bool) {
 // fires as soon as the intent dispatches rather than after any
 // confirmation overlay closes; scripts that need to observe user
 // confirmation must arrange their own signal path. Quit routes
-// through handleQuit to preserve the save-on-exit path the legacy
-// "q" key used.
+// through handleQuit, as the "q" key does.
 //
 // A lifecycle call or ctx:new_instance is a request to the model
 // instead, and its coroutine resumes when the model replies
@@ -568,13 +567,8 @@ func (m *home) handleScriptIntent(p pendingIntent, slot *workspaceSlot) tea.Cmd 
 	case script.CreateInstanceIntent:
 		return m.scriptCreate(p, i, slot)
 	case script.QuitIntent:
-		// handleQuit returns tea.Quit on success. On SaveInstances
-		// failure (any slot in multi-slot mode, or the root storage in
-		// single-slot mode) it returns a non-terminal error Cmd so the
-		// user can fix the underlying issue (disk full, read-only
-		// mount) and retry rather than losing state silently. Falling
-		// through to the tea.Batch below ensures the awaiting Lua
-		// coroutine resumes in both outcomes.
+		// Falling through to the tea.Batch below resumes the awaiting
+		// Lua coroutine before the program quits.
 		_, cmd = m.handleQuit()
 	case script.PushSelectedIntent:
 		if !selectedNotBusyNotWorkspace(m) {

@@ -100,28 +100,30 @@ func TestEvents_AnUnknownOneIsDroppedAKnownOneThatWillNotDecodeIsFatal(t *testin
 	case <-time.After(5 * time.Second):
 		t.Fatal("the bad event did not wake the client")
 	}
-	p := catch(func() { c.RCAuth() })
-	w, ok := p.(*core.WireError)
-	require.True(t, ok, "the next call panics with the wire's error, got %T", p)
-	assert.Equal(t, core.CodeProtocol, w.Code)
+	w := assertLost(t, c, core.CodeProtocol)
 	assert.Contains(t, w.Message, "ModelChanged", "it names the event")
-	assert.NotNil(t, catch(func() { c.Kill(1, 0) }), "and so does a request")
 }
 
 // TestReply_AProtocolErrorIsFatal: a reply carrying a protocol error means
 // the two sides disagree about the wire, which is not any method's own
-// error: it is raised, as a panic reply is, and every later call raises it.
+// error: the model is lost, as with a panic reply, and Wakes says so.
 func TestReply_AProtocolErrorIsFatal(t *testing.T) {
 	c, s := dialScripted(t)
 	s.answerWith(func(f Frame) Frame {
 		return Frame{ID: f.ID, Error: &core.WireError{Code: core.CodeProtocol, Message: "rpc: decode params: bad"}}
 	})
+	select {
+	case <-c.Wakes():
+	default:
+	}
 
-	p := catch(func() { c.Kill(1, 0) })
-	w, ok := p.(*core.WireError)
-	require.True(t, ok, "the caller panics with the wire's error, got %T", p)
-	assert.Equal(t, core.CodeProtocol, w.Code)
-	assert.NotNil(t, catch(func() { c.RCAuth() }), "and every later call")
+	assert.Nil(t, catch(func() { c.Kill(1, 0) }), "the caller does not panic")
+	select {
+	case <-c.Wakes():
+	default:
+		t.Fatal("the loss did not wake the client")
+	}
+	assertLost(t, c, core.CodeProtocol)
 }
 
 // TestReply_AnUnknownMethodIsAnOrdinaryError: a method the server does not

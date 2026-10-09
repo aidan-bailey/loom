@@ -143,7 +143,7 @@ func (s *workspaceSlot) ws() *core.Workspace {
 	return nil
 }
 
-// wireCore gives a fixture home the model production builds in newHome,
+// wireCore gives a fixture home the model the daemon builds and boots,
 // serving every slot's workspace (the tabs in order, then the focused
 // slot's), unbooted: a test that needs the global or registered
 // workspaces served boots it (bootFixture). A slot with no
@@ -355,7 +355,7 @@ func editRCAuth(m *home, edit func(*session.RemoteControlAuth)) {
 	loopOf(m).SetRCAuthForTest(a)
 }
 
-// bootFixture boots m's model as newHome does before its loop starts
+// bootFixture boots m's model as the daemon does before its loop starts
 // (core.Model.Boot), after wireCore installed the fixture's workspaces:
 // the global workspace (LOOM_GLOBAL_DIR) and every registered one load
 // beside them, and one orphan sweep covers them all. The loop is idle
@@ -383,7 +383,7 @@ func registerWorkspaces(t *testing.T, m *home, defs ...config.Workspace) *config
 	return reg
 }
 
-// startupHome builds a TUI as newHome does (startHome), over a model with
+// startupHome builds a TUI as Run does (startHome), over a model with
 // exec as its executor (nil: the production one) and reg as its registry
 // (nil: none), booted and served to a test client: startupName names the
 // workspace it starts on ("" the global one, LOOM_GLOBAL_DIR's), and
@@ -434,10 +434,10 @@ type testStack struct {
 // testStacks maps each test client (a home's core) to its stack.
 var testStacks sync.Map
 
-// startTestCore is startCore for app's tests: rpc.InProcessForTest, whose
-// loop keeps its jobs for the test and whose client is synchronous (a ping
-// before every read and after every cast), so the TUI meets the model as
-// it did in stage 1E. It records the stack for loopOf.
+// startTestCore serves a model to an app test's TUI: rpc.InProcessForTest,
+// whose loop keeps its jobs for the test and whose client is synchronous
+// (a ping before every read and after every cast), so the TUI meets the
+// model as it did in stage 1E. It records the stack for loopOf.
 func startTestCore(model *core.Model) (*rpc.Client, func(), error) {
 	c, loop, stop, err := rpc.InProcessForTest(model)
 	if err != nil {

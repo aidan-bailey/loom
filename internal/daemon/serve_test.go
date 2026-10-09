@@ -151,6 +151,38 @@ func TestServe_RefusesASecondDaemon(t *testing.T) {
 	assert.ErrorIs(t, err, ErrRunning)
 }
 
+// Two clients starting a daemon each is harmless: the second daemon finds
+// the first's lock, even while the first still boots (its record has a
+// build but no socket yet), and stops as already running. A loom from
+// before the daemon holding the lock is named as such.
+func TestServe_TheLockHoldersRecordSaysWhy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		holder Record
+		check  func(t *testing.T, err error)
+	}{
+		{"a daemon still booting", Record{PID: 4242, Build: "v0.13.1"}, func(t *testing.T, err error) {
+			assert.ErrorIs(t, err, ErrRunning)
+		}},
+		{"a loom from before the daemon", Record{PID: 3713275, TTY: "/dev/pts/2"}, func(t *testing.T, err error) {
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "a loom from before the daemon is running")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := globalDir(t)
+			l, _, err := TryAcquire(dir, tc.holder)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = l.Close() })
+			tc.check(t, Serve(Options{GlobalDir: dir, LockWait: 100 * time.Millisecond, Stop: make(chan struct{}),
+				NewModel: func() (*core.Model, error) {
+					t.Error("built a model without the lock")
+					return core.New(core.Options{}), nil
+				}}))
+		})
+	}
+}
+
 // A socket file removed under a running daemon (a runtime dir cleared at
 // logout, a tmp cleaner) would leave a daemon no client can reach, holding
 // the lock that stops another starting: it listens again.

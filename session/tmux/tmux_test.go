@@ -1,7 +1,6 @@
 package tmux
 
 import (
-	"context"
 	"fmt"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/internal/testenv"
@@ -88,29 +87,11 @@ func TestEnv_ReturnsACloneNotTheInternalSlice(t *testing.T) {
 // (exact: see SessionTarget).
 func TestFullScreenAttachCmd(t *testing.T) {
 	session := NewTmuxSession("attach-shape", "program")
-	cmd := session.FullScreenAttachCmd(context.Background())
+	cmd := session.FullScreenAttachCmd()
 	require.Equal(t,
 		[]string{"tmux", "attach-session", "-t", "=" + TmuxPrefix + "attach-shape"},
 		cmd.Args,
 	)
-}
-
-// TestFullScreenAttachCmd_CancelSendsSIGTERM: a takeover ends a
-// full-screen attach by cancelling its context. tmux takes SIGTERM as its
-// client exiting and leaves the session running; exec's default, SIGKILL,
-// gives the client no chance to restore the terminal it owns.
-func TestFullScreenAttachCmd_CancelSendsSIGTERM(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := NewTmuxSession("attach-cancel", "program").FullScreenAttachCmd(ctx)
-	sleep, err := exec.LookPath("sleep")
-	require.NoError(t, err)
-	cmd.Path, cmd.Args = sleep, []string{"sleep", "30"} // stands in for the tmux client
-	require.NoError(t, cmd.Start())
-
-	cancel()
-	err = cmd.Wait()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "terminated", "SIGTERM, not SIGKILL")
 }
 
 func TestCaptureAndProcessCapturesOnce(t *testing.T) {

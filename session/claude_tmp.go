@@ -207,8 +207,8 @@ func SweepClaudeTemp(configDir string, claimed map[string]bool, otherConfigDirs 
 	if !ok {
 		return 0
 	}
-	// A tombstone only holds content already archived, and one a quit or
-	// takeover interrupted mid-delete is otherwise never retried.
+	// A tombstone only holds content already archived, and one a stop or
+	// crash interrupted mid-delete is otherwise never retried.
 	if n := claudetmp.PurgeTrash(root, sweepTrashAge); n > 0 {
 		log.For("claudetmp").Info("claudetmp.trash_purged", "root", root, "removed", n)
 	}

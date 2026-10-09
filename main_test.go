@@ -15,6 +15,7 @@ import (
 
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,18 +81,6 @@ func TestResetCmd_RefusesWhenNested(t *testing.T) {
 	assert.Equal(t, "loom_term_x", nested.Session)
 }
 
-func TestRootCmd_RefusesWhenNested(t *testing.T) {
-	isolateLoomEnv(t)
-	stubNesting(t, &tmux.NestedError{Session: "loom_agent"})
-	t.Cleanup(func() { workspaceFlag = "" })
-
-	rootCmd.SetArgs([]string{"--workspace", "__loomtest_missing__"})
-	err := rootCmd.Execute()
-
-	var nested *tmux.NestedError
-	require.ErrorAs(t, err, &nested, "the guard must run before workspace resolution")
-}
-
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	orig := os.Stdout
@@ -120,8 +109,83 @@ func TestDebugCmd_ReportsIsolationKnobs(t *testing.T) {
 	})
 
 	assert.Contains(t, out, "Tmux socket: loomdev-probe")
+	server, err := tmux.ResolveServer()
+	require.NoError(t, err)
+	assert.Contains(t, out, "Tmux server: "+server)
 	assert.Contains(t, out, "Global dir: "+os.Getenv(config.EnvGlobalDir))
+	assert.Contains(t, out, "Daemon: not running")
+	assert.Contains(t, out, "Daemon log: "+daemon.LogPath(os.Getenv(config.EnvGlobalDir)))
 	assert.Contains(t, out, "Nesting guard: ok")
+}
+
+// TestDebugCmd_ReportsTheDaemon: debug names the daemon holding the global
+// dir's lock, and where it listens.
+func TestDebugCmd_ReportsTheDaemon(t *testing.T) {
+	isolateLoomEnv(t)
+	stubNesting(t, nil)
+	holdLock(t, daemon.Record{PID: 4242, Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1 ad199a3"})
+
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"debug"})
+		require.NoError(t, rootCmd.Execute())
+	})
+
+	assert.Contains(t, out, "Daemon: pid 4242")
+	assert.Contains(t, out, "socket /run/user/1000/loom/abc.sock, build v0.13.1 ad199a3")
+}
+
+// holdLock holds the global dir's lock with rec, as a running daemon (or
+// a loom from before it) would, until the test ends.
+func holdLock(t *testing.T, rec daemon.Record) {
+	t.Helper()
+	l, _, err := daemon.TryAcquire(os.Getenv(config.EnvGlobalDir), rec)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+}
+
+// TestStateWriters_RefuseWhileTheDaemonRuns: reset and `workspace migrate`
+// write state.json themselves, which a running daemon would overwrite with
+// its own sessions (and they its): they refuse, touching nothing, while a
+// daemon (or a loom from before it) holds the lock.
+func TestStateWriters_RefuseWhileTheDaemonRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"reset", []string{"reset", "--force"}},
+		{"workspace migrate", []string{"workspace", "migrate"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateLoomEnv(t)
+			stubNesting(t, nil)
+			t.Cleanup(func() { resetForceFlag = false })
+			wt := globalWorktree(t, "busy_18d7")
+			fake := &resetTmux{listing: "loom_busy\t" + wt + "\n"}
+			stubResetTmux(t, fake)
+			holdLock(t, daemon.Record{PID: 4242, Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1"})
+
+			rootCmd.SetArgs(tc.args)
+			err := rootCmd.Execute()
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "the loom daemon is running: stop it first (`loom serve stop`)")
+			assert.Empty(t, fake.killed)
+			assert.FileExists(t, filepath.Join(wt, "work.txt"))
+		})
+	}
+
+	t.Run("a loom from before the daemon", func(t *testing.T) {
+		isolateLoomEnv(t)
+		stubNesting(t, nil)
+		t.Cleanup(func() { resetForceFlag = false })
+		holdLock(t, daemon.Record{PID: 3713275, TTY: "/dev/pts/2"})
+
+		rootCmd.SetArgs([]string{"reset", "--force"})
+		err := rootCmd.Execute()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "a loom is running (pid 3713275 on /dev/pts/2")
+	})
 }
 
 // resetTmux is a fake tmux for reset: the sweep's "ls" answers listing (or

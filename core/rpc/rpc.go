@@ -19,13 +19,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"runtime/debug"
 
 	"github.com/aidan-bailey/loom/core"
 )
 
 // Protocol is the wire's version. Both sides send it in their hello and
-// refuse a different one (stage 3 adds the newer-side-wins handshake).
+// refuse a different one; the hello's build tells which side is newer.
 // Adding a method or an optional field is compatible and needs no bump: a
 // peer that lacks the method answers CodeUnsupported, an ordinary error, a
 // peer ignores a field it does not know, and an event it does not know is
@@ -59,10 +58,26 @@ type methodInfo struct {
 	Result any
 }
 
-// mismatchError is what a server answers a hello of another protocol with.
+// mismatchError is what a server answers a hello of another protocol with,
+// after its own hello.
 func mismatchError() *core.WireError {
 	return &core.WireError{Code: core.CodeMismatch,
 		Message: fmt.Sprintf("rpc: protocol mismatch: this server speaks %d", Protocol)}
+}
+
+// MismatchError is Dial's error when the server speaks another protocol.
+// Peer is the server's hello, nil when it sent none (a server from before
+// servers said hello first), so a client can still tell which build is
+// newer and replace an older server.
+type MismatchError struct {
+	Peer *Hello
+}
+
+func (e *MismatchError) Error() string {
+	if e.Peer == nil {
+		return fmt.Sprintf("rpc: protocol mismatch: the server does not speak %d", Protocol)
+	}
+	return fmt.Sprintf("rpc: protocol mismatch: the server speaks %d, this client %d", e.Peer.Protocol, Protocol)
 }
 
 // decodeParams decodes a request's parameters into p; none decode as
@@ -95,35 +110,26 @@ type Frame struct {
 	Fatal  *core.WireError `json:"fatal,omitempty"`
 }
 
-// Hello is each side's first frame.
+// Hello is each side's first frame: its protocol and its build, which a
+// client compares with the server's (CompareBuilds: the newer side wins).
+// A server sends its own even to a peer of another protocol, ahead of the
+// mismatch error, so every client learns the server's build. The fields
+// after Build are optional: a peer that lacks them leaves them empty.
 type Hello struct {
 	Protocol int    `json:"protocol"`
 	Build    string `json:"build"`
-}
-
-// build names the binary: its module version and VCS revision, as Go
-// stamps them.
-// Build names this binary: its module version, VCS revision and whether
-// the tree was modified. A daemon records it in its lock.
-func Build() string { return build() }
-
-func build() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "unknown"
-	}
-	b := info.Main.Version
-	for _, s := range info.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			b += " " + s.Value
-		case "vcs.modified":
-			if s.Value == "true" {
-				b += "+dirty"
-			}
-		}
-	}
-	return b
+	// Version is the release (main's version, SetVersion).
+	Version string `json:"version,omitempty"`
+	// Time is when the VCS revision was committed (vcs.time, RFC 3339).
+	Time string `json:"time,omitempty"`
+	// Modified says the tree was modified when built (vcs.modified).
+	Modified bool `json:"modified,omitempty"`
+	// Exe is the SHA-256 of the running executable, in hex: two builds of
+	// one commit with different edits agree on everything else.
+	Exe string `json:"exe,omitempty"`
+	// Tmux is the tmux server the server's sessions run on (its socket's
+	// path), which its clients use too (Server.SetTmux). Servers only.
+	Tmux string `json:"tmux,omitempty"`
 }
 
 // eventTypes maps each event's wire name (its Go type name) to its type.
