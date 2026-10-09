@@ -32,8 +32,8 @@ func TestCsBindOverridesExisting(t *testing.T) {
 	defer e.Close()
 	e.BeginLoad("t.lua")
 	require.NoError(t, e.L.DoString(`cs.bind("x", function() _G.first = true end)`))
-	// Second bind on same key replaces the first — unlike
-	// cs.register_action which keeps the first.
+	// Second bind on same key replaces the first, as cs.register_action
+	// does (both go through Engine.bind).
 	require.NoError(t, e.L.DoString(`cs.bind("x", function() _G.second = true end)`))
 	e.EndLoad()
 

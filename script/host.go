@@ -1,7 +1,8 @@
-// Package script provides a sandboxed Lua scripting surface that lets
-// users bind keys in the TUI to custom actions. It owns a single
-// gopher-lua state, loads .lua files at startup, and dispatches on raw
-// key strings after the built-in keymap misses.
+// Package script provides a sandboxed Lua scripting surface that binds
+// keys in the TUI to actions. It owns a single gopher-lua state, loads
+// the built-in keymap (defaults.lua) and then the user's .lua files at
+// startup, and dispatches every default-state key press by its raw key
+// string; a user script rebinds or adds to the defaults.
 //
 // The engine is decoupled from the app/ package through the Host
 // interface so that scripts can manipulate live session state without

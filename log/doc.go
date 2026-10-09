@@ -1,8 +1,11 @@
 // Package log is Loom's centralized logging surface.
 //
-// All records land in {configDir}/logs/loom.log, which is rotated
-// once to loom.log.1 at startup when it exceeds 5 MB. Two logger
-// families share the file:
+// The TUI's records land in {configDir}/logs/loom.log, which is rotated
+// once to loom.log.1 at startup when it exceeds 5 MB. The daemon's
+// (loom serve) land in <globalDir>/logs/serve.log instead, which is
+// rotated as it grows but not at startup, since a loom serve that
+// finds another daemon running would rotate the live one's. Two logger
+// families share a file:
 //
 //   - Structured (slog-backed): [For], [InfoKV], [WarnKV], [ErrorKV],
 //     [DebugKV]. Records carry a subsystem tag plus component=daemon
@@ -10,9 +13,8 @@
 //     output to a subsystem.
 //   - Legacy (*log.Logger): [InfoLog], [WarningLog], [ErrorLog] plus
 //     the Infof/Warnf/Errorf helpers. Retained for callers not yet
-//     migrated: 15 InfoLog.Printf sites, all in ui/split_pane.go (the
-//     helpers have no callers outside this package). Routed through
-//     the same writer and gated by the same level.
+//     migrated (the helpers have no callers outside this package).
+//     Routed through the same writer and gated by the same level.
 //
 // Both families respect LOOM_LOG_LEVEL (debug|info|warn|error) and
 // the --log-level CLI flag. Debug records are emitted only through

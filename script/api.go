@@ -86,10 +86,10 @@ func apiRegisterAction(e *Engine) lua.LGFunction {
 }
 
 // apiBind backs cs.bind(key, fn [, opts]). Unlike cs.register_action
-// it takes the handler function as a positional argument and always
-// overwrites an existing binding, which is what makes user-script
-// overrides of defaults.lua clean (cs.unbind + cs.bind, or just
-// cs.bind if replacement is desired).
+// it takes the handler function as a positional argument; both go
+// through Engine.bind, which overwrites an existing binding, and that
+// is what makes user-script overrides of defaults.lua clean (cs.unbind
+// + cs.bind, or just cs.bind if replacement is desired).
 func apiBind(e *Engine) lua.LGFunction {
 	return func(L *lua.LState) int {
 		key := L.CheckString(1)
