@@ -1,0 +1,62 @@
+# session
+
+The core domain: `Instance` and its lifecycle in a git worktree and a tmux session, storage and schema, reconcile and orphans, resume decisions, Claude status, hooks, temp-dir archiving and the launch environment, plus the sub-packages `agent`, `claudetmp`, `files`, `github`, `hooks`, `launch` and `subagent`. Full reference in [`README.md`](README.md).
+
+## Rules when modifying this package
+
+### Schema and storage
+
+- **Changing a `session.InstanceData` field?** Bump `CurrentSchemaVersion`, add the upgrade step to `session/storage_migrate.go:Migrate`, and update the fixture in `cmd/workspace_migrate_shape_test.go`. A record a downgraded loom can't decode must survive untouched for the newer binary. **Enforced** by `TestMigrationInstance_MirrorsInstanceData_JSON` and the `TestMigrate_…` tests; downgrade safety only by `TestStorage_UndecodableRecord_SurvivesSave`. Guide: [`../docs/claude/changing-the-instance-schema.md`](../docs/claude/changing-the-instance-schema.md)
+- **Never write `state.json` around `Storage.writeLocked`.** It appends undecodable records verbatim, loads before a first write, and refuses writes while the load latch is engaged (`ErrStorageLoadFailed`), so a bypass silently drops a newer binary's records or overwrites a payload loom couldn't read. The one known bypass is `loom workspace migrate`, which writes through its typed mirror and loses unknown fields. **Enforced** for `Storage`'s own writes by the `TestStorage_UndecodableRecord_…` tests and `TestStorage_TopLevelCorrupt_RefusesWrites`; a new writer is unguarded.
+
+### Instance internals
+
+- **Set and read launch fields only through their accessors (`SetLaunchOptions`, `SetProgram`, `Program()`, …), and read the private fields in `session` code that already holds `i.mu`.** The accessors lock `i.mu`, which is not reentrant. **Convention** — a data race on direct assignment, a self-deadlock on an accessor under the lock.
+- **Keep `FromInstanceData` a pure constructor, and attach no PTY anywhere in `session`.** Restoring a record must spawn nothing, and the TUI's pane clients own every attach; `inst.EnsureRunning()` only marks a running session as started. **Enforced** by `TestFromInstanceData_NoPTY_ForRunning`.
+- **Treat `Recoverable` like Paused in every per-instance loop.** It is an orphaned worktree surfaced for recover or discard, re-derived at each load and never persisted, and `EnsureRunning` no-ops on it. **Convention** — a loop that drives a PTY or git in a worktree no record owns.
+
+### Worktrees, starts and stashes
+
+- **Paused does not mean the worktree is gone: classify with `InspectTree` and decide with `decideResume`, and never route an intact tree to `Setup`.** An agent that exits on its own is only marked Paused, so its worktree may hold the only copy of uncommitted work, and `Setup` runs `git worktree remove -f`, which deletes an intact dirty tree without a word. Refuse on `TreeUnverified` or an unanswered probe. **Enforced** by `TestDecideResume`, `TestResume_AgentExitedKeepsUncommittedWork` and `TestCrashRestart_RefusesGuttedWorktree`. Gutted trees and mass deaths: [`../docs/claude/incident-triage.md`](../docs/claude/incident-triage.md)
+- **Run failed-start cleanup only when nothing can be running in the tree, and delete only a branch `Setup` created.** That is a name `tmux.Start` refused before launching (`tmux.ErrSessionExists`) or a session `SessionLiveness` confirms Dead; any other failure may come after the agent launched, so the tree and branch stay and the error says so. **Enforced** by `TestStart_FailedStartKeepsAPreexistingBranch`, `TestStart_UnconfirmedDeathKeepsTheWorktree` and `TestStart_LiveSessionAfterFailedLaunchKeepsTheWorktree`.
+- **Never re-apply a stash `git stash list` no longer lists, and refuse a dirty, different tree over a pending one.** The commit survives until gc, so applying a dropped stash by SHA resurrects work the user discarded; the rebuild path asks `StashListed` before `Setup` and changes nothing when the list can't be read. **Enforced** by `TestResume_DroppedStashIsNeverReapplied`, `TestResume_RebuildNeverReappliesDroppedStash` and `TestResume_InPlaceRefusesDivergentStash`.
+- **Report a forgotten stash or a failed drop as a `session.Notice` naming its SHA and recovery commands, never only in a log.** The daemon's `serve.log` is read by nobody, and that SHA may be the only record of the work or of another session's stash entry. **Enforced** by `TestKill_UndroppableStashIsANotice`, `TestResume_RebuildUndroppableStashIsANotice` and `TestPause_AbortReportsUndroppableStash`.
+
+### Ownership
+
+- **Ask `HeldElsewhere` before killing or replacing what runs under a record's name, and change nothing when tmux can't answer.** tmux names are per server, not per workspace, so another workspace's session can hold the name; a kill leaves it running and cleans up only the record's own, and a resume refuses. **Enforced** by `TestHeldElsewhere_OnlyTheRecordsOwnSessionIsFree` and, in core, `TestKillAndResume_RefuseWhenTmuxCannotSayWhoseTheSessionIs`.
+- **Let the orphan sweep kill only sessions it proves it owns, and fail closed.** "Not in my lists" is no proof: a second loom's sweep once killed every loom session on a shared server. Kill an unclaimed session only when its start directory (`#{session_path}`) lies inside an owned root of its `SweepScope` with no foreign root nested deeper; spare an empty, relative, unplaceable or untargetable one, and return an error for a failed listing or kill so `reset` stops before deleting worktrees. **Enforced** by the `TestCleanupOrphanedSessions_…` tests, `TestKillOwnedTmuxSession` and `TestNewSweepScope`.
+- **Let reconcile's `startedElsewhere` act only on positive evidence.** A record whose name is alive on a session started elsewhere is marked Paused, never restored onto it, crash-restarted under it or killed; an unreadable listing changes nothing. A workspace terminal's home matches only exactly (`SessionHome.Exact`), since an agent titled after the workspace starts in `<repo>/.loom/worktrees`. **Enforced** by `TestReconcile_ASessionStartedElsewhereIsNotTheRecords`.
+
+### Claude temp dirs and hooks
+
+- **Archive Claude's temp dirs, never delete them, and ask `ClaudeTmpArchiveDir` for every archive path.** Pause archives before it marks the instance Paused, Kill only when nothing failed, Resume restores before the agent launches, and the sweep takes a dir only when no record claims it, no worktree encodes to it and it is quiet. A deleted scratchpad is unrecoverable; a path computed elsewhere misses `claude_tmp_archive_dir`. **Enforced** by `TestPause_ArchivesBeforeTheInstanceIsPaused`, `TestSweepClaudeTemp_ArchivesIntoTheConfiguredDir` and the `TestSweepClaudeTemp_…` tests.
+- **Prepare hooks only on real launches, and reset the previous launch's state on every one (`resetHookLaunch`).** A reattached Claude is still writing to its folder; a relaunch that keeps the old tracker shows a dead process's rows. **Enforced** by `TestLaunchProgram_ReattachLeavesFolderAlone`, `TestLaunchProgram_UntrackedRelaunchClearsState` and `TestLaunchProgram_RelaunchResetsWarmTracker`.
+- **Name hooks folders with `hooksFolderName` (path-escaped, one segment) and keep them outside `worktrees/`.** A `/` in a title would nest one instance's folder inside another's, where launching, killing or sweeping the outer deletes it; inside `worktrees/`, `DiscoverOrphans` would walk them. **Enforced** by `TestSubagentHooksDir_SingleSegment` and `TestRemoveSubagentHooks_LeavesSlashSiblingAlone`.
+- **Never read a missing or malformed `background_tasks` list as empty, and reconcile only on the parent's `Stop`.** An empty reading ends every running subagent row at once; a `SubagentStop` list can omit a parallel foreground agent. **Convention** — subagent rows that vanish while their agents run.
+
+### Claude status and the roster
+
+- **Let the newest observation win across hooks and roster, with no grace window.** Stamp a hook event with its file's time and a roster answer with its query's start; a live probe showed the roster moving before the hook's timestamp, so any window misorders them. **Enforced** by `TestClaudeState_NewestWinsAcrossSources`, `TestClaudeState_ProbeReplay` and the opt-in `TestRealClaude_HookStatusContract`.
+- **Count only parent events (no `agent_id`), except `PermissionRequest`, and set the session ID only from `SessionStart`.** A subagent's `Stop` would end the parent's turn, and a failed `--resume` sends a `SessionEnd` carrying an unknown ID. **Enforced** by `TestClaudeState_EventMapping` and `TestClaudeState_SessionIDOnlyFromParentSessionStart`.
+- **Join the roster on interactive entries only, and drop an ambiguous cwd.** A `claude --bg` session started inside a worktree would blind the join for loom's own session, and two interactive sessions in one directory can't be told apart; an entry with no `kind` counts as interactive. **Enforced** by `TestQueryClaudeRoster_BackgroundSiblingDoesNotBlindInteractive` and `TestQueryClaudeRoster_TwoInteractiveInOneCwdIsDropped`.
+
+### Accounts and launching
+
+- **Resolve a session's account at launch and fail closed (`*MissingAccountError`, `*AccountDirMissingError`, `*RegistryLoadError`); never fall back to default.** Falling back bills the wrong subscription, and a vanished dir would start a fresh, logged-out identity. **Enforced** by `TestAccountDir_MissingDirFailsClosed`, `TestAccountDir_RegistryLoadFailureIsDistinctFromUnregistered` and `TestStart_MissingAccountFailsBeforeAnySetup`.
+- **Give `CLAUDE_CONFIG_DIR` only to Claude programs, and run `account.EnsureOnboarded` on every account launch.** A wrapper program or the terminal pane's shell must run as the default account; without the onboarding flag the first session on a CLI-logged-in account asks to log in again. **Enforced** by `TestLaunchEnv_NonClaudeIgnoresTheAccount` and `TestLaunchEnv_MarksAnAccountsOnboardingWhenLaunching`.
+- **Launch every Claude session with `CLAUDE_CODE_NO_FLICKER=1` (`ClaudeFullscreenEnv`, folded into `InstanceEnv`), as an env var, not `--settings`.** Claude's classic renderer brackets every frame in synchronized output, which tmux relays as repaints, so the pane's scrollback stays empty; Claude drops `--settings` on a renderer relaunch. **Enforced** by `TestClaudeFullscreenEnv_Claude`.
+- **Adding an agent program?** Implement a `session/agent` adapter (trust-prompt keys, recovery flags, `Matches`), resolved through `Registry.Lookup`, rather than editing `session/tmux/tmux.go` or `agent_restart.go`. **Convention** — program checks scattered where the next program misses them.
+
+### Package boundaries
+
+- **Keep `SlugTitle` to lowercase ASCII alphanumerics.** Its output becomes a git branch name, so a fully non-ASCII title yields a bare `gh-<n>`. **Enforced** by `TestSlugTitle`.
+- **Keep `session/launch` a leaf that imports only `config` and `session`.** The model's workspace-terminal auto-create composes a launch program through it, and `core` must import no UI. **Convention** — an import that drags `ui/` into the daemon (`TestCoreImportsNoUI` catches a UI import, not other growth). Changing an option: [`../docs/claude/launch-options.md`](../docs/claude/launch-options.md)
+- **Keep `tmux.RenameLegacySessions` only in `Storage.LoadAndReconcile`, before per-record reconcile.** Every load path runs it there, so live `claudesquad_` sessions keep their panes under `loom_`. **Enforced** by `TestRenameLegacySessions_ExactTarget` for the rename itself.
+- **Keep `session/github`, `session/hooks`, `session/subagent` and `session/claudetmp` free of tmux, UI and app imports.** They are pure readers with injected executors, testable without a terminal. **Convention** — a cycle or a test that needs tmux.
+
+## Pointers
+
+- [`tmux/CLAUDE.md`](tmux/CLAUDE.md), [`git/CLAUDE.md`](git/CLAUDE.md), [`vt/CLAUDE.md`](vt/CLAUDE.md) — the sub-packages with rules of their own.
+- [`../core/CLAUDE.md`](../core/CLAUDE.md) — the model that drives every instance.
+- [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) — where this package sits.

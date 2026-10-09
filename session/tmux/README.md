@@ -1,0 +1,52 @@
+# session/tmux
+
+Tmux session management: launching, probing and killing sessions for lifecycle, the attach clients the TUI renders panes through, the output pump and its event coalescer, and the one place tmux is invoked. Session names carry the prefix `loom_` (`tmux.TmuxPrefix`); `claudesquad_` (`tmux.LegacyTmuxPrefix`, `LegacyTmuxPrefix`) is still recognized by the orphan sweep and the startup rename pass (`RenameLegacySessions`).
+
+## Files
+
+| File | Holds |
+|---|---|
+| `command.go` (`session/tmux/command.go`) | `tmux.Command`, `tmux.CommandOnSocket`, `tmuxCommand`, `UseServer`, `ResolveServer`, `ServerRunning`, `SameServer`, `EnclosingSessionName` |
+| `target.go` (`session/tmux/target.go`) | `tmux.SessionTarget`, `tmux.PaneTarget`, `ToLoomTmuxName`, `ExactlyTargetable` |
+| `session.go` | `Session`: launch, probes, capture-pane, `DismissTrustPrompt`, `TypeText`/`SendPrompt`/`PressKeys`, `WithProgramEnv`, `NewSessionNamed`, `NewSessionWithDeps` |
+| `tmux.go` | `TmuxSession`, the attach client: `Restore`, `PausePreview`, `Close`, the output pump, `stateMu`, `ForwardMouse`, `Attached`, `PtmxAlive`, `statusContent`, `PaneTitle`, `NewTmuxSessionWithDeps`, `ToLegacyTmuxName`, `RenameLegacySessions` |
+| `attach.go` | `NewAttachClient`, `NewAttachClientWithDeps`, `DetectStatus` |
+| `notify.go` | the per-session coalescer and `tmux.SetNotifier` |
+| `nesting.go` | `CheckNestingFromEnv`, the nesting guard's tmux half |
+| `emulator_unix.go`, `emulator_windows.go` | the embedded VT emulator per platform, gated by `LOOM_PANE_RENDERER` |
+| `pty.go` | `PtyFactory` |
+
+## Sessions and attach clients
+
+`Session` (`session.go`) is a session as lifecycle sees it: `Start` launches without attaching and `Close` kills. It also covers liveness probes, capture-pane, `DismissTrustPrompt`, and input with no client: `TypeText`/`SendPrompt` send text through `load-buffer` + `paste-buffer -d -r` (raw bytes in one paste, with no length limit), never `send-keys -l`, which tmux refuses past about 16 KiB ("command too long") and which treats a trailing `;` as a command separator even after `--`; `PressKeys` sends key names through `send-keys`. `TestTypeTextMatchesPTYWrite_RealTmux` pins both against a write to an attach client's PTY, byte for byte, including the trailing-`;` and over-16-KiB cases.
+
+`TmuxSession` (`tmux.go`) embeds a `Session` and is an attach client: `Close` detaches it and then kills the session, while `PausePreview` only detaches it, which is how the TUI releases a client. `NewAttachClient` (`attach.go`) builds an unattached client for a session it did not start, by name, which `Restore` then attaches. `NewTmuxSession` plus `Start` both launch and attach, and only the terminal pane's shells use that path.
+
+A started program's environment is the session's own (`-e`), plus the variables tmux's `update-environment` option lists (`SSH_AUTH_SOCK`, `DISPLAY`, …) as the starting process has them, plus the tmux server's global environment, which is that of whatever started the server (`Session.Start`): an agent's `update-environment` variables are the daemon's, the terminal pane's shells' the TUI's, and everything else (the credential overrides, the default account's `CLAUDE_CONFIG_DIR`, `PATH`) the server's.
+
+Every loom session sets `detach-on-destroy on`, through `Session.Start` and, for a session an older loom launched, through `Restore`. Under a global `off`, tmux switches a destroyed session's clients to another session instead of ending them, so a client keyed by the dead session's name would show, and take inline-attach keys for, another agent's pane, and never read EOF. With it on, an agent that exits during a full-screen attach drops the user back to loom, and a user's own terminal attached to a loom session detaches when that session dies (`TestKilledSessionsClientExits_RealTmux`).
+
+A client is usable only while `TmuxSession.Attached` holds: its PTY is open and the pump draining it has not hit EOF on its own. Each pump owns its exit flag (`pumpDone`), set after its Dead notification returns, so a late old pump can't mark a newer attach dead (`TestAttached_LateOldPumpExitLeavesTheNewAttach`). `PtmxAlive` stays true after that EOF and only says there is a handle to close. On creack/pty the attach fd is blocking, so the read deadline `signalPumpStop` sets can't cut the pump's read short: closing a client of a still-live session waits the full `pumpWaitTimeout` (`waitPumpExit`), while a dead session's client closes at once.
+
+## Output pump, emulator and status
+
+The pump writes `ptmx` output through `vt.NewAltScreenFilter` into an embedded VT emulator (`emulator_unix.go`/`emulator_windows.go`, gated by `LOOM_PANE_RENDERER`), so panes render from the emulator with a capture-pane fallback, and `ForwardMouse` and bracketed paste back interact mode. tmux clients enter the alternate screen at attach and never leave it, and x/vt only accumulates scrollback on the primary screen, so the filter strips the alt-screen mode switches. `Restore` seeds pre-attach history once per attach (`capture-pane -S - -E -1`, stored as `SeedHistory`); the TUI's `ui.ScrollModel` windows seed, emulator scrollback and screen through the emulator's `RenderWindow`/`ScrollbackLen`.
+
+`TmuxSession.stateMu` guards the `ptmx`/`monitor`/emulator fields of a `tmux.TmuxSession` against the race between status scans off the TUI's Update goroutine (`statusDetectCmd`, `snapshotScan`) and the attach lifecycle. The pump also drives the event-based UI: a per-session coalescer (`notify.go`) emits dirty (rate-limited), quiet (after output settles), bell, and dead notifications through the package-level `tmux.SetNotifier` hook, which `app.Run` wires to `tea.Program.Send`. Status detection (`statusContent`) reads the emulator in-process; capture-pane remains only as the snapshot path's fallback. Prompt detection (`TmuxSession.DetectStatus`, `attach.go`) surfaces a `Prompting` status, and answers a trust prompt through `send-keys`.
+
+## Commands, servers and targets
+
+Every tmux invocation goes through `tmux.Command` or `tmux.CommandOnSocket` (`command.go`). `Command` targets the server `tmux.UseServer` pinned (`-S <path>`), else `LOOM_TMUX_SOCKET`'s (`-L`); `CommandOnSocket`'s explicit socket outranks the pin. The daemon pins the server it resolved at start (`daemon.TmuxServer`) and each TUI the one the daemon's hello names (`peer.Tmux`), so every process reaches the agents where the daemon runs them, whatever its own environment says. A raw tmux exec (`exec.Command("tmux", …)`) would follow `$TMUX` to whatever server encloses the process.
+
+Both pass `-u`. tmux prints a non-UTF-8 command-line client's output through `utf8_sanitize`, which turns every byte outside printable ASCII into `_` (tabs, escapes, non-ASCII paths), and a client is UTF-8 only when `$TMUX` is set (even empty) or `LC_ALL`/`LC_CTYPE`/`LANG` names UTF-8. Without `-u`, a loom started outside tmux under no UTF-8 locale (a service, a bare SSH login, the Nix build sandbox) read `#{session_name}\t#{session_path}` as one name, and the held-name guard, finding no session of its name, killed another workspace's (`TestCommand_ListingSurvivesANonUTF8Client_RealTmux`). So argv starts `tmux -u [-S path | -L sock] <sub>` (`tmuxCommand`).
+
+Every target is exact, built by `tmux.SessionTarget` or `tmux.PaneTarget` (`target.go`). A bare `-t name` falls back to a prefix match when no session has exactly that name, and loom's sessions die on their own all the time, so a command aimed at a dead `loom_api` lands on a live `loom_api-v2`: closing it killed the sibling (`TestKillIsExactMatch_RealTmux`), and `Restore`/`ResumePreview` attached the dead session's preview PTY to it, sending every keystroke, paste and initial prompt to the other agent (`TestDeadSessionNeverReachesPrefixSibling_RealTmux`; likewise `FullScreenAttachCmd`, the captures, and `RenameLegacySessions`, which renamed `claudesquad_api-v2`). Session-typed commands (`attach-session`, `has-session`, `kill-session`, `rename-session`, `switch-client`) take `"-t", SessionTarget(name)` (`=name`); pane- and window-typed ones (`capture-pane`, `display-message`, `send-keys`, `paste-buffer`, `set-option`, `resize-window`, `list-panes`) take `"-t", PaneTarget(name)` (`=name:`). Plain `=name` fails there ("can't find pane: =loom_x"; `set-option` says "no such session"), while `=name:` works and fails cleanly on a missing session (`display-message` then prints empty formats and exits 0).
+
+Session names never hold `:` or `.`: `ToLoomTmuxName`/`ToLegacyTmuxName` drop whitespace and map both to `_`, because tmux creates `loom_fix:login` literally but every target parses `:` and `.` as its session:window.pane separators (`-t=loom_fix:login` asks for window `login` of `loom_fix`). A title like "fix: login" used to probe Dead until `Start` timed out, `Close` could not kill it, and the failed-start cleanup removed the worktree under the running agent (`TestColonTitle_StartsProbesAliveAndCloses_RealTmux`). Titles differing only in those characters share a session name; the second `Start` fails with "already exists". A name that still holds one (made by an older loom, or another tool) cannot be targeted exactly at all (`-t=loom_feat:0` kills `loom_feat`), so the orphan sweep skips it (`tmux.ExactlyTargetable`).
+
+## Tests
+
+- Dependency injection: `cmd.Executor` for subprocesses and `tmux.PtyFactory` for PTYs; `NewSessionWithDeps()`, `NewAttachClientWithDeps()` and `NewTmuxSessionWithDeps()` accept mock dependencies.
+- argv starts `tmux -u [-S …|-L …]`, so mocks dispatch on `cmd_test.TmuxSubcommand(argv)` (`cmd/cmd_test/testutils.go`), never `argv[1]`, or their `assert.Empty` checks pass vacuously.
+- `TestNoRawTmuxExec` fails the build on a raw tmux exec outside `command.go` (whose `EnclosingSessionName` is the one deliberate exception); `TestTmuxTargetsAreExact` fails on a production `"-t"` not followed by one of the two target helpers, and on a target spelled inline (`"-t="+name`, `fmt.Sprintf("-t=%s", …)`), with an allow-list holding only `EnclosingSessionName`'s `$TMUX_PANE` pane id. They live in `command_enforce_test.go` and `target_enforce_test.go`.
+- Real-tmux tests call `privateTmux(t, tag)` (`realtmux_helpers_test.go`): a fresh private server killed when the test ends, `$TMUX` cleared, and a short `TMUX_TMPDIR` so the socket path stays under the 104/108-byte `sun_path` cap. `TestMain` unsets `LOOM_TMUX_SOCKET`, since argv-exact mock assertions assume the default server.
