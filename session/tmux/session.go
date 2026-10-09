@@ -121,6 +121,15 @@ func (s *Session) Program() string { return s.program }
 // refuses with ErrSessionExists before launching anything. Any other error
 // may come after the program was launched, so the caller must not assume
 // it is not running in workDir (see SessionLiveness).
+//
+// The program's environment is the tmux server's global environment, the
+// variables its update-environment option lists (SSH_AUTH_SOCK, DISPLAY,
+// SSH_CONNECTION, …) as the process calling Start has them, and s.env. So
+// the caller's environment decides those. Since daemon stage 3B an agent's
+// caller is the daemon (loom serve), whose environment is the one it was
+// spawned with, by whichever loom first needed it: a TUI attached later,
+// or from another terminal or SSH session, changes nothing an agent sees.
+// The terminal pane's shells are started by the TUI and see its own.
 func (s *Session) Start(workDir string) (err error) {
 	t0 := time.Now()
 	log.For("tmux").Debug("start.begin", "session", s.sanitizedName, "program", s.program, "workdir", workDir)

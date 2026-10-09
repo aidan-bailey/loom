@@ -13,7 +13,8 @@ import (
 
 func TestSaveSettings_WritesAppliesAndPublishes(t *testing.T) {
 	m := NewForTest(Options{})
-	ws := storedWorkspace(t, "a")
+	ws := storedWorkspace(t, "") // the global workspace, whose program is the model's
+	t.Setenv(config.EnvGlobalDir, ws.ctx.ConfigDir)
 	m.SetWorkspacesForTest(ws)
 	id := m.wsIDOf(ws)
 	m.Sync()
@@ -40,6 +41,31 @@ func TestSaveSettings_WritesAppliesAndPublishes(t *testing.T) {
 
 	s.DefaultProgram = "changed after"
 	assert.Equal(t, "aider --yes", ws.cfg.GetProgram(), "the model keeps its own copy")
+}
+
+// The model's program (the accounts' Claude commands, orphan
+// placeholders) is the global config's, as the daemon starts it: another
+// workspace's save changes that workspace's own program, not the model's,
+// and the global workspace's save changes it, however its dir is spelled.
+func TestSaveSettings_OnlyTheGlobalWorkspaceSetsTheModelsProgram(t *testing.T) {
+	global, a := storedWorkspace(t, ""), storedWorkspace(t, "a")
+	link := filepath.Join(t.TempDir(), "global")
+	require.NoError(t, os.Symlink(global.ctx.ConfigDir, link))
+	t.Setenv(config.EnvGlobalDir, link)
+	m := NewForTest(Options{Program: "claude"})
+	m.SetWorkspacesForTest(global, a)
+
+	s := a.cfg.Snapshot()
+	s.DefaultProgram = "aider --yes"
+	require.NoError(t, m.SaveSettings(m.wsIDOf(a), s))
+	assert.Equal(t, "claude", m.program, "another workspace's save leaves the model's program alone")
+	assert.Equal(t, "claude", m.ClaudeProgram())
+	assert.Equal(t, "aider --yes", a.cfg.GetProgram(), "it changes its own")
+
+	s = global.cfg.Snapshot()
+	s.DefaultProgram = "claude --verbose"
+	require.NoError(t, m.SaveSettings(m.wsIDOf(global), s))
+	assert.Equal(t, "claude --verbose", m.program, "the global workspace's save sets it")
 }
 
 func TestSettingsRequests_RefuseAnUnknownWorkspace(t *testing.T) {

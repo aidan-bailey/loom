@@ -21,7 +21,9 @@ func newEmulator(cols, rows int) vt.Emulator {
 
 // EmulatorEnabled reports whether panes render from the in-process emulator —
 // i.e. whether the event-driven update path (pane dirty/quiet/dead events)
-// is available. False selects the legacy tick-polled snapshot path.
+// is available. False selects the legacy tick-polled snapshot path. It reads
+// this process's LOOM_PANE_RENDERER: a TUI's for its own panes, the
+// daemon's for the model's tick (core's tickInterval).
 func EmulatorEnabled() bool {
 	return os.Getenv("LOOM_PANE_RENDERER") != "snapshot"
 }

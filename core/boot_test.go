@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
@@ -837,4 +838,32 @@ func TestBoot_ReturnsTheAccountRegistrysNotices(t *testing.T) {
 	for _, ev := range m.Sync().Events {
 		assert.NotEqual(t, notices[0], ev, "nothing left for the first Sync")
 	}
+}
+
+// Whether loom runs as an account is the model's environment's to say: in
+// a daemon, the one it was spawned with (from an account's pane, say),
+// whose "default" then describes that account. Boot raises the warning
+// before any client can connect, so it is among the notices Boot hands
+// back, which the daemon keeps for its first client.
+func TestBoot_ReturnsTheRunningAsAnAccountNotice(t *testing.T) {
+	noCredentialOverride(t)
+	m := bootModel(t)
+	global, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	acct, _, err := account.LoadRegistry(global).Create("max-2", t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { session.SetAccountDirs(nil, nil) })
+	t.Setenv("CLAUDE_CONFIG_DIR", acct.Dir)
+
+	notices := m.Boot()
+
+	var said []string
+	for _, ev := range notices {
+		if n, ok := ev.(Notice); ok && n.Err != nil {
+			said = append(said, n.Err.Error())
+		}
+	}
+	require.Len(t, said, 1, "the one notice: %q", said)
+	assert.Contains(t, said[0], `loom is running as account "max-2"`)
+	assert.Contains(t, said[0], acct.Dir)
 }

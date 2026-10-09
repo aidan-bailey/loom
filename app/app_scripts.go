@@ -821,13 +821,21 @@ func (m *home) scriptInstanceOp(p pendingIntent, i script.InstanceOpIntent) tea.
 // workspace: the script's snapshot slot, or nil when focus moved while
 // the script ran (handleScriptDone), which refuses it. Its coroutine
 // resumes with the new instance when the Reply lands (scriptReplied).
+//
+// A relative path is resolved here, against the TUI's working directory:
+// the model, in the daemon, would resolve it against the daemon's
+// (session.NewInstance), which is wherever some client spawned it.
 func (m *home) scriptCreate(p pendingIntent, i script.CreateInstanceIntent, slot *workspaceSlot) tea.Cmd {
 	if slot == nil {
 		log.For("script").Warn("new_instance_dropped", "trace", p.trace, "title", i.Title)
 		return m.resumeScript(p, script.ResumeValue{Err: fmt.Sprintf("new_instance: workspace changed while a script ran; not creating %s here", i.Title)})
 	}
+	path, err := filepath.Abs(i.Path)
+	if err != nil {
+		return m.resumeScript(p, script.ResumeValue{Err: scriptError("new_instance", err)})
+	}
 	req := m.newReq(pendingReq{script: &pendingScript{intent: p.id, trace: p.trace, op: "new_instance"}})
-	m.core.Create(slot.id, core.NewInstance{Title: i.Title, Path: i.Path, Program: i.Program, Prompt: i.Prompt, Branch: i.Branch}, req)
+	m.core.Create(slot.id, core.NewInstance{Title: i.Title, Path: path, Program: i.Program, Prompt: i.Prompt, Branch: i.Branch}, req)
 	return nil
 }
 

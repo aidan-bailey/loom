@@ -34,6 +34,13 @@ const MaxDirName = 200
 // joined with claude-<uid>. A relative value names a different directory
 // for every process, so it is skipped. When the root does not exist, the
 // path returned is unresolved.
+//
+// It reads this process's environment. Loom archives, restores and sweeps
+// in its daemon (loom serve, since stage 3B), so the root is the daemon's,
+// computed from the environment it was spawned with, while each agent's
+// Claude computes its own from the agent's (Session.Start's in package
+// tmux). When the two differ, Locate finds nothing and nothing is
+// archived. A client's root, and `loom debug`'s, are their own.
 func Root() (string, bool) {
 	base := "/tmp"
 	for _, v := range []string{EnvTmpDir, "TMPDIR", "TMP", "TEMP"} {

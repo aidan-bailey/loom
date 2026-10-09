@@ -31,11 +31,12 @@ func (o Out) Empty() bool { return len(o.Events) == 0 && len(o.Jobs) == 0 }
 type Options struct {
 	// Registry is the workspace registry; nil in bare tests.
 	Registry *config.WorkspaceRegistry
-	// Program is the agent program the process was started with: the -p
-	// flag, else the startup workspace's. The model detects the default
-	// account's remote-control auth with it (Boot) and runs the accounts'
-	// Claude commands with it (ClaudeProgram) until a settings save
-	// replaces it; each client keeps the program its own drafts default to.
+	// Program is the global config's agent program, as the daemon starts
+	// the model (loom serve). The model detects the default account's
+	// remote-control auth with it (Boot), and runs the accounts' Claude
+	// commands (ClaudeProgram) and orphan placeholders with it, until the
+	// global workspace's settings save replaces it (SaveSettings); each
+	// client keeps the program its own drafts default to.
 	Program string
 	// CmdExec replaces cmd.MakeExecutor() on the workspace load paths: a
 	// test seam. nil in production.

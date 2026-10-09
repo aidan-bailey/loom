@@ -436,6 +436,41 @@ end)`)
 	assert.False(t, inst.Started())
 }
 
+// createWatch is a home's Core that records the spec of every Create.
+type createWatch struct {
+	core.Core
+	specs []core.NewInstance
+}
+
+func (w *createWatch) Create(id core.WorkspaceID, spec core.NewInstance, req core.ReqID) {
+	w.specs = append(w.specs, spec)
+	w.Core.Create(id, spec, req)
+}
+
+// TestScriptNewInstance_ARelativePathIsTheTUIs: a script's relative path
+// names a directory from where the user runs loom, so the TUI makes it
+// absolute before the Create: the model, in the daemon, would resolve it
+// against the daemon's working directory, which some other client's
+// terminal may have set.
+func TestScriptNewInstance_ARelativePathIsTheTUIs(t *testing.T) {
+	m := homeWithAppState(t)
+	watch := &createWatch{Core: m.core}
+	testStacks.Store(core.Core(watch), stackOf(m))
+	t.Cleanup(func() { testStacks.Delete(core.Core(watch)) })
+	m.core = watch
+	withScript(t, m, `cs.bind("Z", function(ctx)
+  ctx:new_instance{title = "scripted", path = "sub/repo"}
+end)`)
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+
+	done := runKey(t, m, "Z")
+
+	require.NoError(t, lastErr(t, done))
+	require.Len(t, watch.specs, 1)
+	assert.Equal(t, filepath.Join(cwd, "sub", "repo"), watch.specs[0].Path, "the model is sent the TUI's absolute path")
+}
+
 // TestScriptSnapshot_LeavesOutTheDraftRow: a creation flow's draft is a
 // row (ID 0) but no instance, and a script can't act on it. While a "#n"
 // expansion runs, the draft stays open and selected in stateDefault, so a

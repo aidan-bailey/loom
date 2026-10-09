@@ -36,13 +36,14 @@ func readyInst(t *testing.T, m *Model) *session.Instance {
 	return inst
 }
 
-// ghModel is a model with one opened workspace and no repository of its
-// own, so the poll covers the directory the test runs in, as global mode
-// polls the one loom started in.
+// ghModel is a model with one opened workspace with no repository of its
+// own (as the global one) and one session in it, so the poll covers the
+// repository that session runs in.
 func ghModel(t *testing.T) *Model {
 	t.Helper()
 	m := NewForTest(Options{})
 	m.SetWorkspacesForTest(storedWorkspace(t, "a"))
+	hold(m, newInst(t, "x"))
 	return m
 }
 
@@ -64,23 +65,56 @@ func TestGHQuery_OnlyOpenedWorkspacesArePolled(t *testing.T) {
 	assert.Equal(t, []string{ws.ctx.RepoPath}, m.openRepoPaths())
 }
 
-// Started in a registered repository's directory, the opened global
-// workspace stands for that same repository: the repository's own
-// workspace wins, so it is polled once, against its own base branch,
-// however the start directory is spelled.
-func TestOpenedRepos_ARepositorysOwnWorkspaceWinsOverTheStartDirectory(t *testing.T) {
+// The global workspace has no repository of its own: it stands for the
+// repositories its sessions run in, each once, against the global config's
+// base branch, never for the directory the daemon happens to run in (some
+// client's, when it spawned it). With no session it polls nothing.
+func TestOpenedRepos_TheGlobalWorkspaceStandsForItsSessionsRepositories(t *testing.T) {
+	t.Chdir(t.TempDir()) // the daemon's working directory: no client's
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	global := storedWorkspace(t, "")
+	global.cfg.BaseBranch = "trunk"
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(global)
+
+	assert.Empty(t, m.openedRepos(), "no session, nothing to poll")
+	assert.False(t, m.maybeGHQuery())
+
+	r1, r2 := t.TempDir(), t.TempDir()
+	at := func(title, repo string) *session.Instance {
+		inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: repo, Program: "claude"})
+		require.NoError(t, err)
+		return inst
+	}
+	hold(m, at("x", r1), at("y", r2), at("z", r1))
+
+	got := m.openedRepos()
+	assert.Equal(t, []openedRepo{{path: r1, base: "trunk"}, {path: r2, base: "trunk"}}, got)
+	for _, r := range got {
+		assert.NotEqual(t, cwd, r.path, "the working directory is not polled")
+	}
+}
+
+// A global session in a registered repository names that repository too:
+// the repository's own workspace wins, so it is polled once, against its
+// own base branch, however the session's path is spelled.
+func TestOpenedRepos_ARepositorysOwnWorkspaceWinsOverTheGlobalSessions(t *testing.T) {
 	repo := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
 	require.NoError(t, os.Symlink(repo, link))
-	for name, cwd := range map[string]string{"started in it": repo, "started through a symlink to it": link} {
+	for name, path := range map[string]string{"run in it": repo, "run through a symlink to it": link} {
 		t.Run(name, func(t *testing.T) {
-			t.Chdir(cwd)
-			global := storedWorkspace(t, "") // no repository: it stands for the start directory
+			global := storedWorkspace(t, "") // no repository: it stands for its sessions'
+			global.cfg.BaseBranch = "trunk"
 			x := storedWorkspace(t, "x")
 			x.ctx.RepoPath = repo
 			x.cfg.BaseBranch = "develop"
 			m := NewForTest(Options{})
 			m.SetWorkspacesForTest(global, x) // the global workspace is served first
+			inst, err := session.NewInstance(session.InstanceOptions{Title: "g", Path: path, Program: "claude"})
+			require.NoError(t, err)
+			hold(m, inst)
 
 			assert.Equal(t, []openedRepo{{path: repo, base: "develop"}}, m.openedRepos())
 		})

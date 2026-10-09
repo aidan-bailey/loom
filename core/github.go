@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
@@ -77,12 +76,16 @@ type openedRepo struct{ path, base string }
 // workspace's config.BaseBranch: every workspace has its own config.json,
 // so one setting applied across the batch would resolve the others' repos
 // against the wrong workspace's. An opened workspace with no repository
-// (the global one) stands for the directory loom was started in, as
-// classic mode always polled. The workspaces with a repository of their own
-// come first, in the order the model serves them, then the stand-ins: when
-// loom starts in a registered repository's directory, the stand-in names
-// that repository too (compared canonically), and the repository's own
-// workspace, with its base branch, must win.
+// (the global one) stands for the repositories its sessions run in
+// (Instance.Path), each against that workspace's own base branch, and with
+// no session it polls nothing. It no longer stands for the directory loom
+// started in: the model runs in the daemon (stage 3B), whose working
+// directory is wherever some client spawned it, which names nothing a
+// client shows. The workspaces with a repository of their own come first,
+// in the order the model serves them, then the global workspace's: a global
+// session in a registered repository names that repository too (compared
+// canonically), and the repository's own workspace, with its base branch,
+// must win.
 func (m *Model) openedRepos() []openedRepo {
 	seen := map[string]bool{}
 	var out []openedRepo
@@ -105,8 +108,9 @@ func (m *Model) openedRepos() []openedRepo {
 	}
 	for _, ws := range m.workspaces {
 		if ws.opened && (ws.ctx == nil || ws.ctx.RepoPath == "") {
-			cwd, _ := os.Getwd()
-			add(ws, cwd)
+			for _, inst := range ws.insts {
+				add(ws, inst.Path)
+			}
 		}
 	}
 	return out

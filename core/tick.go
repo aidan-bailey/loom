@@ -28,6 +28,13 @@ const maxWorkspaceTerminalRestartFailures = 3
 // long after the previous probe lands (Loop.armTick). Formerly the sleep
 // in app's tickUpdateMetadataCmd, which keeps the same cadence for the
 // TUI's own half.
+//
+// It reads LOOM_PANE_RENDERER (tmux.EmulatorEnabled) in the model's
+// process: since stage 3B the daemon, so the daemon's environment sets the
+// model's cadence, while each TUI's own sets how that TUI renders its
+// panes and the cadence of its own half. When they disagree each keeps its
+// own: a snapshot-path TUI served by an emulator-path daemon still scans
+// its panes every 500ms, over a model that probes every 3s.
 func tickInterval() time.Duration {
 	if tmux.EmulatorEnabled() {
 		return 3 * time.Second

@@ -462,6 +462,15 @@ type ClaudeProgramResult struct {
 	Value string `json:"value"`
 }
 
+// CredentialOverrideParams are CredentialOverride's parameters on the wire.
+type CredentialOverrideParams struct {
+}
+
+// CredentialOverrideResult is CredentialOverride's result on the wire; an error travels in the reply.
+type CredentialOverrideResult struct {
+	Value string `json:"value"`
+}
+
 // ReloadAccountsParams are ReloadAccounts's parameters on the wire.
 type ReloadAccountsParams struct {
 }
@@ -564,6 +573,7 @@ var methods = []methodInfo{
 	{Name: "AccountUsage", Kind: kindLocal, Params: AccountUsageParams{}, Result: AccountUsageResult{}},
 	{Name: "AccountEnv", Kind: kindLocal, Params: AccountEnvParams{}, Result: AccountEnvResult{}},
 	{Name: "ClaudeProgram", Kind: kindLocal, Params: ClaudeProgramParams{}, Result: ClaudeProgramResult{}},
+	{Name: "CredentialOverride", Kind: kindLocal, Params: CredentialOverrideParams{}, Result: CredentialOverrideResult{}},
 	{Name: "ReloadAccounts", Kind: kindRequest, Params: ReloadAccountsParams{}, Result: ReloadAccountsResult{}},
 	{Name: "RequestAccountsRefresh", Kind: kindCast, Params: RequestAccountsRefreshParams{}, Result: RequestAccountsRefreshResult{}},
 	{Name: "RequestUsageProbe", Kind: kindCast, Params: RequestUsageProbeParams{}, Result: RequestUsageProbeResult{}},
@@ -917,6 +927,12 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 			return nil, err, true
 		}
 		return ClaudeProgramResult{Value: b.ClaudeProgram()}, nil, true
+	case "CredentialOverride":
+		var p CredentialOverrideParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		return CredentialOverrideResult{Value: b.CredentialOverride()}, nil, true
 	case "ReloadAccounts":
 		var p ReloadAccountsParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1260,6 +1276,13 @@ func (c *Client) AccountEnv(name string) ([]string, error) {
 func (c *Client) ClaudeProgram() string {
 	var v0 string
 	c.local(func(r *replica) { v0 = r.ClaudeProgram() })
+	return v0
+}
+
+// CredentialOverride is core.Core's CredentialOverride (local).
+func (c *Client) CredentialOverride() string {
+	var v0 string
+	c.local(func(r *replica) { v0 = r.CredentialOverride() })
 	return v0
 }
 

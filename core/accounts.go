@@ -46,7 +46,7 @@ func (m *Model) InitAccounts() {
 	// first WindowSizeMsg is still to come.
 	m.adoptAccounts(reg)
 	m.warnIfRunningAsAccount()
-	if name, ok := account.ActiveCredentialOverride(); ok && m.HasExtraAccounts() {
+	if name := m.CredentialOverride(); name != "" && m.HasExtraAccounts() {
 		log.For("account").Warn("registry.credential_override", "env", name)
 	}
 }
@@ -56,7 +56,11 @@ func (m *Model) InitAccounts() {
 // (it was started from an account session's pane, say). The default
 // account's auth, usage and roster, which run with loom's environment,
 // then describe that account rather than the main login. Sync already
-// refuses to link against it (syncMainDir).
+// refuses to link against it (syncMainDir). "Its own" is the model's: in a
+// daemon, the environment the daemon was spawned with, whichever client's
+// terminal that was; a client's own says nothing here. Boot raises the
+// warning before any client connects, and the daemon keeps it for the
+// first one (TestBoot_ReturnsTheRunningAsAnAccountNotice).
 func (m *Model) warnIfRunningAsAccount() {
 	dir := os.Getenv("CLAUDE_CONFIG_DIR")
 	if dir == "" || m.accounts == nil || m.accounts.Path() == "" {
@@ -158,6 +162,20 @@ func (m *Model) ensureAccountMaps() {
 // HasExtraAccounts reports whether an account besides default is
 // registered; all account UI and polling is gated on it.
 func (m *Model) HasExtraAccounts() bool { return m.accounts != nil && m.accounts.HasExtra() }
+
+// CredentialOverride names the credential set in the model's own
+// environment that overrides every account's login
+// (account.ActiveCredentialOverride), "" when none is. It is the model's
+// environment that decides: sessions launch from it, the usage probes and
+// auth reads inherit it, and the remote-control block reason reads it.
+// Since the model runs in the daemon (stage 3B), that environment is the
+// one the daemon was spawned with, possibly from another terminal than a
+// client's, so a client warns from this answer, never from its own
+// environment.
+func (m *Model) CredentialOverride() string {
+	name, _ := account.ActiveCredentialOverride()
+	return name
+}
 
 // accountDirs is the registry's name → config dir map (nil without one).
 func (m *Model) accountDirs() map[string]string {
@@ -390,7 +408,7 @@ func (m *Model) deliverAccountsRefreshed(msg accountsRefreshed) {
 	if msg.defaultAuth != nil {
 		m.rcAuth = *msg.defaultAuth
 	}
-	_, override := account.ActiveCredentialOverride()
+	override := m.CredentialOverride() != ""
 	for name, a := range msg.auth {
 		m.accountAuth[name] = extraAccountAuth(name, a, override)
 	}

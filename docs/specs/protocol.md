@@ -345,6 +345,12 @@ Params: `{}`
 
 Result: `{"value":""}`
 
+### CredentialOverride (local)
+
+Params: `{}`
+
+Result: `{"value":""}`
+
 ### ReloadAccounts (request)
 
 Params: `{}`
@@ -385,7 +391,7 @@ Result: `{}`
 
 ### AccountsChanged
 
-`{"View":{"Names":{"Present":false,"Default":"","Names":null},"Loaded":false,"Extra":false,"ClaudeProgram":"","Accounts":null,"DefaultAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Auth":null,"Sync":null,"Usage":null,"UsageErr":null}}`
+`{"View":{"Names":{"Present":false,"Default":"","Names":null},"Loaded":false,"Extra":false,"ClaudeProgram":"","CredentialOverride":"","Accounts":null,"DefaultAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Auth":null,"Sync":null,"Usage":null,"UsageErr":null}}`
 
 ### Alive
 

@@ -18,8 +18,9 @@ func (m *Model) modelView() ModelView {
 // TestStateViews_AnswerAsTheModel keeps the two in step.
 func (m *Model) accountsView() AccountsView {
 	v := AccountsView{
-		DefaultAuth:   m.rcAuth,
-		ClaudeProgram: m.ClaudeProgram(),
+		DefaultAuth:        m.rcAuth,
+		ClaudeProgram:      m.ClaudeProgram(),
+		CredentialOverride: m.CredentialOverride(),
 	}
 	if m.accounts != nil {
 		v.Names = AccountNames{Present: true, Default: m.accounts.Default(), Names: m.accounts.Names()}

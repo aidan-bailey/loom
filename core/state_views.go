@@ -81,6 +81,10 @@ type AccountsView struct {
 	// ClaudeProgram is the Claude program the accounts run with ("" when
 	// neither the agent program nor an active session is Claude).
 	ClaudeProgram string
+	// CredentialOverride names the credential in the model's environment
+	// that overrides every account, "" when none does
+	// (Core.CredentialOverride).
+	CredentialOverride string
 	// Accounts are the registered accounts, by name.
 	Accounts map[string]account.Account
 	// DefaultAuth is the default account's remote-control auth, and Auth

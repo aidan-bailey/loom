@@ -105,6 +105,7 @@ type Core interface {
 	AccountUsage(name string) (account.Usage, error)    // rpc:local
 	AccountEnv(name string) ([]string, error)           // rpc:local
 	ClaudeProgram() string                              // rpc:local
+	CredentialOverride() string                         // rpc:local
 	ReloadAccounts()
 	RequestAccountsRefresh(withDefault bool) // rpc:cast
 	RequestUsageProbe()                      // rpc:cast

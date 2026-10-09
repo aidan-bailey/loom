@@ -9,11 +9,15 @@ import (
 // SaveSettings replaces the workspace's settings with s and writes its
 // config.json: to its context's config dir, or to the default config dir
 // for a bare context. Then it applies what a settings change does at
-// once: the agent program the accounts' Claude commands run with
-// (ClaudeProgram) and the two launch toggles the session package keeps per
-// config dir (SetLoomContextEnabled, SetSubagentTrackingEnabled). The
-// program a client's drafts default to is the client's to follow. An unknown id is an error. Moved from
-// app/state_settings.go, which did this to the model's own config.
+// once: the two launch toggles the session package keeps per config dir
+// (SetLoomContextEnabled, SetSubagentTrackingEnabled) and, for the global
+// workspace only, the agent program the model runs the accounts' Claude
+// commands and orphan placeholders with (m.program, ClaudeProgram): in a
+// daemon that program is the global config's (Options.Program), so one
+// workspace's save must not replace it for every other. The program a
+// client's drafts default to is the client's to follow. An unknown id is
+// an error. Moved from app/state_settings.go, which did this to the
+// model's own config.
 func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 	ws := m.wsLookup(id)
 	if ws == nil || ws.cfg == nil {
@@ -37,7 +41,9 @@ func (m *Model) SaveSettings(id WorkspaceID, s config.Settings) error {
 			return fmt.Errorf("save settings: %w", err)
 		}
 	}
-	m.program = ws.cfg.GetProgram()
+	if isGlobalWS(ws) {
+		m.program = ws.cfg.GetProgram()
+	}
 	// Re-sync the session flags so an in-place change takes effect on the
 	// workspace's next session launch. Keyed by the context's config dir,
 	// which its instances carry, not the dir the settings were saved to.
@@ -66,4 +72,16 @@ func (m *Model) SetHelpScreensSeen(id WorkspaceID, seen uint32) error {
 		return fmt.Errorf("save help screens: workspace %d is not served", id)
 	}
 	return ws.state.SetHelpScreensSeen(seen)
+}
+
+// isGlobalWS reports whether ws is the global workspace: its config dir is
+// the global config dir (config.GlobalWorkspaceContext), compared
+// canonically.
+func isGlobalWS(ws *Workspace) bool {
+	dir := ws.configDir()
+	if dir == "" {
+		return false
+	}
+	global, err := config.GetGlobalConfigDir()
+	return err == nil && canonicalDir(dir) == canonicalDir(global)
 }

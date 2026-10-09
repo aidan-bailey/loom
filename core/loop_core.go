@@ -111,8 +111,9 @@ func (l *Loop) AccountUsage(name string) (account.Usage, error) {
 func (l *Loop) AccountEnv(name string) ([]string, error) {
 	return get2(l, func(m *Model) ([]string, error) { return m.AccountEnv(name) })
 }
-func (l *Loop) ClaudeProgram() string { return get(l, (*Model).ClaudeProgram) }
-func (l *Loop) ReloadAccounts()       { l.do((*Model).ReloadAccounts) }
+func (l *Loop) ClaudeProgram() string      { return get(l, (*Model).ClaudeProgram) }
+func (l *Loop) CredentialOverride() string { return get(l, (*Model).CredentialOverride) }
+func (l *Loop) ReloadAccounts()            { l.do((*Model).ReloadAccounts) }
 func (l *Loop) RequestAccountsRefresh(withDefault bool) {
 	l.do(func(m *Model) { m.RequestAccountsRefresh(withDefault) })
 }

@@ -129,6 +129,7 @@ func TestStateViews_AnswerAsTheModel(t *testing.T) {
 	}{
 		{"bare", func(*testing.T, *Model) {}},
 		{"accounts and GitHub", func(t *testing.T, m *Model) {
+			t.Setenv("ANTHROPIC_AUTH_TOKEN", "tok")
 			withAccounts(t, m, "max-2", "max-3")
 			m.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthOK, Identity: account.Identity{ConfigDir: "/c", LoggedIn: true}})
 			m.SetAccountAuthForTest(map[string]session.RemoteControlAuth{
@@ -176,6 +177,7 @@ func TestStateViews_AnswerAsTheModel(t *testing.T) {
 			assert.Equal(t, m.AccountsLoaded(), av.AccountsLoaded())
 			assert.Equal(t, m.HasExtraAccounts(), av.HasExtraAccounts())
 			assert.Equal(t, m.ClaudeProgram(), av.ClaudeProgram)
+			assert.Equal(t, m.CredentialOverride(), av.CredentialOverride)
 			for _, repo := range []string{"/r", "/s", "/nowhere"} {
 				s, ok := m.GitHubSnapshot(repo)
 				vs, vok := gv.GitHubSnapshot(repo)

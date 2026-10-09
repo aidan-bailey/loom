@@ -110,6 +110,10 @@ func raised(t *testing.T, what string, f func()) (p any) {
 // from its replica gives what the model gives, over the wire, for known
 // names and misses alike.
 func TestReplica_AnswersAsTheModel(t *testing.T) {
+	for _, v := range account.CredentialOverrides {
+		t.Setenv(v, "")
+	}
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
 	model := core.NewForTest(core.Options{Program: "claude", Registry: &config.WorkspaceRegistry{
 		Workspaces:     []config.Workspace{{Name: "a", Path: "/a"}, {Name: "b", Path: "/b"}},
 		OpenWorkspaces: []string{"b", "a"},
@@ -164,6 +168,7 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	same("AccountsLoaded", func(k core.Core) []any { return []any{k.AccountsLoaded()} })
 	same("HasExtraAccounts", func(k core.Core) []any { return []any{k.HasExtraAccounts()} })
 	same("ClaudeProgram", func(k core.Core) []any { return []any{k.ClaudeProgram()} })
+	same("CredentialOverride", func(k core.Core) []any { return []any{k.CredentialOverride()} })
 	for _, name := range []string{"", account.DefaultName, "max-2", "nobody"} {
 		same("Account "+name, func(k core.Core) []any { v, ok := k.Account(name); return []any{v, ok} })
 		same("RCAuthFor "+name, func(k core.Core) []any { return []any{k.RCAuthFor(name)} })

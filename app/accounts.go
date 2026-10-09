@@ -16,12 +16,14 @@ import (
 )
 
 // credentialOverrideWarning is what the strip and the Accounts screen say
-// while a credential in loom's environment overrides every account
-// (account.ActiveCredentialOverride): every account session runs and bills
-// as it, and the usage probes, which inherit loom's environment, show its
-// usage under every account's name. "" otherwise.
-func credentialOverrideWarning() string {
-	if name, ok := account.ActiveCredentialOverride(); ok {
+// while a credential in the model's environment overrides every account
+// (core.Core.CredentialOverride): every account session runs and bills as
+// it, and the usage probes, which inherit that environment, show its usage
+// under every account's name. "" otherwise. The model's environment is the
+// daemon's, which some other terminal may have spawned, so the TUI's own
+// environment says nothing here.
+func (m *home) credentialOverrideWarning() string {
+	if name := m.core.CredentialOverride(); name != "" {
 		return "$" + name + " set: all accounts use it"
 	}
 	return ""
@@ -34,7 +36,7 @@ func (m *home) accountsScreenNotice() string {
 	if !m.core.HasExtraAccounts() {
 		return ""
 	}
-	return credentialOverrideWarning()
+	return m.credentialOverrideWarning()
 }
 
 // accountStatuses builds the view of every account, default first, for the
@@ -89,7 +91,7 @@ func (m *home) refreshAccountViews() tea.Cmd {
 		return nil
 	}
 	before := m.accountStrip.Height()
-	m.accountStrip.SetWarning(credentialOverrideWarning())
+	m.accountStrip.SetWarning(m.credentialOverrideWarning())
 	m.accountStrip.SetAccounts(statuses)
 	if m.accountStrip.Height() != before {
 		return tea.RequestWindowSize
