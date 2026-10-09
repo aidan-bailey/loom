@@ -106,8 +106,10 @@ type Model struct {
 	// ghAvailable caches gh's install/auth check, resolved by the first
 	// poll. Until checked, polls proceed (the poll itself checks).
 	ghAvailable ghAvailability
-	// ghState is the latest GitHub snapshot per open repo path. Replaced
-	// wholesale on every ghResult; a repo whose query failed is absent.
+	// ghState is the latest GitHub snapshot per open repository, keyed by
+	// its canonical top level (ghRepoKey), as are ghErrs and ghBases.
+	// Replaced wholesale on every ghResult; a repo whose query failed is
+	// absent.
 	ghState map[string]github.Snapshot
 	// ghErrs is the last poll error per open repo, replaced wholesale
 	// alongside ghState. A repo can fail every poll forever while
@@ -115,14 +117,27 @@ type Model struct {
 	// no GitHub remote never flips availability — and without this the
 	// picker would sit on "loading…" with nothing to show for it.
 	ghErrs map[string]error
+	// ghWatched are the repositories clients asked the poll to cover
+	// beside the opened workspaces' (WatchGitHub), in the order first
+	// asked, each with when one last asked: one not asked for within
+	// ghWatchTTL is no longer polled, and is dropped at the next ask.
+	ghWatched []ghWatch
 	// ghBases is the resolved base ref name per repo ("origin/main"),
 	// refreshed by the poll and read by probeJob for parity.
 	ghBases map[string]string
+	// ghAliases maps each polled path (canonical) that lies inside another
+	// repository's top level to that top level (ghRepoKey). Replaced by
+	// every poll. Like ghBases it is handed to probeJob, so it is replaced,
+	// never edited in place.
+	ghAliases map[string]string
 
 	// accounts is the Claude account registry (account/), loaded from the
 	// global config dir at startup. Loop-goroutine only: launches read the
 	// published dir map (session.SetAccountDirs) instead.
 	accounts *account.Registry
+	// runningAs is the warning that loom runs as an extra account, set at
+	// startup (noteRunningAsAccount), "" when it does not.
+	runningAs string
 	// accountAuth is each extra account's remote-control auth, with the
 	// identity `claude auth status` reported, filled by accountsRefreshed.
 	// The default account's lives in rcAuth.

@@ -130,6 +130,7 @@ func TestStateViews_AnswerAsTheModel(t *testing.T) {
 		{"bare", func(*testing.T, *Model) {}},
 		{"accounts and GitHub", func(t *testing.T, m *Model) {
 			t.Setenv("ANTHROPIC_AUTH_TOKEN", "tok")
+			m.SetRunningAsAccountForTest(`loom is running as account "max-2"`)
 			withAccounts(t, m, "max-2", "max-3")
 			m.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthOK, Identity: account.Identity{ConfigDir: "/c", LoggedIn: true}})
 			m.SetAccountAuthForTest(map[string]session.RemoteControlAuth{
@@ -137,9 +138,9 @@ func TestStateViews_AnswerAsTheModel(t *testing.T) {
 			})
 			m.SetAccountSyncForTest("max-2", account.SyncReport{Linked: []string{"projects"}, Diverged: []string{"settings.json"}})
 			m.SetAccountUsageForTest("max-3", account.Usage{Available: true, Plan: "max", At: time.Unix(10, 0)}, errors.New("probe failed"))
-			m.Deliver(GitHubResultForTest(true, "", map[string]github.Snapshot{
+			m.Deliver(GitHubAliasesForTest(GitHubResultForTest(true, "", map[string]github.Snapshot{
 				"/r": {PRs: map[string]github.PR{"dev/x": {Number: 4}}, Issues: map[int]github.Issue{7: {Number: 7, Title: "t"}}},
-			}, map[string]error{"/s": errors.New("no remote")}))
+			}, map[string]error{"/s": errors.New("no remote")}), map[string]string{"/r/sub": "/r", "/s/sub": "/s"}))
 		}},
 		{"unavailable registry and gh", func(t *testing.T, m *Model) {
 			dir := t.TempDir()
@@ -178,7 +179,8 @@ func TestStateViews_AnswerAsTheModel(t *testing.T) {
 			assert.Equal(t, m.HasExtraAccounts(), av.HasExtraAccounts())
 			assert.Equal(t, m.ClaudeProgram(), av.ClaudeProgram)
 			assert.Equal(t, m.CredentialOverride(), av.CredentialOverride)
-			for _, repo := range []string{"/r", "/s", "/nowhere"} {
+			assert.Equal(t, m.RunningAsAccount(), av.RunningAsAccount)
+			for _, repo := range []string{"/r", "/r/sub", "/r/", "/s", "/s/sub", "/nowhere"} {
 				s, ok := m.GitHubSnapshot(repo)
 				vs, vok := gv.GitHubSnapshot(repo)
 				assert.Equal(t, [2]any{s, ok}, [2]any{vs, vok}, "GitHubSnapshot(%q)", repo)
@@ -227,6 +229,25 @@ func TestModelView_CloneKeepsEveryField(t *testing.T) {
 	assert.Equal(t, m.Registry(), c.Registry, "as the model answers")
 	c.Registry.Workspaces[0].Name = "changed"
 	assert.Equal(t, "a", v.Registry.Workspaces[0].Name, "a deep copy")
+}
+
+// TestGitHubView_CloneKeepsEveryField: a replica hands out clones of the
+// published GitHub view, so a map the clone drops or shares is one every
+// client loses, or one a caller's edit reaches.
+func TestGitHubView_CloneKeepsEveryField(t *testing.T) {
+	v := GitHubView{
+		Snapshots:   map[string]github.Snapshot{"/r": {Issues: map[int]github.Issue{7: {Number: 7}}}},
+		Errs:        map[string]string{"/s": "no remote"},
+		Aliases:     map[string]string{"/r/sub": "/r"},
+		Unavailable: true,
+		Reason:      "r",
+	}
+	c := v.Clone()
+	assert.Equal(t, v, c)
+	c.Errs["/s"] = "changed"
+	c.Aliases["/r/sub"] = "changed"
+	assert.Equal(t, "no remote", v.Errs["/s"], "a deep copy")
+	assert.Equal(t, "/r", v.Aliases["/r/sub"], "a deep copy")
 }
 
 // TestWorkspacesView_WorkspacesIsNeverNil: Workspaces answers an empty

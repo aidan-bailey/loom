@@ -3,43 +3,46 @@ package tmux
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
 // EnvAllowNested bypasses CheckNesting when set to "1".
 const EnvAllowNested = "LOOM_ALLOW_NESTED"
 
-// NestedError reports that loom was started inside one of its own tmux
-// sessions while targeting that same server — the default server, or a
-// private socket (LOOM_TMUX_SOCKET) that names the very server this process
-// is already running inside.
+// NestedError reports that a loom process that sweeps tmux sessions (the
+// daemon, reset) was started inside one of loom's own tmux sessions, on
+// the very server it would manage.
 type NestedError struct {
 	// Session is the enclosing loom-managed tmux session.
 	Session string
+	// Lookup is why the enclosing session, on that server, could not be
+	// named (Session is then ""): it may be one of loom's.
+	Lookup error
 }
 
 // Error implements error.
 func (e *NestedError) Error() string {
-	return fmt.Sprintf("loom: refusing to start inside a loom-managed tmux session (%s) — its orphan sweep would kill the host's sessions. Use `go run ./tools/loomdev run` or set %s.",
-		e.Session, EnvTmuxSocket)
+	if e.Lookup != nil {
+		return fmt.Sprintf("loom: refusing to start inside tmux, on the tmux server this loom would manage, in a session it could not name (%v): it may be one of loom's own, whose sweep would kill the host's sessions. Use `go run ./tools/loomdev run`, start loom outside loom, or set %s=1 if this session is not loom's.",
+			e.Lookup, EnvAllowNested)
+	}
+	return fmt.Sprintf("loom: refusing to start inside a loom-managed tmux session (%s), on the tmux server this loom would manage — its orphan sweep would kill the host's sessions. Use `go run ./tools/loomdev run`, or start loom outside loom.",
+		e.Session)
 }
 
 // CheckNesting returns a *NestedError when the process runs inside a
-// loom-managed tmux session (loom_* or claudesquad_*) on the server this
-// process would itself manage. A tmux server copies the environment of the
-// client that started it, so every pane of a server started with
-// LOOM_TMUX_SOCKET=X inherits both $TMUX (naming server X) and
-// LOOM_TMUX_SOCKET=X — trusting a non-empty LOOM_TMUX_SOCKET on its own
-// would let the guard wave through a bare run inside its own sandbox
-// server. So the lookup is skipped only when LOOM_TMUX_SOCKET names a
-// server *other than* the one $TMUX points at (compared against the socket
-// basename — the part of $TMUX before the first comma); when they match,
-// the enclosing-session lookup still runs, exactly as it would with no
-// private socket configured at all. A failing lookup means "not nested":
-// with no reachable enclosing server there is nothing for the sweep to
-// harm.
-func CheckNesting(getenv func(string) string, enclosing func() (string, error)) error {
+// loom-managed tmux session (loom_* or claudesquad_*) on server, the tmux
+// server (its socket's path) the process is about to pin and manage. The
+// enclosing server is the one $TMUX names (its first comma-separated
+// field), compared with SameServer. What LOOM_TMUX_SOCKET names decides
+// nothing: a daemon keeps the last daemon's server while that server runs,
+// whatever its own environment selects (daemon.TmuxServer), so a dev loom
+// run in a loom pane with a private socket set would otherwise start the
+// user's daemon on the user's server. A loomdev sandbox passes on its own:
+// its global dir is its own, and so is its server. A lookup that fails on
+// that server (a timeout under load) fails closed, as replaceGuard does:
+// the session may be one of loom's.
+func CheckNesting(getenv func(string) string, enclosing func() (string, error), server string) error {
 	if getenv(EnvAllowNested) == "1" {
 		return nil
 	}
@@ -47,12 +50,12 @@ func CheckNesting(getenv func(string) string, enclosing func() (string, error)) 
 	if tmuxEnv == "" {
 		return nil
 	}
-	if socket := getenv(EnvTmuxSocket); socket != "" && socket != tmuxSocketBasename(tmuxEnv) {
+	if enclosingServer, _, _ := strings.Cut(tmuxEnv, ","); !SameServer(enclosingServer, server) {
 		return nil
 	}
 	name, err := enclosing()
 	if err != nil {
-		return nil
+		return &NestedError{Lookup: err}
 	}
 	if strings.HasPrefix(name, TmuxPrefix) || strings.HasPrefix(name, LegacyTmuxPrefix) {
 		return &NestedError{Session: name}
@@ -60,15 +63,8 @@ func CheckNesting(getenv func(string) string, enclosing func() (string, error)) 
 	return nil
 }
 
-// tmuxSocketBasename extracts the socket name from a $TMUX value such as
-// "/tmp/tmux-1000/default,1234,0", returning "default".
-func tmuxSocketBasename(tmuxEnv string) string {
-	path, _, _ := strings.Cut(tmuxEnv, ",")
-	return filepath.Base(path)
-}
-
 // CheckNestingFromEnv is CheckNesting wired to the process environment and
-// the real enclosing-session lookup.
-func CheckNestingFromEnv() error {
-	return CheckNesting(os.Getenv, EnclosingSessionName)
+// the real enclosing-session lookup, for the tmux server server.
+func CheckNestingFromEnv(server string) error {
+	return CheckNesting(os.Getenv, EnclosingSessionName, server)
 }

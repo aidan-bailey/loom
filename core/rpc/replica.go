@@ -145,6 +145,7 @@ func (r *replica) AccountsLoaded() bool              { return r.accounts.Account
 func (r *replica) HasExtraAccounts() bool            { return r.accounts.HasExtraAccounts() }
 func (r *replica) ClaudeProgram() string             { return r.accounts.ClaudeProgram }
 func (r *replica) CredentialOverride() string        { return r.accounts.CredentialOverride }
+func (r *replica) RunningAsAccount() string          { return r.accounts.RunningAsAccount }
 func (r *replica) AccountLoggedOut(acct string) bool { return r.accounts.AccountLoggedOut(acct) }
 func (r *replica) Account(name string) (account.Account, bool) {
 	return r.accounts.Account(name)

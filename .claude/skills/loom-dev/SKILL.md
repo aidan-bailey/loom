@@ -5,11 +5,15 @@ description: Launch, drive, and screenshot a dev build of loom safely from insid
 
 # Loom dev sandbox
 
-Loom's startup orphan sweep kills unclaimed `loom_*` tmux sessions on the
-server it talks to (those started under the workspaces it loads). Inside a
-loom pane that is the host's server, so the binary refuses to start there
-(nesting guard). Use the sandbox instead: a private tmux socket, a private
-registry, and a toy workspace named `toy`.
+A loom TUI in a loom pane is a client of the host's daemon (the user's
+global dir), so a dev build run there never gets a daemon of its own: it
+joins the user's daemon, or is refused. A loom inside loom never replaces
+an older daemon (`replaceGuard`), and a daemon that would start there
+refuses (its nesting guard): its boot runs an orphan sweep that kills
+unclaimed `loom_*` tmux sessions on the tmux server it pins, which is the
+host's (the last daemon's while it runs, whatever `LOOM_TMUX_SOCKET`
+says). Use the sandbox instead: its own global dir, so its own daemon and
+tmux server, a private registry, and a toy workspace named `toy`.
 
 Run everything from the repo root as `go run ./tools/loomdev <cmd>`. The
 sandbox is named after the current branch's leaf; `--sandbox NAME` (`-s`)
@@ -28,11 +32,19 @@ daemon outlives that TUI:
   `start` joins the same daemon.
 - `start --restart` stops both first, like `stop` then `start`.
 - `build` (and `up`, and `start` and `run` unless `--no-build`) replaces
-  the binary only: a running daemon is replaced by the next loom to start
-  when the build changed, because its executable differs.
+  the binary only. The next loom to start replaces a running daemon only
+  when the new build is newer, which takes a build that names its commit
+  (one from a git checkout, as loomdev's are; a Nix build stamps it): a
+  later commit, or a tree edited and rebuilt at the same one. An older
+  build (an earlier commit, or a clean build after a dirty one at the same
+  commit) is refused, and one that names no commit joins the running
+  daemon as it is: `stop` the daemon first.
 - `run` leaves the daemon running when its TUI quits, as a real loom does;
   `stop` ends it.
-- `down` stops the daemon before it deletes the sandbox.
+- `down` stops the daemon before it deletes the sandbox. A daemon that won't
+  stop, or a loom from before the daemon holding the sandbox's lock, stops
+  `down` with nothing deleted; `down --force` kills it (SIGKILL) first, once
+  its executable is proved a build in the sandbox's `bin` dir.
 - `ls` shows each sandbox's daemon (pid, socket); `logs` names it and
   includes its `serve.log` (and `serve-crash.log`, after a runtime crash).
 - `loom serve stop` by hand, in a subshell so the sandbox's environment
@@ -72,6 +84,10 @@ state's own prompt text before sending the next keys.
 ## Rules
 
 - Never run `./loom`, `go run .`, or `loom reset` directly in a loom pane.
+- Never run a bare `loom serve stop` in a loom pane: with the pane's
+  environment it stops the host's daemon, and every open loom TUI with it.
+  Stop the sandbox's daemon with `loomdev stop` (or the subshell recipe
+  above).
 - Never run `clean.sh` / `clean_hard.sh` from inside loom (they refuse anyway).
 - Fix the product, not the sandbox, when the UI misbehaves; fix the test's key sequence when the UI is right.
-- The nesting guard only recognizes loom-managed enclosing sessions (`loom_*`/`claudesquad_*`); a dev loom started from a plain (non-loom) tmux pane on a server that also hosts loom sessions is not refused, so still use `loomdev` (or `LOOM_TMUX_SOCKET`) there.
+- The nesting guard only recognizes loom-managed enclosing sessions (`loom_*`/`claudesquad_*`); a dev loom started from a plain (non-loom) tmux pane on a server that also hosts loom sessions is not refused, so still use `loomdev` there. Setting `LOOM_TMUX_SOCKET` is no way around either guard: a daemon keeps the last daemon's tmux server while it runs, and the global dir stays the user's.

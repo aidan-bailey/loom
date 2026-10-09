@@ -842,10 +842,11 @@ func TestBoot_ReturnsTheAccountRegistrysNotices(t *testing.T) {
 
 // Whether loom runs as an account is the model's environment's to say: in
 // a daemon, the one it was spawned with (from an account's pane, say),
-// whose "default" then describes that account. Boot raises the warning
-// before any client can connect, so it is among the notices Boot hands
-// back, which the daemon keeps for its first client.
-func TestBoot_ReturnsTheRunningAsAnAccountNotice(t *testing.T) {
+// whose "default" then describes that account. It holds for the daemon's
+// whole life, so Boot publishes it in the accounts view, which every
+// client gets when it connects, rather than raise a notice, which only the
+// daemon's first client would see.
+func TestBoot_PublishesRunningAsAnAccount(t *testing.T) {
 	noCredentialOverride(t)
 	m := bootModel(t)
 	global, err := config.GetGlobalConfigDir()
@@ -857,13 +858,29 @@ func TestBoot_ReturnsTheRunningAsAnAccountNotice(t *testing.T) {
 
 	notices := m.Boot()
 
-	var said []string
 	for _, ev := range notices {
 		if n, ok := ev.(Notice); ok && n.Err != nil {
-			said = append(said, n.Err.Error())
+			assert.NotContains(t, n.Err.Error(), "CLAUDE_CONFIG_DIR", "not a notice")
 		}
 	}
-	require.Len(t, said, 1, "the one notice: %q", said)
-	assert.Contains(t, said[0], `loom is running as account "max-2"`)
-	assert.Contains(t, said[0], acct.Dir)
+	said := m.RunningAsAccount()
+	assert.Contains(t, said, `loom is running as account "max-2"`)
+	assert.Contains(t, said, acct.Dir)
+	var published []string
+	for _, ev := range m.Snapshot() {
+		if a, ok := ev.(AccountsChanged); ok {
+			published = append(published, a.View.RunningAsAccount)
+		}
+	}
+	assert.Equal(t, []string{said}, published, "in the snapshot every connecting client starts from")
+}
+
+func TestBoot_NotRunningAsAnAccountFromTheMainDir(t *testing.T) {
+	noCredentialOverride(t)
+	m := bootModel(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+
+	m.Boot()
+
+	assert.Empty(t, m.RunningAsAccount())
 }

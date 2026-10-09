@@ -43,33 +43,37 @@ global config dir.`,
 			fmt.Fprintf(os.Stderr, "loom: %v\n", logErr)
 		}
 		defer log.Close()
-		// The daemon sweeps tmux sessions, so the nesting guard is its. It
-		// logs the refusal too: a daemon a client started has no stderr,
-		// and the client quotes the log (daemon.Connect).
-		if err := nestingCheck(); err != nil {
-			log.For("serve").Error("serve.refused", "err", err)
-			return err
-		}
-		// Pinned before the boot touches tmux, and named in the hello, so
-		// the daemon and every client use one server whatever their
-		// environments say.
-		server, err := tmux.ResolveServer()
+		// Pinned before the boot touches tmux, and named in the hello and
+		// the lock record, so the daemon, every client and the next daemon
+		// use one server whatever their environments say.
+		server, err := daemon.TmuxServer(globalDir)
 		if err != nil {
 			log.For("serve").Error("serve.refused", "err", err)
 			return fmt.Errorf("find the tmux server: %w", err)
+		}
+		// The daemon sweeps tmux sessions, so the nesting guard is its,
+		// decided against the server it pins (the last daemon's, while it
+		// runs, whatever LOOM_TMUX_SOCKET says here). It logs the refusal
+		// too: a daemon a client started has no stderr, and the client
+		// quotes the log (daemon.Connect).
+		if err := nestingCheck(server); err != nil {
+			log.For("serve").Error("serve.refused", "err", err)
+			return err
 		}
 		tmux.UseServer(server)
 		// A runtime crash (a concurrent map write, a goroutine's unrecovered
 		// panic) goes to stderr, which a daemon started on demand has none
 		// of: keep it in a file beside serve.log.
-		if f, err := os.OpenFile(filepath.Join(logDir, "serve-crash.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+		if f, err := os.OpenFile(daemon.CrashLogPath(globalDir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 			_ = debug.SetCrashOutput(f, debug.CrashOptions{})
 			_ = f.Close()
 		}
 
 		// The first signal stops the daemon gracefully: it waits for
-		// in-flight lifecycle jobs (up to 30s) and saves. A second one, a
-		// user's Ctrl-C meanwhile, exits at once.
+		// in-flight lifecycle jobs (up to 30s) and saves. A user's Ctrl-C
+		// meanwhile exits at once (forcesExit); another SIGTERM, from a
+		// second `loom serve stop` or a newer loom replacing this daemon
+		// while it stops, is only logged.
 		stop := make(chan struct{})
 		sigs := make(chan os.Signal, 2)
 		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
@@ -77,14 +81,18 @@ global config dir.`,
 		go func() {
 			first := true
 			for s := range sigs {
-				if !first {
+				switch {
+				case first:
+					first = false
+					log.For("serve").Info("serve.signal", "signal", s.String())
+					close(stop)
+				case forcesExit(s):
 					log.For("serve").Warn("serve.forced_exit", "signal", s.String())
 					log.Close()
 					os.Exit(1)
+				default:
+					log.For("serve").Info("serve.signal_while_stopping", "signal", s.String())
 				}
-				first = false
-				log.For("serve").Info("serve.signal", "signal", s.String())
-				close(stop)
 			}
 		}()
 
@@ -142,3 +150,9 @@ func init() {
 	serveCmd.AddCommand(serveStopCmd)
 	rootCmd.AddCommand(serveCmd)
 }
+
+// forcesExit reports whether a signal that arrives while the daemon stops
+// ends it at once, without the save: only an interrupt does (a user's
+// Ctrl-C). A stop's SIGTERM can come twice, from two looms replacing the
+// daemon together, and must not cost it the save it is making.
+func forcesExit(s os.Signal) bool { return s == os.Interrupt }

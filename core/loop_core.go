@@ -89,6 +89,7 @@ func (l *Loop) GitHubErr(repo string) error {
 func (l *Loop) GitHubUnavailable() bool         { return get(l, (*Model).GitHubUnavailable) }
 func (l *Loop) GitHubUnavailableReason() string { return get(l, (*Model).GitHubUnavailableReason) }
 func (l *Loop) ExpediteGitHub()                 { l.do((*Model).ExpediteGitHub) }
+func (l *Loop) WatchGitHub(repo string)         { l.do(func(m *Model) { m.WatchGitHub(repo) }) }
 
 func (l *Loop) AccountNames() AccountNames { return get(l, (*Model).AccountNames) }
 func (l *Loop) AccountsLoaded() bool       { return get(l, (*Model).AccountsLoaded) }
@@ -113,6 +114,7 @@ func (l *Loop) AccountEnv(name string) ([]string, error) {
 }
 func (l *Loop) ClaudeProgram() string      { return get(l, (*Model).ClaudeProgram) }
 func (l *Loop) CredentialOverride() string { return get(l, (*Model).CredentialOverride) }
+func (l *Loop) RunningAsAccount() string   { return get(l, (*Model).RunningAsAccount) }
 func (l *Loop) ReloadAccounts()            { l.do((*Model).ReloadAccounts) }
 func (l *Loop) RequestAccountsRefresh(withDefault bool) {
 	l.do(func(m *Model) { m.RequestAccountsRefresh(withDefault) })

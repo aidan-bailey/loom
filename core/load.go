@@ -51,7 +51,7 @@ func (s RecoverySummary) String() string {
 		// These records are preserved on disk and retried next launch,
 		// but never appear in the list — without this line they would
 		// look like silently lost sessions.
-		parts = append(parts, fmt.Sprintf("%s failed to load (kept; see loom.log)", plural(s.Failed, "session", "sessions")))
+		parts = append(parts, fmt.Sprintf("%s failed to load (kept; see serve.log)", plural(s.Failed, "session", "sessions")))
 	}
 	if s.Undecodable > 0 {
 		// Typically left by a newer loom after a downgrade. Saves write

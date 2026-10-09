@@ -13,7 +13,7 @@ import (
 // fake daemon (startFakeDaemon), the test binary runs that instead.
 func TestMain(m *testing.M) {
 	if dir := os.Getenv(fakeDaemonEnv); dir != "" {
-		os.Exit(runFakeDaemon(dir))
+		os.Exit(runFakeDaemon(dir, os.Getenv(fakeDaemonModeEnv)))
 	}
 	cleanup := testenv.MustIsolateLoomDirs()
 	code := m.Run()

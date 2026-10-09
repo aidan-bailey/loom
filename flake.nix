@@ -68,10 +68,14 @@
 
             env.CGO_ENABLED = "0";
 
+            # A Nix build has no .git, so Go stamps no commit time, and every
+            # store file is dated 1970: stamp the source's commit time, which
+            # tells two builds of one version apart (rpc.CompareBuilds).
             ldflags = [
               "-s"
               "-w"
               "-X main.version=${version}"
+              "-X github.com/aidan-bailey/loom/core/rpc.commitUnix=${toString (self.lastModified or 0)}"
             ];
 
             nativeBuildInputs = [ pkgs.makeWrapper ];

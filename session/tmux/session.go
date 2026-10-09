@@ -124,12 +124,19 @@ func (s *Session) Program() string { return s.program }
 //
 // The program's environment is the tmux server's global environment, the
 // variables its update-environment option lists (SSH_AUTH_SOCK, DISPLAY,
-// SSH_CONNECTION, …) as the process calling Start has them, and s.env. So
-// the caller's environment decides those. Since daemon stage 3B an agent's
-// caller is the daemon (loom serve), whose environment is the one it was
-// spawned with, by whichever loom first needed it: a TUI attached later,
-// or from another terminal or SSH session, changes nothing an agent sees.
-// The terminal pane's shells are started by the TUI and see its own.
+// SSH_CONNECTION, …) as the process calling Start has them, and s.env.
+// The caller's environment decides only the update-environment variables;
+// everything else not in s.env (ANTHROPIC_API_KEY and the other credential
+// overrides, the default account's CLAUDE_CONFIG_DIR, PATH, …) comes from
+// the global environment, which is the environment of whatever started
+// the tmux server. Since daemon stage 3B an agent's caller is the daemon
+// (loom serve), spawned by whichever loom first needed it: a TUI attached
+// later, or from another terminal or SSH session, changes nothing an agent
+// sees. The global environment is the daemon's only when the daemon
+// started the server; on a server the user started, or an earlier daemon
+// did (the next keeps it), it is that starter's. The terminal pane's
+// shells are started by the TUI, and their update-environment variables
+// are its own.
 func (s *Session) Start(workDir string) (err error) {
 	t0 := time.Now()
 	log.For("tmux").Debug("start.begin", "session", s.sanitizedName, "program", s.program, "workdir", workDir)

@@ -2,14 +2,17 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/stretchr/testify/assert"
@@ -21,7 +24,7 @@ func stubSpawn(t *testing.T, f func() (<-chan error, error)) *atomic.Int32 {
 	t.Helper()
 	calls := &atomic.Int32{}
 	prev := spawn
-	spawn = func() (<-chan error, error) {
+	spawn = func(string) (<-chan error, error) {
 		calls.Add(1)
 		return f()
 	}
@@ -200,16 +203,63 @@ func TestConnect_RetriesARecordedSocketUntilItListens(t *testing.T) {
 // nothing.
 func TestConnect_RefusesALoomFromBeforeTheDaemon(t *testing.T) {
 	dir := globalDir(t)
-	l, _, err := TryAcquire(dir, Record{PID: 3713275, TTY: "/dev/pts/2", Started: time.Now()})
+	l, _, err := TryAcquire(dir, Record{PID: os.Getpid(), TTY: "/dev/pts/2", Started: time.Now()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = l.Close() })
 	calls := stubSpawn(t, func() (<-chan error, error) { return nil, errors.New("spawned") })
 
 	_, _, err = Connect(dir, 5*time.Second)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "a loom from before the daemon is running (pid 3713275 on /dev/pts/2")
+	assert.Contains(t, err.Error(), fmt.Sprintf("a loom from before the daemon is running (pid %d on /dev/pts/2", os.Getpid()))
 	assert.Contains(t, err.Error(), "quit it first")
 	assert.Zero(t, calls.Load())
+}
+
+// The global dir is made before a daemon is started in it, as its working
+// directory: a first launch with a LOOM_GLOBAL_DIR nobody has made yet (or
+// LOOM_HOME, with no ~/.loom) failed to start any ("no such file or
+// directory"). The spawn here fails as the real one's does without it.
+func TestConnect_MakesTheGlobalDirBeforeItSpawns(t *testing.T) {
+	dir := filepath.Join(globalDir(t), "fresh")
+	t.Setenv(config.EnvGlobalDir, dir)
+	spawnInProcess(t, dir, Options{})
+	inProcess := spawn
+	spawn = func(d string) (<-chan error, error) {
+		if info, err := os.Stat(d); err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("start the loom daemon: chdir %s: no such file or directory", d)
+		}
+		return inProcess(d)
+	}
+	t.Cleanup(func() { spawn = inProcess })
+
+	nc, _, err := Connect(dir, 30*time.Second)
+	require.NoError(t, err, "the daemon starts in a global dir nobody had made")
+	handshake(t, nc).Workspaces()
+}
+
+// deadPID is the pid of a process that has exited.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("true")
+	require.NoError(t, cmd.Run())
+	return cmd.Process.Pid
+}
+
+// The lock file keeps the last holder's record, and a loom from before the
+// daemon wrote one too. A lock held while it still says so (a daemon that
+// has taken it and not yet written its own, a client probing it) is a
+// daemon starting, not that loom: Connect waits rather than refuse.
+func TestConnect_AStalePreDaemonRecordIsNotRefused(t *testing.T) {
+	dir := globalDir(t)
+	l, _, err := TryAcquire(dir, Record{PID: deadPID(t), TTY: "/dev/pts/2", Started: time.Now()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+	stubSpawn(t, func() (<-chan error, error) { return nil, errors.New("spawned") })
+
+	_, _, err = Connect(dir, 300*time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "still starting")
+	assert.NotContains(t, err.Error(), "from before the daemon")
 }
 
 // A daemon that never comes up fails Connect once the timeout passes, with

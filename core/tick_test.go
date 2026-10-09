@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -150,6 +151,31 @@ func TestApplyLiveness_DeadStillPauses(t *testing.T) {
 	assert.False(t, alive)
 	assert.Equal(t, session.Paused, inst.GetStatus(),
 		"an answered has-session failure must still pause the instance")
+}
+
+// TestApplyLiveness_AGoneSessionsPauseIsSaved: no request saves the pause
+// a probe makes of an agent whose session is gone (the user exited it),
+// and the daemon saves otherwise only when it stops: one killed first
+// would crash-restart the agent at its next boot. A probe that changes
+// nothing saves nothing.
+func TestApplyLiveness_AGoneSessionsPauseIsSaved(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "w")
+	m.SetWorkspacesForTest(ws)
+	inst := probedRunning(t, m)
+	stateFile := filepath.Join(ws.configDir(), config.StateFileName)
+
+	for _, live := range []tmux.Liveness{tmux.LivenessAlive, tmux.LivenessUnknown} {
+		require.True(t, m.applyLiveness(inst, live, fromTick))
+		_, err := os.Stat(stateFile)
+		require.True(t, errors.Is(err, os.ErrNotExist), "nothing changed, nothing saved (%v)", live)
+	}
+
+	require.False(t, m.applyLiveness(inst, tmux.LivenessDead, fromTick))
+	records := savedRecords(t, ws.configDir())
+	require.Len(t, records, 1)
+	assert.Equal(t, "a", records[0].Title)
+	assert.Equal(t, session.Paused, records[0].Status, "the pause is on disk at once")
 }
 
 // TestApplyLiveness_AProbeOfAnInstanceNoWorkspaceHoldsIsIgnored: a probe

@@ -20,20 +20,38 @@ import (
 )
 
 // fakeDaemonEnv, set to a global dir, makes the test binary a fake daemon
-// of that dir (runFakeDaemon) instead of running the tests.
-const fakeDaemonEnv = "DEVSANDBOX_FAKE_DAEMON"
+// of that dir (runFakeDaemon) instead of running the tests, and
+// fakeDaemonModeEnv picks how it behaves (the fake… modes).
+const (
+	fakeDaemonEnv     = "DEVSANDBOX_FAKE_DAEMON"
+	fakeDaemonModeEnv = "DEVSANDBOX_FAKE_DAEMON_MODE"
+)
+
+const (
+	// fakeStubborn ignores SIGTERM: a daemon that won't stop.
+	fakeStubborn = "stubborn"
+	// fakePreDaemon holds the lock with the record of a loom from before
+	// the daemon (a pid, no socket, no build), which daemon.Stop refuses.
+	fakePreDaemon = "predaemon"
+)
 
 // runFakeDaemon stands in for `loom serve`, as far as the sandbox sees
 // one: it holds dir's lock with a daemon's record until SIGTERM, which is
-// how daemon.Stop asks a daemon to go.
-func runFakeDaemon(dir string) int {
+// how daemon.Stop asks a daemon to go. mode varies that (the fake… modes).
+func runFakeDaemon(dir, mode string) int {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM)
 	rec := daemon.Record{PID: os.Getpid(), Started: time.Now(), Build: "fake", Socket: filepath.Join(dir, "fake.sock")}
+	if mode == fakePreDaemon {
+		rec = daemon.Record{PID: os.Getpid(), Started: time.Now()}
+	}
 	lock, _, err := daemon.TryAcquire(dir, rec)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
+	}
+	for mode != "" { // until killed
+		time.Sleep(time.Hour)
 	}
 	<-sigs
 	_ = lock.Close()
@@ -46,9 +64,30 @@ func startFakeDaemon(t *testing.T, sb *Sandbox) *exec.Cmd {
 	t.Helper()
 	exe, err := os.Executable()
 	require.NoError(t, err)
+	return startFakeDaemonAs(t, sb, exe, "")
+}
+
+// sandboxBuild copies the test binary into sb's bin dir as its loom, so a
+// fake daemon run from there is a build of the sandbox's own.
+func sandboxBuild(t *testing.T, sb *Sandbox) string {
+	t.Helper()
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	data, err := os.ReadFile(exe)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(sb.BinDir(), 0o755))
+	require.NoError(t, os.WriteFile(sb.LoomBin(), data, 0o755))
+	return sb.LoomBin()
+}
+
+// startFakeDaemonAs runs exe, the test binary or a copy of it, as a fake
+// daemon of sb's global dir in mode, and waits until it holds the lock. It
+// is killed at cleanup if still running.
+func startFakeDaemonAs(t *testing.T, sb *Sandbox, exe, mode string) *exec.Cmd {
+	t.Helper()
 	// "serve": daemon.Stop signals only a process whose command line has it.
 	cmd := exec.Command(exe, "serve")
-	cmd.Env = append(os.Environ(), fakeDaemonEnv+"="+sb.GlobalDir())
+	cmd.Env = append(os.Environ(), fakeDaemonEnv+"="+sb.GlobalDir(), fakeDaemonModeEnv+"="+mode)
 	require.NoError(t, cmd.Start())
 	exited := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(exited) }()
@@ -120,6 +159,63 @@ func TestDown_StopsTheDaemonFirst(t *testing.T) {
 	assert.NoDirExists(t, sb.Dir)
 	assert.Eventually(t, func() bool { return exited(cmd) }, 5*time.Second, 20*time.Millisecond,
 		"a daemon must never outlive its sandbox")
+}
+
+// stopTimeout shortens the wait for a daemon to stop for one test.
+func stopTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := daemonStopTimeout
+	daemonStopTimeout = d
+	t.Cleanup(func() { daemonStopTimeout = prev })
+}
+
+// A daemon that won't stop, or a loom from before the daemon holding the
+// lock, stops Down with nothing removed, and its error names the way past
+// it; ForceDown kills that process, a build of the sandbox's own, and
+// removes the sandbox.
+func TestDown_AProcessThatWontStopNeedsForce(t *testing.T) {
+	stopTimeout(t, 300*time.Millisecond)
+	for _, mode := range []string{fakeStubborn, fakePreDaemon} {
+		t.Run(mode, func(t *testing.T) {
+			useTempBase(t)
+			sb, err := Open(fmt.Sprintf("t%d", time.Now().UnixNano()))
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(sb.RepoDir(), 0o755))
+			cmd := startFakeDaemonAs(t, sb, sandboxBuild(t, sb), mode)
+
+			err = sb.Down()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "loomdev down --force")
+			assert.DirExists(t, sb.Dir, "nothing removed")
+			assert.False(t, exited(cmd))
+
+			require.NoError(t, sb.ForceDown())
+			assert.NoDirExists(t, sb.Dir)
+			assert.Eventually(t, func() bool { return exited(cmd) }, 5*time.Second, 20*time.Millisecond)
+		})
+	}
+}
+
+// ForceDown kills only a build of the sandbox's own: a process holding its
+// lock from elsewhere (a stale record's reused pid, say) is left running,
+// and the sandbox with it.
+func TestForceDown_KillsNoProcessButTheSandboxsLoom(t *testing.T) {
+	stopTimeout(t, 300*time.Millisecond)
+	useTempBase(t)
+	sb, err := Open(fmt.Sprintf("t%d", time.Now().UnixNano()))
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(sb.RepoDir(), 0o755))
+	sandboxBuild(t, sb) // a build is there, but the holder isn't it
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	cmd := startFakeDaemonAs(t, sb, exe, fakeStubborn)
+
+	err = sb.ForceDown()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), fmt.Sprintf("pid %d holds the sandbox's lock but runs no build in", cmd.Process.Pid))
+	assert.DirExists(t, sb.Dir)
+	assert.Never(t, func() bool { return exited(cmd) }, 300*time.Millisecond, 20*time.Millisecond,
+		"a process not the sandbox's own is never killed")
 }
 
 func TestList_ReportsTheDaemon(t *testing.T) {

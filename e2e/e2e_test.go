@@ -41,7 +41,14 @@ func newSandbox(t *testing.T, profile string) *devsandbox.Sandbox {
 		}
 		// Down stops the sandbox's daemon first: a daemon must never
 		// outlive its sandbox, so one still running after it is an error,
-		// and killed rather than leaked.
+		// and killed rather than leaked. That is any daemon of the
+		// sandbox's builds, not only the lock holder: one that never took
+		// the lock (a start race's loser that failed to stand down) is a
+		// leak too. Read before Down deletes the bin dir.
+		binDirs := []string{sb.BinDir()}
+		if r, err := filepath.EvalSymlinks(sb.BinDir()); err == nil {
+			binDirs = append(binDirs, r)
+		}
 		rec, held := sb.Daemon()
 		if err := sb.Down(); err != nil {
 			t.Errorf("down: %v", err)
@@ -54,6 +61,14 @@ func newSandbox(t *testing.T, profile string) *devsandbox.Sandbox {
 		if held && rec.PID > 0 && !waitExit(rec.PID, 5*time.Second) {
 			t.Errorf("the sandbox's daemon (pid %d) outlived it", rec.PID)
 			_ = syscall.Kill(rec.PID, syscall.SIGKILL)
+		}
+		for _, pid := range daemonsOf(binDirs...) {
+			if waitExit(pid, 5*time.Second) {
+				continue
+			}
+			t.Errorf("a daemon of the sandbox's builds (pid %d) outlived it", pid)
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+			waitExit(pid, 5*time.Second)
 		}
 	})
 	require.NoError(t, sb.Up(devsandbox.UpOptions{SourceWorktree: root, DefaultProfile: profile}))
@@ -124,9 +139,9 @@ func TestE2E_SandboxLeavesOtherServersAlone(t *testing.T) {
 	// the dev loom process — it only ever sees the sandbox's own server.
 	// Instead, run the loom binary itself under `env TMUX=<decoy>,1,0`, so
 	// the process the test cares about actually sees the decoy as its
-	// $TMUX. (With the nesting-guard fix, this is still allowed to start:
-	// LOOM_TMUX_SOCKET names the sandbox's own server, which differs from
-	// the decoy's socket basename.)
+	// $TMUX. (The nesting guard still lets its daemon start: the server it
+	// pins is the sandbox's own, the last sandbox daemon's or the one
+	// LOOM_TMUX_SOCKET names, not the decoy's.)
 	require.NoError(t, sb.Start(devsandbox.StartOptions{
 		Command: []string{"env", "TMUX=" + decoySocketPath + ",1,0", sb.LoomBin(), "--workspace", devsandbox.WorkspaceName},
 	}))

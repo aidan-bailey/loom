@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -129,10 +131,17 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	t.Cleanup(func() { session.SetAccountDirs(nil, nil) })
 	model.SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "r"}})
 	model.SetAccountUsageForTest("max-2", account.Usage{Available: true, Plan: "max", At: time.Unix(10, 0)}, errors.New("probe failed"))
+	model.SetRunningAsAccountForTest(`loom is running as account "max-2"`)
 	loop := core.StartForTest(model)
-	loop.DeliverForTest(core.GitHubResultForTest(true, "", map[string]github.Snapshot{
-		"/r": {Issues: map[int]github.Issue{7: {Number: 7, Title: "t"}}},
-	}, map[string]error{"/s": errors.New("no remote")}))
+	// A repository reached through a symlink and from a subdirectory: the
+	// replica finds its snapshot by any spelling, as the model does.
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(real, link))
+	loop.DeliverForTest(core.GitHubAliasesForTest(core.GitHubResultForTest(true, "", map[string]github.Snapshot{
+		"/r":                        {Issues: map[int]github.Issue{7: {Number: 7, Title: "t"}}},
+		session.CanonicalPath(real): {Issues: map[int]github.Issue{8: {Number: 8, Title: "u"}}},
+	}, map[string]error{"/s": errors.New("no remote")}), map[string]string{"/r/sub": "/r"}))
 	c := pair(t, loop)
 
 	wsIDs := []core.WorkspaceID{0, 99}
@@ -169,6 +178,7 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	same("HasExtraAccounts", func(k core.Core) []any { return []any{k.HasExtraAccounts()} })
 	same("ClaudeProgram", func(k core.Core) []any { return []any{k.ClaudeProgram()} })
 	same("CredentialOverride", func(k core.Core) []any { return []any{k.CredentialOverride()} })
+	same("RunningAsAccount", func(k core.Core) []any { return []any{k.RunningAsAccount()} })
 	for _, name := range []string{"", account.DefaultName, "max-2", "nobody"} {
 		same("Account "+name, func(k core.Core) []any { v, ok := k.Account(name); return []any{v, ok} })
 		same("RCAuthFor "+name, func(k core.Core) []any { return []any{k.RCAuthFor(name)} })
@@ -177,7 +187,7 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 		same("AccountUsage "+name, func(k core.Core) []any { v, err := k.AccountUsage(name); return []any{v, errText(err)} })
 		same("AccountEnv "+name, func(k core.Core) []any { v, err := k.AccountEnv(name); return []any{v, errText(err)} })
 	}
-	for _, repo := range []string{"/r", "/s", "/nowhere"} {
+	for _, repo := range []string{"/r", "/r/sub", "/s", "/nowhere", real, link} {
 		same("GitHubSnapshot "+repo, func(k core.Core) []any { v, ok := k.GitHubSnapshot(repo); return []any{v, ok} })
 		same("GitHubErr "+repo, func(k core.Core) []any { return []any{errText(k.GitHubErr(repo))} })
 	}

@@ -144,12 +144,11 @@ func (s *Sandbox) WorkspaceConfigDir() string { return filepath.Join(s.RepoDir()
 // loom.log files, and its daemon's serve.log and the crash file beside it
 // (the runtime's own report of a fatal error, which serve.log can't hold).
 func (s *Sandbox) LogFiles() []string {
-	serveLog := daemon.LogPath(s.GlobalDir())
 	return []string{
 		filepath.Join(s.HomeDir(), "logs", "loom.log"),
 		filepath.Join(s.WorkspaceConfigDir(), "logs", "loom.log"),
-		serveLog,
-		filepath.Join(filepath.Dir(serveLog), "serve-crash.log"),
+		daemon.LogPath(s.GlobalDir()),
+		daemon.CrashLogPath(s.GlobalDir()),
 	}
 }
 
@@ -209,8 +208,9 @@ func (s *Sandbox) serverAlive() bool {
 }
 
 // daemonStopTimeout bounds the wait for the sandbox's daemon to stop: it
-// waits for in-flight lifecycle jobs (up to 30s), then saves.
-const daemonStopTimeout = 60 * time.Second
+// waits for in-flight lifecycle jobs (up to 30s), then saves. A variable
+// so tests can shorten it.
+var daemonStopTimeout = 60 * time.Second
 
 // Daemon reads the lock record of the sandbox's daemon, the `loom serve` a
 // sandboxed loom started (with the sandbox's global dir). held reports
@@ -234,8 +234,18 @@ func (s *Sandbox) StopDaemon() error {
 // Down stops the sandbox's loom daemon (a sandboxed loom started it, with
 // the sandbox's global dir), kills its private tmux server and deletes its
 // directory, and the socket files both leave outside it. It refuses any Dir
-// that is not <BaseDir>/<Name>.
-func (s *Sandbox) Down() error {
+// that is not <BaseDir>/<Name>. A daemon that won't stop, or a loom from
+// before the daemon holding the sandbox's lock, stops it with nothing
+// removed; ForceDown kills that process instead.
+func (s *Sandbox) Down() error { return s.down(false) }
+
+// ForceDown is Down, except that a process holding the sandbox's lock that
+// won't stop (a daemon past its stop timeout, a loom from before the
+// daemon) is killed with SIGKILL, once it is proved the sandbox's own loom
+// (killSandboxLoom).
+func (s *Sandbox) ForceDown() error { return s.down(true) }
+
+func (s *Sandbox) down(force bool) error {
 	base, err := BaseDir()
 	if err != nil {
 		return err
@@ -244,7 +254,12 @@ func (s *Sandbox) Down() error {
 		return fmt.Errorf("refusing to remove %s: not the sandbox directory %s", s.Dir, filepath.Join(base, s.Name))
 	}
 	if err := s.StopDaemon(); err != nil {
-		return err
+		if !force {
+			return fmt.Errorf("%w (`loomdev down --force` kills it)", err)
+		}
+		if kerr := s.killSandboxLoom(); kerr != nil {
+			return fmt.Errorf("%w; --force: %w", err, kerr)
+		}
 	}
 	// A daemon that stops removes its socket, but one killed outright
 	// leaves it, in the runtime dir; the free lock proves no daemon uses it.
@@ -258,6 +273,56 @@ func (s *Sandbox) Down() error {
 	_ = tmux.CommandOnSocket(ctx, s.Socket(), "kill-server").Run() // no server is fine
 	removeSocket(strings.TrimSpace(string(path)))
 	return os.RemoveAll(s.Dir)
+}
+
+// killSandboxLoom kills (SIGKILL) the process holding the sandbox's lock
+// and waits for the lock to come free. It kills only a process proved the
+// sandbox's own loom (runsSandboxLoom): the record's pid alone proves
+// nothing, since a stale record can name a pid reused since.
+func (s *Sandbox) killSandboxLoom() error {
+	rec, held := s.Daemon()
+	if !held {
+		return nil
+	}
+	if rec.PID <= 0 {
+		return errors.New("the sandbox's lock record names no process: not killed")
+	}
+	if !s.runsSandboxLoom(rec.PID) {
+		return fmt.Errorf("pid %d holds the sandbox's lock but runs no build in %s: not killed", rec.PID, s.BinDir())
+	}
+	p, err := os.FindProcess(rec.PID)
+	if err != nil {
+		return err
+	}
+	if err := p.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("kill pid %d: %w", rec.PID, err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if cur, held := s.Daemon(); !held || cur.PID != rec.PID {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("pid %d still holds the sandbox's lock after SIGKILL", rec.PID)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// runsSandboxLoom reports whether process pid runs an executable in the
+// sandbox's bin dir (/proc/<pid>/exe, compared through symlinks), as the
+// sandbox's builds of loom do; a build replaced since the process started
+// reads "<path> (deleted)", still there. False where /proc can't say.
+func (s *Sandbox) runsSandboxLoom(pid int) bool {
+	exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		return false
+	}
+	bin, err := filepath.EvalSymlinks(s.BinDir())
+	if err != nil {
+		return false
+	}
+	return filepath.Dir(strings.TrimSuffix(exe, " (deleted)")) == bin
 }
 
 // removeSocket deletes path when it is a socket.

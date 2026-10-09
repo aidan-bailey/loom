@@ -265,6 +265,9 @@ type home struct {
 	// accountStrip is the usage strip above the tab bar; empty (height 0)
 	// until an extra account exists.
 	accountStrip *ui.AccountStrip
+	// runningAsShown: this client has shown the model's warning that loom
+	// runs as an extra account (showRunningAsAccount).
+	runningAsShown bool
 	// global spinner instance. we plumb this down to where it's needed
 	spinner spinner.Model
 	// activeOverlay is the currently displayed modal (nil when no overlay
@@ -1466,9 +1469,11 @@ func (m *home) showRecoverySummary(s core.RecoverySummary) {
 }
 
 // handleQuit ends the TUI. It saves no session: the daemon serves them
-// on, and saves them as they change and when it stops. It writes only the
-// TUI's own state (the split ratios, the workbench's, the open list); Run
-// closes the client once the program has stopped.
+// on and saves them itself, after each request that changes them and each
+// change it makes on its own (an agent found exited, a conversation
+// named: core's saveUnprompted), and all of them when it stops. It writes
+// only the TUI's own state (the split ratios, the workbench's, the open
+// list); Run closes the client once the program has stopped.
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	// Persist any not-yet-flushed split resize before exit (the throttle
 	// tick may still be in flight; covers the classic path too, which

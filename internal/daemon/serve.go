@@ -14,6 +14,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/tmux"
 )
 
 // ErrRunning is Serve's answer when a daemon already serves the global dir.
@@ -34,14 +35,16 @@ type Options struct {
 	// Build names this binary in the lock record (rpc.Build).
 	Build string
 	// Tmux is the tmux server the model's sessions run on (its socket's
-	// path), which the daemon's hello names so its clients use it too. The
+	// path; TmuxServer chooses it), which the daemon's hello names so its
+	// clients use it too, and its record so the next daemon keeps it. The
 	// caller pins it for this process first (tmux.UseServer).
 	Tmux string
 	// Stop is closed to stop the daemon gracefully (on SIGTERM, from
 	// `loom serve stop` or a newer loom replacing it).
 	Stop <-chan struct{}
-	// LockWait is how long to wait for the lock: a client that spawned this
-	// daemon may hold it a moment longer. 0 means 5s.
+	// LockWait is how long to wait for a lock held by no live loom process
+	// (a client's ReadRecord probing it, say); one a live daemon holds is
+	// ErrRunning at once (acquire). 0 means 5s.
 	LockWait time.Duration
 	// QuiesceTimeout bounds the wait for in-flight lifecycle jobs when
 	// stopping (core.Loop.Quiesce). 0 means 30s.
@@ -75,7 +78,8 @@ func Serve(o Options) error {
 		o.WatchInterval = 2 * time.Second
 	}
 	rec := self(o.Build)
-	lock, holder, err := Wait(o.GlobalDir, rec, o.LockWait)
+	rec.Tmux = o.Tmux
+	lock, holder, err := acquire(o.GlobalDir, rec, o.LockWait)
 	if errors.Is(err, ErrHeld) {
 		if holder.IsPreDaemon() {
 			return fmt.Errorf("a loom from before the daemon is running (%s): quit it first", holder)
@@ -367,14 +371,35 @@ func procMounted() bool {
 }
 
 // Stop stops globalDir's daemon gracefully and waits, up to timeout, until
-// it has released its lock. It signals the pid its lock record names rather
+// its process has exited. It signals the pid its lock record names rather
 // than asking over the socket, so it works whatever protocol the daemon
 // speaks (a newer loom replacing an older daemon). ErrNotRunning when no
 // daemon holds the lock; a loom from before the daemon holding it is left
 // alone.
 func Stop(globalDir string, timeout time.Duration) error {
+	return stop(globalDir, 0, timeout)
+}
+
+// StopPID is Stop for the daemon that is process pid: the one a client
+// dialed and found older than itself. When the lock is free by now, or
+// another process holds it, it signals nothing and returns ErrNotRunning:
+// that daemon has gone, and the one holding the lock now (another client
+// may have just started it, replacing the same old daemon) is not the one
+// compared.
+func StopPID(globalDir string, pid int, timeout time.Duration) error {
+	if pid <= 0 {
+		return fmt.Errorf("the daemon's lock record names no process")
+	}
+	return stop(globalDir, pid, timeout)
+}
+
+// stop is Stop, for the daemon that is process only when only is not 0.
+func stop(globalDir string, only int, timeout time.Duration) error {
 	rec, held := ReadRecord(globalDir)
-	if !held {
+	// For StopPID, the daemon it names has gone too when its process has,
+	// though its record stays while another process holds the lock a
+	// moment (a client's probe, the next daemon before it writes its own).
+	if !held || only != 0 && (rec.PID != only || !alive(only)) {
 		return ErrNotRunning
 	}
 	if rec.IsPreDaemon() {
@@ -391,7 +416,9 @@ func Stop(globalDir string, timeout time.Duration) error {
 	}
 	deadline := time.Now().Add(timeout)
 	for {
-		if _, held := ReadRecord(globalDir); !held {
+		// Stopped once its process is gone. The lock may be held again by
+		// then: a client may have started a daemon of its own.
+		if cur, held := ReadRecord(globalDir); !held || cur.PID > 0 && cur.PID != rec.PID || !alive(rec.PID) {
 			return nil
 		}
 		if !time.Now().Before(deadline) {
@@ -399,4 +426,19 @@ func Stop(globalDir string, timeout time.Duration) error {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// TmuxServer is the tmux server a daemon for globalDir is to use (its
+// socket's path): the last daemon's (its record's Tmux) while that server
+// still runs, else the one this process's environment selects
+// (tmux.ResolveServer). A daemon started from another environment (an ssh
+// login without TMUX_TMPDIR, a client inside another tmux server, a newer
+// loom replacing an older daemon) must find the agents where they run: on
+// another server it would find every session dead and relaunch each agent
+// there, two to a worktree.
+func TmuxServer(globalDir string) (string, error) {
+	if prev, _ := ReadRecord(globalDir); prev.Tmux != "" && tmux.ServerRunning(prev.Tmux) {
+		return prev.Tmux, nil
+	}
+	return tmux.ResolveServer()
 }

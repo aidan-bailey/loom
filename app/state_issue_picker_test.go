@@ -57,6 +57,58 @@ func TestRunNewFromIssue_NoSnapshotShowsLoadingAndForcesPoll(t *testing.T) {
 	assert.Contains(t, m.issuePicker().Render(), "loading")
 }
 
+// TestRunNewFromIssue_AsksForItsRepositorysPoll: with no snapshot, the
+// picker asks the model to poll its repository. In global mode that is
+// the directory loom started in, which no poll covers unless a global
+// session runs there: the model runs in the daemon, whose working
+// directory names nothing a client shows, so the picker would wait on
+// "loading…" for good.
+func TestRunNewFromIssue_AsksForItsRepositorysPoll(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	deliver(t, m, core.GitHubResultForTest(true, "", nil, nil))
+	repo := m.repoPath()
+	require.NotContains(t, testModel(m).GitHubReposForTest(), repo, "fixture: no poll covers it")
+
+	_, _ = runNewFromIssue(m)
+	assert.Contains(t, testModel(m).GitHubReposForTest(), repo)
+}
+
+// TestRunNewFromIssue_RenewsItsRepositorysWatch: the picker asks for its
+// repository on every open, a snapshot or not, so the model keeps polling
+// it while the picker is used (a watch expires otherwise); with a snapshot
+// in hand, that costs no poll at once.
+func TestRunNewFromIssue_RenewsItsRepositorysWatch(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	repo := m.repoPath()
+	deliver(t, m, core.GitHubResultForTest(true, "", map[string]github.Snapshot{repo: {Issues: map[int]github.Issue{
+		12: {Number: 12, Title: "Fix"},
+	}}}, nil))
+	require.NotContains(t, testModel(m).GitHubReposForTest(), repo, "fixture: no poll covers it")
+	testModel(m).SetGateForTest("github", false, time.Now())
+
+	_, _ = runNewFromIssue(m)
+	assert.Contains(t, testModel(m).GitHubReposForTest(), repo, "watched again")
+	_, _, due := testModel(m).GateForTest("github", time.Now())
+	assert.False(t, due, "with a snapshot in hand, no poll at once")
+}
+
+// A picker left open past the watch's lifetime keeps its repository
+// polled: every poll that lands while it is open renews the watch.
+func TestOpenPicker_RenewsItsRepositorysWatchAsPollsLand(t *testing.T) {
+	m := newTestHomeWithWsCtx(t)
+	repo := m.repoPath()
+	snap := map[string]github.Snapshot{repo: {Issues: map[int]github.Issue{12: {Number: 12, Title: "Fix"}}}}
+	deliver(t, m, core.GitHubResultForTest(true, "", snap, nil))
+	require.NotContains(t, testModel(m).GitHubReposForTest(), repo, "fixture: no poll covers it")
+	_, _ = runNewFromIssue(m)
+	require.Contains(t, testModel(m).GitHubReposForTest(), repo)
+
+	testModel(m).AgeGitHubWatchesForTest(time.Hour)
+	deliver(t, m, core.GitHubResultForTest(true, "", snap, nil))
+	assert.Contains(t, testModel(m).GitHubReposForTest(), repo, "renewed by the open picker")
+	assert.Equal(t, []int{12}, m.issuePicker().VisibleNumbers())
+}
+
 func TestRunNewFromIssue_ShowsPollErrorInsteadOfLoading(t *testing.T) {
 	m := newTestHomeWithWsCtx(t)
 	deliver(t, m, core.GitHubResultForTest(true, "", nil, map[string]error{m.repoPath(): errors.New("no GitHub remote")}))

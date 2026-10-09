@@ -57,8 +57,13 @@ func (m *home) issuePickerStatus() string {
 	return "loading…"
 }
 
-// runNewFromIssue opens the issue picker. When no snapshot exists yet
-// it opens in the loading state and forces the next tick to poll.
+// runNewFromIssue opens the issue picker. It asks the model to cover its
+// repository on every open (WatchGitHub): in global mode that is the
+// directory loom started in, which no poll covers unless a global session
+// runs there, so the picker would otherwise wait on "loading…" for good,
+// and the model stops polling a repository nobody has asked about for a
+// while. When no snapshot exists yet the picker opens in the loading
+// state, and the model polls at the next tick.
 func runNewFromIssue(m *home) (tea.Model, tea.Cmd) {
 	if m.list.NumInstances() >= GlobalInstanceLimit {
 		return m, m.handleError(fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
@@ -68,9 +73,7 @@ func runNewFromIssue(m *home) (tea.Model, tea.Cmd) {
 	}
 	p := overlay.NewIssuePicker(m.issueRows())
 	p.SetStatus(m.issuePickerStatus())
-	if _, ok := m.core.GitHubSnapshot(m.repoPath()); !ok {
-		m.core.ExpediteGitHub()
-	}
+	m.core.WatchGitHub(m.repoPath())
 	m.setOverlay(p, overlayIssuePicker)
 	m.state = stateIssuePicker
 	return m, nil
@@ -228,7 +231,10 @@ func (m *home) handleIssueExpanded(msg issueExpandedMsg) (tea.Model, tea.Cmd) {
 		}
 		d.prompt = prompt
 		d.issue = msg.issue.Number
-		m.core.ExpediteGitHub()
+		// The draft's row shows its issue from its repository's poll, which
+		// in global mode covers the directory only once a session runs
+		// there: ask for it, as the picker does (WatchGitHub expedites).
+		m.core.WatchGitHub(d.path)
 	}
 	_, cmd := m.openLaunchOptionsForNew(d, msg.selectedBranch)
 	return m, tea.Batch(cmd, errCmd)

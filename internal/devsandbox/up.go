@@ -198,7 +198,11 @@ func (s *Sandbox) registerWorkspace() error {
 // Build compiles loom and fakeagent from the module rooted at srcDir into
 // the sandbox and records the source revision. The sandbox must be Up. A
 // sandbox daemon still running the previous build is replaced by the next
-// sandboxed loom to start: its executable differs, so it is the newer build.
+// sandboxed loom to start when this build is newer (rpc.CompareBuilds: a
+// later commit, or an edited tree rebuilt at the same one, which takes a
+// srcDir that is a git checkout, so the build names its commit); an older
+// one is refused, and one naming no commit joins the running daemon, so
+// the daemon must be stopped first.
 func (s *Sandbox) Build(srcDir string) error {
 	meta, err := s.LoadMeta()
 	if err != nil {

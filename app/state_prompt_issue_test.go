@@ -43,9 +43,11 @@ func TestIssueExpandedMsg_SeedsPromptAndLinks(t *testing.T) {
 	d := m.draft
 	m.dismissOverlay()
 	m.state = stateDefault
+	require.NotContains(t, testModel(m).GitHubReposForTest(), d.path, "fixture: no poll covers the draft's repository")
 	m.Update(issueExpandedMsg{draft: d, repo: m.repoPath(), rest: "and tidy tests",
 		issue: github.Issue{Number: 12, Title: "Fix", URL: "https://x/12", Body: "b"}})
 	assert.Equal(t, 12, d.issue)
+	assert.Contains(t, testModel(m).GitHubReposForTest(), d.path, "the draft's row shows its issue once its repository is polled")
 	assert.Contains(t, d.prompt, "# Fix")
 	assert.Contains(t, d.prompt, "\n\nand tidy tests")
 	assert.Equal(t, stateLaunchOptions, m.state)

@@ -44,6 +44,9 @@ type Record struct {
 	// Host is the machine the daemon runs on: a global dir shared over a
 	// network filesystem must not have a pid signalled on the wrong host.
 	Host string `json:"host,omitempty"`
+	// Tmux is the tmux server the daemon's sessions run on (its socket's
+	// path), which the next daemon keeps while it runs (TmuxServer).
+	Tmux string `json:"tmux,omitempty"`
 }
 
 // IsDaemon reports whether r is the record of a daemon that listens. One
@@ -98,8 +101,8 @@ func LockPath(globalDir string) string { return filepath.Join(globalDir, lockFil
 
 // Lock is a held lock.
 type Lock struct {
-	path string
-	fl   *flock.Flock
+	record string // where Write puts the record (recordPath)
+	fl     *flock.Flock
 }
 
 // TryAcquire takes globalDir's lock and records rec in it. While another
@@ -118,9 +121,10 @@ func TryAcquire(globalDir string, rec Record) (*Lock, Record, error) {
 	}
 	if !ok {
 		_ = fl.Close()
-		return nil, readRecord(path), ErrHeld
+		holder, _ := readRecordOK(recordPath(globalDir))
+		return nil, holder, ErrHeld
 	}
-	l := &Lock{path: path, fl: fl}
+	l := &Lock{record: recordPath(globalDir), fl: fl}
 	if err := l.Write(rec); err != nil {
 		_ = fl.Close()
 		return nil, Record{}, err
@@ -128,24 +132,37 @@ func TryAcquire(globalDir string, rec Record) (*Lock, Record, error) {
 	return l, Record{}, nil
 }
 
-// Wait polls for globalDir's lock until it is free or timeout passes
-// (ErrHeld, with the holder's record).
-func Wait(globalDir string, rec Record, timeout time.Duration) (*Lock, Record, error) {
-	deadline := time.Now().Add(timeout)
+// acquire takes globalDir's lock for a daemon, waiting up to wait while it
+// is held by no live loom process: a client's ReadRecord probing it, or a
+// daemon that has taken it and not yet written its record. A live holder
+// ends the wait at once (ErrHeld, with its record): a daemon started while
+// another runs, or while another stops, must not take over once that one
+// has gone, when nobody is waiting for it.
+func acquire(globalDir string, rec Record, wait time.Duration) (*Lock, Record, error) {
+	deadline := time.Now().Add(wait)
 	for {
 		l, holder, err := TryAcquire(globalDir, rec)
-		if !errors.Is(err, ErrHeld) || !time.Now().Before(deadline) {
+		if !errors.Is(err, ErrHeld) || liveHolder(holder) || !time.Now().Before(deadline) {
 			return l, holder, err
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 }
 
+// liveHolder reports whether rec names a live holder of the lock: a loom
+// TUI from before the daemon, or a `loom serve`.
+func liveHolder(rec Record) bool {
+	if rec.PID <= 0 || !alive(rec.PID) {
+		return false
+	}
+	return rec.IsPreDaemon() || servesLoom(rec.PID)
+}
+
 // Write replaces the record the held lock carries.
 func (l *Lock) Write(rec Record) error {
 	data, err := json.Marshal(rec)
 	if err == nil {
-		err = os.WriteFile(l.path, data, 0o644)
+		err = os.WriteFile(l.record, data, 0o644)
 	}
 	if err != nil {
 		return fmt.Errorf("record lock holder: %w", err)
@@ -164,8 +181,8 @@ func (l *Lock) Close() error { return l.fl.Close() }
 // inode, which the lock is on), so a reader can meet it half-written: a held
 // lock whose record won't parse is read again for a moment.
 func ReadRecord(globalDir string) (rec Record, held bool) {
-	path := LockPath(globalDir)
-	fl := flock.New(path)
+	path := recordPath(globalDir)
+	fl := flock.New(LockPath(globalDir))
 	ok, err := fl.TryLock()
 	if err == nil && ok {
 		_ = fl.Close()
@@ -192,12 +209,4 @@ func readRecordOK(path string) (Record, bool) {
 		return r, false
 	}
 	return r, json.Unmarshal(data, &r) == nil
-}
-
-func readRecord(path string) Record {
-	var r Record
-	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &r)
-	}
-	return r
 }

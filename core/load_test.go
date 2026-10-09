@@ -34,7 +34,7 @@ func TestRecoverySummary_String(t *testing.T) {
 	assert.False(t, RecoverySummary{Undecodable: 1}.Empty(), "undecodable records alone must still be surfaced")
 	assert.Equal(t, "Recovery: 1 session record could not be read by this version of loom and was preserved unchanged",
 		RecoverySummary{Undecodable: 1}.String())
-	assert.Equal(t, "Recovery: 1 session failed to load (kept; see loom.log) · 2 session records could not be read by this version of loom and were preserved unchanged",
+	assert.Equal(t, "Recovery: 1 session failed to load (kept; see serve.log) · 2 session records could not be read by this version of loom and were preserved unchanged",
 		RecoverySummary{Failed: 1, Undecodable: 2}.String())
 }
 

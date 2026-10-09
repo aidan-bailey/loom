@@ -59,6 +59,13 @@ func IsGitRepo(path string, runner CommandRunner) bool {
 	return r.Run(c) == nil
 }
 
+// RepoRoot is the top level of the checkout holding path (git rev-parse
+// --show-toplevel): a repository's own, or a linked worktree's. Pass nil
+// for runner to use the default subprocess runner.
+func RepoRoot(path string, runner CommandRunner) (string, error) {
+	return findGitRepoRoot(path, runner)
+}
+
 func findGitRepoRoot(path string, runner CommandRunner) (string, error) {
 	r := defaultRunner(runner)
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)

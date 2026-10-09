@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/aidan-bailey/loom/log"
@@ -70,9 +71,13 @@ func (m *Model) maybeHookScan(active []*session.Instance) bool {
 // deliverHookScan applies a scan. An instance whose Claude status changed
 // moves to it at once, and any change also asks the roster to confirm:
 // its answer, stamped after the event, corrects a Stop that ended a turn
-// but not the work (a lead about to pick up a teammate's reply).
+// but not the work (a lead about to pick up a teammate's reply). A scan
+// that names another conversation for an instance (its SessionStart)
+// saves the workspace holding it (saveUnprompted), since a relaunch
+// resumes the recorded one.
 func (m *Model) deliverHookScan(msg hookScanResults) {
 	changed := false
+	var resumed []*Workspace
 	for _, r := range msg.results {
 		if r.err != nil {
 			if errors.Is(r.err, hooks.ErrNoHooks) {
@@ -86,12 +91,21 @@ func (m *Model) deliverHookScan(msg hookScanResults) {
 			continue
 		}
 		st0, why0, ok0 := r.instance.ClaudeStatus()
+		conv0, transcript0 := r.instance.ClaudeSession()
 		r.instance.ApplyHookScan(r.result)
 		st1, why1, ok1 := r.instance.ClaudeStatus()
+		if conv, transcript := r.instance.ClaudeSession(); conv != conv0 || transcript != transcript0 {
+			if ws := m.holding(r.instance); ws != nil && !slices.Contains(resumed, ws) {
+				resumed = append(resumed, ws)
+			}
+		}
 		if st0 != st1 || why0 != why1 || ok0 != ok1 {
 			changed = true
 			m.applyClaudeStatus(r.instance)
 		}
+	}
+	for _, ws := range resumed {
+		m.saveUnprompted(ws, "conversation")
 	}
 	if !changed {
 		return

@@ -121,6 +121,81 @@ func TestOpenedRepos_ARepositorysOwnWorkspaceWinsOverTheGlobalSessions(t *testin
 	}
 }
 
+// TestWatchGitHub_PollsARepositoryNothingElseCovers: a client's issue
+// picker in global mode, in a repository no global session runs in, asks
+// the poll to cover it, which it does from then on, after every opened
+// workspace's repository and global session's, against the global
+// config's base branch, once however often it is asked, from the next
+// tick. A path that is not absolute names no repository, and one an
+// opened workspace covers is polled once, as that workspace's.
+func TestWatchGitHub_PollsARepositoryNothingElseCovers(t *testing.T) {
+	global := storedWorkspace(t, "")
+	global.cfg.BaseBranch = "trunk"
+	x := storedWorkspace(t, "x")
+	x.ctx.RepoPath = t.TempDir()
+	x.cfg.BaseBranch = "develop"
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(global, x)
+	running := t.TempDir()
+	inst, err := session.NewInstance(session.InstanceOptions{Title: "g", Path: running, Program: "claude"})
+	require.NoError(t, err)
+	hold(m, inst)
+	m.gate(gateGH).last = time.Now()
+	require.False(t, m.gateDue(gateGH, time.Now()), "fixture: a poll just went")
+
+	asked := t.TempDir()
+	m.WatchGitHub(asked)
+	m.WatchGitHub(asked)
+	m.WatchGitHub("relative/dir")
+	m.WatchGitHub(x.ctx.RepoPath)
+
+	assert.Equal(t, []openedRepo{{path: x.ctx.RepoPath, base: "develop"}, {path: running, base: "trunk"}, {path: asked, base: "trunk"}},
+		m.openedRepos())
+	assert.Equal(t, []string{asked, x.ctx.RepoPath}, watchedRepos(m), "each kept once, however often a picker opens")
+	assert.True(t, m.gateDue(gateGH, time.Now()), "polled at the next tick")
+}
+
+// watchedRepos lists the repositories clients asked the poll to cover.
+func watchedRepos(m *Model) []string {
+	var out []string
+	for _, w := range m.ghWatched {
+		out = append(out, w.repo)
+	}
+	return out
+}
+
+// TestWatchGitHub_AWatchExpires: a repository a client asked for is
+// polled until ghWatchTTL has passed since the last ask, not for the
+// daemon's life: the picker asks on every open, so one in use stays
+// polled. Asking again renews a watch, without polling at once when the
+// poll has answered for it already; an expired one asked again is polled
+// again, at the next tick.
+func TestWatchGitHub_AWatchExpires(t *testing.T) {
+	m := NewForTest(Options{})
+	m.SetWorkspacesForTest(storedWorkspace(t, ""))
+	stale, renewed := t.TempDir(), t.TempDir()
+	m.WatchGitHub(stale)
+	m.WatchGitHub(renewed)
+	require.Equal(t, []string{stale, renewed}, m.openRepoPaths())
+
+	m.ghWatched[0].at = time.Now().Add(-ghWatchTTL - time.Second)
+	m.ghWatched[1].at = time.Now().Add(-ghWatchTTL + time.Minute)
+	assert.Equal(t, []string{renewed}, m.openRepoPaths(), "a watch nobody renewed within ghWatchTTL is no longer polled")
+
+	m.ghState = map[string]github.Snapshot{canonicalDir(renewed): {}}
+	m.gate(gateGH).last = time.Now()
+	m.WatchGitHub(renewed)
+	assert.Equal(t, []string{renewed}, watchedRepos(m), "the expired watch was dropped")
+	assert.WithinDuration(t, time.Now(), m.ghWatched[0].at, time.Second, "renewed")
+	assert.False(t, m.gateDue(gateGH, time.Now()), "a repository the poll has answered for is not polled again at once")
+	m.ghWatched[0].at = time.Now().Add(-ghWatchTTL + time.Minute)
+	assert.Equal(t, []string{renewed}, m.openRepoPaths(), "still polled: renewed a moment before it expired")
+
+	m.WatchGitHub(stale)
+	assert.Equal(t, []string{renewed, stale}, m.openRepoPaths(), "asked again: polled again")
+	assert.True(t, m.gateDue(gateGH, time.Now()), "at the next tick, having no answer for it")
+}
+
 func TestGHQueryDispatchesOnFirstCall(t *testing.T) {
 	m := ghModel(t)
 	require.True(t, m.maybeGHQuery())
@@ -291,11 +366,13 @@ func (f *ghFakeExec) CombinedOutput(c *exec.Cmd) ([]byte, error) { return f.Outp
 func TestGHPollJobResolvesPerRepoBaseAndBucketsErrors(t *testing.T) {
 	fake := &ghFakeExec{answers: map[string][]ghFakeAnswer{
 		"/a": {
+			{substr: "rev-parse --show-toplevel", out: "/a\n"},
 			{substr: "rev-parse --verify --quiet refs/heads/develop", out: "shaaaaa1\n"},
 			{substr: "pr list", out: "[]"},
 			{substr: "issue list", out: "[]"},
 		},
 		"/b": {
+			{substr: "rev-parse --show-toplevel", out: "/b\n"},
 			{substr: "symbolic-ref --short refs/remotes/origin/HEAD", err: errors.New("no origin HEAD")},
 			{substr: "rev-parse --verify --quiet refs/heads/main", out: "shabbbbb2\n"},
 			{substr: "pr list", err: errors.New("boom")},
@@ -335,6 +412,94 @@ func TestGHPollJobResolvesPerRepoBaseAndBucketsErrors(t *testing.T) {
 	_, bOK := msg.snapshots["/b"]
 	assert.False(t, bOK, "/b's failed query must not leave a snapshot")
 	require.Error(t, msg.errs["/b"])
+}
+
+// TestGHPollJob_PollsARepositoryOnceUnderItsTopLevel: a global session
+// in a subdirectory of an opened workspace's repository, or a picker
+// opened there, asks the poll for the subdirectory too. It is one
+// repository: queried and fetched once, under its top level, against the
+// first path's configured base branch, for the issues both paths link,
+// and the subdirectory is reported as an alias of the top level.
+func TestGHPollJob_PollsARepositoryOnceUnderItsTopLevel(t *testing.T) {
+	fake := &ghFakeExec{answers: map[string][]ghFakeAnswer{
+		"/r": {
+			{substr: "rev-parse --show-toplevel", out: "/r\n"},
+			{substr: "rev-parse --verify --quiet refs/heads/develop", out: "shaaaaa1\n"},
+			{substr: "pr list", out: "[]"},
+			{substr: "issue list", out: "[]"},
+		},
+		"/r/sub": {{substr: "rev-parse --show-toplevel", out: "/r\n"}},
+	}}
+	req := ghPollRequest{
+		repos:      []string{"/r", "/r/sub"},
+		linked:     map[string][]int{"/r": {1}, "/r/sub": {7, 1}},
+		configured: map[string]string{"/r": "develop", "/r/sub": "trunk"},
+	}
+
+	msg, ok := ghPollJob(req, fake)().(ghResult)
+	require.True(t, ok)
+
+	var lists []string
+	views := map[string]int{}
+	for _, c := range fake.calls {
+		if strings.Contains(c.argv, "pr list") {
+			lists = append(lists, c.repo)
+		}
+		for _, n := range []string{"1", "7"} {
+			if strings.Contains(c.argv, "issue view "+n+" ") {
+				views[c.repo+" #"+n]++
+			}
+		}
+		assert.NotContains(t, c.argv, "trunk", "the subdirectory's base never reaches its repository")
+	}
+	assert.Equal(t, []string{"/r"}, lists, "one repository, one query")
+	assert.Equal(t, map[string]int{"/r #1": 1, "/r #7": 1}, views, "both paths' linked issues, each once")
+	assert.Equal(t, map[string]string{"/r/sub": "/r"}, msg.aliases)
+	assert.Equal(t, map[string]string{"/r": "develop"}, msg.bases)
+	assert.Contains(t, msg.snapshots, "/r")
+	assert.Len(t, msg.snapshots, 1)
+}
+
+// A session whose path reaches a polled repository through a symlink, or
+// lies in a subdirectory the poll found inside it, gets that repository's
+// state and its linked issue, and a client finds the snapshot by any of
+// those spellings.
+func TestGHState_AnySpellingOfAPolledRepository(t *testing.T) {
+	repo := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(repo, link))
+	sub := filepath.Join(repo, "sub")
+	require.NoError(t, os.Mkdir(sub, 0o755))
+	key := canonicalDir(repo)
+
+	m := NewForTest(Options{})
+	at := func(title, path string, issue int) *session.Instance {
+		inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: path, Program: "claude"})
+		require.NoError(t, err)
+		inst.Branch = "u/" + title
+		inst.SetIssue(issue)
+		hold(m, inst)
+		return inst
+	}
+	viaLink, inSub := at("l", link, 7), at("s", sub, 8)
+	assert.Equal(t, []int{7}, m.linkedIssues(repo), "the symlinked session's issue is linked")
+
+	m.Deliver(GitHubAliasesForTest(GitHubResultForTest(true, "", map[string]github.Snapshot{key: {
+		PRs:    map[string]github.PR{"u/l": {Number: 45, State: github.PROpen}, "u/s": {Number: 46, State: github.PROpen}},
+		Issues: map[int]github.Issue{7: {Number: 7, Title: "Fix"}, 8: {Number: 8, Title: "Tidy"}},
+	}}, nil), map[string]string{canonicalDir(sub): key}))
+
+	for inst, want := range map[*session.Instance][2]any{viaLink: {45, "Fix"}, inSub: {46, "Tidy"}} {
+		s := inst.GitHubState()
+		assert.True(t, s.Known, inst.Path)
+		assert.Equal(t, want, [2]any{s.PRNumber, s.IssueTitle}, inst.Path)
+	}
+	for _, spelling := range []string{repo, link, sub, link + "/"} {
+		_, ok := m.GitHubSnapshot(spelling)
+		assert.True(t, ok, "GitHubSnapshot(%q)", spelling)
+		_, ok = m.githubView().GitHubSnapshot(spelling)
+		assert.True(t, ok, "the view's GitHubSnapshot(%q)", spelling)
+	}
 }
 
 func TestBaseFor_ReadsGHBases(t *testing.T) {

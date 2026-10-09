@@ -29,6 +29,19 @@ func (m *home) credentialOverrideWarning() string {
 	return ""
 }
 
+// showRunningAsAccount shows the model's warning that loom runs as an
+// extra account (core.Core.RunningAsAccount), once per client: it holds
+// for the model's whole life, in a daemon for every client that connects,
+// so each shows it when it first sees it, not only the daemon's first.
+func (m *home) showRunningAsAccount() tea.Cmd {
+	text := m.core.RunningAsAccount()
+	if text == "" || m.runningAsShown {
+		return nil
+	}
+	m.runningAsShown = true
+	return m.handleError(errors.New(text))
+}
+
 // accountsScreenNotice is the Accounts screen's notice: the credential
 // override warning while an extra account exists, since with default
 // alone there is no account choice for it to void.

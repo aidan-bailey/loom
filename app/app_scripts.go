@@ -10,7 +10,9 @@ import (
 	"github.com/aidan-bailey/loom/script"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
@@ -824,19 +826,33 @@ func (m *home) scriptInstanceOp(p pendingIntent, i script.InstanceOpIntent) tea.
 //
 // A relative path is resolved here, against the TUI's working directory:
 // the model, in the daemon, would resolve it against the daemon's
-// (session.NewInstance), which is wherever some client spawned it.
+// (session.NewInstance), which is wherever some client spawned it. A
+// leading "~" or "~/" is the user's home, as a shell would expand it.
 func (m *home) scriptCreate(p pendingIntent, i script.CreateInstanceIntent, slot *workspaceSlot) tea.Cmd {
 	if slot == nil {
 		log.For("script").Warn("new_instance_dropped", "trace", p.trace, "title", i.Title)
 		return m.resumeScript(p, script.ResumeValue{Err: fmt.Sprintf("new_instance: workspace changed while a script ran; not creating %s here", i.Title)})
 	}
-	path, err := filepath.Abs(i.Path)
+	path, err := scriptPath(i.Path)
 	if err != nil {
 		return m.resumeScript(p, script.ResumeValue{Err: scriptError("new_instance", err)})
 	}
 	req := m.newReq(pendingReq{script: &pendingScript{intent: p.id, trace: p.trace, op: "new_instance"}})
 	m.core.Create(slot.id, core.NewInstance{Title: i.Title, Path: path, Program: i.Program, Prompt: i.Prompt, Branch: i.Branch}, req)
 	return nil
+}
+
+// scriptPath is a script's path made absolute: a leading "~" or "~/" is
+// the user's home, and a relative path is the TUI's working directory's.
+func scriptPath(path string) (string, error) {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand ~ in %s: %w", path, err)
+		}
+		path = filepath.Join(home, path[1:])
+	}
+	return filepath.Abs(path)
 }
 
 // resumeScript resumes p's coroutine with v.

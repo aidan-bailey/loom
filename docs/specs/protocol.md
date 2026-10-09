@@ -30,10 +30,13 @@ client's own ID: a `Reply`, and the `Notice` of a request's job, go to that clie
 
 A hello names the side's build, which a client compares with the server's (`rpc.CompareBuilds`: the
 newer side wins): its release (`version`), its commit's time and whether its tree was modified (`time`,
-`modified`), and the SHA-256 of its executable (`exe`). A server's also names the tmux server its
-sessions run on (`tmux`, its socket's path), which its clients use too. Every field after `build` is
-optional:
-`{"hello":{"protocol":2,"build":"v0.13.1 ad199a3…","version":"0.13.0","time":"2026-10-08T17:54:55Z","exe":"e3b0c442…","tmux":"/run/user/1000/tmux-1000/default"}}`
+`modified`), and the SHA-256 of its executable (`exe`) and when that was last modified (`exe_time`,
+which breaks a tie nothing else decides when both name their commit, unless it is at or before
+1970-01-01T00:00:01Z, where a Nix store dates every file; one nothing tells apart is the same build).
+A server's also names the tmux server its sessions run on (`tmux`, its socket's path),
+which its clients use too.
+Every field after `build` is optional:
+`{"hello":{"protocol":2,"build":"v0.13.1 ad199a3…","version":"0.13.0","time":"2026-10-08T17:54:55Z","exe":"e3b0c442…","exe_time":"2026-10-08T18:02:11.52Z","tmux":"/run/user/1000/tmux-1000/default"}}`
 
 ## Refused hello
 
@@ -285,6 +288,12 @@ Params: `{}`
 
 Result: `{}`
 
+### WatchGitHub (cast)
+
+Params: `{"repo":""}`
+
+Result: `{}`
+
 ### AccountNames (local)
 
 Params: `{}`
@@ -351,6 +360,12 @@ Params: `{}`
 
 Result: `{"value":""}`
 
+### RunningAsAccount (local)
+
+Params: `{}`
+
+Result: `{"value":""}`
+
 ### ReloadAccounts (request)
 
 Params: `{}`
@@ -391,7 +406,7 @@ Result: `{}`
 
 ### AccountsChanged
 
-`{"View":{"Names":{"Present":false,"Default":"","Names":null},"Loaded":false,"Extra":false,"ClaudeProgram":"","CredentialOverride":"","Accounts":null,"DefaultAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Auth":null,"Sync":null,"Usage":null,"UsageErr":null}}`
+`{"View":{"Names":{"Present":false,"Default":"","Names":null},"Loaded":false,"Extra":false,"ClaudeProgram":"","CredentialOverride":"","RunningAsAccount":"","Accounts":null,"DefaultAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Auth":null,"Sync":null,"Usage":null,"UsageErr":null}}`
 
 ### Alive
 
@@ -403,7 +418,7 @@ Result: `{}`
 
 ### GitHubChanged
 
-`{"View":{"Snapshots":null,"Errs":null,"Unavailable":false,"Reason":""}}`
+`{"View":{"Snapshots":null,"Errs":null,"Aliases":null,"Unavailable":false,"Reason":""}}`
 
 ### HealthChecked
 

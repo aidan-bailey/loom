@@ -135,9 +135,9 @@ func (m *home) servedNamed(name string) (core.WorkspaceView, bool) {
 // persists on names, so a tab under the other name would be closed by the
 // next picker commit and dropped from the open list, which keeps
 // registered names only. A twin (the other name is registered too) is to
-// be opened by that name; a rename while loom runs waits for a restart,
-// which serves the workspace under its new name (until a rename can reload
-// a workspace, daemon stage 3C).
+// be opened by that name; a rename while the daemon runs waits for its
+// restart (`loom serve stop`, then loom), which serves the workspace under
+// its new name (until a rename can reload a workspace, daemon stage 3C).
 func (m *home) servedID(name string) (core.WorkspaceID, error) {
 	v, twin, ok := m.servedFor(name)
 	if !ok {
@@ -156,7 +156,7 @@ func (m *home) servedID(name string) (core.WorkspaceID, error) {
 	case twin:
 		return 0, fmt.Errorf("%s is the same directory as %s, which loom serves: open %s", name, v.Name, v.Name)
 	default:
-		return 0, fmt.Errorf("%s is the workspace loom serves as %s (renamed while loom runs, or registered twice for one directory): restart loom to open it as %s",
+		return 0, fmt.Errorf("%s is the workspace loom serves as %s (renamed while the loom daemon runs, or registered twice for one directory): stop the daemon (`loom serve stop`), then start loom, to open it as %s",
 			name, labelOf(v.Name), name)
 	}
 }

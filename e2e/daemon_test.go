@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -186,11 +187,26 @@ func TestE2E_Daemon_SpawnsOnDemand(t *testing.T) {
 
 	assert.NotEqual(t, panePID(t, sb, sb.Driver()), rec.PID, "the daemon is a process of its own")
 	if exe := exeOf(rec.PID); exe != "" {
-		assert.Equal(t, sb.LoomBin(), exe, "the TUI starts its own build as the daemon")
+		// /proc names resolved paths, and the TUI spawns the daemon by
+		// os.Executable, which is resolved too: compare with the sandbox's
+		// paths resolved, which a symlinked temp dir would otherwise fail.
+		bin, globalDir := resolved(t, sb.LoomBin()), resolved(t, sb.GlobalDir())
+		assert.Equal(t, bin, exe, "the TUI starts its own build as the daemon")
 		cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", rec.PID))
 		require.NoError(t, err)
-		assert.Equal(t, sb.LoomBin()+"\x00serve\x00", string(cmdline))
+		assert.Equal(t, bin+"\x00serve\x00", string(cmdline))
+		cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", rec.PID))
+		require.NoError(t, err)
+		assert.Equal(t, globalDir, cwd, "the daemon keeps no client's working directory")
 	}
+}
+
+// resolved is path with its symlinks resolved, as /proc names it.
+func resolved(t *testing.T, path string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
+	return r
 }
 
 // A daemon killed outright leaves its socket file behind and its lock
@@ -329,15 +345,26 @@ func TestE2E_Daemon_TwoTUIsStartingAtOnce(t *testing.T) {
 		return // no /proc to count daemons by
 	}
 	require.Eventually(t, func() bool {
-		pids := daemonsOf(sb.LoomBin())
+		pids := daemonsOf(sb.BinDir())
 		return len(pids) == 1 && pids[0] == rec.PID
-	}, uiTimeout, 100*time.Millisecond, "one daemon serves the sandbox, the lock holder (daemons: %v)", daemonsOf(sb.LoomBin()))
+	}, uiTimeout, 100*time.Millisecond, "one daemon serves the sandbox, the lock holder (daemons: %v)", daemonsOf(sb.BinDir()))
 	assert.True(t, sb.DriverRunning())
 	assert.True(t, second.DriverRunning())
 }
 
-// daemonsOf lists the pids of the `serve` processes bin runs.
-func daemonsOf(bin string) []int {
+// daemonsOf lists the pids of the `loom serve` processes a build in one of
+// dirs runs: a command line of a program there and "serve". A TUI spawns
+// its daemon by its resolved path, a test by the sandbox's, so both
+// spellings of each dir count, and so does a build deleted since its
+// daemon started, by the path it ran.
+func daemonsOf(dirs ...string) []int {
+	want := map[string]bool{}
+	for _, d := range dirs {
+		want[filepath.Clean(d)] = true
+		if r, err := filepath.EvalSymlinks(d); err == nil {
+			want[r] = true
+		}
+	}
 	entries, _ := os.ReadDir("/proc")
 	var pids []int
 	for _, e := range entries {
@@ -346,7 +373,19 @@ func daemonsOf(bin string) []int {
 			continue
 		}
 		cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-		if err == nil && string(cmdline) == bin+"\x00serve\x00" && alive(pid) {
+		if err != nil {
+			continue
+		}
+		args := strings.Split(strings.TrimSuffix(string(cmdline), "\x00"), "\x00")
+		if len(args) != 2 || args[1] != "serve" {
+			continue
+		}
+		in := filepath.Dir(args[0])
+		match := want[in]
+		if r, err := filepath.EvalSymlinks(in); err == nil {
+			match = match || want[r]
+		}
+		if match && alive(pid) {
 			pids = append(pids, pid)
 		}
 	}
@@ -444,26 +483,40 @@ func TestE2E_Daemon_RebuildReplacesIt(t *testing.T) {
 }
 
 // Two daemons started at once, as two TUIs starting together can: the
-// second waits for the first's lock. Stopping the first must not hand the
-// lock to the second, which would boot a daemon no one asked for, after a
-// stop, and make the stop wait out its timeout for a lock that never
-// comes free.
+// second finds the first's lock and stands down. It must not wait for the
+// lock and take it when the first stops, booting a daemon no one asked
+// for, after a stop, while the stop waits out its timeout.
 func TestE2E_Daemon_StopDuringAStartRace(t *testing.T) {
-	t.Skip("internal/daemon bug: Serve's lock wait hands the lock to the second daemon, and Stop waits for the lock rather than the pid; unskip with the fix")
 	sb := newSandbox(t, "")
-	serve := func() {
+	// serve starts a daemon writing its output to out (nil for none) and
+	// returns a channel that delivers its exit; it is killed at cleanup,
+	// however the test ends.
+	serve := func(out io.Writer) <-chan error {
 		c := sb.Cmd(sb.LoomBin(), "serve")
+		c.Stdout, c.Stderr = out, out
 		require.NoError(t, c.Start())
-		go func() { _ = c.Wait() }()
+		exited := make(chan error, 1)
+		go func() { exited <- c.Wait() }()
+		t.Cleanup(func() {
+			_ = c.Process.Kill()
+			waitExit(c.Process.Pid, 5*time.Second)
+		})
+		return exited
 	}
-	serve()
+	serve(nil)
 	first := servingDaemon(t, sb)
-	serve()
-	time.Sleep(500 * time.Millisecond) // the second now waits for the lock
+	var out bytes.Buffer
+	secondExited := serve(&out)
+	select {
+	case err := <-secondExited:
+		require.NoError(t, err, "the second daemon stands down cleanly:\n%s", out.String())
+		assert.Contains(t, out.String(), daemon.ErrRunning.Error())
+	case <-time.After(uiTimeout):
+		t.Fatalf("the second daemon is still running: it must stand down at once, not wait for the lock")
+	}
 
 	require.NoError(t, daemon.Stop(sb.GlobalDir(), 15*time.Second))
 	assert.True(t, waitExit(first.PID, uiTimeout))
-	time.Sleep(time.Second)
 	rec, held := sb.Daemon()
 	assert.False(t, held, "a daemon took over after the stop: %+v", rec)
 }

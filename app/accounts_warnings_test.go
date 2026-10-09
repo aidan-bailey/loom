@@ -77,6 +77,25 @@ func TestInitAccounts_WarnsWhenLoomRunsAsAnAccount(t *testing.T) {
 	assert.NotContains(t, m.errBox.String(), "CLAUDE_CONFIG_DIR", "said once, at startup")
 }
 
+// TestRunningAsAccount_AClientConnectingLaterShowsIt: the warning holds
+// for the daemon's whole life, so a TUI connecting after the daemon's
+// first client took its notices shows it too, from the published view.
+func TestRunningAsAccount_AClientConnectingLaterShowsIt(t *testing.T) {
+	noCredentialOverride(t)
+	reg := globalAccounts(t, "max-2")
+	acct, _ := reg.Get("max-2")
+	t.Setenv("CLAUDE_CONFIG_DIR", acct.Dir)
+	m := newTestHome(t)
+	m.accountStrip = ui.NewAccountStrip()
+	testModel(m).InitAccounts() // the daemon's boot
+	testModel(m).Drain()        // what it raised went to its first client
+
+	asDaemonsClient(t, m) // this TUI connects later
+	m.drainCore()
+
+	assert.Contains(t, m.errBox.String(), `account "max-2"`)
+}
+
 func TestInitAccounts_NoRunningAsWarningFromTheMainDir(t *testing.T) {
 	noCredentialOverride(t)
 	globalAccounts(t, "max-2")

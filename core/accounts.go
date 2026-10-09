@@ -45,23 +45,25 @@ func (m *Model) InitAccounts() {
 	// than when the first probe lands. Its relayout Cmd is not needed: the
 	// first WindowSizeMsg is still to come.
 	m.adoptAccounts(reg)
-	m.warnIfRunningAsAccount()
+	m.noteRunningAsAccount()
 	if name := m.CredentialOverride(); name != "" && m.HasExtraAccounts() {
 		log.For("account").Warn("registry.credential_override", "env", name)
 	}
 }
 
-// warnIfRunningAsAccount says, once at startup, that loom itself runs as an
-// extra account: its own $CLAUDE_CONFIG_DIR lies inside the accounts dir
-// (it was started from an account session's pane, say). The default
+// noteRunningAsAccount records, once at startup, whether loom itself runs
+// as an extra account: its own $CLAUDE_CONFIG_DIR lies inside the accounts
+// dir (it was started from an account session's pane, say). The default
 // account's auth, usage and roster, which run with loom's environment,
 // then describe that account rather than the main login. Sync already
 // refuses to link against it (syncMainDir). "Its own" is the model's: in a
 // daemon, the environment the daemon was spawned with, whichever client's
-// terminal that was; a client's own says nothing here. Boot raises the
-// warning before any client connects, and the daemon keeps it for the
-// first one (TestBoot_ReturnsTheRunningAsAnAccountNotice).
-func (m *Model) warnIfRunningAsAccount() {
+// terminal that was; a client's own says nothing here. It holds for the
+// model's whole life, so it is published (RunningAsAccount, in the
+// accounts view) for every client to show, not raised as one notice the
+// first client alone would see.
+func (m *Model) noteRunningAsAccount() {
+	m.runningAs = ""
 	dir := os.Getenv("CLAUDE_CONFIG_DIR")
 	if dir == "" || m.accounts == nil || m.accounts.Path() == "" {
 		return
@@ -75,8 +77,12 @@ func (m *Model) warnIfRunningAsAccount() {
 		who = fmt.Sprintf("as account %q", strings.SplitN(rel, string(filepath.Separator), 2)[0])
 	}
 	log.For("account").Warn("registry.running_as_account", "claude_config_dir", dir)
-	m.notifyErr(fmt.Errorf("loom is running %s ($CLAUDE_CONFIG_DIR is %s): \"default\" shows that account's login, usage and sessions, not your main login's", who, dir))
+	m.runningAs = fmt.Sprintf("loom is running %s ($CLAUDE_CONFIG_DIR is %s): \"default\" shows that account's login, usage and sessions, not your main login's", who, dir)
 }
+
+// RunningAsAccount is the warning that loom itself runs as an extra
+// account (noteRunningAsAccount), "" when it does not.
+func (m *Model) RunningAsAccount() string { return m.runningAs }
 
 // adoptAccounts installs reg as the registry and publishes it, recording
 // the file version and state it holds as seen (noteAccountsState).
@@ -165,13 +171,22 @@ func (m *Model) HasExtraAccounts() bool { return m.accounts != nil && m.accounts
 
 // CredentialOverride names the credential set in the model's own
 // environment that overrides every account's login
-// (account.ActiveCredentialOverride), "" when none is. It is the model's
-// environment that decides: sessions launch from it, the usage probes and
-// auth reads inherit it, and the remote-control block reason reads it.
-// Since the model runs in the daemon (stage 3B), that environment is the
-// one the daemon was spawned with, possibly from another terminal than a
-// client's, so a client warns from this answer, never from its own
-// environment.
+// (account.ActiveCredentialOverride), "" when none is. The usage probes
+// and auth reads inherit the model's environment and the remote-control
+// block reason reads it. Since the model runs in the daemon (stage 3B),
+// that environment is the one the daemon was spawned with, possibly from
+// another terminal than a client's, so a client warns from this answer,
+// never from its own environment.
+//
+// An agent's own environment is another matter. These variables, like the
+// default account's CLAUDE_CONFIG_DIR, are neither in tmux's
+// update-environment nor passed with -e (session.InstanceEnv passes only an
+// extra account's), so an agent inherits them from the tmux server's
+// global environment: the environment of whatever started that server,
+// which is the daemon's only when the daemon started it. Under a server
+// something else started (the user's own, or an earlier daemon's, which
+// the next keeps: daemon.TmuxServer), an agent bills by that server's
+// credential, which this answer does not see.
 func (m *Model) CredentialOverride() string {
 	name, _ := account.ActiveCredentialOverride()
 	return name

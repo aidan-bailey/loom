@@ -1,6 +1,10 @@
 package app
 
 import (
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/ui"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -43,4 +47,22 @@ func handleStateSettingsKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.state = stateDefault
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// applySettingsChange applies to this TUI a change to the focused
+// workspace's settings that reached it from the model (another TUI saved
+// them): a new theme is painted at once, as the settings overlay paints
+// its own, and a new default program becomes the one this TUI's drafts
+// default to (m.program), as this TUI's own save makes it. Only a change
+// does anything: this TUI's own save rereads the view (syncWorkspaces), so
+// the WorkspacesChanged it brings finds none.
+func (m *home) applySettingsChange(old, cur config.Settings) {
+	if theme := cur.GetTheme(); theme != old.GetTheme() {
+		if !ui.ApplyTheme(theme) && theme != "" {
+			log.For("ui").Warn("unknown_theme", "name", theme, "fallback", ui.DefaultThemeName)
+		}
+	}
+	if program := cur.GetProgram(); program != old.GetProgram() {
+		m.program = program
+	}
 }

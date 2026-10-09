@@ -70,6 +70,9 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 		// read the new views.
 		for _, v := range ev.Views {
 			if s := m.slotFor(v.ID); s != nil {
+				if s == m.workspaceSlot && s.info.ID == v.ID {
+					m.applySettingsChange(s.info.Settings, v.Settings)
+				}
 				s.info = v
 			}
 		}
@@ -136,10 +139,14 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 		if p := m.issuePicker(); p != nil {
 			p.SetRows(m.issueRows())
 			p.SetStatus(m.issuePickerStatus())
+			// An open picker still wants its repository: renew the watch,
+			// which would otherwise expire (ghWatchTTL) under a picker
+			// left open, emptying it at the next poll.
+			m.core.WatchGitHub(m.repoPath())
 		}
 	case core.AccountsChanged:
 		ui.SetShowAccounts(m.core.HasExtraAccounts())
-		return m.refreshAccountViews()
+		return tea.Batch(m.refreshAccountViews(), m.showRunningAsAccount())
 	case core.Reply:
 		return m.handleReply(ev)
 	}

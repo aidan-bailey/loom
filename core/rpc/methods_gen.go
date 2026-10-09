@@ -364,6 +364,15 @@ type ExpediteGitHubParams struct {
 type ExpediteGitHubResult struct {
 }
 
+// WatchGitHubParams are WatchGitHub's parameters on the wire.
+type WatchGitHubParams struct {
+	Repo string `json:"repo"`
+}
+
+// WatchGitHubResult is WatchGitHub's result on the wire; an error travels in the reply.
+type WatchGitHubResult struct {
+}
+
 // AccountNamesParams are AccountNames's parameters on the wire.
 type AccountNamesParams struct {
 }
@@ -471,6 +480,15 @@ type CredentialOverrideResult struct {
 	Value string `json:"value"`
 }
 
+// RunningAsAccountParams are RunningAsAccount's parameters on the wire.
+type RunningAsAccountParams struct {
+}
+
+// RunningAsAccountResult is RunningAsAccount's result on the wire; an error travels in the reply.
+type RunningAsAccountResult struct {
+	Value string `json:"value"`
+}
+
 // ReloadAccountsParams are ReloadAccounts's parameters on the wire.
 type ReloadAccountsParams struct {
 }
@@ -563,6 +581,7 @@ var methods = []methodInfo{
 	{Name: "GitHubUnavailable", Kind: kindLocal, Params: GitHubUnavailableParams{}, Result: GitHubUnavailableResult{}},
 	{Name: "GitHubUnavailableReason", Kind: kindLocal, Params: GitHubUnavailableReasonParams{}, Result: GitHubUnavailableReasonResult{}},
 	{Name: "ExpediteGitHub", Kind: kindCast, Params: ExpediteGitHubParams{}, Result: ExpediteGitHubResult{}},
+	{Name: "WatchGitHub", Kind: kindCast, Params: WatchGitHubParams{}, Result: WatchGitHubResult{}},
 	{Name: "AccountNames", Kind: kindLocal, Params: AccountNamesParams{}, Result: AccountNamesResult{}},
 	{Name: "AccountsLoaded", Kind: kindLocal, Params: AccountsLoadedParams{}, Result: AccountsLoadedResult{}},
 	{Name: "HasExtraAccounts", Kind: kindLocal, Params: HasExtraAccountsParams{}, Result: HasExtraAccountsResult{}},
@@ -574,6 +593,7 @@ var methods = []methodInfo{
 	{Name: "AccountEnv", Kind: kindLocal, Params: AccountEnvParams{}, Result: AccountEnvResult{}},
 	{Name: "ClaudeProgram", Kind: kindLocal, Params: ClaudeProgramParams{}, Result: ClaudeProgramResult{}},
 	{Name: "CredentialOverride", Kind: kindLocal, Params: CredentialOverrideParams{}, Result: CredentialOverrideResult{}},
+	{Name: "RunningAsAccount", Kind: kindLocal, Params: RunningAsAccountParams{}, Result: RunningAsAccountResult{}},
 	{Name: "ReloadAccounts", Kind: kindRequest, Params: ReloadAccountsParams{}, Result: ReloadAccountsResult{}},
 	{Name: "RequestAccountsRefresh", Kind: kindCast, Params: RequestAccountsRefreshParams{}, Result: RequestAccountsRefreshResult{}},
 	{Name: "RequestUsageProbe", Kind: kindCast, Params: RequestUsageProbeParams{}, Result: RequestUsageProbeResult{}},
@@ -863,6 +883,13 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.ExpediteGitHub()
 		return ExpediteGitHubResult{}, nil, true
+	case "WatchGitHub":
+		var p WatchGitHubParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		b.WatchGitHub(p.Repo)
+		return WatchGitHubResult{}, nil, true
 	case "AccountNames":
 		var p AccountNamesParams
 		if err := decodeParams(params, &p); err != nil {
@@ -933,6 +960,12 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 			return nil, err, true
 		}
 		return CredentialOverrideResult{Value: b.CredentialOverride()}, nil, true
+	case "RunningAsAccount":
+		var p RunningAsAccountParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		return RunningAsAccountResult{Value: b.RunningAsAccount()}, nil, true
 	case "ReloadAccounts":
 		var p ReloadAccountsParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1205,6 +1238,11 @@ func (c *Client) ExpediteGitHub() {
 	c.cast("ExpediteGitHub", ExpediteGitHubParams{})
 }
 
+// WatchGitHub is core.Core's WatchGitHub (cast).
+func (c *Client) WatchGitHub(repo string) {
+	c.cast("WatchGitHub", WatchGitHubParams{Repo: repo})
+}
+
 // AccountNames is core.Core's AccountNames (local).
 func (c *Client) AccountNames() core.AccountNames {
 	var v0 core.AccountNames
@@ -1283,6 +1321,13 @@ func (c *Client) ClaudeProgram() string {
 func (c *Client) CredentialOverride() string {
 	var v0 string
 	c.local(func(r *replica) { v0 = r.CredentialOverride() })
+	return v0
+}
+
+// RunningAsAccount is core.Core's RunningAsAccount (local).
+func (c *Client) RunningAsAccount() string {
+	var v0 string
+	c.local(func(r *replica) { v0 = r.RunningAsAccount() })
 	return v0
 }
 

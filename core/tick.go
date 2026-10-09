@@ -87,7 +87,7 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	active := m.activeInstances()
 	// Fan out I/O off the model's goroutine. A stalled tmux or git process
 	// must not block it: the probe waits for its goroutines inside the job.
-	m.spawnBackground(probeJob(active, selected, m.takeDirty(), m.ghBases))
+	m.spawnBackground(probeJob(active, selected, m.takeDirty(), m.ghBases, m.ghAliases))
 
 	// One `claude agents --json` for the whole fleet (~100ms, off the
 	// loop goroutine), on its OWN cadence rather than the tick's —
@@ -154,7 +154,7 @@ func (m *Model) selectedInstances() []*session.Instance {
 // On the snapshot path the TUI's status scan reports output through
 // MarkOutput, so a change it sees refreshes the diff on the next tick.
 // Formerly gatherMetadataCmd, minus the pane reads, which are the TUI's.
-func probeJob(active []*session.Instance, selected []*session.Instance, dirty map[string]bool, bases map[string]string) Job {
+func probeJob(active []*session.Instance, selected []*session.Instance, dirty map[string]bool, bases, aliases map[string]string) Job {
 	return func() any {
 		results := make([]ProbeResult, len(active))
 		var wg sync.WaitGroup
@@ -173,7 +173,7 @@ func probeJob(active []*session.Instance, selected []*session.Instance, dirty ma
 				// without any session activity at all — "you are now N
 				// behind main" is exactly the case where tmuxUpdated is
 				// false. One local rev-list, no network.
-				instance.UpdateParity(bases[instance.Path])
+				instance.UpdateParity(bases[ghRepoKey(aliases, instance.Path)])
 
 				wantFull := slices.Contains(selected, instance)
 				if !instance.ShouldRefreshDiff(dirty[instance.Pane().TmuxSessionName()], wantFull) {
@@ -276,7 +276,8 @@ func (m *Model) deliverDeadVerified(r DeadVerified) {
 // names the path the result came from, for the logs. Must run on the
 // loop goroutine.
 func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, source livenessSource) bool {
-	if m.holding(inst) == nil {
+	ws := m.holding(inst)
+	if ws == nil {
 		// inst left its workspace while the probe ran (a kill, or a
 		// recover's replacement; the model never drops a workspace). A
 		// workspace-terminal restart here would relaunch a session no
@@ -308,9 +309,7 @@ func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, so
 				// relaunches it with its breaker reset (ensureTerminal):
 				// fix a broken Program on disk before that.
 				log.For("core").Error("workspace_terminal.restart_circuit_tripped", "title", inst.Title, "consecutive_failures", failures)
-				if err := inst.TransitionTo(session.Paused); err != nil {
-					log.For("core").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
-				}
+				m.pauseGone(ws, inst)
 				return false
 			}
 			log.For("core").Warn("workspace_terminal.tmux_died_restarting", "title", inst.Title, "source", source)
@@ -322,13 +321,21 @@ func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, so
 			return false
 		}
 		log.For("core").Warn("tick.tmux_gone_marking_paused", "title", inst.Title, "source", source)
-		if err := inst.TransitionTo(session.Paused); err != nil {
-			log.For("core").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
-		}
+		m.pauseGone(ws, inst)
 		return false
 	}
 	inst.ResetRestartFailures()
 	return true
+}
+
+// pauseGone marks inst, whose session is gone, Paused, and saves ws, which
+// holds it (saveUnprompted): no request saves this pause.
+func (m *Model) pauseGone(ws *Workspace, inst *session.Instance) {
+	if err := inst.TransitionTo(session.Paused); err != nil {
+		log.For("core").Warn("tick.transition_failed", "instance", inst.Title, "to", "Paused", "err", err.Error())
+		return
+	}
+	m.saveUnprompted(ws, "pause")
 }
 
 // MarkOutput records that a session produced output since the last health

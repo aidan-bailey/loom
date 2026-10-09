@@ -31,6 +31,18 @@ func GitHubResultForTest(available bool, reason string, snapshots map[string]git
 	}
 }
 
+// SetRunningAsAccountForTest sets the warning that loom runs as an extra
+// account, as InitAccounts would from its environment.
+func (m *Model) SetRunningAsAccountForTest(text string) { m.runningAs = text }
+
+// GitHubAliasesForTest is a GitHubResultForTest result whose poll found
+// each key of aliases inside the repository named by its value.
+func GitHubAliasesForTest(result any, aliases map[string]string) any {
+	r := result.(ghResult)
+	r.aliases = aliases
+	return r
+}
+
 // UsageResultForTest is a finished round of usage probes, for Deliver.
 func UsageResultForTest(results map[string]account.Usage, errs map[string]error) any {
 	return usageResult{results: results, errs: errs}
@@ -176,6 +188,18 @@ func (m *Model) GateForTest(kind string, now time.Time) (inFlight, pending, due 
 func (m *Model) SetGateForTest(kind string, inFlight bool, last time.Time) {
 	g := m.gate(gateNamed(kind))
 	g.inFlight, g.last = inFlight, last
+}
+
+// GitHubReposForTest lists the repositories the next GitHub poll covers
+// (openedRepos), in the order it polls them.
+func (m *Model) GitHubReposForTest() []string { return m.openRepoPaths() }
+
+// AgeGitHubWatchesForTest makes every repository a client asked the poll
+// to cover (WatchGitHub) asked d earlier.
+func (m *Model) AgeGitHubWatchesForTest(d time.Duration) {
+	for i := range m.ghWatched {
+		m.ghWatched[i].at = m.ghWatched[i].at.Add(-d)
+	}
 }
 
 // RefreshDefaultAuthForTest reports whether the next accounts refresh

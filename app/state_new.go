@@ -117,5 +117,5 @@ func (m *home) latchedStorageErr() error {
 	if !m.info.WritesRefused {
 		return nil
 	}
-	return fmt.Errorf("new sessions can't be created here: this workspace's saved sessions could not be read, so nothing can be saved (see loom.log)")
+	return fmt.Errorf("new sessions can't be created here: this workspace's saved sessions could not be read, so nothing can be saved (see serve.log)")
 }

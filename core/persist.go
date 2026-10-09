@@ -51,6 +51,25 @@ func (m *Model) saveWS(ws *Workspace) error {
 	return ws.storage.SaveInstances(Persistable(ws.insts))
 }
 
+// saveUnprompted saves ws after a change the model made on its own, which
+// no request's completion saves: a probe that found an agent's session
+// gone (applyLiveness), a hook scan that named the conversation a relaunch
+// resumes (deliverHookScan). The daemon saves otherwise only on requests
+// and when it stops, so one killed or crashing first would lose the
+// change: an agent the user exited would be crash-restarted at the next
+// boot, and a relaunch would resume the wrong conversation. It runs on the
+// loop's goroutine, as every save does (saveWS). A failure is logged, with
+// no request to report it to; a workspace with no storage (a bare test
+// fixture's) has nothing to save.
+func (m *Model) saveUnprompted(ws *Workspace, after string) {
+	if ws == nil || ws.storage == nil {
+		return
+	}
+	if err := m.saveWS(ws); err != nil {
+		log.For("core").Warn("workspace.save_failed", "workspace", ws.Label(), "after", after, "err", err)
+	}
+}
+
 // SaveForQuit saves every workspace the model serves, as the daemon's last
 // step when it stops (internal/daemon; a TUI quitting saves no session). A
 // failed save of a workspace a client opened in this run is returned, for

@@ -51,10 +51,20 @@ func Self() Hello {
 	return h
 }
 
+// commitUnix is the commit's time in Unix seconds, stamped at link time
+// (-ldflags "-X github.com/aidan-bailey/loom/core/rpc.commitUnix=…") by a
+// build Go can stamp no VCS information into: the Nix flake stamps its
+// source's lastModified, since a Nix build has no .git to read.
+var commitUnix string
+
 // identity is the part of Self that does not change while the process
-// runs, read once: hashing the executable reads it whole.
-var identity = sync.OnceValue(func() Hello {
-	h := Hello{Protocol: Protocol, Build: build(), Exe: exeHash()}
+// runs, read once (readIdentity): hashing the executable reads it whole.
+var identity = sync.OnceValue(readIdentity)
+
+// readIdentity reads identity.
+func readIdentity() Hello {
+	h := Hello{Protocol: Protocol, Build: build()}
+	h.Exe, h.ExeTime = exeIdentity()
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, s := range info.Settings {
 			switch s.Key {
@@ -65,38 +75,59 @@ var identity = sync.OnceValue(func() Hello {
 			}
 		}
 	}
+	h.Time = commitTime(h.Time, commitUnix)
 	return h
-})
+}
 
-// exeHash is the SHA-256 of the running executable, "" when it can't be
-// read. It reads /proc/self/exe where there is one, the image this process
-// runs, rather than os.Executable's path: a rebuild replaces the file at
-// that path while an older process still runs, and that process must not
+// commitTime is the commit's time a hello names: Go's vcs.time, else the
+// stamp (commitUnix) as RFC 3339 in UTC when it is a positive number of
+// seconds, else "".
+func commitTime(vcsTime, stamp string) string {
+	if vcsTime != "" {
+		return vcsTime
+	}
+	secs, err := strconv.ParseInt(stamp, 10, 64)
+	if err != nil || secs <= 0 {
+		return ""
+	}
+	return time.Unix(secs, 0).UTC().Format(time.RFC3339)
+}
+
+// exeIdentity is the SHA-256 of the running executable and its
+// modification time (UTC, RFC 3339), both "" when it can't be read. It
+// reads /proc/self/exe where there is one, the image this process runs,
+// rather than os.Executable's path: a rebuild replaces the file at that
+// path while an older process still runs, and that process must not
 // report the new build as its own.
-func exeHash() string {
+func exeIdentity() (hash, modTime string) {
 	f, err := os.Open("/proc/self/exe")
 	if err != nil {
 		path, perr := os.Executable()
 		if perr != nil {
-			return ""
+			return "", ""
 		}
 		if f, err = os.Open(path); err != nil {
-			return ""
+			return "", ""
 		}
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", ""
+	}
 	sum := sha256.New()
 	if _, err := io.Copy(sum, f); err != nil {
-		return ""
+		return "", ""
 	}
-	return hex.EncodeToString(sum.Sum(nil))
+	return hex.EncodeToString(sum.Sum(nil)), info.ModTime().UTC().Format(time.RFC3339Nano)
 }
 
 // Order is how a client's build compares with a server's (CompareBuilds).
 type Order int
 
 const (
-	// SameBuild is one executable on both sides.
+	// SameBuild is one build on both sides: one executable, or two that
+	// nothing tells apart.
 	SameBuild Order = iota
 	// ClientNewer is a client newer than its server: it replaces the server.
 	ClientNewer
@@ -108,10 +139,22 @@ const (
 // CompareBuilds says which of a client's and a server's builds is newer,
 // from their hellos: the same executable (Exe) is the same build;
 // otherwise the higher release (Version, as semver), then the later commit
-// (Time), then a modified tree over a clean one. A tie counts as the
-// client newer: it was just started, so a rebuild nothing else tells apart
-// (a dev build edited again at one commit) replaces its sandbox's server.
-// A field either side lacks, or can't be read, decides nothing.
+// (Time), then a modified tree over a clean one, then the higher protocol
+// (a peer that sent no hello, protocol 0, is older than any that did),
+// then, only when both name their commit (Time), the newer executable
+// (ExeTime: both were built from a checkout at one commit, and a dev build
+// edited or rebuilt there replaces its sandbox's server). A field either
+// side lacks, or can't be read, decides nothing, and a full tie is
+// otherwise the same build: two installs of one release keep whichever
+// daemon runs rather than replace each other's on every launch, and a
+// loom whose executable can't be read keeps the daemon rather than stop
+// it on every launch. An executable dated at or before the epoch's first
+// second tells nothing either (knownExeTime): a Nix store dates every file
+// there, so a Nix build and a release binary of one commit keep whichever
+// daemon runs rather than refuse each other as newer, and two Nix builds
+// are told apart by the commit time the flake stamps (commitUnix). A build
+// that names no commit (a plain go build from a tarball) at the same
+// release keeps the running daemon: `loom serve stop` switches.
 func CompareBuilds(client, server Hello) Order {
 	if client.Exe != "" && client.Exe == server.Exe {
 		return SameBuild
@@ -128,7 +171,29 @@ func CompareBuilds(client, server Hello) Order {
 		}
 		return ServerNewer
 	}
-	return ClientNewer
+	if c := cmp.Compare(client.Protocol, server.Protocol); c != 0 {
+		return orderOf(c)
+	}
+	if client.Time != "" && server.Time != "" {
+		if c := compareTimes(knownExeTime(client.ExeTime), knownExeTime(server.ExeTime)); c != 0 {
+			return orderOf(c)
+		}
+	}
+	return SameBuild
+}
+
+// nixEpoch is the time a Nix store gives every file it holds: one second
+// past the Unix epoch.
+var nixEpoch = time.Unix(1, 0)
+
+// knownExeTime is exeTime, or "" when it tells nothing: a time at or
+// before nixEpoch, which a Nix store gives every executable.
+func knownExeTime(exeTime string) string {
+	t, err := time.Parse(time.RFC3339, exeTime)
+	if err != nil || !t.After(nixEpoch) {
+		return ""
+	}
+	return exeTime
 }
 
 // orderOf is the Order of a comparison of client with server.

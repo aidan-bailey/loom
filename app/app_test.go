@@ -715,9 +715,9 @@ func (q *quitWatch) SaveForQuit() error {
 }
 
 // TestHandleQuit_SavesNoSession: quitting the TUI saves no session (the
-// daemon serves them on, and saves them as they change and when it
-// stops), so a workspace whose state can't be written no longer holds the
-// quit. The TUI writes only its own state, the open list
+// daemon serves them on and saves them itself, as requests and its own
+// probes change them and when it stops), so a workspace whose state can't
+// be written no longer holds the quit. The TUI writes only its own state, the open list
 // (TestHandleQuit_PersistsTheOpenList).
 func TestHandleQuit_SavesNoSession(t *testing.T) {
 	cfgDir := t.TempDir()

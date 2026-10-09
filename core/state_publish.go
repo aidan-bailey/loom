@@ -1,6 +1,7 @@
 package core
 
 import (
+	"maps"
 	"reflect"
 
 	"github.com/aidan-bailey/loom/account"
@@ -21,6 +22,7 @@ func (m *Model) accountsView() AccountsView {
 		DefaultAuth:        m.rcAuth,
 		ClaudeProgram:      m.ClaudeProgram(),
 		CredentialOverride: m.CredentialOverride(),
+		RunningAsAccount:   m.RunningAsAccount(),
 	}
 	if m.accounts != nil {
 		v.Names = AccountNames{Present: true, Default: m.accounts.Default(), Names: m.accounts.Names()}
@@ -77,6 +79,9 @@ func (m *Model) githubView() GitHubView {
 		for repo, err := range m.ghErrs {
 			v.Errs[repo] = err.Error()
 		}
+	}
+	if len(m.ghAliases) > 0 {
+		v.Aliases = maps.Clone(m.ghAliases)
 	}
 	return v
 }

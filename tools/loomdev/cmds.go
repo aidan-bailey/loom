@@ -63,7 +63,7 @@ func (a *app) buildCmd() *cobra.Command {
 			}
 			fmt.Fprintf(a.out, "built %s into %s\n", meta.BuildSHA, sb.BinDir())
 			if rec, held := sb.Daemon(); held {
-				fmt.Fprintf(a.out, "the sandbox's daemon (pid %d) runs the build it started with: the next loom to start replaces it when the build changed\n", rec.PID)
+				fmt.Fprintf(a.out, "the sandbox's daemon (pid %d) runs the build it started with: the next loom to start replaces it when this build is newer (a later commit, or an edited tree rebuilt, in a git checkout), and refuses an older one (`loomdev stop` first)\n", rec.PID)
 			}
 			return nil
 		},
@@ -321,22 +321,33 @@ func (a *app) lsCmd() *cobra.Command {
 }
 
 func (a *app) downCmd() *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "down",
-		Short: "Kill the sandbox's tmux server and delete the sandbox",
-		Args:  cobra.NoArgs,
+		Short: "Stop the sandbox's daemon, kill its tmux server and delete the sandbox",
+		Long: `Stop the sandbox's daemon, kill its tmux server and delete the sandbox.
+A daemon that won't stop, or a loom from before the daemon holding the
+sandbox's lock, stops down with nothing removed; --force kills that process
+(SIGKILL) first, once it is proved a build in the sandbox's bin dir.`,
+		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			sb, err := a.open()
 			if err != nil {
 				return err
 			}
-			if err := sb.Down(); err != nil {
+			down := sb.Down
+			if force {
+				down = sb.ForceDown
+			}
+			if err := down(); err != nil {
 				return err
 			}
 			fmt.Fprintf(a.out, "removed %s\n", sb.Dir)
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "kill (SIGKILL) a sandbox loom that holds the lock and won't stop")
+	return cmd
 }
 
 // daemonText describes a sandbox daemon from its lock record: "pid 4242

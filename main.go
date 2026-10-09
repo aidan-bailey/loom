@@ -145,15 +145,13 @@ var (
 			}
 
 			// The TUI is a client of the daemon, which owns the sessions
-			// and is started here when none runs. A TUI inside a loom pane
-			// is one too: the nesting guard is the daemon's.
+			// and is started here when none runs, and whose tmux server it
+			// uses from here on. A TUI inside a loom pane is one too: the
+			// nesting guard is the daemon's.
 			client, err := joinDaemon(globalDir)
 			if err != nil {
 				return err
 			}
-			// Before anything here touches tmux: the daemon's sessions are
-			// on its server, whatever this environment would pick.
-			tmux.UseServer(client.Peer().Tmux)
 			err = app.Run(ctx, client, wsCtx.Name, cfg, program, pendingDir, noScriptsFlag)
 			if errors.Is(err, app.ErrDaemonGone) {
 				return fmt.Errorf("loom: the daemon stopped (see %s); your sessions keep running. Run loom again.", daemon.LogPath(globalDir))
@@ -172,7 +170,22 @@ var (
 			"workspaces are left running. If the tmux cleanup fails, reset stops before\n" +
 			"removing any worktree. This cannot be undone; it requires --force.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := nestingCheck(); err != nil {
+			// Reset sweeps the tmux server a daemon started now would
+			// pin (daemon.TmuxServer: the last daemon's while it runs),
+			// whatever this environment selects: run after a `loom serve
+			// stop` from another environment, it would otherwise find
+			// none of the workspace's sessions, then delete the worktrees
+			// under its live agents. The nesting guard is decided against
+			// that server, as the daemon's is.
+			globalDir, err := config.GetGlobalConfigDir()
+			if err != nil {
+				return err
+			}
+			server, err := daemon.TmuxServer(globalDir)
+			if err != nil {
+				return fmt.Errorf("find the tmux server: %w", err)
+			}
+			if err := nestingCheck(server); err != nil {
 				return err
 			}
 			// Reset writes state.json itself, which the daemon would
@@ -183,6 +196,7 @@ var (
 			if !resetForceFlag {
 				return fmt.Errorf("loom reset deletes the workspace's instances, kills its tmux sessions (only those started in its repo or worktrees directory), and removes its worktrees AND their branches (unpushed commits are lost); re-run with --force to proceed")
 			}
+			tmux.UseServer(server)
 			// Resolve target workspace explicitly — per
 			// docs/specs/workspaces.md §3, empty-string fallbacks are
 			// disallowed so each subsystem gets a concrete ConfigDir.
@@ -264,15 +278,24 @@ var (
 			}
 			fmt.Printf("Log format: %s (env %s)\n", format, log.EnvLogFormat)
 
+			globalDir, globalErr := config.GetGlobalConfigDir()
 			socket := tmux.Socket()
 			if socket == "" {
 				socket = "default (" + tmux.EnvTmuxSocket + " unset)"
 			}
 			fmt.Printf("Tmux socket: %s\n", socket)
-			if server, err := tmux.ResolveServer(); err != nil {
+			// The server a daemon started now pins: the last daemon's
+			// while it runs, else this environment's (daemon.TmuxServer).
+			var server string
+			if globalErr == nil {
+				server, err = daemon.TmuxServer(globalDir)
+			} else {
+				err = globalErr
+			}
+			if err != nil {
 				fmt.Printf("Tmux server: error: %v\n", err)
 			} else {
-				fmt.Printf("Tmux server: %s (a daemon started here uses it, and its TUIs with it)\n", server)
+				fmt.Printf("Tmux server: %s (a daemon started now uses it, and its TUIs with it)\n", server)
 			}
 			if root, ok := claudetmp.Root(); ok {
 				fmt.Printf("Claude temp root: %s\n", root)
@@ -287,8 +310,8 @@ var (
 			default:
 				fmt.Printf("Claude temp archives: %s (a workspace's: <repo>/.loom/archive/claude-tmp; set claude_tmp_archive_dir in %s to move them)\n", claudetmp.ArchiveDir(wsCtx.ConfigDir), filepath.Join(wsCtx.ConfigDir, config.ConfigFileName))
 			}
-			if globalDir, err := config.GetGlobalConfigDir(); err != nil {
-				fmt.Printf("Global dir: error: %v\n", err)
+			if globalErr != nil {
+				fmt.Printf("Global dir: error: %v\n", globalErr)
 			} else {
 				fmt.Printf("Global dir: %s (env %s)\n", globalDir, config.EnvGlobalDir)
 				switch rec, held := daemon.ReadRecord(globalDir); {
@@ -297,13 +320,17 @@ var (
 				case rec.IsPreDaemon():
 					fmt.Printf("Daemon: none; a loom from before the daemon holds the lock (%s)\n", rec)
 				case rec.IsDaemon():
-					fmt.Printf("Daemon: %s, socket %s, build %s\n", rec, rec.Socket, rec.Build)
+					fmt.Printf("Daemon: %s, socket %s, build %s, tmux server %s (its TUIs use it)\n", rec, rec.Socket, rec.Build, recordTmux(rec))
 				default:
-					fmt.Printf("Daemon: %s, starting, build %s\n", rec, rec.Build)
+					fmt.Printf("Daemon: %s, starting, build %s, tmux server %s\n", rec, rec.Build, recordTmux(rec))
 				}
 				fmt.Printf("Daemon log: %s\n", daemon.LogPath(globalDir))
 			}
-			if err := nestingCheck(); err != nil {
+			// The guard `loom serve` and reset run, on the server they
+			// would pin.
+			if server == "" {
+				fmt.Println("Nesting guard: unknown (no tmux server)")
+			} else if err := nestingCheck(server); err != nil {
 				fmt.Printf("Nesting guard: would refuse — %v\n", err)
 			} else {
 				fmt.Println("Nesting guard: ok")
@@ -324,9 +351,17 @@ var (
 )
 
 // nestingCheck guards the commands whose startup sweeps tmux sessions (the
-// daemon and reset), and keeps a TUI inside a loom pane from replacing the
-// daemon. A package var so tests can stub the environment probe.
+// daemon and reset), on the tmux server they pin. A package var so tests
+// can stub the environment probe.
 var nestingCheck = tmux.CheckNestingFromEnv
+
+// recordTmux names the tmux server a lock record names, for loom debug.
+func recordTmux(rec daemon.Record) string {
+	if rec.Tmux == "" {
+		return "unnamed"
+	}
+	return rec.Tmux
+}
 
 // resolveResetWorkspace resolves the workspace context for the reset
 // subcommand. When --workspace is supplied, the named workspace is

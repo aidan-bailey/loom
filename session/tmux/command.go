@@ -93,6 +93,29 @@ func ResolveServer() (string, error) {
 	return filepath.Join(socketDir(), "default"), nil
 }
 
+// ServerRunning reports whether a tmux server answers at the socket path:
+// one with sessions, since a server exits with its last. A probe that times
+// out says yes: a server too loaded to answer is still there.
+func ServerRunning(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
+	defer cancel()
+	err := tmuxCommand(ctx, []string{"-S", path}, []string{"list-sessions"}).Run()
+	return err == nil || ctx.Err() != nil
+}
+
+// SameServer reports whether two tmux socket paths name one server: equal
+// once cleaned, or once their symlinks are resolved (tmux resolves its
+// socket dir, so $TMUX can name /private/tmp where a daemon resolved
+// /tmp).
+func SameServer(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
+}
+
 // socketDir is the directory tmux keeps this user's sockets in.
 func socketDir() string {
 	base := os.Getenv("TMUX_TMPDIR")

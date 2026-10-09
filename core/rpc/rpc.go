@@ -120,13 +120,19 @@ type Hello struct {
 	Build    string `json:"build"`
 	// Version is the release (main's version, SetVersion).
 	Version string `json:"version,omitempty"`
-	// Time is when the VCS revision was committed (vcs.time, RFC 3339).
+	// Time is when the VCS revision was committed (RFC 3339): vcs.time,
+	// else the commit time the build stamped (commitUnix, as Nix does).
 	Time string `json:"time,omitempty"`
 	// Modified says the tree was modified when built (vcs.modified).
 	Modified bool `json:"modified,omitempty"`
 	// Exe is the SHA-256 of the running executable, in hex: two builds of
 	// one commit with different edits agree on everything else.
 	Exe string `json:"exe,omitempty"`
+	// ExeTime is when the running executable was last modified (UTC, RFC
+	// 3339), which breaks a tie nothing else decides when both sides name
+	// their commit (Time): a rebuild at one commit is newer. One at or
+	// before the epoch's first second (a Nix store's) tells nothing.
+	ExeTime string `json:"exe_time,omitempty"`
 	// Tmux is the tmux server the server's sessions run on (its socket's
 	// path), which its clients use too (Server.SetTmux). Servers only.
 	Tmux string `json:"tmux,omitempty"`

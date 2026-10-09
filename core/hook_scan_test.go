@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/subagent"
@@ -185,4 +186,32 @@ func TestHookScanStatusChangeMovesInstanceAndAsksRoster(t *testing.T) {
 	assert.Equal(t, "permission: Bash", inst.WaitReason())
 	require.NotEmpty(t, m.Drain().Jobs, "a status change asks the roster to confirm")
 	assert.True(t, m.gate(gateRoster).inFlight)
+}
+
+// TestHookScan_ANewConversationIsSaved: the conversation a relaunch
+// resumes comes from a hook scan, which no request saves, and the daemon
+// saves otherwise only when it stops: one killed first would resume the
+// wrong conversation. A scan that names no new one saves nothing.
+func TestHookScan_ANewConversationIsSaved(t *testing.T) {
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "w")
+	m.SetWorkspacesForTest(ws)
+	inst := activeInst(t, m, "conv")
+	stateFile := filepath.Join(ws.configDir(), config.StateFileName)
+	scan := func(events ...hooks.Event) {
+		m.Deliver(hookScanResults{results: []hookScanResult{{instance: inst,
+			result: session.HookScanResult{LaunchID: "L1", Replayed: true, Events: events}}}})
+	}
+
+	scan(hooks.Event{Name: hooks.EventSessionStart, SessionID: "11111111-1111-1111-1111-111111111111",
+		TranscriptPath: "/p/1.jsonl", Source: "startup", At: time.Now()})
+	records := savedRecords(t, ws.configDir())
+	require.Len(t, records, 1)
+	assert.Equal(t, "11111111-1111-1111-1111-111111111111", records[0].ClaudeSessionID)
+	assert.Equal(t, "/p/1.jsonl", records[0].ClaudeTranscriptPath)
+
+	require.NoError(t, os.Remove(stateFile))
+	scan(hooks.Event{Name: hooks.EventUserPromptSubmit, At: time.Now()})
+	_, err := os.Stat(stateFile)
+	assert.True(t, errors.Is(err, os.ErrNotExist), "the same conversation: nothing saved (%v)", err)
 }

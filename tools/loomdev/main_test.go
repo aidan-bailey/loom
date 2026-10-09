@@ -3,14 +3,20 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/internal/devsandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -131,11 +137,115 @@ func TestDriverFlag_RejectsLoomSessionNames(t *testing.T) {
 	}
 }
 
-func TestStop_HasKeepDaemon(t *testing.T) {
-	root := newRootCmd(io.Discard, io.Discard)
-	stop, _, err := root.Find([]string{"stop"})
+// fakeSandbox opens a sandbox of a fresh name under a fresh state dir,
+// with its global dir made.
+func fakeSandbox(t *testing.T) *devsandbox.Sandbox {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sb, err := devsandbox.Open(fmt.Sprintf("t%d", time.Now().UnixNano()))
 	require.NoError(t, err)
-	assert.NotNil(t, stop.Flags().Lookup("keep-daemon"))
+	require.NoError(t, os.MkdirAll(sb.GlobalDir(), 0o755))
+	return sb
+}
+
+// startFakeDaemon runs exe (the test binary, or a copy of it) as a fake
+// daemon of sb's global dir in mode (runFakeDaemon), and waits until it
+// holds the lock. It is killed at cleanup if still running.
+func startFakeDaemon(t *testing.T, sb *devsandbox.Sandbox, exe, mode string) *exec.Cmd {
+	t.Helper()
+	// "serve": daemon.Stop signals only a process whose command line has it.
+	cmd := exec.Command(exe, "serve")
+	cmd.Env = append(os.Environ(), fakeDaemonEnv+"="+sb.GlobalDir(), fakeDaemonModeEnv+"="+mode)
+	require.NoError(t, cmd.Start())
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		<-done
+	})
+	require.Eventually(t, func() bool {
+		rec, held := sb.Daemon()
+		return held && rec.PID == cmd.Process.Pid
+	}, 10*time.Second, 20*time.Millisecond, "the fake daemon never took the lock")
+	return cmd
+}
+
+// testBinary is the running test binary, a fake daemon's executable.
+func testBinary(t *testing.T) string {
+	t.Helper()
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	return exe
+}
+
+// sandboxBuild copies the test binary into sb's bin dir as its loom, so a
+// fake daemon run from there is a build of the sandbox's own.
+func sandboxBuild(t *testing.T, sb *devsandbox.Sandbox) string {
+	t.Helper()
+	data, err := os.ReadFile(testBinary(t))
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(sb.BinDir(), 0o755))
+	require.NoError(t, os.WriteFile(sb.LoomBin(), data, 0o755))
+	return sb.LoomBin()
+}
+
+// gone reports whether the process cmd started has ended.
+func gone(cmd *exec.Cmd) bool {
+	return errors.Is(cmd.Process.Signal(syscall.Signal(0)), os.ErrProcessDone)
+}
+
+// stop --keep-daemon quits the TUI only, as a real quit does; a plain stop
+// stops the sandbox's daemon too.
+func TestStop_KeepDaemonLeavesTheDaemonRunning(t *testing.T) {
+	sb := fakeSandbox(t)
+	cmd := startFakeDaemon(t, sb, testBinary(t), "")
+
+	_, err := execute(t, "stop", "--sandbox", sb.Name, "--keep-daemon")
+	require.NoError(t, err)
+	rec, held := sb.Daemon()
+	assert.True(t, held && rec.PID == cmd.Process.Pid, "--keep-daemon leaves the daemon running")
+	assert.False(t, gone(cmd))
+
+	_, err = execute(t, "stop", "--sandbox", sb.Name)
+	require.NoError(t, err)
+	_, held = sb.Daemon()
+	assert.False(t, held, "stop stops the daemon")
+	assert.Eventually(t, func() bool { return gone(cmd) }, 5*time.Second, 20*time.Millisecond)
+}
+
+// ls shows the pid of the process holding a sandbox's lock, and its
+// socket, or that it is still starting.
+func TestLs_ShowsTheDaemonsPidAndSocket(t *testing.T) {
+	sb := fakeSandbox(t)
+	serving := startFakeDaemon(t, sb, testBinary(t), "")
+	booting, err := devsandbox.Open(sb.Name + "-booting")
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(booting.GlobalDir(), 0o755))
+	starting := startFakeDaemon(t, booting, testBinary(t), fakeBooting)
+
+	out, err := execute(t, "ls")
+	require.NoError(t, err)
+	assert.Regexp(t, fmt.Sprintf(`(?m)^%s\s+down\s+pid %d\s+%s\s`, sb.Name, serving.Process.Pid,
+		regexp.QuoteMeta(filepath.Join(sb.GlobalDir(), "fake.sock"))), out)
+	assert.Regexp(t, fmt.Sprintf(`(?m)^%s\s+down\s+pid %d\s+\(starting\)\s`, booting.Name, starting.Process.Pid), out)
+}
+
+// down stops at a sandbox loom that won't stop, naming --force, which
+// kills it and removes the sandbox.
+func TestDown_ForceKillsASandboxLoomThatWontStop(t *testing.T) {
+	sb := fakeSandbox(t)
+	cmd := startFakeDaemon(t, sb, sandboxBuild(t, sb), fakePreDaemon)
+
+	_, err := execute(t, "down", "--sandbox", sb.Name)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "loomdev down --force")
+	assert.DirExists(t, sb.Dir)
+
+	out, err := execute(t, "down", "--sandbox", sb.Name, "--force")
+	require.NoError(t, err)
+	assert.Contains(t, out, "removed "+sb.Dir)
+	assert.NoDirExists(t, sb.Dir)
+	assert.Eventually(t, func() bool { return gone(cmd) }, 5*time.Second, 20*time.Millisecond)
 }
 
 func TestLs_ShowsTheDaemonColumns(t *testing.T) {

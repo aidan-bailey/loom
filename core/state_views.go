@@ -85,6 +85,9 @@ type AccountsView struct {
 	// that overrides every account, "" when none does
 	// (Core.CredentialOverride).
 	CredentialOverride string
+	// RunningAsAccount warns that the model runs as an extra account, ""
+	// when it does not (Core.RunningAsAccount).
+	RunningAsAccount string
 	// Accounts are the registered accounts, by name.
 	Accounts map[string]account.Account
 	// DefaultAuth is the default account's remote-control auth, and Auth
@@ -197,25 +200,31 @@ func (v AccountsView) Clone() AccountsView {
 }
 
 // GitHubView is the GitHub poll's state (published as GitHubChanged):
-// each open repo's snapshot or its last poll's failure, and whether gh is
-// usable.
+// each open repo's snapshot or its last poll's failure, keyed by its
+// canonical top level, and whether gh is usable.
 type GitHubView struct {
 	Snapshots map[string]github.Snapshot
 	Errs      map[string]string
+	// Aliases maps each polled path (canonical) that lies inside another
+	// repository's top level, a subdirectory of it, to that top level: a
+	// lookup by any spelling finds its repository's state.
+	Aliases map[string]string
 	// Unavailable: gh was checked and found unusable, for Reason.
 	Unavailable bool
 	Reason      string
 }
 
-// GitHubSnapshot is repo's latest snapshot (Core.GitHubSnapshot).
+// GitHubSnapshot is repo's latest snapshot (Core.GitHubSnapshot), by
+// any spelling of repo (ghRepoKey).
 func (v GitHubView) GitHubSnapshot(repo string) (github.Snapshot, bool) {
-	s, ok := v.Snapshots[repo]
+	s, ok := v.Snapshots[ghRepoKey(v.Aliases, repo)]
 	return s.Clone(), ok
 }
 
-// GitHubErr is repo's last poll failure (Core.GitHubErr).
+// GitHubErr is repo's last poll failure (Core.GitHubErr), by any
+// spelling of repo (ghRepoKey).
 func (v GitHubView) GitHubErr(repo string) error {
-	if msg, ok := v.Errs[repo]; ok {
+	if msg, ok := v.Errs[ghRepoKey(v.Aliases, repo)]; ok {
 		return errors.New(msg)
 	}
 	return nil
@@ -239,6 +248,7 @@ func (v GitHubView) Clone() GitHubView {
 		v.Snapshots = snaps
 	}
 	v.Errs = maps.Clone(v.Errs)
+	v.Aliases = maps.Clone(v.Aliases)
 	return v
 }
 

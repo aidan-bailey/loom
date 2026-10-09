@@ -50,6 +50,8 @@ func isolateLoomEnv(t *testing.T) {
 	t.Setenv(config.EnvHome, t.TempDir())
 	t.Setenv(config.EnvGlobalDir, t.TempDir())
 	t.Setenv(tmux.EnvTmuxSocket, fmt.Sprintf("loomtest-none-%d", time.Now().UnixNano()))
+	// reset (and serve) pin their tmux server for the rest of the process.
+	t.Cleanup(func() { tmux.UseServer("") })
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
 	// pflag latches a bool flag's value across Execute() calls on the same
@@ -61,11 +63,18 @@ func isolateLoomEnv(t *testing.T) {
 	_ = rootCmd.Flags().Set("version", "false")
 }
 
-func stubNesting(t *testing.T, err error) {
+// stubNesting makes the nesting guard answer err, and returns the tmux
+// servers it was asked about.
+func stubNesting(t *testing.T, err error) *[]string {
 	t.Helper()
 	orig := nestingCheck
-	nestingCheck = func() error { return err }
+	var asked []string
+	nestingCheck = func(server string) error {
+		asked = append(asked, server)
+		return err
+	}
 	t.Cleanup(func() { nestingCheck = orig })
+	return &asked
 }
 
 func TestResetCmd_RefusesWhenNested(t *testing.T) {
@@ -98,6 +107,81 @@ func captureStdout(t *testing.T, fn func()) string {
 	return <-done
 }
 
+// startTmuxServer starts a tmux server listening at a socket of its own
+// and returns the socket's path; the server is killed when the test ends.
+func startTmuxServer(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("no tmux")
+	}
+	dir, err := os.MkdirTemp("", "tx")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "s")
+	require.NoError(t, exec.Command("tmux", "-f", os.DevNull, "-S", sock, "new-session", "-d", "-s", "keep", "sleep 60").Run())
+	t.Cleanup(func() { _ = exec.Command("tmux", "-S", sock, "kill-server").Run() })
+	return sock
+}
+
+// lastDaemonOn leaves the record of a daemon that ran on the tmux server
+// sock and has stopped, as `loom serve stop` leaves it: the lock free, the
+// record still naming its server.
+func lastDaemonOn(t *testing.T, sock string) {
+	t.Helper()
+	l, _, err := daemon.TryAcquire(os.Getenv(config.EnvGlobalDir), daemon.Record{PID: os.Getpid(), Build: "b", Tmux: sock})
+	require.NoError(t, err)
+	require.NoError(t, l.Close())
+}
+
+// TestServeCmd_GuardsTheServerItPins: `loom serve` decides nesting on the
+// tmux server it will pin, the last daemon's while that server runs, not on
+// the one this environment selects. A dev loom in a loom pane, with
+// LOOM_TMUX_SOCKET naming another server, would otherwise start the user's
+// daemon on the user's server while the user's daemon is down.
+func TestServeCmd_GuardsTheServerItPins(t *testing.T) {
+	isolateLoomEnv(t)
+	sock := startTmuxServer(t)
+	lastDaemonOn(t, sock)
+	asked := stubNesting(t, &tmux.NestedError{Session: "loom_agent"})
+
+	rootCmd.SetArgs([]string{"serve"})
+	err := rootCmd.Execute()
+
+	var nested *tmux.NestedError
+	require.ErrorAs(t, err, &nested)
+	assert.Equal(t, []string{sock}, *asked, "the server the daemon would pin")
+	_, held := daemon.ReadRecord(os.Getenv(config.EnvGlobalDir))
+	assert.False(t, held, "no daemon started")
+}
+
+// TestResetCmd_SweepsTheServerADaemonWouldPin: reset sweeps the tmux server
+// the last daemon used while it runs, whatever this environment selects
+// (LOOM_TMUX_SOCKET here names another), and decides nesting on it. Run
+// after a `loom serve stop` from another environment, it found none of
+// the workspace's sessions, then deleted the worktrees under live agents.
+func TestResetCmd_SweepsTheServerADaemonWouldPin(t *testing.T) {
+	isolateLoomEnv(t)
+	t.Cleanup(func() { resetForceFlag = false })
+	sock := startTmuxServer(t)
+	lastDaemonOn(t, sock)
+	asked := stubNesting(t, nil)
+	wt := globalWorktree(t, "busy_18d7")
+	fake := &resetTmux{listing: "loom_busy\t" + wt + "\n"}
+	stubResetTmux(t, fake)
+
+	_ = captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"reset", "--force"})
+		require.NoError(t, rootCmd.Execute())
+	})
+
+	assert.Equal(t, []string{sock}, *asked, "the guard is decided on the server swept")
+	require.NotEmpty(t, fake.commands)
+	for _, args := range fake.commands {
+		assert.True(t, slices.Equal([]string{"tmux", "-S", sock}, args[:3]), "on the last daemon's server: %q", args)
+	}
+	assert.Equal(t, []string{"=loom_busy"}, fake.killed)
+}
+
 func TestDebugCmd_ReportsIsolationKnobs(t *testing.T) {
 	isolateLoomEnv(t)
 	t.Setenv(tmux.EnvTmuxSocket, "loomdev-probe")
@@ -119,11 +203,13 @@ func TestDebugCmd_ReportsIsolationKnobs(t *testing.T) {
 }
 
 // TestDebugCmd_ReportsTheDaemon: debug names the daemon holding the global
-// dir's lock, and where it listens.
+// dir's lock, where it listens and the tmux server its TUIs use.
 func TestDebugCmd_ReportsTheDaemon(t *testing.T) {
 	isolateLoomEnv(t)
 	stubNesting(t, nil)
-	holdLock(t, daemon.Record{PID: 4242, Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1 ad199a3"})
+	// A server no one runs: debug probes it (daemon.TmuxServer).
+	server := filepath.Join(t.TempDir(), "tmux-1000", "default")
+	holdLock(t, daemon.Record{PID: 4242, Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1 ad199a3", Tmux: server})
 
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"debug"})
@@ -131,7 +217,26 @@ func TestDebugCmd_ReportsTheDaemon(t *testing.T) {
 	})
 
 	assert.Contains(t, out, "Daemon: pid 4242")
-	assert.Contains(t, out, "socket /run/user/1000/loom/abc.sock, build v0.13.1 ad199a3")
+	assert.Contains(t, out, "socket /run/user/1000/loom/abc.sock, build v0.13.1 ad199a3, tmux server "+server+" (its TUIs use it)")
+}
+
+// TestDebugCmd_NamesTheServerADaemonWouldPin: the tmux server debug names
+// is the one a daemon started now would use, the last daemon's while it
+// runs, not the one this environment selects; the nesting guard is
+// decided on it, as `loom serve`'s is.
+func TestDebugCmd_NamesTheServerADaemonWouldPin(t *testing.T) {
+	isolateLoomEnv(t)
+	sock := startTmuxServer(t)
+	lastDaemonOn(t, sock)
+	asked := stubNesting(t, nil)
+
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"debug"})
+		require.NoError(t, rootCmd.Execute())
+	})
+
+	assert.Contains(t, out, "Tmux server: "+sock+" (")
+	assert.Equal(t, []string{sock}, *asked)
 }
 
 // holdLock holds the global dir's lock with rec, as a running daemon (or
@@ -190,21 +295,27 @@ func TestStateWriters_RefuseWhileTheDaemonRuns(t *testing.T) {
 
 // resetTmux is a fake tmux for reset: the sweep's "ls" answers listing (or
 // listErr), and every kill-session is recorded and answered with killErr.
+// It records every command's arguments.
 type resetTmux struct {
-	listing string
-	listErr error
-	killErr error
-	killed  []string
+	listing  string
+	listErr  error
+	killErr  error
+	killed   []string
+	commands [][]string
 }
 
 func (r *resetTmux) Run(c *exec.Cmd) error {
+	r.commands = append(r.commands, c.Args)
 	if slices.Contains(c.Args, "kill-session") {
 		r.killed = append(r.killed, c.Args[len(c.Args)-1])
 		return r.killErr
 	}
 	return nil
 }
-func (r *resetTmux) Output(c *exec.Cmd) ([]byte, error)         { return []byte(r.listing), r.listErr }
+func (r *resetTmux) Output(c *exec.Cmd) ([]byte, error) {
+	r.commands = append(r.commands, c.Args)
+	return []byte(r.listing), r.listErr
+}
 func (r *resetTmux) CombinedOutput(c *exec.Cmd) ([]byte, error) { return r.Output(c) }
 
 func stubResetTmux(t *testing.T, fake *resetTmux) {

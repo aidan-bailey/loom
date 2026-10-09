@@ -451,24 +451,37 @@ func (w *createWatch) Create(id core.WorkspaceID, spec core.NewInstance, req cor
 // names a directory from where the user runs loom, so the TUI makes it
 // absolute before the Create: the model, in the daemon, would resolve it
 // against the daemon's working directory, which some other client's
-// terminal may have set.
+// terminal may have set. A leading "~" is the user's home, as a shell
+// would expand it, not a directory named "~" there.
 func TestScriptNewInstance_ARelativePathIsTheTUIs(t *testing.T) {
-	m := homeWithAppState(t)
-	watch := &createWatch{Core: m.core}
-	testStacks.Store(core.Core(watch), stackOf(m))
-	t.Cleanup(func() { testStacks.Delete(core.Core(watch)) })
-	m.core = watch
-	withScript(t, m, `cs.bind("Z", function(ctx)
-  ctx:new_instance{title = "scripted", path = "sub/repo"}
-end)`)
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for path, want := range map[string]string{
+		"sub/repo":  filepath.Join(cwd, "sub", "repo"),
+		"~/proj":    filepath.Join(home, "proj"),
+		"~":         home,
+		"~user/x":   filepath.Join(cwd, "~user", "x"),
+		"/abs/repo": "/abs/repo",
+	} {
+		t.Run(path, func(t *testing.T) {
+			m := homeWithAppState(t)
+			watch := &createWatch{Core: m.core}
+			testStacks.Store(core.Core(watch), stackOf(m))
+			t.Cleanup(func() { testStacks.Delete(core.Core(watch)) })
+			m.core = watch
+			withScript(t, m, `cs.bind("Z", function(ctx)
+  ctx:new_instance{title = "scripted", path = "`+path+`"}
+end)`)
 
-	done := runKey(t, m, "Z")
+			done := runKey(t, m, "Z")
 
-	require.NoError(t, lastErr(t, done))
-	require.Len(t, watch.specs, 1)
-	assert.Equal(t, filepath.Join(cwd, "sub", "repo"), watch.specs[0].Path, "the model is sent the TUI's absolute path")
+			require.NoError(t, lastErr(t, done))
+			require.Len(t, watch.specs, 1)
+			assert.Equal(t, want, watch.specs[0].Path, "the model is sent the TUI's absolute path")
+		})
+	}
 }
 
 // TestScriptSnapshot_LeavesOutTheDraftRow: a creation flow's draft is a

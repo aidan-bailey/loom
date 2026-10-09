@@ -3,10 +3,22 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"syscall"
 )
+
+// recordPath is where globalDir's lock record lives: in the lock file
+// itself, where a loom TUI from before the daemon wrote its own (flock is
+// advisory, so the file stays readable while it is held).
+func recordPath(globalDir string) string { return LockPath(globalDir) }
+
+// alive reports whether a process pid exists.
+func alive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
 
 // detach makes cmd a session leader of its own, so the daemon outlives the
 // terminal and the client that started it.

@@ -157,7 +157,7 @@ func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices
 	}
 	if !ok {
 		stopCore()
-		return nil, fmt.Errorf("initialize storage: the %s workspace could not be loaded (see loom.log)", labelOf(startupName))
+		return nil, fmt.Errorf("initialize storage: the %s workspace could not be loaded (see serve.log)", labelOf(startupName))
 	}
 	h.id, h.info = classic.ID, classic
 	if startupName != "" {
@@ -187,10 +187,10 @@ func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices
 	willRestoreSlots := len(savedOpen) > 0 && pendingDir == ""
 
 	h.accountStrip = ui.NewAccountStrip()
-	// The published state (the account strip's), then the boot's notices
-	// (the account registry's: a load error, loom running as an account),
-	// land before the startup open's, as they did when the TUI loaded the
-	// account registry itself.
+	// The published state (the account strip's, and the warning that loom
+	// runs as an account), then the boot's notices (the account registry's
+	// load error), land before the startup open's, as they did when the TUI
+	// loaded the account registry itself.
 	h.initCmd = tea.Batch(h.initCmd, h.drainCore())
 	for _, ev := range notices {
 		h.initCmd = tea.Batch(h.initCmd, h.applyCoreEvent(ev))

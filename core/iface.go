@@ -86,12 +86,14 @@ type Core interface {
 	// with.
 	RCAuth() session.RemoteControlAuth // rpc:local
 
-	// GitHub: the poll's results, and a poll sooner.
+	// GitHub: the poll's results, a poll sooner, and a repository the
+	// poll covers from now on.
 	GitHubSnapshot(repo string) (github.Snapshot, bool) // rpc:local
 	GitHubErr(repo string) error                        // rpc:local
 	GitHubUnavailable() bool                            // rpc:local
 	GitHubUnavailableReason() string                    // rpc:local
 	ExpediteGitHub()                                    // rpc:cast
+	WatchGitHub(repo string)                            // rpc:cast
 
 	// Accounts: the registry, each account's auth, sync, usage and env,
 	// and the account requests.
@@ -106,6 +108,7 @@ type Core interface {
 	AccountEnv(name string) ([]string, error)           // rpc:local
 	ClaudeProgram() string                              // rpc:local
 	CredentialOverride() string                         // rpc:local
+	RunningAsAccount() string                           // rpc:local
 	ReloadAccounts()
 	RequestAccountsRefresh(withDefault bool) // rpc:cast
 	RequestUsageProbe()                      // rpc:cast
