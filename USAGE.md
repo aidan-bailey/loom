@@ -28,6 +28,7 @@ Loom lets you run multiple AI coding agents (Claude Code, Aider, Codex, Amp) sim
 | **Worktree** | An isolated git checkout where the agent works without affecting your main branch |
 | **Workspace** | A registered git repository with its own configuration and session storage |
 | **Profile** | A named program configuration (e.g. "claude-fast", "aider-gpt4") |
+| **Daemon** | The background process (`loom serve`) that owns every session. `loom` starts it when none runs, and it keeps running after you quit (see [The Loom Daemon](#the-loom-daemon)) |
 
 ---
 
@@ -490,29 +491,81 @@ Select session → D → y (confirm)
 
 Destroys the tmux session, removes the worktree, and deletes the branch (unless it was pre-existing). This is irreversible.
 
-### Move to Another Terminal (takeover)
+### The Loom Daemon
 
-Only one Loom TUI runs at a time. Two would overwrite each other's
-session records. If you start Loom while another is still running, on
-your desktop say, with this one over SSH from a laptop, it asks first:
+Your sessions belong to a background process, the loom daemon
+(`loom serve`), not to the loom you are looking at. The first `loom` you
+start launches it, and it keeps running after you quit, until you stop
+it. There is one daemon per global config folder (`~/.loom`, or
+`LOOM_GLOBAL_DIR`). While it starts, which loads every workspace, loom
+says `loom: waiting for the loom daemon (it loads every workspace as it
+starts)…`.
 
-```
-loom (pid 3713275 on /dev/pts/2, since 06:23) is already running, and two looms overwrite each other's sessions.
-Take over? It will save and quit. [y/N]
-```
+- **Several terminals at once.** Start loom in as many terminals as you
+  like, on your desktop and over SSH from a laptop, say. Each one is a
+  client of the same daemon: they show the same sessions, and what one
+  does, the others see. Each keeps its own tabs and selection. A tmux
+  window takes the size of whichever terminal used it last.
+- **Quitting** (`q`) closes only this loom. Your agents keep running, and
+  the daemon keeps watching them: it pauses an agent that exits, restarts
+  a workspace terminal that dies, polls GitHub, and saves.
+- **Stopping the daemon**: `loom serve stop`. The daemon finishes any
+  pause or kill in progress (up to 30 seconds), saves and exits. Your
+  agents keep running in tmux. Every open loom then prints `loom: the
+  daemon stopped (see ~/.loom/logs/serve.log); your sessions keep running.
+  Run loom again.` and exits, and the next `loom` starts a new daemon,
+  which picks the sessions back up. A daemon that crashes ends the same
+  way. Don't run `loom serve stop` from inside one of loom's own panes
+  unless you mean it: it stops the daemon every open loom uses.
+- **Upgrading.** A newer loom replaces an older daemon with its own build
+  (`loom: replacing the loom daemon (…) with this build…`), and a loom of
+  the old build still open exits as above. An older loom refuses a newer
+  daemon (`the loom daemon is …, newer than this loom (…): upgrade loom,
+  or run loom serve stop`). Of two builds of one release, the one of the
+  later commit is newer; a build that names no commit (a plain `go build`
+  from a source tarball) keeps the daemon that runs, so run
+  `loom serve stop` to switch to it. A Nix build of loom names the commit
+  it was built from, so a newer one replaces the daemon as a release does.
+  A loom started inside one of loom's own tmux sessions never replaces the
+  daemon: run the new loom from an ordinary terminal, or stop the daemon
+  first.
+- **The daemon's environment** is the one it started with: that of the
+  terminal or SSH login whose `loom` launched it. It decides what your
+  agents get for `SSH_AUTH_SOCK`, `DISPLAY` and the like (the rest of
+  their environment is the tmux server's), the Claude
+  credential warning (see [Run Sessions on Several Claude
+  Accounts](#run-sessions-on-several-claude-accounts)), and where Claude's
+  temp directories are looked for. Starting loom later from another
+  terminal changes none of it. To pick up a new environment (a new SSH
+  agent, say), run `loom serve stop`, then start loom from the terminal
+  you want. The shell in the terminal pane is the exception: the loom you
+  are looking at starts it, with its own `SSH_AUTH_SOCK`, `DISPLAY` and
+  the like.
+- **Where it lives.** While it runs, the daemon holds `~/.loom/loom.lock`
+  (with its pid, socket and build, which `loom debug` prints), listens on
+  a private socket (in `$XDG_RUNTIME_DIR/loom/`, else `~/.loom/run/`,
+  else `loom-<uid>/` in the temp dir), and logs to
+  `~/.loom/logs/serve.log`, with a crash it can't log in
+  `serve-crash.log` beside it. If the daemon fails to start, loom prints
+  what it logged.
+- `loom reset` and `loom workspace migrate` write session files
+  themselves, so they refuse while the daemon runs: run
+  `loom serve stop` first.
+- A loom from before the daemon, still running, keeps the daemon from
+  starting: quit it first.
 
-Answer `y` and the running Loom saves and quits, ending a full-screen
-attach if it is in one. Its terminal then reads `loom: saved and quit;
-taken over by …`. Your agents keep running throughout, and the new Loom
-opens with them. To move back, start Loom on the other terminal again.
-If the old one is in an editor or a login, or can't save, the takeover
-times out after 15 seconds and says how to end it.
+You never need to run `loom serve` yourself. Run by hand, it runs the
+daemon in that terminal until `Ctrl-C`, which stops it as `loom serve
+stop` does (a second `Ctrl-C` exits at once, without saving); if a
+daemon already runs, it says so and exits.
 
 ### Session Recovery (orphaned worktrees)
 
 If Loom crashes or its state file loses track of a session, the worktree
-and agent may still exist on disk. On every launch and workspace switch,
-Loom scans `~/.loom/worktrees/` for directories it isn't tracking:
+and agent may still exist on disk. Whenever the daemon starts (and when a
+workspace is registered), Loom scans each workspace's worktrees folder
+(`~/.loom/worktrees/` for the global one) for directories it isn't
+tracking:
 
 - **Stale leftovers** (no live agent, no uncommitted changes) are removed
   automatically. A summary line reports the count — the branch itself is
@@ -530,14 +583,15 @@ For a `⟲` entry you have two choices:
 - `D` — **discard**: remove the worktree. Uncommitted changes are lost,
   but the branch is kept, so committed work survives.
 
-Unactioned `⟲` entries are re-derived from disk and will reappear on the
-next launch until you recover or discard them.
+Unactioned `⟲` entries are re-derived from disk and will reappear the
+next time the daemon starts until you recover or discard them.
 
-If a stored session fails to load at startup (e.g. its repo moved), it is
-**not** deleted: the record is kept on disk and retried on every launch,
-and the startup summary reports "N sessions failed to load (kept; see
-loom.log)". Check the log for the reason; the record lives in
-`instances.json` until the underlying problem is fixed.
+If a stored session fails to load (e.g. its repo moved), it is **not**
+deleted: the record is kept on disk and retried each time the daemon
+starts, and the workspace's recovery summary reports "N sessions failed
+to load (kept; see serve.log)". The reason is in the daemon's log,
+`~/.loom/logs/serve.log`; the record stays in the workspace's
+`state.json` until the underlying problem is fixed.
 
 **Stashes on pause/resume**: pausing stashes uncommitted work
 (`[loom] stash from '<title>' …` in `git stash list`); resuming re-applies
@@ -585,12 +639,19 @@ shell instead; `loom account login <name>` for a specific account is
 unaffected.
 
 Account selection needs `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and
-`CLAUDE_CODE_OAUTH_TOKEN` unset in the environment loom itself runs in —
-Claude checks those before ever reading a config dir's own login, so with
-one set every account silently runs and bills as that credential no
-matter which one you pick. The usage strip and **Settings → Accounts** both warn "`⚠ $VAR set: all
-accounts use it`" when this is the case, and `loom account
-add`/`login`/`list` print the same warning.
+`CLAUDE_CODE_OAUTH_TOKEN` unset in the loom daemon's environment (the
+terminal it was started from; see [The Loom Daemon](#the-loom-daemon))
+and in tmux's — Claude checks those before ever reading a config dir's
+own login, so with one set every account silently runs and bills as that
+credential no matter which one you pick. The usage strip and **Settings →
+Accounts** both warn "`⚠ $VAR set: all accounts use it`" when the
+daemon's environment has one, and `loom account add`/`login`/`list`
+print the same warning for the shell you run them in. Your agents get
+these variables from the tmux server's environment, which is the
+daemon's only when the daemon started that tmux server: if loom runs on
+a tmux server you started yourself, unset them there too
+(`tmux set-environment -g -u ANTHROPIC_API_KEY`, say), since the warning
+can't see that environment.
 
 **Known limitations**: the terminal pane (the shell below the agent pane)
 always runs on the default account, whichever account the agent is on; an
@@ -627,7 +688,7 @@ loom [command]
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--program <prog>` | `-p` | Program to run in new sessions (e.g. `aider --model gpt-4`) |
+| `--program <prog>` | `-p` | Program this loom's new sessions run (e.g. `aider --model gpt-4`); other open looms keep their own |
 | `--workspace <name>` | `-w` | Select workspace by name (bypasses auto-detection) |
 
 ### Commands
@@ -635,8 +696,10 @@ loom [command]
 | Command | Description |
 |---------|-------------|
 | `version` | Print version number |
-| `debug` | Print config paths and loaded configuration |
-| `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**. Stops before removing worktrees if the tmux cleanup fails. |
+| `debug` | Print config paths and loaded configuration, the daemon (pid, socket, build and tmux server, or "not running") and its log, and the tmux server a daemon started now would use (the last daemon's while it runs). Its Claude temp root is the one your shell's environment gives, not necessarily the daemon's |
+| `serve` | Run the loom daemon in this terminal (loom starts one in the background when none runs; see [The Loom Daemon](#the-loom-daemon)) |
+| `serve stop` | Stop the daemon: it finishes any pause or kill in progress, saves and exits. Sessions keep running; every open loom exits |
+| `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions (on the tmux server the last daemon used, while it runs) — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**. Stops before removing worktrees if the tmux cleanup fails. Refused while the daemon runs (`loom serve stop` first). |
 | `workspace` | Manage workspaces (see below) |
 
 ### Workspace Subcommands
@@ -650,7 +713,7 @@ loom [command]
 | `workspace use <name>` | Set the default workspace |
 | `workspace rename <old> <new>` | Rename a workspace |
 | `workspace status [name]` | Show instance counts (defaults to CWD workspace) |
-| `workspace migrate` | Move global instances to their matching workspace directories |
+| `workspace migrate` | Move global instances to their matching workspace directories (refused while the daemon runs) |
 
 ### Examples
 
@@ -735,7 +798,7 @@ Layout tweaks are remembered per workspace in `state.json` (under a `ui` block):
 
 When `claude_remote_control` is enabled (the default), every Claude session Loom starts is launched with Claude's `--remote-control` flag, so you can drive it from a remote-control client. The remote session is named after the Loom session title (sanitized to a shell-safe token — e.g. `fix login bug` → `fix-login-bug`), making parallel sessions easy to tell apart. The flag is only added for the `claude` program; other agents are unaffected. To turn it off globally, set `"claude_remote_control": false`. If your `default_program` already includes `--remote-control`, Loom leaves it as-is rather than adding a second flag.
 
-**Authentication requirement.** Remote control requires a claude.ai OAuth login (Pro/Max/Team/Enterprise). API keys, Console accounts, and inference-scoped `setup-token`s cannot use it — nor can a login that's overridden by an `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` environment variable. Loom probes `claude auth status` once at startup:
+**Authentication requirement.** Remote control requires a claude.ai OAuth login (Pro/Max/Team/Enterprise). API keys, Console accounts, and inference-scoped `setup-token`s cannot use it — nor can a login that's overridden by an `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` environment variable. The loom daemon probes `claude auth status` when it starts:
 
 - **Logged in via claude.ai** → sessions launch with `--remote-control`.
 - **Incompatible auth detected** → when you create a session (`n`/`N`), Loom shows a modal explaining the problem (e.g. "not logged in — run `claude auth login`") and lets you **start the session without remote control** (`y`) or **cancel** (`n`/`esc`). Auto-created workspace terminals skip the flag silently and show a brief info-bar notice.
@@ -748,7 +811,7 @@ Loom shows the subagents and agent-team teammates a Claude session has spawned: 
 - Toggle the rows with **Track Subagents** under `S` → Claude Preferences. It is on by default and applies at once; the hooks stay installed either way, so turning it back on shows the current agents.
 - Only live agents are shown. A finished subagent disappears; a teammate stays listed as idle until it is shut down.
 - Sessions whose program already passes `--settings`, and sessions on Windows, get no hooks: they show no subagent rows, and their status comes from Claude's session list and the screen.
-- Restarting loom keeps the rows: loom replays the events it already collected for sessions that are still running.
+- Restarting the daemon keeps the rows: it replays the events it already collected for sessions that are still running.
 - Event files live in the `hooks/` folder inside the workspace's loom config folder: `<repo>/.loom/hooks/` for a registered workspace, otherwise `~/.loom/hooks/`. They are cleared at each launch and removed when you kill the session.
 
 ### Claude Temp-Dir Archives
@@ -764,7 +827,7 @@ Claude Code keeps a temp directory for every session, outside the worktree: `/tm
   { "claude_tmp_archive_dir": "~/claude-archives" }
   ```
 
-  Every workspace's archives then go under that folder, each workspace in its own subfolder named after its loom config folder (e.g. `~/claude-archives/home-you-projects-my-app--loom/`). It applies to the next archive, no restart needed. Archives already made stay where they are, and a session paused before the change still gets its scratchpad back on resume. A relative path is ignored (with a warning in `loom.log`). A workspace's own `config.json` doesn't set this. `loom debug` prints the temp root and the archive folder in effect.
+  Every workspace's archives then go under that folder, each workspace in its own subfolder named after its loom config folder (e.g. `~/claude-archives/home-you-projects-my-app--loom/`). It applies to the next archive, no restart needed. Archives already made stay where they are, and a session paused before the change still gets its scratchpad back on resume. A relative path is ignored (with a warning in the daemon's log, `serve.log`). A workspace's own `config.json` doesn't set this. `loom debug` prints the archive folder in effect, and the temp root your shell's environment gives: the daemon uses the one its own environment gives (see [The Loom Daemon](#the-loom-daemon)).
 - Directories marked with a valid `CACHEDIR.TAG` (cargo's `target/`, for example) are left out; the archive's `.loom-archive.json` lists what was skipped and how big it was. Symlinks are stored as links.
 - Loom never deletes an archive. Prune `archive/claude-tmp/` by hand when you no longer need them. To look inside one: `unzip -l <file>.zip`.
 
@@ -774,7 +837,7 @@ Every Claude session Loom starts runs Claude's fullscreen renderer (Loom sets `C
 
 - Sessions started before this change keep their renderer until Loom restarts their tmux session; run `/tui fullscreen` inside one to switch it now.
 - To use the classic renderer for a single session anyway, run `/tui default` in it.
-- To opt out globally, run `tmux set-environment -g CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN 1`; Claude checks it before `CLAUDE_CODE_NO_FLICKER`. It applies to sessions created afterwards, and agent-pane scrolling won't work in them. Exporting the variable in the shell you start Loom from isn't enough when the tmux server is already running: tmux only copies its `update-environment` variables into new sessions.
+- To opt out globally, run `tmux set-environment -g CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN 1`; Claude checks it before `CLAUDE_CODE_NO_FLICKER`. It applies to sessions created afterwards, and agent-pane scrolling won't work in them. Exporting the variable in the shell you start Loom from isn't enough: the loom daemon starts the sessions, with the environment it started with, and once the tmux server is running tmux only copies its `update-environment` variables into new sessions.
 
 ### Branch Prefix
 
@@ -808,9 +871,9 @@ This setting only affects sessions created on a **new** branch. Picking an exist
 | Variable | Description |
 |----------|-------------|
 | `LOOM_HOME` | Override the config directory (default: `~/.loom`). Must be an absolute path; supports `~` expansion. |
-| `LOOM_TMUX_SOCKET` | Run all of loom's tmux commands against a private server (`tmux -L <name>`). |
-| `LOOM_GLOBAL_DIR` | Override the directory holding `workspaces.json` (default: `~/.loom`). Absolute path; supports `~`. |
-| `LOOM_ALLOW_NESTED` | Set to `1` to start loom inside one of its own tmux sessions anyway (normally refused, because startup cleanup would kill the enclosing loom's sessions). |
+| `LOOM_TMUX_SOCKET` | Run loom's sessions on a private tmux server (`tmux -L <name>`). It is read when a daemon starts (a daemon keeps the tmux server the last one used while that server runs); every loom then uses the daemon's server, whatever its own environment says. Inside one of loom's own tmux sessions it doesn't let a daemon start: for a dev build, use `go run ./tools/loomdev run`. |
+| `LOOM_GLOBAL_DIR` | Override the directory holding `workspaces.json` (default: `~/.loom`). Absolute path; supports `~`. Each global directory has its own daemon. |
+| `LOOM_ALLOW_NESTED` | Set to `1` to let the daemon start (or `loom reset` run) inside one of loom's own tmux sessions on the tmux server it would use anyway (normally refused, because its startup cleanup could kill the enclosing loom's sessions). A loom started inside loom still never replaces an older daemon. |
 
 ---
 
@@ -825,6 +888,8 @@ Workspaces provide per-repository isolation. Each workspace gets its own config,
   config.json
   state.json
   workspaces.json                    ← Workspace registry
+  loom.lock                          ← The daemon's lock (its pid, socket and build)
+  logs/serve.log                     ← The daemon's log
   worktrees/
 
 ~/projects/my-app/.loom/     ← Workspace-scoped

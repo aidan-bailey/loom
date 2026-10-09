@@ -49,7 +49,7 @@ without a client starting the daemon.
 | 4 | **The boundary is a Go interface,** `core.Core`, with an in-process and a socket-backed implementation. Clients never call `session` lifecycle methods. |
 | 5 | **Transport:** newline-delimited JSON over a unix socket, request/reply with ids plus server-pushed events. No gRPC. |
 | 6 | **Status comes from roster and hooks,** which need no pane. The TUI keeps its content-scrape ladder as a display-only fallback and sends the daemon nothing from the pane. |
-| 7 | **Version mismatch: the newer side wins.** A newer client asks the daemon to exit and spawns its own build; a newer daemon tells an older client to upgrade. |
+| 7 | **Version mismatch: the newer side wins.** A newer client asks the daemon to exit and spawns its own build; a newer daemon tells an older client to upgrade. (Amended 2026-10-09 by stage 3B: the client stops the daemon with a signal, not a request, and compares builds itself; see §6.) |
 | 8 | **Strangler migration** in four shippable stages. The model loop moves out of the TUI first, in-process; the socket is the last step. |
 
 Rejected:
@@ -84,6 +84,22 @@ own tmux server. Beside the socket it holds an exclusive `flock` on
 process dies, so two daemons can never own one config dir, and a stale
 socket is told from a live one by whether the lock is free.
 
+(Amended 2026-10-09 by stage 3B, as built in `internal/daemon`: the lock
+is `<globalDir>/loom.lock`, not beside the socket, since a lock under
+`$XDG_RUNTIME_DIR` would let a client without that variable start a
+second daemon; it is also the file the retired takeover lock used, so a
+loom from before the daemon and a daemon exclude each other. The lock
+file carries the holder's record (pid, tty, start time, socket, build,
+host, tmux server; on Windows, whose lock is mandatory, in
+`loom.lock.json` beside it), and clients dial the socket the record
+names rather than derive it, since their environment may differ from
+the daemon's. The socket is `$XDG_RUNTIME_DIR/loom/<hash>.sock`, else
+`<globalDir>/run/serve.sock` when that path fits a socket address
+(100 bytes), else `loom-<uid>/<hash>.sock` in the temp dir, each in a
+0700 directory the user owns, the socket 0600. A daemon that finds its
+socket file gone or replaced (a runtime dir removed at logout) listens
+again wherever there is room and rewrites the record.)
+
 At start it loads every registered workspace and the global context, and
 for each runs what the TUI runs today on activation: `LoadAndReconcile`,
 `reconcileOrphans`, the orphan tmux sweep and the hooks sweep. Then it
@@ -93,19 +109,35 @@ the only process that writes `state.json` and the only one that creates,
 pauses, resumes, kills, recovers or relaunches a session. It daemonizes
 (a new session via `setsid`, stdio to `/dev/null`, logs to
 `logs/serve.log`) and exits only on `loom serve stop`, a mismatch request
-(§6) or a signal.
+(§6) or a signal. (Amended 2026-10-09 by stage 3B: it exits on SIGTERM,
+SIGINT or SIGHUP, which is what `loom serve stop` and a newer client
+send; the first signal stops it gracefully (§6); a Ctrl-C meanwhile exits
+at once, and another SIGTERM is only logged, since two clients replacing
+it together each send one. It also exits, without saving, when its model fails; the next
+client starts a fresh one. A runtime crash it can't log goes to
+`logs/serve-crash.log`. It starts in the global dir, never the spawning
+client's directory.)
 
 **`loom`, the TUI, a client.** It dials the socket. If nothing answers
 and the lock is free, it spawns `loom serve` detached and retries for a
 bounded time. It renders, takes keys, runs the Lua engine and the
 overlays, and attaches preview PTYs straight to tmux as today. Every
 lifecycle key becomes a request. Its open tabs are a view preference the
-daemon stores in the registry but does not act on.
+daemon stores in the registry but does not act on. (Amended 2026-10-09 by
+stage 3B: it targets the daemon's tmux server, which the daemon names in
+its hello, whatever its own environment would pick. When the daemon goes
+away under it, it restores the terminal, says the daemon stopped and that
+the sessions keep running, and exits: the user's decision, with live
+reconnect left to a stage after 3B.)
 
 **Subcommands, clients.** `loom work …` (the agent CLI), `loom reset`,
 `loom workspace …` and `loom account …` send requests instead of loading
 `state.json` or the registries themselves. `loom version` and
-`loom debug` stay direct; they read files only.
+`loom debug` stay direct; they read files only. (Amended 2026-10-09 by
+stage 3B: the subcommands become clients in 3C. Until then `loom reset`
+and `loom workspace migrate`, which write `state.json` themselves,
+refuse while any process holds the lock, and `loom debug` reports the
+daemon from its lock record.)
 
 ### 2. The `Core` interface
 
@@ -150,7 +182,8 @@ dotted names this section's grouping suggested.) Grouped:
   since `claude auth login` needs the terminal.
 - *Work log:* append, read board, read entries since an offset (the
   scrum spec).
-- *Daemon:* version, stop, reload registry.
+- *Daemon:* version, stop, reload registry. (As built in 3B, the version
+  is the hello's and stop is a signal, §6; `ReloadRegistry` is a request.)
 
 A long operation (kill, resume, recover) replies when it finishes, as
 the TUI's completion messages land today. The reply names the instance by
@@ -240,8 +273,20 @@ to view state: list widget, panes, workbench, cursor. Its
   `s` still pauses, as a request.
 - The nesting guard moves to `loom serve`: a daemon started inside a
   `loom_*` tmux session without its own socket refuses. A TUI inside one
-  is fine; it no longer sweeps.
+  is fine; it no longer sweeps. (Amended 2026-10-09 by stage 3B, as
+  built: `loom reset` keeps the guard too, and a daemon spawned on demand
+  logs its refusal to `serve.log`, which the client quotes. A TUI inside
+  a loom session joins its global dir's daemon, but never replaces one
+  that is older: a loom built in a worktree and run in an agent's pane
+  would otherwise stop the user's daemon. That refusal has its own check
+  (a `loom_*`/`claudesquad_*` session on the daemon's tmux server), which
+  `LOOM_TMUX_SOCKET` and `LOOM_ALLOW_NESTED` do not bypass. The nesting
+  guard itself is decided on the tmux server the daemon, or `reset`, is
+  about to pin, the last daemon's while it runs, not on "its own socket":
+  a private socket the pin ignores no longer waves a daemon through, and
+  `reset` sweeps that server.)
 - `loom reset` becomes a request, so its sweep runs against loaded state.
+  (Stage 3C; until then it refuses while the daemon runs.)
 - Status bar warnings and notices become `notice` events the TUI shows.
 - The TUI's pane-driven status ladder (`statusDetectedMsg`,
   `maybeRedetect`) stays, but as a display overlay used only when the
@@ -278,6 +323,12 @@ and result and every event, is
   no reply. An **event** is named by its Go type (`core.EventTypes()`).
   A **fatal** frame says the model is gone (it panicked, or an event
   would not encode), and the client re-raises it on every later call.
+  (Amended 2026-10-09 by stage 3B: a daemon's client panics nowhere; it
+  reports the loss, as it does a lost connection, and the TUI exits
+  cleanly (§1). An in-process client still re-raises it. The daemon exits
+  on a fatal error. A notice that reaches no client, raised while none is
+  connected or a request's whose client has gone with no other connected,
+  is kept for the next connection, the newest 50 at most.)
 - The server publishes after every request and before queueing its
   reply, so a request's events reach the client ahead of its reply.
   Casts publish nothing. A client is sent the whole published state
@@ -292,7 +343,14 @@ and result and every event, is
 - The **first frame** from each side is a `hello` carrying `protocol`
   (an integer, bumped on any incompatible change) and `build` (the
   binary's version and commit). The daemon answers `hello` or
-  `mismatch` (§6).
+  `mismatch` (§6). (Amended 2026-10-09 by stage 3B: the hello also
+  carries optional fields to compare builds by, `version`, `time`,
+  `modified`, `exe` (the executable's hash) and `exe_time`, and, from a
+  server, `tmux`, the tmux server its sessions run on. The server sends
+  its hello first, even to a client of another protocol, before answering
+  it `mismatch`, so every client learns the server's build. A peer that
+  says no hello within 10s is dropped. `protocol` stays 2: every addition
+  is optional.)
 - Errors carry a `code` (`not_found`, `refused`, `busy`, `storage`,
   `mismatch`, `internal`) and a message meant for the user, since the TUI
   shows it verbatim and the agent CLI prints it to stderr. (As built in
@@ -334,6 +392,28 @@ The daemon takes the lock before anything else, writes its pid into the
 lock file for `loom debug`, binds the socket with mode `0600`, and only
 then loads state.
 
+(Amended 2026-10-09 by stage 3B, as built in `internal/daemon`. The
+client derives nothing: it reads the lock's record (§1). A record with a
+socket is a daemon that listens, and the client dials it. One with a
+build but no socket is a daemon still booting, which the client waits
+for, past its 20s timeout up to 3 minutes while that daemon lives, since
+a boot relaunches every dead agent before it listens. A record of a loom
+from before the daemon is refused while its pid lives. With no holder the
+client spawns `loom serve` detached (a new session, stdio to
+`/dev/null`, the global dir as its working directory, the client's
+environment) and redials with a backoff; the spawner takes no lock, so
+two clients starting at once may spawn two daemons, and the second
+stands down at once on finding a live daemon's lock (it waits only for a
+lock no live loom holds), and both clients dial the first. A daemon that
+exits before it listens fails the connect at once, quoting what it wrote
+to `serve.log` and `serve-crash.log`; one that stood down for a daemon
+gone since is followed by another spawn, three at most. The daemon takes
+the lock, finds the socket's place, boots, and only then listens and
+writes the socket into its record: a socket that answers is a daemon
+that is ready, and the stale socket file a killed daemon left is replaced
+when the next one listens. After 750ms of waiting the client says it is
+waiting for the daemon to load its workspaces.)
+
 ### 6. Version handshake
 
 Both `hello` frames carry `protocol` and `build`. The rule is **the
@@ -352,25 +432,58 @@ runs against a stale daemon:
   same version compare by commit time, and a `vcs.modified` build counts
   as newer than a clean one at the same commit.
 
+(Amended 2026-10-09 by stage 3B, as built. **Stopping is a signal**, not
+a `daemon.stop` request: the client sends SIGTERM to the pid in the
+lock's record, after checking the record's host and that the pid's
+arguments say `serve`, so a newer client can stop a daemon of any
+protocol. The daemon then stops accepting, waits up to 30s for the
+lifecycle jobs in flight (a pause mid-stash), saves every workspace and
+exits; the client waits for the process to go, then connects again,
+which spawns its own build. The server's hello comes first, even on a
+protocol mismatch, so the client always knows the daemon's build.
+**Build identity** (`rpc.CompareBuilds`): the same executable (its
+SHA-256, `exe`) is the same build; otherwise the higher version, then
+the later commit time, then a modified tree over a clean one, then the
+higher protocol (a daemon that sent no hello is older), then, only when
+both name their commit time, the newer executable (`exe_time`), so a dev
+build rebuilt at one commit replaces its sandbox's daemon. A field
+either side lacks decides nothing, nor does an `exe_time` at or before
+1970-01-01T00:00:01Z (a Nix store's), and a full tie is the same build:
+two installs of one release keep whichever daemon runs. A Nix build has
+no VCS stamp, so the flake stamps its commit time (`self.lastModified`)
+at link time; a build that names no commit at all (a plain `go build`
+from a tarball) keeps a daemon of its release, and `loom serve stop`
+switches. A replacing client stops only the daemon it compared, by its
+pid, never one another client started meanwhile. A client replaces a
+daemon once per start, announcing it on stderr, and **never from inside
+loom**: from a loom tmux session on the daemon's own tmux server it
+refuses, and says to run the new loom outside loom or stop the daemon
+first (§3). Windows has no graceful stop, and says so. A TUI of the
+older build still open on a replaced daemon exits cleanly (§1).)
+
 ### 7. Failure handling
 
 | Situation | Behaviour |
 |---|---|
-| No daemon on the socket, lock free | The client spawns one (§5). The spawn is one attempt; a second failure is an error naming `serve.log`. |
-| Socket present, lock free (daemon crashed) | Treated as no daemon: stale socket removed under the lock, new daemon started. Nothing is lost: `state.json` and the work log are on disk, and the new daemon reconciles as startup does today, relaunching dead sessions. |
-| Daemon dies while a TUI is open | The connection drops. The TUI shows a banner, keeps rendering its panes (the PTYs are to tmux), disables lifecycle keys, redials on a backoff, and respawns if the lock is free. On reconnect it resubscribes and re-lists. |
+| No daemon on the socket, lock free | The client spawns one (§5). The spawn is one attempt; a second failure is an error naming `serve.log`. (Amended 2026-10-09 by stage 3B: a daemon that exits before listening fails the connect at once, quoting `serve.log` and `serve-crash.log`; one that stood down for a daemon gone since is followed by another spawn, three at most.) |
+| Socket present, lock free (daemon crashed) | Treated as no daemon: stale socket removed under the lock, new daemon started. (As built in 3B, the new daemon replaces the stale file when it listens, holding the lock.) Nothing is lost: `state.json` and the work log are on disk, and the new daemon reconciles as startup does today, relaunching dead sessions. |
+| Daemon dies while a TUI is open | The connection drops. The TUI shows a banner, keeps rendering its panes (the PTYs are to tmux), disables lifecycle keys, redials on a backoff, and respawns if the lock is free. On reconnect it resubscribes and re-lists. (Amended 2026-10-09 by stage 3B, the user's decision: for now the TUI restores the terminal, prints "loom: the daemon stopped (see <serve.log>); your sessions keep running. Run loom again." and exits, and the next `loom` starts a daemon. Live reconnect is a stage after 3B.) |
 | Daemon dies mid-operation | The operation's state is whatever `session` left on disk, as after a TUI crash today. The next start's reconcile classifies it (`Paused` with an intact tree, orphan, and so on). |
 | Two clients act on one instance | Serialized by the model loop; the second gets a reply reflecting the first ("already killed"). |
 | Version mismatch | §6. |
-| A nested dev loom | `loomdev` sets `LOOM_GLOBAL_DIR`, so the sandbox's daemon owns its own socket, lock, registry and tmux server. The nesting guard refuses a daemon that would share a tmux server with its host. |
+| A nested dev loom | `loomdev` sets `LOOM_GLOBAL_DIR`, so the sandbox's daemon owns its own socket, lock, registry and tmux server. The nesting guard refuses a daemon that would share a tmux server with its host. (Amended 2026-10-09 by stage 3B: and a loom inside a loom session never replaces the host's daemon, whatever its build (§6).) |
 | A workspace fails to load (latched storage) | As today: marked failed, its titles unknown so the sweep skips it, writes refused. Reported as a `notice` and shown in the picker. (Amended 2026-10-08 by stage 3A: the workspace stays served, empty and latched, its error published (`WorkspaceView.LoadErr`); the sweep leaves only its roots out of the owned set and still sweeps every other workspace; every `Open` rereads it from disk. It is not reported as a notice: the boot only logs it (`workspace.load_failed`), and the TUI reads its own failed opens (`failedOpen`), not `LoadErr`, so a failed workspace that isn't in the open list shows nowhere until a client opens it.) |
 | A request names a workspace the daemon hasn't loaded | `not_found`: the registry changed. Clients re-list on `registry changed`. |
 | A slow client | Its queue coalesces state events, so it holds at most one of each kind; replies and other events are never dropped (§4, amended by stage 2). |
 | Reboot | No daemon until the first `loom` start or agent CLI call. A sprint stalls until then. A systemd user unit is a possible later add-on. |
-| `loom serve stop` with sessions running | The daemon saves and exits. Sessions keep running; the next daemon reattaches them. |
+| `loom serve stop` with sessions running | The daemon saves and exits. Sessions keep running; the next daemon reattaches them. (As built in 3B, it first waits up to 30s for lifecycle jobs in flight; every open TUI exits as when the daemon dies.) |
+| The daemon is started from another environment (an SSH login, another tmux server) | (Added 2026-10-09 by stage 3B.) It keeps the last daemon's tmux server (named in the lock's record) while that server runs, so it finds the agents where they run rather than relaunch each on another server. Its environment, frozen when it was spawned, is what the model reads and what the agents' `update-environment` variables come from; a TUI started later from elsewhere changes none of it. |
 
 Logs: the daemon writes `logs/serve.log`, the TUI `logs/loom.log`,
 same rotation, same structured format, `subsystem=rpc` on protocol lines.
+(Amended 2026-10-09 by stage 3B: `serve.log` is in the global dir and is
+not rotated at startup, since a `loom serve` that loses the race for the
+lock would rotate the live daemon's; it rotates as it grows.)
 
 ## Testing
 
@@ -387,11 +500,21 @@ same rotation, same structured format, `subsystem=rpc` on protocol lines.
   throwaway global dir): spawn on demand, stale socket, daemon killed
   under an open TUI and reconnected, two TUIs on one daemon seeing each
   other's kills, mismatch with a fake newer build, `loom serve stop` with
-  live sessions reattached by the next daemon.
+  live sessions reattached by the next daemon. (Amended 2026-10-09 by
+  stage 3B, as built in `e2e/daemon_test.go`: the TUI under a killed
+  daemon exits cleanly rather than reconnect; the suite also covers two
+  TUIs starting at once, a newer build replacing the daemon under an
+  open older TUI, an older build refusing, the daemon outliving its TUI's
+  tmux session (Assumption 1), a same-version rebuild replacing the
+  sandbox daemon, and a stop during a start race. Sessions come back on
+  the same agent process, not paused.)
 - **The TUI** keeps its tests against an in-process `Core` over
   `net.Pipe`, so no test needs a daemon process.
 - `loomdev` grows `serve` awareness: `up` starts the sandbox daemon,
-  `down` stops it.
+  `down` stops it. (As built in 3B: the sandboxed loom starts it, as any
+  loom does; `stop` stops it after the TUI unless `--keep-daemon`,
+  `start --restart` stops both first, `down` stops it before removing the
+  sandbox, and `ls` and `logs` show it.)
 - `CC=clang CGO_ENABLED=1 go test -race ./...`.
 
 `InstanceData` doesn't change; there is no schema bump. `state.json` and
@@ -562,6 +685,34 @@ end:
      to the first client by hand), the sticky fatal, the GitHub poll's
      start directory for the global workspace, and a guard for two
      global dirs that register the same repository.
+
+     Done as one plan
+     ([plan](../plans/2026-10-08-daemon-stage3b-serve.md)): `loom serve`
+     (`internal/daemon`) holds `<globalDir>/loom.lock`, boots the model,
+     and serves any number of TUIs on a private unix socket it records in
+     the lock (§1, §5); `loom serve stop` and a newer client stop it with
+     a signal, after which it waits for lifecycle jobs in flight and saves
+     (§6). Every `loom` is a client: it spawns the daemon when none runs,
+     the newer build wins the handshake, and it pins the daemon's tmux
+     server. The takeover lock is retired, and the nesting guard moved to
+     `loom serve` (§3). The user's decision (2026-10-08): **when the
+     daemon goes away under an open TUI, the TUI restores the terminal,
+     says so and exits; live reconnect is a stage of its own after 3B**
+     (§7). The coordinator's, told to the user without objection: the open
+     list, last-used workspace and UI prefs are shared values, the last
+     writer winning; a TUI quitting saves nothing (the daemon saves on
+     requests, after the changes it makes on its own, and on stop); a
+     notice that reaches no client is kept for the next one, bounded and
+     logged; in global mode GitHub polls the repositories the global
+     sessions run in, plus those a client's issue picker asks for, not a
+     start directory; and a model that fails makes the daemon exit, the
+     next `loom` starting a fresh one (which retires the sticky fatal).
+     The daemon's environment is frozen when it is spawned, so where the
+     model reads its own environment (the credential override, running as
+     an account) it publishes the answer and every client shows the
+     daemon's. Still open: the guard for two global dirs registering one
+     repository, and logging into the default account from a TUI, which
+     uses the TUI's environment.
    - **3C, the subcommands as clients,** plus the duties a daemon has
      with no TUI (trust prompts and hook scans, Assumption 4) and
      unloading a workspace removed or renamed in the registry (until
@@ -590,7 +741,9 @@ The scrum workflow starts after stage 3.
 - A systemd unit (possible add-on).
 - Moving pane rendering into the daemon. Panes attach to tmux directly.
 - Windows: no unix sockets in this design, as there are no hooks or
-  `flock` there already.
+  `flock` there already. (Amended 2026-10-09 by stage 3B: the daemon
+  builds for Windows, which releases ship, with its lock record beside
+  the lock in `loom.lock.json`; it has no graceful stop there.)
 
 ## Assumptions
 
@@ -619,8 +772,8 @@ The scrum workflow starts after stage 3.
 
 | # | Assumption | How |
 |---|---|---|
-| 1 | A detached child started from a TUI process (new session, stdio closed) keeps running after the TUI exits and after its tmux pane closes. | Stage 3's end-to-end test. |
-| 2 | `$XDG_RUNTIME_DIR` is set in the environments loom runs in (a tmux pane under a systemd user session; a plain ssh login may lack it). | Stage 3 falls back to `<globalDir>/run/`; the test covers both. |
-| 3 | The fallback socket path fits `sun_path`: 108 bytes on Linux, 104 on macOS. A deep `LOOM_GLOBAL_DIR`, such as a sandbox under a long temp dir, overflows it, and `connect` fails with "File name too long" (hit while probing for 1A). | Stage 3: hash into a short path, or bind relative to the dir, and test with a 100-byte global dir. |
+| 1 | A detached child started from a TUI process (new session, stdio closed) keeps running after the TUI exits and after its tmux pane closes. | Stage 3's end-to-end test. **Verified 2026-10-09 by stage 3B:** `TestE2E_Daemon_OutlivesItsTUI`. |
+| 2 | `$XDG_RUNTIME_DIR` is set in the environments loom runs in (a tmux pane under a systemd user session; a plain ssh login may lack it). | Stage 3 falls back to `<globalDir>/run/`; the test covers both. **Resolved 2026-10-09 by stage 3B:** only the daemon picks the place, and clients dial the socket its lock record names, so a client without the variable still finds it; the daemon falls back to `<globalDir>/run/`, then the temp dir, and listens again elsewhere when its runtime dir is removed (`TestSocketPath`, `TestServe_ASocketWhoseDirIsGoneMovesElsewhere`). |
+| 3 | The fallback socket path fits `sun_path`: 108 bytes on Linux, 104 on macOS. A deep `LOOM_GLOBAL_DIR`, such as a sandbox under a long temp dir, overflows it, and `connect` fails with "File name too long" (hit while probing for 1A). | Stage 3: hash into a short path, or bind relative to the dir, and test with a 100-byte global dir. **Resolved 2026-10-09 by stage 3B:** a candidate longer than 100 bytes is skipped, and the last is `loom-<uid>/<hash>.sock` in the temp dir, `<hash>` 16 hex digits (`TestSocketPath`). |
 | 4 | With no pane events, the daemon still answers trust prompts and reads hook events promptly. 1A keeps trust detection in the TUI's status scrape and hook scans on pane events. Since 1E the model ticks on its own timer, so its hook backstop scan runs with no TUI, at the tick's cadence. | Stage 3 (3C, since the split): a launch watch (`capture-pane` for N seconds after each launch) and a faster hook-scan timer (~250ms; no file-watch library is vendored). |
 | 5 | Loading every registered workspace (decision 3) does not start a Claude workspace terminal in each one. Today activating a workspace auto-creates its terminal. | Decide before stage 3. Suggested rule: create on a client's first open of the workspace, then relaunch on death as today. **Resolved 2026-10-08 by stage 3A (the user's decision): the suggested rule.** A workspace's first open since the model started (`Core.Open`) creates its terminal, or relaunches one that died while nobody had the workspace open or that its restart breaker stopped; a live one is kept. Until then the terminal is dormant: the health tick neither probes, relaunches nor pauses it. |

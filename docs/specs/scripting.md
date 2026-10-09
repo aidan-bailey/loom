@@ -156,7 +156,7 @@ Passing `--no-scripts` to `loom` skips the user-scripts directory entirely; only
 loom --no-scripts
 ```
 
-Source: `main.go` wires the flag (`noScriptsFlag`), `app/app_init.go#newHome` stores it as `skipScripts`, and `app/app_scripts.go#initScriptsIn` skips the `engine.Load(dir)` call when set.
+Source: `main.go` wires the flag (`noScriptsFlag`) through `app.Run`, `app/app_init.go#startHome` stores it as `skipScripts`, and `app/app_scripts.go#initScriptsIn` skips the `engine.Load(dir)` call when set.
 
 ### Hard-reserved `ctrl+c`
 
