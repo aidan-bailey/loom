@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,30 @@ import (
 // DriverSession is the tmux session the headless dev loom runs in. It has
 // no loom_ prefix, so loom's orphan sweep never touches it.
 const DriverSession = "dev-driver"
+
+// validDriver is what WithDriver accepts: a name tmux targets exactly (no
+// ':' or '.') and no session loom's orphan sweep would take for its own.
+var validDriver = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+// WithDriver is the sandbox driven through the tmux session name rather
+// than DriverSession: a second headless loom beside the first, on the same
+// server and the same daemon. Everything else is the sandbox's own.
+func (s *Sandbox) WithDriver(name string) (*Sandbox, error) {
+	if !validDriver.MatchString(name) || strings.HasPrefix(name, tmux.TmuxPrefix) || strings.HasPrefix(name, tmux.LegacyTmuxPrefix) {
+		return nil, fmt.Errorf("invalid driver session name %q (want %s, not loom's own prefix)", name, validDriver)
+	}
+	d := *s
+	d.driver = name
+	return &d, nil
+}
+
+// Driver is the tmux session the driver methods act on.
+func (s *Sandbox) Driver() string {
+	if s.driver == "" {
+		return DriverSession
+	}
+	return s.driver
+}
 
 const (
 	defaultWidth  = 160
@@ -64,7 +89,7 @@ func (s *Sandbox) runTmux(args ...string) (string, error) {
 }
 
 func (s *Sandbox) driverExists() bool {
-	_, err := s.runTmux("has-session", "-t", tmux.SessionTarget(DriverSession))
+	_, err := s.runTmux("has-session", "-t", tmux.SessionTarget(s.Driver()))
 	return err == nil
 }
 
@@ -77,7 +102,7 @@ func (s *Sandbox) driverExists() bool {
 // erroring, so any output other than exactly "1" or "0" (including empty)
 // is treated as the driver session not existing, not as "not dead".
 func (s *Sandbox) paneDead() (bool, error) {
-	out, err := s.runTmux("display-message", "-p", "-t", tmux.PaneTarget(DriverSession), "#{pane_dead}")
+	out, err := s.runTmux("display-message", "-p", "-t", tmux.PaneTarget(s.Driver()), "#{pane_dead}")
 	if err != nil {
 		return false, err
 	}
@@ -87,7 +112,7 @@ func (s *Sandbox) paneDead() (bool, error) {
 	case "0":
 		return false, nil
 	default:
-		return false, fmt.Errorf("driver session %s not found (pane_dead=%q)", DriverSession, out)
+		return false, fmt.Errorf("driver session %s not found (pane_dead=%q)", s.Driver(), out)
 	}
 }
 
@@ -102,17 +127,18 @@ func (s *Sandbox) DriverRunning() bool {
 }
 
 // Start launches the driver session on the private server. A running
-// driver is kept unless opts.Restart is set; a dead one is replaced.
+// driver is kept and a dead one replaced, unless opts.Restart is set: that
+// stops the driver and the sandbox's daemon first (Stop), so the dev loom
+// starts afresh.
 func (s *Sandbox) Start(opts StartOptions) error {
-	if s.DriverRunning() {
-		if !opts.Restart {
-			return nil
-		}
+	if opts.Restart {
 		if err := s.Stop(5 * time.Second); err != nil {
 			return err
 		}
+	} else if s.DriverRunning() {
+		return nil
 	} else if s.driverExists() {
-		if _, err := s.runTmux("kill-session", "-t", tmux.SessionTarget(DriverSession)); err != nil {
+		if _, err := s.runTmux("kill-session", "-t", tmux.SessionTarget(s.Driver())); err != nil {
 			return err
 		}
 	}
@@ -131,21 +157,33 @@ func (s *Sandbox) Start(opts StartOptions) error {
 	// at exactly w×h (loom turns the status line off on its own sessions
 	// anyway). new-session in the same command list starts the server.
 	args := []string{"set-option", "-g", "status", "off", ";",
-		"new-session", "-d", "-s", DriverSession,
+		"new-session", "-d", "-s", s.Driver(),
 		"-x", strconv.Itoa(w), "-y", strconv.Itoa(h), "-c", s.RepoDir()}
 	for _, e := range s.Env() {
 		args = append(args, "-e", e)
 	}
 	args = append(args, shellJoin(argv),
-		";", "set-option", "-w", "-t", tmux.PaneTarget(DriverSession), "remain-on-exit", "on")
+		";", "set-option", "-w", "-t", tmux.PaneTarget(s.Driver()), "remain-on-exit", "on")
 	_, err := s.runTmux(args...)
 	return err
 }
 
-// Stop asks the driver's program to quit with `q`, waits up to grace for it
-// to exit, then removes the driver session. Loom's own agent sessions stay
-// on the private server, as after a real quit.
+// Stop quits the dev loom: its TUI (StopDriver), then the sandbox's daemon
+// (StopDaemon). Loom's own agent sessions stay on the private server, so
+// the next Start boots a fresh daemon that reattaches them: the restore
+// path. A daemon serves every driver, so stopping it ends another
+// driver's TUI too.
 func (s *Sandbox) Stop(grace time.Duration) error {
+	if err := s.StopDriver(grace); err != nil {
+		return err
+	}
+	return s.StopDaemon()
+}
+
+// StopDriver asks the driver's program to quit with `q`, waits up to grace
+// for it to exit, then removes the driver session. The sandbox's daemon
+// keeps running, as after a real quit, so the next Start connects to it.
+func (s *Sandbox) StopDriver(grace time.Duration) error {
 	if !s.driverExists() {
 		return nil
 	}
@@ -155,7 +193,7 @@ func (s *Sandbox) Stop(grace time.Duration) error {
 			time.Sleep(pollInterval)
 		}
 	}
-	if _, err := s.runTmux("kill-session", "-t", tmux.SessionTarget(DriverSession)); err != nil && s.driverExists() {
+	if _, err := s.runTmux("kill-session", "-t", tmux.SessionTarget(s.Driver())); err != nil && s.driverExists() {
 		return err
 	}
 	return nil
@@ -164,13 +202,13 @@ func (s *Sandbox) Stop(grace time.Duration) error {
 // SendKeys sends tmux key names (e.g. "n", "Enter", "Escape", "C-c") to the
 // driver pane. A word tmux does not recognize is typed as characters.
 func (s *Sandbox) SendKeys(keys ...string) error {
-	_, err := s.runTmux(append([]string{"send-keys", "-t", tmux.PaneTarget(DriverSession)}, keys...)...)
+	_, err := s.runTmux(append([]string{"send-keys", "-t", tmux.PaneTarget(s.Driver())}, keys...)...)
 	return err
 }
 
 // SendText types text literally, with no key-name interpretation.
 func (s *Sandbox) SendText(text string) error {
-	_, err := s.runTmux("send-keys", "-t", tmux.PaneTarget(DriverSession), "-l", text)
+	_, err := s.runTmux("send-keys", "-t", tmux.PaneTarget(s.Driver()), "-l", text)
 	return err
 }
 
@@ -181,7 +219,7 @@ func (s *Sandbox) SendText(text string) error {
 // by exactly one line before printing "Pane is dead …", which would
 // otherwise drop the program's last line of output from a plain capture.
 func (s *Sandbox) Screen(ansi bool) (string, error) {
-	args := []string{"capture-pane", "-p", "-t", tmux.PaneTarget(DriverSession)}
+	args := []string{"capture-pane", "-p", "-t", tmux.PaneTarget(s.Driver())}
 	if dead, _ := s.paneDead(); dead {
 		args = append(args, "-S", "-1")
 	}
@@ -189,6 +227,13 @@ func (s *Sandbox) Screen(ansi bool) (string, error) {
 		args = append(args, "-e")
 	}
 	return s.runTmux(args...)
+}
+
+// Text captures the driver pane's text, its scrollback included, with
+// lines the pane wrapped joined: a message wider than the pane (an exited
+// loom's error, say) reads whole.
+func (s *Sandbox) Text() (string, error) {
+	return s.runTmux("capture-pane", "-p", "-J", "-S", "-", "-t", tmux.PaneTarget(s.Driver()))
 }
 
 // WaitFor polls the driver screen until text appears or timeout elapses.

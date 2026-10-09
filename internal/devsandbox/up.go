@@ -196,25 +196,45 @@ func (s *Sandbox) registerWorkspace() error {
 }
 
 // Build compiles loom and fakeagent from the module rooted at srcDir into
-// the sandbox and records the source revision. The sandbox must be Up.
+// the sandbox and records the source revision. The sandbox must be Up. A
+// sandbox daemon still running the previous build is replaced by the next
+// sandboxed loom to start: its executable differs, so it is the newer build.
 func (s *Sandbox) Build(srcDir string) error {
 	meta, err := s.LoadMeta()
 	if err != nil {
 		return fmt.Errorf("sandbox %q is not up (run `loomdev up`): %w", s.Name, err)
 	}
-	for _, t := range []struct{ out, pkg string }{
-		{s.LoomBin(), "."},
-		{s.FakeAgentBin(), "./tools/fakeagent"},
-	} {
-		cmd := exec.Command("go", "build", "-o", t.out, t.pkg)
-		cmd.Dir = srcDir
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("go build %s: %w\n%s", t.pkg, err, out)
-		}
+	if err := goBuild(srcDir, s.LoomBin(), ".", ""); err != nil {
+		return err
+	}
+	if err := goBuild(srcDir, s.FakeAgentBin(), "./tools/fakeagent", ""); err != nil {
+		return err
 	}
 	meta.BuildSHA = sourceRevision(srcDir)
 	return s.saveMeta(meta)
+}
+
+// BuildLoom compiles loom from the module rooted at srcDir to out, with
+// ldflags when not empty: another build beside the sandbox's own, such as
+// `-X main.version=99.0.0` for a newer release. Run it with Cmd, or in a
+// driver (StartOptions.Command), to use the sandbox.
+func (s *Sandbox) BuildLoom(srcDir, out, ldflags string) error {
+	return goBuild(srcDir, out, ".", ldflags)
+}
+
+// goBuild runs `go build` for pkg in srcDir, writing out.
+func goBuild(srcDir, out, pkg, ldflags string) error {
+	args := []string{"build", "-o", out}
+	if ldflags != "" {
+		args = append(args, "-ldflags", ldflags)
+	}
+	cmd := exec.Command("go", append(args, pkg)...)
+	cmd.Dir = srcDir
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("go build %s: %w\n%s", pkg, err, output)
+	}
+	return nil
 }
 
 // sourceRevision describes srcDir as "<sha>" or "<sha>-dirty", or "unknown"

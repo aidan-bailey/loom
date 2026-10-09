@@ -15,6 +15,33 @@ Run everything from the repo root as `go run ./tools/loomdev <cmd>`. The
 sandbox is named after the current branch's leaf; `--sandbox NAME` (`-s`)
 picks another.
 
+## The sandbox daemon
+
+A loom TUI is a client of `loom serve`, the daemon that owns the sessions.
+The first sandboxed loom to start spawns the sandbox's own daemon (it runs
+the sandbox's build, with the sandbox's global dir and tmux server), and the
+daemon outlives that TUI:
+
+- `stop` quits the TUI **and** stops the daemon, so the next `start` boots a
+  fresh daemon that reattaches the sessions (the restore path).
+  `stop --keep-daemon` quits only the TUI, as a real `q` does: the next
+  `start` joins the same daemon.
+- `start --restart` stops both first, like `stop` then `start`.
+- `build` (and `up`, and `start` and `run` unless `--no-build`) replaces
+  the binary only: a running daemon is replaced by the next loom to start
+  when the build changed, because its executable differs.
+- `run` leaves the daemon running when its TUI quits, as a real loom does;
+  `stop` ends it.
+- `down` stops the daemon before it deletes the sandbox.
+- `ls` shows each sandbox's daemon (pid, socket); `logs` names it and
+  includes its `serve.log` (and `serve-crash.log`, after a runtime crash).
+- `loom serve stop` by hand, in a subshell so the sandbox's environment
+  stays out of yours:
+  `(eval "$(go run ./tools/loomdev env)"; "$LOOM_GLOBAL_DIR/../bin/loom" serve stop)`.
+
+Stopping the daemon ends every TUI connected to it: each exits saying "the
+daemon stopped … Run loom again".
+
 ## Verify a change headlessly
 
 1. `go run ./tools/loomdev up` — create or refresh the sandbox and build it (idempotent).
@@ -22,7 +49,7 @@ picks another.
 3. `go run ./tools/loomdev wait --text toy` — wait until the UI is up.
 4. Drive it with tmux key names — `keys n`, `keys Enter`, `keys Escape`, `keys Up`, `keys C-c` — and type text with `keys -l some text`.
 5. `go run ./tools/loomdev shot` prints the screen (`--ansi` keeps colors). Use `wait --text` instead of sleeping.
-6. `go run ./tools/loomdev stop` when done; `down` deletes the sandbox.
+6. `go run ./tools/loomdev stop` when done (it stops the sandbox's daemon too); `down` deletes the sandbox.
 
 On a `wait` timeout the tool prints the last screen and the sandbox log
 tail. Read them before retrying. `logs -f` follows the logs.
@@ -37,9 +64,10 @@ state's own prompt text before sending the next keys.
 - Send text to the selected agent from loom's keymap: `keys a` → `wait --text "Enter to send to agent"` → `keys -l <text>` → `keys Enter`.
 - Fake agent commands (send them as agent text): `work N`, `ask`, `trust`, `bell`, `title X`, `edit`, `commit`, `crash`, `exit`.
 - Profiles: `fake` (default), `fake-claude`, `fake-aider`, `shell`; `up --real-claude` adds the real `claude` (costs tokens). Change the default with `up --default-profile fake-aider`.
-- Restore path: `stop`, then `start`; sessions persist on the private tmux server.
+- Restore path: `stop`, then `start`; sessions persist on the private tmux server, and the fresh daemon reattaches them.
+- Two TUIs on one daemon: `--driver NAME` makes `start`, `stop`, `keys`, `shot` and `wait` drive another session on the sandbox's server, e.g. `start --driver two` then `shot --driver two`. Use `stop --keep-daemon --driver two` to quit it alone.
 - Interactive, for a human: `go run ./tools/loomdev run`. The host loom intercepts `ctrl+q` and double-`esc`, so test the dev loom's interact-exit from a plain OS terminal.
-- End-to-end suite: `go test -tags e2e ./e2e/...`.
+- End-to-end suite: `go test -tags e2e ./e2e/...` (the daemon's lifecycle is in `e2e/daemon_test.go`).
 
 ## Rules
 

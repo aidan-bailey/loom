@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -38,7 +39,22 @@ func newSandbox(t *testing.T, profile string) *devsandbox.Sandbox {
 			screen, _ := sb.Screen(false)
 			t.Logf("last screen:\n%s\nsandbox logs:\n%s", screen, sb.TailLogs(40))
 		}
-		_ = sb.Down()
+		// Down stops the sandbox's daemon first: a daemon must never
+		// outlive its sandbox, so one still running after it is an error,
+		// and killed rather than leaked.
+		rec, held := sb.Daemon()
+		if err := sb.Down(); err != nil {
+			t.Errorf("down: %v", err)
+			if now, held := sb.Daemon(); held && now.PID > 0 {
+				_ = syscall.Kill(now.PID, syscall.SIGKILL)
+				waitExit(now.PID, 5*time.Second)
+			}
+			_ = sb.Down()
+		}
+		if held && rec.PID > 0 && !waitExit(rec.PID, 5*time.Second) {
+			t.Errorf("the sandbox's daemon (pid %d) outlived it", rec.PID)
+			_ = syscall.Kill(rec.PID, syscall.SIGKILL)
+		}
 	})
 	require.NoError(t, sb.Up(devsandbox.UpOptions{SourceWorktree: root, DefaultProfile: profile}))
 	require.NoError(t, sb.Build(root))

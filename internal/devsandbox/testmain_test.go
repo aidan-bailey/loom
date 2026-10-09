@@ -9,8 +9,12 @@ import (
 
 // TestMain points LOOM_HOME and LOOM_GLOBAL_DIR at throwaway directories,
 // so no test here can resolve the developer's real ~/.loom. Tests that
-// need directories of their own still t.Setenv over them.
+// need directories of their own still t.Setenv over them. Started as a
+// fake daemon (startFakeDaemon), the test binary runs that instead.
 func TestMain(m *testing.M) {
+	if dir := os.Getenv(fakeDaemonEnv); dir != "" {
+		os.Exit(runFakeDaemon(dir))
+	}
 	cleanup := testenv.MustIsolateLoomDirs()
 	code := m.Run()
 	cleanup()

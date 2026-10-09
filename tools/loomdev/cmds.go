@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/internal/devsandbox"
 	"github.com/spf13/cobra"
 )
@@ -61,6 +62,9 @@ func (a *app) buildCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(a.out, "built %s into %s\n", meta.BuildSHA, sb.BinDir())
+			if rec, held := sb.Daemon(); held {
+				fmt.Fprintf(a.out, "the sandbox's daemon (pid %d) runs the build it started with: the next loom to start replaces it when the build changed\n", rec.PID)
+			}
 			return nil
 		},
 	}
@@ -80,7 +84,12 @@ func (a *app) runCmd() *cobra.Command {
 			c.Dir = sb.RepoDir()
 			c.Env = sb.Environ()
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-			if err := c.Run(); err != nil {
+			err = c.Run()
+			// As after a real loom, the daemon it started keeps running.
+			if rec, held := sb.Daemon(); held {
+				fmt.Fprintf(a.errOut, "loomdev: the sandbox's daemon keeps running (%s); `loomdev stop` ends it\n", daemonText(rec))
+			}
+			if err != nil {
 				var ee *exec.ExitError
 				if errors.As(err, &ee) {
 					return &exitError{code: ee.ExitCode()}
@@ -113,7 +122,7 @@ func (a *app) startCmd() *cobra.Command {
 			if err := sb.Start(devsandbox.StartOptions{Width: w, Height: h, Restart: restart}); err != nil {
 				return err
 			}
-			fmt.Fprintf(a.out, "driver running on tmux -L %s (session %s)\n", sb.Socket(), devsandbox.DriverSession)
+			fmt.Fprintf(a.out, "driver running on tmux -L %s (session %s)\n", sb.Socket(), sb.Driver())
 			return nil
 		},
 	}
@@ -125,19 +134,29 @@ func (a *app) startCmd() *cobra.Command {
 
 func (a *app) stopCmd() *cobra.Command {
 	var grace time.Duration
+	var keepDaemon bool
 	cmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Quit the headless loom and remove the driver session",
-		Args:  cobra.NoArgs,
+		Short: "Quit the headless loom, remove the driver session and stop the sandbox's daemon",
+		Long: `Quit the headless loom, remove the driver session and stop the sandbox's
+daemon, so the next start boots a fresh daemon that reattaches the sessions
+(the restore path). The daemon serves every driver and ` + "`loomdev run`" + `, so
+stopping it ends their TUIs too. --keep-daemon leaves it running, as a real
+quit does: the next start connects to the same daemon.`,
+		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			sb, err := a.open()
 			if err != nil {
 				return err
 			}
+			if keepDaemon {
+				return sb.StopDriver(grace)
+			}
 			return sb.Stop(grace)
 		},
 	}
 	cmd.Flags().DurationVar(&grace, "grace", 5*time.Second, "how long to wait for loom to quit before killing it")
+	cmd.Flags().BoolVar(&keepDaemon, "keep-daemon", false, "quit the TUI only, leaving the sandbox's daemon running")
 	return cmd
 }
 
@@ -219,12 +238,17 @@ func (a *app) logsCmd() *cobra.Command {
 	var follow bool
 	cmd := &cobra.Command{
 		Use:   "logs",
-		Short: "Show the sandbox's loom.log files",
+		Short: "Show the sandbox's daemon and its loom.log and serve.log files",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			sb, err := a.open()
 			if err != nil {
 				return err
+			}
+			if rec, held := sb.Daemon(); held {
+				fmt.Fprintf(a.out, "daemon: %s\n", daemonText(rec))
+			} else {
+				fmt.Fprintln(a.out, "daemon: not running")
 			}
 			fmt.Fprint(a.out, sb.TailLogs(lines))
 			if !follow {
@@ -274,16 +298,22 @@ func (a *app) lsCmd() *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(a.out, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tSERVER\tBUILD\tSOURCE")
+			fmt.Fprintln(tw, "NAME\tSERVER\tDAEMON\tSOCKET\tBUILD\tSOURCE")
 			for _, in := range infos {
-				server, build, source := "down", "-", "-"
+				server, serving, socket, build, source := "down", "down", "-", "-", "-"
 				if in.ServerAlive {
 					server = "up"
+				}
+				if d := in.Daemon; d != nil {
+					serving, socket = fmt.Sprintf("pid %d", d.PID), d.Socket
+					if !d.IsDaemon() {
+						socket = "(starting)"
+					}
 				}
 				if in.Meta != nil {
 					build, source = in.Meta.BuildSHA, in.Meta.SourceWorktree
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", in.Name, server, build, source)
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", in.Name, server, serving, socket, build, source)
 			}
 			return tw.Flush()
 		},
@@ -307,6 +337,15 @@ func (a *app) downCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// daemonText describes a sandbox daemon from its lock record: "pid 4242
+// on /run/user/1000/loom/1f2e….sock", or still starting.
+func daemonText(rec daemon.Record) string {
+	if !rec.IsDaemon() {
+		return fmt.Sprintf("pid %d, starting", rec.PID)
+	}
+	return fmt.Sprintf("pid %d on %s", rec.PID, rec.Socket)
 }
 
 func parseSize(s string) (int, int, error) {

@@ -23,6 +23,7 @@ const modulePath = "github.com/aidan-bailey/loom"
 type app struct {
 	out, errOut io.Writer
 	sandbox     string
+	driver      string
 }
 
 // exitError carries the dev loom's own exit status out of `run`.
@@ -53,6 +54,8 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.SetErr(errOut)
 	root.PersistentFlags().StringVarP(&a.sandbox, "sandbox", "s", "",
 		"sandbox name (default: leaf of the current git branch)")
+	root.PersistentFlags().StringVar(&a.driver, "driver", devsandbox.DriverSession,
+		"tmux session of the headless loom that start, stop, keys, shot and wait drive (another name runs a second TUI)")
 	root.AddCommand(a.upCmd(), a.buildCmd(), a.runCmd(), a.startCmd(), a.stopCmd(),
 		a.keysCmd(), a.shotCmd(), a.waitCmd(), a.logsCmd(), a.envCmd(), a.lsCmd(), a.downCmd())
 	return root
@@ -81,7 +84,11 @@ func (a *app) open() (*devsandbox.Sandbox, error) {
 		}
 		name = devsandbox.DefaultName(strings.TrimSpace(string(out)))
 	}
-	return devsandbox.Open(name)
+	sb, err := devsandbox.Open(name)
+	if err != nil || a.driver == "" || a.driver == devsandbox.DriverSession {
+		return sb, err
+	}
+	return sb.WithDriver(a.driver)
 }
 
 // prepare brings the sandbox up without changing its config, then rebuilds

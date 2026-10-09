@@ -121,3 +121,37 @@ func TestFollowLogs_StreamsAppendedBytes(t *testing.T) {
 	require.NoError(t, <-done)
 	assert.NotContains(t, out.String(), "old line", "follow starts at the current end")
 }
+
+func TestDriverFlag_RejectsLoomSessionNames(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	for _, bad := range []string{"loom_x", "a:b", "Bad"} {
+		_, err := execute(t, "shot", "--sandbox", "demo", "--driver", bad)
+		require.Error(t, err, bad)
+		assert.Contains(t, err.Error(), "invalid driver session name", bad)
+	}
+}
+
+func TestStop_HasKeepDaemon(t *testing.T) {
+	root := newRootCmd(io.Discard, io.Discard)
+	stop, _, err := root.Find([]string{"stop"})
+	require.NoError(t, err)
+	assert.NotNil(t, stop.Flags().Lookup("keep-daemon"))
+}
+
+func TestLs_ShowsTheDaemonColumns(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	require.NoError(t, os.MkdirAll(filepath.Join(state, "loom-dev", "demo"), 0o755))
+	out, err := execute(t, "ls")
+	require.NoError(t, err)
+	assert.Contains(t, out, "DAEMON")
+	assert.Contains(t, out, "SOCKET")
+	assert.Regexp(t, `demo\s+down\s+down\s+-`, out, "no server, no daemon")
+}
+
+func TestLogs_SaysWhenNoDaemonRuns(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	out, err := execute(t, "logs", "--sandbox", "demo")
+	require.NoError(t, err)
+	assert.Contains(t, out, "daemon: not running")
+}

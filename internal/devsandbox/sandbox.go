@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -39,6 +40,9 @@ var (
 type Sandbox struct {
 	Name string
 	Dir  string
+	// driver is the tmux session the driver methods act on: DriverSession
+	// when empty (WithDriver).
+	driver string
 }
 
 // Meta is the sandbox's sandbox.json.
@@ -57,6 +61,10 @@ type Info struct {
 	Dir         string
 	ServerAlive bool
 	Meta        *Meta // nil when sandbox.json is missing or unreadable
+	// Daemon is the lock record of the process holding the sandbox's global
+	// dir (its daemon, or one still booting: no socket yet); nil when none
+	// holds it.
+	Daemon *daemon.Record
 }
 
 // BaseDir returns the directory holding every sandbox:
@@ -133,12 +141,15 @@ func (s *Sandbox) OriginDir() string { return filepath.Join(s.Dir, "origin.git")
 func (s *Sandbox) WorkspaceConfigDir() string { return filepath.Join(s.RepoDir(), ".loom") }
 
 // LogFiles lists the log files a sandboxed loom writes: its TUI's
-// loom.log files and its daemon's serve.log.
+// loom.log files, and its daemon's serve.log and the crash file beside it
+// (the runtime's own report of a fatal error, which serve.log can't hold).
 func (s *Sandbox) LogFiles() []string {
+	serveLog := daemon.LogPath(s.GlobalDir())
 	return []string{
 		filepath.Join(s.HomeDir(), "logs", "loom.log"),
 		filepath.Join(s.WorkspaceConfigDir(), "logs", "loom.log"),
-		daemon.LogPath(s.GlobalDir()),
+		serveLog,
+		filepath.Join(filepath.Dir(serveLog), "serve-crash.log"),
 	}
 }
 
@@ -154,6 +165,15 @@ func (s *Sandbox) Env() []string {
 // Environ is os.Environ() with Env() appended; os/exec uses the last value
 // of a duplicated key, so the overlay wins.
 func (s *Sandbox) Environ() []string { return append(os.Environ(), s.Env()...) }
+
+// Cmd runs argv in the sandbox's environment from the toy repo, as a
+// sandboxed loom would run: Cmd(sb.LoomBin(), "serve", "stop"), say.
+func (s *Sandbox) Cmd(argv ...string) *exec.Cmd {
+	c := exec.Command(argv[0], argv[1:]...)
+	c.Dir = s.RepoDir()
+	c.Env = s.Environ()
+	return c
+}
 
 func (s *Sandbox) metaPath() string { return filepath.Join(s.Dir, metaFileName) }
 
@@ -188,13 +208,33 @@ func (s *Sandbox) serverAlive() bool {
 	return tmux.CommandOnSocket(ctx, s.Socket(), "list-sessions").Run() == nil
 }
 
-// daemonStopTimeout bounds Down's wait for the sandbox's daemon, which
-// waits for in-flight lifecycle jobs, then saves.
+// daemonStopTimeout bounds the wait for the sandbox's daemon to stop: it
+// waits for in-flight lifecycle jobs (up to 30s), then saves.
 const daemonStopTimeout = 60 * time.Second
+
+// Daemon reads the lock record of the sandbox's daemon, the `loom serve` a
+// sandboxed loom started (with the sandbox's global dir). held reports
+// whether a process holds the lock now: a daemon, or one still booting
+// (no socket yet).
+func (s *Sandbox) Daemon() (rec daemon.Record, held bool) {
+	return daemon.ReadRecord(s.GlobalDir())
+}
+
+// StopDaemon stops the sandbox's daemon gracefully (it saves first) and
+// waits for it to go; no daemon running is fine. The sessions keep
+// running on the sandbox's tmux server, and the next sandboxed loom starts
+// a fresh daemon, which reattaches them.
+func (s *Sandbox) StopDaemon() error {
+	if err := daemon.Stop(s.GlobalDir(), daemonStopTimeout); err != nil && !errors.Is(err, daemon.ErrNotRunning) {
+		return fmt.Errorf("stop the sandbox's loom daemon: %w", err)
+	}
+	return nil
+}
 
 // Down stops the sandbox's loom daemon (a sandboxed loom started it, with
 // the sandbox's global dir), kills its private tmux server and deletes its
-// directory. It refuses any Dir that is not <BaseDir>/<Name>.
+// directory, and the socket files both leave outside it. It refuses any Dir
+// that is not <BaseDir>/<Name>.
 func (s *Sandbox) Down() error {
 	base, err := BaseDir()
 	if err != nil {
@@ -203,13 +243,28 @@ func (s *Sandbox) Down() error {
 	if !validName.MatchString(s.Name) || s.Dir != filepath.Join(base, s.Name) {
 		return fmt.Errorf("refusing to remove %s: not the sandbox directory %s", s.Dir, filepath.Join(base, s.Name))
 	}
-	if err := daemon.Stop(s.GlobalDir(), daemonStopTimeout); err != nil && !errors.Is(err, daemon.ErrNotRunning) {
-		return fmt.Errorf("stop the sandbox's loom daemon: %w", err)
+	if err := s.StopDaemon(); err != nil {
+		return err
+	}
+	// A daemon that stops removes its socket, but one killed outright
+	// leaves it, in the runtime dir; the free lock proves no daemon uses it.
+	if rec, held := s.Daemon(); !held {
+		removeSocket(rec.Socket)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// tmux leaves its socket file behind on kill-server.
+	path, _ := tmux.CommandOnSocket(ctx, s.Socket(), "display-message", "-p", "#{socket_path}").Output()
 	_ = tmux.CommandOnSocket(ctx, s.Socket(), "kill-server").Run() // no server is fine
+	removeSocket(strings.TrimSpace(string(path)))
 	return os.RemoveAll(s.Dir)
+}
+
+// removeSocket deletes path when it is a socket.
+func removeSocket(path string) {
+	if info, err := os.Lstat(path); path != "" && err == nil && info.Mode()&os.ModeSocket != 0 {
+		_ = os.Remove(path)
+	}
 }
 
 // List returns every sandbox under BaseDir, sorted by name.
@@ -234,6 +289,9 @@ func List() ([]Info, error) {
 		info := Info{Name: sb.Name, Dir: sb.Dir, ServerAlive: sb.serverAlive()}
 		if m, err := sb.LoadMeta(); err == nil {
 			info.Meta = m
+		}
+		if rec, held := sb.Daemon(); held {
+			info.Daemon = &rec
 		}
 		infos = append(infos, info)
 	}
