@@ -1,11 +1,15 @@
-# docs/claude
+# docs/claude — task guides for Claude
 
-Procedures and traps that need more than a few lines, each linked from the rule in a `CLAUDE.md` that needs it. A guide earns a place here only when a task has steps the code doesn't make obvious, or a trap that has cost a session real time; undocumented beats noise, so anything the code, a test name or an existing guide already says stays out. Each guide gives the symptom, the cause and the rule, then the procedure, the traps, and what the gates still won't tell you.
+Procedures shaped for someone (or some agent) actively performing a task in this repo. Each guide is referenced by a specific pointer from a `CLAUDE.md` rule.
 
-Read a guide when its trigger matches what you are about to do.
+A guide belongs here when either:
+- A `CLAUDE.md` rule needs more than ~3 lines of supporting context to land safely.
+- A task has actual sequential steps (>2) that benefit from a checklist shape.
+
+If you're tempted to add a file because "it might be useful later", don't. Undocumented beats noise.
 
 | File | When to read |
-|---|---|
+|------|-------------|
 | [`adding-a-core-method.md`](adding-a-core-method.md) | Adding or changing a `core.Core` method — pick its kind (the line comment in `core/iface.go`), forward it from the loop, regenerate the wire, give a local query a view method and parity cases, keep a `ReqID` top-level, rewrite the protocol reference, bump `rpc.Protocol` only on removal or renaming; traps: the model's query and its view method are two implementations, a `time.Time` loses its monotonic reading, only three errors survive `errors.Is` |
 | [`adding-a-core-event.md`](adding-a-core-event.md) | Adding a `core.Event` — list it in `EventTypes()`, give an error field a wire form, a state event a coalescing key, an event naming a request its `forConn` route, and the TUI an applier; traps: `wireCore`'s reseed hides a missing applier, synchronous test clients hide ordering, a cast publishes nothing, an event with no client connected is lost unless it is a `Notice` |
 | [`changing-the-instance-schema.md`](changing-the-instance-schema.md) | Changing a persisted `session.InstanceData` field — carry it both ways, bump `CurrentSchemaVersion`, add the `Migrate` step, update the `workspace migrate` mirror and its fixture; traps: downgrade safety, `workspace migrate` drops a newer record's unknown fields, a change of meaning without a bump, fields that must survive `Recoverable` adoption |

@@ -324,6 +324,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `p` | Push branch to remote (with confirmation) |
 | `D` | Kill selected session (with confirmation); on an orphaned (`⟲`) session: discard its worktree, keeping the branch |
 | `d` | Toggle diff overlay |
+| `Enter` | Open the session workbench for the selected session |
 | `c` | Open the workbench code review for the selected session |
 | `W` | Open workspace picker |
 | `S` | Open settings (edit config.json: Default Program, Branch Prefix, Base Branch, Theme, Profiles, Claude Preferences) |

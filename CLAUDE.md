@@ -8,7 +8,7 @@ It was forked from claude-squad at v1.0.17 and has diverged since: [`NOTICE.md`]
 | What | Where | How far to trust it |
 |---|---|---|
 | Rules for changing a package | its `CLAUDE.md`, which loads when you work in its subtree | kept with the code; the lint checks its shape |
-| Facts about a package | its `README.md`; read it once when you enter an unfamiliar package | kept with the code |
+| Facts about a package | its `README.md` | kept with the code |
 | How the pieces fit, persistent state, logs, env vars | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | nothing verifies it |
 | Procedures and traps (adding a `Core` method, releasing, triage) | [`docs/claude/INDEX.md`](docs/claude/INDEX.md) | each guide names its gates |
 | The wire protocol | [`docs/specs/protocol.md`](docs/specs/protocol.md) | generated, and byte-checked by `TestProtocolReference` |
@@ -87,18 +87,19 @@ Not exhaustive: the package `CLAUDE.md` files name the tests that guard each rul
 
 ## Conventions for CLAUDE.md files
 
-- Rules go in `CLAUDE.md`, facts in `README.md` or [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), user-facing facts in `USAGE.md`, procedures needing more than about three lines in a `docs/claude/` guide. History stays in git and the design-history dirs.
-- A rule is self-sufficient: it says what to do, why in one clause, what breaks and how silently, then **Enforced** by a named test or **Convention** with the silent wrong result, plus a guide link when there is one. Never defer to another passage (`see the … above`): the passage may now live in a file that doesn't load.
-- Present tense. Name, don't count: counts rot. Name the file that holds a config value or tool version instead of restating it. Write paths from the repo root or beside the doc.
-- A package `CLAUDE.md` covers its subtree; every Go package needs one there or in a parent below the root, or an exemption with a reason in `tools/claudemd/lint.go`.
-- Budgets: this file ≤150 lines and 16,000 bytes, any other `CLAUDE.md` ≤100 lines and 20,000 bytes, every line ≤1,200 bytes. **Enforced** by `tools/claudemd`; check the headroom (`go run ./tools/claudemd -v`) before planning rule additions, and move context into a guide rather than raise a budget.
-- The lint checks structure, not truth. Re-run it after merges, and audit what the docs claim with [`docs/claude/auditing-claude-md-currency.md`](docs/claude/auditing-claude-md-currency.md) after a big refactor, a deletion or a long merge.
-- Deleting a package or retiring a concept means grepping every `CLAUDE.md`, README and guide for it.
-- `CLAUDE.md` is per worktree: a session in a worktree reads that branch's files, so rules land on `main` only when the branch merges.
-- Commit a rule with the work that taught it. When a written rule is broken again, make it mechanical: [`docs/claude/adding-an-enforce-test.md`](docs/claude/adding-an-enforce-test.md).
-- Repo lessons go here and in `docs/claude/`, not in personal memory.
+- **Self-sufficiency.** Every rule states inline the minimum context needed to apply it correctly. Do not write phrases that point readers to another file — they rot, and `CLAUDE.md` is auto-loaded but `README.md` is not.
+- **Rules vs facts.** `CLAUDE.md` holds *rules* (what must / must not happen when modifying code). `README.md` holds *facts* (what the package is, structure, public API); facts spanning packages go in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), user-facing ones in `USAGE.md`. Some duplication on critical facts that drive rules is the right cost.
+- **Procedures live in `docs/claude/`.** If a rule needs more than ~3 lines of supporting context, write a procedure at `docs/claude/<task>.md` and link to it from the rule.
+- **Rule shape.** What to do; why, in one clause; what breaks and how silently; then **Enforced** by a named test, or **Convention** with the silent wrong result. Present tense. Name, don't count. Name the file that holds a config value or tool version instead of restating it. Write paths from the repo root or beside the doc. History stays in git.
+- **Coverage.** A package `CLAUDE.md` covers its subtree; every Go package needs one there or in a parent below the root, or an exemption with a reason in `tools/claudemd/lint.go`.
+- **Size budgets.** Root `CLAUDE.md` ≤150 lines and 16,000 bytes; package `CLAUDE.md` ≤100 lines and 20,000 bytes; no line over 1,200 bytes. Enforced by `tools/claudemd` (`go test ./...`, `go run ./tools/claudemd`, and CI's Docs workflow). Check the headroom (`go run ./tools/claudemd -v`) before planning rule additions, and move context into a guide rather than raise a budget.
+- **The lint checks structure, not truth.** It catches a path, a test name or a file-and-symbol reference that no longer resolves, but a moved symbol named plainly, a count, or a rule that is no longer true passes it forever. Re-run it after merges, and re-verify with [`docs/claude/auditing-claude-md-currency.md`](docs/claude/auditing-claude-md-currency.md). Deleting a package or retiring a concept means grepping every `CLAUDE.md`, README and guide for it.
+- **When entering an unfamiliar package**, read its `README.md` once for orientation before broad exploration.
+- `CLAUDE.md` is per worktree: a session in a worktree reads that branch's files, so rules land on `main` only when the branch merges. Commit a rule with the work that taught it; when a written rule is broken again, make it mechanical ([`docs/claude/adding-an-enforce-test.md`](docs/claude/adding-an-enforce-test.md)). Repo lessons go here and in `docs/claude/`, not in personal memory.
 - Not adopted yet, because loom has nothing for them: ADRs and an ADR index (design history stays in `docs/superpowers/specs/`), an issue-label table, a hook-launch check (no hooks are checked in), a `/distill` command, and anchor checks in links.
 
 ## Updating docs/claude/
 
-At the end of a task, ask whether it taught something a future session would otherwise rediscover the hard way: a trap that cost real time, a procedure with steps that aren't obvious from the code, or a symptom that pointed somewhere misleading. If so, add it to the matching guide, or write one and add its row to [`docs/claude/INDEX.md`](docs/claude/INDEX.md). If it is a rule about one package, put it in that package's `CLAUDE.md` instead. Undocumented beats noise: skip anything the code, a test name or an existing guide already says.
+Before ending the turn on non-trivial work, evaluate: did I (or the user) discover a fact worth recording for future sessions? Did I make a mistake whose rule isn't captured anywhere yet? Did a workflow take longer than it should have because the path wasn't documented?
+
+If yes, write or extend a file in `docs/claude/`, add it to [`docs/claude/INDEX.md`](docs/claude/INDEX.md), and commit as part of the work. Bar: "a future session would have done better with this knowledge." If unsure, skip — undocumented beats noise.
