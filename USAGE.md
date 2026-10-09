@@ -13,6 +13,7 @@ A comprehensive guide to using Loom — the terminal UI for managing multiple AI
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
 - [Workspaces](#workspaces)
+- [Coming from claude-squad](#coming-from-claude-squad)
 
 ---
 
@@ -45,6 +46,9 @@ CGO_ENABLED=0 go build -o loom
 
 # Or with Nix
 nix run .
+
+# Or install a release binary (into ~/.local/bin, which it adds to your shell's PATH)
+./install.sh
 ```
 
 ### First Session in 30 Seconds
@@ -301,10 +305,10 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `↑` / `k` | Move selection up |
 | `↓` / `j` | Move selection down |
 | `n` | Create new session (name only) |
-| `N` | Create new session with prompt, profile, and branch picker |
+| `N` | Create new session with prompt, profile, and branch picker. A prompt starting `#123` expands to that GitHub issue |
 | `I` | Create new session from a GitHub issue (picker; needs `gh` auth) |
 | `Tab` | Toggle overview mode (fleet card grid) |
-| `]` / `[` | Jump to next/previous agent waiting for input (prompting or bell; wraps) |
+| `]` / `[` | Jump to next/previous agent waiting for input (prompting or bell; wraps), across every open workspace tab, switching tabs as needed |
 | `i` / `Ctrl+A` | Inline attach to agent pane |
 | `Ctrl+T` | Inline attach to terminal pane |
 | `Alt+A` / `Alt+T` | Full-screen attach (agent / terminal) |
@@ -335,15 +339,15 @@ Session-lifecycle keys (`D`, `r`, `R`), workspace keys, and `q`/`?`/`W`/`S` keep
 | Key | Action |
 |-----|--------|
 | `↑` / `k`, `↓` / `j` | Walk the attention-sorted card grid |
-| `Enter` / `Esc` | Return to focus mode on the selected session |
+| `Enter` / `Esc` | Return to focus mode on the selected session, switching to its workspace tab |
 | `Tab` | Return to focus mode |
 | `z` | Collapse/expand the active workspace group |
-| `]` / `[` | Jump to next/previous agent waiting for input |
+| `]` / `[` | Move the cursor to the next/previous agent waiting for input, in any open workspace |
 | `n` / `N` | Drop to focus mode, then open the create flow |
 
 ### Session Workbench (after pressing `Enter` on a selected session)
 
-Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive. The Review tab passes most of those keys through, with these exceptions: `S` sends the review comments to the agent instead of opening settings, `q` closes the review instead of quitting, `]`/`[` move between comments instead of jumping to a waiting agent, and `s` toggles the comment sidebar instead of stash-and-pause (in a code review, `n`/`N` jump between changes instead of creating instances). In a code review the pane also owns `1`–`9` and `Tab`/`Shift+Tab` (file tabs) — see [Reviewing](#reviewing) for the full set of review keys.
+Session-lifecycle keys (`D`, `r`, `R`, `p`, `s`, `m`), attach (`i`/`Ctrl+A`/`Alt+A`), quick input (`a`), workspace keys, `]`/`[`, and `q`/`?`/`W`/`S` keep working; layout keys that address the hidden focus-mode chrome (`\`, `T`, list paging) are inactive. `]`/`[` move the panel to a waiting agent in the same workspace, and return to focus mode for one in another workspace. The Review tab passes most of those keys through, with these exceptions: `S` sends the review comments to the agent instead of opening settings, `q` closes the review instead of quitting, `]`/`[` move between comments instead of jumping to a waiting agent, and `s` toggles the comment sidebar instead of stash-and-pause (in a code review, `n`/`N` jump between changes instead of creating instances). In a code review the pane also owns `1`–`9` and `Tab`/`Shift+Tab` (file tabs) — see [Reviewing](#reviewing) for the full set of review keys.
 
 | Key | Action |
 |-----|--------|
@@ -395,7 +399,7 @@ The overlay has four focus areas. Press `Tab` to cycle between them:
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+Q` | Detach from session and return to TUI |
+| `Ctrl+Q`, or `Esc` twice within half a second | Detach from session and return to TUI (a single `Esc` still reaches the agent) |
 | *All other keys* | Sent directly to the tmux session |
 
 ### Confirmation Modal (kill, push)
@@ -690,6 +694,7 @@ loom [command]
 |------|-------|-------------|
 | `--program <prog>` | `-p` | Program this loom's new sessions run (e.g. `aider --model gpt-4`); other open looms keep their own |
 | `--workspace <name>` | `-w` | Select workspace by name (bypasses auto-detection) |
+| `--log-level <level>` | | `debug`, `info`, `warn` or `error`; accepted by every subcommand and wins over `LOOM_LOG_LEVEL` |
 
 ### Commands
 
@@ -701,6 +706,7 @@ loom [command]
 | `serve stop` | Stop the daemon: it finishes any pause or kill in progress, saves and exits. Sessions keep running; every open loom exits |
 | `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions (on the tmux server the last daemon used, while it runs) — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**. Stops before removing worktrees if the tmux cleanup fails. Refused while the daemon runs (`loom serve stop` first). |
 | `workspace` | Manage workspaces (see below) |
+| `account` | Manage extra Claude accounts (see below, and [Run Sessions on Several Claude Accounts](#run-sessions-on-several-claude-accounts)) |
 
 ### Workspace Subcommands
 
@@ -714,6 +720,17 @@ loom [command]
 | `workspace rename <old> <new>` | Rename a workspace |
 | `workspace status [name]` | Show instance counts (defaults to CWD workspace) |
 | `workspace migrate` | Move global instances to their matching workspace directories (refused while the daemon runs) |
+
+### Account Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `account add <name> [--no-login]` | Create `~/.loom/accounts/<name>`, link your Claude setup into it, and run `claude auth login` for it (skipped with `--no-login`) |
+| `account login <name>` | Log an account in again; `default` is your main login |
+| `account list` | Each account's email, plan and 5-hour/7-day usage |
+| `account use <name>` | The account new sessions preselect |
+| `account sync` | Share entries added to your main Claude config dir since the accounts were made |
+| `account remove <name> [-y] [--force]` | Remove an account; refused while a session uses it or its dir holds unshared files. `-y` skips the confirmation, `--force` overrides both refusals |
 
 ### Examples
 
@@ -873,7 +890,16 @@ This setting only affects sessions created on a **new** branch. Picking an exist
 | `LOOM_HOME` | Override the config directory (default: `~/.loom`). Must be an absolute path; supports `~` expansion. |
 | `LOOM_TMUX_SOCKET` | Run loom's sessions on a private tmux server (`tmux -L <name>`). It is read when a daemon starts (a daemon keeps the tmux server the last one used while that server runs); every loom then uses the daemon's server, whatever its own environment says. Inside one of loom's own tmux sessions it doesn't let a daemon start: for a dev build, use `go run ./tools/loomdev run`. |
 | `LOOM_GLOBAL_DIR` | Override the directory holding `workspaces.json` (default: `~/.loom`). Absolute path; supports `~`. Each global directory has its own daemon. |
+| `LOOM_LOG_LEVEL` | `debug`, `info` (default), `warn` or `error`: what goes into the log files. `--log-level` wins over it. |
+| `LOOM_LOG_FORMAT` | Set to `json` to write structured log records as JSON lines (older plain lines stay plain text). |
+| `LOOM_PANE_RENDERER` | Set to `snapshot` to turn off the embedded terminal emulator and render panes from periodic `tmux capture-pane` snapshots instead (always the case on Windows). You lose mouse forwarding, live scroll-back, the native cursor and title/bell pass-through, and panes refresh on a timer rather than as output arrives. The daemon and each loom read their own: start loom with it to change your panes, and stop the daemon (`loom serve stop`) to change the daemon's refresh rate. |
 | `LOOM_ALLOW_NESTED` | Set to `1` to let the daemon start (or `loom reset` run) inside one of loom's own tmux sessions on the tmux server it would use anyway (normally refused, because its startup cleanup could kill the enclosing loom's sessions). A loom started inside loom still never replaces an older daemon. |
+
+The names Loom inherited from claude-squad still work, with a one-time deprecation warning on stderr: `CLAUDE_SQUAD_HOME`, `CLAUDE_SQUAD_LOG_FORMAT` and `CLAUDE_SQUAD_LOG_LEVEL`. Move to the `LOOM_*` names in your shell init.
+
+### Logs
+
+Each loom writes `logs/loom.log` in its config folder (`~/.loom/logs/loom.log` by default), moving it to `loom.log.1` at startup once it passes 5 MB. The daemon writes `~/.loom/logs/serve.log`, and a crash it can't log goes to `serve-crash.log` beside it. `loom debug` prints the paths. For more detail run loom with `--log-level=debug`; a daemon already running keeps its own level, so `loom serve stop` first to raise the daemon's. Every record names its component, so `grep subsystem=tmux loom.log` narrows a log to one part of loom.
 
 ---
 
@@ -927,3 +953,9 @@ loom workspace migrate
 ```
 
 Instances are matched to workspaces by their repository path. Unmatched instances remain in global storage.
+
+---
+
+## Coming from claude-squad
+
+Loom is a fork of [claude-squad](https://github.com/smtg-ai/claude-squad). The first time it runs, Loom renames `~/.claude-squad/` to `~/.loom/` in one step, so sessions, worktrees and your scripts carry over. Running agents keep running: their tmux sessions, named `claudesquad_…`, are renamed to `loom_…` before Loom reconciles them. Auto-commits are tagged `[loom]` rather than `[claudesquad]`; commits made before the switch keep the old tag. The old `CLAUDE_SQUAD_*` environment variables still work (see [Environment Variables](#environment-variables)).
