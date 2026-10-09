@@ -1,0 +1,30 @@
+name: Docs
+
+# Always on, unlike build, lint and race: a CLAUDE.md, a guide or a skill
+# goes stale without any Go file changing.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  claude-md:
+    name: CLAUDE.md lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check structure
+        run: go test ./tools/claudemd/
+
+      # Advisory, as the playbook has it: the symbol heuristic can misfire
+      # on a new doc, so stale symbols are reported, not failed.
+      - name: Report stale symbols
+        run: go run ./tools/claudemd -idents
