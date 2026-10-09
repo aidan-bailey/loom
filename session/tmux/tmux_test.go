@@ -89,7 +89,7 @@ func TestFullScreenAttachCmd(t *testing.T) {
 	session := NewTmuxSession("attach-shape", "program")
 	cmd := session.FullScreenAttachCmd()
 	require.Equal(t,
-		[]string{"tmux", "attach-session", "-t", "=" + TmuxPrefix + "attach-shape"},
+		[]string{"tmux", "-u", "attach-session", "-t", "=" + TmuxPrefix + "attach-shape"},
 		cmd.Args,
 	)
 }
@@ -353,9 +353,9 @@ func TestStartTmuxSession(t *testing.T) {
 	err := session.Start(workdir)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(ptyFactory.cmds))
-	require.Equal(t, fmt.Sprintf("tmux new-session -d -s loom_test-session -c %s claude", workdir),
+	require.Equal(t, fmt.Sprintf("tmux -u new-session -d -s loom_test-session -c %s claude", workdir),
 		cmd2.ToString(ptyFactory.cmds[0]))
-	require.Equal(t, "tmux attach-session -t =loom_test-session",
+	require.Equal(t, "tmux -u attach-session -t =loom_test-session",
 		cmd2.ToString(ptyFactory.cmds[1]))
 
 	require.Equal(t, 2, len(ptyFactory.files))
@@ -392,7 +392,7 @@ func TestStartTmuxSessionWithEnv(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, len(ptyFactory.cmds))
 	require.Equal(t,
-		fmt.Sprintf("tmux new-session -d -s loom_test-session -c %s -e ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude", workdir),
+		fmt.Sprintf("tmux -u new-session -d -s loom_test-session -c %s -e ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude", workdir),
 		cmd2.ToString(ptyFactory.cmds[0]))
 }
 
@@ -419,7 +419,7 @@ func TestStartTmuxSessionNoEnvUnchanged(t *testing.T) {
 	err := session.Start(workdir)
 	require.NoError(t, err)
 	require.Equal(t,
-		fmt.Sprintf("tmux new-session -d -s loom_test-session -c %s claude", workdir),
+		fmt.Sprintf("tmux -u new-session -d -s loom_test-session -c %s claude", workdir),
 		cmd2.ToString(ptyFactory.cmds[0]))
 }
 

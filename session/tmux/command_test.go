@@ -14,22 +14,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCommand_DefaultServerLeavesArgvUnchanged(t *testing.T) {
+func TestCommand_DefaultServerAddsNoSocket(t *testing.T) {
 	t.Setenv(EnvTmuxSocket, "")
 	cmd := Command(context.Background(), "has-session", "-t=loom_x")
-	assert.Equal(t, []string{"tmux", "has-session", "-t=loom_x"}, cmd.Args)
+	assert.Equal(t, []string{"tmux", "-u", "has-session", "-t=loom_x"}, cmd.Args)
 }
 
 func TestCommand_PrivateSocketPrependsL(t *testing.T) {
 	t.Setenv(EnvTmuxSocket, "loomdev-demo")
 	cmd := Command(context.Background(), "ls")
-	assert.Equal(t, []string{"tmux", "-L", "loomdev-demo", "ls"}, cmd.Args)
+	assert.Equal(t, []string{"tmux", "-u", "-L", "loomdev-demo", "ls"}, cmd.Args)
 }
 
 func TestCommandOnSocket_IgnoresEnv(t *testing.T) {
 	t.Setenv(EnvTmuxSocket, "from-env")
 	cmd := CommandOnSocket(context.Background(), "explicit", "ls")
-	assert.Equal(t, []string{"tmux", "-L", "explicit", "ls"}, cmd.Args)
+	assert.Equal(t, []string{"tmux", "-u", "-L", "explicit", "ls"}, cmd.Args)
 }
 
 func TestCommandOnSocket_DoesNotMutateCallerArgs(t *testing.T) {
@@ -37,6 +37,33 @@ func TestCommandOnSocket_DoesNotMutateCallerArgs(t *testing.T) {
 	args[0] = "ls"
 	_ = CommandOnSocket(context.Background(), "s", args...)
 	assert.Equal(t, []string{"ls"}, args)
+}
+
+// TestCommand_ListingSurvivesANonUTF8Client_RealTmux pins -u. tmux prints a
+// command-line client's output through utf8_sanitize, which turns every
+// byte outside printable ASCII into '_', unless the client is UTF-8: $TMUX
+// set (even empty) or a UTF-8 LC_ALL/LC_CTYPE/LANG. Outside tmux under no
+// UTF-8 locale (a service, a bare SSH login, the Nix build sandbox) a
+// "#{session_name}\t#{session_path}" listing came back as one field, and the
+// held-name guard, finding no session of its name, killed another
+// workspace's.
+func TestCommand_ListingSurvivesANonUTF8Client_RealTmux(t *testing.T) {
+	privateTmux(t, "u8")
+	for _, v := range []string{"TMUX", "LC_ALL", "LC_CTYPE", "LANG"} {
+		t.Setenv(v, "") // restores the variable when the test ends
+		require.NoError(t, os.Unsetenv(v))
+	}
+	dir := filepath.Join(t.TempDir(), "café")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	out, err := Command(context.Background(), "new-session", "-d", "-s", "loom_u8", "-c", dir, "sleep 300").CombinedOutput()
+	require.NoError(t, err, "%s", out)
+
+	out, err = Command(context.Background(), "ls", "-F", "#{session_name}\t#{session_path}").Output()
+	require.NoError(t, err)
+	name, path, ok := strings.Cut(strings.TrimSpace(string(out)), "\t")
+	require.True(t, ok, "the tab survives: %q", out)
+	assert.Equal(t, "loom_u8", name)
+	assert.Equal(t, "café", filepath.Base(path), "and so does a non-ASCII path")
 }
 
 func TestCommand_BoundToContext(t *testing.T) {
@@ -80,13 +107,13 @@ func TestUseServer_PinsEveryCommand(t *testing.T) {
 	UseServer("/run/user/1000/tmux-1000/default")
 	t.Cleanup(func() { UseServer("") })
 
-	assert.Equal(t, []string{"tmux", "-S", "/run/user/1000/tmux-1000/default", "ls"}, Command(ctx, "ls").Args)
-	assert.Equal(t, []string{"tmux", "-S", "/run/user/1000/tmux-1000/default", "attach-session", "-t", "=loom_x"},
+	assert.Equal(t, []string{"tmux", "-u", "-S", "/run/user/1000/tmux-1000/default", "ls"}, Command(ctx, "ls").Args)
+	assert.Equal(t, []string{"tmux", "-u", "-S", "/run/user/1000/tmux-1000/default", "attach-session", "-t", "=loom_x"},
 		NewTmuxSession("x", "sh").FullScreenAttachCmd().Args, "the full-screen attach too")
-	assert.Equal(t, []string{"tmux", "-L", "explicit", "ls"}, CommandOnSocket(ctx, "explicit", "ls").Args)
+	assert.Equal(t, []string{"tmux", "-u", "-L", "explicit", "ls"}, CommandOnSocket(ctx, "explicit", "ls").Args)
 
 	UseServer("")
-	assert.Equal(t, []string{"tmux", "-L", "from-env", "ls"}, Command(ctx, "ls").Args)
+	assert.Equal(t, []string{"tmux", "-u", "-L", "from-env", "ls"}, Command(ctx, "ls").Args)
 }
 
 // TestResolveServer: the socket path is the one tmux itself would use in

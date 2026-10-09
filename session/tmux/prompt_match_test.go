@@ -41,5 +41,5 @@ func TestTrustPromptMatchesWrappedPattern(t *testing.T) {
 
 	require.True(t, s.DismissTrustPrompt(content),
 		"a wrapped trust prompt must still be detected")
-	assert.Equal(t, [][]string{{"tmux", "send-keys", "-t", "=loom_trustwrap:", "Enter"}}, rec.ran("send-keys"))
+	assert.Equal(t, [][]string{{"tmux", "-u", "send-keys", "-t", "=loom_trustwrap:", "Enter"}}, rec.ran("send-keys"))
 }

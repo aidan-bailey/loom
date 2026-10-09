@@ -35,7 +35,7 @@ func TestKillTmuxSessionByTitle_SendsSanitizedTarget(t *testing.T) {
 	}
 	err := KillTmuxSessionByTitle("prader-rs", cmdExec)
 	assert.NoError(t, err)
-	assert.Equal(t, []string{"tmux", "kill-session", "-t", "=loom_prader-rs"}, got,
+	assert.Equal(t, []string{"tmux", "-u", "kill-session", "-t", "=loom_prader-rs"}, got,
 		"killed by exact name (tmux.SessionTarget)")
 }
 

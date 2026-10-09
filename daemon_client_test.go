@@ -204,7 +204,7 @@ func TestJoin_PinsTheDaemonsTmuxServer(t *testing.T) {
 	_, err := f.link(ours, nil).join()
 	require.NoError(t, err)
 	args := tmux.Command(context.Background(), "list-sessions").Args
-	assert.True(t, slices.Equal([]string{"tmux", "-S", "/srv/daemon.sock", "list-sessions"}, args), "got %q", args)
+	assert.True(t, slices.Equal([]string{"tmux", "-u", "-S", "/srv/daemon.sock", "list-sessions"}, args), "got %q", args)
 }
 
 // TestReplaceGuard: a loom inside loom never replaces the daemon its

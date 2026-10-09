@@ -24,3 +24,20 @@ func (e MockCmdExec) CombinedOutput(cmd *exec.Cmd) ([]byte, error) {
 	}
 	return e.OutputFunc(cmd)
 }
+
+// TmuxSubcommand is the command a tmux argv runs: the first word after the
+// global flags tmux.Command puts first (-u, and -L <socket> or -S <path>), or "" when
+// there is none. Mocks dispatch on it rather than on argv[1], which is a
+// global flag.
+func TmuxSubcommand(argv []string) string {
+	for i := 1; i < len(argv); i++ {
+		switch argv[i] {
+		case "-u":
+		case "-L", "-S":
+			i++ // its socket name, or the pinned server's socket path
+		default:
+			return argv[i]
+		}
+	}
+	return ""
+}

@@ -177,7 +177,7 @@ func TestResetCmd_SweepsTheServerADaemonWouldPin(t *testing.T) {
 	assert.Equal(t, []string{sock}, *asked, "the guard is decided on the server swept")
 	require.NotEmpty(t, fake.commands)
 	for _, args := range fake.commands {
-		assert.True(t, slices.Equal([]string{"tmux", "-S", sock}, args[:3]), "on the last daemon's server: %q", args)
+		assert.True(t, slices.Equal([]string{"tmux", "-u", "-S", sock}, args[:4]), "on the last daemon's server: %q", args)
 	}
 	assert.Equal(t, []string{"=loom_busy"}, fake.killed)
 }

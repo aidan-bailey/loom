@@ -39,9 +39,9 @@ func TestNewAttachClient_RestoreAttachesByExactName(t *testing.T) {
 	t.Cleanup(func() { _ = c.PausePreview() })
 
 	require.Len(t, ptyFactory.cmds, 1)
-	assert.Equal(t, []string{"tmux", "attach-session", "-t", "=loom_api"}, ptyFactory.cmds[0].Args)
+	assert.Equal(t, []string{"tmux", "-u", "attach-session", "-t", "=loom_api"}, ptyFactory.cmds[0].Args)
 	assert.Empty(t, rec.ran("new-session"), "a client launches nothing")
-	assert.Equal(t, [][]string{{"tmux", "set-option", "-t", "=loom_api:", "detach-on-destroy", "on"}}, rec.ran("set-option"),
+	assert.Equal(t, [][]string{{"tmux", "-u", "set-option", "-t", "=loom_api:", "detach-on-destroy", "on"}}, rec.ran("set-option"),
 		"a session an older loom launched gets detach-on-destroy too")
 	assert.True(t, c.PtmxAlive())
 }
@@ -69,7 +69,7 @@ func TestDetectStatus_AnswersTheTrustPrompt(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, updated)
-	assert.Equal(t, [][]string{{"tmux", "send-keys", "-t", "=loom_cl:", "Enter"}}, rec.ran("send-keys"))
+	assert.Equal(t, [][]string{{"tmux", "-u", "send-keys", "-t", "=loom_cl:", "Enter"}}, rec.ran("send-keys"))
 }
 
 func TestDetectStatus_ReportsThePendingPrompt(t *testing.T) {
