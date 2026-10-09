@@ -18,7 +18,7 @@ import (
 func liveServer(list string, killed *[]string) cmd_test.MockCmdExec {
 	return cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
-			if len(c.Args) >= 2 && c.Args[1] == "kill-session" {
+			if cmd_test.TmuxSubcommand(c.Args) == "kill-session" {
 				*killed = append(*killed, c.Args[len(c.Args)-1])
 			}
 			return nil // has-session: alive

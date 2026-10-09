@@ -40,7 +40,7 @@ func TestLiveSessionAccount_MapsConfigDirToAccount(t *testing.T) {
 	got := liveSessionAccount("three", envExec("CLAUDE_CONFIG_DIR=/g/accounts/alt\n", nil, &args))
 
 	assert.Equal(t, "alt", got)
-	assert.Equal(t, []string{"tmux", "show-environment", "-t", "=loom_three", "CLAUDE_CONFIG_DIR"}, args,
+	assert.Equal(t, []string{"tmux", "-u", "show-environment", "-t", "=loom_three", "CLAUDE_CONFIG_DIR"}, args,
 		"asks the session's own environment, by exact name")
 }
 

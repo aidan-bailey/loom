@@ -328,7 +328,7 @@ func TestInstance_PauseClosesTerminalPaneSession(t *testing.T) {
 	var killedSessions []string
 	inst.getTmuxSession().SetCmdExecForTest(cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
-			if len(c.Args) >= 3 && c.Args[1] == "kill-session" {
+			if cmd_test.TmuxSubcommand(c.Args) == "kill-session" {
 				// Killed by exact match: -t =<name> (tmux.SessionTarget).
 				killedSessions = append(killedSessions, strings.TrimPrefix(c.Args[len(c.Args)-1], "="))
 			}
@@ -354,7 +354,7 @@ func TestInstance_KillClosesTerminalPaneSession(t *testing.T) {
 	var killedSessions []string
 	inst.getTmuxSession().SetCmdExecForTest(cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
-			if len(c.Args) >= 3 && c.Args[1] == "kill-session" {
+			if cmd_test.TmuxSubcommand(c.Args) == "kill-session" {
 				// Killed by exact match: -t =<name> (tmux.SessionTarget).
 				killedSessions = append(killedSessions, strings.TrimPrefix(c.Args[len(c.Args)-1], "="))
 			}
@@ -397,7 +397,7 @@ func TestInstance_RestartProceedsPastIdempotencyGuard(t *testing.T) {
 	var hasSessionCalls int
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
-			if len(c.Args) >= 2 && c.Args[1] == "has-session" {
+			if cmd_test.TmuxSubcommand(c.Args) == "has-session" {
 				hasSessionCalls++
 				if hasSessionCalls == 1 {
 					// First check inside tmux.Start: report no session so
@@ -476,7 +476,7 @@ type recordingPtyFactory struct {
 }
 
 func (f recordingPtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
-	if len(cmd.Args) > 1 && cmd.Args[1] == "new-session" {
+	if cmd_test.TmuxSubcommand(cmd.Args) == "new-session" {
 		*f.programs = append(*f.programs, cmd.Args[len(cmd.Args)-1])
 	}
 	return f.fakePtyFactory.Start(cmd)
@@ -496,7 +496,7 @@ func TestInstance_RestartIsARealLaunch(t *testing.T) {
 	var hasSessionCalls int
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
-			if len(c.Args) >= 2 && c.Args[1] == "has-session" {
+			if cmd_test.TmuxSubcommand(c.Args) == "has-session" {
 				hasSessionCalls++
 				if hasSessionCalls == 1 {
 					return fmt.Errorf("no such session")
@@ -553,7 +553,7 @@ func TestInstance_RestartUsesAFreshlyResolvedAccountEnv(t *testing.T) {
 	var hasSessionCalls int
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
-			if len(c.Args) >= 2 && c.Args[1] == "has-session" {
+			if cmd_test.TmuxSubcommand(c.Args) == "has-session" {
 				hasSessionCalls++
 				if hasSessionCalls == 1 {
 					return fmt.Errorf("no such session")

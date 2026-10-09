@@ -68,7 +68,7 @@ func (r *argvRecorder) runner() cmd_test.MockCmdExec {
 			if r.fail != nil {
 				return nil, r.fail
 			}
-			if msg, ok := r.failOn[c.Args[1]]; ok {
+			if msg, ok := r.failOn[cmd_test.TmuxSubcommand(c.Args)]; ok {
 				return []byte(msg + "\n"), errors.New("exit status 1")
 			}
 			return []byte{}, nil
@@ -82,7 +82,7 @@ func (r *argvRecorder) ran(sub string) [][]string {
 	defer r.mu.Unlock()
 	var out [][]string
 	for _, argv := range r.runs {
-		if len(argv) > 1 && argv[1] == sub {
+		if cmd_test.TmuxSubcommand(argv) == sub {
 			out = append(out, argv)
 		}
 	}
@@ -96,7 +96,7 @@ func (r *argvRecorder) stdin(sub string) []string {
 	defer r.mu.Unlock()
 	var out []string
 	for i, argv := range r.runs {
-		if len(argv) > 1 && argv[1] == sub {
+		if cmd_test.TmuxSubcommand(argv) == sub {
 			out = append(out, r.stdins[i])
 		}
 	}
@@ -110,8 +110,8 @@ func (r *argvRecorder) subcommands() []string {
 	defer r.mu.Unlock()
 	var out []string
 	for _, argv := range r.runs {
-		if len(argv) > 1 {
-			out = append(out, argv[1])
+		if s := cmd_test.TmuxSubcommand(argv); s != "" {
+			out = append(out, s)
 		}
 	}
 	return out
@@ -126,13 +126,13 @@ func TestSession_TypeTextPastesThroughABuffer(t *testing.T) {
 
 	require.Equal(t, []string{"load-buffer", "paste-buffer"}, rec.subcommands())
 	load, paste := rec.ran("load-buffer")[0], rec.ran("paste-buffer")[0]
-	buffer := load[3]
+	buffer := load[4]
 	assert.Regexp(t, fmt.Sprintf(`^loom-loom_typed-%d-\d+$`, os.Getpid()), buffer,
 		"named for the session, this process and the call, so no other process's paste can collide")
-	assert.Equal(t, []string{"tmux", "load-buffer", "-b", buffer, "-"}, load)
+	assert.Equal(t, []string{"tmux", "-u", "load-buffer", "-b", buffer, "-"}, load)
 	assert.Equal(t, []string{text}, rec.stdin("load-buffer"),
 		"the text goes in on stdin, where tmux neither parses nor size-caps it")
-	assert.Equal(t, []string{"tmux", "paste-buffer", "-d", "-r", "-b", buffer, "-t", "=loom_typed:"}, paste,
+	assert.Equal(t, []string{"tmux", "-u", "paste-buffer", "-d", "-r", "-b", buffer, "-t", "=loom_typed:"}, paste,
 		"the same buffer, deleted once pasted, LF kept as LF, exactly targeted")
 }
 
@@ -145,7 +145,7 @@ func TestSession_TypeTextUsesAFreshBufferPerCall(t *testing.T) {
 
 	loads := rec.ran("load-buffer")
 	require.Len(t, loads, 2)
-	assert.NotEqual(t, loads[0][3], loads[1][3])
+	assert.NotEqual(t, loads[0][4], loads[1][4])
 }
 
 func TestSession_TypeTextEmptyRunsNothing(t *testing.T) {
@@ -163,7 +163,7 @@ func TestSession_PressKeysNamesKeysInOrder(t *testing.T) {
 
 	require.NoError(t, s.PressKeys("D", "Enter"))
 
-	assert.Equal(t, [][]string{{"tmux", "send-keys", "-t", "=loom_keys:", "D", "Enter"}}, rec.ran("send-keys"))
+	assert.Equal(t, [][]string{{"tmux", "-u", "send-keys", "-t", "=loom_keys:", "D", "Enter"}}, rec.ran("send-keys"))
 }
 
 func TestSession_SendPromptTypesThenPressesEnter(t *testing.T) {
@@ -174,7 +174,7 @@ func TestSession_SendPromptTypesThenPressesEnter(t *testing.T) {
 
 	assert.Equal(t, []string{"load-buffer", "paste-buffer", "send-keys"}, rec.subcommands())
 	assert.Equal(t, []string{"fix the login bug"}, rec.stdin("load-buffer"))
-	assert.Equal(t, [][]string{{"tmux", "send-keys", "-t", "=loom_prompt:", "Enter"}}, rec.ran("send-keys"))
+	assert.Equal(t, [][]string{{"tmux", "-u", "send-keys", "-t", "=loom_prompt:", "Enter"}}, rec.ran("send-keys"))
 }
 
 func TestSession_TypeTextReportsTmuxFailure(t *testing.T) {
@@ -196,8 +196,8 @@ func TestSession_TypeTextDeletesTheBufferWhenThePasteFails(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "can't find pane", "tmux's own message, not just its exit status")
-	buffer := rec.ran("load-buffer")[0][3]
-	assert.Equal(t, [][]string{{"tmux", "delete-buffer", "-b", buffer}}, rec.ran("delete-buffer"),
+	buffer := rec.ran("load-buffer")[0][4]
+	assert.Equal(t, [][]string{{"tmux", "-u", "delete-buffer", "-b", buffer}}, rec.ran("delete-buffer"),
 		"-d deletes only after a paste, so a failed one would leave the buffer on the server")
 }
 
@@ -221,9 +221,9 @@ func TestSession_StartLaunchesWithoutAttaching(t *testing.T) {
 	require.NoError(t, s.Start(workdir))
 
 	require.Len(t, ptyFactory.cmds, 1, "new-session only: no attach client")
-	assert.Equal(t, []string{"tmux", "new-session", "-d", "-s", "loom_launch", "-c", workdir, "claude"}, ptyFactory.cmds[0].Args)
+	assert.Equal(t, []string{"tmux", "-u", "new-session", "-d", "-s", "loom_launch", "-c", workdir, "claude"}, ptyFactory.cmds[0].Args)
 	assert.Len(t, rec.ran("set-option"), 4, "history-limit, mouse, status and detach-on-destroy")
-	assert.Contains(t, rec.ran("set-option"), []string{"tmux", "set-option", "-t", "=loom_launch:", "detach-on-destroy", "on"})
+	assert.Contains(t, rec.ran("set-option"), []string{"tmux", "-u", "set-option", "-t", "=loom_launch:", "detach-on-destroy", "on"})
 	assert.Len(t, rec.ran("bind-key"), 1)
 	assert.Empty(t, rec.ran("capture-pane"), "no seed capture: that belongs to an attach client")
 }
@@ -235,7 +235,7 @@ func TestSession_CloseOnlyKills(t *testing.T) {
 
 	require.NoError(t, s.Close())
 
-	assert.Equal(t, [][]string{{"tmux", "kill-session", "-t", "=loom_closing"}}, rec.runs)
+	assert.Equal(t, [][]string{{"tmux", "-u", "kill-session", "-t", "=loom_closing"}}, rec.runs)
 	assert.Empty(t, ptyFactory.cmds)
 }
 
@@ -260,7 +260,7 @@ func TestSession_DismissTrustPrompt(t *testing.T) {
 				assert.Empty(t, rec.ran("send-keys"))
 				return
 			}
-			want := append([]string{"tmux", "send-keys", "-t", "=loom_trust:"}, tc.keys...)
+			want := append([]string{"tmux", "-u", "send-keys", "-t", "=loom_trust:"}, tc.keys...)
 			assert.Equal(t, [][]string{want}, rec.ran("send-keys"))
 		})
 	}

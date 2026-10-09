@@ -35,7 +35,7 @@ func (s *sweepServer) executor() cmd_test.MockCmdExec {
 			return []byte(s.listing), s.listErr
 		},
 		RunFunc: func(c *exec.Cmd) error {
-			if len(c.Args) >= 3 && c.Args[1] == "kill-session" {
+			if cmd_test.TmuxSubcommand(c.Args) == "kill-session" {
 				s.killed = append(s.killed, c.Args[len(c.Args)-1])
 			}
 			return nil

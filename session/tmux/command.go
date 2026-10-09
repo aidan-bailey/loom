@@ -29,8 +29,18 @@ func Command(ctx context.Context, args ...string) *exec.Cmd {
 
 // CommandOnSocket is Command with an explicit socket name; "" selects the
 // default server. The caller's args slice is never modified.
+//
+// -u makes every invocation a UTF-8 client. tmux decides that per client,
+// from $TMUX (set at all) or a UTF-8 LC_ALL, LC_CTYPE or LANG, and prints a
+// non-UTF-8 command-line client's output through utf8_sanitize, which turns
+// every byte outside printable ASCII into '_': a tab, an escape, a
+// non-ASCII path. Started outside tmux under no UTF-8 locale (a service, a
+// bare SSH login), loom read "#{session_name}\t#{session_path}" as one name
+// with no directory, and the held-name guard, finding no session of its
+// name, killed another workspace's.
 func CommandOnSocket(ctx context.Context, socket string, args ...string) *exec.Cmd {
-	full := make([]string, 0, len(args)+2)
+	full := make([]string, 0, len(args)+3)
+	full = append(full, "-u")
 	if socket != "" {
 		full = append(full, "-L", socket)
 	}
