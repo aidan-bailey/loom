@@ -326,9 +326,21 @@ func (s *Server) sendLocked(events []core.Event) {
 				sent = true
 			}
 			if isNotice && !sent {
-				// Its client has gone: whoever comes next is told.
+				// Its client has gone: the clients still here are told,
+				// or, with none, whoever comes next.
 				notice.Req = 0
-				s.keepLocked(notice)
+				if len(s.conns) == 0 {
+					s.keepLocked(notice)
+					continue
+				}
+				f, err := encodeEvent(notice)
+				if err != nil {
+					s.setFatalLocked(encodeFatal(notice, err))
+					return
+				}
+				for c := range s.conns {
+					c.enqueue(f, "")
+				}
 			}
 			continue
 		}

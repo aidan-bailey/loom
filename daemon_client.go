@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/aidan-bailey/loom/config"
@@ -76,11 +77,20 @@ func joinDaemon(globalDir string) (*rpc.Client, error) {
 	}.join()
 }
 
+// slowConnect is how long loom waits for the daemon in silence.
+const slowConnect = 750 * time.Millisecond
+
 // dialDaemon connects to globalDir's daemon (daemon.Connect) and says
 // hello. The handshake shares the connect's bound: a daemon that accepts
 // but never answers must not hang loom.
 func dialDaemon(globalDir string) (*rpc.Client, rpc.Hello, error) {
+	// A daemon starting loads every workspace, which can take seconds:
+	// say so rather than sit silent. The TUI has not taken the screen yet.
+	waiting := time.AfterFunc(slowConnect, func() {
+		fmt.Fprintln(os.Stderr, "loom: waiting for the loom daemon (it loads every workspace as it starts)…")
+	})
 	nc, _, err := daemon.Connect(globalDir, connectTimeout)
+	waiting.Stop()
 	if err != nil {
 		return nil, rpc.Hello{}, err
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 )
 
 // maxSocketPath bounds a socket's path: a unix socket address holds 108
@@ -71,7 +70,7 @@ func privateDir(dir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a directory", dir)
 	}
-	if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+	if ownedByAnother(info) {
 		return fmt.Errorf("%s belongs to another user", dir)
 	}
 	if info.Mode().Perm() != 0o700 {

@@ -529,3 +529,30 @@ func TestInitialize_TheDaemonWritesServeLog(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, ServeLogFileName))
 	assert.NoFileExists(t, filepath.Join(dir, logFileName))
 }
+
+// A `loom serve` that starts only to find another daemon running must not
+// rename the live daemon's log out from under it: the daemon's log is not
+// rotated at startup, however large, while the TUI's is.
+func TestInitialize_TheDaemonsLogIsNotRotatedAtStartup(t *testing.T) {
+	origMax := maxLogSize
+	t.Cleanup(func() { maxLogSize = origMax })
+	maxLogSize = 10
+
+	for _, daemon := range []bool{true, false} {
+		dir := t.TempDir()
+		name := logFileName
+		if daemon {
+			name = ServeLogFileName
+		}
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, []byte("the live daemon's lines\n"), 0o600))
+		require.NoError(t, Initialize(dir, daemon))
+		Close()
+		globalRotator = nil
+		if daemon {
+			assert.NoFileExists(t, path+".1", "the daemon's log was rotated at startup")
+		} else {
+			assert.FileExists(t, path+".1", "the TUI's log rotates at startup")
+		}
+	}
+}

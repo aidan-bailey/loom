@@ -217,6 +217,19 @@ func (l *Loop) DeliverForTest(result any) {
 	l.do(func(*Model) { l.deliverResult(result) })
 }
 
+// SpawnForTest queues job on the loop as the model would, a foreground job
+// (spawn) or a background one (spawnBackground), and starts it: a test
+// of what waits for jobs in flight (Quiesce, a daemon stopping).
+func (l *Loop) SpawnForTest(job Job, background bool) {
+	l.do(func(m *Model) {
+		if background {
+			m.spawnBackground(job)
+		} else {
+			m.spawn(job)
+		}
+	})
+}
+
 // SelectedForTest is the model's selection (Model.SelectedForTest), read
 // on the loop, so a test may read it while a server is calling the loop.
 func (l *Loop) SelectedForTest() []InstanceID {

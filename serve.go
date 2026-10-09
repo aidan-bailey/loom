@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
-	"sync"
 	"syscall"
 	"time"
 
@@ -68,15 +67,24 @@ global config dir.`,
 			_ = f.Close()
 		}
 
+		// The first signal stops the daemon gracefully: it waits for
+		// in-flight lifecycle jobs (up to 30s) and saves. A second one, a
+		// user's Ctrl-C meanwhile, exits at once.
 		stop := make(chan struct{})
-		var once sync.Once
-		sigs := make(chan os.Signal, 1)
+		sigs := make(chan os.Signal, 2)
 		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 		defer signal.Stop(sigs)
 		go func() {
+			first := true
 			for s := range sigs {
+				if !first {
+					log.For("serve").Warn("serve.forced_exit", "signal", s.String())
+					log.Close()
+					os.Exit(1)
+				}
+				first = false
 				log.For("serve").Info("serve.signal", "signal", s.String())
-				once.Do(func() { close(stop) })
+				close(stop)
 			}
 		}()
 
@@ -85,16 +93,19 @@ global config dir.`,
 			Build:     rpc.Build(),
 			Tmux:      server,
 			Stop:      stop,
-			NewModel: func() (*core.Model, error) {
+			NewModel: func() (*core.Model, []core.Notice, error) {
+				var notices []core.Notice
 				registry, err := config.LoadWorkspaceRegistry()
 				if err != nil {
-					// Served without it: the global workspace alone, and a
-					// notice the first client shows.
+					// Served without it: the global workspace alone, until the
+					// daemon restarts. The first client is told.
 					log.For("serve").Error("serve.registry_load_failed", "err", err)
+					notices = append(notices, core.Notice{Err: fmt.Errorf(
+						"the workspace registry would not load, so only global sessions are served (fix it, then run loom serve stop): %w", err)})
 					registry = nil
 				}
 				program := config.LoadConfigFrom(globalDir).GetProgram()
-				return core.New(core.Options{Registry: registry, Program: program}), nil
+				return core.New(core.Options{Registry: registry, Program: program}), notices, nil
 			},
 		})
 		if errors.Is(err, daemon.ErrRunning) {

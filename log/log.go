@@ -140,7 +140,12 @@ func Initialize(logDir string, daemon bool) error {
 		name = ServeLogFileName
 	}
 	logFilePath = filepath.Join(logDir, name)
-	rotateIfNeeded(logFilePath)
+	// The daemon's log is never rotated at startup: a `loom serve` that
+	// starts only to find another daemon running would rename the live
+	// one's log out from under it. Its writer rotates it as it grows.
+	if !daemon {
+		rotateIfNeeded(logFilePath)
+	}
 
 	prefix := ""
 	if daemon {

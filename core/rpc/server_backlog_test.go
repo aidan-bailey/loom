@@ -99,6 +99,38 @@ func TestServe_ARequestsNoticeOutlivesItsClient(t *testing.T) {
 	assert.Zero(t, got[0].Req, "the request was another client's")
 }
 
+// A request's Notice whose client has gone goes to the clients still
+// connected, at once, rather than wait for one that may come much later.
+func TestServe_AGoneClientsNoticeReachesTheOthers(t *testing.T) {
+	loop, id := failingKill(t)
+	srv := NewServer(loop)
+	t.Cleanup(srv.Close)
+
+	stays := dialTo(t, srv)
+	gone := dialTo(t, srv)
+	gone.Kill(id, 3)
+	require.NoError(t, gone.FlushForTest())
+	jobs := loop.JobsForTest()
+	gone.Close()
+	require.Eventually(t, func() bool {
+		srv.mu.Lock()
+		defer srv.mu.Unlock()
+		return len(srv.conns) == 1
+	}, 5*time.Second, time.Millisecond)
+	for _, j := range jobs {
+		loop.DeliverForTest(j())
+	}
+
+	require.NoError(t, stays.FlushForTest())
+	got := noticesOf(stays.Sync())
+	require.Len(t, got, 1)
+	assert.Error(t, got[0].Err)
+	assert.Zero(t, got[0].Req, "the request was another client's")
+
+	next := dialTo(t, srv)
+	assert.Empty(t, noticesOf(next.Sync()), "told once, not kept as well")
+}
+
 // The backlog holds the newest notices, so a daemon left alone for long
 // cannot grow without bound.
 func TestServe_TheBacklogIsBounded(t *testing.T) {

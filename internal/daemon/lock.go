@@ -41,6 +41,9 @@ type Record struct {
 	Socket string `json:"socket,omitempty"`
 	// Build names the daemon's binary (rpc.Build).
 	Build string `json:"build,omitempty"`
+	// Host is the machine the daemon runs on: a global dir shared over a
+	// network filesystem must not have a pid signalled on the wrong host.
+	Host string `json:"host,omitempty"`
 }
 
 // IsDaemon reports whether r is the record of a daemon that listens. One
@@ -76,7 +79,8 @@ func self(build string) Record {
 	if build == "" {
 		build = "unknown"
 	}
-	return Record{PID: os.Getpid(), TTY: ownTTY(), Started: time.Now(), Build: build}
+	host, _ := os.Hostname()
+	return Record{PID: os.Getpid(), TTY: ownTTY(), Started: time.Now(), Build: build, Host: host}
 }
 
 // ownTTY is the terminal on this process's stdin, "" when unknown (it is
@@ -155,16 +159,39 @@ func (l *Lock) Close() error { return l.fl.Close() }
 
 // ReadRecord reads globalDir's lock record, whoever holds it (zero when it
 // can't be read). Held reports whether a process holds the lock now.
+//
+// A record is rewritten in place (a rename would give the lock file a new
+// inode, which the lock is on), so a reader can meet it half-written: a held
+// lock whose record won't parse is read again for a moment.
 func ReadRecord(globalDir string) (rec Record, held bool) {
 	path := LockPath(globalDir)
 	fl := flock.New(path)
 	ok, err := fl.TryLock()
 	if err == nil && ok {
 		_ = fl.Close()
-		return readRecord(path), false
+		rec, _ = readRecordOK(path)
+		return rec, false
 	}
 	_ = fl.Close()
-	return readRecord(path), err == nil
+	held = err == nil
+	for range 20 {
+		var parsed bool
+		if rec, parsed = readRecordOK(path); parsed || !held {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return rec, held
+}
+
+// readRecordOK reads the record at path, and whether it parsed.
+func readRecordOK(path string) (Record, bool) {
+	var r Record
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return r, false
+	}
+	return r, json.Unmarshal(data, &r) == nil
 }
 
 func readRecord(path string) Record {

@@ -352,4 +352,28 @@ func TestLoop_QuiesceWaitsForForegroundJobs(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		assert.Zero(t, get(l, func(*Model) int { return l.armed }), "Begin arms no tick on a quiet loop")
 	})
+
+	t.Run("a tick armed before it does not fire", func(t *testing.T) {
+		l := startLoop(NewForTest(Options{}), false, 30*time.Millisecond)
+		t.Cleanup(l.Stop)
+		probes := 0
+		l.do(func(*Model) {
+			l.deliver = func(r any) {
+				if _, ok := r.(HealthResult); ok {
+					probes++
+				}
+			}
+		})
+		l.Begin()
+		require.True(t, l.Quiesce(time.Second))
+		time.Sleep(150 * time.Millisecond)
+		assert.Zero(t, get(l, func(*Model) int { return probes }), "the tick armed by Begin ran no probe")
+	})
+
+	t.Run("a foreground job with no result lands", func(t *testing.T) {
+		l := startLoop(NewForTest(Options{}), false, 0)
+		t.Cleanup(l.Stop)
+		l.do(func(m *Model) { m.spawn(func() any { return nil }) })
+		assert.True(t, l.Quiesce(time.Second), "a nil result counts as landed")
+	})
 }

@@ -39,7 +39,9 @@ func spawnInProcess(t *testing.T, dir string, o Options) *atomic.Int32 {
 		o := o
 		o.GlobalDir, o.Stop = dir, stop
 		if o.NewModel == nil {
-			o.NewModel = func() (*core.Model, error) { return core.New(core.Options{CmdExec: deadExec()}), nil }
+			o.NewModel = func() (*core.Model, []core.Notice, error) {
+				return core.New(core.Options{CmdExec: deadExec()}), nil, nil
+			}
 		}
 		go func() {
 			defer close(done)
@@ -98,10 +100,10 @@ func TestConnect_StartsADaemonWhenNoneRuns(t *testing.T) {
 func TestConnect_WaitsThroughADaemonStillBooting(t *testing.T) {
 	dir := globalDir(t)
 	booting, release := make(chan struct{}), make(chan struct{})
-	calls := spawnInProcess(t, dir, Options{NewModel: func() (*core.Model, error) {
+	calls := spawnInProcess(t, dir, Options{NewModel: func() (*core.Model, []core.Notice, error) {
 		close(booting)
 		<-release
-		return core.New(core.Options{CmdExec: deadExec()}), nil
+		return core.New(core.Options{CmdExec: deadExec()}), nil, nil
 	}})
 
 	type result struct {

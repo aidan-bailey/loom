@@ -3,11 +3,12 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
-	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/aidan-bailey/loom/core"
@@ -26,8 +27,10 @@ type Options struct {
 	// GlobalDir is the global config dir the daemon serves.
 	GlobalDir string
 	// NewModel builds the model, not yet booted: Serve boots it once it
-	// holds the lock, so no two models ever load one global dir.
-	NewModel func() (*core.Model, error)
+	// holds the lock, so no two models ever load one global dir. The notices
+	// it returns (a registry that would not load, say) are kept for the
+	// first client with the boot's.
+	NewModel func() (*core.Model, []core.Notice, error)
 	// Build names this binary in the lock record (rpc.Build).
 	Build string
 	// Tmux is the tmux server the model's sessions run on (its socket's
@@ -45,7 +48,8 @@ type Options struct {
 	QuiesceTimeout time.Duration
 	// WatchInterval is how often the daemon checks its socket file still
 	// exists (a runtime dir removed at logout, a tmp cleaner) and listens
-	// again if not. 0 means 30s.
+	// again if not. 0 means 2s: a client gives up on a silent daemon after
+	// seconds, and a check is one Lstat.
 	WatchInterval time.Duration
 	// Serving, when set, is called once the daemon listens: a test seam.
 	Serving func(loop *core.Loop, socket string)
@@ -68,7 +72,7 @@ func Serve(o Options) error {
 		o.QuiesceTimeout = 30 * time.Second
 	}
 	if o.WatchInterval == 0 {
-		o.WatchInterval = 30 * time.Second
+		o.WatchInterval = 2 * time.Second
 	}
 	rec := self(o.Build)
 	lock, holder, err := Wait(o.GlobalDir, rec, o.LockWait)
@@ -84,7 +88,14 @@ func Serve(o Options) error {
 	}
 	defer func() { _ = lock.Close() }()
 
-	model, err := o.NewModel()
+	// Where to listen is settled before the boot, which sweeps sessions and
+	// relaunches agents: a host with nowhere to put the socket fails here,
+	// having touched nothing.
+	socket, err := SocketPath(o.GlobalDir)
+	if err != nil {
+		return err
+	}
+	model, kept, err := o.NewModel()
 	if err != nil {
 		return fmt.Errorf("build the model: %w", err)
 	}
@@ -92,6 +103,7 @@ func Serve(o Options) error {
 	loop := core.Start(model)
 	srv := rpc.NewServer(loop)
 	srv.SetTmux(o.Tmux)
+	srv.Keep(kept...)
 	for _, ev := range notices {
 		if n, ok := ev.(core.Notice); ok {
 			srv.Keep(n)
@@ -99,21 +111,20 @@ func Serve(o Options) error {
 	}
 	loop.Begin()
 
-	socket, err := SocketPath(o.GlobalDir)
-	if err != nil {
-		srv.Close()
-		loop.Stop()
-		return err
-	}
-	l := &listener{path: socket, srv: srv}
+	l := &listener{globalDir: o.GlobalDir, path: socket, srv: srv, lock: lock, rec: rec}
 	if err := l.listen(); err != nil {
 		srv.Close()
 		loop.Stop()
 		return err
 	}
-	rec.Socket = socket
-	if err := lock.Write(rec); err != nil {
-		log.For("serve").Warn("serve.record_failed", "err", err)
+	// The record is how every client finds the daemon: one it can't write
+	// leaves a daemon nobody can reach or stop, so it is no daemon at all.
+	if err := l.record(); err != nil {
+		l.close()
+		srv.Close()
+		loop.Stop()
+		l.remove()
+		return err
 	}
 	log.For("serve").Info("serve.listening", "socket", socket, "pid", rec.PID, "build", o.Build, "tmux", o.Tmux)
 	if o.Serving != nil {
@@ -128,10 +139,9 @@ func Serve(o Options) error {
 			log.For("serve").Info("serve.stopping")
 			l.close()
 			srv.Close()
-			if !loop.Quiesce(o.QuiesceTimeout) {
-				log.For("serve").Warn("serve.stopped_with_jobs_in_flight")
-			}
-			if err := saveForStop(loop); err != nil {
+			// A model that failed but has not been published yet must not be
+			// waited on or saved: its state is unknown (stopModel).
+			if err := stopModel(loop, o.QuiesceTimeout); err != nil {
 				log.For("serve").Error("serve.save_failed", "err", err)
 			}
 			loop.Stop()
@@ -152,37 +162,63 @@ func Serve(o Options) error {
 	}
 }
 
-// saveForStop saves every workspace the model serves, as a stop's last
-// step. A failure is returned (and logged), not retried: the daemon is
-// going, and the records it could not write keep their last saved state.
-func saveForStop(loop *core.Loop) (err error) {
+// stopModel readies the model to stop: it waits for in-flight lifecycle
+// jobs (Loop.Quiesce), then saves every workspace the model serves. A
+// failure is returned, not retried: the daemon is going, and the records it
+// could not write keep their last saved state. A model that already failed
+// re-raises its panic on the first call; that is returned too, with nothing
+// saved, since its state is unknown.
+func stopModel(loop *core.Loop, timeout time.Duration) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("save on stop: %v", r)
+			err = fmt.Errorf("the model had failed; nothing saved: %v", r)
 		}
 	}()
+	if !loop.Quiesce(timeout) {
+		log.For("serve").Warn("serve.stopped_with_jobs_in_flight")
+	}
 	return loop.SaveForQuit()
 }
 
-// listener is the daemon's socket and the goroutine accepting on it.
+// listener is the daemon's socket, the goroutine accepting on it, and the
+// lock record that names it.
 type listener struct {
-	path string
-	srv  *rpc.Server
+	globalDir string
+	srv       *rpc.Server
+	lock      *Lock
+	rec       Record
 
-	mu sync.Mutex
-	ln net.Listener
-	// ino is the socket file's inode, to tell it from one put in its place.
-	ino uint64
+	mu   sync.Mutex
+	path string
+	ln   net.Listener
+	// file is the socket file as listened on, to tell it from one put in
+	// its place (os.SameFile); nil until it listens.
+	file os.FileInfo
+	// lost is set while the socket can't be listened on again: its failure
+	// is logged once, not at every watch.
+	lost bool
+}
+
+// record writes the lock record naming the socket now listened on.
+func (l *listener) record() error {
+	l.mu.Lock()
+	l.rec.Socket = l.path
+	rec := l.rec
+	l.mu.Unlock()
+	return l.lock.Write(rec)
 }
 
 // listen binds the socket, replacing a stale file a dead daemon left (the
 // lock, which this process holds, proves no live one uses it), makes it
 // private (net.Listen follows the umask), and accepts on it.
 func (l *listener) listen() error {
-	_ = os.Remove(l.path)
-	ln, err := net.Listen("unix", l.path)
+	l.mu.Lock()
+	path := l.path
+	l.mu.Unlock()
+	_ = os.Remove(path)
+	ln, err := net.Listen("unix", path)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", l.path, err)
+		return fmt.Errorf("listen on %s: %w", path, err)
 	}
 	// Closing would unlink the path whatever file is there by then (one put
 	// in its place, once the watch has listened again): remove checks the
@@ -190,24 +226,34 @@ func (l *listener) listen() error {
 	if ul, ok := ln.(*net.UnixListener); ok {
 		ul.SetUnlinkOnClose(false)
 	}
-	if err := os.Chmod(l.path, 0o600); err != nil {
+	if err := os.Chmod(path, 0o600); err != nil {
 		_ = ln.Close()
-		return fmt.Errorf("make %s private: %w", l.path, err)
+		return fmt.Errorf("make %s private: %w", path, err)
 	}
 	l.mu.Lock()
-	l.ln, l.ino = ln, inode(l.path)
+	l.ln, l.file = ln, stat(path)
 	l.mu.Unlock()
 	go l.accept(ln)
 	return nil
 }
 
-// accept serves every connection ln accepts, until ln closes.
+// accept serves every connection ln accepts, until ln closes. Any other
+// error (too many open files, say) is waited out: returning would leave a
+// daemon that listens but never accepts, which no watch would notice.
 func (l *listener) accept(ln net.Listener) {
+	backoff := 10 * time.Millisecond
 	for {
 		nc, err := ln.Accept()
-		if err != nil {
+		if errors.Is(err, net.ErrClosed) {
 			return
 		}
+		if err != nil {
+			log.For("serve").Warn("serve.accept_failed", "err", err)
+			time.Sleep(backoff)
+			backoff = min(2*backoff, time.Second)
+			continue
+		}
+		backoff = 10 * time.Millisecond
 		l.srv.Serve(nc)
 	}
 }
@@ -215,22 +261,44 @@ func (l *listener) accept(ln net.Listener) {
 // watch listens again when the socket file is gone or replaced: a runtime
 // dir removed at the last logout, or a tmp cleaner, would otherwise leave a
 // daemon no client can reach, holding the lock that stops another starting.
+//
+// The socket goes wherever SocketPath finds a place now, which is another
+// one while its dir is gone (a runtime dir removed at logout), and the
+// record is rewritten to name it.
 func (l *listener) watch() {
 	l.mu.Lock()
-	ino := l.ino
+	file, path, lost := l.file, l.path, l.lost
 	l.mu.Unlock()
-	if ino != 0 && inode(l.path) == ino {
+	if !lost && sameFile(file, path) {
 		return
 	}
-	log.For("serve").Warn("serve.socket_gone", "socket", l.path)
+	if !lost {
+		log.For("serve").Warn("serve.socket_gone", "socket", path)
+	}
 	l.close()
-	if err := privateDir(filepath.Dir(l.path)); err != nil {
-		log.For("serve").Error("serve.relisten_failed", "err", err)
+	next, err := SocketPath(l.globalDir)
+	if err == nil {
+		l.mu.Lock()
+		l.path = next
+		l.mu.Unlock()
+		err = l.listen()
+	}
+	if err == nil {
+		err = l.record()
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err != nil {
+		if !l.lost {
+			log.For("serve").Error("serve.relisten_failed", "err", err)
+		}
+		l.lost = true
 		return
 	}
-	if err := l.listen(); err != nil {
-		log.For("serve").Error("serve.relisten_failed", "err", err)
+	if l.lost || next != path {
+		log.For("serve").Info("serve.listening_again", "socket", next)
 	}
+	l.lost = false
 }
 
 // close stops accepting; connections already served stay open.
@@ -246,28 +314,57 @@ func (l *listener) close() {
 // remove deletes the socket file, if it is still this daemon's.
 func (l *listener) remove() {
 	l.mu.Lock()
-	ino := l.ino
+	file, path := l.file, l.path
 	l.mu.Unlock()
-	if ino != 0 && inode(l.path) == ino {
-		_ = os.Remove(l.path)
+	if sameFile(file, path) {
+		_ = os.Remove(path)
 	}
 }
 
-// inode is path's inode number, 0 when it can't be read.
-func inode(path string) uint64 {
+// stat is path's file info, nil when it can't be read.
+func stat(path string) os.FileInfo {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return 0
+		return nil
 	}
-	if st, ok := info.Sys().(*syscall.Stat_t); ok {
-		return st.Ino
-	}
-	return 0
+	return info
+}
+
+// sameFile reports whether path is still the file listened on, not gone
+// or another put in its place.
+func sameFile(file os.FileInfo, path string) bool {
+	now := stat(path)
+	return file != nil && now != nil && os.SameFile(file, now)
 }
 
 // signalStop asks the process pid to stop gracefully: Serve's caller turns
-// SIGTERM into a closed Stop. A test seam.
-var signalStop = func(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
+// SIGTERM into a closed Stop. pid must be a `loom serve` (servesLoom). A
+// test seam.
+var signalStop = func(pid int) error {
+	if !servesLoom(pid) {
+		return fmt.Errorf("process %d is not a loom daemon", pid)
+	}
+	return terminate(pid)
+}
+
+// servesLoom reports whether process pid may be a loom daemon: one whose
+// arguments include "serve". A record read at the wrong moment, or left by
+// a daemon that died and whose pid was reused, must never get another
+// process of the user's signalled. Where the process table can't be read
+// (no /proc), it can't tell, and says yes.
+func servesLoom(pid int) bool {
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return !errors.Is(err, fs.ErrNotExist) || !procMounted()
+	}
+	return slices.Contains(strings.Split(string(cmdline), "\x00"), "serve")
+}
+
+// procMounted reports whether /proc lists processes here.
+func procMounted() bool {
+	_, err := os.Stat("/proc/self/cmdline")
+	return err == nil
+}
 
 // Stop stops globalDir's daemon gracefully and waits, up to timeout, until
 // it has released its lock. It signals the pid its lock record names rather
@@ -285,6 +382,9 @@ func Stop(globalDir string, timeout time.Duration) error {
 	}
 	if rec.PID <= 0 {
 		return fmt.Errorf("the daemon's lock record names no process")
+	}
+	if host, _ := os.Hostname(); rec.Host != "" && rec.Host != host {
+		return fmt.Errorf("the loom daemon runs on %s, not this host: stop it there", rec.Host)
 	}
 	if err := signalStop(rec.PID); err != nil {
 		return fmt.Errorf("stop the loom daemon (%s): %w", rec, err)

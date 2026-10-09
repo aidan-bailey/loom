@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -71,7 +72,9 @@ func serve(t *testing.T, dir string, o Options) *running {
 	o.GlobalDir = dir
 	o.Stop = r.stop
 	if o.NewModel == nil {
-		o.NewModel = func() (*core.Model, error) { return core.New(core.Options{CmdExec: deadExec()}), nil }
+		o.NewModel = func() (*core.Model, []core.Notice, error) {
+			return core.New(core.Options{CmdExec: deadExec()}), nil, nil
+		}
 	}
 	o.Serving = func(loop *core.Loop, socket string) {
 		r.loop, r.socket = loop, socket
@@ -144,9 +147,9 @@ func TestServe_RefusesASecondDaemon(t *testing.T) {
 	dir := globalDir(t)
 	serve(t, dir, Options{})
 	err := Serve(Options{GlobalDir: dir, LockWait: 100 * time.Millisecond, Stop: make(chan struct{}),
-		NewModel: func() (*core.Model, error) {
+		NewModel: func() (*core.Model, []core.Notice, error) {
 			t.Error("the second daemon built a model")
-			return core.New(core.Options{}), nil
+			return core.New(core.Options{}), nil, nil
 		}})
 	assert.ErrorIs(t, err, ErrRunning)
 }
@@ -175,9 +178,9 @@ func TestServe_TheLockHoldersRecordSaysWhy(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = l.Close() })
 			tc.check(t, Serve(Options{GlobalDir: dir, LockWait: 100 * time.Millisecond, Stop: make(chan struct{}),
-				NewModel: func() (*core.Model, error) {
+				NewModel: func() (*core.Model, []core.Notice, error) {
 					t.Error("built a model without the lock")
-					return core.New(core.Options{}), nil
+					return core.New(core.Options{}), nil, nil
 				}}))
 		})
 	}
@@ -206,14 +209,21 @@ func TestServe_ARemovedSocketIsListenedAgain(t *testing.T) {
 func TestServe_TheBootsNoticesReachTheFirstClient(t *testing.T) {
 	dir := globalDir(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "accounts.json"), []byte("{not json"), 0o600))
-	r := serve(t, dir, Options{})
-	var notices []core.Notice
+	r := serve(t, dir, Options{NewModel: func() (*core.Model, []core.Notice, error) {
+		return core.New(core.Options{CmdExec: deadExec()}), []core.Notice{{Info: "the registry would not load"}}, nil
+	}})
+	var infos []string
+	var errs int
 	for _, ev := range dial(t, r.socket).Sync() {
 		if n, ok := ev.(core.Notice); ok {
-			notices = append(notices, n)
+			if n.Err != nil {
+				errs++
+			}
+			infos = append(infos, n.Info)
 		}
 	}
-	require.NotEmpty(t, notices, "the account registry's load error")
+	assert.Positive(t, errs, "the account registry's load error")
+	assert.Contains(t, infos, "the registry would not load", "what building the model raised")
 }
 
 // A model that panicked is as good as gone: the daemon exits, saving
@@ -263,6 +273,19 @@ func TestStop(t *testing.T) {
 		err = Stop(dir, time.Second)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "before the daemon")
+	})
+
+	t.Run("a daemon on another host", func(t *testing.T) {
+		dir := globalDir(t)
+		l, _, err := TryAcquire(dir, Record{PID: 12345, Build: "b", Socket: "/run/x.sock", Host: "elsewhere.invalid"})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = l.Close() })
+		prev := signalStop
+		signalStop = func(int) error { t.Error("signalled a pid of another host"); return nil }
+		t.Cleanup(func() { signalStop = prev })
+		err = Stop(dir, time.Second)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "elsewhere.invalid")
 	})
 
 	t.Run("a daemon", func(t *testing.T) {
@@ -334,4 +357,181 @@ func TestSocketPath(t *testing.T) {
 		require.NoError(t, os.Symlink(dir, link))
 		assert.Equal(t, globalHash(dir), globalHash(link))
 	})
+}
+
+// A stop waits for the lifecycle jobs in flight (a pause, a kill), so none
+// is cut off mid-step, and saves once they have landed.
+func TestServe_AStopWaitsForJobsInFlight(t *testing.T) {
+	dir := globalDir(t)
+	r := serve(t, dir, Options{QuiesceTimeout: 10 * time.Second})
+	release := make(chan struct{})
+	r.loop.SpawnForTest(func() any { <-release; return nil }, false)
+	close(r.stop)
+	select {
+	case err := <-r.done:
+		t.Fatalf("stopped with a job in flight: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-r.done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the daemon never stopped")
+	}
+}
+
+// A stop that comes before a model's failure is published must neither
+// wait on nor save a model whose state is unknown, nor crash the daemon
+// re-raising its panic: it reports it, with nothing saved.
+func TestStopModel_AFailedModelIsNotSaved(t *testing.T) {
+	loop := core.Start(core.New(core.Options{CmdExec: deadExec()}))
+	t.Cleanup(loop.Stop)
+	func() {
+		defer func() { _ = recover() }()
+		loop.DeliverForTest(core.StartResult{}) // a nil instance panics the model
+	}()
+	var err error
+	require.NotPanics(t, func() { err = stopModel(loop, time.Second) })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nothing saved")
+}
+
+// A runtime dir removed under a running daemon (the last logout) and not
+// made again: the daemon listens wherever SocketPath finds a place now, and
+// rewrites its record so clients find it there.
+func TestServe_ASocketWhoseDirIsGoneMovesElsewhere(t *testing.T) {
+	dir := globalDir(t)
+	rt := os.Getenv("XDG_RUNTIME_DIR")
+	r := serve(t, dir, Options{WatchInterval: 20 * time.Millisecond})
+	require.True(t, strings.HasPrefix(r.socket, rt))
+	require.NoError(t, os.RemoveAll(rt))
+	require.NoError(t, os.WriteFile(rt, nil, 0o600), "a file where the runtime dir was: it can't be made again")
+
+	var rec Record
+	require.Eventually(t, func() bool {
+		rec, _ = ReadRecord(dir)
+		return rec.Socket != "" && rec.Socket != r.socket
+	}, 5*time.Second, 10*time.Millisecond, "the record still names the gone socket")
+	assert.False(t, strings.HasPrefix(rec.Socket, rt))
+	dial(t, rec.Socket).Workspaces()
+}
+
+// A host with nowhere to put the socket fails before the boot, which
+// sweeps sessions and relaunches agents, not after it.
+func TestServe_FindsAPlaceToListenBeforeItBoots(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), strings.Repeat("d", maxSocketPath))
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	blocked := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(blocked, nil, 0o600))
+	t.Setenv(config.EnvGlobalDir, dir)
+	t.Setenv("XDG_RUNTIME_DIR", blocked)
+	t.Setenv("TMPDIR", blocked)
+
+	err := Serve(Options{GlobalDir: dir, Stop: make(chan struct{}),
+		NewModel: func() (*core.Model, []core.Notice, error) {
+			t.Error("booted with nowhere to listen")
+			return core.New(core.Options{CmdExec: deadExec()}), nil, nil
+		}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no place for the loom daemon's socket")
+	_, held := ReadRecord(dir)
+	assert.False(t, held, "the lock is released")
+}
+
+// flakyListener fails its first Accept as a full file table would, then
+// hands out what conns sends, and is closed when conns is.
+type flakyListener struct {
+	net.Listener // only Accept is called
+	conns        chan net.Conn
+	failed       bool
+}
+
+func (f *flakyListener) Accept() (net.Conn, error) {
+	if !f.failed {
+		f.failed = true
+		return nil, syscall.EMFILE
+	}
+	c, ok := <-f.conns
+	if !ok {
+		return nil, net.ErrClosed
+	}
+	return c, nil
+}
+
+// A failed Accept (too many open files) is waited out: a daemon that
+// listened but never accepted again would hold the lock unreachable.
+func TestListener_AFailedAcceptIsWaitedOut(t *testing.T) {
+	loop := core.Start(core.New(core.Options{CmdExec: deadExec()}))
+	srv := rpc.NewServer(loop)
+	t.Cleanup(func() {
+		srv.Close()
+		loop.Stop()
+	})
+	fl := &flakyListener{conns: make(chan net.Conn, 1)}
+	l := &listener{srv: srv}
+	accepting := make(chan struct{})
+	go func() {
+		defer close(accepting)
+		l.accept(fl)
+	}()
+
+	a, b := net.Pipe()
+	fl.conns <- a
+	dialed := make(chan error, 1)
+	go func() {
+		c, err := rpc.Dial(b)
+		if err == nil {
+			c.Close()
+		}
+		dialed <- err
+	}()
+	select {
+	case err := <-dialed:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the connection after a failed accept was never served")
+	}
+	close(fl.conns)
+	select {
+	case <-accepting:
+	case <-time.After(5 * time.Second):
+		t.Fatal("accept outlived its listener")
+	}
+}
+
+// A lock record is rewritten in place, so a reader can meet it torn: a held
+// lock whose record does not parse yet is read again, not taken for a
+// holder that names nothing.
+func TestReadRecord_WaitsOutATornRecord(t *testing.T) {
+	dir := globalDir(t)
+	want := Record{PID: 4242, Build: "b", Socket: "/run/x.sock"}
+	l, _, err := TryAcquire(dir, want)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+	require.NoError(t, os.WriteFile(LockPath(dir), []byte(`{"pid":42`), 0o644))
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = l.Write(want)
+	}()
+	rec, held := ReadRecord(dir)
+	require.True(t, held)
+	assert.Equal(t, want.Socket, rec.Socket)
+	assert.Equal(t, want.PID, rec.PID)
+}
+
+// Only a process that may be a loom daemon is signalled: never one whose
+// arguments don't say serve, which a stale or torn record could name.
+func TestServesLoom(t *testing.T) {
+	if !procMounted() {
+		t.Skip("no /proc")
+	}
+	assert.False(t, servesLoom(os.Getpid()), "this test binary")
+	cmd := exec.Command("sh", "-c", "sleep 30; true", "serve")
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	assert.Eventually(t, func() bool { return servesLoom(cmd.Process.Pid) }, 5*time.Second, 10*time.Millisecond)
 }

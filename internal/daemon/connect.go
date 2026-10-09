@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/aidan-bailey/loom/log"
@@ -20,8 +19,8 @@ func LogPath(globalDir string) string {
 	return filepath.Join(globalDir, "logs", log.ServeLogFileName)
 }
 
-// spawn starts `loom serve` (this executable) detached: in a session of
-// its own, so it outlives the terminal and the client that started it,
+// spawn starts `loom serve` (this executable) detached (detach), so it
+// outlives the terminal and the client that started it,
 // with no stdio and this process's environment, from which it resolves the
 // same global dir. It returns a channel that receives the daemon's exit.
 // A test seam: tests serve in process instead.
@@ -37,7 +36,7 @@ var spawn = func() (<-chan error, error) {
 	defer null.Close()
 	cmd := exec.Command(exe, "serve")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = null, null, null
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start the loom daemon: %w", err)
 	}
