@@ -17,7 +17,7 @@ Each step says whether the compiler or a test catches a miss.
 7. **Background messages.** `m.state` gates only key routing: completions, late issue fetches and script results still land while the modal is open. Snapshot at open time whatever its confirm will act on (as the merge picker does with `pendingMergeSourceItems`), and let the request re-validate it. Completions already move the focused selection only in `stateDefault`, late issue results drop themselves outside it, and `deferFocusMutation` applies only there, so a new state is safe from those without further work. Silent.
 8. **Opening it from overview.** A key that opens the modal from overview must be in `overviewKeyAllowed` (`app/state_default.go`), or drop to focus first as `n`/`N` do. Pinned for existing keys by `TestOverviewKeyWhitelist_BlocksFocusOnlyKeys`.
 9. **Mouse.** Mouse messages reach Update in every state; selection runs only in `stateDefault` and `stateInlineAttach`. A modal that wants the mouse routes it explicitly in the mouse cases of `update`. Silent.
-10. **Docs.** A new key goes in `script/defaults.lua`, `keys.GlobalkeyBindings` (pinned by `TestKeymapParity`), `USAGE.md`'s Keyboard Reference and the root keybinding table.
+10. **Keymap and docs.** A new key goes in `script/defaults.lua` and `USAGE.md`'s Keyboard Reference, and in `keys.GlobalkeyBindings` when it has a menu or help entry (`TestKeymapParity` checks that each entry there is bound in the defaults).
 
 ## What the gates still won't tell you
 
