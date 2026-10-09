@@ -128,7 +128,11 @@ stage 3B: it targets the daemon's tmux server, which the daemon names in
 its hello, whatever its own environment would pick. When the daemon goes
 away under it, it restores the terminal, says the daemon stopped and that
 the sessions keep running, and exits: the user's decision, with live
-reconnect left to a stage after 3B.)
+reconnect left to a stage after 3B.) (Amended 2026-10-09 by stage 3R,
+planned: it survives the daemon going away. It keeps rendering and
+attaching panes, refuses what needs the model, and rejoins a daemon when
+one answers, respawning one itself only after a crash; see the 3R entry
+under Rollout.)
 
 **Subcommands, clients.** `loom work …` (the agent CLI), `loom reset`,
 `loom workspace …` and `loom account …` send requests instead of loading
@@ -194,7 +198,12 @@ stale ID is refused rather than reaching an instance that took its
 place. A reconnecting client re-lists, since a restarted daemon assigns
 new IDs. Title and repository path are in the view, for display. (Amended
 2026-10-07 by stage 1C, which replaced the planned title-plus-workspace-
-path identity.)
+path identity.) (Amended 2026-10-09 by stage 3R, planned: IDs are stable
+across daemons. A workspace's is derived from its canonical config dir,
+an instance's from its workspace's config dir, its title and its
+`created_at`, so two daemons over one disk agree and a rejoining client
+re-lists nothing; an instance recreated under a killed one's title has a
+new `created_at`, so a new ID.)
 
 **Events** are frames with no `id`, pushed to every subscribed client:
 instance added, removed and changed (status, diff stats, GitHub state,
@@ -329,6 +338,12 @@ and result and every event, is
   on a fatal error. A notice that reaches no client, raised while none is
   connected or a request's whose client has gone with no other connected,
   is kept for the next connection, the newest 50 at most.)
+  (Amended 2026-10-09 by stage 3R, planned: a daemon stopping gracefully
+  sends every connection a `bye` frame first, `{"bye":"stopping"}`, then
+  refuses new requests, lets the lifecycle jobs in flight finish and
+  publish their replies, saves, and only then closes the connections. A
+  client that met a `bye` before the connection closed knows the loss was
+  graceful. `bye` is an optional field: an older client ignores it.)
 - The server publishes after every request and before queueing its
   reply, so a request's events reach the client ahead of its reply.
   Casts publish nothing. A client is sent the whole published state
@@ -467,7 +482,7 @@ older build still open on a replaced daemon exits cleanly (§1).)
 |---|---|
 | No daemon on the socket, lock free | The client spawns one (§5). The spawn is one attempt; a second failure is an error naming `serve.log`. (Amended 2026-10-09 by stage 3B: a daemon that exits before listening fails the connect at once, quoting `serve.log` and `serve-crash.log`; one that stood down for a daemon gone since is followed by another spawn, three at most.) |
 | Socket present, lock free (daemon crashed) | Treated as no daemon: stale socket removed under the lock, new daemon started. (As built in 3B, the new daemon replaces the stale file when it listens, holding the lock.) Nothing is lost: `state.json` and the work log are on disk, and the new daemon reconciles as startup does today, relaunching dead sessions. |
-| Daemon dies while a TUI is open | The connection drops. The TUI shows a banner, keeps rendering its panes (the PTYs are to tmux), disables lifecycle keys, redials on a backoff, and respawns if the lock is free. On reconnect it resubscribes and re-lists. (Amended 2026-10-09 by stage 3B, the user's decision: for now the TUI restores the terminal, prints "loom: the daemon stopped (see <serve.log>); your sessions keep running. Run loom again." and exits, and the next `loom` starts a daemon. Live reconnect is a stage after 3B.) |
+| Daemon dies while a TUI is open | The connection drops. The TUI shows a banner, keeps rendering its panes (the PTYs are to tmux), disables lifecycle keys, redials on a backoff, and respawns if the lock is free. On reconnect it resubscribes and re-lists. (Amended 2026-10-09 by stage 3B, the user's decision: for now the TUI restores the terminal, prints "loom: the daemon stopped (see <serve.log>); your sessions keep running. Run loom again." and exits, and the next `loom` starts a daemon. Live reconnect is a stage after 3B.) (Amended 2026-10-09 by stage 3R, planned: the TUI stays up. A daemon stopping gracefully says goodbye first and the TUI waits for a daemon to appear, never spawning one on its own (`ctrl+r` starts one); a loss with no goodbye (a crash, a model failure) is redialled on a backoff, spawning when the lock is free, until three spawns fail. Meanwhile panes still render and attach, and what needs the model is refused. On rejoin the newer build wins as at startup: a newer daemon makes the TUI exit, an older one is replaced. See the 3R entry under Rollout.) |
 | Daemon dies mid-operation | The operation's state is whatever `session` left on disk, as after a TUI crash today. The next start's reconcile classifies it (`Paused` with an intact tree, orphan, and so on). |
 | Two clients act on one instance | Serialized by the model loop; the second gets a reply reflecting the first ("already killed"). |
 | Version mismatch | §6. |
@@ -508,6 +523,11 @@ lock would rotate the live daemon's; it rotates as it grows.)
   tmux session (Assumption 1), a same-version rebuild replacing the
   sandbox daemon, and a stop during a start race. Sessions come back on
   the same agent process, not paused.)
+  (Amended 2026-10-09 by stage 3R, planned: a TUI under a killed daemon
+  reconnects, keeping its tabs and selection; after `loom serve stop` it
+  waits and `ctrl+r` brings a daemon back; under a newer build's
+  replacement an older TUI exits; a pause in flight across a stop gets
+  its reply.)
 - **The TUI** keeps its tests against an in-process `Core` over
   `net.Pipe`, so no test needs a daemon process.
 - `loomdev` grows `serve` awareness: `up` starts the sandbox daemon,
@@ -713,6 +733,68 @@ end:
      daemon's. Still open: the guard for two global dirs registering one
      repository, and logging into the default account from a TUI, which
      uses the TUI's environment.
+   - **3R, live reconnect** (designed 2026-10-09; the user's decisions
+     are marked). A TUI survives the daemon going away.
+
+     - **States.** *Connected*; *stopping* (a `bye` arrived: lifecycle is
+       refused, in-flight replies still arrive); *waiting* (the
+       connection closed after a `bye`: the TUI polls the lock record for
+       a daemon to appear and never spawns one on its own; `ctrl+r`,
+       reserved by the app while offline, starts one); *reconnecting*
+       (closed with no `bye`, or a `fatal`: it redials on a backoff from
+       1s to 30s, spawning when the lock is free, and drops to *waiting*
+       after three failed spawns, so a daemon that fails at boot is not
+       respawned forever). A banner names the state. **The user's
+       decision: respawn only after a crash**, so `loom serve stop` stays
+       a stop and an old build never races a new one to spawn while it
+       replaces the daemon.
+     - **Offline.** What talks to tmux directly keeps working: pane
+       rendering and scroll-back, inline and full-screen attach, the
+       terminal pane, navigation, the overview, the workbench, help and
+       quit. Everything that needs the model is refused at the key by an
+       offline whitelist (as overview's `overviewKeyAllowed`), and the
+       client refuses requests locally (`core.ErrUnavailable`, which
+       matches `ErrRefused`) as a backstop. Statuses stay as last
+       published. Every request the TUI awaits a `Reply` for that nothing
+       can answer any more (made after the `bye`, or all of them at the
+       loss) is failed with a synthetic `Reply`, so Lua calls resume with
+       an error, prompt-send holds release and flows end with a message.
+     - **Rejoin.** `main` hands `app.Run` a rejoin function: the
+       startup join, quiet (its messages go to the banner), with a spawn
+       flag. **The user's decision: the newer build wins as at startup.**
+       The same build is rejoined. A newer daemon (a newer loom replaced
+       it) makes the TUI exit: "the loom daemon was replaced by a newer
+       loom (X); run loom again". An older one (an older TUI respawned it
+       first after a crash) is replaced once, under `replaceGuard`.
+     - **Resync.** The TUI swaps its client (`core`, wakes, the loss
+       check, the stop function, and the goroutine forwarding wakes),
+       rereads every slot's workspace view and instance views from the
+       new replica, closes a tab whose workspace the new daemon does not
+       serve (unregistered meanwhile; the classic slot falls back to
+       global), `Open`s every workspace it shows again (the new daemon's
+       first open: the terminal and GitHub polling start; a failed load
+       shows its error), re-publishes its selection, and, when the daemon
+       names another tmux server (the old one died), re-pins it and
+       releases every pane client for the repair paths to re-attach.
+       Drafts, overlays, the workbench, the review and scroll positions
+       are kept.
+     - **Stable IDs** (§2). **The user's decision:** a workspace's ID is
+       derived from its canonical config dir and an instance's from its
+       workspace's config dir, title and `created_at`, masked to 53 bits
+       (safe in any JSON client), never 0 (the draft row's), with a
+       collision probing the next value. A rejoining TUI's slots,
+       selection, bells, ladder, workbench and open confirmations keep
+       naming the same things, and one naming an instance gone meanwhile
+       is refused (`not_found`). With per-daemon counters a new daemon
+       would reassign 1, 2, 3, and a confirmation left open across a
+       restart could reach another instance. A record rebuilt as a new
+       instance (a load retried, a recovery) keeps its ID. These are the
+       host-scoped stable IDs a hub would need (the cloud direction).
+     - **Stop order.** bye, refuse new requests, `Quiesce` with the
+       connections open, save, close, exit (it used to close first, so
+       in-flight replies were lost). `daemon.Connect` gains a no-spawn
+       mode for *waiting*.
+
    - **3C, the subcommands as clients,** plus the duties a daemon has
      with no TUI (trust prompts and hook scans, Assumption 4) and
      unloading a workspace removed or renamed in the registry (until
