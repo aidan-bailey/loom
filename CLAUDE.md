@@ -41,7 +41,7 @@ It was forked from claude-squad at v1.0.17 and has diverged since: [`NOTICE.md`]
 
 ## The root package (`main.go`, `serve.go`, `daemon_client.go`)
 
-- **`replaceGuard` refuses to replace the daemon from a `loom_*`/`claudesquad_*` session on its tmux server, and neither `LOOM_TMUX_SOCKET` nor `LOOM_ALLOW_NESTED` gets past it.** **Enforced** by `TestReplaceGuard`.
+- **`replaceGuard` refuses to replace the daemon from a `loom_*`/`claudesquad_*` session on the daemon's tmux server, or on any server when the daemon named none (then only `LOOM_GLOBAL_DIR` lets it through); neither `LOOM_TMUX_SOCKET` nor `LOOM_ALLOW_NESTED` gets past it.** A loomdev sandbox passes because its daemon's server is its own. **Enforced** by `TestReplaceGuard`.
 - **Pin the daemon's tmux server (`tmux.UseServer`) before anything touches tmux: in `serve.go`, in `daemonLink.join`, and in `reset`.** An unpinned process finds every session dead on its own server. **Enforced** by `TestJoin_PinsTheDaemonsTmuxServer`, `TestServeCmd_GuardsTheServerItPins` and `TestResetCmd_SweepsTheServerADaemonWouldPin`.
 - **`main.go` sets `cmd.StateWriteGuard` to `refuseWhileServed`**, since `cmd` can't import the daemon's packages. **Enforced** by `TestStateWriters_RefuseWhileTheDaemonRuns`.
 - **Keep `version = "X.Y.Z"` in `main.go` in exactly that shape.** `flake.nix` and `.github/workflows/release.yml` extract it by pattern. **Convention** — the Nix build throws and no release is cut.
