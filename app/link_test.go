@@ -340,6 +340,42 @@ func TestLink_StrandedRequestsFail(t *testing.T) {
 	}
 }
 
+// TestLink_ARequestRefusedAroundTheByeFailsAtOnce: a request made before
+// the TUI saw the bye (numbered at or below its watermark) but refused as
+// unavailable, by the client that heard the bye or by the server it
+// crossed, never reached the model: it fails as soon as the TUI sees the
+// bye, not once the daemon has finished stopping.
+func TestLink_ARequestRefusedAroundTheByeFailsAtOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		before func(t *testing.T, st daemonStack)
+	}{
+		{"refused by the client", func(t *testing.T, st daemonStack) {
+			st.srv.Bye()
+			require.Eventually(t, st.c.Stopping, 5*time.Second, 5*time.Millisecond)
+		}},
+		{"crossing the bye", func(t *testing.T, st daemonStack) { st.srv.Bye() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateTmux(t)
+			twoRows(t)
+			m, st := linkedHome(t, "")
+			alpha := rowID(t, m, "alpha")
+			tc.before(t, st)
+			req := m.opReq("kill", "alpha")
+			m.core.Kill(alpha, req)
+
+			cmd := wake(t, m, st.c.Stopping)
+			runCmds(t, cmd)
+			require.Equal(t, linkStopping, m.link.state)
+			assert.LessOrEqual(t, req, m.link.byeReq, "made before the TUI saw the bye")
+			assert.NotContains(t, m.pending, req)
+			assert.Contains(t, m.errBox.String(), "kill alpha: the loom daemon is unavailable")
+			assert.Empty(t, st.loop.JobsForTest(), "the model never saw it")
+		})
+	}
+}
+
 // TestLink_ARepliedRequestIsNotStranded: a Reply that arrived before the
 // connection closed is applied, not failed: Update checks the link after
 // its drain, and the loss drains once more.

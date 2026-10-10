@@ -765,14 +765,27 @@ func (m *home) refreshPeerSections() {
 }
 
 // persistFocusedWorkspace writes the currently focused slot's name to
-// LastUsed so the next launch focuses the same tab.
+// LastUsed so the next launch focuses the same tab. Offline (or refused as
+// unavailable: the link not yet noticed) the name is kept, and resync sends
+// it to the next daemon, as it does the UI prefs.
 func (m *home) persistFocusedWorkspace() {
 	if m.focusedSlot < 0 || m.focusedSlot >= len(m.slots) {
 		return
 	}
-	if err := m.core.SetLastUsed(m.slots[m.focusedSlot].name()); err != nil {
-		log.For("app").Error("persist_focused_workspace_failed", "err", err)
+	name := m.slots[m.focusedSlot].name()
+	var err error
+	if !m.offline() {
+		if err = m.core.SetLastUsed(name); err == nil {
+			m.unsentLastUsed = ""
+			return
+		}
+		if !errors.Is(err, core.ErrUnavailable) {
+			log.For("app").Error("persist_focused_workspace_failed", "err", err)
+			return
+		}
 	}
+	log.For("app").Warn("persist_focused_workspace_unsent", "workspace", name, "link", m.link.state.String(), "err", err)
+	m.unsentLastUsed = name
 }
 
 // slotNames returns the names of all active workspace slots — the set

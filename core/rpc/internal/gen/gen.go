@@ -421,18 +421,40 @@ func emit(methods []method, imports map[string]string, used map[string]bool) ([]
 			p("\tc.local(func(r *replica) { %s = r.%s(%s) })\n", strings.Join(vars, ", "), m.name, strings.Join(args, ", "))
 			p("\treturn %s\n", strings.Join(vars, ", "))
 		default:
+			// A request a Reply answers (it carries a ReqID) that is refused
+			// as unavailable gets no Reply: the client records its request
+			// IDs for its user to fail (noteRefused, TakeRefused).
+			var reqs []string
+			for _, a := range m.params {
+				if a.typ == "core.ReqID" {
+					reqs = append(reqs, a.name)
+				}
+			}
+			noted := func(call string) string {
+				if len(reqs) == 0 {
+					return call
+				}
+				return fmt.Sprintf("c.noteRefused(%s, %s)", call, strings.Join(reqs, ", "))
+			}
 			p("\tvar r %sResult\n", m.name)
+			noErr := noted(fmt.Sprintf("c.requestNoErr(%q, %s, &r)", m.name, params))
+			withErr := fmt.Sprintf("err := c.request(%q, %s, &r)\n", m.name, params)
+			if len(reqs) > 0 {
+				withErr += "\t" + noted("err") + "\n"
+			}
 			switch {
 			case len(m.values) == 0 && !m.withErr:
-				p("\tc.requestNoErr(%q, %s, &r)\n", m.name, params)
-			case len(m.values) == 0:
+				p("\t%s\n", noErr)
+			case len(m.values) == 0 && len(reqs) == 0:
 				p("\treturn c.request(%q, %s, &r)\n", m.name, params)
+			case len(m.values) == 0:
+				p("\t%s\treturn err\n", withErr)
 			case len(m.values) == 1 && !m.withErr:
-				p("\tc.requestNoErr(%q, %s, &r)\n\treturn r.Value\n", m.name, params)
+				p("\t%s\n\treturn r.Value\n", noErr)
 			case len(m.values) == 1:
-				p("\terr := c.request(%q, %s, &r)\n\treturn r.Value, err\n", m.name, params)
+				p("\t%s\treturn r.Value, err\n", withErr)
 			default:
-				p("\tc.requestNoErr(%q, %s, &r)\n\treturn r.Value, r.OK\n", m.name, params)
+				p("\t%s\n\treturn r.Value, r.OK\n", noErr)
 			}
 		}
 		p("}\n\n")

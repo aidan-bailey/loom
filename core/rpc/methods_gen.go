@@ -1115,61 +1115,61 @@ func (c *Client) View(id core.InstanceID) (core.InstanceView, bool) {
 // Create is core.Core's Create (request).
 func (c *Client) Create(id core.WorkspaceID, spec core.NewInstance, req core.ReqID) {
 	var r CreateResult
-	c.requestNoErr("Create", CreateParams{ID: id, Spec: spec, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("Create", CreateParams{ID: id, Spec: spec, Req: req}, &r), req)
 }
 
 // Kill is core.Core's Kill (request).
 func (c *Client) Kill(id core.InstanceID, req core.ReqID) {
 	var r KillResult
-	c.requestNoErr("Kill", KillParams{ID: id, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("Kill", KillParams{ID: id, Req: req}, &r), req)
 }
 
 // Pause is core.Core's Pause (request).
 func (c *Client) Pause(id core.InstanceID, req core.ReqID) {
 	var r PauseResult
-	c.requestNoErr("Pause", PauseParams{ID: id, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("Pause", PauseParams{ID: id, Req: req}, &r), req)
 }
 
 // Resume is core.Core's Resume (request).
 func (c *Client) Resume(id core.InstanceID, req core.ReqID) {
 	var r ResumeResult
-	c.requestNoErr("Resume", ResumeParams{ID: id, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("Resume", ResumeParams{ID: id, Req: req}, &r), req)
 }
 
 // ResumeWith is core.Core's ResumeWith (request).
 func (c *Client) ResumeWith(id core.InstanceID, opts launch.Options, base string, req core.ReqID) {
 	var r ResumeWithResult
-	c.requestNoErr("ResumeWith", ResumeWithParams{ID: id, Opts: opts, Base: base, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("ResumeWith", ResumeWithParams{ID: id, Opts: opts, Base: base, Req: req}, &r), req)
 }
 
 // Recover is core.Core's Recover (request).
 func (c *Client) Recover(id core.InstanceID, req core.ReqID) {
 	var r RecoverResult
-	c.requestNoErr("Recover", RecoverParams{ID: id, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("Recover", RecoverParams{ID: id, Req: req}, &r), req)
 }
 
 // Merge is core.Core's Merge (request).
 func (c *Client) Merge(target core.InstanceID, source core.InstanceID, req core.ReqID) {
 	var r MergeResult
-	c.requestNoErr("Merge", MergeParams{Target: target, Source: source, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("Merge", MergeParams{Target: target, Source: source, Req: req}, &r), req)
 }
 
 // Push is core.Core's Push (request).
 func (c *Client) Push(id core.InstanceID, req core.ReqID) {
 	var r PushResult
-	c.requestNoErr("Push", PushParams{ID: id, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("Push", PushParams{ID: id, Req: req}, &r), req)
 }
 
 // SendPrompt is core.Core's SendPrompt (request).
 func (c *Client) SendPrompt(id core.InstanceID, text string, req core.ReqID) {
 	var r SendPromptResult
-	c.requestNoErr("SendPrompt", SendPromptParams{ID: id, Text: text, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("SendPrompt", SendPromptParams{ID: id, Text: text, Req: req}, &r), req)
 }
 
 // FetchIssue is core.Core's FetchIssue (request).
 func (c *Client) FetchIssue(repo string, number int, req core.ReqID) {
 	var r FetchIssueResult
-	c.requestNoErr("FetchIssue", FetchIssueParams{Repo: repo, Number: number, Req: req}, &r)
+	c.noteRefused(c.requestNoErr("FetchIssue", FetchIssueParams{Repo: repo, Number: number, Req: req}, &r), req)
 }
 
 // SetSelected is core.Core's SetSelected (cast).

@@ -146,7 +146,8 @@ func (m *home) offline() bool { return m.link.state != linkConnected }
 // checkLink follows the client's state after every Update's drain: a bye
 // takes the TUI to stopping, and the loss of the model offline (lose).
 // Offline, every request nothing will answer is failed (failStranded):
-// while stopping, those made after the bye; once lost, all of them.
+// while stopping, those made after the bye, and those refused as
+// unavailable on either side of it; once lost, all of them.
 func (m *home) checkLink() tea.Cmd {
 	if m.conn == nil {
 		return nil
@@ -162,6 +163,7 @@ func (m *home) checkLink() tea.Cmd {
 			m.link.byeReq = m.nextReq
 			m.link.gen++
 			m.relayout()
+			return m.failStranded(m.link.byeReq)
 		}
 		return nil
 	case linkStopping:
@@ -194,16 +196,24 @@ func (m *home) lose(err error) tea.Cmd {
 	return tea.Batch(drained, stranded, m.scheduleRejoin())
 }
 
-// failStranded fails, in ascending order, every request numbered above
-// after that is still waiting for its Reply, as the model would have
-// refused it: unavailable (core.ErrUnavailable). Each flow ends as its
-// Reply ends it (handleReply): a lifecycle request shows "kill x: the loom
-// daemon is unavailable", a send releases its hold, a Lua call resumes
-// raising, a create and an issue fetch show their error.
+// failStranded fails, in ascending order, every request still waiting for
+// its Reply that is numbered above after, or that the client refused as
+// unavailable (rpc.Client.TakeRefused: refused by the client before this
+// TUI saw the bye, or by the server after it crossed the bye), as the
+// model would have refused it: unavailable (core.ErrUnavailable). Each flow
+// ends as its Reply ends it (handleReply): a lifecycle request shows "kill
+// x: the loom daemon is unavailable", a send releases its hold, a Lua call
+// resumes raising, a create and an issue fetch show their error.
 func (m *home) failStranded(after core.ReqID) tea.Cmd {
+	refused := map[core.ReqID]bool{}
+	if m.conn != nil {
+		for _, req := range m.conn.TakeRefused() {
+			refused[req] = true
+		}
+	}
 	var reqs []core.ReqID
 	for req := range m.pending {
-		if req > after {
+		if req > after || refused[req] {
 			reqs = append(reqs, req)
 		}
 	}
@@ -391,6 +401,13 @@ func (m *home) resync(c *rpc.Client) tea.Cmd {
 	cmds = append(cmds, m.drainCore())
 
 	m.sendUnsentPrefs()
+	if name := m.unsentLastUsed; name != "" {
+		if err := m.core.SetLastUsed(name); err != nil {
+			log.For("app").Warn("registry.update_last_used_failed", "workspace", name, "err", err)
+		} else {
+			m.unsentLastUsed = ""
+		}
+	}
 	m.sentSelected = 0
 
 	if peer := c.Peer().Tmux; peer != m.daemonTmux {

@@ -39,6 +39,25 @@ func TestGenerate_NoRequestDiscardsItsError(t *testing.T) {
 	assert.Contains(t, string(out), `return c.request("Foo"`, "an error result is returned")
 }
 
+// TestGenerate_NotesEveryRefusedRequestID: a request a Reply answers that
+// is refused as unavailable gets no Reply, so the client records the
+// request IDs it carried (noteRefused), whatever the method returns.
+func TestGenerate_NotesEveryRefusedRequestID(t *testing.T) {
+	for method, want := range map[string]string{
+		"\tFoo(id InstanceID, req ReqID, other ReqID)": `c.noteRefused(c.requestNoErr("Foo", FooParams{ID: id, Req: req, Other: other}, &r), req, other)`,
+		"\tFoo(req ReqID) error":                       "c.noteRefused(err, req)\n\treturn err",
+		"\tFoo(req ReqID) (string, error)":             "c.noteRefused(err, req)\n\treturn r.Value, err",
+		"\tFoo(req ReqID) string":                      `c.noteRefused(c.requestNoErr("Foo", FooParams{Req: req}, &r), req)`,
+	} {
+		out, err := Generate(iface(method))
+		require.NoError(t, err, "method %q", method)
+		assert.Contains(t, string(out), want, "method %q", method)
+	}
+	out, err := Generate(iface("\tFoo(id InstanceID)"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "noteRefused(", "no request ID, nothing to note")
+}
+
 // TestGenerate_TagsEveryRequestID: the server's dispatch hands every
 // request ID a call carries to tag first, which names the connection in it,
 // so a Reply reaches the client that made the request (rpc.tagReq).

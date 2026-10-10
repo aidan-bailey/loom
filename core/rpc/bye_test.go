@@ -436,3 +436,30 @@ func TestClient_IgnoresAnUnknownFrameField(t *testing.T) {
 }
 
 var _ io.ReadWriteCloser = (*recordedConn)(nil)
+
+// TestClient_RecordsTheRequestsRefusedAsUnavailable: a request a Reply
+// answers that is refused as unavailable, by a stopping server (it crossed
+// the bye) or by the client itself (after the bye), never reaches the model,
+// so no Reply comes: the client records its request ID for the TUI to fail
+// (TakeRefused). A request wanting no Reply, or refused otherwise, is not
+// recorded.
+func TestClient_RecordsTheRequestsRefusedAsUnavailable(t *testing.T) {
+	c, s := dialScripted(t)
+	s.answerWith(func(f Frame) Frame {
+		if f.Method == "Pause" {
+			return Frame{ID: f.ID, Error: &core.WireError{Code: core.CodeRefused, Message: "pause x: refused"}}
+		}
+		return Frame{ID: f.ID, Error: &core.WireError{Code: core.CodeUnavailable, Message: "the loom daemon is stopping"}}
+	})
+	c.Kill(1, 3)
+	c.Kill(1, 0)
+	c.Pause(1, 4)
+	assert.Equal(t, []core.ReqID{3}, c.TakeRefused(), "the one the server refused as unavailable")
+	assert.Empty(t, c.TakeRefused(), "taken")
+
+	s.send(Frame{Bye: "stopping"})
+	waitStopping(t, c)
+	c.Resume(1, 5)
+	c.FetchIssue("repo", 1, 6)
+	assert.Equal(t, []core.ReqID{5, 6}, c.TakeRefused(), "the ones the client refused itself")
+}

@@ -151,6 +151,10 @@ type home struct {
 	// in tests): a rejoin's progress and a new client's wakes go through
 	// it, from goroutines of their own.
 	send func(tea.Msg)
+	// unsentLastUsed is the tab focused while offline, which the registry
+	// could not record (persistFocusedWorkspace): resync sends it. "" when
+	// none waits (a tab's name never is).
+	unsentLastUsed string
 	// daemonTmux is the tmux server the daemon named at the last join: a
 	// rejoined daemon on another server (the old one died) has its pane
 	// clients replaced (resync).
@@ -1519,7 +1523,7 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 		// The open list and the ratios are the daemon's to write, and
 		// there is none to write them: they are lost, on record.
 		log.For("app").Warn("quit.offline_unsaved", "link", m.link.state.String(),
-			"open", m.openList(), "unsent_prefs", m.unsentPrefSlots())
+			"open", m.openList(), "unsent_prefs", m.unsentPrefSlots(), "unsent_last_used", m.unsentLastUsed)
 		return m, tea.Quit
 	}
 	// With no tab open the open list is written only if the registry holds

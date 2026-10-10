@@ -199,6 +199,51 @@ func TestReconnect_ClosesATabTheNewDaemonDoesNotServe(t *testing.T) {
 	})
 }
 
+// TestReconnect_AClassicWorkspaceNoLongerServedFallsBackToGlobal: with no
+// tab open, the TUI shows the workspace it started on; unregistered while
+// the TUI was offline, the next daemon serves it no more, and the TUI
+// shows the global workspace, with a note.
+func TestReconnect_AClassicWorkspaceNoLongerServedFallsBackToGlobal(t *testing.T) {
+	isolateTmux(t)
+	globalDisk(t)
+	ws := writeWorkspaceState(t, "ws-b", "["+pausedRecord("other", "2026-10-01T11:00:00Z")+"]")
+	savedRegistry(t, nil, "", ws)
+	m, a := linkedHome(t, "ws-b")
+	require.Empty(t, m.slots)
+	require.Equal(t, "ws-b", m.name(), "the classic slot shows the startup workspace")
+	crash(t, m, a)
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	require.NoError(t, reg.Remove("ws-b"))
+	b, _ := bootDaemon(t, &recordingExec{})
+	rejoinOnto(t, m, b)
+
+	assert.Empty(t, m.slots)
+	assert.Empty(t, m.name(), "the global workspace")
+	assert.True(t, b.c.IsLoaded(m.id))
+	assert.Contains(t, m.errBox.String(), "ws-b is no longer registered; showing global")
+	assert.NoError(t, m.checkSlotInvariant())
+}
+
+// TestReconnect_SendsTheTabFocusedOffline: a tab focused while offline is
+// the registry's last used once a daemon is joined, as the UI prefs are.
+func TestReconnect_SendsTheTabFocusedOffline(t *testing.T) {
+	isolateTmux(t)
+	twoTabs(t)
+	m, a := linkedHome(t, "")
+	require.Equal(t, "ws-a", m.name())
+	crash(t, m, a)
+	pressScript(t, m, keyFor(t, "}"))
+	require.Equal(t, "ws-b", m.name(), "tabs switch offline")
+	assert.Equal(t, "ws-b", m.unsentLastUsed)
+	assert.Equal(t, "ws-a", lastUsedOnDisk(t), "no daemon wrote it")
+
+	b, _ := bootDaemon(t, &recordingExec{})
+	rejoinOnto(t, m, b)
+	assert.Empty(t, m.unsentLastUsed, "sent")
+	assert.Equal(t, "ws-b", lastUsedOnDisk(t))
+}
+
 // TestReconnect_AFailedOpenShowsItsError: a workspace the new daemon
 // serves but cannot load (its state.json broke while the TUI was offline)
 // keeps its tab, and its open's error is shown.

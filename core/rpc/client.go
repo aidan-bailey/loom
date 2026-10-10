@@ -63,6 +63,9 @@ type Client struct {
 	closing bool
 	// stopping is set by the reader when the server says bye.
 	stopping bool
+	// refused holds the request IDs of the calls refused as unavailable
+	// since the last TakeRefused (noteRefused).
+	refused []core.ReqID
 
 	wake       chan struct{}
 	done       chan struct{}
@@ -387,11 +390,45 @@ func (c *Client) gone() error {
 
 // requestNoErr is request for a method that has no error to return: a
 // failure (the connection gone, a reply that will not decode, an error the
-// server answered with) is logged, not discarded.
-func (c *Client) requestNoErr(method string, params, result any) {
-	if err := c.request(method, params, result); err != nil {
+// server answered with) is logged, not discarded. It returns the failure,
+// for noteRefused.
+func (c *Client) requestNoErr(method string, params, result any) error {
+	err := c.request(method, params, result)
+	if err != nil {
 		log.For("rpc").Warn("client.request_failed", "method", method, "err", err)
 	}
+	return err
+}
+
+// noteRefused records reqs, the request IDs a call carried (0, no Reply
+// wanted, excepted), when err says it was refused as unavailable: by the
+// client itself (the server said bye, or the model is lost) or by a server
+// stopping. The model never saw the call, so no Reply will answer it, and
+// its requester fails it itself (TakeRefused).
+func (c *Client) noteRefused(err error, reqs ...core.ReqID) {
+	if err == nil || !errors.Is(err, core.ErrUnavailable) {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, req := range reqs {
+		if req != 0 {
+			c.refused = append(c.refused, req)
+		}
+	}
+}
+
+// TakeRefused returns, and forgets, the request IDs of the calls refused as
+// unavailable since the last TakeRefused (noteRefused): requests no Reply
+// will answer, whichever side of a bye they were made on. A request whose
+// connection went before its reply counts too, though its Reply may have
+// arrived first: a caller fails only the requests still waiting.
+func (c *Client) TakeRefused() []core.ReqID {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	refused := c.refused
+	c.refused = nil
+	return refused
 }
 
 // cast sends method with params one way; once the server has said bye or
