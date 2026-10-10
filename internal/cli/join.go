@@ -67,6 +67,9 @@ func withDaemon(cmd *cobra.Command, fn func(c *client) error) error {
 
 // events returns the events that arrived since the last call, the state
 // events first (the client's Sync), having written each Notice to errOut.
+// A Notice naming a request (Req) is one of this command's own, which the
+// daemon routes to it alone, and the command reports that request's
+// outcome itself (its Reply), so it is not written twice.
 func (c *client) events() []core.Event {
 	var out []core.Event
 	for _, ev := range c.Sync() {
@@ -74,6 +77,7 @@ func (c *client) events() []core.Event {
 		switch {
 		case !ok:
 			out = append(out, ev)
+		case n.Req != 0:
 		case n.Err != nil:
 			fmt.Fprintf(c.errOut, "loom: %v\n", n.Err)
 		case n.Info != "":

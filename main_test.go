@@ -288,17 +288,42 @@ func TestStateWriters_RefuseWhileTheDaemonRuns(t *testing.T) {
 			wt := globalWorktree(t, "busy_18d7")
 			fake := &resetTmux{listing: "loom_busy\t" + wt + "\n"}
 			stubResetTmux(t, fake)
-			holdLock(t, daemon.Record{PID: 3713275, TTY: "/dev/pts/2"})
+			holdLock(t, daemon.Record{PID: os.Getpid(), TTY: "/dev/pts/2"})
 
 			rootCmd.SetArgs(tc.args)
 			err := rootCmd.Execute()
 
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "a loom from before the daemon is running (pid 3713275 on /dev/pts/2")
+			assert.Contains(t, err.Error(), fmt.Sprintf("a loom from before the daemon is running (pid %d on /dev/pts/2", os.Getpid()))
 			assert.Empty(t, fake.killed)
 			assert.FileExists(t, filepath.Join(wt, "work.txt"))
 		})
 	}
+}
+
+// TestResetCmd_RefusesWhileAnotherCommandHoldsTheLock: another command
+// writing state.json itself (a direct reset, a migrate) holds the lock and
+// is no daemon: reset names it and refuses, rather than ask a daemon that
+// does not run (and start one to ask).
+func TestResetCmd_RefusesWhileAnotherCommandHoldsTheLock(t *testing.T) {
+	isolateLoomEnv(t)
+	stubNesting(t, nil)
+	t.Cleanup(func() { resetForceFlag = false })
+	wt := globalWorktree(t, "busy_18d7")
+	fake := &resetTmux{listing: "loom_busy\t" + wt + "\n"}
+	stubResetTmux(t, fake)
+	orig := cli.Join
+	cli.Join = func() (*rpc.Client, error) { t.Error("joined a daemon"); return nil, errors.New("no daemon") }
+	t.Cleanup(func() { cli.Join = orig })
+	holdLock(t, daemon.Record{PID: os.Getpid(), Build: "unknown"})
+
+	rootCmd.SetArgs([]string{"reset", "--force"})
+	err := rootCmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), fmt.Sprintf("another loom command holds the lock (pid %d", os.Getpid()))
+	assert.Empty(t, fake.killed)
+	assert.FileExists(t, filepath.Join(wt, "work.txt"))
 }
 
 // joinModel boots a model over the test's disk (its registry, its global

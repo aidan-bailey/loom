@@ -29,9 +29,9 @@ type testDaemon struct {
 }
 
 // deadTmux is the daemon's executor: every tmux session is dead (has-session
-// fails, a listing is empty), and every other command runs, so the boot's
-// auth read reaches the test's fake Claude.
-type deadTmux struct{}
+// fails, a listing is empty, or fails with listErr), and every other
+// command runs, so the boot's auth read reaches the test's fake Claude.
+type deadTmux struct{ listErr error }
 
 func isTmux(c *exec.Cmd) bool { return filepath.Base(c.Path) == "tmux" }
 
@@ -42,16 +42,16 @@ func (deadTmux) Run(c *exec.Cmd) error {
 	return internalexec.Default{}.Run(c)
 }
 
-func (deadTmux) Output(c *exec.Cmd) ([]byte, error) {
+func (d deadTmux) Output(c *exec.Cmd) ([]byte, error) {
 	if isTmux(c) {
-		return nil, nil
+		return nil, d.listErr
 	}
 	return internalexec.Default{}.Output(c)
 }
 
-func (deadTmux) CombinedOutput(c *exec.Cmd) ([]byte, error) {
+func (d deadTmux) CombinedOutput(c *exec.Cmd) ([]byte, error) {
 	if isTmux(c) {
-		return nil, nil
+		return nil, d.listErr
 	}
 	return internalexec.Default{}.CombinedOutput(c)
 }
@@ -67,13 +67,19 @@ func (deadTmux) CombinedOutput(c *exec.Cmd) ([]byte, error) {
 // land there.
 func serveDaemon(t *testing.T, program string) *testDaemon {
 	t.Helper()
+	return serveDaemonOn(t, program, deadTmux{})
+}
+
+// serveDaemonOn is serveDaemon with tmuxExec as the daemon's tmux.
+func serveDaemonOn(t *testing.T, program string, tmuxExec deadTmux) *testDaemon {
+	t.Helper()
 	requireIsolatedClaude(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TMUX", "")
 	t.Setenv(tmux.EnvTmuxSocket, fmt.Sprintf("loomclitest-%d", time.Now().UnixNano()))
 	reg, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
-	model := core.New(core.Options{Registry: reg, Program: program, CmdExec: deadTmux{}})
+	model := core.New(core.Options{Registry: reg, Program: program, CmdExec: tmuxExec})
 	model.Boot()
 	loop := core.Start(model)
 	srv := rpc.NewServer(loop)

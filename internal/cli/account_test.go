@@ -88,7 +88,7 @@ func accountsEnv(t *testing.T, unsafe bool) *accountsFixture {
 	// Likewise for the credential-override vars: a developer's own
 	// ANTHROPIC_API_KEY (say, set for other tools) must not make every
 	// test here print an unexpected warning line. Tests exercising
-	// warnCredentialOverride set their own value with t.Setenv.
+	// the credential warnings set their own value with t.Setenv.
 	for _, v := range account.CredentialOverrides {
 		t.Setenv(v, "")
 	}
@@ -743,6 +743,61 @@ func TestAccountLogin_WarnsWhenACredentialOverrideIsSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "warning: $ANTHROPIC_AUTH_TOKEN is set")
 	assert.Contains(t, out, "Logged in max-2")
+}
+
+// add and list warn about the daemon's environment, which sessions run
+// in, not this command's: a credential set only in the command's own
+// shell overrides no session.
+func TestAccountList_WarnsAboutTheDaemonsCredentialOverride(t *testing.T) {
+	isolateAccounts(t)
+	stubLocalOverride(t, "", false)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+
+	out, err := runAccount(t, "", "list")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "warning: $ANTHROPIC_API_KEY is set in the loom daemon's environment")
+
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	stubLocalOverride(t, "ANTHROPIC_API_KEY", true)
+
+	out, err = runAccount(t, "", "list")
+
+	require.NoError(t, err)
+	assert.NotContains(t, out, "warning:", "the command's own environment runs no session")
+}
+
+func TestAccountAdd_WarnsAboutTheDaemonsCredentialOverride(t *testing.T) {
+	isolateAccounts(t)
+	stubLocalOverride(t, "", false)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+
+	out, err := runAccount(t, "", "add", "max-2", "--no-login")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "warning: $CLAUDE_CODE_OAUTH_TOKEN is set in the loom daemon's environment")
+}
+
+// login warns about its own environment, which its claude runs in.
+func TestAccountLogin_WarnsAboutItsOwnCredentialOverride(t *testing.T) {
+	isolateAccounts(t)
+	_, err := runAccount(t, "", "add", "max-2", "--no-login")
+	require.NoError(t, err)
+	stubLocalOverride(t, "ANTHROPIC_AUTH_TOKEN", true)
+
+	out, err := runAccount(t, "", "login", "max-2")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "warning: $ANTHROPIC_AUTH_TOKEN is set —")
+}
+
+// stubLocalOverride makes this command's own environment name name (ok)
+// as its credential override, until the test ends.
+func stubLocalOverride(t *testing.T, name string, ok bool) {
+	t.Helper()
+	prev := localCredentialOverride
+	localCredentialOverride = func() (string, bool) { return name, ok }
+	t.Cleanup(func() { localCredentialOverride = prev })
 }
 
 func TestAccountList_NoWarningWhenNoCredentialOverrideIsSet(t *testing.T) {

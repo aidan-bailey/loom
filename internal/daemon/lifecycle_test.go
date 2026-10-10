@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -320,8 +321,10 @@ func TestTakeLock(t *testing.T) {
 		assert.False(t, rec.IsDaemon(), "no socket for a client to dial")
 		assert.False(t, rec.IsPreDaemon(), "not a loom from before the daemon")
 
+		shortTakeLockWait(t, 50*time.Millisecond)
 		_, err = TakeLock(dir)
-		assert.ErrorIs(t, err, ErrRunning, "a second hold is refused at once")
+		require.Error(t, err, "a second hold is refused")
+		assert.NotErrorIs(t, err, ErrRunning, "naming the command that holds it, no daemon")
 		release()
 		_, held = ReadRecord(dir)
 		assert.False(t, held)
@@ -340,12 +343,70 @@ func TestTakeLock(t *testing.T) {
 
 	t.Run("a loom from before the daemon holds it", func(t *testing.T) {
 		dir := globalDir(t)
-		l, _, err := TryAcquire(dir, Record{PID: 3713275, TTY: "/dev/pts/2"})
+		l, _, err := TryAcquire(dir, Record{PID: os.Getpid(), TTY: "/dev/pts/2"})
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = l.Close() })
 		_, err = TakeLock(dir)
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, ErrRunning)
-		assert.Contains(t, err.Error(), "a loom from before the daemon is running (pid 3713275 on /dev/pts/2")
+		assert.Contains(t, err.Error(), fmt.Sprintf("a loom from before the daemon is running (pid %d on /dev/pts/2", os.Getpid()))
 	})
+
+	// A client's ReadRecord holds the lock for a moment, leaving the last
+	// holder's record (a process gone): that is waited out, not taken for
+	// a daemon, which a reset would then start to ask.
+	t.Run("a passing probe", func(t *testing.T) {
+		dir := globalDir(t)
+		shortTakeLockWait(t, 2*time.Second)
+		l, _, err := TryAcquire(dir, Record{PID: deadPID(t), Build: "b"})
+		require.NoError(t, err)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			_ = l.Close()
+		}()
+
+		release, err := TakeLock(dir)
+
+		require.NoError(t, err)
+		release()
+	})
+
+	// Another command that writes state.json itself (a direct reset, a
+	// migrate) is named and refused: it is no daemon to ask.
+	t.Run("another loom command holds it", func(t *testing.T) {
+		dir := globalDir(t)
+		shortTakeLockWait(t, 100*time.Millisecond)
+		l, _, err := TryAcquire(dir, Record{PID: os.Getpid(), Build: "unknown"})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = l.Close() })
+
+		_, err = TakeLock(dir)
+
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrRunning, "no daemon to ask")
+		assert.Contains(t, err.Error(), fmt.Sprintf("another loom command holds the lock (pid %d", os.Getpid()))
+	})
+
+	// A daemon still booting (a live `loom serve` that has not listened
+	// yet) is a daemon: ErrRunning, at once.
+	t.Run("a daemon still booting", func(t *testing.T) {
+		dir := globalDir(t)
+		other := otherDaemon(t)
+		l, _, err := TryAcquire(dir, Record{PID: other.Process.Pid, Build: "b"})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = l.Close() })
+		start := time.Now()
+		_, err = TakeLock(dir)
+		assert.ErrorIs(t, err, ErrRunning)
+		assert.Less(t, time.Since(start), time.Second)
+	})
+}
+
+// shortTakeLockWait bounds TakeLock's wait for a passing holder to d until
+// the test ends.
+func shortTakeLockWait(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := takeLockWait
+	takeLockWait = d
+	t.Cleanup(func() { takeLockWait = prev })
 }

@@ -149,29 +149,51 @@ func acquire(globalDir string, rec Record, wait time.Duration) (*Lock, Record, e
 	}
 }
 
+// takeLockWait bounds TakeLock's wait for a holder that is passing
+// through: a client's ReadRecord probe, which leaves the last holder's
+// record.
+var takeLockWait = time.Second
+
 // TakeLock takes globalDir's lock for a command that changes its state
 // itself, with no daemon to ask (`loom reset` while none runs, `workspace
-// migrate`), and returns the function that lets it go. It never waits:
-// while any process holds the lock it is ErrRunning (a daemon, running or
-// starting), or an error naming a loom from before the daemon. Its record
-// names this process with no socket, as a daemon still booting does, so a
-// daemon started meanwhile stands down and a client waits, and it keeps
-// the tmux server the last daemon named, which the next one keeps
+// migrate`), and returns the function that lets it go. Who holds it
+// decides the answer:
+//   - a daemon, listening or still booting (liveHolder), is ErrRunning at
+//     once: the command is the daemon's to make;
+//   - a live loom from before the daemon, or another live loom command
+//     holding it this way, is refused, naming it;
+//   - anyone else (a client's ReadRecord probe, which leaves the last
+//     holder's record, or a process that has not written its own yet) is
+//     waited out for up to takeLockWait, then refused.
+//
+// Its record names this process with no socket, as a daemon still booting
+// does, so a daemon started meanwhile stands down and a client waits, and
+// it keeps the tmux server the last daemon named, which the next one keeps
 // (TmuxServer).
 func TakeLock(globalDir string) (release func(), err error) {
-	last, _ := readRecordOK(recordPath(globalDir))
-	rec := self("")
-	rec.Tmux = last.Tmux
-	l, holder, err := TryAcquire(globalDir, rec)
-	switch {
-	case errors.Is(err, ErrHeld) && holder.IsPreDaemon():
-		return nil, fmt.Errorf("a loom from before the daemon is running (%s): quit it first", holder)
-	case errors.Is(err, ErrHeld):
-		return nil, fmt.Errorf("%w (%s)", ErrRunning, holder)
-	case err != nil:
-		return nil, err
+	deadline := time.Now().Add(takeLockWait)
+	for {
+		last, _ := readRecordOK(recordPath(globalDir))
+		rec := self("")
+		rec.Tmux = last.Tmux
+		l, holder, err := TryAcquire(globalDir, rec)
+		switch {
+		case err == nil:
+			return func() { _ = l.Close() }, nil
+		case !errors.Is(err, ErrHeld):
+			return nil, err
+		case holder.IsPreDaemon() && alive(holder.PID):
+			return nil, fmt.Errorf("a loom from before the daemon is running (%s): quit it first", holder)
+		case holder.IsDaemon() || liveHolder(holder):
+			return nil, fmt.Errorf("%w (%s)", ErrRunning, holder)
+		case time.Now().Before(deadline):
+			time.Sleep(20 * time.Millisecond)
+			continue
+		case holder.PID > 0 && alive(holder.PID):
+			return nil, fmt.Errorf("another loom command holds the lock (%s): run this again once it is done", holder)
+		}
+		return nil, fmt.Errorf("a process that left no record holds the loom lock (%s): try again", LockPath(globalDir))
 	}
-	return func() { _ = l.Close() }, nil
 }
 
 // liveHolder reports whether rec names a live holder of the lock: a loom

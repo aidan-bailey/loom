@@ -182,17 +182,39 @@ func accountFromEnv(reg *account.Registry) (string, bool) {
 	return name, true
 }
 
-// warnCredentialOverride prints a warning to out when a credential env var
-// overrides every account's own login (account.ActiveCredentialOverride):
-// claude checks CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN
-// before ever reading a config dir's stored credentials, so with one set in
-// loom's own environment every account it launches — regardless of which
-// config dir CLAUDE_CONFIG_DIR points it at — silently runs (and bills) as
-// that one credential instead of its own login: account selection has no
-// effect. Non-fatal: the caller still runs normally afterward.
-func warnCredentialOverride(out io.Writer) {
-	if name, ok := account.ActiveCredentialOverride(); ok {
-		fmt.Fprintf(out, "warning: $%s is set — every account runs as that credential, so account selection has no effect; unset it to use accounts\n", name)
+// localCredentialOverride names a credential env var set in this
+// command's own environment (account.ActiveCredentialOverride); a var so
+// tests tell it from the daemon's, which is the same process's in them.
+var localCredentialOverride = account.ActiveCredentialOverride
+
+// warnOverride prints the warning that the credential in $name overrides
+// every account's own login: claude checks CLAUDE_CODE_OAUTH_TOKEN,
+// ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN before ever reading a config
+// dir's stored credentials, so every account runs (and bills) as that one
+// credential, whichever config dir CLAUDE_CONFIG_DIR names: account
+// selection has no effect. where says whose environment it is in.
+func warnOverride(out io.Writer, name, where string) {
+	fmt.Fprintf(out, "warning: $%s is set%s — every account runs as that credential, so account selection has no effect; unset it to use accounts\n", name, where)
+}
+
+// warnDaemonOverride warns when a credential in the daemon's environment
+// overrides every account (Core.CredentialOverride): sessions run in the
+// daemon's environment (its tmux server's), not this command's. Call it
+// after a request, so the published view is the daemon's now.
+func warnDaemonOverride(out io.Writer, d *client) string {
+	name := d.CredentialOverride()
+	if name != "" {
+		warnOverride(out, name, " in the loom daemon's environment")
+	}
+	return name
+}
+
+// warnLoginOverride warns when a credential in this command's own
+// environment, which a login's claude runs in, overrides it, unless the
+// daemon's warning named it already (warned).
+func warnLoginOverride(out io.Writer, warned string) {
+	if name, ok := localCredentialOverride(); ok && name != warned {
+		warnOverride(out, name, "")
 	}
 }
 
@@ -233,7 +255,6 @@ var accountAddCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(c *cobra.Command, args []string) error {
 		out := c.OutOrStdout()
-		warnCredentialOverride(out)
 		reg, err := loadAccountRegistry()
 		if err != nil {
 			return err
@@ -242,6 +263,8 @@ var accountAddCmd = &cobra.Command{
 			return err
 		}
 		return withDaemon(c, func(d *client) error {
+			d.ReloadAccounts()
+			warned := warnDaemonOverride(out, d)
 			// The daemon creates it, linked against the main config dir
 			// it knows, which it validates first (account.ValidateMainDir).
 			name, err := d.AddAccount(args[0])
@@ -263,6 +286,7 @@ var accountAddCmd = &cobra.Command{
 				fmt.Fprintf(out, "Log in later with: loom account login %s\n", name)
 				return nil
 			}
+			warnLoginOverride(out, warned)
 			err = loginAndReport(out, claudeProgram(), name, account.EnvFor(acct.Dir))
 			requestRefresh(d, false)
 			if err != nil {
@@ -280,7 +304,8 @@ var accountLoginCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(c *cobra.Command, args []string) error {
 		out := c.OutOrStdout()
-		warnCredentialOverride(out)
+		// The login's claude runs here, in this command's environment.
+		warnLoginOverride(out, "")
 		reg, err := loadAccountRegistry()
 		if err != nil {
 			return err
@@ -378,7 +403,6 @@ var accountListCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(c *cobra.Command, args []string) error {
 		out := c.OutOrStdout()
-		warnCredentialOverride(out)
 		reg, err := loadAccountRegistry()
 		if err != nil {
 			return err
@@ -388,12 +412,15 @@ var accountListCmd = &cobra.Command{
 		}
 		return withDaemon(c, func(d *client) error {
 			d.ReloadAccounts()
+			warnDaemonOverride(out, d)
 			names := d.AccountNames()
 			since := time.Now()
 			// The daemon probes usage only once an extra account exists,
 			// and only with a Claude program: then a round is asked for
 			// and waited for, and a sample older than it is shown with
-			// its age.
+			// its age. With the default account alone it probes nothing,
+			// so its row shows no usage (unlike `list` before the daemon,
+			// which probed it here).
 			if d.HasExtraAccounts() && d.ClaudeProgram() != "" {
 				d.RequestUsageProbe()
 				if _, err := d.await(accountWait, probed(d, names.Names, since)); err != nil {
