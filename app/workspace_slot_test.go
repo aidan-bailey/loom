@@ -396,15 +396,11 @@ func TestEnterGlobalMode_FlushesPendingRatiosIntoTheTabsState(t *testing.T) {
 	assert.InDelta(t, 0.4, saved["main"], 0, "flushed into the departing tab's state")
 }
 
-// TestActivateWorkspace_ARenamedWorkspaceIsRefused: renamed while the
-// daemon runs (`loom workspace rename`), a workspace stays served under
-// the name it had when the model first served it. The TUI keys its tabs
-// and the open list on names, so a tab opened for the new name would show
-// the old one, be closed by the next picker commit and be dropped from the
-// open list. Opening it by its new name is refused, naming both, with
-// nothing opened or persisted, until the daemon's restart serves it under
-// its new name.
-func TestActivateWorkspace_ARenamedWorkspaceIsRefused(t *testing.T) {
+// TestActivateWorkspace_ARenamedWorkspaceOpensUnderItsNewName: renamed
+// while the daemon runs (`loom workspace rename` in another process), a
+// workspace is renamed in place at the model's next reread of the
+// registry, keeping its ID, so the TUI opens it by its new name.
+func TestActivateWorkspace_ARenamedWorkspaceOpensUnderItsNewName(t *testing.T) {
 	isolateTmux(t)
 	t.Setenv(config.EnvGlobalDir, t.TempDir())
 	old, other := preservedTerminalWorkspace(t, "ws-old"), preservedTerminalWorkspace(t, "ws-other")
@@ -414,7 +410,7 @@ func TestActivateWorkspace_ARenamedWorkspaceIsRefused(t *testing.T) {
 	require.NoError(t, reg.Add(other.Name, other.Path))
 	m := newRestoreHome(t, &recordingExec{})
 	m.ctx = cancelledCtx()
-	_, ok := m.servedNamed("ws-old")
+	before, ok := m.servedNamed("ws-old")
 	require.True(t, ok, "fixture: the model serves it from boot")
 	_ = m.applyWorkspaceToggle([]config.Workspace{other})
 	require.Equal(t, []string{"ws-other"}, m.slotNames())
@@ -426,21 +422,11 @@ func TestActivateWorkspace_ARenamedWorkspaceIsRefused(t *testing.T) {
 	renamed := config.Workspace{Name: "ws-new", Path: old.Path}
 
 	_, err = m.activateWorkspace(renamed)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ws-new is the workspace loom serves as ws-old")
-	assert.Contains(t, err.Error(), "stop the daemon (`loom serve stop`), then start loom, to open it as ws-new",
-		"a rename is not a twin: ws-old is no longer registered, and only a new daemon serves it as ws-new")
-	assert.NotContains(t, err.Error(), "restart loom", "a TUI's restart reaches the same daemon")
-	assert.Equal(t, []string{"ws-other"}, m.slotNames(), "no tab opens")
-
-	// A picker commit that keeps ws-other and checks ws-new opens nothing
-	// more, and keeps the tab it kept.
-	_ = m.applyWorkspaceToggle([]config.Workspace{other, renamed})
-	assert.Equal(t, []string{"ws-other"}, m.slotNames(), "the kept tab stays, and nothing else opens")
-	assert.Contains(t, m.errBox.String(), "loom serve stop")
-	fresh, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
-	assert.Equal(t, []string{"ws-other"}, fresh.OpenWorkspaces, "the open list is the tabs, unchanged")
+	assert.Equal(t, []string{"ws-other", "ws-new"}, m.slotNames())
+	after, ok := m.servedNamed("ws-new")
+	require.True(t, ok)
+	assert.Equal(t, before.ID, after.ID, "the same workspace, renamed in place")
 	require.NoError(t, m.checkSlotInvariant())
 }
 

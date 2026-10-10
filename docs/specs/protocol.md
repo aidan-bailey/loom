@@ -123,6 +123,24 @@ Params: `{"name":"","dir":""}`
 
 Result: `{"value":{"ID":0,"Name":"","Label":"","RepoPath":"","ConfigDir":"","Settings":{"default_program":"","branch_prefix":""},"UIPrefs":{},"HelpScreensSeen":0,"WritesRefused":false,"PreservedTitles":null,"Recovery":{"Cleaned":0,"Review":0,"Failed":0,"Undecodable":0},"LoadErr":""}}`
 
+### Unregister (request)
+
+Params: `{"name":""}`
+
+Result: `{}`
+
+### RenameWorkspace (request)
+
+Params: `{"from":"","to":""}`
+
+Result: `{}`
+
+### Reset (request)
+
+Params: `{"id":0,"req":0}`
+
+Result: `{}`
+
 ### PersistOpenList (request)
 
 Params: `{"names":null}`
@@ -395,7 +413,7 @@ Result: `{"value":""}`
 
 ### RemoveAccount (request)
 
-Params: `{"name":""}`
+Params: `{"name":"","force":false}`
 
 Result: `{}`
 

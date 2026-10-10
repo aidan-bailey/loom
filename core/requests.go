@@ -105,6 +105,8 @@ func outcome(result any) (err, notice error) {
 		return r.err, nil
 	case resumeSkipped:
 		return r.err, nil
+	case resetResult:
+		return r.err, nil
 	}
 	return nil, nil
 }
@@ -388,10 +390,14 @@ type NewInstance struct {
 // configures and starts it: the owner is stamped now, and the start's
 // completion is a StartResult as before. The Reply comes at once and names
 // the new instance. A ws the model does not serve (an unknown ID) is
-// refused.
+// refused, and so is one being reset, whose job removes every worktree.
 func (m *Model) createWS(ws *Workspace, spec NewInstance, req ReqID) {
 	if !m.isLoadedWS(ws) {
 		m.refuse(req, 0, fmt.Errorf("create %s: its workspace is not served", spec.Title))
+		return
+	}
+	if ws.resetting {
+		m.refuse(req, 0, fmt.Errorf("create %s: its workspace is being reset", spec.Title))
 		return
 	}
 	cfgDir := ""

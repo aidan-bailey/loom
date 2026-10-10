@@ -89,6 +89,35 @@ type RegisterResult struct {
 	Value core.WorkspaceView `json:"value"`
 }
 
+// UnregisterParams are Unregister's parameters on the wire.
+type UnregisterParams struct {
+	Name string `json:"name"`
+}
+
+// UnregisterResult is Unregister's result on the wire; an error travels in the reply.
+type UnregisterResult struct {
+}
+
+// RenameWorkspaceParams are RenameWorkspace's parameters on the wire.
+type RenameWorkspaceParams struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// RenameWorkspaceResult is RenameWorkspace's result on the wire; an error travels in the reply.
+type RenameWorkspaceResult struct {
+}
+
+// ResetParams are Reset's parameters on the wire.
+type ResetParams struct {
+	ID  core.WorkspaceID `json:"id"`
+	Req core.ReqID       `json:"req"`
+}
+
+// ResetResult is Reset's result on the wire; an error travels in the reply.
+type ResetResult struct {
+}
+
 // PersistOpenListParams are PersistOpenList's parameters on the wire.
 type PersistOpenListParams struct {
 	Names []string `json:"names"`
@@ -526,7 +555,8 @@ type AddAccountResult struct {
 
 // RemoveAccountParams are RemoveAccount's parameters on the wire.
 type RemoveAccountParams struct {
-	Name string `json:"name"`
+	Name  string `json:"name"`
+	Force bool   `json:"force"`
 }
 
 // RemoveAccountResult is RemoveAccount's result on the wire; an error travels in the reply.
@@ -553,6 +583,9 @@ var methods = []methodInfo{
 	{Name: "Registry", Kind: kindLocal, Params: RegistryParams{}, Result: RegistryResult{}},
 	{Name: "ReloadRegistry", Kind: kindRequest, Params: ReloadRegistryParams{}, Result: ReloadRegistryResult{}},
 	{Name: "Register", Kind: kindRequest, Params: RegisterParams{}, Result: RegisterResult{}},
+	{Name: "Unregister", Kind: kindRequest, Params: UnregisterParams{}, Result: UnregisterResult{}},
+	{Name: "RenameWorkspace", Kind: kindRequest, Params: RenameWorkspaceParams{}, Result: RenameWorkspaceResult{}},
+	{Name: "Reset", Kind: kindRequest, Params: ResetParams{}, Result: ResetResult{}},
 	{Name: "PersistOpenList", Kind: kindRequest, Params: PersistOpenListParams{}, Result: PersistOpenListResult{}},
 	{Name: "SetLastUsed", Kind: kindRequest, Params: SetLastUsedParams{}, Result: SetLastUsedResult{}},
 	{Name: "SaveSettings", Kind: kindRequest, Params: SaveSettingsParams{}, Result: SaveSettingsResult{}},
@@ -661,6 +694,30 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		v, err := b.Register(p.Name, p.Dir)
 		return RegisterResult{Value: v}, err, true
+	case "Unregister":
+		var p UnregisterParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		err := b.Unregister(p.Name)
+		return UnregisterResult{}, err, true
+	case "RenameWorkspace":
+		var p RenameWorkspaceParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		err := b.RenameWorkspace(p.From, p.To)
+		return RenameWorkspaceResult{}, err, true
+	case "Reset":
+		var p ResetParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		err := b.Reset(p.ID, p.Req)
+		return ResetResult{}, err, true
 	case "PersistOpenList":
 		var p PersistOpenListParams
 		if err := decodeParams(params, &p); err != nil {
@@ -999,7 +1056,7 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err, true
 		}
-		err := b.RemoveAccount(p.Name)
+		err := b.RemoveAccount(p.Name, p.Force)
 		return RemoveAccountResult{}, err, true
 	case "SetDefaultAccount":
 		var p SetDefaultAccountParams
@@ -1065,6 +1122,26 @@ func (c *Client) Register(name string, dir string) (core.WorkspaceView, error) {
 	var r RegisterResult
 	err := c.request("Register", RegisterParams{Name: name, Dir: dir}, &r)
 	return r.Value, err
+}
+
+// Unregister is core.Core's Unregister (request).
+func (c *Client) Unregister(name string) error {
+	var r UnregisterResult
+	return c.request("Unregister", UnregisterParams{Name: name}, &r)
+}
+
+// RenameWorkspace is core.Core's RenameWorkspace (request).
+func (c *Client) RenameWorkspace(from string, to string) error {
+	var r RenameWorkspaceResult
+	return c.request("RenameWorkspace", RenameWorkspaceParams{From: from, To: to}, &r)
+}
+
+// Reset is core.Core's Reset (request).
+func (c *Client) Reset(id core.WorkspaceID, req core.ReqID) error {
+	var r ResetResult
+	err := c.request("Reset", ResetParams{ID: id, Req: req}, &r)
+	c.noteRefused(err, req)
+	return err
 }
 
 // PersistOpenList is core.Core's PersistOpenList (request).
@@ -1355,9 +1432,9 @@ func (c *Client) AddAccount(name string) (string, error) {
 }
 
 // RemoveAccount is core.Core's RemoveAccount (request).
-func (c *Client) RemoveAccount(name string) error {
+func (c *Client) RemoveAccount(name string, force bool) error {
 	var r RemoveAccountResult
-	return c.request("RemoveAccount", RemoveAccountParams{Name: name}, &r)
+	return c.request("RemoveAccount", RemoveAccountParams{Name: name, Force: force}, &r)
 }
 
 // SetDefaultAccount is core.Core's SetDefaultAccount (request).

@@ -400,7 +400,7 @@ func TestAccountRequests_RefuseWithoutARegistry(t *testing.T) {
 	_, err := m.AddAccount("max-2")
 	assert.EqualError(t, err, "the account registry is unavailable")
 	assert.EqualError(t, m.SetDefaultAccount("max-2"), "the account registry is unavailable")
-	assert.EqualError(t, m.RemoveAccount("max-2"), "the account registry is unavailable")
+	assert.EqualError(t, m.RemoveAccount("max-2", false), "the account registry is unavailable")
 }
 
 // TestInitAccounts_FillsTheStripOnce: the startup publication tells the
@@ -426,4 +426,40 @@ func TestInitAccounts_FillsTheStripOnce(t *testing.T) {
 	}
 	assert.Equal(t, 1, changed)
 	assert.True(t, m.HasExtraAccounts(), "the registry was loaded and published")
+}
+
+// TestRemoveAccount_ForceOverridesBothRefusals: unforced, RemoveAccount
+// keeps an account a session uses or whose dir holds files shared with
+// nothing; forced (`loom account remove --force`), it removes it anyway,
+// unshared files and all.
+func TestRemoveAccount_ForceOverridesBothRefusals(t *testing.T) {
+	global := t.TempDir()
+	t.Setenv("LOOM_GLOBAL_DIR", global)
+	t.Setenv("LOOM_HOME", global)
+	m := NewForTest(Options{})
+	withAccounts(t, m, "max-2")
+	acct, ok := m.accounts.Get("max-2")
+	require.True(t, ok)
+	require.NoError(t, os.WriteFile(filepath.Join(acct.Dir, "notes.md"), []byte("mine"), 0o600))
+	ws := storedWorkspace(t, "a")
+	user := newInst(t, "x")
+	user.SetAccount("max-2")
+	ws.add(user)
+	m.SetWorkspacesForTest(ws)
+
+	err := m.RemoveAccount("max-2", false)
+	assert.ErrorContains(t, err, "1 session(s) use max-2", "in use")
+	ws.remove(user)
+	err = m.RemoveAccount("max-2", false)
+	assert.ErrorContains(t, err, "notes.md", "unshared files")
+	assert.ErrorContains(t, err, "--force")
+	_, ok = m.accounts.Get("max-2")
+	require.True(t, ok, "kept")
+	assert.DirExists(t, acct.Dir)
+
+	ws.add(user)
+	require.NoError(t, m.RemoveAccount("max-2", true))
+	_, ok = m.accounts.Get("max-2")
+	assert.False(t, ok, "removed")
+	assert.NoDirExists(t, acct.Dir, "unshared files and all")
 }

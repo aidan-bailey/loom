@@ -128,8 +128,8 @@ func (m *Model) removeEverywhere(inst *session.Instance) {
 }
 
 // deliverStart applies an async start's result to the workspace that owns
-// the instance (see the note at the top of this file). The owner is always
-// served: the model never drops a workspace.
+// the instance (see the note at the top of this file). The owner is
+// served: a workspace with a session Loading is never unloaded (busy).
 //
 //   - Failure: the instance is removed from its owner by identity, the
 //     owner saved, and the instance killed (worktree, tmux) off the

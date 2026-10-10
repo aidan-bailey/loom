@@ -56,9 +56,10 @@ type Model struct {
 
 	// workspaces are every workspace the model serves, loaded once (Boot):
 	// the global one and each registered one, in that order, plus any
-	// registered or reread later. None is ever dropped, and every one is
-	// published: which of them a client shows (its tabs, or the workspace
-	// it shows while none is open) is the client's own state.
+	// registered or reread later. One is dropped only when it leaves the
+	// registry (Unregister, applyRegistry), and every one is published:
+	// which of them a client shows (its tabs, or the workspace it shows
+	// while none is open) is the client's own state.
 	workspaces []*Workspace
 	booted     bool
 
@@ -416,6 +417,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverUsage(msg)
 	case tracked:
 		m.deliverTracked(msg)
+	case resetResult:
+		m.deliverReset(msg)
 	case issueResult:
 		// Only its Reply carries it (deliverTracked).
 	default:

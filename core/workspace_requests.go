@@ -81,19 +81,18 @@ func (m *Model) Registry() RegistryView {
 
 // ReloadRegistry rereads the workspace registry from disk, for a caller
 // about to show it (the workspace picker) or open a workspace it lacks:
-// another process may have registered a workspace since, which the model
-// then serves too. One no longer registered stays served until the next
-// start.
+// another process may have changed it since (serveRegistry). A workspace
+// registered since is served too; one no longer registered is unloaded
+// (unload; one with a busy session waits for the next reread), and one
+// registered under another name only is renamed in place, keeping its ID.
 func (m *Model) ReloadRegistry() error {
 	if m.registry == nil {
-		return fmt.Errorf("no workspace registry")
+		return errNoWorkspaceRegistry
 	}
 	if err := m.registry.Reload(); err != nil {
 		return err
 	}
-	for _, def := range m.registry.Workspaces {
-		_, _ = m.ensureLoaded(def)
-	}
+	m.serveRegistry()
 	return nil
 }
 

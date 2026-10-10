@@ -295,7 +295,7 @@ func (m *home) carryOutAccountRequest(req overlay.AccountRequest) (login string,
 	case overlay.AccountRequestSetDefault:
 		return "", m.core.SetDefaultAccount(req.Name)
 	case overlay.AccountRequestRemove:
-		return "", m.core.RemoveAccount(req.Name)
+		return "", m.core.RemoveAccount(req.Name, false)
 	}
 	return "", nil
 }

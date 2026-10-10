@@ -541,28 +541,30 @@ func (m *Model) SetDefaultAccount(name string) error {
 	return nil
 }
 
-// RemoveAccount removes account name, refusing while a session uses it
-// (accountUsers) or while its dir holds unshared files (the error then
-// names them and the CLI command that can force it; this path never
-// forces).
-func (m *Model) RemoveAccount(name string) error {
+// RemoveAccount removes account name. Without force it refuses while a
+// session uses it (accountUsers) or while its dir holds unshared files (the
+// error then names them and the CLI command that can force it); force
+// overrides both, as `loom account remove --force` does, and logs what it
+// overrode.
+func (m *Model) RemoveAccount(name string, force bool) error {
 	if m.accounts == nil {
 		return errNoRegistry
 	}
 	m.ReloadAccounts()
 	m.ensureAccountMaps()
 	n, err := m.accountUsers(name)
-	if err != nil {
+	switch {
+	case err != nil && !force:
 		return fmt.Errorf("can't tell whether sessions use %s, so it was kept: %w", name, err)
-	}
-	if n > 0 {
+	case n > 0 && !force:
 		return fmt.Errorf("%d session(s) use %s: kill them or relaunch them on another account (R) first", n, name)
+	case err != nil || n > 0:
+		log.For("core").Warn("account.remove_forced_in_use", "account", name, "users", n, "err", err)
 	}
-	// Never forced from here: an account dir holding real, unshared
-	// entries is kept, and the toast names them and the CLI command
-	// that can force it (Remove's own text offers a --force this
-	// screen doesn't have).
-	if _, err := m.accounts.Remove(name, false); err != nil {
+	// Unforced, an account dir holding real, unshared entries is kept, and
+	// the error names them and the CLI command that can force it (Remove's
+	// own text offers a --force the Accounts screen doesn't have).
+	if _, err := m.accounts.Remove(name, force); err != nil {
 		var unshared *account.UnsharedError
 		if errors.As(err, &unshared) {
 			err = fmt.Errorf("account %q holds files that are not shared with your main config: %s; to remove it anyway run `loom account remove --force %s`",

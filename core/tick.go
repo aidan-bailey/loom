@@ -278,8 +278,8 @@ func (m *Model) deliverDeadVerified(r DeadVerified) {
 func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, source livenessSource) bool {
 	ws := m.holding(inst)
 	if ws == nil {
-		// inst left its workspace while the probe ran (a kill, or a
-		// recover's replacement; the model never drops a workspace). A
+		// inst left its workspace while the probe ran (a kill, a
+		// recover's replacement, a reset, or its workspace unloaded). A
 		// workspace-terminal restart here would relaunch a session no
 		// record holds. Drop the result.
 		return false

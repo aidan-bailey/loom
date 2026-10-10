@@ -40,9 +40,10 @@ type Core interface {
 	Sync() []Event // rpc:client
 
 	// Workspaces: every one the model serves, by ID, and the requests that
-	// open one, save them all, register one and write the registry. Which
-	// of them a client shows (its tabs, or the workspace it shows while
-	// none is open) is the client's own state.
+	// open one, save them all, register, unregister, rename or reset one
+	// and write the registry. Which of them a client shows (its tabs, or
+	// the workspace it shows while none is open) is the client's own
+	// state.
 	Workspaces() []WorkspaceView                    // rpc:local
 	Workspace(id WorkspaceID) (WorkspaceView, bool) // rpc:local
 	IsLoaded(id WorkspaceID) bool                   // rpc:local
@@ -51,6 +52,9 @@ type Core interface {
 	Registry() RegistryView // rpc:local
 	ReloadRegistry() error
 	Register(name, dir string) (WorkspaceView, error)
+	Unregister(name string) error
+	RenameWorkspace(from, to string) error
+	Reset(id WorkspaceID, req ReqID) error
 	PersistOpenList(names []string)
 	SetLastUsed(name string) error
 
@@ -113,7 +117,7 @@ type Core interface {
 	RequestAccountsRefresh(withDefault bool) // rpc:cast
 	RequestUsageProbe()                      // rpc:cast
 	AddAccount(name string) (string, error)
-	RemoveAccount(name string) error
+	RemoveAccount(name string, force bool) error
 	SetDefaultAccount(name string) error
 }
 

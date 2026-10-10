@@ -31,6 +31,21 @@ func (l *Loop) ReloadRegistry() error  { return get(l, (*Model).ReloadRegistry) 
 func (l *Loop) Register(name, dir string) (WorkspaceView, error) {
 	return get2(l, func(m *Model) (WorkspaceView, error) { return m.Register(name, dir) })
 }
+
+// Unregister runs Model.Unregister on the loop.
+func (l *Loop) Unregister(name string) error {
+	return get(l, func(m *Model) error { return m.Unregister(name) })
+}
+
+// RenameWorkspace runs Model.RenameWorkspace on the loop.
+func (l *Loop) RenameWorkspace(from, to string) error {
+	return get(l, func(m *Model) error { return m.RenameWorkspace(from, to) })
+}
+
+// Reset runs Model.Reset on the loop.
+func (l *Loop) Reset(id WorkspaceID, req ReqID) error {
+	return get(l, func(m *Model) error { return m.Reset(id, req) })
+}
 func (l *Loop) PersistOpenList(names []string) { l.do(func(m *Model) { m.PersistOpenList(names) }) }
 func (l *Loop) SetLastUsed(name string) error {
 	return get(l, func(m *Model) error { return m.SetLastUsed(name) })
@@ -134,8 +149,10 @@ func (l *Loop) RequestUsageProbe() { l.do((*Model).RequestUsageProbe) }
 func (l *Loop) AddAccount(name string) (string, error) {
 	return get2(l, func(m *Model) (string, error) { return m.AddAccount(name) })
 }
-func (l *Loop) RemoveAccount(name string) error {
-	return get(l, func(m *Model) error { return m.RemoveAccount(name) })
+
+// RemoveAccount runs Model.RemoveAccount on the loop.
+func (l *Loop) RemoveAccount(name string, force bool) error {
+	return get(l, func(m *Model) error { return m.RemoveAccount(name, force) })
 }
 func (l *Loop) SetDefaultAccount(name string) error {
 	return get(l, func(m *Model) error { return m.SetDefaultAccount(name) })

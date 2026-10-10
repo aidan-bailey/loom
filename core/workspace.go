@@ -11,8 +11,9 @@ import (
 // instances persist to, its config and app state, its instances in
 // display order, and the summary of its last orphan reconcile. The model
 // owns it; the TUI reads it (its slot is a view over it) and changes its
-// instances only through Add, Remove and Replace. The context, storage,
-// config and state are fixed for the workspace's lifetime.
+// instances only through Add, Remove and Replace. Its context changes only
+// by a rename (renameWS, which gives it a renamed copy) and its storage,
+// config and state only by a reread from disk (reloadWS).
 type Workspace struct {
 	ctx      *config.WorkspaceContext
 	storage  *session.Storage
@@ -30,6 +31,11 @@ type Workspace struct {
 	// (settleTerminal); terminalChecking while the health tick's retry of
 	// that check is in flight (maybeSettleTerminals).
 	terminalUnsettled, terminalChecking bool
+	// resetting is set while a reset's job runs (Model.Reset): the
+	// workspace holds no instance, and takes none (Create) nor a terminal
+	// (ensureTerminal) until the job lands, since the job kills every
+	// session started in its roots and removes every worktree.
+	resetting bool
 	// loadErr is what the workspace's storage failed to load with, nil
 	// once it loaded. A workspace that failed is kept, empty, its storage
 	// latched shut (no write can overwrite the unreadable payload), and a

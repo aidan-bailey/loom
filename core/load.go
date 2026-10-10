@@ -383,6 +383,12 @@ func (m *Model) retryLoad(ws *Workspace) error {
 	if ws.loadErr == nil {
 		return nil
 	}
+	return m.reloadWS(ws)
+}
+
+// reloadWS reads ws afresh from disk: its state, config and storage, then
+// its instances (loadWS), added to whatever it holds.
+func (m *Model) reloadWS(ws *Workspace) error {
 	if ws.ctx != nil {
 		fresh, err := newWS(ws.ctx)
 		if err != nil {
@@ -421,7 +427,9 @@ func (m *Model) open(ws *Workspace) error {
 // the terminal exists, just not in this binary's list, and a second
 // same-titled record would clobber it).
 func (m *Model) ensureTerminal(ws *Workspace) {
-	if ws.ctx == nil || ws.ctx.RepoPath == "" || ws.loadErr != nil {
+	// A reset running would kill the terminal: its completion calls this
+	// again (deliverReset).
+	if ws.ctx == nil || ws.ctx.RepoPath == "" || ws.loadErr != nil || ws.resetting {
 		return
 	}
 	if t := ws.terminal(); t != nil {
@@ -553,10 +561,11 @@ func (m *Model) maybeSettleTerminals() {
 }
 
 // deliverTerminalChecked settles the terminal a name check was about,
-// unless it left its workspace or stopped needing a relaunch meanwhile.
+// unless it left its workspace, or its workspace was unloaded, or it
+// stopped needing a relaunch meanwhile.
 func (m *Model) deliverTerminalChecked(r terminalChecked) {
 	r.ws.terminalChecking = false
-	if r.ws.terminal() != r.inst {
+	if !m.isLoadedWS(r.ws) || r.ws.terminal() != r.inst {
 		return // the next tick looks again
 	}
 	if !r.inst.CrashRecovered() && !r.inst.Paused() {

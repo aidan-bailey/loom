@@ -8,6 +8,7 @@ import (
 	"github.com/aidan-bailey/loom/app"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/log"
@@ -215,42 +216,26 @@ var (
 			}
 			defer log.Close()
 
-			state := config.LoadStateFrom(wsCtx.ConfigDir)
-			storage, err := session.NewStorage(state, wsCtx.ConfigDir)
-			if err != nil {
-				return fmt.Errorf("failed to initialize storage: %w", err)
-			}
-			if err := storage.DeleteAllInstances(); err != nil {
-				return fmt.Errorf("failed to reset storage: %w", err)
-			}
-			fmt.Println("Storage has been reset successfully")
-
 			// Only this workspace's sessions: the tmux server is shared by
 			// every loom process and workspace, and this reset deletes only
-			// this workspace's records and worktrees. The records are gone,
-			// so nothing is claimed.
+			// this workspace's records and worktrees.
 			registry, regErr := config.LoadWorkspaceRegistry()
 			if regErr != nil {
 				fmt.Fprintf(os.Stderr, "loom: reading workspace registry: %v (workspaces nested in this one are not told apart)\n", regErr)
 				registry = nil
 			}
-			scope := session.NewSweepScope([]*config.WorkspaceContext{wsCtx}, registry)
-			swept, err := session.CleanupOrphanedSessions(nil, scope, resetExecutor())
-			if err != nil {
-				// Some of this workspace's sessions may still be running,
-				// with agents inside the worktrees removed below: stop here.
-				return fmt.Errorf("tmux cleanup failed (%d killed, %d kills failed); worktrees and branches were NOT removed, since an agent may still be running in one — re-run once tmux answers: %w",
-					swept.Killed, swept.Failed, err)
+			rep, err := core.ResetWorkspace(wsCtx, registry, resetExecutor())
+			if rep.Records {
+				fmt.Println("Storage has been reset successfully")
 			}
-			fmt.Printf("Tmux sessions have been cleaned up: %d killed, %d left running (started outside this workspace), %d left running (name tmux cannot target exactly)\n",
-				swept.Killed, swept.Unowned, swept.Untargetable)
-
-			if err := git.CleanupWorktrees(wsCtx.ConfigDir, nil); err != nil {
-				return fmt.Errorf("failed to cleanup worktrees: %w", err)
+			if rep.Swept {
+				fmt.Printf("Tmux sessions have been cleaned up: %d killed, %d left running (started outside this workspace), %d left running (name tmux cannot target exactly)\n",
+					rep.Sweep.Killed, rep.Sweep.Unowned, rep.Sweep.Untargetable)
 			}
-			fmt.Println("Worktrees have been cleaned up")
-
-			return nil
+			if rep.Worktrees {
+				fmt.Println("Worktrees have been cleaned up")
+			}
+			return err
 		},
 	}
 
