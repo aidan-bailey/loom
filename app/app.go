@@ -3,10 +3,12 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/keys"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/script"
@@ -131,18 +133,31 @@ type home struct {
 	// its implementation: it keeps a replica of the state the model
 	// publishes). Never nil after startHome.
 	core core.Core
-	// wakes is the client's wake signal (rpc.Client.Wakes), which Run
-	// forwards into the program (forwardWakes), and stopCore closes the
-	// client. Both are nil in fixtures, whose loops run no job on their
-	// own.
-	wakes    <-chan struct{}
+	// conn is the daemon's client core is, for the link's state
+	// (rpc.Client.Stopping, Err) and its wakes, which Run forwards into
+	// the program (forwardWakes); a rejoin replaces both (resync). nil in
+	// bare test homes, which skip every link check. stopCore closes the
+	// client (a test stack's stop, in fixtures).
+	conn     *rpc.Client
 	stopCore func()
-	// coreLost reports the client's loss of the model (rpc.Client.Err):
-	// the daemon stopped, or the model it serves failed. Update checks it
-	// first and quits. Nil in fixtures.
-	coreLost func() error
-	// exitErr is why the TUI quit on its own (the model lost, wrapped in
-	// ErrDaemonGone), which Run returns once the terminal is restored.
+	// link is the TUI's link to the daemon: connected, stopping, waiting
+	// or reconnecting (link.go). Offline (not connected), a banner names
+	// it, keys that need the model are refused, and a rejoin is scheduled.
+	link link
+	// rejoin joins a daemon again once this one is lost (Run's; nil in
+	// tests that set none, whose TUI then stays offline).
+	rejoin Rejoin
+	// send is the program's Send (Run sets it before the program runs; nil
+	// in tests): a rejoin's progress and a new client's wakes go through
+	// it, from goroutines of their own.
+	send func(tea.Msg)
+	// daemonTmux is the tmux server the daemon named at the last join: a
+	// rejoined daemon on another server (the old one died) has its pane
+	// clients replaced (resync).
+	daemonTmux string
+	// exitErr is why the TUI quit on its own (a rejoin found a newer
+	// daemon: ErrDaemonNewer), which Run returns once the terminal is
+	// restored.
 	exitErr error
 	// program is the agent program this TUI's drafts and scripts default
 	// to: the one the process started with (the -p flag, else the startup
@@ -606,6 +621,11 @@ func (m *home) flushPendingRatioSaves() {
 // surfaced (layout prefs are best-effort). Persistence is a synchronous
 // write-through to state.json — fine for rare toggles; debounce burst
 // callers (e.g. key-repeat ratio changes).
+//
+// Offline (or when the request is refused as unavailable: the link not yet
+// noticed), the change applies locally and is kept as unsent
+// (workspaceSlot.unsentPrefs), and resync sends it to the next daemon: the
+// TUI's own value wins.
 func (m *home) mutateUIPrefs(fn func(*config.UIPrefs)) {
 	if m.id == 0 {
 		// Bare test homes load no workspace; nothing to persist.
@@ -613,7 +633,15 @@ func (m *home) mutateUIPrefs(fn func(*config.UIPrefs)) {
 	}
 	p := m.uiPrefs()
 	fn(&p)
+	if m.offline() {
+		m.keepUnsentPrefs(p)
+		return
+	}
 	if err := m.core.SetUIPrefs(m.id, p); err != nil {
+		if errors.Is(err, core.ErrUnavailable) {
+			m.keepUnsentPrefs(p)
+			return
+		}
 		log.For("app").Warn("ui_prefs_save_failed", "err", err)
 		return
 	}
@@ -637,25 +665,20 @@ func (m *home) Init() tea.Cmd {
 }
 
 // Update implements tea.Model: the message's handler (update), then
-// whatever the model produced meanwhile (drainCore), then the selection,
-// if it moved (publishSelection). First, though, a model the client has
-// lost (the daemon stopped, or its model failed) quits the TUI: the
-// client's wake brings the loss here (coreWakeMsg), and Run says why once
-// the terminal is restored. Nothing panics meanwhile: the client answers
-// local reads, View's included, from its last replica.
+// whatever the model produced meanwhile (drainCore), then the link to the
+// daemon (checkLink: a bye, or the model lost, brings the TUI offline;
+// link.go), then the selection, if it moved (publishSelection). The link
+// is checked after the drain, so the replies that arrived before the
+// connection closed are applied, not failed as stranded. Nothing panics
+// offline: the lost client answers local reads, View's included, from its
+// last replica. Once the TUI quits on its own (exitErr), nothing more is
+// handled.
 func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.exitErr != nil {
 		return m, nil
 	}
-	if m.coreLost != nil {
-		if err := m.coreLost(); err != nil {
-			log.For("app").Error("core.lost", "err", err)
-			m.exitErr = fmt.Errorf("%w: %w", ErrDaemonGone, err)
-			return m, tea.Quit
-		}
-	}
 	model, cmd := m.update(msg)
-	cmd = tea.Batch(cmd, m.drainCore())
+	cmd = tea.Batch(cmd, m.drainCore(), m.checkLink())
 	m.publishSelection()
 	return model, cmd
 }
@@ -664,7 +687,15 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case coreWakeMsg:
-		// The model's loop woke the TUI: Update's drain does the rest.
+		// The model's loop woke the TUI: Update's drain does the rest, and
+		// its link check (a bye, or the model lost).
+		return m, nil
+	case rejoinTickMsg:
+		return m, m.rejoinTick(msg)
+	case rejoinedMsg:
+		return m, m.rejoined(msg)
+	case rejoinNoteMsg:
+		m.rejoinNote(msg)
 		return m, nil
 	case hideErrMsg:
 		m.errBox.Clear()
@@ -1484,6 +1515,13 @@ func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	if len(m.slots) > 0 {
 		m.leaveFocusedSlot()
 	}
+	if m.offline() {
+		// The open list and the ratios are the daemon's to write, and
+		// there is none to write them: they are lost, on record.
+		log.For("app").Warn("quit.offline_unsaved", "link", m.link.state.String(),
+			"open", m.openList(), "unsent_prefs", m.unsentPrefSlots())
+		return m, tea.Quit
+	}
 	// With no tab open the open list is written only if the registry holds
 	// one: it then keeps just the workspaces that failed to restore.
 	if len(m.slots) > 0 || len(m.core.Registry().Open) > 0 {
@@ -1930,6 +1968,9 @@ func (m *home) View() tea.View {
 	}
 
 	sections := []string{}
+	if banner := m.bannerView(); banner != "" {
+		sections = append(sections, banner)
+	}
 	if m.accountStrip != nil {
 		if strip := m.accountStrip.String(); strip != "" {
 			// Padded to the full width: the sections are joined centered,

@@ -23,22 +23,32 @@ import (
 // to drain and close (see script.Engine.Shutdown).
 const scriptShutdownTimeout = 1500 * time.Millisecond
 
-// ErrDaemonGone is Run's error when the TUI quit because it lost the
-// model: the daemon stopped (or was replaced by a newer one), or the model
-// it serves failed. The sessions keep running, and the next loom starts a
-// daemon again.
-var ErrDaemonGone = errors.New("the loom daemon is gone")
+// ErrDaemonNewer is matched by a rejoin's error when the daemon now
+// running is a newer build than this loom (a newer loom replaced it): the
+// TUI exits, and Run returns that error, for main to say so once the
+// terminal is restored.
+var ErrDaemonNewer = errors.New("the loom daemon is newer than this loom")
+
+// ErrDaemonDidNotStart is matched by a rejoin's error when the daemon it
+// started exited before it served: after maxSpawnFails of them in a row
+// the TUI stops starting daemons and waits for one (ctrl+r tries again).
+var ErrDaemonDidNotStart = errors.New("the loom daemon did not start")
 
 // Run starts the Bubble Tea program over client, a connection to the loom
-// daemon, and blocks until the user quits, ctx is cancelled, or the daemon
-// goes (ErrDaemonGone). It installs a shutdown hook that drains suspended
-// Lua coroutines, closes the client when the program has stopped, and
-// swallows no errors: any other non-nil return means tea.Program.Run
-// failed.
+// daemon, and blocks until the user quits, ctx is cancelled, or a rejoin
+// finds a newer daemon (ErrDaemonNewer). Losing the daemon is not the end:
+// the TUI shows its banner, keeps what needs no model, and joins a daemon
+// again through rejoin (see link.go). It installs a shutdown hook that
+// drains suspended Lua coroutines, closes the client it holds when the
+// program has stopped (the last one it joined), and swallows no errors:
+// any other non-nil return means tea.Program.Run failed.
 //
 // Parameters:
 //   - client is the daemon's client, connected and handshaken; Run owns it
-//     from here on, and closes it on return.
+//     from here on, and closes it (or the client a rejoin replaced it with)
+//     on return.
+//   - rejoin joins a daemon again once the TUI lost this one (nil: the TUI
+//     stays offline).
 //   - startupName names the workspace the TUI starts on ("": the global
 //     one).
 //   - appConfig is the pre-loaded config from the resolved workspace dir,
@@ -48,7 +58,7 @@ var ErrDaemonGone = errors.New("the loom daemon is gone")
 //     overlay with (used by `loom` invoked from a non-workspace dir).
 //   - noScripts disables loading user scripts from ~/.loom/scripts;
 //     embedded defaults still load so core keybindings work.
-func Run(ctx context.Context, client *rpc.Client, startupName string, appConfig *config.Config, program string, pendingDir string, noScripts bool) error {
+func Run(ctx context.Context, client *rpc.Client, rejoin Rejoin, startupName string, appConfig *config.Config, program string, pendingDir string, noScripts bool) error {
 	// Activate the configured theme before any component renders.
 	// Package-init styles are theme-hooked (ui.RegisterThemeHook), so
 	// this rebuild-on-apply is what makes config-selected themes stick.
@@ -65,9 +75,11 @@ func Run(ctx context.Context, client *rpc.Client, startupName string, appConfig 
 	if err != nil {
 		return err
 	}
+	h.rejoin = rejoin
 	// The client closes when Run returns, after the program quit; the
-	// daemon serves the sessions on.
-	defer h.stopCore()
+	// daemon serves the sessions on. A closure: a rejoin replaces the
+	// client, and its closer with it (resync).
+	defer func() { h.stopCore() }()
 	// Shutdown hook: drain any suspended script coroutines then close
 	// the Lua state. The engine's "every coroutine gets resumed" contract
 	// would otherwise be violated on process exit — including on the
@@ -82,9 +94,14 @@ func Run(ctx context.Context, client *rpc.Client, startupName string, appConfig 
 		}
 	}()
 	p := tea.NewProgram(h) // alt-screen + mouse mode are set on the tea.View (see View())
-	// The client's wakes (events arrived, or the model was lost) reach the
-	// program as coreWakeMsg; forwardWakes ends when the client closes.
-	go forwardWakes(h.wakes, p.Send)
+	// A rejoin's progress and the next client's wakes reach the program
+	// through Send too (link.go). Set before the program runs, so Update
+	// reads it with no race.
+	h.send = p.Send
+	// The client's wakes (events arrived, the daemon said bye, or the
+	// model was lost) reach the program as coreWakeMsg; forwardWakes ends
+	// when the client closes. A rejoined client gets one of its own.
+	go forwardWakes(h.conn.Wakes(), p.Send)
 	// Pane events: the output pumps push dirty/quiet/bell/dead into the
 	// program from their own goroutines; Send is goroutine-safe by design.
 	// Torn down before Run returns so a late timer can't Send into a dead
@@ -118,9 +135,9 @@ func startHome(ctx context.Context, client *rpc.Client, stopCore func(), notices
 	h := &home{
 		ctx:         ctx,
 		core:        client,
-		wakes:       client.Wakes(),
+		conn:        client,
 		stopCore:    stopCore,
-		coreLost:    client.Err,
+		daemonTmux:  client.Peer().Tmux,
 		program:     program,
 		startupName: startupName,
 		workspaceSlot: &workspaceSlot{

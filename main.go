@@ -152,9 +152,14 @@ var (
 			if err != nil {
 				return err
 			}
-			err = app.Run(ctx, client, wsCtx.Name, cfg, program, pendingDir, noScriptsFlag)
-			if errors.Is(err, app.ErrDaemonGone) {
-				return fmt.Errorf("loom: the daemon stopped (see %s); your sessions keep running. Run loom again.", daemon.LogPath(globalDir))
+			// A TUI that loses the daemon joins one again (rejoinDaemon),
+			// quietly, under its banner; a newer daemon there makes it exit.
+			rejoin := func(spawn bool, say func(string)) (*rpc.Client, error) {
+				return rejoinDaemon(globalDir, spawn, say)
+			}
+			err = app.Run(ctx, client, rejoin, wsCtx.Name, cfg, program, pendingDir, noScriptsFlag)
+			if newer := (*newerDaemonError)(nil); errors.As(err, &newer) {
+				return fmt.Errorf("loom: the loom daemon was replaced by a newer loom (%s); run loom again", describeBuild(newer.peer))
 			}
 			return err
 		},

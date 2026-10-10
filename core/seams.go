@@ -262,6 +262,18 @@ func (l *Loop) SelectedForTest() []InstanceID {
 	return ids
 }
 
+// OpenedForTest reports, on the loop, whether a client has opened the
+// workspace id since the model started (Core.Open: its first open starts
+// its terminal and its GitHub polling).
+func (l *Loop) OpenedForTest(id WorkspaceID) bool {
+	var opened bool
+	l.do(func(m *Model) {
+		ws := m.wsLookup(id)
+		opened = ws != nil && ws.opened
+	})
+	return opened
+}
+
 // SetRCAuthForTest records the default account's remote-control auth on
 // the loop (Model.SetRCAuth), as Boot's detection does: a change straight
 // to the model, which only the next publish sends to its clients.

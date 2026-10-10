@@ -198,11 +198,12 @@ func accountOrDefault(name string) string {
 	return name
 }
 
-// topChromeHeight is the rows above the content: the account strip (when
-// shown) plus the workspace tab bar. Every content-height and mouse/cursor
-// offset goes through it, so both rows stay accounted for.
+// topChromeHeight is the rows above the content: the daemon banner (while
+// offline, link.go), the account strip (when shown) plus the workspace tab
+// bar. Every content-height and mouse/cursor offset goes through it, so
+// every row stays accounted for.
 func (m *home) topChromeHeight() int {
-	h := m.tabBar.Height()
+	h := m.tabBar.Height() + m.bannerHeight()
 	if m.accountStrip != nil {
 		h += m.accountStrip.Height()
 	}

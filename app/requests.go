@@ -82,12 +82,14 @@ func (m *home) opReq(op, title string) core.ReqID {
 // refusal shows r's error when the model refused the request
 // (core.ErrRefused), and nothing otherwise: a failure of the request's job
 // is the model's to show, in its own notice, never twice. A gone session's
-// refusal names no request, so what (e.g. "kill x") goes in front of it.
+// refusal names no request, nor does an unavailable daemon's (a request
+// the TUI failed itself when its daemon went, failStranded), so what (e.g.
+// "kill x") goes in front of it.
 func (m *home) refusal(what string, r core.Reply) tea.Cmd {
 	if !errors.Is(r.Err, core.ErrRefused) {
 		return nil
 	}
-	if errors.Is(r.Err, core.ErrNoSession) {
+	if errors.Is(r.Err, core.ErrNoSession) || errors.Is(r.Err, core.ErrUnavailable) {
 		return m.handleError(fmt.Errorf("%s: %w", what, r.Err))
 	}
 	return m.handleError(r.Err)
@@ -184,10 +186,10 @@ func (m *home) scriptReplied(p *pendingScript, r core.Reply) tea.Cmd {
 // its own, which names the request and the session ("kill x: not allowed
 // on a workspace terminal"); anything else is "<op>: <err>", as the
 // methods raised before the model ran them: a failed job's error, a gone
-// session's (ErrNoSession names neither), and every ctx:new_instance
-// error ("new_instance: …").
+// session's or an unavailable daemon's (ErrNoSession and ErrUnavailable
+// name neither), and every ctx:new_instance error ("new_instance: …").
 func scriptError(op string, err error) string {
-	if op != "new_instance" && errors.Is(err, core.ErrRefused) && !errors.Is(err, core.ErrNoSession) {
+	if op != "new_instance" && errors.Is(err, core.ErrRefused) && !errors.Is(err, core.ErrNoSession) && !errors.Is(err, core.ErrUnavailable) {
 		return err.Error()
 	}
 	return fmt.Sprintf("%s: %s", op, err)

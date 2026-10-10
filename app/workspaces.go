@@ -44,6 +44,11 @@ type workspaceSlot struct {
 	// It pairs with this slot's splitPane (its terminal tab shows the
 	// slot's shared TerminalPane). Non-nil for every slot.
 	workbench *ui.Workbench
+	// unsentPrefs holds UI prefs changed while the TUI was offline
+	// (mutateUIPrefs): info shows them, a WorkspacesChanged keeps them over
+	// the published ones, and resync sends them to the next daemon. nil
+	// when none wait.
+	unsentPrefs *config.UIPrefs
 }
 
 // name is the workspace's registered name, "" for the global context.

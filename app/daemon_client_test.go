@@ -14,12 +14,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDaemonGone_QuitsCleanly: the daemon going away under a running TUI
-// (a crash, `loom serve stop`, a newer loom replacing it) quits the TUI,
-// with ErrDaemonGone for Run to report once the terminal is restored. A
-// daemon's client panics nowhere, so neither a render (View's local reads)
-// nor the Update that quits can trip Bubble Tea's panic recovery first.
-func TestDaemonGone_QuitsCleanly(t *testing.T) {
+// TestDaemonGone_GoesOffline: the daemon going away under a running TUI
+// (a crash: no bye) no longer quits it. The TUI goes offline, reconnecting,
+// with its banner up, and keeps working on what needs no model. A daemon's
+// client panics nowhere, so neither a render (View's local reads) nor the
+// Update that notices the loss, nor a key after it, trips Bubble Tea's
+// panic recovery.
+func TestDaemonGone_GoesOffline(t *testing.T) {
 	isolateTmux(t)
 	t.Setenv(config.EnvGlobalDir, t.TempDir())
 	model := core.NewForTest(core.Options{Program: "true", CmdExec: &recordingExec{}})
@@ -35,24 +36,35 @@ func TestDaemonGone_QuitsCleanly(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(m.stopCore)
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	require.NoError(t, m.exitErr)
+	require.Equal(t, linkConnected, m.link.state)
 
-	srv.Close() // the daemon goes
+	srv.Close() // the daemon goes, saying no bye
 	require.Eventually(t, func() bool { return client.Err() != nil }, 5*time.Second, 10*time.Millisecond)
 
-	require.NotPanics(t, func() { _ = m.View() }, "a render before the TUI quits")
+	require.NotPanics(t, func() { _ = m.View() }, "a render before the TUI notices")
 	require.NotPanics(t, func() {
 		_ = m.core.Registry()
 		_ = m.core.Workspaces()
 		_ = m.core.Sync()
 	}, "the client's local reads answer from its last replica")
-	var cmd tea.Cmd
-	require.NotPanics(t, func() { _, cmd = m.Update(coreWakeMsg{}) }, "the loss's wake")
-	require.NotNil(t, cmd)
-	assert.IsType(t, tea.QuitMsg{}, cmd(), "the TUI quits")
-	assert.ErrorIs(t, m.exitErr, ErrDaemonGone)
-	require.NotPanics(t, func() { _ = m.View() }, "the last render")
+	require.NotPanics(t, func() { m.Update(coreWakeMsg{}) }, "the loss's wake")
+	assert.NoError(t, m.exitErr, "the TUI does not quit")
+	assert.Equal(t, linkReconnecting, m.link.state, "no bye: a crash, so it reconnects")
+	assert.Contains(t, viewText(m), "lost the loom daemon: reconnecting (attempt 1)")
+	ended := make(chan struct{})
+	go func() {
+		for range client.Wakes() {
+		}
+		close(ended)
+	}()
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lost client's wakes never closed: its forwardWakes would run on")
+	}
+	require.NotPanics(t, func() { _ = m.View() }, "a render offline")
 	require.NotPanics(t, func() { m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"}) }, "a key that lands after")
+	assert.NoError(t, m.exitErr)
 }
 
 // TestStartupHome_FindsAWorkspaceRegisteredAfterBoot: the daemon booted

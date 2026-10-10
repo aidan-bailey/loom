@@ -1,9 +1,12 @@
 package app
 
 import (
+	"fmt"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/ui"
 )
 
 // overviewKeyAllowed whitelists script-dispatched keys in overview mode.
@@ -27,6 +30,53 @@ var overviewKeyAllowed = map[string]bool{
 	"{": true, "}": true, "l": true, ";": true,
 }
 
+// offlineKeyAllowed whitelists the keys that work while the TUI is offline
+// (link.go: the daemon stopping, stopped or unreachable): the ones that
+// talk to tmux or stay in the TUI. Everything else (n N I D p s m r R W S
+// a, and every key a user script bound) needs the model, and is refused
+// with an info line rather than dispatched. As a backstop, a request made
+// anyway (an overlay that was open when the link dropped, committing) is
+// refused by the client itself (core.ErrUnavailable).
+var offlineKeyAllowed = map[string]bool{
+	"up": true, "k": true, "down": true, "j": true, "]": true, "[": true,
+	"tab": true, "\\": true, "T": true, "ctrl+up": true, "ctrl+down": true,
+	"{": true, "l": true, "}": true, ";": true,
+	"i": true, "ctrl+a": true, "ctrl+t": true, "alt+a": true, "alt+t": true,
+	"t": true, "d": true, "f": true, "c": true, "e": true,
+	"?": true, "q": true, "enter": true, "esc": true, "z": true,
+	"pgup": true, "pgdown": true, "home": true, "end": true, "ctrl+u": true, "ctrl+d": true,
+	"shift+up": true, "shift+down": true, "alt+pgup": true, "alt+pgdown": true,
+	"K": true, "J": true, "g": true, "G": true,
+	"1": true, "2": true, "3": true, "4": true, "5": true,
+	"ctrl+left": true, "ctrl+right": true,
+}
+
+// offlineKeyRefused reports whether the offline gate refuses key, saying so
+// on the info line when it does. Connected, nothing is refused.
+func (m *home) offlineKeyRefused(key string) bool {
+	if !m.offline() || offlineKeyAllowed[key] {
+		return false
+	}
+	m.errBox.SetInfo(fmt.Sprintf("the loom daemon is %s: %s needs it", m.link.state.word(), key))
+	return true
+}
+
+// workbenchOwnsKeys reports whether the workbench's markdown editor or
+// review pane gets each key first (handleWorkbenchKey): the editor takes
+// every key as text, and the review its own (s, v, n, N, / and digits
+// among them), all in the TUI. The offline gate then meets only the keys
+// they decline; the review's S, which needs the model, is refused by the
+// client.
+func (m *home) workbenchOwnsKeys() bool {
+	if m.viewMode != viewWorkbench || m.workbench == nil {
+		return false
+	}
+	if m.workbench.Markdown != nil && m.workbench.Markdown.Editing() {
+		return true
+	}
+	return m.workbench.Tab() == ui.WbTabReview && m.wbReview != nil
+}
+
 // handleStateDefaultKey processes keys while the list is in its normal
 // (no-overlay) state. ctrl+c is a hard-reserved panic exit. In overview
 // mode, enter/esc drop back to focus, z collapses the active group, and
@@ -45,9 +95,22 @@ func handleStateDefaultKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
+	// Offline, ctrl+r joins a daemon now, starting one; connected, it is
+	// any other key (unbound by default). Then the offline gate, ahead of
+	// every mode's own keys, but for the workbench's editor and review,
+	// which take theirs first (workbenchOwnsKeys).
+	if msg.String() == "ctrl+r" && m.offline() {
+		return m, m.retryNow()
+	}
+	if !m.workbenchOwnsKeys() && m.offlineKeyRefused(msg.String()) {
+		return m, nil
+	}
 	if m.viewMode == viewWorkbench {
 		if model, cmd, handled := handleWorkbenchKey(m, msg); handled {
 			return model, cmd
+		}
+		if m.offlineKeyRefused(msg.String()) {
+			return m, nil
 		}
 		if !workbenchKeyAllowed[msg.String()] {
 			return m, nil

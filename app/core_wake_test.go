@@ -82,7 +82,8 @@ func TestRealLoop_AJobsResultReachesTheTUIByWake(t *testing.T) {
 	c, stop, err := rpc.InProcess(model)
 	require.NoError(t, err)
 	t.Cleanup(stop)
-	m.core, m.wakes = c, c.Wakes()
+	m.core = c
+	wakes := c.Wakes()
 	m.aliveProbe = func(string) bool { return true } // the TUI's probe must not read the model's instances while its loop runs
 
 	_, _ = runKillSelectedNoConfirm(m)
@@ -92,7 +93,7 @@ func TestRealLoop_AJobsResultReachesTheTUIByWake(t *testing.T) {
 	deadline := time.After(10 * time.Second)
 	for !strings.Contains(m.errBox.String(), notice) {
 		select {
-		case <-m.wakes:
+		case <-wakes:
 			_, _ = m.Update(coreWakeMsg{})
 		case <-deadline:
 			t.Fatalf("the kill's failure never reached the error bar; it holds %q", m.errBox.String())

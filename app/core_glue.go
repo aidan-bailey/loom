@@ -13,10 +13,12 @@ import (
 // (drainCore) applies what it produced. forwardWakes sends it.
 type coreWakeMsg struct{}
 
-// forwardWakes sends a coreWakeMsg for each of the model loop's wakes
-// until they end (the loop stopped). It runs on a goroutine of its own:
-// send blocks until Update takes the message, and the model's goroutine
-// must never wait on the TUI.
+// forwardWakes sends a coreWakeMsg for each of a client's wakes until they
+// end (the client closed). It runs on a goroutine of its own: send blocks
+// until Update takes the message, and the model's goroutine must never
+// wait on the TUI. Each client gets its own: Run starts the first, and
+// resync one for each client a rejoin brings; the one of a client lost
+// ends when lose closes it.
 func forwardWakes(wakes <-chan struct{}, send func(tea.Msg)) {
 	for range wakes {
 		send(coreWakeMsg{})
@@ -72,6 +74,11 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 			if s := m.slotFor(v.ID); s != nil {
 				if s == m.workspaceSlot && s.info.ID == v.ID {
 					m.applySettingsChange(s.info.Settings, v.Settings)
+				}
+				if s.unsentPrefs != nil {
+					// Changed offline and not yet sent (resync sends it):
+					// the TUI's own value wins.
+					v.UIPrefs = s.unsentPrefs.Clone()
 				}
 				s.info = v
 			}

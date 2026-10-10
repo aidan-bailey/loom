@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -12,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/app"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,11 +26,12 @@ import (
 // fakeDaemons is a daemonLink over scripted daemons: each dial reaches the
 // current one, whose hello is builds[0] and whose pid is fakePID plus the
 // stops so far, until a stop replaces it with the next. It records the
-// dials and stops, and the pids the stops named.
+// dials and their spawn flags, the stops, and the pids the stops named.
 type fakeDaemons struct {
 	t       *testing.T
 	builds  []rpc.Hello
 	dials   int
+	spawns  []bool
 	stops   int
 	stopped []int
 	clients []*rpc.Client
@@ -42,8 +46,9 @@ const fakePID = 4000
 func (f *fakeDaemons) link(own rpc.Hello, refusal error) daemonLink {
 	return daemonLink{
 		own: own,
-		dial: func() (*rpc.Client, rpc.Hello, int, error) {
+		dial: func(spawn bool) (*rpc.Client, rpc.Hello, int, error) {
 			f.dials++
+			f.spawns = append(f.spawns, spawn)
 			c, _, stop, err := rpc.InProcessForTest(core.NewForTest(core.Options{}))
 			require.NoError(f.t, err)
 			f.t.Cleanup(stop)
@@ -60,7 +65,7 @@ func (f *fakeDaemons) link(own rpc.Hello, refusal error) daemonLink {
 			f.guarded = append(f.guarded, daemonTmux)
 			return refusal
 		},
-		stderr: &f.stderr,
+		say: sayTo(&f.stderr),
 	}
 }
 
@@ -75,7 +80,7 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 
 	t.Run("the same build", func(t *testing.T) {
 		f := &fakeDaemons{t: t, builds: []rpc.Hello{ours}}
-		c, err := f.link(ours, nil).join()
+		c, err := f.link(ours, nil).join(true)
 		require.NoError(t, err)
 		assert.Same(t, f.clients[0], c)
 		assert.Zero(t, f.stops)
@@ -91,7 +96,7 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 				"said before the stop, which can take a while")
 			return stop(pid)
 		}
-		c, err := link.join()
+		c, err := link.join(true)
 		require.NoError(t, err)
 		assert.Equal(t, 1, f.stops)
 		assert.Equal(t, []int{fakePID}, f.stopped, "stopped the daemon it dialed and compared, by its pid")
@@ -103,7 +108,7 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 
 	t.Run("a newer daemon is refused", func(t *testing.T) {
 		f := &fakeDaemons{t: t, builds: []rpc.Hello{newer}}
-		_, err := f.link(ours, nil).join()
+		_, err := f.link(ours, nil).join(true)
 		require.Error(t, err)
 		assert.Equal(t, "the loom daemon is 0.14.0 (v0.14.0 123), newer than this loom (0.13.0 (v0.13.0 abc)): upgrade loom, or run `loom serve stop`", err.Error())
 		assert.Zero(t, f.stops)
@@ -112,7 +117,7 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 	t.Run("inside loom, an older daemon is kept", func(t *testing.T) {
 		f := &fakeDaemons{t: t, builds: []rpc.Hello{older, ours}}
 		refusal := errors.New("this loom runs in loom's tmux session loom_agent, on the daemon's tmux server")
-		_, err := f.link(ours, refusal).join()
+		_, err := f.link(ours, refusal).join(true)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, refusal)
 		assert.Equal(t, "the loom daemon is 0.12.0 (v0.12.0 def), older than this loom (0.13.0 (v0.13.0 abc)), and "+
@@ -125,7 +130,7 @@ func TestJoin_TheNewerSideWins(t *testing.T) {
 
 	t.Run("a daemon that stays older after its replacement", func(t *testing.T) {
 		f := &fakeDaemons{t: t, builds: []rpc.Hello{older, older}}
-		_, err := f.link(ours, nil).join()
+		_, err := f.link(ours, nil).join(true)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "even after replacing it")
 		assert.Equal(t, 1, f.stops, "replaced once, not in a loop")
@@ -149,7 +154,7 @@ func TestJoin_AnotherProtocol(t *testing.T) {
 			var replacement *rpc.Client
 			link := daemonLink{
 				own: ours,
-				dial: func() (*rpc.Client, rpc.Hello, int, error) {
+				dial: func(bool) (*rpc.Client, rpc.Hello, int, error) {
 					dials++
 					if stops == 0 {
 						var peer rpc.Hello
@@ -170,9 +175,9 @@ func TestJoin_AnotherProtocol(t *testing.T) {
 					return nil
 				},
 				mayReplace: func(string) error { return nil },
-				stderr:     io.Discard,
+				say:        func(string) {},
 			}
-			c, err := link.join()
+			c, err := link.join(true)
 			require.NoError(t, err)
 			assert.Same(t, replacement, c)
 			assert.Equal(t, 1, stops)
@@ -183,12 +188,12 @@ func TestJoin_AnotherProtocol(t *testing.T) {
 		boom := errors.New("the loom daemon did not start")
 		link := daemonLink{
 			own:        ours,
-			dial:       func() (*rpc.Client, rpc.Hello, int, error) { return nil, rpc.Hello{}, 0, boom },
+			dial:       func(bool) (*rpc.Client, rpc.Hello, int, error) { return nil, rpc.Hello{}, 0, boom },
 			stop:       func(int) error { t.Error("stopped"); return nil },
 			mayReplace: func(string) error { return nil },
-			stderr:     io.Discard,
+			say:        func(string) {},
 		}
-		_, err := link.join()
+		_, err := link.join(true)
 		assert.ErrorIs(t, err, boom)
 	})
 }
@@ -201,7 +206,7 @@ func TestJoin_PinsTheDaemonsTmuxServer(t *testing.T) {
 	t.Cleanup(func() { tmux.UseServer("") })
 	ours := rpc.Hello{Exe: "ours", Version: "0.13.0", Tmux: "/srv/daemon.sock"}
 	f := &fakeDaemons{t: t, builds: []rpc.Hello{ours}}
-	_, err := f.link(ours, nil).join()
+	_, err := f.link(ours, nil).join(true)
 	require.NoError(t, err)
 	args := tmux.Command(context.Background(), "list-sessions").Args
 	assert.True(t, slices.Equal([]string{"tmux", "-u", "-S", "/srv/daemon.sock", "list-sessions"}, args), "got %q", args)
@@ -313,4 +318,103 @@ func TestHandshake_IsBounded(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		assert.NoError(t, c.FlushForTest(), "the connection outlives the handshake's bound")
 	})
+}
+
+// TestJoin_SpawnFlag: the first dial starts a daemon only when the caller
+// lets it (a TUI waiting after a graceful stop does not); the dial after
+// stopping an older daemon always does, since this build must start its
+// replacement.
+func TestJoin_SpawnFlag(t *testing.T) {
+	ours := rpc.Hello{Exe: "ours", Version: "0.13.0"}
+	older := rpc.Hello{Exe: "older", Version: "0.12.0"}
+	for _, spawn := range []bool{true, false} {
+		t.Run(fmt.Sprintf("spawn=%v, the same build", spawn), func(t *testing.T) {
+			f := &fakeDaemons{t: t, builds: []rpc.Hello{ours}}
+			_, err := f.link(ours, nil).join(spawn)
+			require.NoError(t, err)
+			assert.Equal(t, []bool{spawn}, f.spawns)
+		})
+		t.Run(fmt.Sprintf("spawn=%v, an older daemon replaced", spawn), func(t *testing.T) {
+			f := &fakeDaemons{t: t, builds: []rpc.Hello{older, ours}}
+			_, err := f.link(ours, nil).join(spawn)
+			require.NoError(t, err)
+			assert.Equal(t, []bool{spawn, true}, f.spawns, "the replacement is started by this build")
+		})
+	}
+}
+
+// TestJoin_ANewerDaemonIsNewerDaemonError: a newer daemon's refusal keeps
+// its message, and matches app.ErrDaemonNewer, which makes a rejoining TUI
+// exit; main reads its build back (errors.As) to say who replaced it.
+func TestJoin_ANewerDaemonIsNewerDaemonError(t *testing.T) {
+	ours := rpc.Hello{Exe: "ours", Version: "0.13.0", Build: "v0.13.0 abc"}
+	newer := rpc.Hello{Exe: "newer", Version: "0.14.0", Build: "v0.14.0 123"}
+	f := &fakeDaemons{t: t, builds: []rpc.Hello{newer}}
+	_, err := f.link(ours, nil).join(false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, app.ErrDaemonNewer)
+	assert.Equal(t, "the loom daemon is 0.14.0 (v0.14.0 123), newer than this loom (0.13.0 (v0.13.0 abc)): upgrade loom, or run `loom serve stop`", err.Error())
+	var nd *newerDaemonError
+	require.ErrorAs(t, err, &nd)
+	assert.Equal(t, newer, nd.peer)
+
+	t.Run("a rejoin passes it on", func(t *testing.T) {
+		f := &fakeDaemons{t: t, builds: []rpc.Hello{newer}}
+		_, err := rejoinWith(f.link(ours, nil), false)
+		assert.ErrorIs(t, err, app.ErrDaemonNewer)
+	})
+}
+
+// TestRejoin_IsQuiet: a rejoin runs under the TUI, which holds the screen,
+// so it writes nothing to stderr: its dial says nothing while it waits for
+// a daemon still starting, and a replacement is announced to say (the
+// banner) instead.
+func TestRejoin_IsQuiet(t *testing.T) {
+	t.Setenv(config.EnvGlobalDir, t.TempDir())
+	globalDir := os.Getenv(config.EnvGlobalDir)
+
+	t.Run("its dial says nothing while it waits", func(t *testing.T) {
+		// A daemon that took the lock and has not yet said where it
+		// listens: the dial polls it until its bound passes, well past the
+		// moment a startup join would say it waits.
+		holdLock(t, daemon.Record{PID: os.Getpid(), Build: "booting"})
+		var err error
+		out := captureStderr(t, func() {
+			_, _, _, err = newDaemonLink(globalDir, true, func(string) {}).dial(false)
+		})
+		require.Error(t, err)
+		assert.Empty(t, out)
+	})
+
+	t.Run("say hears the replacement", func(t *testing.T) {
+		ours := rpc.Hello{Exe: "ours", Version: "0.13.0"}
+		older := rpc.Hello{Exe: "older", Version: "0.12.0", Build: "v0.12.0 def"}
+		f := &fakeDaemons{t: t, builds: []rpc.Hello{older, ours}}
+		var heard []string
+		link := newDaemonLink(globalDir, true, func(s string) { heard = append(heard, s) })
+		fake := f.link(ours, nil)
+		link.own, link.dial, link.stop, link.mayReplace = fake.own, fake.dial, fake.stop, fake.mayReplace
+		var err error
+		out := captureStderr(t, func() { _, err = rejoinWith(link, false) })
+		require.NoError(t, err)
+		assert.Equal(t, []string{"replacing the loom daemon (0.12.0 (v0.12.0 def)) with this build…"}, heard)
+		assert.Empty(t, out)
+		assert.Empty(t, f.stderr.String())
+	})
+}
+
+// captureStderr runs f with os.Stderr a pipe, and returns what f wrote to
+// it.
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	old := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	f()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
 }
