@@ -779,4 +779,62 @@ The user approved this execution (2026-10-09, "looks good"). The setup is the sa
 
 ## Outcome and follow-ups
 
-(Filled in after execution.)
+Executed 2026-10-10. To save tokens, each package had one implementer and one combined spec-and-quality review, and
+the implementer fixed what its review found. D was reviewed in the final review. Then came a sandbox smoke run and the
+final cross-cutting review, whose findings were fixed and re-checked. The gate is green: gofmt, vet, the Windows
+build, `go test ./...`, the race run and e2e (17 tests, twice).
+
+| Commit | What |
+|---|---|
+| f7370bf | the plan |
+| 951cfc2, 4d1a83b | A: stable IDs; an orphan placeholder's ID from its worktree's timestamp |
+| 8ae2af4, e069edb | B: bye, the stop order, the no-spawn connect; `Bye` waits for the replies of the calls it let in |
+| 24b3bd5, 0e83e31 | C: link states, the offline gate, rejoin, resync; requests refused around the bye fail at once |
+| be4241a, 5c1bef6 | D: e2e and `loomdev daemon`; the docs |
+| 0c2d4d6, 9d221d6 | the final review's fixes |
+
+### What the reviews found
+
+- **A:**
+  - A Recoverable placeholder took its `created_at` from the time it was found, so its ID differed on every daemon.
+    It now comes from the worktree's `_<hex>` suffix.
+  - One test passed with counted IDs.
+- **B:**
+  - `Bye` counted a call done before its reply was queued, so a stop could close a connection ahead of that reply.
+  - Two READMEs were stale.
+- **C:**
+  - A request refused in the moment of the bye, or one that crossed it, stayed pending until the loss (up to 30s
+    plus the save). The client now records the ReqIDs it refused (`TakeRefused`, emitted by the generator).
+  - An offline `SetLastUsed` was never resent.
+  - The classic-slot fallback was untested.
+- **Final review:**
+  - **Important:** every successful rejoin reset the backoff and the spawn-failure count, so a daemon dying soon
+    after each join was respawned about once a second, forever. A loss within 30s of a rejoin (`stableLink`) now
+    counts as a failed start.
+  - **Important:** `PauseAcrossAStop` raced the stop against the pause. Its hook now writes a marker the test
+    waits for.
+  - The docs wrongly said every script-bound key is refused offline.
+  - `loomdev daemon --kill` could report a kill that did not happen.
+- **Smoke run** (sandbox, 5 scenarios, all passed):
+  - a SIGKILL under one TUI, and under two (both rejoined one new daemon);
+  - `daemon --stop`, then waiting with no respawn, offline keys, and `ctrl+r`;
+  - an inline attach while offline;
+  - a quit while offline.
+
+### Deviations from the plan
+
+- `app` imports `internal/daemon` for `ErrNoDaemon`.
+- The workbench editor and review take keys before the offline gate. Review `S` cannot send.
+- The generated client records refused ReqIDs, and `requestNoErr` returns its error.
+- `home.now` is a clock seam, `Server.afterCall` a test hook, `core.Options.GHExec` an executor, and
+  `Loop.OpenedForTest` a seam.
+
+### Follow-ups
+
+- `TestE2E_Daemon_StaleSocket` flakes ("the dead daemon's lock is free"). The flake predates 3R.
+- A worktree with no timestamp suffix (made by an old loom) still gives its orphan placeholder a per-daemon ID.
+- `ctrl+r` is the app's only while offline. It is not in the keymap or help.
+- `app/CLAUDE.md` is at about 19.3k of its 20k budget.
+- When the third early death drops the TUI to waiting, the log line still says `state=reconnecting`.
+- A 3R TUI on a 3B daemon (possible only on a build tie) treats `serve stop` as a crash and respawns.
+- 3C is next: the subcommands as clients, and the duties a daemon has with no TUI.
