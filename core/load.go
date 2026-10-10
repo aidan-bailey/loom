@@ -348,7 +348,7 @@ func (m *Model) loadWS(ws *Workspace) error {
 	}
 	for _, inst := range ws.insts {
 		if inst.CrashRecovered() && (!inst.IsWorkspaceTerminal || ws.opened) {
-			crashRestart(inst)
+			m.crashRestart(inst)
 		}
 	}
 	// Discover orphan worktrees (on disk but not in state.json), auto-clean
@@ -364,13 +364,17 @@ func (m *Model) loadWS(ws *Workspace) error {
 }
 
 // crashRestart relaunches a session the reconcile found dead with its
-// worktree intact; one that will not relaunch is marked Paused.
-func crashRestart(inst *session.Instance) {
+// worktree intact, and watches the launch for a trust prompt
+// (watchLaunch): at the daemon's boot no TUI is there to see it. One that
+// will not relaunch is marked Paused.
+func (m *Model) crashRestart(inst *session.Instance) {
 	if err := inst.CrashRestart(); err != nil {
 		log.For("core").Error("crash_recovery.restart_failed", "title", inst.Title, "err", err)
 		if tErr := inst.TransitionTo(session.Paused); tErr != nil {
 			log.For("core").Warn("crash_recovery.transition_failed", "instance", inst.Title, "err", tErr.Error())
 		}
+	} else {
+		m.watchLaunch(inst)
 	}
 	inst.SetCrashRecovered(false)
 }
@@ -478,6 +482,8 @@ func (m *Model) ensureTerminal(ws *Workspace) {
 	ws.add(inst)
 	if err := inst.Start(true); err != nil {
 		log.For("core").Error("workspace_terminal.start_failed", "workspace", ws.Label(), "err", err)
+	} else {
+		m.watchLaunch(inst)
 	}
 	m.saveTerminal(ws)
 }
@@ -511,7 +517,7 @@ func (m *Model) settleTerminal(ws *Workspace, t *session.Instance, held bool, er
 			m.saveTerminal(ws)
 		}
 	case t.CrashRecovered():
-		crashRestart(t)
+		m.crashRestart(t)
 		m.saveTerminal(ws)
 	default:
 		// Its breaker gave up (applyLiveness), or reconcile found its name
@@ -522,6 +528,7 @@ func (m *Model) settleTerminal(ws *Workspace, t *session.Instance, held bool, er
 			log.For("core").Error("workspace_terminal.restart_failed", "title", t.Title, "err", err)
 			return
 		}
+		m.watchLaunch(t)
 		m.emit(SessionLaunched{ID: m.idOf(t)})
 		m.saveTerminal(ws)
 	}

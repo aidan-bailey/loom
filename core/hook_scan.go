@@ -68,6 +68,20 @@ func (m *Model) maybeHookScan(active []*session.Instance) bool {
 	})
 }
 
+// HookTick is the loop's hook timer (hookInterval): a hook scan when one is
+// due (maybeHookScan: none in flight, hookScanInterval since the last
+// dispatch), and only while an active Claude instance exists, since only
+// a Claude session writes hook events. With none it does nothing: no job,
+// no gate armed, and the loop wakes no client for it. The loop's timer
+// calls it; Loop.HookTickForTest runs it in tests.
+func (m *Model) HookTick() {
+	active := m.activeInstances()
+	if !slices.ContainsFunc(active, func(inst *session.Instance) bool { return session.IsClaudeProgram(inst.Program()) }) {
+		return
+	}
+	m.maybeHookScan(active)
+}
+
 // deliverHookScan applies a scan. An instance whose Claude status changed
 // moves to it at once, and any change also asks the roster to confirm:
 // its answer, stamped after the event, corrects a Stop that ended a turn

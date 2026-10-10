@@ -39,8 +39,8 @@ type InstanceView struct {
 	Branch           string
 	// TmuxSession is the agent's tmux session name ("" before it has one);
 	// pane clients attach by it. SessionProgram is the program that session
-	// was launched with, which picks the client's adapter (trust-prompt and
-	// pending-prompt patterns); Program can already name a new one after R.
+	// was launched with, which picks the client's adapter (its
+	// pending-prompt pattern); Program can already name a new one after R.
 	TmuxSession    string
 	SessionProgram string
 	Program        string

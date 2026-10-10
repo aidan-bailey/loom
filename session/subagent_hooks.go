@@ -94,10 +94,25 @@ func subagentLive(s Status) bool {
 func (i *Instance) launchProgram(env LaunchEnv, launching bool) string {
 	program := loomContextProgram(env.Program, i.ConfigDir, i.IsWorkspaceTerminal)
 	if launching {
+		i.mu.Lock()
+		i.launches++
+		i.mu.Unlock()
 		i.resetHookLaunch()
 		program = i.prepareHooks(program, env.ClaudeConfigDir)
 	}
 	return program
+}
+
+// Launches counts the instance's real launches: every Start(true),
+// Restart, CrashRestart and resume that relaunches its agent composes its
+// command through launchProgram once. A resume that reattached to a live
+// session leaves it unchanged, so the daemon watches only a relaunch for a
+// trust prompt (core's watchLaunch). It counts attempts: a launch whose
+// tmux start then failed counts too.
+func (i *Instance) Launches() uint64 {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.launches
 }
 
 // resetHookLaunch clears the previous launch's hook state before a new

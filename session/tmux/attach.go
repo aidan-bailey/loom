@@ -20,15 +20,15 @@ func NewAttachClientWithDeps(sessionName, program string, ptyFactory PtyFactory,
 
 // DetectStatus scans the pane's current screen once for the status ladder.
 // It reports whether the screen changed since the last scan and whether it
-// shows the agent's pending-input prompt, and it answers the agent's trust
-// prompt through send-keys. An agent with no adapter patterns gets only
-// the change check. err reports a failed capture on the snapshot path; it
-// never means "no change".
+// shows the agent's pending-input prompt. It sends nothing to the pane: the
+// daemon answers trust prompts (core's launch watch). An agent with no
+// adapter patterns gets only the change check. err reports a failed
+// capture on the snapshot path; it never means "no change".
 func (t *TmuxSession) DetectStatus() (updated, hasPrompt bool, err error) {
 	if t.adapter.Name() == "default" {
 		updated, hasPrompt = t.HasUpdated()
 		return updated, hasPrompt, nil
 	}
-	_, updated, hasPrompt, _, err = t.CaptureAndProcess()
+	_, updated, hasPrompt, err = t.CaptureAndProcess()
 	return updated, hasPrompt, err
 }

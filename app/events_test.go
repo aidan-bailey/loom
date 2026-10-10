@@ -1,11 +1,15 @@
 package app
 
 import (
+	"os/exec"
+	"sync"
 	"testing"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,6 +68,36 @@ func TestPaneQuietRunsStatusDetection(t *testing.T) {
 	// The mock capture returns non-prompt content and the first hash counts
 	// as an update → instance lands in Running.
 	require.Equal(t, session.Running, inst.GetStatus())
+}
+
+// TestStatusScan_NeverAnswersATrustPrompt: trust prompts are the daemon's
+// to answer (core's launch watch), with or without a TUI. A TUI scanning a
+// pane that shows one types nothing into it: a second answer would land in
+// whatever the agent shows next.
+func TestStatusScan_NeverAnswersATrustPrompt(t *testing.T) {
+	var mu sync.Mutex
+	var sent [][]string
+	observe := func(c *exec.Cmd) {
+		if cmd_test.TmuxSubcommand(c.Args) == "send-keys" {
+			mu.Lock()
+			sent = append(sent, c.Args)
+			mu.Unlock()
+		}
+	}
+	inst := startedInstanceWithProgram(t, "trusting", "claude",
+		"Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit", observe)
+	t.Setenv("LOOM_PANE_RENDERER", "")
+
+	m := homeWithAppState(t)
+	m.ws().AddForTest(inst)
+	m.syncViews()
+
+	_, cmd := m.Update(paneQuietMsg{session: inst.Pane().TmuxSessionName()})
+	_, _ = m.Update(detectionFrom(t, cmd))
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Empty(t, sent, "the status scan sent keys to the pane")
 }
 
 // TestPaneQuietIgnoresUnknownAndInertSessions guards the drop paths.

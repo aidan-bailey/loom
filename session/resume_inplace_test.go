@@ -674,3 +674,29 @@ func TestResume_UnansweredProbeWhileFinishingRefuses(t *testing.T) {
 		})
 	}
 }
+
+// TestResume_LaunchesCountsARelaunchOnly: the daemon watches a resume for a
+// trust prompt only when it relaunched the agent (core's watchLaunch), and
+// tells the two apart by Launches.
+func TestResume_LaunchesCountsARelaunchOnly(t *testing.T) {
+	t.Run("relaunch in place", func(t *testing.T) {
+		inst, _ := newTickPausedInstance(t)
+		before := inst.Launches()
+
+		require.NoError(t, resumeLikeApp(t, inst))
+
+		assert.Equal(t, before+1, inst.Launches())
+	})
+	t.Run("reattach", func(t *testing.T) {
+		inst, srv := newTickPausedInstance(t)
+		srv.mu.Lock()
+		srv.created = true // the agent's session is alive after all
+		srv.mu.Unlock()
+		before := inst.Launches()
+
+		require.NoError(t, resumeLikeApp(t, inst))
+
+		assert.Empty(t, srv.launchArgs(), "precondition: this exercises the reattach path")
+		assert.Equal(t, before, inst.Launches(), "a reattach launches nothing")
+	})
+}

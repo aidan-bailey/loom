@@ -29,8 +29,9 @@ type Session struct {
 	// program is the command line the session runs.
 	program string
 	// adapter is the agent adapter resolved from program: the
-	// trust-prompt and pending-prompt patterns that an attach client's
-	// CaptureAndProcess (via DismissTrustPrompt) and HasUpdated use.
+	// trust-prompt patterns the daemon's launch watch answers through
+	// DismissTrustPrompt, and the pending-prompt pattern an attach client's
+	// CaptureAndProcess and HasUpdated use.
 	adapter agent.Adapter
 	// env holds "KEY=VALUE" entries applied to the session via
 	// `new-session -e`, e.g. ANTHROPIC_BASE_URL under Headroom Proxy.
@@ -56,6 +57,13 @@ func NewSession(name, program string, env ...string) *Session {
 // it, so they reach the session by name rather than through an instance.
 func NewSessionNamed(name, program string) *Session {
 	return newSanitizedSession(name, program, MakePtyFactory(), internalexec.Default{})
+}
+
+// NewSessionNamedWithDeps is NewSessionNamed with injected dependencies:
+// the daemon's launch watch (core) reaches a session by name with the
+// model's executor, which its tests replace.
+func NewSessionNamedWithDeps(name, program string, ptyFactory PtyFactory, cmdExec internalexec.Executor) *Session {
+	return newSanitizedSession(name, program, ptyFactory, cmdExec)
 }
 
 // NewSessionWithDeps is NewSession with injected dependencies, so tests
@@ -360,6 +368,14 @@ func (s *Session) SendPrompt(prompt string) error {
 	}
 	time.Sleep(promptEnterDelay)
 	return s.PressKeys("Enter")
+}
+
+// AnswersTrustPrompt reports whether the session's agent has a trust
+// prompt DismissTrustPrompt can answer: patterns to find it by and keys to
+// answer it with. The fallback adapter (a shell, an unknown program) has
+// neither, so there is nothing to watch its launch for.
+func (s *Session) AnswersTrustPrompt() bool {
+	return len(s.adapter.TrustPromptPatterns()) > 0 && s.adapter.TrustPromptResponse() != agent.TrustPromptNone
 }
 
 // DismissTrustPrompt scans content (the pane's screen) for the adapter's

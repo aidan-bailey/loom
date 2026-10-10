@@ -239,6 +239,29 @@ func TestSession_CloseOnlyKills(t *testing.T) {
 	assert.Empty(t, ptyFactory.cmds)
 }
 
+func TestSession_AnswersTrustPrompt(t *testing.T) {
+	for program, want := range map[string]bool{
+		"claude --continue": true,
+		"aider":             true,
+		"gemini":            true,
+		"bash":              false,
+		"":                  false,
+	} {
+		s := NewSessionWithDeps("trust", program, NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+		assert.Equal(t, want, s.AnswersTrustPrompt(), "program %q", program)
+	}
+}
+
+func TestNewSessionNamedWithDeps_TakesTheSessionNameVerbatim(t *testing.T) {
+	rec := &argvRecorder{}
+	s := NewSessionNamedWithDeps("loom_api", "claude", NewMockPtyFactory(t), rec.runner())
+	assert.Equal(t, "loom_api", s.SessionName(), "already a session name: never re-prefixed")
+
+	_, _ = s.CapturePaneContent()
+	assert.Equal(t, [][]string{{"tmux", "-u", "capture-pane", "-p", "-e", "-t", "=loom_api:"}}, rec.ran("capture-pane"),
+		"the injected executor runs its commands")
+}
+
 func TestSession_DismissTrustPrompt(t *testing.T) {
 	for _, tc := range []struct {
 		name, program, screen string

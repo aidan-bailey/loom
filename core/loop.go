@@ -12,10 +12,10 @@ import (
 // Loop runs a Model on a goroutine of its own (daemon stage 1E). It
 // serves every Core method as a round trip over that goroutine, starts the
 // jobs the model queues on goroutines of their own and delivers their
-// results on the loop, fires the model's health tick from its own timer,
-// and signals Wakes when something it did unprompted (a result, a tick)
-// may have produced events for its client to drain (Sync). It implements
-// Core; nothing else touches its model.
+// results on the loop, fires the model's health tick and hook timer from
+// timers of its own, and signals Wakes when something it did unprompted (a
+// result, a tick) may have produced events for its client to drain (Sync).
+// It implements Core; nothing else touches its model.
 //
 // Nothing runs on the loop's goroutine except inside a step, and nothing
 // on it waits on its client or calls the loop: a call made from inside a
@@ -39,6 +39,9 @@ type Loop struct {
 	// interval is the health tick's period; 0 never ticks on its own
 	// (StartForTest: TickForTest).
 	interval time.Duration
+	// hookEvery is the hook timer's period (hookInterval); 0 never fires it
+	// on its own (StartForTest: HookTickForTest).
+	hookEvery time.Duration
 
 	// The loop goroutine's own state.
 
@@ -54,8 +57,9 @@ type Loop struct {
 	// (Quiesce waits for none). quiet is set by Quiesce: no tick fires.
 	pending int
 	quiet   bool
-	// armed counts the ticks armed (armTick), for tests.
-	armed int
+	// armed counts the ticks armed (armTick), and hookArmed the hook
+	// timers (armHookTick), for tests.
+	armed, hookArmed int
 }
 
 // call is one round trip: f runs on the loop, and its panic, if any, goes
@@ -81,6 +85,18 @@ type jobPanicked struct {
 
 // tickDue is the health tick's timer firing.
 type tickDue struct{}
+
+// hookTickDue is the hook timer firing.
+type hookTickDue struct{}
+
+// hookInterval is the hook timer's period. A TUI's pane events ask for a
+// hook scan when an agent prints or goes quiet (PaneOutput, PaneQuiet),
+// and the health tick asks every few seconds; the timer asks between
+// them, so the daemon reads Claude's hook events (its status, its
+// conversation, its subagents) as soon as the gate allows
+// (hookScanInterval) whether or not a TUI is open. Model.HookTick costs
+// nothing with no active Claude instance.
+const hookInterval = 250 * time.Millisecond
 
 // LoopPanic is a panic on the model's goroutine (in a call, a delivery or
 // the tick) or in one of its jobs. The loop re-raises it on the goroutine
@@ -111,21 +127,29 @@ func newLoopPanic(v any) *LoopPanic {
 
 // Start runs m on a goroutine of its own and returns the loop serving it.
 // From here on only the loop touches m, which is booted already
-// (Model.Boot). The health tick starts with Begin; Stop ends the loop.
-func Start(m *Model) *Loop { return startLoop(m, false, tickInterval()) }
+// (Model.Boot). The health tick and the hook timer start with Begin; Stop
+// ends the loop.
+func Start(m *Model) *Loop { return startLoopTimed(m, false, tickInterval(), hookInterval) }
 
-// startLoop starts a loop over m: hold keeps its jobs for the test, and
-// interval is the tick's period (0: no tick of its own).
+// startLoop starts a loop over m with no hook timer: hold keeps its jobs
+// for the test, and interval is the tick's period (0: no tick of its own).
 func startLoop(m *Model, hold bool, interval time.Duration) *Loop {
+	return startLoopTimed(m, hold, interval, 0)
+}
+
+// startLoopTimed is startLoop with the hook timer's period too (0: no
+// hook timer of its own).
+func startLoopTimed(m *Model, hold bool, interval, hookEvery time.Duration) *Loop {
 	l := &Loop{
-		m:        m,
-		calls:    make(chan call),
-		inbox:    make(chan any),
-		wake:     make(chan struct{}, 1),
-		done:     make(chan struct{}),
-		exited:   make(chan struct{}),
-		hold:     hold,
-		interval: interval,
+		m:         m,
+		calls:     make(chan call),
+		inbox:     make(chan any),
+		wake:      make(chan struct{}, 1),
+		done:      make(chan struct{}),
+		exited:    make(chan struct{}),
+		hold:      hold,
+		interval:  interval,
+		hookEvery: hookEvery,
 	}
 	l.deliver = m.Deliver
 	go l.run()
@@ -133,7 +157,11 @@ func startLoop(m *Model, hold bool, interval time.Duration) *Loop {
 }
 
 // run is the loop's goroutine: one step at a time, a call or an inbox
-// item (a job's result or panic, a tick), until Stop.
+// item (a job's result or panic, a tick), until Stop. Every inbox item
+// wakes the client but a hook tick that queued no event: the timer fires
+// four times a second, and a wake has the server diff every view (Sync).
+// A hook tick changes no published state (it only dispatches a scan,
+// whose result wakes the client when it lands).
 func (l *Loop) run() {
 	defer close(l.exited)
 	for {
@@ -143,8 +171,10 @@ func (l *Loop) run() {
 		case c := <-l.calls:
 			c.done <- l.step(func() { c.f(l.m) })
 		case msg := <-l.inbox:
-			l.step(func() { l.handle(msg) })
-			l.signal()
+			p := l.step(func() { l.handle(msg) })
+			if _, hook := msg.(hookTickDue); !hook || p != nil || len(l.m.out.Events) > 0 {
+				l.signal()
+			}
 		}
 	}
 }
@@ -184,6 +214,11 @@ func (l *Loop) handle(msg any) {
 		if !l.quiet {
 			l.m.Tick()
 		}
+	case hookTickDue:
+		if !l.quiet {
+			l.m.HookTick()
+			l.armHookTick()
+		}
 	}
 }
 
@@ -204,6 +239,19 @@ func (l *Loop) armTick() {
 	}
 	l.armed++
 	time.AfterFunc(l.interval, func() { l.post(tickDue{}) })
+}
+
+// armHookTick fires the hook timer one hookEvery from now; a loop without
+// one never fires it on its own. The timer re-arms only once its tick has
+// run, so ticks never queue up behind a busy loop, and the scans they
+// dispatch never overlap: the hook scan's gate (gateHookScan) dispatches
+// none while one is in flight.
+func (l *Loop) armHookTick() {
+	if l.hookEvery <= 0 || l.quiet {
+		return
+	}
+	l.hookArmed++
+	time.AfterFunc(l.hookEvery, func() { l.post(hookTickDue{}) })
 }
 
 // startJobs starts every job the model queued: each on a goroutine of its
@@ -275,7 +323,7 @@ func (l *Loop) Stop() {
 	})
 }
 
-// Quiesce readies the loop to stop: no tick fires from now on, and it
+// Quiesce readies the loop to stop: no tick or hook tick fires from now on, and it
 // waits until every foreground job has landed (the lifecycle operations a
 // request started, and the jobs their results start), or timeout passes.
 // Background work (polls, probes, scans) is not waited for: its result is
@@ -298,14 +346,16 @@ func (l *Loop) Quiesce(timeout time.Duration) bool {
 }
 
 // Begin starts the model's first background jobs (Model.Begin) and, the
-// first time, the health tick. Whatever serves the loop calls it once,
-// when it starts serving (the daemon, rpc.InProcess); it is not in Core.
+// first time, the health tick and the hook timer. Whatever serves the loop
+// calls it once, when it starts serving (the daemon, rpc.InProcess); it is
+// not in Core.
 func (l *Loop) Begin() {
 	l.do(func(m *Model) {
 		m.Begin()
 		if !l.began {
 			l.began = true
 			l.armTick()
+			l.armHookTick()
 		}
 	})
 }

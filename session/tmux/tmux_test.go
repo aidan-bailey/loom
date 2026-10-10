@@ -110,7 +110,7 @@ func TestCaptureAndProcessCapturesOnce(t *testing.T) {
 	ts := newTmuxSession("test-session", ProgramClaude, &MockPtyFactory{t: t}, cmdExec)
 	ts.monitor = newStatusMonitor()
 
-	_, _, _, _, _ = ts.CaptureAndProcess()
+	_, _, _, _ = ts.CaptureAndProcess()
 	require.Equal(t, 1, captureCount, "CaptureAndProcess should call capture-pane exactly once")
 }
 
@@ -131,11 +131,11 @@ func TestCaptureAndProcessHashesOnce(t *testing.T) {
 	ts := newTmuxSession("test-session", ProgramClaude, &MockPtyFactory{t: t}, cmdExec)
 	ts.monitor = newStatusMonitor()
 
-	_, _, _, _, _ = ts.CaptureAndProcess()
+	_, _, _, _ = ts.CaptureAndProcess()
 	require.Equal(t, 1, ts.monitor.hashCalls,
 		"CaptureAndProcess should hash pane content exactly once")
 
-	_, _, _, _, _ = ts.CaptureAndProcess()
+	_, _, _, _ = ts.CaptureAndProcess()
 	require.Equal(t, 2, ts.monitor.hashCalls,
 		"second CaptureAndProcess should add exactly one hash call")
 }
@@ -450,7 +450,7 @@ func TestDetectionSurvivesLaunchFlags(t *testing.T) {
 		ts := newTmuxSession("flags-session", program, &MockPtyFactory{t: t}, cmdExec)
 		ts.monitor = newStatusMonitor()
 
-		_, _, hasPrompt, _, err := ts.CaptureAndProcess()
+		_, _, hasPrompt, err := ts.CaptureAndProcess()
 		require.NoError(t, err)
 		require.True(t, hasPrompt, "pending prompt must be detected for program %q", program)
 	}
@@ -459,7 +459,7 @@ func TestDetectionSurvivesLaunchFlags(t *testing.T) {
 	paneContent = "(Y)es/(N)o/(D)on't ask again"
 	ts := newTmuxSession("aider-path", "/usr/bin/aider --model gpt", &MockPtyFactory{t: t}, cmdExec)
 	ts.monitor = newStatusMonitor()
-	_, _, hasPrompt, _, err := ts.CaptureAndProcess()
+	_, _, hasPrompt, err := ts.CaptureAndProcess()
 	require.NoError(t, err)
 	require.True(t, hasPrompt, "aider prompt must be detected through an absolute path")
 }

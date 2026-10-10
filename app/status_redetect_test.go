@@ -20,8 +20,9 @@ import (
 // program whose mocked capture-pane always returns the same content. Static
 // content is the shape of the Running-latch regression: the first status
 // detection after a burst hashes new content (updated=true) and every later
-// one hashes the same content (updated=false).
-func startedInstanceWithProgram(t *testing.T, title, program, content string) *session.Instance {
+// one hashes the same content (updated=false). observe sees every tmux
+// command the instance's session and its pane client run.
+func startedInstanceWithProgram(t *testing.T, title, program, content string, observe ...func(*exec.Cmd)) *session.Instance {
 	t.Helper()
 
 	workdir := t.TempDir()
@@ -49,8 +50,14 @@ func startedInstanceWithProgram(t *testing.T, title, program, content string) *s
 	require.NoError(t, err)
 
 	sessionCreated := false
+	notify := func(cmd *exec.Cmd) {
+		for _, f := range observe {
+			f(cmd)
+		}
+	}
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(cmd *exec.Cmd) error {
+			notify(cmd)
 			s := cmd.String()
 			if strings.Contains(s, "has-session") {
 				if sessionCreated {
@@ -64,6 +71,7 @@ func startedInstanceWithProgram(t *testing.T, title, program, content string) *s
 			return nil
 		},
 		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
+			notify(cmd)
 			if strings.Contains(cmd.String(), "capture-pane") {
 				return []byte(content), nil
 			}

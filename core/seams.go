@@ -287,6 +287,12 @@ func (l *Loop) TickForTest() {
 	l.do(func(m *Model) { m.Tick() })
 }
 
+// HookTickForTest runs the model's hook timer tick on the loop, as its
+// timer would (a StartForTest loop never fires it on its own).
+func (l *Loop) HookTickForTest() {
+	l.do(func(m *Model) { m.HookTick() })
+}
+
 // SelectedForTest returns the instances the probe refreshes the full diff
 // of (SetSelected, SetSelection).
 func (m *Model) SelectedForTest() []InstanceID { return slices.Clone(m.selected) }

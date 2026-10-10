@@ -186,7 +186,9 @@ func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 // concurrent reconcile flip landed the instance somewhere that transition
 // can't legally proceed from; the caller's confirmation step can't
 // otherwise tell the job to skip), and reports a resumeSkipped otherwise.
-// Formerly app.runRestartWithOptionsSelected's Async body.
+// A resume that launched the agent anew (inst.Launches moved) says so
+// (ResumeResult.Relaunched). Formerly app.runRestartWithOptionsSelected's
+// Async body.
 func (m *Model) resumeIfLoadingInst(ws *Workspace, inst *session.Instance) Job {
 	saveFunc := m.saveSnapshot(ws)
 	title := inst.Title
@@ -195,7 +197,13 @@ func (m *Model) resumeIfLoadingInst(ws *Workspace, inst *session.Instance) Job {
 		if st := inst.GetStatus(); st != session.Loading {
 			return resumeSkipped{err: fmt.Errorf("resume skipped: %s is no longer loading (%s)", title, st)}
 		}
-		return resumeOutcome(inst, title, owner, inst.Resume(saveFunc))
+		launches := inst.Launches()
+		out := resumeOutcome(inst, title, owner, inst.Resume(saveFunc))
+		if r, ok := out.(ResumeResult); ok {
+			r.Relaunched = inst.Launches() != launches
+			out = r
+		}
+		return out
 	}
 }
 

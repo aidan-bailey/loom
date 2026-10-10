@@ -317,6 +317,7 @@ func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, so
 				log.For("core").Error("workspace_terminal.restart_failed", "title", inst.Title, "err", err)
 				return false
 			}
+			m.watchLaunch(inst)
 			m.emit(SessionLaunched{ID: m.idOf(inst)})
 			return false
 		}

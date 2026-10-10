@@ -377,3 +377,77 @@ func TestLoop_QuiesceWaitsForForegroundJobs(t *testing.T) {
 		assert.True(t, l.Quiesce(time.Second), "a nil result counts as landed")
 	})
 }
+
+// TestLoop_HookTimer: the hook timer asks for a hook scan on its own, a
+// few times a second, never two at once; it wakes no client for a tick
+// that queued nothing; and a loop for tests (StartForTest) or one quiesced
+// never fires it.
+func TestLoop_HookTimer(t *testing.T) {
+	t.Run("it scans on its own, one scan at a time", func(t *testing.T) {
+		m := NewForTest(Options{})
+		hold(m, startedInst(t, "c", "claude"))
+		l := startLoopTimed(m, true, 0, 5*time.Millisecond)
+		t.Cleanup(l.Stop)
+		l.do(func(*Model) { l.armHookTick() })
+
+		var jobs []Job
+		require.Eventually(t, func() bool {
+			jobs = append(jobs, l.JobsForTest()...)
+			return len(jobs) > 0
+		}, 5*time.Second, time.Millisecond)
+		require.Eventually(t, func() bool { return get(l, func(*Model) int { return l.hookArmed }) > 5 },
+			5*time.Second, time.Millisecond, "the timer keeps firing")
+		jobs = append(jobs, l.JobsForTest()...)
+		require.Len(t, jobs, 1, "no second scan while the first is out")
+		r, ok := jobs[0]().(gatedResult)
+		require.True(t, ok)
+		assert.Equal(t, gateHookScan, r.kind)
+
+		l.DeliverForTest(r)
+		require.Eventually(t, func() bool { return len(l.JobsForTest()) > 0 }, 5*time.Second, time.Millisecond,
+			"the scan's landing lets the next tick dispatch")
+	})
+
+	t.Run("a tick that queued nothing wakes no client", func(t *testing.T) {
+		m := NewForTest(Options{})
+		hold(m, startedInst(t, "a", "aider"))
+		l := startLoopTimed(m, false, 0, time.Millisecond)
+		t.Cleanup(l.Stop)
+		l.do(func(*Model) { l.armHookTick() })
+
+		require.Eventually(t, func() bool { return get(l, func(*Model) int { return l.hookArmed }) > 20 },
+			5*time.Second, time.Millisecond)
+		select {
+		case <-l.Wakes():
+			t.Fatal("a hook tick with no Claude instance woke the client")
+		default:
+		}
+	})
+
+	t.Run("a loop for tests never fires it", func(t *testing.T) {
+		l := StartForTest(NewForTest(Options{}))
+		t.Cleanup(l.Stop)
+		l.Begin()
+		assert.Zero(t, get(l, func(*Model) int { return l.hookArmed }))
+	})
+
+	t.Run("Begin arms it once", func(t *testing.T) {
+		l := startLoopTimed(NewForTest(Options{}), true, 0, time.Hour)
+		t.Cleanup(l.Stop)
+		l.Begin()
+		l.Begin()
+		assert.Equal(t, 1, get(l, func(*Model) int { return l.hookArmed }))
+	})
+
+	t.Run("no hook tick fires after Quiesce", func(t *testing.T) {
+		m := NewForTest(Options{})
+		hold(m, startedInst(t, "c", "claude"))
+		l := startLoopTimed(m, true, 0, 30*time.Millisecond)
+		t.Cleanup(l.Stop)
+		l.Begin()
+		require.True(t, l.Quiesce(time.Second))
+		time.Sleep(150 * time.Millisecond)
+		assert.Empty(t, l.JobsForTest(), "the hook timer armed by Begin dispatched no scan")
+		assert.Equal(t, 1, get(l, func(*Model) int { return l.hookArmed }), "nor re-armed")
+	})
+}

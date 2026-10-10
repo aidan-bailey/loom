@@ -61,7 +61,11 @@ func TestDetectStatus_DefaultAdapterOnlyChecksForChange(t *testing.T) {
 	assert.Empty(t, rec.ran("send-keys"), "an agent without patterns gets no trust answer")
 }
 
-func TestDetectStatus_AnswersTheTrustPrompt(t *testing.T) {
+// TestDetectStatus_LeavesTheTrustPromptToTheDaemon: a status scan types
+// nothing into the pane. The daemon's launch watch answers trust prompts;
+// a TUI answering too would send a second Enter into whatever the agent
+// shows next.
+func TestDetectStatus_LeavesTheTrustPromptToTheDaemon(t *testing.T) {
 	rec := &argvRecorder{}
 	c := NewAttachClientWithDeps("loom_cl", "claude", NewMockPtyFactory(t), screenRunner(rec, "Do you trust the files in this folder?\n❯ 1. Yes, proceed"))
 
@@ -69,7 +73,7 @@ func TestDetectStatus_AnswersTheTrustPrompt(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, updated)
-	assert.Equal(t, [][]string{{"tmux", "-u", "send-keys", "-t", "=loom_cl:", "Enter"}}, rec.ran("send-keys"))
+	assert.Empty(t, rec.ran("send-keys"), "a scan never answers the trust prompt")
 }
 
 func TestDetectStatus_ReportsThePendingPrompt(t *testing.T) {

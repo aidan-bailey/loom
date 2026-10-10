@@ -35,12 +35,15 @@ type StartResult struct {
 
 // ResumeResult is a resume that succeeded (resumeIfLoadingInst).
 // Notice, when set, is what it found that the user must see: a stash it
-// forgot or could not drop (session.Notice). A failed resume is an
-// OpFailed.
+// forgot or could not drop (session.Notice). Relaunched says it launched
+// the agent anew (session.Instance.Launches moved) rather than reattach to
+// its live session, so the launch is watched for a trust prompt. A failed
+// resume is an OpFailed.
 type ResumeResult struct {
-	Instance *session.Instance
-	Owner    *Workspace
-	Notice   error
+	Instance   *session.Instance
+	Owner      *Workspace
+	Notice     error
+	Relaunched bool
 }
 
 // RecoverResult is a recover job's result (Recover). Placeholder is the
@@ -134,7 +137,8 @@ func (m *Model) removeEverywhere(inst *session.Instance) {
 //   - Failure: the instance is removed from its owner by identity, the
 //     owner saved, and the instance killed (worktree, tmux) off the
 //     model's goroutine.
-//   - Success: the owner is saved and the pending prompt (N flow) sent by
+//   - Success: the launch is watched for a trust prompt (watchLaunch), the
+//     owner is saved and the pending prompt (N flow) sent by
 //     a job. Started tells the TUI, which attaches the instance's client
 //     and moves its selection only when that can't retarget a flow. With a
 //     prompt, Started waits for the send (deliverPromptSent): the TUI's
@@ -161,6 +165,7 @@ func (m *Model) deliverStart(r StartResult) {
 		return
 	}
 
+	m.watchLaunch(inst)
 	if owner != nil {
 		if err := m.saveWS(owner); err != nil {
 			m.notifyErr(err)
@@ -185,10 +190,14 @@ func (m *Model) deliverPromptSent(r promptSent) {
 
 // deliverResume finishes a resume: an instance a served workspace still
 // holds (a kill may have removed it meanwhile) gets a fresh pane client
-// (SessionLaunched). Formerly app.handleResumeDone.
+// (SessionLaunched), and a relaunch is watched for a trust prompt
+// (watchLaunch). Formerly app.handleResumeDone.
 func (m *Model) deliverResume(r ResumeResult) {
 	m.notifyErr(r.Notice)
 	if inst := r.Instance; inst != nil && m.holding(inst) != nil {
+		if r.Relaunched {
+			m.watchLaunch(inst)
+		}
 		m.emit(SessionLaunched{ID: m.idOf(inst)})
 	}
 	m.emit(InstancesChanged{Relayout: true})

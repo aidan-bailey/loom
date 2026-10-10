@@ -261,6 +261,12 @@ type Instance struct {
 	hookLaunchID string
 	subagentWarm bool
 
+	// launches counts this instance's real launches (launchProgram with
+	// launching set), so a caller can tell a resume that relaunched the
+	// agent from one that reattached to its live session (Launches).
+	// Guarded by mu. Ephemeral.
+	launches uint64
+
 	// claude is what Claude's hooks and the agent roster report about this
 	// session: its status, the conversation to resume and its last
 	// message (see claude_state.go). Guarded by mu. sessionID and

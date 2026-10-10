@@ -96,6 +96,10 @@ type Model struct {
 	// diff-stat refreshes. Loop-goroutine only.
 	dirtySessions map[string]bool
 
+	// watching holds the launch watches running (watchLaunch), keyed by
+	// tmux session name: one per session. Loop-goroutine only.
+	watching map[string]*launchWatch
+
 	// roster is Claude's own view of its live sessions, keyed by working
 	// directory, refreshed once per health tick (see rosterQueryJob). It is
 	// authoritative where the pane scraper is inferential, so status events
@@ -407,6 +411,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverRoster(msg)
 	case hookScanResults:
 		m.deliverHookScan(msg)
+	case launchWatched:
+		m.deliverLaunchWatched(msg)
 	case ghResult:
 		m.deliverGH(msg)
 	case pushResult:

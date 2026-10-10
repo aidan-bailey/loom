@@ -27,10 +27,10 @@ type bellMsg struct{ session string }
 
 // statusDetectedMsg carries one instance's settled-content detection result
 // back to the Update goroutine (the detection itself runs in a tea.Cmd:
-// in-process on the emulator path, but answering a trust prompt runs
-// `tmux send-keys`, and the snapshot fallback shells out to capture-pane —
-// neither subprocess belongs on the Update goroutine). id and title name
-// the instance scanned.
+// in-process on the emulator path, but the snapshot fallback shells out to
+// capture-pane, which does not belong on the Update goroutine). The scan
+// only reads the pane: the daemon answers trust prompts (core's launch
+// watch). id and title name the instance scanned.
 type statusDetectedMsg struct {
 	id        core.InstanceID
 	title     string

@@ -629,7 +629,7 @@ func (t *TmuxSession) SendKeysRaw(b []byte) error {
 }
 
 // statusContent returns the pane content that status detection (update hash,
-// pending-prompt, trust-prompt) scans. With an emulator wired it reads the
+// pending-prompt) scans. With an emulator wired it reads the
 // in-process visible screen — no subprocess; the capture-pane fallback keeps
 // the snapshot/Windows path working. Both sources carry SGR escapes
 // (capture-pane is invoked with -e), so downstream pattern scans see the
@@ -661,22 +661,24 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 	return false, hasPrompt
 }
 
-// CaptureAndProcess captures pane content once and runs both trust prompt
-// and update detection checks, avoiding duplicate CapturePaneContent calls.
-// Returns a non-nil err when the pane capture itself failed — callers must
-// surface this instead of treating zero values as "no change", which used
-// to hide tmux failures as a frozen UI.
-func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasPrompt bool, trustHandled bool, err error) {
+// CaptureAndProcess captures pane content once and runs both the pending
+// prompt and update detection checks, avoiding duplicate
+// CapturePaneContent calls. It sends nothing to the pane: trust prompts are
+// the daemon's to answer (its launch watch, core's watchLaunch), so a TUI
+// scanning a pane never types into it. Returns a non-nil err when the pane
+// capture itself failed — callers must surface this instead of treating
+// zero values as "no change", which used to hide tmux failures as a frozen
+// UI.
+func (t *TmuxSession) CaptureAndProcess() (content string, updated bool, hasPrompt bool, err error) {
 	content, err = t.statusContent()
 	if err != nil {
-		return "", false, false, false, fmt.Errorf("capture pane content: %w", err)
+		return "", false, false, fmt.Errorf("capture pane content: %w", err)
 	}
 
-	trustHandled = t.DismissTrustPrompt(content)
 	hasPrompt = t.pendingPrompt(content)
 	updated = t.processContentHash(content)
 
-	return content, updated, hasPrompt, trustHandled, nil
+	return content, updated, hasPrompt, nil
 }
 
 // GetContentHash returns the last computed content hash from HasUpdated
