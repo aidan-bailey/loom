@@ -58,10 +58,12 @@ type Options struct {
 	Serving func(loop *core.Loop, socket string)
 }
 
-// Serve runs globalDir's daemon until o.Stop is closed (it then waits for
-// in-flight lifecycle jobs, saves every workspace and returns nil) or the
-// model is gone (a panic: it returns that error, saving nothing, since the
-// model's state is unknown). In order: it takes the lock (ErrRunning when
+// Serve runs globalDir's daemon until o.Stop is closed (it then says bye to
+// every client, stops listening, waits for in-flight lifecycle jobs while
+// their replies still reach the clients, saves every workspace, closes the
+// connections and returns nil) or the model is gone (a panic: it returns
+// that error, saying no bye and saving nothing, since the model's state is
+// unknown, and its clients reconnect as after a crash). In order: it takes the lock (ErrRunning when
 // another daemon holds it), boots the model, keeps the boot's notices for
 // the first client, starts the loop and its tick, listens on its socket
 // (SocketPath, mode 0600, recorded in the lock), and serves every
@@ -141,13 +143,16 @@ func Serve(o Options) error {
 		select {
 		case <-o.Stop:
 			log.For("serve").Info("serve.stopping")
-			l.close()
-			srv.Close()
-			// A model that failed but has not been published yet must not be
-			// waited on or saved: its state is unknown (stopModel).
+			srv.Bye() // every client hears it first, and nothing new is taken
+			l.close() // no new connections
+			// The jobs in flight finish and publish their replies to the
+			// connections still open; then every workspace is saved. A model
+			// that failed but has not been published yet must not be waited
+			// on or saved: its state is unknown (stopModel).
 			if err := stopModel(loop, o.QuiesceTimeout); err != nil {
 				log.For("serve").Error("serve.save_failed", "err", err)
 			}
+			srv.Close() // a last publish, each connection flushed, then closed
 			loop.Stop()
 			l.remove()
 			log.For("serve").Info("serve.stopped")

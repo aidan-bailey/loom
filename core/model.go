@@ -41,6 +41,9 @@ type Options struct {
 	// CmdExec replaces cmd.MakeExecutor() on the workspace load paths: a
 	// test seam. nil in production.
 	CmdExec cmd2.Executor
+	// GHExec replaces the executor FetchIssue runs gh with: a test seam
+	// (a daemon test holds a request's job with it). nil in production.
+	GHExec cmd2.Executor
 }
 
 // Model is the session model (see the package doc). Methods must be
@@ -49,6 +52,7 @@ type Model struct {
 	registry *config.WorkspaceRegistry
 	program  string
 	cmdExec  cmd2.Executor
+	ghExec   cmd2.Executor
 
 	// workspaces are every workspace the model serves, loaded once (Boot):
 	// the global one and each registered one, in that order, plus any
@@ -208,6 +212,7 @@ func newModel(o Options) *Model {
 		registry:  o.Registry,
 		program:   o.Program,
 		cmdExec:   o.CmdExec,
+		ghExec:    o.GHExec,
 		ids:       make(map[*session.Instance]InstanceID),
 		published: make(map[*Workspace][]InstanceView),
 		wsIDs:     make(map[*Workspace]WorkspaceID),

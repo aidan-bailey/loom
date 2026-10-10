@@ -29,12 +29,16 @@ const (
 	CodeUnsupported = "unsupported"
 	// CodeMismatch: the two sides speak different protocol versions.
 	CodeMismatch = "mismatch"
+	// CodeUnavailable: the daemon is stopping, or the client has lost it
+	// (ErrUnavailable, a refusal). An older peer sees only its message.
+	CodeUnavailable = "unavailable"
 )
 
 // WireError is an error as it crosses a process boundary: its message,
 // and a code that keeps the identities clients test with errors.Is
-// (ErrNoSession, ErrRefused, session.ErrStorageLoadFailed). Every other
-// error arrives as text only, which is all the TUI does with one.
+// (ErrNoSession, ErrUnavailable, ErrRefused,
+// session.ErrStorageLoadFailed). Every other error arrives as text only,
+// which is all the TUI does with one.
 type WireError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -43,12 +47,15 @@ type WireError struct {
 func (e *WireError) Error() string { return e.Message }
 
 // Is keeps the sentinel identities a client checks: a not_found error is
-// ErrNoSession (and so ErrRefused, as ErrNoSession is a refusal), a
-// refused one ErrRefused, a storage one session.ErrStorageLoadFailed.
+// ErrNoSession (and so ErrRefused, as ErrNoSession is a refusal), an
+// unavailable one ErrUnavailable (a refusal too), a refused one
+// ErrRefused, a storage one session.ErrStorageLoadFailed.
 func (e *WireError) Is(target error) bool {
 	switch e.Code {
 	case CodeNotFound:
 		return target == ErrNoSession || target == ErrRefused
+	case CodeUnavailable:
+		return target == ErrUnavailable || target == ErrRefused
 	case CodeRefused:
 		return target == ErrRefused
 	case CodeStorage:
@@ -76,6 +83,8 @@ func ToWire(err error) *WireError {
 	switch {
 	case errors.Is(err, ErrNoSession):
 		code = CodeNotFound
+	case errors.Is(err, ErrUnavailable):
+		code = CodeUnavailable
 	case errors.Is(err, ErrRefused):
 		code = CodeRefused
 	case errors.Is(err, session.ErrStorageLoadFailed):

@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"errors"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -379,6 +382,98 @@ func TestServe_AStopWaitsForJobsInFlight(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the daemon never stopped")
 	}
+}
+
+// heldGH is a gh whose `issue view` blocks until release is closed (and
+// says so on started), then answers with issue 5; anything else fails.
+func heldGH(started chan<- struct{}, release <-chan struct{}) cmd_test.MockCmdExec {
+	view := func(c *exec.Cmd) ([]byte, error) {
+		if !slices.Contains(c.Args, "issue") || !slices.Contains(c.Args, "view") {
+			return nil, errors.New("no gh here")
+		}
+		started <- struct{}{}
+		<-release
+		return []byte(`{"number":5,"title":"held","state":"OPEN"}`), nil
+	}
+	return cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return errors.New("no gh here") },
+		OutputFunc: view,
+	}
+}
+
+// logSince is what the test log gained since it was from bytes long.
+func logSince(t *testing.T, from int64) string {
+	t.Helper()
+	data, err := os.ReadFile(log.LogFilePath())
+	require.NoError(t, err)
+	if int64(len(data)) < from {
+		return string(data)
+	}
+	return string(data[from:])
+}
+
+// A graceful stop says bye to every client first and takes nothing new,
+// but the request in flight when it came still gets its Reply: its job
+// finishes and publishes to the connections still open, the workspaces
+// are saved, and only then do the connections close, which the client
+// reads as a stop, not a crash.
+func TestServe_StopSaysByeAndAnswersInFlightRequests(t *testing.T) {
+	dir := globalDir(t)
+	logFrom := fileSize(log.LogFilePath())
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	var once bool
+	releaseGH := func() {
+		if !once {
+			once = true
+			close(release)
+		}
+	}
+	r := serve(t, dir, Options{QuiesceTimeout: 20 * time.Second, NewModel: func() (*core.Model, []core.Notice, error) {
+		return core.New(core.Options{CmdExec: deadExec(), GHExec: heldGH(started, release)}), nil, nil
+	}})
+	t.Cleanup(releaseGH) // runs before the daemon's own stop: a failing test must not hold it
+	c := dial(t, r.socket)
+
+	c.FetchIssue(dir, 5, 9)
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the request's job never ran")
+	}
+	close(r.stop)
+	require.Eventually(t, c.Stopping, 10*time.Second, 5*time.Millisecond, "the client heard the bye")
+	assert.NoError(t, c.Err(), "the connection stays open while the job runs")
+	_, err := c.Open(1)
+	assert.ErrorIs(t, err, core.ErrUnavailable, "a new request is refused")
+	select {
+	case err := <-r.done:
+		t.Fatalf("stopped with a request in flight: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	releaseGH()
+	select {
+	case err := <-r.done:
+		require.NoError(t, err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("the daemon never stopped")
+	}
+	require.Eventually(t, func() bool { return c.Err() != nil }, 10*time.Second, 5*time.Millisecond, "the connection closed")
+	var replies []core.Reply
+	for _, ev := range c.Sync() {
+		if rep, ok := ev.(core.Reply); ok {
+			replies = append(replies, rep)
+		}
+	}
+	require.Len(t, replies, 1, "the in-flight request's Reply came before the close")
+	assert.Equal(t, core.ReqID(9), replies[0].Req)
+	assert.NoError(t, replies[0].Err)
+	assert.Equal(t, 5, replies[0].Issue.Number)
+	assert.ErrorIs(t, c.Err(), core.ErrUnavailable, "the loss is a stop, not a crash")
+
+	logged := logSince(t, logFrom)
+	assert.Contains(t, logged, "serve.stopped")
+	assert.NotContains(t, logged, "serve.stopped_with_jobs_in_flight")
 }
 
 // A stop that comes before a model's failure is published must neither

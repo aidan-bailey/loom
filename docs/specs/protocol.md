@@ -6,7 +6,9 @@ Newline-delimited JSON frames (`core/rpc.Frame`). Each side's first frame is a h
 (`{"hello":{"protocol":2,"build":"…"}}`). A request is `{"id":N,"method":M,"params":{…}}`;
 its reply `{"id":N,"result":{…},"error":{"code":…,"message":…}}` follows the events the
 request produced. A cast has no id and no reply. An event is `{"event":Name,"data":{…}}`.
-`{"fatal":{…}}` says the model panicked; every later call fails with it. A client is sent
+`{"fatal":{…}}` says the model panicked; every later call fails with it. `{"bye":"stopping"}` says the daemon
+is stopping: requests are refused (`unavailable`), replies to requests in flight still come, then the
+connection closes; a peer that does not know the field ignores the frame. A client is sent
 the whole published state when it connects, then every change.
 
 Kinds: **request** (a reply follows), **cast** (one way), **local** (a client answers it from its
@@ -64,7 +66,8 @@ An error crosses as `{"code":C,"message":M}` (`core.WireError`). The code keeps 
 tests with errors.Is, and every other error arrives as its message: `not_found`, `refused`, `storage`, `error`
 (a failure that is none of the others), `panic` (the model panicked), `protocol` (a frame the other side could
 not use; fatal to a client), `unsupported` (the peer does not know the method; an ordinary error, so a newer client
-can probe an older server) and `mismatch` (a refused hello). Examples, a `Notice` and a `Reply` carrying one:
+can probe an older server), `unavailable` (the daemon is stopping, or the client has lost it; a refusal, which an
+older peer sees as its message) and `mismatch` (a refused hello). Examples, a `Notice` and a `Reply` carrying one:
 
 `{"event":"Notice","data":{"Err":{"code":"not_found","message":"no such session"}}}`
 

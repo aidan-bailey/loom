@@ -302,3 +302,46 @@ func TestConnect_ADaemonThatExitsAtOnceSaysWhy(t *testing.T) {
 	assert.Contains(t, err.Error(), "refusing to start inside a loom-managed tmux session")
 	assert.NotContains(t, err.Error(), "an earlier daemon's line")
 }
+
+// With no daemon running, ConnectNoSpawn says so at once and starts none:
+// a TUI waiting for a daemon after a graceful stop must not start one.
+func TestConnectNoSpawn_FindsNoDaemon(t *testing.T) {
+	dir := globalDir(t)
+	calls := stubSpawn(t, func() (<-chan error, error) { return nil, errors.New("spawned") })
+
+	start := time.Now()
+	_, _, err := ConnectNoSpawn(dir, 30*time.Second)
+	assert.ErrorIs(t, err, ErrNoDaemon)
+	assert.Less(t, time.Since(start), time.Second, "at once, not at the timeout")
+	assert.Zero(t, calls.Load(), "no daemon started")
+}
+
+// ConnectNoSpawn dials a running daemon as Connect does.
+func TestConnectNoSpawn_DialsARunningDaemon(t *testing.T) {
+	dir := globalDir(t)
+	r := serve(t, dir, Options{Build: "test build"})
+	calls := stubSpawn(t, func() (<-chan error, error) { return nil, errors.New("spawned") })
+
+	nc, rec, err := ConnectNoSpawn(dir, 5*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, r.socket, rec.Socket)
+	handshake(t, nc).Workspaces()
+	assert.Zero(t, calls.Load())
+}
+
+// A daemon Connect started that exits before it serves is ErrDidNotStart,
+// its message unchanged, so a caller can tell it from a daemon that is
+// merely slow.
+func TestConnect_ADaemonThatDidNotStartIsErrDidNotStart(t *testing.T) {
+	dir := globalDir(t)
+	stubSpawn(t, func() (<-chan error, error) {
+		exited := make(chan error, 1)
+		exited <- errors.New("exit status 1")
+		return exited, nil
+	})
+
+	_, _, err := Connect(dir, 30*time.Second)
+	assert.ErrorIs(t, err, ErrDidNotStart)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the loom daemon did not start: it exited (exit status 1)")
+}

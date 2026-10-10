@@ -82,8 +82,8 @@ func within(t *testing.T, d time.Duration, what string, f func()) {
 
 // assertLost asserts that c, a daemon's client (Dial), has lost the model
 // with code, and reports it without panicking: Err says so, a local read
-// answers from the last replica, a request fails with the loss, and a cast
-// is dropped. It returns the loss.
+// answers from the last replica, a request is refused as unavailable,
+// naming the loss, and a cast is dropped. It returns the loss.
 func assertLost(t *testing.T, c *Client, code string) *core.WireError {
 	t.Helper()
 	var w *core.WireError
@@ -94,9 +94,10 @@ func assertLost(t *testing.T, c *Client, code string) *core.WireError {
 	assert.Nil(t, raised(t, "a cast", func() { c.MarkOutput("x") }), "nor a cast")
 	var err error
 	assert.Nil(t, raised(t, "a request", func() { _, err = c.Open(1) }), "nor a request")
-	var got *core.WireError
-	require.ErrorAs(t, err, &got, "the request fails with the loss")
-	assert.Equal(t, code, got.Code)
+	assert.ErrorIs(t, err, core.ErrUnavailable, "the request is refused as unavailable")
+	assert.ErrorIs(t, err, core.ErrRefused, "which the TUI shows as a refusal")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), w.Message, "naming the loss")
 	return w
 }
 
@@ -606,8 +607,8 @@ func TestDial_TheServersHello(t *testing.T) {
 }
 
 // TestClosed_CallsReturn: once the server is gone, calls return at once. A
-// call that meets the loss before the reader has seen it returns the closed
-// connection's error; one after it raises the loss, which
+// call that meets the loss before the reader has seen it returns
+// unavailable; one after it raises the loss, which
 // TestConnectionLost_IsFatal pins.
 func TestClosed_CallsReturn(t *testing.T) {
 	loop := core.StartForTest(core.NewForTest(core.Options{}))

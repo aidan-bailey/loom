@@ -97,7 +97,11 @@ func decodeParams(params json.RawMessage, p any) error {
 //   - a request: Method, Params and a non-zero ID (a cast has no ID);
 //   - a reply: ID, Result and Error;
 //   - an event: Event (its Go type name) and Data;
-//   - a fatal error: Fatal, which every later call re-raises.
+//   - a fatal error: Fatal, which every later call re-raises;
+//   - a bye: Bye, the reason a server is going ("stopping"). It takes no
+//     request after it, replies to the requests in flight still follow,
+//     then the connection closes. Optional: a peer that does not know it
+//     decodes past the field, and the frame matches nothing it reads.
 type Frame struct {
 	Hello  *Hello          `json:"hello,omitempty"`
 	ID     uint64          `json:"id,omitempty"`
@@ -108,6 +112,7 @@ type Frame struct {
 	Event  string          `json:"event,omitempty"`
 	Data   json.RawMessage `json:"data,omitempty"`
 	Fatal  *core.WireError `json:"fatal,omitempty"`
+	Bye    string          `json:"bye,omitempty"`
 }
 
 // Hello is each side's first frame: its protocol and its build, which a

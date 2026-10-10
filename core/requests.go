@@ -36,6 +36,11 @@ func (e refusedError) Unwrap() error        { return e.error }
 // saw it. It matches ErrRefused.
 var ErrNoSession error = refusedError{errors.New("no such session")}
 
+// ErrUnavailable refuses a request the model cannot take: the daemon is
+// stopping, or the client has lost it. It matches ErrRefused, so the TUI's
+// refusal path shows it.
+var ErrUnavailable error = refusedError{errors.New("the loom daemon is unavailable")}
+
 // tracked carries a request's job result back to Deliver together with the
 // request it answers.
 type tracked struct {
@@ -440,7 +445,11 @@ func (m *Model) applyLaunch(inst *session.Instance, opts launch.Options, base st
 // FetchIssue reads issue n of repo through gh (github.View) in a job and
 // answers with the Reply's Issue (or Err).
 func (m *Model) FetchIssue(repo string, n int, req ReqID) {
-	m.spawn(m.track(req, 0, fetchIssueJob(repo, n, internalexec.Default{})))
+	var r internalexec.Executor = internalexec.Default{}
+	if m.ghExec != nil {
+		r = m.ghExec
+	}
+	m.spawn(m.track(req, 0, fetchIssueJob(repo, n, r)))
 }
 
 // fetchIssueJob is FetchIssue's job, with its executor injectable for tests.

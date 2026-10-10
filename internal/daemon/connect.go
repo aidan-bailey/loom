@@ -54,6 +54,12 @@ var spawn = func(globalDir string) (<-chan error, error) {
 	return exited, nil
 }
 
+// ErrNoDaemon: ConnectNoSpawn found no daemon holding the lock.
+var ErrNoDaemon = errors.New("no loom daemon is running")
+
+// ErrDidNotStart: a daemon Connect spawned exited before it served.
+var ErrDidNotStart = errors.New("the loom daemon did not start")
+
 // bootTimeout bounds Connect's wait for a live daemon that is still
 // booting, past its own timeout: a boot relaunches every agent whose session
 // died (after a reboot, all of them) before the daemon listens.
@@ -77,10 +83,27 @@ const maxSpawns = 3
 // lock (its nesting guard refused, say) fails Connect at once, quoting what
 // it logged. It makes the global dir first, which the daemon starts in: a
 // first launch with a new LOOM_GLOBAL_DIR, or LOOM_HOME and no ~/.loom yet,
-// would otherwise fail to start any.
+// would otherwise fail to start any. A daemon it started that exits
+// before serving is ErrDidNotStart.
 func Connect(globalDir string, timeout time.Duration) (net.Conn, Record, error) {
-	if err := os.MkdirAll(globalDir, 0o755); err != nil {
-		return nil, Record{}, fmt.Errorf("make the loom config dir: %w", err)
+	return connect(globalDir, timeout, true)
+}
+
+// ConnectNoSpawn is Connect that never starts a daemon: a TUI waiting for
+// one after a graceful stop. With no holder of the lock it returns
+// ErrNoDaemon at once, and it waits for a booting daemon no longer than
+// timeout (its caller polls again).
+func ConnectNoSpawn(globalDir string, timeout time.Duration) (net.Conn, Record, error) {
+	return connect(globalDir, timeout, false)
+}
+
+// connect is Connect, which starts a daemon when none runs only when
+// spawnOK is set.
+func connect(globalDir string, timeout time.Duration, spawnOK bool) (net.Conn, Record, error) {
+	if spawnOK {
+		if err := os.MkdirAll(globalDir, 0o755); err != nil {
+			return nil, Record{}, fmt.Errorf("make the loom config dir: %w", err)
+		}
 	}
 	logPath, crashPath := LogPath(globalDir), CrashLogPath(globalDir)
 	logFrom, crashFrom := fileSize(logPath), fileSize(crashPath)
@@ -117,8 +140,10 @@ func Connect(globalDir string, timeout time.Duration) (net.Conn, Record, error) 
 		case exited != nil:
 			last = errors.New("the loom daemon is starting")
 		case gone && (exitErr != nil || spawns == maxSpawns):
-			return nil, Record{}, fmt.Errorf("the loom daemon did not start: %s%s%s",
+			return nil, Record{}, fmt.Errorf("%w: %s%s%s", ErrDidNotStart,
 				exitText(exitErr), logTail(logPath, logFrom), crashTail(crashPath, crashFrom))
+		case !spawnOK:
+			return nil, Record{}, ErrNoDaemon
 		default:
 			ch, err := spawn(globalDir)
 			if err != nil {
@@ -128,7 +153,7 @@ func Connect(globalDir string, timeout time.Duration) (net.Conn, Record, error) 
 			last = errors.New("the loom daemon is starting")
 		}
 		limit := start.Add(timeout)
-		if booting {
+		if booting && spawnOK {
 			limit = start.Add(max(timeout, bootTimeout))
 		}
 		if !time.Now().Before(limit) {

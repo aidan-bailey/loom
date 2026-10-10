@@ -266,16 +266,19 @@ func TestWorkspacesView_WorkspacesIsNeverNil(t *testing.T) {
 // matches the sentinels clients test, and nothing else.
 func TestWireError_KeepsTheSentinels(t *testing.T) {
 	for _, tc := range []struct {
-		err       error
-		code      string
-		refused   bool
-		noSession bool
-		storage   bool
+		err         error
+		code        string
+		refused     bool
+		noSession   bool
+		storage     bool
+		unavailable bool
 	}{
-		{ErrNoSession, CodeNotFound, true, true, false},
-		{refusedError{errors.New("kill x: busy")}, CodeRefused, true, false, false},
-		{fmt.Errorf("save: %w", session.ErrStorageLoadFailed), CodeStorage, false, false, true},
-		{errors.New("git failed"), CodeError, false, false, false},
+		{ErrNoSession, CodeNotFound, true, true, false, false},
+		{refusedError{errors.New("kill x: busy")}, CodeRefused, true, false, false, false},
+		{fmt.Errorf("save: %w", session.ErrStorageLoadFailed), CodeStorage, false, false, true, false},
+		{errors.New("git failed"), CodeError, false, false, false, false},
+		{ErrUnavailable, CodeUnavailable, true, false, false, true},
+		{fmt.Errorf("kill x: %w", ErrUnavailable), CodeUnavailable, true, false, false, true},
 	} {
 		w := ToWire(tc.err)
 		assert.Equal(t, tc.code, w.Code, "%v", tc.err)
@@ -284,6 +287,7 @@ func TestWireError_KeepsTheSentinels(t *testing.T) {
 		assert.Equal(t, tc.refused, errors.Is(back, ErrRefused), "%v is ErrRefused", tc.err)
 		assert.Equal(t, tc.noSession, errors.Is(back, ErrNoSession), "%v is ErrNoSession", tc.err)
 		assert.Equal(t, tc.storage, errors.Is(back, session.ErrStorageLoadFailed), "%v is ErrStorageLoadFailed", tc.err)
+		assert.Equal(t, tc.unavailable, errors.Is(back, ErrUnavailable), "%v is ErrUnavailable", tc.err)
 	}
 	assert.Nil(t, ToWire(nil))
 	assert.True(t, FromWire(nil) == nil, "a nil interface, not a typed nil (assert.Nil accepts both)")

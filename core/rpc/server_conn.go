@@ -112,9 +112,10 @@ func (c *serverConn) writeLoop() {
 	}
 }
 
-// close stops queuing, lets the writer flush what is queued (for up to
-// closeFlushTimeout), and closes the connection.
-func (c *serverConn) close() {
+// flush stops queuing and lets the writer write what is queued, for up to
+// closeFlushTimeout; then the writer has stopped. A peer not reading by
+// then has its connection closed under the blocked write.
+func (c *serverConn) flush() {
 	c.mu.Lock()
 	c.closed = true
 	c.mu.Unlock()
@@ -128,5 +129,10 @@ func (c *serverConn) close() {
 		c.nc.Close() // the peer is not reading: closing fails the blocked write
 		<-c.done
 	}
+}
+
+// close flushes what is queued (flush) and closes the connection.
+func (c *serverConn) close() {
+	c.flush()
 	c.nc.Close()
 }

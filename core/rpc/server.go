@@ -59,6 +59,12 @@ type Server struct {
 	// tmux is the tmux server the model's sessions run on, for the hello
 	// (SetTmux).
 	tmux string
+	// stopping is set by Bye: the server takes nothing new, and every
+	// connection, a later one included, has been sent the bye.
+	stopping bool
+	// calls counts the calls on their way to the backend, each counted
+	// under mu while not stopping, so Bye can wait for those it let in.
+	calls sync.WaitGroup
 
 	// selMu orders the selection: each connection's selected row (its
 	// SetSelected), merged for the model (setSelected).
@@ -98,15 +104,65 @@ func (s *Server) wakeLoop() {
 	}
 }
 
-// Close ends every connection and stops publishing.
+// byeFrame tells a client the server is stopping.
+var byeFrame = Frame{Bye: "stopping"}
+
+// errStopping answers a request a stopping server will not take.
+var errStopping = &core.WireError{Code: core.CodeUnavailable, Message: "the loom daemon is stopping"}
+
+// Bye starts a graceful stop: every connection is sent a bye, and from
+// then on the server takes nothing new. A request is answered unavailable
+// without reaching the backend, a cast is dropped, and a connection that
+// joins is sent the bye after its snapshot. Replies to the requests in
+// flight still follow, as their jobs land; Close ends the connections. It
+// returns once the calls already let through have returned from the
+// backend, so whatever jobs they started are in flight when the caller
+// waits for them (core.Loop.Quiesce).
+func (s *Server) Bye() {
+	s.mu.Lock()
+	if !s.stopping {
+		s.stopping = true
+		for c := range s.conns {
+			c.sendFrame(byeFrame)
+		}
+	}
+	s.mu.Unlock()
+	s.calls.Wait()
+}
+
+// Close ends every connection and stops publishing. Unless the model has
+// failed, it publishes once more first, so whatever the backend produced
+// before Close (the Reply of a request in flight at the bye, say) reaches
+// its client even if no wake has published it yet. Then every connection's
+// writer flushes what is queued, a fatal frame included (in parallel, each
+// for up to closeFlushTimeout), and every connection is closed, one that
+// has not said hello included.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
 		close(s.done)
+		s.publishLocked()
+		conns := make([]*serverConn, 0, len(s.conns))
+		for c := range s.conns {
+			conns = append(conns, c)
+		}
+		ncs := make([]io.ReadWriteCloser, 0, len(s.open))
 		for _, nc := range s.open {
-			nc.Close()
+			ncs = append(ncs, nc)
 		}
 		s.mu.Unlock()
+		var flushed sync.WaitGroup
+		for _, c := range conns {
+			flushed.Add(1)
+			go func() {
+				defer flushed.Done()
+				c.flush()
+			}()
+		}
+		flushed.Wait()
+		for _, nc := range ncs {
+			nc.Close()
+		}
 	})
 	s.wg.Wait()
 }
@@ -220,6 +276,9 @@ func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 		c.sendFrame(Frame{Fatal: s.fatal})
 	} else {
 		s.flushBacklogLocked(c)
+		if s.stopping {
+			c.sendFrame(byeFrame)
+		}
 	}
 	s.conns[c] = true
 	s.mu.Unlock()
@@ -241,8 +300,27 @@ func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 // cast, which publishes nothing: a cast changes no published state (it
 // marks output, names the selection, or starts jobs, whose results
 // publish when they land, on the loop's wake), and pane events cast up to
-// ~60 times a second per session.
+// ~60 times a second per session. Once stopping (Bye) it runs neither: a
+// request, the barrier included, is answered unavailable after a publish,
+// as any reply follows the events before it, and a cast is dropped.
 func (s *Server) handle(c *serverConn, f Frame) {
+	s.mu.Lock()
+	stopping := s.stopping
+	if !stopping {
+		s.calls.Add(1)
+	}
+	s.mu.Unlock()
+	if stopping {
+		if f.ID == 0 {
+			log.For("rpc").Debug("server.cast_while_stopping", "method", f.Method)
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.publishLocked()
+		c.sendReply(f.ID, nil, errStopping)
+		return
+	}
 	var result any = struct{}{}
 	var err error
 	if f.Method != pingMethod {
@@ -252,6 +330,7 @@ func (s *Server) handle(c *serverConn, f Frame) {
 			err = &core.WireError{Code: core.CodeUnsupported, Message: fmt.Sprintf("rpc: unknown method %q", f.Method)}
 		}
 	}
+	s.calls.Done()
 	if f.ID == 0 {
 		if err != nil {
 			log.For("rpc").Warn("server.cast_failed", "method", f.Method, "err", err)
