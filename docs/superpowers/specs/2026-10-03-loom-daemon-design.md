@@ -142,7 +142,13 @@ exit. See the 3R entry under Rollout.)
 stage 3B: the subcommands become clients in 3C. Until then `loom reset`
 and `loom workspace migrate`, which write `state.json` themselves,
 refuse while any process holds the lock, and `loom debug` reports the
-daemon from its lock record.)
+daemon from its lock record.) (Amended 2026-10-10 by stage 3C+4,
+planned: `workspace` and `account` join the daemon as the TUI does
+(spawning it, the newer build winning) and make a request; `reset` does
+too while a daemon runs, and with none it works directly, holding the
+lock, so it still recovers a state the daemon cannot boot from;
+`workspace migrate`, a one-time legacy tool, stays direct under the
+lock. See the 3C+4 entry under Rollout.)
 
 ### 2. The `Core` interface
 
@@ -303,7 +309,9 @@ to view state: list widget, panes, workbench, cursor. Its
   a private socket the pin ignores no longer waves a daemon through, and
   `reset` sweeps that server.)
 - `loom reset` becomes a request, so its sweep runs against loaded state.
-  (Stage 3C; until then it refuses while the daemon runs.)
+  (Stage 3C; until then it refuses while the daemon runs.) (Amended
+  2026-10-10 by stage 3C+4, planned: with a daemon running it is the
+  `Reset` request; with none, it works directly under the lock.)
 - Status bar warnings and notices become `notice` events the TUI shows.
 - The TUI's pane-driven status ladder (`statusDetectedMsg`,
   `maybeRedetect`) stays, but as a display overlay used only when the
@@ -830,7 +838,8 @@ end:
      with no TUI (trust prompts and hook scans, Assumption 4) and
      unloading a workspace removed or renamed in the registry (until
      then it stays served until restart, under its old name: a client
-     can't open it by its new one).
+     can't open it by its new one). (Amended 2026-10-10: combined with
+     stage 4 as **3C+4**, below.)
 
    The user's decisions (2026-10-08):
 
@@ -843,7 +852,64 @@ end:
      sessions, and tmux sizes each window to the most recently active
      client.
 4. **Cleanup.** Delete the TUI's dead lifecycle code, rewrite the
-   CLAUDE.md gotchas, update USAGE.md, bump the version.
+   CLAUDE.md gotchas, update USAGE.md, bump the version. (Amended
+   2026-10-10: combined with 3C as **3C+4**.)
+
+   **3C+4, the subcommands as clients, the daemon's duties with no TUI,
+   and the cleanup** (designed 2026-10-10; the user's decisions are
+   marked).
+
+   - **Subcommands.** **The user's decision: always a client, `reset`
+     excepted.** `workspace` and `account` commands reuse the TUI's join
+     (`daemonLink.join`: spawn when none runs, the newer build wins,
+     `replaceGuard`), make one request and exit; no new protocol, since
+     the snapshot a client receives costs nothing on a local socket.
+     `workspace add`/`use` are `Register`/`SetLastUsed`; `remove` and
+     `rename` are new requests (`Unregister`, `RenameWorkspace`); `list`
+     and `status` read the daemon's live state (counts no longer stale
+     against `state.json`). `account add`/`use`/`remove`/`sync` are
+     `AddAccount`/`SetDefaultAccount`/`RemoveAccount` (gaining `force`)/
+     `AccountSync`; `login` runs `claude auth login` in the CLI, as it is
+     interactive, after the daemon has checked or made the account's
+     dir; `list` shows the daemon's published accounts after a refresh.
+     `reset`, with a daemon running, is the new `Reset(workspace)`
+     request: the model kills the workspace's owned sessions and removes
+     its worktrees, branches and records (today's reset, moved into
+     `core`); with none running it works directly, holding the lock, so
+     no daemon starts under it and it still recovers a state the daemon
+     cannot boot from. `workspace migrate` stays direct under the lock.
+   - **Unregister and rename.** **The user's decision: unload on remove,
+     rename in place.** `Unregister` saves the workspace and stops
+     serving it, refusing while any of its sessions is busy (Loading or
+     Deleting); its agents and terminal keep running in tmux, a
+     re-registration serves them again under the same ID (stable, 3R),
+     and open TUIs close its tab (3R's `closeUnserved`).
+     `RenameWorkspace` changes the served name in place, keeping the ID,
+     so tabs stay open, and the TUI's "stop the daemon to open it as X"
+     refusal goes. `ReloadRegistry` also applies removals and renames,
+     covering a hand-edited `workspaces.json`.
+   - **Trust prompts.** **The user's decision: the daemon alone.** After
+     every real launch (a start, a relaunch on resume, a crash restart,
+     a workspace terminal's restart) the model queues a background
+     launch watch for the session: it captures the pane every 250ms for
+     up to 30s and answers the adapter's trust prompt once
+     (`DismissTrustPrompt`), one watch per session at a time, reading no
+     model state. The TUI's pane scrape stops answering them, so nothing
+     presses Enter twice, and an agent relaunched with no TUI open (a
+     daemon booting after a reboot) gets past its prompt.
+   - **Hook scans.** The loop gains a 250ms hook timer running the gated
+     scan while any Claude session is active, so statuses stay current
+     with no TUI; the TUI's pane-event triggers stay (gated, harmless).
+   - **Cleanup.** Production code only tests call is deleted, or becomes
+     a `…ForTest` seam where a test needs it (deliberate test
+     infrastructure, `rpc.InProcess` and `Model.Drain`, stays); the
+     "Formerly X" comments naming code that is gone and the "until stage
+     3C" comments go; every CLAUDE.md is audited (`claudemd -idents`,
+     strict) and rewritten where this stage changes it; USAGE.md
+     updated.
+   - **Version.** **The user's decision: 0.14.0, not pushed.** `main.go`
+     bumped and `CHANGELOG.md` regenerated with git-cliff on local main;
+     a push to main cuts the release, which stays the user's call.
 
 The scrum workflow starts after stage 3.
 
@@ -888,5 +954,5 @@ The scrum workflow starts after stage 3.
 | 1 | A detached child started from a TUI process (new session, stdio closed) keeps running after the TUI exits and after its tmux pane closes. | Stage 3's end-to-end test. **Verified 2026-10-09 by stage 3B:** `TestE2E_Daemon_OutlivesItsTUI`. |
 | 2 | `$XDG_RUNTIME_DIR` is set in the environments loom runs in (a tmux pane under a systemd user session; a plain ssh login may lack it). | Stage 3 falls back to `<globalDir>/run/`; the test covers both. **Resolved 2026-10-09 by stage 3B:** only the daemon picks the place, and clients dial the socket its lock record names, so a client without the variable still finds it; the daemon falls back to `<globalDir>/run/`, then the temp dir, and listens again elsewhere when its runtime dir is removed (`TestSocketPath`, `TestServe_ASocketWhoseDirIsGoneMovesElsewhere`). |
 | 3 | The fallback socket path fits `sun_path`: 108 bytes on Linux, 104 on macOS. A deep `LOOM_GLOBAL_DIR`, such as a sandbox under a long temp dir, overflows it, and `connect` fails with "File name too long" (hit while probing for 1A). | Stage 3: hash into a short path, or bind relative to the dir, and test with a 100-byte global dir. **Resolved 2026-10-09 by stage 3B:** a candidate longer than 100 bytes is skipped, and the last is `loom-<uid>/<hash>.sock` in the temp dir, `<hash>` 16 hex digits (`TestSocketPath`). |
-| 4 | With no pane events, the daemon still answers trust prompts and reads hook events promptly. 1A keeps trust detection in the TUI's status scrape and hook scans on pane events. Since 1E the model ticks on its own timer, so its hook backstop scan runs with no TUI, at the tick's cadence. | Stage 3 (3C, since the split): a launch watch (`capture-pane` for N seconds after each launch) and a faster hook-scan timer (~250ms; no file-watch library is vendored). |
+| 4 | With no pane events, the daemon still answers trust prompts and reads hook events promptly. (Amended 2026-10-10 by stage 3C+4, planned: a launch watch in the daemon answers trust prompts, and the TUI no longer does; a 250ms hook timer.) 1A keeps trust detection in the TUI's status scrape and hook scans on pane events. Since 1E the model ticks on its own timer, so its hook backstop scan runs with no TUI, at the tick's cadence. | Stage 3 (3C, since the split): a launch watch (`capture-pane` for N seconds after each launch) and a faster hook-scan timer (~250ms; no file-watch library is vendored). |
 | 5 | Loading every registered workspace (decision 3) does not start a Claude workspace terminal in each one. Today activating a workspace auto-creates its terminal. | Decide before stage 3. Suggested rule: create on a client's first open of the workspace, then relaunch on death as today. **Resolved 2026-10-08 by stage 3A (the user's decision): the suggested rule.** A workspace's first open since the model started (`Core.Open`) creates its terminal, or relaunches one that died while nobody had the workspace open or that its restart breaker stopped; a live one is kept. Until then the terminal is dormant: the health tick neither probes, relaunches nor pauses it. |
