@@ -31,7 +31,7 @@ func TestAgentPane_SendPromptRefusesAPausedInstance(t *testing.T) {
 	}
 	inst, err := FromInstanceData(InstanceData{Title: "fix", Status: Paused, Program: "claude", IsWorkspaceTerminal: true}, t.TempDir())
 	require.NoError(t, err)
-	inst.SetTmuxSession(tmux.NewSessionWithDeps("fix", "claude", fakePtyFactory{t: t}, rec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("fix", "claude", fakePtyFactory{t: t}, rec))
 	require.True(t, inst.Paused())
 
 	require.Error(t, inst.Pane().SendPrompt("fix the bug"))

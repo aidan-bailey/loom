@@ -241,7 +241,7 @@ func endedUnderItsName(t *testing.T, title string) (inst *session.Instance, old 
 		Title: title, Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true,
 	}, t.TempDir())
 	require.NoError(t, err)
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(title, "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
 	require.NoError(t, inst.TransitionTo(session.Running))
 	var mu sync.Mutex
 	var peers []*os.File
@@ -435,7 +435,7 @@ func TestDeadEvent_RepairOfAClientThatExitsOnAttachIsBounded(t *testing.T) {
 		Title: "badterm", Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true,
 	}, t.TempDir())
 	require.NoError(t, err)
-	inst.SetTmuxSession(tmux.NewSessionWithDeps("badterm", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("badterm", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
 	require.NoError(t, inst.TransitionTo(session.Running))
 	var starts atomic.Int32
 	attachTestClient(t, inst, instantExitPty{t: t, starts: &starts}, aliveCmdExecForTest())

@@ -405,7 +405,7 @@ func TestWorkbenchReview_ScrollIgnoredWhileModalOpen(t *testing.T) {
 }
 
 // aliveTmuxSessionForTest builds a tmux.Session whose DoesSessionExist
-// (and thus Instance.Pane().TmuxAlive) reports true without touching a real
+// (and thus Instance.Pane().TmuxAliveForTest) reports true without touching a real
 // tmux server — mirrors addReadyInstance's fixture in
 // app_scripts_dispatch_test.go.
 func aliveTmuxSessionForTest(t *testing.T, name string) *tmux.Session {
@@ -420,7 +420,7 @@ func aliveTmuxSessionForTest(t *testing.T, name string) *tmux.Session {
 // TestWorkbenchReview_SendNoComments pins the zero-comment guard: `S`
 // with an empty review must not open the confirm overlay, and must
 // surface an info notice via errBox. The harness instance has no live
-// tmux session (TmuxAlive()==false), so the liveness guard actually
+// tmux session (TmuxAliveForTest()==false), so the liveness guard actually
 // fires first — that is asserted directly, and the zero-comment intent
 // is covered separately via a direct ComposePrompt assertion below.
 func TestWorkbenchReview_SendNoComments(t *testing.T) {
@@ -448,8 +448,8 @@ func TestWorkbenchReview_SendOpensConfirm(t *testing.T) {
 	sel := m.list.GetSelectedInstance()
 	require.NotNil(t, sel)
 	inst := testModel(m).InstanceForTest(sel.ID)
-	inst.SetTmuxSession(aliveTmuxSessionForTest(t, "a"))
-	require.True(t, inst.Pane().TmuxAlive(), "fixture precondition")
+	inst.SetTmuxSessionForTest(aliveTmuxSessionForTest(t, "a"))
+	require.True(t, inst.Pane().TmuxAliveForTest(), "fixture precondition")
 	m.syncViews()
 
 	root := sel.WorktreePath

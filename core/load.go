@@ -319,7 +319,7 @@ func (m *Model) globalWS() (*Workspace, error) {
 // for the workspace's first open (ensureTerminal). A load error leaves ws
 // empty, its storage's write latch engaged so nothing can overwrite the
 // unreadable payload, and is kept in ws.loadErr for an open to retry
-// (retryLoad). Formerly loadWorkspace.
+// (retryLoad).
 func (m *Model) loadWS(ws *Workspace) error {
 	if ws.storage == nil {
 		return nil

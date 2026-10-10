@@ -78,7 +78,7 @@ func startedInstanceWithProgram(t *testing.T, title, program, content string, ob
 			return []byte(""), nil
 		},
 	}
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, program, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(title, program, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
 	require.NoError(t, inst.Start(true))
 	attachTestClient(t, inst, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec)
 	return inst

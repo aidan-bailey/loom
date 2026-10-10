@@ -14,7 +14,7 @@ import (
 )
 
 // aliveCmdExecForTest reports every `has-session` check as successful, so
-// TmuxAlive()/DoesSessionExist() see a live session without touching a real
+// TmuxAliveForTest()/DoesSessionExist() see a live session without touching a real
 // tmux server.
 func aliveCmdExecForTest() cmd_test.MockCmdExec {
 	return cmd_test.MockCmdExec{
@@ -66,7 +66,7 @@ func setupInlineAttachTerminalDeathFixture(t *testing.T) (*home, *session.Instan
 	require.NoError(t, inst.TransitionTo(session.Running))
 
 	agentTs := tmux.NewSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())
-	inst.SetTmuxSession(agentTs)
+	inst.SetTmuxSessionForTest(agentTs)
 
 	deadTermTs := tmux.NewTmuxSessionWithDeps(tmux.TerminalSessionName("a"), "bash", fakePtyFactory{t: t}, deadCmdExecForTest())
 	m.splitPane.InjectTerminalSessionForTest(inst.Title, deadTermTs, inst.Path)
@@ -83,7 +83,7 @@ func setupInlineAttachTerminalDeathFixture(t *testing.T) (*home, *session.Instan
 // its own tmux session has died out from under it, the very next keystroke
 // must drop back to nav instead of silently forwarding into a dead PTY
 // forever. Before the fix, the liveness guard only ever checked the AGENT's
-// TmuxAlive(), so a dead terminal session with a live agent never tripped it.
+// TmuxAliveForTest(), so a dead terminal session with a live agent never tripped it.
 func TestHandleStateInlineAttachKey_DeadTerminalSessionExitsInteract(t *testing.T) {
 	m, _ := setupInlineAttachTerminalDeathFixture(t)
 

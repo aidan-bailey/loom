@@ -289,7 +289,7 @@ func TestEnsureTerminal_AnUnansweredNameCheckIsRetriedByTheTick(t *testing.T) {
 
 			assert.Equal(t, session.Running, f.term.GetStatus(), "the tick asked again and relaunched it")
 			assert.False(t, f.term.CrashRecovered())
-			assert.True(t, f.term.Pane().TmuxAlive())
+			assert.True(t, f.term.Pane().TmuxAliveForTest())
 			recs := savedRecords(t, f.ws.ctx.ConfigDir)
 			require.Len(t, recs, 1)
 			assert.Equal(t, session.Running, recs[0].Status)
@@ -470,7 +470,7 @@ func TestEnsureTerminal_ATrippedTerminalIsRelaunched(t *testing.T) {
 	m.ensureTerminal(ws)
 
 	assert.Equal(t, session.Running, term.GetStatus())
-	assert.Zero(t, term.RestartFailureCount(), "its breaker is reset")
+	assert.Zero(t, term.RestartFailureCountForTest(), "its breaker is reset")
 	assert.Contains(t, m.Drain().Events, Event(SessionLaunched{ID: m.idOf(term)}))
 	recs := savedRecords(t, ws.ctx.ConfigDir)
 	require.Len(t, recs, 1)

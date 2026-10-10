@@ -253,7 +253,7 @@ func (m *home) refreshSelection() {
 }
 
 // sessionAlive reports whether the tmux session name exists (has-session,
-// exact target), as AgentPane.TmuxAlive did through the instance. Tests
+// exact target), by name, since the TUI holds no instance to ask. Tests
 // replace the probe (aliveProbe); production asks tmux.
 func (m *home) sessionAlive(name string) bool {
 	if m.aliveProbe != nil {

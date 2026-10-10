@@ -586,11 +586,6 @@ func (s *SplitPane) ForwardTerminalFocus(in bool) {
 	s.terminal.ForwardFocus(in)
 }
 
-// CleanupTerminal closes the terminal session.
-func (s *SplitPane) CleanupTerminal() {
-	s.terminal.Close()
-}
-
 // SendTerminalPrompt sends text followed by Enter to the terminal pane's tmux session.
 func (s *SplitPane) SendTerminalPrompt(text string) error {
 	return s.terminal.SendPrompt(text)

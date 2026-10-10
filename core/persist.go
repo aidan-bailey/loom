@@ -46,7 +46,7 @@ func quitSkipsSave(err error) bool {
 	return errors.Is(err, session.ErrStorageLoadFailed)
 }
 
-// saveWS persists ws's instances after a change. Formerly app.saveSlot.
+// saveWS persists ws's instances after a change.
 func (m *Model) saveWS(ws *Workspace) error {
 	return ws.storage.SaveInstances(Persistable(ws.insts))
 }
@@ -81,7 +81,7 @@ func (m *Model) saveUnprompted(ws *Workspace, after string) {
 // the tick), but a registered repository on an unmounted or read-only path
 // is no failure of the stop: its failure is only logged, and when its
 // config dir is gone (a deleted or unmounted repository) it is skipped,
-// since the save would create the dir. Formerly handleQuit's saves.
+// since the save would create the dir.
 func (m *Model) SaveForQuit() error {
 	var firstErr error
 	for _, ws := range m.workspaces {

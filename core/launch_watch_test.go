@@ -241,7 +241,7 @@ func TestLaunchWatch_EveryLaunchIsWatched(t *testing.T) {
 			},
 			OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 		}
-		inst.SetTmuxSession(tmux.NewSessionWithDeps("ws-restart", "claude", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+		inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("ws-restart", "claude", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
 		require.NoError(t, inst.EnsureRunning())
 
 		m.Deliver(HealthResult{Results: []ProbeResult{{Instance: inst, TmuxLive: tmux.LivenessDead}}})

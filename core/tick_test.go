@@ -33,11 +33,11 @@ func probedRunning(t *testing.T, m *Model) *session.Instance {
 	hold(m, inst)
 
 	ts := tmux.NewSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveExec())
-	inst.SetTmuxSession(ts)
+	inst.SetTmuxSessionForTest(ts)
 	// Marked started, as a restored record whose session runs is.
 	require.NoError(t, inst.EnsureRunning())
 	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")
-	require.True(t, inst.Pane().TmuxAlive(), "fixture precondition: tmux session must read alive")
+	require.True(t, inst.Pane().TmuxAliveForTest(), "fixture precondition: tmux session must read alive")
 	return inst
 }
 
@@ -60,7 +60,7 @@ func tickedInst(t *testing.T, m *Model, title string, gone *bool) *session.Insta
 		},
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "aider", fakePtyFactory{t: t}, cmdExec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(title, "aider", fakePtyFactory{t: t}, cmdExec))
 	// Marked started, as a restored record whose session runs is.
 	require.NoError(t, inst.EnsureRunning())
 	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")
@@ -281,7 +281,7 @@ func setupWorkspaceTerminalDead(t *testing.T) (*Model, *session.Instance) {
 		},
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
-	inst.SetTmuxSession(tmux.NewSessionWithDeps("ws-term", "broken-program", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("ws-term", "broken-program", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
 	// Marked started, as a restored record whose session runs is: the
 	// probe only probes started instances.
 	require.NoError(t, inst.EnsureRunning())
@@ -324,12 +324,12 @@ func TestHealthResult_WorkspaceTerminalRestartFailures_ResetOnRecovery(t *testin
 	m.Deliver(HealthResult{Results: []ProbeResult{
 		{Instance: inst, TmuxLive: tmux.LivenessDead},
 	}})
-	require.Equal(t, 1, inst.RestartFailureCount())
+	require.Equal(t, 1, inst.RestartFailureCountForTest())
 
 	m.Deliver(HealthResult{Results: []ProbeResult{
 		{Instance: inst, TmuxLive: tmux.LivenessAlive},
 	}})
-	require.Equal(t, 0, inst.RestartFailureCount(),
+	require.Equal(t, 0, inst.RestartFailureCountForTest(),
 		"a healthy tick must reset the consecutive-failure counter")
 }
 
@@ -360,7 +360,7 @@ func TestHealthResult_ARestartedWorkspaceTerminalGetsAFreshClient(t *testing.T) 
 		},
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
-	inst.SetTmuxSession(tmux.NewSessionWithDeps("ws-restart", "sh", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("ws-restart", "sh", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
 	// Marked started, as a restored record whose session ran is: the
 	// probe only probes started instances.
 	require.NoError(t, inst.EnsureRunning())

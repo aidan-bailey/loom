@@ -60,7 +60,7 @@ func TestKill_LockedWorktreeKeepsTheRowAndShowsTheRemedy(t *testing.T) {
 					},
 					OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 				}
-				inst.SetTmuxSession(tmux.NewSessionWithDeps("locked", "claude", fakePtyFactory{t: t}, rec))
+				inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("locked", "claude", fakePtyFactory{t: t}, rec))
 				require.NoError(t, inst.TransitionTo(session.Running))
 				previous = session.Running
 			}

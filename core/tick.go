@@ -25,9 +25,8 @@ const maxWorkspaceTerminalRestartFailures = 3
 // tickInterval is the health tick's period: a slow belt-and-braces sweep
 // in event mode (the emulator path), where status rides pane events, and
 // the legacy 500ms on the snapshot path. The loop arms the next tick this
-// long after the previous probe lands (Loop.armTick). Formerly the sleep
-// in app's tickUpdateMetadataCmd, which keeps the same cadence for the
-// TUI's own half.
+// long after the previous probe lands (Loop.armTick); app's
+// tickUpdateMetadataCmd keeps the same cadence for the TUI's own half.
 //
 // It reads LOOM_PANE_RENDERER (tmux.EmulatorEnabled) in the model's
 // process: since stage 3B the daemon, so the daemon's environment sets the
@@ -81,8 +80,7 @@ type DeadVerified struct {
 // probe refreshes. In event mode (the
 // emulator path) the tick is a slow belt-and-braces sweep, because status
 // rides pane events; on the snapshot path it keeps the legacy 500ms
-// cadence. Formerly the lifecycle half of the tickUpdateMetadataMessage
-// case.
+// cadence.
 func (m *Model) tickInst(selected []*session.Instance) {
 	active := m.activeInstances()
 	// Fan out I/O off the model's goroutine. A stalled tmux or git process
@@ -153,7 +151,6 @@ func (m *Model) selectedInstances() []*session.Instance {
 // agent, the git fan-out drops from about N subprocesses per tick to one.
 // On the snapshot path the TUI's status scan reports output through
 // MarkOutput, so a change it sees refreshes the diff on the next tick.
-// Formerly gatherMetadataCmd, minus the pane reads, which are the TUI's.
 func probeJob(active []*session.Instance, selected []*session.Instance, dirty map[string]bool, bases, aliases map[string]string) Job {
 	return func() any {
 		results := make([]ProbeResult, len(active))

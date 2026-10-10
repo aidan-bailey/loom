@@ -14,8 +14,7 @@ import (
 // belongs to, for stamping its result: the loaded workspace holding it,
 // or fallback (the workspace the TUI shows) if none does. Resolved by
 // identity, not assumed to be the focused workspace — deferred script
-// actions can change focus while a creation flow is open. Formerly
-// app.startOwner.
+// actions can change focus while a creation flow is open.
 func (m *Model) startOwner(inst *session.Instance, fallback *Workspace) *Workspace {
 	if ws := m.holding(inst); ws != nil {
 		return ws
@@ -27,8 +26,7 @@ func (m *Model) startOwner(inst *session.Instance, fallback *Workspace) *Workspa
 // StartResult stamped with its owner: the loaded workspace holding it,
 // else fallback (the workspace the TUI shows). The owner is resolved now,
 // by identity, not when the start lands, because a script's deferred
-// action can change focus while a creation flow is open. Formerly
-// app.startOwner and the creation flows' Async bodies.
+// action can change focus while a creation flow is open.
 func (m *Model) startInst(inst *session.Instance, fallback *Workspace) Job {
 	owner := m.startOwner(inst, fallback)
 	return func() any {
@@ -41,7 +39,7 @@ func (m *Model) startInst(inst *session.Instance, fallback *Workspace) Job {
 // model's goroutine and returns a KillResult, or an OpFailed. ws is the
 // workspace holding the instance, whose storage holds the record. The
 // instance's Kill ends its terminal pane's shell too (by name), so the TUI
-// takes no step of its own. Formerly app.killActionFor.
+// takes no step of its own.
 func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(), job Job) {
 	previousStatus := selected.GetStatus()
 	title := selected.Title
@@ -152,8 +150,7 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 // run in their job. It snapshots the membership now, on the model's
 // goroutine, because the instance list must not be read from the job;
 // status filtering still happens at save time (Persistable), so the state
-// changes Pause and Resume make themselves are captured. Formerly
-// app.snapshotSaveFunc.
+// changes Pause and Resume make themselves are captured.
 func (m *Model) saveSnapshot(ws *Workspace) func() error {
 	storage := ws.storage
 	snapshot := append([]*session.Instance(nil), ws.insts...)
@@ -166,7 +163,7 @@ func (m *Model) saveSnapshot(ws *Workspace) func() error {
 // session and its terminal pane's shell, remove the worktree, save ws's
 // instances through saveSnapshot), reporting a PauseResult, or an OpFailed
 // reverting to the status selected has now; the caller moves it to
-// Loading. ws is the workspace holding it. Formerly app.pauseActionFor.
+// Loading. ws is the workspace holding it.
 func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 	previousStatus := selected.GetStatus()
 	pauseTitle := selected.Title
@@ -187,8 +184,7 @@ func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 // can't legally proceed from; the caller's confirmation step can't
 // otherwise tell the job to skip), and reports a resumeSkipped otherwise.
 // A resume that launched the agent anew (inst.Launches moved) says so
-// (ResumeResult.Relaunched). Formerly app.runRestartWithOptionsSelected's
-// Async body.
+// (ResumeResult.Relaunched).
 func (m *Model) resumeIfLoadingInst(ws *Workspace, inst *session.Instance) Job {
 	saveFunc := m.saveSnapshot(ws)
 	title := inst.Title
@@ -209,7 +205,7 @@ func (m *Model) resumeIfLoadingInst(ws *Workspace, inst *session.Instance) Job {
 
 // resumeOutcome turns Resume's error into its result. A Notice alone
 // means the resume succeeded with something to report, which
-// deliverResume shows; anything else failed. Formerly app.resumeResult.
+// deliverResume shows; anything else failed.
 func resumeOutcome(inst *session.Instance, title string, owner *Workspace, err error) any {
 	if n, ok := session.OnlyNotice(err); ok {
 		return ResumeResult{Instance: inst, Owner: owner, Notice: n}
@@ -228,8 +224,7 @@ func resumeOutcome(inst *session.Instance, title string, owner *Workspace, err e
 // caller must have checked that inst is Recoverable (the TUI's
 // runResumeOrRecover; the Recover request's precondition): TransitionTo
 // guards nothing here, since every status may move to Loading. nil when
-// the transition is refused all the same. Formerly the core of
-// app.runRecoverSelected.
+// the transition is refused all the same.
 func (m *Model) recoverInst(ws *Workspace, inst *session.Instance) Job {
 	cfgDir := ""
 	if ws.ctx != nil {
@@ -258,7 +253,7 @@ func (m *Model) recoverInst(ws *Workspace, inst *session.Instance) Job {
 // picker. Mirrors push: its MergeResult carries no error on success
 // (silent, matching push's convention of treating "no error" as
 // sufficient feedback) or the wrapped git error, which Deliver surfaces
-// as a notice. Formerly app.mergeActionFor.
+// as a notice.
 func (m *Model) mergeInst(target, source *session.Instance) Job {
 	return func() any {
 		worktree, err := target.GetGitWorktree()
@@ -279,7 +274,7 @@ func (m *Model) mergeInst(target, source *session.Instance) Job {
 
 // killUnstarted returns the job running the blocking Kill of an instance
 // already removed from every list (an aborted creation flow, a failed
-// start); a failure is only logged. Formerly app.backgroundKillCmd.
+// start); a failure is only logged.
 func killUnstarted(inst *session.Instance) Job {
 	if inst == nil {
 		return nil

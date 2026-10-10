@@ -27,7 +27,7 @@ func liveInstance(t *testing.T, title string) *session.Instance {
 		Title: title, Status: session.Paused, Program: "claude", IsWorkspaceTerminal: true,
 	}, t.TempDir())
 	require.NoError(t, err)
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(title, "claude", fakePtyFactory{t: t}, aliveCmdExecForTest()))
 	require.NoError(t, inst.TransitionTo(session.Running))
 	require.True(t, attachTestClient(t, inst, fakePtyFactory{t: t}, aliveCmdExecForTest()).PtmxAlive(), "fixture: the client is attached")
 	return inst

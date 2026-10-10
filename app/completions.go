@@ -22,8 +22,7 @@ import (
 // focused slot and no other flow is on screen; otherwise a notice says
 // where it started. All but the attach is for the client that asked for the
 // start (ev.Req): another client's start, which a server sends with no
-// request named, only gets its pane. Formerly app.handleInstanceStarted's
-// view half.
+// request named, only gets its pane.
 func (m *home) applyStarted(ev core.Started) tea.Cmd {
 	owner := ev.Owner
 	// The row, nil when no open slot shows the instance (its owner's tab
@@ -73,7 +72,6 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 // otherwise invisible when fast. The degraded case is spelled out: when
 // the tmux session and worktree were both already gone, adoption could only
 // mark the record Paused, and resume rebuilds the worktree from the branch.
-// Formerly app.handleRecoverDone's view half.
 func (m *home) applyRecovered(ev core.Recovered) tea.Cmd {
 	owner := ev.Owner
 	v, _ := m.viewByID(ev.ID)

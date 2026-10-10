@@ -1203,13 +1203,6 @@ func (i *Instance) ResetRestartFailures() {
 	i.restartFailureCount = 0
 }
 
-// RestartFailureCount reports the current consecutive-failure count.
-func (i *Instance) RestartFailureCount() int {
-	i.mu.RLock()
-	defer i.mu.RUnlock()
-	return i.restartFailureCount
-}
-
 // Lifecycle operations that must not overlap on one worktree: a Pause and a
 // Resume (or two of either) would stash, close, rebuild and launch the same
 // session twice, and a Resume that began while Pause was still archiving
@@ -2023,9 +2016,4 @@ func (i *Instance) UpdateParity(base string) {
 		return
 	}
 	i.setParity(ahead, behind, true)
-}
-
-// SetTmuxSession sets the tmux session for testing purposes
-func (i *Instance) SetTmuxSession(session *tmux.Session) {
-	i.setTmuxSession(session)
 }

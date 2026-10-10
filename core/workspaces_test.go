@@ -28,8 +28,7 @@ func fakeClaude(t *testing.T) string {
 // TestOpen_BlockedRemoteControlEmitsTheRCOffNotice: the workspace
 // terminal a first open creates launches without remote control when the
 // default account's auth is blocked, and the model says so with an info
-// notice (formerly the load's own errBox.SetInfo), queued before the
-// terminal starts. The load paths run on a mock executor; the terminal
+// notice, queued before the terminal starts. The load paths run on a mock executor; the terminal
 // starts on the private tmux server TestMain sets up.
 func TestOpen_BlockedRemoteControlEmitsTheRCOffNotice(t *testing.T) {
 	isolateTmux(t)

@@ -110,7 +110,7 @@ func startedInstanceWithHistoryTitled(t *testing.T, historyCaptures *int, title 
 			return []byte(""), nil
 		},
 	}
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "bash", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(title, "bash", runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
 	require.NoError(t, inst.Start(true)) // creates the worktree and marks started
 	attachTestClient(t, inst, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec)
 	return inst

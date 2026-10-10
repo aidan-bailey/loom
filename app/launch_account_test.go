@@ -209,8 +209,7 @@ func pausedForResumeWith(t *testing.T, m *home, title string) *session.Instance 
 }
 
 // TestResumeWith_RecordsTheAccount: the chosen launch options, recorded by
-// the R flow's request (formerly app's applyChosenLaunch, now inside
-// core.Model.ResumeWith), carry the account.
+// the R flow's request (core.Model.ResumeWith), carry the account.
 func TestResumeWith_RecordsTheAccount(t *testing.T) {
 	m := newTestHome(t)
 	withAccounts(t, m, "max-2")

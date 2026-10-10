@@ -209,7 +209,7 @@ func startedInst(t *testing.T, title, program string) *session.Instance {
 		},
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return []byte(""), nil },
 	}
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, program, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(title, program, runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
 	require.NoError(t, inst.Start(true))
 	return inst
 }

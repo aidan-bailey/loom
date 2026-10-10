@@ -135,7 +135,7 @@ type snapshotStatus struct {
 // snapshot path: LOOM_PANE_RENDERER=snapshot, or Windows); nil when there
 // is none, or a scan is still running. With the emulator, quiet events
 // drive the ladder (statusDetectedMsg), and a pane with no client has no
-// screen to scan and no opinion. Formerly gatherMetadataCmd's capture.
+// screen to scan and no opinion.
 func (m *home) snapshotScan() tea.Cmd {
 	if m.snapshotScanning {
 		return nil

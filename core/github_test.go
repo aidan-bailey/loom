@@ -32,7 +32,7 @@ func readyInst(t *testing.T, m *Model) *session.Instance {
 	require.NoError(t, err)
 	hold(m, inst)
 	require.NoError(t, inst.TransitionTo(session.Running))
-	inst.SetTmuxSession(tmux.NewSessionWithDeps("a", "true", fakePtyFactory{t: t}, aliveExec()))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("a", "true", fakePtyFactory{t: t}, aliveExec()))
 	return inst
 }
 

@@ -36,13 +36,13 @@ func (m *trackingMockStorage) DeleteAllInstances() error {
 }
 
 // TestDeleteInstance_DoesNotConstructLiveInstances verifies that DeleteInstance
-// never routes through LoadInstances, which would call FromInstanceData on
-// every persisted row and spawn a tmux attach PTY for each running instance.
+// never builds live instances, which would call FromInstanceData on every
+// persisted row and spawn a tmux attach PTY for each running instance.
 // The fixture includes an entry with an empty title. FromInstanceData for a
 // non-paused instance calls Instance.Start(false), which returns
-// "instance title cannot be empty" when Title is "". If DeleteInstance uses
-// LoadInstances (the buggy path), that bad entry aborts the whole delete —
-// the target is never removed. The fix routes through raw InstanceData.
+// "instance title cannot be empty" when Title is "". If DeleteInstance
+// built live instances (the buggy path), that bad entry would abort the whole
+// delete — the target is never removed. The fix routes through raw InstanceData.
 func TestDeleteInstance_DoesNotConstructLiveInstances(t *testing.T) {
 	mock := &trackingMockStorage{
 		data: json.RawMessage(`[
@@ -284,7 +284,7 @@ func TestUpdateInstance_DoesNotConstructLiveInstances(t *testing.T) {
 	target := &Instance{Title: "Target", Status: Paused, program: "claude"}
 	target.setStarted(true)
 
-	err = s.UpdateInstance(target)
+	err = s.UpdateInstanceForTest(target)
 	assert.NoError(t, err)
 	assert.Len(t, mock.saved, 1)
 }
@@ -373,16 +373,16 @@ func TestStorage_UndecodableRecord_SurvivesDelete(t *testing.T) {
 }
 
 // TestStorage_UndecodableRecord_SurvivesUpdate covers the raw-data write
-// path behind UpdateInstance.
+// path behind UpdateInstanceForTest.
 func TestStorage_UndecodableRecord_SurvivesUpdate(t *testing.T) {
 	s, mock := futureStorage(t)
 
 	alive := &Instance{Title: "alive", Status: Paused, program: "aider"}
 	alive.setStarted(true)
-	require.NoError(t, s.UpdateInstance(alive))
+	require.NoError(t, s.UpdateInstanceForTest(alive))
 	assertFutureRecordPreserved(t, mock)
 
-	data, err := s.LoadInstanceData()
+	data, err := s.LoadInstanceDataForTest()
 	require.NoError(t, err)
 	require.Len(t, data, 1)
 	assert.Equal(t, "aider", data[0].Program, "the update itself landed")
@@ -457,7 +457,7 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 		assert.Equal(t, corrupt, string(mock.data))
 	})
 
-	// DeleteInstance and UpdateInstance load inside the write; their load
+	// DeleteInstance and UpdateInstanceForTest load inside the write; their load
 	// failure is the refusal, so it must carry the sentinel too.
 	t.Run("delete refuses", func(t *testing.T) {
 		mock := &trackingMockStorage{data: json.RawMessage(corrupt)}
@@ -478,7 +478,7 @@ func TestStorage_TopLevelCorrupt_RefusesWrites(t *testing.T) {
 
 		live := &Instance{Title: "fresh", Status: Paused, program: "claude"}
 		live.setStarted(true)
-		err = s.UpdateInstance(live)
+		err = s.UpdateInstanceForTest(live)
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, ErrStorageLoadFailed), "got %v", err)
 		assert.Empty(t, mock.saved)
@@ -522,7 +522,7 @@ func TestStorage_PreservedTitles(t *testing.T) {
 	]`)}
 	s, err := NewStorage(mock, "")
 	require.NoError(t, err)
-	_, err = s.LoadInstanceData()
+	_, err = s.LoadInstanceDataForTest()
 	require.NoError(t, err)
 	require.Equal(t, 5, s.UndecodableCount())
 
@@ -561,7 +561,7 @@ func TestStorage_UndecodableSharingALiveTitle_BothKept(t *testing.T) {
 	mock := &trackingMockStorage{data: json.RawMessage(`[` + futureRecord + `]`)}
 	s, err := NewStorage(mock, "")
 	require.NoError(t, err)
-	_, err = s.LoadInstanceData()
+	_, err = s.LoadInstanceDataForTest()
 	require.NoError(t, err)
 
 	live := &Instance{Title: "from-the-future", Status: Paused, program: "claude"}

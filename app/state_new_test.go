@@ -95,7 +95,7 @@ func preservedTitleStorage(t *testing.T, title string) *session.Storage {
 		`[{"schema_version":99,"title":"` + title + `"}]`)}
 	storage, err := session.NewStorage(rec, t.TempDir())
 	require.NoError(t, err)
-	_, err = storage.LoadInstanceData()
+	_, err = storage.LoadInstanceDataForTest()
 	require.NoError(t, err)
 	require.Equal(t, []string{title}, storage.PreservedTitles())
 	return storage
@@ -128,7 +128,7 @@ func latchedStorage(t *testing.T) *session.Storage {
 	rec := &recordingInstanceStorage{lastData: json.RawMessage(`{"not":"an array"}`)}
 	storage, err := session.NewStorage(rec, t.TempDir())
 	require.NoError(t, err)
-	_, err = storage.LoadInstanceData()
+	_, err = storage.LoadInstanceDataForTest()
 	require.Error(t, err)
 	require.True(t, storage.WritesRefused())
 	return storage

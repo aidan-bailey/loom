@@ -11,7 +11,7 @@ import (
 )
 
 // setupPtmxDeadFixture builds a started, Running instance whose tmux
-// session is alive (TmuxAlive true) but has no attach client in the
+// session is alive (TmuxAliveForTest true) but has no attach client in the
 // registry — the exact "session healthy, Loom's attach client gone" state
 // produced by a failed reattach after full-screen attach.
 func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
@@ -27,19 +27,19 @@ func setupPtmxDeadFixture(t *testing.T) (*home, *session.Instance) {
 	m.ws().AddForTest(inst)
 
 	ts := tmux.NewSessionWithDeps("a", "claude", fakePtyFactory{t: t}, aliveCmdExecForTest())
-	inst.SetTmuxSession(ts)
+	inst.SetTmuxSessionForTest(ts)
 	// Marked started, as a restored record whose session runs is.
 	require.NoError(t, inst.EnsureRunning())
 	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")
 	require.False(t, m.panes.Alive(inst.Pane().TmuxSessionName()), "fixture precondition: no client attached")
-	require.True(t, inst.Pane().TmuxAlive(), "fixture precondition: tmux session must read alive")
+	require.True(t, inst.Pane().TmuxAliveForTest(), "fixture precondition: tmux session must read alive")
 
 	m.syncViews()
 	return m, inst
 }
 
 // TestHealthTick_RepairsDeadPtmx is the regression guard for the
-// "PTY is not available" bug: a session that TmuxAlive reports as healthy
+// "PTY is not available" bug: a session that TmuxAliveForTest reports as healthy
 // but whose ptmx is nil was never retried by anything, forever. The
 // health tick must now notice the client is not attached (core.Alive)
 // and re-attach it.

@@ -330,8 +330,7 @@ func runNow(cmd tea.Cmd) {
 // fails closed, with the error shown rather than an exit, so the user can
 // still open a workspace from the picker (its storage's write latch
 // refuses every save). notes are the startup's info notes so far, shown
-// with this one's and the recovery summary (showStartupInfo). Formerly
-// core.Model.RestoreSaved and its classic fallback.
+// with this one's and the recovery summary (showStartupInfo).
 func (m *home) restoreSavedWorkspaces(saved []config.Workspace, notes []string) {
 	inSaved := func(name string) bool {
 		return slices.ContainsFunc(saved, func(w config.Workspace) bool { return w.Name == name })

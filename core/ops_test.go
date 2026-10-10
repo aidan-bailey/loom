@@ -158,7 +158,7 @@ func terminalKills(t *testing.T, inst *session.Instance, wtPath string, kills *i
 		},
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(inst.Title, "claude", fakePtyFactory{t: t}, rec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(inst.Title, "claude", fakePtyFactory{t: t}, rec))
 }
 
 // TestKill_EndsTheTerminalShellAfterTheChecksAndBeforeTheWorktree pins

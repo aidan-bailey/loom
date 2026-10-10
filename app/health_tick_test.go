@@ -42,7 +42,7 @@ func TestHealthTick_ProbeRoundTrip(t *testing.T) {
 		},
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
-	inst.SetTmuxSession(tmux.NewSessionWithDeps("probed", "aider", fakePtyFactory{t: t}, cmdExec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("probed", "aider", fakePtyFactory{t: t}, cmdExec))
 	// Marked started, as a restored record whose session runs is.
 	require.NoError(t, inst.EnsureRunning())
 	require.Equal(t, session.Running, inst.GetStatus(), "fixture precondition")

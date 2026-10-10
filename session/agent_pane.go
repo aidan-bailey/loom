@@ -87,20 +87,10 @@ func (p AgentPane) TapEnter() {
 	}
 }
 
-// TmuxAlive reports whether the tmux session is alive: a sanity check
-// before acting on the pane.
-func (p AgentPane) TmuxAlive() bool {
-	ts := p.i.getTmuxSession()
-	if ts == nil {
-		return false
-	}
-	return ts.DoesSessionExist()
-}
-
 // TmuxLiveness reports the session's liveness, distinguishing "tmux
 // answered no" from "the probe never got an answer". Callers that change
-// an instance's state on a negative must use this rather than TmuxAlive,
-// which collapses both cases into false.
+// an instance's state on a negative must use this rather than a boolean
+// probe, which collapses both cases into false.
 func (p AgentPane) TmuxLiveness() tmux.Liveness {
 	ts := p.i.getTmuxSession()
 	if ts == nil {

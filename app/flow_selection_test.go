@@ -172,7 +172,7 @@ func startedWorktreeInstance(t *testing.T, title, wtPath string, srv *fakeTmuxSe
 	srv.mu.Unlock()
 	inst, err := session.FromInstanceData(worktreeRecord(title, wtPath, session.Paused), t.TempDir())
 	require.NoError(t, err)
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(title, "claude", fakePtyFactory{t: t}, srv.exec()))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(title, "claude", fakePtyFactory{t: t}, srv.exec()))
 	require.NoError(t, inst.TransitionTo(session.Running))
 	return inst
 }
@@ -236,7 +236,7 @@ func pumpScript(t *testing.T, m *home, cmd tea.Cmd) {
 
 // TestIssueExpanded_ForReplacedDraftIsDropped: after the #n dispatch the
 // draft stays open, its row shown, for up to ~20s; a newer creation flow
-// can replace it meanwhile (formerly: D could kill the unstarted instance).
+// can replace it meanwhile.
 // The expansion must not reopen the flow for a draft no rail shows.
 func TestIssueExpanded_ForReplacedDraftIsDropped(t *testing.T) {
 	m := newTestHome(t)

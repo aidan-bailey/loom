@@ -622,10 +622,10 @@ func TestInstance_RestartFailureCounter(t *testing.T) {
 
 	require.Equal(t, 1, inst.RecordRestartFailure())
 	require.Equal(t, 2, inst.RecordRestartFailure())
-	require.Equal(t, 2, inst.RestartFailureCount())
+	require.Equal(t, 2, inst.RestartFailureCountForTest())
 
 	inst.ResetRestartFailures()
-	require.Equal(t, 0, inst.RestartFailureCount())
+	require.Equal(t, 0, inst.RestartFailureCountForTest())
 	require.Equal(t, 1, inst.RecordRestartFailure(),
 		"counter must restart from zero after a reset, not keep accumulating")
 }

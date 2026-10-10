@@ -203,31 +203,9 @@ func (s *Storage) SaveInstances(instances []*Instance) error {
 	return s.writeLocked(data)
 }
 
-// LoadInstances loads the list of instances from disk. Records this
-// binary cannot decode are skipped (and preserved on the next write).
-func (s *Storage) LoadInstances() ([]*Instance, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	instancesData, err := s.loadInstanceDataLocked()
-	if err != nil {
-		return nil, err
-	}
-
-	instances := make([]*Instance, len(instancesData))
-	for i, data := range instancesData {
-		instance, err := FromInstanceData(data, s.configDir)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create instance %s: %w", data.Title, err)
-		}
-		instances[i] = instance
-	}
-
-	return instances, nil
-}
-
 // LoadAndReconcile loads instance data from disk and reconciles each instance
-// against the live tmux/worktree state. Unlike LoadInstances, a single failing
-// instance is logged and skipped rather than aborting the whole load. This is
+// against the live tmux/worktree state. A single failing instance is logged and
+// skipped rather than aborting the whole load. This is
 // the correct entry point for any caller that can tolerate reconciliation side
 // effects (killing orphan tmux sessions, marking instances paused).
 //
@@ -353,37 +331,9 @@ func (s *Storage) DeleteInstance(title string) error {
 	return s.writeLocked(filtered)
 }
 
-// UpdateInstance replaces the persisted record for an existing instance.
-// Uses the in-memory snapshot of the provided instance and the raw-data
-// load path so the other stored entries are never reconstructed.
-func (s *Storage) UpdateInstance(instance *Instance) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.loadForWriteLocked()
-	if err != nil {
-		return err
-	}
-
-	snap := instance.ToInstanceData()
-	found := false
-	for i, d := range data {
-		if d.Title == snap.Title {
-			data[i] = snap
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("%w: %s", ErrInstanceNotFound, snap.Title)
-	}
-
-	return s.writeLocked(data)
-}
-
 // writeLocked is the single choke point for every write of the instance
 // payload (SaveInstances, and the raw-InstanceData path behind
-// DeleteInstance/UpdateInstance, which never builds live Instances). It
+// DeleteInstance, which never builds live Instances). It
 // refuses with ErrStorageLoadFailed when the persisted payload could not
 // be decoded as a whole (loading first if nothing has, so a never-loaded
 // Storage learns that before it writes), then writes data followed by
@@ -416,10 +366,10 @@ func (s *Storage) writeLocked(data []InstanceData) error {
 }
 
 // loadForWriteLocked loads the payload on behalf of a write — the
-// read-modify-write in DeleteInstance/UpdateInstance, or writeLocked's
-// first-write load. A load failure there is the write being refused, so
-// it wraps ErrStorageLoadFailed alongside the cause, matching writeLocked's
-// own refusal: every write path's refusal satisfies errors.Is. Caller must
+// read-modify-write in DeleteInstance, or writeLocked's first-write load.
+// A load failure there is the write being refused, so it wraps
+// ErrStorageLoadFailed alongside the cause, matching writeLocked's own
+// refusal: every write path's refusal satisfies errors.Is. Caller must
 // hold s.mu.
 func (s *Storage) loadForWriteLocked() ([]InstanceData, error) {
 	data, err := s.loadInstanceDataLocked()
@@ -429,19 +379,11 @@ func (s *Storage) loadForWriteLocked() ([]InstanceData, error) {
 	return data, nil
 }
 
-// LoadInstanceData loads raw serialized instance data without constructing Instance objects.
-// Used by reconciliation to inspect state before deciding how to restore.
-// All records pass through Migrate so callers receive CurrentSchemaVersion data;
-// records that fail it are omitted here and preserved on the next write.
-func (s *Storage) LoadInstanceData() ([]InstanceData, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.loadInstanceDataLocked()
-}
-
-// loadInstanceDataLocked is the unlocked core of LoadInstanceData. Callers
-// that already hold s.mu (LoadInstances, LoadAndReconcile, and every write
-// path via loadForWriteLocked) use this to avoid re-entering the mutex.
+// loadInstanceDataLocked loads the raw serialized instance data without
+// constructing Instance objects, so reconciliation can inspect state before
+// deciding how to restore. Callers that already hold s.mu (LoadAndReconcile,
+// and every write path via loadForWriteLocked) use this to avoid re-entering
+// the mutex.
 //
 // Every load refreshes the write-safety state: a payload that is not a JSON
 // array sets loadErr (latching writes shut); a successful load clears it

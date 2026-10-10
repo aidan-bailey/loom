@@ -102,7 +102,7 @@ func TestSave_WritesALoadedWorkspace(t *testing.T) {
 	m.SetWorkspacesForTest(ws)
 
 	require.NoError(t, m.saveWS(ws))
-	data, err := ws.storage.LoadInstanceData()
+	data, err := ws.storage.LoadInstanceDataForTest()
 	require.NoError(t, err)
 	require.Len(t, data, 1)
 	assert.Equal(t, "kept", data[0].Title)

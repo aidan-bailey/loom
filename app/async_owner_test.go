@@ -52,7 +52,7 @@ func startingInstance(t *testing.T, slot *workspaceSlot, title string) *session.
 // session started without launching anything.
 func finishStart(t *testing.T, inst *session.Instance) {
 	t.Helper()
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(inst.Title, inst.Program(), fakePtyFactory{t: t}, aliveCmdExecForTest()))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(inst.Title, inst.Program(), fakePtyFactory{t: t}, aliveCmdExecForTest()))
 	require.NoError(t, inst.EnsureRunning())
 	require.Equal(t, session.Running, inst.GetStatus(), "fixture: a start leaves the instance Running")
 	require.True(t, core.ViewForTest(inst, 1).Active(), "fixture: a start leaves the instance active")
@@ -178,7 +178,7 @@ func TestConfirmedDraft_ItsOwnStartAttachesInline(t *testing.T) {
 		},
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
-	inst.SetTmuxSession(tmux.NewSessionWithDeps(inst.Title, inst.Program(), runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps(inst.Title, inst.Program(), runningPtyFactory{t: t, cmdExec: cmdExec}, cmdExec))
 
 	pumpCore(t, m, nil) // the start, then Started
 

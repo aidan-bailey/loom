@@ -212,7 +212,7 @@ func wireCore(t *testing.T, m *home) *home {
 // agent session has that name. Fixtures build those sessions on a mock
 // executor (aliveCmdExecForTest, deadCmdExecForTest, …), so this is the
 // answer the TUI got when it probed through the instance
-// (AgentPane.TmuxAlive). A name no loaded instance's session has reads
+// (AgentPane.TmuxAliveForTest). A name no loaded instance's session has reads
 // dead.
 func fixtureAlive(m *home) func(string) bool {
 	return func(name string) bool {
@@ -225,7 +225,7 @@ func fixtureAlive(m *home) func(string) bool {
 			}
 			for _, inst := range s.ws().InstancesForTest() {
 				if inst.Pane().TmuxSessionName() == name {
-					return inst.Pane().TmuxAlive()
+					return inst.Pane().TmuxAliveForTest()
 				}
 			}
 		}

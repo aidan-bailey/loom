@@ -398,7 +398,7 @@ type pushResult struct{ err error }
 
 // pushInst returns the job committing and pushing inst's worktree, reporting
 // a pushResult: an error becomes a notice, a success expedites the GitHub
-// poll so the PR badge follows. Formerly app.pushActionFor.
+// poll so the PR badge follows.
 func (m *Model) pushInst(inst *session.Instance) Job {
 	selected := inst
 	return func() any {

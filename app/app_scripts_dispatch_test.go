@@ -45,7 +45,7 @@ func homeWithAppState(t *testing.T) *home {
 // addReadyInstance attaches a Running instance so preconditions-gated
 // intents (push/kill/stash/attach/quick_input) have a valid
 // selection. A mock TmuxSession is installed with a cmdExec that
-// reports tmux `has-session` success, so TmuxAlive() returns true
+// reports tmux `has-session` success, so TmuxAliveForTest() returns true
 // without touching a real tmux server.
 func addReadyInstance(t *testing.T, h *home) *session.Instance {
 	t.Helper()
@@ -63,7 +63,7 @@ func addReadyInstance(t *testing.T, h *home) *session.Instance {
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
 	}
 	ts := tmux.NewSessionWithDeps("a", "true", fakePtyFactory{t: t}, cmdExec)
-	inst.SetTmuxSession(ts)
+	inst.SetTmuxSessionForTest(ts)
 	h.syncViews()
 	return inst
 }

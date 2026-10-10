@@ -211,7 +211,7 @@ func TestKillAndResume_RefuseWhenTmuxCannotSayWhoseTheSessionIs(t *testing.T) {
 		var killed []string
 		inst, err := session.NewInstance(session.InstanceOptions{Title: "api", Path: t.TempDir(), Program: "aider"})
 		require.NoError(t, err)
-		inst.SetTmuxSession(tmux.NewSessionWithDeps("api", "aider", fakePtyFactory{t: t}, starvedTmux(&killed)))
+		inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("api", "aider", fakePtyFactory{t: t}, starvedTmux(&killed)))
 		require.NoError(t, inst.EnsureRunning())
 
 		err = inst.Kill()
@@ -225,7 +225,7 @@ func TestKillAndResume_RefuseWhenTmuxCannotSayWhoseTheSessionIs(t *testing.T) {
 	t.Run("resume", func(t *testing.T) {
 		var killed []string
 		inst := pausedWorktreeInst(t, gitRepo(t), "api", "b/api")
-		inst.SetTmuxSession(tmux.NewSessionWithDeps("api", "claude", fakePtyFactory{t: t}, starvedTmux(&killed)))
+		inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("api", "claude", fakePtyFactory{t: t}, starvedTmux(&killed)))
 
 		err := inst.Resume(nil)
 

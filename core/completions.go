@@ -120,7 +120,7 @@ func (m *Model) owningWorkspace(stamped *Workspace, inst *session.Instance) *Wor
 // focuses at delivery time, which may not be the workspace that owns the
 // instance — instance lists are in-memory until restart, so a missed
 // removal would orphan the row (e.g. stuck in Deleting) with its backing
-// resources already gone. Formerly app.removeInstanceEverywhere.
+// resources already gone.
 func (m *Model) removeEverywhere(inst *session.Instance) {
 	if inst == nil {
 		return
@@ -144,8 +144,6 @@ func (m *Model) removeEverywhere(inst *session.Instance) {
 //     prompt, Started waits for the send (deliverPromptSent): the TUI's
 //     inline attach forwards keys to the agent, and a key typed before the
 //     prompt's paste and Enter would join the prompt.
-//
-// Formerly app.handleInstanceStarted's model half.
 func (m *Model) deliverStart(r StartResult) {
 	inst := r.Instance
 	owner := m.owningWorkspace(r.Owner, inst)
@@ -191,7 +189,7 @@ func (m *Model) deliverPromptSent(r promptSent) {
 // deliverResume finishes a resume: an instance a served workspace still
 // holds (a kill may have removed it meanwhile) gets a fresh pane client
 // (SessionLaunched), and a relaunch is watched for a trust prompt
-// (watchLaunch). Formerly app.handleResumeDone.
+// (watchLaunch).
 func (m *Model) deliverResume(r ResumeResult) {
 	m.notifyErr(r.Notice)
 	if inst := r.Instance; inst != nil && m.holding(inst) != nil {
@@ -206,8 +204,7 @@ func (m *Model) deliverResume(r ResumeResult) {
 // deliverRecover puts the adopted instance in its placeholder's row in
 // the workspace that owns it, by identity, so the order and the
 // selection's row are unchanged, and saves. A failure reverts the
-// placeholder to Recoverable so the user can retry r. Formerly
-// app.handleRecoverDone's model half.
+// placeholder to Recoverable so the user can retry r.
 func (m *Model) deliverRecover(r RecoverResult) {
 	owner := m.owningWorkspace(r.Owner, r.Placeholder)
 	if r.Err != nil {
