@@ -27,8 +27,21 @@ import (
 // below is a client of the sandbox's `loom serve`, which the first one
 // starts and which outlives it.
 
-// daemonGone is what a TUI prints when its daemon goes away under it.
-const daemonGone = "the daemon stopped"
+// What a TUI shows while its daemon is away (bannerText in app/link.go), and
+// what it says when it gives up on one (main.go).
+const (
+	// bannerStopping: the daemon said bye and finishes its jobs in flight.
+	bannerStopping = "the loom daemon is stopping"
+	// bannerWaiting: the daemon stopped; the TUI polls for one and starts
+	// none, and ctrl+r starts one.
+	bannerWaiting = "the loom daemon stopped: waiting for one to start (ctrl+r starts it)"
+	// bannerReconnecting: the daemon was lost with no bye (a crash); the TUI
+	// redials on a backoff and starts a daemon when none runs.
+	bannerReconnecting = "lost the loom daemon: reconnecting"
+	// replacedByNewer: a newer loom replaced the daemon, so an older TUI
+	// exits rather than rejoin it.
+	replacedByNewer = "the loom daemon was replaced by a newer loom"
+)
 
 // servingDaemon waits until a daemon serves the sandbox other than any of
 // not (pids of daemons that must be gone by now), and returns its record.
@@ -116,6 +129,41 @@ func requireReattached(t *testing.T, sb *devsandbox.Sandbox, title string, agent
 	screen, err := sb.Screen(false)
 	require.NoError(t, err)
 	assert.NotContains(t, screen, "paused", "%s came back paused", title)
+}
+
+// requireKept checks that a TUI which was open on the session titled
+// title, selected, still shows it selected after its daemon went and
+// another served: listed with its pane (Agent · dev/<title>), on the same
+// agent as before, and not paused. Unlike requireReattached it presses no
+// key, since the selection is what is under test.
+func requireKept(t *testing.T, sb *devsandbox.Sandbox, title string, agent int) {
+	t.Helper()
+	require.NoError(t, sb.WaitFor("Agent · dev/"+title, uiTimeout), "%s is still the selected row", title)
+	require.NoError(t, sb.WaitFor("commands: work N", uiTimeout), "the pane shows %s's live agent", title)
+	assert.Equal(t, agent, agentPID(t, sb, title), "the agent of %s was relaunched, not reattached", title)
+	screen, err := sb.Screen(false)
+	require.NoError(t, err)
+	assert.NotContains(t, screen, "paused", "%s came back paused", title)
+}
+
+// waitOnline waits until the driver's banner is gone and the TUI says it
+// joined a daemon again.
+func waitOnline(t *testing.T, sb *devsandbox.Sandbox) {
+	t.Helper()
+	require.NoError(t, sb.WaitFor("reconnected to the loom daemon", uiTimeout))
+	waitGone(t, sb, bannerReconnecting)
+	waitGone(t, sb, bannerWaiting)
+	waitGone(t, sb, bannerStopping)
+}
+
+// requireNoDaemonFor checks that no process takes the sandbox's lock for
+// d: nothing started a daemon, the TUI waiting included.
+func requireNoDaemonFor(t *testing.T, sb *devsandbox.Sandbox, d time.Duration) {
+	t.Helper()
+	require.Never(t, func() bool {
+		_, held := sb.Daemon()
+		return held
+	}, d, 100*time.Millisecond, "a daemon started by itself")
 }
 
 // waitGone waits until text is no longer on the driver's screen.
@@ -233,22 +281,33 @@ func TestE2E_Daemon_StaleSocket(t *testing.T) {
 	requireReattached(t, sb, "keeper", agent)
 }
 
-// The daemon killed under an open TUI: the TUI restores the terminal, says
-// so and exits, with no panic; the agents keep running in tmux.
-func TestE2E_Daemon_KilledUnderAnOpenTUI(t *testing.T) {
+// The daemon killed under an open TUI (a crash, so no bye): the TUI stays
+// up under a banner, redials, starts a daemon when none runs, and joins it,
+// keeping its tab, its selection and the agent it was showing; the agent
+// keeps running in tmux throughout.
+func TestE2E_Daemon_KilledUnderAnOpenTUIReconnects(t *testing.T) {
 	sb := newSandbox(t, "")
 	startLoom(t, sb)
 	createSession(t, sb, "keeper")
 	agent := agentPID(t, sb, "keeper")
+	tui := panePID(t, sb, sb.Driver())
 	rec := servingDaemon(t, sb)
 
 	require.NoError(t, syscall.Kill(rec.PID, syscall.SIGKILL))
-	text := exitText(t, sb)
-	assert.Contains(t, text, daemonGone)
-	assert.Contains(t, text, "Run loom again")
-	assert.NotContains(t, text, "panic")
-	assert.NotContains(t, text, "goroutine ")
-	assert.Equal(t, agent, agentPID(t, sb, "keeper"), "the agent keeps running")
+	require.NoError(t, sb.WaitFor(bannerReconnecting, uiTimeout))
+	fresh := servingDaemon(t, sb, rec.PID)
+	assert.NotEqual(t, rec.PID, fresh.PID, "a new daemon serves")
+
+	waitOnline(t, sb)
+	assert.True(t, sb.DriverRunning(), "the TUI did not exit")
+	assert.Equal(t, tui, panePID(t, sb, sb.Driver()), "the same TUI process is still running")
+	requireKept(t, sb, "keeper", agent)
+	screen, err := sb.Screen(false)
+	require.NoError(t, err)
+	assert.NotContains(t, screen, "panic")
+
+	// The rejoined client takes requests again.
+	createSession(t, sb, "after")
 }
 
 // Two TUIs on one daemon: a kill in one shows in the other, and a session
@@ -302,7 +361,8 @@ func TestE2E_Daemon_TwoTUIs(t *testing.T) {
 
 // A newer loom replaces the running daemon with its own build; the
 // sessions survive the swap, and a TUI of the older build still open on
-// the old daemon exits cleanly.
+// the old daemon waits for a daemon, finds the newer one and exits saying
+// so, with no panic.
 func TestE2E_Daemon_NewerBuildReplacesIt(t *testing.T) {
 	sb := newSandbox(t, "")
 	newer := buildLoom(t, sb, "loom-99", "-X main.version=99.0.0")
@@ -324,8 +384,11 @@ func TestE2E_Daemon_NewerBuildReplacesIt(t *testing.T) {
 	assert.Contains(t, string(serveLog), "msg=serve.stopped", "the older daemon stopped gracefully, saving first")
 
 	text := exitText(t, sb)
-	assert.Contains(t, text, daemonGone, "the older TUI goes with its daemon")
+	assert.Contains(t, text, replacedByNewer, "the older TUI exits when the newer daemon answers")
+	assert.Contains(t, text, "run loom again")
 	assert.NotContains(t, text, "panic")
+	assert.NotContains(t, text, "goroutine ")
+	assert.Equal(t, agent, agentPID(t, sb, "keeper"), "the agent keeps running")
 	requireReattached(t, upgraded, "keeper", agent)
 }
 
@@ -412,9 +475,9 @@ func TestE2E_Daemon_OlderBuildRefuses(t *testing.T) {
 	assert.True(t, sb.DriverRunning(), "the newer TUI keeps running")
 }
 
-// `loom serve stop` with live sessions: the open TUI goes with its daemon,
-// the sessions keep running, and the next loom's daemon reattaches them,
-// running, not paused.
+// `loom serve stop` with live sessions: the open TUI stays up, waiting for
+// a daemon under its banner, the sessions keep running, and after the TUI
+// quits the next loom's daemon reattaches them, running, not paused.
 func TestE2E_Daemon_ServeStopKeepsTheSessions(t *testing.T) {
 	sb := newSandbox(t, "")
 	startLoom(t, sb)
@@ -428,12 +491,133 @@ func TestE2E_Daemon_ServeStopKeepsTheSessions(t *testing.T) {
 	_, held := sb.Daemon()
 	assert.False(t, held, "serve stop returns once the daemon has let go of its lock")
 	assert.True(t, waitExit(rec.PID, uiTimeout))
-	assert.Contains(t, exitText(t, sb), daemonGone)
+	require.NoError(t, sb.WaitFor(bannerWaiting, uiTimeout), "the TUI waits for a daemon")
+	assert.True(t, sb.DriverRunning(), "the TUI does not exit with its daemon")
 	assert.Equal(t, agent, agentPID(t, sb, "keeper"), "the agent keeps running without a daemon")
 
+	// Quit the waiting TUI: the next loom starts the daemon.
+	require.NoError(t, sb.StopDriver(10*time.Second))
 	startLoom(t, sb)
 	servingDaemon(t, sb, rec.PID)
 	requireReattached(t, sb, "keeper", agent)
+}
+
+// `loom serve stop` under an open TUI, then ctrl+r: the TUI shows the
+// stopped banner and refuses what needs the model, no process takes the lock
+// of its own accord (a graceful stop is not followed by a respawn), and
+// ctrl+r starts a daemon, which the TUI joins with its selection.
+func TestE2E_Daemon_ServeStopWaitsAndCtrlRStartsOne(t *testing.T) {
+	sb := newSandbox(t, "")
+	startLoom(t, sb)
+	createSession(t, sb, "keeper")
+	agent := agentPID(t, sb, "keeper")
+	rec := servingDaemon(t, sb)
+
+	out, err := runLoom(t, sb, sb.LoomBin(), "serve", "stop")
+	require.NoError(t, err, out)
+	assert.True(t, waitExit(rec.PID, uiTimeout))
+	require.NoError(t, sb.WaitFor(bannerWaiting, uiTimeout))
+
+	// Offline, a key that needs the model says so and opens nothing.
+	require.NoError(t, sb.SendKeys("n"))
+	require.NoError(t, sb.WaitFor("the loom daemon is stopped: n needs it", uiTimeout))
+	screen, err := sb.Screen(false)
+	require.NoError(t, err)
+	assert.NotContains(t, screen, "enter a name for the instance")
+
+	requireNoDaemonFor(t, sb, 3*time.Second)
+	screen, err = sb.Screen(false)
+	require.NoError(t, err)
+	assert.Contains(t, screen, bannerWaiting, "still waiting after the poll found no daemon")
+
+	require.NoError(t, sb.SendKeys("C-r"))
+	fresh := servingDaemon(t, sb, rec.PID)
+	assert.NotEqual(t, rec.PID, fresh.PID)
+	waitOnline(t, sb)
+	assert.True(t, sb.DriverRunning())
+	requireKept(t, sb, "keeper", agent)
+
+	// The rejoined client takes requests again.
+	createSession(t, sb, "after")
+}
+
+// holdStashes makes every update of refs/stash in the sandbox's workspace
+// repo take d: a pause stores the worktree's changes there, so a pause of a
+// session with changes lasts at least that long. It installs a
+// reference-transaction hook (git 2.28 and later), which blocks the update
+// while it is prepared.
+func holdStashes(t *testing.T, sb *devsandbox.Sandbox, d time.Duration) {
+	t.Helper()
+	hooks := filepath.Join(sb.RepoDir(), ".git", "hooks")
+	require.NoError(t, os.MkdirAll(hooks, 0o755))
+	script := fmt.Sprintf("#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\n"+
+		"while read -r old new ref; do\n  [ \"$ref\" = refs/stash ] && sleep %d\ndone\n", int(d.Seconds()))
+	require.NoError(t, os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(script), 0o755))
+}
+
+// dirtyWorktree adds an untracked file to the worktree of the session
+// titled title (<repo>/.loom/worktrees/<workspace>/<title>_<hash>, beside
+// its .loom-title sidecar), so that pausing it has changes to stash.
+func dirtyWorktree(t *testing.T, sb *devsandbox.Sandbox, title string) {
+	t.Helper()
+	trees, err := filepath.Glob(filepath.Join(sb.WorkspaceConfigDir(), "worktrees", "*", title+"_*"))
+	require.NoError(t, err)
+	var dirs []string
+	for _, tree := range trees {
+		if info, err := os.Stat(tree); err == nil && info.IsDir() {
+			dirs = append(dirs, tree)
+		}
+	}
+	require.Len(t, dirs, 1, "the worktree of %s", title)
+	require.NoError(t, os.WriteFile(filepath.Join(dirs[0], "unsaved.txt"), []byte("work in progress\n"), 0o644))
+}
+
+// A pause in flight across `loom serve stop`: the stop waits for the pause,
+// whose result the TUI receives before the connection closes (so it reads
+// the session Paused while no daemon runs, and fails nothing as stranded),
+// and the daemon saves before it exits, so a daemon started after reads the
+// session Paused too, never stuck in Loading.
+func TestE2E_Daemon_PauseAcrossAStop(t *testing.T) {
+	sb := newSandbox(t, "")
+	startLoom(t, sb)
+	createSession(t, sb, "keeper")
+	agent := agentPID(t, sb, "keeper")
+	rec := servingDaemon(t, sb)
+	// The pause stores a stash, which this holds for 3s: the stop below
+	// arrives with the pause in flight, not after it.
+	const hold = 3 * time.Second
+	dirtyWorktree(t, sb, "keeper")
+	holdStashes(t, sb, hold)
+
+	require.NoError(t, sb.SendKeys("s"))
+	require.NoError(t, sb.WaitFor("Pause session 'keeper'?", uiTimeout))
+	require.NoError(t, sb.SendKeys("y"))
+	began := time.Now()
+	out, err := runLoom(t, sb, sb.LoomBin(), "serve", "stop")
+	require.NoError(t, err, out)
+	assert.GreaterOrEqual(t, time.Since(began), hold/2, "serve stop waited for the pause in flight")
+	assert.True(t, waitExit(rec.PID, uiTimeout))
+
+	serveLog, err := os.ReadFile(daemon.LogPath(sb.GlobalDir()))
+	require.NoError(t, err)
+	assert.Contains(t, string(serveLog), "msg=serve.stopped", "the daemon stopped gracefully, saving first")
+	assert.NotContains(t, string(serveLog), "serve.stopped_with_jobs_in_flight", "the stop waited out the pause")
+	assert.True(t, waitExit(agent, uiTimeout), "the pause ended the agent")
+
+	// The pause's result was published before the connection closed.
+	require.NoError(t, sb.WaitFor(bannerWaiting, uiTimeout))
+	require.NoError(t, sb.WaitFor("paused", uiTimeout), "the TUI read the pause finish before the daemon went")
+	screen, err := sb.Screen(false)
+	require.NoError(t, err)
+	assert.NotContains(t, screen, "unavailable", "the pause was not failed as stranded")
+
+	require.NoError(t, sb.SendKeys("C-r"))
+	servingDaemon(t, sb, rec.PID)
+	waitOnline(t, sb)
+	require.NoError(t, sb.WaitFor("paused", uiTimeout), "the session reads Paused on the new daemon")
+	screen, err = sb.Screen(false)
+	require.NoError(t, err)
+	assert.NotContains(t, screen, "panic")
 }
 
 // Assumption 1 of the daemon spec: a daemon a TUI started keeps running

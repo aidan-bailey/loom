@@ -218,6 +218,36 @@ func TestForceDown_KillsNoProcessButTheSandboxsLoom(t *testing.T) {
 		"a process not the sandbox's own is never killed")
 }
 
+// KillDaemon kills a build of the sandbox's own as a crash does, reports
+// the record it killed, and refuses a holder from elsewhere or none.
+func TestKillDaemon_KillsASandboxBuildAndNoOther(t *testing.T) {
+	useTempBase(t)
+	sb, err := Open(fmt.Sprintf("t%d", time.Now().UnixNano()))
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(sb.GlobalDir(), 0o755))
+	_, err = sb.KillDaemon()
+	require.ErrorIs(t, err, ErrNoDaemon)
+
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	foreign := startFakeDaemonAs(t, sb, exe, "")
+	rec, err := sb.KillDaemon()
+	require.Error(t, err)
+	assert.Equal(t, foreign.Process.Pid, rec.PID)
+	assert.Contains(t, err.Error(), "runs no build in")
+	assert.Never(t, func() bool { return exited(foreign) }, 300*time.Millisecond, 20*time.Millisecond)
+	require.NoError(t, foreign.Process.Kill())
+	require.Eventually(t, func() bool { _, held := sb.Daemon(); return !held }, 5*time.Second, 20*time.Millisecond)
+
+	own := startFakeDaemonAs(t, sb, sandboxBuild(t, sb), "")
+	rec, err = sb.KillDaemon()
+	require.NoError(t, err)
+	assert.Equal(t, own.Process.Pid, rec.PID)
+	assert.Eventually(t, func() bool { return exited(own) }, 5*time.Second, 20*time.Millisecond)
+	_, held := sb.Daemon()
+	assert.False(t, held, "the lock of a killed daemon is free")
+}
+
 func TestList_ReportsTheDaemon(t *testing.T) {
 	useTempBase(t)
 	for _, name := range []string{"idle", "served"} {

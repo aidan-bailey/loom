@@ -57,7 +57,7 @@ func newRootCmd(out, errOut io.Writer) *cobra.Command {
 	root.PersistentFlags().StringVar(&a.driver, "driver", devsandbox.DriverSession,
 		"tmux session of the headless loom that start, stop, keys, shot and wait drive (another name runs a second TUI)")
 	root.AddCommand(a.upCmd(), a.buildCmd(), a.runCmd(), a.startCmd(), a.stopCmd(),
-		a.keysCmd(), a.shotCmd(), a.waitCmd(), a.logsCmd(), a.envCmd(), a.lsCmd(), a.downCmd())
+		a.daemonCmd(), a.keysCmd(), a.shotCmd(), a.waitCmd(), a.logsCmd(), a.envCmd(), a.lsCmd(), a.downCmd())
 	return root
 }
 

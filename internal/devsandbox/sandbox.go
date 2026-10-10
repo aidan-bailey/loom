@@ -231,6 +231,24 @@ func (s *Sandbox) StopDaemon() error {
 	return nil
 }
 
+// ErrNoDaemon: nothing holds the sandbox's lock, so there is no daemon to
+// kill.
+var ErrNoDaemon = errors.New("no loom daemon runs in the sandbox")
+
+// KillDaemon kills the sandbox's daemon with SIGKILL, as a crash does: no
+// bye, no save, and the socket file stays behind. The sessions keep running
+// on the sandbox's tmux server, and a TUI open on the daemon sees a crash,
+// not a stop. It kills only a process proved a build in the sandbox's bin
+// dir (killSandboxLoom), and returns the record of the daemon it killed;
+// ErrNoDaemon when none runs.
+func (s *Sandbox) KillDaemon() (daemon.Record, error) {
+	rec, held := s.Daemon()
+	if !held {
+		return rec, ErrNoDaemon
+	}
+	return rec, s.killSandboxLoom()
+}
+
 // Down stops the sandbox's loom daemon (a sandboxed loom started it, with
 // the sandbox's global dir), kills its private tmux server and deletes its
 // directory, and the socket files both leave outside it. It refuses any Dir

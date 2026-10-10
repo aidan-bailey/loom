@@ -36,7 +36,7 @@ func TestRoot_HasEverySubcommand(t *testing.T) {
 	for _, c := range root.Commands() {
 		names = append(names, c.Name())
 	}
-	for _, want := range []string{"up", "build", "run", "start", "stop", "keys", "shot", "wait", "logs", "env", "ls", "down"} {
+	for _, want := range []string{"up", "build", "run", "start", "stop", "daemon", "keys", "shot", "wait", "logs", "env", "ls", "down"} {
 		assert.Contains(t, names, want)
 	}
 }
@@ -264,4 +264,79 @@ func TestLogs_SaysWhenNoDaemonRuns(t *testing.T) {
 	out, err := execute(t, "logs", "--sandbox", "demo")
 	require.NoError(t, err)
 	assert.Contains(t, out, "daemon: not running")
+}
+
+// daemon prints the lock record of the sandbox's daemon, a booting one
+// without its socket yet, and says so when none runs.
+func TestDaemon_ShowsTheRecord(t *testing.T) {
+	sb := fakeSandbox(t)
+	out, err := execute(t, "daemon", "--sandbox", sb.Name)
+	require.NoError(t, err)
+	assert.Contains(t, out, "daemon: not running")
+
+	cmd := startFakeDaemon(t, sb, testBinary(t), "")
+	out, err = execute(t, "daemon", "--sandbox", sb.Name)
+	require.NoError(t, err)
+	assert.Contains(t, out, fmt.Sprintf("pid:    %d\n", cmd.Process.Pid))
+	assert.Contains(t, out, "socket: "+filepath.Join(sb.GlobalDir(), "fake.sock")+"\n")
+	assert.Contains(t, out, "build:  fake\n")
+	assert.Contains(t, out, "tmux:   \n")
+
+	booting, err := devsandbox.Open(sb.Name + "-booting")
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(booting.GlobalDir(), 0o755))
+	startFakeDaemon(t, booting, testBinary(t), fakeBooting)
+	out, err = execute(t, "daemon", "--sandbox", booting.Name)
+	require.NoError(t, err)
+	assert.Contains(t, out, "socket: (starting)\n")
+}
+
+// daemon --stop stops the daemon the way `loom serve stop` does, and
+// tolerates none running.
+func TestDaemon_StopStopsItGracefully(t *testing.T) {
+	sb := fakeSandbox(t)
+	out, err := execute(t, "daemon", "--stop", "--sandbox", sb.Name)
+	require.NoError(t, err)
+	assert.Contains(t, out, "daemon: not running")
+
+	cmd := startFakeDaemon(t, sb, testBinary(t), "")
+	out, err = execute(t, "daemon", "--stop", "--sandbox", sb.Name)
+	require.NoError(t, err)
+	assert.Contains(t, out, fmt.Sprintf("stopped the sandbox's daemon (pid %d)", cmd.Process.Pid))
+	_, held := sb.Daemon()
+	assert.False(t, held, "the lock is free once --stop returns")
+	assert.Eventually(t, func() bool { return gone(cmd) }, 5*time.Second, 20*time.Millisecond)
+}
+
+// daemon --kill sends SIGKILL, to a build of the sandbox's own and no
+// other process: a holder from elsewhere (a stale record's reused pid) is
+// refused and left running.
+func TestDaemon_KillKillsOnlyASandboxBuild(t *testing.T) {
+	sb := fakeSandbox(t)
+	out, err := execute(t, "daemon", "--kill", "--sandbox", sb.Name)
+	require.NoError(t, err)
+	assert.Contains(t, out, "daemon: not running")
+
+	foreign := startFakeDaemon(t, sb, testBinary(t), "")
+	_, err = execute(t, "daemon", "--kill", "--sandbox", sb.Name)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), fmt.Sprintf("pid %d holds the sandbox's lock but runs no build in", foreign.Process.Pid))
+	assert.Never(t, func() bool { return gone(foreign) }, 300*time.Millisecond, 20*time.Millisecond,
+		"a process that is not the sandbox's own is never killed")
+	require.NoError(t, foreign.Process.Kill())
+	require.Eventually(t, func() bool { _, held := sb.Daemon(); return !held }, 5*time.Second, 20*time.Millisecond)
+
+	own := startFakeDaemon(t, sb, sandboxBuild(t, sb), "")
+	out, err = execute(t, "daemon", "--kill", "--sandbox", sb.Name)
+	require.NoError(t, err)
+	assert.Contains(t, out, fmt.Sprintf("killed the sandbox's daemon (pid %d, SIGKILL)", own.Process.Pid))
+	assert.Eventually(t, func() bool { return gone(own) }, 5*time.Second, 20*time.Millisecond)
+	_, held := sb.Daemon()
+	assert.False(t, held, "a killed daemon's lock is free")
+}
+
+func TestDaemon_StopAndKillAreExclusive(t *testing.T) {
+	_, err := execute(t, "daemon", "--stop", "--kill", "--sandbox", "demo")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "none of the others can be")
 }

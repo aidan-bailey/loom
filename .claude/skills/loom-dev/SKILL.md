@@ -30,6 +30,11 @@ daemon outlives that TUI:
   fresh daemon that reattaches the sessions (the restore path).
   `stop --keep-daemon` quits only the TUI, as a real `q` does: the next
   `start` joins the same daemon.
+- `daemon` prints the daemon's lock record (pid, socket, build, tmux server)
+  and leaves every TUI open. `daemon --stop` stops it gracefully, as
+  `loom serve stop` does, and `daemon --kill` sends SIGKILL, as a crash does
+  (only to a process proved a build in the sandbox's `bin` dir). Use them to
+  see how an open TUI takes losing its daemon (below).
 - `start --restart` stops both first, like `stop` then `start`.
 - `build` (and `up`, and `start` and `run` unless `--no-build`) replaces
   the binary only. The next loom to start replaces a running daemon only
@@ -51,8 +56,22 @@ daemon outlives that TUI:
   stays out of yours:
   `(eval "$(go run ./tools/loomdev env)"; "$LOOM_GLOBAL_DIR/../bin/loom" serve stop)`.
 
-Stopping the daemon ends every TUI connected to it: each exits saying "the
-daemon stopped … Run loom again".
+Losing the daemon does not end a TUI; it goes offline under a banner on its
+top row, keeps showing and attaching panes, refuses the keys that need the
+model ("the loom daemon is stopped: n needs it") and joins a daemon again
+when one answers:
+
+- A graceful stop (`daemon --stop`, `loom serve stop`, `stop` from another
+  driver): "the loom daemon stopped: waiting for one to start (ctrl+r starts
+  it)". The TUI polls for a daemon and starts none itself; `ctrl+r` starts one.
+- A crash (`daemon --kill`): "lost the loom daemon: reconnecting (attempt N)".
+  The TUI redials on a backoff (1s doubling to 30s) and starts a daemon when
+  the lock is free, giving up after three starts that fail to serve.
+- A newer build replacing the daemon makes an older TUI exit instead, saying
+  the daemon "was replaced by a newer loom". An older build is replaced once.
+
+Rejoined, the TUI keeps its tabs, selection and open flows, and shows
+"reconnected to the loom daemon".
 
 ## Verify a change headlessly
 
@@ -77,9 +96,10 @@ state's own prompt text before sending the next keys.
 - Fake agent commands (send them as agent text): `work N`, `ask`, `trust`, `bell`, `title X`, `edit`, `commit`, `crash`, `exit`.
 - Profiles: `fake` (default), `fake-claude`, `fake-aider`, `shell`; `up --real-claude` adds the real `claude` (costs tokens). Change the default with `up --default-profile fake-aider`.
 - Restore path: `stop`, then `start`; sessions persist on the private tmux server, and the fresh daemon reattaches them.
+- Offline behaviour with the TUI open: `daemon --stop`, then `wait --text "waiting for one to start"`, try `keys n` (refused with an info line), wait three seconds to see that no daemon appears, then `keys C-r` and `wait --text "reconnected to the loom daemon"`. For a crash, `daemon --kill`, then `wait --text reconnecting` and `wait --text reconnected`.
 - Two TUIs on one daemon: `--driver NAME` makes `start`, `stop`, `keys`, `shot` and `wait` drive another session on the sandbox's server, e.g. `start --driver two` then `shot --driver two`. Use `stop --keep-daemon --driver two` to quit it alone.
 - Interactive, for a human: `go run ./tools/loomdev run`. The host loom intercepts `ctrl+q` and double-`esc`, so test the dev loom's interact-exit from a plain OS terminal.
-- End-to-end suite: `go test -tags e2e ./e2e/...` (the daemon's lifecycle is in `e2e/daemon_test.go`).
+- End-to-end suite: `go test -tags e2e ./e2e/...` (the daemon's lifecycle, losing and rejoining it included, is in `e2e/daemon_test.go`).
 
 ## Smoke runs
 
@@ -123,8 +143,8 @@ touch.
 - Never run `./loom`, `go run .`, or `loom reset` directly in a loom pane.
 - Never run a bare `loom serve stop` in a loom pane: with the pane's
   environment it stops the host's daemon, and every open loom TUI with it.
-  Stop the sandbox's daemon with `loomdev stop` (or the subshell recipe
-  above).
+  Stop the sandbox's daemon with `loomdev stop` or `loomdev daemon --stop`
+  (or the subshell recipe above).
 - Never run `clean.sh` / `clean_hard.sh` from inside loom (they refuse anyway).
 - Fix the product, not the sandbox, when the UI misbehaves; fix the test's key sequence when the UI is right.
 - The nesting guard only recognizes loom-managed enclosing sessions (`loom_*`/`claudesquad_*`); a dev loom started from a plain (non-loom) tmux pane on a server that also hosts loom sessions is not refused, so still use `loomdev` there. Setting `LOOM_TMUX_SOCKET` is no way around either guard: a daemon keeps the last daemon's tmux server while it runs, and the global dir stays the user's.

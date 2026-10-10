@@ -350,6 +350,78 @@ sandbox's lock, stops down with nothing removed; --force kills that process
 	return cmd
 }
 
+func (a *app) daemonCmd() *cobra.Command {
+	var stop, kill bool
+	cmd := &cobra.Command{
+		Use:   "daemon [--stop | --kill]",
+		Short: "Show, stop or kill the sandbox's daemon, leaving its TUIs running",
+		Long: `Show the sandbox's daemon (its lock record: pid, socket, build and tmux
+server), or act on it while the TUIs stay open, to see how they take its loss.
+--stop stops it gracefully, as ` + "`loom serve stop`" + ` does: it says bye, finishes
+the jobs in flight and saves, and every TUI waits for a daemon (ctrl+r starts
+one). --kill sends SIGKILL, as a crash does: no bye and no save, and every TUI
+reconnects, starting a daemon itself. --kill acts only on a process proved a
+build in the sandbox's bin dir. Neither touches the TUIs or the sessions;
+` + "`loomdev stop`" + ` quits the TUI too.`,
+		Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			sb, err := a.open()
+			if err != nil {
+				return err
+			}
+			switch {
+			case stop:
+				rec, held := sb.Daemon()
+				if !held {
+					fmt.Fprintln(a.out, "daemon: not running")
+					return nil
+				}
+				if err := sb.StopDaemon(); err != nil {
+					return err
+				}
+				fmt.Fprintf(a.out, "stopped the sandbox's daemon (pid %d)\n", rec.PID)
+			case kill:
+				rec, err := sb.KillDaemon()
+				if errors.Is(err, devsandbox.ErrNoDaemon) {
+					fmt.Fprintln(a.out, "daemon: not running")
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(a.out, "killed the sandbox's daemon (pid %d, SIGKILL)\n", rec.PID)
+			default:
+				rec, held := sb.Daemon()
+				if !held {
+					fmt.Fprintln(a.out, "daemon: not running")
+					return nil
+				}
+				fmt.Fprint(a.out, daemonRecord(rec))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&stop, "stop", false, "stop the daemon gracefully (the TUIs wait for one)")
+	cmd.Flags().BoolVar(&kill, "kill", false, "kill the daemon with SIGKILL, as a crash does (the TUIs reconnect)")
+	cmd.MarkFlagsMutuallyExclusive("stop", "kill")
+	return cmd
+}
+
+// daemonRecord lays out a sandbox daemon's lock record, one field a line.
+// A daemon still booting has no socket yet.
+func daemonRecord(rec daemon.Record) string {
+	socket := rec.Socket
+	if !rec.IsDaemon() {
+		socket = "(starting)"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "pid:    %d\n", rec.PID)
+	fmt.Fprintf(&b, "socket: %s\n", socket)
+	fmt.Fprintf(&b, "build:  %s\n", rec.Build)
+	fmt.Fprintf(&b, "tmux:   %s\n", rec.Tmux)
+	return b.String()
+}
+
 // daemonText describes a sandbox daemon from its lock record: "pid 4242
 // on /run/user/1000/loom/1f2e….sock", or still starting.
 func daemonText(rec daemon.Record) string {
