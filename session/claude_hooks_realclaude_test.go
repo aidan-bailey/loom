@@ -37,7 +37,7 @@ func TestRealClaude_HookStatusContract(t *testing.T) {
 
 	root := t.TempDir()
 	hooksDir := filepath.Join(root, "hooks")
-	launchID, err := hooks.Prepare(hooksDir)
+	launchID, err := hooks.Prepare(hooksDir, "")
 	require.NoError(t, err)
 	work := filepath.Join(root, "work")
 	require.NoError(t, os.MkdirAll(work, 0o700))

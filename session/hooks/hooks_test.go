@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestSettingsJSON_Golden(t *testing.T) {
-	got, err := SettingsJSON("/cfg/hooks/loom_x/events")
+	got, err := SettingsJSON("/cfg/hooks/loom_x/events", "")
 	require.NoError(t, err)
 
 	cmd := `f='/cfg/hooks/loom_x/events/'\"$(date +%s%N)-$$\"; { cat > \"$f.tmp\" && mv \"$f.tmp\" \"$f.json\"; } 2>/dev/null || cat >/dev/null`
@@ -38,6 +39,21 @@ func TestSettingsJSON_Golden(t *testing.T) {
 		}, ",\n") +
 		"\n  }\n}\n"
 	assert.Equal(t, want, string(got))
+}
+
+// An account session's memory dir rides in the same file, so it needs no
+// second --settings flag; without one the file is the hooks alone.
+func TestSettingsJSON_AutoMemoryDirectory(t *testing.T) {
+	got, err := SettingsJSON("/e", "/home/u/.claude/projects/-r/memory")
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(got, &doc))
+	assert.Equal(t, "/home/u/.claude/projects/-r/memory", doc["autoMemoryDirectory"])
+	assert.Contains(t, doc, "hooks")
+
+	got, err = SettingsJSON("/e", "")
+	require.NoError(t, err)
+	assert.NotContains(t, string(got), "autoMemoryDirectory")
 }
 
 func requireShell(t *testing.T) {
@@ -99,13 +115,13 @@ func TestSafePath(t *testing.T) {
 func TestPrepare_CreatesLayout(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "hooks", "loom_x")
 
-	id, err := Prepare(dir)
+	id, err := Prepare(dir, "")
 	require.NoError(t, err)
 	assert.Len(t, id, 16)
 
 	settings, err := os.ReadFile(SettingsPath(dir))
 	require.NoError(t, err)
-	want, err := SettingsJSON(EventsDir(dir))
+	want, err := SettingsJSON(EventsDir(dir), "")
 	require.NoError(t, err)
 	assert.Equal(t, string(want), string(settings))
 
@@ -123,18 +139,18 @@ func TestPrepare_CreatesLayout(t *testing.T) {
 
 func TestPrepare_ClearsPreviousLaunch(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "loom_x")
-	first, err := Prepare(dir)
+	first, err := Prepare(dir, "")
 	require.NoError(t, err)
 	old := filepath.Join(EventsDir(dir), "1-1.ev")
 	require.NoError(t, os.WriteFile(old, []byte("{}"), 0o600))
 
-	second, err := Prepare(dir)
+	second, err := Prepare(dir, "")
 	require.NoError(t, err)
 	assert.NotEqual(t, first, second)
 	assert.NoFileExists(t, old)
 }
 
 func TestPrepare_RejectsSingleQuote(t *testing.T) {
-	_, err := Prepare(filepath.Join(t.TempDir(), "it's"))
+	_, err := Prepare(filepath.Join(t.TempDir(), "it's"), "")
 	assert.Error(t, err)
 }

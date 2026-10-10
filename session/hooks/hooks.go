@@ -53,14 +53,17 @@ type hookMatcher struct {
 }
 
 type settingsDoc struct {
-	Hooks map[string][]hookMatcher `json:"hooks"`
+	Hooks               map[string][]hookMatcher `json:"hooks"`
+	AutoMemoryDirectory string                   `json:"autoMemoryDirectory,omitempty"`
 }
 
 // SettingsJSON returns the settings file registering HookCommand for every
-// event in HookEvents. Claude adds these hooks to the user's own.
-func SettingsJSON(eventsDir string) ([]byte, error) {
+// event in HookEvents. Claude adds these hooks to the user's own. A
+// non-empty autoMemoryDir also sets Claude's autoMemoryDirectory, which
+// outranks the user's own settings for this launch.
+func SettingsJSON(eventsDir, autoMemoryDir string) ([]byte, error) {
 	cmd := HookCommand(eventsDir)
-	doc := settingsDoc{Hooks: make(map[string][]hookMatcher, len(HookEvents))}
+	doc := settingsDoc{Hooks: make(map[string][]hookMatcher, len(HookEvents)), AutoMemoryDirectory: autoMemoryDir}
 	for _, name := range HookEvents {
 		doc.Hooks[name] = []hookMatcher{{Hooks: []hookCommand{{Type: "command", Command: cmd}}}}
 	}
@@ -74,12 +77,12 @@ func SettingsJSON(eventsDir string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Prepare empties dir and writes a fresh settings.json, events folder and
-// launch-id for a new launch, returning the launch ID. Events from an
-// earlier launch describe agents that no longer exist, so nothing is kept.
-// launch-id is written last, so a concurrent scan never sees a new ID
-// without its settings.
-func Prepare(dir string) (string, error) {
+// Prepare empties dir and writes a fresh settings.json (with
+// autoMemoryDir, when set), events folder and launch-id for a new launch,
+// returning the launch ID. Events from an earlier launch describe agents
+// that no longer exist, so nothing is kept. launch-id is written last, so
+// a concurrent scan never sees a new ID without its settings.
+func Prepare(dir, autoMemoryDir string) (string, error) {
 	if !SafePath(dir) {
 		return "", fmt.Errorf("hooks: hooks folder %q contains a single quote", dir)
 	}
@@ -89,7 +92,7 @@ func Prepare(dir string) (string, error) {
 	if err := os.MkdirAll(EventsDir(dir), 0o700); err != nil {
 		return "", fmt.Errorf("hooks: create hooks folder: %w", err)
 	}
-	settings, err := SettingsJSON(EventsDir(dir))
+	settings, err := SettingsJSON(EventsDir(dir), autoMemoryDir)
 	if err != nil {
 		return "", err
 	}

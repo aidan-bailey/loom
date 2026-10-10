@@ -120,7 +120,7 @@ func TestSubagentScanJobEndToEnd(t *testing.T) {
 	inst := activeInst(t, m, "sub-e2e")
 
 	dir := session.SubagentHooksDir(inst.ConfigDir, inst.Title)
-	_, err := hooks.Prepare(dir)
+	_, err := hooks.Prepare(dir, "")
 	require.NoError(t, err)
 	root := t.TempDir()
 	sub := filepath.Join(root, "sess", "subagents")
@@ -172,7 +172,7 @@ func TestHookScanStatusChangeMovesInstanceAndAsksRoster(t *testing.T) {
 	// prepared its folder; it adopts this one's launch ID, as a restored
 	// instance would.
 	dir := session.SubagentHooksDir(inst.ConfigDir, inst.Title)
-	_, err := hooks.Prepare(dir)
+	_, err := hooks.Prepare(dir, "")
 	require.NoError(t, err)
 	name := fmt.Sprintf("%d-1.json", time.Now().UnixNano())
 	require.NoError(t, os.WriteFile(filepath.Join(hooks.EventsDir(dir), name),
