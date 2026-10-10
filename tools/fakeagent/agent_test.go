@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +53,44 @@ func TestRun_TrustWaitsForDismissal(t *testing.T) {
 	out, _, _ := runScript(t, "claude", "trust\n\n")
 	assert.Contains(t, out, "Do you trust the files in this folder?")
 	assert.Contains(t, out, clearScreen+`trusted: ""`)
+}
+
+// lockedBuffer is a bytes.Buffer a test can read while the agent writes.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// With --trust-first the agent stops at the trust prompt before its banner
+// or its first hook, and goes on only once the prompt is answered.
+func TestRun_TrustFirstWaitsBeforeTheBanner(t *testing.T) {
+	out := &lockedBuffer{}
+	in, answer := io.Pipe()
+	a := newFakeAgent(personaFor("claude"), in, out, t.TempDir())
+	a.trustFirst = true
+	done := make(chan int)
+	go func() { done <- a.run() }()
+
+	require.Eventually(t, func() bool { return strings.Contains(out.String(), "Do you trust the files in this folder?") },
+		5*time.Second, 5*time.Millisecond)
+	assert.NotContains(t, out.String(), "commands: work N", "no banner while the prompt is unanswered")
+
+	_, err := answer.Write([]byte("\nexit\n"))
+	require.NoError(t, err)
+	assert.Equal(t, 0, <-done)
+	assert.Regexp(t, `Do you trust the files in this folder\?\n`+regexp.QuoteMeta(clearScreen)+`trusted: ""\nfakeagent: claude persona\ncommands: work N`, out.String())
 }
 
 func TestRun_WorkTicksTenTimesPerSecond(t *testing.T) {

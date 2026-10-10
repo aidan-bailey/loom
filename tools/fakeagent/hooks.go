@@ -13,9 +13,10 @@ import (
 // launchOptions are the Claude flags fakeagent honours. Every other flag
 // is ignored, as before.
 type launchOptions struct {
-	settings string // --settings: loom's hooks settings file
-	resume   string // --resume: the conversation to continue
-	agents   bool   // `claude agents …`: loom's roster query
+	settings   string // --settings: loom's hooks settings file
+	resume     string // --resume: the conversation to continue
+	agents     bool   // `claude agents …`: loom's roster query
+	trustFirst bool   // --trust-first: stop at the trust prompt before anything else
 }
 
 func parseArgs(args []string) launchOptions {
@@ -36,6 +37,8 @@ func parseArgs(args []string) launchOptions {
 				o.resume = args[i+1]
 				i++
 			}
+		case "--trust-first":
+			o.trustFirst = true
 		}
 	}
 	return o

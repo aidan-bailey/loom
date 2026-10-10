@@ -61,11 +61,33 @@ func TestUp_WritesSandboxConfigToBothConfigDirs(t *testing.T) {
 		assert.Equal(t, "fake", cfg.DefaultProgram, dir)
 		assert.Equal(t, "dev/", cfg.BranchPrefix, dir)
 		assert.False(t, cfg.RemoteControlEnabled(), dir)
-		assert.Equal(t, []string{"fake", "fake-claude", "fake-aider", "shell"}, profileList(cfg.Profiles), dir)
+		assert.Equal(t, []string{"fake", "fake-claude", "fake-aider", "fake-claude-trust", "shell"}, profileList(cfg.Profiles), dir)
 		assert.Equal(t, filepath.Join(sb.PersonaDir(), "fakeagent"), cfg.Profiles[0].Program)
 		assert.Equal(t, filepath.Join(sb.PersonaDir(), "claude"), cfg.Profiles[1].Program)
 		assert.Equal(t, filepath.Join(sb.PersonaDir(), "aider"), cfg.Profiles[2].Program)
+		assert.Equal(t, filepath.Join(sb.PersonaDir(), "claude")+" --trust-first", cfg.Profiles[3].Program)
 	}
+}
+
+func TestSeedWorkspace_GivesAWorkspaceTheToyWorkspacesConfigAndState(t *testing.T) {
+	sb := upSandbox(t, UpOptions{DefaultProfile: "fake-aider"})
+	repo := t.TempDir()
+
+	require.NoError(t, sb.SeedWorkspace(repo))
+
+	dir := filepath.Join(repo, ".loom")
+	assert.Equal(t, readConfig(t, sb.WorkspaceConfigDir()), readConfig(t, dir))
+	assert.Equal(t, "fake-aider", readConfig(t, dir).DefaultProgram)
+	seeded, err := os.ReadFile(filepath.Join(dir, config.StateFileName))
+	require.NoError(t, err)
+	assert.Contains(t, string(seeded), "help_screens_seen", "no first-run overlay stops a headless driver")
+}
+
+func TestSeedWorkspace_NeedsAnUpSandbox(t *testing.T) {
+	useTempBase(t)
+	sb, err := Open("demo")
+	require.NoError(t, err)
+	assert.Error(t, sb.SeedWorkspace(t.TempDir()))
 }
 
 func TestUp_KeepsEditedConfigUnlessFlagsGiven(t *testing.T) {

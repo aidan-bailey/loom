@@ -19,6 +19,7 @@ func TestParseArgs(t *testing.T) {
 	assert.Equal(t, launchOptions{settings: "/h/settings.json", resume: "abc"}, o)
 	assert.True(t, parseArgs([]string{"agents", "--json"}).agents)
 	assert.Equal(t, launchOptions{}, parseArgs([]string{"--settings"}), "a flag with no value is ignored")
+	assert.Equal(t, launchOptions{trustFirst: true}, parseArgs([]string{"--continue", "--trust-first"}))
 }
 
 type recordedHook struct {

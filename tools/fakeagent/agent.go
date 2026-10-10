@@ -55,6 +55,10 @@ type fakeAgent struct {
 	edits int
 	// hooks fires loom's hooks the way Claude does; nil without --settings.
 	hooks *hookEmitter
+	// trustFirst makes run show the trust prompt and wait for its answer
+	// before the banner, as an agent in a folder it has not been told to
+	// trust does on launch (--trust-first).
+	trustFirst bool
 }
 
 func newFakeAgent(p persona, in io.Reader, out io.Writer, dir string) *fakeAgent {
@@ -72,6 +76,9 @@ func runGit(dir string, args ...string) error {
 // run executes stdin commands until exit, crash, or EOF and returns the
 // process exit code.
 func (a *fakeAgent) run() int {
+	if a.trustFirst {
+		a.await(a.p.trustPrompt, "trusted")
+	}
 	a.hooks.sessionStart()
 	fmt.Fprintf(a.out, "fakeagent: %s persona\n%s\n", a.p.name, usage)
 	for {

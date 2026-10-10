@@ -85,6 +85,26 @@ func (s *Sandbox) Up(opts UpOptions) error {
 	return s.saveMeta(meta)
 }
 
+// SeedWorkspace gives the workspace repository repoDir, which a test
+// registers with `loom workspace add`, the toy workspace's config and state
+// (as Up does the toy repo): its sessions run the fake agent, and no
+// first-run overlay stops a headless driver. Without it a workspace
+// defaults to the real `claude`. The sandbox must be Up.
+func (s *Sandbox) SeedWorkspace(repoDir string) error {
+	cfg, err := os.ReadFile(filepath.Join(s.WorkspaceConfigDir(), config.ConfigFileName))
+	if err != nil {
+		return fmt.Errorf("the sandbox's workspace config: %w", err)
+	}
+	dir := config.WorkspaceConfigDir(&config.Workspace{Path: repoDir})
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := config.AtomicWriteFile(filepath.Join(dir, config.ConfigFileName), cfg, 0o644); err != nil {
+		return err
+	}
+	return seedState(dir)
+}
+
 func sandboxConfig(personaDir string, realClaude bool, defaultProfile string) (map[string]any, error) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -94,6 +114,10 @@ func sandboxConfig(personaDir string, realClaude bool, defaultProfile string) (m
 		{Name: "fake", Program: filepath.Join(personaDir, "fakeagent")},
 		{Name: "fake-claude", Program: filepath.Join(personaDir, "claude")},
 		{Name: "fake-aider", Program: filepath.Join(personaDir, "aider")},
+		// Stops at its trust prompt on every launch, as an agent in a folder
+		// it was not told to trust does: it goes on only once something
+		// answers (--trust-first).
+		{Name: "fake-claude-trust", Program: filepath.Join(personaDir, "claude") + " --trust-first"},
 		{Name: "shell", Program: shell},
 	}
 	if realClaude {

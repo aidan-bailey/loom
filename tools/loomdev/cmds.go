@@ -43,7 +43,7 @@ func (a *app) upCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&realClaude, "real-claude", false, "add a `claude` profile running the real CLI (sticky)")
-	cmd.Flags().StringVar(&profile, "default-profile", "", "default profile: fake, fake-claude, fake-aider, shell, claude (rewrites config.json)")
+	cmd.Flags().StringVar(&profile, "default-profile", "", "default profile: fake, fake-claude, fake-aider, fake-claude-trust, shell, claude (rewrites config.json)")
 	return cmd
 }
 
