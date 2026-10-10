@@ -8,8 +8,8 @@ It was forked from claude-squad at v1.0.17 and has diverged since: [`NOTICE.md`]
 | What | Where | How far to trust it |
 |---|---|---|
 | Rules for changing a package | its `CLAUDE.md`, which loads when you work in its subtree | kept with the code; the lint checks its shape |
-| Facts about a package | its `README.md` | kept with the code |
-| How the pieces fit, persistent state, logs, env vars | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | nothing verifies it |
+| Facts about a package | its `README.md` | kept with the code; the lint checks its links, paths and test names, not the prose |
+| How the pieces fit, persistent state, logs, env vars | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | the lint checks its links, paths and test names, never the prose; re-check that with [`docs/claude/auditing-claude-md-currency.md`](docs/claude/auditing-claude-md-currency.md) |
 | Procedures and traps (adding a `Core` method, releasing, triage) | [`docs/claude/INDEX.md`](docs/claude/INDEX.md) | each guide names its gates |
 | The wire protocol | [`docs/specs/protocol.md`](docs/specs/protocol.md) | generated, and byte-checked by `TestProtocolReference` |
 | The Lua API; workspaces | [`docs/specs/scripting.md`](docs/specs/scripting.md); [`docs/specs/workspaces.md`](docs/specs/workspaces.md) | maintained by hand |
