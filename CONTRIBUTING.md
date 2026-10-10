@@ -43,6 +43,7 @@ go run ./tools/loomdev up                 # create + build a sandbox named after
 go run ./tools/loomdev run                # try it interactively (the sandbox's daemon keeps running after)
 go run ./tools/loomdev start              # or headless, then: wait --text toy / keys … / shot
 go run ./tools/loomdev stop               # quit the headless TUI and stop the sandbox's daemon (--keep-daemon keeps it)
+go run ./tools/loomdev daemon             # show the sandbox's daemon; --stop / --kill it with its TUIs left open (they wait / reconnect)
 go run ./tools/loomdev down               # stop the sandbox's daemon, delete the sandbox and its tmux server
 go run ./tools/loomdev down --force       # same, SIGKILLing a lock holder that won't stop if it runs a build from the sandbox's bin dir
 ```

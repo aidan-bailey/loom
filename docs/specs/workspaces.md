@@ -191,7 +191,7 @@ Picking Global (or unchecking every workspace) from a tab set, or from a named w
 
 ### Quit
 
-`q` flushes the split ratios, persists the open list (when tabs are open, or the registry holds one) and quits. It saves no session: the daemon saves as sessions change, whether a request or the daemon itself changed them, and when it stops (`loom serve stop`: `SaveForQuit`, which saves every served workspace). There, a failed save of a workspace opened since the daemon started is logged, except a workspace whose storage is latched, which is skipped. A workspace nobody opened is saved too (its agents are crash-restarted at boot and paused by the tick), but its failure is only logged, and when its config dir is gone (a deleted or unmounted repository) it is skipped rather than recreated.
+`q` flushes the split ratios, persists the open list (when tabs are open, or the registry holds one) and quits. While the daemon is away it writes neither (only the daemon can), and logs `quit.offline_unsaved` with what was lost; the UI prefs and the focused tab changed meanwhile are otherwise kept and sent when a daemon is joined again. It saves no session: the daemon saves as sessions change, whether a request or the daemon itself changed them, and when it stops (`loom serve stop`: `SaveForQuit`, which saves every served workspace). There, a failed save of a workspace opened since the daemon started is logged, except a workspace whose storage is latched, which is skipped. A workspace nobody opened is saved too (its agents are crash-restarted at boot and paused by the tick), but its failure is only logged, and when its config dir is gone (a deleted or unmounted repository) it is skipped rather than recreated.
 
 ## The Open List
 

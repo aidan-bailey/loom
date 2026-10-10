@@ -331,6 +331,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `{` / `l` | Previous workspace tab |
 | `}` / `;` | Next workspace tab |
 | `?` | Show help screen |
+| `Ctrl+R` | While the daemon is away: join a daemon now, starting one (see [The Loom Daemon](#the-loom-daemon)). Otherwise unbound |
 | `q` | Quit |
 
 ### Overview Mode (after pressing `Tab`)
@@ -514,17 +515,54 @@ starts)…`.
 - **Quitting** (`q`) closes only this loom. Your agents keep running, and
   the daemon keeps watching them: it pauses an agent that exits, restarts
   a workspace terminal that dies, polls GitHub, and saves.
-- **Stopping the daemon**: `loom serve stop`. The daemon finishes any
-  pause or kill in progress (up to 30 seconds), saves and exits. Your
-  agents keep running in tmux. Every open loom then prints `loom: the
-  daemon stopped (see ~/.loom/logs/serve.log); your sessions keep running.
-  Run loom again.` and exits, and the next `loom` starts a new daemon,
-  which picks the sessions back up. A daemon that crashes ends the same
-  way. Don't run `loom serve stop` from inside one of loom's own panes
+- **Stopping the daemon**: `loom serve stop`. The daemon tells every open
+  loom it is stopping, finishes any pause or kill in progress (up to 30
+  seconds; the loom that asked still gets the result), saves and exits. Your
+  agents keep running in tmux. The next `loom`, or `Ctrl+R` in a loom
+  that is still open, starts a new daemon, which picks the sessions back
+  up. Don't run `loom serve stop` from inside one of loom's own panes
   unless you mean it: it stops the daemon every open loom uses.
+- **When the daemon goes away**, an open loom stays up. A banner on its top
+  row says what happened, the panes keep rendering and you can still
+  attach to them, and it joins a daemon again as soon as one answers,
+  keeping your tabs, selection and any prompt you were typing.
+  - After `loom serve stop` (or a newer loom replacing the daemon): `⚠ the
+    loom daemon stopped: waiting for one to start (ctrl+r starts it)`. The
+    loom looks for a daemon once a second and never starts one itself, so
+    a stop stays a stop: press `Ctrl+R` to start one now. Right after you
+    run the stop the banner reads `the loom daemon is stopping: finishing
+    its jobs in flight`, and `Ctrl+R` waits until that ends.
+  - After a crash (the daemon was killed, or failed): `⚠ lost the loom
+    daemon: reconnecting (attempt N)`. The loom retries with growing
+    pauses (1s up to 30s) and starts a daemon when none runs. If three
+    daemons in a row fail to start it stops trying and waits as above,
+    naming `serve.log`; `Ctrl+R` tries again.
+  - Offline, the keys that only talk to tmux or stay in loom still work:
+    moving the selection, tabs, the overview and workbench views, attach
+    (`i`, `Ctrl+A`, `Ctrl+T`, `Alt+A`, `Alt+T`), quick input to the
+    terminal (`t`), the diff overlay (`d`), scrolling, help and `q`. Every
+    key that needs the daemon (`n`, `N`, `I`, `D`, `r`, `R`, `p`, `s`,
+    `m`, `a`, `W`, `S`, and keys your scripts bound) shows `the loom
+    daemon is stopped: n needs it` and does nothing. A command already
+    waiting for an answer when the daemon went (a kill, a pause, a
+    prompt you sent) ends with `the loom daemon is unavailable`; check the
+    session once you are back. Statuses stay as last shown until a daemon
+    is back.
+  - Changes to the layout while offline (the rail, the terminal pane, the
+    view mode, the split sizes) and the tab you focus take effect at
+    once and are saved when a daemon is back.
+  - On rejoining, the banner clears and `reconnected to the loom daemon`
+    appears. A tab whose workspace was unregistered meanwhile closes, and
+    the message says so.
+  - `q` while offline quits without saving the open tabs, the split sizes
+    or the layout changes above, since only the daemon can write them
+    (`loom.log` records `quit.offline_unsaved`); the next `loom` opens
+    the tabs of the last time they were saved.
 - **Upgrading.** A newer loom replaces an older daemon with its own build
-  (`loom: replacing the loom daemon (…) with this build…`), and a loom of
-  the old build still open exits as above. An older loom refuses a newer
+  (`loom: replacing the loom daemon (…) with this build…`). A loom of the
+  old build still open waits for a daemon as above, finds the newer one
+  and exits with `loom: the loom daemon was replaced by a newer loom (…);
+  run loom again`. An older loom refuses a newer
   daemon (`the loom daemon is …, newer than this loom (…): upgrade loom,
   or run loom serve stop`). Of two builds of one release, the one of the
   later commit is newer; a build that names no commit (a plain `go build`
@@ -704,7 +742,7 @@ loom [command]
 | `version` | Print version number |
 | `debug` | Print config paths and loaded configuration, the daemon (pid, socket, build and tmux server, or "not running") and its log, and the tmux server a daemon started now would use (the last daemon's while it runs). Its Claude temp root is the one your shell's environment gives, not necessarily the daemon's |
 | `serve` | Run the loom daemon in this terminal (loom starts one in the background when none runs; see [The Loom Daemon](#the-loom-daemon)) |
-| `serve stop` | Stop the daemon: it finishes any pause or kill in progress, saves and exits. Sessions keep running; every open loom exits |
+| `serve stop` | Stop the daemon: it finishes any pause or kill in progress, saves and exits. Sessions keep running; every open loom waits for a daemon (`Ctrl+R` starts one) |
 | `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions (on the tmux server the last daemon used, while it runs) — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**. Stops before removing worktrees if the tmux cleanup fails. Refused while the daemon runs (`loom serve stop` first). |
 | `workspace` | Manage workspaces (see below) |
 | `account` | Manage extra Claude accounts (see below, and [Run Sessions on Several Claude Accounts](#run-sessions-on-several-claude-accounts)) |
