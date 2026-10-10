@@ -81,8 +81,9 @@ func subagentLive(s Status) bool {
 	return s == Running || s == Ready || s == Prompting || s == Loading
 }
 
-// launchProgram composes the command for a new tmux session: loom's
-// context flag and, when launching is true, loom's subagent hooks.
+// launchProgram composes the command for env's new tmux session: loom's
+// context flag and, when launching is true, loom's subagent hooks (and,
+// on an account, its memory dir: accountMemoryDir).
 // launching is false only for Start(false), which reattaches to a live
 // session with Restore. That Claude is still writing to its existing
 // hooks folder, and preparing a new one would wipe its history. When
@@ -90,11 +91,11 @@ func subagentLive(s Status) bool {
 // the previous launch, so a relaunch that ends up skipping hooks
 // (tracking turned off, program no longer Claude, etc.) never keeps a
 // stale row, a stale launch ID or the old hooks folder around.
-func (i *Instance) launchProgram(program string, launching bool) string {
-	program = loomContextProgram(program, i.ConfigDir, i.IsWorkspaceTerminal)
+func (i *Instance) launchProgram(env LaunchEnv, launching bool) string {
+	program := loomContextProgram(env.Program, i.ConfigDir, i.IsWorkspaceTerminal)
 	if launching {
 		i.resetHookLaunch()
-		program = i.prepareHooks(program)
+		program = i.prepareHooks(program, env.ClaudeConfigDir)
 	}
 	return program
 }
@@ -130,15 +131,16 @@ func (i *Instance) recoveryLaunch() (launch string, env []string, err error) {
 	}
 	sessionID, transcriptPath := i.ClaudeSession()
 	le.Program = BuildResumeCommand(le.Program, sessionID, transcriptPath)
-	return i.launchProgram(le.Program, true), InstanceEnv(le), nil
+	return i.launchProgram(le, true), InstanceEnv(le), nil
 }
 
 // prepareHooks readies a fresh hooks folder and returns program
-// with --settings added. On any failure it returns program unchanged, so
-// the session still launches, just untracked. It also adopts the new
-// launch ID and resets the tracker, so scan results from before this
-// launch are dropped.
-func (i *Instance) prepareHooks(program string) string {
+// with --settings added. The settings also carry the memory dir of the
+// account whose config dir is claudeConfigDir, when it needs one. On any
+// failure it returns program unchanged, so the session still launches,
+// just untracked. It also adopts the new launch ID and resets the
+// tracker, so scan results from before this launch are dropped.
+func (i *Instance) prepareHooks(program, claudeConfigDir string) string {
 	if i.ConfigDir == "" || runtime.GOOS == "windows" || !IsClaudeProgram(program) {
 		return program
 	}
@@ -151,7 +153,11 @@ func (i *Instance) prepareHooks(program string) string {
 		i.getLogger().Debug("subagent_hooks.skipped", "reason", "single quote in hooks folder path")
 		return program
 	}
-	launchID, err := hooks.Prepare(dir)
+	memoryDir, why := accountMemoryDir(claudeConfigDir, i.Path)
+	if why != "" {
+		i.getLogger().Info("claude_memory.unresolved", "reason", why)
+	}
+	launchID, err := hooks.Prepare(dir, memoryDir)
 	if err != nil {
 		i.getLogger().Warn("subagent_hooks.prepare_failed", "err", err.Error())
 		return program
