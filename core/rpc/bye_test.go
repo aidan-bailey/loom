@@ -81,6 +81,64 @@ func TestBye_WaitsForTheCallsItLetIn(t *testing.T) {
 	}
 }
 
+// TestBye_WaitsForTheRepliesOfTheCallsItLetIn: a call Bye let in has its
+// reply queued before Bye returns, so a Close right after it flushes the
+// reply rather than dropping it. The server's afterCall hook holds the call
+// between its return from the backend and its reply.
+func TestBye_WaitsForTheRepliesOfTheCallsItLetIn(t *testing.T) {
+	loop := core.StartForTest(core.NewForTest(core.Options{}))
+	t.Cleanup(loop.Stop)
+	srv := NewServer(loop)
+	entered, held := make(chan struct{}, 1), make(chan struct{})
+	srv.afterCall = func(method string) {
+		if method == "Open" {
+			entered <- struct{}{}
+			<-held
+		}
+	}
+	var once sync.Once
+	release := func() { once.Do(func() { close(held) }) }
+	t.Cleanup(srv.Close)
+	t.Cleanup(release) // before the server's Close, which waits for the call
+	c, _ := dialServer(t, srv)
+
+	opened := make(chan error, 1)
+	go func() {
+		_, err := c.Open(99)
+		opened <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call never returned from the backend")
+	}
+	byed := make(chan struct{})
+	go func() {
+		defer close(byed)
+		srv.Bye()
+	}()
+	waitStopping(t, c)
+	select {
+	case <-byed:
+		t.Fatal("Bye returned before the reply of a call it let in was queued")
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	select {
+	case <-byed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Bye never returned")
+	}
+	within(t, 10*time.Second, "Close", srv.Close)
+	select {
+	case err := <-opened:
+		require.Error(t, err, "nothing serves workspace 99")
+		assert.False(t, errors.Is(err, core.ErrUnavailable), "the model's own answer, not the closed connection: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request never returned")
+	}
+}
+
 // recordedConn is the server's end of a connection, keeping every byte the
 // server read from it: what reached the server.
 type recordedConn struct {

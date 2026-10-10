@@ -62,9 +62,13 @@ type Server struct {
 	// stopping is set by Bye: the server takes nothing new, and every
 	// connection, a later one included, has been sent the bye.
 	stopping bool
-	// calls counts the calls on their way to the backend, each counted
-	// under mu while not stopping, so Bye can wait for those it let in.
+	// calls counts the calls Bye let in until each one's reply is queued
+	// (a cast's until it returns): each is counted under mu while not
+	// stopping, so Bye can wait for them.
 	calls sync.WaitGroup
+	// afterCall, when set, runs between a call's return and its reply: a
+	// test seam, set before the server serves.
+	afterCall func(method string)
 
 	// selMu orders the selection: each connection's selected row (its
 	// SetSelected), merged for the model (setSelected).
@@ -115,9 +119,9 @@ var errStopping = &core.WireError{Code: core.CodeUnavailable, Message: "the loom
 // without reaching the backend, a cast is dropped, and a connection that
 // joins is sent the bye after its snapshot. Replies to the requests in
 // flight still follow, as their jobs land; Close ends the connections. It
-// returns once the calls already let through have returned from the
-// backend, so whatever jobs they started are in flight when the caller
-// waits for them (core.Loop.Quiesce).
+// returns once the calls already let through have had their replies queued,
+// so a Close after it flushes them, and whatever jobs they started are in
+// flight when the caller waits for them (core.Loop.Quiesce).
 func (s *Server) Bye() {
 	s.mu.Lock()
 	if !s.stopping {
@@ -330,7 +334,12 @@ func (s *Server) handle(c *serverConn, f Frame) {
 			err = &core.WireError{Code: core.CodeUnsupported, Message: fmt.Sprintf("rpc: unknown method %q", f.Method)}
 		}
 	}
-	s.calls.Done()
+	if s.afterCall != nil {
+		s.afterCall(f.Method)
+	}
+	// Done comes once the reply is queued: a Close right after Bye then
+	// flushes it. Bye waits without holding mu, so the publish can't block it.
+	defer s.calls.Done()
 	if f.ID == 0 {
 		if err != nil {
 			log.For("rpc").Warn("server.cast_failed", "method", f.Method, "err", err)

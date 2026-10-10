@@ -45,7 +45,7 @@ Every `Options.WatchInterval` it checks that the socket file is still its own (`
 
 `Serve`'s own failures (a pre-daemon holder, no place for the socket, a failed listen or record write) return to its caller and reach stderr, which a spawned daemon has none of: only the root's tmux-server and nesting refusals are logged, so `Connect` can quote nothing for the others.
 
-When `Options.Stop` closes it closes the listener and the server, waits for foreground jobs and saves (`stopModel`: `Loop.Quiesce`, bounded by `Options.QuiesceTimeout`, then `SaveForQuit`), stops the loop and removes the socket. When the model fails (`Server.Fatal()`) it exits without saving (`serve.model_gone`), since the model's state is unknown, and the next `loom` spawns a fresh daemon.
+When `Options.Stop` closes it says bye to every client (`Server.Bye`: from then on a request is refused as unavailable and a cast dropped, and it returns once the calls already let in have their replies queued), closes the listener, waits for foreground jobs while their replies still reach the connections left open, and saves (`stopModel`: `Loop.Quiesce`, bounded by `Options.QuiesceTimeout`, then `SaveForQuit`). Then it closes the server (`Server.Close`: a last publish, each connection flushed, then closed), stops the loop and removes the socket. When the model fails (`Server.Fatal()`) it exits without a bye and without saving (`serve.model_gone`), since the model's state is unknown, and the next `loom` spawns a fresh daemon.
 
 ## The root's serve.go
 
