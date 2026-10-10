@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/hooks"
+	"github.com/aidan-bailey/loom/session/subagent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -450,4 +452,32 @@ func TestLoop_HookTimer(t *testing.T) {
 		assert.Empty(t, l.JobsForTest(), "the hook timer armed by Begin dispatched no scan")
 		assert.Equal(t, 1, get(l, func(*Model) int { return l.hookArmed }), "nor re-armed")
 	})
+}
+
+// TestLoop_AnIdleHookScanWakesNoClient: the hook timer scans an idle
+// Claude four times a second, and a wake has the server build and diff
+// every view, so a scan that moved nothing wakes no client; one that
+// moved something does.
+func TestLoop_AnIdleHookScanWakesNoClient(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "idle")
+	l := startLoop(m, true, 0)
+	t.Cleanup(l.Stop)
+	l.DeliverForTest(hookScanResults{results: []hookScanResult{{instance: inst, result: explorerResult("L1", true)}}})
+	land := func(r session.HookScanResult) bool {
+		l.post(jobDone{result: gatedResult{kind: gateHookScan, result: hookScanResults{results: []hookScanResult{{instance: inst, result: r}}}}})
+		l.do(func(*Model) {}) // the step that handled it has run
+		select {
+		case <-l.Wakes():
+			return true
+		default:
+			return false
+		}
+	}
+
+	assert.False(t, land(session.HookScanResult{LaunchID: "L1"}), "an idle scan woke the client")
+	assert.True(t, land(session.HookScanResult{LaunchID: "L1",
+		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a2", AgentType: "Plan", TranscriptPath: "/p/s.jsonl"}},
+		Meta:   map[string]subagent.Meta{"a2": {AgentType: "Plan", Description: "plan it"}},
+	}), "a new subagent row woke no client")
 }

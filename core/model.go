@@ -205,6 +205,11 @@ type Model struct {
 	// can wait for the others alone (takeJobsSplit).
 	out    Out
 	bgJobs []Job
+	// noWake is set by a step that changed nothing a client sees (a hook
+	// tick, an idle hook scan's delivery): the loop then wakes no client
+	// for it, since a wake has the server build and diff every view
+	// (Sync). The loop clears it before each item of its inbox.
+	noWake bool
 }
 
 // New builds the model, serving no workspace yet: Boot loads them, before

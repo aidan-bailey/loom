@@ -158,10 +158,10 @@ func startLoopTimed(m *Model, hold bool, interval, hookEvery time.Duration) *Loo
 
 // run is the loop's goroutine: one step at a time, a call or an inbox
 // item (a job's result or panic, a tick), until Stop. Every inbox item
-// wakes the client but a hook tick that queued no event: the timer fires
-// four times a second, and a wake has the server diff every view (Sync).
-// A hook tick changes no published state (it only dispatches a scan,
-// whose result wakes the client when it lands).
+// wakes the client but one whose step changed nothing a client sees and
+// queued no event (Model.noWake: a hook tick, an idle hook scan's
+// result). The hook timer fires four times a second, and a wake has the
+// server build and diff every view (Sync).
 func (l *Loop) run() {
 	defer close(l.exited)
 	for {
@@ -171,8 +171,9 @@ func (l *Loop) run() {
 		case c := <-l.calls:
 			c.done <- l.step(func() { c.f(l.m) })
 		case msg := <-l.inbox:
+			l.m.noWake = false
 			p := l.step(func() { l.handle(msg) })
-			if _, hook := msg.(hookTickDue); !hook || p != nil || len(l.m.out.Events) > 0 {
+			if p != nil || !l.m.noWake || len(l.m.out.Events) > 0 {
 				l.signal()
 			}
 		}

@@ -215,3 +215,35 @@ func TestHookScan_ANewConversationIsSaved(t *testing.T) {
 	_, err := os.Stat(stateFile)
 	assert.True(t, errors.Is(err, os.ErrNotExist), "the same conversation: nothing saved (%v)", err)
 }
+
+// TestDeliverHookScan_NoWakeOnlyWhenNothingMoved: an idle Claude's scan,
+// every 250ms, moves nothing a client sees, so the loop wakes no client
+// for it (noWake); a scan that moved the rows, the last message, the
+// conversation or the status, or a vanished folder that dropped the rows,
+// wakes it.
+func TestDeliverHookScan_NoWakeOnlyWhenNothingMoved(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "idle")
+	deliver := func(r hookScanResult) bool {
+		r.instance = inst
+		m.noWake = false
+		m.Deliver(hookScanResults{results: []hookScanResult{r}})
+		return !m.noWake
+	}
+	scan := func(events ...hooks.Event) hookScanResult {
+		return hookScanResult{result: session.HookScanResult{LaunchID: "L1", Events: events}}
+	}
+
+	require.True(t, deliver(hookScanResult{result: explorerResult("L1", true)}), "the first scan's rows")
+	assert.False(t, deliver(scan()), "an idle scan")
+	assert.False(t, deliver(scan(hooks.Event{Name: hooks.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"})),
+		"an event that changes nothing")
+	assert.True(t, deliver(scan(hooks.Event{Name: hooks.EventSessionStart, SessionID: "11111111-1111-1111-1111-111111111111",
+		TranscriptPath: "/p/1.jsonl", Source: "startup", At: time.Now()})), "a new conversation")
+	assert.True(t, deliver(scan(hooks.Event{Name: hooks.EventStop, LastAssistantMessage: "done", HasTasks: true, At: time.Now()})),
+		"a status and a last message")
+	assert.False(t, deliver(scan()), "idle again")
+	assert.True(t, deliver(hookScanResult{err: hooks.ErrNoHooks}), "a vanished folder drops the rows")
+	assert.False(t, deliver(hookScanResult{err: hooks.ErrNoHooks}), "nothing left to drop")
+	assert.False(t, deliver(hookScanResult{err: errors.New("disk on fire")}), "a failed scan changes nothing")
+}
