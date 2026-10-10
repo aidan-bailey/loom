@@ -156,6 +156,21 @@ func TestReset_Refusals(t *testing.T) {
 	assert.DirExists(t, f.wt)
 }
 
+// A refused reset is also the Reply to its request, at once, as every
+// request's refusal is (refuse): a client waiting on the Reply learns of
+// it.
+func TestReset_ARefusalIsTheReply(t *testing.T) {
+	f := newResetFixture(t)
+
+	err := f.m.Reset(99, 4)
+
+	require.ErrorIs(t, err, ErrRefused)
+	reply := replyTo(f.m.Drain().Events, 4)
+	require.NotNil(t, reply, "the refusal is the Reply")
+	assert.ErrorIs(t, reply.Err, ErrRefused)
+	assert.Equal(t, err.Error(), reply.Err.Error())
+}
+
 // A sweep that fails stops the reset before the worktrees, which an agent
 // may still be running in: the Reply carries the error, and the model shows
 // it.

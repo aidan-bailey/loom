@@ -100,21 +100,26 @@ type resetResult struct {
 // once it lands, an opened workspace gets a fresh terminal, as the next
 // start used to give it.
 //
-// A refusal (ErrRefused) is returned, with no Reply: an unknown
-// workspace, a busy session or a reset already running (busy), and a
-// workspace whose load failed. Its storage refuses writes, since loom
-// can't read its records; the direct path clears that (`loom serve stop`,
-// then `loom reset`).
+// A refusal (ErrRefused) is returned and, as for every request, is the
+// Reply to req at once (refuse): an unknown workspace, a busy session or a
+// reset already running (busy), and a workspace whose load failed. Its
+// storage refuses writes, since loom can't read its records; the direct
+// path clears that (`loom serve stop`, then `loom reset`).
 func (m *Model) Reset(id WorkspaceID, req ReqID) error {
+	refused := func(err error) error {
+		err = refusedError{err}
+		m.refuse(req, 0, err)
+		return err
+	}
 	ws := m.wsLookup(id)
 	if ws == nil || ws.ctx == nil || ws.storage == nil {
-		return refusedError{errors.New("reset: the model serves no such workspace")}
+		return refused(errors.New("reset: the model serves no such workspace"))
 	}
 	if why := busy(ws); why != "" {
-		return refusedError{fmt.Errorf("reset %s: %s", ws.Label(), why)}
+		return refused(fmt.Errorf("reset %s: %s", ws.Label(), why))
 	}
 	if ws.loadErr != nil || ws.storage.WritesRefused() {
-		return refusedError{fmt.Errorf("reset %s: its sessions failed to load, so loom can't tell what the reset would delete: stop the daemon (`loom serve stop`), then run `loom reset`", ws.Label())}
+		return refused(fmt.Errorf("reset %s: its sessions failed to load, so loom can't tell what the reset would delete: stop the daemon (`loom serve stop`), then run `loom reset`", ws.Label()))
 	}
 	ws.insts = nil
 	ws.resetting, ws.terminalUnsettled = true, false
