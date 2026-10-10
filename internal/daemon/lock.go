@@ -158,8 +158,10 @@ var takeLockWait = time.Second
 // itself, with no daemon to ask (`loom reset` while none runs, `workspace
 // migrate`), and returns the function that lets it go. Who holds it
 // decides the answer:
-//   - a daemon, listening or still booting (liveHolder), is ErrRunning at
-//     once: the command is the daemon's to make;
+//   - a live daemon, listening or still booting (liveHolder), is
+//     ErrRunning at once: the command is the daemon's to make; a record
+//     naming a socket whose daemon has gone is not, since a probe leaves
+//     the last holder's record behind;
 //   - a live loom from before the daemon, or another live loom command
 //     holding it this way, is refused, naming it;
 //   - anyone else (a client's ReadRecord probe, which leaves the last
@@ -184,7 +186,7 @@ func TakeLock(globalDir string) (release func(), err error) {
 			return nil, err
 		case holder.IsPreDaemon() && alive(holder.PID):
 			return nil, fmt.Errorf("a loom from before the daemon is running (%s): quit it first", holder)
-		case holder.IsDaemon() || liveHolder(holder):
+		case liveHolder(holder):
 			return nil, fmt.Errorf("%w (%s)", ErrRunning, holder)
 		case time.Now().Before(deadline):
 			time.Sleep(20 * time.Millisecond)

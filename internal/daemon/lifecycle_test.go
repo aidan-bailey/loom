@@ -332,7 +332,8 @@ func TestTakeLock(t *testing.T) {
 
 	t.Run("a daemon holds it", func(t *testing.T) {
 		dir := globalDir(t)
-		l, _, err := TryAcquire(dir, Record{PID: os.Getpid(), Build: "b", Socket: "/run/x.sock"})
+		other := otherDaemon(t)
+		l, _, err := TryAcquire(dir, Record{PID: other.Process.Pid, Build: "b", Socket: "/run/x.sock"})
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = l.Close() })
 		start := time.Now()
@@ -359,6 +360,25 @@ func TestTakeLock(t *testing.T) {
 		dir := globalDir(t)
 		shortTakeLockWait(t, 2*time.Second)
 		l, _, err := TryAcquire(dir, Record{PID: deadPID(t), Build: "b"})
+		require.NoError(t, err)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			_ = l.Close()
+		}()
+
+		release, err := TakeLock(dir)
+
+		require.NoError(t, err)
+		release()
+	})
+
+	// A probe leaving a stopped daemon's record, which still names its
+	// socket, is no daemon: it is waited out too, where taking it for one
+	// would have a reset join, and so start, a daemon.
+	t.Run("a passing probe over a stopped daemon's record", func(t *testing.T) {
+		dir := globalDir(t)
+		shortTakeLockWait(t, 2*time.Second)
+		l, _, err := TryAcquire(dir, Record{PID: deadPID(t), Build: "b", Socket: "/run/x.sock"})
 		require.NoError(t, err)
 		go func() {
 			time.Sleep(100 * time.Millisecond)

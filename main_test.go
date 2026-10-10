@@ -244,6 +244,28 @@ func TestDebugCmd_NamesTheServerADaemonWouldPin(t *testing.T) {
 	assert.Equal(t, []string{sock}, *asked)
 }
 
+// liveDaemonPID is the pid of a live process that passes for a `loom
+// serve` (its arguments say serve), killed when the test ends: a lock
+// record naming it is a running daemon's.
+func liveDaemonPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", "sleep 60; true", "serve")
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	pid := cmd.Process.Pid
+	if _, err := os.Stat("/proc/self/cmdline"); err != nil {
+		return pid // no /proc: the daemon package takes any live pid for one
+	}
+	require.Eventually(t, func() bool {
+		args, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		return err == nil && slices.Contains(strings.Split(string(args), "\x00"), "serve")
+	}, 5*time.Second, 10*time.Millisecond, "its arguments say serve once it has started")
+	return pid
+}
+
 // holdLock holds the global dir's lock with rec, as a running daemon (or
 // a loom from before it) would, until the test ends.
 func holdLock(t *testing.T, rec daemon.Record) {
@@ -265,7 +287,7 @@ func TestStateWriters_RefuseWhileTheDaemonRuns(t *testing.T) {
 		stubNesting(t, nil)
 		require.NoError(t, os.WriteFile(filepath.Join(os.Getenv(config.EnvGlobalDir), config.StateFileName),
 			[]byte(`{"instances":[{"title":"t"}]}`), 0o644))
-		holdLock(t, daemon.Record{PID: 4242, Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1"})
+		holdLock(t, daemon.Record{PID: liveDaemonPID(t), Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1"})
 
 		rootCmd.SetArgs([]string{"workspace", "migrate"})
 		err := rootCmd.Execute()
@@ -375,7 +397,7 @@ func TestResetCmd_AsksTheDaemonWhileOneRuns(t *testing.T) {
 	global, ok := servedGlobal(c)
 	require.True(t, ok)
 	require.Len(t, c.Views(global), 1, "fixture: the daemon serves the session")
-	holdLock(t, daemon.Record{PID: 4242, Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1"})
+	holdLock(t, daemon.Record{PID: liveDaemonPID(t), Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1"})
 
 	out := captureStdout(t, func() {
 		rootCmd.SetArgs([]string{"reset", "--force"})
