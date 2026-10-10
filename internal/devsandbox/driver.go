@@ -165,8 +165,19 @@ func (s *Sandbox) Start(opts StartOptions) error {
 	args = append(args, shellJoin(argv),
 		";", "set-option", "-w", "-t", tmux.PaneTarget(s.Driver()), "remain-on-exit", "on")
 	_, err := s.runTmux(args...)
+	if err != nil && strings.Contains(err.Error(), serverExited) {
+		// A tmux server exits once its last session is gone, so killing the
+		// driver above (or in Stop) can leave this list reaching a server
+		// mid-exit. tmux says so only once that server is gone, having run
+		// none of the list, so the second try starts a fresh server.
+		_, err = s.runTmux(args...)
+	}
 	return err
 }
+
+// serverExited is what a tmux client prints when the server it reached
+// exits before answering. tmux's messages are not translated.
+const serverExited = "server exited unexpectedly"
 
 // Stop quits the dev loom: its TUI (StopDriver), then the sandbox's daemon
 // (StopDaemon). Loom's own agent sessions stay on the private server, so
