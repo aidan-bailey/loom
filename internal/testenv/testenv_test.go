@@ -164,6 +164,7 @@ func TestIsolateLoomDirs(t *testing.T) {
 	t.Setenv(EnvHome, "before-home")
 	t.Setenv(EnvGlobalDir, "before-global")
 	t.Setenv(EnvClaudeTmpDir, "before-claude-tmp")
+	t.Setenv(EnvClaudeConfigDir, "before-claude-config")
 	cleanup, err := IsolateLoomDirs()
 	require.NoError(t, err)
 
@@ -177,7 +178,45 @@ func TestIsolateLoomDirs(t *testing.T) {
 	assert.Equal(t, filepath.Dir(home), filepath.Dir(claudeTmp), "Claude's temp root is isolated under the same dir")
 	assert.DirExists(t, claudeTmp, "a real Claude launched by an opt-in test finds its root's parent")
 	assert.NoDirExists(t, filepath.Join(claudeTmp, fmt.Sprintf("claude-%d", os.Getuid())), "but no root: every archive operation stays a no-op")
+	claudeConfig := os.Getenv(EnvClaudeConfigDir)
+	assert.Equal(t, filepath.Dir(home), filepath.Dir(claudeConfig), "the main Claude config dir is isolated under the same dir")
+	assert.DirExists(t, claudeConfig, "an empty main config dir, as a real one would exist")
 
 	cleanup()
 	assert.NoDirExists(t, filepath.Dir(home), "cleanup removes the throwaway dir")
+}
+
+// TestIsolateLoomDirs_KeepsClaudesMainDirOffTheRealHome: once isolated, the
+// main Claude config dir's override (CLAUDE_CONFIG_DIR, which
+// account.MainDir reads before ~/.claude) is the throwaway one, never under
+// the developer's home (~/.claude, or an account dir under ~/.loom the
+// shell runs as). A test daemon that fell back to ~/.claude once linked a
+// test account into it, and a test's write into the account dir overwrote
+// the developer's settings.json through the link. account's own
+// TestMainDir_IsTheIsolatedOneInTests checks MainDir reads this variable.
+// It imports no loom package: one importing config here would make every
+// package whose tests import this one reach config.
+func TestIsolateLoomDirs_KeepsClaudesMainDirOffTheRealHome(t *testing.T) {
+	realHome, err := os.UserHomeDir()
+	require.NoError(t, err)
+	for _, name := range []string{EnvHome, EnvGlobalDir, EnvClaudeTmpDir, EnvClaudeConfigDir} {
+		t.Setenv(name, os.Getenv(name))
+	}
+	cleanup, err := IsolateLoomDirs()
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	main := os.Getenv(EnvClaudeConfigDir)
+
+	require.NotEmpty(t, main)
+	assert.Equal(t, filepath.Dir(os.Getenv(EnvHome)), filepath.Dir(main), "the throwaway dir")
+	for _, real := range []string{filepath.Join(realHome, ".claude"), filepath.Join(realHome, ".loom")} {
+		assert.False(t, within(real, main), "the main Claude config dir %s is under the real %s", main, real)
+	}
+}
+
+// within reports whether p is dir or lies beneath it.
+func within(dir, p string) bool {
+	rel, err := filepath.Rel(dir, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

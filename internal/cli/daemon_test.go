@@ -3,8 +3,10 @@ package cli
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,14 +59,16 @@ func (deadTmux) CombinedOutput(c *exec.Cmd) ([]byte, error) {
 // serveDaemon starts a testDaemon whose agent program is program (the
 // accounts' Claude commands run with it) and points Join at it until the
 // test ends. Call it once the test's disk is laid out: the model boots
-// from it. HOME and CLAUDE_CONFIG_DIR are the test's own, so a main config
-// dir the daemon can't learn from its Claude falls back to nothing real:
-// an account linked against the developer's ~/.claude would let a test's
-// write through a link land there.
+// from it. It refuses a CLAUDE_CONFIG_DIR that is unset or under the
+// developer's home (TestMain's isolation sets it, a fixture may set its
+// own), and gives the test a HOME of its own: a main config dir the daemon
+// can't learn from its Claude falls back to them, and an account linked
+// against the developer's ~/.claude lets a test's write through a link
+// land there.
 func serveDaemon(t *testing.T, program string) *testDaemon {
 	t.Helper()
+	requireIsolatedClaude(t)
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("TMUX", "")
 	t.Setenv(tmux.EnvTmuxSocket, fmt.Sprintf("loomclitest-%d", time.Now().UnixNano()))
 	reg, err := config.LoadWorkspaceRegistry()
@@ -117,4 +121,23 @@ func (d *testDaemon) workspace(t *testing.T, name string) core.WorkspaceView {
 	}
 	t.Fatalf("the daemon serves no workspace %q", name)
 	return core.WorkspaceView{}
+}
+
+// requireIsolatedClaude fails the test unless CLAUDE_CONFIG_DIR names a
+// dir outside the developer's ~/.claude and ~/.loom.
+func requireIsolatedClaude(t *testing.T) {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	require.NotEmpty(t, dir, "CLAUDE_CONFIG_DIR is isolated (testenv.IsolateLoomDirs)")
+	for _, real := range []string{filepath.Join(home, ".claude"), filepath.Join(home, ".loom")} {
+		require.False(t, within(real, dir), "CLAUDE_CONFIG_DIR %s is under the real %s", dir, real)
+	}
+}
+
+// within reports whether p is dir or lies beneath it.
+func within(dir, p string) bool {
+	rel, err := filepath.Rel(dir, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

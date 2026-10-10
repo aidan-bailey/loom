@@ -76,11 +76,15 @@ func accountsEnv(t *testing.T, unsafe bool) *accountsFixture {
 	fx := &accountsFixture{global: t.TempDir(), main: t.TempDir()}
 	t.Setenv("LOOM_GLOBAL_DIR", fx.global)
 	t.Setenv("LOOM_HOME", t.TempDir())
-	// Hermetic against whatever shell runs the test suite: a real
-	// CLAUDE_CONFIG_DIR in the environment must never leak into these
-	// tests. Tests exercising guardAgainstAccountEnv set their own value
-	// with t.Setenv, which layers cleanly over this.
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	fx.reported = fx.main
+	if unsafe {
+		fx.reported = fx.global
+	}
+	// The default account's config dir is the main one the fake Claude
+	// reports, and what account.MainDir falls back to: never the
+	// developer's. Tests exercising guardAgainstAccountEnv set their own
+	// value with t.Setenv, which layers cleanly over this.
+	t.Setenv("CLAUDE_CONFIG_DIR", fx.reported)
 	// Likewise for the credential-override vars: a developer's own
 	// ANTHROPIC_API_KEY (say, set for other tools) must not make every
 	// test here print an unexpected warning line. Tests exercising
@@ -89,10 +93,6 @@ func accountsEnv(t *testing.T, unsafe bool) *accountsFixture {
 		t.Setenv(v, "")
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(fx.main, "CLAUDE.md"), []byte("x"), 0o600))
-	fx.reported = fx.main
-	if unsafe {
-		fx.reported = fx.global
-	}
 	claude := fakeClaude(t, fx.reported)
 	fx.bin = filepath.Dir(claude)
 	origLogin, origExec, origWait := accountLogin, accountExec, accountWait
@@ -133,12 +133,38 @@ func writeNew(t *testing.T, path string) {
 	require.NoError(t, f.Close())
 }
 
-// account is the daemon's account name, as it serves it now.
+// account is the daemon's account name, as it serves it now. Its links
+// point into the fixture's main dir (linksIntoMain), which a test checks
+// before it writes into the account dir.
 func (fx *accountsFixture) account(t *testing.T, name string) (account.Account, bool) {
 	t.Helper()
 	require.NoError(t, fx.d.client.FlushForTest())
 	fx.d.client.Sync()
-	return fx.d.client.Account(name)
+	acct, ok := fx.d.client.Account(name)
+	if ok {
+		fx.linksIntoMain(t, acct)
+	}
+	return acct, ok
+}
+
+// linksIntoMain fails the test unless every link in acct's dir points into
+// the fixture's main dir: a link elsewhere (the developer's ~/.claude) is
+// one a test's write would follow.
+func (fx *accountsFixture) linksIntoMain(t *testing.T, acct account.Account) {
+	t.Helper()
+	entries, err := os.ReadDir(acct.Dir)
+	if os.IsNotExist(err) {
+		return
+	}
+	require.NoError(t, err)
+	for _, e := range entries {
+		if e.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		target, err := os.Readlink(filepath.Join(acct.Dir, e.Name()))
+		require.NoError(t, err)
+		require.True(t, within(fx.main, target), "%s links to %s, outside the fixture's main dir %s", e.Name(), target, fx.main)
+	}
 }
 
 // created registers account name on disk, linked against the main dir,
@@ -147,6 +173,7 @@ func (fx *accountsFixture) created(t *testing.T, name string) account.Account {
 	t.Helper()
 	acct, _, err := account.LoadRegistry(fx.global).Create(name, fx.main)
 	require.NoError(t, err)
+	fx.linksIntoMain(t, acct)
 	return acct
 }
 
