@@ -56,8 +56,8 @@ Not exhaustive: the package `CLAUDE.md` files name the tests that guard each rul
 - Format: `gofmt -w $(git ls-files '*.go' | grep -v '^vendor/')`, and check with `gofmt -l` on the same list. Never `gofmt -w .`: it rewrites vendored files.
 - Lint: CI pins golangci-lint v1 in `.github/workflows/lint.yml`. The dev shell's v2 rejects the repo's `.golangci.yml` and `--fast`, so run `CGO_ENABLED=0 go vet ./...` locally, say plainly that golangci-lint was skipped, and leave the config alone.
 - End to end, after changing the daemon, the join or a lifecycle: `go test -tags e2e ./e2e/...` (needs tmux; no CI job runs it).
-- Docs: `go run ./tools/claudemd -v` (structure, budgets) and `go run ./tools/claudemd -idents` (symbols it can't find).
-- CI: `.github/workflows/build.yml`, `.github/workflows/race.yml` and `.github/workflows/lint.yml` run only when Go files, `go.mod`, `go.sum` or the workflow change, so a docs-only commit runs none of them.
+- Docs: `go test ./...` fails on their structure through `TestRepo_ClaudeMDStructure`; `go run ./tools/claudemd -v` shows the budgets' headroom, and `go run ./tools/claudemd -idents` the symbols it can't find (failing only under `LOOM_CLAUDEMD_STRICT=1`).
+- CI: `.github/workflows/build.yml`, `.github/workflows/race.yml` and `.github/workflows/lint.yml` run only when Go files, `go.mod`, `go.sum` or the workflow change, so a docs-only commit runs none of them; `.github/workflows/docs.yml` runs the CLAUDE.md lint on every push and pull request to `main`.
 - Nix: `nix build .#loom` runs the tests in a sandbox with no TZ, locale or `$TMUX`, and stops at the first failing package; `tools/` and `e2e/` are excluded. Guide: [`docs/claude/nix-build-failures.md`](docs/claude/nix-build-failures.md).
 
 ## Tests

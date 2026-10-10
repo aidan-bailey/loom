@@ -70,8 +70,11 @@ golangci-lint run --timeout=3m --fast
 # Where your golangci-lint is v2, which can't read this repo's v1 config, run vet instead
 CGO_ENABLED=0 go vet ./...
 
-# The docs' structure: CLAUDE.md budgets, links, guides
+# The docs' structure: CLAUDE.md budgets, links, guides. `go test ./...` fails on it
+# (TestRepo_ClaudeMDStructure), and CI's Docs workflow runs it on every push and PR to main.
+# -v adds each file's headroom; -idents reports the symbols no source file holds.
 go run ./tools/claudemd -v
+go run ./tools/claudemd -idents
 ```
 
 ### Testing
