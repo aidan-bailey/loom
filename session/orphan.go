@@ -300,6 +300,22 @@ const (
 	maxTimestampNanos = 4_200_000_000_000_000_000 // ~2103-01-01
 )
 
+// WorktreeCreatedAt reads when a worktree was made from the `_<hex
+// UnixNano>` suffix resolveWorktreePaths gave its directory. ok is false
+// when the name carries no plausible suffix (not a generated worktree).
+func WorktreeCreatedAt(worktreePath string) (time.Time, bool) {
+	name := filepath.Base(worktreePath)
+	idx := strings.LastIndex(name, "_")
+	if idx <= 0 {
+		return time.Time{}, false
+	}
+	n, ok := parseTimestampSuffix(name[idx+1:])
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Unix(0, int64(n)).UTC(), true
+}
+
 // stripTimestampSuffix removes the trailing `_<hex-timestamp>` segment
 // that resolveWorktreePaths appends. Returns ok=false when the input has
 // no underscore, or when the trailing token is not a plausible generated
@@ -324,14 +340,21 @@ func stripTimestampSuffix(name string) (string, bool) {
 // nanosecond timestamp within the plausible window. A token too short
 // (small magnitude) or too long (overflows uint64) is rejected.
 func looksLikeTimestampSuffix(s string) bool {
+	_, ok := parseTimestampSuffix(s)
+	return ok
+}
+
+// parseTimestampSuffix is the nanosecond timestamp s encodes, when s is
+// hex and within the plausible window (looksLikeTimestampSuffix).
+func parseTimestampSuffix(s string) (uint64, bool) {
 	if !isHexString(s) {
-		return false
+		return 0, false
 	}
 	n, err := strconv.ParseUint(s, 16, 64)
 	if err != nil {
-		return false // more than 16 hex digits — not a UnixNano value
+		return 0, false // more than 16 hex digits — not a UnixNano value
 	}
-	return n >= minTimestampNanos && n <= maxTimestampNanos
+	return n, n >= minTimestampNanos && n <= maxTimestampNanos
 }
 
 func isHexString(s string) bool {
@@ -449,14 +472,22 @@ func RemoveOrphanWorktree(repoPath, worktreePath string) error {
 // IsExistingBranch is always true so a later Kill (discard) removes only the
 // worktree, never the branch. Status is left zero (Running); callers override
 // it (Recoverable for the inline placeholder, Running for recovery).
+//
+// CreatedAt is when the worktree was made (WorktreeCreatedAt), not when it
+// was discovered: the instance's ID derives from it, so every daemon and
+// every load must read the same value from the same worktree.
 func InstanceDataFromOrphan(cand OrphanCandidate, program string) InstanceData {
 	now := time.Now()
+	created, ok := WorktreeCreatedAt(cand.WorktreePath)
+	if !ok {
+		created = now
+	}
 	return InstanceData{
 		SchemaVersion: CurrentSchemaVersion,
 		Title:         cand.Title,
 		Path:          cand.RepoPath,
 		Branch:        cand.BranchName,
-		CreatedAt:     now,
+		CreatedAt:     created,
 		UpdatedAt:     now,
 		Program:       program,
 		Account:       cand.Account,

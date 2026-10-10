@@ -172,9 +172,14 @@ func TestIDs_ARecordReloadedFromDiskKeepsItsID(t *testing.T) {
 
 // A workspace whose load failed is empty; once it loads on a retry (Open),
 // its workspace and its records have the IDs a daemon whose load never
-// failed gives them.
+// failed gives them. That daemon serves another workspace first, so it
+// asks for other IDs first: a counter would number the same record
+// differently on the two.
 func TestIDs_ARetriedLoadKeepsItsInstancesIDs(t *testing.T) {
 	broken := workspaceDef(t, "flaky", `{"not":"an array"}`, "true")
+	extra := workspaceDef(t, "extra",
+		`[{"title":"e1","status":3,"program":"claude","created_at":"2026-01-02T00:00:00Z"},`+
+			`{"title":"e2","status":3,"program":"claude","created_at":"2026-01-03T00:00:00Z"}]`, "true")
 	m := bootModel(t, broken)
 	globalDir := os.Getenv(config.EnvGlobalDir)
 	m.boot()
@@ -189,13 +194,59 @@ func TestIDs_ARetriedLoadKeepsItsInstancesIDs(t *testing.T) {
 	inst := served(m, broken).byTitle("x")
 	require.NotNil(t, inst)
 
-	fresh := bootModel(t, broken) // a daemon whose load never failed
+	fresh := bootModel(t, extra, broken) // a daemon whose load never failed
 	t.Setenv(config.EnvGlobalDir, globalDir)
 	fresh.boot()
 	require.NoError(t, served(fresh, broken).loadErr)
+	for _, ws := range fresh.Loaded() { // the other workspaces' IDs come first
+		fresh.wsIDOf(ws)
+		if ws == served(fresh, broken) {
+			continue
+		}
+		for _, other := range ws.instances() {
+			fresh.idOf(other)
+		}
+	}
 	assert.Equal(t, fresh.wsIDOf(served(fresh, broken)), m.wsIDOf(served(m, broken)), "the workspace keeps its ID")
 	assert.Equal(t, wsID, m.wsIDOf(served(m, broken)))
 	assert.Equal(t, fresh.idOf(served(fresh, broken).byTitle("x")), m.idOf(inst))
+}
+
+// A Recoverable placeholder is built from an orphaned worktree on disk, so
+// every daemon discovering the same worktree names it by the same ID, and a
+// load later in the same daemon's life does too: its creation time is the
+// worktree's, not the time it was found.
+func TestIDs_AnOrphanPlaceholderHasTheSameIDOnEveryDaemon(t *testing.T) {
+	def := workspaceDef(t, "orph", `[]`, "true")
+	repo := def.Path
+	runGit(t, repo, "init", "-q")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "f"), []byte("x"), 0o644))
+	runGit(t, repo, "add", "f")
+	runGit(t, repo, "commit", "-qm", "init")
+	userDir := filepath.Join(config.WorkspaceConfigDir(&def), "worktrees", "u")
+	require.NoError(t, os.MkdirAll(userDir, 0o755))
+	wt := filepath.Join(userDir, "dirty_18be000000000002")
+	runGit(t, repo, "worktree", "add", "-b", "u/dirty", wt)
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "UNSAVED.txt"), []byte("wip"), 0o644), "a dirty worktree needs review")
+
+	placeholderID := func(m *Model) InstanceID {
+		t.Helper()
+		ws := served(m, def)
+		require.NotNil(t, ws)
+		require.NoError(t, ws.loadErr)
+		inst := ws.byTitle("dirty")
+		require.NotNil(t, inst, "the orphan surfaces as a Recoverable row")
+		require.Equal(t, session.Recoverable, inst.GetStatus())
+		return m.idOf(inst)
+	}
+	first := bootModel(t, def)
+	globalDir := os.Getenv(config.EnvGlobalDir)
+	first.boot()
+	second := bootModel(t, def)
+	t.Setenv(config.EnvGlobalDir, globalDir)
+	second.boot()
+
+	assert.Equal(t, placeholderID(first), placeholderID(second))
 }
 
 // A Recoverable placeholder is replaced by the instance adopting its

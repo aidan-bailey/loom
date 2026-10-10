@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -305,6 +307,48 @@ func TestInstanceDataFromOrphan_BuildsExistingBranchWorktree(t *testing.T) {
 	assert.True(t, data.Worktree.IsExistingBranch)
 	assert.Equal(t, "/cfg/worktrees/u/feature_abc", data.Worktree.WorktreePath)
 	assert.Equal(t, "deadbeef", data.Worktree.BaseCommitSHA)
+}
+
+// TestWorktreeCreatedAt_ReadsTheSuffixResolveWorktreePathsWrote: an orphan's
+// creation time is the one in its directory name, so it reads the same on
+// every load and every daemon (an instance ID derives from it). A name
+// without a plausible suffix has none.
+func TestWorktreeCreatedAt_ReadsTheSuffixResolveWorktreePathsWrote(t *testing.T) {
+	want := time.Date(2026, 9, 1, 12, 30, 15, 123456789, time.UTC)
+	name := "feature_" + strconv.FormatInt(want.UnixNano(), 16)
+
+	got, ok := WorktreeCreatedAt(filepath.Join("/cfg/worktrees/u", name))
+	require.True(t, ok)
+	assert.True(t, want.Equal(got), "got %s, want %s", got, want)
+	assert.Equal(t, time.UTC, got.Location())
+
+	got, ok = WorktreeCreatedAt(filepath.Join("/cfg/worktrees/u", "my_feature_"+strconv.FormatInt(want.UnixNano(), 16)))
+	require.True(t, ok, "the suffix is the last underscore segment")
+	assert.True(t, want.Equal(got))
+
+	for _, bad := range []string{"feature", "feature_abc", "issue_1234", "_18be000000000001", "feature_zzzzzzzzzzzzzzzz", "feature_ffffffffffffffffff", "feature_"} {
+		_, ok := WorktreeCreatedAt(filepath.Join("/cfg/worktrees/u", bad))
+		assert.False(t, ok, bad)
+	}
+}
+
+// TestInstanceDataFromOrphan_CreatedAtIsTheWorktrees: the placeholder's
+// record carries the worktree's creation time, not the time it was
+// discovered, so discovering it again gives the same record. A worktree
+// with no suffix falls back to now.
+func TestInstanceDataFromOrphan_CreatedAtIsTheWorktrees(t *testing.T) {
+	want := time.Date(2026, 9, 1, 12, 30, 15, 123456789, time.UTC)
+	cand := OrphanCandidate{WorktreePath: "/cfg/worktrees/u/feature_" + strconv.FormatInt(want.UnixNano(), 16), Title: "feature"}
+
+	first := InstanceDataFromOrphan(cand, "claude")
+	time.Sleep(2 * time.Millisecond)
+	second := InstanceDataFromOrphan(cand, "claude")
+	assert.True(t, want.Equal(first.CreatedAt), "got %s", first.CreatedAt)
+	assert.True(t, first.CreatedAt.Equal(second.CreatedAt))
+
+	before := time.Now()
+	bare := InstanceDataFromOrphan(OrphanCandidate{WorktreePath: "/cfg/worktrees/u/feature", Title: "feature"}, "claude")
+	assert.False(t, bare.CreatedAt.Before(before), "no suffix: the discovery time")
 }
 
 // TestDiscoverOrphans_SkipsNonDirectoryEntries makes sure stray files
