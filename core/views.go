@@ -3,21 +3,49 @@ package core
 import (
 	"reflect"
 	"slices"
+	"time"
 
 	"github.com/aidan-bailey/loom/session"
 )
 
-// idOf returns inst's ID, assigning the next one the first time.
+// idOf returns inst's ID. It names a record, not a position or a moment:
+// a hash of the holding workspace's canonical config dir, the title and
+// the creation time, so every daemon over one disk derives the same ID. The
+// first call caches it by pointer. A hash a still-held instance already
+// answers to (two records colliding) probes to the next free value; a
+// holder no workspace holds any more gives its ID up, which is how a record
+// rebuilt as a new instance (a retried load, a recovery whose title is
+// unchanged) takes back its own ID. An instance no served workspace holds
+// gets the ID its hash would give, uncached: its workspace is part of it.
 func (m *Model) idOf(inst *session.Instance) InstanceID {
 	if id, ok := m.ids[inst]; ok {
 		return id
 	}
+	ws := m.holding(inst)
+	want := idHash("instance", wsKey(ws), inst.Title, inst.CreatedAt.UTC().Format(time.RFC3339Nano))
+	if ws == nil {
+		return InstanceID(want)
+	}
 	if m.ids == nil {
 		m.ids = make(map[*session.Instance]InstanceID)
 	}
-	m.nextID++
-	m.ids[inst] = m.nextID
-	return m.nextID
+	if m.idHolders == nil {
+		m.idHolders = make(map[InstanceID]*session.Instance)
+	}
+	id := InstanceID(probe(want, func(v uint64) bool {
+		holder, ok := m.idHolders[InstanceID(v)]
+		switch {
+		case !ok || holder == inst:
+			return false
+		case m.holding(holder) != nil:
+			return true
+		}
+		delete(m.ids, holder)
+		delete(m.idHolders, InstanceID(v))
+		return false
+	}))
+	m.ids[inst], m.idHolders[id] = id, inst
+	return id
 }
 
 // lookup resolves id to its instance and the served workspace holding it,
@@ -129,9 +157,10 @@ func (m *Model) publishViews() []Event {
 		}
 	}
 	m.published = next
-	for inst := range m.ids {
+	for inst, id := range m.ids {
 		if !live[inst] {
 			delete(m.ids, inst)
+			delete(m.idHolders, id)
 		}
 	}
 	return events

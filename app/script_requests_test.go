@@ -627,9 +627,10 @@ func scriptReq(t *testing.T, m *home) core.ReqID {
 
 // TestScriptResume_ARecoveredInstanceTakesTheAdoptedView: inst:resume() on
 // a Recoverable session recovers it, and the adoption replaces the
-// placeholder with a new instance, under a new ID. The handle takes the
-// adopted instance's view, its ID included, so its next call is a request
-// for the adopted instance, not the placeholder that is gone.
+// placeholder with a new instance, the same record rebuilt and so under the
+// placeholder's ID. The handle takes the adopted instance's view, so it
+// reads the adopted status and its next call is a request that reaches the
+// adopted instance, not the placeholder that is gone.
 func TestScriptResume_ARecoveredInstanceTakesTheAdoptedView(t *testing.T) {
 	m := homeWithAppState(t)
 	m.ctx = cancelledCtx()
@@ -659,7 +660,8 @@ end)`)
 		core.RecoverResult{Placeholder: placeholder, Owner: m.ws(), OldTitle: "orphan", Recovered: adopted}))
 
 	adoptedID := idOf(m, adopted)
-	require.NotEqual(t, placeholderID, adoptedID, "fixture: the adoption is a new instance")
+	require.NotSame(t, placeholder, adopted, "fixture: the adoption is a new instance")
+	require.Equal(t, placeholderID, adoptedID, "the same record, so the same ID")
 	var resumed *scriptResumeMsg
 	for _, msg := range runCmds(t, reply) {
 		if rm, ok := msg.(scriptResumeMsg); ok {

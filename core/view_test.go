@@ -32,7 +32,7 @@ func TestView_CopiesTheInstance(t *testing.T) {
 	assert.Equal(t, v, got)
 }
 
-func TestIDs_StableNeverReusedAndForgotten(t *testing.T) {
+func TestIDs_StableAndForgotten(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
 	a, b := pausedInst(t, "a"), pausedInst(t, "b")
@@ -49,8 +49,8 @@ func TestIDs_StableNeverReusedAndForgotten(t *testing.T) {
 	_, ok := m.View(idA)
 	assert.False(t, ok)
 	ws.add(a)
-	assert.NotEqual(t, idA, m.idOf(a), "a forgotten instance gets a new ID, never an old one")
-	assert.Greater(t, m.idOf(a), idB)
+	assert.Equal(t, idA, m.idOf(a), "the same record named again has the same ID")
+	assert.Equal(t, idB, m.idOf(b))
 }
 
 func TestSync_PublishesChangedWorkspacesFirst(t *testing.T) {

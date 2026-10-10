@@ -5,7 +5,11 @@ import (
 	"slices"
 )
 
-// wsIDOf returns ws's ID, assigning the next one the first time.
+// wsIDOf returns ws's ID: a hash of its canonical config dir, so every
+// daemon over one disk derives the same one, kept (cached by pointer) while
+// the model serves the workspace. A hash a still-served workspace already
+// answers to (two workspaces colliding) probes to the next free value; a
+// holder no longer served gives its ID up.
 func (m *Model) wsIDOf(ws *Workspace) WorkspaceID {
 	if id, ok := m.wsIDs[ws]; ok {
 		return id
@@ -13,9 +17,23 @@ func (m *Model) wsIDOf(ws *Workspace) WorkspaceID {
 	if m.wsIDs == nil {
 		m.wsIDs = make(map[*Workspace]WorkspaceID)
 	}
-	m.nextWSID++
-	m.wsIDs[ws] = m.nextWSID
-	return m.nextWSID
+	if m.wsHolders == nil {
+		m.wsHolders = make(map[WorkspaceID]*Workspace)
+	}
+	id := WorkspaceID(probe(idHash("workspace", wsKey(ws)), func(v uint64) bool {
+		holder, ok := m.wsHolders[WorkspaceID(v)]
+		switch {
+		case !ok || holder == ws:
+			return false
+		case slices.Contains(m.workspaces, holder):
+			return true
+		}
+		delete(m.wsIDs, holder)
+		delete(m.wsHolders, WorkspaceID(v))
+		return false
+	}))
+	m.wsIDs[ws], m.wsHolders[id] = id, ws
+	return id
 }
 
 // wsLookup resolves id to its loaded workspace, or nil.
@@ -77,9 +95,10 @@ func (m *Model) publishWorkspaces() []Event {
 		views[i] = m.wsViewOf(ws)
 		live[ws] = true
 	}
-	for ws := range m.wsIDs {
+	for ws, id := range m.wsIDs {
 		if !live[ws] {
 			delete(m.wsIDs, ws)
+			delete(m.wsHolders, id)
 		}
 	}
 	if m.publishedWS != nil && reflect.DeepEqual(m.publishedWS, views) {

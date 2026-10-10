@@ -18,7 +18,7 @@ func workspacesEvent(events []Event) *WorkspacesChanged {
 	return nil
 }
 
-func TestWorkspaceIDs_StableAndNeverReused(t *testing.T) {
+func TestWorkspaceIDs_StableAndForgotten(t *testing.T) {
 	m := NewForTest(Options{})
 	a, b := storedWorkspace(t, "a"), storedWorkspace(t, "b")
 	m.SetWorkspacesForTest(a, b)
@@ -32,9 +32,9 @@ func TestWorkspaceIDs_StableAndNeverReused(t *testing.T) {
 	_, ok := m.Workspace(idA)
 	assert.False(t, ok, "a closed workspace has no view")
 
-	reopened := storedWorkspace(t, "a")
-	m.SetWorkspacesForTest(b, reopened)
-	assert.Greater(t, m.wsIDOf(reopened), idB, "a reopened workspace gets a new ID, never an old one")
+	m.SetWorkspacesForTest(b, a)
+	assert.Equal(t, idA, m.wsIDOf(a), "a workspace served again has the ID its config dir gives it")
+	assert.Equal(t, idB, m.wsIDOf(b))
 }
 
 func TestWorkspaceView_CopiesTheWorkspace(t *testing.T) {

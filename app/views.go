@@ -182,7 +182,7 @@ func (m *home) activeViews() []core.InstanceView {
 }
 
 // pruneLadder forgets the scraped status of every instance no open slot
-// shows any more (IDs are never reused), and of every one whose view has
+// shows any more (an ID names one record), and of every one whose view has
 // not started, is Paused or Recoverable, or has a reported status: a
 // ladder status must not resurface after a pause and resume, or once
 // Claude's report goes quiet. It keeps the entry of a Loading or Deleting
@@ -218,7 +218,8 @@ func (m *home) pruneLadder() {
 }
 
 // pruneBells forgets the bells of instances no open slot shows any more:
-// their IDs are never reused, so the entries would only accumulate. The
+// an ID names one record, so a stale entry would ring again on the same
+// record when it returned, and the entries would only accumulate. The
 // ViewsChanged applier runs it after replacing a store.
 func (m *home) pruneBells() {
 	if len(m.bells) == 0 {

@@ -9,11 +9,14 @@ import (
 	"github.com/aidan-bailey/loom/session/subagent"
 )
 
-// InstanceID names one instance for the life of the process. The model
-// assigns it the first time it reports the instance (idOf) and never reuses
-// it, so a request naming an ID can't reach another instance: a same-titled
-// one in another workspace, or one created under the title of an instance
-// killed meanwhile. 0 is never assigned; the TUI uses it for a draft row.
+// InstanceID names one record: a hash of its workspace's canonical config
+// dir, its title and its creation time (idOf), so every daemon over one
+// disk gives it the same ID and a client that rejoins another daemon keeps
+// naming the same sessions. A request naming an ID can't reach another
+// instance: a same-titled one in another workspace differs by config dir,
+// and one created under the title of an instance killed meanwhile by
+// creation time (a collision between two live records probes to the next
+// free value). 0 is never assigned; the TUI uses it for a draft row.
 type InstanceID uint64
 
 // InstanceView is an instance as a client sees it: a value copied out of the

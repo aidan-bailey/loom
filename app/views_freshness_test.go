@@ -60,8 +60,8 @@ func TestViewsChanged_RefreshesTheSelectionsCopies(t *testing.T) {
 	assert.NotContains(t, menu, "stash")
 }
 
-// TestViewsChanged_PrunesBellsOfGoneInstances: bells are keyed by IDs the
-// model never reuses, so the bell of an instance no slot shows any more is
+// TestViewsChanged_PrunesBellsOfGoneInstances: bells are keyed by IDs that
+// name one record, so the bell of an instance no slot shows any more is
 // dropped when the views change; a shown instance keeps its bell.
 func TestViewsChanged_PrunesBellsOfGoneInstances(t *testing.T) {
 	m := homeWithAppState(t)

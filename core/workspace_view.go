@@ -2,10 +2,11 @@ package core
 
 import "github.com/aidan-bailey/loom/config"
 
-// WorkspaceID names a workspace the model serves. The model assigns it the
-// first time it reports the workspace and never reuses it; a workspace
-// keeps its ID while the model serves it, which is until the model stops
-// (a tab closed and reopened shows the same workspace). 0 means none.
+// WorkspaceID names a workspace the model serves: a hash of its canonical
+// config dir (wsIDOf), so every daemon over one disk gives it the same ID. A
+// workspace keeps its ID while the model serves it, which is until the model
+// stops (a tab closed and reopened shows the same workspace); a collision
+// between two served workspaces probes to the next free value. 0 means none.
 type WorkspaceID uint64
 
 // WorkspaceView is a served workspace as its clients see it: a value the

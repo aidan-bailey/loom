@@ -160,18 +160,18 @@ type Model struct {
 	// made while another refresh is in flight is not lost.
 	refreshDefaultAuth bool
 
-	// ids is each reported instance's ID (idOf). An instance no loaded
-	// workspace holds is forgotten at the next publish; IDs are never reused
-	// (nextID only grows).
-	ids    map[*session.Instance]InstanceID
-	nextID InstanceID
+	// ids is each reported instance's ID (idOf), and idHolders the instance
+	// each ID is cached for. An instance no loaded workspace holds is
+	// forgotten at the next publish, or earlier when another asks for its ID.
+	ids       map[*session.Instance]InstanceID
+	idHolders map[InstanceID]*session.Instance
 	// published is each loaded workspace's views as last published (Sync).
 	published map[*Workspace][]InstanceView
-	// wsIDs is each reported workspace's ID (wsIDOf). A workspace no
-	// longer loaded loses its entry at the next publish, and its ID is
-	// never reused (nextWSID only grows).
-	wsIDs    map[*Workspace]WorkspaceID
-	nextWSID WorkspaceID
+	// wsIDs is each reported workspace's ID (wsIDOf), and wsHolders the
+	// workspace each ID is cached for. A workspace no longer loaded loses
+	// its entry at the next publish, or earlier when another asks for its ID.
+	wsIDs     map[*Workspace]WorkspaceID
+	wsHolders map[WorkspaceID]*Workspace
 	// publishedWS is every served workspace's view as last published
 	// (Sync), in Loaded order.
 	publishedWS []WorkspaceView

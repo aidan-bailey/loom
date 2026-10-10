@@ -139,7 +139,8 @@ func TestResume_ShowsTheSpinnerAndRepliesOnlyWhenItFinishes(t *testing.T) {
 }
 
 // TestRecover_RepliesWithTheAdoptedInstance: a Recover's Reply names the
-// instance that replaced the placeholder, not the placeholder.
+// instance that replaced the placeholder. It is the placeholder's record
+// rebuilt, so it answers to the placeholder's ID.
 func TestRecover_RepliesWithTheAdoptedInstance(t *testing.T) {
 	m := NewForTest(Options{})
 	ws := storedWorkspace(t, "a")
@@ -165,7 +166,7 @@ func TestRecover_RepliesWithTheAdoptedInstance(t *testing.T) {
 	}
 	require.Len(t, rec, 1)
 	assert.Equal(t, ReqID(4), rec[0].Req, "Recovered names the request, for the client that made it")
-	assert.NotEqual(t, pid, rs[0].ID)
+	assert.Equal(t, pid, rs[0].ID, "the same record, so the same ID")
 	assert.Same(t, adopted, ws.instances()[0], "the adoption was applied before the reply")
 }
 
