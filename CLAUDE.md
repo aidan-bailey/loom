@@ -8,8 +8,8 @@ It was forked from claude-squad at v1.0.17 and has diverged since: [`NOTICE.md`]
 | What | Where | How far to trust it |
 |---|---|---|
 | Rules for changing a package | its `CLAUDE.md`, which loads when you work in its subtree | kept with the code; the lint checks its shape |
-| Facts about a package | its `README.md` | kept with the code |
-| How the pieces fit, persistent state, logs, env vars | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | nothing verifies it |
+| Facts about a package | its `README.md` | kept with the code; the lint checks its links, paths and test names, not the prose |
+| How the pieces fit, persistent state, logs, env vars | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | the lint checks its links, paths and test names, never the prose; re-check that with [`docs/claude/auditing-claude-md-currency.md`](docs/claude/auditing-claude-md-currency.md) |
 | Procedures and traps (adding a `Core` method, releasing, triage) | [`docs/claude/INDEX.md`](docs/claude/INDEX.md) | each guide names its gates |
 | The wire protocol | [`docs/specs/protocol.md`](docs/specs/protocol.md) | generated, and byte-checked by `TestProtocolReference` |
 | The Lua API; workspaces | [`docs/specs/scripting.md`](docs/specs/scripting.md); [`docs/specs/workspaces.md`](docs/specs/workspaces.md) | maintained by hand |
@@ -54,7 +54,7 @@ Not exhaustive: the package `CLAUDE.md` files name the tests that guard each rul
 - `CGO_ENABLED=0 go test ./...`. Builds run with CGO off, and a plain `go test` fails with `cgo: C compiler "gcc" not found` where only clang is installed. The Go version is `go.mod`'s `go` directive; there is no `toolchain` line.
 - Race: `CC=clang CGO_ENABLED=1 go test -race ./...` (drop `CC=clang` where gcc exists). CI runs it.
 - Format: `gofmt -w $(git ls-files '*.go' | grep -v '^vendor/')`, and check with `gofmt -l` on the same list. Never `gofmt -w .`: it rewrites vendored files.
-- Lint: CI pins golangci-lint v1 in `.github/workflows/lint.yml`. The dev shell's v2 rejects the repo's `.golangci.yml` and `--fast`, so run `CGO_ENABLED=0 go vet ./...` locally, say plainly that golangci-lint was skipped, and leave the config alone.
+- Lint: CI pins golangci-lint v1 in `.github/workflows/lint.yml`. The dev shell's v2 rejects the repo's `.golangci.yml` and `--fast`, so run `CGO_ENABLED=0 go vet ./...` locally, say plainly that golangci-lint was skipped, and leave the config alone; or run the pinned release binary from GitHub with `--new-from-rev=origin/main`. CI checks only the lines a push changes, so a gofmt realignment of an aligned block of one-line methods brings its undocumented neighbours into revive's scope: keep the block's widest line, or document what moves.
 - End to end, after changing the daemon, the join or a lifecycle: `go test -tags e2e ./e2e/...` (needs tmux; no CI job runs it).
 - Docs: `go test ./...` fails on their structure through `TestRepo_ClaudeMDStructure`; `go run ./tools/claudemd -v` shows the budgets' headroom, and `go run ./tools/claudemd -idents` the symbols it can't find (failing only under `LOOM_CLAUDEMD_STRICT=1`).
 - CI: `.github/workflows/build.yml`, `.github/workflows/race.yml` and `.github/workflows/lint.yml` run only when Go files, `go.mod`, `go.sum` or the workflow change, so a docs-only commit runs none of them; `.github/workflows/docs.yml` runs the CLAUDE.md lint on every push and pull request to `main`.

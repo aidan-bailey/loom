@@ -18,7 +18,7 @@ var base = time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 func prepared(t *testing.T) (dir, launchID string) {
 	t.Helper()
 	dir = filepath.Join(t.TempDir(), "hooks", "loom_x")
-	id, err := Prepare(dir)
+	id, err := Prepare(dir, "")
 	require.NoError(t, err)
 	return dir, id
 }

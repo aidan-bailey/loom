@@ -17,6 +17,8 @@ A sandboxed loom spawns the sandbox's own daemon (its own global dir), which out
 
 A headless loom in a tmux session (`DriverSession`, no loom prefix) on the sandbox's private socket: `Start` (`StartOptions`: pane size, command, restart), `SendKeys`/`SendText`, `Screen`, `WaitFor` (whose timeout error carries the screen) and `Stop`.
 
+`Start` keeps a running driver and replaces a dead one, which `remain-on-exit` keeps for diagnosis. The private server exits with its last session, so the `new-session` after killing the old driver (or after `Stop`, for `Restart`) can reach that server while it exits; tmux then answers "server exited unexpectedly" having run nothing, and `Start` tries once more, which starts a fresh server.
+
 For the e2e suite: `WithDriver` (a second driver session on the same daemon), `BuildLoom`, `Cmd` and `Text` (the pane with wrapped lines joined).
 
 ## What it does not isolate

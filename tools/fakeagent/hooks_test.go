@@ -81,7 +81,7 @@ func TestHookEmitter_ThroughLoomsHooks(t *testing.T) {
 	}
 	t.Setenv("TMPDIR", t.TempDir()) // transcripts go under os.TempDir()
 	dir := filepath.Join(t.TempDir(), "hooks", "loom_x")
-	_, err := hooks.Prepare(dir)
+	_, err := hooks.Prepare(dir, "")
 	require.NoError(t, err)
 	e, err := newHookEmitter(launchOptions{settings: hooks.SettingsPath(dir)}, "/w")
 	require.NoError(t, err)
@@ -102,7 +102,7 @@ func TestHookEmitter_ThroughLoomsHooks(t *testing.T) {
 func TestHookEmitter_ResumeKeepsTheID(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	dir := filepath.Join(t.TempDir(), "hooks", "loom_x")
-	_, err := hooks.Prepare(dir)
+	_, err := hooks.Prepare(dir, "")
 	require.NoError(t, err)
 	const id = "8c634184-0fe5-4b62-b437-8f364eeeefcc"
 

@@ -67,7 +67,7 @@ func TestRemoveSubagentHooks_LeavesSlashSiblingAlone(t *testing.T) {
 func TestLaunchProgram_AddsHooksWhenLaunching(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 
-	got := inst.launchProgram("claude", true)
+	got := inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 
 	assert.Contains(t, got, settingsFlag(inst))
 	assert.Equal(t, "claude", inst.Program(), "program is never rewritten")
@@ -80,12 +80,12 @@ func TestLaunchProgram_AddsHooksWhenLaunching(t *testing.T) {
 
 func TestLaunchProgram_ReattachLeavesFolderAlone(t *testing.T) {
 	inst := hooksInstance(t, "claude")
-	inst.launchProgram("claude", true)
+	inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 	launchID := inst.hookLaunchID
 	kept := filepath.Join(hooks.EventsDir(SubagentHooksDir(inst.ConfigDir, inst.Title)), "1-1.ev")
 	require.NoError(t, os.WriteFile(kept, []byte("{}"), 0o600))
 
-	got := inst.launchProgram("claude", false)
+	got := inst.launchProgram(LaunchEnv{Program: "claude"}, false)
 
 	assert.NotContains(t, got, "--settings")
 	assert.FileExists(t, kept)
@@ -109,7 +109,7 @@ func TestLaunchProgram_SkipsHooks(t *testing.T) {
 				inst.ConfigDir = ""
 			}
 
-			got := inst.launchProgram(tc.program, true)
+			got := inst.launchProgram(LaunchEnv{Program: tc.program}, true)
 
 			assert.Equal(t, strings.Count(tc.program, "--settings"), strings.Count(got, "--settings"))
 			if inst.ConfigDir != "" {
@@ -122,7 +122,7 @@ func TestLaunchProgram_SkipsHooks(t *testing.T) {
 
 func TestLaunchProgram_UntrackedRelaunchClearsState(t *testing.T) {
 	inst := hooksInstance(t, "claude")
-	inst.launchProgram("claude", true)
+	inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 	oldLaunchID := inst.hookLaunchID
 	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: oldLaunchID, Replayed: true,
 		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
@@ -143,14 +143,14 @@ func TestLaunchProgram_UntrackedRelaunchClearsState(t *testing.T) {
 
 func TestLaunchProgram_RelaunchResetsWarmTracker(t *testing.T) {
 	inst := hooksInstance(t, "claude")
-	inst.launchProgram("claude", true)
+	inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 	firstID := inst.hookLaunchID
 	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: firstID, Replayed: true,
 		Events: []hooks.Event{{Name: hooks.EventSubagentStart, AgentID: "a1", TranscriptPath: "/p/s.jsonl"}},
 		Meta:   map[string]subagent.Meta{"a1": {AgentType: "Explore"}}}))
 	require.Len(t, inst.Subagents(), 1)
 
-	inst.launchProgram("claude", true)
+	inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 
 	assert.Empty(t, inst.Subagents())
 	assert.False(t, inst.subagentWarm)
@@ -201,7 +201,7 @@ func scanAndApply(t *testing.T, inst *Instance) bool {
 
 func TestSubagents_EndToEndAndRestart(t *testing.T) {
 	inst := hooksInstance(t, "claude")
-	inst.launchProgram("claude", true)
+	inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 	transcript := fakeTranscript(t, "amate-1", `{"agentType":"mate","name":"mate","description":"implement","taskKind":"in_process_teammate"}`)
 	t0 := time.Now().Add(-time.Minute)
 	writeHookEvent(t, inst, "1", fmt.Sprintf(`{"hook_event_name":"SubagentStart","agent_id":"amate-1","agent_type":"mate","transcript_path":%q}`, transcript), t0)
@@ -227,7 +227,7 @@ func TestSubagents_EndToEndAndRestart(t *testing.T) {
 
 func TestApplyHookScan_Gates(t *testing.T) {
 	inst := hooksInstance(t, "claude")
-	inst.launchProgram("claude", true)
+	inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 	start := hooks.Event{Name: hooks.EventSubagentStart, AgentID: "a1", AgentType: "Explore", TranscriptPath: "/p/s.jsonl"}
 	meta := map[string]subagent.Meta{"a1": {AgentType: "Explore", Description: "d"}}
 
@@ -247,7 +247,7 @@ func TestApplyHookScan_Gates(t *testing.T) {
 // another loom process's sweep) must not keep its last rows forever.
 func TestForgetSubagentsWithoutHooks(t *testing.T) {
 	inst := hooksInstance(t, "claude")
-	inst.launchProgram("claude", true)
+	inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 	transcript := fakeTranscript(t, "a1", `{"agentType":"Explore","description":"map code"}`)
 	writeHookEvent(t, inst, "1", fmt.Sprintf(`{"hook_event_name":"SubagentStart","agent_id":"a1","agent_type":"Explore","transcript_path":%q}`, transcript),
 		time.Now().Add(-time.Second))
@@ -333,7 +333,7 @@ func TestKill_RemovesHooksFolder(t *testing.T) {
 	inst := newTestStartedInstance(t)
 	inst.SetProgram("claude")
 	inst.ConfigDir = t.TempDir()
-	inst.launchProgram("claude", true)
+	inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 	dir := SubagentHooksDir(inst.ConfigDir, inst.Title)
 	require.DirExists(t, dir)
 
@@ -384,7 +384,7 @@ func TestLaunchProgram_HooksInstalledWithTrackingOff(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 	withTracking(t, inst.ConfigDir, false)
 
-	got := inst.launchProgram("claude", true)
+	got := inst.launchProgram(LaunchEnv{Program: "claude"}, true)
 
 	assert.Contains(t, got, settingsFlag(inst), "hooks carry status and the session ID, not only subagent rows")
 }

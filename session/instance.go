@@ -452,7 +452,7 @@ func (i *Instance) Restart() error {
 		if closeErr := old.Close(); closeErr != nil {
 			i.getLogger().Debug("instance.restart.close_old_failed", "err", closeErr.Error())
 		}
-		i.setTmuxSession(old.WithProgramEnv(i.launchProgram(env.Program, true), InstanceEnv(env)))
+		i.setTmuxSession(old.WithProgramEnv(i.launchProgram(env, true), InstanceEnv(env)))
 	}
 	return i.Start(true)
 }
@@ -877,7 +877,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		// already runs), and that Claude keeps writing to its existing
 		// hooks folder.
 		// InstanceEnv still keys off the bare program.
-		launchProgram := i.launchProgram(env.Program, firstTimeSetup)
+		launchProgram := i.launchProgram(env, firstTimeSetup)
 		ts = tmux.NewSession(i.Title, launchProgram, InstanceEnv(env)...)
 	}
 	i.setTmuxSession(ts)

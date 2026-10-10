@@ -1,9 +1,12 @@
 package devsandbox
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -95,6 +98,65 @@ func TestDriver_DeadPaneKeptForDiagnosis(t *testing.T) {
 
 	require.NoError(t, sb.Start(StartOptions{Command: []string{"sh", "-c", "echo fresh; exec cat"}}))
 	require.NoError(t, sb.WaitFor("fresh", 5*time.Second), "Start replaces a dead driver")
+}
+
+// TestDriver_StartRetriesAServerExitingUnderIt pins Start against a private
+// server that exits as Start reaches it. A tmux server exits once its last
+// session is gone, so replacing a dead driver (or Restart, after Stop) can
+// hand Start's new-session a server mid-exit, and tmux answers "server
+// exited unexpectedly" having run none of the list. The fake server does to
+// the client carrying new-session what an exiting one does: it stops
+// listening, then drops the connection.
+func TestDriver_StartRetriesAServerExitingUnderIt(t *testing.T) {
+	requireTmux(t)
+	dir, err := os.MkdirTemp("", "ldv") // short: sun_path caps a socket path at 108 bytes
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	t.Setenv("TMUX", "")
+	sb := driverSandbox(t)
+
+	sockDir := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()))
+	require.NoError(t, os.Mkdir(sockDir, 0o700))
+	ln, err := net.Listen("unix", filepath.Join(sockDir, sb.Socket()))
+	require.NoError(t, err)
+	dropped := make(chan struct{})
+	go func() {
+		defer ln.Close()
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// A command client sends its identity and argv at once, then
+			// waits for the server.
+			_ = conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+			var got []byte
+			buf := make([]byte, 4096)
+			for !bytes.Contains(got, []byte("new-session")) {
+				n, err := conn.Read(buf)
+				got = append(got, buf[:n]...)
+				if err != nil {
+					break
+				}
+			}
+			if bytes.Contains(got, []byte("new-session")) {
+				_ = ln.Close()
+				_ = conn.Close()
+				close(dropped)
+				return
+			}
+			_ = conn.Close() // a probe: Start reads its failure as no driver
+		}
+	}()
+
+	require.NoError(t, sb.Start(StartOptions{Command: []string{"sh", "-c", "echo fresh; exec cat"}}))
+	select {
+	case <-dropped:
+	default:
+		t.Fatal("Start never reached the exiting server; the test proves nothing")
+	}
+	require.NoError(t, sb.WaitFor("fresh", 5*time.Second))
 }
 
 func TestDriver_StopUsesQuitKeyFirst(t *testing.T) {

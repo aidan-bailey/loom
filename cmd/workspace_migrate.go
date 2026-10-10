@@ -243,7 +243,7 @@ func backupStateIfRequested(dir string, backup bool) error {
 	return nil
 }
 
-// StateWriteGuard, when set, runs before a command that writes a
+// StateWriteGuard is run, when set, before a command that writes a
 // workspace's state.json itself (workspace migrate), and its error refuses
 // the command. main sets it to refuse while the loom daemon serves the
 // global dir, which would overwrite what the command wrote; cmd cannot ask
