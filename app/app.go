@@ -344,6 +344,12 @@ type home struct {
 	// (openTab) or the user deselects it (applyWorkspaceToggle);
 	// global mode (enterGlobalMode, stayInGlobalMode) closes them all.
 	failedOpen []string
+	// servedNames are the names the daemon published its workspaces under
+	// last (WorkspacesChanged), by ID: a workspace renamed while the TUI
+	// runs keeps its ID, so the next WorkspacesChanged tells the TUI which
+	// name to follow (renameShown). A rejoin forgets them: another daemon
+	// numbers its workspaces anew.
+	servedNames map[core.WorkspaceID]string
 	// tabBar renders workspace tabs at the top of the TUI
 	tabBar *ui.WorkspaceTabBar
 	// lastWidth and lastHeight cache the terminal size for sizing new slots

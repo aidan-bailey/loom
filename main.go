@@ -10,6 +10,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/internal/cli"
 	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
@@ -174,7 +175,8 @@ var (
 			"worktrees INCLUDING their branches — unpushed commits on those branches are\n" +
 			"lost. Without --workspace it resets the global workspace. Sessions of other\n" +
 			"workspaces are left running. If the tmux cleanup fails, reset stops before\n" +
-			"removing any worktree. This cannot be undone; it requires --force.",
+			"removing any worktree. While the loom daemon runs, the reset is its to make,\n" +
+			"and reset waits for it. This cannot be undone; it requires --force.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Reset sweeps the tmux server a daemon started now would
 			// pin (daemon.TmuxServer: the last daemon's while it runs),
@@ -194,14 +196,21 @@ var (
 			if err := nestingCheck(server); err != nil {
 				return err
 			}
-			// Reset writes state.json itself, which the daemon would
-			// overwrite, until reset is the daemon's client (stage 3C).
-			if err := refuseWhileServed(); err != nil {
-				return err
-			}
 			if !resetForceFlag {
 				return fmt.Errorf("loom reset deletes the workspace's instances, kills its tmux sessions (only those started in its repo or worktrees directory), and removes its worktrees AND their branches (unpushed commits are lost); re-run with --force to proceed")
 			}
+			// While a daemon serves the global dir the reset is its to
+			// make: it writes state.json, and would overwrite the records
+			// a reset of its own deleted. With none, reset works directly,
+			// holding the lock, so no daemon starts meanwhile.
+			release, err := daemon.TakeLock(globalDir)
+			if errors.Is(err, daemon.ErrRunning) {
+				return cli.Reset(cmd, os.Stdout, resetWorkspaceFlag)
+			}
+			if err != nil {
+				return err
+			}
+			defer release()
 			tmux.UseServer(server)
 			// Resolve target workspace explicitly — per
 			// docs/specs/workspaces.md §3, empty-string fallbacks are
@@ -405,9 +414,13 @@ func init() {
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resetCmd)
-	rootCmd.AddCommand(cmd2.WorkspaceCmd)
-	cmd2.StateWriteGuard = refuseWhileServed
-	rootCmd.AddCommand(cmd2.AccountCmd)
+	// The workspace and account commands are the daemon's clients (Join);
+	// migrate writes state.json itself, holding the lock.
+	cli.Join = joinCLI
+	cli.WorkspaceCmd.AddCommand(cmd2.MigrateCmd)
+	cmd2.StateWriteGuard = holdForStateWrite
+	rootCmd.AddCommand(cli.WorkspaceCmd)
+	rootCmd.AddCommand(cli.AccountCmd)
 }
 
 func main() {

@@ -20,7 +20,7 @@ Extra Claude accounts, so sessions can be spread across several subscriptions. A
 
 ## Who uses it
 
-- `loom account` (`cmd/account.go`) is the CLI over it; the model (`core/accounts.go`, `core/usage.go`) holds the registry, auth, sync and usage, reloads `accounts.json` when its stat moves and before every user action that reads it, re-syncs existing accounts in the background (`accountsRefreshJob`, which applies `ValidateMainDir` through `syncMainDir` and logs a refusal once), and publishes it all to the TUI (`app/accounts.go`).
+- `loom account` (`internal/cli/account.go`) is the CLI over it, a client of the daemon; the model (`core/accounts.go`, `core/usage.go`) holds the registry, auth, sync and usage, reloads `accounts.json` when its stat moves and before every user action that reads it, re-syncs existing accounts in the background (`accountsRefreshJob`, which applies `ValidateMainDir` through `syncMainDir` and logs a refusal once), and publishes it all to the TUI (`app/accounts.go`).
 - Every real launch resolves an instance's account name to its dir and fails closed; that resolution lives in `session`.
 - Usage is display-only: a failed probe keeps the last sample, shown dimmed with its age, because nothing acts on it.
 - `remove --force` on an account a live session still uses can lose a race with that session's own Claude process, which can recreate a bare, unlinked dir right after the delete; a later `add` of the same name then fails ("already exists") until the leftover dir is cleared by hand.

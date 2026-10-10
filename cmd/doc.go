@@ -1,17 +1,15 @@
-// Package cmd holds the `loom workspace` and `loom account` Cobra
-// subcommands and the subprocess seam the rest of Loom shells out through.
+// Package cmd holds `loom workspace migrate` and the subprocess seam the
+// rest of Loom shells out through.
 //
-// Most of the package is the workspace CLI. [WorkspaceCmd], which main.go
-// adds to the root command, groups add, list, remove, use, rename and
-// status (workspace.go), which read and write the global workspace
-// registry, and migrate (workspace_migrate.go), which moves instances from
-// the global state.json into the config dirs of their matching workspaces.
-// migrate decodes records into its own typed mirror of
-// session.InstanceData; workspace_migrate_shape_test.go guards that mirror
-// against schema drift.
-//
-// [AccountCmd] (account.go) groups add, login, list, use, sync and remove
-// over the Claude account registry in the account package.
+// [MigrateCmd] (workspace_migrate.go), which main.go attaches under the
+// workspace command (internal/cli), moves instances from the global
+// state.json into the config dirs of their matching workspaces. It writes
+// state.json directly, holding the global dir's lock ([StateWriteGuard]),
+// rather than asking the daemon as the other workspace and account
+// subcommands do: those live in internal/cli, since core imports this
+// package and cannot be imported back. migrate decodes records into its own
+// typed mirror of session.InstanceData; workspace_migrate_shape_test.go
+// guards that mirror against schema drift.
 //
 // The subprocess seam is [Executor], re-exported from internal/exec so
 // callers that shell out (git operations, tmux calls, the claude command

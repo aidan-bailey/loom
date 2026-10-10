@@ -149,6 +149,31 @@ func acquire(globalDir string, rec Record, wait time.Duration) (*Lock, Record, e
 	}
 }
 
+// TakeLock takes globalDir's lock for a command that changes its state
+// itself, with no daemon to ask (`loom reset` while none runs, `workspace
+// migrate`), and returns the function that lets it go. It never waits:
+// while any process holds the lock it is ErrRunning (a daemon, running or
+// starting), or an error naming a loom from before the daemon. Its record
+// names this process with no socket, as a daemon still booting does, so a
+// daemon started meanwhile stands down and a client waits, and it keeps
+// the tmux server the last daemon named, which the next one keeps
+// (TmuxServer).
+func TakeLock(globalDir string) (release func(), err error) {
+	last, _ := readRecordOK(recordPath(globalDir))
+	rec := self("")
+	rec.Tmux = last.Tmux
+	l, holder, err := TryAcquire(globalDir, rec)
+	switch {
+	case errors.Is(err, ErrHeld) && holder.IsPreDaemon():
+		return nil, fmt.Errorf("a loom from before the daemon is running (%s): quit it first", holder)
+	case errors.Is(err, ErrHeld):
+		return nil, fmt.Errorf("%w (%s)", ErrRunning, holder)
+	case err != nil:
+		return nil, err
+	}
+	return func() { _ = l.Close() }, nil
+}
+
 // liveHolder reports whether rec names a live holder of the lock: a loom
 // TUI from before the daemon, or a `loom serve`.
 func liveHolder(rec Record) bool {

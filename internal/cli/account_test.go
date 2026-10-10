@@ -1,4 +1,4 @@
-package cmd
+package cli
 
 import (
 	"bytes"
@@ -12,21 +12,20 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/account"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// scriptedAccountExec answers `auth status` and the usage probe.
-type scriptedAccountExec struct{ auth, usage string }
+// scriptedAccountExec answers `auth status`, which the login's report runs
+// in this process.
+type scriptedAccountExec struct{ auth string }
 
 func (s *scriptedAccountExec) out(c *exec.Cmd) ([]byte, error) {
-	switch {
-	case slices.Contains(c.Args, "status"):
+	if slices.Contains(c.Args, "status") {
 		return []byte(s.auth), nil
-	case slices.Contains(c.Args, "-p"):
-		return []byte(s.usage), nil
 	}
 	return nil, errors.New("unexpected: " + strings.Join(c.Args, " "))
 }
@@ -37,17 +36,50 @@ func (s *scriptedAccountExec) CombinedOutput(c *exec.Cmd) ([]byte, error) { retu
 const cliAuthJSON = `{"loggedIn":true,"authMethod":"claude.ai","email":"you@example.com","subscriptionType":"max","configDirectory":"/main"}`
 const cliUsageJSON = `{"type":"control_response","response":{"subtype":"success","request_id":"loom-usage","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":12},"seven_day":{"utilization":31}}}}}`
 
-// isolateAccounts points the account commands at throwaway dirs and a fake
-// CLI. Returns the global dir.
-func isolateAccounts(t *testing.T) string {
+// accountsFixture is a test's global dir, the main Claude config dir its
+// accounts link to, the one its fake Claude reports (main, or an unsafe
+// one), the fake Claude's dir, and the daemon.
+type accountsFixture struct {
+	global, main, reported, bin string
+	d                           *testDaemon
+}
+
+// fakeClaude writes the Claude the daemon runs for its auth reads and
+// usage probes: `auth status` reports a logged-in identity whose config
+// dir is CLAUDE_CONFIG_DIR, else reported (the default account's main
+// dir); `-p` answers the usage request, after a while when a file named
+// slow sits beside it.
+func fakeClaude(t *testing.T, reported string) string {
 	t.Helper()
-	global, main := t.TempDir(), t.TempDir()
-	t.Setenv("LOOM_GLOBAL_DIR", global)
+	bin := t.TempDir()
+	auth := `{"loggedIn":true,"authMethod":"claude.ai","email":"you@example.com","subscriptionType":"max","configDirectory":"'"${CLAUDE_CONFIG_DIR:-` + reported + `}"'"}`
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do\n" +
+		"  case \"$a\" in\n" +
+		"    status) printf '%s\\n' '" + auth + "'; exit 0;;\n" +
+		"    -p) cat >/dev/null; [ -e '" + filepath.Join(bin, "slow") + "' ] && sleep 2; printf '%s\\n' '" + cliUsageJSON + "'; exit 0;;\n" +
+		"  esac\n" +
+		"done\n" +
+		"exit 1\n"
+	path := filepath.Join(bin, "claude")
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	return path
+}
+
+// accountsEnv points the account commands at throwaway dirs, hermetic
+// against the shell running the tests, with the daemon's fake Claude
+// reporting the fixture's main dir as the main config dir, or, when
+// unsafe, the global dir, which holds the accounts dir. The test lays out
+// what the daemon boots from, then calls serve.
+func accountsEnv(t *testing.T, unsafe bool) *accountsFixture {
+	t.Helper()
+	fx := &accountsFixture{global: t.TempDir(), main: t.TempDir()}
+	t.Setenv("LOOM_GLOBAL_DIR", fx.global)
 	t.Setenv("LOOM_HOME", t.TempDir())
 	// Hermetic against whatever shell runs the test suite: a real
 	// CLAUDE_CONFIG_DIR in the environment must never leak into these
-	// tests. Tests exercising guardAgainstAccountEnv (item 7) set their
-	// own value with t.Setenv, which layers cleanly over this.
+	// tests. Tests exercising guardAgainstAccountEnv set their own value
+	// with t.Setenv, which layers cleanly over this.
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	// Likewise for the credential-override vars: a developer's own
 	// ANTHROPIC_API_KEY (say, set for other tools) must not make every
@@ -56,16 +88,74 @@ func isolateAccounts(t *testing.T) string {
 	for _, v := range account.CredentialOverrides {
 		t.Setenv(v, "")
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(main, "CLAUDE.md"), []byte("x"), 0o600))
-	origMain, origLogin, origExec := accountMainDir, accountLogin, accountExec
-	accountMainDir = func(string) string { return main }
+	require.NoError(t, os.WriteFile(filepath.Join(fx.main, "CLAUDE.md"), []byte("x"), 0o600))
+	fx.reported = fx.main
+	if unsafe {
+		fx.reported = fx.global
+	}
+	claude := fakeClaude(t, fx.reported)
+	fx.bin = filepath.Dir(claude)
+	origLogin, origExec, origWait := accountLogin, accountExec, accountWait
 	accountLogin = func(string, []string) error { return nil }
-	accountExec = &scriptedAccountExec{auth: cliAuthJSON, usage: cliUsageJSON}
+	accountExec = &scriptedAccountExec{auth: cliAuthJSON}
+	accountWait = 5 * time.Second
 	t.Cleanup(func() {
-		accountMainDir, accountLogin, accountExec = origMain, origLogin, origExec
+		accountLogin, accountExec, accountWait = origLogin, origExec, origWait
 		accountNoLogin, accountForce, accountYes = false, false, false
 	})
-	return global
+	return fx
+}
+
+// serve starts the daemon over the fixture's disk, running its fake
+// Claude, and checks that the daemon learned its main config dir from it:
+// a fallback would be no dir of the fixture's.
+func (fx *accountsFixture) serve(t *testing.T) {
+	t.Helper()
+	fx.d = serveDaemon(t, filepath.Join(fx.bin, "claude"))
+	require.Equal(t, fx.reported, fx.d.client.RCAuthFor(account.DefaultName).Identity.ConfigDir,
+		"the daemon's main config dir is the fixture's")
+}
+
+// isolateAccounts is accountsEnv with its daemon serving.
+func isolateAccounts(t *testing.T) *accountsFixture {
+	t.Helper()
+	fx := accountsEnv(t, false)
+	fx.serve(t)
+	return fx
+}
+
+// writeNew writes a new file at path, failing rather than following a link
+// already there.
+func writeNew(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+}
+
+// account is the daemon's account name, as it serves it now.
+func (fx *accountsFixture) account(t *testing.T, name string) (account.Account, bool) {
+	t.Helper()
+	require.NoError(t, fx.d.client.FlushForTest())
+	fx.d.client.Sync()
+	return fx.d.client.Account(name)
+}
+
+// created registers account name on disk, linked against the main dir,
+// before the daemon boots.
+func (fx *accountsFixture) created(t *testing.T, name string) account.Account {
+	t.Helper()
+	acct, _, err := account.LoadRegistry(fx.global).Create(name, fx.main)
+	require.NoError(t, err)
+	return acct
+}
+
+// inUse stores a session on account name in the global workspace, before
+// the daemon boots, which then serves it.
+func (fx *accountsFixture) inUse(t *testing.T, name string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(fx.global, "state.json"),
+		[]byte(`{"instances":[{"title":"t","status":3,"program":"true","account":"`+name+`","worktree":{"worktree_path":"/tmp/wt-t"}}]}`), 0o644))
 }
 
 func runAccount(t *testing.T, stdin string, args ...string) (string, error) {
@@ -79,15 +169,19 @@ func runAccount(t *testing.T, stdin string, args ...string) (string, error) {
 	return out.String(), err
 }
 
+// `add --no-login` has the daemon create the account, linked against its
+// main config dir, and runs no login.
 func TestAccountAdd_NoLoginCreatesALinkedAccount(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
+	accountLogin = func(string, []string) error { t.Error("--no-login ran a login"); return nil }
 
 	out, err := runAccount(t, "", "add", "max-2", "--no-login")
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "Created")
-	acct, ok := account.LoadRegistry(global).Get("max-2")
-	require.True(t, ok)
+	assert.Contains(t, out, "from "+fx.main)
+	acct, ok := fx.account(t, "max-2")
+	require.True(t, ok, "the daemon serves the new account")
 	_, err = os.Readlink(filepath.Join(acct.Dir, "CLAUDE.md"))
 	assert.NoError(t, err)
 }
@@ -105,17 +199,37 @@ func TestAccountAdd_LogsInAsTheNewAccount(t *testing.T) {
 	assert.Contains(t, out, "Logged in max-2 as you@example.com (max)")
 }
 
+// The daemon validates the main config dir it links a new account
+// against (account.ValidateMainDir): one holding the accounts dir would
+// link it into the account, and the add is refused with nothing created.
+func TestAccountAdd_RefusesAnUnsafeMainDir(t *testing.T) {
+	fx := accountsEnv(t, true)
+	fx.serve(t)
+
+	_, err := runAccount(t, "", "add", "max-2", "--no-login")
+
+	require.Error(t, err)
+	_, ok := fx.account(t, "max-2")
+	assert.False(t, ok)
+	assert.NoDirExists(t, filepath.Join(fx.global, "accounts", "max-2"))
+}
+
 func TestAccountUse_SetsTheDefault(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
 
 	_, err = runAccount(t, "", "use", "max-2")
 
 	require.NoError(t, err)
-	assert.Equal(t, "max-2", account.LoadRegistry(global).Default())
+	require.NoError(t, fx.d.client.FlushForTest())
+	assert.Equal(t, "max-2", fx.d.client.AccountNames().Default)
+
+	_, err = runAccount(t, "", "use", "nope")
+	assert.Error(t, err)
 }
 
+// `list` prints the usage the daemon probed for it.
 func TestAccountList_ShowsUsage(t *testing.T) {
 	isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
@@ -128,13 +242,36 @@ func TestAccountList_ShowsUsage(t *testing.T) {
 	assert.Contains(t, out, "12%")
 	assert.Contains(t, out, "31%")
 	assert.Contains(t, out, "*")
+	assert.NotContains(t, out, "as of", "the round list asked for landed")
+}
+
+// A round that does not land in time: the daemon's last sample is shown
+// with its age.
+func TestAccountList_ShowsAnOlderSampleWithItsAge(t *testing.T) {
+	fx := isolateAccounts(t)
+	_, err := runAccount(t, "", "add", "max-2", "--no-login")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_ = fx.d.client.FlushForTest()
+		fx.d.client.Sync()
+		u, _ := fx.d.client.AccountUsage("max-2")
+		return u.Available
+	}, 5*time.Second, 10*time.Millisecond, "fixture: the add's round lands")
+	require.NoError(t, os.WriteFile(filepath.Join(fx.bin, "slow"), nil, 0o644))
+	accountWait = 100 * time.Millisecond
+
+	out, err := runAccount(t, "", "list")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "12%")
+	assert.Contains(t, out, "(as of <1m ago)")
 }
 
 func TestAccountList_ShowsAccountDirMissing(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
-	acct, ok := account.LoadRegistry(global).Get("max-2")
+	acct, ok := fx.account(t, "max-2")
 	require.True(t, ok)
 	require.NoError(t, os.RemoveAll(acct.Dir))
 
@@ -146,36 +283,40 @@ func TestAccountList_ShowsAccountDirMissing(t *testing.T) {
 }
 
 func TestAccountRemove_RefusedWhileInUse(t *testing.T) {
-	global := isolateAccounts(t)
-	_, err := runAccount(t, "", "add", "max-2", "--no-login")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(global, "state.json"),
-		[]byte(`{"instances":[{"title":"t","account":"max-2"}]}`), 0o644))
+	fx := accountsEnv(t, false)
+	fx.created(t, "max-2")
+	fx.inUse(t, "max-2")
+	fx.serve(t)
 
-	_, err = runAccount(t, "y\n", "remove", "max-2")
+	_, err := runAccount(t, "y\n", "remove", "max-2")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 session(s) use max-2")
-	_, ok := account.LoadRegistry(global).Get("max-2")
+	_, ok := fx.account(t, "max-2")
 	assert.True(t, ok)
 }
 
+// The daemon removes the account, which it stops serving, and deletes its
+// dir.
 func TestAccountRemove_ConfirmsAndDeletes(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
-	acct, _ := account.LoadRegistry(global).Get("max-2")
+	acct, ok := fx.account(t, "max-2")
+	require.True(t, ok)
 
 	out, err := runAccount(t, "y\n", "remove", "max-2")
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "Removed max-2")
+	_, ok = fx.account(t, "max-2")
+	assert.False(t, ok)
 	_, statErr := os.Stat(acct.Dir)
 	assert.True(t, os.IsNotExist(statErr))
 }
 
 func TestAccountRemove_AbortsWithoutYes(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
 
@@ -183,7 +324,7 @@ func TestAccountRemove_AbortsWithoutYes(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "Aborted")
-	_, ok := account.LoadRegistry(global).Get("max-2")
+	_, ok := fx.account(t, "max-2")
 	assert.True(t, ok)
 }
 
@@ -192,12 +333,12 @@ func TestAccountRemove_AbortsWithoutYes(t *testing.T) {
 // creation makes plain `remove` refuse, answered "y" or not, and
 // `--force` still deletes it.
 func TestAccountRemove_RefusedWithUnsharedFiles(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
-	acct, ok := account.LoadRegistry(global).Get("max-2")
+	acct, ok := fx.account(t, "max-2")
 	require.True(t, ok)
-	require.NoError(t, os.WriteFile(filepath.Join(acct.Dir, "settings.json"), []byte("{}"), 0o600))
+	writeNew(t, filepath.Join(acct.Dir, "settings.json"))
 
 	// The unshared check runs (and refuses) before the confirmation
 	// prompt, so "y\n" is never even consumed: refused outright, nothing
@@ -207,7 +348,7 @@ func TestAccountRemove_RefusedWithUnsharedFiles(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "settings.json")
 	assert.NotContains(t, out, "[y/N]")
-	_, ok = account.LoadRegistry(global).Get("max-2")
+	_, ok = fx.account(t, "max-2")
 	assert.True(t, ok, "account must still be registered")
 	assert.FileExists(t, filepath.Join(acct.Dir, "settings.json"))
 
@@ -219,29 +360,28 @@ func TestAccountRemove_RefusedWithUnsharedFiles(t *testing.T) {
 	assert.Contains(t, out, "overriding unshared files: settings.json")
 	_, statErr := os.Stat(acct.Dir)
 	assert.True(t, os.IsNotExist(statErr))
-	_, ok = account.LoadRegistry(global).Get("max-2")
+	_, ok = fx.account(t, "max-2")
 	assert.False(t, ok)
 }
 
 // --- Fix round: --yes/--force split (item 1), reordering (item 2) ---
 
 func TestAccountRemove_YesStillRefusesInUse(t *testing.T) {
-	global := isolateAccounts(t)
-	_, err := runAccount(t, "", "add", "max-2", "--no-login")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(global, "state.json"),
-		[]byte(`{"instances":[{"title":"t","account":"max-2"}]}`), 0o644))
+	fx := accountsEnv(t, false)
+	fx.created(t, "max-2")
+	fx.inUse(t, "max-2")
+	fx.serve(t)
 
-	_, err = runAccount(t, "", "remove", "max-2", "--yes")
+	_, err := runAccount(t, "", "remove", "max-2", "--yes")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1 session(s) use max-2")
-	_, ok := account.LoadRegistry(global).Get("max-2")
+	_, ok := fx.account(t, "max-2")
 	assert.True(t, ok)
 }
 
 func TestAccountRemove_ForceWithoutYesStillPrompts(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
 
@@ -250,22 +390,23 @@ func TestAccountRemove_ForceWithoutYesStillPrompts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "[y/N]")
 	assert.Contains(t, out, "Aborted")
-	_, ok := account.LoadRegistry(global).Get("max-2")
+	_, ok := fx.account(t, "max-2")
 	assert.True(t, ok, "aborting a forced removal must still keep the account")
 }
 
+// --force reaches the daemon, which checks the sessions it serves again
+// and removes the account anyway.
 func TestAccountRemove_ForceYesRemovesInUseAndReportsOverride(t *testing.T) {
-	global := isolateAccounts(t)
-	_, err := runAccount(t, "", "add", "max-2", "--no-login")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(global, "state.json"),
-		[]byte(`{"instances":[{"title":"t","account":"max-2"}]}`), 0o644))
+	fx := accountsEnv(t, false)
+	fx.created(t, "max-2")
+	fx.inUse(t, "max-2")
+	fx.serve(t)
 
 	out, err := runAccount(t, "", "remove", "max-2", "--force", "--yes")
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "overriding 1 session(s) using max-2")
-	_, ok := account.LoadRegistry(global).Get("max-2")
+	_, ok := fx.account(t, "max-2")
 	assert.False(t, ok)
 }
 
@@ -282,10 +423,11 @@ func TestAccountRemove_ForceYesRemovesInUseAndReportsOverride(t *testing.T) {
 // against an in-memory account.Registry in account/link_test.go) is ever
 // reached.
 func TestAccountRemove_RefusesWhenTheRegistryHoldsAForeignDir(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := accountsEnv(t, false)
 	outside := t.TempDir()
 	data := fmt.Sprintf(`{"accounts":[{"name":"byo","dir":%q}]}`, outside)
-	require.NoError(t, os.WriteFile(filepath.Join(global, "accounts.json"), []byte(data), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(fx.global, "accounts.json"), []byte(data), 0o644))
+	fx.serve(t)
 
 	_, err := runAccount(t, "\n", "remove", "byo")
 
@@ -348,14 +490,14 @@ func TestRunWithChildSignals_DoesNotLeakSignalIgnoreIntoTheChild(t *testing.T) {
 }
 
 func TestAccountAdd_FailedLoginKeepsTheAccountAndSaysHowToFinish(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	accountLogin = func(string, []string) error { return errors.New("boom") }
 
 	out, err := runAccount(t, "", "add", "max-2")
 
 	require.Error(t, err)
 	assert.Contains(t, out, "max-2 was created; finish with: loom account login max-2")
-	_, ok := account.LoadRegistry(global).Get("max-2")
+	_, ok := fx.account(t, "max-2")
 	assert.True(t, ok, "a failed login during add must not un-create the account")
 }
 
@@ -374,13 +516,33 @@ func TestAccountLogin_LogsInAndReports(t *testing.T) {
 	assert.Contains(t, out, "Logged in max-2 as you@example.com (max)")
 }
 
-func TestAccountLogin_RefusesWhenTheAccountDirIsMissing(t *testing.T) {
-	global := isolateAccounts(t)
+// After a login the daemon rereads the account's auth, as after the TUI's:
+// it serves the identity the login gave the account.
+func TestAccountLogin_TheDaemonRereadsTheAccountsAuth(t *testing.T) {
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
-	acct, ok := account.LoadRegistry(global).Get("max-2")
+	acct, ok := fx.account(t, "max-2")
+	require.True(t, ok)
+
+	_, err = runAccount(t, "", "login", "max-2")
+
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_ = fx.d.client.FlushForTest()
+		fx.d.client.Sync()
+		return fx.d.client.RCAuthFor("max-2").Identity.ConfigDir == acct.Dir
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestAccountLogin_RefusesWhenTheAccountDirIsMissing(t *testing.T) {
+	fx := isolateAccounts(t)
+	_, err := runAccount(t, "", "add", "max-2", "--no-login")
+	require.NoError(t, err)
+	acct, ok := fx.account(t, "max-2")
 	require.True(t, ok)
 	require.NoError(t, os.RemoveAll(acct.Dir))
+	accountLogin = func(string, []string) error { t.Error("logged in to a missing dir"); return nil }
 
 	_, err = runAccount(t, "", "login", "max-2")
 
@@ -399,10 +561,10 @@ func TestAccountLogin_NamesAnUnexpectedStatError(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
-	acct, ok := account.LoadRegistry(global).Get("max-2")
+	acct, ok := fx.account(t, "max-2")
 	require.True(t, ok)
 	parent := filepath.Dir(acct.Dir)
 	require.NoError(t, os.Chmod(parent, 0o000))
@@ -429,47 +591,35 @@ func TestAccountList_OrdersRowsByNamesRegardlessOfProbeTiming(t *testing.T) {
 	require.NoError(t, err)
 	iDefault, iA, iB := strings.Index(out, "default"), strings.Index(out, "a-acct"), strings.Index(out, "b-acct")
 	require.True(t, iDefault >= 0 && iA >= 0 && iB >= 0, "all three rows must appear")
-	assert.True(t, iDefault < iA && iA < iB, "rows must print in reg.Names() order regardless of which probe finishes first")
+	assert.True(t, iDefault < iA && iA < iB, "rows must print in the daemon's AccountNames order")
 }
 
-func TestAccountList_SkipsDefaultProbeWhenMainDirIsUnknown(t *testing.T) {
-	isolateAccounts(t)
-	accountMainDir = func(string) string { return "" }
+// --- sync ---
 
-	out, err := runAccount(t, "", "list")
-
-	require.NoError(t, err)
-	assert.Contains(t, out, "no main config dir found")
-}
-
-// --- sync guards (item 6) ---
-
-func TestAccountAdd_RefusesWhenMainDirIsUnknown(t *testing.T) {
-	isolateAccounts(t)
-	accountMainDir = func(string) string { return "" }
-
-	_, err := runAccount(t, "", "add", "max-2", "--no-login")
-
-	assert.Error(t, err)
-}
-
-func TestAccountSync_RefusesWhenMainDirIsUnknown(t *testing.T) {
-	isolateAccounts(t)
-	accountMainDir = func(string) string { return "" }
+// The daemon links nothing from a main dir that holds the accounts dir,
+// and sync says why rather than print the last reports.
+func TestAccountSync_RefusesAnUnsafeMainDir(t *testing.T) {
+	fx := accountsEnv(t, true)
+	acct := fx.created(t, "max-2")
+	writeNew(t, filepath.Join(fx.main, "NEW.md"))
+	fx.serve(t)
 
 	_, err := runAccount(t, "", "sync")
 
-	assert.Error(t, err)
+	require.Error(t, err)
+	_, err = os.Lstat(filepath.Join(acct.Dir, "NEW.md"))
+	assert.True(t, os.IsNotExist(err), "nothing linked")
 }
 
+// sync has the daemon re-link every account and prints its reports; a
+// second sync, with nothing new to link, still hears its refresh land.
 func TestAccountSync_LinksNewEntriesForEveryAccount(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
-	acct, ok := account.LoadRegistry(global).Get("max-2")
+	acct, ok := fx.account(t, "max-2")
 	require.True(t, ok)
-	main := accountMainDir("")
-	require.NoError(t, os.WriteFile(filepath.Join(main, "NEW.md"), []byte("x"), 0o600))
+	writeNew(t, filepath.Join(fx.main, "NEW.md"))
 
 	out, err := runAccount(t, "", "sync")
 
@@ -477,15 +627,23 @@ func TestAccountSync_LinksNewEntriesForEveryAccount(t *testing.T) {
 	assert.Contains(t, out, "max-2: linked 1 new")
 	_, err = os.Readlink(filepath.Join(acct.Dir, "NEW.md"))
 	assert.NoError(t, err)
+	require.NoError(t, fx.d.client.FlushForTest())
+	rep, _ := fx.d.client.AccountSync("max-2")
+	assert.Equal(t, []string{"NEW.md"}, rep.Linked, "the daemon's own report")
+
+	out, err = runAccount(t, "", "sync")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "max-2: linked 0 new")
 }
 
 // --- CLAUDE_CONFIG_DIR leak from an account's own shell (item 7) ---
 
 func TestAccountCmds_RefuseWhenRunningAsAnAccount(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
-	acct, ok := account.LoadRegistry(global).Get("max-2")
+	acct, ok := fx.account(t, "max-2")
 	require.True(t, ok)
 	t.Setenv("CLAUDE_CONFIG_DIR", acct.Dir)
 
@@ -498,16 +656,18 @@ func TestAccountCmds_RefuseWhenRunningAsAnAccount(t *testing.T) {
 
 	_, err = runAccount(t, "", "add", "max-3", "--no-login")
 	assert.Error(t, err)
+	_, ok = fx.account(t, "max-3")
+	assert.False(t, ok)
 
 	_, err = runAccount(t, "", "login", "default")
 	assert.Error(t, err)
 }
 
 func TestAccountCmds_NamedAccountOpsStillWorkUnderAccountEnv(t *testing.T) {
-	global := isolateAccounts(t)
+	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")
 	require.NoError(t, err)
-	acct, ok := account.LoadRegistry(global).Get("max-2")
+	acct, ok := fx.account(t, "max-2")
 	require.True(t, ok)
 	t.Setenv("CLAUDE_CONFIG_DIR", acct.Dir)
 
@@ -589,20 +749,19 @@ func TestClaudeProgram_PrefersTheGlobalConfigDirOverLoomHome(t *testing.T) {
 	assert.Equal(t, "/opt/claude-custom/claude --model opus", claudeProgram())
 }
 
-// TestAccountList_UsesTheProgramConfiguredInTheGlobalDir exercises the
-// same fix through the CLI: isolateAccounts (like every test in this
-// file) already points LOOM_HOME at a directory distinct from
-// LOOM_GLOBAL_DIR, which is exactly the configuration the review found
-// broken — a config.json written under the global dir must be the one
-// `list` resolves the Claude program from.
-func TestAccountList_UsesTheProgramConfiguredInTheGlobalDir(t *testing.T) {
-	global := isolateAccounts(t)
-	require.NoError(t, os.WriteFile(filepath.Join(global, "config.json"),
+// TestAccountLogin_UsesTheProgramConfiguredInTheGlobalDir exercises the
+// same fix through the CLI: accountsEnv (like every fixture in this file)
+// points LOOM_HOME at a directory distinct from LOOM_GLOBAL_DIR, which is
+// exactly the configuration the review found broken — a config.json
+// written under the global dir must be the one the login runs.
+func TestAccountLogin_UsesTheProgramConfiguredInTheGlobalDir(t *testing.T) {
+	fx := isolateAccounts(t)
+	require.NoError(t, os.WriteFile(filepath.Join(fx.global, "config.json"),
 		[]byte(`{"default_program":"/opt/claude-custom/claude --model opus"}`), 0o644))
 	var gotProgram string
-	accountMainDir = func(p string) string { gotProgram = p; return "" }
+	accountLogin = func(p string, _ []string) error { gotProgram = p; return nil }
 
-	_, err := runAccount(t, "", "list")
+	_, err := runAccount(t, "", "login", "default")
 
 	require.NoError(t, err)
 	assert.Equal(t, "/opt/claude-custom/claude --model opus", gotProgram)

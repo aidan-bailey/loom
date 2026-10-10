@@ -298,3 +298,54 @@ func TestStopPID_StopsOnlyTheDaemonItNames(t *testing.T) {
 		require.NoError(t, <-r.done)
 	})
 }
+
+// TakeLock is a direct writer's hold on the global dir (`loom reset` with
+// no daemon, `workspace migrate`): it refuses at once while a daemon holds
+// the lock, names a loom from before the daemon, keeps the last daemon's
+// tmux server in the record (TmuxServer reads it), passes for no daemon
+// a client would dial, and lets go when released.
+func TestTakeLock(t *testing.T) {
+	t.Run("free", func(t *testing.T) {
+		dir := globalDir(t)
+		last, _, err := TryAcquire(dir, Record{PID: os.Getpid(), Build: "b", Tmux: "/tmp/tmux-1000/last"})
+		require.NoError(t, err)
+		require.NoError(t, last.Close())
+
+		release, err := TakeLock(dir)
+		require.NoError(t, err)
+		rec, held := ReadRecord(dir)
+		assert.True(t, held)
+		assert.Equal(t, os.Getpid(), rec.PID)
+		assert.Equal(t, "/tmp/tmux-1000/last", rec.Tmux, "the last daemon's tmux server survives")
+		assert.False(t, rec.IsDaemon(), "no socket for a client to dial")
+		assert.False(t, rec.IsPreDaemon(), "not a loom from before the daemon")
+
+		_, err = TakeLock(dir)
+		assert.ErrorIs(t, err, ErrRunning, "a second hold is refused at once")
+		release()
+		_, held = ReadRecord(dir)
+		assert.False(t, held)
+	})
+
+	t.Run("a daemon holds it", func(t *testing.T) {
+		dir := globalDir(t)
+		l, _, err := TryAcquire(dir, Record{PID: os.Getpid(), Build: "b", Socket: "/run/x.sock"})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = l.Close() })
+		start := time.Now()
+		_, err = TakeLock(dir)
+		assert.ErrorIs(t, err, ErrRunning)
+		assert.Less(t, time.Since(start), time.Second, "never waits")
+	})
+
+	t.Run("a loom from before the daemon holds it", func(t *testing.T) {
+		dir := globalDir(t)
+		l, _, err := TryAcquire(dir, Record{PID: 3713275, TTY: "/dev/pts/2"})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = l.Close() })
+		_, err = TakeLock(dir)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrRunning)
+		assert.Contains(t, err.Error(), "a loom from before the daemon is running (pid 3713275 on /dev/pts/2")
+	})
+}

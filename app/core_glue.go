@@ -68,8 +68,8 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 	case core.WorkspacesChanged:
 		// Each open slot takes its workspace's newest view: a load's
 		// recovery summary and storage flags, a pref or setting written
-		// anywhere. Sync puts this event first, so the appliers below
-		// read the new views.
+		// anywhere, a new name. Sync puts this event first, so the
+		// appliers below read the new views.
 		for _, v := range ev.Views {
 			if s := m.slotFor(v.ID); s != nil {
 				if s == m.workspaceSlot && s.info.ID == v.ID {
@@ -83,6 +83,8 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 				s.info = v
 			}
 		}
+		m.renameShown(ev.Views)
+		return m.closeUnservedLive()
 	case core.ViewsChanged:
 		if s := m.slotFor(ev.WS); s != nil {
 			s.views = ev.Views

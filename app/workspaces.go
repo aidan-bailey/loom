@@ -132,20 +132,16 @@ func (m *home) servedNamed(name string) (core.WorkspaceView, bool) {
 }
 
 // servedID is the ID of the served workspace called name, for a client
-// that opens it by name (the picker). One the model does not serve yet
-// (registered by another process since the registry was last read) is
-// looked for again after a reread (ReloadRegistry), which serves it. One
-// whose directory the model serves under another name is refused
-// (servedFor): the TUI keys its tabs, the picker and the open list it
-// persists on names, so a tab under the other name would be closed by the
-// next picker commit and dropped from the open list, which keeps
-// registered names only. A twin (the other name is registered too) is to
-// be opened by that name; a rename while the daemon runs waits for its
-// restart (`loom serve stop`, then loom), which serves the workspace under
-// its new name (until a rename can reload a workspace, daemon stage 3C).
+// that opens it by name (the picker). One the model does not serve by that
+// name yet (registered or renamed by another process since the registry
+// was last read) is looked for again after a reread (ReloadRegistry),
+// which serves it, or renames it in place. A twin, one directory the
+// model serves under another registered name (servedFor), is refused: the
+// TUI keys its tabs, the picker and the open list it persists on names,
+// so it is to be opened by that name.
 func (m *home) servedID(name string) (core.WorkspaceID, error) {
 	v, twin, ok := m.servedFor(name)
-	if !ok {
+	if !ok || (v.Name != name && !twin) {
 		if err := m.core.ReloadRegistry(); err != nil {
 			return 0, fmt.Errorf("workspace %s: %w", labelOf(name), err)
 		}
@@ -160,10 +156,8 @@ func (m *home) servedID(name string) (core.WorkspaceID, error) {
 		return 0, fmt.Errorf("%s shares its config dir with the global workspace, which loom serves: pick Global", name)
 	case twin:
 		return 0, fmt.Errorf("%s is the same directory as %s, which loom serves: open %s", name, v.Name, v.Name)
-	default:
-		return 0, fmt.Errorf("%s is the workspace loom serves as %s (renamed while the loom daemon runs, or registered twice for one directory): stop the daemon (`loom serve stop`), then start loom, to open it as %s",
-			name, labelOf(v.Name), name)
 	}
+	return 0, fmt.Errorf("workspace %s is served as %s", name, labelOf(v.Name))
 }
 
 // servedFor is the served workspace the registered name stands for: the
@@ -173,8 +167,9 @@ func (m *home) servedID(name string) (core.WorkspaceID, error) {
 // reports, for the latter, that the other name is still registered (one
 // directory registered twice, as through a symlink) or is the global
 // workspace's (a workspace registered at $HOME, whose config dir is the
-// global one); otherwise name is the workspace's new name (renamed while
-// loom runs). false when the model serves neither.
+// global one); otherwise name is the workspace's new name, renamed by
+// another process and not yet reread (servedID rereads it). false when the
+// model serves neither.
 func (m *home) servedFor(name string) (v core.WorkspaceView, twin, ok bool) {
 	if v, ok := m.servedNamed(name); ok || name == "" {
 		return v, false, ok

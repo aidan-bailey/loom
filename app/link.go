@@ -405,6 +405,7 @@ func (m *home) resync(c *rpc.Client) tea.Cmd {
 		go forwardWakes(c.Wakes(), m.send)
 	}
 	m.link.gen++
+	m.servedNames = nil
 	log.For("app").Info("link.rejoined", "build", c.Peer().Build, "tmux", c.Peer().Tmux)
 
 	// A workspace registered meanwhile is served once the daemon rereads
@@ -509,6 +510,59 @@ func (m *home) closeUnserved() (tea.Cmd, []string) {
 	m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
 	m.persistOpenList()
 	return tea.Batch(cmds...), notes
+}
+
+// closeUnservedLive closes the tabs whose workspace the daemon stopped
+// serving while the TUI runs (unregistered by `loom workspace remove`, or
+// a reread of the registry), as a WorkspacesChanged shows it, and says so.
+// A rejoin's resync closes them itself, naming them in its own note, so
+// nothing is closed here while the link is down.
+func (m *home) closeUnservedLive() tea.Cmd {
+	if m.link.state.lost() {
+		return nil
+	}
+	cmd, notes := m.closeUnserved()
+	if len(notes) > 0 {
+		m.updateTabBarStatuses()
+		m.errBox.SetInfo(strings.Join(notes, "; "))
+	}
+	return cmd
+}
+
+// renameShown follows the workspaces renamed since the last
+// WorkspacesChanged (views, by ID: a rename keeps it): the open slots
+// already took their new views, so the tab bar and each slot's rail label
+// are redrawn, and a saved tab that failed to open (failedOpen) takes its
+// new name, so the open list this TUI persists names it as the registry
+// now does.
+func (m *home) renameShown(views []core.WorkspaceView) {
+	renamed := false
+	names := make(map[core.WorkspaceID]string, len(views))
+	for _, v := range views {
+		names[v.ID] = v.Name
+		old, ok := m.servedNames[v.ID]
+		if !ok || old == v.Name {
+			continue
+		}
+		renamed = true
+		log.For("app").Info("workspace.renamed", "from", old, "to", v.Name)
+		if i := slices.Index(m.failedOpen, old); i >= 0 {
+			m.failedOpen[i] = v.Name
+		}
+	}
+	m.servedNames = names
+	if !renamed {
+		return
+	}
+	for _, s := range m.openSlots() {
+		if s.list != nil {
+			s.list.SetWorkspaceName(s.name())
+		}
+	}
+	if len(m.slots) > 0 {
+		m.tabBar.SetWorkspaces(m.slotNames(), m.focusedSlot)
+		m.updateTabBarStatuses()
+	}
 }
 
 // keepUnsentPrefs applies p, the focused slot's UI prefs changed offline,

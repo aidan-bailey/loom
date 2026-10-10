@@ -273,21 +273,29 @@ func describeBuild(h rpc.Hello) string {
 	return "an unknown build"
 }
 
-// refuseWhileServed refuses a command that writes a workspace's state.json
-// itself (reset, `workspace migrate`) while a process holds the global
-// dir's lock: the daemon would overwrite what it wrote, and it would
-// overwrite the daemon's.
-func refuseWhileServed() error {
+// joinCLI connects a subcommand (internal/cli) to the daemon as the TUI's
+// startup join does (joinDaemon), starting one when none runs, and says on
+// stderr what it does meanwhile.
+func joinCLI() (*rpc.Client, error) {
 	globalDir, err := config.GetGlobalConfigDir()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	rec, held := daemon.ReadRecord(globalDir)
-	switch {
-	case !held:
-		return nil
-	case rec.IsPreDaemon():
-		return fmt.Errorf("a loom is running (%s): quit it first", rec)
+	return joinDaemon(globalDir)
+}
+
+// holdForStateWrite holds the global dir's lock for a command that writes
+// a workspace's state.json itself (`workspace migrate`), refusing while
+// any process holds it: the daemon would overwrite what the command wrote,
+// and the command the daemon's. Holding it, no daemon starts meanwhile.
+func holdForStateWrite() (release func(), err error) {
+	globalDir, err := config.GetGlobalConfigDir()
+	if err != nil {
+		return nil, err
 	}
-	return errors.New("the loom daemon is running: stop it first (`loom serve stop`)")
+	release, err = daemon.TakeLock(globalDir)
+	if errors.Is(err, daemon.ErrRunning) {
+		return nil, errors.New("the loom daemon is running: stop it first (`loom serve stop`)")
+	}
+	return release, err
 }

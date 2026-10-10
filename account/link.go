@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // sharedDenyList names the main config dir's entries that stay per
@@ -57,18 +58,23 @@ type SyncReport struct {
 	// Sync leaves them alone, since the account's copy may hold the only
 	// copy of a change.
 	Diverged []string
+	// At is when the run started: a client that asked for a sync tells the
+	// report of its run from an older one (`loom account sync`).
+	At time.Time
 }
 
 // Clone deep-copies r's slices.
 func (r SyncReport) Clone() SyncReport {
-	return SyncReport{Linked: slices.Clone(r.Linked), Diverged: slices.Clone(r.Diverged)}
+	out := r
+	out.Linked, out.Diverged = slices.Clone(r.Linked), slices.Clone(r.Diverged)
+	return out
 }
 
 // Sync links every shared entry of mainDir that acctDir does not have yet.
 // Idempotent. Existing links are left as they are, wherever they point,
 // and a real file or directory is never replaced.
 func Sync(acctDir, mainDir string) (SyncReport, error) {
-	var rep SyncReport
+	rep := SyncReport{At: time.Now()}
 	entries, err := os.ReadDir(mainDir)
 	if err != nil {
 		return rep, fmt.Errorf("read main config dir %s: %w", mainDir, err)

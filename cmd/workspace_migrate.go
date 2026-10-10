@@ -243,21 +243,80 @@ func backupStateIfRequested(dir string, backup bool) error {
 	return nil
 }
 
-// StateWriteGuard is run, when set, before a command that writes a
-// workspace's state.json itself (workspace migrate), and its error refuses
-// the command. main sets it to refuse while the loom daemon serves the
-// global dir, which would overwrite what the command wrote; cmd cannot ask
-// the daemon itself (the daemon's package imports this one).
-var StateWriteGuard func() error
+// instanceSummary is a minimal struct for reading instance JSON: only the
+// fields mergeWorkspaceInstances reads are decoded.
+type instanceSummary struct {
+	Title    string `json:"title"`
+	Worktree struct {
+		RepoPath     string `json:"repo_path"`
+		WorktreePath string `json:"worktree_path"`
+	} `json:"worktree"`
+}
 
-var workspaceMigrateCmd = &cobra.Command{
+// mergeWorkspaceInstances merges newInstances into a workspace's existing
+// instance data. Duplicates (by Title) are skipped. Returns the merged JSON,
+// the count of entries appended, and an error if existingData is present but
+// cannot be parsed as a JSON array.
+func mergeWorkspaceInstances(existingData json.RawMessage, newInstances []json.RawMessage) ([]byte, int, error) {
+	var existingRaw []json.RawMessage
+	if existingData != nil && string(existingData) != "[]" {
+		if err := json.Unmarshal(existingData, &existingRaw); err != nil {
+			return nil, 0, fmt.Errorf("failed to parse existing workspace instances: %w", err)
+		}
+	}
+
+	existingTitles := make(map[string]bool)
+	for _, raw := range existingRaw {
+		var inst instanceSummary
+		if err := json.Unmarshal(raw, &inst); err != nil {
+			continue
+		}
+		existingTitles[inst.Title] = true
+	}
+
+	added := 0
+	for _, raw := range newInstances {
+		var inst instanceSummary
+		if err := json.Unmarshal(raw, &inst); err != nil {
+			continue
+		}
+		if existingTitles[inst.Title] {
+			continue
+		}
+		existingRaw = append(existingRaw, raw)
+		existingTitles[inst.Title] = true
+		added++
+	}
+
+	merged, err := json.Marshal(existingRaw)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to marshal merged instances: %w", err)
+	}
+	return merged, added, nil
+}
+
+// StateWriteGuard is run, when set, before a command that writes a
+// workspace's state.json itself (workspace migrate): it holds the global
+// dir's lock for the command, which then calls release, and its error
+// refuses the command. main sets it to take the lock the daemon holds, so
+// the command refuses while the daemon serves the global dir (it would
+// overwrite what the command wrote) and no daemon starts meanwhile; cmd
+// cannot take it itself (the daemon's package imports this one).
+var StateWriteGuard func() (release func(), err error)
+
+// MigrateCmd is `loom workspace migrate`, which main attaches under the
+// workspace command. It writes state.json directly, under the lock
+// (StateWriteGuard), rather than through the daemon.
+var MigrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Move global instances to their matching workspace directories",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if StateWriteGuard != nil {
-			if err := StateWriteGuard(); err != nil {
+			release, err := StateWriteGuard()
+			if err != nil {
 				return err
 			}
+			defer release()
 		}
 		globalDir, err := config.GetGlobalConfigDir()
 		if err != nil {
@@ -298,6 +357,6 @@ var workspaceMigrateCmd = &cobra.Command{
 }
 
 func init() {
-	workspaceMigrateCmd.Flags().BoolVar(&migrateDryRun, "dry-run", false, "Print migration plan without modifying files")
-	workspaceMigrateCmd.Flags().BoolVar(&migrateBackup, "backup", true, "Copy state.json files to .bak before overwriting")
+	MigrateCmd.Flags().BoolVar(&migrateDryRun, "dry-run", false, "Print migration plan without modifying files")
+	MigrateCmd.Flags().BoolVar(&migrateBackup, "backup", true, "Copy state.json files to .bak before overwriting")
 }

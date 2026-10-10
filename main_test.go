@@ -5,16 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/internal/cli"
 	"github.com/aidan-bailey/loom/internal/daemon"
 	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
@@ -248,11 +253,27 @@ func holdLock(t *testing.T, rec daemon.Record) {
 	t.Cleanup(func() { _ = l.Close() })
 }
 
-// TestStateWriters_RefuseWhileTheDaemonRuns: reset and `workspace migrate`
-// write state.json themselves, which a running daemon would overwrite with
-// its own sessions (and they its): they refuse, touching nothing, while a
-// daemon (or a loom from before it) holds the lock.
+// TestStateWriters_RefuseWhileTheDaemonRuns: `workspace migrate` writes
+// state.json itself, which a running daemon would overwrite with its own
+// sessions (and it the daemon's): it refuses, touching nothing, while a
+// daemon (or a loom from before it) holds the lock. reset asks the daemon
+// instead (TestResetCmd_AsksTheDaemonWhileOneRuns), and refuses only a
+// loom from before the daemon, which it can't ask.
 func TestStateWriters_RefuseWhileTheDaemonRuns(t *testing.T) {
+	t.Run("workspace migrate", func(t *testing.T) {
+		isolateLoomEnv(t)
+		stubNesting(t, nil)
+		require.NoError(t, os.WriteFile(filepath.Join(os.Getenv(config.EnvGlobalDir), config.StateFileName),
+			[]byte(`{"instances":[{"title":"t"}]}`), 0o644))
+		holdLock(t, daemon.Record{PID: 4242, Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1"})
+
+		rootCmd.SetArgs([]string{"workspace", "migrate"})
+		err := rootCmd.Execute()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "the loom daemon is running: stop it first (`loom serve stop`)")
+	})
+
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -260,60 +281,171 @@ func TestStateWriters_RefuseWhileTheDaemonRuns(t *testing.T) {
 		{"reset", []string{"reset", "--force"}},
 		{"workspace migrate", []string{"workspace", "migrate"}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(tc.name+": a loom from before the daemon", func(t *testing.T) {
 			isolateLoomEnv(t)
 			stubNesting(t, nil)
 			t.Cleanup(func() { resetForceFlag = false })
 			wt := globalWorktree(t, "busy_18d7")
 			fake := &resetTmux{listing: "loom_busy\t" + wt + "\n"}
 			stubResetTmux(t, fake)
-			holdLock(t, daemon.Record{PID: 4242, Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1"})
+			holdLock(t, daemon.Record{PID: 3713275, TTY: "/dev/pts/2"})
 
 			rootCmd.SetArgs(tc.args)
 			err := rootCmd.Execute()
 
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "the loom daemon is running: stop it first (`loom serve stop`)")
+			assert.Contains(t, err.Error(), "a loom from before the daemon is running (pid 3713275 on /dev/pts/2")
 			assert.Empty(t, fake.killed)
 			assert.FileExists(t, filepath.Join(wt, "work.txt"))
 		})
 	}
+}
 
-	t.Run("a loom from before the daemon", func(t *testing.T) {
-		isolateLoomEnv(t)
-		stubNesting(t, nil)
-		t.Cleanup(func() { resetForceFlag = false })
-		holdLock(t, daemon.Record{PID: 3713275, TTY: "/dev/pts/2"})
-
-		rootCmd.SetArgs([]string{"reset", "--force"})
-		err := rootCmd.Execute()
-
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "a loom is running (pid 3713275 on /dev/pts/2")
+// joinModel boots a model over the test's disk (its registry, its global
+// workspace) on a loop of its own, as the daemon does, with exec as its
+// tmux, and points the subcommands' join (cli.Join) at it, a connection
+// for each command. It returns a client of its own, for the test.
+func joinModel(t *testing.T, exec cmd2.Executor) *rpc.Client {
+	t.Helper()
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	model := core.New(core.Options{Registry: reg, CmdExec: exec})
+	model.Boot()
+	loop := core.Start(model)
+	srv := rpc.NewServer(loop)
+	loop.Begin()
+	dial := func() (*rpc.Client, error) {
+		a, b := net.Pipe()
+		srv.Serve(a)
+		return rpc.Dial(b)
+	}
+	orig := cli.Join
+	cli.Join = dial
+	c, err := dial()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cli.Join = orig
+		c.Close()
+		srv.Close()
+		loop.Stop()
 	})
+	return c
+}
+
+// TestResetCmd_AsksTheDaemonWhileOneRuns: with a daemon serving the global
+// dir, reset is its request (Reset) and waits for the reset to land: the
+// daemon's own sessions go, its sweep kills the workspace's tmux sessions,
+// and reset itself writes nothing (the daemon would overwrite it).
+func TestResetCmd_AsksTheDaemonWhileOneRuns(t *testing.T) {
+	isolateLoomEnv(t)
+	stubNesting(t, nil)
+	t.Cleanup(func() { resetForceFlag = false })
+	wt := globalWorktree(t, "busy_18d7")
+	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv(config.EnvGlobalDir), config.StateFileName),
+		[]byte(`{"instances":[{"title":"busy","status":3,"program":"true","worktree":{"worktree_path":`+fmt.Sprintf("%q", wt)+`}}]}`), 0o644))
+	direct := &resetTmux{}
+	stubResetTmux(t, direct)
+	served := &resetTmux{listing: "loom_busy\t" + wt + "\n", deadSessions: true}
+	c := joinModel(t, served)
+	global, ok := servedGlobal(c)
+	require.True(t, ok)
+	require.Len(t, c.Views(global), 1, "fixture: the daemon serves the session")
+	holdLock(t, daemon.Record{PID: 4242, Socket: "/run/user/1000/loom/abc.sock", Build: "v0.13.1"})
+
+	out := captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"reset", "--force"})
+		require.NoError(t, rootCmd.Execute())
+	})
+
+	assert.Contains(t, out, "The loom daemon reset global")
+	assert.Equal(t, []string{"=loom_busy"}, served.killed, "the daemon swept the workspace's sessions")
+	assert.Empty(t, direct.commands, "reset ran nothing itself")
+	assert.NoDirExists(t, wt)
+	require.Eventually(t, func() bool { c.Sync(); return len(c.Views(global)) == 0 }, 5*time.Second, 10*time.Millisecond,
+		"the daemon serves no session of the workspace")
+}
+
+// servedGlobal is the ID of the global workspace the client's daemon serves.
+func servedGlobal(c *rpc.Client) (core.WorkspaceID, bool) {
+	for _, v := range c.Workspaces() {
+		if v.Name == "" {
+			return v.ID, true
+		}
+	}
+	return 0, false
+}
+
+// TestResetCmd_HoldsTheLockWhileItWorksDirectly: with no daemon, reset
+// works on its own, holding the global dir's lock throughout: a daemon
+// started meanwhile (a TUI opened during the reset) stands down rather
+// than load the records the reset is deleting and save them back.
+func TestResetCmd_HoldsTheLockWhileItWorksDirectly(t *testing.T) {
+	isolateLoomEnv(t)
+	stubNesting(t, nil)
+	t.Cleanup(func() { resetForceFlag = false })
+	wt := globalWorktree(t, "stale_18d7")
+	var serveErr error
+	stop := make(chan struct{})
+	close(stop)
+	fake := &resetTmux{listing: "loom_stale\t" + wt + "\n", onList: func() {
+		serveErr = daemon.Serve(daemon.Options{
+			GlobalDir: os.Getenv(config.EnvGlobalDir), LockWait: 50 * time.Millisecond, Stop: stop,
+			NewModel: func() (*core.Model, []core.Notice, error) { return core.New(core.Options{}), nil, nil },
+		})
+	}}
+	stubResetTmux(t, fake)
+
+	_ = captureStdout(t, func() {
+		rootCmd.SetArgs([]string{"reset", "--force"})
+		require.NoError(t, rootCmd.Execute())
+	})
+
+	require.ErrorIs(t, serveErr, daemon.ErrRunning, "a daemon started during the reset stands down")
+	assert.Equal(t, []string{"=loom_stale"}, fake.killed)
+	_, held := daemon.ReadRecord(os.Getenv(config.EnvGlobalDir))
+	assert.False(t, held, "the lock is let go once the reset is done")
 }
 
 // resetTmux is a fake tmux for reset: the sweep's "ls" answers listing (or
 // listErr), and every kill-session is recorded and answered with killErr.
 // It records every command's arguments.
+//
+// deadSessions answers every other Run (has-session) as a missing session,
+// as a daemon booting over it needs; onList runs once, at the first
+// listing. A daemon's model calls it from its jobs, so it is locked.
 type resetTmux struct {
-	listing  string
-	listErr  error
-	killErr  error
-	killed   []string
-	commands [][]string
+	mu           sync.Mutex
+	listing      string
+	listErr      error
+	killErr      error
+	killed       []string
+	commands     [][]string
+	deadSessions bool
+	onList       func()
 }
 
 func (r *resetTmux) Run(c *exec.Cmd) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.commands = append(r.commands, c.Args)
 	if slices.Contains(c.Args, "kill-session") {
 		r.killed = append(r.killed, c.Args[len(c.Args)-1])
 		return r.killErr
 	}
+	if r.deadSessions {
+		return &exec.ExitError{}
+	}
 	return nil
 }
 func (r *resetTmux) Output(c *exec.Cmd) ([]byte, error) {
+	r.mu.Lock()
 	r.commands = append(r.commands, c.Args)
+	hook := r.onList
+	r.onList = nil
+	r.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	return []byte(r.listing), r.listErr
 }
 func (r *resetTmux) CombinedOutput(c *exec.Cmd) ([]byte, error) { return r.Output(c) }
