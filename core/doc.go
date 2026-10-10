@@ -13,7 +13,8 @@
 // own messages. Core's own tests drive a Model directly, on their own
 // goroutine, with Sync, Drain and Deliver.
 //
-// core imports nothing of the TUI (TestCoreImportsNoUI): the daemon will
-// run it with no terminal. Focus is the TUI's: where an operation needs
-// "the workspace the user is looking at", the caller passes it.
+// core imports nothing of the TUI (TestCoreImportsNoUI): the daemon
+// (loom serve) runs it with no terminal. Focus is the TUI's: where an
+// operation needs "the workspace the user is looking at", the caller
+// passes it.
 package core

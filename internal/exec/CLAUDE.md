@@ -1,0 +1,16 @@
+# internal/exec
+
+The subprocess seam: the `Executor` interface (`Default` in production, fakes in tests; `cmd.Executor` and `cmd.Exec` re-export it) and the constructors of every git and gh subprocess (`internal/exec/command.go`): `GitCommand(ctx, dir, args…)` adds `-C dir` (nothing for `""`) and pins git's message language, and `GhCommand` disables gh's prompts; callers outside import them as `internalexec.GitCommand`/`internalexec.GhCommand` and run them through an `internalexec.Executor`. A leaf package, so `cmd/`, `session/git/` and `tools/` all import it without a cycle.
+
+## Rules when modifying this package
+
+- **Force only git's message language: `LC_MESSAGES=C`, appended last, never `LC_ALL=C`.** Callers classify failures by git's English stderr (`isBranchAbsentErr`, `isWorktreeAbsentErr`, the `worktree unlock` answers in `unlockWorktree`) and parse its English output (`parseShortStat`), so the messages must be C; but `post-checkout` runs on every session create and resume, and hooks such as Ruby's overcommit break under an ASCII `LC_CTYPE`. gettext and `strerror` translate from `LC_MESSAGES`, and gettext ignores `LANGUAGE` once it resolves to C. `gitEnv` drops `LC_ALL` and `LANGUAGE`, re-pins every other `LC_*` to the user's `LC_ALL` value when one was set, and leaves the charset and collation to hooks, filters, textconv, credential helpers and gpg. **Enforced** by the `TestGitEnv_…` tests and `TestGitCommand_ChildProcessesKeepCharset` (`internal/exec/command_test.go`).
+- **Append to a built command's `c.Env`; never rebuild it from `os.Environ()`.** Rebuilding drops the locale pinning, and git's errors come back in the user's language, misclassified silently (`runGitCommandEnvTimeout` in `session/git` is the model). **Enforced** for `GitCommand` itself by `TestGitCommand_CallerEnvSurvives`; call sites are **Convention**.
+- **Keep `GhCommand` setting `GH_PROMPT_DISABLED=1` and `GH_NO_UPDATE_NOTIFIER=1`.** A prompt or an update banner from a subprocess with no terminal hangs or garbles a poll. **Enforced** by `TestGhCommand_DisablesPromptsAndUpdateNotifier`.
+- **Have the constructors only build the `*exec.Cmd`; run it through the injected `Executor` wherever one is in scope.** Tests substitute recorders through it, so a direct `Run` escapes every fake and runs real git in a test. **Convention** — tests that pass by touching the developer's repos.
+- **Know `TestNoRawGitGhExec`'s reach when you change it: it flags a raw `exec.Command` or `exec.CommandContext` outside `command.go`, resolving aliased and dot imports of `os/exec`, but matches only a literal `"git"`/`"gh"` program name, and exempts `*_test.go` files.** A name routed through a variable or constant passes it; keep `TestRawGitGhExecs_Detection` covering every case the matcher handles, or a refactor turns the enforcer into a test that can never fail. **Enforced** by `TestRawGitGhExecs_Detection` (`internal/exec/command_enforce_test.go`). Guide: [`../../docs/claude/adding-an-enforce-test.md`](../../docs/claude/adding-an-enforce-test.md)
+
+## Pointers
+
+- [`../../session/git/CLAUDE.md`](../../session/git/CLAUDE.md) — the main caller, which classifies git's English errors.
+- [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) — where this package sits.

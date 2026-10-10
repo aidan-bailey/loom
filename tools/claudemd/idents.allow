@@ -1,0 +1,8 @@
+# Tokens neither identifier check (go run ./tools/claudemd [-idents]) may
+# flag, one per line: the token as the doc writes it, then "# reason".
+# Only negative claims belong here: a rule saying something must not exist,
+# or no longer does. Anything else here is hiding a stale rule.
+
+InstanceOf      # negative claim: a deleted bridge the TUI must never reintroduce; TestTUIHoldsNoModelObject forbids the name
+IDFor           # negative claim: a deleted bridge the TUI must never reintroduce; TestTUIHoldsNoModelObject forbids the name
+AdoptForScript  # negative claim: a deleted bridge the TUI must never reintroduce; TestTUIHoldsNoModelObject forbids the name

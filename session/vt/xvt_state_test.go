@@ -80,7 +80,7 @@ func TestTitle_NonASCIITruncatesInVendoredParser(t *testing.T) {
 	defer e.Close()
 	_, _ = e.Write([]byte("\x1b]2;✳ claude\x07"))
 	require.False(t, utf8.ValidString(e.Title()),
-		"if this starts passing, the vendored x/vt parser was fixed — simplify PaneTitle's guard and update this test")
+		"if this starts failing, the vendored x/vt parser was fixed — simplify PaneTitle's guard and update this test")
 }
 
 func TestFocusReporting_Mode1004Tracking(t *testing.T) {
