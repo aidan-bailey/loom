@@ -514,7 +514,11 @@ starts)…`.
   window takes the size of whichever terminal used it last.
 - **Quitting** (`q`) closes only this loom. Your agents keep running, and
   the daemon keeps watching them: it pauses an agent that exits, restarts
-  a workspace terminal that dies, polls GitHub, and saves.
+  a workspace terminal that dies, polls GitHub, reads Claude's status
+  from its hook events, and saves. It also answers an agent's trust
+  prompt ("Do you trust the files in this folder?") for up to 30 seconds
+  after each launch, so an agent it relaunches at boot with no loom open
+  gets past the prompt. A loom you have open never answers it too.
 - **Stopping the daemon**: `loom serve stop`. The daemon tells every open
   loom it is stopping, finishes any pause or kill in progress (up to 30
   seconds; the loom that asked still gets the result), saves and exits. Your
@@ -595,9 +599,13 @@ starts)…`.
   `~/.loom/logs/serve.log`, with a crash it can't log in
   `serve-crash.log` beside it. If the daemon fails to start, loom prints
   what it logged.
-- `loom reset` and `loom workspace migrate` write session files
-  themselves, so they refuse while the daemon runs: run
-  `loom serve stop` first.
+- `loom workspace` and `loom account` are clients of the daemon, as a
+  loom is: they start one when none runs, make their request and exit.
+  `loom reset` is the daemon's to make while it runs (it drops the
+  workspace's sessions at once); with no daemon it works directly and
+  holds the daemon's lock meanwhile, so none starts under it.
+  `loom workspace migrate` writes session files itself, so it refuses
+  while the daemon runs: run `loom serve stop` first.
 - A loom from before the daemon, still running, keeps the daemon from
   starting: quit it first.
 
@@ -720,6 +728,8 @@ W → Space to toggle workspaces on/off → Esc
 
 Each workspace tab shows only the sessions for that repository.
 
+Registering and unregistering take effect in a running loom. `loom workspace remove <name>` closes the tab of an open loom ("X is no longer registered; closed its tab"); its agents keep running, and adding the directory again brings them back. `loom workspace rename <old> <new>` keeps the tab and its sessions under the new name. Both are refused while one of the workspace's sessions is loading or being killed.
+
 ---
 
 ## CLI Reference
@@ -747,9 +757,9 @@ loom [command]
 | `debug` | Print config paths and loaded configuration, the daemon (pid, socket, build and tmux server, or "not running") and its log, and the tmux server a daemon started now would use (the last daemon's while it runs). Its Claude temp root is the one your shell's environment gives, not necessarily the daemon's |
 | `serve` | Run the loom daemon in this terminal (loom starts one in the background when none runs; see [The Loom Daemon](#the-loom-daemon)) |
 | `serve stop` | Stop the daemon: it finishes any pause or kill in progress, saves and exits. Sessions keep running; every open loom waits for a daemon (`Ctrl+R` starts one) |
-| `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions (on the tmux server the last daemon used, while it runs) — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**. Stops before removing worktrees if the tmux cleanup fails. Refused while the daemon runs (`loom serve stop` first). |
-| `workspace` | Manage workspaces (see below) |
-| `account` | Manage extra Claude accounts (see below, and [Run Sessions on Several Claude Accounts](#run-sessions-on-several-claude-accounts)) |
+| `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions (on the tmux server the last daemon used, while it runs) — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**. Stops before removing worktrees if the tmux cleanup fails. While the daemon runs it makes the reset, waits for it and refuses while a session of the workspace is loading or being killed; with none running it works directly. |
+| `workspace` | Manage workspaces (see below); a client of the daemon, which it starts when none runs |
+| `account` | Manage extra Claude accounts (see below, and [Run Sessions on Several Claude Accounts](#run-sessions-on-several-claude-accounts)); a client of the daemon too |
 
 ### Workspace Subcommands
 
@@ -758,10 +768,10 @@ loom [command]
 | `workspace add [path]` | Register a git repo as a workspace (defaults to current dir) |
 | `workspace add --name <n> [path]` | Register with a custom name |
 | `workspace list` | List all registered workspaces |
-| `workspace remove <name>` | Unregister a workspace (data preserved) |
+| `workspace remove <name>` | Unregister a workspace (data preserved): the daemon stops serving it and open looms close its tab, and its agents keep running |
 | `workspace use <name>` | Set the default workspace |
-| `workspace rename <old> <new>` | Rename a workspace |
-| `workspace status [name]` | Show instance counts (defaults to CWD workspace) |
+| `workspace rename <old> <new>` | Rename a workspace; open looms keep its tab under the new name |
+| `workspace status [name]` | Show instance counts as the daemon serves them (defaults to CWD workspace) |
 | `workspace migrate` | Move global instances to their matching workspace directories (refused while the daemon runs) |
 
 ### Account Subcommands
@@ -770,7 +780,7 @@ loom [command]
 |---------|-------------|
 | `account add <name> [--no-login]` | Create `~/.loom/accounts/<name>`, link your Claude setup into it, and run `claude auth login` for it (skipped with `--no-login`) |
 | `account login <name>` | Log an account in again; `default` is your main login |
-| `account list` | Each account's email, plan and 5-hour/7-day usage |
+| `account list` | Each account's email, plan and 5-hour/7-day usage. The daemon probes usage only once an extra account exists, so with only the default account the usage columns are empty |
 | `account use <name>` | The account new sessions preselect |
 | `account sync` | Share entries added to your main Claude config dir since the accounts were made |
 | `account remove <name> [-y] [--force]` | Remove an account; refused while a session uses it or its dir holds unshared files. `-y` skips the confirmation, `--force` overrides both refusals |

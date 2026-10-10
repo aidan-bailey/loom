@@ -1,3 +1,294 @@
+## [0.14.0] - 2026-10-10
+
+### 🚀 Features
+
+- *(hooks)* Register status events and parse their fields
+- *(hooks)* Stamp each event with when its hook ran
+- *(session)* Merge Claude status observations, newest first
+- *(session)* Map Claude hook events to status observations
+- *(session)* Track Claude status, conversation and last message per instance
+- *(session)* Install loom's hooks on every Claude launch
+- *(app)* Let a gated job be requested mid-flight
+- *(app)* Merge roster answers with hook events per instance
+- *(app)* Read hook events within a second and apply their status
+- *(session)* Persist the Claude conversation to resume (schema v7)
+- *(session)* Resume the recorded conversation after a crash
+- *(ui)* Show Claude's last message on a stopped session's card
+- *(account)* Registry of extra Claude accounts
+- *(account)* Link the main config dir into account dirs
+- *(account)* Read an account's identity and log it in
+- *(account)* Probe plan usage with a headless get_usage request
+- *(session)* Persist each instance's Claude account (schema v8)
+- *(session)* Launch as the instance's account; fail closed when it is gone
+- *(session)* Query the roster and remote-control auth as an account
+- *(ui)* Account usage strip
+- *(ui)* Show each Claude session's account on cards and the pane title
+- *(overlay)* Account row in Session Launch Options
+- *(overlay)* Accounts screen in Settings
+- *(app)* Load the account registry and read each account's auth
+- *(app)* Query the Claude roster once per account in use
+- *(app)* Poll each account's plan usage on its own gate
+- *(app)* Choose the Claude account in Launch Options and on R
+- *(app)* Account usage strip above the tab bar
+- *(app)* Add, log in, remove and pick Claude accounts from Settings
+- *(cmd)* Loom account add/login/list/use/sync/remove
+- *(account)* Export OwnedDir and ValidateMainDir for the CLI
+- *(account)* Bootstrap the main dir's projects/ on a fresh install
+- *(account)* Detect a credential env var that overrides every account
+- *(ui)* A warning slot leading the account strip
+- *(overlay)* A screen-wide notice above the Accounts rows
+- *(overlay)* Pass an account notice through Settings to its Accounts screen
+- Session lifecycle never attaches; the TUI owns its pane clients
+- One loom TUI per global dir; a second one takes over
+- *(core)* Instance views, IDs, and requests by ID
+- *(claudetmp)* Locate, archive and restore Claude's per-session temp dirs
+- *(session)* Archive Claude's temp dir on pause and kill, restore on resume
+- *(app)* Sweep orphaned Claude temp dirs into archives at workspace load
+- Claude_tmp_archive_dir relocates the Claude temp-dir archives
+- *(core,config)* Workspace views, IDs and settings as values
+- *(core)* The model's own loop (core.Loop)
+- *(core)* Publish the whole state a replica needs
+- *(rpc)* The wire, a server and a replicating client
+- *(core)* Ready the model to serve every workspace
+- *(rpc)* Route a request's answer to the client that made it
+- *(core)* Serve every registered workspace
+- *(serve)* The loom daemon process
+- *(app)* Loom is a client of the loom daemon
+- *(claudemd)* Lint CLAUDE.md structure and stale identifiers
+- *(core)* Stable IDs across daemons (stage 3R A)
+- The daemon says bye; stop order; no-spawn connect (stage 3R B)
+- The TUI survives the daemon going away (stage 3R C)
+- *(core)* Unregister, rename, reset and forced account removal (stage 3C+4 A)
+- The subcommands are clients of the daemon (stage 3C+4 B)
+- The daemon answers trust prompts and scans hooks with no TUI (stage 3C+4 C)
+
+### 🐛 Bug Fixes
+
+- *(account)* Close a Remove path-escape and add safety guards
+- *(account)* Bound subprocess waits and refuse a missing account dir
+- *(account)* Export a Command builder; refactor AuthStatus/ProbeUsage onto it
+- *(session)* Roster query fails closed when an account's config dir is gone
+- *(account)* Stop Unshared false positives, harden the within check
+- *(session)* Distinguish an unregistered, unloadable, and dir-missing account
+- *(session)* Start's account check runs even with a preset tmux session
+- *(session,tmux)* Restart relaunches under a freshly resolved account env
+- *(session)* Remote-control auth keeps the identity when an override blocks it
+- *(session)* Resume fails closed on a missing account before touching anything
+- *(session)* FromInstanceData normalizes the default account name to ""
+- *(overlay)* Target Accounts remove/cursor by identity; stop rows wrapping
+- *(ui)* Width-only rail badge decision, painted gap, truncation order
+- *(overlay)* Reset the Account row's selection when it drops below two
+- *(ui)* Stop the strip's elevated-usage color from reading as Attention
+- *(account)* Resolve symlinked ancestors of a not-yet-existing path
+- *(session)* Resume's account check no longer blocks a live-session reattach
+- *(tmux)* TmuxSession.Env() returns a clone, not the internal slice
+- *(ui)* Rail badge decision must ignore the index prefix's own width
+- *(overlay)* Stop the Accounts screen misleading at its real width
+- *(account)* Reload keeps an Unavailable registry's own error
+- *(app)* Reread accounts.json on the health tick only when it changed
+- *(app)* Reread account auth when accounts appear or lose plan access
+- *(cmd)* Split remove's --force from --yes, fix ordering and leaks
+- *(app)* Show the account switch when R's account was removed
+- *(app)* Say "logged out" once on the Accounts screen
+- *(app)* Count a loaded session once when refusing an account removal
+- *(app)* Point the Settings unshared-files refusal at the CLI's --force
+- *(cmd)* Break the cmd -> session import cycle
+- *(app)* Refuse a TUI login on an account whose config dir is gone
+- *(app)* Skip the accounts' Sync when the main config dir is unsafe
+- *(cmd)* Catch, don't ignore, SIGINT around the login child
+- *(account)* Remove could delete through a symlink-disguised owned dir
+- *(session)* Remote-control override check covers CLAUDE_CODE_OAUTH_TOKEN
+- *(session)* MissingAccountError names R, the actual recovery action
+- *(cmd)* Warn on a credential override, fix global config dir lookup
+- *(app)* An extra account's blocked hint names its own login
+- *(app)* Keep menu highlighting from reordering keys typed in Settings
+- *(app)* Warn once when loom itself runs as an extra account
+- *(session)* AccountDirMissingError points at the actual recovery
+- *(app)* Warn on the strip when a credential overrides every account
+- *(app)* Notice a credential override on the Accounts screen too
+- *(account)* Trim ActiveCredentialOverride's env value like the RC check
+- *(account)* Compare account dirs by resolved path, not exact spelling
+- *(account)* Close resolvedOrClean's not-yet-existing-path bypass
+- *(session)* Mark a CLI-logged-in account's onboarding done before launching
+- *(tmux)* Type text through paste-buffer, not send-keys -l
+- Release pane clients only after the registry drops them; attach after Lua resume
+- *(tmux,ui)* A pane client whose pump hit EOF on its own is dead
+- *(app)* Persist idle agents; skip only never-started instances
+- *(ui)* Bound the Dead event's repair of a client that exits on attach
+- *(tmux)* Set detach-on-destroy on every agent session
+- No-client status scans, paused send_prompt, batched release
+- *(core)* Package A review fixes
+- *(core)* Package B review fixes
+- *(app)* A start landing on a killed instance never enters inline attach
+- *(core)* Package C review fixes
+- *(core)* Final review fixes for stage 1B
+- *(orphan)* A live orphan keeps the account its agent runs on
+- *(core)* Request preconditions and job nil guards
+- *(app,core)* Show refused requests; keep busy rows' terminal clients
+- *(script)* The yielding methods' pcall refusal names the TUI
+- *(script)* Resumed errors name their file; tail calls raise without a position
+- *(script,app,core)* Lua instances refresh after a lifecycle call; ladder survives a failed op; dead code
+- *(script)* A killed handle reaches no pane; pin a recovered handle's refresh
+- *(git)* Remove worktrees an interrupted add left locked
+- *(app)* Slots take the model's newest workspace view
+- *(ui)* No terminal shell for a session being killed
+- *(app)* Draw the issue picker
+- Review fixes for daemon stage 3A
+- *(serve)* Package A's review; build on Windows again
+- *(core,app)* The daemon's environment decides, and the TUI shows it
+- The review fixes for B, C, D and the final review
+- *(tmux)* Run every tmux client as UTF-8 with -u
+- *(claudemd)* Close the review's gaps in fences, the index and phrases
+- *(claudemd)* Leave CLAUDE.local.md to its owner
+- *(core)* An orphan placeholder's ID is the same on every daemon
+- *(rpc)* Bye waits until the replies of the calls it let in are queued
+- *(app)* Fail requests refused around the bye at once; resend the last used tab
+- *(e2e)* Prove the pause is in flight before the stop; KillDaemon reports no kill that did not happen
+- *(app)* A daemon that dies soon after a rejoin counts as a failed start
+- *(devsandbox)* Retry Start when it reaches a tmux server mid-exit
+- *(session)* Give account sessions their resolved memory dir
+- *(core)* Answer a refused Reset with its Reply, as every request does
+- *(cli)* Warn on the daemon's credential, refuse a non-daemon lock holder, report a reset once
+- *(daemon)* Wait out a probe over a stopped daemon's record in TakeLock
+- *(core)* An idle hook scan wakes no client
+
+### 💼 Other
+
+- *(script,app)* Lua and issue fetches through the model
+
+### 🚜 Refactor
+
+- *(session)* Move the hook transport into session/hooks
+- *(session)* Launch env as a LaunchEnv struct with CLAUDE_CONFIG_DIR
+- *(tmux)* Split a lifecycle-only Session from the attach client
+- *(ui,app)* Read agent panes through PaneClients
+- *(core)* The model owns workspaces and their instances
+- *(core)* Lifecycle operations and completions move into the model
+- *(core)* The health tick and background jobs move into the model
+- *(ui,app)* The TUI renders instance views
+- *(app)* Lifecycle operations are requests by ID
+- *(app)* Creation flows hold a draft until Create
+- *(app)* The pane ladder is a display overlay; tmux by name
+- *(app)* Prompt sends hold input to their session until they land
+- *(app,core)* The TUI acts on instances only by request
+- *(script,app)* Lua and issue fetches go through the model
+- *(app,ui)* The TUI holds workspace views, not workspaces
+- *(core,app)* Core.Core is value-typed
+- *(core,app)* The model runs on its own loop
+- *(app)* The TUI talks to its model over the wire
+- *(app)* The tabs, the classic workspace and startup are the client's
+- Delete dead code and stale comments (stage 4)
+
+### 📚 Documentation
+
+- *(spec)* Design Claude hook events for status, resume and last message
+- *(spec)* Amend hook-events design with live probe results
+- *(plan)* Implementation plan for Claude hook events
+- Describe hook-driven Claude status, resume and last message
+- Design for choosing a Claude account per session
+- Implementation plan for Claude account selection
+- *(plan)* Fix the get_usage fixture's missing brace
+- Fold the Phase A-C review decisions into the plan and spec
+- Claude account selection
+- *(spec)* Split loom account remove's --yes from --force
+- Catch up account docs with the CLI/TUI fix rounds
+- Catch up account docs with the final review's fix waves
+- Describe the registry's clean-form check and in-memory canonicalization
+- *(spec)* Supervised workspaces design
+- *(spec)* Restructure supervised workspaces around a work log
+- *(spec)* Record supervised-workspaces probe results
+- *(plan)* Supervised workspaces stage 1
+- *(spec,plan)* Fold review fixes into supervised workspaces stage 1
+- *(spec)* Loom daemon and scrum workspaces designs
+- *(plan,spec)* Daemon stage 1A pane split; split stage 1 into 1A-1D
+- *(plan)* Regroup daemon stage 1A into four packages
+- *(plan)* Amend 1A for paste-buffer input and C1's stuck-pump test
+- *(plan)* Binding amendments to Package C from the A and B reviews
+- *(plan)* Amendment 6, close released pane clients in parallel
+- *(plan)* Amendments 7-8 from Package C's review
+- CLAUDE.md for the pane split (daemon stage 1A)
+- Paste-buffer input and the pane-client liveness rule
+- Lua input docs, repair log names its path, round 3 rules
+- Detach-on-destroy covers every loom session; send_keys history
+- *(plan)* Record stage 1A outcome and follow-ups
+- *(plan)* Daemon stage 1B, the core model
+- CLAUDE.md and spec for the core model (daemon stage 1B)
+- *(plan)* Record stage 1B outcome and follow-ups
+- *(spec)* Locked worktree removal and Claude temp-dir archiving
+- *(plan)* Daemon stage 1C, the instance boundary
+- CLAUDE.md, scripting and spec for the instance boundary (daemon stage 1C)
+- Issue fetches in CLAUDE.md; new_instance's workspace and ctx's lifetime in scripting.md
+- *(plan)* Record stage 1C outcome and follow-ups
+- *(plan)* Locked worktrees and Claude temp-dir archiving
+- *(plan)* Amendment B-1, the contract test drives an interactive Claude
+- *(plan)* Review amendments B-2..B-8, C-1, C-2, D-1
+- *(plan)* Review amendments A-1, B-9, C-3..C-7, D-2
+- *(plan)* Review amendments A-2, C-8, D-3
+- *(plan)* Final-review amendments F-1..F-6
+- *(plan)* Record final-review follow-ups
+- *(plan)* Amendment F-7 from the final smoke run
+- *(plan)* Record the terminal-pane follow-up
+- *(plan)* Widen the error-bar truncation follow-up
+- The resume status gate lives in core now
+- *(plan)* Daemon stage 1D, the workspace boundary
+- CLAUDE.md and spec for the workspace boundary (daemon stage 1D)
+- *(plan)* Record stage 1D outcome and follow-ups
+- *(plan)* Daemon stage 1E, the model's own loop
+- CLAUDE.md and spec for the model loop (daemon stage 1E)
+- *(plan)* Record stage 1E outcome and follow-ups
+- *(plan)* Daemon stage 2, the wire and the client replica
+- CLAUDE.md and spec for the wire (daemon stage 2)
+- *(plan)* Record stage 2 outcome and follow-ups
+- *(plan)* Daemon stage 3A, the multi-client model
+- CLAUDE.md and specs for the multi-client model (daemon stage 3A)
+- *(plan)* Record stage 3A outcome and follow-ups
+- *(plan)* Daemon stage 3B, loom serve
+- CLAUDE.md, USAGE.md and the specs for loom serve (daemon stage 3B)
+- *(plan)* Record stage 3B outcome and follow-ups
+- *(spec)* Design stage 3R, live reconnect
+- *(app,ui,script,account,cmd,config,log,review,devsandbox,tools,e2e)* Rules and facts per package
+- *(tools)* List claudemd's documented blind spots
+- *(core,rpc,serve,session,tmux,git,vt,exec,testenv)* Rules and facts per package
+- *(session)* Name the two account-selection gaps of resume and orphan recovery
+- *(app,ui,script,account,cmd,config,log,review,tools)* Narrow guards to what tests pin
+- *(tools)* Note indented code blocks and the auto-loaded files claudemd checks
+- Root CLAUDE.md to the conventions; ARCHITECTURE, guide index, root guides
+- *(script)* Drop the root keybinding table, which USAGE.md now holds
+- The playbook's bars for docs/claude/INDEX.md and the root's conventions
+- A replacing TUI stops the daemon it dialed; replaceGuard's LOOM_GLOBAL_DIR case
+- *(app,config,review)* Narrow the last guards to the tests that pin them
+- *(core,rpc,serve,session,tmux,git,vt,exec,testenv)* Fix review findings
+- Correct stale package comments
+- The Docs workflow and go test now enforce the CLAUDE.md lint
+- *(plan)* Stage 3R, live reconnect
+- Live reconnect (stage 3R)
+- *(plan)* Record stage 3R outcome and follow-ups
+- *(core,rpc,cmd)* Document the methods revive flags on main
+- CI lints only the lines a push changes; how to run its linter locally
+- Say what the lint checks in README.md and docs/ARCHITECTURE.md
+- Document newerDaemonError.Is (revive)
+- *(spec)* Design stage 3C+4
+- *(plan)* Stage 3C+4, subcommands as clients, headless duties, cleanup
+
+### 🧪 Testing
+
+- *(fakeagent)* Fire loom's hooks like Claude; hook-driven e2e test
+- *(session)* Opt-in contract test for Claude's status hooks
+- *(account)* Opt-in contract test for the usage probe
+- *(session)* Cover the remaining account fail-closed/fresh-env paths
+- *(app)* An Accounts-screen add against an unsafe main dir says why
+- *(session)* Switching accounts still resumes the recorded conversation
+- *(app)* Flow-selection fixtures start their instances
+- *(app)* Pin the view store's freshness; prune bells
+- *(git)* Isolate TestStashOnDisk's temp dir from concurrent runs
+- *(ui)* Config literals for the embedded Settings
+- *(e2e)* The daemon's lifecycle end to end; loomdev runs a sandbox daemon
+- *(app)* Stop fixtures depending on the user name and time zone
+- *(claudemd)* Enforce the conventions on the repo; Docs workflow
+- E2e and loomdev for live reconnect (stage 3R D)
+- Isolate the main Claude config dir in every test binary
+- E2e for subcommands as clients and headless trust prompts (stage 3C+4 D)
+
 ## [0.13.0] - 2026-08-31
 
 ### 🚀 Features

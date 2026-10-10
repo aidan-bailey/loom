@@ -91,21 +91,21 @@ The workspace registry (`workspaces.json`) is the one exception: it always reads
 
 ## CLI Commands
 
-All under `loom workspace`:
+All under `loom workspace`. Each is a client of the loom daemon (it joins the daemon as the TUI does, starting one when none runs, makes its request and exits), except `migrate`, which writes `state.json` itself while it holds the global dir's lock.
 
 | Command | Description |
 |---------|-------------|
 | `workspace add [path]` | Register a git repo as a workspace. Defaults to `.`. Flag `--name` overrides the auto-derived name (directory basename). |
-| `workspace list` | List registered workspaces with name, path, and status (`[last used]` or `[missing]`). |
-| `workspace remove <name>` | Unregister a workspace by name. Does not delete the `.loom/` directory. The loom daemon keeps serving it until the daemon restarts. |
+| `workspace list` | List registered workspaces with name, path, and status (`[last used]` or `[missing]`), from the registry the daemon rereads first. |
+| `workspace remove <name>` | Unregister a workspace by name. Does not delete the `.loom/` directory. The daemon saves the workspace and stops serving it, and an open loom closes its tab; its sessions keep running, and registering the directory again serves them under the same IDs. Refused while one of its sessions is Loading or Deleting. |
 | `workspace use <name>` | Set the default workspace (`LastUsed`) for future invocations. |
-| `workspace rename <old> <new>` | Rename a workspace in the registry. The loom daemon keeps serving it under the old name, and loom refuses to open it by the new one until the daemon restarts (`loom serve stop`, then loom). |
-| `workspace status [name]` | Show instance counts for a workspace (defaults to cwd-matched workspace). |
-| `workspace migrate` | Move global instances to their matching workspaces (see [Migration](#migration)). Refused while the loom daemon runs. |
+| `workspace rename <old> <new>` | Rename a workspace. The daemon renames it in place, keeping its ID and sessions, and an open loom's tab shows the new name. Refused for a name already registered. |
+| `workspace status [name]` | Show instance counts for a workspace (defaults to cwd-matched workspace), as the daemon serves its sessions. |
+| `workspace migrate` | Move global instances to their matching workspaces (see [Migration](#migration)). Refused while the loom daemon runs (`loom serve stop` first). |
 
 The root command also accepts `--workspace <name>` (`-w`) to select a workspace by name, bypassing cwd auto-detection.
 
-Source: `cmd/workspace.go`, `main.go`.
+Source: `internal/cli/workspace.go`, `cmd/workspace_migrate.go`, `main.go`.
 
 ### `workspace add` Details
 
@@ -115,7 +115,7 @@ Source: `cmd/workspace.go`, `main.go`.
 4. Calls `EnsureGitignore()` to add `.loom/` to the repo's `.gitignore`.
 5. Saves to `~/.loom/workspaces.json`.
 
-The loom daemon serves the new workspace from the next time it rereads the registry (`core.Model.ReloadRegistry`, which every loom runs as it starts and the workspace picker runs whenever it opens).
+The command asks the daemon (`Register`), which writes the registry and serves the workspace at once.
 
 ### `workspace remove` Details
 
@@ -124,7 +124,11 @@ The loom daemon serves the new workspace from the next time it rereads the regis
 3. Clears `LastUsed` if this was the last-used workspace.
 4. Saves registry. Does **not** delete on-disk data.
 
-The loom daemon keeps serving the workspace (its sessions are still watched) until it restarts; unloading one is a later stage's work (daemon stage 3C).
+The command is the `Unregister` request. The daemon refuses the global workspace, an unknown name and a workspace with a busy session (Loading or Deleting), then saves the workspace, removes the entry and stops serving it (`core.Model.Unregister`). Its tmux sessions are not touched, so its agents run on, and registering the directory again serves them under the same IDs, which derive from the disk. An entry that is another name for a directory still registered (a twin) only leaves the registry, and the workspace stays served under a name still registered. A workspace removed by editing `workspaces.json` is unloaded the same way at the next reread (`ReloadRegistry`; one with a busy session waits for the next); a rename made there is applied in place.
+
+### `workspace rename` Details
+
+`RenameWorkspace` renames the registry entry (its open list and last-used workspace follow) and the served workspace, in place: it keeps its ID (derived from its config dir), its sessions and its terminal, whose title stays what it was. An open loom follows by ID: its tab bar and rail show the new name, and opening the workspace by the new name works.
 
 ## Startup Behavior
 
@@ -160,7 +164,9 @@ Users press `W` (shift+w) to open the workspace picker overlay. Opening it rerea
 - Shows a footer while any listed workspace failed to load: closing one (unchecking it, or Global) drops it from the open list, so loom stops retrying it at start. Its live sessions are spared either way (see [Failed Loads](#failed-loads)).
 - Navigation: `j`/`k` or arrow keys. `Space` or `Enter` toggles a workspace; on the Global row it unchecks everything and commits. `Esc` or `q` commits the checked set.
 
-Opening a workspace by a name the model serves it under another is refused, because the TUI keys its tabs, the picker and the open list on names: a twin with "X is the same directory as Y, which loom serves: open Y", a workspace registered at `$HOME` with "X shares its config dir with the global workspace, which loom serves: pick Global", and a workspace renamed while the daemon runs with "... stop the daemon (`loom serve stop`), then start loom, to open it as X".
+Opening a workspace by a name the model serves it under another is refused, because the TUI keys its tabs, the picker and the open list on names: a twin with "X is the same directory as Y, which loom serves: open Y", and a workspace registered at `$HOME` with "X shares its config dir with the global workspace, which loom serves: pick Global".
+
+A running TUI follows the daemon's changes to what it serves. A tab whose workspace the daemon stops serving (`workspace remove`, or a reread of the registry) closes with the info line "X is no longer registered; closed its tab" (global mode when it was the last), and a workspace renamed keeps its tab: the tab bar, the rail's header and the TUI's open list take the new name (`renameShown`).
 
 The startup picker (step 4 above) is single-select: `Enter` opens the workspace under the cursor as a tab, or stays global on the Global row.
 
@@ -213,7 +219,7 @@ A workspace whose `state.json` holds a payload that is not a JSON array (see the
 
 `workspace migrate` moves instances from the global `~/.loom/state.json` to workspace-specific state files.
 
-Source: `cmd/workspace.go`.
+Source: `cmd/workspace_migrate.go`.
 
 ### Process
 
@@ -245,13 +251,15 @@ The actual directories are moved on disk via `os.Rename()`.
 | File | Role |
 |------|------|
 | `config/workspace.go` | `Workspace`, `WorkspaceRegistry`, CRUD operations, `EnsureGitignore` |
-| `cmd/workspace.go` | CLI commands: `add`, `list`, `remove`, `migrate` |
+| `internal/cli/workspace.go` | CLI commands: `add`, `list`, `remove`, `use`, `rename`, `status` |
+| `cmd/workspace_migrate.go` | The `migrate` command |
 | `ui/overlay/workspacePicker.go` | Workspace picker overlay (Bubble Tea component) |
 | `ui/workspace_tab_bar.go` | Workspace tab bar |
 | `app/app_init.go` | Startup: the startup workspace, the saved-tab restore, the startup overlays |
 | `app/workspaces.go` | Slots, tabs (`openTab`, `deactivateWorkspace`), global mode, the picker's commit, the open list |
 | `core/load.go` | The model's boot, the one load path (`loadWS`), first open (`open`, `ensureTerminal`), the orphan sweep |
-| `core/workspaces.go`, `core/workspace_requests.go` | `Workspaces`, `Open`, `Register`, `ReloadRegistry`, `PersistOpenList`, `SetLastUsed` |
+| `core/workspaces.go`, `core/workspace_requests.go` | `Workspaces`, `Open`, `Register`, `Unregister`, `RenameWorkspace`, `ReloadRegistry`, `PersistOpenList`, `SetLastUsed` |
+| `core/reset.go` | `ResetWorkspace`, the daemon's `Reset` request |
 | `config/config.go` | `GetConfigDir()` — respects `LOOM_HOME` |
 | `config/state.go` | State loading from config directory |
 | `session/git/worktree.go` | `getWorktreeDirectory()` — uses config directory |
@@ -262,7 +270,7 @@ The actual directories are moved on disk via `os.Rename()`.
 
 **Isolation via explicit context, not filtering.** Rather than loading all instances globally and filtering by workspace, each workspace has its own state file. A `WorkspaceContext` value object carries the config directory and is threaded through all function calls. `LOOM_HOME` remains the user-facing override (with `CLAUDE_SQUAD_HOME` as a deprecated fallback) for external tooling.
 
-**Every workspace served; the tabs are the client's.** Since daemon stage 3A the session model loads every registered workspace and the global one at startup and never drops one, so session lifecycle (crash restarts, the health tick, the orphan sweep) covers every workspace whether or not it is open. Which workspaces a TUI shows, and the open list it persists, are its own state; a workspace's terminal and GitHub polling wait for its first open, so a workspace nobody looks at gets no terminal and no GitHub polling, but still costs its load and reconcile at startup, the health tick's probe and the roster queries and hook scans of its agents, and its save when the daemon stops. Since stage 3B the model runs in the daemon (`loom serve`), and several looms each keep their own tabs over it. See the [daemon spec](../superpowers/specs/2026-10-03-loom-daemon-design.md).
+**Every workspace served; the tabs are the client's.** Since daemon stage 3A the session model loads every registered workspace and the global one at startup and drops one only when it leaves the registry (`Unregister`), so session lifecycle (crash restarts, the health tick, the orphan sweep) covers every workspace whether or not it is open. Which workspaces a TUI shows, and the open list it persists, are its own state; a workspace's terminal and GitHub polling wait for its first open, so a workspace nobody looks at gets no terminal and no GitHub polling, but still costs its load and reconcile at startup, the health tick's probe and the roster queries and hook scans of its agents, and its save when the daemon stops. Since stage 3B the model runs in the daemon (`loom serve`), and several looms each keep their own tabs over it. See the [daemon spec](../superpowers/specs/2026-10-03-loom-daemon-design.md).
 
 **Registry always global.** The workspace registry must be accessible before any workspace is selected, so it lives at `~/.loom/workspaces.json` regardless of `LOOM_HOME`.
 
@@ -270,4 +278,4 @@ The actual directories are moved on disk via `os.Rename()`.
 
 **No auto-migration.** Migration from global to workspace-scoped instances is a manual `workspace migrate` command. This avoids surprising users who haven't opted into workspaces yet.
 
-**`workspace remove` is non-destructive.** Removing a workspace from the registry does not delete its `.loom/` directory or any sessions. The data remains on disk.
+**`workspace remove` is non-destructive.** Removing a workspace from the registry does not delete its `.loom/` directory or any sessions. The data remains on disk, and the daemon stops serving the workspace.

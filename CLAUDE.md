@@ -43,7 +43,7 @@ It was forked from claude-squad at v1.0.17 and has diverged since: [`NOTICE.md`]
 
 - **`replaceGuard` refuses to replace the daemon from a `loom_*`/`claudesquad_*` session on the daemon's tmux server, or on any server when the daemon named none (then only `LOOM_GLOBAL_DIR` lets it through); neither `LOOM_TMUX_SOCKET` nor `LOOM_ALLOW_NESTED` gets past it.** A loomdev sandbox passes because its daemon's server is its own. **Enforced** by `TestReplaceGuard`.
 - **Pin the daemon's tmux server (`tmux.UseServer`) before anything touches tmux: in `serve.go`, in `daemonLink.join`, and in `reset`.** An unpinned process finds every session dead on its own server. **Enforced** by `TestJoin_PinsTheDaemonsTmuxServer`, `TestServeCmd_GuardsTheServerItPins` and `TestResetCmd_SweepsTheServerADaemonWouldPin`.
-- **`main.go` sets `cmd.StateWriteGuard` to `refuseWhileServed`**, since `cmd` can't import the daemon's packages. **Enforced** by `TestStateWriters_RefuseWhileTheDaemonRuns`.
+- **`main.go` wires what `cmd` and `internal/cli` can't import: `cmd.StateWriteGuard` is `holdForStateWrite` and `cli.Join` is `joinCLI`; `reset` asks the daemon while one runs and otherwise works directly, holding the lock (`daemon.TakeLock`).** A command writing `state.json` without the lock races the daemon's saves. **Enforced** by `TestStateWriters_RefuseWhileTheDaemonRuns`, `TestResetCmd_AsksTheDaemonWhileOneRuns` and `TestResetCmd_HoldsTheLockWhileItWorksDirectly`.
 - **Keep `version = "X.Y.Z"` in `main.go` in exactly that shape.** `flake.nix` and `.github/workflows/release.yml` extract it by pattern. **Convention** — the Nix build throws and no release is cut.
 - The daemon's own rules: [`internal/daemon/CLAUDE.md`](internal/daemon/CLAUDE.md).
 

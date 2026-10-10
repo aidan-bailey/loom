@@ -12,6 +12,8 @@ Tmux session management: lifecycle sessions that never attach, the TUI's attach 
 
 ### Sending text
 
+- **Send nothing from an attach client's status scan: `CaptureAndProcess` and `DetectStatus` only read the pane.** The daemon's launch watch answers trust prompts (`DismissTrustPrompt` on a `Session` it builds by name), and a TUI answering too types a second Enter into whatever the agent shows next. **Enforced** by `TestDetectStatus_LeavesTheTrustPromptToTheDaemon` (`session/tmux/attach_test.go`) and, for the TUI's scans, `TestStatusScan_NeverAnswersATrustPrompt` (`app/events_test.go`).
+
 - **Send text with `load-buffer` + `paste-buffer -d -r` (`TypeText`, `SendPrompt`), never `send-keys -l`; send key names with `PressKeys`.** `send-keys -l` fails past about 16 KiB ("command too long") and treats a trailing `;` as a command separator even after `--`. **Enforced** by `TestTypeTextMatchesPTYWrite_RealTmux`, which compares both with a write to an attach client's PTY byte for byte.
 
 ### Session state
