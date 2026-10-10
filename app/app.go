@@ -155,6 +155,9 @@ type home struct {
 	// could not record (persistFocusedWorkspace): resync sends it. "" when
 	// none waits (a tab's name never is).
 	unsentLastUsed string
+	// now replaces time.Now for the link's clock (clock) in tests; nil in
+	// production.
+	now func() time.Time
 	// daemonTmux is the tmux server the daemon named at the last join: a
 	// rejoined daemon on another server (the old one died) has its pane
 	// clients replaced (resync).

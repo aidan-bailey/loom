@@ -474,6 +474,59 @@ func TestLink_ThreeFailedSpawnsDropToWaiting(t *testing.T) {
 	assert.Contains(t, viewText(m), "serve.log", "the note stays while it waits")
 }
 
+// TestLink_ADaemonThatDiesSoonAfterARejoinCounts: a daemon the TUI
+// rejoins that is lost again within stableLink is no success: it counts
+// toward maxSpawnFails, and the backoff goes on from its last attempt, so
+// three quick fatal-after-join cycles drop the TUI to waiting, starting no
+// more daemons, instead of restarting one every second for good.
+func TestLink_ADaemonThatDiesSoonAfterARejoinCounts(t *testing.T) {
+	isolateTmux(t)
+	twoRows(t)
+	m, a := linkedHome(t, "")
+	clock := time.Unix(1_000_000, 0)
+	m.now = func() time.Time { return clock }
+	crash(t, m, a)
+	for i, delay := range []time.Duration{2 * time.Second, 4 * time.Second, 0} {
+		b, _ := bootDaemon(t, &recordingExec{})
+		rejoinOnto(t, m, b)
+		clock = clock.Add(5 * time.Second)
+		crash(t, m, b)
+		if delay == 0 {
+			break
+		}
+		require.Equal(t, linkReconnecting, m.link.state, "cycle %d", i+1)
+		assert.Equal(t, i+1, m.link.spawnFails, "cycle %d", i+1)
+		assert.Equal(t, delay, m.nextRejoinDelay(), "cycle %d: the backoff goes on", i+1)
+	}
+	require.Equal(t, linkWaiting, m.link.state, "three daemons that did not stay up")
+	assert.Contains(t, viewText(m), "it did not stay up 3 times: see serve.log")
+	f := failing(daemon.ErrNoDaemon)
+	m.rejoin = f.rejoin
+	res := tick(t, m)
+	require.NotNil(t, res)
+	assert.Equal(t, []bool{false}, f.spawns, "waiting: it starts no daemon")
+}
+
+// TestLink_AStableLinkResetsTheCounts: a rejoined link that stayed up for
+// stableLink was a success: its loss starts the backoff and the counts
+// over.
+func TestLink_AStableLinkResetsTheCounts(t *testing.T) {
+	isolateTmux(t)
+	twoRows(t)
+	m, a := linkedHome(t, "")
+	clock := time.Unix(1_000_000, 0)
+	m.now = func() time.Time { return clock }
+	crash(t, m, a)
+	b, _ := bootDaemon(t, &recordingExec{})
+	rejoinOnto(t, m, b)
+	clock = clock.Add(stableLink)
+	crash(t, m, b)
+	require.Equal(t, linkReconnecting, m.link.state)
+	assert.Zero(t, m.link.spawnFails)
+	assert.Zero(t, m.link.attempt)
+	assert.Equal(t, time.Second, m.nextRejoinDelay())
+}
+
 // TestLink_CtrlRSpawnsWhileWaiting: ctrl+r joins a daemon now, starting
 // one, even while waiting; the tick already scheduled is dropped. While
 // the daemon is stopping it only says so.

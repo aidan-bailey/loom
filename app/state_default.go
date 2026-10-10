@@ -32,10 +32,12 @@ var overviewKeyAllowed = map[string]bool{
 
 // offlineKeyAllowed whitelists the keys that work while the TUI is offline
 // (link.go: the daemon stopping, stopped or unreachable): the ones that
-// talk to tmux or stay in the TUI. Everything else (n N I D p s m r R W S
-// a, and every key a user script bound) needs the model, and is refused
-// with an info line rather than dispatched. As a backstop, a request made
-// anyway (an overlay that was open when the link dropped, committing) is
+// talk to tmux or stay in the TUI. Every other key (n N I D p s m r R W S
+// a among them) is refused with an info line rather than dispatched. The
+// gate goes by the key's name, not by what it is bound to: a user script
+// bound to a key not listed here is refused, while one bound to a listed
+// key still runs. As a backstop, a request made anyway (such a script's,
+// or an overlay's that was open when the link dropped, committing) is
 // refused by the client itself (core.ErrUnavailable).
 var offlineKeyAllowed = map[string]bool{
 	"up": true, "k": true, "down": true, "j": true, "]": true, "[": true,

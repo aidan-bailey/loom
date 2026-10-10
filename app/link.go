@@ -32,11 +32,11 @@ import (
 //     starts one itself; ctrl+r does.
 //   - reconnecting: the connection closed with no bye, or the model failed
 //     (a crash). The TUI redials on a backoff, starting a daemon when none
-//     runs, until maxSpawnFails of them in a row did not start; then it
-//     waits.
+//     runs, until maxSpawnFails of them did not start or did not stay up
+//     (stableLink) since the link was last stable; then it waits.
 //
 // Offline (any state but connected) a banner names the state, the offline
-// key gate refuses what needs the model (offlineKeyAllowed), and every
+// key gate refuses the keys that need the model (offlineKeyAllowed), and every
 // request nothing will answer is failed (failStranded). A rejoin swaps the
 // client in and resyncs from its replica (resync).
 
@@ -88,16 +88,25 @@ func (s linkState) lost() bool { return s == linkWaiting || s == linkReconnectin
 type link struct {
 	state      linkState
 	byeReq     core.ReqID // m.nextReq when the bye arrived
-	attempt    int        // rejoin attempts since the loss
-	spawnFails int        // consecutive rejoins whose spawned daemon did not start
+	attempt    int        // rejoin attempts since the link was last stable
+	spawnFails int        // rejoins since then whose daemon did not start, or did not stay up
+	upAt       time.Time  // when a rejoin brought the link up (zero: the startup join)
 	gen        int        // bumped on every state change: a stale tick or result is dropped
 	busy       bool       // a rejoin is running
 	note       string     // the banner's detail: the last rejoin's progress or error
 }
 
 // maxSpawnFails is how many rejoins in a row may start a daemon that does
-// not start before the TUI stops starting them and waits.
+// not start, or joins one that does not stay up (stableLink), before the
+// TUI stops starting them and waits.
 const maxSpawnFails = 3
+
+// stableLink is how long a rejoined link must stay up for its rejoin to
+// count as a success: one lost sooner counts toward maxSpawnFails, and the
+// backoff goes on from its last attempt, so a daemon that serves and then
+// dies again (a model panic its first opens trigger, say) is not restarted
+// every second, forever, by every TUI.
+const stableLink = 30 * time.Second
 
 // waitPoll is how often a waiting TUI looks for a daemon.
 const waitPoll = time.Second
@@ -137,6 +146,14 @@ func init() { ui.RegisterThemeHook(rebuildBannerStyle) }
 
 func rebuildBannerStyle() {
 	bannerStyle = lipgloss.NewStyle().Foreground(ui.ErrorColor).Bold(true)
+}
+
+// clock is the time, through the now seam tests set (time.Now otherwise).
+func (m *home) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }
 
 // offline reports whether the TUI is not connected to a daemon: stopping,
@@ -190,7 +207,19 @@ func (m *home) lose(err error) tea.Cmd {
 		state = linkWaiting
 	}
 	log.For("app").Warn("link.lost", "state", state.String(), "err", err)
-	m.link = link{state: state, gen: m.link.gen + 1}
+	prev := m.link
+	m.link = link{state: state, gen: prev.gen + 1}
+	if state == linkReconnecting && !prev.upAt.IsZero() && m.clock().Sub(prev.upAt) < stableLink {
+		// The daemon this TUI rejoined did not stay up: no success.
+		m.link.attempt, m.link.spawnFails = prev.attempt, prev.spawnFails+1
+		log.For("app").Warn("link.lost_soon_after_rejoin", "up_for", m.clock().Sub(prev.upAt).String(), "fails", m.link.spawnFails)
+		if m.link.spawnFails >= maxSpawnFails {
+			m.link.state = linkWaiting
+			m.link.note = fmt.Sprintf("it did not stay up %d times: see serve.log", m.link.spawnFails)
+		} else {
+			m.link.note = "it did not stay up (see serve.log)"
+		}
+	}
 	stranded := m.failStranded(0)
 	m.relayout()
 	return tea.Batch(drained, stranded, m.scheduleRejoin())
@@ -341,7 +370,6 @@ func (m *home) rejoined(msg rejoinedMsg) tea.Cmd {
 	case errors.Is(msg.err, ErrDaemonDidNotStart):
 		m.link.note = "it did not start (see serve.log)"
 	default:
-		m.link.spawnFails = 0
 		m.link.note = firstLine(msg.err.Error())
 	}
 	return m.scheduleRejoin()
@@ -402,9 +430,13 @@ func (m *home) resync(c *rpc.Client) tea.Cmd {
 
 	m.sendUnsentPrefs()
 	if name := m.unsentLastUsed; name != "" {
-		if err := m.core.SetLastUsed(name); err != nil {
+		// Sent once: a name this daemon refuses (unregistered meanwhile)
+		// is dropped, unless the daemon was unavailable to take it.
+		err := m.core.SetLastUsed(name)
+		if err != nil {
 			log.For("app").Warn("registry.update_last_used_failed", "workspace", name, "err", err)
-		} else {
+		}
+		if err == nil || !errors.Is(err, core.ErrUnavailable) {
 			m.unsentLastUsed = ""
 		}
 	}
@@ -424,7 +456,9 @@ func (m *home) resync(c *rpc.Client) tea.Cmd {
 	}
 	cmds = append(cmds, m.prunePanes())
 
-	m.link = link{gen: m.link.gen}
+	// The counters go on until the link has stayed up (stableLink): a
+	// daemon that dies again soon after is no success (lose).
+	m.link = link{gen: m.link.gen, attempt: m.link.attempt, spawnFails: m.link.spawnFails, upAt: m.clock()}
 	m.relayout()
 	m.updateTabBarStatuses()
 	m.errBox.SetInfo(strings.Join(append([]string{"reconnected to the loom daemon"}, notes...), "; "))

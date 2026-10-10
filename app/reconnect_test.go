@@ -244,6 +244,26 @@ func TestReconnect_SendsTheTabFocusedOffline(t *testing.T) {
 	assert.Equal(t, "ws-b", lastUsedOnDisk(t))
 }
 
+// TestReconnect_DropsATabNameTheDaemonRefuses: a tab focused offline
+// whose workspace was unregistered meanwhile is refused by the next
+// daemon, and dropped rather than retried at every rejoin.
+func TestReconnect_DropsATabNameTheDaemonRefuses(t *testing.T) {
+	isolateTmux(t)
+	twoTabs(t)
+	m, a := linkedHome(t, "")
+	crash(t, m, a)
+	pressScript(t, m, keyFor(t, "}"))
+	require.Equal(t, "ws-b", m.unsentLastUsed)
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	require.NoError(t, reg.Remove("ws-b"))
+
+	b, _ := bootDaemon(t, &recordingExec{})
+	rejoinOnto(t, m, b)
+	assert.Empty(t, m.unsentLastUsed, "dropped after one refused resend")
+	assert.Equal(t, "ws-a", lastUsedOnDisk(t))
+}
+
 // TestReconnect_AFailedOpenShowsItsError: a workspace the new daemon
 // serves but cannot load (its state.json broke while the TUI was offline)
 // keeps its tab, and its open's error is shown.

@@ -535,19 +535,23 @@ starts)…`.
   - After a crash (the daemon was killed, or failed): `⚠ lost the loom
     daemon: reconnecting (attempt N)`. The loom retries with growing
     pauses (1s up to 30s) and starts a daemon when none runs. If three
-    daemons in a row fail to start it stops trying and waits as above,
-    naming `serve.log`; `Ctrl+R` tries again.
+    daemons fail to start, or die within 30 seconds of loom rejoining
+    them, before one stays up, it stops trying and waits as above, naming
+    `serve.log`; `Ctrl+R` tries again.
   - Offline, the keys that only talk to tmux or stay in loom still work:
     moving the selection, tabs, the overview and workbench views, attach
     (`i`, `Ctrl+A`, `Ctrl+T`, `Alt+A`, `Alt+T`), quick input to the
     terminal (`t`), the diff overlay (`d`), scrolling, help and `q`. Every
-    key that needs the daemon (`n`, `N`, `I`, `D`, `r`, `R`, `p`, `s`,
-    `m`, `a`, `W`, `S`, and keys your scripts bound) shows `the loom
-    daemon is stopped: n needs it` and does nothing. A command already
-    waiting for an answer when the daemon went (a kill, a pause, a
-    prompt you sent) ends with `the loom daemon is unavailable`; check the
-    session once you are back. Statuses stay as last shown until a daemon
-    is back.
+    other key (`n`, `N`, `I`, `D`, `r`, `R`, `p`, `s`, `m`, `a`, `W`, `S`
+    among them) shows `the loom daemon is stopped: n needs it` and does
+    nothing. This goes by the key, not by what it is bound to: a key your
+    scripts bound is refused unless it is one of the keys above, and a
+    script bound to one of those still runs, though whatever it asks of
+    the daemon fails with `the loom daemon is unavailable`. A command
+    already waiting for an answer when the daemon went (a kill, a pause,
+    a prompt you sent) ends with `the loom daemon is unavailable`; check
+    the session once you are back. Statuses stay as last shown until a
+    daemon is back.
   - Changes to the layout while offline (the rail, the terminal pane, the
     view mode, the split sizes) and the tab you focus take effect at
     once and are saved when a daemon is back.
