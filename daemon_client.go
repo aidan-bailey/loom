@@ -49,6 +49,8 @@ func (e *newerDaemonError) Error() string {
 		describeBuild(e.peer), describeBuild(e.own))
 }
 
+// Is matches app.ErrDaemonNewer, so the TUI tells this refusal from any
+// other failed rejoin and exits.
 func (e *newerDaemonError) Is(target error) bool { return target == app.ErrDaemonNewer }
 
 // join connects to the daemon, the newer build winning the handshake
