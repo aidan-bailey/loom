@@ -239,14 +239,10 @@ var ErrNoDaemon = errors.New("no loom daemon runs in the sandbox")
 // bye, no save, and the socket file stays behind. The sessions keep running
 // on the sandbox's tmux server, and a TUI open on the daemon sees a crash,
 // not a stop. It kills only a process proved a build in the sandbox's bin
-// dir (killSandboxLoom), and returns the record of the daemon it killed;
-// ErrNoDaemon when none runs.
+// dir (killHolder), and returns the record of the daemon it killed;
+// ErrNoDaemon when none runs, or when it exited before the signal arrived.
 func (s *Sandbox) KillDaemon() (daemon.Record, error) {
-	rec, held := s.Daemon()
-	if !held {
-		return rec, ErrNoDaemon
-	}
-	return rec, s.killSandboxLoom()
+	return s.killHolder()
 }
 
 // Down stops the sandbox's loom daemon (a sandboxed loom started it, with
@@ -293,35 +289,48 @@ func (s *Sandbox) down(force bool) error {
 	return os.RemoveAll(s.Dir)
 }
 
-// killSandboxLoom kills (SIGKILL) the process holding the sandbox's lock
-// and waits for the lock to come free. It kills only a process proved the
-// sandbox's own loom (runsSandboxLoom): the record's pid alone proves
-// nothing, since a stale record can name a pid reused since.
+// killSandboxLoom is killHolder for Down: a lock nobody holds (or a holder
+// that exited on its own meanwhile) is the outcome it wants, not an error.
 func (s *Sandbox) killSandboxLoom() error {
+	if _, err := s.killHolder(); err != nil && !errors.Is(err, ErrNoDaemon) {
+		return err
+	}
+	return nil
+}
+
+// killHolder kills (SIGKILL) the process holding the sandbox's lock and
+// waits for the lock to come free, returning the record it read. It kills
+// only a process proved the sandbox's own loom (runsSandboxLoom): the
+// record's pid alone proves nothing, since a stale record can name a pid
+// reused since. ErrNoDaemon when no process holds the lock, or the holder
+// exited before the signal reached it: nothing was killed.
+func (s *Sandbox) killHolder() (daemon.Record, error) {
 	rec, held := s.Daemon()
 	if !held {
-		return nil
+		return rec, ErrNoDaemon
 	}
 	if rec.PID <= 0 {
-		return errors.New("the sandbox's lock record names no process: not killed")
+		return rec, errors.New("the sandbox's lock record names no process: not killed")
 	}
 	if !s.runsSandboxLoom(rec.PID) {
-		return fmt.Errorf("pid %d holds the sandbox's lock but runs no build in %s: not killed", rec.PID, s.BinDir())
+		return rec, fmt.Errorf("pid %d holds the sandbox's lock but runs no build in %s: not killed", rec.PID, s.BinDir())
 	}
 	p, err := os.FindProcess(rec.PID)
 	if err != nil {
-		return err
+		return rec, err
 	}
-	if err := p.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("kill pid %d: %w", rec.PID, err)
+	if err := p.Kill(); errors.Is(err, os.ErrProcessDone) {
+		return rec, ErrNoDaemon
+	} else if err != nil {
+		return rec, fmt.Errorf("kill pid %d: %w", rec.PID, err)
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if cur, held := s.Daemon(); !held || cur.PID != rec.PID {
-			return nil
+			return rec, nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("pid %d still holds the sandbox's lock after SIGKILL", rec.PID)
+			return rec, fmt.Errorf("pid %d still holds the sandbox's lock after SIGKILL", rec.PID)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

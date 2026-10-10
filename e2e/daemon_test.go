@@ -544,15 +544,20 @@ func TestE2E_Daemon_ServeStopWaitsAndCtrlRStartsOne(t *testing.T) {
 // holdStashes makes every update of refs/stash in the sandbox's workspace
 // repo take d: a pause stores the worktree's changes there, so a pause of a
 // session with changes lasts at least that long. It installs a
-// reference-transaction hook (git 2.28 and later), which blocks the update
-// while it is prepared.
-func holdStashes(t *testing.T, sb *devsandbox.Sandbox, d time.Duration) {
+// reference-transaction hook (git 2.28 and later), which creates the
+// returned marker file when an update begins and blocks it while it is
+// prepared. The marker proves the pause request reached the daemon and is
+// in its job, which nothing else on the screen does.
+func holdStashes(t *testing.T, sb *devsandbox.Sandbox, d time.Duration) (marker string) {
 	t.Helper()
+	marker = filepath.Join(t.TempDir(), "stash-held")
 	hooks := filepath.Join(sb.RepoDir(), ".git", "hooks")
 	require.NoError(t, os.MkdirAll(hooks, 0o755))
 	script := fmt.Sprintf("#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\n"+
-		"while read -r old new ref; do\n  [ \"$ref\" = refs/stash ] && sleep %d\ndone\n", int(d.Seconds()))
+		"while read -r old new ref; do\n  [ \"$ref\" = refs/stash ] || continue\n  : > %s\n  sleep %d\ndone\n",
+		devsandbox.ShellQuote(marker), int(d.Seconds()))
 	require.NoError(t, os.WriteFile(filepath.Join(hooks, "reference-transaction"), []byte(script), 0o755))
+	return marker
 }
 
 // dirtyWorktree adds an untracked file to the worktree of the session
@@ -583,15 +588,21 @@ func TestE2E_Daemon_PauseAcrossAStop(t *testing.T) {
 	createSession(t, sb, "keeper")
 	agent := agentPID(t, sb, "keeper")
 	rec := servingDaemon(t, sb)
-	// The pause stores a stash, which this holds for 3s: the stop below
-	// arrives with the pause in flight, not after it.
+	// The pause stores a stash, which this holds for 3s, and the stop below
+	// waits for the hook's marker: the pause request has reached the daemon
+	// and its job is under way, so the stop arrives with it in flight,
+	// whichever of the TUI and the stop's process is quicker.
 	const hold = 3 * time.Second
 	dirtyWorktree(t, sb, "keeper")
-	holdStashes(t, sb, hold)
+	held := holdStashes(t, sb, hold)
 
 	require.NoError(t, sb.SendKeys("s"))
 	require.NoError(t, sb.WaitFor("Pause session 'keeper'?", uiTimeout))
 	require.NoError(t, sb.SendKeys("y"))
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(held)
+		return err == nil
+	}, uiTimeout, 20*time.Millisecond, "the pause never reached its stash")
 	began := time.Now()
 	out, err := runLoom(t, sb, sb.LoomBin(), "serve", "stop")
 	require.NoError(t, err, out)

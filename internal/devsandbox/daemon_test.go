@@ -248,6 +248,22 @@ func TestKillDaemon_KillsASandboxBuildAndNoOther(t *testing.T) {
 	assert.False(t, held, "the lock of a killed daemon is free")
 }
 
+// A lock nobody holds is ErrNoDaemon to the killer, so it never reports a
+// kill that did not happen (a holder that exited meanwhile reads the same),
+// and nothing to do to Down, which only wants the lock free.
+func TestKillHolder_NoHolderIsErrNoDaemonButDownsNoError(t *testing.T) {
+	useTempBase(t)
+	sb, err := Open(fmt.Sprintf("t%d", time.Now().UnixNano()))
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(sb.GlobalDir(), 0o755))
+
+	_, err = sb.killHolder()
+	require.ErrorIs(t, err, ErrNoDaemon)
+	_, err = sb.KillDaemon()
+	require.ErrorIs(t, err, ErrNoDaemon)
+	assert.NoError(t, sb.killSandboxLoom(), "Down wants the lock free, and it is")
+}
+
 func TestList_ReportsTheDaemon(t *testing.T) {
 	useTempBase(t)
 	for _, name := range []string{"idle", "served"} {
