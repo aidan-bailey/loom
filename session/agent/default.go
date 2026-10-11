@@ -21,6 +21,9 @@ func (defaultAdapter) TrustPromptPatterns() []string { return nil }
 // TrustPromptResponse implements Adapter.
 func (defaultAdapter) TrustPromptResponse() TrustPromptAction { return TrustPromptNone }
 
+// TrustPromptChoice implements Adapter.
+func (defaultAdapter) TrustPromptChoice(string) string { return "" }
+
 // PendingPromptPattern implements Adapter.
 func (defaultAdapter) PendingPromptPattern() string { return "" }
 

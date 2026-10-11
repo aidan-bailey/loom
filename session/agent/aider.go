@@ -23,6 +23,9 @@ func (aiderAdapter) TrustPromptResponse() TrustPromptAction {
 	return TrustPromptTapDAndEnter
 }
 
+// TrustPromptChoice implements Adapter: the response keys answer it.
+func (aiderAdapter) TrustPromptChoice(string) string { return "" }
+
 // PendingPromptPattern implements Adapter.
 func (aiderAdapter) PendingPromptPattern() string {
 	return "(Y)es/(N)o/(D)on't ask again"

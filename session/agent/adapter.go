@@ -47,6 +47,13 @@ type Adapter interface {
 	// TrustPromptResponse tells us how to dismiss the trust prompt when
 	// one is detected.
 	TrustPromptResponse() TrustPromptAction
+	// TrustPromptChoice returns the option a trust prompt found by
+	// pattern (one of TrustPromptPatterns) is answered with when its menu
+	// does not select it already: the text of the option, which the
+	// answer moves the menu's cursor onto, seen on screen, before it
+	// presses Enter. "" means TrustPromptResponse's keys answer it as
+	// shown.
+	TrustPromptChoice(pattern string) string
 	// PendingPromptPattern returns the substring that indicates the
 	// agent is blocked waiting for the user to answer a prompt. An
 	// empty string disables auto-yes detection for this agent.

@@ -81,16 +81,141 @@ func watchJobs(m *Model) []Job {
 	return bg
 }
 
+// Claude's MCP prompt as capture-pane shows it, after its trust prompt
+// when the repository has a .mcp.json; Claude's late-2026 safety check,
+// its menu's cursor on "No, exit" and then on the option that answers it;
+// and aider's prompt line, which lingers after its answer.
+const (
+	claudeMCPScreen   = "New MCP server found in .mcp.json: db\nUse this new MCP server?\n❯ 1. Yes\n  2. No"
+	safetyCheckOnNo   = "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel"
+	safetyCheckOnYes  = "Quick safety check: Is this a project you created or one you trust?\n\n  No, exit\n❯ Yes, I trust this folder\n\nEnter to confirm · Esc to cancel"
+	aiderTrustScreen  = "Open documentation url for more info? (Y)es/(N)o/(D)on't ask again [Yes]: d\n> "
+	safetyCheckNoMenu = "Quick safety check: Is this a project you created or one you trust?\n\n  No, exit\n  Yes, I trust this folder"
+)
+
+// sent is the send-keys argv a paneServer records for keys to loom_w.
+func sent(keys ...string) []string {
+	return append([]string{"send-keys", "-t", "=loom_w:"}, keys...)
+}
+
+// runWatch runs a launch watch of loom_w running program, capturing every
+// millisecond for within, over srv, after an ended watch that settled
+// settled.
+func runWatch(srv *paneServer, program string, within time.Duration, settled string) launchWatched {
+	ts := tmux.NewSessionNamedWithDeps("loom_w", program, tmux.MakePtyFactory(), srv.runner())
+	return launchWatchJob(ts, time.Millisecond, within, settled)().(launchWatched)
+}
+
 func TestLaunchWatch_AnswersATrustPromptOnce(t *testing.T) {
 	srv := &paneServer{screens: []string{"", "Claude Code starting…", claudeTrustScreen}}
-	ts := tmux.NewSessionNamedWithDeps("loom_w", "claude", tmux.MakePtyFactory(), srv.runner())
 
-	result := launchWatchJob(ts, time.Millisecond, 5*time.Second)()
+	result := runWatch(srv, "claude", 100*time.Millisecond, "")
 
-	assert.Equal(t, launchWatched{session: "loom_w", answered: true}, result)
+	assert.Equal(t, launchWatched{session: "loom_w", answered: true, settled: "Do you trust the files in this folder?"}, result)
 	captures, keys := srv.counts()
-	assert.Equal(t, 3, captures, "it stops capturing once it answered")
-	assert.Equal(t, [][]string{{"send-keys", "-t", "=loom_w:", "Enter"}}, keys, "one answer")
+	assert.Greater(t, captures, 3, "it watches on to its deadline")
+	assert.Equal(t, [][]string{sent("Enter")}, keys, "one answer while the prompt stays on screen")
+}
+
+// One prompt can follow another: Claude shows its MCP prompt after its
+// trust prompt. Each is answered once; a prompt that lingers on screen
+// after its answer is not answered again.
+func TestLaunchWatch_AnswersEachPromptItShows(t *testing.T) {
+	t.Run("the trust prompt, then the MCP prompt", func(t *testing.T) {
+		srv := &paneServer{screens: []string{claudeTrustScreen, claudeTrustScreen, "", claudeMCPScreen}}
+
+		result := runWatch(srv, "claude", 100*time.Millisecond, "")
+
+		assert.True(t, result.answered)
+		_, keys := srv.counts()
+		assert.Equal(t, [][]string{sent("Enter"), sent("Enter")}, keys)
+	})
+
+	t.Run("one straight after the other", func(t *testing.T) {
+		srv := &paneServer{screens: []string{claudeTrustScreen, claudeMCPScreen}}
+
+		runWatch(srv, "claude", 100*time.Millisecond, "")
+
+		_, keys := srv.counts()
+		assert.Equal(t, [][]string{sent("Enter"), sent("Enter")}, keys)
+	})
+
+	t.Run("aider's lingering prompt line", func(t *testing.T) {
+		srv := &paneServer{screens: []string{aiderTrustScreen}}
+
+		result := runWatch(srv, "aider", 100*time.Millisecond, "")
+
+		_, keys := srv.counts()
+		assert.Equal(t, [][]string{sent("D", "Enter")}, keys, "answered once")
+		assert.Equal(t, "Open documentation url for more info", result.settled)
+	})
+
+	t.Run("a watch after one that settled it", func(t *testing.T) {
+		srv := &paneServer{screens: []string{aiderTrustScreen, "", aiderTrustScreen}}
+
+		runWatch(srv, "aider", 100*time.Millisecond, "Open documentation url for more info")
+
+		_, keys := srv.counts()
+		assert.Equal(t, [][]string{sent("D", "Enter")}, keys, "not while it lingers, only once it showed again")
+	})
+}
+
+// Claude's safety check selects "No, exit" first, which Enter would
+// confirm: the watch moves the menu down until a capture shows its cursor
+// on "Yes, I trust this folder", waiting for each move to be drawn, and
+// only then presses Enter. A menu that never gets there is left to the
+// user, as is one with no cursor to read.
+func TestLaunchWatch_AnswersTheSafetyCheckOnlyOnItsOption(t *testing.T) {
+	t.Run("moved, then confirmed", func(t *testing.T) {
+		srv := &paneServer{screens: []string{safetyCheckOnNo, safetyCheckOnNo, safetyCheckOnNo, safetyCheckOnYes, ""}}
+
+		result := runWatch(srv, "claude", 100*time.Millisecond, "")
+
+		assert.True(t, result.answered)
+		_, keys := srv.counts()
+		assert.Equal(t, [][]string{sent("Down"), sent("Enter")}, keys, "one move, waited out until drawn")
+	})
+
+	t.Run("already on its option", func(t *testing.T) {
+		srv := &paneServer{screens: []string{safetyCheckOnYes, ""}}
+
+		runWatch(srv, "claude", 100*time.Millisecond, "")
+
+		_, keys := srv.counts()
+		assert.Equal(t, [][]string{sent("Enter")}, keys)
+	})
+
+	t.Run("a menu that never moves", func(t *testing.T) {
+		srv := &paneServer{screens: []string{safetyCheckOnNo}}
+
+		result := runWatch(srv, "claude", 100*time.Millisecond, "")
+
+		assert.False(t, result.answered)
+		assert.Equal(t, "Quick safety check", result.settled, "left to the user")
+		_, keys := srv.counts()
+		assert.Equal(t, [][]string{sent("Down")}, keys, "no Enter")
+	})
+
+	t.Run("a menu that never reaches its option", func(t *testing.T) {
+		other := strings.Replace(safetyCheckOnNo, "❯ No, exit", "  No, exit\n❯ Maybe later", 1)
+		srv := &paneServer{screens: []string{safetyCheckOnNo, other, safetyCheckOnNo, other, safetyCheckOnNo}}
+
+		result := runWatch(srv, "claude", 100*time.Millisecond, "")
+
+		assert.False(t, result.answered)
+		_, keys := srv.counts()
+		assert.Equal(t, [][]string{sent("Down"), sent("Down"), sent("Down"), sent("Down")}, keys, "no Enter")
+	})
+
+	t.Run("no cursor to read", func(t *testing.T) {
+		srv := &paneServer{screens: []string{safetyCheckNoMenu}}
+
+		result := runWatch(srv, "claude", 100*time.Millisecond, "")
+
+		assert.False(t, result.answered)
+		_, keys := srv.counts()
+		assert.Empty(t, keys)
+	})
 }
 
 func TestLaunchWatch_GivesUpAtItsDeadline(t *testing.T) {
@@ -121,7 +246,7 @@ func TestLaunchWatch_EndsWhenTheSessionDies(t *testing.T) {
 	srv := &paneServer{dead: true}
 	ts := tmux.NewSessionNamedWithDeps("loom_w", "claude", tmux.MakePtyFactory(), srv.runner())
 
-	result := launchWatchJob(ts, time.Hour, time.Hour)()
+	result := launchWatchJob(ts, time.Hour, time.Hour, "")()
 
 	assert.Equal(t, launchWatched{session: "loom_w"}, result, "returned at once, not after an hour")
 }
@@ -146,6 +271,28 @@ func TestLaunchWatch_OneWatchPerSession(t *testing.T) {
 	m.Deliver(launchWatched{session: "loom_w"})
 	assert.Empty(t, watchJobs(m))
 	assert.Empty(t, m.watching)
+}
+
+// The watch of a relaunch leaves alone the prompt the ended watch settled
+// while it lingers on screen: aider's answered prompt line would get a
+// second "D" typed into its input.
+func TestLaunchWatch_TheRelaunchsWatchLeavesTheSettledPrompt(t *testing.T) {
+	shortWatch(t, time.Millisecond, 50*time.Millisecond)
+	srv := &paneServer{screens: []string{aiderTrustScreen}}
+	m := NewForTest(Options{CmdExec: srv.runner()})
+	inst := startedInst(t, "w", "aider")
+	hold(m, inst)
+	m.watchLaunch(inst)
+	m.watchLaunch(inst)
+	require.Len(t, watchJobs(m), 1)
+
+	m.Deliver(launchWatched{session: "loom_w", answered: true, settled: "Open documentation url for more info"})
+	jobs := watchJobs(m)
+	require.Len(t, jobs, 1, "the relaunch is watched")
+	jobs[0]()
+
+	_, keys := srv.counts()
+	assert.Empty(t, keys, "the lingering line is not answered again")
 }
 
 func TestLaunchWatch_AnAgentWithNoTrustPromptIsNotWatched(t *testing.T) {

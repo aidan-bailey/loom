@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/log"
@@ -30,7 +31,7 @@ type Session struct {
 	program string
 	// adapter is the agent adapter resolved from program: the
 	// trust-prompt patterns the daemon's launch watch answers through
-	// DismissTrustPrompt, and the pending-prompt pattern an attach client's
+	// AnswerTrustPrompt or a menu choice (TrustPromptChoice), and the pending-prompt pattern an attach client's
 	// CaptureAndProcess and HasUpdated use.
 	adapter agent.Adapter
 	// env holds "KEY=VALUE" entries applied to the session via
@@ -371,38 +372,84 @@ func (s *Session) SendPrompt(prompt string) error {
 }
 
 // AnswersTrustPrompt reports whether the session's agent has a trust
-// prompt DismissTrustPrompt can answer: patterns to find it by and keys to
+// prompt AnswerTrustPrompt can answer: patterns to find it by and keys to
 // answer it with. The fallback adapter (a shell, an unknown program) has
 // neither, so there is nothing to watch its launch for.
 func (s *Session) AnswersTrustPrompt() bool {
 	return len(s.adapter.TrustPromptPatterns()) > 0 && s.adapter.TrustPromptResponse() != agent.TrustPromptNone
 }
 
-// DismissTrustPrompt scans content (the pane's screen) for the adapter's
-// trust-prompt patterns. On a hit, it answers with the adapter's declared
-// keys through send-keys. It reports whether a prompt was found; a failed
-// answer is logged rather than returned.
-func (s *Session) DismissTrustPrompt(content string) bool {
+// TrustPromptShown returns the adapter's trust-prompt pattern that content
+// (the pane's screen) shows, the first in the adapter's order, or "" when
+// it shows none or the adapter has no keys to answer one with. It sends
+// nothing: a caller watching a pane tells one prompt from the next by it.
+func (s *Session) TrustPromptShown(content string) string {
+	if !s.AnswersTrustPrompt() {
+		return ""
+	}
 	normalized := normalizeForPatternMatch(content)
 	for _, pattern := range s.adapter.TrustPromptPatterns() {
-		if !strings.Contains(normalized, normalizeForPatternMatch(pattern)) {
+		if strings.Contains(normalized, normalizeForPatternMatch(pattern)) {
+			return pattern
+		}
+	}
+	return ""
+}
+
+// TrustPromptChoice returns the option the trust prompt found by pattern
+// (TrustPromptShown) is answered with by moving its menu's cursor onto it
+// (SelectedOption), or "" when AnswerTrustPrompt's keys answer it as
+// shown. A prompt with a choice must never get those keys: they confirm
+// whatever its menu selects, which may be "No, exit".
+func (s *Session) TrustPromptChoice(pattern string) string {
+	return s.adapter.TrustPromptChoice(pattern)
+}
+
+// AnswerTrustPrompt sends the adapter's keys for a trust prompt answered
+// as shown (TrustPromptResponse), through send-keys.
+func (s *Session) AnswerTrustPrompt() error {
+	switch s.adapter.TrustPromptResponse() {
+	case agent.TrustPromptTapEnter:
+		return s.PressKeys("Enter")
+	case agent.TrustPromptTapDAndEnter:
+		return s.PressKeys("D", "Enter")
+	default:
+		return fmt.Errorf("agent %s answers no trust prompt", s.adapter.Name())
+	}
+}
+
+// menuCursor is the marker an agent's selection menu draws before the
+// option it selects (Claude's).
+const menuCursor = "❯"
+
+// SelectedOption returns the option content's selection menu marks with
+// its cursor (menuCursor): the rest of the one line holding the marker,
+// without escapes, surrounding spaces or a box's border. It reports false
+// when no line holds the marker, or more than one does: there is no
+// telling which option is selected then.
+func SelectedOption(content string) (string, bool) {
+	selected, n := "", 0
+	for _, line := range strings.Split(ansiSeqRe.ReplaceAllString(content, ""), "\n") {
+		_, after, ok := strings.Cut(line, menuCursor)
+		if !ok {
 			continue
 		}
-		var keys []string
-		switch s.adapter.TrustPromptResponse() {
-		case agent.TrustPromptTapEnter:
-			keys = []string{"Enter"}
-		case agent.TrustPromptTapDAndEnter:
-			keys = []string{"D", "Enter"}
-		default:
-			return false
-		}
-		if err := s.PressKeys(keys...); err != nil {
-			log.For("tmux").Error("trust_prompt.dismiss_failed", "agent", s.adapter.Name(), "err", err)
-		}
-		return true
+		n++
+		selected = strings.TrimFunc(after, func(r rune) bool {
+			return unicode.IsSpace(r) || unicode.In(r, boxDrawing)
+		})
 	}
-	return false
+	return selected, n == 1
+}
+
+// boxDrawing is the Unicode block an agent draws a dialog's border from.
+var boxDrawing = &unicode.RangeTable{R16: []unicode.Range16{{Lo: 0x2500, Hi: 0x257f, Stride: 1}}}
+
+// IsOption reports whether selected (SelectedOption) is option, by text:
+// a number before it ("2. ") and spacing aside.
+func IsOption(selected, option string) bool {
+	norm := normalizeForPatternMatch(option)
+	return norm != "" && strings.Contains(normalizeForPatternMatch(selected), norm)
 }
 
 // ErrSessionExists is Start's refusal to create a session whose name is

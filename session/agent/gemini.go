@@ -23,6 +23,9 @@ func (geminiAdapter) TrustPromptResponse() TrustPromptAction {
 	return TrustPromptTapDAndEnter
 }
 
+// TrustPromptChoice implements Adapter: the response keys answer it.
+func (geminiAdapter) TrustPromptChoice(string) string { return "" }
+
 // PendingPromptPattern implements Adapter.
 func (geminiAdapter) PendingPromptPattern() string {
 	return "Yes, allow once"

@@ -18,12 +18,31 @@ func (claudeAdapter) Matches(program string) bool {
 	return basenameMatch(program, "claude")
 }
 
+// claudeSafetyCheck finds Claude's trust prompt as it reads since late
+// 2026, whose menu selects "No, exit" first; claudeTrustFolder is the
+// option that answers it.
+const (
+	claudeSafetyCheck = "Quick safety check"
+	claudeTrustFolder = "Yes, I trust this folder"
+)
+
 // TrustPromptPatterns implements Adapter.
 func (claudeAdapter) TrustPromptPatterns() []string {
 	return []string{
 		"Do you trust the files in this folder?",
 		"new MCP server",
+		claudeSafetyCheck,
 	}
+}
+
+// TrustPromptChoice implements Adapter: the safety check is answered by
+// moving its menu onto claudeTrustFolder; the older prompt and the MCP
+// one select their yes already.
+func (claudeAdapter) TrustPromptChoice(pattern string) string {
+	if pattern == claudeSafetyCheck {
+		return claudeTrustFolder
+	}
+	return ""
 }
 
 // TrustPromptResponse implements Adapter.

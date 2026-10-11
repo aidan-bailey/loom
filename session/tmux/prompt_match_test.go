@@ -3,6 +3,7 @@ package tmux
 import (
 	"testing"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,12 +35,10 @@ func TestPendingPromptNoFalsePositiveOnPlainOutput(t *testing.T) {
 }
 
 func TestTrustPromptMatchesWrappedPattern(t *testing.T) {
-	rec := &argvRecorder{}
-	s := NewSessionWithDeps("trustwrap", "claude", NewMockPtyFactory(t), rec.runner())
+	s := NewSessionWithDeps("trustwrap", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
 	// Wrap splits the trust pattern mid-word; detection must still hit.
 	content := "Do you trust the files in this fol\nder?\n❯ 1. Yes, proceed"
 
-	require.True(t, s.DismissTrustPrompt(content),
+	assert.Equal(t, "Do you trust the files in this folder?", s.TrustPromptShown(content),
 		"a wrapped trust prompt must still be detected")
-	assert.Equal(t, [][]string{{"tmux", "-u", "send-keys", "-t", "=loom_trustwrap:", "Enter"}}, rec.ran("send-keys"))
 }

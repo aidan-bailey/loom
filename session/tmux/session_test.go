@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -262,31 +263,78 @@ func TestNewSessionNamedWithDeps_TakesTheSessionNameVerbatim(t *testing.T) {
 		"the injected executor runs its commands")
 }
 
-func TestSession_DismissTrustPrompt(t *testing.T) {
+func TestSession_TrustPromptShown(t *testing.T) {
+	claude := NewSessionWithDeps("trust", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+	assert.Equal(t, "Do you trust the files in this folder?", claude.TrustPromptShown("Do you trust the files in this folder?\n❯ 1. Yes, proceed"))
+	assert.Equal(t, "new MCP server", claude.TrustPromptShown("New MCP server found in .mcp.json: db\nUse this new MCP server?"))
+	assert.Equal(t, "Quick safety check", claude.TrustPromptShown(claudeSafetyCheck))
+	assert.Empty(t, claude.TrustPromptShown("$ ls\nREADME.md"))
+	shell := NewSessionWithDeps("trust", "bash", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+	assert.Empty(t, shell.TrustPromptShown("Do you trust the files in this folder?"), "no keys to answer it with")
+}
+
+func TestSession_AnswerTrustPrompt(t *testing.T) {
 	for _, tc := range []struct {
-		name, program, screen string
-		found                 bool
-		keys                  []string
+		name, program string
+		keys          []string
 	}{
-		{"claude taps enter", "claude", "Do you trust the files in this folder?\n❯ 1. Yes, proceed", true, []string{"Enter"}},
-		{"aider answers D", "aider", "Open documentation url for more info? (Y)es/(N)o/(D)on't ask again", true, []string{"D", "Enter"}},
-		{"no prompt on screen", "claude", "$ ls\nREADME.md", false, nil},
-		{"an agent with no patterns", "bash", "Do you trust the files in this folder?", false, nil},
+		{"claude taps enter", "claude", []string{"Enter"}},
+		{"aider answers D", "aider", []string{"D", "Enter"}},
+		{"an agent with no keys", "bash", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &argvRecorder{}
 			s := NewSessionWithDeps("trust", tc.program, NewMockPtyFactory(t), rec.runner())
 
-			assert.Equal(t, tc.found, s.DismissTrustPrompt(tc.screen))
+			err := s.AnswerTrustPrompt()
 
 			if tc.keys == nil {
+				assert.Error(t, err)
 				assert.Empty(t, rec.ran("send-keys"))
 				return
 			}
+			require.NoError(t, err)
 			want := append([]string{"tmux", "-u", "send-keys", "-t", "=loom_trust:"}, tc.keys...)
 			assert.Equal(t, [][]string{want}, rec.ran("send-keys"))
 		})
 	}
+}
+
+// claudeSafetyCheck is Claude's late-2026 trust prompt as capture-pane
+// shows it inside loom's pane border, its menu on "No, exit".
+const claudeSafetyCheck = "\x1b[1m│ Quick safety check: Is this a project you created or one you trust?   │\x1b[0m\n" +
+	"│                                                                       │\n" +
+	"│ \x1b[36m❯ No, exit\x1b[0m                                                            │\n" +
+	"│   Yes, I trust this folder                                            │\n" +
+	"│                                                                       │\n" +
+	"│ Enter to confirm · Esc to cancel                                      │"
+
+func TestSession_TrustPromptChoice(t *testing.T) {
+	claude := NewSessionWithDeps("trust", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+	pattern := claude.TrustPromptShown(claudeSafetyCheck)
+	require.Equal(t, "Quick safety check", pattern)
+	assert.Equal(t, "Yes, I trust this folder", claude.TrustPromptChoice(pattern))
+	assert.Empty(t, claude.TrustPromptChoice("Do you trust the files in this folder?"), "Enter answers it as shown")
+}
+
+func TestSelectedOption(t *testing.T) {
+	selected, ok := SelectedOption(claudeSafetyCheck)
+	require.True(t, ok)
+	assert.Equal(t, "No, exit", selected, "escapes, spaces and the border go")
+	assert.False(t, IsOption(selected, "Yes, I trust this folder"))
+	assert.True(t, IsOption(selected, "No, exit"))
+
+	moved := strings.NewReplacer("❯ No, exit", "  No, exit", "  Yes, I trust", "❯ Yes, I trust").Replace(claudeSafetyCheck)
+	selected, ok = SelectedOption(moved)
+	require.True(t, ok)
+	assert.True(t, IsOption(selected, "Yes, I trust this folder"))
+	assert.True(t, IsOption("2. Yes, I trust this folder", "Yes, I trust this folder"), "a number before it")
+	assert.False(t, IsOption("Yes, I trust this folder", ""))
+
+	_, ok = SelectedOption("Quick safety check\n  No, exit\n  Yes, I trust this folder")
+	assert.False(t, ok, "no cursor drawn")
+	_, ok = SelectedOption("❯ No, exit\n❯ Yes, I trust this folder")
+	assert.False(t, ok, "two cursors: no telling which is the menu's")
 }
 
 func TestSession_WithProgramEnv(t *testing.T) {

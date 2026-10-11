@@ -212,6 +212,20 @@ func TestTrustPromptResponses(t *testing.T) {
 	assert.Equal(t, TrustPromptNone, Default().TrustPromptResponse())
 }
 
+// Claude's safety check selects "No, exit" first, so it is answered by an
+// option, not by Enter as shown; every other prompt is.
+func TestTrustPromptChoices(t *testing.T) {
+	assert.Equal(t, "Yes, I trust this folder", Claude().TrustPromptChoice("Quick safety check"))
+	assert.Contains(t, Claude().TrustPromptPatterns(), "Quick safety check")
+	for _, ad := range []Adapter{Claude(), Aider(), Gemini(), Default()} {
+		for _, p := range ad.TrustPromptPatterns() {
+			if p != "Quick safety check" {
+				assert.Empty(t, ad.TrustPromptChoice(p), "%s: %q", ad.Name(), p)
+			}
+		}
+	}
+}
+
 func TestApplyLoomContextFlag(t *testing.T) {
 	reg := DefaultRegistry()
 	path := "/home/u/.loom/claude-loom-context.md"
