@@ -353,4 +353,77 @@ The flow is frugal, as in 3R:
 
 ## Outcome and follow-ups
 
-(Filled in after execution.)
+Executed 2026-10-10 and 2026-10-11, as 3R was: one implementer and one combined review per package, D reviewed in the
+final review, then a sandbox smoke run and the final cross-cutting review. The usage limit cut the session off midway
+through the final review's fix wave; the next session finished it inline. The gate is green: gofmt, vet, the Windows
+build, `go test ./...`, the race run, e2e (22 tests), the CLAUDE.md lint and strict ident check, and the pinned
+golangci-lint v1.60.1 on the changed lines in CI's `--fast` mode. That linter no longer reads the stdlib export data
+of the local Go 1.26 toolchain without `--fast`.
+
+| Commit | What |
+|---|---|
+| bae7427, 896cc47 | the spec entry and the plan |
+| 3c3d06e, 3fa06c5 | A: unregister, rename, reset, forced account removal in core; a refused `Reset` answers with its `Reply` |
+| 7f49577, c241a4e, 6455cae, 28a71a3 | B: the subcommands as clients (`internal/cli`); every test binary isolates `CLAUDE_CONFIG_DIR`; the review's fixes |
+| faf88b4, 766faf9 | C: the launch watch and the hook timer; an idle hook scan wakes no client |
+| 315df39, b59d743, 4007ac7 | D: e2e, dead code, docs and the version |
+| 3e5d8c0, 386efd3, ad75faf, 657d7ee, e2ede7d | the final review's and the smoke run's fixes |
+
+The release commit, `chore(release): v0.14.0`, comes last: it rewrites the 0.14.0 changelog section D prepended.
+
+### What the reviews found
+
+- **A:** an open TUI kept a dead tab for an unloaded workspace, and a renamed one kept its old name (fixed in B); a
+  refused `Reset` sent no `Reply`.
+- **B:**
+  - A test's in-process daemon found no Claude config dir of its own and wrote `{}` through a linked test account
+    into the real `~/.claude/settings.json` (restored from the Nix store copy a minute later). Every test binary now
+    gets a throwaway `CLAUDE_CONFIG_DIR`.
+  - The credential warning read the CLI's environment, not the daemon's; `reset` took any lock holder for a daemon;
+    a failed `reset` printed its error twice; a stopped daemon's record could skip `TakeLock`'s wait.
+- **C:** a hook scan republished four times a second for any active Claude session, idle or not.
+- **Final review** (3 Medium, 6 Low):
+  - **Medium:** `reset` deleted no branch of a prefixed worktree (`worktrees/dev/x_<stamp>`, the loomdev sandbox's
+    layout and any `branch_prefix`), while the CLI said branches were gone. It predates the stage.
+  - **Medium:** the launch watch answered one prompt and returned, so Claude's MCP prompt after its trust prompt went
+    unanswered with no TUI open.
+  - **Medium:** the version bump went in under `docs:`, so the next release's step 2 would find 0.13.0's commit and
+    repeat every 0.14.0 entry; and the section's range started at the v0.13.0 tag, which sits 142 commits after the
+    0.13.0 release commit, so those commits appeared in no section.
+  - **Low:** a terminal that failed to start was saved (a renamed workspace's old tmux name blocks a new workspace's
+    terminal); a live tab close ran a nested drain; a rejoin forgot the served names, so an offline rename was never
+    followed; `login default` logged in the shell's main dir, not the daemon's; `Register` skipped `applyRegistry`;
+    StaleSocket's lock flake; a stale comment and three test nits.
+- **Smoke run** (sandbox, 5 scenarios, all passed): add, rename and remove under an open TUI; `workspace status`;
+  `reset --force` with the TUI open; a CLI command spawning the daemon; a trust prompt answered with no TUI. It found
+  that real Claude (2.1.292) now asks "Quick safety check: …" with "No, exit" selected first, which no pattern
+  matched, so no Claude session's trust prompt was answered by anything, before this stage or after.
+
+### The safety check (user's decision)
+
+Answer yes, verified: the adapter names the prompt's choice (`TrustPromptChoice`), and the watch moves the menu down
+one option per capture, waits for each move to be drawn, and presses Enter only when a capture shows the cursor on
+"Yes, I trust this folder"; otherwise the prompt is left to the user. Checked by hand against real Claude 2.1.292 on a
+private tmux server: one cursor, and one Down reaches the option (Esc sent instead of Enter, so no trust was written).
+
+### Deviations from the plan
+
+- The `workspace` and `account` commands moved to a new package, `internal/cli`: `core` imports `cmd`, so `cmd`
+  could not import the RPC client.
+- The changelog: D used `git cliff v0.13.0..HEAD`, not the plan's `-o` regeneration (which the release guide forbids)
+  nor the guide's `<release commit>..HEAD`; the release commit regenerates the section from 5805955.
+- `fakeagent --trust-first` and the `fake-claude-trust` profile, and `Sandbox.SeedWorkspace`, are new test
+  infrastructure.
+
+### Follow-ups
+
+- The launch watch can answer a trust-prompt pattern that shows on screen in an agent's first 30s without being a
+  live prompt (narrower than the old TUI scan, which looked for a session's whole life).
+- The fake agent has no safety-check menu, so no e2e test drives the Down-then-Enter answer; unit tests and the hand
+  check cover it.
+- A renamed workspace's terminal keeps its old tmux name: a workspace registered later under that name gets no
+  terminal (now said in a notice) until the old one goes.
+- Removing a workspace leaves its sessions running (by design), and nothing lists them afterwards.
+- A first open of a new workspace logs `loom_context.write_failed` before `.loom/` exists.
+- A loomdev workspace added outside the e2e helpers runs the host's default program (the real `claude`).
+- The smoke sandbox's daemon reported build 3d3bfa1 while `sandbox.json` named 4007ac7.
