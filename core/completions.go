@@ -15,10 +15,12 @@ import (
 // never on a client's focused workspace, list or selection. (Kill, pause
 // and transition failures carry the instance and act by identity; the
 // TUI's pane clients of a killed, paused or reverted instance are closed by
-// the prune that follows each of them, ClientsStale.) The model never
-// drops a workspace, so the owner is always served, and every client
-// attaches the instance's pane client (the TUI's replacePane, on
-// SessionLaunched, Started or Recovered) whichever workspace it shows.
+// the prune that follows each of them, ClientsStale.) The model drops a
+// workspace (Unregister, a registry reread) only while no lifecycle job
+// owns one of its sessions (busy), so the owner is still served when the
+// completion arrives, and every client attaches the instance's pane
+// client (the TUI's replacePane, on SessionLaunched, Started or
+// Recovered) whichever workspace it shows.
 //
 // Nor do they move the focused workspace's selection while another flow is
 // on screen: a creation flow, an inline attach or a prompt acts on the

@@ -608,6 +608,29 @@ func TestOpen_SavesTheTerminalItChanged(t *testing.T) {
 	})
 }
 
+// A terminal that fails to start (its tmux name held by a session another
+// workspace started, as a renamed workspace's terminal holds its old name)
+// is neither kept nor saved, and the open says so: a saved, never-started
+// record would claim the name at every later load.
+func TestOpen_ATerminalThatDidNotStartIsNotSaved(t *testing.T) {
+	isolateTmux(t)
+	def := workspaceDef(t, "unstarted", `[]`, fakeClaude(t))
+	m := bootModel(t, def)
+	m.boot()
+	startForeignSession(t, def.Name, t.TempDir())
+	m.Drain()
+
+	_, err := openDef(t, m, def)
+	require.NoError(t, err)
+
+	assert.Nil(t, served(m, def).terminal(), "not kept")
+	assert.Empty(t, savedRecords(t, config.WorkspaceConfigDir(&def)), "not saved")
+	assert.True(t, slices.ContainsFunc(m.Drain().Events, func(ev Event) bool {
+		n, ok := ev.(Notice)
+		return ok && n.Err != nil && strings.Contains(n.Err.Error(), "its terminal did not start")
+	}), "the open says so")
+}
+
 // canonical resolves p's symlinks (a temp dir may be reached through one).
 func canonical(t *testing.T, p string) string {
 	t.Helper()
@@ -668,6 +691,28 @@ func TestRegisterAndReloadRegistry_LoadTheNewWorkspace(t *testing.T) {
 	require.NoError(t, elsewhere.Add(other.Name, other.Path))
 	require.NoError(t, m.ReloadRegistry())
 	assert.NotNil(t, served(m, other))
+}
+
+// Register rereads the registry to add its entry, so it serves whatever
+// else changed there meanwhile, as a reread does: a workspace another
+// process registered is served, and one it removed is dropped.
+func TestRegister_ServesWhatElseChangedInTheRegistry(t *testing.T) {
+	m := bootModel(t)
+	gone := workspaceDef(t, "gone", `[]`, "true")
+	require.NoError(t, m.registry.Add(gone.Name, gone.Path))
+	m.boot()
+	require.NotNil(t, served(m, gone), "fixture: served from boot")
+	other := workspaceDef(t, "elsewhere", `[]`, "true")
+	elsewhere, err := config.LoadWorkspaceRegistry() // another process's
+	require.NoError(t, err)
+	require.NoError(t, elsewhere.Add(other.Name, other.Path))
+	require.NoError(t, elsewhere.Remove(gone.Name))
+
+	_, err = m.Register("new", t.TempDir())
+	require.NoError(t, err)
+
+	assert.NotNil(t, served(m, other), "registered elsewhere: served")
+	assert.Nil(t, served(m, gone), "removed elsewhere: dropped")
 }
 
 // Opening the global workspace, as a client entering global mode does,

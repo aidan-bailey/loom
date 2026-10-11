@@ -115,6 +115,9 @@ func (m *Model) Register(name, dir string) (WorkspaceView, error) {
 	if ws == nil {
 		return WorkspaceView{}, err
 	}
+	// Add reread the registry to add the entry: whatever else changed in
+	// it meanwhile is served as every registry change is.
+	m.serveRegistry()
 	return m.wsViewOf(ws), nil
 }
 

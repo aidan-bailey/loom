@@ -410,7 +410,7 @@ func TestInitAccounts_FillsTheStripOnce(t *testing.T) {
 	noCredentialOverride(t)
 	global := t.TempDir()
 	t.Setenv("LOOM_GLOBAL_DIR", global)
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // the main dir, never the real ~/.claude
 	_, _, err := account.LoadRegistry(global).Create("max-2", t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { session.SetAccountDirs(nil, nil) })

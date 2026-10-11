@@ -479,12 +479,16 @@ func (m *Model) ensureTerminal(ws *Workspace) {
 		log.For("core").Error("workspace_terminal.create_failed", "workspace", ws.Label(), "err", err)
 		return
 	}
-	ws.add(inst)
+	// A terminal that did not start is neither kept nor saved: a saved
+	// record of it would claim the name (a renamed workspace's old one,
+	// say) at every later load, and the next first open tries again.
 	if err := inst.Start(true); err != nil {
 		log.For("core").Error("workspace_terminal.start_failed", "workspace", ws.Label(), "err", err)
-	} else {
-		m.watchLaunch(inst)
+		m.notifyErr(fmt.Errorf("workspace %s: its terminal did not start: %w", ws.Label(), err))
+		return
 	}
+	ws.add(inst)
+	m.watchLaunch(inst)
 	m.saveTerminal(ws)
 }
 
