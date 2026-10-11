@@ -307,6 +307,10 @@ func TestE2E_Clients_TrustPromptAnsweredWithNoTUI(t *testing.T) {
 	require.NoError(t, sb.StopDriver(10*time.Second))
 	require.NoError(t, sb.StopDaemon())
 	require.True(t, waitExit(old.PID, uiTimeout))
+	// The first daemon answered the prompt at the agent's first launch:
+	// only what the log gains from here on is the next daemon's.
+	before, err := os.ReadFile(daemon.LogPath(sb.GlobalDir()))
+	require.NoError(t, err)
 	require.NoError(t, tmux.CommandOnSocket(context.Background(), sb.Socket(),
 		"kill-session", "-t", tmux.SessionTarget(tmux.ToLoomTmuxName("keeper"))).Run())
 	require.True(t, waitExit(agent, uiTimeout), "the agent ended with its session")
@@ -316,21 +320,23 @@ func TestE2E_Clients_TrustPromptAnsweredWithNoTUI(t *testing.T) {
 	out, err := runLoom(t, sb, sb.LoomBin(), "workspace", "list")
 	require.NoError(t, err, out)
 	fresh := servingDaemon(t, sb, old.PID)
-	require.Eventually(t, func() bool {
+	if !assert.Eventually(t, func() bool {
 		return hasSession(sb, "keeper") && strings.Contains(paneText(t, sb, tmux.ToLoomTmuxName("keeper")), "commands: work N")
-	}, uiTimeout, 100*time.Millisecond, "the relaunched agent never got past its trust prompt:\n%s", func() string {
-		if !hasSession(sb, "keeper") {
-			return "(no session)"
+	}, uiTimeout, 100*time.Millisecond) {
+		pane := "(no session)"
+		if hasSession(sb, "keeper") {
+			pane = paneText(t, sb, tmux.ToLoomTmuxName("keeper"))
 		}
-		return paneText(t, sb, tmux.ToLoomTmuxName("keeper"))
-	}())
+		t.Fatalf("the relaunched agent never got past its trust prompt:\n%s", pane)
+	}
 	relaunched := agentPID(t, sb, "keeper")
 	assert.NotEqual(t, agent, relaunched, "the agent was relaunched")
 	assert.NotContains(t, paneText(t, sb, tmux.ToLoomTmuxName("keeper")), "Do you trust the files in this folder?")
 	assert.False(t, sb.DriverRunning(), "no TUI was open to answer it")
 	serveLog, err := os.ReadFile(daemon.LogPath(sb.GlobalDir()))
 	require.NoError(t, err)
-	assert.Contains(t, string(serveLog), "launch_watch.trust_prompt_answered", "the daemon answered it")
+	require.GreaterOrEqual(t, len(serveLog), len(before), "fixture: the log was appended to")
+	assert.Contains(t, string(serveLog[len(before):]), "launch_watch.trust_prompt_answered", "the next daemon answered it")
 
 	startLoom(t, sb)
 	assert.Equal(t, fresh.PID, servingDaemon(t, sb).PID, "the TUI joins the daemon that answered it")

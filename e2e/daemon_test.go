@@ -270,8 +270,10 @@ func TestE2E_Daemon_StaleSocket(t *testing.T) {
 
 	require.NoError(t, syscall.Kill(old.PID, syscall.SIGKILL))
 	require.True(t, waitExit(old.PID, uiTimeout))
-	_, held := sb.Daemon()
-	require.False(t, held, "the dead daemon's lock is free")
+	// alive counts a zombie thread leader as gone while the process's
+	// other threads, still exiting, hold its flock: wait for the lock.
+	require.Eventually(t, func() bool { _, held := sb.Daemon(); return !held }, uiTimeout, 50*time.Millisecond,
+		"the dead daemon's lock is free")
 	_, err := os.Stat(old.Socket)
 	require.NoError(t, err, "a killed daemon leaves its socket file")
 
