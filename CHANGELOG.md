@@ -1,4 +1,4 @@
-## [0.14.0] - 2026-10-10
+## [0.14.0] - 2026-10-11
 
 ### 🚀 Features
 
@@ -151,6 +151,10 @@
 - *(cli)* Warn on the daemon's credential, refuse a non-daemon lock holder, report a reset once
 - *(daemon)* Wait out a probe over a stopped daemon's record in TakeLock
 - *(core)* An idle hook scan wakes no client
+- *(git)* Reset removes the branches of prefixed worktrees
+- *(app,cli)* Defer a live tab close, follow offline renames, guard login default
+- *(core,agent)* Answer each trust prompt, and Claude's safety check by its option
+- *(core)* Keep no terminal that failed to start; Register applies the registry
 
 ### 💼 Other
 
@@ -269,6 +273,8 @@
 - Document newerDaemonError.Is (revive)
 - *(spec)* Design stage 3C+4
 - *(plan)* Stage 3C+4, subcommands as clients, headless duties, cleanup
+- Subcommands as clients, headless duties; v0.14.0 (stage 3C+4)
+- *(plan)* Record stage 3C+4 outcome and follow-ups
 
 ### 🧪 Testing
 
@@ -288,12 +294,169 @@
 - E2e and loomdev for live reconnect (stage 3R D)
 - Isolate the main Claude config dir in every test binary
 - E2e for subcommands as clients and headless trust prompts (stage 3C+4 D)
+- *(e2e)* Read only the next daemon's log, wait out the dead daemon's lock
 
-## [0.13.0] - 2026-08-31
+## [0.13.0] - 2026-09-23
 
 ### 🚀 Features
 
 - *(git)* Configurable base branch and per-session branch prefix
+- *(session)* Derive Claude status from the agent roster
+- *(ui)* Show Claude's wait reason on prompting cards
+- *(subagent)* Parse Claude hook events and agent metadata
+- *(subagent)* Track live subagents and teammates from hook events
+- *(subagent)* Write per-launch hook settings and event folder
+- *(subagent)* Scan hook events into a replayable compact log
+- *(config)* Add Track Subagents preference
+- *(agent)* Add --settings flag injection for Claude
+- *(session)* Launch Claude with subagent hooks and track agents
+- *(app)* Scan subagent hook events on the health tick
+- *(ui)* Show live subagent count on rail cards
+- *(ui)* List live subagents on overview cards
+- *(tmux)* Route every tmux exec through a socket-aware builder
+- *(config)* LOOM_GLOBAL_DIR relocates the workspace registry
+- Refuse to start loom inside its own tmux session
+- *(tools)* Add fakeagent, a deterministic agent stand-in
+- *(devsandbox)* Named sandboxes with toy repo and seeded config
+- *(devsandbox)* Headless driver on the private tmux server
+- *(tools)* Add loomdev, the dev sandbox CLI
+- *(github)* Add session/github types and pure state join
+- *(github)* Fold check rollups, PR state and review decisions
+- *(github)* Query PRs and issues through the gh CLI
+- *(github)* Issue slug, prompt seeding and #n shorthand parsing
+- *(git)* Ahead/behind counting, targeted ref fetch, shared gh check
+- *(session)* Link instances to GitHub issues (schema v6) and hold transient GitHub/parity state
+- *(app)* Batched GitHub poller with roster-style throttle and wholesale replace
+- *(app)* Count base-branch parity on the metadata tick; refresh GitHub state after push
+- *(ui)* Issue, PR, checks and parity badges on rail and overview cards
+- *(script)* Bind I to cs.actions.new_from_issue
+- *(overlay)* GitHub issue picker with type-to-filter
+- *(app)* Issue picker state and issue-seeded session creation
+- *(app)* Expand a leading #n in the new-session prompt into the issue
+
+### 🐛 Bug Fixes
+
+- *(git)* Recover a half-removed worktree instead of wedging resume
+- *(session)* Never destroy a live session's worktree on a stale probe
+- *(session)* Pause must not remove the worktree on an inconclusive liveness probe
+- *(git)* Give `worktree remove` its own deadline instead of the 8s tick budget
+- *(app)* Throttle the Claude roster poll off the health tick
+- *(ui)* Re-render agent/terminal panes on mouse-wheel scroll
+- *(session)* Join the Claude roster on interactive sessions only
+- *(session)* Reset subagent state on every launch
+- *(session)* Make Restart a real launch through launchProgram
+- *(session)* Keep each hooks folder a single path segment
+- *(ui)* Sanitize subagent text and wait reason on cards
+- *(subagent)* Drop rows when a tracked launch loses its hooks folder
+- *(session)* Launch Claude sessions with the fullscreen renderer
+- *(devsandbox)* Refuse an incomplete toy repo instead of skipping it
+- *(devsandbox)* Keep the scrollback margin to dead driver panes
+- *(devsandbox)* Treat a missing driver pane as not running
+- *(tmux)* Scope the nesting guard's socket check to the enclosing server
+- *(loomdev)* Reject an empty --text on wait
+- *(session)* List tmux sessions for the hook sweep via the socket-aware builder
+- *(app)* Surface the poll error in the issue picker instead of waiting forever
+- *(session)* Preserve undecodable instance records and refuse saves after a failed load
+- *(session)* Wrap load failures on every write path and exempt preserved records from the orphan sweep
+- *(app)* Keep preserved workspace terminals and skip the restore sweep when a workspace fails to load
+- *(app)* Load global storage when every workspace restore fails
+- *(app)* Refuse new sessions while storage is latched, let q quit, isolate app tests from the real tmux server
+- *(app)* Give script hosts a main-goroutine snapshot instead of the live model
+- *(script)* Rebind ctx to the resume host so post-yield calls aren't dropped
+- Keep script-reachable terminal sends off the pane lock during tmux I/O; drop unused Host.Workspaces
+- *(script)* Answer HasAction/Registrations from a published snapshot so a running handler can't freeze the UI
+- *(script)* Bound engine shutdown so quit can't hang behind a running handler
+- *(exec)* Build every git/gh subprocess through LC_ALL=C constructors, enforced by test
+- *(exec)* Force only git's message language, keep the user's character set for hooks and filters
+- *(script)* Route Lua print to the script log instead of stdout
+- *(script)* Send script logs to the structured logger instead of an undrained buffer
+- *(app)* Hold the focused-slot invariant at every slot mutation
+- *(app)* Release attach PTYs when a workspace slot is dropped
+- *(app)* Resolve start/recover completions against the owning slot, never the focused selection
+- *(app)* Release terminal-pane attach clients of dropped slots
+- *(app)* Set menu state on Update, not inside Cmd closures
+- *(ui)* Keep the list selection on its row when an earlier row is removed
+- *(app)* Never move the selection under an open flow; cancel paths kill the pending instance by identity
+- *(app)* Match reopened twins by worktree identity; stamp start owners by identity
+- *(script)* Let cs.await(cs.actions.X()) continue after the intent completes
+- *(script)* Cancel dropped coroutines and name the running handler in logs
+- *(app)* Register the startup workspace on Update, not inside the confirmation Cmd
+- *(ui)* Keep the selection visible when a workspace terminal is prepended
+- *(app)* Stamp resume completions with their owning slot and release orphaned resumes
+- *(app)* Keep failed-to-restore workspaces open until opened or deselected
+- *(app)* Load global mode like startup and release its stale terminal clients
+- *(session)* Relaunch in place when resuming onto an intact worktree instead of force-removing it
+- *(app)* Save tabs before loading global state; resolve the global dir like startup
+- *(app)* Skip the reload when re-entering global mode; release previews of failed resumes
+- *(tmux)* Kill sessions by exact name, never by prefix
+- *(git)* Drop stashes by verified sha; parse rev-parse stdout only
+- *(session)* Never re-apply a dropped stash; clear the stash of an aborted pause
+- *(session)* Only delete a branch a failed Start created
+- *(session)* Record the base commit on in-place resume; refuse unverifiable trees helpfully
+- *(session)* The orphan sweep kills only sessions whose cwd this process owns
+- *(tmux)* Map ':' and '.' out of tmux session names
+- *(tmux)* Target sessions and panes exactly; never let a name prefix-match a sibling
+- *(git)* Unlock an interrupted worktree add before rebuilding; give worktree add its own deadline
+- *(session)* Surface stash notices; keep a failed start's worktree unless its agent is gone
+- *(reset)* Stop before removing worktrees when the tmux sweep fails; report sweep counts
+- *(git)* Unlock a worktree entry only when its path provably holds no tree
+- *(session)* Point a skipped failed-start cleanup at recovery, not D
+- *(nix,test)* Make the package check phase and CI pass without a dev machine's setup
+
+### 🚜 Refactor
+
+- *(app)* Split app.go into init, overview and workspace files
+- *(app)* Replace hand-rolled poll throttles with pollGate
+- *(app)* Key poll intervals by gate kind so a zero-value gate still throttles
+- *(app)* Make the focused workspace slot the single owner of per-workspace state
+- *(app)* Tidy slot-focus leftovers
+- *(session)* Move agent-pane I/O behind Instance.Pane()
+- *(session)* Encapsulate Instance launch fields behind accessors
+- *(session)* Drop the dead AgentPane.CheckAndHandleTrustPrompt
+- Delete dead selection- and title-based removal APIs
+
+### 📚 Documentation
+
+- *(specs)* Design subagent nesting on loom cards
+- *(specs)* Amend subagent nesting for loom restarts
+- *(plans)* Implementation plan for subagent nesting
+- Document subagent tracking
+- Document hooks folder location, escaping and Restart relaunch
+- *(specs)* Design for the loom-in-loom dev sandbox
+- *(plans)* Implementation plan for the dev sandbox
+- Document the dev sandbox and its isolation knobs
+- Correct roster and tmux-quirk explanations, document guard scope
+- Design spec for GitHub issue integration
+- Add base-branch parity section to GitHub issues spec
+- Implementation plan for GitHub issue integration
+- GitHub issue integration keybinding, package and poller gotcha
+- *(plan)* Architecture audit remediation plan
+- Sync CLAUDE.md and package docs with the audit remediation
+- Record the resume, stash and tmux-kill safety rules in CLAUDE.md
+
+### ⚡ Performance
+
+- *(subagent)* Skip lstat for entries a scan does not use
+
+### 🧪 Testing
+
+- *(subagent)* Add opt-in real Claude hook contract test
+- *(subagent)* Assert the teammate shutdown sequence in the real Claude test
+- *(vt)* Deflake the real-tmux scrollback tests
+- Route preview test tmux cleanup through the builder
+- *(e2e)* Smoke-test a sandboxed loom end to end
+- *(e2e)* Make the cross-server sweep test able to fail; prove a clean restart quit
+- Enforce keymap parity, overlay conformance and sandbox strip-list; isolate ui tests from the real tmux server
+- *(exec)* Isolate the child-env git test from user config and keep env out of failure output
+- *(tmux)* Run the real-tmux capture test on a private server
+- *(tmux)* Shorten private socket names to fit the sun_path limit
+- *(session)* Isolate orphan-discovery tests from the real tmux server
+- Isolate every package's tests from the real ~/.loom
+
+### ⚙️ Miscellaneous Tasks
+
+- *(app)* Name a reopened owner, give orphan placeholders the slot's program, warn before closing unloaded workspaces
+- *(nix)* Bump nixpkgs so the repo's own flake meets go.mod
 
 ## [0.12.0] - 2026-08-21
 
