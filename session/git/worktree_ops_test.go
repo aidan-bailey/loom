@@ -151,6 +151,56 @@ func TestSetup_BranchDeletedExternallyReturnsErrBranchGone(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBranchGone, "Setup must return ErrBranchGone sentinel when branch vanished")
 }
 
+// TestCleanupWorktrees_DeletesTheBranchesOfPrefixedWorktrees: a branch
+// prefix ("dev/", "u/") puts a worktree a directory deeper
+// (worktrees/dev/alpha_<stamp>), and a deeper prefix deeper still. Cleanup
+// finds each one under the directories that are no worktree, removes it,
+// prunes its repository and deletes its branch, beside a flat one; nothing
+// is left in the worktrees dir. The config dir here is outside the
+// repository, as the global workspace's is.
+func TestCleanupWorktrees_DeletesTheBranchesOfPrefixedWorktrees(t *testing.T) {
+	configDir, repoDir, flat, flatBranch := setupTestRepoWithWorktree(t)
+	worktrees := filepath.Join(configDir, "worktrees")
+	prefixed := map[string]string{
+		"dev/alpha":   filepath.Join(worktrees, "dev", "alpha_fixture"),
+		"team/u/beta": filepath.Join(worktrees, "team", "u", "beta_fixture"),
+	}
+	for branch, path := range prefixed {
+		runGit(t, repoDir, "worktree", "add", "-b", branch, path)
+		require.NoError(t, os.WriteFile(WorktreeTitleSidecarPath(path), []byte("title"), 0o644))
+	}
+
+	require.NoError(t, CleanupWorktrees(configDir, nil))
+
+	for branch, path := range prefixed {
+		assert.NoDirExists(t, path)
+		assert.False(t, branchExists(t, repoDir, branch), "branch %q should be deleted", branch)
+	}
+	assert.NoDirExists(t, flat)
+	assert.False(t, branchExists(t, repoDir, flatBranch))
+	left, err := os.ReadDir(worktrees)
+	require.NoError(t, err)
+	assert.Empty(t, left, "the prefix directories go too")
+	out, err := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain").Output()
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(out), "worktree "), "pruned: only the main worktree is registered")
+}
+
+// TestCleanupWorktrees_ThroughASymlinkedConfigDir: git lists a worktree
+// by the path it was added under, and cleanup may reach it by another
+// spelling (a config dir through a symlink): the two are matched resolved,
+// or the branch would leak.
+func TestCleanupWorktrees_ThroughASymlinkedConfigDir(t *testing.T) {
+	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
+	link := filepath.Join(t.TempDir(), "config-link")
+	require.NoError(t, os.Symlink(configDir, link))
+
+	require.NoError(t, CleanupWorktrees(link, nil))
+
+	assert.NoDirExists(t, worktreePath)
+	assert.False(t, branchExists(t, repoDir, branchName), "branch %q should be deleted", branchName)
+}
+
 // TestCleanupWorktrees_EmptyDirectoryNoError confirms cleanup is a safe no-op
 // when the worktrees directory is empty.
 func TestCleanupWorktrees_EmptyDirectoryNoError(t *testing.T) {

@@ -36,8 +36,9 @@ func (f *sweepTmux) CombinedOutput(c *exec.Cmd) ([]byte, error) { return f.Outpu
 
 // resetFixture is an opened workspace over a real repository, holding a
 // Paused session x saved to its records, with a worktree on branch u/x in
-// its worktrees dir, on a model whose tmux is tmux: x's session runs in
-// that worktree, and another session elsewhere.
+// its worktrees dir, where loom puts it (worktrees/u/x_<stamp>: the branch
+// prefix is a directory), on a model whose tmux is tmux: x's session runs
+// in that worktree, and another session elsewhere.
 type resetFixture struct {
 	m        *Model
 	ws       *Workspace
@@ -51,7 +52,7 @@ func newResetFixture(t *testing.T) resetFixture {
 	repo := gitRepo(t)
 	def := config.Workspace{Name: "reset-r", Path: repo}
 	cfgDir := config.WorkspaceConfigDir(&def)
-	wt := filepath.Join(cfgDir, "worktrees", "x_18d7")
+	wt := filepath.Join(cfgDir, "worktrees", "u", "x_18d7")
 	runGit(t, repo, "worktree", "add", "-q", "-b", "u/x", wt)
 	killSessionAtEnd(t, def.Name)
 
@@ -115,9 +116,7 @@ func TestReset_EmptiesTheWorkspaceAndSweepsOnlyItsSessions(t *testing.T) {
 	assert.NoError(t, reply.Err)
 	assert.Equal(t, []string{"=loom_x"}, f.tmux.killed, "only its own session")
 	assert.NoDirExists(t, f.wt)
-	out, err := exec.Command("git", "-C", f.repo, "branch", "--list", "u/x").Output()
-	require.NoError(t, err)
-	assert.Empty(t, strings.TrimSpace(string(out)), "its branch is gone")
+	assert.False(t, f.hasBranch(t), "its branch is gone")
 	term := f.ws.terminal()
 	require.NotNil(t, term, "the opened workspace gets a fresh terminal")
 	assert.True(t, term.Started())
@@ -223,4 +222,14 @@ func TestResetWorkspace_RunsEveryStep(t *testing.T) {
 	assert.Equal(t, ResetReport{Records: true, Swept: true, Sweep: session.SweepResult{Killed: 1, Unowned: 1}, Worktrees: true}, rep)
 	assert.Empty(t, savedRecords(t, f.ws.ctx.ConfigDir))
 	assert.NoDirExists(t, f.wt)
+	assert.False(t, f.hasBranch(t), "the branch of a prefixed worktree is gone")
+	assert.NoDirExists(t, filepath.Dir(f.wt), "and its prefix directory")
+}
+
+// hasBranch reports whether the fixture's branch u/x still exists.
+func (f resetFixture) hasBranch(t *testing.T) bool {
+	t.Helper()
+	out, err := exec.Command("git", "-C", f.repo, "branch", "--list", "u/x").Output()
+	require.NoError(t, err)
+	return strings.TrimSpace(string(out)) != ""
 }

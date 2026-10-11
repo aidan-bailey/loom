@@ -569,15 +569,13 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 		return fmt.Errorf("failed to read worktree directory: %w", err)
 	}
 
-	// Group worktree directories by their parent repo root
+	// Group worktree directories by their parent repo root. A worktree
+	// sits at worktrees/<branch>_<stamp>, so a branch prefix ("dev/")
+	// puts it a directory deeper or more: findWorktrees walks down through
+	// the directories that are no worktree.
 	repoWorktrees := make(map[string][]string) // repoRoot -> []worktreePath
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		worktreePath := filepath.Join(worktreesDir, entry.Name())
-
+	var errs []error
+	for _, worktreePath := range findWorktrees(worktreesDir, 0) {
 		// Use findMainRepoRoot so the path still resolves once the linked
 		// worktree directory is removed below — branch deletion has to
 		// run against the main repo, not the now-gone worktree.
@@ -594,7 +592,6 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 	// Ordering is important: `git branch -D` fails while a branch's worktree
 	// is still registered, so we must remove the worktree directory and prune
 	// the registration *before* deleting the branch.
-	var errs []error
 	for repoRoot, worktreePaths := range repoWorktrees {
 		listCtx, listCancel := context.WithTimeout(context.Background(), gitTimeout)
 		listCmd := internalexec.GitCommand(listCtx, repoRoot, "worktree", "list", "--porcelain")
@@ -607,11 +604,14 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 			errs = append(errs, fmt.Errorf("failed to list worktrees for %s: %w", repoRoot, listErr))
 		}
 
+		// Keyed by the resolved path: git may record a worktree's path
+		// through another spelling than ours (a symlinked temp or home
+		// dir), and the paths only exist to be resolved until removed.
 		worktreeBranches := make(map[string]string)
 		var currentWorktree string
 		for _, line := range strings.Split(string(output), "\n") {
 			if strings.HasPrefix(line, "worktree ") {
-				currentWorktree = strings.TrimPrefix(line, "worktree ")
+				currentWorktree = resolvedPath(strings.TrimPrefix(line, "worktree "))
 			} else if strings.HasPrefix(line, "branch ") {
 				branchPath := strings.TrimPrefix(line, "branch ")
 				branchName := strings.TrimPrefix(branchPath, "refs/heads/")
@@ -621,10 +621,15 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 			}
 		}
 
+		var branches []string
 		for _, wtPath := range worktreePaths {
+			if branch, ok := worktreeBranches[resolvedPath(wtPath)]; ok {
+				branches = append(branches, branch)
+			}
 			if err := os.RemoveAll(wtPath); err != nil {
 				errs = append(errs, fmt.Errorf("failed to remove worktree %s: %w", wtPath, err))
 			}
+			_ = os.Remove(WorktreeTitleSidecarPath(wtPath))
 		}
 
 		pruneCtx, pruneCancel := context.WithTimeout(context.Background(), gitTimeout)
@@ -634,17 +639,24 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 		}
 		pruneCancel()
 
-		for _, wtPath := range worktreePaths {
-			branch, ok := worktreeBranches[wtPath]
-			if !ok {
-				continue
-			}
+		for _, branch := range branches {
 			delCtx, delCancel := context.WithTimeout(context.Background(), gitTimeout)
 			deleteCmd := internalexec.GitCommand(delCtx, repoRoot, "branch", "-D", branch)
 			if err := r.Run(deleteCmd); err != nil {
 				errs = append(errs, fmt.Errorf("failed to delete branch %s: %w", branch, err))
 			}
 			delCancel()
+		}
+	}
+
+	// Whatever is left: the prefix directories, and anything there that
+	// was no worktree.
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(worktreesDir, entry.Name())); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove %s: %w", entry.Name(), err))
 		}
 	}
 
@@ -656,4 +668,40 @@ func CleanupWorktrees(configDir string, runner CommandRunner) error {
 		return fmt.Errorf("cleanup errors: %s", strings.Join(msgs, "; "))
 	}
 	return nil
+}
+
+// maxWorktreeDepth bounds how far findWorktrees descends: a branch prefix
+// of that many segments is far past any in use.
+const maxWorktreeDepth = 8
+
+// findWorktrees lists the worktrees under dir, depth directories below the
+// worktrees dir: each directory holding a .git, and those below every
+// directory holding none (a branch prefix's).
+func findWorktrees(dir string, depth int) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var found []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+			found = append(found, path)
+		} else if depth < maxWorktreeDepth {
+			found = append(found, findWorktrees(path, depth+1)...)
+		}
+	}
+	return found
+}
+
+// resolvedPath is path with its symlinks resolved, or cleaned when it
+// can't be.
+func resolvedPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
 }

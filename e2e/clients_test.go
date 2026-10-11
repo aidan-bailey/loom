@@ -228,6 +228,9 @@ func TestE2E_Clients_ResetEmptiesTheWorkspaceAndSparesTheOthers(t *testing.T) {
 	waitGone(t, sb, "doomed")
 	assert.False(t, hasSession(sb, "doomed"), "the session's tmux session is gone")
 	assert.Empty(t, worktreesOf(t, sb.WorkspaceConfigDir(), "doomed"), "its worktree is gone")
+	branches, err := internalexec.GitCommand(context.Background(), sb.RepoDir(), "branch", "--list", "dev/doomed").Output()
+	require.NoError(t, err)
+	assert.Empty(t, strings.TrimSpace(string(branches)), "its branch is gone, under the sandbox's dev/ prefix")
 	require.NoError(t, sb.WaitFor("0. "+devsandbox.WorkspaceName, uiTimeout), "the workspace keeps its terminal")
 	require.Eventually(t, func() bool {
 		pid, err := tmux.CommandOnSocket(context.Background(), sb.Socket(),
