@@ -100,6 +100,24 @@ func mainDirOf(d *client) string {
 	return d.RCAuthFor(account.DefaultName).Identity.ConfigDir
 }
 
+// sameMainDir refuses `login default` when the main config dir this shell
+// would log in (its CLAUDE_CONFIG_DIR, else ~/.claude: account.MainDir)
+// is not the one the daemon runs the default account in: the login would
+// go to a dir no session uses. A daemon that has not read its default
+// account's identity yet decides nothing.
+func sameMainDir(d *client) error {
+	daemonDir := mainDirOf(d)
+	if daemonDir == "" {
+		return nil
+	}
+	own := account.MainDir(account.Identity{})
+	if session.CanonicalPath(own) == session.CanonicalPath(daemonDir) {
+		return nil
+	}
+	return fmt.Errorf("this shell's main Claude config dir is %s, but the loom daemon runs the default account in %s: run `loom account login default` from a shell whose CLAUDE_CONFIG_DIR is %s (or unset, if that is your ~/.claude)",
+		dash(own), daemonDir, daemonDir)
+}
+
 // runWithChildSignals runs c the way a foreground, interactive child
 // should: SIGINT is caught, not ignored, here in loom, so the same Ctrl-C
 // the terminal delivers to c doesn't also abort loom's own RunE mid-flow
@@ -321,7 +339,11 @@ var accountLoginCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			if !targetsDefault {
+			if targetsDefault {
+				if err := sameMainDir(d); err != nil {
+					return err
+				}
+			} else {
 				if a, ok := d.Account(name); ok {
 					if _, statErr := os.Stat(a.Dir); statErr != nil {
 						if os.IsNotExist(statErr) {

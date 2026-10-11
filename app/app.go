@@ -345,10 +345,11 @@ type home struct {
 	// global mode (enterGlobalMode, stayInGlobalMode) closes them all.
 	failedOpen []string
 	// servedNames are the names the daemon published its workspaces under
-	// last (WorkspacesChanged), by ID: a workspace renamed while the TUI
-	// runs keeps its ID, so the next WorkspacesChanged tells the TUI which
-	// name to follow (renameShown). A rejoin forgets them: another daemon
-	// numbers its workspaces anew.
+	// last (WorkspacesChanged), by ID: a renamed workspace keeps its ID, so
+	// the next WorkspacesChanged tells the TUI which name to follow
+	// (renameShown). A rejoin keeps them, since every daemon over the disk
+	// gives a workspace the same ID, so a rename made while the TUI was
+	// offline is followed too.
 	servedNames map[core.WorkspaceID]string
 	// tabBar renders workspace tabs at the top of the TUI
 	tabBar *ui.WorkspaceTabBar
@@ -707,6 +708,8 @@ func (m *home) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.rejoinTick(msg)
 	case rejoinedMsg:
 		return m, m.rejoined(msg)
+	case closeUnservedMsg:
+		return m, m.closeUnservedNow()
 	case rejoinNoteMsg:
 		m.rejoinNote(msg)
 		return m, nil

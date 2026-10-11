@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/stretchr/testify/assert"
@@ -21,6 +23,19 @@ func otherClient(t *testing.T, st daemonStack) *rpc.Client {
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
 	return c
+}
+
+// updateWith runs cmd, then hands m every message it produced that the
+// TUI sends itself (closeUnservedMsg), as the runtime would, running what
+// that Update returns too.
+func updateWith(t *testing.T, m *home, cmd tea.Cmd) {
+	t.Helper()
+	for _, msg := range runCmds(t, cmd) {
+		if _, ok := msg.(closeUnservedMsg); ok {
+			_, next := m.Update(msg)
+			updateWith(t, m, next)
+		}
+	}
 }
 
 // servedAs is the ID of the workspace st's daemon serves as name, as the
@@ -51,7 +66,7 @@ func TestWorkspacesChanged_ClosesATabNoLongerServed(t *testing.T) {
 
 		require.NoError(t, otherClient(t, st).Unregister("ws-b"))
 		cmd := wake(t, m, func() bool { return !st.c.IsLoaded(b) })
-		runCmds(t, cmd)
+		updateWith(t, m, cmd)
 
 		assert.Equal(t, []string{"ws-a"}, m.slotNames())
 		assert.Equal(t, "ws-a", m.name())
@@ -70,7 +85,9 @@ func TestWorkspacesChanged_ClosesATabNoLongerServed(t *testing.T) {
 
 		require.NoError(t, otherClient(t, st).Unregister("ws-b"))
 		cmd := wake(t, m, func() bool { return !st.c.IsLoaded(b) })
-		runCmds(t, cmd)
+		require.Equal(t, []string{"ws-b"}, m.slotNames(),
+			"the drain made no transition: going to global mode drains the model, which inside a drain applies the rest of its batch, older, after newer events")
+		updateWith(t, m, cmd)
 
 		assert.Empty(t, m.slots, "global mode")
 		assert.Empty(t, m.name())
@@ -101,7 +118,7 @@ func TestWorkspacesChanged_ARenamedTabTakesItsNewName(t *testing.T) {
 		v, ok := st.c.Workspace(bID)
 		return ok && v.Name == "ws-c" && slices.ContainsFunc(st.c.Workspaces(), func(v core.WorkspaceView) bool { return v.Name == "ws-y" })
 	})
-	runCmds(t, cmd)
+	updateWith(t, m, cmd)
 
 	assert.Equal(t, []string{"ws-a", "ws-c"}, m.slotNames(), "the same tab, by its new name")
 	assert.Contains(t, m.tabBar.String(), "ws-c")
@@ -109,5 +126,34 @@ func TestWorkspacesChanged_ARenamedTabTakesItsNewName(t *testing.T) {
 	assert.Equal(t, "ws-c", m.slots[1].list.WorkspaceName())
 	assert.Equal(t, []string{"ws-y"}, m.failedOpen)
 	assert.Equal(t, []string{"ws-a", "ws-c", "ws-y"}, m.openList())
+	assert.NoError(t, m.checkSlotInvariant())
+}
+
+// TestReconnect_ARenameMadeOfflineTakesItsNewName: a workspace renamed
+// while the TUI was offline keeps its ID in the next daemon (every daemon
+// over the disk agrees on them), so the rejoin follows the rename as a
+// live one does: the tab bar redraws, and a saved tab it failed to open
+// takes its new name.
+func TestReconnect_ARenameMadeOfflineTakesItsNewName(t *testing.T) {
+	isolateTmux(t)
+	twoTabs(t)
+	x := writeWorkspaceState(t, "ws-x", "[]")
+	savedRegistry(t, []string{"ws-a", "ws-b"}, "ws-a", x)
+	m, a := linkedHome(t, "")
+	require.Equal(t, []string{"ws-a", "ws-b"}, m.slotNames())
+	m.failedOpen = []string{"ws-x"}
+	crash(t, m, a)
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	require.NoError(t, reg.Rename("ws-b", "ws-c"))
+	require.NoError(t, reg.Rename("ws-x", "ws-y"))
+	b, _ := bootDaemon(t, &recordingExec{})
+	rejoinOnto(t, m, b)
+
+	assert.Equal(t, []string{"ws-a", "ws-c"}, m.slotNames(), "the same tab, by its new name")
+	assert.Contains(t, m.tabBar.String(), "ws-c")
+	assert.NotContains(t, m.tabBar.String(), "ws-b")
+	assert.Equal(t, "ws-c", m.slots[1].list.WorkspaceName())
+	assert.Equal(t, []string{"ws-y"}, m.failedOpen)
 	assert.NoError(t, m.checkSlotInvariant())
 }

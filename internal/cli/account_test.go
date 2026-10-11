@@ -562,6 +562,39 @@ func TestAccountLogin_TheDaemonRereadsTheAccountsAuth(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
+// `login default` logs in the main config dir of the shell it runs in
+// (its CLAUDE_CONFIG_DIR, else ~/.claude); when that is not the one the
+// daemon runs its default account in, the login would go to a dir no
+// session uses: it is refused, naming both.
+func TestAccountLogin_DefaultRefusesAnotherMainDirThanTheDaemons(t *testing.T) {
+	fx := isolateAccounts(t)
+	elsewhere := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", elsewhere)
+	accountLogin = func(string, []string) error { t.Error("logged in another main dir"); return nil }
+
+	_, err := runAccount(t, "", "login", "default")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), elsewhere)
+	assert.Contains(t, err.Error(), fx.main)
+}
+
+// The same main dir, by another spelling (a symlink to it), is the
+// daemon's: the login runs.
+func TestAccountLogin_DefaultRunsInTheDaemonsMainDir(t *testing.T) {
+	fx := isolateAccounts(t)
+	link := filepath.Join(t.TempDir(), "main")
+	require.NoError(t, os.Symlink(fx.main, link))
+	t.Setenv("CLAUDE_CONFIG_DIR", link)
+	ran := false
+	accountLogin = func(string, []string) error { ran = true; return nil }
+
+	_, err := runAccount(t, "", "login", "default")
+
+	require.NoError(t, err)
+	assert.True(t, ran)
+}
+
 func TestAccountLogin_RefusesWhenTheAccountDirIsMissing(t *testing.T) {
 	fx := isolateAccounts(t)
 	_, err := runAccount(t, "", "add", "max-2", "--no-login")

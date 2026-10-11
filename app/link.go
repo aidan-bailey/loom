@@ -405,7 +405,6 @@ func (m *home) resync(c *rpc.Client) tea.Cmd {
 		go forwardWakes(c.Wakes(), m.send)
 	}
 	m.link.gen++
-	m.servedNames = nil
 	log.For("app").Info("link.rejoined", "build", c.Peer().Build, "tmux", c.Peer().Tmux)
 
 	// A workspace registered meanwhile is served once the daemon rereads
@@ -512,12 +511,39 @@ func (m *home) closeUnserved() (tea.Cmd, []string) {
 	return tea.Batch(cmds...), notes
 }
 
-// closeUnservedLive closes the tabs whose workspace the daemon stopped
-// serving while the TUI runs (unregistered by `loom workspace remove`, or
-// a reread of the registry), as a WorkspacesChanged shows it, and says so.
-// A rejoin's resync closes them itself, naming them in its own note, so
-// nothing is closed here while the link is down.
+// closeUnservedMsg asks Update to close the tabs whose workspace the daemon
+// no longer serves (closeUnservedNow), after the drain that saw it go.
+type closeUnservedMsg struct{}
+
+// closeUnservedLive schedules, from the WorkspacesChanged applier, the
+// closing of the tabs whose workspace the daemon stopped serving while the
+// TUI runs (unregistered by `loom workspace remove`, or a reread of the
+// registry): a closeUnservedMsg, handled after the drain. The transition
+// can drain the model itself (global mode opens the global workspace), and
+// a drain nested inside the applier's would apply the rest of the outer
+// batch, older, after the newer events it fetched. A rejoin's resync
+// closes them itself, naming them in its own note, so nothing is
+// scheduled while the link is down.
 func (m *home) closeUnservedLive() tea.Cmd {
+	if m.link.state.lost() || !m.showsUnserved() {
+		return nil
+	}
+	return func() tea.Msg { return closeUnservedMsg{} }
+}
+
+// showsUnserved reports whether a tab, or the classic slot while none is
+// open, shows a workspace the daemon no longer serves.
+func (m *home) showsUnserved() bool {
+	if len(m.slots) == 0 {
+		return m.id != 0 && !m.core.IsLoaded(m.id)
+	}
+	return slices.ContainsFunc(m.slots, func(s *workspaceSlot) bool { return !m.core.IsLoaded(s.id) })
+}
+
+// closeUnservedNow closes the tabs whose workspace the daemon no longer
+// serves (closeUnserved), and says so; nothing once a rejoin's resync has
+// taken over, or when a later drain found them served after all.
+func (m *home) closeUnservedNow() tea.Cmd {
 	if m.link.state.lost() {
 		return nil
 	}
