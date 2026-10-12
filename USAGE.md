@@ -760,6 +760,7 @@ loom [command]
 | `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions (on the tmux server the last daemon used, while it runs) — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**. Stops before removing worktrees if the tmux cleanup fails. While the daemon runs it makes the reset, waits for it and refuses while a session of the workspace is loading or being killed; with none running it works directly. |
 | `workspace` | Manage workspaces (see below); a client of the daemon, which it starts when none runs |
 | `account` | Manage extra Claude accounts (see below, and [Run Sessions on Several Claude Accounts](#run-sessions-on-several-claude-accounts)); a client of the daemon too |
+| `session` | Create, list, pause, resume and kill a registered workspace's sessions from a shell (see below); a client of the daemon too |
 
 ### Workspace Subcommands
 
@@ -785,6 +786,18 @@ loom [command]
 | `account sync` | Share entries added to your main Claude config dir since the accounts were made |
 | `account remove <name> [-y] [--force]` | Remove an account; refused while a session uses it or its dir holds unshared files. `-y` skips the confirmation, `--force` overrides both refusals |
 
+### Session Subcommands
+
+Each acts on a registered workspace: `-w <name>`, else the one whose repository holds the current directory. Sessions are named by exact title; when two share a title, `--id` (from `session list --json`) picks one.
+
+| Command | Description |
+|---------|-------------|
+| `session new <title> [flags]` | Create and start a session with the workspace's default program and the launch options the Session Launch Options screen would pre-fill, and return once it runs. Flags: `--prompt <text>` or `--prompt-file <file>` (sent once the agent is up), `--branch <existing>`, `--issue <n>` (links it), `--account`, `--model`, `--permission-mode`, `--effort`, and `--no-remote-control`, which a session needs when remote control is on and its account's login can't use it. Refuses a title the workspace already has. Ctrl-C stops waiting; the daemon still starts the session |
+| `session list [--json]` | The workspace's sessions: title, status, branch, account and time in that status. `--json` prints `id`, `title`, `status`, `wait_reason`, `status_since`, `branch`, `worktree`, `repo`, `program`, `account`, `issue` and `pr` |
+| `session kill <title> [-y] [--id <n>]` | Kill a session (its agent, tmux session and worktree) after asking; `-y` skips the question |
+| `session pause <title> [--id <n>]` | Pause a running session: its agent stops and its worktree is removed, its branch kept |
+| `session resume <title> [--id <n>]` | Resume a paused session |
+
 ### Examples
 
 ```bash
@@ -802,6 +815,12 @@ loom workspace add --name backend ~/projects/api-server
 
 # Check how many sessions are running
 loom workspace status my-project
+
+# Start a session from a shell and hand it a task
+loom session new fix-login -w my-project --prompt "Fix the login redirect"
+
+# List a workspace's sessions for a script
+loom session list -w my-project --json
 ```
 
 ---

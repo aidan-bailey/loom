@@ -14,6 +14,7 @@ The session model (`core/`): everything that acts on sessions without a terminal
 | `load.go` | `Boot`, `boot`, `loadWS`, `ensureLoaded`, `globalWS`, `retryLoad`, `open`, `ensureTerminal`, `settleTerminal`, `maybeSettleTerminals`, `sweepOrphans`, `reconcileOrphans`, `claimTitles` |
 | `persist.go` | `Persistable`, `saveWS`, `saveUnprompted`, `SaveForQuit`, `quitSkipsSave` |
 | `requests.go` | every lifecycle request, `admit`, `precondition`, `track`, `deliverTracked` |
+| `new_session.go` | what a client checks before a `Create` (`CheckRoom`, `CheckWritable`, `CheckNewTitle`, `CheckPreservedTitle`) and the account the Session Launch Options modal pre-fills (`ChooseLaunchAccount`, `RemovedAccountNotice`): one source for the TUI's creation flows and `loom session new` |
 | `ops.go` | the lifecycle operations behind the requests: `killInst`, `pauseInst`, `startInst`, `startOwner`, `sendInitialPrompt`, `saveSnapshot`, `recoverInst` (the instance-pointer API across these files is unexported) |
 | `completions.go` | applying the lifecycle jobs' results: `deliverStart`, `deliverResume`, `deliverRecover`, `deliverKill`, `deliverPause`, `deliverOpFailed`, `killUnstarted`, `removeEverywhere`, `owningWorkspace` |
 | `tick.go` | the health tick's model half: `Tick`, `tickInst`, `probeJob`, `deliverHealth`, `applyLiveness`, `pauseGone`, `takeDirty`, `tickInterval` |

@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -341,4 +342,42 @@ func TestE2E_Clients_TrustPromptAnsweredWithNoTUI(t *testing.T) {
 	startLoom(t, sb)
 	assert.Equal(t, fresh.PID, servingDaemon(t, sb).PID, "the TUI joins the daemon that answered it")
 	requireReattached(t, sb, "keeper", relaunched)
+}
+
+// `loom session` drives a session from a shell with no TUI open: new
+// waits until it runs, list --json shows it, pause and resume round-trip
+// it, and kill -y ends its agent and removes it.
+func TestE2E_Clients_SessionLifecycle(t *testing.T) {
+	sb := newSandbox(t, "")
+	loom := func(args ...string) string {
+		t.Helper()
+		out, err := runLoom(t, sb, append([]string{sb.LoomBin(), "session"}, args...)...)
+		require.NoError(t, err, out)
+		return out
+	}
+
+	out := loom("new", "keeper", "-w", devsandbox.WorkspaceName)
+	assert.Contains(t, out, `Started "keeper" in `+devsandbox.WorkspaceName)
+	assert.True(t, hasSession(sb, "keeper"))
+	require.Eventually(t, func() bool {
+		return strings.Contains(paneText(t, sb, tmux.ToLoomTmuxName("keeper")), "commands: work N")
+	}, uiTimeout, 100*time.Millisecond, "the fake agent came up")
+
+	var rows []struct {
+		Title  string `json:"title"`
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(loom("list", "-w", devsandbox.WorkspaceName, "--json")), &rows))
+	require.Len(t, rows, 1)
+	assert.Equal(t, "keeper", rows[0].Title)
+
+	assert.Contains(t, loom("pause", "keeper", "-w", devsandbox.WorkspaceName), `Paused "keeper"`)
+	assert.False(t, hasSession(sb, "keeper"))
+	assert.Contains(t, loom("resume", "keeper", "-w", devsandbox.WorkspaceName), `Resumed "keeper"`)
+	assert.True(t, hasSession(sb, "keeper"))
+
+	assert.Contains(t, loom("kill", "keeper", "-w", devsandbox.WorkspaceName, "-y"), `Killed "keeper"`)
+	assert.False(t, hasSession(sb, "keeper"))
+	assert.Contains(t, loom("list", "-w", devsandbox.WorkspaceName), "No sessions in")
+	assert.False(t, sb.DriverRunning(), "no TUI was open")
 }
