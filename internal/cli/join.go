@@ -142,3 +142,67 @@ func (c *client) awaitReply(req core.ReqID) (core.Reply, error) {
 	})
 	return reply, err
 }
+
+// awaitStart waits for the start the Create req asked for. A refused
+// Create is its Reply's Err; then either the start's Started (the daemon
+// sends it once the initial prompt is sent) or the errors it reports for
+// the request end the wait: a failed start notices its error, and its
+// save's first (deliverStart), by which time the daemon has removed the
+// instance. One loop waits for all three, since a batch can hold more
+// than one. Notices naming req that carry no error are written to errOut.
+func (c *client) awaitStart(req core.ReqID) (core.Started, error) {
+	var (
+		started core.Started
+		ok      bool
+		errs    []error
+	)
+	_, err := c.await(0, func(events []core.Event) bool {
+		for _, ev := range events {
+			switch e := ev.(type) {
+			case core.Reply:
+				if e.Req == req && e.Err != nil {
+					errs = append(errs, e.Err)
+				}
+			case core.Started:
+				if e.Req == req {
+					started, ok = e, true
+				}
+			case core.Notice:
+				switch {
+				case e.Req != req:
+				case e.Err != nil:
+					errs = append(errs, e.Err)
+				case e.Info != "":
+					fmt.Fprintf(c.errOut, "loom: %s\n", e.Info)
+				}
+			}
+		}
+		return ok || len(errs) > 0
+	})
+	switch {
+	case err != nil:
+		return core.Started{}, err
+	case len(errs) > 0:
+		return core.Started{}, errors.Join(errs...)
+	}
+	return started, nil
+}
+
+// request makes a command's one request (send, given sessionReq) and
+// waits for its Reply: its Err fails the command, and a notice riding a
+// success (a kill's undroppable stash, a resume's recovery commands) goes
+// to errOut.
+func (c *client) request(send func(core.ReqID)) error {
+	send(sessionReq)
+	reply, err := c.awaitReply(sessionReq)
+	switch {
+	case err != nil:
+		return err
+	case reply.Err != nil:
+		return reply.Err
+	}
+	if reply.Notice != nil {
+		fmt.Fprintf(c.errOut, "loom: %v\n", reply.Notice)
+	}
+	return nil
+}

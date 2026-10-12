@@ -2,13 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -169,4 +176,243 @@ func TestSince(t *testing.T) {
 	assert.Equal(t, "5m", since(now.Add(-5*time.Minute), now))
 	assert.Equal(t, "3h", since(now.Add(-3*time.Hour), now))
 	assert.Equal(t, "2d", since(now.Add(-50*time.Hour), now))
+}
+
+// A started session: `new` returns once it runs, its prompt sent.
+func TestSessionNew_ReturnsOnceTheSessionRuns(t *testing.T) {
+	isolateWorkspaces(t)
+	agent := fakeAgent(t, "claude.ai")
+	liveWorkspace(t, "ws-a", agent, nil)
+	d := serveDaemonLive(t, agent)
+
+	out, _, err := runSession(t, "", "new", "alpha", "-w", "ws-a", "--prompt", "hello there")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, `Started "alpha" in ws-a`)
+	v, ok := d.view(t, "ws-a", "alpha")
+	require.True(t, ok)
+	assert.NotEqual(t, session.Loading, v.Status, "it returned before the start finished")
+	assert.NotEmpty(t, v.WorktreePath)
+	assert.True(t, tmuxHas("alpha"))
+	assert.Eventually(t, func() bool {
+		out, err := tmux.Command(context.Background(), "capture-pane", "-p", "-t", tmux.PaneTarget(tmux.ToLoomTmuxName("alpha"))).Output()
+		return err == nil && strings.Contains(string(out), "hello there")
+	}, 5*time.Second, 50*time.Millisecond, "the prompt reached the agent's pane")
+}
+
+// A start that fails is the command's failure, and leaves no session.
+func TestSessionNew_AFailedStartFailsAndLeavesNoSession(t *testing.T) {
+	isolateWorkspaces(t)
+	agent := fakeAgent(t, "claude.ai")
+	liveWorkspace(t, "ws-a", agent, nil)
+	d := serveDaemonLive(t, agent)
+
+	out, errOut, err := runSession(t, "", "new", "alpha", "-w", "ws-a", "--branch", "no-such-branch")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no-such-branch", "the daemon's error for the start")
+	assert.NotContains(t, out, "Usage:", "a failure is loom's, not a usage mistake")
+	assert.Empty(t, errOut, "main prints the error, once")
+	assert.Eventually(t, func() bool {
+		_, ok := d.view(t, "ws-a", "alpha")
+		return !ok
+	}, 5*time.Second, 50*time.Millisecond, "the daemon removed the failed start")
+}
+
+// An interrupt while `new` waits ends the wait at once, not the start:
+// the daemon carries on. A post-checkout hook holds the start's worktree
+// setup for seconds, so the interrupt lands mid-wait.
+func TestSessionNew_AnInterruptLeavesTheDaemonStarting(t *testing.T) {
+	isolateWorkspaces(t)
+	agent := fakeAgent(t, "claude.ai")
+	ws := liveWorkspace(t, "ws-a", agent, nil)
+	hook := filepath.Join(ws.Path, ".git", "hooks", "post-checkout")
+	require.NoError(t, os.WriteFile(hook, []byte("#!/bin/sh\nsleep 3\n"), 0o755))
+	d := serveDaemonLive(t, agent)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(500*time.Millisecond, cancel)
+
+	cmd := newSessionCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"new", "alpha", "-w", "ws-a"})
+	began := time.Now()
+	err := cmd.ExecuteContext(ctx)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `interrupted: the loom daemon is still starting "alpha"`)
+	assert.Less(t, time.Since(began), 2500*time.Millisecond, "the interrupt ended the wait, not the start")
+	assert.Eventually(t, func() bool {
+		v, ok := d.view(t, "ws-a", "alpha")
+		return ok && v.Status != session.Loading && tmuxHas("alpha")
+	}, 10*time.Second, 50*time.Millisecond)
+}
+
+// What `new` refuses, it refuses before asking the daemon for anything.
+func TestSessionNew_Refusals(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a title the workspace holds", []string{"alpha"}, `ws-a already has a session titled "alpha"`},
+		{"a preserved title", []string{"future"}, `title "future" belongs to a saved session`},
+		{"an empty title", []string{""}, "title cannot be empty"},
+		{"a title too wide", []string{strings.Repeat("a", 33)}, "title cannot be longer than 32 characters"},
+		{"an unknown model", []string{"gamma", "--model", "gpt"}, `--model "gpt": want one of default, sonnet`},
+		{"an unknown permission mode", []string{"gamma", "--permission-mode", "yolo"}, `--permission-mode "yolo"`},
+		{"an unknown effort", []string{"gamma", "--effort", "huge"}, `--effort "huge"`},
+		{"both prompt flags", []string{"gamma", "--prompt", "x", "--prompt-file", "y"}, "prompt"},
+		{"an unregistered account", []string{"gamma", "--account", "nope"}, `account "nope" is not registered`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateWorkspaces(t)
+			registered(t, "ws-a", `[{"title":"alpha","status":3,"program":"true"},{"schema_version":9999,"title":"future"}]`)
+			d := serveDaemon(t, fakeClaude(t, ""))
+
+			_, _, err := runSession(t, "", append([]string{"new", "-w", "ws-a"}, tc.args...)...)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			views := d.client.Views(d.workspace(t, "ws-a").ID)
+			assert.Len(t, views, 1, "nothing was created")
+		})
+	}
+}
+
+// Remote control on, for an account whose login can't use it: `new`
+// refuses with the reason, and --no-remote-control starts it without.
+func TestSessionNew_RemoteControlBlocked(t *testing.T) {
+	isolateWorkspaces(t)
+	agent := fakeAgent(t, "console")
+	on := true
+	liveWorkspace(t, "ws-a", agent, func(c *config.Config) { c.ClaudeRemoteControl = &on })
+	d := serveDaemonLive(t, agent)
+	require.Eventually(t, func() bool {
+		require.NoError(t, d.client.FlushForTest())
+		d.client.Sync()
+		return d.client.RCAuthFor(account.DefaultName).Blocked()
+	}, 10*time.Second, 50*time.Millisecond, "fixture: the daemon learned the login can't use remote control")
+
+	_, _, err := runSession(t, "", "new", "alpha", "-w", "ws-a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remote control is unavailable: you're authenticated with a non-claude.ai account")
+	assert.Contains(t, err.Error(), "--no-remote-control")
+	_, ok := d.view(t, "ws-a", "alpha")
+	assert.False(t, ok, "nothing was created")
+
+	_, _, err = runSession(t, "", "new", "alpha", "-w", "ws-a", "--no-remote-control")
+	require.NoError(t, err)
+	assert.True(t, tmuxHas("alpha"))
+}
+
+// The workspace's settings are the defaults; the flags override them; a
+// non-Claude program takes no account.
+func TestLaunchOptions_SettingsThenFlags(t *testing.T) {
+	isolateWorkspaces(t)
+	plan := "plan"
+	ws := registered(t, "ws-a", "")
+	cfg := config.DefaultConfig()
+	cfg.ClaudePermissionMode = &plan
+	require.NoError(t, config.SaveConfigTo(cfg, config.WorkspaceConfigDir(&ws)))
+	d := serveDaemon(t, fakeClaude(t, ""))
+	v := d.workspace(t, "ws-a")
+	var warn bytes.Buffer
+	c := &client{Client: d.client, errOut: &warn, ctx: context.Background()}
+
+	opts, err := c.launchOptions(v, "claude", newFlags{})
+	require.NoError(t, err)
+	assert.Equal(t, "plan", opts.PermissionMode, "the workspace's setting")
+
+	opts, err = c.launchOptions(v, "claude", newFlags{permissionMode: "acceptEdits", model: "opus", effort: "high"})
+	require.NoError(t, err)
+	assert.Equal(t, "acceptEdits", opts.PermissionMode)
+	assert.Equal(t, "opus", opts.Model)
+	assert.Equal(t, "high", opts.Effort)
+
+	opts, err = c.launchOptions(v, "aider", newFlags{account: "work"})
+	require.NoError(t, err)
+	assert.Empty(t, opts.Account)
+	assert.Contains(t, warn.String(), "--account ignored")
+}
+
+func TestSessionKill_AsksFirst(t *testing.T) {
+	isolateWorkspaces(t)
+	agent := fakeAgent(t, "claude.ai")
+	liveWorkspace(t, "ws-a", agent, nil)
+	d := serveDaemonLive(t, agent)
+	_, _, err := runSession(t, "", "new", "alpha", "-w", "ws-a")
+	require.NoError(t, err)
+
+	for _, answer := range []string{"n\n", ""} {
+		out, _, err := runSession(t, answer, "kill", "alpha", "-w", "ws-a")
+		require.Error(t, err, "answer %q", answer)
+		assert.Contains(t, err.Error(), "aborted: nothing was killed")
+		assert.Contains(t, out, "Kill session 'alpha' in ws-a? [y/N]")
+		assert.True(t, tmuxHas("alpha"), "answer %q killed it", answer)
+	}
+
+	out, _, err := runSession(t, "y\n", "kill", "alpha", "-w", "ws-a")
+	require.NoError(t, err)
+	assert.Contains(t, out, `Killed "alpha" in ws-a`)
+	assert.False(t, tmuxHas("alpha"))
+	_, ok := d.view(t, "ws-a", "alpha")
+	assert.False(t, ok)
+}
+
+func TestSessionKill_YesSkipsTheQuestion(t *testing.T) {
+	isolateWorkspaces(t)
+	agent := fakeAgent(t, "claude.ai")
+	liveWorkspace(t, "ws-a", agent, nil)
+	serveDaemonLive(t, agent)
+	_, _, err := runSession(t, "", "new", "alpha", "-w", "ws-a")
+	require.NoError(t, err)
+
+	out, _, err := runSession(t, "", "kill", "alpha", "-w", "ws-a", "-y")
+
+	require.NoError(t, err)
+	assert.NotContains(t, out, "[y/N]")
+	assert.False(t, tmuxHas("alpha"))
+}
+
+func TestSessionPauseResume_RoundTrip(t *testing.T) {
+	isolateWorkspaces(t)
+	agent := fakeAgent(t, "claude.ai")
+	liveWorkspace(t, "ws-a", agent, nil)
+	d := serveDaemonLive(t, agent)
+	_, _, err := runSession(t, "", "new", "alpha", "-w", "ws-a")
+	require.NoError(t, err)
+
+	out, _, err := runSession(t, "", "pause", "alpha", "-w", "ws-a")
+	require.NoError(t, err)
+	assert.Contains(t, out, `Paused "alpha" in ws-a`)
+	v, _ := d.view(t, "ws-a", "alpha")
+	assert.Equal(t, session.Paused, v.Status)
+	assert.False(t, tmuxHas("alpha"))
+
+	_, _, err = runSession(t, "", "pause", "alpha", "-w", "ws-a")
+	require.Error(t, err, "a paused session can't be paused")
+	assert.Contains(t, err.Error(), "the session is not running (Paused)")
+
+	out, _, err = runSession(t, "", "resume", "alpha", "-w", "ws-a")
+	require.NoError(t, err)
+	assert.Contains(t, out, `Resumed "alpha" in ws-a`)
+	v, _ = d.view(t, "ws-a", "alpha")
+	assert.NotEqual(t, session.Paused, v.Status)
+	assert.True(t, tmuxHas("alpha"))
+
+	_, _, err = runSession(t, "", "resume", "alpha", "-w", "ws-a")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the session is not paused")
+}
+
+func TestSessionOps_NameASessionExactly(t *testing.T) {
+	isolateWorkspaces(t)
+	registered(t, "ws-a", pausedRecords)
+	serveDaemon(t, "true")
+
+	_, _, err := runSession(t, "", "resume", "alp", "-w", "ws-a")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `no session "alp"`)
 }

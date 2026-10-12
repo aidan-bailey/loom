@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
@@ -70,8 +72,8 @@ func serveDaemon(t *testing.T, program string) *testDaemon {
 	return serveDaemonOn(t, program, deadTmux{})
 }
 
-// serveDaemonOn is serveDaemon with tmuxExec as the daemon's tmux.
-func serveDaemonOn(t *testing.T, program string, tmuxExec deadTmux) *testDaemon {
+// serveDaemonOn is serveDaemon with ex as the daemon's executor.
+func serveDaemonOn(t *testing.T, program string, ex cmd.Executor) *testDaemon {
 	t.Helper()
 	requireIsolatedClaude(t)
 	t.Setenv("HOME", t.TempDir())
@@ -79,7 +81,7 @@ func serveDaemonOn(t *testing.T, program string, tmuxExec deadTmux) *testDaemon 
 	t.Setenv(tmux.EnvTmuxSocket, fmt.Sprintf("loomclitest-%d", time.Now().UnixNano()))
 	reg, err := config.LoadWorkspaceRegistry()
 	require.NoError(t, err)
-	model := core.New(core.Options{Registry: reg, Program: program, CmdExec: tmuxExec})
+	model := core.New(core.Options{Registry: reg, Program: program, CmdExec: ex})
 	model.Boot()
 	loop := core.Start(model)
 	srv := rpc.NewServer(loop)
@@ -146,4 +148,94 @@ func requireIsolatedClaude(t *testing.T) {
 func within(dir, p string) bool {
 	rel, err := filepath.Rel(dir, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// serveDaemonLive is serveDaemon on a private real tmux server, killed
+// once the daemon has stopped, so sessions really start: their agent is
+// whatever program the workspace's config names (liveWorkspace).
+func serveDaemonLive(t *testing.T, program string) *testDaemon {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	var sock string
+	// Registered first so it runs last: after the loop has stopped.
+	t.Cleanup(func() {
+		if sock != "" {
+			_ = tmux.CommandOnSocket(context.Background(), sock, "kill-server").Run()
+		}
+	})
+	d := serveDaemonOn(t, program, internalexec.Default{})
+	sock = os.Getenv(tmux.EnvTmuxSocket)
+	return d
+}
+
+// fakeAgent is a stand-in Claude, named claude so loom launches it as
+// one: `auth status` reports a login (by authMethod, "claude.ai" for one
+// remote control accepts), any other subcommand fails at once (the
+// roster's `agents`, a usage probe's -p), and a launch, with flags or
+// none, stays up until its tmux session ends.
+func fakeAgent(t *testing.T, authMethod string) string {
+	t.Helper()
+	bin := t.TempDir()
+	auth := `{"loggedIn":true,"authMethod":"` + authMethod + `","email":"you@example.com","subscriptionType":"max"}`
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  auth) printf '%s\\n' '" + auth + "'; exit 0;;\n" +
+		"  -p) exit 1;;\n" +
+		"  ''|-*) exec sleep 3600;;\n" +
+		"esac\n" +
+		"exit 1\n"
+	path := filepath.Join(bin, "claude")
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	return path
+}
+
+// liveWorkspace registers, before the daemon boots, a repository with one
+// commit as name, whose config.json launches program. edit, when set,
+// changes the config before it is written.
+func liveWorkspace(t *testing.T, name, program string, edit func(*config.Config)) config.Workspace {
+	t.Helper()
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	git("init", "-q", "-b", "main")
+	git("config", "user.name", "loom test")
+	git("config", "user.email", "test@example.invalid")
+	git("config", "commit.gpgsign", "false")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".loom/\n"), 0o644))
+	git("add", "-A")
+	git("commit", "-q", "--no-verify", "-m", "init")
+	ws := config.Workspace{Name: name, Path: dir}
+	reg, err := config.LoadWorkspaceRegistry()
+	require.NoError(t, err)
+	require.NoError(t, reg.Add(ws.Name, ws.Path))
+	cfg := config.DefaultConfig()
+	cfg.DefaultProgram = program
+	if edit != nil {
+		edit(cfg)
+	}
+	require.NoError(t, config.SaveConfigTo(cfg, config.WorkspaceConfigDir(&ws)))
+	return ws
+}
+
+// view is the daemon's view of the session titled title in the workspace
+// served as ws, as its client has it now.
+func (d *testDaemon) view(t *testing.T, ws, title string) (core.InstanceView, bool) {
+	t.Helper()
+	for _, v := range d.client.Views(d.workspace(t, ws).ID) {
+		if v.Title == title {
+			return v, true
+		}
+	}
+	return core.InstanceView{}, false
+}
+
+// tmuxHas reports whether the agent session titled title runs on the
+// test's private tmux server.
+func tmuxHas(title string) bool {
+	return tmux.Command(context.Background(), "has-session", "-t", tmux.SessionTarget(tmux.ToLoomTmuxName(title))).Run() == nil
 }
