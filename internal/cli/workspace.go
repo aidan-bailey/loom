@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -141,32 +142,13 @@ var workspaceStatusCmd = &cobra.Command{
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(c *cobra.Command, args []string) error {
 		return withDaemon(c, func(d *client) error {
-			if err := d.ReloadRegistry(); err != nil {
-				return err
-			}
-			reg := &config.WorkspaceRegistry{Workspaces: d.Registry().Workspaces}
-
-			var ws *config.Workspace
+			name := ""
 			if len(args) > 0 {
-				ws = reg.Get(args[0])
-				if ws == nil {
-					return fmt.Errorf("workspace %q not found", args[0])
-				}
-			} else {
-				// Auto-detect from cwd
-				cwd, err := os.Getwd()
-				if err != nil {
-					return fmt.Errorf("failed to get working directory: %w", err)
-				}
-				ws = reg.FindByPath(cwd)
-				if ws == nil {
-					return fmt.Errorf("no workspace matches current directory; specify a name")
-				}
+				name = args[0]
 			}
-
-			v, ok := d.served(ws.Name)
-			if !ok {
-				return fmt.Errorf("workspace %q is not served by the loom daemon", ws.Name)
+			ws, v, err := d.resolveWorkspace(name)
+			if err != nil {
+				return err
 			}
 			// The daemon's sessions, as state.json keeps them: a
 			// Recoverable entry is a worktree found on disk, never stored.
@@ -188,6 +170,36 @@ var workspaceStatusCmd = &cobra.Command{
 			return nil
 		})
 	},
+}
+
+// resolveWorkspace is the registered workspace a command acts on, name's
+// or, with name "", the one whose repository holds the working directory,
+// and the view the daemon serves it as. It rereads the registry first
+// (ReloadRegistry): another process may have changed it.
+func (c *client) resolveWorkspace(name string) (config.Workspace, core.WorkspaceView, error) {
+	if err := c.ReloadRegistry(); err != nil {
+		return config.Workspace{}, core.WorkspaceView{}, err
+	}
+	reg := &config.WorkspaceRegistry{Workspaces: c.Registry().Workspaces}
+	var ws *config.Workspace
+	if name != "" {
+		if ws = reg.Get(name); ws == nil {
+			return config.Workspace{}, core.WorkspaceView{}, fmt.Errorf("workspace %q not found", name)
+		}
+	} else {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return config.Workspace{}, core.WorkspaceView{}, fmt.Errorf("failed to get working directory: %w", err)
+		}
+		if ws = reg.FindByPath(cwd); ws == nil {
+			return config.Workspace{}, core.WorkspaceView{}, errors.New("no workspace matches current directory; specify a name")
+		}
+	}
+	v, ok := c.served(ws.Name)
+	if !ok {
+		return config.Workspace{}, core.WorkspaceView{}, fmt.Errorf("workspace %q is not served by the loom daemon", ws.Name)
+	}
+	return *ws, v, nil
 }
 
 // served is the view of the workspace the daemon serves for the registered

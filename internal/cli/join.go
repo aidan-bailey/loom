@@ -16,6 +16,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -43,6 +44,9 @@ type client struct {
 	*rpc.Client
 	// errOut hears the notices the daemon gives this connection.
 	errOut io.Writer
+	// ctx ends a wait (await) early: the command's context, which
+	// `session new` cancels on an interrupt.
+	ctx context.Context
 }
 
 // withDaemon joins the daemon (Join), runs fn with the client and closes
@@ -59,7 +63,11 @@ func withDaemon(cmd *cobra.Command, fn func(c *client) error) error {
 		return err
 	}
 	defer rc.Close()
-	c := &client{Client: rc, errOut: cmd.ErrOrStderr()}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c := &client{Client: rc, errOut: cmd.ErrOrStderr(), ctx: ctx}
 	err = fn(c)
 	c.events()
 	return err
@@ -68,8 +76,8 @@ func withDaemon(cmd *cobra.Command, fn func(c *client) error) error {
 // events returns the events that arrived since the last call, the state
 // events first (the client's Sync), having written each Notice to errOut.
 // A Notice naming a request (Req) is one of this command's own, which the
-// daemon routes to it alone, and the command reports that request's
-// outcome itself (its Reply), so it is not written twice.
+// daemon routes to it alone: it is returned, not written, so the command
+// reports it with its request's outcome and never twice.
 func (c *client) events() []core.Event {
 	var out []core.Event
 	for _, ev := range c.Sync() {
@@ -78,6 +86,7 @@ func (c *client) events() []core.Event {
 		case !ok:
 			out = append(out, ev)
 		case n.Req != 0:
+			out = append(out, ev)
 		case n.Err != nil:
 			fmt.Fprintf(c.errOut, "loom: %v\n", n.Err)
 		case n.Info != "":
@@ -88,9 +97,10 @@ func (c *client) events() []core.Event {
 }
 
 // await waits until done holds, for up to timeout (0: for as long as the
-// daemon is reachable). done is asked once at once and again with each
-// batch of events that arrives (events, which writes the notices). It
-// reports whether done held, and the client's loss of the daemon.
+// daemon is reachable), or until the command's context ends (its error).
+// done is asked once at once and again with each batch of events that
+// arrives (events, which writes the notices). It reports whether done
+// held, and the client's loss of the daemon.
 func (c *client) await(timeout time.Duration, done func([]core.Event) bool) (bool, error) {
 	var expired <-chan time.Time
 	if timeout > 0 {
@@ -105,10 +115,15 @@ func (c *client) await(timeout time.Duration, done func([]core.Event) bool) (boo
 		if err := c.Err(); err != nil {
 			return false, fmt.Errorf("lost the loom daemon: %w", err)
 		}
+		if err := c.ctx.Err(); err != nil {
+			return false, err
+		}
 		select {
 		case <-c.Wakes():
 		case <-expired:
 			return false, nil
+		case <-c.ctx.Done():
+			return false, c.ctx.Err()
 		}
 	}
 }

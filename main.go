@@ -421,6 +421,7 @@ func init() {
 	cmd2.StateWriteGuard = holdForStateWrite
 	rootCmd.AddCommand(cli.WorkspaceCmd)
 	rootCmd.AddCommand(cli.AccountCmd)
+	rootCmd.AddCommand(cli.SessionCmd)
 }
 
 func main() {
