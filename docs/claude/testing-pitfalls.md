@@ -41,6 +41,7 @@ Loom runs `git add -N .` in every session worktree on each diff probe (`session/
 
 - **Probe a new Claude-behaviour premise live before building on it.** A live probe of Claude's hooks falsified a key assumption of the hook-status design (the roster moves before the hook's timestamp), and `claude -p` turned out to get no scratchpad. Probe on a private server: `env -u TMUX tmux -L <name> …`, targeting windows by name (a user's `base-index` shifts numbers) and quoting `'=target'` in zsh. The opt-in contract tests run with `LOOM_TEST_REAL_CLAUDE=1` and some cost money.
 - **Real-tmux tests run on their own server** (`privateTmux(t, tag)` in `session/tmux`, `isolateTmux(t)` in `core` and `app`): a tmux server exits when its last session dies, so a shared one makes the next test's `new-session` fail with "server exited unexpectedly". Keep socket paths short; `sun_path` caps them at 108 bytes, and a long `TMPDIR` overflows it.
+- **A package whose tests run a live `core.Loop` on real tmux pins `LOOM_TMUX_SOCKET` in `TestMain`, not only per test.** `Loop.Stop` drops background jobs' results but doesn't wait for them, so a launch watch (up to 30s of captures) or a probe outlives the test, and with it the test's `t.Setenv`: a late tmux call then reaches whatever the variable reverts to, the developer's default server when `TestMain` set none (`internal/cli/testmain_test.go`, as `app`'s does).
 - **Pace output a scroll test asserts on**: [`nix-build-failures.md`](nix-build-failures.md) explains tmux's burst redraw.
 
 ## What the gates won't tell you
