@@ -29,12 +29,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// GlobalInstanceLimit caps the number of simultaneously-tracked
-// instances per workspace slot. Once reached, New/Prompt flows short-
-// circuit with an error-bar message instead of allocating another
-// worktree. The cap is a soft guardrail — tmux server memory and git
-// worktree overhead are the real upper bound; raise deliberately.
-const GlobalInstanceLimit = 10
+// GlobalInstanceLimit is the rows a workspace slot holds before the
+// creation flows refuse another (core.InstanceLimit, checked through
+// core.CheckRoom).
+const GlobalInstanceLimit = core.InstanceLimit
 
 var (
 	inlineAttachHintStyle, statusLineStyle lipgloss.Style

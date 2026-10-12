@@ -107,9 +107,8 @@ func selectedReadyForQuickInput(m *home) bool {
 // -- Lifecycle --
 
 func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
-	if m.list.NumInstances() >= GlobalInstanceLimit {
-		return m, m.handleError(
-			fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
+	if err := core.CheckRoom(m.list.NumInstances()); err != nil {
+		return m, m.handleError(err)
 	}
 	if err := m.latchedStorageErr(); err != nil {
 		return m, m.handleError(err)
@@ -134,9 +133,8 @@ func runPromptNewInstance(m *home) (tea.Model, tea.Cmd) {
 }
 
 func runNewInstance(m *home) (tea.Model, tea.Cmd) {
-	if m.list.NumInstances() >= GlobalInstanceLimit {
-		return m, m.handleError(
-			fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
+	if err := core.CheckRoom(m.list.NumInstances()); err != nil {
+		return m, m.handleError(err)
 	}
 	if err := m.latchedStorageErr(); err != nil {
 		return m, m.handleError(err)

@@ -174,6 +174,8 @@ func precondition(op requestOp, inst *session.Instance) error {
 			why = "not allowed on a workspace terminal"
 		case st == session.Loading || st == session.Deleting:
 			why = fmt.Sprintf("the session is busy (%s)", st)
+		case op == opPause && (st == session.Paused || st == session.Recoverable):
+			why = fmt.Sprintf("the session is not running (%s)", st)
 		case op == opMergeInto && !inst.Started():
 			why = "the session has not started"
 		}

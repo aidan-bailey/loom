@@ -307,6 +307,8 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"kill a deleting session", func(f fixture) { f.m.Kill(f.id["deleting"], 1) }, "kill deleting: the session is busy (Deleting)"},
 		{"pause a terminal", func(f fixture) { f.m.Pause(f.id["term"], 1) }, "pause term: not allowed on a workspace terminal"},
 		{"pause a loading session", func(f fixture) { f.m.Pause(f.id["loading"], 1) }, "pause loading: the session is busy (Loading)"},
+		{"pause a paused session", func(f fixture) { f.m.Pause(f.id["paused"], 1) }, "pause paused: the session is not running (Paused)"},
+		{"pause a recoverable session", func(f fixture) { f.m.Pause(f.id["orphan"], 1) }, "pause orphan: the session is not running (Recoverable)"},
 		{"push a terminal", func(f fixture) { f.m.Push(f.id["term"], 1) }, "push term: not allowed on a workspace terminal"},
 		{"push a deleting session", func(f fixture) { f.m.Push(f.id["deleting"], 1) }, "push deleting: the session is busy (Deleting)"},
 		{"resume a terminal", func(f fixture) { f.m.Resume(f.id["term"], 1) }, "resume term: not allowed on a workspace terminal"},

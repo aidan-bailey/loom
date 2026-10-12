@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/ui"
@@ -65,8 +66,8 @@ func (m *home) issuePickerStatus() string {
 // while. When no snapshot exists yet the picker opens in the loading
 // state, and the model polls at the next tick.
 func runNewFromIssue(m *home) (tea.Model, tea.Cmd) {
-	if m.list.NumInstances() >= GlobalInstanceLimit {
-		return m, m.handleError(fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
+	if err := core.CheckRoom(m.list.NumInstances()); err != nil {
+		return m, m.handleError(err)
 	}
 	if m.core.GitHubUnavailable() {
 		return m, m.handleError(fmt.Errorf("gh unavailable: %s", m.core.GitHubUnavailableReason()))
@@ -134,8 +135,8 @@ func (m *home) handleIssuePicked(msg issuePickedMsg) (tea.Model, tea.Cmd) {
 	if m.state != stateDefault {
 		return m, m.handleError(fmt.Errorf("issue #%d arrived while another session was being created; press I again", msg.issue.Number))
 	}
-	if m.list.NumInstances() >= GlobalInstanceLimit {
-		return m, m.handleError(fmt.Errorf("you can't create more than %d instances", GlobalInstanceLimit))
+	if err := core.CheckRoom(m.list.NumInstances()); err != nil {
+		return m, m.handleError(err)
 	}
 	if err := m.latchedStorageErr(); err != nil {
 		return m, m.handleError(err)

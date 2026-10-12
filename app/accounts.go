@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/ui"
 	"github.com/aidan-bailey/loom/ui/overlay"
@@ -86,7 +87,7 @@ func (m *home) accountStatuses() []ui.AccountStatus {
 // reset the choice to the default account, where keeping the stale one
 // makes a named account's launch fail closed instead. When the modal's
 // selected account is gone the selection moves to the first choice, and
-// the modal says so (removedAccountNotice).
+// the modal says so (core.RemovedAccountNotice).
 func (m *home) refreshAccountViews() tea.Cmd {
 	statuses := m.accountStatuses()
 	if so := m.settingsOverlay(); so != nil {
@@ -96,7 +97,7 @@ func (m *home) refreshAccountViews() tea.Cmd {
 	if lo := m.launchOptionsOverlay(); lo != nil && lo.AccountsShown() && m.core.AccountsLoaded() {
 		choices := m.accountChoices(statuses)
 		if sel := lo.Options().Account; sel != "" && len(choices) > 0 && !hasAccountChoice(choices, sel) {
-			lo.SetAccountNotice(removedAccountNotice(sel, choices[0].Name))
+			lo.SetAccountNotice(core.RemovedAccountNotice(sel, choices[0].Name))
 		}
 		lo.SetAccounts(choices)
 	}
@@ -138,46 +139,19 @@ func hasAccountChoice(choices []overlay.AccountChoice, name string) bool {
 	return false
 }
 
-// removedAccountNotice is the Account row's notice for a session whose
-// account was removed: it runs on another one, which the user sees before
-// confirming.
-func removedAccountNotice(removed, now string) string {
-	return fmt.Sprintf("%s was removed — this session will run on %s", removed, now)
-}
-
 // newLaunchOptionsOverlay builds the Session Launch Options modal for opts,
 // launching program, and the Cmd of re-reading the registry, which it does
-// first (core.Model.ReloadAccounts). A Claude launch gets
-// the Account row when an extra account exists, and an empty or
-// unregistered opts.Account becomes the registry default, so R on a
-// session whose account was removed can't relaunch as it again; the row
-// then shows, even with default the only choice left, with a notice
-// naming the switch (removedAccountNotice). A registry
-// that failed to load keeps a named opts.Account: it lists no accounts, so
-// the row is hidden, and rewriting the account would move the session to
-// another subscription the user never saw chosen; kept, its launch fails
-// closed (session.RegistryLoadError). Any other program records no account
-// and gets no row.
+// first (core.Model.ReloadAccounts). The account it pre-fills is
+// core.ChooseLaunchAccount's. A Claude launch gets the Account row when an
+// extra account exists, or when the account it chose replaces a removed
+// one, even with default the only choice left, with a notice naming the
+// switch. A registry that failed to load lists no accounts, so the row is
+// hidden. Any other program records no account and gets no row.
 func (m *home) newLaunchOptionsOverlay(opts overlay.LaunchOptions, program string) (*overlay.SessionLaunchOptions, tea.Cmd) {
 	m.core.ReloadAccounts()
 	reloaded := m.drainCore()
 	claude := session.IsClaudeProgram(program)
-	notice := ""
-	switch {
-	case !claude || !m.core.AccountNames().Present:
-		opts.Account = ""
-	case opts.Account == "":
-		opts.Account = m.core.AccountNames().Default
-	case opts.Account == account.DefaultName || !m.core.AccountsLoaded():
-		// Kept: the default, or a registry that can't tell whether the
-		// account still exists.
-	default:
-		if _, ok := m.core.Account(opts.Account); !ok {
-			removed := opts.Account
-			opts.Account = m.core.AccountNames().Default
-			notice = removedAccountNotice(removed, opts.Account)
-		}
-	}
+	opts, notice := core.ChooseLaunchAccount(m.core, opts, program)
 	auth := m.core.RCAuthFor(opts.Account)
 	lo := overlay.NewSessionLaunchOptions(opts, auth.Blocked(), auth.Reason)
 	// Otherwise the row stays hidden: a registry that failed to load lists

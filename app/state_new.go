@@ -2,8 +2,8 @@ package app
 
 import (
 	"fmt"
-	"slices"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/ui"
 
 	tea "charm.land/bubbletea/v2"
@@ -35,10 +35,7 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.Code {
 	// Start the instance (enable previews etc) and go back to the main menu state.
 	case tea.KeyEnter:
-		if len(d.title) == 0 {
-			return m, m.handleError(fmt.Errorf("title cannot be empty"))
-		}
-		if err := m.preservedTitleErr(d.title); err != nil {
+		if err := core.CheckNewTitle(d.title, m.info); err != nil {
 			return m, m.handleError(err)
 		}
 
@@ -85,8 +82,8 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if msg.Text == "" {
 			break
 		}
-		if runewidth.StringWidth(d.title) >= 32 {
-			return m, m.handleError(fmt.Errorf("title cannot be longer than 32 characters"))
+		if runewidth.StringWidth(d.title) >= core.MaxTitleWidth {
+			return m, m.handleError(fmt.Errorf("title cannot be longer than %d characters", core.MaxTitleWidth))
 		}
 		d.title += msg.Text
 	}
@@ -96,26 +93,17 @@ func handleStateNewKey(m *home, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // preservedTitleErr rejects a new session title that belongs to a record
-// the focused storage preserves on disk but could not load (a reconcile
-// failure, or a newer loom's record after a downgrade). Storage never
-// dedupes against such records, so creating the session would persist a
-// second record under the title, and the two would share a tmux session
-// name. Returns nil when the title is free.
+// the focused storage preserves on disk but could not load
+// (core.CheckPreservedTitle). Returns nil when the title is free.
 func (m *home) preservedTitleErr(title string) error {
-	if !slices.Contains(m.info.PreservedTitles, title) {
-		return nil
-	}
-	return fmt.Errorf("title %q belongs to a saved session this version of loom could not load; choose another", title)
+	return core.CheckPreservedTitle(title, m.info)
 }
 
 // latchedStorageErr refuses to create a session while the focused storage's
-// write latch is engaged (Storage.WritesRefused): the session could never be
+// write latch is engaged (core.CheckWritable): the session could never be
 // persisted. It also keeps a latched list exactly as loaded — empty — which
 // is what makes skipping its save lossless (applyWorkspaceToggle,
 // handleQuit). Returns nil when the storage accepts writes.
 func (m *home) latchedStorageErr() error {
-	if !m.info.WritesRefused {
-		return nil
-	}
-	return fmt.Errorf("new sessions can't be created here: this workspace's saved sessions could not be read, so nothing can be saved (see serve.log)")
+	return core.CheckWritable(m.info)
 }
