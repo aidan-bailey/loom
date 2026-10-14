@@ -39,11 +39,12 @@ daemon outlives that TUI:
 - `build` (and `up`, and `start` and `run` unless `--no-build`) replaces
   the binary only. The next loom to start replaces a running daemon only
   when the new build is newer, which takes a build that names its commit
-  (one from a git checkout, as loomdev's are; a Nix build stamps it): a
-  later commit, or a tree edited and rebuilt at the same one. An older
-  build (an earlier commit, or a clean build after a dirty one at the same
-  commit) is refused, and one that names no commit joins the running
-  daemon as it is: `stop` the daemon first.
+  (one from a git checkout, which loomdev stamps itself, since a plain
+  `go build` in a nested worktree names the main checkout's commit; a Nix
+  build stamps it too): a later commit, or a tree edited and rebuilt at
+  the same one. An older build (an earlier commit, or a clean build after
+  a dirty one at the same commit) is refused, and one that names no commit
+  joins the running daemon as it is: `stop` the daemon first.
 - `run` leaves the daemon running when its TUI quits, as a real loom does;
   `stop` ends it.
 - `down` stops the daemon before it deletes the sandbox. A daemon that won't

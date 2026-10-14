@@ -23,15 +23,12 @@ func build() string {
 		return "unknown"
 	}
 	b := info.Main.Version
-	for _, s := range info.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			b += " " + s.Value
-		case "vcs.modified":
-			if s.Value == "true" {
-				b += "+dirty"
-			}
-		}
+	c := commitOf(info.Settings, commitUnix, commitRevision, commitModified)
+	if c.revision != "" {
+		b += " " + c.revision
+	}
+	if c.modified {
+		b += "+dirty"
 	}
 	return b
 }
@@ -53,9 +50,52 @@ func Self() Hello {
 
 // commitUnix is the commit's time in Unix seconds, stamped at link time
 // (-ldflags "-X github.com/aidan-bailey/loom/core/rpc.commitUnix=…") by a
-// build Go can stamp no VCS information into: the Nix flake stamps its
-// source's lastModified, since a Nix build has no .git to read.
+// build Go stamps no VCS information into: the Nix flake stamps its
+// source's lastModified, since a Nix build has no .git to read, and
+// loomdev's builds (internal/devsandbox) stamp it with commitRevision and
+// commitModified, having turned Go's stamping off (-buildvcs=false): Go
+// would stamp a worktree nested in another checkout with the enclosing
+// checkout's commit.
 var commitUnix string
+
+// commitRevision (the commit's full hash) and commitModified ("true" for a
+// modified tree) are stamped at link time with commitUnix, by loomdev's
+// builds.
+var commitRevision, commitModified string
+
+// commit is what a binary says of the commit it was built from.
+type commit struct {
+	revision string // "" when it names none
+	time     string // RFC 3339, "" when it names none
+	modified bool
+}
+
+// commitOf is the commit a binary with these build settings and link-time
+// stamps names: Go's VCS settings where it recorded them, and for each it
+// did not, the stamp (commitUnix, commitRevision, commitModified).
+func commitOf(settings []debug.BuildSetting, unix, revision, modified string) commit {
+	var c commit
+	var vcsTime string
+	vcsModified := false
+	for _, s := range settings {
+		switch s.Key {
+		case "vcs.revision":
+			c.revision = s.Value
+		case "vcs.time":
+			vcsTime = s.Value
+		case "vcs.modified":
+			c.modified, vcsModified = s.Value == "true", true
+		}
+	}
+	if c.revision == "" {
+		c.revision = revision
+	}
+	if !vcsModified {
+		c.modified = modified == "true"
+	}
+	c.time = commitTime(vcsTime, unix)
+	return c
+}
 
 // identity is the part of Self that does not change while the process
 // runs, read once (readIdentity): hashing the executable reads it whole.
@@ -65,17 +105,12 @@ var identity = sync.OnceValue(readIdentity)
 func readIdentity() Hello {
 	h := Hello{Protocol: Protocol, Build: build()}
 	h.Exe, h.ExeTime = exeIdentity()
+	var settings []debug.BuildSetting
 	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, s := range info.Settings {
-			switch s.Key {
-			case "vcs.time":
-				h.Time = s.Value
-			case "vcs.modified":
-				h.Modified = s.Value == "true"
-			}
-		}
+		settings = info.Settings
 	}
-	h.Time = commitTime(h.Time, commitUnix)
+	c := commitOf(settings, commitUnix, commitRevision, commitModified)
+	h.Time, h.Modified = c.time, c.modified
 	return h
 }
 

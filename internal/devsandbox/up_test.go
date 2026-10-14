@@ -2,6 +2,7 @@ package devsandbox
 
 import (
 	"bytes"
+	"debug/buildinfo"
 	"encoding/json"
 	"math"
 	"os"
@@ -161,6 +162,57 @@ func TestUp_WarnsWhenSourceWorktreeChanges(t *testing.T) {
 	assert.Equal(t, "/src/b", meta.SourceWorktree)
 }
 
+// A dev build turns Go's VCS stamping off and stamps the commit itself, with
+// the caller's ldflags after the stamp's.
+func TestGoBuildArgs(t *testing.T) {
+	assert.Equal(t, []string{"build", "-o", "/out/loom", "-buildvcs=false", "-ldflags", "-X a.b=1 -X main.version=99.0.0", "."},
+		goBuildArgs("/out/loom", ".", "-X main.version=99.0.0", "-X a.b=1"))
+	assert.Equal(t, []string{"build", "-o", "/out/loom", "-buildvcs=false", "-ldflags", "-X a.b=1", "."},
+		goBuildArgs("/out/loom", ".", "", "-X a.b=1"))
+	assert.Equal(t, []string{"build", "-o", "/out/loom", "-ldflags", "-X main.version=99.0.0", "."},
+		goBuildArgs("/out/loom", ".", "-X main.version=99.0.0", ""), "no checkout: built as Go stamps it")
+}
+
+// vcsLdflags stamps the commit of the checkout it is given, read with git
+// there: for a worktree nested in another checkout, the worktree's commit,
+// where Go's own stamping would name the enclosing checkout's.
+func TestVCSLdflags_StampsTheCheckoutsOwnCommit(t *testing.T) {
+	requireGit(t)
+	outer := t.TempDir()
+	require.NoError(t, git(outer, "init", "-q", "-b", "main"))
+	for _, args := range [][]string{
+		{"config", "user.name", "t"}, {"config", "user.email", "t@example.invalid"}, {"config", "commit.gpgsign", "false"},
+		{"commit", "-q", "--allow-empty", "--no-verify", "-m", "outer"},
+	} {
+		require.NoError(t, git(outer, args...))
+	}
+	inner := filepath.Join(outer, "worktrees", "feature")
+	require.NoError(t, git(outer, "worktree", "add", "-q", "-b", "feature", inner))
+	require.NoError(t, os.WriteFile(filepath.Join(inner, "f.txt"), []byte("x"), 0o644))
+	require.NoError(t, git(inner, "add", "f.txt"))
+	require.NoError(t, git(inner, "commit", "-q", "--no-verify", "-m", "inner"))
+	head := gitOut(t, inner, "rev-parse", "HEAD")
+	require.NotEqual(t, gitOut(t, outer, "rev-parse", "HEAD"), head)
+	const rpc = "-X github.com/aidan-bailey/loom/core/rpc."
+
+	flags, err := vcsLdflags(inner)
+
+	require.NoError(t, err)
+	assert.Contains(t, flags, rpc+"commitRevision="+head)
+	assert.Contains(t, flags, rpc+"commitUnix="+gitOut(t, inner, "log", "-1", "--format=%ct"))
+	assert.Contains(t, flags, rpc+"commitModified=false")
+
+	require.NoError(t, os.WriteFile(filepath.Join(inner, "f.txt"), []byte("edited"), 0o644))
+	flags, err = vcsLdflags(inner)
+	require.NoError(t, err)
+	assert.Contains(t, flags, rpc+"commitModified=true", "an edited tree")
+	assert.Contains(t, flags, rpc+"commitRevision="+head)
+
+	flags, err = vcsLdflags(t.TempDir())
+	require.NoError(t, err)
+	assert.Empty(t, flags, "no checkout, no stamp")
+}
+
 func TestBuild_RequiresUp(t *testing.T) {
 	useTempBase(t)
 	sb, err := Open("demo")
@@ -187,4 +239,18 @@ func TestBuild_ProducesRunnableBinaries(t *testing.T) {
 	meta, err := sb.LoadMeta()
 	require.NoError(t, err)
 	assert.NotEmpty(t, meta.BuildSHA)
+
+	// From a checkout (this one may be a worktree nested in another), the
+	// build names the checkout's own commit, never the enclosing one's.
+	if meta.BuildSHA == "unknown" {
+		return
+	}
+	info, err := buildinfo.ReadFile(sb.LoomBin())
+	require.NoError(t, err)
+	settings := map[string]string{}
+	for _, s := range info.Settings {
+		settings[s.Key] = s.Value
+	}
+	assert.NotContains(t, settings, "vcs.revision", "Go's stamp would name the enclosing checkout")
+	assert.Contains(t, settings["-ldflags"], "core/rpc.commitRevision="+gitOut(t, root, "rev-parse", "HEAD"))
 }

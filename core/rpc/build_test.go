@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"runtime/debug"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,56 @@ func TestSelf_NamesTheStampedCommitTime(t *testing.T) {
 	assert.Equal(t, "2025-10-05T10:00:00Z", readIdentity().Time)
 	commitUnix = ""
 	assert.Empty(t, readIdentity().Time, "nothing stamped, nothing named")
+}
+
+// TestCommitOf: a binary names the commit Go's VCS stamping recorded, and
+// for each fact Go recorded nothing, the link-time stamp a build with Go's
+// stamping off sets instead: loomdev's dev builds, which Go would stamp
+// with the enclosing checkout's commit, and the Nix flake's, with no .git.
+func TestCommitOf(t *testing.T) {
+	goVCS := []debug.BuildSetting{
+		{Key: "vcs.revision", Value: "aaaa"},
+		{Key: "vcs.time", Value: "2026-10-05T10:00:00Z"},
+		{Key: "vcs.modified", Value: "false"},
+	}
+	for _, tc := range []struct {
+		name                     string
+		settings                 []debug.BuildSetting
+		unix, revision, modified string
+		want                     commit
+	}{
+		{"Go's stamp", goVCS, "", "", "", commit{revision: "aaaa", time: "2026-10-05T10:00:00Z"}},
+		{"Go's stamp outranks the link-time one", goVCS, "1759658400", "bbbb", "true", commit{revision: "aaaa", time: "2026-10-05T10:00:00Z"}},
+		{"the link-time stamp of a dirty tree", nil, "1759658400", "bbbb", "true", commit{revision: "bbbb", time: "2025-10-05T10:00:00Z", modified: true}},
+		{"the link-time stamp of a clean tree", nil, "1759658400", "bbbb", "false", commit{revision: "bbbb", time: "2025-10-05T10:00:00Z"}},
+		{"nothing stamped", nil, "", "", "", commit{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, commitOf(tc.settings, tc.unix, tc.revision, tc.modified))
+		})
+	}
+}
+
+// TestSelf_NamesTheStampedCommit: a build stamped at link time (Go's VCS
+// stamping off, as in loomdev's builds; a test binary has none either)
+// names that revision and modified tree in its build and its hello.
+func TestSelf_NamesTheStampedCommit(t *testing.T) {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" {
+				t.Skip("this binary names its commit through Go's VCS stamp")
+			}
+		}
+	}
+	prevRev, prevMod := commitRevision, commitModified
+	t.Cleanup(func() { commitRevision, commitModified = prevRev, prevMod })
+
+	commitRevision, commitModified = "bbbb", "true"
+	assert.True(t, strings.HasSuffix(build(), " bbbb+dirty"), build())
+	assert.True(t, readIdentity().Modified)
+	commitModified = "false"
+	assert.True(t, strings.HasSuffix(build(), " bbbb"), build())
+	assert.False(t, readIdentity().Modified)
 }
 
 // TestSelf: this binary's hello names its protocol, build, release and

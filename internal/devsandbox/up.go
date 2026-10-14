@@ -224,9 +224,9 @@ func (s *Sandbox) registerWorkspace() error {
 // sandbox daemon still running the previous build is replaced by the next
 // sandboxed loom to start when this build is newer (rpc.CompareBuilds: a
 // later commit, or an edited tree rebuilt at the same one, which takes a
-// srcDir that is a git checkout, so the build names its commit); an older
-// one is refused, and one naming no commit joins the running daemon, so
-// the daemon must be stopped first.
+// srcDir that is a git checkout, whose commit the build names: goBuild
+// stamps it itself, vcsLdflags); an older one is refused, and one naming
+// no commit joins the running daemon, so the daemon must be stopped first.
 func (s *Sandbox) Build(srcDir string) error {
 	meta, err := s.LoadMeta()
 	if err != nil {
@@ -250,19 +250,63 @@ func (s *Sandbox) BuildLoom(srcDir, out, ldflags string) error {
 	return goBuild(srcDir, out, ".", ldflags)
 }
 
-// goBuild runs `go build` for pkg in srcDir, writing out.
+// goBuild runs `go build` for pkg in srcDir, writing out, stamped with
+// srcDir's commit when it is a git checkout (vcsLdflags).
 func goBuild(srcDir, out, pkg, ldflags string) error {
-	args := []string{"build", "-o", out}
-	if ldflags != "" {
-		args = append(args, "-ldflags", ldflags)
+	stamp, err := vcsLdflags(srcDir)
+	if err != nil {
+		return err
 	}
-	cmd := exec.Command("go", append(args, pkg)...)
+	cmd := exec.Command("go", goBuildArgs(out, pkg, ldflags, stamp)...)
 	cmd.Dir = srcDir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("go build %s: %w\n%s", pkg, err, output)
 	}
 	return nil
+}
+
+// goBuildArgs is goBuild's `go build` arguments. With a stamp (vcsLdflags)
+// Go's own VCS stamping is off and the stamp comes before the caller's
+// ldflags; without one, the build is stamped as Go stamps it.
+func goBuildArgs(out, pkg, ldflags, stamp string) []string {
+	args := []string{"build", "-o", out}
+	if stamp != "" {
+		args = append(args, "-buildvcs=false")
+		ldflags = strings.TrimSpace(stamp + " " + ldflags)
+	}
+	if ldflags != "" {
+		args = append(args, "-ldflags", ldflags)
+	}
+	return append(args, pkg)
+}
+
+// rpcStamp is the -X prefix of core/rpc's link-time commit stamps.
+const rpcStamp = "-X github.com/aidan-bailey/loom/core/rpc."
+
+// vcsLdflags is the ldflags that stamp srcDir's commit into a build (its
+// hash, time and whether its tree is modified, as core/rpc's commitRevision,
+// commitUnix and commitModified), read with git in srcDir; "" when srcDir is
+// not a git checkout. Go's own stamping looks for a .git directory, so for
+// a worktree nested in another checkout, whose .git is a file, it names the
+// enclosing checkout's commit, and a dirty dev build reads clean.
+func vcsLdflags(srcDir string) (string, error) {
+	ctx := context.Background()
+	head, err := internalexec.GitCommand(ctx, srcDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", nil
+	}
+	unix, err := internalexec.GitCommand(ctx, srcDir, "log", "-1", "--format=%ct").Output()
+	if err != nil {
+		return "", fmt.Errorf("stamp the build: read the commit time in %s: %w", srcDir, err)
+	}
+	status, err := internalexec.GitCommand(ctx, srcDir, "status", "--porcelain").Output()
+	if err != nil {
+		return "", fmt.Errorf("stamp the build: read the status in %s: %w", srcDir, err)
+	}
+	modified := len(bytes.TrimSpace(status)) > 0
+	return fmt.Sprintf("%scommitRevision=%s %scommitUnix=%s %scommitModified=%t",
+		rpcStamp, strings.TrimSpace(string(head)), rpcStamp, strings.TrimSpace(string(unix)), rpcStamp, modified), nil
 }
 
 // sourceRevision describes srcDir as "<sha>" or "<sha>-dirty", or "unknown"
