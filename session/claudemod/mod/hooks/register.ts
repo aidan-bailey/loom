@@ -203,7 +203,9 @@ export const register: Register = on => {
     void ensurePump($)
     const r = await next(e)
     mainTurn = r.turnId
-    if (entered.length > 0) await claim($, r.turnId, entered.splice(0))
+    // The posts are not awaited: a hook's budget runs while it waits on posts
+    // made with another hook's $, and the bookkeeping is already done.
+    if (entered.length > 0) void claim($, r.turnId, entered.splice(0))
     return r
   })
 
@@ -220,7 +222,7 @@ export const register: Register = on => {
     const ids = turns.get(e.turnId)
     if (ids !== undefined) {
       turns.delete(e.turnId)
-      await reportInOrder(
+      void reportInOrder(
         $,
         ids.map(id => ({ kind: 'complete' as const, id, turnId: e.turnId, text: r.text, reason: e.reason })),
       )
