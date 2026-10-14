@@ -88,6 +88,7 @@ func TestRealClaude_TempDirLayout(t *testing.T) {
 
 	// -e hands Claude the variable as a loom pane would get it.
 	tm(append([]string{"new-session", "-d", "-s", "probe", "-x", "160", "-y", "45", "-c", cwd}, paneEnv...)...)
+	shellCmd := strings.TrimSpace(tm("display-message", "-p", "-t", target, "#{pane_current_command}"))
 	tm("send-keys", "-t", target, "claude --model haiku", "Enter")
 	const trustDialog = "trust this folder"
 	waitForRealClaude(t, screen, 60*time.Second, func() bool {
@@ -134,7 +135,19 @@ func TestRealClaude_TempDirLayout(t *testing.T) {
 	chat, ok := claudetmp.Locate(projects, cwd)
 	require.True(t, ok, "Locate finds the chat dir under %s", projects)
 	t.Cleanup(func() {
-		_ = tmux.CommandOnSocket(ctx, sock, "kill-server").Run() // before Claude can write again
+		// Claude writes to its transcript as it exits, and kill-server returns
+		// before it has: quit it and wait for the pane's shell, or the dir
+		// removed here comes straight back. It may still be mid-turn, where
+		// the first Ctrl-C only interrupts, so press until it is gone.
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+			out, err := tmux.CommandOnSocket(ctx, sock, "display-message", "-p", "-t", target, "#{pane_current_command}").Output()
+			if err != nil || strings.TrimSpace(string(out)) == shellCmd {
+				break
+			}
+			_ = tmux.CommandOnSocket(ctx, sock, "send-keys", "-t", target, "C-c").Run()
+			time.Sleep(500 * time.Millisecond)
+		}
+		_ = tmux.CommandOnSocket(ctx, sock, "kill-server").Run()
 		_ = os.RemoveAll(chat)
 	})
 	assert.Equal(t, want, filepath.Base(chat), "Claude names the chat dir as it names the temp dir")
