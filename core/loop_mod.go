@@ -39,14 +39,15 @@ func (l *Loop) ModEvents(launch string, events []ModEvent) error {
 // modCall runs f on the loop and wakes the client when the model has events
 // queued after it, as the loop does for an inbox item. A poll or a report
 // that changed nothing a client sees wakes none: a wake has the server build
-// and diff every view.
+// and diff every view. The wake is raised on the loop's goroutine, inside
+// the call: Stop closes Wakes only once that goroutine has exited, so a
+// signal from the caller's goroutine after the call could send on a closed
+// channel.
 func (l *Loop) modCall(f func(*Model)) {
-	queued := false
 	l.do(func(m *Model) {
 		f(m)
-		queued = len(m.out.Events) > 0
+		if len(m.out.Events) > 0 {
+			l.signal()
+		}
 	})
-	if queued {
-		l.signal()
-	}
 }

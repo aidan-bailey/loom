@@ -274,10 +274,15 @@ func TestModSocketPath(t *testing.T) {
 // and takes both down when it stops.
 func TestServe_ServesTheModSocket(t *testing.T) {
 	dir := globalDir(t)
-	r := serve(t, dir, Options{})
+	var atBuild string
+	r := serve(t, dir, Options{NewModel: func() (*core.Model, []core.Notice, error) {
+		atBuild = session.ModSocket()
+		return core.New(core.Options{CmdExec: deadExec()}), nil, nil
+	}})
 	mod := ModSocketPath(r.socket)
 	require.NotEmpty(t, mod)
 	assert.Equal(t, mod, session.ModSocket(), "launches name it")
+	assert.Equal(t, mod, atBuild, "named before the model is built and booted: the boot relaunches agents")
 	info, err := os.Stat(mod)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())

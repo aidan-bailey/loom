@@ -129,6 +129,14 @@ func get(c *http.Client, path string) <-chan int {
 	return done
 }
 
+// A held poll must end before Claude's host aborts the fetch (30 s), and a
+// working mod, held and then backing off at most 5 s, must never look silent
+// to the model (core.ModPollTimeout).
+func TestDefaultHold_FitsClaudesFetchAndTheModelsPollTimeout(t *testing.T) {
+	assert.LessOrEqual(t, DefaultHold, 25*time.Second, "5 s under Claude's 30 s fetch abort")
+	assert.Less(t, DefaultHold+5*time.Second, core.ModPollTimeout)
+}
+
 func TestListen_TheSocketIsPrivate(t *testing.T) {
 	s, _ := listen(t, &fakeHost{}, time.Second)
 	info, err := os.Stat(s.path)
