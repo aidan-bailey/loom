@@ -165,6 +165,10 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 	// Text goes in as loom types it (TypeText: a paste buffer), keys by
 	// name; both reach the private server through LOOM_TMUX_SOCKET.
 	t.Setenv(tmux.EnvTmuxSocket, sock)
+	// A server UseServer pinned in this binary would outrank it.
+	cmdArgs := strings.Join(tmux.Command(ctx).Args, " ")
+	require.Contains(t, cmdArgs, " -L "+sock, "the pane's helpers reach the private server")
+	require.NotContains(t, cmdArgs, " -S ", "and no pinned one")
 	pane := tmux.NewSessionNamed("probe", "")
 	press := func(keys ...string) {
 		t.Helper()
