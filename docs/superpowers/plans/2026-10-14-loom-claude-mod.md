@@ -3264,4 +3264,28 @@ Run 2026-10-14 on Claude Code 2.1.299 (`--model haiku`), with the probe recipe a
 
 ## Outcome and follow-ups
 
-Filled in when the plan is done: the commits, what reviews found, and what was left for later (the spec's Out of scope list is the starting point).
+Done 2026-10-14, d3932d3..8773389, executed package by package with a standing reviewer, a final cross-cutting review and a sandbox smoke run.
+
+**Commits.** A: 4eb7d1b (spike results), 5812a31 (amendments 12-14). B: 3888242, 8c6787e. The module's correlation after the spike: 8cb8988, a78ee1d, 78526f6, c56fc62, 36e88a9, af1feef, d8b0080. C: 7c0f181, 79546fa, 19677f9. D: da73005, d0a50ba. E: c2dfebf, cbb46ba, 481ae1e, 13721f2, 4db9718, e262e2a. Final review: 19820ac, 6ef7ea9, 8773389.
+
+**What the reviews found** (each fixed, with a test that goes red without it):
+- The spike's P3: Claude merges plugin prompts that wait through one turn, so head-of-queue matching lost every later message. The module now claims a message when its submit resolves (amendment 12), and its turn hooks clear `mainTurn` before anything awaits and never wait on posts.
+- B: the launch-order test only grepped the source; every launch now goes through `launchCommand`, pinned by Restart and CrashRestart tests.
+- C: links that waited forever (a restored launch without hooks; a live mod that stopped polling, now `ModPollTimeout`); the `offered` guard (never paste what a mod took); a wake raised off the loop goroutine.
+- D: a launch that never reports SessionStart held its first prompt forever (`modStartCap`, 60 s); the daemon's stop lost first prompts (`ModsStop`); Send admitted a busy session.
+- Final review: the grace ran from the boot, before the mod socket listened (now `ModsServing`, and `modGrace` 15 s); refusals now say why a launch has no mod; routes follow `claudemod.Version`; `core/CLAUDE.md` gained the mod-link rules.
+
+**Smoke run** (sandbox, real Claude 2.1.299): `send --wait` answered in 1.6 s; `session new --prompt` delivered through the mod in 1.5 s; the quick bar still pastes; a send during a permission dialog left it alone and ran after it; after a daemon restart the mods reconnected in 3.6 s.
+
+**Follow-ups** (beyond the spec's Out of scope):
+- A removed mod socket is not re-listened; links fail closed after `core.ModPollTimeout`.
+- `hello`'s session ID goes stale after `/clear` (`session.start` doesn't fire again).
+- A lost `queued` report followed by `complete` strands a `--wait` sender until the session stops.
+- A merged turn may answer neither message well (haiku asked which of two conflicting ones to send).
+- A workspace registered long after the boot gets an early grace; a modless `""` launch can be refused about 250 ms early.
+- No relaunch pin for a non-terminal session.
+- A fallback paste after `modStartCap` could land in a trust prompt the launch watch left to the person (as the old immediate paste could); a capture before the paste would guard it.
+- The TUI holds inline attach during a mod send, which only a paste needs.
+- Two pollers on one launch (a child Claude inheriting `LOOM_LAUNCH`) would wake each other in a loop; a superseded poll could answer 409.
+- Seen in the smoke run, older than this plan: a session started with `--permission-mode default` showed auto mode; a dev build from a worktree nested in the main checkout is stamped with the main checkout's revision (Go's VCS stamping looks for a `.git` directory and skips the worktree's `.git` file), which matters to `rpc.CompareBuilds`.
+- A flake seen once in the final gate, older than this plan: `TestAccountSync_LinksNewEntriesForEveryAccount` under load.
