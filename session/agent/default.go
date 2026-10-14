@@ -69,3 +69,6 @@ func DefaultRegistry() *Registry {
 		Gemini(),
 	)
 }
+
+// TrustPromptLeftToUser implements Adapter.
+func (defaultAdapter) TrustPromptLeftToUser(string) bool { return false }

@@ -300,8 +300,8 @@ func TestSession_TrustPromptOpen(t *testing.T) {
 				"❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to\ncancel", true},
 		{"the safety check with no single cursor (the launch watch leaves it to the person)",
 			"Quick safety check: Is this a project you created or one you trust?\n\n  No, exit\n  Yes, I trust this folder", true},
-		{"the MCP dialog", " New MCP server found in this project: db\n MCP servers may execute code or access system resources. All tool calls require approval. Learn more in the MCP documentation.\n" +
-			" ❯ Use this MCP server\n   Use this and all future MCP servers in this project\n   Continue without using this MCP server\n Enter to confirm · Esc to cancel", true},
+		{"the MCP dialog for one server", claudeMCPServerDialog, true},
+		{"the MCP dialog for several servers", claudeMCPServersDialog, true},
 		{"the older trust prompt", "Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit", true},
 
 		{"no prompt on screen", "> hello\n● Hi there" + inputBox, false},
@@ -327,6 +327,29 @@ func TestSession_TrustPromptOpen(t *testing.T) {
 		"even under a menu: an agent that answers by typing has no menu Enter confirms")
 	shell := NewSessionWithDeps("trust", "bash", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
 	assert.False(t, shell.TrustPromptOpen("Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit"), "no keys to answer it with")
+}
+
+// Claude 2.1.299's MCP server dialogs, as capture-pane showed them: for one
+// server (its cursor on "Continue without", the default) and for several.
+const (
+	claudeMCPServerDialog = "────────────────\n  New MCP server found in this project: db\n" +
+		"  MCP servers may execute code or access system resources. All tool calls require approval. Learn\n  more in the MCP documentation.\n" +
+		"    Use this MCP server\n    Use this and all future MCP servers in this project\n  ❯ Continue without using this MCP server\n  Enter to confirm · Esc to cancel"
+	claudeMCPServersDialog = "────────────────\n  2 new MCP servers found in this project\n  Select any you wish to enable.\n" +
+		"  MCP servers may execute code or access system resources. All tool calls require approval. Learn\n  more in the MCP documentation.\n" +
+		"  ❯ [✔] db\n    [✔] search\n       Enable selected\n Space to select · Esc to reject all"
+)
+
+// The MCP server dialogs are found, case and all (the one-server title is
+// capitalised), and left to the person.
+func TestSession_TrustPromptLeftToUser(t *testing.T) {
+	claude := NewSessionWithDeps("trust", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+	one, several := claude.TrustPromptShown(claudeMCPServerDialog), claude.TrustPromptShown(claudeMCPServersDialog)
+	assert.Equal(t, "New MCP server found in this project", one)
+	assert.Equal(t, "new MCP server", several)
+	assert.True(t, claude.TrustPromptLeftToUser(one))
+	assert.True(t, claude.TrustPromptLeftToUser(several))
+	assert.False(t, claude.TrustPromptLeftToUser(claude.TrustPromptShown(claudeSafetyCheck)), "the safety check is loom's to answer")
 }
 
 func TestSession_AnswerTrustPrompt(t *testing.T) {

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -222,6 +223,25 @@ func TestTrustPromptChoices(t *testing.T) {
 		for _, p := range ad.TrustPromptPatterns() {
 			if p != "Quick safety check" {
 				assert.Empty(t, ad.TrustPromptChoice(p), "%s: %q", ad.Name(), p)
+			}
+		}
+	}
+}
+
+// Claude's MCP server dialogs, for one server and for several, are found
+// (a paste waits for them) but left to the person: approving one starts a
+// process the repository's .mcp.json names. Every other prompt is loom's to
+// answer.
+func TestTrustPromptLeftToUser(t *testing.T) {
+	mcp := []string{"New MCP server found in this project", "new MCP server"}
+	for _, p := range mcp {
+		assert.Contains(t, Claude().TrustPromptPatterns(), p)
+		assert.True(t, Claude().TrustPromptLeftToUser(p), p)
+	}
+	for _, ad := range []Adapter{Claude(), Aider(), Gemini(), Default()} {
+		for _, p := range ad.TrustPromptPatterns() {
+			if !slices.Contains(mcp, p) {
+				assert.False(t, ad.TrustPromptLeftToUser(p), "%s: %q", ad.Name(), p)
 			}
 		}
 	}

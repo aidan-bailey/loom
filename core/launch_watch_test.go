@@ -86,7 +86,8 @@ func watchJobs(m *Model) []Job {
 // its menu's cursor on "No, exit" and then on the option that answers it;
 // and aider's prompt line, which lingers after its answer.
 const (
-	claudeMCPScreen   = "New MCP server found in .mcp.json: db\nUse this new MCP server?\n❯ 1. Yes\n  2. No"
+	claudeMCPScreen   = "  New MCP server found in this project: db\n  MCP servers may execute code or access system resources.\n    Use this MCP server\n    Use this and all future MCP servers in this project\n  ❯ Continue without using this MCP server\n  Enter to confirm · Esc to cancel"
+	claudeMCPsScreen  = "  2 new MCP servers found in this project\n  Select any you wish to enable.\n  ❯ [✔] db\n    [✔] search\n       Enable selected\n Space to select · Esc to reject all"
 	safetyCheckOnNo   = "Quick safety check: Is this a project you created or one you trust?\n\n❯ No, exit\n  Yes, I trust this folder\n\nEnter to confirm · Esc to cancel"
 	safetyCheckOnYes  = "Quick safety check: Is this a project you created or one you trust?\n\n  No, exit\n❯ Yes, I trust this folder\n\nEnter to confirm · Esc to cancel"
 	aiderTrustScreen  = "Open documentation url for more info? (Y)es/(N)o/(D)on't ask again [Yes]: d\n> "
@@ -118,8 +119,9 @@ func TestLaunchWatch_AnswersATrustPromptOnce(t *testing.T) {
 }
 
 // One prompt can follow another: Claude shows its MCP prompt after its
-// trust prompt. Each is answered once; a prompt that lingers on screen
-// after its answer is not answered again.
+// trust prompt. Each is answered once, but an MCP server dialog is left to
+// the person; a prompt that lingers on screen after its answer is not
+// answered again.
 func TestLaunchWatch_AnswersEachPromptItShows(t *testing.T) {
 	t.Run("the trust prompt, then the MCP prompt", func(t *testing.T) {
 		srv := &paneServer{screens: []string{claudeTrustScreen, claudeTrustScreen, "", claudeMCPScreen}}
@@ -128,7 +130,8 @@ func TestLaunchWatch_AnswersEachPromptItShows(t *testing.T) {
 
 		assert.True(t, result.answered)
 		_, keys := srv.counts()
-		assert.Equal(t, [][]string{sent("Enter"), sent("Enter")}, keys)
+		assert.Equal(t, [][]string{sent("Enter")}, keys, "the trust prompt's answer alone")
+		assert.Equal(t, "New MCP server found in this project", result.settled, "the MCP prompt left settled")
 	})
 
 	t.Run("one straight after the other", func(t *testing.T) {
@@ -137,7 +140,7 @@ func TestLaunchWatch_AnswersEachPromptItShows(t *testing.T) {
 		runWatch(srv, "claude", 100*time.Millisecond, "")
 
 		_, keys := srv.counts()
-		assert.Equal(t, [][]string{sent("Enter"), sent("Enter")}, keys)
+		assert.Equal(t, [][]string{sent("Enter")}, keys)
 	})
 
 	t.Run("aider's lingering prompt line", func(t *testing.T) {
@@ -158,6 +161,26 @@ func TestLaunchWatch_AnswersEachPromptItShows(t *testing.T) {
 		_, keys := srv.counts()
 		assert.Equal(t, [][]string{sent("D", "Enter")}, keys, "not while it lingers, only once it showed again")
 	})
+}
+
+// An MCP server dialog, for one server or several, is the person's to
+// answer: approving one starts a process the repository's .mcp.json names.
+// The watch sends it nothing, and leaves it settled.
+func TestLaunchWatch_LeavesMCPServerDialogsToThePerson(t *testing.T) {
+	for _, tc := range []struct{ name, screen, pattern string }{
+		{"one server", claudeMCPScreen, "New MCP server found in this project"},
+		{"several servers", claudeMCPsScreen, "new MCP server"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &paneServer{screens: []string{"", tc.screen}}
+
+			result := runWatch(srv, "claude", 50*time.Millisecond, "")
+
+			_, keys := srv.counts()
+			assert.Empty(t, keys, "no key sent")
+			assert.Equal(t, launchWatched{session: "loom_w", settled: tc.pattern}, result, "seen, and left")
+		})
+	}
 }
 
 // Claude's safety check selects "No, exit" first, which Enter would

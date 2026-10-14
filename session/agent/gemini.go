@@ -71,3 +71,6 @@ func (geminiAdapter) ApplyLoomContextFlag(program, _ string) string {
 
 // ApplySettingsFlag is a no-op for gemini — it has no settings-file flag.
 func (geminiAdapter) ApplySettingsFlag(program, _ string) string { return program }
+
+// TrustPromptLeftToUser implements Adapter.
+func (geminiAdapter) TrustPromptLeftToUser(string) bool { return false }

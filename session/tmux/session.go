@@ -405,13 +405,14 @@ func (s *Session) TrustPromptShown(content string) string {
 // tells it open, and Enter picks no option there.
 //
 // The dialog itself must show, not only its words, which a transcript, an
-// answer or a file on screen can hold at any time: two of its options
-// (trustDialogOptions), each on a line of its own in the screen's last
-// trustDialogLines non-empty lines, where Claude draws its dialogs, and one
-// of the adapter's patterns in the trustTitleLines non-empty lines above the
-// first of them, where a narrow pane wraps the dialog's title. The patterns
-// match regardless of case: Claude 2.1.299 titles its one-server MCP dialog
-// "New MCP server found in this project".
+// answer or a file on screen can hold at any time: two of the lines only a
+// dialog draws (trustDialogMarks), each on a line of its own in the
+// screen's last trustDialogLines non-empty lines, where Claude draws its
+// dialogs, and one of the adapter's patterns in the trustTitleLines
+// non-empty lines above the first of them, where a narrow pane wraps the
+// dialog's title. The patterns match regardless of case. A dialog left to
+// the person (TrustPromptLeftToUser) counts: a paste's Enter would answer
+// it all the same.
 func (s *Session) TrustPromptOpen(content string) bool {
 	if s.adapter.TrustPromptResponse() != agent.TrustPromptTapEnter {
 		return false
@@ -419,7 +420,7 @@ func (s *Session) TrustPromptOpen(content string) bool {
 	lines := lastNonEmptyLines(ansiSeqRe.ReplaceAllString(content, ""), trustDialogLines+trustTitleLines)
 	first, options := -1, 0
 	for i := max(0, len(lines)-trustDialogLines); i < len(lines); i++ {
-		if isTrustDialogOption(lines[i]) {
+		if isTrustDialogMark(lines[i]) {
 			if first < 0 {
 				first = i
 			}
@@ -452,29 +453,32 @@ const (
 	trustTitleLines  = 40
 )
 
-// trustDialogOptions are the options of the trust dialogs an agent answers
-// with Enter alone (Claude's, as 2.1.299 labels them): the safety check's,
-// the older trust prompt's and the new-MCP-server dialog's. A new agent
-// answered by Enter alone needs its own here.
-var trustDialogOptions = []string{
+// trustDialogMarks are the lines only the trust dialogs of an agent
+// answered by Enter alone draw (Claude's, as 2.1.299 draws them): the
+// options of the safety check, the older trust prompt and the one-server
+// MCP dialog, and the several-server MCP dialog's subtitle and button, whose
+// options are its servers' names. A new agent answered by Enter alone needs
+// its own here.
+var trustDialogMarks = []string{
 	"Yes, I trust this folder", "No, exit", "No, continue without these permissions",
 	"Yes, proceed",
 	"Use this MCP server", "Use this and all future MCP servers in this project", "Continue without using this MCP server",
+	"Select any you wish to enable.", "Enable selected",
 }
 
 // menuIndex is a menu option's number ("2. "), which Claude draws unless the
 // menu hides its indexes.
 var menuIndex = regexp.MustCompile(`^[0-9]+\.\s*`)
 
-// isTrustDialogOption reports whether line is a trust dialog's option on a
-// line of its own: its whole text, once a box's border, the menu's cursor
-// and the option's number are set aside, is one of trustDialogOptions.
-func isTrustDialogOption(line string) bool {
+// isTrustDialogMark reports whether line is one of a trust dialog's marks
+// on a line of its own: its whole text, once a box's border, the menu's
+// cursor and an option's number are set aside, is one of trustDialogMarks.
+func isTrustDialogMark(line string) bool {
 	text := strings.TrimFunc(line, func(r rune) bool { return unicode.IsSpace(r) || unicode.In(r, boxDrawing) })
 	text = menuIndex.ReplaceAllString(strings.TrimSpace(strings.TrimPrefix(text, menuCursor)), "")
 	norm := normalizeForPatternMatch(text)
-	for _, option := range trustDialogOptions {
-		if norm == normalizeForPatternMatch(option) {
+	for _, mark := range trustDialogMarks {
+		if norm == normalizeForPatternMatch(mark) {
 			return true
 		}
 	}
@@ -502,6 +506,13 @@ func lastNonEmptyLines(content string, n int) []string {
 // whatever its menu selects, which may be "No, exit".
 func (s *Session) TrustPromptChoice(pattern string) string {
 	return s.adapter.TrustPromptChoice(pattern)
+}
+
+// TrustPromptLeftToUser reports whether the trust prompt found by pattern
+// (TrustPromptShown) is the person's to answer (Claude's MCP server
+// dialogs): a launch watch sends it nothing.
+func (s *Session) TrustPromptLeftToUser(pattern string) bool {
+	return s.adapter.TrustPromptLeftToUser(pattern)
 }
 
 // AnswerTrustPrompt sends the adapter's keys for a trust prompt answered

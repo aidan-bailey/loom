@@ -124,7 +124,10 @@ func launchWatchJob(ts *tmux.Session, every, within time.Duration, settled strin
 }
 
 // trustAnswer answers the trust prompts a launch watch's captures show,
-// each once while the screen shows it. A prompt answered as shown gets
+// each once while the screen shows it, except one the agent leaves to the
+// person (TrustPromptLeftToUser: Claude's MCP server dialogs, whose
+// approval starts a process the repository names), which gets nothing. A
+// prompt answered as shown gets
 // the agent's keys (tmux.Session.AnswerTrustPrompt). A prompt with a
 // choice (Claude's safety check, which selects "No, exit" first) gets
 // Enter only once a capture shows its menu's cursor on the choice; until
@@ -153,6 +156,10 @@ func (a *trustAnswer) see(screen string) bool {
 		*a = trustAnswer{ts: a.ts, prompt: shown}
 	}
 	if shown == "" || a.settled {
+		return false
+	}
+	if a.ts.TrustPromptLeftToUser(shown) {
+		a.leave("the person's to answer")
 		return false
 	}
 	choice := a.ts.TrustPromptChoice(shown)

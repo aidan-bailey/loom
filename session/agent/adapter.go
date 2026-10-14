@@ -54,6 +54,12 @@ type Adapter interface {
 	// presses Enter. "" means TrustPromptResponse's keys answer it as
 	// shown.
 	TrustPromptChoice(pattern string) string
+	// TrustPromptLeftToUser reports whether the trust prompt found by
+	// pattern (one of TrustPromptPatterns) is the person's to answer:
+	// loom's launch watch sends it nothing, though it still finds it (a
+	// paste waits while it is open). Claude's MCP server dialogs are:
+	// approving one starts a process the repository's .mcp.json names.
+	TrustPromptLeftToUser(pattern string) bool
 	// PendingPromptPattern returns the substring that indicates the
 	// agent is blocked waiting for the user to answer a prompt. An
 	// empty string disables auto-yes detection for this agent.

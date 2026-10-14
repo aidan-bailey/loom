@@ -26,18 +26,34 @@ const (
 	claudeTrustFolder = "Yes, I trust this folder"
 )
 
+// claudeMCPServers and claudeMCPServer find Claude's MCP server dialogs,
+// for several servers ("2 new MCP servers found in this project") and for
+// one ("New MCP server found in this project: db"), which loom leaves to
+// the person (TrustPromptLeftToUser).
+const (
+	claudeMCPServers = "new MCP server"
+	claudeMCPServer  = "New MCP server found in this project"
+)
+
 // TrustPromptPatterns implements Adapter.
 func (claudeAdapter) TrustPromptPatterns() []string {
 	return []string{
 		"Do you trust the files in this folder?",
-		"new MCP server",
+		claudeMCPServers,
 		claudeSafetyCheck,
+		claudeMCPServer,
 	}
 }
 
+// TrustPromptLeftToUser implements Adapter: the MCP server dialogs are the
+// person's, since approving one starts a process the repository names.
+func (claudeAdapter) TrustPromptLeftToUser(pattern string) bool {
+	return pattern == claudeMCPServers || pattern == claudeMCPServer
+}
+
 // TrustPromptChoice implements Adapter: the safety check is answered by
-// moving its menu onto claudeTrustFolder; the older prompt and the MCP
-// one select their yes already.
+// moving its menu onto claudeTrustFolder; the older prompt selects its yes
+// already.
 func (claudeAdapter) TrustPromptChoice(pattern string) string {
 	if pattern == claudeSafetyCheck {
 		return claudeTrustFolder

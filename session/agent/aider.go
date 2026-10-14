@@ -72,3 +72,6 @@ func (aiderAdapter) ApplyLoomContextFlag(program, _ string) string {
 
 // ApplySettingsFlag is a no-op for aider — it has no settings-file flag.
 func (aiderAdapter) ApplySettingsFlag(program, _ string) string { return program }
+
+// TrustPromptLeftToUser implements Adapter.
+func (aiderAdapter) TrustPromptLeftToUser(string) bool { return false }
