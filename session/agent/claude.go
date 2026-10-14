@@ -232,3 +232,13 @@ func (claudeAdapter) ApplySettingsFlag(program, path string) string {
 	}
 	return insertAfterCommand(program, "--settings '"+path+"'")
 }
+
+// ApplyClaudePluginDir inserts "--plugin-dir '<dir>'" after "claude": the
+// loom mod for this launch (session/claudemod). dir must hold no single quote
+// (hooks.SafePath).
+func ApplyClaudePluginDir(program, dir string) string {
+	if dir == "" || len(strings.Fields(program)) == 0 {
+		return program
+	}
+	return insertAfterCommand(program, "--plugin-dir '"+dir+"'")
+}

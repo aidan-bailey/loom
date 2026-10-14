@@ -260,6 +260,9 @@ type Instance struct {
 	subagents    *subagent.Tracker
 	hookLaunchID string
 	subagentWarm bool
+	// modEnvVars is the current launch's mod environment (prepareMod), nil
+	// when it got no mod. Guarded by mu.
+	modEnvVars []string
 
 	// launches counts this instance's real launches (launchProgram with
 	// launching set), so a caller can tell a resume that relaunched the
@@ -458,7 +461,7 @@ func (i *Instance) Restart() error {
 		if closeErr := old.Close(); closeErr != nil {
 			i.getLogger().Debug("instance.restart.close_old_failed", "err", closeErr.Error())
 		}
-		i.setTmuxSession(old.WithProgramEnv(i.launchProgram(env, true), InstanceEnv(env)))
+		i.setTmuxSession(old.WithProgramEnv(i.launchProgram(env, true), append(InstanceEnv(env), i.modEnv()...)))
 	}
 	return i.Start(true)
 }
@@ -884,7 +887,7 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 		// hooks folder.
 		// InstanceEnv still keys off the bare program.
 		launchProgram := i.launchProgram(env, firstTimeSetup)
-		ts = tmux.NewSession(i.Title, launchProgram, InstanceEnv(env)...)
+		ts = tmux.NewSession(i.Title, launchProgram, append(InstanceEnv(env), i.modEnv()...)...)
 	}
 	i.setTmuxSession(ts)
 

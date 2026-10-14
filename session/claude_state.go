@@ -40,6 +40,10 @@ type claudeState struct {
 	// makes it stale.
 	lastMessage  string
 	lastMsgValid bool
+	// sessionStartedAt is when this launch's Claude first reported its
+	// SessionStart (startup or resume): core's mod grace runs from it.
+	// newLaunch clears it.
+	sessionStartedAt time.Time
 }
 
 // offer applies o if it is newer than the current observation, and reports
@@ -114,6 +118,9 @@ func (s *claudeState) applyEvent(ev hooks.Event) bool {
 		if ev.SessionID != "" {
 			s.sessionID, s.transcriptPath = ev.SessionID, ev.TranscriptPath
 		}
+		if s.sessionStartedAt.IsZero() && (ev.Source == "startup" || ev.Source == "resume") {
+			s.sessionStartedAt = ev.At
+		}
 		switch ev.Source {
 		case "startup", "resume", "clear":
 			return s.offer(observation{status: Ready, at: ev.At, source: obsHook, valid: true})
@@ -179,6 +186,7 @@ func runningSubagent(tasks []hooks.Task) bool {
 func (s *claudeState) newLaunch(now time.Time) {
 	s.obs = observation{at: now, source: obsHook}
 	s.lastMessage, s.lastMsgValid = "", false
+	s.sessionStartedAt = time.Time{}
 }
 
 // folderGone drops what the hooks reported once their folder vanished

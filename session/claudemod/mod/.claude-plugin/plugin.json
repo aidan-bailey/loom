@@ -1,0 +1,5 @@
+{
+  "name": "loom",
+  "version": "1.0.0",
+  "description": "Carries loom's messages into Claude's prompt queue (loom session send, Lua send_prompt, the first prompt)."
+}

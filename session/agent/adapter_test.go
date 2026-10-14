@@ -281,6 +281,12 @@ func TestApplySettingsFlag(t *testing.T) {
 	assert.Equal(t, "codex --x", Default().ApplySettingsFlag("codex --x", path))
 }
 
+func TestApplyClaudePluginDir(t *testing.T) {
+	assert.Equal(t, "claude --plugin-dir '/h/mod' --model x", ApplyClaudePluginDir("claude --model x", "/h/mod"))
+	assert.Equal(t, "claude", ApplyClaudePluginDir("claude", ""))
+	assert.Equal(t, "", ApplyClaudePluginDir("", "/h/mod"))
+}
+
 func TestHasSettingsFlag(t *testing.T) {
 	assert.True(t, HasSettingsFlag("claude --settings x.json"))
 	assert.True(t, HasSettingsFlag("claude --model opus --settings=x.json"))

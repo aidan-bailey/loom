@@ -119,13 +119,14 @@ func (i *Instance) Launches() uint64 {
 // process starts: the tracker and warm flag, the Claude status and last
 // message (the conversation ID is kept for the relaunch to resume),
 // hookLaunchID (set to the sentinel, so no stale scan result can match
-// until prepareHooks maybe sets a real one), and the old hooks folder on
-// disk. Called only
+// until prepareHooks maybe sets a real one), the mod environment, and the
+// old hooks folder on disk. Called only
 // when launching is true, so no old Claude process for this instance can
 // still be writing to that folder.
 func (i *Instance) resetHookLaunch() {
 	i.mu.Lock()
 	i.hookLaunchID = noHooksLaunchID
+	i.modEnvVars = nil
 	i.subagentWarm = false
 	i.subagentTrackerLocked().Reset()
 	i.claude.newLaunch(time.Now())
@@ -146,7 +147,7 @@ func (i *Instance) recoveryLaunch() (launch string, env []string, err error) {
 	}
 	sessionID, transcriptPath := i.ClaudeSession()
 	le.Program = BuildResumeCommand(le.Program, sessionID, transcriptPath)
-	return i.launchProgram(le, true), InstanceEnv(le), nil
+	return i.launchProgram(le, true), append(InstanceEnv(le), i.modEnv()...), nil
 }
 
 // prepareHooks readies a fresh hooks folder and returns program
@@ -154,7 +155,9 @@ func (i *Instance) recoveryLaunch() (launch string, env []string, err error) {
 // account whose config dir is claudeConfigDir, when it needs one. On any
 // failure it returns program unchanged, so the session still launches,
 // just untracked. It also adopts the new launch ID and resets the
-// tracker, so scan results from before this launch are dropped.
+// tracker, so scan results from before this launch are dropped. When a
+// daemon serves the loom mod, it also writes the mod into the folder and
+// adds --plugin-dir (prepareMod).
 func (i *Instance) prepareHooks(program, claudeConfigDir string) string {
 	if i.ConfigDir == "" || runtime.GOOS == "windows" || !IsClaudeProgram(program) {
 		return program
@@ -177,12 +180,18 @@ func (i *Instance) prepareHooks(program, claudeConfigDir string) string {
 		i.getLogger().Warn("subagent_hooks.prepare_failed", "err", err.Error())
 		return program
 	}
+	modEnv := i.prepareMod(dir, launchID)
 	i.mu.Lock()
 	i.hookLaunchID = launchID
+	i.modEnvVars = modEnv
 	i.subagentWarm = false
 	i.subagentTrackerLocked().Reset()
 	i.mu.Unlock()
-	return BuildSettingsCommand(program, hooks.SettingsPath(dir))
+	program = BuildSettingsCommand(program, hooks.SettingsPath(dir))
+	if modEnv != nil {
+		program = agent.ApplyClaudePluginDir(program, modDirOf(dir))
+	}
+	return program
 }
 
 // subagentTrackerLocked returns the tracker, creating it on first use.
