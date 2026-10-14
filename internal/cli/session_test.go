@@ -440,7 +440,7 @@ func playMod(t *testing.T, host core.ModHost, launch, answer, reason string) <-c
 	go func() {
 		deadline := time.Now().Add(30 * time.Second)
 		for time.Now().Before(deadline) {
-			msgs, wake, err := host.ModInbox(launch)
+			msgs, wake, err := host.ModInbox(launch, "")
 			if err != nil || wake == nil {
 				time.Sleep(20 * time.Millisecond)
 				continue

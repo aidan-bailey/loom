@@ -135,7 +135,7 @@ func TestMod_AMessageWaitsForItsModAndRepliesWhenQueued(t *testing.T) {
 
 	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
 	m.modTick(time.Now()) // a tick between the hello and the first poll: the hello counts as heard
-	msgs, _, err := m.ModInbox("L1")
+	msgs, _, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, ModMessage{ID: msgs[0].ID, Text: "hello"}, msgs[0])
@@ -143,7 +143,7 @@ func TestMod_AMessageWaitsForItsModAndRepliesWhenQueued(t *testing.T) {
 	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: msgs[0].ID}}))
 	assert.Equal(t, []Reply{{Req: 5, ID: m.idOf(inst)}}, replies(m.Drain()))
 
-	again, _, err := m.ModInbox("L1")
+	again, _, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	assert.Empty(t, again, "a queued message leaves the inbox")
 	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: msgs[0].ID}}))
@@ -155,7 +155,7 @@ func TestMod_WaitHearsTheTurnsAnswer(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := modInst(t, m, "x")
 	m.enqueue(inst, cliMessage(5, "hello", true))
-	msgs, _, _ := m.ModInbox("L1")
+	msgs, _, _ := m.ModInbox("L1", "")
 	id := msgs[0].ID
 
 	require.NoError(t, m.ModEvents("L1", []ModEvent{
@@ -177,7 +177,7 @@ func TestMod_MessagesMergedIntoOneTurnEachHearItsAnswer(t *testing.T) {
 	inst := modInst(t, m, "x")
 	m.enqueue(inst, cliMessage(5, "first", true))
 	m.enqueue(inst, cliMessage(6, "second", true))
-	msgs, _, _ := m.ModInbox("L1")
+	msgs, _, _ := m.ModInbox("L1", "")
 	require.Len(t, msgs, 2)
 	a, b := msgs[0].ID, msgs[1].ID
 
@@ -206,7 +206,7 @@ func TestMod_AnUnknownLaunchIsRefused(t *testing.T) {
 	modInst(t, m, "x")
 
 	assert.ErrorIs(t, m.ModHello("L9", ModHello{}), ErrModUnknownLaunch)
-	_, _, err := m.ModInbox("L9")
+	_, _, err := m.ModInbox("L9", "")
 	assert.ErrorIs(t, err, ErrModUnknownLaunch)
 	assert.ErrorIs(t, m.ModEvents("", nil), ErrModUnknownLaunch)
 }
@@ -217,9 +217,9 @@ func TestMod_APollIsWokenByAMessageAndSupersededByAPoll(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := modInst(t, m, "x")
 
-	_, first, err := m.ModInbox("L1")
+	_, first, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
-	_, second, err := m.ModInbox("L1")
+	_, second, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	assert.True(t, closed(first), "a newer poll supersedes the held one")
 	assert.False(t, closed(second))
@@ -272,12 +272,12 @@ func TestMod_APollRevivesASilentLink(t *testing.T) {
 	m.enqueue(inst, cliMessage(5, "refused", false))
 	require.Len(t, replies(m.Drain()), 1, "fixture: judged silent, absent")
 
-	_, _, err := m.ModInbox("L1")
+	_, _, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	m.enqueue(inst, cliMessage(6, "delivered", false))
 
 	assert.Empty(t, replies(m.Drain()), "live again: the message waits for the mod")
-	msgs, _, err := m.ModInbox("L1")
+	msgs, _, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "delivered", msgs[0].Text)
@@ -320,7 +320,7 @@ func TestMod_ALateHelloMakesTheLaunchLive(t *testing.T) {
 	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
 	m.enqueue(inst, cliMessage(6, "delivered", false))
 	assert.Empty(t, replies(m.Drain()), "live again: it waits for the mod")
-	msgs, _, _ := m.ModInbox("L1")
+	msgs, _, _ := m.ModInbox("L1", "")
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "delivered", msgs[0].Text)
 }
@@ -352,7 +352,7 @@ func TestMod_ARestoredLaunchIsAdoptedInPlace(t *testing.T) {
 	adoptLaunch(t, m, inst, "L1", time.Now())
 	m.modTick(time.Now())
 	assert.Empty(t, replies(m.Drain()), "the same launch: the message still waits")
-	msgs, _, err := m.ModInbox("L1")
+	msgs, _, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 }
@@ -397,7 +397,7 @@ func TestMod_AnAdoptedLaunchsGraceRunsFromItsSessionStart(t *testing.T) {
 
 	m.modTick(started.Add(modGrace - time.Second))
 	assert.Empty(t, replies(m.Drain()), "inside its grace it waits for its mod")
-	msgs, _, err := m.ModInbox("L1")
+	msgs, _, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	assert.Len(t, msgs, 1)
 }
@@ -432,7 +432,7 @@ func TestMod_ALiveModThatStopsPollingTurnsAbsent(t *testing.T) {
 	m.mods[inst].heard = time.Now().Add(-time.Hour) // greeted long ago; only its polls keep it live
 	m.enqueue(inst, cliMessage(5, "queued, waiting", true))
 	m.enqueue(inst, &modMessage{text: "taken, never reported", origin: OriginScript, req: 6})
-	msgs, _, err := m.ModInbox("L1")
+	msgs, _, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	polled := time.Now()
 	require.Len(t, msgs, 2)
@@ -480,7 +480,7 @@ func TestMod_ARelaunchEndsTheOldLaunchsLink(t *testing.T) {
 	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
 	m.enqueue(inst, cliMessage(5, "never queued", false))
 	m.enqueue(inst, cliMessage(6, "queued, waiting", true))
-	msgs, _, _ := m.ModInbox("L1")
+	msgs, _, _ := m.ModInbox("L1", "")
 	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: msgs[1].ID}}))
 	m.Drain()
 
@@ -501,9 +501,9 @@ func TestMod_ARelaunchEndsTheOldLaunchsLink(t *testing.T) {
 
 	m.enqueue(inst, cliMessage(7, "to the new launch", false))
 	assert.Empty(t, replies(m.Drain()), "the new launch is pending")
-	_, _, err := m.ModInbox("L1")
+	_, _, err := m.ModInbox("L1", "")
 	assert.ErrorIs(t, err, ErrModUnknownLaunch, "the old launch is gone")
-	got, _, err := m.ModInbox(next)
+	got, _, err := m.ModInbox(next, "")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "to the new launch", got[0].Text)
@@ -515,7 +515,7 @@ func TestMod_AStoppedSessionRefusesWhatItHeld(t *testing.T) {
 	inst := modInst(t, m, "x")
 	m.enqueue(inst, cliMessage(5, "never queued", false))
 	m.enqueue(inst, cliMessage(6, "queued, waiting", true))
-	msgs, wake, _ := m.ModInbox("L1")
+	msgs, wake, _ := m.ModInbox("L1", "")
 	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: msgs[1].ID}}))
 	m.Drain()
 
@@ -541,7 +541,7 @@ func TestMod_FailedMessages(t *testing.T) {
 	inst := modInst(t, m, "x")
 	m.enqueue(inst, cliMessage(5, "refused by claude", false))
 	m.enqueue(inst, cliMessage(6, "dropped later", true))
-	msgs, _, _ := m.ModInbox("L1")
+	msgs, _, _ := m.ModInbox("L1", "")
 	m.Drain()
 
 	require.NoError(t, m.ModEvents("L1", []ModEvent{
@@ -570,7 +570,7 @@ func TestLoop_AModReportWakesTheClient(t *testing.T) {
 	m.Drain()
 	l := StartForTest(m)
 	t.Cleanup(l.Stop)
-	msgs, _, err := l.ModInbox("L1")
+	msgs, _, err := l.ModInbox("L1", "")
 	require.NoError(t, err)
 	for len(l.Wakes()) > 0 {
 		<-l.Wakes()
@@ -599,7 +599,7 @@ func TestLoop_AnIdleModCallWakesNoClient(t *testing.T) {
 	}
 
 	require.NoError(t, l.ModHello("L1", ModHello{Mod: 1}))
-	_, _, err := l.ModInbox("L1")
+	_, _, err := l.ModInbox("L1", "")
 	require.NoError(t, err)
 	require.NoError(t, l.ModEvents("L1", []ModEvent{{Kind: "started", ID: "m1", TurnID: "t1"}}))
 
@@ -613,7 +613,7 @@ func TestSend_AFramedCLIMessage(t *testing.T) {
 
 	m.Send(m.idOf(inst), Message{Text: "status?", From: "po", Origin: OriginCLI}, 5)
 
-	msgs, _, err := m.ModInbox("L1")
+	msgs, _, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "From po:\n\nstatus?", msgs[0].Text)
@@ -627,7 +627,7 @@ func TestSend_AScriptMessageIsThePersonsOwn(t *testing.T) {
 
 	m.Send(m.idOf(inst), Message{Text: "go on", From: "ignored", Origin: OriginScript}, 5)
 
-	msgs, _, _ := m.ModInbox("L1")
+	msgs, _, _ := m.ModInbox("L1", "")
 	require.Len(t, msgs, 1)
 	assert.Equal(t, ModMessage{ID: msgs[0].ID, Text: "go on", AsUser: true}, msgs[0])
 }
@@ -652,7 +652,7 @@ func TestSend_WaitHearsTheAnswer(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := modInst(t, m, "x")
 	m.Send(m.idOf(inst), Message{Text: "status?", Wait: true, Origin: OriginCLI}, 5)
-	msgs, _, _ := m.ModInbox("L1")
+	msgs, _, _ := m.ModInbox("L1", "")
 	require.Len(t, msgs, 1)
 
 	require.NoError(t, m.ModEvents("L1", []ModEvent{
@@ -686,7 +686,7 @@ func TestDeliverStart_AFirstPromptGoesThroughTheMod(t *testing.T) {
 		_, isStarted := ev.(Started)
 		assert.False(t, isStarted, "no Started until the mod has queued the prompt")
 	}
-	msgs, _, err := m.ModInbox("L1")
+	msgs, _, err := m.ModInbox("L1", "")
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, ModMessage{ID: msgs[0].ID, Text: "do the thing", AsUser: true}, msgs[0])
@@ -738,7 +738,7 @@ func TestModsStop_SettlesWhatTheModsHeld(t *testing.T) {
 	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
 	m.enqueue(inst, &modMessage{text: "taken", asUser: true, origin: OriginFirstPrompt, cause: 7, owner: ws})
 	m.enqueue(inst, cliMessage(5, "queued, waiting", true))
-	msgs, _, _ := m.ModInbox("L1")
+	msgs, _, _ := m.ModInbox("L1", "")
 	require.Len(t, msgs, 2)
 	require.NoError(t, m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: msgs[1].ID}}))
 	m.enqueue(inst, &modMessage{text: "never taken", asUser: true, origin: OriginFirstPrompt, cause: 8, owner: ws})
@@ -773,7 +773,7 @@ func TestModsStop_SettlesWhatTheModsHeld(t *testing.T) {
 	assert.Len(t, startedOf(run(m, m.Drain()), 10), 1, "a start landing after the stop pastes its prompt, and its paste finishes it")
 	assert.Empty(t, m.mods[late].outbox, "nothing waits for a mod")
 
-	_, _, err := m.ModInbox("L1") // a poll that crossed the server's close
+	_, _, err := m.ModInbox("L1", "") // a poll that crossed the server's close
 	require.NoError(t, err)
 	m.enqueue(inst, cliMessage(11, "after the stop", false))
 	rs = replies(m.Drain())
@@ -905,7 +905,7 @@ func TestMod_AFirstPromptsLateQueuedStartsNothingTwice(t *testing.T) {
 	t.Run("after the mod went silent", func(t *testing.T) {
 		m, _, id := start(t, time.Now())
 		require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
-		_, _, err := m.ModInbox("L1")
+		_, _, err := m.ModInbox("L1", "")
 		require.NoError(t, err)
 		m.modTick(time.Now().Add(ModPollTimeout))
 		require.Equal(t, 1, settle(m), "fixture: the silence finished it, unpasted")
@@ -975,5 +975,55 @@ func TestMod_ARefusalSaysWhyTheLaunchHasNoMod(t *testing.T) {
 		_, hooked := inst.HookLaunch()
 		require.True(t, hooked, "fixture: launched by this daemon, with the mod")
 		assert.ErrorContains(t, refusal(t, m, inst, time.Now().Add(modStartCap+time.Second)), "send to x: its Claude runs without the loom mod (an older Claude, or the mod did not load)")
+	})
+}
+
+// The newest mod wins: a poll from another poller than the latest hello's is
+// refused (ErrModSuperseded) and changes nothing, so two pumps on one launch
+// (a hot-reloaded module's old one still running) never wake each other. A
+// mod that names no poller (an older one), or a link whose latest hello named
+// none, is accepted as before.
+func TestMod_ThePollerOfTheLatestHelloWins(t *testing.T) {
+	t.Run("a superseded poll is refused and changes nothing", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := modInst(t, m, "x")
+		require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Poller: "P1"}))
+		require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Poller: "P2"}))
+		_, held, err := m.ModInbox("L1", "P2")
+		require.NoError(t, err)
+		heard := m.mods[inst].heard
+
+		msgs, wake, err := m.ModInbox("L1", "P1")
+
+		assert.ErrorIs(t, err, ErrModSuperseded)
+		assert.Nil(t, msgs)
+		assert.Nil(t, wake)
+		assert.False(t, closed(held), "the newest poller's held poll goes on")
+		assert.Equal(t, heard, m.mods[inst].heard, "nor does it count as hearing from the mod")
+		_, _, err = m.ModInbox("L1", "P2")
+		assert.NoError(t, err)
+		_, _, err = m.ModInbox("L1", "")
+		assert.NoError(t, err, "a mod that names no poller is accepted")
+	})
+	t.Run("a hello that names no poller accepts any", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		modInst(t, m, "x")
+		require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Poller: "P1"}))
+		require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
+		_, _, err := m.ModInbox("L1", "P9")
+		assert.NoError(t, err)
+	})
+	t.Run("a superseded poll revives no silent link", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := modInst(t, m, "x")
+		require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Poller: "P2"}))
+		m.modTick(time.Now().Add(ModPollTimeout))
+		_, _, err := m.ModInbox("L1", "P1")
+		require.ErrorIs(t, err, ErrModSuperseded)
+		m.enqueue(inst, cliMessage(5, "hi", false))
+		assert.Len(t, replies(m.Drain()), 1, "still absent: refused")
 	})
 }

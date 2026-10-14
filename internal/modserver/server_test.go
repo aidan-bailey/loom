@@ -49,9 +49,12 @@ func (h *fakeHost) ModHello(launch string, hello core.ModHello) error {
 	return nil
 }
 
-func (h *fakeHost) ModInbox(launch string) ([]core.ModMessage, <-chan struct{}, error) {
+func (h *fakeHost) ModInbox(launch, poller string) ([]core.ModMessage, <-chan struct{}, error) {
 	if launch != "L1" {
 		return nil, nil, core.ErrModUnknownLaunch
+	}
+	if poller == "old" {
+		return nil, nil, core.ErrModSuperseded
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -81,7 +84,7 @@ func (h *fakeHost) polled() bool {
 // after Stop: no error, and a nil channel for a poll.
 type stoppedHost struct{ fakeHost }
 
-func (*stoppedHost) ModInbox(string) ([]core.ModMessage, <-chan struct{}, error) {
+func (*stoppedHost) ModInbox(string, string) ([]core.ModMessage, <-chan struct{}, error) {
 	return nil, nil, nil
 }
 
@@ -376,4 +379,15 @@ func TestClose_LeavesAFileThatIsNotItsOwn(t *testing.T) {
 	s.Close()
 
 	assert.FileExists(t, s.path)
+}
+
+// A poll from a module instance a newer one replaced hears 409, so it stops;
+// the hello and the poll carry the poller to the model.
+func TestInbox_ASupersededPollerIs409(t *testing.T) {
+	h := &fakeHost{}
+	_, c := listen(t, h, time.Second)
+
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1","poller":"new"}`))
+	assert.Equal(t, "new", h.hello[0].Poller)
+	assert.Equal(t, http.StatusConflict, <-get(c, api("/inbox?launch=L1&poller=old")))
 }

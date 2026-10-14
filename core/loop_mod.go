@@ -19,13 +19,13 @@ func (l *Loop) ModHello(launch string, h ModHello) error {
 
 // ModInbox runs Model.ModInbox on the loop. After Stop it returns a nil
 // channel, which the server reads as the daemon stopping.
-func (l *Loop) ModInbox(launch string) ([]ModMessage, <-chan struct{}, error) {
+func (l *Loop) ModInbox(launch, poller string) ([]ModMessage, <-chan struct{}, error) {
 	var (
 		msgs []ModMessage
 		wake <-chan struct{}
 		err  error
 	)
-	l.modCall(func(m *Model) { msgs, wake, err = m.ModInbox(launch) })
+	l.modCall(func(m *Model) { msgs, wake, err = m.ModInbox(launch, poller) })
 	return msgs, wake, err
 }
 

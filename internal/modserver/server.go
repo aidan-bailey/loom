@@ -212,7 +212,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // poll until something may have changed (204), the hold ends (204) or the
 // daemon stops (503).
 func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
-	msgs, wake, err := s.host.ModInbox(r.URL.Query().Get("launch"))
+	q := r.URL.Query()
+	msgs, wake, err := s.host.ModInbox(q.Get("launch"), q.Get("poller"))
 	switch {
 	case err != nil:
 		answer(w, err)
@@ -250,13 +251,16 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 // answer answers a call the model took: 204, 404 for a launch no session
-// holds, 500 for anything else.
+// holds, 409 for a poll a newer module instance superseded (it stops
+// polling), 500 for anything else.
 func answer(w http.ResponseWriter, err error) {
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, core.ErrModUnknownLaunch):
 		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, core.ErrModSuperseded):
+		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		log.For("modserver").Error("modserver.request_failed", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

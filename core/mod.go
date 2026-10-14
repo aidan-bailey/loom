@@ -47,6 +47,12 @@ const ModPollTimeout = 45 * time.Second
 // restored session's launch. The mod retries.
 var ErrModUnknownLaunch = errors.New("no session holds this launch")
 
+// ErrModSuperseded answers a poll from a module instance a newer one has
+// replaced: the launch's latest hello named another poller. The superseded
+// instance stops polling (a reloaded module's old pump, which would otherwise
+// wake the new one's held poll with each of its own, and be woken by them).
+var ErrModSuperseded = errors.New("a newer loom mod polls for this launch")
+
 // Origin says who sent a message, which decides how the mod submits it and
 // what happens when the session's launch has no live mod.
 type Origin string
@@ -127,6 +133,11 @@ type ModHello struct {
 	Mod     int    `json:"mod"`
 	Claude  string `json:"claude"`
 	Session string `json:"session"`
+	// Poller names the module instance saying hello: a random ID each
+	// loaded module mints once, so a reloaded one has a new one. Its polls
+	// carry it (ModInbox), and the latest hello's poller alone may poll. ""
+	// from an older mod, which names none.
+	Poller string `json:"poller,omitempty"`
 }
 
 // ModMessage is a message as the mod's inbox hands it out.
@@ -159,8 +170,10 @@ type ModHost interface {
 	// ModInbox returns the messages waiting for launch, and a channel that
 	// closes when that may have changed (a message arrived, a newer poll
 	// superseded this one, the launch ended). A nil channel means the
-	// daemon is stopping.
-	ModInbox(launch string) ([]ModMessage, <-chan struct{}, error)
+	// daemon is stopping. poller names the polling module instance
+	// (ModHello.Poller); one the latest hello did not name is
+	// ErrModSuperseded.
+	ModInbox(launch, poller string) ([]ModMessage, <-chan struct{}, error)
 	ModEvents(launch string, events []ModEvent) error
 	// ModsServing says the server listens from now, so every launch's
 	// grace runs from here at the earliest.
@@ -214,6 +227,9 @@ type modLink struct {
 	// heard is when the mod last said hello or polled its inbox: a live
 	// link silent for ModPollTimeout turns absent (modTick).
 	heard time.Time
+	// poller is the module instance the latest hello named (ModHello.Poller),
+	// "" for none: only it polls (ModInbox).
+	poller string
 	// since is when the link was made: the model met the launch then, as a
 	// start or relaunch delivered or a message or mod named it. A launch
 	// that reports no SessionStart is still starting only up to
@@ -512,8 +528,12 @@ func (m *Model) ModHello(launch string, h ModHello) error {
 	if l.live != modLive {
 		log.For("core").Info("mod.live", "instance", inst.Title, "launch", launch, "mod", h.Mod, "claude", h.Claude)
 	}
+	if l.poller != h.Poller && l.poller != "" {
+		log.For("core").Info("mod.new_poller", "instance", inst.Title, "launch", launch, "poller", h.Poller)
+	}
 	l.live = modLive
 	l.heard = time.Now()
+	l.poller = h.Poller
 	return nil
 }
 
@@ -523,12 +543,19 @@ func (m *Model) ModHello(launch string, h ModHello) error {
 // one judged silent while it still polled (the loop stalled past
 // ModPollTimeout) would otherwise stay absent, since the mod says hello again
 // only after a failed call. Once the daemon stops (ModsStop) nothing revives.
-func (m *Model) ModInbox(launch string) ([]ModMessage, <-chan struct{}, error) {
+// The newest module instance wins: a poll naming another poller than the
+// latest hello's is ErrModSuperseded, and pokes, stamps and revives nothing,
+// so two pumps on one launch never wake each other. A poll or hello that
+// names none (an older mod) is accepted.
+func (m *Model) ModInbox(launch, poller string) ([]ModMessage, <-chan struct{}, error) {
 	inst := m.instByLaunch(launch)
 	if inst == nil {
 		return nil, nil, ErrModUnknownLaunch
 	}
 	l := m.linkFor(inst)
+	if poller != "" && l.poller != "" && poller != l.poller {
+		return nil, nil, ErrModSuperseded
+	}
 	if l.live != modLive && !m.modsStopped {
 		log.For("core").Info("mod.live", "instance", inst.Title, "launch", launch, "by", "poll")
 		l.live = modLive

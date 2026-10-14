@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -271,4 +272,59 @@ func TestMod_BackoffIsTheModulesSchedule(t *testing.T) {
 		got = append(got, d)
 	}
 	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 5 * time.Second, 5 * time.Second}, got)
+}
+
+// The mod names its poller in its hello and every poll, and stops polling
+// for good when the daemon answers 409: a newer mod polls for its launch.
+func TestMod_StopsWhenANewerModSupersedesIt(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "fam")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "m.sock")
+	ln, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	var (
+		mu      sync.Mutex
+		greeted string   // the hello's poller
+		polled  []string // each poll's poller
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("POST /v%d/hello", claudemod.Version), func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Poller string `json:"poller"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		greeted = body.Poller
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc(fmt.Sprintf("GET /v%d/inbox", claudemod.Version), func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		polled = append(polled, r.URL.Query().Get("poller"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusConflict)
+	})
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	c := newModClient(func(k string) string {
+		return map[string]string{"LOOM_MOD_SOCKET": sock, "LOOM_LAUNCH": "L1"}[k]
+	})
+	require.NotNil(t, c)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+
+	go func() { c.run(ctx); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the mod kept polling after a 409")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	assert.NotEmpty(t, greeted, "its hello names its poller")
+	assert.Equal(t, []string{greeted}, polled, "one poll, naming the same poller")
 }

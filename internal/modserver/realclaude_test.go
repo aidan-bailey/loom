@@ -41,7 +41,7 @@ func (h *queueHost) ModHello(launch string, _ core.ModHello) error {
 	return nil
 }
 
-func (h *queueHost) ModInbox(launch string) ([]core.ModMessage, <-chan struct{}, error) {
+func (h *queueHost) ModInbox(launch, _ string) ([]core.ModMessage, <-chan struct{}, error) {
 	if launch != "L1" {
 		return nil, nil, core.ErrModUnknownLaunch
 	}

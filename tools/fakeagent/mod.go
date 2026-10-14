@@ -27,9 +27,12 @@ type modMsg struct {
 // reports each message queued as it arrives, and hands it to the agent, which
 // runs it as a prompt once idle, as Claude runs a submitted prompt. Unlike
 // Claude it never merges messages into one turn, and a message is a command
-// like any typed line: one reading exit or crash ends the agent.
+// like any typed line: one reading exit or crash ends the agent. Like the
+// module it names a poller of its own in its hello and polls, and stops
+// polling for good when the daemon answers 409 (a newer mod polls).
 type modClient struct {
 	launch string
+	poller string
 	http   *http.Client
 	out    chan modMsg
 }
@@ -40,7 +43,7 @@ func newModClient(getenv func(string) string) *modClient {
 	if socket == "" || launch == "" {
 		return nil
 	}
-	return &modClient{launch: launch, out: make(chan modMsg, 64), http: &http.Client{Transport: &http.Transport{
+	return &modClient{launch: launch, poller: newTurnID(), out: make(chan modMsg, 64), http: &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", socket)
@@ -96,10 +99,11 @@ func backoff(d time.Duration) time.Duration {
 	return min(2*d, maxBackoff)
 }
 
-// run polls until ctx ends, which the agent does as it exits. Like the mod
-// it says hello again after any failure, retries on the mod's backoff, and
-// reports a message the daemon offers again (its queued report was lost)
-// queued again without handing it over twice.
+// run polls until ctx ends, which the agent does as it exits, or until the
+// daemon answers a poll 409. Like the mod it says hello again after any other
+// failure, retries on the mod's backoff, and reports a message the daemon
+// offers again (its queued report was lost) queued again without handing it
+// over twice.
 func (c *modClient) run(ctx context.Context) {
 	greeted := false
 	seen := map[string]bool{}
@@ -113,13 +117,13 @@ func (c *modClient) run(ctx context.Context) {
 			}
 		}
 		if !greeted {
-			greeted = c.post(ctx, "/hello", map[string]any{"launch": c.launch, "mod": claudemod.Version, "claude": "fakeagent", "session": "fake"}) == http.StatusNoContent
+			greeted = c.post(ctx, "/hello", map[string]any{"launch": c.launch, "mod": claudemod.Version, "claude": "fakeagent", "session": "fake", "poller": c.poller}) == http.StatusNoContent
 			if !greeted {
 				delay = backoff(delay)
 				continue
 			}
 		}
-		resp, err := c.call(ctx, http.MethodGet, "/inbox?launch="+url.QueryEscape(c.launch), nil)
+		resp, err := c.call(ctx, http.MethodGet, "/inbox?launch="+url.QueryEscape(c.launch)+"&poller="+url.QueryEscape(c.poller), nil)
 		if err != nil {
 			greeted = false
 			delay = backoff(delay)
@@ -152,6 +156,8 @@ func (c *modClient) run(ctx context.Context) {
 			delay = 0
 		case http.StatusNoContent:
 			delay = 0
+		case http.StatusConflict:
+			return // superseded: a newer mod polls for this launch
 		default:
 			greeted = false
 			delay = backoff(delay)
@@ -159,7 +165,7 @@ func (c *modClient) run(ctx context.Context) {
 	}
 }
 
-// newTurnID is a turn ID, random like Claude's.
+// newTurnID is a turn ID, random like Claude's, and the mod's poller ID.
 func newTurnID() string {
 	var b [6]byte
 	_, _ = rand.Read(b[:])

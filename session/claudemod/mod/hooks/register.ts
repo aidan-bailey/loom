@@ -27,8 +27,17 @@ type ModEvent = {
   error?: string
 }
 
+// POLLER names this module instance to the daemon, in its hello and every
+// poll: minted once as the module loads, so a reloaded module has a new one.
+// The daemon lets only the latest hello's poller poll (409 for any other), so
+// an old pump that outlived a reload stops rather than wake the new one's
+// held poll with each of its own.
+const POLLER = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
+
 let socket = ''
 let launch = ''
+// pumping is set once the pump starts, and stays set: a pump a 409 stopped is
+// never started again in this module instance.
 let pumping = false
 // submitted are the IDs this process has handed to Claude, newest last, so a
 // message the daemon offers again (its queued report was lost) is reported
@@ -70,7 +79,7 @@ async function report($: EngineInterface, events: ModEvent[]) {
 async function hello($: EngineInterface): Promise<boolean> {
   const version = await $.session.version()
   const session = await $.session.id()
-  const r = await call($, 'POST', '/hello', { launch, mod: MOD_VERSION, claude: version.version, session })
+  const r = await call($, 'POST', '/hello', { launch, mod: MOD_VERSION, claude: version.version, session, poller: POLLER })
   return r.status === 204
 }
 
@@ -143,7 +152,13 @@ async function pump($: EngineInterface) {
           continue
         }
       }
-      const r = await call($, 'GET', `/inbox?launch=${encodeURIComponent(launch)}`)
+      const r = await call($, 'GET', `/inbox?launch=${encodeURIComponent(launch)}&poller=${POLLER}`)
+      if (r.status === 409) {
+        // A newer instance of this module polls for the launch: stop for
+        // good. Reports stay: what this one submitted still reports its turn.
+        $.ui.log('loom: superseded by a newer loom mod', { to: 'debug' })
+        return
+      }
       if (r.status === 200) {
         const { messages } = JSON.parse(r.text) as { messages: Message[] }
         for (const m of messages) await submit($, m)
