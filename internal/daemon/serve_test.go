@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -253,8 +256,44 @@ func TestServe_StopsWhenTheModelIsGone(t *testing.T) {
 	}
 	close(r.stop)
 	assert.NoFileExists(t, r.socket)
+	assert.NoFileExists(t, ModSocketPath(r.socket), "the mod's socket goes too")
+	assert.Empty(t, session.ModSocket(), "no launch names a socket nobody serves")
 	_, held := ReadRecord(dir)
 	assert.False(t, held)
+}
+
+func TestModSocketPath(t *testing.T) {
+	assert.Equal(t, "/run/user/1/loom/abc.mod.sock", ModSocketPath("/run/user/1/loom/abc.sock"))
+	assert.Equal(t, "/g/run/serve.mod.sock", ModSocketPath("/g/run/serve.sock"))
+	long := "/" + strings.Repeat("x", maxSocketPath-len("/.sock")) + ".sock"
+	require.LessOrEqual(t, len(long), maxSocketPath)
+	assert.Empty(t, ModSocketPath(long), "a path past the limit: no mod")
+}
+
+// The daemon serves the mod beside its own socket, names it for launches,
+// and takes both down when it stops.
+func TestServe_ServesTheModSocket(t *testing.T) {
+	dir := globalDir(t)
+	r := serve(t, dir, Options{})
+	mod := ModSocketPath(r.socket)
+	require.NotEmpty(t, mod)
+	assert.Equal(t, mod, session.ModSocket(), "launches name it")
+	info, err := os.Stat(mod)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	c := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "unix", mod)
+	}}}
+	resp, err := c.Post("http://loom/v1/hello", "application/json", strings.NewReader(`{"launch":"nobody"}`))
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "the model answers: no session holds that launch")
+
+	require.NoError(t, r.shutdown(t))
+	assert.NoFileExists(t, mod)
+	assert.Empty(t, session.ModSocket(), "no launch names a socket nobody serves")
 }
 
 // Stop stops a running daemon gracefully (here: by closing its Stop, as the

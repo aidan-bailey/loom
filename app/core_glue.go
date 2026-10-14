@@ -158,6 +158,8 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 		return tea.Batch(m.refreshAccountViews(), m.showRunningAsAccount())
 	case core.Reply:
 		return m.handleReply(ev)
+	case core.Answered:
+		// Only a Send with Wait asks for it, and the TUI's sends never wait.
 	}
 	return nil
 }

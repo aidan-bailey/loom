@@ -188,12 +188,25 @@ type Reply struct {
 
 func (Reply) coreEvent() {}
 
+// Answered is the end of the turn a message sent with Wait opened (Send):
+// Claude's answer and why the turn ended ("answer", "aborted", "error",
+// "refusal"). Req names the Send; a server sends it to that client alone.
+// Messages Claude merged into one turn each get one, with the same answer.
+type Answered struct {
+	Req    ReqID
+	ID     InstanceID
+	Text   string
+	Reason string
+}
+
+func (Answered) coreEvent() {}
+
 // EventTypes returns a zero value of every concrete Event type: what a
 // codec decodes events into, by type name. TestAllEventsListsEveryEvent
 // keeps it complete.
 func EventTypes() []Event {
 	return []Event{
-		AccountsChanged{}, Alive{}, ClientsStale{}, GitHubChanged{},
+		AccountsChanged{}, Alive{}, Answered{}, ClientsStale{}, GitHubChanged{},
 		HealthChecked{}, InstancesChanged{}, ModelChanged{}, Notice{},
 		Reactivated{}, Recovered{}, Reply{}, SessionLaunched{}, Started{},
 		StatusesChanged{}, ViewsChanged{}, WorkspacesChanged{},

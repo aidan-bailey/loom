@@ -433,6 +433,10 @@ Result: `{}`
 
 `{"IDs":null,"Source":""}`
 
+### Answered
+
+`{"Req":0,"ID":0,"Text":"","Reason":""}`
+
 ### ClientsStale
 
 `{}`

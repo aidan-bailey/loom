@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // maxSocketPath bounds a socket's path: a unix socket address holds 108
@@ -43,6 +44,19 @@ func SocketPath(globalDir string) (string, error) {
 		return p, nil
 	}
 	return "", fmt.Errorf("no place for the loom daemon's socket: %w", lastErr)
+}
+
+// ModSocketPath is where the loom mod reaches the daemon whose own socket is
+// socket: beside it, in the same private directory, its .sock suffix
+// replaced by .mod.sock. It is "" when that path is too long for a unix
+// socket: the daemon then serves no mod. Only the daemon computes it;
+// launches learn it from LOOM_MOD_SOCKET.
+func ModSocketPath(socket string) string {
+	p := strings.TrimSuffix(socket, ".sock") + ".mod.sock"
+	if len(p) > maxSocketPath {
+		return ""
+	}
+	return p
 }
 
 // globalHash names globalDir in a socket's file name: 16 hex characters of

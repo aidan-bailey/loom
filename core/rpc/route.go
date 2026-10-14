@@ -51,6 +51,8 @@ func routed(ev core.Event) bool {
 	switch e := ev.(type) {
 	case core.Reply:
 		return e.Req != 0
+	case core.Answered:
+		return e.Req != 0
 	case core.Notice:
 		return e.Req != 0
 	case core.Started:
@@ -62,14 +64,18 @@ func routed(ev core.Event) bool {
 }
 
 // forConn is ev as connection n is sent it, and whether it is sent at all. A
-// Reply, and the Notice of a request's job, go to the client that made the
-// request alone, with its own request ID. Started and Recovered go to every
+// Reply, a Send's Answered, and the Notice of a request's job go to the
+// client that made the request alone, with its own request ID. Started and Recovered go to every
 // client, since each attaches the session's pane, but name the request only
 // to the one that made it, which alone selects the row and attaches inline.
 // Every event type with a request ID is here (TestForConn_CoversEveryEventNamingARequest).
 func forConn(ev core.Event, n uint32) (core.Event, bool) {
 	switch e := ev.(type) {
 	case core.Reply:
+		req, mine := local(e.Req, n)
+		e.Req = req
+		return e, mine
+	case core.Answered:
 		req, mine := local(e.Req, n)
 		e.Req = req
 		return e, mine

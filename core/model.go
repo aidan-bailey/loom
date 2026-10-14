@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/aidan-bailey/loom/account"
 	cmd2 "github.com/aidan-bailey/loom/cmd"
@@ -99,6 +100,13 @@ type Model struct {
 	// watching holds the launch watches running (watchLaunch), keyed by
 	// tmux session name: one per session. Loop-goroutine only.
 	watching map[string]*launchWatch
+
+	// mods are the loom mod links (mod.go), one per instance that has had a
+	// message for its mod or heard from it. Loop-goroutine only.
+	mods map[*session.Instance]*modLink
+	// bootedAt is when Boot ran: a mod's grace runs from it at the earliest
+	// (pastModGrace), since a restarted daemon re-reads every SessionStart.
+	bootedAt time.Time
 
 	// roster is Claude's own view of its live sessions, keyed by working
 	// directory, refreshed once per health tick (see rosterQueryJob). It is

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/internal/modserver"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
 )
 
@@ -68,7 +71,10 @@ type Options struct {
 // the first client, starts the loop and its tick, listens on its socket
 // (SocketPath, mode 0600, recorded in the lock), and serves every
 // connection with an rpc.Server. It listens only once booted, so a socket
-// that answers is a daemon that is ready.
+// that answers is a daemon that is ready. It also serves the loom mod's API
+// (internal/modserver) on ModSocketPath(socket) when that fits, having named
+// it for launches (session.SetModSocket) before the boot; a mod socket it
+// can't listen on costs only the mod.
 func Serve(o Options) error {
 	if o.LockWait == 0 {
 		o.LockWait = 5 * time.Second
@@ -101,6 +107,15 @@ func Serve(o Options) error {
 	if err != nil {
 		return err
 	}
+	// The loom mod's socket is settled before the boot too: the boot
+	// relaunches agents, whose launches name it (session.SetModSocket).
+	// Windows serves no mod.
+	modSocket := ""
+	if runtime.GOOS != "windows" {
+		modSocket = ModSocketPath(socket)
+	}
+	session.SetModSocket(modSocket)
+	defer session.SetModSocket("")
 	model, kept, err := o.NewModel()
 	if err != nil {
 		return fmt.Errorf("build the model: %w", err)
@@ -133,6 +148,16 @@ func Serve(o Options) error {
 		return err
 	}
 	log.For("serve").Info("serve.listening", "socket", socket, "pid", rec.PID, "build", o.Build, "tmux", o.Tmux)
+	var mods *modserver.Server
+	if modSocket != "" {
+		if mods, err = modserver.Listen(modSocket, loop, modserver.DefaultHold); err != nil {
+			// Not fatal: launches go without the mod from now on, and the ones
+			// the boot made turn absent after their grace.
+			log.For("serve").Warn("serve.mod_listen_failed", "err", err)
+			session.SetModSocket("")
+			mods = nil
+		}
+	}
 	if o.Serving != nil {
 		o.Serving(loop, socket)
 	}
@@ -143,8 +168,9 @@ func Serve(o Options) error {
 		select {
 		case <-o.Stop:
 			log.For("serve").Info("serve.stopping")
-			srv.Bye() // every client hears it first, and nothing new is taken
-			l.close() // no new connections
+			srv.Bye()    // every client hears it first, and nothing new is taken
+			l.close()    // no new connections
+			mods.Close() // every held poll hears 503; the mods reconnect to the next daemon
 			// The jobs in flight finish and publish their replies to the
 			// connections still open; then every workspace is saved. A model
 			// that failed but has not been published yet must not be waited
@@ -161,6 +187,7 @@ func Serve(o Options) error {
 			fatal := srv.FatalError()
 			log.For("serve").Error("serve.model_gone", "err", fatal)
 			l.close()
+			mods.Close()
 			srv.Close()
 			loop.Stop()
 			l.remove()
