@@ -156,14 +156,19 @@ export const register: Register = on => {
     return started
   })
 
+  // The turn hooks clear mainTurn before anything awaits: a done.then queued
+  // before the hook ran would otherwise run in that gap and see the old turn.
   on('turn.start', async ($, e, next) => {
-    await ensurePump($)
-    if (e.agentId !== undefined) return next(e)
+    if (e.agentId !== undefined) {
+      void ensurePump($)
+      return next(e)
+    }
     // A new main-loop turn means the last one is over, even when its
-    // turn.complete is still in next or never came (an abort). Cleared before
-    // next: this turn's messages resolve while this hook is still in next, and
-    // must not claim the old turn.
+    // turn.complete is still in next or never came. Cleared before next: this
+    // turn's messages resolve while this hook is still in next, and must not
+    // claim the old turn.
     mainTurn = undefined
+    void ensurePump($)
     const r = await next(e)
     mainTurn = r.turnId
     if (entered.length > 0) await claim($, r.turnId, entered.splice(0))
@@ -171,11 +176,14 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    await ensurePump($)
-    if (e.agentId !== undefined) return next(e)
+    if (e.agentId !== undefined) {
+      void ensurePump($)
+      return next(e)
+    }
     // Cleared before next, for the same reason: the next turn's messages can
     // resolve while this hook is still in next.
     if (e.turnId === mainTurn) mainTurn = undefined
+    void ensurePump($)
     const r = await next(e)
     const ids = turns.get(e.turnId)
     if (ids !== undefined) {
