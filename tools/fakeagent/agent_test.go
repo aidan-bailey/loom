@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/session/agent"
+	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -174,8 +176,8 @@ func TestMod_AMessageRunsAsAPromptButNeverAnswersOne(t *testing.T) {
 	)
 	offer := make(chan string) // an inbox body for the held poll
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/hello", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	mux.HandleFunc("GET /v1/inbox", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(fmt.Sprintf("POST /v%d/hello", claudemod.Version), func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc(fmt.Sprintf("GET /v%d/inbox", claudemod.Version), func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case body := <-offer:
 			w.Header().Set("content-type", "application/json")
@@ -184,7 +186,7 @@ func TestMod_AMessageRunsAsAPromptButNeverAnswersOne(t *testing.T) {
 			left.Add(1)
 		}
 	})
-	mux.HandleFunc("POST /v1/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(fmt.Sprintf("POST /v%d/events", claudemod.Version), func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Launch string           `json:"launch"`
 			Events []map[string]any `json:"events"`
@@ -258,4 +260,15 @@ func TestMod_AMessageRunsAsAPromptButNeverAnswersOne(t *testing.T) {
 	_, _ = io.WriteString(feed, "exit\n")
 	assert.Equal(t, 0, <-done)
 	eventually("the mod to stop with the agent", func() bool { return left.Load() == 1 })
+}
+
+// The mod retries on the module's schedule (register.ts's backoff): 1 s
+// after a success, doubling to a 5 s cap.
+func TestMod_BackoffIsTheModulesSchedule(t *testing.T) {
+	var got []time.Duration
+	for d, i := time.Duration(0), 0; i < 5; i++ {
+		d = backoff(d)
+		got = append(got, d)
+	}
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 5 * time.Second, 5 * time.Second}, got)
 }

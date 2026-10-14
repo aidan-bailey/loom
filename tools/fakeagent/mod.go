@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -54,7 +55,7 @@ func (c *modClient) call(ctx context.Context, method, path string, body any) (*h
 		b, _ := json.Marshal(body)
 		r = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://loom/v1"+path, r)
+	req, err := http.NewRequestWithContext(ctx, method, fmt.Sprintf("http://loom/v%d%s", claudemod.Version, path), r)
 	if err != nil {
 		return nil, err
 	}
@@ -79,31 +80,49 @@ func (c *modClient) report(ctx context.Context, ev map[string]any) {
 	c.post(ctx, "/events", map[string]any{"launch": c.launch, "events": []any{ev}})
 }
 
+// The mod's retry schedule (backoff in register.ts): after a failure it
+// waits 1 s, doubling to 5 s, until a call succeeds.
+const (
+	firstBackoff = time.Second
+	maxBackoff   = 5 * time.Second
+)
+
+// backoff is the wait after a failure that followed a wait of d (0 after a
+// success), as the mod's backoff computes it.
+func backoff(d time.Duration) time.Duration {
+	if d == 0 {
+		return firstBackoff
+	}
+	return min(2*d, maxBackoff)
+}
+
 // run polls until ctx ends, which the agent does as it exits. Like the mod
-// it says hello again after any failure, and reports a message the daemon
-// offers again (its queued report was lost) queued again without handing it
-// over twice.
+// it says hello again after any failure, retries on the mod's backoff, and
+// reports a message the daemon offers again (its queued report was lost)
+// queued again without handing it over twice.
 func (c *modClient) run(ctx context.Context) {
 	greeted := false
 	seen := map[string]bool{}
-	pause := func() {
-		select {
-		case <-time.After(200 * time.Millisecond):
-		case <-ctx.Done():
-		}
-	}
+	var delay time.Duration
 	for ctx.Err() == nil {
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return
+			}
+		}
 		if !greeted {
 			greeted = c.post(ctx, "/hello", map[string]any{"launch": c.launch, "mod": claudemod.Version, "claude": "fakeagent", "session": "fake"}) == http.StatusNoContent
 			if !greeted {
-				pause()
+				delay = backoff(delay)
 				continue
 			}
 		}
 		resp, err := c.call(ctx, http.MethodGet, "/inbox?launch="+url.QueryEscape(c.launch), nil)
 		if err != nil {
 			greeted = false
-			pause()
+			delay = backoff(delay)
 			continue
 		}
 		var body struct {
@@ -130,10 +149,12 @@ func (c *modClient) run(ctx context.Context) {
 					return
 				}
 			}
+			delay = 0
 		case http.StatusNoContent:
+			delay = 0
 		default:
 			greeted = false
-			pause()
+			delay = backoff(delay)
 		}
 	}
 }
