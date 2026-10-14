@@ -1,12 +1,12 @@
 package core
 
-// The ModHost methods of Loop: each runs its namesake on the model, on the
-// loop's goroutine. No client call follows a mod's to drain what it
-// produced (a Reply, Started, Answered, a refusal when a relaunch ends a
-// link), so a call that queued an event wakes the client (modCall). They
-// are not Core methods: only the daemon's mod server calls them, in
-// process, from its HTTP goroutines, and nothing about them crosses the
-// wire.
+// The ModHost methods of Loop, and the daemon's ModsStop: each runs its
+// namesake on the model, on the loop's goroutine. No client call follows
+// one to drain what it produced (a Reply, Started, Answered, a refusal when
+// a relaunch ends a link), so a call that queued an event wakes the client
+// (modCall). They are not Core methods: only the daemon calls them (its mod
+// server from its HTTP goroutines), in process, and nothing about them
+// crosses the wire.
 
 var _ ModHost = (*Loop)(nil)
 
@@ -34,6 +34,13 @@ func (l *Loop) ModEvents(launch string, events []ModEvent) error {
 	var err error
 	l.modCall(func(m *Model) { err = m.ModEvents(launch, events) })
 	return err
+}
+
+// ModsStop runs Model.ModsStop on the loop. The daemon calls it as it stops,
+// once its mod server has closed and before it waits for the jobs in flight,
+// so the pastes it starts are among them.
+func (l *Loop) ModsStop() {
+	l.modCall(func(m *Model) { m.ModsStop() })
 }
 
 // modCall runs f on the loop and wakes the client when the model has events

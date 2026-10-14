@@ -140,10 +140,12 @@ func (m *Model) removeEverywhere(inst *session.Instance) {
 //     owner saved, and the instance killed (worktree, tmux) off the
 //     model's goroutine.
 //   - Success: the launch is watched for a trust prompt (watchLaunch), the
-//     owner is saved and the pending prompt (N flow) sent by
-//     a job. Started tells the TUI, which attaches the instance's client
-//     and moves its selection only when that can't retarget a flow. With a
-//     prompt, Started waits for the send (deliverPromptSent): the TUI's
+//     owner is saved and the pending prompt (N flow) sent: through the loom
+//     mod when the launch can have one (enqueue), else pasted by a job.
+//     Started tells the TUI, which attaches the instance's client and moves
+//     its selection only when that can't retarget a flow. With a prompt,
+//     Started waits for the send: the mod's queued report (modQueued), or
+//     the paste (deliverPromptSent) when the launch has no mod. The TUI's
 //     inline attach forwards keys to the agent, and a key typed before the
 //     prompt's paste and Enter would join the prompt.
 func (m *Model) deliverStart(r StartResult) {
@@ -174,6 +176,12 @@ func (m *Model) deliverStart(r StartResult) {
 	}
 	if prompt := inst.Prompt(); prompt != "" {
 		inst.SetPrompt("")
+		if _, possible := modLaunch(inst); possible {
+			// Through the mod: Started follows its queued report
+			// (modQueued), or the paste once the launch turns absent.
+			m.enqueue(inst, &modMessage{text: prompt, asUser: true, origin: OriginFirstPrompt, cause: m.cause, owner: owner})
+			return
+		}
 		m.spawn(sendInitialPrompt(inst, owner, prompt))
 		return
 	}

@@ -39,6 +39,7 @@ func newSessionCmd() *cobra.Command {
 	cmd.AddCommand(
 		newSessionListCmd(&workspace),
 		newSessionNewCmd(&workspace),
+		newSessionSendCmd(&workspace),
 		newSessionOpCmd(&workspace, "kill", "Kill a session: its agent, tmux session and worktree", "Killed", true,
 			func(d *client, id core.InstanceID, req core.ReqID) { d.Kill(id, req) }),
 		newSessionOpCmd(&workspace, "pause", "Pause a session: its agent stops and its worktree is removed, its branch kept", "Paused", false,
@@ -368,6 +369,101 @@ func (d *client) launchOptions(v core.WorkspaceView, program string, f newFlags)
 		return launch.Options{}, fmt.Errorf("remote control is unavailable: %s (--no-remote-control starts without it)", auth.Reason)
 	}
 	return opts, nil
+}
+
+func newSessionSendCmd(workspace *string) *cobra.Command {
+	var (
+		id               uint64
+		text, file, from string
+		wait             bool
+	)
+	cmd := &cobra.Command{
+		Use:   "send <title>",
+		Short: "Send a message to a session's Claude, queued behind its running turn or open dialog",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			body, err := readMessage(c.InOrStdin(), text, file, c.Flags().Changed("text"))
+			if err != nil {
+				return err
+			}
+			loomErrors(c)
+			// An interrupt ends the wait (await), not the delivery.
+			ctx, stop := signal.NotifyContext(c.Context(), os.Interrupt)
+			defer stop()
+			c.SetContext(ctx)
+			return withDaemon(c, func(d *client) error {
+				_, v, err := d.resolveWorkspace(*workspace)
+				if err != nil {
+					return err
+				}
+				s, err := findSession(d.Views(v.ID), args[0], core.InstanceID(id))
+				if err != nil {
+					return fmt.Errorf("%s: %w", v.Label, err)
+				}
+				return d.send(c.OutOrStdout(), v.Label, s, core.Message{Text: body, From: from, Wait: wait, Origin: core.OriginCLI})
+			})
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&text, "text", "", "The message (default: read from stdin)")
+	fl.StringVar(&file, "file", "", "Send this file's text")
+	cmd.MarkFlagsMutuallyExclusive("text", "file")
+	fl.StringVar(&from, "from", "", "Name the sender on a line before the message")
+	fl.BoolVar(&wait, "wait", false, "Wait until the turn that carries the message ends, and print Claude's reply")
+	fl.Uint64Var(&id, "id", 0, "The session's ID (loom session list --json), when several share the title")
+	return cmd
+}
+
+// readMessage is send's text: --text's, --file's, or stdin's, without its
+// trailing newlines. An empty message is refused.
+func readMessage(stdin io.Reader, text, file string, hasText bool) (string, error) {
+	var s string
+	switch {
+	case hasText:
+		s = text
+	case file != "":
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("--file: %w", err)
+		}
+		s = string(b)
+	default:
+		b, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", fmt.Errorf("read stdin: %w", err)
+		}
+		s = string(b)
+	}
+	s = strings.TrimRight(s, "\n")
+	if strings.TrimSpace(s) == "" {
+		return "", errors.New("send: the message is empty")
+	}
+	return s, nil
+}
+
+// send makes the Send request for s and waits for its Reply and, with
+// msg.Wait, for its Answered, whose text alone goes to out. Messages Claude
+// merged into one turn share its answer, so the text may answer them all.
+func (d *client) send(out io.Writer, wsLabel string, s core.InstanceView, msg core.Message) error {
+	d.Send(s.ID, msg, sessionReq)
+	ans, err := d.awaitSend(sessionReq, msg.Wait)
+	switch {
+	case errors.Is(err, errDeliveredNoAnswer):
+		return fmt.Errorf("interrupted: the message to %q was delivered; its reply will not be printed", s.Title)
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("interrupted: the message to %q may still be delivered", s.Title)
+	case err != nil:
+		return err
+	}
+	if !msg.Wait {
+		fmt.Fprintf(out, "Queued for %q in %s\n", s.Title, wsLabel)
+		return nil
+	}
+	fmt.Fprintln(out, ans.Text)
+	if ans.Reason != "" && ans.Reason != "answer" {
+		return fmt.Errorf("the turn ended: %s", ans.Reason)
+	}
+	return nil
 }
 
 // newSessionOpCmd is `kill`, `pause` or `resume`: op's request on the

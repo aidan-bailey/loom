@@ -46,6 +46,46 @@ const (
 	OriginFirstPrompt Origin = "first-prompt"
 )
 
+// Message is a message for a session's Claude, delivered through the loom mod
+// (Send).
+type Message struct {
+	Text string
+	// From names the sender on a line before a CLI message's text.
+	From string
+	// Wait asks for Answered when the turn that carries the message ends.
+	Wait   bool
+	Origin Origin
+}
+
+// compose is the text the mod submits for msg: a CLI message names its sender
+// on a line of its own.
+func (msg Message) compose() string {
+	if msg.Origin == OriginCLI && msg.From != "" {
+		return "From " + msg.From + ":\n\n" + msg.Text
+	}
+	return msg.Text
+}
+
+// Send delivers msg to the session id's Claude through the loom mod
+// (enqueue): queued behind any running turn or open dialog, never typed into
+// the pane; messages that wait through the same turn are answered together,
+// as one turn. The Reply comes once the mod has queued it, or at once with a
+// refusal: a session not started or Paused (opSend's precondition), an
+// origin no sender may use, or (OriginCLI) a launch without a live mod. A
+// script's message is pasted instead on such a launch, as SendPrompt does.
+// With Wait, Answered follows when the turn that carries the message ends.
+func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
+	inst, _, ok := m.admit(opSend, id, req)
+	if !ok {
+		return
+	}
+	if msg.Origin != OriginCLI && msg.Origin != OriginScript {
+		m.refuse(req, id, fmt.Errorf("send to %s: %q is no sender's origin", inst.Title, msg.Origin))
+		return
+	}
+	m.enqueue(inst, &modMessage{text: msg.compose(), asUser: msg.Origin == OriginScript, origin: msg.Origin, req: req, wait: msg.Wait})
+}
+
 // ModHello is what a mod says when it starts or reconnects.
 type ModHello struct {
 	Mod     int    `json:"mod"`
@@ -185,7 +225,7 @@ func (m *Model) linkFor(inst *session.Instance) *modLink {
 		m.endLink(inst, l, "the session relaunched")
 	}
 	live := modPending
-	if !possible {
+	if !possible || m.modsStopped {
 		live = modAbsent
 	}
 	l = newModLink(launch, live)
@@ -334,6 +374,20 @@ func (m *Model) modTick(now time.Time) {
 			}
 		}
 	}
+}
+
+// ModsStop settles every link as the daemon stops, after its mod server has
+// closed, so no mod can queue what the links hold (modGone, "the loom daemon
+// stopped"): what no mod took is pasted, a CLI message refused, what a mod
+// took never pasted, and a turn's waiter told. The pastes are jobs, which the
+// stop's quiesce waits for, as it waited for a first prompt's paste before
+// the mod. Every launch counts as having none from now on (modsStopped).
+func (m *Model) ModsStop() {
+	m.modsStopped = true
+	for inst, l := range m.mods {
+		m.modGone(inst, l, "the loom daemon stopped")
+	}
+	log.For("core").Info("mod.stopped", "links", len(m.mods))
 }
 
 // pastModGrace reports whether inst's launch has had its grace: modGrace since

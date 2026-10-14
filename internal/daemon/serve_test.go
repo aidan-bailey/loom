@@ -299,6 +299,7 @@ func TestServe_ServesTheModSocket(t *testing.T) {
 	require.NoError(t, r.shutdown(t))
 	assert.NoFileExists(t, mod)
 	assert.Empty(t, session.ModSocket(), "no launch names a socket nobody serves")
+	assert.True(t, r.loop.ModelForTest().ModsStoppedForTest(), "the stop settled what the mods held")
 }
 
 // Stop stops a running daemon gracefully (here: by closing its Stop, as the

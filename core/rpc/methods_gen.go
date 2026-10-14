@@ -282,6 +282,17 @@ type SendPromptParams struct {
 type SendPromptResult struct {
 }
 
+// SendParams are Send's parameters on the wire.
+type SendParams struct {
+	ID  core.InstanceID `json:"id"`
+	Msg core.Message    `json:"msg"`
+	Req core.ReqID      `json:"req"`
+}
+
+// SendResult is Send's result on the wire; an error travels in the reply.
+type SendResult struct {
+}
+
 // FetchIssueParams are FetchIssue's parameters on the wire.
 type FetchIssueParams struct {
 	Repo   string     `json:"repo"`
@@ -602,6 +613,7 @@ var methods = []methodInfo{
 	{Name: "Merge", Kind: kindRequest, Params: MergeParams{}, Result: MergeResult{}},
 	{Name: "Push", Kind: kindRequest, Params: PushParams{}, Result: PushResult{}},
 	{Name: "SendPrompt", Kind: kindRequest, Params: SendPromptParams{}, Result: SendPromptResult{}},
+	{Name: "Send", Kind: kindRequest, Params: SendParams{}, Result: SendResult{}},
 	{Name: "FetchIssue", Kind: kindRequest, Params: FetchIssueParams{}, Result: FetchIssueResult{}},
 	{Name: "SetSelected", Kind: kindCast, Params: SetSelectedParams{}, Result: SetSelectedResult{}},
 	{Name: "MarkOutput", Kind: kindCast, Params: MarkOutputParams{}, Result: MarkOutputResult{}},
@@ -856,6 +868,16 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.SendPrompt(p.ID, p.Text, p.Req)
 		return SendPromptResult{}, nil, true
+	case "Send":
+		var p SendParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.Send(p.ID, p.Msg, p.Req)
+		return SendResult{}, nil, true
 	case "FetchIssue":
 		var p FetchIssueParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1241,6 +1263,12 @@ func (c *Client) Push(id core.InstanceID, req core.ReqID) {
 func (c *Client) SendPrompt(id core.InstanceID, text string, req core.ReqID) {
 	var r SendPromptResult
 	c.noteRefused(c.requestNoErr("SendPrompt", SendPromptParams{ID: id, Text: text, Req: req}, &r), req)
+}
+
+// Send is core.Core's Send (request).
+func (c *Client) Send(id core.InstanceID, msg core.Message, req core.ReqID) {
+	var r SendResult
+	c.noteRefused(c.requestNoErr("Send", SendParams{ID: id, Msg: msg, Req: req}, &r), req)
 }
 
 // FetchIssue is core.Core's FetchIssue (request).

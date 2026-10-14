@@ -330,6 +330,8 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"merge into itself", func(f fixture) { f.m.Merge(f.id["paused"], f.id["paused"], 1) }, "merge paused: a session can't be merged into itself"},
 		{"send to an unstarted session", func(f fixture) { f.m.SendPrompt(f.id["new"], "hi", 1) }, "send a prompt to new: the session has not started"},
 		{"send to a paused session", func(f fixture) { f.m.SendPrompt(f.id["paused"], "hi", 1) }, "send a prompt to paused: the session is paused"},
+		{"send through the mod to an unstarted session", func(f fixture) { f.m.Send(f.id["new"], Message{Text: "hi", Origin: OriginCLI}, 1) }, "send a prompt to new: the session has not started"},
+		{"send through the mod to a paused session", func(f fixture) { f.m.Send(f.id["paused"], Message{Text: "hi", Origin: OriginCLI}, 1) }, "send a prompt to paused: the session is paused"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewForTest(Options{})

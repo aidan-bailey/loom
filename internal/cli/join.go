@@ -188,6 +188,56 @@ func (c *client) awaitStart(req core.ReqID) (core.Started, error) {
 	return started, nil
 }
 
+// errDeliveredNoAnswer is awaitSend's interrupt after the message was queued.
+var errDeliveredNoAnswer = errors.New("delivered; no answer awaited")
+
+// awaitSend waits for the Send req: its Reply (a refusal is its Err), then,
+// with wait, the Answered naming it or a Notice saying none will come. One
+// loop reads them all, since a batch can hold more than one.
+func (c *client) awaitSend(req core.ReqID, wait bool) (core.Answered, error) {
+	var (
+		queued bool
+		ans    core.Answered
+		got    bool
+		errs   []error
+	)
+	_, err := c.await(0, func(events []core.Event) bool {
+		for _, ev := range events {
+			switch e := ev.(type) {
+			case core.Reply:
+				if e.Req == req {
+					if e.Err != nil {
+						errs = append(errs, e.Err)
+					}
+					queued = true
+				}
+			case core.Answered:
+				if e.Req == req {
+					ans, got = e, true
+				}
+			case core.Notice:
+				switch {
+				case e.Req != req:
+				case e.Err != nil:
+					errs = append(errs, e.Err)
+				case e.Info != "":
+					fmt.Fprintf(c.errOut, "loom: %s\n", e.Info)
+				}
+			}
+		}
+		return len(errs) > 0 || (queued && (!wait || got))
+	})
+	switch {
+	case err != nil && queued && errors.Is(err, context.Canceled):
+		return core.Answered{}, errDeliveredNoAnswer
+	case err != nil:
+		return core.Answered{}, err
+	case len(errs) > 0:
+		return core.Answered{}, errors.Join(errs...)
+	}
+	return ans, nil
+}
+
 // request makes a command's one request (send, given sessionReq) and
 // waits for its Reply: its Err fails the command, and a notice riding a
 // success (a kill's undroppable stash, a resume's recovery commands) goes

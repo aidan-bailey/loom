@@ -792,7 +792,8 @@ Each acts on a registered workspace: `-w <name>`, else the one whose repository 
 
 | Command | Description |
 |---------|-------------|
-| `session new <title> [flags]` | Create and start a session with the workspace's default program and the launch options the Session Launch Options screen would pre-fill, and return once it runs. Flags: `--prompt <text>` or `--prompt-file <file>` (sent once the agent is up), `--branch <existing>`, `--issue <n>` (links it), `--account`, `--model`, `--permission-mode`, `--effort`, and `--no-remote-control`, which a session needs when remote control is on and its account's login can't use it. Refuses a title the workspace already has. Ctrl-C stops waiting; the daemon still starts the session |
+| `session new <title> [flags]` | Create and start a session with the workspace's default program and the launch options the Session Launch Options screen would pre-fill, and return once it runs. Flags: `--prompt <text>` or `--prompt-file <file>` (sent once the agent is up: through the loom mod, as `session send` delivers, or typed into the pane when the session runs without the mod), `--branch <existing>`, `--issue <n>` (links it), `--account`, `--model`, `--permission-mode`, `--effort`, and `--no-remote-control`, which a session needs when remote control is on and its account's login can't use it. Refuses a title the workspace already has. Ctrl-C stops waiting; the daemon still starts the session |
+| `session send <title> [--text <t> \| --file <f>] [--from <name>] [--wait] [--id <n>]` | Hand a message to the session's Claude through the loom mod, never typed into the pane: it waits in Claude's prompt queue behind any running turn or open dialog, and messages that wait through the same turn are answered together, as one turn. The text comes from `--text`, `--file` or stdin; `--from` names the sender on a line before it. Returns once Claude has queued it; with `--wait`, once the turn that carries it ends, printing Claude's reply (for merged messages, the one answer they share) alone on stdout, and failing when the turn ended without an answer. Refuses a session whose Claude runs without the mod (an older Claude, or one the mod did not load into). Ctrl-C stops waiting; a queued message stays queued |
 | `session list [--json]` | The workspace's sessions: title, status, branch, account and time in that status. `--json` prints `id`, `title`, `status`, `wait_reason`, `status_since`, `branch`, `worktree`, `repo`, `program`, `account`, `issue` and `pr` |
 | `session kill <title> [-y] [--id <n>]` | Kill a session (its agent, tmux session and worktree) after asking; `-y` skips the question |
 | `session pause <title> [--id <n>]` | Pause a running session: its agent stops and its worktree is removed, its branch kept |
@@ -821,6 +822,9 @@ loom session new fix-login -w my-project --prompt "Fix the login redirect"
 
 # List a workspace's sessions for a script
 loom session list -w my-project --json
+
+# Ask a session a question once its current turn is done, and print the reply
+loom session send fix-login -w my-project --from po --wait --text "Status?"
 ```
 
 ---

@@ -171,7 +171,8 @@ func Serve(o Options) error {
 			srv.Bye()    // every client hears it first, and nothing new is taken
 			l.close()    // no new connections
 			mods.Close() // every held poll hears 503; the mods reconnect to the next daemon
-			// The jobs in flight finish and publish their replies to the
+			// What the mods held is settled, now that no mod can take it;
+			// the jobs in flight finish and publish their replies to the
 			// connections still open; then every workspace is saved. A model
 			// that failed but has not been published yet must not be waited
 			// on or saved: its state is unknown (stopModel).
@@ -198,18 +199,21 @@ func Serve(o Options) error {
 	}
 }
 
-// stopModel readies the model to stop: it waits for in-flight lifecycle
-// jobs (Loop.Quiesce), then saves every workspace the model serves. A
-// failure is returned, not retried: the daemon is going, and the records it
-// could not write keep their last saved state. A model that already failed
-// re-raises its panic on the first call; that is returned too, with nothing
-// saved, since its state is unknown.
+// stopModel readies the model to stop: it settles what the loom mods held
+// (Loop.ModsStop: the mod server has closed, and a first prompt or a
+// script's message no mod took is pasted instead, by a job), waits for
+// in-flight lifecycle jobs (Loop.Quiesce), then saves every workspace the
+// model serves. A failure is returned, not retried: the daemon is going,
+// and the records it could not write keep their last saved state. A model
+// that already failed re-raises its panic on the first call; that is
+// returned too, with nothing saved, since its state is unknown.
 func stopModel(loop *core.Loop, timeout time.Duration) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("the model had failed; nothing saved: %v", r)
 		}
 	}()
+	loop.ModsStop()
 	if !loop.Quiesce(timeout) {
 		log.For("serve").Warn("serve.stopped_with_jobs_in_flight")
 	}

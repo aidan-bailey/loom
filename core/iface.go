@@ -76,6 +76,7 @@ type Core interface {
 	Merge(target, source InstanceID, req ReqID)
 	Push(id InstanceID, req ReqID)
 	SendPrompt(id InstanceID, text string, req ReqID)
+	Send(id InstanceID, msg Message, req ReqID)
 	FetchIssue(repo string, number int, req ReqID)
 
 	// Claude status and the tick: what the TUI's pane events tell the

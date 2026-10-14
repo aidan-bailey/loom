@@ -107,6 +107,9 @@ type Model struct {
 	// bootedAt is when Boot ran: a mod's grace runs from it at the earliest
 	// (pastModGrace), since a restarted daemon re-reads every SessionStart.
 	bootedAt time.Time
+	// modsStopped is set by ModsStop, as the daemon stops: no mod can reach
+	// it any more, so every launch counts as having none (linkFor).
+	modsStopped bool
 
 	// roster is Claude's own view of its live sessions, keyed by working
 	// directory, refreshed once per health tick (see rosterQueryJob). It is

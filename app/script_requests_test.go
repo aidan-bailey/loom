@@ -411,6 +411,31 @@ func TestScriptSendPrompt_RefusedWhileASendLands(t *testing.T) {
 	assert.True(t, m.sending[idOf(m, inst)], "the other send still holds input")
 }
 
+// TestScriptSendPrompt_GoesThroughTheMod: on a Claude launch that can have
+// the loom mod, a Lua send_prompt is the model's Send, not a paste: it
+// waits for the mod (here none ever polls), holding input, and nothing is
+// typed into the pane.
+func TestScriptSendPrompt_GoesThroughTheMod(t *testing.T) {
+	session.SetModSocket("/tmp/loom-app-test.mod.sock")
+	t.Cleanup(func() { session.SetModSocket("") })
+	m := homeWithAppState(t)
+	inst := addReadyInstance(t, m)
+	require.NoError(t, inst.EnsureRunning())
+	m.syncViews()
+	id := idOf(m, inst)
+	withScript(t, m, `cs.bind("Z", function(ctx) ctx:selected():send_prompt("hello") end)`)
+
+	cmd, ok := m.dispatchScript("Z")
+	require.True(t, ok)
+	first, ok := cmd().(scriptDoneMsg)
+	require.True(t, ok)
+	_, next := m.Update(first)
+	done := pumpRequests(t, m, next)
+
+	assert.Empty(t, done, "the script waits for the mod's queued report, not a paste")
+	assert.True(t, m.sending[id], "input stays held until then")
+}
+
 // TestScriptNewInstance_ReturnsTheCreatedInstance: ctx:new_instance yields
 // until the model has created the instance, unstarted, in the dispatch's
 // workspace, and returns it.

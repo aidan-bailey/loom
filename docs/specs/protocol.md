@@ -237,6 +237,12 @@ Params: `{"id":0,"text":"","req":0}`
 
 Result: `{}`
 
+### Send (request)
+
+Params: `{"id":0,"msg":{"Text":"","From":"","Wait":false,"Origin":""},"req":0}`
+
+Result: `{}`
+
 ### FetchIssue (request)
 
 Params: `{"repo":"","number":0,"req":0}`

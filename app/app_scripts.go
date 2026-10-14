@@ -787,7 +787,9 @@ func (m *home) handleScriptDone(msg scriptDoneMsg) tea.Cmd {
 //     (runResumeOrRecover); the model's Resume refuses one.
 //   - send_prompt holds input to the session until its Reply, as the
 //     TUI's own sends do (sendPrompt), and is refused while another send
-//     to it is in flight.
+//     to it is in flight. It goes through the loom mod (Send, as the
+//     person's own words) where the launch has one, and is pasted where
+//     it has none.
 func (m *home) scriptInstanceOp(p pendingIntent, i script.InstanceOpIntent) tea.Cmd {
 	ps := &pendingScript{intent: p.id, trace: p.trace, op: i.Op}
 	v, _ := m.viewByID(i.ID)
@@ -812,7 +814,7 @@ func (m *home) scriptInstanceOp(p pendingIntent, i script.InstanceOpIntent) tea.
 		}
 		m.holdInput(i.ID)
 		ps.held = i.ID
-		m.core.SendPrompt(i.ID, i.Text, m.newReq(pendingReq{script: ps}))
+		m.core.Send(i.ID, core.Message{Text: i.Text, Origin: core.OriginScript}, m.newReq(pendingReq{script: ps}))
 	default:
 		return m.resumeScript(p, script.ResumeValue{Err: fmt.Sprintf("%s: unknown operation", i.Op)})
 	}

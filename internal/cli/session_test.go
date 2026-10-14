@@ -416,3 +416,138 @@ func TestSessionOps_NameASessionExactly(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `no session "alp"`)
 }
+
+// launchOf is the hooks launch ID of the session title in ws.
+func launchOf(t *testing.T, d *testDaemon, ws, title string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(session.SubagentHooksDir(d.workspace(t, ws).ConfigDir, title), "launch-id"))
+	require.NoError(t, err)
+	return string(b)
+}
+
+// playMod answers launch's inbox as the loom mod would, once: it reports the
+// first message queued and, unless answer is "", its turn started and ended
+// with answer, and hands back the text it carried.
+func playMod(t *testing.T, host core.ModHost, launch, answer string) <-chan string {
+	t.Helper()
+	got := make(chan string, 1)
+	go func() {
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			msgs, wake, err := host.ModInbox(launch)
+			if err != nil || wake == nil {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			if len(msgs) == 0 {
+				select {
+				case <-wake:
+				case <-time.After(time.Second):
+				}
+				continue
+			}
+			m := msgs[0]
+			events := []core.ModEvent{{Kind: "queued", ID: m.ID}}
+			if answer != "" {
+				events = append(events,
+					core.ModEvent{Kind: "started", ID: m.ID, TurnID: "t1"},
+					core.ModEvent{Kind: "complete", ID: m.ID, TurnID: "t1", Text: answer, Reason: "answer"})
+			}
+			_ = host.ModEvents(launch, events)
+			got <- m.Text
+			return
+		}
+		got <- ""
+	}()
+	return got
+}
+
+// withModSocket has the test's daemon give launches the mod.
+func withModSocket(t *testing.T) {
+	t.Helper()
+	session.SetModSocket("/tmp/loom-cli-test.mod.sock")
+	t.Cleanup(func() { session.SetModSocket("") })
+}
+
+// modSession starts alpha in ws-a on a daemon that gives launches the mod,
+// and has its mod say hello: the daemon counts it live.
+func modSession(t *testing.T) (*testDaemon, string) {
+	t.Helper()
+	isolateWorkspaces(t)
+	withModSocket(t)
+	agent := fakeAgent(t, "claude.ai")
+	liveWorkspace(t, "ws-a", agent, nil)
+	d := serveDaemonLive(t, agent)
+	_, _, err := runSession(t, "", "new", "alpha", "-w", "ws-a")
+	require.NoError(t, err)
+	launch := launchOf(t, d, "ws-a", "alpha")
+	require.NoError(t, d.loop.ModHello(launch, core.ModHello{Mod: 1}))
+	return d, launch
+}
+
+func TestSessionSend_WaitPrintsTheAnswer(t *testing.T) {
+	d, launch := modSession(t)
+	carried := playMod(t, d.loop, launch, "all green")
+
+	out, _, err := runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "status?", "--from", "po", "--wait")
+
+	require.NoError(t, err)
+	assert.Equal(t, "all green\n", out, "only the answer on stdout")
+	assert.Equal(t, "From po:\n\nstatus?", <-carried)
+}
+
+func TestSessionSend_ReturnsOnceQueued(t *testing.T) {
+	d, launch := modSession(t)
+	carried := playMod(t, d.loop, launch, "")
+
+	out, _, err := runSession(t, "from stdin\n\n", "send", "alpha", "-w", "ws-a")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, `Queued for "alpha" in ws-a`)
+	assert.Equal(t, "from stdin", <-carried, "stdin's text, trailing newlines dropped, no From line")
+}
+
+// An interrupt while --wait waits for the turn ends the wait, not the
+// delivery: the message was queued, and the command says so.
+func TestSessionSend_AnInterruptAfterQueuedSaysItWasDelivered(t *testing.T) {
+	d, launch := modSession(t)
+	carried := playMod(t, d.loop, launch, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-carried
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
+
+	cmd := newSessionCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"send", "alpha", "-w", "ws-a", "--text", "hi", "--wait"})
+	err := cmd.ExecuteContext(ctx)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `interrupted: the message to "alpha" was delivered; its reply will not be printed`)
+}
+
+// With no daemon serving the mod the launch has none, and send refuses at
+// once rather than paste into the pane.
+func TestSessionSend_RefusesWithoutAMod(t *testing.T) {
+	isolateWorkspaces(t)
+	agent := fakeAgent(t, "claude.ai")
+	liveWorkspace(t, "ws-a", agent, nil)
+	serveDaemonLive(t, agent)
+	_, _, err := runSession(t, "", "new", "alpha", "-w", "ws-a")
+	require.NoError(t, err)
+
+	_, _, err = runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "hi")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "runs without the loom mod")
+}
+
+func TestSessionSend_RefusesAnEmptyMessage(t *testing.T) {
+	_, _, err := runSession(t, "\n\n", "send", "alpha")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the message is empty")
+}

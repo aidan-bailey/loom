@@ -206,6 +206,10 @@ func (m *Model) AgeGitHubWatchesForTest(d time.Duration) {
 // rereads the default account's auth too.
 func (m *Model) RefreshDefaultAuthForTest() bool { return m.refreshDefaultAuth }
 
+// ModsStoppedForTest reports whether the daemon settled its mod links for its
+// stop (ModsStop).
+func (m *Model) ModsStoppedForTest() bool { return m.modsStopped }
+
 // OutputMarkedForTest reports whether sessionName's output is recorded
 // for the next health tick's diff refresh (MarkOutput).
 func (m *Model) OutputMarkedForTest(sessionName string) bool { return m.dirtySessions[sessionName] }
