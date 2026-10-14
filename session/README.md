@@ -1,6 +1,6 @@
 # session
 
-The core domain: `Instance`, a running agent session in its own git worktree and tmux session, with its storage, reconcile, orphan discovery, resume decisions, Claude status, hooks, temp-dir archiving and launch environment. The model in [`../core/`](../core/README.md) drives it; the TUI never holds an `Instance`. `session/` itself holds the instance and everything that acts on it; the sub-packages (`session/agent/`, `session/claudetmp/`, `session/files/`, `session/github/`, `session/hooks/`, `session/launch/`, `session/subagent/`, `session/git/`, `session/vt/`) are described at the end, and `session/tmux/` has its own [`README.md`](tmux/README.md).
+The core domain: `Instance`, a running agent session in its own git worktree and tmux session, with its storage, reconcile, orphan discovery, resume decisions, Claude status, hooks, temp-dir and chat archiving and launch environment. The model in [`../core/`](../core/README.md) drives it; the TUI never holds an `Instance`. `session/` itself holds the instance and everything that acts on it; the sub-packages (`session/agent/`, `session/claudetmp/`, `session/files/`, `session/github/`, `session/hooks/`, `session/launch/`, `session/subagent/`, `session/git/`, `session/vt/`) are described at the end, and `session/tmux/` has its own [`README.md`](tmux/README.md).
 
 ## Instance
 
@@ -86,6 +86,16 @@ Claude keeps each session's scratchpad and task output under `<root>/<encoded cw
 - `SweepClaudeTemp`, queued by core on every workspace load (`core/claude_tmp.go`), reaps `.loom-trash-*` tombstones and `.loom-restore-*` staging dirs older than an hour and archive `*.partial` files older than a day. It takes a dir only when all of these hold: its name carries this config dir's encoded worktrees prefix and no other known config dir's (the encoding is lossy: `foo_bar` and `foo-bar` collide); it ends in a worktree timestamp and is not truncated; no record claims it; nothing in its top three levels changed within `sweepQuietPeriod`; and, rechecked just before archiving, no directory under the config dir's `worktrees*` dirs encodes to it. A dir that fails to archive is skipped until the daemon restarts.
 - The daemon computes Claude's root from its own environment (`claudetmp.Root`), while each agent's Claude computes its own from the agent's, so a differing `TMPDIR` or `CLAUDE_CODE_TMPDIR` makes archiving find nothing (safe). `loom debug` prints its own environment's root. `IsolateLoomDirs` (`internal/testenv`) points `CLAUDE_CODE_TMPDIR` at a throwaway dir. Opt-in contract test (an interactive Claude in a private tmux server, since `claude -p` gets no scratchpad): `LOOM_TEST_REAL_CLAUDE=1 go test ./session -run TestRealClaude_TempDirLayout`.
 
+## Claude chats
+
+Claude keeps each session's conversation in `<config>/projects/<encoded cwd>/` (`<session id>.jsonl`, plus `<session id>/subagents/` and `<session id>/tool-results/`), using the temp dir's encoding, and deletes a transcript once it has gone `cleanupPeriodDays` (30 by default) without a write. `session/claude_chat.go` copies it, never moving it:
+
+- Pause and Kill snapshot the dir named by the instance's recorded transcript path (`ClaudeSession`), else the one `claudetmp.Locate` finds under the session's account's `projects/` (`claudeProjectsDir`). Workspace terminals are skipped. A failure is logged as `claudechat.archive_failed` and fails neither.
+- Archives are `<configDir>/archive/chats/<name>.zip`, or `<claude_tmp_archive_dir>/<encoded config dir>/chats/` (`ClaudeChatArchiveDir`), with `<name>` the scratchpad zip's. `claudetmp.Snapshot` writes one only when something in the dir is newer than the zip, and carries forward every entry whose source is gone, so nothing archived is dropped. They are never pruned.
+- Resume (both launch paths) calls `restoreClaudeChat` before `finishResume`. When the recorded transcript is missing and an archive exists (in the dir in effect, then the default one), `claudetmp.Fill` writes the missing entries back without overwriting anything, and `BuildResumeCommand` then picks `--resume`. A failure is a `Notice`, and the launch continues with `--continue`.
+- `SweepClaudeChats` runs in core's temp-dir sweep job (`core/claude_tmp.go`) over `ClaudeProjectsRoots` (the main config dir's `projects/` and any account's that is not a link into it). It snapshots dirs with the config dir's worktrees prefix and no other's, a timestamp suffix and an untruncated name, skipping running sessions' dirs. Dead and paused ones qualify.
+- The contract test `TestRealClaude_TempDirLayout` also pins the chat dir's name and layout. It hands the pane `~/.claude` (or `LOOM_TEST_CLAUDE_CONFIG_DIR`), since `TestMain` isolates `CLAUDE_CONFIG_DIR`.
+
 ## Launch environment and accounts
 
 `session.ClaudeFullscreenEnv`, folded into `InstanceEnv` (`agent_restart.go`), launches every Claude session with `CLAUDE_CODE_NO_FLICKER=1`: Claude's classic renderer brackets every frame in DEC 2026 synchronized output, which tmux relays to an attach client as a repaint rather than scroll sequences, so the emulator's scrollback stays empty (`TestSyncOutputDefeatsEmulatorScrollback_RealTmux`, which skips below tmux 3.7, where the relay still scrolls). The env var, not `--settings`, keeps `/tui default` working per session, because Claude drops it on renderer relaunch. Any other sync-output app in either pane still can't scroll.
@@ -97,6 +107,7 @@ Instances store the account name (`InstanceData.Account`, "" = default). Every r
 - `<configDir>/worktrees/` (`~/.loom/worktrees/` for the global workspace): the worktrees; `.loom-title` sidecars sit beside them.
 - `<configDir>/hooks/` (`hooks/`): per-instance Claude hook folders for status, resume and subagent tracking, one per path-escaped tmux session name; emptied at each launch, removed when an instance is killed, swept when unclaimed and its tmux session is gone.
 - `archive/claude-tmp/` (or the `claude_tmp_archive_dir` relocation): zips of Claude's per-session temp dirs, minus `CACHEDIR.TAG` caches: one `<name>.zip` per paused session (restored and deleted on resume), plus permanent archives from kills, sweeps and demoted parks.
+- `archive/chats/` (or `<claude_tmp_archive_dir>/<encoded config dir>/chats/`): one zip per session of its Claude chats, a copy refreshed on pause, kill and sweep, keeping whatever Claude has since deleted.
 
 ## Sub-packages
 
@@ -106,7 +117,7 @@ Instances store the account name (`InstanceData.Account`, "" = default). Every r
 
 ### claudetmp
 
-Claude Code's per-session temp dir, `<root>/<encoded cwd>/<session id>/{scratchpad,tasks}`, where root is the first of `$CLAUDE_CODE_TMPDIR`/`$TMPDIR`/`$TMP`/`$TEMP` (else `/tmp`) plus `claude-<uid>`. `Root`; `DirName`/`Names` (Claude's encoding: every UTF-16 unit outside `[a-zA-Z0-9]` becomes `-`, truncated past 200 characters with a hash loom can't compute, so a truncated name never matches and such dirs are left alone); `Locate`; `Archive`/`ArchiveAs` (zip; symlinks stored as links; `CACHEDIR.TAG` dirs skipped; the source renamed to a `.loom-trash-*` tombstone, then deleted, only after the zip's rename); `Parked`; `Restore` (through `os.Root`). `Root` reads its own process's environment. No tmux, UI, app or config dependency.
+Claude Code's per-session temp dir, `<root>/<encoded cwd>/<session id>/{scratchpad,tasks}`, and its chat dir, `<config>/projects/<encoded cwd>/`, where root is the first of `$CLAUDE_CODE_TMPDIR`/`$TMPDIR`/`$TMP`/`$TEMP` (else `/tmp`) plus `claude-<uid>`. `Root`; `DirName`/`Names` (Claude's encoding: every UTF-16 unit outside `[a-zA-Z0-9]` becomes `-`, truncated past 200 characters with a hash loom can't compute, so a truncated name never matches and such dirs are left alone); `Locate`; `Archive`/`ArchiveAs` (zip; symlinks stored as links; `CACHEDIR.TAG` dirs skipped; the source renamed to a `.loom-trash-*` tombstone, then deleted, only after the zip's rename); `Parked`; `Restore` (through `os.Root`); `Snapshot` (zip a dir without touching it, carrying forward entries of the previous zip whose source is gone, the zip stamped two seconds before the walk began); `Fill` (extract what a dir lacks, never overwriting); `ChatArchiveDir`. `Root` reads its own process's environment. No tmux, UI, app or config dependency.
 
 ### files
 
