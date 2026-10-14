@@ -112,8 +112,10 @@ func runWatch(srv *paneServer, program string, within time.Duration, settled str
 // cursor starts on the first and moves down on Down, wrapping, and that
 // closes on Enter. Like Claude's, it refuses every key for refuseFor after
 // it first shows; a frozen one never moves. A key it takes shows its effect
-// only lag later, in order, as a loaded Claude draws late. It records each
-// key, when it came (since the menu showed) and what Enter confirmed.
+// only lag later, in order, as a loaded Claude draws late; with a frame, as
+// Ink batches input, the effects due show only at the frame's next tick,
+// all at once. It records each key, when it came (since the menu showed)
+// and what Enter confirmed.
 type menuPane struct {
 	mu        sync.Mutex
 	options   []string
@@ -121,6 +123,7 @@ type menuPane struct {
 	refuseFor time.Duration
 	frozen    bool
 	lag       time.Duration
+	frame     time.Duration
 	shown     time.Time
 	taken     []takenKey
 	keys      []string
@@ -134,8 +137,12 @@ type takenKey struct {
 	due time.Time
 }
 
-// draw applies the effects of the keys taken that are due by now, in order.
+// draw applies the effects of the keys taken that are due by now, or by
+// the last frame tick before now, in order.
 func (p *menuPane) draw(now time.Time) {
+	if p.frame > 0 {
+		now = p.shown.Add(now.Sub(p.shown).Truncate(p.frame))
+	}
 	for len(p.taken) > 0 && !p.taken[0].due.After(now) {
 		switch p.taken[0].key {
 		case "Down":
@@ -363,6 +370,8 @@ func TestLaunchWatch_AnswersTheSafetyCheckOnlyOnItsOption(t *testing.T) {
 		// A loaded Claude takes a Down at once but draws it late. A Down
 		// pressed again meanwhile lands after it, and an Enter sent on the
 		// first one's draw would land after both: on "No, exit", wrapped.
+		// The lags stay under trustMenuLost settles, past which a Down is
+		// taken for refused.
 		for _, lag := range []time.Duration{10 * time.Millisecond, 30 * time.Millisecond, 70 * time.Millisecond} {
 			menu := &menuPane{options: safety(), lag: lag}
 
@@ -372,6 +381,33 @@ func TestLaunchWatch_AnswersTheSafetyCheckOnlyOnItsOption(t *testing.T) {
 			assert.Equal(t, "Yes, I trust this folder", confirmed, "lag %v: keys %v", lag, keys)
 			assert.True(t, result.answered, "lag %v", lag)
 		}
+	})
+
+	t.Run("a refused Down, then one drawn short of the choice", func(t *testing.T) {
+		// Three options: the first Down is refused, the one pressed again
+		// lands on the middle option. The refused one counts as lost after
+		// trustMenuLost settles, and the menu moves on to its choice.
+		menu := &menuPane{options: []string{"No, exit", "Maybe later", "Yes, I trust this folder"}, refuseFor: 30 * time.Millisecond}
+
+		result := runMenuWatch(menu, 2*time.Second, 20*time.Millisecond)
+
+		keys, _, confirmed := menu.seen()
+		assert.Equal(t, "Yes, I trust this folder", confirmed, "keys %v", keys)
+		assert.True(t, result.answered)
+	})
+
+	t.Run("Downs batched into one frame never end in No", func(t *testing.T) {
+		// Ink draws the input of a frame at once: Downs pressed again within
+		// one frame land together, and a menu of two wraps back to where a
+		// capture last saw it, as if none had landed.
+		menu := &menuPane{options: safety(), frame: 25 * time.Millisecond}
+
+		result := runMenuWatch(menu, 3*time.Second, 10*time.Millisecond)
+
+		keys, _, confirmed := menu.seen()
+		assert.Equal(t, "Yes, I trust this folder", confirmed, "keys %v", keys)
+		assert.True(t, result.answered)
+		assert.Greater(t, strings.Count(strings.Join(keys, " "), "Down"), 1, "fixture: Downs pressed again within a frame")
 	})
 
 	t.Run("no cursor to read", func(t *testing.T) {

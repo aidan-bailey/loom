@@ -41,9 +41,10 @@ const trustMenuSettle = 2500 * time.Millisecond
 
 // trustMenuLost is how many settles a Down may go undrawn, with the menu
 // unchanged, before an answer counts it as refused rather than on its way:
-// until then no Enter goes, since a Down still to land would move the
-// cursor off the choice first.
-const trustMenuLost = 3
+// until then no Enter goes, and no new move, since a Down still to land
+// would move the cursor first. A Down that draws later than that (10 s) is
+// taken for refused: the one lag an answer does not survive.
+const trustMenuLost = 4
 
 // launchWatch is one session's watch (Model.watching): the program of its
 // latest launch, and whether the session launched again while the watch
@@ -201,15 +202,21 @@ func (a *trustAnswer) see(screen string, now time.Time) bool {
 	}
 	a.last = selected
 	// pending is how many Downs may still be on their way: each change a
-	// capture saw drew one at least, so it is never fewer than are.
+	// capture saw drew one at least, so it is never fewer than are. A cursor
+	// move the watch did not cause (a person pressing keys in the pane
+	// meanwhile) raises drawn too, and may hide one on its way: acceptable,
+	// since the person is at the pane. Downs that drew nothing for
+	// trustMenuLost settles since the menu last changed were refused, and
+	// count as landed, wherever the cursor is.
 	pending, quiet := a.sent-a.drawn, now.Sub(a.activeAt)
+	if pending > 0 && quiet >= trustMenuLost*a.settle {
+		a.drawn, pending = a.sent, 0
+	}
 	switch {
 	case tmux.IsOption(selected, choice):
 		// Enter only with no Down in flight: one still to land would move
-		// the cursor first, and a menu of two wraps onto "No, exit". Downs
-		// that drew nothing for trustMenuLost settles since the menu last
-		// changed were refused, and count as landed.
-		if pending > 0 && quiet < trustMenuLost*a.settle {
+		// the cursor first, and a menu of two wraps onto "No, exit".
+		if pending > 0 {
 			return false
 		}
 		return a.answered(a.ts.PressKeys("Enter"))
