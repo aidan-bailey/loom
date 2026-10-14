@@ -83,6 +83,8 @@ func (l *Loop) Push(id InstanceID, req ReqID) { l.do(func(m *Model) { m.Push(id,
 func (l *Loop) SendPrompt(id InstanceID, text string, req ReqID) {
 	l.do(func(m *Model) { m.SendPrompt(id, text, req) })
 }
+
+// Send runs Model.Send on the loop.
 func (l *Loop) Send(id InstanceID, msg Message, req ReqID) {
 	l.do(func(m *Model) { m.Send(id, msg, req) })
 }
