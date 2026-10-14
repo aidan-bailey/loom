@@ -28,6 +28,12 @@ Later packages and reviewers build on these, not on the spec's text where they d
 10. **A first prompt whose launch ends before the mod queued it** is logged, and its start finishes with `Started` all the same, as today's paste does when it fails (`sendInitialPrompt`).
 11. **No `CodeUnsupported` handling in the CLI.** A CLI's join replaces an older daemon, or refuses with a clear error inside a loom pane (`replaceGuard`), so `loom session send` never talks to a daemon without `Send`.
 
+Added during execution (binding; see **Spike results**):
+
+12. **Messages queued during one turn share the next turn.** Claude runs every plugin prompt that waited through a turn as one turn (P3), and the user accepted it: each message still gets `queued`, `started` and `complete`, merged ones with one turn ID and one answer. The module claims a message for a turn when its submit resolves (P3c: the running main-loop turn, else the next one); `matches` is gone. The Go side handles events by message ID and never assumes one message per turn.
+13. **`DefaultHold` is 24 s.** Claude's host aborts every `$.http.fetch` at 30 s (P1).
+14. **Every launch builds its program and env through `Instance.launchCommand`** (8c6787e, from B's review). E4's `session/CLAUDE.md` rule names `launchCommand` and is **Enforced** by `TestRestart_GivesEachLaunchItsOwnModEnv`, `TestCrashRestart_GivesEachLaunchItsOwnModEnv` and `TestLaunchProgram_OnlyLaunchCommandCallsIt`; `TestInstanceEnv_CallSitesAppendTheModEnv` no longer exists.
+
 ## Files
 
 | File | Package | Change |
