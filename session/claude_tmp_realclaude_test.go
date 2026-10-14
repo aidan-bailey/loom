@@ -16,14 +16,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRealClaude_TempDirLayout pins the layout session/claudetmp assumes,
-// Claude's temp root and its encoding of the physical cwd, against a real
+// TestRealClaude_TempDirLayout pins the layouts session/claudetmp assumes
+// (Claude's temp root, its encoding of the physical cwd, and the chat dir
+// under <config>/projects that uses the same encoding) against a real
 // interactive Claude session on a private tmux server, started in a cwd
 // reached through a symlinked parent (the path loom stores). It has to be
 // interactive: a headless `claude -p` is told of no scratchpad and creates
-// no per-cwd directory. It spends a few cents of haiku usage and leaves
-// entries in ~/.claude/projects, so it only runs with
-// LOOM_TEST_REAL_CLAUDE=1 and never in CI.
+// no per-cwd directory. It spends a few cents of haiku usage and leaves a
+// trust entry in the config dir's .claude.json (it removes the chat dir it
+// creates), so it only runs with LOOM_TEST_REAL_CLAUDE=1 and never in CI.
+// Its Claude runs on the default config (~/.claude and ~/.claude.json), or
+// on LOOM_TEST_CLAUDE_CONFIG_DIR when that is set.
 func TestRealClaude_TempDirLayout(t *testing.T) {
 	if os.Getenv("LOOM_TEST_REAL_CLAUDE") != "1" {
 		t.Skip("set LOOM_TEST_REAL_CLAUDE=1 to run against real Claude (costs money)")
@@ -43,6 +46,28 @@ func TestRealClaude_TempDirLayout(t *testing.T) {
 	physical, err := filepath.EvalSymlinks(cwd)
 	require.NoError(t, err)
 	t.Setenv(claudetmp.EnvTmpDir, tmp)
+	// TestMain points CLAUDE_CONFIG_DIR at an empty dir, where Claude would
+	// start logged out. Run the pane's Claude as loom's default account
+	// does, with no CLAUDE_CONFIG_DIR at all (the private tmux server
+	// inherits this process's environment), or on
+	// LOOM_TEST_CLAUDE_CONFIG_DIR. Setting it to ~/.claude is not the same:
+	// Claude then reads ~/.claude/.claude.json, not ~/.claude.json.
+	paneEnv := []string{"-e", claudetmp.EnvTmpDir + "=" + tmp}
+	claudeConfig := os.Getenv("LOOM_TEST_CLAUDE_CONFIG_DIR")
+	if claudeConfig != "" {
+		paneEnv = append(paneEnv, "-e", "CLAUDE_CONFIG_DIR="+claudeConfig)
+	} else {
+		home, err := os.UserHomeDir()
+		require.NoError(t, err)
+		claudeConfig = filepath.Join(home, ".claude")
+		prev, had := os.LookupEnv("CLAUDE_CONFIG_DIR")
+		require.NoError(t, os.Unsetenv("CLAUDE_CONFIG_DIR"))
+		t.Cleanup(func() {
+			if had {
+				_ = os.Setenv("CLAUDE_CONFIG_DIR", prev)
+			}
+		})
+	}
 
 	ctx := context.Background()
 	sock := fmt.Sprintf("loomclaudetmp-%d", os.Getpid())
@@ -62,7 +87,8 @@ func TestRealClaude_TempDirLayout(t *testing.T) {
 	}
 
 	// -e hands Claude the variable as a loom pane would get it.
-	tm("new-session", "-d", "-s", "probe", "-x", "160", "-y", "45", "-c", cwd, "-e", claudetmp.EnvTmpDir+"="+tmp)
+	tm(append([]string{"new-session", "-d", "-s", "probe", "-x", "160", "-y", "45", "-c", cwd}, paneEnv...)...)
+	shellCmd := strings.TrimSpace(tm("display-message", "-p", "-t", target, "#{pane_current_command}"))
 	tm("send-keys", "-t", target, "claude --model haiku", "Enter")
 	const trustDialog = "trust this folder"
 	waitForRealClaude(t, screen, 60*time.Second, func() bool {
@@ -102,4 +128,30 @@ func TestRealClaude_TempDirLayout(t *testing.T) {
 	want, _ := claudetmp.DirName(physical)
 	assert.Equal(t, want, filepath.Base(dir), "Claude names the dir after its physical cwd")
 	assert.Len(t, matches, 1, "the scratchpad sits at <dir>/<session id>/scratchpad")
+
+	// Its chats: <config>/projects/<the same encoding>/<session id>.jsonl,
+	// written with the first message, so there by now.
+	projects := filepath.Join(claudeConfig, "projects")
+	chat, ok := claudetmp.Locate(projects, cwd)
+	require.True(t, ok, "Locate finds the chat dir under %s", projects)
+	t.Cleanup(func() {
+		// Claude writes to its transcript as it exits, and kill-server returns
+		// before it has: quit it and wait for the pane's shell, or the dir
+		// removed here comes straight back. It may still be mid-turn, where
+		// the first Ctrl-C only interrupts, so press until it is gone.
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
+			out, err := tmux.CommandOnSocket(ctx, sock, "display-message", "-p", "-t", target, "#{pane_current_command}").Output()
+			if err != nil || strings.TrimSpace(string(out)) == shellCmd {
+				break
+			}
+			_ = tmux.CommandOnSocket(ctx, sock, "send-keys", "-t", target, "C-c").Run()
+			time.Sleep(500 * time.Millisecond)
+		}
+		_ = tmux.CommandOnSocket(ctx, sock, "kill-server").Run()
+		_ = os.RemoveAll(chat)
+	})
+	assert.Equal(t, want, filepath.Base(chat), "Claude names the chat dir as it names the temp dir")
+	transcripts, err := filepath.Glob(filepath.Join(chat, "*.jsonl"))
+	require.NoError(t, err)
+	assert.Len(t, transcripts, 1, "one transcript per session, at <dir>/<session id>.jsonl")
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/claudetmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,6 +113,61 @@ func TestClaudeTmpSweep_SnapshotsTheClaimSet(t *testing.T) {
 	m.requestClaudeTmpSweep(ws, cfg)
 
 	assert.True(t, m.claudeTmpPending[cfg].claimed["/wt/paused_18be000000000001"])
+}
+
+// TestClaudeTmpSweep_SnapshotsTheRunningSet: the chat sweep leaves running
+// sessions to Pause and Kill; paused ones are its to copy.
+func TestClaudeTmpSweep_SnapshotsTheRunningSet(t *testing.T) {
+	cfg := t.TempDir()
+	mk := func(title string, status session.Status, wt string) *session.Instance {
+		t.Helper()
+		inst, err := session.FromInstanceData(session.InstanceData{
+			SchemaVersion: session.CurrentSchemaVersion,
+			Title:         title,
+			Path:          t.TempDir(),
+			Branch:        "u/" + title,
+			Status:        status,
+			Worktree: session.GitWorktreeData{
+				RepoPath:     t.TempDir(),
+				WorktreePath: wt,
+				BranchName:   "u/" + title,
+			},
+		}, cfg)
+		require.NoError(t, err)
+		return inst
+	}
+	ws := NewWorkspace(WorkspaceParts{})
+	ws.add(mk("paused", session.Paused, "/wt/paused_18be000000000001"))
+	ws.add(mk("live", session.Running, "/wt/live_18be000000000002"))
+	m := NewForTest(Options{})
+
+	m.requestClaudeTmpSweep(ws, cfg)
+
+	job := m.claudeTmpPending[cfg]
+	assert.Equal(t, map[string]bool{"/wt/live_18be000000000002": true}, job.running)
+	assert.True(t, job.claimed["/wt/paused_18be000000000001"], "the temp sweep's claim set still holds paused sessions")
+}
+
+// TestClaudeTmpSweep_ArchivesDeadChats: the queued job runs the chat sweep
+// after the temp sweep, over the main config dir's projects/.
+func TestClaudeTmpSweep_ArchivesDeadChats(t *testing.T) {
+	mainDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", mainDir)
+	cfg := t.TempDir()
+	gone := filepath.Join(cfg, "worktrees", "u", "gone_18be000000000001")
+	chat := filepath.Join(mainDir, "projects", claudetmp.Names(gone)[0].Value)
+	require.NoError(t, os.MkdirAll(chat, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(chat, "s.jsonl"), []byte("turn\n"), 0o600))
+	m := NewForTest(Options{})
+	m.requestClaudeTmpSweep(NewWorkspace(WorkspaceParts{}), cfg)
+	require.True(t, m.maybeClaudeTmpSweep())
+	jobs := m.Drain().Jobs
+	require.Len(t, jobs, 1)
+
+	jobs[0]()
+
+	assert.FileExists(t, filepath.Join(claudetmp.ChatArchiveDir(cfg), "u-gone-18be000000000001.zip"))
+	assert.FileExists(t, filepath.Join(chat, "s.jsonl"), "copied, not moved")
 }
 
 // TestReconcileOrphans_Locks: a clean orphan left locked "initializing" by

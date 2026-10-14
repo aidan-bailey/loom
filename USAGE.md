@@ -850,7 +850,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | `theme` | string | `"afterglow"` | UI color theme (`"afterglow"` or `"legacy"`) |
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
-| `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) |
+| `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir and chat archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) and [Claude Chat Archives](#claude-chat-archives) |
 
 ### Example config.json
 
@@ -930,6 +930,25 @@ Claude Code keeps a temp directory for every session, outside the worktree: `/tm
   Every workspace's archives then go under that folder, each workspace in its own subfolder named after its loom config folder (e.g. `~/claude-archives/home-you-projects-my-app--loom/`). It applies to the next archive, no restart needed. Archives already made stay where they are, and a session paused before the change still gets its scratchpad back on resume. A relative path is ignored (with a warning in the daemon's log, `serve.log`). A workspace's own `config.json` doesn't set this. `loom debug` prints the archive folder in effect, and the temp root your shell's environment gives: the daemon uses the one its own environment gives (see [The Loom Daemon](#the-loom-daemon)).
 - Directories marked with a valid `CACHEDIR.TAG` (cargo's `target/`, for example) are left out; the archive's `.loom-archive.json` lists what was skipped and how big it was. Symlinks are stored as links.
 - Loom never deletes an archive. Prune `archive/claude-tmp/` by hand when you no longer need them. To look inside one: `unzip -l <file>.zip`.
+
+### Claude Chat Archives
+
+Claude Code keeps each session's conversation in `~/.claude/projects/<the session's directory, encoded>/` (under `$CLAUDE_CONFIG_DIR` when that is set; an extra account's `projects/` links to the main one), and deletes a transcript once it has gone unwritten for `cleanupPeriodDays` (30 by default). A loom session's directory is its worktree, which nothing reuses, so a session's conversation would vanish a month after it ended, or a month into a pause. Loom keeps a copy:
+
+- **Pause** and **kill** copy the session's conversation (its transcripts, its subagents' and its tool results) into a zip. Claude's own files are never moved or changed.
+- **Resume** puts a paused session's transcript back if Claude deleted it during the pause, so Claude picks the conversation up again (`--resume`) instead of starting over. If that fails, you see why and the session starts with `--continue`.
+- **At every workspace load**, loom copies the conversations of its sessions that aren't running (paused, killed, or ended before loom archived chats) when they changed since their last copy.
+- A new copy replaces the old zip but keeps everything in it that Claude has since deleted, so nothing once archived is lost.
+- Archives live beside the temp-dir archives: `<repo>/.loom/archive/chats/` (or `~/.loom/archive/chats/`), or `<claude_tmp_archive_dir>/<workspace folder>/chats/` when that is set. `loom debug` prints the folder.
+- Loom never deletes them. To read one:
+
+  ```sh
+  unzip -l <file>.zip                     # list the sessions in it
+  unzip -p <file>.zip <session id>.jsonl  # print a transcript
+  zipgrep 'some phrase' <file>.zip        # search every file in it
+  ```
+
+- Only loom's worktree sessions are covered, not Claude sessions run in a repository root or outside loom.
 
 ### Claude Fullscreen Renderer
 

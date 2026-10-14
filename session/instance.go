@@ -1128,6 +1128,7 @@ func (i *Instance) Kill() (err error) {
 	// answer "no such session") may still be writing to it.
 	if gitWT != nil && !isWorkspaceTerm {
 		archiveClaudeTempFn(i.ConfigDir, gitWT.GetWorktreePath(), "kill")
+		i.archiveChat(gitWT.GetWorktreePath(), "kill")
 	}
 	return NewNotice(notices...)
 }
@@ -1418,6 +1419,10 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 	// dead), with no relaunch attempted. Resume then finds the temp dir
 	// either intact or zipped and restores it from either.
 	archiveClaudeTempFn(i.ConfigDir, gw.GetWorktreePath(), "pause")
+	// Claude deletes a transcript a month after its last write, and a paused
+	// session writes none: keep a copy for Resume to put back. A copy deletes
+	// nothing, so unlike the archive above it has no ordering to keep.
+	i.archiveChat(gw.GetWorktreePath(), "pause")
 
 	// Checkpoint: mark as Paused immediately after cleanup succeeds.
 	// If we crash after this point, the instance is safely Paused.
@@ -1444,8 +1449,8 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 //
 // A resume that succeeded but forgot a stash no longer in `git stash
 // list`, restored one it then could not drop, or could not restore Claude's
-// archived scratchpad, returns a Notice saying so (see OnlyNotice); a
-// failed one includes those notices in its error.
+// archived scratchpad or transcript, returns a Notice saying so (see
+// OnlyNotice); a failed one includes those notices in its error.
 func (i *Instance) Resume(saveState func() error) (err error) {
 	lg := i.getLogger()
 	t0 := time.Now()
@@ -1554,11 +1559,12 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 			lg.Warn("instance.resume.base_commit_failed", "worktree", gw.GetWorktreePath(), "err", err.Error())
 		}
 		// Before finishResume launches the agent, so Claude finds its
-		// scratchpad. (Evaluated first: Go evaluates call arguments in
-		// order, so this must not move into withNotices' argument list
-		// after finishResume.)
+		// scratchpad and recoveryLaunch its transcript. (Evaluated first: Go
+		// evaluates call arguments in order, so these must not move into
+		// withNotices' argument list after finishResume.)
 		tmpNote := restoreClaudeTemp(i.ConfigDir, gw.GetWorktreePath())
-		return withNotices(i.finishResume(saveState, ts, gw), note, tmpNote)
+		chatNote := i.restoreChat()
+		return withNotices(i.finishResume(saveState, ts, gw), note, tmpNote, chatNote)
 	case resumeRefuse:
 		if live == tmux.LivenessUnknown {
 			return fmt.Errorf("cannot tell whether this session's agent is still running (tmux did not answer in time); leaving the worktree untouched — retry once the machine is less busy")
@@ -1614,8 +1620,9 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		gw.SetStashRef("")
 	}
 
-	// Before finishResume launches the agent, so Claude finds its scratchpad.
-	notes = append(notes, restoreClaudeTemp(i.ConfigDir, gw.GetWorktreePath()))
+	// Before finishResume launches the agent, so Claude finds its scratchpad
+	// and recoveryLaunch its transcript.
+	notes = append(notes, restoreClaudeTemp(i.ConfigDir, gw.GetWorktreePath()), i.restoreChat())
 	return withNotices(i.finishResume(saveState, ts, gw), notes...)
 }
 

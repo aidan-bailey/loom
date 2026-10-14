@@ -104,6 +104,7 @@ All under `~/.loom/` (the global dir) or a workspace's `<repo>/.loom/`.
 | `worktrees/` | Session worktrees, each with a `.loom-title` sidecar beside it | [`session/README.md`](../session/README.md) |
 | `hooks/` | Per-instance Claude hook folders, each holding its launch's copy of the loom mod (`mod/`) | [`session/README.md`](../session/README.md) |
 | `archive/claude-tmp/` | Archived Claude temp dirs (or under `claude_tmp_archive_dir`) | [`session/README.md`](../session/README.md) |
+| `archive/chats/` | Copies of Claude's chats for paused and ended sessions (or under `claude_tmp_archive_dir`) | [`session/README.md`](../session/README.md) |
 | `scripts/` (global dir) | User Lua scripts, loaded at startup | [`docs/specs/scripting.md`](specs/scripting.md) |
 
 ## Logs and debugging
