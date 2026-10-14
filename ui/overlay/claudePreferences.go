@@ -122,8 +122,8 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 }
 
 // permissionModeLabel is how a permission mode reads on screen. "default"
-// passes no flag, so the mode is Claude's own choice (auto since Claude
-// 2.1.299), not its ask mode, which is "manual".
+// passes no flag, so the mode is Claude's own choice
+// (config.ClaudePermissionModes), not its ask mode, which is "manual".
 func permissionModeLabel(mode string) string {
 	if mode == "default" {
 		return "default (Claude's)"

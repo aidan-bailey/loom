@@ -45,6 +45,10 @@ daemon outlives that TUI:
   the same one. An older build (an earlier commit, or a clean build after
   a dirty one at the same commit) is refused, and one that names no commit
   joins the running daemon as it is: `stop` the daemon first.
+- A sandbox daemon built before loomdev stamped its builds (866db86) names
+  the main checkout's commit time. When the worktree's HEAD is older than
+  main's, the first stamped build compares older and is refused once;
+  `loomdev stop` clears it.
 - `run` leaves the daemon running when its TUI quits, as a real loom does;
   `stop` ends it.
 - `down` stops the daemon before it deletes the sandbox. A daemon that won't

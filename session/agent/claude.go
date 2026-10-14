@@ -129,13 +129,12 @@ func sanitizeRemoteControlName(s string) string {
 
 // ApplyPermissionModeFlag inserts "--permission-mode <mode>" after
 // "claude". mode == "" or "default" is a no-op, leaving the mode to Claude
-// (its settings' defaultMode, else its own default: auto since 2.1.299);
-// Claude's ask mode is "manual", passed like any other. Returns program
-// unchanged if a --permission-mode
-// flag is already present or if program is empty. mode is expected to
-// come from config.ClaudePermissionModes, never free-typed user input,
-// so no sanitization is applied (unlike ApplyRemoteControlFlag's
-// sessionName).
+// (config.ClaudePermissionModes says what it picks); Claude's ask mode is
+// "manual", passed like any other. Returns program unchanged if a
+// --permission-mode flag is already present or if program is empty. mode
+// is expected to come from config.ClaudePermissionModes, never free-typed
+// user input, so no sanitization is applied (unlike
+// ApplyRemoteControlFlag's sessionName).
 func (claudeAdapter) ApplyPermissionModeFlag(program, mode string) string {
 	if mode == "" || mode == "default" {
 		return program

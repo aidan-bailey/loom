@@ -49,8 +49,8 @@ type Settings struct {
 	// sets this explicitly to "default" rather than leaving it nil — nil
 	// only occurs for a config.json predating this field, and is
 	// treated identically to "default" (no flag injected; Claude
-	// chooses, which is auto, not manual, on Claude 2.1.299). Read it
-	// through PermissionMode.
+	// chooses, as ClaudePermissionModes says). Read it through
+	// PermissionMode.
 	ClaudePermissionMode *string `json:"claude_permission_mode,omitempty"`
 	// Theme names the active UI color theme (see ui.ThemeNames).
 	// Empty (pre-existing config files) means the default theme.
