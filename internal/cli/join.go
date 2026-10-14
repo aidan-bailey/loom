@@ -188,27 +188,25 @@ func (c *client) awaitStart(req core.ReqID) (core.Started, error) {
 	return started, nil
 }
 
-// errDeliveredNoAnswer is awaitSend's interrupt after the message was queued.
-var errDeliveredNoAnswer = errors.New("delivered; no answer awaited")
-
 // awaitSend waits for the Send req: its Reply (a refusal is its Err), then,
 // with wait, the Answered naming it or a Notice saying none will come. One
-// loop reads them all, since a batch can hold more than one.
-func (c *client) awaitSend(req core.ReqID, wait bool) (core.Answered, error) {
+// loop reads them all, since a batch can hold more than one. queued reports
+// whether the Reply said the mod had queued the message, which a failure
+// after it (an interrupt, the daemon lost) does not undo.
+func (c *client) awaitSend(req core.ReqID, wait bool) (ans core.Answered, queued bool, err error) {
 	var (
-		queued bool
-		ans    core.Answered
-		got    bool
-		errs   []error
+		got  bool
+		errs []error
 	)
-	_, err := c.await(0, func(events []core.Event) bool {
+	_, err = c.await(0, func(events []core.Event) bool {
 		for _, ev := range events {
 			switch e := ev.(type) {
 			case core.Reply:
-				if e.Req == req {
-					if e.Err != nil {
-						errs = append(errs, e.Err)
-					}
+				switch {
+				case e.Req != req:
+				case e.Err != nil:
+					errs = append(errs, e.Err)
+				default:
 					queued = true
 				}
 			case core.Answered:
@@ -228,14 +226,12 @@ func (c *client) awaitSend(req core.ReqID, wait bool) (core.Answered, error) {
 		return len(errs) > 0 || (queued && (!wait || got))
 	})
 	switch {
-	case err != nil && queued && errors.Is(err, context.Canceled):
-		return core.Answered{}, errDeliveredNoAnswer
 	case err != nil:
-		return core.Answered{}, err
+		return core.Answered{}, queued, err
 	case len(errs) > 0:
-		return core.Answered{}, errors.Join(errs...)
+		return core.Answered{}, queued, errors.Join(errs...)
 	}
-	return ans, nil
+	return ans, queued, nil
 }
 
 // request makes a command's one request (send, given sessionReq) and

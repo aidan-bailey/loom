@@ -426,9 +426,9 @@ func launchOf(t *testing.T, d *testDaemon, ws, title string) string {
 }
 
 // playMod answers launch's inbox as the loom mod would, once: it reports the
-// first message queued and, unless answer is "", its turn started and ended
-// with answer, and hands back the text it carried.
-func playMod(t *testing.T, host core.ModHost, launch, answer string) <-chan string {
+// first message queued and, unless reason is "", its turn started and ended
+// for reason with answer, and hands back the text it carried.
+func playMod(t *testing.T, host core.ModHost, launch, answer, reason string) <-chan string {
 	t.Helper()
 	got := make(chan string, 1)
 	go func() {
@@ -448,10 +448,10 @@ func playMod(t *testing.T, host core.ModHost, launch, answer string) <-chan stri
 			}
 			m := msgs[0]
 			events := []core.ModEvent{{Kind: "queued", ID: m.ID}}
-			if answer != "" {
+			if reason != "" {
 				events = append(events,
 					core.ModEvent{Kind: "started", ID: m.ID, TurnID: "t1"},
-					core.ModEvent{Kind: "complete", ID: m.ID, TurnID: "t1", Text: answer, Reason: "answer"})
+					core.ModEvent{Kind: "complete", ID: m.ID, TurnID: "t1", Text: answer, Reason: reason})
 			}
 			_ = host.ModEvents(launch, events)
 			got <- m.Text
@@ -487,7 +487,7 @@ func modSession(t *testing.T) (*testDaemon, string) {
 
 func TestSessionSend_WaitPrintsTheAnswer(t *testing.T) {
 	d, launch := modSession(t)
-	carried := playMod(t, d.loop, launch, "all green")
+	carried := playMod(t, d.loop, launch, "all green", "answer")
 
 	out, _, err := runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "status?", "--from", "po", "--wait")
 
@@ -498,7 +498,7 @@ func TestSessionSend_WaitPrintsTheAnswer(t *testing.T) {
 
 func TestSessionSend_ReturnsOnceQueued(t *testing.T) {
 	d, launch := modSession(t)
-	carried := playMod(t, d.loop, launch, "")
+	carried := playMod(t, d.loop, launch, "", "")
 
 	out, _, err := runSession(t, "from stdin\n\n", "send", "alpha", "-w", "ws-a")
 
@@ -511,7 +511,7 @@ func TestSessionSend_ReturnsOnceQueued(t *testing.T) {
 // delivery: the message was queued, and the command says so.
 func TestSessionSend_AnInterruptAfterQueuedSaysItWasDelivered(t *testing.T) {
 	d, launch := modSession(t)
-	carried := playMod(t, d.loop, launch, "")
+	carried := playMod(t, d.loop, launch, "", "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
@@ -530,6 +530,55 @@ func TestSessionSend_AnInterruptAfterQueuedSaysItWasDelivered(t *testing.T) {
 	assert.Contains(t, err.Error(), `interrupted: the message to "alpha" was delivered; its reply will not be printed`)
 }
 
+// A turn that ends without an answer (aborted, an error) prints what it
+// said and fails, naming why.
+func TestSessionSend_WaitFailsWhenTheTurnEndsWithoutAnAnswer(t *testing.T) {
+	d, launch := modSession(t)
+	playMod(t, d.loop, launch, "partial", "aborted")
+
+	out, _, err := runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "go", "--wait")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the turn ended: aborted")
+	assert.Equal(t, "partial\n", out)
+}
+
+// An interrupt before the mod has queued the message ends the wait, and says
+// the message may still be delivered: the daemon still holds it.
+func TestSessionSend_AnInterruptBeforeQueuedSaysItMayStillBeDelivered(t *testing.T) {
+	modSession(t) // its mod never polls: the message waits in the daemon
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(300*time.Millisecond, cancel)
+
+	cmd := newSessionCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"send", "alpha", "-w", "ws-a", "--text", "hi", "--wait"})
+	err := cmd.ExecuteContext(ctx)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `interrupted: the message to "alpha" may still be delivered`)
+}
+
+// Losing the daemon after the message was queued, while --wait waits for
+// the turn, says the message was delivered.
+func TestSessionSend_LosingTheDaemonAfterQueuedSaysItWasDelivered(t *testing.T) {
+	d, launch := modSession(t)
+	carried := playMod(t, d.loop, launch, "", "")
+	go func() {
+		<-carried
+		time.Sleep(200 * time.Millisecond)
+		d.srv.Close()
+	}()
+
+	_, _, err := runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "hi", "--wait")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `the message to "alpha" was delivered, but its reply will not be printed`)
+	assert.Contains(t, err.Error(), "lost the loom daemon")
+}
+
 // With no daemon serving the mod the launch has none, and send refuses at
 // once rather than paste into the pane.
 func TestSessionSend_RefusesWithoutAMod(t *testing.T) {
@@ -540,10 +589,11 @@ func TestSessionSend_RefusesWithoutAMod(t *testing.T) {
 	_, _, err := runSession(t, "", "new", "alpha", "-w", "ws-a")
 	require.NoError(t, err)
 
-	_, _, err = runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "hi")
+	_, _, err = runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "hi", "--wait")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "runs without the loom mod")
+	assert.NotContains(t, err.Error(), "delivered", "a refusal is no delivery")
 }
 
 func TestSessionSend_RefusesAnEmptyMessage(t *testing.T) {

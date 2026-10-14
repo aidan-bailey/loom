@@ -25,12 +25,16 @@ func withMod(t *testing.T) {
 
 // adoptLaunch delivers a scan naming launch with its SessionStart at started,
 // as a restored instance adopts its launch (startedInst's mock tmux prepares
-// no hooks folder). No session ID: a conversation change would save.
+// no hooks folder); a zero started is a launch whose hooks never report one.
+// No session ID: a conversation change would save.
 func adoptLaunch(t *testing.T, m *Model, inst *session.Instance, launch string, started time.Time) {
 	t.Helper()
+	var events []hooks.Event
+	if !started.IsZero() {
+		events = []hooks.Event{{Name: hooks.EventSessionStart, Source: "startup", At: started}}
+	}
 	m.Deliver(hookScanResults{results: []hookScanResult{{instance: inst, result: session.HookScanResult{
-		LaunchID: launch, Replayed: true,
-		Events: []hooks.Event{{Name: hooks.EventSessionStart, Source: "startup", At: started}},
+		LaunchID: launch, Replayed: true, Events: events,
 	}}}})
 	got, hooked := inst.HookLaunch()
 	require.True(t, hooked)
@@ -763,4 +767,59 @@ func TestModsStop_SettlesWhatTheModsHeld(t *testing.T) {
 	rs = replies(m.Drain())
 	require.Len(t, rs, 1, "a poll revives no link once the daemon stops")
 	assert.Equal(t, ReqID(11), rs[0].Req)
+}
+
+// A hooked launch that never reports its SessionStart (hooks turned off in
+// Claude's settings, a trust prompt left to the person) is still starting
+// only up to modStartCap from its link's creation: then it falls back, so a
+// first prompt is pasted and its start finishes, and a CLI message is
+// refused.
+func TestMod_ALaunchThatNeverReportsItsStartFallsBackAfterTheCap(t *testing.T) {
+	withMod(t)
+	m := NewForTest(Options{})
+	ws := storedWorkspace(t, "a")
+	inst := startedInst(t, "x", "claude")
+	ws.add(inst)
+	m.SetWorkspacesForTest(ws)
+	adoptLaunch(t, m, inst, "L1", time.Time{})
+	m.Drain()
+	inst.SetPrompt("do the thing")
+	before := time.Now()
+	m.Deliver(caused{req: 7, result: StartResult{Instance: inst, Owner: ws}})
+	m.enqueue(inst, cliMessage(5, "from the cli", false))
+	m.Drain()
+
+	m.modTick(before.Add(modStartCap - time.Second))
+	out := m.Drain()
+	assert.Empty(t, replies(out), "inside the cap it is still starting")
+	assert.Empty(t, startedOf(out, 7))
+	assert.Empty(t, out.Jobs)
+
+	m.modTick(time.Now().Add(modStartCap))
+	out = m.Drain()
+	rs := replies(out)
+	require.Len(t, rs, 1, "the CLI message is refused")
+	assert.Equal(t, ReqID(5), rs[0].Req)
+	assert.ErrorContains(t, rs[0].Err, "runs without the loom mod")
+	assert.Len(t, startedOf(run(m, out), 7), 1, "the first prompt is pasted, and its paste finishes the start")
+}
+
+// A CLI message reaches only Claude: another program is refused by name. A
+// script's message to it is pasted, as SendPrompt does.
+func TestSend_ACLIMessageToAnotherProgramIsRefusedByName(t *testing.T) {
+	withMod(t)
+	m := NewForTest(Options{})
+	inst := startedInst(t, "x", "aider --model sonnet")
+	hold(m, inst)
+
+	m.Send(m.idOf(inst), Message{Text: "hi", Origin: OriginCLI}, 5)
+	rs := replies(m.Drain())
+	require.Len(t, rs, 1)
+	assert.ErrorContains(t, rs[0].Err, "send to x: it runs aider, not Claude: loom session send reaches only Claude")
+	assert.ErrorIs(t, rs[0].Err, ErrRefused)
+
+	m.Send(m.idOf(inst), Message{Text: "hi", Origin: OriginScript}, 6)
+	out := m.Drain()
+	assert.Empty(t, replies(out))
+	assert.Len(t, out.Jobs, 1, "the script's paste")
 }

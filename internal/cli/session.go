@@ -446,13 +446,16 @@ func readMessage(stdin io.Reader, text, file string, hasText bool) (string, erro
 // merged into one turn share its answer, so the text may answer them all.
 func (d *client) send(out io.Writer, wsLabel string, s core.InstanceView, msg core.Message) error {
 	d.Send(s.ID, msg, sessionReq)
-	ans, err := d.awaitSend(sessionReq, msg.Wait)
+	ans, queued, err := d.awaitSend(sessionReq, msg.Wait)
 	switch {
-	case errors.Is(err, errDeliveredNoAnswer):
+	case err == nil:
+	case queued && errors.Is(err, context.Canceled):
 		return fmt.Errorf("interrupted: the message to %q was delivered; its reply will not be printed", s.Title)
+	case queued:
+		return fmt.Errorf("the message to %q was delivered, but its reply will not be printed: %w", s.Title, err)
 	case errors.Is(err, context.Canceled):
 		return fmt.Errorf("interrupted: the message to %q may still be delivered", s.Title)
-	case err != nil:
+	default:
 		return err
 	}
 	if !msg.Wait {

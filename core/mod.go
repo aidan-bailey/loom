@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aidan-bailey/loom/log"
@@ -15,6 +17,16 @@ import (
 // whichever is later) its loom mod has to say hello before the launch counts
 // as having none (modAbsent).
 const modGrace = 10 * time.Second
+
+// modStartCap bounds how long a hooked launch that has reported no
+// SessionStart counts as still starting, from its link's creation (or the
+// daemon's boot, whichever is later): Claude may sit at a trust prompt left
+// to the person, or its settings may stop hooks (disableAllHooks, managed
+// allowManagedHooksOnly), so the SessionStart never comes. Past it the
+// launch has no mod (modAbsent), and what waits for one falls back. Generous,
+// since a first start can take a while (plugins, MCP servers) and the
+// fallback pastes into whatever the pane shows.
+const modStartCap = 60 * time.Second
 
 // ModPollTimeout is how long a live loom mod may go without saying hello or
 // polling its inbox before its launch counts as having none (modAbsent): its
@@ -70,17 +82,26 @@ func (msg Message) compose() string {
 // (enqueue): queued behind any running turn or open dialog, never typed into
 // the pane; messages that wait through the same turn are answered together,
 // as one turn. The Reply comes once the mod has queued it, or at once with a
-// refusal: a session not started or Paused (opSend's precondition), an
-// origin no sender may use, or (OriginCLI) a launch without a live mod. A
-// script's message is pasted instead on such a launch, as SendPrompt does.
-// With Wait, Answered follows when the turn that carries the message ends.
+// refusal: a session not started or Paused (opSend's precondition), one
+// starting (Loading: a start or resume is launching it, and its link would be
+// the old launch's), an origin no sender may use, or (OriginCLI) another
+// program than Claude or a launch without a live mod. A script's message is
+// pasted instead on such a launch, as SendPrompt does. With Wait, Answered
+// follows when the turn that carries the message ends.
 func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	inst, _, ok := m.admit(opSend, id, req)
 	if !ok {
 		return
 	}
-	if msg.Origin != OriginCLI && msg.Origin != OriginScript {
+	switch {
+	case inst.GetStatus() == session.Loading:
+		m.refuse(req, id, fmt.Errorf("%s %s: the session is starting: send again once it runs", opSend, inst.Title))
+		return
+	case msg.Origin != OriginCLI && msg.Origin != OriginScript:
 		m.refuse(req, id, fmt.Errorf("send to %s: %q is no sender's origin", inst.Title, msg.Origin))
+		return
+	case msg.Origin == OriginCLI && !session.IsClaudeProgram(inst.Program()):
+		m.refuse(req, id, fmt.Errorf("send to %s: it runs %s, not Claude: loom session send reaches only Claude", inst.Title, programName(inst.Program())))
 		return
 	}
 	m.enqueue(inst, &modMessage{text: msg.compose(), asUser: msg.Origin == OriginScript, origin: msg.Origin, req: req, wait: msg.Wait})
@@ -128,6 +149,16 @@ type ModHost interface {
 	ModEvents(launch string, events []ModEvent) error
 }
 
+// programName is program's command name: "aider" for "/usr/bin/aider --model
+// x".
+func programName(program string) string {
+	f := strings.Fields(program)
+	if len(f) == 0 {
+		return program
+	}
+	return filepath.Base(f[0])
+}
+
 // modLiveness is whether a launch has a loom mod.
 type modLiveness int
 
@@ -165,10 +196,15 @@ type modLink struct {
 	// heard is when the mod last said hello or polled its inbox: a live
 	// link silent for ModPollTimeout turns absent (modTick).
 	heard time.Time
+	// since is when the link was made: the model met the launch then, as a
+	// start or relaunch delivered or a message or mod named it. A launch
+	// that reports no SessionStart is still starting only up to
+	// modStartCap from it (pastModGrace).
+	since time.Time
 }
 
 func newModLink(launch string, live modLiveness) *modLink {
-	return &modLink{launch: launch, live: live, turning: map[string]*modMessage{}, wake: make(chan struct{})}
+	return &modLink{launch: launch, live: live, turning: map[string]*modMessage{}, wake: make(chan struct{}), since: time.Now()}
 }
 
 // poke ends a held poll (its channel closes) and arms the next.
@@ -365,7 +401,7 @@ func (m *Model) modTick(now time.Time) {
 		default:
 			l = m.linkFor(inst)
 			switch {
-			case l.live == modPending && m.pastModGrace(inst, now):
+			case l.live == modPending && m.pastModGrace(inst, l, now):
 				log.For("core").Info("mod.absent", "instance", inst.Title, "launch", l.launch)
 				m.modGone(inst, l, "")
 			case l.live == modLive && now.Sub(l.heard) >= ModPollTimeout:
@@ -390,24 +426,29 @@ func (m *Model) ModsStop() {
 	log.For("core").Info("mod.stopped", "links", len(m.mods))
 }
 
-// pastModGrace reports whether inst's launch has had its grace: modGrace since
-// its SessionStart or the daemon's boot, whichever is later. A launch that has
-// not reported its SessionStart is still starting (a trust prompt, say). A
-// restored launch no scan has adopted ("") times it from the boot alone: a
-// hooked one is adopted at its first scan, well inside the grace, so one
-// still unadopted then has no hooks (its program passes its own --settings,
-// or its folder was never prepared or was swept) and will never report a
-// SessionStart.
-func (m *Model) pastModGrace(inst *session.Instance, now time.Time) bool {
+// pastModGrace reports whether inst's launch, whose link is l, has had its
+// grace: modGrace since its SessionStart or the daemon's boot, whichever is
+// later. A launch that has not reported its SessionStart is still starting (a
+// trust prompt, say), but only up to modStartCap from the later of l's
+// creation and the boot: its hooks may never report one. A restored launch no
+// scan has adopted ("") times its grace from the boot alone: a hooked one is
+// adopted at its first scan, well inside the grace, so one still unadopted
+// then has no hooks (its program passes its own --settings, or its folder was
+// never prepared or was swept) and will never report a SessionStart.
+func (m *Model) pastModGrace(inst *session.Instance, l *modLink, now time.Time) bool {
 	at := m.bootedAt
-	if launch, _ := inst.HookLaunch(); launch != "" {
-		started, ok := inst.LaunchSessionStartedAt()
-		if !ok {
-			return false
+	if launch, _ := inst.HookLaunch(); launch == "" {
+		return now.Sub(at) >= modGrace
+	}
+	started, ok := inst.LaunchSessionStartedAt()
+	if !ok {
+		if l.since.After(at) {
+			at = l.since
 		}
-		if started.After(at) {
-			at = started
-		}
+		return now.Sub(at) >= modStartCap
+	}
+	if started.After(at) {
+		at = started
 	}
 	return now.Sub(at) >= modGrace
 }

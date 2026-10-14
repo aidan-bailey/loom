@@ -28,6 +28,9 @@ import (
 type testDaemon struct {
 	loop   *core.Loop
 	client *rpc.Client
+	// srv serves the commands' connections; a test closes it to lose the
+	// daemon under a command.
+	srv *rpc.Server
 }
 
 // deadTmux is the daemon's executor: every tmux session is dead (has-session
@@ -101,7 +104,7 @@ func serveDaemonOn(t *testing.T, program string, ex cmd.Executor) *testDaemon {
 		srv.Close()
 		loop.Stop()
 	})
-	return &testDaemon{loop: loop, client: c}
+	return &testDaemon{loop: loop, client: c, srv: srv}
 }
 
 // workspaces are the names of the workspaces the daemon serves, "" the
