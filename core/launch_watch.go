@@ -27,13 +27,17 @@ var (
 )
 
 // trustMenuMoves is how many times an answer moves a trust prompt's menu
-// (Down) looking for its option, and trustMenuWaits how many captures it
-// waits for the agent to draw a move: past either, the prompt is left to
-// the user.
-const (
-	trustMenuMoves = 4
-	trustMenuWaits = 8
-)
+// (Down) looking for its option: past it, the prompt is left to the user.
+const trustMenuMoves = 4
+
+// trustMenuSettle is how long a watch waits, after it first sees a trust
+// prompt, before its first key, and again after a Down the menu has not
+// drawn before it presses Down once more. Claude 2.1.299 refuses every key
+// for a moment after a dialog opens (its bundle's input guard is 2,000 ms
+// from mounting; a probe saw a Down at once refused and one 1.5 s later
+// taken), so a key sent at first sight is lost, and a refused Enter would
+// leave a prompt the watch thinks it answered.
+const trustMenuSettle = 2500 * time.Millisecond
 
 // launchWatch is one session's watch (Model.watching): the program of its
 // latest launch, and whether the session launched again while the watch
@@ -91,7 +95,7 @@ func (m *Model) startWatch(name, program, settled string) {
 		m.watching = make(map[string]*launchWatch)
 	}
 	m.watching[name] = &launchWatch{program: program}
-	m.spawnBackground(launchWatchJob(m.launchSession(name, program), launchWatchEvery, launchWatchFor, settled))
+	m.spawnBackground(launchWatchJob(m.launchSession(name, program), launchWatchEvery, launchWatchFor, trustMenuSettle, settled))
 }
 
 // launchWatchJob captures ts's pane every every, for up to within, and
@@ -101,21 +105,22 @@ func (m *Model) startWatch(name, program, settled string) {
 // (Claude's MCP prompt after its trust prompt), and returns early only
 // when the session is gone: a capture that fails on a session tmux says
 // is dead. It reads no model state: ts was built on the loop.
-func launchWatchJob(ts *tmux.Session, every, within time.Duration, settled string) Job {
+func launchWatchJob(ts *tmux.Session, every, within, settle time.Duration, settled string) Job {
 	name := ts.SessionName()
 	return func() any {
 		deadline := time.Now().Add(within)
-		a := trustAnswer{ts: ts, prompt: settled, settled: settled != ""}
+		a := trustAnswer{ts: ts, settle: settle, prompt: settled, settled: settled != ""}
 		answered := false
 		for {
 			screen, err := ts.CapturePaneContent()
-			if err == nil && a.see(screen) {
+			if err == nil && a.see(screen, time.Now()) {
 				answered = true
 			}
 			if err != nil && ts.SessionLiveness() == tmux.LivenessDead {
 				return launchWatched{session: name, answered: answered}
 			}
 			if !time.Now().Add(every).Before(deadline) {
+				a.end()
 				return launchWatched{session: name, answered: answered, settled: a.settledPrompt()}
 			}
 			time.Sleep(every)
@@ -127,39 +132,47 @@ func launchWatchJob(ts *tmux.Session, every, within time.Duration, settled strin
 // each once while the screen shows it, except one the agent leaves to the
 // person (TrustPromptLeftToUser: Claude's MCP server dialogs, whose
 // approval starts a process the repository names), which gets nothing. A
-// prompt answered as shown gets
-// the agent's keys (tmux.Session.AnswerTrustPrompt). A prompt with a
-// choice (Claude's safety check, which selects "No, exit" first) gets
-// Enter only once a capture shows its menu's cursor on the choice; until
-// then each capture moves the menu one option down, after the agent drew
-// the last move. A menu that never reaches the choice, or shows no single
-// cursor, is left to the user: no key it sends can then confirm "No".
+// prompt answered as shown gets the agent's keys
+// (tmux.Session.AnswerTrustPrompt). A prompt with a choice (Claude's safety
+// check, which selects "No, exit" first) gets Enter only once a capture
+// shows its menu's cursor on the choice; until then the menu is moved one
+// option down at a time, after the agent drew the last move. No key goes
+// before settle has passed since the prompt first showed, and a Down the
+// menu has not drawn is pressed again once settle has passed since it: the
+// agent refuses keys just after a dialog opens. A menu that never reaches
+// the choice, shows no single cursor, or has not reached it when the watch
+// ends is left to the user: no key it sends can then confirm "No".
 type trustAnswer struct {
-	ts *tmux.Session
+	ts     *tmux.Session
+	settle time.Duration
 	// prompt is the trust prompt the last capture showed, "" for none;
-	// settled reports that it was answered or left to the user.
+	// settled reports that it was answered or left to the user. seenAt is
+	// when a capture first showed it.
 	prompt  string
 	settled bool
-	// moves counts the Downs sent to prompt's menu, the last one from the
-	// option from; waits counts the captures since that still show the
-	// cursor on from.
+	seenAt  time.Time
+	// moves counts the moves sent to prompt's menu, the last one a Down
+	// from the option from, at keyAt.
 	moves int
 	from  string
-	waits int
+	keyAt time.Time
 }
 
-// see handles one capture of the pane, screen, and reports whether it
-// answered a prompt.
-func (a *trustAnswer) see(screen string) bool {
+// see handles one capture of the pane, screen, taken at now, and reports
+// whether it answered a prompt.
+func (a *trustAnswer) see(screen string, now time.Time) bool {
 	shown := a.ts.TrustPromptShown(screen)
 	if shown != a.prompt {
-		*a = trustAnswer{ts: a.ts, prompt: shown}
+		*a = trustAnswer{ts: a.ts, settle: a.settle, prompt: shown, seenAt: now}
 	}
 	if shown == "" || a.settled {
 		return false
 	}
 	if a.ts.TrustPromptLeftToUser(shown) {
 		a.leave("the person's to answer")
+		return false
+	}
+	if now.Sub(a.seenAt) < a.settle {
 		return false
 	}
 	choice := a.ts.TrustPromptChoice(shown)
@@ -173,19 +186,35 @@ func (a *trustAnswer) see(screen string) bool {
 	case tmux.IsOption(selected, choice):
 		return a.answered(a.ts.PressKeys("Enter"))
 	case a.moves > 0 && selected == a.from:
-		if a.waits++; a.waits > trustMenuWaits {
-			a.leave("the menu did not move")
+		// The last Down is not drawn: refused, or still to come.
+		if now.Sub(a.keyAt) >= a.settle {
+			a.down(selected, now)
 		}
 	case a.moves >= trustMenuMoves:
 		a.leave("the menu never reached " + choice)
 	default:
-		if err := a.ts.PressKeys("Down"); err != nil {
-			a.leave(err.Error())
-			break
-		}
-		a.moves, a.from, a.waits = a.moves+1, selected, 0
+		a.moves++
+		a.down(selected, now)
 	}
 	return false
+}
+
+// down presses Down on the menu, whose cursor is on from, at now.
+func (a *trustAnswer) down(from string, now time.Time) {
+	if err := a.ts.PressKeys("Down"); err != nil {
+		a.leave(err.Error())
+		return
+	}
+	a.from, a.keyAt = from, now
+}
+
+// end leaves to the user a menu the watch was still moving when it ran out
+// of time. A prompt it sent no key yet stays unsettled, for a relaunch's
+// watch to answer.
+func (a *trustAnswer) end() {
+	if a.prompt != "" && !a.settled && a.moves > 0 {
+		a.leave("the watch ended before the menu reached its option")
+	}
 }
 
 // answered settles the prompt with the result of sending its answer, and

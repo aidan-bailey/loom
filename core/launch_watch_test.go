@@ -101,10 +101,86 @@ func sent(keys ...string) []string {
 
 // runWatch runs a launch watch of loom_w running program, capturing every
 // millisecond for within, over srv, after an ended watch that settled
-// settled.
+// settled. It waits no time before a key (no settle): srv's screens change
+// per capture, not per key.
 func runWatch(srv *paneServer, program string, within time.Duration, settled string) launchWatched {
 	ts := tmux.NewSessionNamedWithDeps("loom_w", program, tmux.MakePtyFactory(), srv.runner())
-	return launchWatchJob(ts, time.Millisecond, within, settled)().(launchWatched)
+	return launchWatchJob(ts, time.Millisecond, within, 0, settled)().(launchWatched)
+}
+
+// menuPane is Claude's safety check as a tmux pane: a menu of options whose
+// cursor starts on the first and moves down on Down, wrapping, and that
+// closes on Enter. Like Claude's, it refuses every key for refuseFor after
+// it first shows; a frozen one never moves. It records each key, when it
+// came (since the menu showed) and what Enter confirmed.
+type menuPane struct {
+	mu        sync.Mutex
+	options   []string
+	cursor    int
+	refuseFor time.Duration
+	frozen    bool
+	shown     time.Time
+	keys      []string
+	at        []time.Duration
+	confirmed string
+}
+
+func (p *menuPane) screen() string {
+	if p.confirmed != "" {
+		return "❯ \n? for shortcuts"
+	}
+	var b strings.Builder
+	b.WriteString("Quick safety check: Is this a project you created or one you trust?\n\n")
+	for i, o := range p.options {
+		if i == p.cursor {
+			b.WriteString("❯ " + o + "\n")
+		} else {
+			b.WriteString("  " + o + "\n")
+		}
+	}
+	b.WriteString("\nEnter to confirm · Esc to cancel")
+	return b.String()
+}
+
+func (p *menuPane) runner() cmd_test.MockCmdExec {
+	output := func(c *exec.Cmd) ([]byte, error) {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		switch cmd_test.TmuxSubcommand(c.Args) {
+		case "capture-pane":
+			if p.shown.IsZero() {
+				p.shown = time.Now()
+			}
+			return []byte(p.screen()), nil
+		case "send-keys":
+			key, since := c.Args[len(c.Args)-1], time.Since(p.shown)
+			p.keys, p.at = append(p.keys, key), append(p.at, since)
+			if p.confirmed != "" || p.frozen || since < p.refuseFor {
+				break
+			}
+			switch key {
+			case "Down":
+				p.cursor = (p.cursor + 1) % len(p.options)
+			case "Enter":
+				p.confirmed = p.options[p.cursor]
+			}
+		}
+		return nil, nil
+	}
+	return cmd_test.MockCmdExec{RunFunc: func(*exec.Cmd) error { return nil }, OutputFunc: output, CombinedOutputFunc: output}
+}
+
+func (p *menuPane) seen() (keys []string, at []time.Duration, confirmed string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.keys...), append([]time.Duration(nil), p.at...), p.confirmed
+}
+
+// runMenuWatch runs a launch watch of Claude over menu, capturing every
+// millisecond for within, waiting settle before a key.
+func runMenuWatch(menu *menuPane, within, settle time.Duration) launchWatched {
+	ts := tmux.NewSessionNamedWithDeps("loom_w", "claude", tmux.MakePtyFactory(), menu.runner())
+	return launchWatchJob(ts, time.Millisecond, within, settle, "")().(launchWatched)
 }
 
 func TestLaunchWatch_AnswersATrustPromptOnce(t *testing.T) {
@@ -185,49 +261,78 @@ func TestLaunchWatch_LeavesMCPServerDialogsToThePerson(t *testing.T) {
 
 // Claude's safety check selects "No, exit" first, which Enter would
 // confirm: the watch moves the menu down until a capture shows its cursor
-// on "Yes, I trust this folder", waiting for each move to be drawn, and
-// only then presses Enter. A menu that never gets there is left to the
-// user, as is one with no cursor to read.
+// on "Yes, I trust this folder", and only then presses Enter. Claude refuses
+// every key for a moment after a dialog opens, so no key goes before the
+// settle has passed since the watch first saw it, and a Down the menu did
+// not draw is pressed again after another settle. A menu that never gets
+// there is left to the user, as is one with no cursor to read.
 func TestLaunchWatch_AnswersTheSafetyCheckOnlyOnItsOption(t *testing.T) {
+	safety := func() []string { return []string{"No, exit", "Yes, I trust this folder"} }
 	t.Run("moved, then confirmed", func(t *testing.T) {
-		srv := &paneServer{screens: []string{safetyCheckOnNo, safetyCheckOnNo, safetyCheckOnNo, safetyCheckOnYes, ""}}
+		menu := &menuPane{options: safety()}
 
-		result := runWatch(srv, "claude", 100*time.Millisecond, "")
+		result := runMenuWatch(menu, time.Second, 5*time.Millisecond)
 
 		assert.True(t, result.answered)
-		_, keys := srv.counts()
-		assert.Equal(t, [][]string{sent("Down"), sent("Enter")}, keys, "one move, waited out until drawn")
+		keys, _, confirmed := menu.seen()
+		assert.Equal(t, []string{"Down", "Enter"}, keys, "one move, drawn, then confirmed")
+		assert.Equal(t, "Yes, I trust this folder", confirmed)
 	})
 
-	t.Run("already on its option", func(t *testing.T) {
-		srv := &paneServer{screens: []string{safetyCheckOnYes, ""}}
+	t.Run("a menu that refuses keys at first, then moves", func(t *testing.T) {
+		menu := &menuPane{options: safety(), refuseFor: 60 * time.Millisecond}
 
-		runWatch(srv, "claude", 100*time.Millisecond, "")
+		result := runMenuWatch(menu, 2*time.Second, 20*time.Millisecond)
 
-		_, keys := srv.counts()
-		assert.Equal(t, [][]string{sent("Enter")}, keys)
+		assert.True(t, result.answered, "answered once the menu took its keys")
+		keys, at, confirmed := menu.seen()
+		assert.Equal(t, "Yes, I trust this folder", confirmed)
+		require.GreaterOrEqual(t, len(keys), 3)
+		assert.Less(t, at[0], menu.refuseFor, "fixture: the first Down came while it refused keys")
+		assert.Equal(t, "Enter", keys[len(keys)-1])
+		for _, k := range keys[:len(keys)-1] {
+			assert.Equal(t, "Down", k, "a refused Down is pressed again, never an Enter on a guess")
+		}
+	})
+
+	t.Run("no key before the settle", func(t *testing.T) {
+		menu := &menuPane{options: []string{"Yes, I trust this folder", "No, exit"}}
+
+		result := runMenuWatch(menu, time.Second, 50*time.Millisecond)
+
+		assert.True(t, result.answered)
+		keys, at, _ := menu.seen()
+		assert.Equal(t, []string{"Enter"}, keys, "already on its option: Enter alone")
+		assert.GreaterOrEqual(t, at[0], 50*time.Millisecond, "even an Enter waits out the settle")
 	})
 
 	t.Run("a menu that never moves", func(t *testing.T) {
-		srv := &paneServer{screens: []string{safetyCheckOnNo}}
+		menu := &menuPane{options: safety(), frozen: true}
 
-		result := runWatch(srv, "claude", 100*time.Millisecond, "")
+		result := runMenuWatch(menu, 100*time.Millisecond, 10*time.Millisecond)
 
 		assert.False(t, result.answered)
-		assert.Equal(t, "Quick safety check", result.settled, "left to the user")
-		_, keys := srv.counts()
-		assert.Equal(t, [][]string{sent("Down")}, keys, "no Enter")
+		assert.Equal(t, "Quick safety check", result.settled, "left to the user when the watch ends")
+		keys, at, _ := menu.seen()
+		assert.Greater(t, len(keys), 1, "Down pressed again")
+		for i := 1; i < len(at); i++ {
+			// Half the settle: the menu stamps a key as it lands, the watch
+			// times it from the capture before, so a gap can fall a little
+			// short; a Down pressed again at once lands within a capture.
+			assert.GreaterOrEqual(t, at[i]-at[i-1], 5*time.Millisecond, "each after the settle")
+		}
+		assert.NotContains(t, keys, "Enter")
 	})
 
 	t.Run("a menu that never reaches its option", func(t *testing.T) {
-		other := strings.Replace(safetyCheckOnNo, "❯ No, exit", "  No, exit\n❯ Maybe later", 1)
-		srv := &paneServer{screens: []string{safetyCheckOnNo, other, safetyCheckOnNo, other, safetyCheckOnNo}}
+		menu := &menuPane{options: []string{"No, exit", "Maybe later"}}
 
-		result := runWatch(srv, "claude", 100*time.Millisecond, "")
+		result := runMenuWatch(menu, time.Second, 5*time.Millisecond)
 
 		assert.False(t, result.answered)
-		_, keys := srv.counts()
-		assert.Equal(t, [][]string{sent("Down"), sent("Down"), sent("Down"), sent("Down")}, keys, "no Enter")
+		assert.Equal(t, "Quick safety check", result.settled)
+		keys, _, _ := menu.seen()
+		assert.Equal(t, []string{"Down", "Down", "Down", "Down"}, keys, "no Enter")
 	})
 
 	t.Run("no cursor to read", func(t *testing.T) {
@@ -269,7 +374,7 @@ func TestLaunchWatch_EndsWhenTheSessionDies(t *testing.T) {
 	srv := &paneServer{dead: true}
 	ts := tmux.NewSessionNamedWithDeps("loom_w", "claude", tmux.MakePtyFactory(), srv.runner())
 
-	result := launchWatchJob(ts, time.Hour, time.Hour, "")()
+	result := launchWatchJob(ts, time.Hour, time.Hour, 0, "")()
 
 	assert.Equal(t, launchWatched{session: "loom_w"}, result, "returned at once, not after an hour")
 }
