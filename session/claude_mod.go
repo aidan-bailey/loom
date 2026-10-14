@@ -47,7 +47,7 @@ func (i *Instance) prepareMod(dir, launchID string) []string {
 }
 
 // modEnv is the environment that lets the current launch's mod reach the
-// daemon, nil when the launch got no mod. The launch sites append it to
+// daemon, nil when the launch got no mod. launchCommand appends it to
 // InstanceEnv after launchProgram, which decides it.
 func (i *Instance) modEnv() []string {
 	i.mu.RLock()

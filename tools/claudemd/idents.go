@@ -35,7 +35,7 @@ var (
 // so a doc cannot confirm a symbol from another doc.
 var sourceExts = map[string]bool{
 	".go": true, ".lua": true, ".nix": true, ".yml": true, ".yaml": true,
-	".toml": true, ".sh": true, ".json": true, ".mod": true,
+	".toml": true, ".sh": true, ".json": true, ".mod": true, ".ts": true,
 }
 
 // pathExts make a token without a slash a file path.

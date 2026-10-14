@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/session/hooks"
+	"github.com/aidan-bailey/loom/session/tmux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,9 +91,14 @@ func TestLaunchProgram_AReattachKeepsTheModEnv(t *testing.T) {
 	assert.Equal(t, want, inst.modEnv())
 }
 
+// A restored record has no launch ID until its first scan adopts the
+// folder's: unknown (""), never the no-hooks sentinel.
 func TestHookLaunch_BeforeTheFirstScanIsUnknown(t *testing.T) {
-	inst := &Instance{Title: "x", program: "claude"}
+	inst, err := FromInstanceData(InstanceData{Title: "x", Status: Running, Program: "claude", IsWorkspaceTerminal: true}, t.TempDir())
+	require.NoError(t, err)
+
 	launch, hooked := inst.HookLaunch()
+
 	assert.Equal(t, "", launch)
 	assert.False(t, hooked)
 }
@@ -119,13 +126,146 @@ func TestLaunchSessionStartedAt(t *testing.T) {
 	assert.False(t, ok, "a new launch has not started yet")
 }
 
-// The launch sites build the env after the program: pin the order the mod
-// env relies on (it reads the launch ID launchProgram minted).
-func TestInstanceEnv_CallSitesAppendTheModEnv(t *testing.T) {
-	src, err := os.ReadFile("instance.go")
+// The first startup or resume names the launch's start; neither a later
+// resume nor a /clear before it does.
+func TestLaunchSessionStartedAt_TheFirstStartupOrResumeWins(t *testing.T) {
+	t0 := time.Now().Add(-time.Minute).Round(0)
+	start := func(source string, at time.Time) hooks.Event {
+		return hooks.Event{Name: hooks.EventSessionStart, Source: source, At: at}
+	}
+	cases := []struct {
+		name   string
+		events []hooks.Event
+		want   time.Time
+	}{
+		{"a later resume", []hooks.Event{start("startup", t0), start("resume", t0.Add(30*time.Second))}, t0},
+		{"a clear first", []hooks.Event{start("clear", t0), start("startup", t0.Add(time.Second))}, t0.Add(time.Second)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inst := hooksInstance(t, "claude")
+			inst.launchProgram(LaunchEnv{Program: "claude"}, true)
+			launch, _ := inst.HookLaunch()
+
+			require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: launch, Replayed: true, Events: tc.events}))
+
+			at, ok := inst.LaunchSessionStartedAt()
+			require.True(t, ok)
+			assert.Equal(t, tc.want, at)
+		})
+	}
+}
+
+// A relaunch that skips the hooks (a user's own --settings) gets no mod
+// either, even with the socket still set: resetHookLaunch drops the last
+// launch's mod env, which named another launch.
+func TestRecoveryLaunch_WithoutHooksDropsTheLastModEnv(t *testing.T) {
+	withModSocket(t, "/run/loom/x.mod.sock")
+	inst := hooksInstance(t, "claude")
+	_, env, err := inst.recoveryLaunch()
 	require.NoError(t, err)
-	assert.Equal(t, 2, strings.Count(string(src), "InstanceEnv(env), i.modEnv()..."), "instance.go's two launch sites")
-	src, err = os.ReadFile("subagent_hooks.go")
+	require.Contains(t, env, "LOOM_MOD_SOCKET=/run/loom/x.mod.sock")
+
+	inst.SetProgram("claude --settings /mine.json")
+	_, env, err = inst.recoveryLaunch()
+
 	require.NoError(t, err)
-	assert.Contains(t, string(src), "append(InstanceEnv(le), i.modEnv()...)")
+	assert.Nil(t, inst.modEnv())
+	assert.NotContains(t, env, "LOOM_MOD_SOCKET=/run/loom/x.mod.sock")
+}
+
+// launchEnvs is the env (each -e entry) of every new-session srv saw: what
+// each launch's Claude got.
+func launchEnvs(srv *fakeTmuxServer) [][]string {
+	var envs [][]string
+	for _, argv := range srv.launchArgs() {
+		var env []string
+		for n := 0; n+1 < len(argv); n++ {
+			if argv[n] == "-e" {
+				env = append(env, argv[n+1])
+			}
+		}
+		envs = append(envs, env)
+	}
+	return envs
+}
+
+// sessionDied makes srv answer that the session is gone, as after its agent
+// exited, so the next launch can start it again.
+func sessionDied(srv *fakeTmuxServer) {
+	srv.mu.Lock()
+	srv.created = false
+	srv.mu.Unlock()
+}
+
+// relaunchTwice runs relaunch twice, each after the session died, and
+// asserts each launch's Claude got the mod env naming that launch, never
+// the one before it.
+func relaunchTwice(t *testing.T, inst *Instance, srv *fakeTmuxServer, relaunch func() error) {
+	t.Helper()
+	var launches []string
+	for range 2 {
+		sessionDied(srv)
+		require.NoError(t, relaunch())
+		launch, hooked := inst.HookLaunch()
+		require.True(t, hooked)
+		launches = append(launches, launch)
+	}
+
+	envs := launchEnvs(srv)
+	require.Len(t, envs, 2)
+	require.NotEqual(t, launches[0], launches[1])
+	for n, env := range envs {
+		assert.Contains(t, env, "LOOM_LAUNCH="+launches[n], "launch %d", n+1)
+		assert.Contains(t, env, "LOOM_MOD_SOCKET=/run/loom/x.mod.sock", "launch %d", n+1)
+	}
+}
+
+// The workspace terminal's auto-restart hands each new Claude its own
+// launch's mod env: read before launchProgram, it would name the previous
+// launch, whose ID the daemon no longer knows.
+func TestRestart_GivesEachLaunchItsOwnModEnv(t *testing.T) {
+	withModSocket(t, "/run/loom/x.mod.sock")
+	srv := &fakeTmuxServer{}
+	inst := &Instance{
+		Title:               "restart-mod",
+		Path:                t.TempDir(),
+		program:             "claude",
+		ConfigDir:           t.TempDir(),
+		Status:              Running,
+		IsWorkspaceTerminal: true,
+	}
+	inst.setTmuxSession(tmux.NewSessionWithDeps(inst.Title, "claude", srv, srv.runner()))
+	inst.setStarted(true)
+
+	relaunchTwice(t, inst, srv, inst.Restart)
+}
+
+func TestCrashRestart_GivesEachLaunchItsOwnModEnv(t *testing.T) {
+	withModSocket(t, "/run/loom/x.mod.sock")
+	inst, srv := newCrashRecoveredInstance(t)
+	inst.ConfigDir = t.TempDir()
+
+	relaunchTwice(t, inst, srv, inst.CrashRestart)
+}
+
+// Every launch builds its command and env through launchCommand, which
+// reads the mod env only after launchProgram. Start(true) builds its tmux
+// session with no seam a test could launch through, so this pins by source
+// that no site calls launchProgram on its own.
+func TestLaunchProgram_OnlyLaunchCommandCallsIt(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	var callers []string
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		require.NoError(t, err)
+		if n := strings.Count(string(src), ".launchProgram("); n > 0 {
+			callers = append(callers, fmt.Sprintf("%s: %d", f, n))
+		}
+	}
+	assert.Equal(t, []string{"subagent_hooks.go: 1"}, callers, "only launchCommand calls launchProgram")
 }

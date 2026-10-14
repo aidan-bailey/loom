@@ -103,6 +103,17 @@ func (i *Instance) launchProgram(env LaunchEnv, launching bool) string {
 	return program
 }
 
+// launchCommand is launchProgram plus the env for the tmux session that
+// runs it: InstanceEnv and the mod environment of the launch launchProgram
+// just prepared. The mod env names that launch's ID, so it is read only
+// after launchProgram: read before, a relaunch would hand Claude the
+// previous launch's ID, and its mod would never be greeted. Every site
+// that builds a tmux session for a launch goes through here.
+func (i *Instance) launchCommand(env LaunchEnv, launching bool) (program string, tmuxEnv []string) {
+	program = i.launchProgram(env, launching)
+	return program, append(InstanceEnv(env), i.modEnv()...)
+}
+
 // Launches counts the instance's real launches: every Start(true),
 // Restart, CrashRestart and resume that relaunches its agent composes its
 // command through launchProgram once. A resume that reattached to a live
@@ -147,7 +158,8 @@ func (i *Instance) recoveryLaunch() (launch string, env []string, err error) {
 	}
 	sessionID, transcriptPath := i.ClaudeSession()
 	le.Program = BuildResumeCommand(le.Program, sessionID, transcriptPath)
-	return i.launchProgram(le, true), append(InstanceEnv(le), i.modEnv()...), nil
+	launch, env = i.launchCommand(le, true)
+	return launch, env, nil
 }
 
 // prepareHooks readies a fresh hooks folder and returns program
