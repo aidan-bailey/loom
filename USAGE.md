@@ -518,7 +518,11 @@ starts)…`.
   from its hook events, and saves. It also answers an agent's trust
   prompt ("Do you trust the files in this folder?") for up to 30 seconds
   after each launch, so an agent it relaunches at boot with no loom open
-  gets past the prompt. A loom you have open never answers it too.
+  gets past the prompt. A loom you have open never answers it too. A
+  prompt it leaves to you is never typed into: a new session's first
+  prompt waits up to two minutes for you to answer it, or loom tells you
+  it was not sent, with its text; a prompt you send from loom (the quick
+  bar, the prompt overlay, a script) is refused while it is open.
 - **Stopping the daemon**: `loom serve stop`. The daemon tells every open
   loom it is stopping, finishes any pause or kill in progress (up to 30
   seconds; the loom that asked still gets the result), saves and exits. Your
