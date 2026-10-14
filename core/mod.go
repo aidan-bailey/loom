@@ -429,12 +429,20 @@ func (m *Model) ModHello(launch string, h ModHello) error {
 
 // ModInbox returns the messages waiting for launch's mod, and the channel a
 // held poll waits on. A poll supersedes any poll still held for the launch.
+// A poll proves the mod is there, so it makes the link live as a hello does:
+// one judged silent while it still polled (the loop stalled past
+// ModPollTimeout) would otherwise stay absent, since the mod says hello again
+// only after a failed call. Once the daemon stops (ModsStop) nothing revives.
 func (m *Model) ModInbox(launch string) ([]ModMessage, <-chan struct{}, error) {
 	inst := m.instByLaunch(launch)
 	if inst == nil {
 		return nil, nil, ErrModUnknownLaunch
 	}
 	l := m.linkFor(inst)
+	if l.live != modLive && !m.modsStopped {
+		log.For("core").Info("mod.live", "instance", inst.Title, "launch", launch, "by", "poll")
+		l.live = modLive
+	}
 	l.poke()
 	l.heard = time.Now()
 	out := make([]ModMessage, 0, len(l.outbox))

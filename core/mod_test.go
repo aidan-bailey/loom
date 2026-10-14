@@ -241,13 +241,35 @@ func TestMod_PastTheGraceAModlessLaunchFallsBack(t *testing.T) {
 	assert.Equal(t, ReqID(5), rs[0].Req)
 	assert.ErrorContains(t, rs[0].Err, "runs without the loom mod")
 	require.Len(t, out.Jobs, 1, "the script's paste")
-	msgs, _, _ := m.ModInbox("L1")
-	assert.Empty(t, msgs)
+	assert.Empty(t, m.mods[inst].outbox) // read, not polled: a poll would prove a mod
 
 	m.enqueue(inst, cliMessage(7, "later", false))
 	rs = replies(m.Drain())
-	require.Len(t, rs, 1, "an absent launch refuses a CLI message at once")
+	require.Len(t, rs, 1, "an absent launch no mod has polled refuses a CLI message at once")
 	assert.Equal(t, ReqID(7), rs[0].Req)
+}
+
+// A link judged silent while its mod still polls (the loop stalled past
+// ModPollTimeout, say) is live again at its next poll: the mod says hello
+// only after a failed call, so a hello alone would never revive it.
+func TestMod_APollRevivesASilentLink(t *testing.T) {
+	withMod(t)
+	m := NewForTest(Options{})
+	inst := modInst(t, m, "x")
+	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
+	m.modTick(time.Now().Add(ModPollTimeout))
+	m.enqueue(inst, cliMessage(5, "refused", false))
+	require.Len(t, replies(m.Drain()), 1, "fixture: judged silent, absent")
+
+	_, _, err := m.ModInbox("L1")
+	require.NoError(t, err)
+	m.enqueue(inst, cliMessage(6, "delivered", false))
+
+	assert.Empty(t, replies(m.Drain()), "live again: the message waits for the mod")
+	msgs, _, err := m.ModInbox("L1")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "delivered", msgs[0].Text)
 }
 
 // The grace runs from the daemon's boot at the earliest: a restarted daemon
@@ -734,4 +756,11 @@ func TestModsStop_SettlesWhatTheModsHeld(t *testing.T) {
 	m.Deliver(caused{req: 10, result: StartResult{Instance: late, Owner: ws}})
 	assert.Len(t, startedOf(run(m, m.Drain()), 10), 1, "a start landing after the stop pastes its prompt, and its paste finishes it")
 	assert.Empty(t, m.mods[late].outbox, "nothing waits for a mod")
+
+	_, _, err := m.ModInbox("L1") // a poll that crossed the server's close
+	require.NoError(t, err)
+	m.enqueue(inst, cliMessage(11, "after the stop", false))
+	rs = replies(m.Drain())
+	require.Len(t, rs, 1, "a poll revives no link once the daemon stops")
+	assert.Equal(t, ReqID(11), rs[0].Req)
 }
