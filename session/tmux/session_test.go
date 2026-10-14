@@ -311,6 +311,7 @@ func TestSession_TrustPromptOpen(t *testing.T) {
 		{"one option line, no menu", "● The safety check (Quick safety check) offers to quit with\nNo, exit" + inputBox, false},
 		{"options that only mention the labels", "● The new MCP server dialog offers:\n  - Use this MCP server, for this session\n  - Continue without using this MCP server, to skip it" + inputBox, false},
 		{"options above the words", "No, exit\nYes, I trust this folder\n● That was the Quick safety check" + inputBox, false},
+		{"a dialog mark alone in an answer", "● With a new MCP server in .mcp.json Claude asks you to pick servers, then press\nEnable selected\n● or Esc to reject them all." + inputBox, false},
 		{"a dialog scrolled up, mid-screen", "Quick safety check: Is this a project you created or one you trust?\n❯ No, exit\n  Yes, I trust this folder\n" + output + inputBox, false},
 	} {
 		claude := NewSessionWithDeps("trust", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
