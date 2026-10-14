@@ -1,9 +1,10 @@
 // The loom mod: carries the messages loom's daemon has for this Claude into
-// its prompt queue. Claude submits each as a turn of its own once the
-// session is idle, so a message never answers an open dialog or joins a
-// running turn. Everything else stays in loom: the daemon composes the text
-// and decides what to send, and this module only carries it and reports
-// when each message is queued, when its turn starts and how the turn ended.
+// its prompt queue. Claude runs each once the session is idle (messages that
+// waited through the same turn run together, as one turn), so a message
+// never answers an open dialog or joins a running turn. Everything else stays
+// in loom: the daemon composes the text and decides what to send, and this
+// module only carries it and reports when each message is queued, when its
+// turn starts and how the turn ended.
 //
 // loom writes this folder into each launch's hooks folder and passes it with
 // --plugin-dir. LOOM_MOD_SOCKET names the daemon's mod socket and LOOM_LAUNCH
@@ -33,10 +34,14 @@ let pumping = false
 // message the daemon offers again (its queued report was lost) is reported
 // again, not submitted twice.
 const submitted: string[] = []
-// awaiting are submitted messages whose turn has not started, oldest first.
-const awaiting: Message[] = []
-// turns maps a started turn to the message that opened it.
-const turns = new Map<string, string>()
+// entered are messages whose submit resolved while no main-loop turn ran; the
+// next main-loop turn carries them.
+const entered: Message[] = []
+// mainTurn is the running main-loop turn, if any.
+let mainTurn: string | undefined
+// turns maps a started turn to the messages it carries: Claude runs every
+// prompt queued while it was busy in one turn.
+const turns = new Map<string, string[]>()
 
 async function call($: EngineInterface, method: string, path: string, body?: unknown) {
   return $.http.fetch(BASE + path, {
@@ -62,17 +67,15 @@ async function hello($: EngineInterface): Promise<boolean> {
   return r.status === 204
 }
 
-// matches says whether a turn's text is the submitted message's: Claude may
-// hand it on bare or wrapped (plan package A settled which).
-function matches(turnText: string, sent: string): boolean {
-  return turnText === sent || turnText.includes(sent)
+// claim records that a turn carries ms and reports each as started.
+async function claim($: EngineInterface, turnId: string, ms: Message[]) {
+  turns.set(turnId, [...(turns.get(turnId) ?? []), ...ms.map(m => m.id)])
+  await report($, ms.map(m => ({ kind: 'started' as const, id: m.id, turnId })))
 }
 
-function forget(id: string) {
-  const i = awaiting.findIndex(m => m.id === id)
-  if (i >= 0) awaiting.splice(i, 1)
-}
-
+// A submit resolves as the turn carrying its prompt starts (on Claude 2.1.299,
+// while that turn's turn.start hooks run), so a resolved message belongs to
+// the running main-loop turn, or to the next one when none has started yet.
 async function submit($: EngineInterface, m: Message) {
   if (submitted.includes(m.id)) {
     await report($, [{ kind: 'queued', id: m.id }])
@@ -80,18 +83,15 @@ async function submit($: EngineInterface, m: Message) {
   }
   submitted.push(m.id)
   if (submitted.length > KEEP_SUBMITTED) submitted.shift()
-  awaiting.push(m)
   const done = $.prompt.submit(m.asUser ? { text: m.text, asUser: true } : { text: m.text })
   await report($, [{ kind: 'queued', id: m.id }])
   done.then(
     r => {
-      if (r.drop !== undefined) {
-        forget(m.id)
-        void report($, [{ kind: 'failed', id: m.id, error: `dropped: ${r.drop}` }])
-      }
+      if (r.drop !== undefined) void report($, [{ kind: 'failed', id: m.id, error: `dropped: ${r.drop}` }])
+      else if (mainTurn !== undefined) void claim($, mainTurn, [m])
+      else entered.push(m)
     },
     err => {
-      forget(m.id)
       void report($, [{ kind: 'failed', id: m.id, error: String(err) }])
     },
   )
@@ -146,22 +146,24 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    if (e.agentId !== undefined) return next(e)
     const r = await next(e)
-    const head = awaiting[0]
-    if (e.agentId === undefined && head !== undefined && matches(e.text, head.text)) {
-      awaiting.shift()
-      turns.set(r.turnId, head.id)
-      await report($, [{ kind: 'started', id: head.id, turnId: r.turnId }])
-    }
+    mainTurn = r.turnId
+    if (entered.length > 0) await claim($, r.turnId, entered.splice(0))
     return r
   })
 
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId !== undefined) return next(e)
     const r = await next(e)
-    const id = e.agentId === undefined ? turns.get(e.turnId) : undefined
-    if (id !== undefined) {
+    if (e.turnId === mainTurn) mainTurn = undefined
+    const ids = turns.get(e.turnId)
+    if (ids !== undefined) {
       turns.delete(e.turnId)
-      await report($, [{ kind: 'complete', id, turnId: e.turnId, text: r.text, reason: e.reason }])
+      await report(
+        $,
+        ids.map(id => ({ kind: 'complete' as const, id, turnId: e.turnId, text: r.text, reason: e.reason })),
+      )
     }
     return r
   })
