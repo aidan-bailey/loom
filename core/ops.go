@@ -343,7 +343,7 @@ func (m *Model) sendInitialPrompt(inst *session.Instance, owner *Workspace, prom
 	title, every, within, stopping := inst.Title, firstPromptPollEvery, firstPromptWaitFor, m.stopSignal()
 	return func() any {
 		if !trustPromptCleared(inst.Pane(), title, every, within, stopping) {
-			log.For("core").Warn("first_prompt.trust_prompt_open", "instance", title, "prompt_bytes", len(prompt))
+			log.For("core").Warn("first_prompt.trust_prompt_open", "instance", title, "prompt", prompt)
 			return promptSent{inst: inst, owner: owner, unsent: fmt.Sprintf(
 				"the first prompt for %s was not sent: its trust prompt is still open. Answer it, then send the prompt yourself: %s", title, prompt)}
 		}

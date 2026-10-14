@@ -276,22 +276,52 @@ func TestSession_TrustPromptShown(t *testing.T) {
 // A trust prompt is open, for a paste's sake, only where a pasted Enter
 // would answer it: a dialog answered by Enter alone (Claude's), which the
 // agent clears once answered. A prompt answered by typing (aider's D,
-// Enter) is a line that lingers after its answer, so it never counts.
+// Enter) is a line that lingers after its answer, so it never counts. The
+// dialog itself must show, not only its words: two of its options on lines
+// of their own, below its pattern, in the screen's last lines, where Claude
+// draws it. Its words in a transcript, a file or an answer are no dialog.
 func TestSession_TrustPromptOpen(t *testing.T) {
-	claude := NewSessionWithDeps("trust", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
-	assert.True(t, claude.TrustPromptOpen("Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit"))
-	assert.True(t, claude.TrustPromptOpen(claudeSafetyCheck))
-	assert.True(t, claude.TrustPromptOpen("Quick safety check: Is this a project you created or one you trust?\n\n  No, exit\n  Yes, I trust this folder"),
-		"open with no single cursor too: the launch watch leaves such a prompt to the person")
-	assert.False(t, claude.TrustPromptOpen("> hello\n● Hi there"), "no prompt on screen")
+	inputBox := "\n────────────────\n❯ \n────────────────\n  ? for shortcuts"
+	output := strings.Repeat("● working on it\n", 16)
+	for _, tc := range []struct {
+		name   string
+		screen string
+		open   bool
+	}{
+		{"the safety check, as Claude 2.1.299 draws it", "➜  work claude --model haiku\n────────────────\n Accessing workspace:\n /tmp/x/work\n" +
+			" Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not,\n" +
+			" take a moment to review what's in this folder first.\n Claude Code'll be able to read, edit, and execute files here.\n Security guide\n" +
+			" ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel", true},
+		{"the safety check in a box", claudeSafetyCheck, true},
+		{"the safety check with no single cursor (the launch watch leaves it to the person)",
+			"Quick safety check: Is this a project you created or one you trust?\n\n  No, exit\n  Yes, I trust this folder", true},
+		{"the MCP dialog", " New MCP server found in this project: db\n MCP servers may execute code or access system resources. All tool calls require approval. Learn more in the MCP documentation.\n" +
+			" ❯ Use this MCP server\n   Use this and all future MCP servers in this project\n   Continue without using this MCP server\n Enter to confirm · Esc to cancel", true},
+		{"the older trust prompt", "Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit", true},
+
+		{"no prompt on screen", "> hello\n● Hi there" + inputBox, false},
+		{"its words in an answer, above the input box", "❯ how do I add a new MCP server?\n● Run claude mcp add; Claude asks about the new MCP server at its next start." + inputBox, false},
+		{"its words quoted near the bottom", "● Claude asks \"Do you trust the files in this folder?\" on a first launch." + inputBox, false},
+		{"its words and options in source on screen", "	safetyCheckOnNo   = \"Quick safety check: Is this a project you created or one you trust?\\n\\n❯ No, exit\\n  Yes, I trust this folder\\n\\nEnter to confirm · Esc to cancel\"" + inputBox, false},
+		{"one option line, no menu", "● The safety check (Quick safety check) offers to quit with\nNo, exit" + inputBox, false},
+		{"options that only mention the labels", "● The new MCP server dialog offers:\n  - Use this MCP server, for this session\n  - Continue without using this MCP server, to skip it" + inputBox, false},
+		{"options above the words", "No, exit\nYes, I trust this folder\n● That was the Quick safety check" + inputBox, false},
+		{"a dialog scrolled up, mid-screen", "Quick safety check: Is this a project you created or one you trust?\n❯ No, exit\n  Yes, I trust this folder\n" + output + inputBox, false},
+	} {
+		claude := NewSessionWithDeps("trust", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+		assert.Equal(t, tc.open, claude.TrustPromptOpen(tc.screen), tc.name)
+	}
 	for _, program := range []string{"aider", "gemini"} {
 		lines := NewSessionWithDeps("trust", program, NewMockPtyFactory(t), cmd_test.MockCmdExec{})
 		require.NotEmpty(t, lines.TrustPromptShown("Open documentation url for more info? (Y)es/(N)o/(D)on't ask again [Yes]: d\n> "), "fixture: %s shows it", program)
 		assert.False(t, lines.TrustPromptOpen("Open documentation url for more info? (Y)es/(N)o/(D)on't ask again [Yes]: d\n> "),
 			"%s's line prompt lingers after its answer", program)
 	}
+	aider := NewSessionWithDeps("trust", "aider", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+	assert.False(t, aider.TrustPromptOpen("Open documentation url for more info?\n❯ 1. Yes, proceed\n  2. No, exit"),
+		"even under a menu: an agent that answers by typing has no menu Enter confirms")
 	shell := NewSessionWithDeps("trust", "bash", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
-	assert.False(t, shell.TrustPromptOpen("Do you trust the files in this folder?"), "no keys to answer it with")
+	assert.False(t, shell.TrustPromptOpen("Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit"), "no keys to answer it with")
 }
 
 func TestSession_AnswerTrustPrompt(t *testing.T) {

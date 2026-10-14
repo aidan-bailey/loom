@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -397,14 +398,93 @@ func (s *Session) TrustPromptShown(content string) string {
 }
 
 // TrustPromptOpen reports whether content (the pane's screen) shows a
-// trust prompt that a pasted prompt's Enter would answer: one answered by
-// Enter alone (Claude's dialogs), which confirms whatever its menu
-// selects, "No, exit" included. The agent clears such a dialog once it is
-// answered, so it is open wherever it shows. A prompt answered by typing
-// (aider's and gemini's D, Enter) never counts: its line lingers after its
-// answer, so no capture tells it open, and Enter picks no option there.
+// trust dialog that a pasted prompt's Enter would answer: one answered by
+// Enter alone (Claude's), which confirms whatever its menu selects, "No,
+// exit" included. A prompt answered by typing (aider's and gemini's D,
+// Enter) never counts: its line lingers after its answer, so no capture
+// tells it open, and Enter picks no option there.
+//
+// The dialog itself must show, not only its words, which a transcript, an
+// answer or a file on screen can hold at any time: two of its options
+// (trustDialogOptions), each on a line of its own, and one of the adapter's
+// patterns above the first of them, all in the screen's last
+// trustDialogLines non-empty lines, where Claude draws its dialogs. The
+// patterns match regardless of case: Claude 2.1.299 titles its one-server
+// MCP dialog "New MCP server found in this project".
 func (s *Session) TrustPromptOpen(content string) bool {
-	return s.adapter.TrustPromptResponse() == agent.TrustPromptTapEnter && s.TrustPromptShown(content) != ""
+	if s.adapter.TrustPromptResponse() != agent.TrustPromptTapEnter {
+		return false
+	}
+	lines := lastNonEmptyLines(ansiSeqRe.ReplaceAllString(content, ""), trustDialogLines)
+	first, options := -1, 0
+	for i, line := range lines {
+		if isTrustDialogOption(line) {
+			if first < 0 {
+				first = i
+			}
+			options++
+		}
+	}
+	if options < 2 {
+		return false
+	}
+	above := strings.ToLower(normalizeForPatternMatch(strings.Join(lines[:first], "\n")))
+	for _, pattern := range s.adapter.TrustPromptPatterns() {
+		if strings.Contains(above, strings.ToLower(normalizeForPatternMatch(pattern))) {
+			return true
+		}
+	}
+	return false
+}
+
+// trustDialogLines is how many of the screen's last non-empty lines
+// TrustPromptOpen looks at. Claude draws its dialogs at the bottom of the
+// pane, and its tallest, the safety check (a path, two paragraphs, a link,
+// its options and a footer), takes about 12 non-empty lines when wrapped at
+// 80 columns; a mention further up the transcript falls outside.
+const trustDialogLines = 15
+
+// trustDialogOptions are the options of the trust dialogs an agent answers
+// with Enter alone (Claude's, as 2.1.299 labels them): the safety check's,
+// the older trust prompt's and the new-MCP-server dialog's. A new agent
+// answered by Enter alone needs its own here.
+var trustDialogOptions = []string{
+	"Yes, I trust this folder", "No, exit", "No, continue without these permissions",
+	"Yes, proceed",
+	"Use this MCP server", "Use this and all future MCP servers in this project", "Continue without using this MCP server",
+}
+
+// menuIndex is a menu option's number ("2. "), which Claude draws unless the
+// menu hides its indexes.
+var menuIndex = regexp.MustCompile(`^[0-9]+\.\s*`)
+
+// isTrustDialogOption reports whether line is a trust dialog's option on a
+// line of its own: its whole text, once a box's border, the menu's cursor
+// and the option's number are set aside, is one of trustDialogOptions.
+func isTrustDialogOption(line string) bool {
+	text := strings.TrimFunc(line, func(r rune) bool { return unicode.IsSpace(r) || unicode.In(r, boxDrawing) })
+	text = menuIndex.ReplaceAllString(strings.TrimSpace(strings.TrimPrefix(text, menuCursor)), "")
+	norm := normalizeForPatternMatch(text)
+	for _, option := range trustDialogOptions {
+		if norm == normalizeForPatternMatch(option) {
+			return true
+		}
+	}
+	return false
+}
+
+// lastNonEmptyLines is content's last n lines that hold more than spaces and
+// a box's border, in order.
+func lastNonEmptyLines(content string, n int) []string {
+	var lines []string
+	all := strings.Split(content, "\n")
+	for i := len(all) - 1; i >= 0 && len(lines) < n; i-- {
+		if strings.TrimFunc(all[i], func(r rune) bool { return unicode.IsSpace(r) || unicode.In(r, boxDrawing) }) != "" {
+			lines = append(lines, all[i])
+		}
+	}
+	slices.Reverse(lines)
+	return lines
 }
 
 // TrustPromptChoice returns the option the trust prompt found by pattern

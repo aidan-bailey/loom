@@ -193,14 +193,16 @@ func (m *Model) deliverStart(r StartResult) {
 
 // deliverPromptSent finishes a start whose initial prompt was sent first
 // (deliverStart): only now does the TUI hear of it (Started). A prompt not
-// sent is an info notice to the requester, ahead of Started, with its text:
-// the session runs, so it is no failure of the start.
+// sent is an info notice to the requester, with its text: after Started,
+// whose own info line ("x started") would replace it in the TUI, and no
+// failure of the start, since the session runs (a CLI's awaitStart reads
+// the whole batch, so it still prints it).
 func (m *Model) deliverPromptSent(r promptSent) {
+	ownerID, label := m.ownerFields(r.owner)
+	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: ownerID, OwnerLabel: label})
 	if r.unsent != "" {
 		m.notifyInfo(r.unsent)
 	}
-	ownerID, label := m.ownerFields(r.owner)
-	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: ownerID, OwnerLabel: label})
 }
 
 // deliverResume finishes a resume: an instance a served workspace still
