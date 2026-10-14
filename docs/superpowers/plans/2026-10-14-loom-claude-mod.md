@@ -3244,15 +3244,17 @@ Then a smoke run of the real thing through the `loom-dev` skill (never `./loom` 
 
 ## Spike results
 
-Package A fills this in (date, Claude Code version, and for each probe what happened):
+Run 2026-10-14 on Claude Code 2.1.299 (`--model haiku`), with the probe recipe against the throwaway server. `claude plugin validate` passes the mod, warning only that it names no author.
 
 | Probe | Result | Consequence |
 |---|---|---|
-| P1 long poll | not yet run | `DefaultHold` |
-| P2 turn text | not yet run | `matches` rule |
-| P3 back to back | not yet run | |
-| P4 across `/clear` | not yet run | |
-| Other | | |
+| P1 long poll | Holds of 25 s and 29 s succeed, three in a row each. Holds of 30 s and 120 s fail every time: the host ends a `$.http.fetch` at exactly 30 s (`aborted: no complete answer within 30000ms`), and `HttpInit` has no timeout field. The un-awaited loop started from `session.start` polls without trouble. | `DefaultHold` is 24 s (29 s minus 5 s); C4's code block above still reads 25 s. |
+| P2 turn text | A framed message's `turn.start.text` contains it (`The loom plugin sent a message:\n<text>\n\nThis is how Claude Code surfaces…`); an `asUser` message's equals it. | P3c removes `matches`, so nothing depends on it. |
+| P3 back to back | Fails: m3 and m4, queued during one turn, ran as one turn (two `prompt.submit`s, then one `[engine] turn 4 start`) with one answer (`THREE\nFOUR`), and its `turn.start.text` held only m4's text. Head-of-queue matching then lost both, and every later message behind them. | The user accepted merging: messages that enter together share one turn and one answer, and each still gets `queued`, `started` and `complete`. |
+| P3b claim by entry | Fails: Claude skips a module's own hooks for the prompts its code submits (`hooks module loom@inline prompt.submit skipped: re-entry (the plugin's own code raised it; origin loom)`), and a `.catch` on the hook is not asked in its place. A hook's code after `await next(e)` also runs after the turn's `turn.start`, too late to mark entry. | The mod has no `prompt.submit` hook and stays non-gating. |
+| P3c claim on `done` | Passes all five probes, each attributed right: one message while idle; m3 and m4 merged (both `started` with one turn ID, both `complete` with the same text); one message mid-turn (its own turn, not the running one); a typed prompt and a mod message during one turn, in either order (never merged: separate turns in queue order); one message after `/clear`. `done` resolved before the carrying turn's `turn.start` hook got its `next` back, or between turns, 6 of 6 times (the `entered` path). | B1's `register.ts` (3888242) changes: a resolved submit joins the running main-loop turn (`mainTurn`), or `entered` for the next one to claim; `turns` maps a turn to its message IDs; `matches` goes. |
+| P4 across `/clear` | Passes: a poll spanning `/clear` ends normally and polling goes on, and a message sent after it gets `queued`, `started` and `complete`. | None. |
+| Other | `session.start` doesn't fire on `/clear`, so the session ID `hello` reported goes stale. With the server down the mod retries after 1, 2, 4 and 5 s, then says `hello` again. Claude writes `tsconfig.json` and `.claude-plugin/types/` into a `--plugin-dir` folder at load and watches the folder (every 400 ms while active, 30 s idle): the module loaded once and never reloaded, but a rewrite of `register.ts` would reload it. `HttpInit.socketPath` is documented as near 100 B at most. A merged turn may answer neither message: given THREE and FOUR, haiku asked which to send. | Nothing may rely on `hello`'s session ID after `/clear` (a follow-up). Amendment 1 holds: loom never rewrites a launch's mod folder. |
 
 ## Outcome and follow-ups
 
