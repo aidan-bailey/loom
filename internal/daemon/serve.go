@@ -158,6 +158,7 @@ func Serve(o Options) error {
 			mods = nil
 		}
 	}
+	mw := &modWatch{srv: mods, path: modSocket}
 	if o.Serving != nil {
 		o.Serving(loop, socket)
 	}
@@ -195,6 +196,7 @@ func Serve(o Options) error {
 			return fmt.Errorf("the model failed, and the daemon stops: %w", fatal)
 		case <-watch.C:
 			l.watch()
+			mw.watch(l.socketPath())
 		}
 	}
 }
@@ -339,6 +341,51 @@ func (l *listener) watch() {
 		log.For("serve").Info("serve.listening_again", "socket", next)
 	}
 	l.lost = false
+}
+
+// socketPath is the path the daemon listens on now: watch may move it.
+func (l *listener) socketPath() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.path
+}
+
+// modWatch keeps the mod socket beside the daemon's own: listened again when
+// its file is gone or replaced, and moved when the daemon's socket moves
+// (modserver.Server.Watch). New launches name where it is now
+// (session.SetModSocket); running ones keep the path they were launched
+// with, and on a move their links turn absent (core.ModPollTimeout), as
+// before. A failure is logged once, and names no socket until one listens
+// again.
+type modWatch struct {
+	srv  *modserver.Server // nil: no mod served (Windows, a path too long, a failed first listen)
+	path string            // where it listens, as last named to launches
+	lost bool
+}
+
+// watch has the mod server listen beside socket, the daemon's socket now.
+func (w *modWatch) watch(socket string) {
+	if w.srv == nil {
+		return
+	}
+	want := ModSocketPath(socket)
+	err := errors.New("its path would be too long for a unix socket")
+	if want != "" {
+		err = w.srv.Watch(want)
+	}
+	if err != nil {
+		if !w.lost {
+			log.For("serve").Error("serve.mod_relisten_failed", "socket", want, "err", err)
+			session.SetModSocket("")
+		}
+		w.lost = true
+		return
+	}
+	if w.lost || want != w.path {
+		log.For("serve").Info("serve.mod_listening_again", "socket", want)
+		session.SetModSocket(want)
+	}
+	w.lost, w.path = false, want
 }
 
 // close stops accepting; connections already served stay open.

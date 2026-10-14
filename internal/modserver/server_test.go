@@ -263,3 +263,117 @@ func TestClose_IsSafeTwiceAndOnNil(t *testing.T) {
 	var none *Server
 	none.Close()
 }
+
+// helloAt posts a hello for L1 to the mod socket at path, as a fresh client.
+func helloAt(t *testing.T, path string) int {
+	t.Helper()
+	return post(t, unixClient(path), api("/hello"), `{"launch":"L1"}`)
+}
+
+// A socket file removed under the server (a tmp cleaner) is listened again
+// at the same path, private, and serves.
+func TestWatch_ARemovedSocketIsListenedAgain(t *testing.T) {
+	h := &fakeHost{}
+	s, _ := listen(t, h, time.Second)
+	require.NoError(t, os.Remove(s.path))
+
+	require.NoError(t, s.Watch(s.path))
+
+	info, err := os.Stat(s.path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	assert.Equal(t, http.StatusNoContent, helloAt(t, s.path))
+}
+
+// A socket file something else put in the server's place is replaced by its
+// own again.
+func TestWatch_AReplacedSocketIsListenedAgain(t *testing.T) {
+	s, _ := listen(t, &fakeHost{}, time.Second)
+	require.NoError(t, os.Remove(s.path))
+	require.NoError(t, os.WriteFile(s.path, nil, 0o600))
+
+	require.NoError(t, s.Watch(s.path))
+
+	assert.Equal(t, http.StatusNoContent, helloAt(t, s.path))
+}
+
+// An intact socket is left alone: the same file, the same listener, and a
+// connection made before the watch still serves.
+func TestWatch_AnIntactSocketIsLeftAlone(t *testing.T) {
+	s, c := listen(t, &fakeHost{}, time.Second)
+	before, err := os.Stat(s.path)
+	require.NoError(t, err)
+
+	require.NoError(t, s.Watch(s.path))
+
+	after, err := os.Stat(s.path)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "not listened again")
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1"}`))
+}
+
+// A new wanted path (the daemon's socket moved) moves the mod socket: it
+// serves there, and the old file, still its own, goes.
+func TestWatch_AMovedPathMovesTheSocket(t *testing.T) {
+	s, _ := listen(t, &fakeHost{}, time.Second)
+	old := s.path
+	moved := shortSocket(t)
+
+	require.NoError(t, s.Watch(moved))
+
+	assert.Equal(t, http.StatusNoContent, helloAt(t, moved))
+	assert.NoFileExists(t, old)
+	s.Close()
+	assert.NoFileExists(t, moved, "Close removes the socket it listens on now")
+}
+
+// A re-listen tells the model the mod is served again: mods could not reach
+// it meanwhile, so every launch's grace starts over.
+func TestWatch_ARelistenSaysTheModIsServed(t *testing.T) {
+	h := &fakeHost{}
+	s, _ := listen(t, h, time.Second)
+	h.mu.Lock()
+	h.serving = false
+	h.mu.Unlock()
+	require.NoError(t, s.Watch(s.path))
+	h.mu.Lock()
+	assert.False(t, h.serving, "an intact socket changes nothing")
+	h.mu.Unlock()
+
+	require.NoError(t, os.Remove(s.path))
+	require.NoError(t, s.Watch(s.path))
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	assert.True(t, h.serving)
+}
+
+// A path it can't listen on is an error, and the server keeps what it had.
+func TestWatch_AFailedListenIsReported(t *testing.T) {
+	s, c := listen(t, &fakeHost{}, time.Second)
+
+	assert.Error(t, s.Watch(filepath.Join(t.TempDir(), "missing", "m.sock")))
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1"}`))
+}
+
+// After Close, a watch listens nowhere.
+func TestWatch_AfterCloseDoesNothing(t *testing.T) {
+	s, _ := listen(t, &fakeHost{}, time.Second)
+	s.Close()
+
+	require.NoError(t, s.Watch(s.path))
+
+	assert.NoFileExists(t, s.path)
+}
+
+// Close removes only its own socket: a file something else put at the path
+// stays.
+func TestClose_LeavesAFileThatIsNotItsOwn(t *testing.T) {
+	s, _ := listen(t, &fakeHost{}, time.Second)
+	require.NoError(t, os.Remove(s.path))
+	require.NoError(t, os.WriteFile(s.path, []byte("not the mod's"), 0o600))
+
+	s.Close()
+
+	assert.FileExists(t, s.path)
+}

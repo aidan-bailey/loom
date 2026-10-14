@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -272,6 +274,55 @@ func TestModSocketPath(t *testing.T) {
 
 // The daemon serves the mod beside its own socket, names it for launches,
 // and takes both down when it stops.
+// modHello posts a hello naming no launch to the mod socket at path, and
+// returns the status: 404 when the daemon's model answers.
+func modHello(t *testing.T, path string) int {
+	t.Helper()
+	c := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "unix", path)
+	}}}
+	resp, err := c.Post(fmt.Sprintf("http://loom/v%d/hello", claudemod.Version), "application/json", strings.NewReader(`{"launch":"nobody"}`))
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+// A mod socket file removed under a running daemon (a tmp cleaner) is
+// listened again at its path, and launches keep naming it.
+func TestServe_ARemovedModSocketIsListenedAgain(t *testing.T) {
+	dir := globalDir(t)
+	r := serve(t, dir, Options{WatchInterval: 20 * time.Millisecond})
+	mod := ModSocketPath(r.socket)
+	require.NoError(t, os.Remove(mod))
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(mod)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond, "the mod socket was never listened again")
+	assert.Equal(t, http.StatusNotFound, modHello(t, mod))
+	assert.Equal(t, mod, session.ModSocket())
+}
+
+// When the daemon's socket moves (its runtime dir gone), the mod socket moves
+// beside it, and new launches name the new path.
+func TestServe_AMovedSocketMovesTheModSocket(t *testing.T) {
+	dir := globalDir(t)
+	rt := os.Getenv("XDG_RUNTIME_DIR")
+	r := serve(t, dir, Options{WatchInterval: 20 * time.Millisecond})
+	require.NoError(t, os.RemoveAll(rt))
+	require.NoError(t, os.WriteFile(rt, nil, 0o600), "a file where the runtime dir was: it can't be made again")
+
+	var rec Record
+	require.Eventually(t, func() bool {
+		rec, _ = ReadRecord(dir)
+		return rec.Socket != "" && rec.Socket != r.socket && session.ModSocket() == ModSocketPath(rec.Socket)
+	}, 5*time.Second, 10*time.Millisecond, "the mod socket did not follow the daemon's")
+	mod := ModSocketPath(rec.Socket)
+	require.NotEmpty(t, mod)
+	assert.Equal(t, http.StatusNotFound, modHello(t, mod))
+}
+
 func TestServe_ServesTheModSocket(t *testing.T) {
 	dir := globalDir(t)
 	var atBuild string
@@ -287,14 +338,7 @@ func TestServe_ServesTheModSocket(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
-	c := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var d net.Dialer
-		return d.DialContext(ctx, "unix", mod)
-	}}}
-	resp, err := c.Post("http://loom/v1/hello", "application/json", strings.NewReader(`{"launch":"nobody"}`))
-	require.NoError(t, err)
-	_ = resp.Body.Close()
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "the model answers: no session holds that launch")
+	assert.Equal(t, http.StatusNotFound, modHello(t, mod), "the model answers: no session holds that launch")
 
 	require.NoError(t, r.shutdown(t))
 	assert.NoFileExists(t, mod)
