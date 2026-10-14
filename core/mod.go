@@ -88,11 +88,11 @@ func (msg Message) compose() string {
 // as one turn. The Reply comes once the mod has queued it, or at once with a
 // refusal: a session not started or Paused (opSend's precondition), one busy
 // (Loading: a start or resume is launching it, and its link would be the old
-// launch's, or a pause is stopping it), an empty message, an origin no sender
-// may use, or (OriginCLI) another program than Claude or a launch without a
-// live mod. A script's message is
-// pasted instead on such a launch, as SendPrompt does. With Wait, Answered
-// follows when the turn that carries the message ends.
+// launch's, or a pause is stopping it), an origin no sender may use, or
+// (OriginCLI) an empty message, another program than Claude or a launch
+// without a live mod. A script's message is pasted instead on such a launch,
+// as SendPrompt does, and so is a script's empty one on any launch. With
+// Wait, Answered follows when the turn that carries the message ends.
 func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	inst, _, ok := m.admit(opSend, id, req)
 	if !ok {
@@ -102,7 +102,7 @@ func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	case inst.GetStatus() == session.Loading:
 		m.refuse(req, id, fmt.Errorf("%s %s: the session is busy (starting, resuming or pausing): send again once it runs", opSend, inst.Title))
 		return
-	case strings.TrimSpace(msg.Text) == "":
+	case strings.TrimSpace(msg.Text) == "" && msg.Origin == OriginCLI:
 		m.refuse(req, id, fmt.Errorf("send to %s: the message is empty", inst.Title))
 		return
 	case msg.Origin != OriginCLI && msg.Origin != OriginScript:
@@ -112,7 +112,14 @@ func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 		m.refuse(req, id, fmt.Errorf("send to %s: %s", inst.Title, noModReason(inst)))
 		return
 	}
-	m.enqueue(inst, &modMessage{text: msg.compose(), asUser: msg.Origin == OriginScript, origin: msg.Origin, req: req, wait: msg.Wait})
+	out := &modMessage{text: msg.compose(), asUser: msg.Origin == OriginScript, origin: msg.Origin, req: req, wait: msg.Wait}
+	if strings.TrimSpace(msg.Text) == "" {
+		// A script's empty send_prompt presses Enter, as it did before the
+		// mod: Lua's API keeps it, and the mod has nothing to submit.
+		m.withoutMod(inst, out, "")
+		return
+	}
+	m.enqueue(inst, out)
 }
 
 // ModHello is what a mod says when it starts or reconnects.
@@ -333,19 +340,22 @@ func (m *Model) withoutMod(inst *session.Instance, msg *modMessage, why string) 
 }
 
 // noModReason says why inst's launch has no live mod, and what to do, for a
-// CLI message refused there: the daemon serves none (Windows, or a socket
-// path too long), the session was launched before this daemon (by an older
-// loom, the common case after an upgrade: a pause and resume relaunches it
-// with the mod), its launch has no hooks, or its Claude never said hello.
+// CLI message refused there: it runs another program than Claude, the daemon
+// serves no mod (Windows, or a socket path too long), the session was
+// launched before this daemon started and its mod has not said hello (an
+// older loom's launch, common after an upgrade, or a mod that failed: a
+// pause and resume relaunches it with the mod), its launch has no hooks, or
+// its Claude never said hello. Launches counts this process's launches only,
+// so it can't tell an older loom's launch from a mod that failed.
 func noModReason(inst *session.Instance) string {
 	launch, hooked := inst.HookLaunch()
 	switch {
-	case session.ModSocket() == "":
-		return "this loom daemon serves no loom mod (on Windows, or where its socket path would be too long): attach and type instead"
 	case !session.IsClaudeProgram(inst.Program()):
 		return fmt.Sprintf("it runs %s, not Claude: loom session send reaches only Claude", programName(inst.Program()))
+	case session.ModSocket() == "":
+		return "this loom daemon serves no loom mod (on Windows, or where its socket path would be too long): attach and type instead"
 	case inst.Launches() == 0:
-		return "it was launched without the loom mod (by an older loom, before this daemon started): pause and resume it to relaunch it with the mod, or attach and type instead"
+		return "it was launched before this daemon started and its loom mod has not said hello: pause and resume it to relaunch it with the mod, or attach and type instead"
 	case launch != "" && !hooked:
 		return "it runs without loom's hooks (its program passes its own --settings, or its hooks folder could not be prepared), so it has no loom mod: attach and type instead"
 	default:

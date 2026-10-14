@@ -250,7 +250,7 @@ func TestMod_PastTheGraceAModlessLaunchFallsBack(t *testing.T) {
 	rs := replies(out)
 	require.Len(t, rs, 1, "the CLI message is refused at once; the script's is pasted by a job")
 	assert.Equal(t, ReqID(5), rs[0].Req)
-	assert.ErrorContains(t, rs[0].Err, "without the loom mod")
+	assert.ErrorContains(t, rs[0].Err, "launched before this daemon started and its loom mod has not said hello")
 	require.Len(t, out.Jobs, 1, "the script's paste")
 	assert.Empty(t, m.mods[inst].outbox) // read, not polled: a poll would prove a mod
 
@@ -379,7 +379,7 @@ func TestMod_AnUnadoptedRestoredLaunchsGraceRunsFromTheBoot(t *testing.T) {
 	rs := replies(out)
 	require.Len(t, rs, 1, "the CLI message is refused; the script's is pasted by a job")
 	assert.Equal(t, ReqID(5), rs[0].Req)
-	assert.ErrorContains(t, rs[0].Err, "without the loom mod")
+	assert.ErrorContains(t, rs[0].Err, "launched before this daemon started and its loom mod has not said hello")
 	assert.Len(t, out.Jobs, 1, "the script's paste")
 }
 
@@ -818,7 +818,7 @@ func TestMod_ALaunchThatNeverReportsItsStartFallsBackAfterTheCap(t *testing.T) {
 	rs := replies(out)
 	require.Len(t, rs, 1, "the CLI message is refused")
 	assert.Equal(t, ReqID(5), rs[0].Req)
-	assert.ErrorContains(t, rs[0].Err, "without the loom mod")
+	assert.ErrorContains(t, rs[0].Err, "launched before this daemon started and its loom mod has not said hello")
 	assert.Len(t, startedOf(run(m, out), 7), 1, "the first prompt is pasted, and its paste finishes the start")
 }
 
@@ -842,18 +842,84 @@ func TestSend_ACLIMessageToAnotherProgramIsRefusedByName(t *testing.T) {
 	assert.Len(t, out.Jobs, 1, "the script's paste")
 }
 
-func TestSend_RefusesAnEmptyMessage(t *testing.T) {
+// An empty CLI message is refused. A script's empty send_prompt pastes,
+// pressing Enter, as it did before the mod: the Lua API keeps it, and the mod
+// never sees it.
+func TestSend_AnEmptyMessage(t *testing.T) {
 	withMod(t)
 	m := NewForTest(Options{})
 	inst := modInst(t, m, "x")
 	for _, text := range []string{"", " \n\t"} {
-		m.Send(m.idOf(inst), Message{Text: text, Origin: OriginScript}, 5)
+		m.Send(m.idOf(inst), Message{Text: text, Origin: OriginCLI}, 5)
 		rs := replies(m.Drain())
 		require.Len(t, rs, 1, "%q", text)
 		assert.ErrorContains(t, rs[0].Err, "send to x: the message is empty")
 		assert.ErrorIs(t, rs[0].Err, ErrRefused)
+
+		m.Send(m.idOf(inst), Message{Text: text, Origin: OriginScript}, 6)
+		out := m.Drain()
+		assert.Empty(t, replies(out), "a script's is no refusal")
+		require.Len(t, out.Jobs, 1, "its paste")
+		assert.Equal(t, []Reply{{Req: 6, ID: m.idOf(inst)}}, replies(run(m, out)), "the paste answers it")
 	}
 	assert.Empty(t, m.mods, "nothing reaches the mod")
+}
+
+// A first prompt's start finishes once: a queued report that comes late,
+// after the prompt fell back (the grace, the mod's silence) or after its link
+// ended, starts nothing again.
+func TestMod_AFirstPromptsLateQueuedStartsNothingTwice(t *testing.T) {
+	start := func(t *testing.T, sessionStart time.Time) (*Model, *session.Instance, string) {
+		t.Helper()
+		withMod(t)
+		m := NewForTest(Options{})
+		ws := storedWorkspace(t, "a")
+		inst := startedInst(t, "x", "claude")
+		ws.add(inst)
+		m.SetWorkspacesForTest(ws)
+		adoptLaunch(t, m, inst, "L1", sessionStart)
+		inst.SetPrompt("do the thing")
+		m.Deliver(caused{req: 7, result: StartResult{Instance: inst, Owner: ws}})
+		m.Drain()
+		require.Len(t, m.mods[inst].outbox, 1)
+		return m, inst, m.mods[inst].outbox[0].id
+	}
+	// settle runs what the model produced, its jobs too, and counts the
+	// Started naming the Create.
+	settle := func(m *Model) int {
+		out := m.Drain()
+		return len(startedOf(out, 7)) + len(startedOf(run(m, out), 7))
+	}
+	lateQueued := func(t *testing.T, m *Model, id string) {
+		t.Helper()
+		_ = m.ModEvents("L1", []ModEvent{{Kind: "queued", ID: id}})
+	}
+
+	t.Run("after the grace", func(t *testing.T) {
+		m, _, id := start(t, time.Now().Add(-time.Minute))
+		m.modTick(time.Now())
+		require.Equal(t, 1, settle(m), "fixture: its paste started it")
+		lateQueued(t, m, id)
+		assert.Zero(t, settle(m))
+	})
+	t.Run("after the mod went silent", func(t *testing.T) {
+		m, _, id := start(t, time.Now())
+		require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
+		_, _, err := m.ModInbox("L1")
+		require.NoError(t, err)
+		m.modTick(time.Now().Add(ModPollTimeout))
+		require.Equal(t, 1, settle(m), "fixture: the silence finished it, unpasted")
+		lateQueued(t, m, id)
+		assert.Zero(t, settle(m))
+	})
+	t.Run("after its link ended", func(t *testing.T) {
+		m, inst, id := start(t, time.Now())
+		require.NoError(t, inst.TransitionTo(session.Paused))
+		m.modTick(time.Now())
+		require.Equal(t, 1, settle(m), "fixture: the stop finished it")
+		lateQueued(t, m, id)
+		assert.Zero(t, settle(m))
+	})
 }
 
 // A CLI message to a launch with no mod is refused saying why, and what to
@@ -870,6 +936,12 @@ func TestMod_ARefusalSaysWhyTheLaunchHasNoMod(t *testing.T) {
 		return rs[0].Err
 	}
 
+	t.Run("another program, where the daemon serves no mod", func(t *testing.T) {
+		m := NewForTest(Options{})
+		inst := startedInst(t, "x", "aider")
+		hold(m, inst)
+		assert.ErrorContains(t, refusal(t, m, inst, time.Now()), "send to x: it runs aider, not Claude")
+	})
 	t.Run("the daemon serves no mod", func(t *testing.T) {
 		m := NewForTest(Options{})
 		inst := activeInst(t, m, "x")
@@ -882,8 +954,9 @@ func TestMod_ARefusalSaysWhyTheLaunchHasNoMod(t *testing.T) {
 		adoptLaunch(t, m, inst, "L1", time.Now().Add(-time.Hour))
 		require.Zero(t, inst.Launches(), "fixture: restored, not launched by this daemon")
 		err := refusal(t, m, inst, time.Now())
-		assert.ErrorContains(t, err, "send to x: it was launched without the loom mod")
+		assert.ErrorContains(t, err, "send to x: it was launched before this daemon started and its loom mod has not said hello")
 		assert.ErrorContains(t, err, "pause and resume it")
+		assert.NotContains(t, err.Error(), "older loom", "a restart says nothing of who launched it")
 	})
 	t.Run("a launch without hooks", func(t *testing.T) {
 		withMod(t)
