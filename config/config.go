@@ -94,9 +94,13 @@ type Config struct {
 	Settings
 }
 
-// ClaudePermissionModes lists the values --permission-mode accepts, in
-// the order the Claude Preferences screen cycles through them.
-var ClaudePermissionModes = []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
+// ClaudePermissionModes lists the permission modes loom offers, in the
+// order the Claude Preferences screen cycles through them. "default" passes
+// no --permission-mode, so Claude chooses: its settings' defaultMode, else
+// its own default, which is auto since Claude 2.1.299 (it lists default only
+// as a hidden alias of manual). "manual" is Claude's ask-before-acting mode;
+// every other value passes through as --permission-mode <mode>.
+var ClaudePermissionModes = []string{"default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 
 // ClaudeModel pairs a --model alias with whether it accepts Claude
 // Code's [1m] long-context suffix. The capability lives on the model

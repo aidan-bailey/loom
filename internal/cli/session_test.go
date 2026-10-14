@@ -282,6 +282,12 @@ func TestSessionNew_Refusals(t *testing.T) {
 
 // Remote control on, for an account whose login can't use it: `new`
 // refuses with the reason, and --no-remote-control starts it without.
+// manual is Claude's ask mode; "default" passes no flag and leaves the mode
+// to Claude, whose own default is auto.
+func TestSessionNew_AcceptsManualPermissionMode(t *testing.T) {
+	assert.NoError(t, newFlags{permissionMode: "manual"}.validate())
+}
+
 func TestSessionNew_RemoteControlBlocked(t *testing.T) {
 	isolateWorkspaces(t)
 	agent := fakeAgent(t, "console")

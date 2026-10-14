@@ -33,15 +33,22 @@ func TestClaudePreferencesCyclesPermissionMode(t *testing.T) {
 	// Move focus down to the Permission Mode row.
 	cp.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"})
 
-	_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
-	assert.True(t, changed)
-	assert.Equal(t, "acceptEdits", cfg.PermissionMode())
-
-	for _, want := range []string{"plan", "auto", "dontAsk", "bypassPermissions", "default"} {
-		_, changed = cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	for _, want := range []string{"manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions", "default"} {
+		_, changed := cp.HandleKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
 		assert.True(t, changed)
 		assert.Equal(t, want, cfg.PermissionMode())
 	}
+}
+
+// "default" passes no flag, so Claude picks the mode (auto, on Claude
+// 2.1.299), not its ask mode, which is "manual": the row says whose it is.
+func TestClaudePreferencesShowsDefaultPermissionModeAsClaudes(t *testing.T) {
+	cfg := &config.Config{}
+	assert.Contains(t, NewClaudePreferences(cfg, false, "").Render(), "< default (Claude's) >")
+
+	manual := "manual"
+	cfg.ClaudePermissionMode = &manual
+	assert.Contains(t, NewClaudePreferences(cfg, false, "").Render(), "< manual >")
 }
 
 func TestClaudePreferencesCyclesModel(t *testing.T) {

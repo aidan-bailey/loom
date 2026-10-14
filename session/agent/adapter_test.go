@@ -114,6 +114,7 @@ func TestClaudePermissionModeFlag(t *testing.T) {
 		want    string
 	}{
 		{"plain", "claude", "acceptEdits", "claude --permission-mode acceptEdits"},
+		{"manual is passed, not left to Claude", "claude", "manual", "claude --permission-mode manual"},
 		{"preserves flags", "claude --model sonnet", "plan", "claude --permission-mode plan --model sonnet"},
 		{"absolute path", "/usr/bin/claude", "bypassPermissions", "/usr/bin/claude --permission-mode bypassPermissions"},
 		{"empty mode is no-op", "claude --model sonnet", "", "claude --model sonnet"},

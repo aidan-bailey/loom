@@ -273,7 +273,7 @@ func newSessionNewCmd(workspace *string) *cobra.Command {
 	fl.IntVar(&f.issue, "issue", 0, "Link the session to this GitHub issue")
 	fl.StringVar(&f.account, "account", "", "Claude account to run on (default: the default account)")
 	fl.StringVar(&f.model, "model", "", "Model: "+strings.Join(config.ClaudeModelAliases(), ", "))
-	fl.StringVar(&f.permissionMode, "permission-mode", "", "Permission mode: "+strings.Join(config.ClaudePermissionModes, ", "))
+	fl.StringVar(&f.permissionMode, "permission-mode", "", "Permission mode: "+strings.Join(config.ClaudePermissionModes, ", ")+` ("default" leaves it to Claude's own default; "manual" asks before acting)`)
 	fl.StringVar(&f.effort, "effort", "", "Effort: "+strings.Join(config.ClaudeEfforts, ", "))
 	fl.BoolVar(&f.noRemoteControl, "no-remote-control", false, "Start without remote control")
 	return cmd

@@ -20,7 +20,10 @@ func TestSessionLaunchOptionsTogglesRemoteControl(t *testing.T) {
 func TestSessionLaunchOptionsCyclesPermissionModeAndModel(t *testing.T) {
 	lo := NewSessionLaunchOptions(LaunchOptions{PermissionMode: "default", Model: "default"}, false, "")
 
+	assert.Contains(t, lo.Render(), "< default (Claude's) >")
 	lo.HandleKeyPress(tea.KeyPressMsg{Code: 'j', Text: "j"}) // row 1: Permission Mode
+	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
+	assert.Equal(t, "manual", lo.Options().PermissionMode)
 	lo.HandleKeyPress(tea.KeyPressMsg{Code: ' ', Text: " "})
 	assert.Equal(t, "acceptEdits", lo.Options().PermissionMode)
 

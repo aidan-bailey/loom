@@ -329,7 +329,7 @@ func (l *SessionLaunchOptions) Render() string {
 
 	content := sessionLaunchOptionsTitleStyle.Render("Session Launch Options") + "\n\n" +
 		row(0, "Remote Control    ", rcCheck) + "\n" +
-		row(1, "Permission Mode   ", "< "+l.opts.PermissionMode+" >") + "\n" +
+		row(1, "Permission Mode   ", "< "+permissionModeLabel(l.opts.PermissionMode)+" >") + "\n" +
 		row(2, "Model             ", "< "+l.opts.Model+" >") + "\n" +
 		row(3, "1M Context        ", ctxCheck) + "\n" +
 		row(4, "Headroom Proxy    ", hwCheck) + "\n" +

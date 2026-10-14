@@ -121,6 +121,16 @@ func (c *ClaudePreferences) HandleKeyPress(msg tea.KeyPressMsg) (closed, changed
 	return false, false
 }
 
+// permissionModeLabel is how a permission mode reads on screen. "default"
+// passes no flag, so the mode is Claude's own choice (auto since Claude
+// 2.1.299), not its ask mode, which is "manual".
+func permissionModeLabel(mode string) string {
+	if mode == "default" {
+		return "default (Claude's)"
+	}
+	return mode
+}
+
 // nextInList returns the value in list after current, wrapping from the
 // last value back to the first. Falls back to list[0] if current isn't
 // found (e.g. a value predating this list's current contents).
@@ -172,7 +182,7 @@ func (c *ClaudePreferences) Render() string {
 	if c.cursor == 1 {
 		pmCursor = "> "
 	}
-	pmRow := pmCursor + "Permission Mode   < " + c.cfg.PermissionMode() + " >"
+	pmRow := pmCursor + "Permission Mode   < " + permissionModeLabel(c.cfg.PermissionMode()) + " >"
 	if c.cursor == 1 {
 		pmRow = claudePrefsSelectedStyle.Render(pmRow)
 	} else {

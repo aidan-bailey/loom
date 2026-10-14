@@ -451,7 +451,7 @@ func TestPermissionMode(t *testing.T) {
 }
 
 func TestClaudePermissionModes(t *testing.T) {
-	assert.Equal(t, []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}, ClaudePermissionModes)
+	assert.Equal(t, []string{"default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}, ClaudePermissionModes)
 }
 
 func TestHeadroomProxyEnabled(t *testing.T) {

@@ -80,7 +80,8 @@ type Adapter interface {
 	// ApplyPermissionModeFlag returns the program string with
 	// "--permission-mode <mode>" inserted (e.g. "claude
 	// --permission-mode acceptEdits"). mode == "" or "default" is a
-	// no-op — Claude's own default already matches. Idempotent: if
+	// no-op, leaving the mode to the agent's own default (Claude's is
+	// auto since 2.1.299; its ask mode is "manual"). Idempotent: if
 	// --permission-mode is already present, the input is returned
 	// unchanged. Returns the input unchanged for agents without a
 	// permission-mode concept.
