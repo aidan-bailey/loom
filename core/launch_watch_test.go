@@ -111,18 +111,44 @@ func runWatch(srv *paneServer, program string, within time.Duration, settled str
 // menuPane is Claude's safety check as a tmux pane: a menu of options whose
 // cursor starts on the first and moves down on Down, wrapping, and that
 // closes on Enter. Like Claude's, it refuses every key for refuseFor after
-// it first shows; a frozen one never moves. It records each key, when it
-// came (since the menu showed) and what Enter confirmed.
+// it first shows; a frozen one never moves. A key it takes shows its effect
+// only lag later, in order, as a loaded Claude draws late. It records each
+// key, when it came (since the menu showed) and what Enter confirmed.
 type menuPane struct {
 	mu        sync.Mutex
 	options   []string
 	cursor    int
 	refuseFor time.Duration
 	frozen    bool
+	lag       time.Duration
 	shown     time.Time
+	taken     []takenKey
 	keys      []string
 	at        []time.Duration
 	confirmed string
+}
+
+// takenKey is a key the menu took, whose effect shows at due.
+type takenKey struct {
+	key string
+	due time.Time
+}
+
+// draw applies the effects of the keys taken that are due by now, in order.
+func (p *menuPane) draw(now time.Time) {
+	for len(p.taken) > 0 && !p.taken[0].due.After(now) {
+		switch p.taken[0].key {
+		case "Down":
+			if p.confirmed == "" {
+				p.cursor = (p.cursor + 1) % len(p.options)
+			}
+		case "Enter":
+			if p.confirmed == "" {
+				p.confirmed = p.options[p.cursor]
+			}
+		}
+		p.taken = p.taken[1:]
+	}
 }
 
 func (p *menuPane) screen() string {
@@ -151,6 +177,7 @@ func (p *menuPane) runner() cmd_test.MockCmdExec {
 			if p.shown.IsZero() {
 				p.shown = time.Now()
 			}
+			p.draw(time.Now())
 			return []byte(p.screen()), nil
 		case "send-keys":
 			key, since := c.Args[len(c.Args)-1], time.Since(p.shown)
@@ -158,12 +185,8 @@ func (p *menuPane) runner() cmd_test.MockCmdExec {
 			if p.confirmed != "" || p.frozen || since < p.refuseFor {
 				break
 			}
-			switch key {
-			case "Down":
-				p.cursor = (p.cursor + 1) % len(p.options)
-			case "Enter":
-				p.confirmed = p.options[p.cursor]
-			}
+			p.taken = append(p.taken, takenKey{key: key, due: time.Now().Add(p.lag)})
+			p.draw(time.Now())
 		}
 		return nil, nil
 	}
@@ -173,6 +196,7 @@ func (p *menuPane) runner() cmd_test.MockCmdExec {
 func (p *menuPane) seen() (keys []string, at []time.Duration, confirmed string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.draw(time.Now().Add(time.Hour)) // whatever was taken lands
 	return append([]string(nil), p.keys...), append([]time.Duration(nil), p.at...), p.confirmed
 }
 
@@ -333,6 +357,21 @@ func TestLaunchWatch_AnswersTheSafetyCheckOnlyOnItsOption(t *testing.T) {
 		assert.Equal(t, "Quick safety check", result.settled)
 		keys, _, _ := menu.seen()
 		assert.Equal(t, []string{"Down", "Down", "Down", "Down"}, keys, "no Enter")
+	})
+
+	t.Run("a Down drawn late never ends in No", func(t *testing.T) {
+		// A loaded Claude takes a Down at once but draws it late. A Down
+		// pressed again meanwhile lands after it, and an Enter sent on the
+		// first one's draw would land after both: on "No, exit", wrapped.
+		for _, lag := range []time.Duration{10 * time.Millisecond, 30 * time.Millisecond, 70 * time.Millisecond} {
+			menu := &menuPane{options: safety(), lag: lag}
+
+			result := runMenuWatch(menu, 3*time.Second, 20*time.Millisecond)
+
+			keys, _, confirmed := menu.seen()
+			assert.Equal(t, "Yes, I trust this folder", confirmed, "lag %v: keys %v", lag, keys)
+			assert.True(t, result.answered, "lag %v", lag)
+		}
 	})
 
 	t.Run("no cursor to read", func(t *testing.T) {

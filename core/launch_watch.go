@@ -39,6 +39,12 @@ const trustMenuMoves = 4
 // leave a prompt the watch thinks it answered.
 const trustMenuSettle = 2500 * time.Millisecond
 
+// trustMenuLost is how many settles a Down may go undrawn, with the menu
+// unchanged, before an answer counts it as refused rather than on its way:
+// until then no Enter goes, since a Down still to land would move the
+// cursor off the choice first.
+const trustMenuLost = 3
+
 // launchWatch is one session's watch (Model.watching): the program of its
 // latest launch, and whether the session launched again while the watch
 // ran.
@@ -139,7 +145,9 @@ func launchWatchJob(ts *tmux.Session, every, within, settle time.Duration, settl
 // option down at a time, after the agent drew the last move. No key goes
 // before settle has passed since the prompt first showed, and a Down the
 // menu has not drawn is pressed again once settle has passed since it: the
-// agent refuses keys just after a dialog opens. A menu that never reaches
+// agent refuses keys just after a dialog opens, until the menu drew one.
+// Enter waits until every Down sent was seen drawn, since one that lands
+// late would move the cursor off the choice first. A menu that never reaches
 // the choice, shows no single cursor, or has not reached it when the watch
 // ends is left to the user: no key it sends can then confirm "No".
 type trustAnswer struct {
@@ -151,11 +159,15 @@ type trustAnswer struct {
 	prompt  string
 	settled bool
 	seenAt  time.Time
-	// moves counts the moves sent to prompt's menu, the last one a Down
-	// from the option from, at keyAt.
-	moves int
-	from  string
-	keyAt time.Time
+	// moves counts the moves sent to prompt's menu toward its choice, and
+	// sent every Down, a move pressed again included. drawn counts the
+	// changes of the cursor the captures saw, last the option it was on at
+	// the one before, and activeAt is when a Down went or a change was seen.
+	moves    int
+	sent     int
+	drawn    int
+	last     string
+	activeAt time.Time
 }
 
 // see handles one capture of the pane, screen, taken at now, and reports
@@ -180,32 +192,51 @@ func (a *trustAnswer) see(screen string, now time.Time) bool {
 		return a.answered(a.ts.AnswerTrustPrompt())
 	}
 	selected, ok := tmux.SelectedOption(screen)
-	switch {
-	case !ok:
+	if !ok {
 		a.leave("no single menu cursor")
+		return false
+	}
+	if a.last != "" && selected != a.last {
+		a.drawn, a.activeAt = a.drawn+1, now
+	}
+	a.last = selected
+	// pending is how many Downs may still be on their way: each change a
+	// capture saw drew one at least, so it is never fewer than are.
+	pending, quiet := a.sent-a.drawn, now.Sub(a.activeAt)
+	switch {
 	case tmux.IsOption(selected, choice):
+		// Enter only with no Down in flight: one still to land would move
+		// the cursor first, and a menu of two wraps onto "No, exit". Downs
+		// that drew nothing for trustMenuLost settles since the menu last
+		// changed were refused, and count as landed.
+		if pending > 0 && quiet < trustMenuLost*a.settle {
+			return false
+		}
 		return a.answered(a.ts.PressKeys("Enter"))
-	case a.moves > 0 && selected == a.from:
-		// The last Down is not drawn: refused, or still to come.
-		if now.Sub(a.keyAt) >= a.settle {
-			a.down(selected, now)
+	case pending > 0:
+		// A Down is not drawn: refused, or still to come. A menu that drew
+		// none yet may still be refusing keys, so it gets Down again once
+		// settle has passed; one that drew a Down takes keys, and the rest
+		// are on their way: another would only follow them.
+		if a.drawn == 0 && quiet >= a.settle {
+			a.down(now)
 		}
 	case a.moves >= trustMenuMoves:
 		a.leave("the menu never reached " + choice)
 	default:
 		a.moves++
-		a.down(selected, now)
+		a.down(now)
 	}
 	return false
 }
 
-// down presses Down on the menu, whose cursor is on from, at now.
-func (a *trustAnswer) down(from string, now time.Time) {
+// down presses Down on the menu at now.
+func (a *trustAnswer) down(now time.Time) {
 	if err := a.ts.PressKeys("Down"); err != nil {
 		a.leave(err.Error())
 		return
 	}
-	a.from, a.keyAt = from, now
+	a.sent, a.activeAt = a.sent+1, now
 }
 
 // end leaves to the user a menu the watch was still moving when it ran out
