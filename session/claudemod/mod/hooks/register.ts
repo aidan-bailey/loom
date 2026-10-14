@@ -139,10 +139,16 @@ async function pump($: EngineInterface) {
 // ensurePump starts the pump once, when the launch names the daemon's socket
 // and its launch ID. session.start starts it, and every turn hook makes sure
 // of it: a reloaded module runs register again, with no session.start after.
+// It never rejects, since the turn hooks don't await it.
 async function ensurePump($: EngineInterface) {
   if (pumping) return
-  socket = (await $.env.get('LOOM_MOD_SOCKET')) ?? ''
-  launch = (await $.env.get('LOOM_LAUNCH')) ?? ''
+  try {
+    socket = (await $.env.get('LOOM_MOD_SOCKET')) ?? ''
+    launch = (await $.env.get('LOOM_LAUNCH')) ?? ''
+  } catch (err) {
+    $.ui.log(`loom: read the environment: ${String(err)}`, { to: 'debug' })
+    return
+  }
   if (socket !== '' && launch !== '' && !pumping) {
     pumping = true
     void pump($)
