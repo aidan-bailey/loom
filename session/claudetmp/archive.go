@@ -33,6 +33,9 @@ type Manifest struct {
 	Reason        string         `json:"reason"`
 	ArchivedAt    time.Time      `json:"archived_at"`
 	SkippedCaches []SkippedCache `json:"skipped_caches,omitempty"`
+	// CarriedForward names the entries a Snapshot copied from the previous
+	// zip because their source was gone: kept, never dropped.
+	CarriedForward []string `json:"carried_forward,omitempty"`
 }
 
 // SkippedCache is a cache directory Archive left out (slash path relative
@@ -47,6 +50,7 @@ type Result struct {
 	BytesIn    int64 // regular-file bytes archived
 	BytesOut   int64 // the zip's size
 	CacheBytes int64 // bytes in the cache dirs left out
+	Carried    int   // entries a Snapshot kept from the previous zip
 }
 
 // cacheDirSignature opens every valid CACHEDIR.TAG
@@ -138,7 +142,7 @@ func Archive(src, zipPath string, m Manifest) (Result, error) {
 	zw.RegisterCompressor(zip.Deflate, func(w io.Writer) (io.WriteCloser, error) {
 		return flate.NewWriter(w, flate.BestSpeed)
 	})
-	if err := addTree(zw, src, &m, &res); err != nil {
+	if err := addTree(zw, src, &m, &res, nil); err != nil {
 		return fail(fmt.Errorf("archive %s: %w", src, err))
 	}
 	if err := addManifest(zw, m); err != nil {
@@ -222,8 +226,14 @@ func syncDir(dir string) {
 }
 
 // addTree adds src's content to zw, named by slash paths relative to src.
-// WalkDir never follows symlinks.
-func addTree(zw *zip.Writer, src string, m *Manifest, res *Result) error {
+// WalkDir never follows symlinks. When seen is non-nil, every entry name
+// written is recorded in it (a directory's with its trailing "/").
+func addTree(zw *zip.Writer, src string, m *Manifest, res *Result, seen map[string]bool) error {
+	note := func(name string) {
+		if seen != nil {
+			seen[name] = true
+		}
+	}
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -252,6 +262,7 @@ func addTree(zw *zip.Writer, src string, m *Manifest, res *Result) error {
 			if err != nil {
 				return err
 			}
+			note(name)
 			_, err = io.WriteString(w, target)
 			return err
 		case mode.IsDir():
@@ -263,10 +274,17 @@ func addTree(zw *zip.Writer, src string, m *Manifest, res *Result) error {
 			}
 			hdr := &zip.FileHeader{Name: name + "/", Modified: info.ModTime()}
 			hdr.SetMode(mode)
-			_, err := zw.CreateHeader(hdr)
-			return err
+			if _, err := zw.CreateHeader(hdr); err != nil {
+				return err
+			}
+			note(name + "/")
+			return nil
 		case mode.IsRegular():
-			return addFile(zw, p, name, info, res)
+			if err := addFile(zw, p, name, info, res); err != nil {
+				return err
+			}
+			note(name)
+			return nil
 		default: // sockets, FIFOs, devices
 			return nil
 		}

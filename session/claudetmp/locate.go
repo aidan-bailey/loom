@@ -1,8 +1,12 @@
-// Package claudetmp finds, archives and restores the per-session temp
-// directory Claude Code keeps outside the worktree:
-// <root>/<encoded cwd>/<session id>/{scratchpad,tasks}/. Loom removes a
-// session's worktree on pause and kill; this package keeps the temp dir
-// (on tmpfs, often) from outliving it.
+// Package claudetmp finds, archives and restores the per-session
+// directories Claude Code keeps outside the worktree: its temp dir,
+// <root>/<encoded cwd>/<session id>/{scratchpad,tasks}/, which Archive
+// moves into a zip and Restore puts back (loom removes a session's worktree
+// on pause and kill; this keeps the temp dir, on tmpfs often, from
+// outliving it), and its project dir of chats,
+// <config>/projects/<encoded cwd>/, which Snapshot copies and Fill fills
+// back in, never moving or changing Claude's files. Both names use the
+// same encoding.
 //
 // The layout is Claude's own and undocumented, read from its 2.1.288
 // bundle (docs/superpowers/specs/2026-10-05-worktree-locks-and-claude-temp-archive-design.md).
