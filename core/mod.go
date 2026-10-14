@@ -351,7 +351,7 @@ func (m *Model) withoutMod(inst *session.Instance, msg *modMessage, why string) 
 	case OriginScript:
 		m.causedBy(0, func() { m.spawn(m.track(msg.req, id, m.sendPromptInst(inst, msg.text))) })
 	case OriginFirstPrompt:
-		m.causedBy(msg.cause, func() { m.spawn(sendInitialPrompt(inst, msg.owner, msg.text)) })
+		m.causedBy(msg.cause, func() { m.spawn(m.sendInitialPrompt(inst, msg.owner, msg.text)) })
 	}
 }
 

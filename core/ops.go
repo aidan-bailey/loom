@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/log"
@@ -293,27 +294,88 @@ func killUnstarted(inst *session.Instance) Job {
 // failure comes back as a notice naming the session: it arrives after the
 // overlay or bar that took the text has closed, so the user must resend.
 // For text the user sends to a running session: the prompt overlay, the
-// quick input bar, a workbench review.
+// quick input bar, a workbench review, a script's message with no mod. A
+// trust prompt open on the pane (AgentPane.TrustPromptOpen) refuses it at
+// once, pasting nothing: the Enter would confirm whatever the prompt
+// selects, "No, exit" included, and someone waits on the answer. A capture
+// that fails doesn't block the paste.
 func (m *Model) sendPromptInst(inst *session.Instance, prompt string) Job {
+	title := inst.Title
 	return func() any {
+		open, err := inst.Pane().TrustPromptOpen()
+		if err != nil {
+			log.For("core").Warn("send_prompt.trust_check_failed", "instance", title, "err", err)
+		}
+		if open {
+			return promptFailed{err: fmt.Errorf("prompt not sent to %s: its trust prompt is open: answer it in the pane first", title)}
+		}
 		if err := inst.Pane().SendPrompt(prompt); err != nil {
-			return promptFailed{err: fmt.Errorf("prompt not sent to %s: %w", inst.Title, err)}
+			return promptFailed{err: fmt.Errorf("prompt not sent to %s: %w", title, err)}
 		}
 		return nil
 	}
 }
 
-// sendInitialPrompt is the start completion's send of an N flow's
-// prompt. A failure is logged, as it was when the completion sent it
-// on the TUI's goroutine. Either way it reports promptSent, whose
-// delivery tells the TUI the start finished (Started): only after the
-// prompt, as before, so no key the user types into the attached pane
-// can land ahead of it.
-func sendInitialPrompt(inst *session.Instance, owner *Workspace, prompt string) Job {
+// firstPromptPollEvery is how often a start's first prompt looks again at
+// a trust prompt open on its pane, and firstPromptWaitFor how long it waits
+// for the person to answer it (sendInitialPrompt). The launch watch answers
+// what it can within seconds of the launch, so a prompt still open is one it
+// left to the person, who may be away from the pane. Vars so tests can
+// shorten them; a job reads them when it is built.
+var (
+	firstPromptPollEvery = 500 * time.Millisecond
+	firstPromptWaitFor   = 2 * time.Minute
+)
+
+// sendInitialPrompt is the send of a start's first prompt when its launch
+// has no mod, or the mod's fallback (deliverStart, withoutMod). It never
+// pastes into an open trust prompt (AgentPane.TrustPromptOpen), whose Enter
+// would confirm whatever it selects, "No, exit" included: it waits for the
+// person to answer it, looking every firstPromptPollEvery for up to
+// firstPromptWaitFor, and until the loop begins to stop (stopSignal), when
+// it looks once more. Still open, the prompt is not sent, and promptSent
+// says so with its text (unsent), which reaches the requester as a notice.
+// A capture that fails doesn't block the paste, and a failed paste is
+// logged. Either way it reports promptSent, whose delivery tells the TUI
+// the start finished (Started): only after the prompt, so no key the user
+// types into the attached pane can land ahead of it.
+func (m *Model) sendInitialPrompt(inst *session.Instance, owner *Workspace, prompt string) Job {
+	title, every, within, stopping := inst.Title, firstPromptPollEvery, firstPromptWaitFor, m.stopSignal()
 	return func() any {
+		if !trustPromptCleared(inst.Pane(), title, every, within, stopping) {
+			log.For("core").Warn("first_prompt.trust_prompt_open", "instance", title, "prompt_bytes", len(prompt))
+			return promptSent{inst: inst, owner: owner, unsent: fmt.Sprintf(
+				"the first prompt for %s was not sent: its trust prompt is still open. Answer it, then send the prompt yourself: %s", title, prompt)}
+		}
 		if err := inst.Pane().SendPrompt(prompt); err != nil {
 			log.For("core").Error("send_prompt_failed", "err", err)
 		}
 		return promptSent{inst: inst, owner: owner}
+	}
+}
+
+// trustPromptCleared reports whether pane shows no trust prompt open,
+// looking again every every while one is, for up to within, and once more
+// when stopping closes. A capture that fails counts as cleared, logged: the
+// check blocks no paste it can't see a reason to.
+func trustPromptCleared(pane session.AgentPane, title string, every, within time.Duration, stopping <-chan struct{}) bool {
+	deadline := time.Now().Add(within)
+	for {
+		open, err := pane.TrustPromptOpen()
+		if err != nil {
+			log.For("core").Warn("first_prompt.trust_check_failed", "instance", title, "err", err)
+			return true
+		}
+		if !open {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		select {
+		case <-time.After(every):
+		case <-stopping:
+			deadline = time.Now()
+		}
 	}
 }

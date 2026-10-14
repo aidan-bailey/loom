@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os/exec"
 	"strings"
 	"sync"
@@ -40,4 +41,46 @@ func TestAgentPane_SendPromptRefusesAPausedInstance(t *testing.T) {
 	require.NoError(t, inst.TransitionTo(Running))
 	require.NoError(t, inst.Pane().SendPrompt("fix the bug"))
 	assert.NotEmpty(t, ran, "a running instance's prompt is typed")
+}
+
+// TrustPromptOpen reads the pane's screen (capture-pane) and asks the agent
+// whether a pasted Enter would answer a trust prompt there. A paused
+// instance's name may belong to another workspace's session, so it captures
+// nothing; a failed capture is an error, which the caller decides on.
+func TestAgentPane_TrustPromptOpen(t *testing.T) {
+	screen, captureErr, captures := "", error(nil), 0
+	rec := cmd_test.MockCmdExec{
+		RunFunc: func(*exec.Cmd) error { return nil },
+		OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+			if cmd_test.TmuxSubcommand(c.Args) == "capture-pane" {
+				captures++
+				return []byte(screen), captureErr
+			}
+			return nil, nil
+		},
+	}
+	inst, err := FromInstanceData(InstanceData{Title: "fix", Status: Paused, Program: "claude", IsWorkspaceTerminal: true}, t.TempDir())
+	require.NoError(t, err)
+	inst.SetTmuxSessionForTest(tmux.NewSessionWithDeps("fix", "claude", fakePtyFactory{t: t}, rec))
+
+	screen = "Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit"
+	open, err := inst.Pane().TrustPromptOpen()
+	require.NoError(t, err)
+	assert.False(t, open, "paused: no screen of its own to read")
+	assert.Zero(t, captures)
+
+	require.NoError(t, inst.TransitionTo(Running))
+	open, err = inst.Pane().TrustPromptOpen()
+	require.NoError(t, err)
+	assert.True(t, open, "the trust prompt is on screen")
+	assert.Equal(t, 1, captures)
+
+	screen = "❯ \n? for shortcuts"
+	open, err = inst.Pane().TrustPromptOpen()
+	require.NoError(t, err)
+	assert.False(t, open, "Claude's input box is no trust prompt")
+
+	captureErr = errors.New("can't find pane: loom_fix")
+	_, err = inst.Pane().TrustPromptOpen()
+	assert.Error(t, err, "a failed capture says so")
 }

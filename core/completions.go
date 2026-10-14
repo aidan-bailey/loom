@@ -101,10 +101,12 @@ type promptFailed struct{ err error }
 
 // promptSent is a started instance's initial prompt, sent or (logged)
 // failed (sendInitialPrompt). owner is the start's owner, as deliverStart
-// resolved it.
+// resolved it. unsent, when set, is the notice that the prompt was not sent
+// (a trust prompt stayed open), carrying its text.
 type promptSent struct {
-	inst  *session.Instance
-	owner *Workspace
+	inst   *session.Instance
+	owner  *Workspace
+	unsent string
 }
 
 // owningWorkspace resolves the workspace an async completion belongs to:
@@ -182,7 +184,7 @@ func (m *Model) deliverStart(r StartResult) {
 			m.enqueue(inst, &modMessage{text: prompt, asUser: true, origin: OriginFirstPrompt, cause: m.cause, owner: owner})
 			return
 		}
-		m.spawn(sendInitialPrompt(inst, owner, prompt))
+		m.spawn(m.sendInitialPrompt(inst, owner, prompt))
 		return
 	}
 	ownerID, label := m.ownerFields(owner)
@@ -190,8 +192,13 @@ func (m *Model) deliverStart(r StartResult) {
 }
 
 // deliverPromptSent finishes a start whose initial prompt was sent first
-// (deliverStart): only now does the TUI hear of it (Started).
+// (deliverStart): only now does the TUI hear of it (Started). A prompt not
+// sent is an info notice to the requester, ahead of Started, with its text:
+// the session runs, so it is no failure of the start.
 func (m *Model) deliverPromptSent(r promptSent) {
+	if r.unsent != "" {
+		m.notifyInfo(r.unsent)
+	}
 	ownerID, label := m.ownerFields(r.owner)
 	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: ownerID, OwnerLabel: label})
 }

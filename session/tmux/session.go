@@ -396,6 +396,17 @@ func (s *Session) TrustPromptShown(content string) string {
 	return ""
 }
 
+// TrustPromptOpen reports whether content (the pane's screen) shows a
+// trust prompt that a pasted prompt's Enter would answer: one answered by
+// Enter alone (Claude's dialogs), which confirms whatever its menu
+// selects, "No, exit" included. The agent clears such a dialog once it is
+// answered, so it is open wherever it shows. A prompt answered by typing
+// (aider's and gemini's D, Enter) never counts: its line lingers after its
+// answer, so no capture tells it open, and Enter picks no option there.
+func (s *Session) TrustPromptOpen(content string) bool {
+	return s.adapter.TrustPromptResponse() == agent.TrustPromptTapEnter && s.TrustPromptShown(content) != ""
+}
+
 // TrustPromptChoice returns the option the trust prompt found by pattern
 // (TrustPromptShown) is answered with by moving its menu's cursor onto it
 // (SelectedOption), or "" when AnswerTrustPrompt's keys answer it as

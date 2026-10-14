@@ -70,6 +70,28 @@ func (p AgentPane) SendPrompt(prompt string) error {
 	return ts.SendPrompt(prompt)
 }
 
+// TrustPromptOpen reports whether the pane's screen (capture-pane) shows a
+// trust prompt that a pasted prompt's Enter would answer
+// (tmux.Session.TrustPromptOpen): a paste must wait for it, or the Enter
+// confirms whatever the prompt selects, "No, exit" included. An instance
+// not started, paused or without a session shows none: a paused one's name
+// may belong to another workspace's session. A failed capture is an error.
+func (p AgentPane) TrustPromptOpen() (bool, error) {
+	i := p.i
+	if !i.isStarted() || i.GetStatus() == Paused {
+		return false, nil
+	}
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return false, nil
+	}
+	screen, err := ts.CapturePaneContent()
+	if err != nil {
+		return false, err
+	}
+	return ts.TrustPromptOpen(screen), nil
+}
+
 // TapEnter presses Enter in the tmux session when the instance is
 // running; otherwise it does nothing. Exposed to Lua scripts as
 // inst:tap_enter().

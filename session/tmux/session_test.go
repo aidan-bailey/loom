@@ -273,6 +273,27 @@ func TestSession_TrustPromptShown(t *testing.T) {
 	assert.Empty(t, shell.TrustPromptShown("Do you trust the files in this folder?"), "no keys to answer it with")
 }
 
+// A trust prompt is open, for a paste's sake, only where a pasted Enter
+// would answer it: a dialog answered by Enter alone (Claude's), which the
+// agent clears once answered. A prompt answered by typing (aider's D,
+// Enter) is a line that lingers after its answer, so it never counts.
+func TestSession_TrustPromptOpen(t *testing.T) {
+	claude := NewSessionWithDeps("trust", "claude", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+	assert.True(t, claude.TrustPromptOpen("Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit"))
+	assert.True(t, claude.TrustPromptOpen(claudeSafetyCheck))
+	assert.True(t, claude.TrustPromptOpen("Quick safety check: Is this a project you created or one you trust?\n\n  No, exit\n  Yes, I trust this folder"),
+		"open with no single cursor too: the launch watch leaves such a prompt to the person")
+	assert.False(t, claude.TrustPromptOpen("> hello\n● Hi there"), "no prompt on screen")
+	for _, program := range []string{"aider", "gemini"} {
+		lines := NewSessionWithDeps("trust", program, NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+		require.NotEmpty(t, lines.TrustPromptShown("Open documentation url for more info? (Y)es/(N)o/(D)on't ask again [Yes]: d\n> "), "fixture: %s shows it", program)
+		assert.False(t, lines.TrustPromptOpen("Open documentation url for more info? (Y)es/(N)o/(D)on't ask again [Yes]: d\n> "),
+			"%s's line prompt lingers after its answer", program)
+	}
+	shell := NewSessionWithDeps("trust", "bash", NewMockPtyFactory(t), cmd_test.MockCmdExec{})
+	assert.False(t, shell.TrustPromptOpen("Do you trust the files in this folder?"), "no keys to answer it with")
+}
+
 func TestSession_AnswerTrustPrompt(t *testing.T) {
 	for _, tc := range []struct {
 		name, program string

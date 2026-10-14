@@ -332,7 +332,10 @@ func (l *Loop) Stop() {
 // calls it after it has stopped taking requests, then saves (SaveForQuit),
 // then Stops, so a pause or a kill is never cut off mid-step.
 func (l *Loop) Quiesce(timeout time.Duration) bool {
-	l.do(func(*Model) { l.quiet = true })
+	l.do(func(m *Model) {
+		l.quiet = true
+		m.beginStop()
+	})
 	deadline := time.Now().Add(timeout)
 	for {
 		if get(l, func(*Model) int { return l.pending }) == 0 {

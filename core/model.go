@@ -112,6 +112,12 @@ type Model struct {
 	// modsStopped is set by ModsStop, as the daemon stops: no mod can reach
 	// it any more, so every launch counts as having none (linkFor).
 	modsStopped bool
+	// stopping is closed when the loop begins to stop (beginStop, from
+	// Loop.Quiesce): a job that waits on the world (a first prompt waiting
+	// out a trust prompt) captures it when built (stopSignal) and stops
+	// waiting, so the quiesce does not wait it out. Loop-goroutine only.
+	stopping  chan struct{}
+	stopBegun bool
 
 	// roster is Claude's own view of its live sessions, keyed by working
 	// directory, refreshed once per health tick (see rosterQueryJob). It is
@@ -376,6 +382,24 @@ func (m *Model) takeJobsSplit() (fg, bg []Job) {
 func (m *Model) notifyErr(err error) {
 	if err != nil {
 		m.emit(Notice{Err: err})
+	}
+}
+
+// stopSignal is the channel beginStop closes, for a job to capture when it
+// is built. Loop-goroutine only.
+func (m *Model) stopSignal() <-chan struct{} {
+	if m.stopping == nil {
+		m.stopping = make(chan struct{})
+	}
+	return m.stopping
+}
+
+// beginStop closes stopSignal's channel, once: the loop begins to stop.
+func (m *Model) beginStop() {
+	if !m.stopBegun {
+		m.stopSignal()
+		m.stopBegun = true
+		close(m.stopping)
 	}
 }
 
