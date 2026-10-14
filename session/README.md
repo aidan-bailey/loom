@@ -94,7 +94,7 @@ Claude keeps each session's conversation in `<config>/projects/<encoded cwd>/` (
 - Archives are `<configDir>/archive/chats/<name>.zip`, or `<claude_tmp_archive_dir>/<encoded config dir>/chats/` (`ClaudeChatArchiveDir`), with `<name>` the scratchpad zip's. `claudetmp.Snapshot` writes one only when something in the dir is newer than the zip, and carries forward every entry whose source is gone, so nothing archived is dropped. They are never pruned.
 - Resume (both launch paths) calls `restoreClaudeChat` before `finishResume`. When the recorded transcript is missing and an archive exists (in the dir in effect, then the default one), `claudetmp.Fill` writes the missing entries back without overwriting anything, and `BuildResumeCommand` then picks `--resume`. A failure is a `Notice`, and the launch continues with `--continue`.
 - `SweepClaudeChats` runs in core's temp-dir sweep job (`core/claude_tmp.go`) over `ClaudeProjectsRoots` (the main config dir's `projects/` and any account's that is not a link into it). It snapshots dirs with the config dir's worktrees prefix and no other's, a timestamp suffix and an untruncated name, skipping running sessions' dirs. Dead and paused ones qualify.
-- The contract test `TestRealClaude_TempDirLayout` also pins the chat dir's name and layout. It hands the pane `~/.claude` (or `LOOM_TEST_CLAUDE_CONFIG_DIR`), since `TestMain` isolates `CLAUDE_CONFIG_DIR`.
+- The contract test `TestRealClaude_TempDirLayout` also pins the chat dir's name and layout. Since `TestMain` isolates `CLAUDE_CONFIG_DIR`, it unsets it for the pane, so Claude runs on the default config as a default-account session does (or on `LOOM_TEST_CLAUDE_CONFIG_DIR` when set).
 
 ## Launch environment and accounts
 

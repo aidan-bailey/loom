@@ -25,7 +25,8 @@ import (
 // no per-cwd directory. It spends a few cents of haiku usage and leaves a
 // trust entry in the config dir's .claude.json (it removes the chat dir it
 // creates), so it only runs with LOOM_TEST_REAL_CLAUDE=1 and never in CI.
-// Set LOOM_TEST_CLAUDE_CONFIG_DIR to use a config dir other than ~/.claude.
+// Its Claude runs on the default config (~/.claude and ~/.claude.json), or
+// on LOOM_TEST_CLAUDE_CONFIG_DIR when that is set.
 func TestRealClaude_TempDirLayout(t *testing.T) {
 	if os.Getenv("LOOM_TEST_REAL_CLAUDE") != "1" {
 		t.Skip("set LOOM_TEST_REAL_CLAUDE=1 to run against real Claude (costs money)")
@@ -46,12 +47,26 @@ func TestRealClaude_TempDirLayout(t *testing.T) {
 	require.NoError(t, err)
 	t.Setenv(claudetmp.EnvTmpDir, tmp)
 	// TestMain points CLAUDE_CONFIG_DIR at an empty dir, where Claude would
-	// start logged out: hand the pane the developer's.
+	// start logged out. Run the pane's Claude as loom's default account
+	// does, with no CLAUDE_CONFIG_DIR at all (the private tmux server
+	// inherits this process's environment), or on
+	// LOOM_TEST_CLAUDE_CONFIG_DIR. Setting it to ~/.claude is not the same:
+	// Claude then reads ~/.claude/.claude.json, not ~/.claude.json.
+	paneEnv := []string{"-e", claudetmp.EnvTmpDir + "=" + tmp}
 	claudeConfig := os.Getenv("LOOM_TEST_CLAUDE_CONFIG_DIR")
-	if claudeConfig == "" {
+	if claudeConfig != "" {
+		paneEnv = append(paneEnv, "-e", "CLAUDE_CONFIG_DIR="+claudeConfig)
+	} else {
 		home, err := os.UserHomeDir()
 		require.NoError(t, err)
 		claudeConfig = filepath.Join(home, ".claude")
+		prev, had := os.LookupEnv("CLAUDE_CONFIG_DIR")
+		require.NoError(t, os.Unsetenv("CLAUDE_CONFIG_DIR"))
+		t.Cleanup(func() {
+			if had {
+				_ = os.Setenv("CLAUDE_CONFIG_DIR", prev)
+			}
+		})
 	}
 
 	ctx := context.Background()
@@ -72,8 +87,7 @@ func TestRealClaude_TempDirLayout(t *testing.T) {
 	}
 
 	// -e hands Claude the variable as a loom pane would get it.
-	tm("new-session", "-d", "-s", "probe", "-x", "160", "-y", "45", "-c", cwd,
-		"-e", claudetmp.EnvTmpDir+"="+tmp, "-e", "CLAUDE_CONFIG_DIR="+claudeConfig)
+	tm(append([]string{"new-session", "-d", "-s", "probe", "-x", "160", "-y", "45", "-c", cwd}, paneEnv...)...)
 	tm("send-keys", "-t", target, "claude --model haiku", "Enter")
 	const trustDialog = "trust this folder"
 	waitForRealClaude(t, screen, 60*time.Second, func() bool {
