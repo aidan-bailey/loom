@@ -101,8 +101,8 @@ type promptFailed struct{ err error }
 
 // promptSent is a started instance's initial prompt, sent or (logged)
 // failed (sendInitialPrompt). owner is the start's owner, as deliverStart
-// resolved it. unsent, when set, is the notice that the prompt was not sent
-// (a trust prompt stayed open), carrying its text.
+// resolved it. unsent, when set, is the prompt, not sent because a trust
+// prompt stayed open.
 type promptSent struct {
 	inst   *session.Instance
 	owner  *Workspace
@@ -193,16 +193,11 @@ func (m *Model) deliverStart(r StartResult) {
 
 // deliverPromptSent finishes a start whose initial prompt was sent first
 // (deliverStart): only now does the TUI hear of it (Started). A prompt not
-// sent is an info notice to the requester, with its text: after Started,
-// whose own info line ("x started") would replace it in the TUI, and no
-// failure of the start, since the session runs (a CLI's awaitStart reads
-// the whole batch, so it still prints it).
+// sent rides on Started (PromptNotSent) for the clients to tell: no failure
+// of the start, since the session runs.
 func (m *Model) deliverPromptSent(r promptSent) {
 	ownerID, label := m.ownerFields(r.owner)
-	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: ownerID, OwnerLabel: label})
-	if r.unsent != "" {
-		m.notifyInfo(r.unsent)
-	}
+	m.emit(Started{ID: m.idOf(r.inst), Title: r.inst.Title, Owner: ownerID, OwnerLabel: label, PromptNotSent: r.unsent})
 }
 
 // deliverResume finishes a resume: an instance a served workspace still

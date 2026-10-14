@@ -63,6 +63,11 @@ func (m *home) applyStarted(ev core.Started) tea.Cmd {
 		m.state = stateInlineAttach
 		m.menu.SetState(ui.StateInlineAttach)
 	}
+	// A first prompt the start did not send is told in every case, in place
+	// of the "started" line: whoever asked, the person must send it.
+	if notice := ev.PromptNotSentNotice(); notice != "" {
+		m.errBox.SetInfo(notice)
+	}
 	return tea.Batch(tea.RequestWindowSize, m.instanceChanged(), attach)
 }
 

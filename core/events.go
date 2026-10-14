@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"github.com/aidan-bailey/loom/session/github"
 )
 
@@ -70,9 +71,23 @@ type Started struct {
 	Owner WorkspaceID
 	// OwnerLabel names the owner in notices ("global" when unknown).
 	OwnerLabel string
+	// PromptNotSent is the start's first prompt when it was not sent: its
+	// trust prompt stayed open (sendInitialPrompt). The session runs, and
+	// the person must send the prompt; it rides on Started rather than a
+	// notice of its own, which a client could read too late or overwrite.
+	PromptNotSent string
 }
 
 func (Started) coreEvent() {}
+
+// PromptNotSentNotice is what a client tells the person when the start's
+// first prompt was not sent (PromptNotSent), "" when it was.
+func (s Started) PromptNotSentNotice() string {
+	if s.PromptNotSent == "" {
+		return ""
+	}
+	return fmt.Sprintf("the first prompt for %s was not sent: its trust prompt is still open. Answer it, then send the prompt yourself: %s", s.Title, s.PromptNotSent)
+}
 
 // Recovered reports an orphan adopted into its placeholder's row. Req,
 // Owner, ID and Title are as for Started. Paused is set when adoption

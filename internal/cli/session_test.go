@@ -626,3 +626,19 @@ func TestSessionSend_RefusesAnEmptyMessage(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "the message is empty")
 }
+
+// A start whose first prompt was not sent (its trust prompt stayed open)
+// says so on stderr with the prompt's text. It rides on Started itself, so
+// it is printed whatever frames come before or after.
+func TestSessionNew_SaysWhenTheFirstPromptWasNotSent(t *testing.T) {
+	var errOut bytes.Buffer
+	w := &startWait{req: 7, errOut: &errOut}
+
+	done := w.see([]core.Event{core.Started{Req: 7, Title: "alpha", PromptNotSent: "fix the bug"}})
+
+	assert.True(t, done)
+	assert.Equal(t, "loom: the first prompt for alpha was not sent: its trust prompt is still open. Answer it, then send the prompt yourself: fix the bug\n", errOut.String())
+	errOut.Reset()
+	w.see([]core.Event{core.Started{Req: 8, Title: "beta", PromptNotSent: "other"}})
+	assert.Empty(t, errOut.String(), "another request's start is not this command's")
+}

@@ -149,43 +149,56 @@ func (c *client) awaitReply(req core.ReqID) (core.Reply, error) {
 // the request end the wait: a failed start notices its error, and its
 // save's first (deliverStart), by which time the daemon has removed the
 // instance. One loop waits for all three, since a batch can hold more
-// than one. Notices naming req that carry no error are written to errOut.
+// than one (startWait).
 func (c *client) awaitStart(req core.ReqID) (core.Started, error) {
-	var (
-		started core.Started
-		ok      bool
-		errs    []error
-	)
-	_, err := c.await(0, func(events []core.Event) bool {
-		for _, ev := range events {
-			switch e := ev.(type) {
-			case core.Reply:
-				if e.Req == req && e.Err != nil {
-					errs = append(errs, e.Err)
-				}
-			case core.Started:
-				if e.Req == req {
-					started, ok = e, true
-				}
-			case core.Notice:
-				switch {
-				case e.Req != req:
-				case e.Err != nil:
-					errs = append(errs, e.Err)
-				case e.Info != "":
-					fmt.Fprintf(c.errOut, "loom: %s\n", e.Info)
-				}
-			}
-		}
-		return ok || len(errs) > 0
-	})
+	w := &startWait{req: req, errOut: c.errOut}
+	_, err := c.await(0, w.see)
 	switch {
 	case err != nil:
 		return core.Started{}, err
-	case len(errs) > 0:
-		return core.Started{}, errors.Join(errs...)
+	case len(w.errs) > 0:
+		return core.Started{}, errors.Join(w.errs...)
 	}
-	return started, nil
+	return w.started, nil
+}
+
+// startWait is what awaitStart has heard of the start req asked for. A
+// notice naming req that carries no error is written to errOut, as is a
+// first prompt the start did not send (Started.PromptNotSent).
+type startWait struct {
+	req     core.ReqID
+	errOut  io.Writer
+	started core.Started
+	ok      bool
+	errs    []error
+}
+
+// see takes one batch of events and reports whether the wait is over.
+func (w *startWait) see(events []core.Event) bool {
+	for _, ev := range events {
+		switch e := ev.(type) {
+		case core.Reply:
+			if e.Req == w.req && e.Err != nil {
+				w.errs = append(w.errs, e.Err)
+			}
+		case core.Started:
+			if e.Req == w.req {
+				w.started, w.ok = e, true
+				if notice := e.PromptNotSentNotice(); notice != "" {
+					fmt.Fprintf(w.errOut, "loom: %s\n", notice)
+				}
+			}
+		case core.Notice:
+			switch {
+			case e.Req != w.req:
+			case e.Err != nil:
+				w.errs = append(w.errs, e.Err)
+			case e.Info != "":
+				fmt.Fprintf(w.errOut, "loom: %s\n", e.Info)
+			}
+		}
+	}
+	return w.ok || len(w.errs) > 0
 }
 
 // awaitSend waits for the Send req: its Reply (a refusal is its Err), then,

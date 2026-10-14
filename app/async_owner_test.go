@@ -411,3 +411,25 @@ func TestResumeFailed_RevertsAndLeavesNoClient(t *testing.T) {
 		assert.False(t, clientOf(t, resumed).PtmxAlive(), "and the one it had is closed (owner closed: %v)", ownerClosed)
 	}
 }
+
+// TestInstanceStarted_APromptNotSentIsTold: a start whose first prompt was
+// not sent (its trust prompt stayed open) says so, with the prompt, in place
+// of the "started" line, whichever case applyStarted takes, so no later info
+// of its own overwrites it.
+func TestInstanceStarted_APromptNotSentIsTold(t *testing.T) {
+	m, _, _ := ownerTestHome(t)
+	m.errBox.SetSize(400, 1)
+	want := "the first prompt for x was not sent: its trust prompt is still open. Answer it, then send the prompt yourself: fix it"
+	for _, tc := range []struct {
+		name string
+		ev   core.Started
+	}{
+		{"another client's start", core.Started{ID: 999, Title: "x", PromptNotSent: "fix it"}},
+		{"in a background workspace", core.Started{Req: 1, ID: 999, Title: "x", Owner: m.slots[1].id, OwnerLabel: "bpeer", PromptNotSent: "fix it"}},
+		{"in the focused workspace", core.Started{Req: 1, ID: 999, Title: "x", Owner: m.id, OwnerLabel: "apeer", PromptNotSent: "fix it"}},
+	} {
+		m.errBox.Clear()
+		m.applyStarted(tc.ev)
+		assert.Contains(t, m.errBox.String(), want, tc.name)
+	}
+}

@@ -136,8 +136,8 @@ func TestFirstPrompt_WaitsForAnOpenTrustPromptToClear(t *testing.T) {
 }
 
 // A trust prompt still open at the bound is never pasted into: the start
-// finishes (Started, once), and then the requester hears that the prompt
-// was not sent, with its text, so nothing is lost silently.
+// finishes (Started, once), carrying the prompt that was not sent, so the
+// requester hears it with its text and nothing is lost silently.
 func TestFirstPrompt_StillOpenAtTheBoundIsNotPasted(t *testing.T) {
 	shortFirstPrompt(t, time.Millisecond, 20*time.Millisecond)
 	m := NewForTest(Options{})
@@ -150,17 +150,18 @@ func TestFirstPrompt_StillOpenAtTheBoundIsNotPasted(t *testing.T) {
 	assert.Greater(t, captures, 1, "it waited for the prompt to clear")
 	assert.Empty(t, pastes, "nothing pasted into the open prompt")
 	assert.Zero(t, enters, "and no Enter sent")
-	events := m.Drain().Events
-	notices, starts := noticesAndStarts(events)
+	notices, starts := noticesAndStarts(m.Drain().Events)
 	require.Len(t, starts, 1, "the start finishes, once")
-	_, last := events[len(events)-2].(Started)
-	_, isNotice := events[len(events)-1].(Notice)
-	assert.True(t, last && isNotice, "the notice comes after Started, whose own info line would replace it in the TUI: %#v", events)
-	assert.Equal(t, ReqID(7), starts[0].Req)
-	require.Len(t, notices, 1)
-	assert.Equal(t, ReqID(7), notices[0].Req, "the requester hears it")
-	assert.Nil(t, notices[0].Err, "an info: the session started")
-	assert.Equal(t, "the first prompt for a was not sent: its trust prompt is still open. Answer it, then send the prompt yourself: do the thing", notices[0].Info)
+	assert.Equal(t, ReqID(7), starts[0].Req, "the requester hears it")
+	assert.Equal(t, "do the thing", starts[0].PromptNotSent, "on Started itself, whose frame no client can read without it")
+	assert.Equal(t, "the first prompt for a was not sent: its trust prompt is still open. Answer it, then send the prompt yourself: do the thing",
+		starts[0].PromptNotSentNotice())
+	assert.Empty(t, notices, "no notice of its own, which a client could miss or overwrite")
+}
+
+// A start whose prompt went out says nothing more.
+func TestStarted_PromptNotSentNoticeIsEmptyWhenSent(t *testing.T) {
+	assert.Empty(t, Started{Title: "a"}.PromptNotSentNotice())
 }
 
 // A daemon's stop (Loop.Quiesce) ends a first prompt's wait at once: the

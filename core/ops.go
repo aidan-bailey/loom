@@ -334,7 +334,8 @@ var (
 // person to answer it, looking every firstPromptPollEvery for up to
 // firstPromptWaitFor, and until the loop begins to stop (stopSignal), when
 // it looks once more. Still open, the prompt is not sent, and promptSent
-// says so with its text (unsent), which reaches the requester as a notice.
+// carries its text (unsent) to Started (PromptNotSent), for the clients to
+// tell.
 // A capture that fails doesn't block the paste, and a failed paste is
 // logged. Either way it reports promptSent, whose delivery tells the TUI
 // the start finished (Started): only after the prompt, so no key the user
@@ -344,8 +345,7 @@ func (m *Model) sendInitialPrompt(inst *session.Instance, owner *Workspace, prom
 	return func() any {
 		if !trustPromptCleared(inst.Pane(), title, every, within, stopping) {
 			log.For("core").Warn("first_prompt.trust_prompt_open", "instance", title, "prompt", prompt)
-			return promptSent{inst: inst, owner: owner, unsent: fmt.Sprintf(
-				"the first prompt for %s was not sent: its trust prompt is still open. Answer it, then send the prompt yourself: %s", title, prompt)}
+			return promptSent{inst: inst, owner: owner, unsent: prompt}
 		}
 		if err := inst.Pane().SendPrompt(prompt); err != nil {
 			log.For("core").Error("send_prompt_failed", "err", err)
