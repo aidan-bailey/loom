@@ -309,6 +309,7 @@ var (
 			default:
 				fmt.Printf("Claude temp archives: %s (a workspace's: <repo>/.loom/archive/claude-tmp; set claude_tmp_archive_dir in %s to move them)\n", claudetmp.ArchiveDir(wsCtx.ConfigDir), filepath.Join(wsCtx.ConfigDir, config.ConfigFileName))
 			}
+			fmt.Printf("Claude chat archives: %s (copies of sessions' conversations; claude_tmp_archive_dir moves them too)\n", session.ClaudeChatArchiveDir(wsCtx.ConfigDir))
 			if globalErr != nil {
 				fmt.Printf("Global dir: error: %v\n", globalErr)
 			} else {
