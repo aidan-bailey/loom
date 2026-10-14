@@ -73,11 +73,13 @@ The project dir of a session is, in order:
 Neither found: a no-op, so non-Claude programs and sessions that never
 sent a message need no special case.
 
-The sweep's roots are computed in `core`, which already imports `account`:
-the resolved `projects/` of `account.MainDir` for the default identity,
-plus each registered account's `projects/` that resolves somewhere else
-(a real dir, not a link). Duplicates after `EvalSymlinks` are dropped.
-`session` receives the list and never imports `account`.
+The sweep's roots come from `session.ClaudeProjectsRoots(mainDir,
+accountDirs)`: the resolved `projects/` of the main config dir
+(`Model.MainConfigDir`, which is `account.MainDir` over the identity read
+at startup), plus each registered account's `projects/` that resolves
+somewhere else (a real dir, not a link). Duplicates after `EvalSymlinks`
+are dropped. Core captures both inputs when it queues the sweep, and the
+job resolves them off the model's goroutine.
 
 ## Archive layout
 
@@ -107,16 +109,18 @@ func Snapshot(src, zipPath string, m Manifest) (Result, bool, error)
 1. If `zipPath` exists and no file or dir under `src` has an mtime later
    than the zip's, return without writing (`false`). Repeated sweeps cost
    one walk of `stat`s.
-2. Write `<zipPath>.partial` (`O_TRUNC`, deflate at `flate.BestSpeed`) from
-   a walk of `src`.
+2. Write a partial file of its own beside the zip (`openArchiveFile`, as
+   `Archive` does; deflate at `flate.BestSpeed`) from a walk of `src`.
 3. If the previous zip exists, copy across with `zip.Writer.Copy` (no
    recompression) every entry whose name the walk did not write, and list
    them in the manifest's `carried_forward`. A file still on disk always
    wins over its archived copy. A file Claude's cleanup deleted after the
    last snapshot is never dropped from the archive.
 4. fsync, close, rename over `zipPath`, fsync the dir, and set the zip's
-   mtime to the moment the walk began, so a write that landed during the
-   walk still reads as newer at the next check.
+   mtime to two seconds before the walk began, so a write that landed
+   during the walk still reads as newer at the next check: file times come
+   from a coarse clock (a kernel tick, or whole seconds on some
+   filesystems). The cost is at most one redundant snapshot.
 5. Never touch `src`. On any error, remove the partial file, keep the
    previous zip, and return the error.
 
@@ -231,7 +235,9 @@ chat Claude has not yet deleted.
 - A restore failure yields a `Notice` and the launch proceeds.
 - An archive failure fails neither Pause nor Kill.
 - The sweep snapshots dead and paused dirs, and skips running,
-  foreign-prefix, look-alike, truncated and unchanged ones.
+  foreign-prefix, unstamped (`worktrees-old`), truncated and unchanged
+  ones. (A look-alike such as `worktrees-backup/u/x_<stamp>` passes checks
+  1 and 2 and is copied: harmless, since nothing is deleted.)
 
 **`core`**: the chat sweep runs after the temp sweep for each queued
 workspace, with the non-Paused set and the roots snapshotted at request
