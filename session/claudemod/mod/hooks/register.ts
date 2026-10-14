@@ -37,7 +37,9 @@ const submitted: string[] = []
 // entered are messages whose submit resolved while no main-loop turn ran; the
 // next main-loop turn carries them.
 const entered: Message[] = []
-// mainTurn is the running main-loop turn, if any.
+// mainTurn is the running main-loop turn, if any: set once its turn.start
+// has its turn ID back from next, cleared as its turn.complete or the next
+// main-loop turn.start begins.
 let mainTurn: string | undefined
 // turns maps a started turn to the messages it carries: Claude runs every
 // prompt queued while it was busy in one turn.
@@ -74,8 +76,9 @@ async function claim($: EngineInterface, turnId: string, ms: Message[]) {
 }
 
 // A submit resolves as the turn carrying its prompt starts (on Claude 2.1.299,
-// while that turn's turn.start hooks run), so a resolved message belongs to
-// the running main-loop turn, or to the next one when none has started yet.
+// while that turn's turn.start hook is still in next), so a resolved message
+// belongs to the running main-loop turn, or to the next one when none has
+// started yet.
 async function submit($: EngineInterface, m: Message) {
   if (submitted.includes(m.id)) {
     await report($, [{ kind: 'queued', id: m.id }])
@@ -133,20 +136,34 @@ async function pump($: EngineInterface) {
   }
 }
 
+// ensurePump starts the pump once, when the launch names the daemon's socket
+// and its launch ID. session.start starts it, and every turn hook makes sure
+// of it: a reloaded module runs register again, with no session.start after.
+async function ensurePump($: EngineInterface) {
+  if (pumping) return
+  socket = (await $.env.get('LOOM_MOD_SOCKET')) ?? ''
+  launch = (await $.env.get('LOOM_LAUNCH')) ?? ''
+  if (socket !== '' && launch !== '' && !pumping) {
+    pumping = true
+    void pump($)
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    socket = (await $.env.get('LOOM_MOD_SOCKET')) ?? ''
-    launch = (await $.env.get('LOOM_LAUNCH')) ?? ''
-    if (socket !== '' && launch !== '' && !pumping) {
-      pumping = true
-      void pump($)
-    }
+    await ensurePump($)
     return started
   })
 
   on('turn.start', async ($, e, next) => {
+    await ensurePump($)
     if (e.agentId !== undefined) return next(e)
+    // A new main-loop turn means the last one is over, even when its
+    // turn.complete is still in next or never came (an abort). Cleared before
+    // next: this turn's messages resolve while this hook is still in next, and
+    // must not claim the old turn.
+    mainTurn = undefined
     const r = await next(e)
     mainTurn = r.turnId
     if (entered.length > 0) await claim($, r.turnId, entered.splice(0))
@@ -154,9 +171,12 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    await ensurePump($)
     if (e.agentId !== undefined) return next(e)
-    const r = await next(e)
+    // Cleared before next, for the same reason: the next turn's messages can
+    // resolve while this hook is still in next.
     if (e.turnId === mainTurn) mainTurn = undefined
+    const r = await next(e)
     const ids = turns.get(e.turnId)
     if (ids !== undefined) {
       turns.delete(e.turnId)
