@@ -10,7 +10,7 @@
 // --plugin-dir. LOOM_MOD_SOCKET names the daemon's mod socket and LOOM_LAUNCH
 // this launch; without both the module does nothing.
 
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, PromptSubmitResult, Register } from 'claude-code'
 
 const MOD_VERSION = 1
 const BASE = 'http://loom/v1'
@@ -44,6 +44,11 @@ let mainTurn: string | undefined
 // turns maps a started turn to the messages it carries: Claude runs every
 // prompt queued while it was busy in one turn.
 const turns = new Map<string, string[]>()
+// reports holds each submitted message's latest report until its complete or
+// failed: the next report for it waits on it, so the daemon hears queued,
+// started and complete in that order (it ignores what it hears about a
+// message it has not seen queued).
+const reports = new Map<string, Promise<void>>()
 
 async function call($: EngineInterface, method: string, path: string, body?: unknown) {
   return $.http.fetch(BASE + path, {
@@ -69,35 +74,56 @@ async function hello($: EngineInterface): Promise<boolean> {
   return r.status === 204
 }
 
+// reportInOrder reports events once each message's earlier reports are
+// through. The caller's bookkeeping stays synchronous; only the post waits.
+function reportInOrder($: EngineInterface, events: ModEvent[]): Promise<void> {
+  const earlier = events.map(ev => reports.get(ev.id))
+  const posted = Promise.all(earlier).then(() => report($, events))
+  for (const ev of events) {
+    if (ev.kind === 'complete' || ev.kind === 'failed') reports.delete(ev.id)
+    else reports.set(ev.id, posted)
+  }
+  return posted
+}
+
 // claim records that a turn carries ms and reports each as started.
 async function claim($: EngineInterface, turnId: string, ms: Message[]) {
   turns.set(turnId, [...(turns.get(turnId) ?? []), ...ms.map(m => m.id)])
-  await report($, ms.map(m => ({ kind: 'started' as const, id: m.id, turnId })))
+  await reportInOrder($, ms.map(m => ({ kind: 'started' as const, id: m.id, turnId })))
 }
 
 // A submit resolves as the turn carrying its prompt starts (on Claude 2.1.299,
 // while that turn's turn.start hook is still in next), so a resolved message
 // belongs to the running main-loop turn, or to the next one when none has
-// started yet.
+// started yet. The claim is made as the submit resolves, never after the
+// queued report's round trip, which can outlast the turn.
 async function submit($: EngineInterface, m: Message) {
   if (submitted.includes(m.id)) {
     await report($, [{ kind: 'queued', id: m.id }])
     return
   }
+  let done: Promise<PromptSubmitResult>
+  try {
+    done = $.prompt.submit(m.asUser ? { text: m.text, asUser: true } : { text: m.text })
+  } catch (err) {
+    // Nothing entered Claude's queue, so no queued: the daemon falls back.
+    await report($, [{ kind: 'failed', id: m.id, error: String(err) }])
+    return
+  }
   submitted.push(m.id)
   if (submitted.length > KEEP_SUBMITTED) submitted.shift()
-  const done = $.prompt.submit(m.asUser ? { text: m.text, asUser: true } : { text: m.text })
-  await report($, [{ kind: 'queued', id: m.id }])
+  const queued = reportInOrder($, [{ kind: 'queued', id: m.id }])
   done.then(
     r => {
-      if (r.drop !== undefined) void report($, [{ kind: 'failed', id: m.id, error: `dropped: ${r.drop}` }])
+      if (r.drop !== undefined) void reportInOrder($, [{ kind: 'failed', id: m.id, error: `dropped: ${r.drop}` }])
       else if (mainTurn !== undefined) void claim($, mainTurn, [m])
       else entered.push(m)
     },
     err => {
-      void report($, [{ kind: 'failed', id: m.id, error: String(err) }])
+      void reportInOrder($, [{ kind: 'failed', id: m.id, error: String(err) }])
     },
   )
+  await queued
 }
 
 function backoff(ms: number): number {
@@ -194,7 +220,7 @@ export const register: Register = on => {
     const ids = turns.get(e.turnId)
     if (ids !== undefined) {
       turns.delete(e.turnId)
-      await report(
+      await reportInOrder(
         $,
         ids.map(id => ({ kind: 'complete' as const, id, turnId: e.turnId, text: r.text, reason: e.reason })),
       )
