@@ -96,13 +96,19 @@ func (a *fakeAgent) run() int {
 	}
 	a.hooks.sessionStart()
 	fmt.Fprintf(a.out, "fakeagent: %s persona\n%s\n", a.p.name, usage)
+	// The mod polls until the agent exits.
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
 	var mods <-chan modMsg // nil without a mod: never ready
 	if a.mod != nil {
 		mods = a.mod.out
-		go a.mod.run()
+		go a.mod.run(ctx)
 	}
 	for {
 		fmt.Fprint(a.out, "> ")
+		// A typed line and a mod message ready together run in either
+		// order (select picks at random), where Claude runs its queue in
+		// order: a test must not depend on which goes first.
 		select {
 		case line, ok := <-a.lines:
 			if !ok {
@@ -113,7 +119,7 @@ func (a *fakeAgent) run() int {
 				return code
 			}
 		case m := <-mods:
-			if code, done := a.runModMessage(m); done {
+			if code, done := a.runModMessage(ctx, m); done {
 				return code
 			}
 		}
@@ -123,12 +129,12 @@ func (a *fakeAgent) run() int {
 // runModMessage runs a mod message as a prompt, as Claude runs a prompt the
 // mod submitted once the session is idle, reporting its turn started and
 // complete; the answer is what the Stop hook reports.
-func (a *fakeAgent) runModMessage(m modMsg) (code int, done bool) {
+func (a *fakeAgent) runModMessage(ctx context.Context, m modMsg) (code int, done bool) {
 	turn := newTurnID()
-	a.mod.report(map[string]any{"kind": "started", "id": m.ID, "turnId": turn})
+	a.mod.report(ctx, map[string]any{"kind": "started", "id": m.ID, "turnId": turn})
 	fmt.Fprintln(a.out, m.Text)
 	code, done = a.runLine(strings.TrimSpace(m.Text))
-	a.mod.report(map[string]any{"kind": "complete", "id": m.ID, "turnId": turn, "text": "fakeagent finished: " + m.Text, "reason": "answer"})
+	a.mod.report(ctx, map[string]any{"kind": "complete", "id": m.ID, "turnId": turn, "text": "fakeagent finished: " + m.Text, "reason": "answer"})
 	return code, done
 }
 

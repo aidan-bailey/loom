@@ -11,7 +11,7 @@ Two processes writing one workspace's sessions overwrite each other: `Storage.Sa
 | File | Holds |
 |---|---|
 | `lock.go` | the lock, `Record`, `ReadRecord`, `acquire`, `liveHolder` |
-| `paths.go` | `SocketPath`, `privateDir`, `maxSocketPath` |
+| `paths.go` | `SocketPath`, `ModSocketPath`, `privateDir`, `maxSocketPath` |
 | `serve.go` | `Serve`, `Options`, `stopModel`, `Stop`, `StopPID`, `servesLoom`, `TmuxServer` |
 | `connect.go` | `Connect`, `spawn`, `LogPath`, `CrashLogPath` |
 | `proc_unix.go`, `proc_windows.go` | `recordPath`, `terminate`, process probes per platform |
@@ -31,21 +31,24 @@ The holder's `Record` (`pid`, `tty`, `started`, `socket` once it listens, `build
 
 `SocketPath` (`paths.go`; `daemon.SocketPath` to callers): `$XDG_RUNTIME_DIR/loom/<hash>.sock`, else `<globalDir>/run/serve.sock` when that fits a socket address (`maxSocketPath`), else `loom-<uid>/<hash>.sock` in `os.TempDir()`, each in a 0700 directory this user owns that is not a symlink (`privateDir`). The socket itself is 0600, and `<hash>` is 16 hex digits of the SHA-256 of the resolved global dir. Only the daemon computes it: it records it, and clients dial what the record says, since their environment may differ from the daemon's.
 
+**The mod socket.** Beside it the daemon serves the loom mod's HTTP API (`internal/modserver`; the mod is `session/claudemod`) on `ModSocketPath(socket)`: the same path with `.mod.sock` for `.sock`, also 0600, and none when that path is too long for a socket address, or on Windows. It is not in the record: the daemon names it to its launches (`session.SetModSocket`), and each Claude launch carries it in `LOOM_MOD_SOCKET`. A mod socket that can't be listened on costs only the mod, and the watch below covers only the main socket: a removed mod socket is not listened again, so its launches' links turn absent after `core.ModPollTimeout`.
+
 ## Serve
 
 `Serve` (`serve.go`):
 1. takes the lock;
-2. finds the socket's place before the boot, so a host with none fails having swept and relaunched nothing;
+2. finds the socket's place before the boot, so a host with none fails having swept and relaunched nothing, and names the mod socket for launches (`session.SetModSocket`), since the boot relaunches agents;
 3. builds the model (`Options.NewModel`: the root's loads the registry, serving the global workspace alone with a kept notice when it won't load, and the global config's program) and boots it;
 4. keeps the boot's notices for the first client (`Server.Keep`);
 5. starts the loop and `Begin`s it;
-6. listens, so a socket that answers is a daemon that is ready, and writes the socket into the record (a record it can't write stops it, since no client could find or stop it).
+6. listens, so a socket that answers is a daemon that is ready, and writes the socket into the record (a record it can't write stops it, since no client could find or stop it);
+7. serves the mod socket (`modserver.Listen`), or, when it can't, names none for later launches.
 
 Every `Options.WatchInterval` it checks that the socket file is still its own (`os.SameFile`) and, when it is gone or replaced (a runtime dir removed at logout, a tmp cleaner), listens again wherever `SocketPath` finds room now and rewrites the record; a failed `Accept` (EMFILE) is waited out.
 
 `Serve`'s own failures (a pre-daemon holder, no place for the socket, a failed listen or record write) return to its caller and reach stderr, which a spawned daemon has none of: only the root's tmux-server and nesting refusals are logged, so `Connect` can quote nothing for the others.
 
-When `Options.Stop` closes it says bye to every client (`Server.Bye`: from then on a request is refused as unavailable and a cast dropped, and it returns once the calls already let in have their replies queued), closes the listener, waits for foreground jobs while their replies still reach the connections left open, and saves (`stopModel`: `Loop.Quiesce`, bounded by `Options.QuiesceTimeout`, then `SaveForQuit`). Then it closes the server (`Server.Close`: a last publish, each connection flushed, then closed), stops the loop and removes the socket. When the model fails (`Server.Fatal()`) it exits without a bye and without saving (`serve.model_gone`), since the model's state is unknown; the TUIs that lost it (no bye: a crash) and the next `loom` each spawn a fresh daemon, and the second finds the first's lock.
+When `Options.Stop` closes it says bye to every client (`Server.Bye`: from then on a request is refused as unavailable and a cast dropped, and it returns once the calls already let in have their replies queued), closes the listener and the mod server (every held poll hears 503, and each mod reconnects to the next daemon), settles what the mods held (`stopModel`: `Loop.ModsStop`, which pastes a script's message or a first prompt no mod took, by jobs, and refuses a CLI message), waits for foreground jobs while their replies still reach the connections left open, and saves (`Loop.Quiesce`, bounded by `Options.QuiesceTimeout`, then `SaveForQuit`). Then it closes the server (`Server.Close`: a last publish, each connection flushed, then closed), stops the loop and removes the socket. When the model fails (`Server.Fatal()`) it exits without a bye and without saving (`serve.model_gone`), since the model's state is unknown; the TUIs that lost it (no bye: a crash) and the next `loom` each spawn a fresh daemon, and the second finds the first's lock.
 
 ## The root's serve.go
 
@@ -100,6 +103,7 @@ The other CLI subcommands take no lock: `loom account` and `loom workspace add` 
 
 - `loom.lock` (global dir): the lock, and on Unix its record (JSON); on Windows the record is `loom.lock.json` beside it.
 - the socket: `$XDG_RUNTIME_DIR/loom/<hash>.sock`, else `run/serve.sock` in the global dir when that path fits, else `loom-<uid>/<hash>.sock` in the temp dir; named in the record.
+- the mod socket: the socket's path with `.mod.sock` for `.sock`, beside it; named to launches, not in the record.
 - `logs/serve.log`, `logs/serve-crash.log` (global dir): the daemon's log (`log.Initialize(dir, true)`) and its runtime-crash output. The TUI keeps `logs/loom.log` in `LOOM_HOME`'s dir.
 
 ## Tests

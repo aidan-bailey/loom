@@ -75,6 +75,12 @@ func (h *queueHost) ModEvents(launch string, events []core.ModEvent) error {
 	return nil
 }
 
+func (h *queueHost) helloed() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.hello
+}
+
 func (h *queueHost) queue(id, text string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -109,7 +115,8 @@ func (h *queueHost) said() string {
 // answer); and a message delivered while a permission dialog is open, which
 // leaves the dialog alone and runs after it. It spends a few cents and leaves
 // entries in the developer's Claude config dir (projects/, the trust entry),
-// so it runs only with LOOM_TEST_REAL_CLAUDE=1.
+// so it runs only with LOOM_TEST_REAL_CLAUDE=1. Its waits add up to about 8
+// minutes at worst, inside go test's default 10-minute timeout.
 func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 	if os.Getenv("LOOM_TEST_REAL_CLAUDE") != "1" {
 		t.Skip("set LOOM_TEST_REAL_CLAUDE=1 to run against real Claude (costs money)")
@@ -155,10 +162,19 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 			}
 		}
 	}
+	// Text goes in as loom types it (TypeText: a paste buffer), keys by
+	// name; both reach the private server through LOOM_TMUX_SOCKET.
+	t.Setenv(tmux.EnvTmuxSocket, sock)
+	pane := tmux.NewSessionNamed("probe", "")
+	press := func(keys ...string) {
+		t.Helper()
+		require.NoError(t, pane.PressKeys(keys...))
+	}
 	typeLine := func(text string) {
-		tm("send-keys", "-t", target, "-l", text)
+		t.Helper()
+		require.NoError(t, pane.TypeText(text))
 		time.Sleep(300 * time.Millisecond)
-		tm("send-keys", "-t", target, "Enter")
+		press("Enter")
 	}
 
 	// The server, and so the probe's shell, starts from a clean environment
@@ -180,21 +196,28 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 	out, err := start.CombinedOutput()
 	require.NoError(t, err, string(out))
 	serverPath = strings.TrimSpace(tm("display-message", "-p", "-t", target, "#{socket_path}"))
-	tm("send-keys", "-t", target, fmt.Sprintf("%s=%s %s=L1 claude --model haiku --permission-mode default --plugin-dir '%s'",
-		claudemod.EnvSocket, socket, claudemod.EnvLaunch, mod), "Enter")
-	const trustDialog = "trust this folder"
-	waitFor("the trust dialog or the prompt", 60*time.Second, func() bool {
-		s := screen()
-		return strings.Contains(s, trustDialog) || strings.Contains(s, "Claude Code")
+	typeLine(fmt.Sprintf("%s=%s %s=L1 claude --model haiku --permission-mode default --plugin-dir '%s'",
+		claudemod.EnvSocket, socket, claudemod.EnvLaunch, mod))
+	// Claude asks whether to trust a new folder, with "No, exit" selected
+	// for one under a temp dir, and drops a key pressed as the dialog
+	// appears: press Down until a capture shows the cursor on Yes, and Enter
+	// only then, as loom's launch watch answers it.
+	const trustYes = "Yes, I trust this folder"
+	waitFor("the trust dialog or the mod's hello", 60*time.Second, func() bool {
+		return host.helloed() || strings.Contains(screen(), trustYes)
 	})
-	if s := screen(); strings.Contains(s, trustDialog) {
-		// "No, exit" is the default for folders under a temp dir.
-		if strings.Contains(s, "❯ No, exit") {
-			tm("send-keys", "-t", target, "Down")
-		}
-		tm("send-keys", "-t", target, "Enter")
+	if !host.helloed() {
+		waitFor("the trust dialog's cursor on Yes", 30*time.Second, func() bool {
+			if strings.Contains(screen(), "❯ "+trustYes) {
+				return true
+			}
+			press("Down")
+			time.Sleep(500 * time.Millisecond)
+			return strings.Contains(screen(), "❯ "+trustYes)
+		})
+		press("Enter")
 	}
-	waitFor("the mod's hello", 60*time.Second, func() bool { host.mu.Lock(); defer host.mu.Unlock(); return host.hello })
+	waitFor("the mod's hello", 60*time.Second, host.helloed)
 
 	host.queue("m1", "Reply with exactly the word PONG.")
 	waitFor("m1's answer", 90*time.Second, func() bool {
@@ -220,7 +243,7 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 	_, early := host.event("started", "m2")
 	require.False(t, early, "m2 waits for the dialog's turn to end")
 	require.NoDirExists(t, filepath.Join(work, "made-by-test"), "nothing answered the dialog")
-	tm("send-keys", "-t", target, "Enter")
+	press("Enter")
 	waitFor("m2's answer", 90*time.Second, func() bool {
 		ev, ok := host.event("complete", "m2")
 		return ok && strings.Contains(ev.Text, "QUEUED")

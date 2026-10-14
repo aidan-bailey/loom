@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -157,7 +158,8 @@ func TestRun_UnknownCommand(t *testing.T) {
 // A message the mod receives runs as a prompt once the agent is idle; one
 // that arrives while the agent waits at a prompt neither answers it nor
 // starts, as Claude queues a submitted prompt. A message offered again (its
-// queued report lost) is reported queued again but never runs twice.
+// queued report lost) is reported queued again but never runs twice, and the
+// mod stops polling when the agent exits.
 func TestMod_AMessageRunsAsAPromptButNeverAnswersOne(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "fam")
 	require.NoError(t, err)
@@ -168,6 +170,7 @@ func TestMod_AMessageRunsAsAPromptButNeverAnswersOne(t *testing.T) {
 	var (
 		mu     sync.Mutex
 		events []map[string]any
+		left   atomic.Int32 // held polls the agent abandoned
 	)
 	offer := make(chan string) // an inbox body for the held poll
 	mux := http.NewServeMux()
@@ -178,6 +181,7 @@ func TestMod_AMessageRunsAsAPromptButNeverAnswersOne(t *testing.T) {
 			w.Header().Set("content-type", "application/json")
 			_, _ = io.WriteString(w, body)
 		case <-r.Context().Done():
+			left.Add(1)
 		}
 	})
 	mux.HandleFunc("POST /v1/events", func(w http.ResponseWriter, r *http.Request) {
@@ -250,6 +254,8 @@ func TestMod_AMessageRunsAsAPromptButNeverAnswersOne(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	assert.Equal(t, []string{"queued m2"}, kinds()[6:], "a message offered again never runs twice")
 
+	require.Zero(t, left.Load())
 	_, _ = io.WriteString(feed, "exit\n")
 	assert.Equal(t, 0, <-done)
+	eventually("the mod to stop with the agent", func() bool { return left.Load() == 1 })
 }
