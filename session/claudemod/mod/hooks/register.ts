@@ -33,6 +33,11 @@ type ModEvent = {
 // an old pump that outlived a reload stops rather than wake the new one's
 // held poll with each of its own.
 const POLLER = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
+// LOADED is when this module instance loaded, sent in its hello: after a
+// daemon restart every instance still pumping says hello again on its own
+// backoff, and the daemon keeps the one loaded last whichever hello lands
+// last, answering a stale instance's hello 409 too.
+const LOADED = Date.now()
 
 let socket = ''
 let launch = ''
@@ -76,11 +81,27 @@ async function report($: EngineInterface, events: ModEvent[]) {
   }
 }
 
-async function hello($: EngineInterface): Promise<boolean> {
+// hello says the module is here and returns the daemon's answer: 204, or 409
+// when a module instance loaded later holds the launch.
+async function hello($: EngineInterface): Promise<number> {
   const version = await $.session.version()
   const session = await $.session.id()
-  const r = await call($, 'POST', '/hello', { launch, mod: MOD_VERSION, claude: version.version, session, poller: POLLER })
-  return r.status === 204
+  const r = await call($, 'POST', '/hello', {
+    launch,
+    mod: MOD_VERSION,
+    claude: version.version,
+    session,
+    poller: POLLER,
+    loaded: LOADED,
+  })
+  return r.status
+}
+
+// superseded logs that a newer instance of this module holds the launch; the
+// pump then stops for good. Reports stay: what this one submitted still
+// reports its turn.
+function superseded($: EngineInterface) {
+  $.ui.log('loom: superseded by a newer loom mod', { to: 'debug' })
 }
 
 // reportInOrder reports events once each message's earlier reports are
@@ -146,7 +167,12 @@ async function pump($: EngineInterface) {
     if (delay > 0) await $.clock.sleep(delay)
     try {
       if (!greeted) {
-        greeted = await hello($)
+        const status = await hello($)
+        if (status === 409) {
+          superseded($)
+          return
+        }
+        greeted = status === 204
         if (!greeted) {
           delay = backoff(delay)
           continue
@@ -154,9 +180,7 @@ async function pump($: EngineInterface) {
       }
       const r = await call($, 'GET', `/inbox?launch=${encodeURIComponent(launch)}&poller=${POLLER}`)
       if (r.status === 409) {
-        // A newer instance of this module polls for the launch: stop for
-        // good. Reports stay: what this one submitted still reports its turn.
-        $.ui.log('loom: superseded by a newer loom mod', { to: 'debug' })
+        superseded($)
         return
       }
       if (r.status === 200) {

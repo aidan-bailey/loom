@@ -328,3 +328,59 @@ func TestMod_StopsWhenANewerModSupersedesIt(t *testing.T) {
 	assert.NotEmpty(t, greeted, "its hello names its poller")
 	assert.Equal(t, []string{greeted}, polled, "one poll, naming the same poller")
 }
+
+// The mod names its load time in its hello, and stops for good when the
+// hello itself hears 409: a mod loaded later holds the launch.
+func TestMod_StopsWhenItsHelloIsSuperseded(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "fam")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "m.sock")
+	ln, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	var (
+		mu     sync.Mutex
+		loaded []int64 // each hello's load time
+		polls  int
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("POST /v%d/hello", claudemod.Version), func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Loaded int64 `json:"loaded"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		loaded = append(loaded, body.Loaded)
+		mu.Unlock()
+		w.WriteHeader(http.StatusConflict)
+	})
+	mux.HandleFunc(fmt.Sprintf("GET /v%d/inbox", claudemod.Version), func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		polls++
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	c := newModClient(func(k string) string {
+		return map[string]string{"LOOM_MOD_SOCKET": sock, "LOOM_LAUNCH": "L1"}[k]
+	})
+	require.NotNil(t, c)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+
+	go func() { c.run(ctx); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the mod kept going after its hello heard 409")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, loaded, 1, "one hello")
+	assert.Positive(t, loaded[0], "naming its load time")
+	assert.Zero(t, polls)
+}

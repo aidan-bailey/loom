@@ -47,10 +47,11 @@ const ModPollTimeout = 45 * time.Second
 // restored session's launch. The mod retries.
 var ErrModUnknownLaunch = errors.New("no session holds this launch")
 
-// ErrModSuperseded answers a poll from a module instance a newer one has
-// replaced: the launch's latest hello named another poller. The superseded
-// instance stops polling (a reloaded module's old pump, which would otherwise
-// wake the new one's held poll with each of its own, and be woken by them).
+// ErrModSuperseded answers a module instance a newer one has replaced: a poll
+// naming another poller than the recorded hello's, or a hello from an
+// instance loaded before the recorded one. The superseded instance stops
+// polling (a reloaded module's old pump, which would otherwise wake the new
+// one's held poll with each of its own, and be woken by them).
 var ErrModSuperseded = errors.New("a newer loom mod polls for this launch")
 
 // Origin says who sent a message, which decides how the mod submits it and
@@ -135,9 +136,14 @@ type ModHello struct {
 	Session string `json:"session"`
 	// Poller names the module instance saying hello: a random ID each
 	// loaded module mints once, so a reloaded one has a new one. Its polls
-	// carry it (ModInbox), and the latest hello's poller alone may poll. ""
+	// carry it (ModInbox), and only the recorded hello's poller may poll. ""
 	// from an older mod, which names none.
 	Poller string `json:"poller,omitempty"`
+	// Loaded is when that instance loaded, in Unix milliseconds: of two
+	// instances still pumping (a reload's old one after a daemon restart,
+	// both saying hello again on their own backoff), the one loaded last
+	// wins whichever hello lands last. 0 from an older mod.
+	Loaded int64 `json:"loaded,omitempty"`
 }
 
 // ModMessage is a message as the mod's inbox hands it out.
@@ -227,9 +233,12 @@ type modLink struct {
 	// heard is when the mod last said hello or polled its inbox: a live
 	// link silent for ModPollTimeout turns absent (modTick).
 	heard time.Time
-	// poller is the module instance the latest hello named (ModHello.Poller),
-	// "" for none: only it polls (ModInbox).
+	// poller is the module instance the recorded hello named
+	// (ModHello.Poller), "" for none: only it polls (ModInbox). loaded is
+	// that instance's load time (ModHello.Loaded), 0 for none: a hello from
+	// an instance loaded earlier is refused (ModHello).
 	poller string
+	loaded int64
 	// since is when the link was made: the model met the launch then, as a
 	// start or relaunch delivered or a message or mod named it. A launch
 	// that reports no SessionStart is still starting only up to
@@ -515,7 +524,11 @@ func (m *Model) pastModGrace(inst *session.Instance, l *modLink, now time.Time) 
 	return now.Sub(at) >= modGrace
 }
 
-// ModHello records that launch's mod is live.
+// ModHello records that launch's mod is live, and the module instance that
+// alone may poll: the one loaded last (ModHello.Loaded), whichever hello lands
+// last, so a stale instance's hello after a daemon restart is
+// ErrModSuperseded and records nothing. A hello naming no load time is taken
+// as the latest.
 func (m *Model) ModHello(launch string, h ModHello) error {
 	inst := m.instByLaunch(launch)
 	if inst == nil {
@@ -525,6 +538,9 @@ func (m *Model) ModHello(launch string, h ModHello) error {
 	if m.modsStopped {
 		return nil // no mod is served any more: nothing revives
 	}
+	if h.Loaded != 0 && h.Loaded < l.loaded {
+		return ErrModSuperseded // a stale instance, still pumping: it stops
+	}
 	if l.live != modLive {
 		log.For("core").Info("mod.live", "instance", inst.Title, "launch", launch, "mod", h.Mod, "claude", h.Claude)
 	}
@@ -533,7 +549,7 @@ func (m *Model) ModHello(launch string, h ModHello) error {
 	}
 	l.live = modLive
 	l.heard = time.Now()
-	l.poller = h.Poller
+	l.poller, l.loaded = h.Poller, h.Loaded
 	return nil
 }
 

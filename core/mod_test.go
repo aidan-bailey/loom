@@ -1027,3 +1027,48 @@ func TestMod_ThePollerOfTheLatestHelloWins(t *testing.T) {
 		assert.Len(t, replies(m.Drain()), 1, "still absent: refused")
 	})
 }
+
+// After a daemon restart a launch's link is fresh, and every module instance
+// still pumping says hello again on its own backoff, in either order: the one
+// loaded last wins whichever hello lands last, and the stale one hears
+// ErrModSuperseded, at its hello or its poll. A hello that names no load time
+// (an older mod) is taken as before.
+func TestMod_AfterARestartTheModLoadedLastWins(t *testing.T) {
+	stale := ModHello{Mod: 1, Poller: "stale", Loaded: 1000}
+	fresh := ModHello{Mod: 1, Poller: "fresh", Loaded: 2000}
+	newestPolls := func(t *testing.T, m *Model) {
+		t.Helper()
+		_, _, err := m.ModInbox("L1", "fresh")
+		assert.NoError(t, err, "the module loaded last polls")
+		_, _, err = m.ModInbox("L1", "stale")
+		assert.ErrorIs(t, err, ErrModSuperseded, "the stale one hears 409")
+	}
+
+	t.Run("the stale hello first", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		modInst(t, m, "x")
+		require.NoError(t, m.ModHello("L1", stale))
+		require.NoError(t, m.ModHello("L1", fresh))
+		newestPolls(t, m)
+	})
+	t.Run("the stale hello last", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := modInst(t, m, "x")
+		require.NoError(t, m.ModHello("L1", fresh))
+		m.mods[inst].heard = time.Time{}
+		assert.ErrorIs(t, m.ModHello("L1", stale), ErrModSuperseded)
+		assert.True(t, m.mods[inst].heard.IsZero(), "a superseded hello records nothing")
+		newestPolls(t, m)
+	})
+	t.Run("a hello with no load time", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		modInst(t, m, "x")
+		require.NoError(t, m.ModHello("L1", fresh))
+		require.NoError(t, m.ModHello("L1", ModHello{Mod: 1, Poller: "older"}), "an older mod's hello is taken")
+		_, _, err := m.ModInbox("L1", "older")
+		assert.NoError(t, err)
+	})
+}

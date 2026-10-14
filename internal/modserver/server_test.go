@@ -43,6 +43,9 @@ func (h *fakeHost) ModHello(launch string, hello core.ModHello) error {
 	if launch != "L1" {
 		return core.ErrModUnknownLaunch
 	}
+	if hello.Poller == "old" {
+		return core.ErrModSuperseded
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.hello = append(h.hello, hello)
@@ -390,4 +393,15 @@ func TestInbox_ASupersededPollerIs409(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1","poller":"new"}`))
 	assert.Equal(t, "new", h.hello[0].Poller)
 	assert.Equal(t, http.StatusConflict, <-get(c, api("/inbox?launch=L1&poller=old")))
+}
+
+// A hello from a module instance loaded before the one the model holds hears
+// 409 too, so it stops; the hello carries its load time to the model.
+func TestHello_ASupersededModIs409(t *testing.T) {
+	h := &fakeHost{}
+	_, c := listen(t, h, time.Second)
+
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1","poller":"new","loaded":2000}`))
+	assert.Equal(t, int64(2000), h.hello[0].Loaded)
+	assert.Equal(t, http.StatusConflict, post(t, c, api("/hello"), `{"launch":"L1","poller":"old","loaded":1000}`))
 }

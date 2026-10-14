@@ -28,11 +28,13 @@ type modMsg struct {
 // runs it as a prompt once idle, as Claude runs a submitted prompt. Unlike
 // Claude it never merges messages into one turn, and a message is a command
 // like any typed line: one reading exit or crash ends the agent. Like the
-// module it names a poller of its own in its hello and polls, and stops
-// polling for good when the daemon answers 409 (a newer mod polls).
+// module it names a poller of its own and its load time in its hello, the
+// poller in its polls, and stops for good when the daemon answers either 409
+// (a mod loaded later holds the launch).
 type modClient struct {
 	launch string
 	poller string
+	loaded int64 // Unix milliseconds
 	http   *http.Client
 	out    chan modMsg
 }
@@ -43,7 +45,7 @@ func newModClient(getenv func(string) string) *modClient {
 	if socket == "" || launch == "" {
 		return nil
 	}
-	return &modClient{launch: launch, poller: newTurnID(), out: make(chan modMsg, 64), http: &http.Client{Transport: &http.Transport{
+	return &modClient{launch: launch, poller: newTurnID(), loaded: time.Now().UnixMilli(), out: make(chan modMsg, 64), http: &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", socket)
@@ -100,7 +102,7 @@ func backoff(d time.Duration) time.Duration {
 }
 
 // run polls until ctx ends, which the agent does as it exits, or until the
-// daemon answers a poll 409. Like the mod it says hello again after any other
+// daemon answers a hello or a poll 409. Like the mod it says hello again after any other
 // failure, retries on the mod's backoff, and reports a message the daemon
 // offers again (its queued report was lost) queued again without handing it
 // over twice.
@@ -117,7 +119,11 @@ func (c *modClient) run(ctx context.Context) {
 			}
 		}
 		if !greeted {
-			greeted = c.post(ctx, "/hello", map[string]any{"launch": c.launch, "mod": claudemod.Version, "claude": "fakeagent", "session": "fake", "poller": c.poller}) == http.StatusNoContent
+			status := c.post(ctx, "/hello", map[string]any{"launch": c.launch, "mod": claudemod.Version, "claude": "fakeagent", "session": "fake", "poller": c.poller, "loaded": c.loaded})
+			if status == http.StatusConflict {
+				return // superseded: a mod loaded later holds this launch
+			}
+			greeted = status == http.StatusNoContent
 			if !greeted {
 				delay = backoff(delay)
 				continue

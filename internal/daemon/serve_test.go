@@ -323,6 +323,23 @@ func TestServe_AMovedSocketMovesTheModSocket(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, modHello(t, mod))
 }
 
+// A mod socket the watch can't listen on again (here a directory in its
+// place) names none to new launches, rather than a dead path, until it
+// listens again.
+func TestServe_AModSocketThatCantBeListenedNamesNoneUntilItCan(t *testing.T) {
+	dir := globalDir(t)
+	r := serve(t, dir, Options{WatchInterval: 20 * time.Millisecond})
+	mod := ModSocketPath(r.socket)
+	require.NoError(t, os.Remove(mod))
+	require.NoError(t, os.MkdirAll(filepath.Join(mod, "blocker"), 0o700))
+
+	require.Eventually(t, func() bool { return session.ModSocket() == "" }, 5*time.Second, 10*time.Millisecond, "a dead path stayed named")
+
+	require.NoError(t, os.RemoveAll(mod))
+	require.Eventually(t, func() bool { return session.ModSocket() == mod }, 5*time.Second, 10*time.Millisecond, "never named again")
+	assert.Equal(t, http.StatusNotFound, modHello(t, mod))
+}
+
 func TestServe_ServesTheModSocket(t *testing.T) {
 	dir := globalDir(t)
 	var atBuild string
