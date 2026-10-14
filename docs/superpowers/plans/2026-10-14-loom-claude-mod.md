@@ -3278,14 +3278,20 @@ Done 2026-10-14, d3932d3..8773389, executed package by package with a standing r
 **Smoke run** (sandbox, real Claude 2.1.299): `send --wait` answered in 1.6 s; `session new --prompt` delivered through the mod in 1.5 s; the quick bar still pastes; a send during a permission dialog left it alone and ran after it; after a daemon restart the mods reconnected in 3.6 s.
 
 **Follow-ups** (beyond the spec's Out of scope):
-- A removed mod socket is not re-listened; links fail closed after `core.ModPollTimeout`.
 - `hello`'s session ID goes stale after `/clear` (`session.start` doesn't fire again).
 - A lost `queued` report followed by `complete` strands a `--wait` sender until the session stops.
 - A merged turn may answer neither message well (haiku asked which of two conflicting ones to send).
 - A workspace registered long after the boot gets an early grace; a modless `""` launch can be refused about 250 ms early.
 - No relaunch pin for a non-terminal session.
-- A fallback paste after `modStartCap` could land in a trust prompt the launch watch left to the person (as the old immediate paste could); a capture before the paste would guard it.
 - The TUI holds inline attach during a mod send, which only a paste needs.
-- Two pollers on one launch (a child Claude inheriting `LOOM_LAUNCH`) would wake each other in a loop; a superseded poll could answer 409.
-- Seen in the smoke run, older than this plan: a session started with `--permission-mode default` showed auto mode; a dev build from a worktree nested in the main checkout is stamped with the main checkout's revision (Go's VCS stamping looks for a `.git` directory and skips the worktree's `.git` file), which matters to `rpc.CompareBuilds`.
 - A flake seen once in the final gate, older than this plan: `TestAccountSync_LinksNewEntriesForEveryAccount` under load.
+- `core/CLAUDE.md` is at its byte budget (about 19,900 of 20,000): move the mod-link and launch-watch detail into a `docs/claude/` guide before the next rule there.
+
+**Follow-ups fixed** (2026-10-14, 88d98ce..HEAD, each reviewed and re-checked; the launch-watch and trust items confirmed in fresh sandboxes on real Claude 2.1.299):
+- The mod socket is listened again when removed or replaced, and follows a moved main socket (75f62ac).
+- Only the mod instance loaded last polls: a superseded poller or an older hello gets 409 and stops (b2b23e3, 0f96f9b).
+- No prompt is pasted into an open trust prompt: a first prompt waits up to 2 min, then rides `Started.PromptNotSent`; a send someone waits on is refused (f5a0d2c, 724b5fd, 3c7e9c6, a4db786, 796e3a2).
+- MCP server dialogs are left to the person; the launch watch never answers them (d28d31d, the user's decision).
+- The launch watch waits out Claude's ~1.5 s input refusal, retries a refused Down, and presses Enter only once every Down it sent has drawn (47ef3cd, 705b4fa). Before, it left the safety check unanswered in fresh folders.
+- loom's `default` permission mode is Claude's own default (auto on Claude 2.1.299); `manual` is offered (96b27ad, c7145bb).
+- Dev builds through loomdev stamp their own checkout's commit (866db86).
