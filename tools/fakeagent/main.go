@@ -6,6 +6,8 @@
 // the way Claude does, --resume, and --trust-first, which makes it stop at
 // its trust prompt on launch. `fakeagent agents …` answers loom's
 // roster query with no sessions, so the sandbox's status is hook-driven.
+// With LOOM_MOD_SOCKET and LOOM_LAUNCH set it plays the loom mod
+// (session/claudemod), running the daemon's messages as prompts.
 package main
 
 import (
@@ -29,6 +31,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "fakeagent: hooks disabled: %v\n", err)
 	}
 	a.hooks = emitter
+	a.mod = newModClient(os.Getenv)
 	a.trustFirst = opts.trustFirst
 	os.Exit(a.run())
 }

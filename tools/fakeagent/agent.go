@@ -46,8 +46,11 @@ func personaFor(argv0 string) persona {
 }
 
 type fakeAgent struct {
-	p     persona
-	in    *bufio.Scanner
+	p  persona
+	in *bufio.Scanner
+	// lines carries stdin's lines (readStdin), and closes at EOF: a mod
+	// message can then arrive while the agent waits for one.
+	lines chan string
 	out   io.Writer
 	dir   string
 	sleep func(time.Duration)
@@ -59,10 +62,22 @@ type fakeAgent struct {
 	// before the banner, as an agent in a folder it has not been told to
 	// trust does on launch (--trust-first).
 	trustFirst bool
+	// mod plays the loom mod; nil without LOOM_MOD_SOCKET and LOOM_LAUNCH.
+	mod *modClient
 }
 
 func newFakeAgent(p persona, in io.Reader, out io.Writer, dir string) *fakeAgent {
-	return &fakeAgent{p: p, in: bufio.NewScanner(in), out: out, dir: dir, sleep: time.Sleep, git: runGit}
+	a := &fakeAgent{p: p, in: bufio.NewScanner(in), lines: make(chan string), out: out, dir: dir, sleep: time.Sleep, git: runGit}
+	go a.readStdin()
+	return a
+}
+
+// readStdin feeds stdin's lines to a.lines and closes it at EOF.
+func (a *fakeAgent) readStdin() {
+	for a.in.Scan() {
+		a.lines <- a.in.Text()
+	}
+	close(a.lines)
 }
 
 func runGit(dir string, args ...string) error {
@@ -73,27 +88,51 @@ func runGit(dir string, args ...string) error {
 	return nil
 }
 
-// run executes stdin commands until exit, crash, or EOF and returns the
-// process exit code.
+// run executes stdin commands, and the mod's messages, until exit, crash,
+// or EOF and returns the process exit code.
 func (a *fakeAgent) run() int {
 	if a.trustFirst {
 		a.await(a.p.trustPrompt, "trusted")
 	}
 	a.hooks.sessionStart()
 	fmt.Fprintf(a.out, "fakeagent: %s persona\n%s\n", a.p.name, usage)
+	var mods <-chan modMsg // nil without a mod: never ready
+	if a.mod != nil {
+		mods = a.mod.out
+		go a.mod.run()
+	}
 	for {
 		fmt.Fprint(a.out, "> ")
-		if !a.in.Scan() {
-			a.hooks.emit("SessionEnd", map[string]any{"reason": "other"})
-			return 0
-		}
-		if code, done := a.exec(strings.TrimSpace(a.in.Text())); done {
-			return code
+		select {
+		case line, ok := <-a.lines:
+			if !ok {
+				a.hooks.emit("SessionEnd", map[string]any{"reason": "other"})
+				return 0
+			}
+			if code, done := a.runLine(strings.TrimSpace(line)); done {
+				return code
+			}
+		case m := <-mods:
+			if code, done := a.runModMessage(m); done {
+				return code
+			}
 		}
 	}
 }
 
-func (a *fakeAgent) exec(line string) (code int, done bool) {
+// runModMessage runs a mod message as a prompt, as Claude runs a prompt the
+// mod submitted once the session is idle, reporting its turn started and
+// complete; the answer is what the Stop hook reports.
+func (a *fakeAgent) runModMessage(m modMsg) (code int, done bool) {
+	turn := newTurnID()
+	a.mod.report(map[string]any{"kind": "started", "id": m.ID, "turnId": turn})
+	fmt.Fprintln(a.out, m.Text)
+	code, done = a.runLine(strings.TrimSpace(m.Text))
+	a.mod.report(map[string]any{"kind": "complete", "id": m.ID, "turnId": turn, "text": "fakeagent finished: " + m.Text, "reason": "answer"})
+	return code, done
+}
+
+func (a *fakeAgent) runLine(line string) (code int, done bool) {
 	cmd, arg, _ := strings.Cut(line, " ")
 	switch cmd {
 	case "", "crash":
@@ -152,12 +191,16 @@ func (a *fakeAgent) work(arg string) {
 	fmt.Fprintln(a.out, "work done")
 }
 
+// await shows prompt and waits for stdin's answer. Only stdin answers it: a
+// mod message waits in its channel, as a submitted prompt never answers
+// Claude's dialog.
 func (a *fakeAgent) await(prompt, verb string) {
 	fmt.Fprintln(a.out, prompt)
-	if !a.in.Scan() {
+	line, ok := <-a.lines
+	if !ok {
 		return
 	}
-	fmt.Fprintf(a.out, "%s%s: %q\n", clearScreen, verb, a.in.Text())
+	fmt.Fprintf(a.out, "%s%s: %q\n", clearScreen, verb, line)
 }
 
 func (a *fakeAgent) edit() {

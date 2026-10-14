@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -148,4 +152,104 @@ func TestRun_ExitCodes(t *testing.T) {
 func TestRun_UnknownCommand(t *testing.T) {
 	out, _, _ := runScript(t, "fakeagent", "dance\n")
 	assert.Contains(t, out, `unknown command "dance"`)
+}
+
+// A message the mod receives runs as a prompt once the agent is idle; one
+// that arrives while the agent waits at a prompt neither answers it nor
+// starts, as Claude queues a submitted prompt. A message offered again (its
+// queued report lost) is reported queued again but never runs twice.
+func TestMod_AMessageRunsAsAPromptButNeverAnswersOne(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "fam")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "m.sock")
+	ln, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	var (
+		mu     sync.Mutex
+		events []map[string]any
+	)
+	offer := make(chan string) // an inbox body for the held poll
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/hello", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("GET /v1/inbox", func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case body := <-offer:
+			w.Header().Set("content-type", "application/json")
+			_, _ = io.WriteString(w, body)
+		case <-r.Context().Done():
+		}
+	})
+	mux.HandleFunc("POST /v1/events", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Launch string           `json:"launch"`
+			Events []map[string]any `json:"events"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		assert.Equal(t, "L1", body.Launch)
+		mu.Lock()
+		events = append(events, body.Events...)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	kinds := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		var k []string
+		for _, e := range events {
+			k = append(k, e["kind"].(string)+" "+e["id"].(string))
+		}
+		return k
+	}
+	eventually := func(what string, ok func() bool) {
+		t.Helper()
+		require.Eventually(t, ok, 5*time.Second, 10*time.Millisecond, "%s; events %v", what, kinds())
+	}
+
+	stdin, feed := io.Pipe()
+	out := &lockedBuffer{}
+	a := newFakeAgent(personaFor("claude"), stdin, out, t.TempDir())
+	a.mod = newModClient(func(k string) string {
+		return map[string]string{"LOOM_MOD_SOCKET": sock, "LOOM_LAUNCH": "L1"}[k]
+	})
+	require.NotNil(t, a.mod)
+	done := make(chan int, 1)
+	go func() { done <- a.run() }()
+
+	_, _ = io.WriteString(feed, "ask\n")
+	eventually("the prompt", func() bool { return strings.Contains(out.String(), a.p.pendingPrompt) })
+	offer <- `{"messages":[{"id":"m1","text":"work 0"}]}`
+	eventually("m1 queued", func() bool { return slices.Equal(kinds(), []string{"queued m1"}) })
+	time.Sleep(200 * time.Millisecond)
+	assert.NotContains(t, out.String(), "answered:", "a queued message never answers a prompt")
+	assert.Equal(t, []string{"queued m1"}, kinds(), "nor does it start while the agent waits")
+
+	_, _ = io.WriteString(feed, "y\n")
+	eventually("m1 run", func() bool { return strings.Contains(out.String(), "work done") })
+	assert.Contains(t, out.String(), `answered: "y"`)
+	eventually("m1 complete", func() bool {
+		return slices.Equal(kinds(), []string{"queued m1", "started m1", "complete m1"})
+	})
+	mu.Lock()
+	assert.Equal(t, "fakeagent finished: work 0", events[2]["text"])
+	assert.Equal(t, "answer", events[2]["reason"])
+	assert.NotEmpty(t, events[1]["turnId"])
+	assert.Equal(t, events[1]["turnId"], events[2]["turnId"], "started and complete name one turn")
+	mu.Unlock()
+
+	// Idle now: a message runs with no keystroke, and one offered again is
+	// only reported queued again.
+	offer <- `{"messages":[{"id":"m2","text":"bell"}]}`
+	eventually("m2 complete", func() bool { return len(kinds()) == 6 })
+	assert.Equal(t, []string{"queued m2", "started m2", "complete m2"}, kinds()[3:])
+	offer <- `{"messages":[{"id":"m2","text":"bell"}]}`
+	eventually("m2 queued again", func() bool { return len(kinds()) == 7 })
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, []string{"queued m2"}, kinds()[6:], "a message offered again never runs twice")
+
+	_, _ = io.WriteString(feed, "exit\n")
+	assert.Equal(t, 0, <-done)
 }
