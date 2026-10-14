@@ -579,6 +579,25 @@ func TestSessionSend_LosingTheDaemonAfterQueuedSaysItWasDelivered(t *testing.T) 
 	assert.Contains(t, err.Error(), "lost the loom daemon")
 }
 
+// A session that stops after its mod queued the message ends --wait's wait
+// with the daemon's Notice, saying the message was delivered.
+func TestSessionSend_AStopAfterQueuedSaysItWasDelivered(t *testing.T) {
+	d, launch := modSession(t)
+	v, ok := d.view(t, "ws-a", "alpha")
+	require.True(t, ok)
+	carried := playMod(t, d.loop, launch, "", "")
+	go func() {
+		<-carried
+		d.client.Pause(v.ID, 0)
+	}()
+
+	_, _, err := runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "hi", "--wait")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `the message to "alpha" was delivered, but its reply will not be printed`)
+	assert.Contains(t, err.Error(), "the session stopped before its turn ended")
+}
+
 // With no daemon serving the mod the launch has none, and send refuses at
 // once rather than paste into the pane.
 func TestSessionSend_RefusesWithoutAMod(t *testing.T) {
@@ -592,7 +611,7 @@ func TestSessionSend_RefusesWithoutAMod(t *testing.T) {
 	_, _, err = runSession(t, "", "send", "alpha", "-w", "ws-a", "--text", "hi", "--wait")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "runs without the loom mod")
+	assert.Contains(t, err.Error(), "this loom daemon serves no loom mod")
 	assert.NotContains(t, err.Error(), "delivered", "a refusal is no delivery")
 }
 

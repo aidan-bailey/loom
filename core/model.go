@@ -104,9 +104,11 @@ type Model struct {
 	// mods are the loom mod links (mod.go), one per instance that has had a
 	// message for its mod or heard from it. Loop-goroutine only.
 	mods map[*session.Instance]*modLink
-	// bootedAt is when Boot ran: a mod's grace runs from it at the earliest
-	// (pastModGrace), since a restarted daemon re-reads every SessionStart.
-	bootedAt time.Time
+	// modsSince is when the daemon began serving the loom mod (ModsServing),
+	// or when it booted (Boot) until then: a mod's grace runs from it at the
+	// earliest (pastModGrace), since a restarted daemon re-reads every
+	// SessionStart and a mod reconnects only once the socket listens.
+	modsSince time.Time
 	// modsStopped is set by ModsStop, as the daemon stops: no mod can reach
 	// it any more, so every launch counts as having none (linkFor).
 	modsStopped bool

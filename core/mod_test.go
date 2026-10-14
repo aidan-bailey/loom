@@ -57,8 +57,15 @@ func modInst(t *testing.T, m *Model, title string) *session.Instance {
 // kind Restart serves, so the relaunch touches no worktree.
 func relaunchableInst(t *testing.T, m *Model, title string) *session.Instance {
 	t.Helper()
+	return relaunchableInstIn(t, m, title, t.TempDir())
+}
+
+// relaunchableInstIn is relaunchableInst with configDir as its config dir:
+// "" gives its launches no hooks, so no mod.
+func relaunchableInstIn(t *testing.T, m *Model, title, configDir string) *session.Instance {
+	t.Helper()
 	inst, err := session.NewInstance(session.InstanceOptions{
-		Title: title, Path: t.TempDir(), Program: "claude", ConfigDir: t.TempDir(), IsWorkspaceTerminal: true,
+		Title: title, Path: t.TempDir(), Program: "claude", ConfigDir: configDir, IsWorkspaceTerminal: true,
 	})
 	require.NoError(t, err)
 	created := false
@@ -243,7 +250,7 @@ func TestMod_PastTheGraceAModlessLaunchFallsBack(t *testing.T) {
 	rs := replies(out)
 	require.Len(t, rs, 1, "the CLI message is refused at once; the script's is pasted by a job")
 	assert.Equal(t, ReqID(5), rs[0].Req)
-	assert.ErrorContains(t, rs[0].Err, "runs without the loom mod")
+	assert.ErrorContains(t, rs[0].Err, "without the loom mod")
 	require.Len(t, out.Jobs, 1, "the script's paste")
 	assert.Empty(t, m.mods[inst].outbox) // read, not polled: a poll would prove a mod
 
@@ -276,20 +283,25 @@ func TestMod_APollRevivesASilentLink(t *testing.T) {
 	assert.Equal(t, "delivered", msgs[0].Text)
 }
 
-// The grace runs from the daemon's boot at the earliest: a restarted daemon
-// re-reads an old SessionStart, and the mod needs time to reconnect.
-func TestMod_TheGraceRunsFromTheBootAtTheEarliest(t *testing.T) {
+// The grace runs from when the daemon began serving the mod at the earliest
+// (ModsServing, after its boot): a restarted daemon re-reads an old
+// SessionStart, and a mod reconnects only once the socket listens, on its
+// own backoff.
+func TestMod_TheGraceRunsFromWhenTheDaemonServesTheMod(t *testing.T) {
 	withMod(t)
 	m := NewForTest(Options{})
 	inst := activeInst(t, m, "x")
 	adoptLaunch(t, m, inst, "L1", time.Now().Add(-time.Hour))
-	m.bootedAt = time.Now()
+	m.modsSince = time.Now().Add(-time.Minute) // booted a while before it listened
 	m.enqueue(inst, cliMessage(5, "hello", false))
 	m.Drain()
+	serving := time.Now()
 
-	m.modTick(m.bootedAt.Add(modGrace - time.Second))
-	assert.Empty(t, replies(m.Drain()))
-	m.modTick(m.bootedAt.Add(modGrace))
+	m.ModsServing()
+
+	m.modTick(serving.Add(modGrace - time.Second))
+	assert.Empty(t, replies(m.Drain()), "inside the grace from the listen")
+	m.modTick(time.Now().Add(modGrace))
 	assert.Len(t, replies(m.Drain()), 1)
 }
 
@@ -325,7 +337,7 @@ func TestMod_ALaunchWithoutAModIsAbsentAtOnce(t *testing.T) {
 
 	rs := replies(m.Drain())
 	require.Len(t, rs, 1)
-	assert.ErrorContains(t, rs[0].Err, "runs without the loom mod")
+	assert.ErrorContains(t, rs[0].Err, "this loom daemon serves no loom mod")
 }
 
 // A restored instance before its first scan has launch "": pending, and the
@@ -353,21 +365,21 @@ func TestMod_AnUnadoptedRestoredLaunchsGraceRunsFromTheBoot(t *testing.T) {
 	inst := activeInst(t, m, "x")
 	launch, _ := inst.HookLaunch()
 	require.Empty(t, launch, "fixture: restored, never adopted")
-	m.bootedAt = time.Now()
+	m.modsSince = time.Now()
 	m.enqueue(inst, cliMessage(5, "from the cli", false))
 	m.enqueue(inst, &modMessage{text: "from a script", origin: OriginScript, req: 6})
 
-	m.modTick(m.bootedAt.Add(modGrace - time.Second))
+	m.modTick(m.modsSince.Add(modGrace - time.Second))
 	out := m.Drain()
 	assert.Empty(t, replies(out), "inside the grace it may still be adopted")
 	assert.Empty(t, out.Jobs)
 
-	m.modTick(m.bootedAt.Add(modGrace))
+	m.modTick(m.modsSince.Add(modGrace))
 	out = m.Drain()
 	rs := replies(out)
 	require.Len(t, rs, 1, "the CLI message is refused; the script's is pasted by a job")
 	assert.Equal(t, ReqID(5), rs[0].Req)
-	assert.ErrorContains(t, rs[0].Err, "runs without the loom mod")
+	assert.ErrorContains(t, rs[0].Err, "without the loom mod")
 	assert.Len(t, out.Jobs, 1, "the script's paste")
 }
 
@@ -377,7 +389,7 @@ func TestMod_AnAdoptedLaunchsGraceRunsFromItsSessionStart(t *testing.T) {
 	withMod(t)
 	m := NewForTest(Options{})
 	inst := activeInst(t, m, "x")
-	m.bootedAt = time.Now().Add(-time.Hour)
+	m.modsSince = time.Now().Add(-time.Hour)
 	started := time.Now()
 	adoptLaunch(t, m, inst, "L1", started)
 	m.Drain()
@@ -404,7 +416,7 @@ func TestMod_ARestoredNonClaudeLaunchIsAbsentAtOnce(t *testing.T) {
 
 	rs := replies(m.Drain())
 	require.Len(t, rs, 1)
-	assert.ErrorContains(t, rs[0].Err, "runs without the loom mod")
+	assert.ErrorContains(t, rs[0].Err, "it runs aider, not Claude")
 }
 
 // A live mod that stops polling (its socket removed, its module unloaded,
@@ -767,6 +779,12 @@ func TestModsStop_SettlesWhatTheModsHeld(t *testing.T) {
 	rs = replies(m.Drain())
 	require.Len(t, rs, 1, "a poll revives no link once the daemon stops")
 	assert.Equal(t, ReqID(11), rs[0].Req)
+
+	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1})) // a hello that crossed it
+	m.enqueue(inst, cliMessage(12, "after the stop", false))
+	rs = replies(m.Drain())
+	require.Len(t, rs, 1, "nor does a hello")
+	assert.Equal(t, ReqID(12), rs[0].Req)
 }
 
 // A hooked launch that never reports its SessionStart (hooks turned off in
@@ -800,7 +818,7 @@ func TestMod_ALaunchThatNeverReportsItsStartFallsBackAfterTheCap(t *testing.T) {
 	rs := replies(out)
 	require.Len(t, rs, 1, "the CLI message is refused")
 	assert.Equal(t, ReqID(5), rs[0].Req)
-	assert.ErrorContains(t, rs[0].Err, "runs without the loom mod")
+	assert.ErrorContains(t, rs[0].Err, "without the loom mod")
 	assert.Len(t, startedOf(run(m, out), 7), 1, "the first prompt is pasted, and its paste finishes the start")
 }
 
@@ -822,4 +840,67 @@ func TestSend_ACLIMessageToAnotherProgramIsRefusedByName(t *testing.T) {
 	out := m.Drain()
 	assert.Empty(t, replies(out))
 	assert.Len(t, out.Jobs, 1, "the script's paste")
+}
+
+func TestSend_RefusesAnEmptyMessage(t *testing.T) {
+	withMod(t)
+	m := NewForTest(Options{})
+	inst := modInst(t, m, "x")
+	for _, text := range []string{"", " \n\t"} {
+		m.Send(m.idOf(inst), Message{Text: text, Origin: OriginScript}, 5)
+		rs := replies(m.Drain())
+		require.Len(t, rs, 1, "%q", text)
+		assert.ErrorContains(t, rs[0].Err, "send to x: the message is empty")
+		assert.ErrorIs(t, rs[0].Err, ErrRefused)
+	}
+	assert.Empty(t, m.mods, "nothing reaches the mod")
+}
+
+// A CLI message to a launch with no mod is refused saying why, and what to
+// do: the daemon serves none, the session was launched before it had one (a
+// pause and resume relaunches it with one), its launch has no hooks, or its
+// Claude never said hello.
+func TestMod_ARefusalSaysWhyTheLaunchHasNoMod(t *testing.T) {
+	refusal := func(t *testing.T, m *Model, inst *session.Instance, now time.Time) error {
+		t.Helper()
+		m.enqueue(inst, cliMessage(5, "hi", false))
+		m.modTick(now)
+		rs := replies(m.Drain())
+		require.Len(t, rs, 1)
+		return rs[0].Err
+	}
+
+	t.Run("the daemon serves no mod", func(t *testing.T) {
+		m := NewForTest(Options{})
+		inst := activeInst(t, m, "x")
+		assert.ErrorContains(t, refusal(t, m, inst, time.Now()), "send to x: this loom daemon serves no loom mod")
+	})
+	t.Run("launched before this daemon", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := activeInst(t, m, "x")
+		adoptLaunch(t, m, inst, "L1", time.Now().Add(-time.Hour))
+		require.Zero(t, inst.Launches(), "fixture: restored, not launched by this daemon")
+		err := refusal(t, m, inst, time.Now())
+		assert.ErrorContains(t, err, "send to x: it was launched without the loom mod")
+		assert.ErrorContains(t, err, "pause and resume it")
+	})
+	t.Run("a launch without hooks", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := relaunchableInstIn(t, m, "x", "")
+		require.NoError(t, inst.Restart())
+		_, hooked := inst.HookLaunch()
+		require.False(t, hooked, "fixture: no config dir, no hooks")
+		assert.ErrorContains(t, refusal(t, m, inst, time.Now()), "send to x: it runs without loom's hooks")
+	})
+	t.Run("a launch whose Claude never said hello", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := relaunchableInst(t, m, "x")
+		require.NoError(t, inst.Restart())
+		_, hooked := inst.HookLaunch()
+		require.True(t, hooked, "fixture: launched by this daemon, with the mod")
+		assert.ErrorContains(t, refusal(t, m, inst, time.Now().Add(modStartCap+time.Second)), "send to x: its Claude runs without the loom mod (an older Claude, or the mod did not load)")
+	})
 }

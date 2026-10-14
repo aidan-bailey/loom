@@ -75,6 +75,8 @@ func (h *queueHost) ModEvents(launch string, events []core.ModEvent) error {
 	return nil
 }
 
+func (*queueHost) ModsServing() {}
+
 func (h *queueHost) helloed() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

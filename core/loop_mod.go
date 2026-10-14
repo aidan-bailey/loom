@@ -36,6 +36,11 @@ func (l *Loop) ModEvents(launch string, events []ModEvent) error {
 	return err
 }
 
+// ModsServing runs Model.ModsServing on the loop.
+func (l *Loop) ModsServing() {
+	l.modCall(func(m *Model) { m.ModsServing() })
+}
+
 // ModsStop runs Model.ModsStop on the loop. The daemon calls it as it stops,
 // once its mod server has closed and before it waits for the jobs in flight,
 // so the pastes it starts are among them.

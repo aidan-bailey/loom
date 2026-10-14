@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -14,18 +15,29 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // fakeHost is a ModHost that knows one launch, "L1".
 type fakeHost struct {
-	mu     sync.Mutex
-	hello  []core.ModHello
-	msgs   []core.ModMessage
-	wake   chan struct{}
-	events []core.ModEvent
+	mu      sync.Mutex
+	hello   []core.ModHello
+	msgs    []core.ModMessage
+	wake    chan struct{}
+	events  []core.ModEvent
+	serving bool
 }
+
+func (h *fakeHost) ModsServing() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.serving = true
+}
+
+// api is path under the API version the module speaks (claudemod.Version).
+func api(path string) string { return fmt.Sprintf("/v%d%s", claudemod.Version, path) }
 
 func (h *fakeHost) ModHello(launch string, hello core.ModHello) error {
 	if launch != "L1" {
@@ -137,6 +149,16 @@ func TestDefaultHold_FitsClaudesFetchAndTheModelsPollTimeout(t *testing.T) {
 	assert.Less(t, DefaultHold+5*time.Second, core.ModPollTimeout)
 }
 
+// Listen tells the model the mod is served from now: every launch's grace
+// runs from then at the earliest.
+func TestListen_SaysTheModIsServed(t *testing.T) {
+	h := &fakeHost{}
+	listen(t, h, time.Second)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	assert.True(t, h.serving)
+}
+
 func TestListen_TheSocketIsPrivate(t *testing.T) {
 	s, _ := listen(t, &fakeHost{}, time.Second)
 	info, err := os.Stat(s.path)
@@ -148,18 +170,18 @@ func TestHello(t *testing.T) {
 	h := &fakeHost{}
 	_, c := listen(t, h, time.Second)
 
-	assert.Equal(t, http.StatusNoContent, post(t, c, "/v1/hello", `{"launch":"L1","mod":1,"claude":"2.1.299","session":"s"}`))
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1","mod":1,"claude":"2.1.299","session":"s"}`))
 	assert.Equal(t, []core.ModHello{{Mod: 1, Claude: "2.1.299", Session: "s"}}, h.hello)
-	assert.Equal(t, http.StatusNotFound, post(t, c, "/v1/hello", `{"launch":"L9"}`))
-	assert.Equal(t, http.StatusBadRequest, post(t, c, "/v1/hello", `{"launch":`))
-	assert.Equal(t, http.StatusBadRequest, post(t, c, "/v1/hello", `{"launch":"`+string(bytes.Repeat([]byte("x"), maxBody))+`"}`), "an oversized body")
+	assert.Equal(t, http.StatusNotFound, post(t, c, api("/hello"), `{"launch":"L9"}`))
+	assert.Equal(t, http.StatusBadRequest, post(t, c, api("/hello"), `{"launch":`))
+	assert.Equal(t, http.StatusBadRequest, post(t, c, api("/hello"), `{"launch":"`+string(bytes.Repeat([]byte("x"), maxBody))+`"}`), "an oversized body")
 }
 
 func TestInbox_HandsOutWaitingMessagesAtOnce(t *testing.T) {
 	h := &fakeHost{msgs: []core.ModMessage{{ID: "m1", Text: "hi", AsUser: true}}}
 	_, c := listen(t, h, time.Hour)
 
-	resp, err := c.Get("http://loom/v1/inbox?launch=L1")
+	resp, err := c.Get("http://loom" + api("/inbox?launch=L1"))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -170,13 +192,13 @@ func TestInbox_HandsOutWaitingMessagesAtOnce(t *testing.T) {
 
 func TestInbox_AnUnknownLaunchIs404(t *testing.T) {
 	_, c := listen(t, &fakeHost{}, time.Hour)
-	assert.Equal(t, http.StatusNotFound, <-get(c, "/v1/inbox?launch=L9"))
+	assert.Equal(t, http.StatusNotFound, <-get(c, api("/inbox?launch=L9")))
 }
 
 func TestInbox_HoldsUntilWoken(t *testing.T) {
 	h := &fakeHost{}
 	_, c := listen(t, h, time.Hour)
-	done := get(c, "/v1/inbox?launch=L1")
+	done := get(c, api("/inbox?launch=L1"))
 	require.Eventually(t, h.polled, 5*time.Second, 10*time.Millisecond)
 	select {
 	case code := <-done:
@@ -194,7 +216,7 @@ func TestInbox_HoldsUntilWoken(t *testing.T) {
 func TestInbox_AHoldEndsAfterTheHoldTime(t *testing.T) {
 	_, c := listen(t, &fakeHost{}, 50*time.Millisecond)
 	select {
-	case code := <-get(c, "/v1/inbox?launch=L1"):
+	case code := <-get(c, api("/inbox?launch=L1")):
 		assert.Equal(t, http.StatusNoContent, code)
 	case <-time.After(5 * time.Second):
 		t.Fatal("the hold never ended")
@@ -204,7 +226,7 @@ func TestInbox_AHoldEndsAfterTheHoldTime(t *testing.T) {
 func TestInbox_AStopEndsAHoldWith503(t *testing.T) {
 	h := &fakeHost{}
 	s, c := listen(t, h, time.Hour)
-	done := get(c, "/v1/inbox?launch=L1")
+	done := get(c, api("/inbox?launch=L1"))
 	require.Eventually(t, h.polled, 5*time.Second, 10*time.Millisecond)
 
 	s.Close()
@@ -218,7 +240,7 @@ func TestInbox_AStopEndsAHoldWith503(t *testing.T) {
 func TestInbox_AStoppedModelIs503(t *testing.T) {
 	_, c := listen(t, &stoppedHost{}, time.Hour)
 	select {
-	case code := <-get(c, "/v1/inbox?launch=L1"):
+	case code := <-get(c, api("/inbox?launch=L1")):
 		assert.Equal(t, http.StatusServiceUnavailable, code)
 	case <-time.After(5 * time.Second):
 		t.Fatal("a poll to a stopped model was held")
@@ -229,9 +251,9 @@ func TestEvents(t *testing.T) {
 	h := &fakeHost{}
 	_, c := listen(t, h, time.Second)
 
-	assert.Equal(t, http.StatusNoContent, post(t, c, "/v1/events", `{"launch":"L1","events":[{"kind":"queued","id":"m1"},{"kind":"complete","id":"m1","turnId":"t","text":"ok","reason":"answer"}]}`))
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/events"), `{"launch":"L1","events":[{"kind":"queued","id":"m1"},{"kind":"complete","id":"m1","turnId":"t","text":"ok","reason":"answer"}]}`))
 	assert.Equal(t, []core.ModEvent{{Kind: "queued", ID: "m1"}, {Kind: "complete", ID: "m1", TurnID: "t", Text: "ok", Reason: "answer"}}, h.events)
-	assert.Equal(t, http.StatusNotFound, post(t, c, "/v1/events", `{"launch":"L9","events":[]}`))
+	assert.Equal(t, http.StatusNotFound, post(t, c, api("/events"), `{"launch":"L9","events":[]}`))
 }
 
 func TestClose_IsSafeTwiceAndOnNil(t *testing.T) {

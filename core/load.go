@@ -202,13 +202,13 @@ func syncSessionFlags(cfg *config.Config, cfgDir string) {
 // registered (the identity it reads also locates the main config dir the
 // accounts link to); and loads every workspace the model serves (boot). The
 // detection runs once, up front, so every launch decision after it is
-// synchronous. It notes when it ran (bootedAt), since a loom mod's grace
-// runs from then at the earliest. Boot returns the events it raised (the
-// account registry's notices): no client is connected yet to be sent them,
-// so the caller shows them to its own. A client never boots the model: Boot
-// is not in Core.
+// synchronous. It notes when it ran (modsSince), from which a loom mod's
+// grace runs at the earliest until the daemon serves the mod (ModsServing).
+// Boot returns the events it raised (the account registry's notices): no
+// client is connected yet to be sent them, so the caller shows them to its
+// own. A client never boots the model: Boot is not in Core.
 func (m *Model) Boot() []Event {
-	m.bootedAt = time.Now()
+	m.modsSince = time.Now()
 	m.InitAccounts()
 	if remoteControlConfigured() || m.HasExtraAccounts() {
 		m.SetRCAuth(session.DetectClaudeRemoteControlAuth(m.program, m.executor()))

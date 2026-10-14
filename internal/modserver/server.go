@@ -1,7 +1,8 @@
 // Package modserver serves the loom mod's HTTP API (session/claudemod) on the
-// daemon's mod socket: POST /v1/hello, GET /v1/inbox (a long poll) and POST
-// /v1/events, each naming the launch the mod runs in. It holds no state: every
-// request goes to the model through core.ModHost.
+// daemon's mod socket: POST /v<n>/hello, GET /v<n>/inbox (a long poll) and
+// POST /v<n>/events, n being claudemod.Version, each naming the launch the
+// mod runs in. It holds no state: every request goes to the model through
+// core.ModHost.
 package modserver
 
 import (
@@ -17,6 +18,7 @@ import (
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session/claudemod"
 )
 
 // DefaultHold is how long an empty inbox poll is held before it answers 204.
@@ -38,8 +40,17 @@ type Server struct {
 	once     sync.Once
 }
 
+// route is method's pattern for path under the API version the module
+// speaks: the module builds its URLs from the same Version, so a bump moves
+// both.
+func route(method, path string) string {
+	return fmt.Sprintf("%s /v%d%s", method, claudemod.Version, path)
+}
+
 // Listen serves the mod's API on a unix socket at path (mode 0600; a stale
 // file there is replaced), with host behind it and empty polls held for hold.
+// Once it listens it tells host (ModsServing): no mod could reach the daemon
+// before, so every launch's grace runs from then at the earliest.
 func Listen(path string, host core.ModHost, hold time.Duration) (*Server, error) {
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)
@@ -52,15 +63,16 @@ func Listen(path string, host core.ModHost, hold time.Duration) (*Server, error)
 	}
 	s := &Server{host: host, hold: hold, path: path, stopping: make(chan struct{})}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/hello", s.hello)
-	mux.HandleFunc("GET /v1/inbox", s.inbox)
-	mux.HandleFunc("POST /v1/events", s.events)
+	mux.HandleFunc(route("POST", "/hello"), s.hello)
+	mux.HandleFunc(route("GET", "/inbox"), s.inbox)
+	mux.HandleFunc(route("POST", "/events"), s.events)
 	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := s.http.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.For("modserver").Error("modserver.serve_failed", "err", err)
 		}
 	}()
+	host.ModsServing()
 	return s, nil
 }
 

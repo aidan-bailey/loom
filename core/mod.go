@@ -13,10 +13,14 @@ import (
 	"github.com/aidan-bailey/loom/session"
 )
 
-// modGrace is how long after a launch's SessionStart (or the daemon's boot,
-// whichever is later) its loom mod has to say hello before the launch counts
-// as having none (modAbsent).
-const modGrace = 10 * time.Second
+// modGrace is how long after a launch's SessionStart (or the daemon's start
+// serving the mod, whichever is later: modsSince) its loom mod has to say
+// hello before the launch counts as having none (modAbsent). It covers the
+// worst reconnect after a daemon restart: a mod mid-way through its longest
+// backoff (5 s) when the socket starts listening, then a hello that beats
+// the hook scan adopting its launch and gets a 404, costing another 5 s
+// backoff, then the scan and the hello's round trips.
+const modGrace = 15 * time.Second
 
 // modStartCap bounds how long a hooked launch that has reported no
 // SessionStart counts as still starting, from its link's creation (or the
@@ -82,10 +86,11 @@ func (msg Message) compose() string {
 // (enqueue): queued behind any running turn or open dialog, never typed into
 // the pane; messages that wait through the same turn are answered together,
 // as one turn. The Reply comes once the mod has queued it, or at once with a
-// refusal: a session not started or Paused (opSend's precondition), one
-// starting (Loading: a start or resume is launching it, and its link would be
-// the old launch's), an origin no sender may use, or (OriginCLI) another
-// program than Claude or a launch without a live mod. A script's message is
+// refusal: a session not started or Paused (opSend's precondition), one busy
+// (Loading: a start or resume is launching it, and its link would be the old
+// launch's, or a pause is stopping it), an empty message, an origin no sender
+// may use, or (OriginCLI) another program than Claude or a launch without a
+// live mod. A script's message is
 // pasted instead on such a launch, as SendPrompt does. With Wait, Answered
 // follows when the turn that carries the message ends.
 func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
@@ -95,13 +100,16 @@ func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	}
 	switch {
 	case inst.GetStatus() == session.Loading:
-		m.refuse(req, id, fmt.Errorf("%s %s: the session is starting: send again once it runs", opSend, inst.Title))
+		m.refuse(req, id, fmt.Errorf("%s %s: the session is busy (starting, resuming or pausing): send again once it runs", opSend, inst.Title))
+		return
+	case strings.TrimSpace(msg.Text) == "":
+		m.refuse(req, id, fmt.Errorf("send to %s: the message is empty", inst.Title))
 		return
 	case msg.Origin != OriginCLI && msg.Origin != OriginScript:
 		m.refuse(req, id, fmt.Errorf("send to %s: %q is no sender's origin", inst.Title, msg.Origin))
 		return
 	case msg.Origin == OriginCLI && !session.IsClaudeProgram(inst.Program()):
-		m.refuse(req, id, fmt.Errorf("send to %s: it runs %s, not Claude: loom session send reaches only Claude", inst.Title, programName(inst.Program())))
+		m.refuse(req, id, fmt.Errorf("send to %s: %s", inst.Title, noModReason(inst)))
 		return
 	}
 	m.enqueue(inst, &modMessage{text: msg.compose(), asUser: msg.Origin == OriginScript, origin: msg.Origin, req: req, wait: msg.Wait})
@@ -147,6 +155,9 @@ type ModHost interface {
 	// daemon is stopping.
 	ModInbox(launch string) ([]ModMessage, <-chan struct{}, error)
 	ModEvents(launch string, events []ModEvent) error
+	// ModsServing says the server listens from now, so every launch's
+	// grace runs from here at the earliest.
+	ModsServing()
 }
 
 // programName is program's command name: "aider" for "/usr/bin/aider --model
@@ -310,15 +321,35 @@ func (m *Model) withoutMod(inst *session.Instance, msg *modMessage, why string) 
 	id := m.idOf(inst)
 	switch msg.origin {
 	case OriginCLI:
-		err := fmt.Errorf("send to %s: its Claude runs without the loom mod (an older Claude, or the mod did not load): attach and type instead", inst.Title)
-		if why != "" {
-			err = fmt.Errorf("send to %s: %s", inst.Title, why)
+		if why == "" {
+			why = noModReason(inst)
 		}
-		m.refuse(msg.req, id, err)
+		m.refuse(msg.req, id, fmt.Errorf("send to %s: %s", inst.Title, why))
 	case OriginScript:
 		m.causedBy(0, func() { m.spawn(m.track(msg.req, id, m.sendPromptInst(inst, msg.text))) })
 	case OriginFirstPrompt:
 		m.causedBy(msg.cause, func() { m.spawn(sendInitialPrompt(inst, msg.owner, msg.text)) })
+	}
+}
+
+// noModReason says why inst's launch has no live mod, and what to do, for a
+// CLI message refused there: the daemon serves none (Windows, or a socket
+// path too long), the session was launched before this daemon (by an older
+// loom, the common case after an upgrade: a pause and resume relaunches it
+// with the mod), its launch has no hooks, or its Claude never said hello.
+func noModReason(inst *session.Instance) string {
+	launch, hooked := inst.HookLaunch()
+	switch {
+	case session.ModSocket() == "":
+		return "this loom daemon serves no loom mod (on Windows, or where its socket path would be too long): attach and type instead"
+	case !session.IsClaudeProgram(inst.Program()):
+		return fmt.Sprintf("it runs %s, not Claude: loom session send reaches only Claude", programName(inst.Program()))
+	case inst.Launches() == 0:
+		return "it was launched without the loom mod (by an older loom, before this daemon started): pause and resume it to relaunch it with the mod, or attach and type instead"
+	case launch != "" && !hooked:
+		return "it runs without loom's hooks (its program passes its own --settings, or its hooks folder could not be prepared), so it has no loom mod: attach and type instead"
+	default:
+		return "its Claude runs without the loom mod (an older Claude, or the mod did not load): attach and type instead"
 	}
 }
 
@@ -412,6 +443,11 @@ func (m *Model) modTick(now time.Time) {
 	}
 }
 
+// ModsServing notes that the daemon's mod socket listens from now: the grace
+// of every launch runs from here at the earliest (modsSince), since no mod
+// could reach the daemon before.
+func (m *Model) ModsServing() { m.modsSince = time.Now() }
+
 // ModsStop settles every link as the daemon stops, after its mod server has
 // closed, so no mod can queue what the links hold (modGone, "the loom daemon
 // stopped"): what no mod took is pasted, a CLI message refused, what a mod
@@ -436,7 +472,7 @@ func (m *Model) ModsStop() {
 // then has no hooks (its program passes its own --settings, or its folder was
 // never prepared or was swept) and will never report a SessionStart.
 func (m *Model) pastModGrace(inst *session.Instance, l *modLink, now time.Time) bool {
-	at := m.bootedAt
+	at := m.modsSince
 	if launch, _ := inst.HookLaunch(); launch == "" {
 		return now.Sub(at) >= modGrace
 	}
@@ -460,6 +496,9 @@ func (m *Model) ModHello(launch string, h ModHello) error {
 		return ErrModUnknownLaunch
 	}
 	l := m.linkFor(inst)
+	if m.modsStopped {
+		return nil // no mod is served any more: nothing revives
+	}
 	if l.live != modLive {
 		log.For("core").Info("mod.live", "instance", inst.Title, "launch", launch, "mod", h.Mod, "claude", h.Claude)
 	}
@@ -549,7 +588,11 @@ func (m *Model) modComplete(inst *session.Instance, l *modLink, ev ModEvent) {
 // modFailed settles a message the mod could not submit: one still in the
 // outbox falls back as a modless launch's would; one Claude dropped after it
 // was queued is reported (to its waiter, or to every client), never pasted,
-// since it may have reached Claude after all.
+// since it may have reached Claude after all. A failed report means the
+// prompt never entered Claude: a drop is answered before it enters, and a
+// rejected or thrown submit never submitted it. So pasting one still in the
+// outbox can't deliver it twice, and the rule that a message the mod took is
+// never pasted (offered, modGone) does not apply here.
 func (m *Model) modFailed(inst *session.Instance, l *modLink, ev ModEvent) {
 	if msg := l.take(ev.ID); msg != nil {
 		m.withoutMod(inst, msg, "the loom mod could not submit it: "+ev.Error)

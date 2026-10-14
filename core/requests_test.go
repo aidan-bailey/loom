@@ -332,7 +332,7 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"send to a paused session", func(f fixture) { f.m.SendPrompt(f.id["paused"], "hi", 1) }, "send a prompt to paused: the session is paused"},
 		{"send through the mod to an unstarted session", func(f fixture) { f.m.Send(f.id["new"], Message{Text: "hi", Origin: OriginCLI}, 1) }, "send a prompt to new: the session has not started"},
 		{"send through the mod to a paused session", func(f fixture) { f.m.Send(f.id["paused"], Message{Text: "hi", Origin: OriginCLI}, 1) }, "send a prompt to paused: the session is paused"},
-		{"send through the mod to a loading session", func(f fixture) { f.m.Send(f.id["loading"], Message{Text: "hi", Origin: OriginScript}, 1) }, "send a prompt to loading: the session is starting: send again once it runs"},
+		{"send through the mod to a loading session", func(f fixture) { f.m.Send(f.id["loading"], Message{Text: "hi", Origin: OriginScript}, 1) }, "send a prompt to loading: the session is busy (starting, resuming or pausing): send again once it runs"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewForTest(Options{})
