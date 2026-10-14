@@ -278,8 +278,9 @@ func TestSession_TrustPromptShown(t *testing.T) {
 // agent clears once answered. A prompt answered by typing (aider's D,
 // Enter) is a line that lingers after its answer, so it never counts. The
 // dialog itself must show, not only its words: two of its options on lines
-// of their own, below its pattern, in the screen's last lines, where Claude
-// draws it. Its words in a transcript, a file or an answer are no dialog.
+// of their own in the screen's last lines, where Claude draws it, below its
+// pattern, which a narrow pane can wrap further up. Its words in a
+// transcript, a file or an answer are no dialog.
 func TestSession_TrustPromptOpen(t *testing.T) {
 	inputBox := "\n────────────────\n❯ \n────────────────\n  ? for shortcuts"
 	output := strings.Repeat("● working on it\n", 16)
@@ -293,6 +294,10 @@ func TestSession_TrustPromptOpen(t *testing.T) {
 			" take a moment to review what's in this folder first.\n Claude Code'll be able to read, edit, and execute files here.\n Security guide\n" +
 			" ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel", true},
 		{"the safety check in a box", claudeSafetyCheck, true},
+		{"the safety check wrapped in a narrow pane, its title more than 15 lines up",
+			"Quick safety check: Is this\na project you created or\none you trust? (Like your\nown code, a well-known open\nsource project, or work\nfrom your team). If not,\n" +
+				"take a moment to review\nwhat's in this folder\nfirst.\nClaude Code'll be able to\nread, edit, and execute\nfiles here.\nSecurity guide\n" +
+				"❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to\ncancel", true},
 		{"the safety check with no single cursor (the launch watch leaves it to the person)",
 			"Quick safety check: Is this a project you created or one you trust?\n\n  No, exit\n  Yes, I trust this folder", true},
 		{"the MCP dialog", " New MCP server found in this project: db\n MCP servers may execute code or access system resources. All tool calls require approval. Learn more in the MCP documentation.\n" +

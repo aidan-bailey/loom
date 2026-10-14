@@ -406,19 +406,20 @@ func (s *Session) TrustPromptShown(content string) string {
 //
 // The dialog itself must show, not only its words, which a transcript, an
 // answer or a file on screen can hold at any time: two of its options
-// (trustDialogOptions), each on a line of its own, and one of the adapter's
-// patterns above the first of them, all in the screen's last
-// trustDialogLines non-empty lines, where Claude draws its dialogs. The
-// patterns match regardless of case: Claude 2.1.299 titles its one-server
-// MCP dialog "New MCP server found in this project".
+// (trustDialogOptions), each on a line of its own in the screen's last
+// trustDialogLines non-empty lines, where Claude draws its dialogs, and one
+// of the adapter's patterns in the trustTitleLines non-empty lines above the
+// first of them, where a narrow pane wraps the dialog's title. The patterns
+// match regardless of case: Claude 2.1.299 titles its one-server MCP dialog
+// "New MCP server found in this project".
 func (s *Session) TrustPromptOpen(content string) bool {
 	if s.adapter.TrustPromptResponse() != agent.TrustPromptTapEnter {
 		return false
 	}
-	lines := lastNonEmptyLines(ansiSeqRe.ReplaceAllString(content, ""), trustDialogLines)
+	lines := lastNonEmptyLines(ansiSeqRe.ReplaceAllString(content, ""), trustDialogLines+trustTitleLines)
 	first, options := -1, 0
-	for i, line := range lines {
-		if isTrustDialogOption(line) {
+	for i := max(0, len(lines)-trustDialogLines); i < len(lines); i++ {
+		if isTrustDialogOption(lines[i]) {
 			if first < 0 {
 				first = i
 			}
@@ -428,7 +429,7 @@ func (s *Session) TrustPromptOpen(content string) bool {
 	if options < 2 {
 		return false
 	}
-	above := strings.ToLower(normalizeForPatternMatch(strings.Join(lines[:first], "\n")))
+	above := strings.ToLower(normalizeForPatternMatch(strings.Join(lines[max(0, first-trustTitleLines):first], "\n")))
 	for _, pattern := range s.adapter.TrustPromptPatterns() {
 		if strings.Contains(above, strings.ToLower(normalizeForPatternMatch(pattern))) {
 			return true
@@ -438,11 +439,18 @@ func (s *Session) TrustPromptOpen(content string) bool {
 }
 
 // trustDialogLines is how many of the screen's last non-empty lines
-// TrustPromptOpen looks at. Claude draws its dialogs at the bottom of the
-// pane, and its tallest, the safety check (a path, two paragraphs, a link,
-// its options and a footer), takes about 12 non-empty lines when wrapped at
-// 80 columns; a mention further up the transcript falls outside.
-const trustDialogLines = 15
+// TrustPromptOpen finds a dialog's options in, and trustTitleLines how far
+// above the first of them it finds the dialog's words. Claude draws its
+// dialogs at the bottom of the pane, with the options under their title and
+// above at most a footer, so options further up are a transcript's. The
+// tallest, the safety check (a path, two paragraphs, a link, its options and
+// a footer), takes about 12 non-empty lines at 80 columns, but its title can
+// sit more than 15 lines above its footer once a pane narrower than 40
+// columns wraps it, and 40 lines above its options covers a pane of 20.
+const (
+	trustDialogLines = 15
+	trustTitleLines  = 40
+)
 
 // trustDialogOptions are the options of the trust dialogs an agent answers
 // with Enter alone (Claude's, as 2.1.299 labels them): the safety check's,
