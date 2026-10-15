@@ -1,6 +1,8 @@
 package core
 
 import (
+	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -40,7 +42,8 @@ type rosterResult struct {
 // parallel inside the one Job, which still returns a single result.
 func rosterQueryJob(active []*session.Instance, dirs map[string]string) Job {
 	var program string
-	accounts := map[string]bool{}
+	// accounts maps each account in use to its instances' worktrees.
+	accounts := map[string][]string{}
 	for _, inst := range active {
 		p := inst.Program()
 		if !session.IsClaudeProgram(p) {
@@ -49,7 +52,7 @@ func rosterQueryJob(active []*session.Instance, dirs map[string]string) Job {
 		if program == "" {
 			program = p
 		}
-		accounts[inst.Account()] = true
+		accounts[inst.Account()] = append(accounts[inst.Account()], inst.GetWorktreePath())
 	}
 	if program == "" {
 		return nil
@@ -58,7 +61,7 @@ func rosterQueryJob(active []*session.Instance, dirs map[string]string) Job {
 		msg := rosterResult{at: time.Now()}
 		var mu sync.Mutex
 		var wg sync.WaitGroup
-		for name := range accounts {
+		for name, paths := range accounts {
 			var env []string
 			if name != "" {
 				dir, ok := dirs[name]
@@ -68,9 +71,12 @@ func rosterQueryJob(active []*session.Instance, dirs map[string]string) Job {
 				env = account.EnvFor(dir)
 			}
 			wg.Add(1)
-			go func(name string, env []string) {
+			go func(name string, env, paths []string) {
 				defer wg.Done()
 				entries, err := session.QueryClaudeRosterEnv(program, env, internalexec.Default{})
+				if err == nil {
+					joinRecordedPaths(entries, paths)
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				if name == "" {
@@ -86,10 +92,38 @@ func rosterQueryJob(active []*session.Instance, dirs map[string]string) Job {
 				} else {
 					msg.extra[name] = entries
 				}
-			}(name, env)
+			}(name, env, paths)
 		}
 		wg.Wait()
 		return msg
+	}
+}
+
+// joinRecordedPaths also keys each worktree in paths to its directory's
+// entry, when loom recorded it through a symlink: Claude reports its cwd
+// with symlinks resolved, while loom records a worktree under the path its
+// workspace was registered by (~/Source, a link to /tb/Source). Without it
+// the roster has no opinion on such a session, and a Prompting its hooks
+// reported stays until the turn ends, since nothing fires when a prompt
+// is answered. It resolves on the job's goroutine: that reads the disk.
+// Fail closed: a path that can't be resolved joins nothing, nor does a
+// link sharing its directory with another recorded path, since the entry
+// could be either's.
+func joinRecordedPaths(entries map[string]session.RosterEntry, paths []string) {
+	byDir := map[string][]string{}
+	for _, p := range paths {
+		dir, err := filepath.EvalSymlinks(p)
+		if err != nil || slices.Contains(byDir[dir], p) {
+			continue
+		}
+		byDir[dir] = append(byDir[dir], p)
+	}
+	for dir, recorded := range byDir {
+		entry, ok := entries[dir]
+		if !ok || len(recorded) > 1 {
+			continue
+		}
+		entries[recorded[0]] = entry
 	}
 }
 
@@ -148,9 +182,9 @@ func (m *Model) deliverRoster(msg rosterResult) {
 // is joined against that account's roster only.
 //
 // The join is exact string equality on the path. Claude reports a
-// symlink-resolved cwd, so a Loom config dir reached through a symlink
-// (a dotfiles setup, say) simply produces no match and falls back — a
-// silent degradation to the old behavior, never a wrong status.
+// symlink-resolved cwd, so the job also keys a worktree loom recorded
+// through a symlink (joinRecordedPaths); one it can't resolve gets no
+// opinion, and a Prompting from its hooks then holds until the next one.
 func (m *Model) rosterStatusFor(inst *session.Instance) (session.Status, string, bool) {
 	if inst == nil || !session.IsClaudeProgram(inst.Program()) {
 		return session.Ready, "", false

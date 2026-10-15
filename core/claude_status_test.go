@@ -1,8 +1,13 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
+	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"testing"
 	"time"
 
@@ -293,4 +298,82 @@ func TestRosterQueryJob_NeverQueriesAnAccountAsAnother(t *testing.T) {
 	assert.NotContains(t, msg.extra, "gone", "an unregistered account is not queried at all")
 	assert.NotContains(t, msg.extraErrs, "gone")
 	assert.ErrorIs(t, msg.extraErrs["max-2"], account.ErrAccountDirMissing)
+}
+
+// writeFakeClaude writes an executable at bin that prints roster as
+// `claude agents --json` would.
+func writeFakeClaude(t *testing.T, bin string, roster []map[string]string) {
+	t.Helper()
+	out, err := json.Marshal(roster)
+	require.NoError(t, err)
+	script := "#!/bin/sh\ncat <<'EOF'\n" + string(out) + "\nEOF\n"
+	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+}
+
+// Claude reports its cwd with symlinks resolved, while loom records a
+// worktree under the path its workspace was registered by (~/Source, a
+// link to /tb/Source). The roster must still answer for the session:
+// nothing fires when a prompt is answered, so without it a Prompting the
+// hooks reported stays until the turn ends.
+func TestRoster_AnswersForAWorktreeReachedThroughASymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("runs a shell script as claude")
+	}
+	configDir := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(t.TempDir(), configDir))
+	bin := filepath.Join(t.TempDir(), "claude")
+	m := NewForTest(Options{})
+	inst := startedInstIn(t, "via-link", bin, configDir)
+	hold(m, inst)
+	wt := inst.GetWorktreePath()
+	resolved, err := filepath.EvalSymlinks(wt)
+	require.NoError(t, err)
+	require.NotEqual(t, wt, resolved, "fixture: the worktree is reached through a symlink")
+	writeFakeClaude(t, bin, []map[string]string{{"cwd": resolved, "kind": "interactive", "status": "busy"}})
+
+	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", At: time.Now().Add(-time.Second)})
+	m.applyClaudeStatus(inst)
+	require.Equal(t, session.Prompting, inst.GetStatus())
+
+	job := rosterQueryJob(m.activeInstances(), nil)
+	require.NotNil(t, job)
+	m.Deliver(job())
+
+	assert.Equal(t, session.Running, inst.GetStatus(), "the roster's busy answers the prompt the hooks left open")
+}
+
+// joinRecordedPaths gives a recorded path its directory's entry only when
+// that settles whose session the entry is.
+func TestJoinRecordedPaths(t *testing.T) {
+	dir := t.TempDir()
+	unlisted := t.TempDir()
+	linkA := filepath.Join(t.TempDir(), "a")
+	linkB := filepath.Join(t.TempDir(), "b")
+	linkU := filepath.Join(t.TempDir(), "u")
+	require.NoError(t, os.Symlink(dir, linkA))
+	require.NoError(t, os.Symlink(dir, linkB))
+	require.NoError(t, os.Symlink(unlisted, linkU))
+	resolved, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name  string
+		paths []string
+		want  []string
+	}{
+		{"a link joins its directory's entry", []string{linkA}, []string{resolved, linkA}},
+		{"the same link twice is one path", []string{linkA, linkA}, []string{resolved, linkA}},
+		{"two links to one directory join neither", []string{linkA, linkB}, []string{resolved}},
+		{"a link beside its directory's own spelling joins nothing", []string{linkA, resolved}, []string{resolved}},
+		{"a link to a directory the roster doesn't list joins nothing", []string{linkU}, []string{resolved}},
+		{"a path that can't be resolved joins nothing", []string{filepath.Join(linkA, "gone")}, []string{resolved}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := map[string]session.RosterEntry{resolved: {Status: session.RosterStatusBusy}}
+
+			joinRecordedPaths(entries, tc.paths)
+
+			assert.ElementsMatch(t, tc.want, slices.Collect(maps.Keys(entries)))
+		})
+	}
 }

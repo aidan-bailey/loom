@@ -175,6 +175,12 @@ func aliveExec() cmd_test.MockCmdExec {
 // content, which are the TUI's.
 func startedInst(t *testing.T, title, program string) *session.Instance {
 	t.Helper()
+	return startedInstIn(t, title, program, t.TempDir())
+}
+
+// startedInstIn is startedInst with its worktree under configDir.
+func startedInstIn(t *testing.T, title, program, configDir string) *session.Instance {
+	t.Helper()
 
 	workdir := t.TempDir()
 	runGit(t, workdir, "init")
@@ -188,7 +194,7 @@ func startedInst(t *testing.T, title, program string) *session.Instance {
 		Title:     title,
 		Path:      workdir,
 		Program:   program,
-		ConfigDir: t.TempDir(),
+		ConfigDir: configDir,
 	})
 	require.NoError(t, err)
 
