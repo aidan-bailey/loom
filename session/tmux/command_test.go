@@ -173,3 +173,69 @@ func TestResolveServer_IsTheServerTmuxUses_RealTmux(t *testing.T) {
 	t.Setenv(EnvTmuxSocket, "")
 	assert.NoError(t, Command(context.Background(), "has-session", "-t", SessionTarget("loom_probe")).Run())
 }
+
+// TestStart_PinnedServerWhoseSocketDirIsGone_RealTmux: the first start on
+// a pinned server whose socket dir does not exist yet (a reboot empties a
+// tmpfs $TMUX_TMPDIR such as /run/user/<uid>) creates that dir, private to
+// its owner as tmux makes its own, and starts the server in it. `tmux -S`
+// creates no directory: it printed "error creating …", exited 0, and every
+// start and resume timed out until something else ran a plain tmux.
+func TestStart_PinnedServerWhoseSocketDirIsGone_RealTmux(t *testing.T) {
+	privateTmux(t, "gone")
+	t.Setenv(EnvTmuxSocket, "")
+	path, err := ResolveServer()
+	require.NoError(t, err)
+	require.NoDirExists(t, filepath.Dir(path), "privateTmux's TMUX_TMPDIR is fresh, as after a reboot")
+	UseServer(path)
+	t.Cleanup(func() {
+		_ = Command(context.Background(), "kill-server").Run()
+		UseServer("")
+	})
+
+	s := NewSession("gone", "sleep 60")
+	require.NoError(t, s.Start(t.TempDir()))
+
+	assert.True(t, s.DoesSessionExist())
+	info, err := os.Stat(filepath.Dir(path))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+}
+
+// TestStart_PinnedServerSocketDirThatExistsKeepsItsMode: a socket dir that
+// exists is the server's or the user's, and Start changes nothing about it.
+func TestStart_PinnedServerSocketDirThatExistsKeepsItsMode(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tmux-1000")
+	require.NoError(t, os.Mkdir(dir, 0o750))
+	require.NoError(t, os.Chmod(dir, 0o750))
+	UseServer(filepath.Join(dir, "default"))
+	t.Cleanup(func() { UseServer("") })
+	ptyFactory := NewMockPtyFactory(t)
+	s := NewSessionWithDeps("kept", "claude", ptyFactory, (&argvRecorder{}).runner())
+
+	require.NoError(t, s.Start(t.TempDir()))
+
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o750), info.Mode().Perm())
+	assert.Len(t, ptyFactory.cmds, 1)
+}
+
+// TestStart_PinnedServerSocketDirThatCantBeMadeStopsTheStart: a socket dir
+// that can't be made (its parent is gone too) fails the start before
+// anything launches, naming the dir, where a bare `tmux -S` timed out with
+// no reason; and no tree is made under a missing $TMUX_TMPDIR, as tmux
+// makes none.
+func TestStart_PinnedServerSocketDirThatCantBeMadeStopsTheStart(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "gone", "tmux-1000")
+	UseServer(filepath.Join(dir, "default"))
+	t.Cleanup(func() { UseServer("") })
+	ptyFactory := NewMockPtyFactory(t)
+	s := NewSessionWithDeps("stopped", "claude", ptyFactory, (&argvRecorder{}).runner())
+
+	err := s.Start(t.TempDir())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), dir)
+	assert.Empty(t, ptyFactory.cmds, "no new-session: nothing launched")
+	assert.NoDirExists(t, dir)
+}

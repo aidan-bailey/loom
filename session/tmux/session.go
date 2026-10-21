@@ -162,6 +162,9 @@ func (s *Session) Start(workDir string) (err error) {
 	if s.DoesSessionExist() {
 		return fmt.Errorf("%w: %s", ErrSessionExists, s.sanitizedName)
 	}
+	if err := ensureServerDir(); err != nil {
+		return fmt.Errorf("error starting tmux session: %w", err)
+	}
 
 	// Create a new detached tmux session and start the program in it.
 	// tmuxStartTimeout allows the agent process's initial exec before tmux

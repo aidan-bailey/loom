@@ -2,7 +2,9 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +41,24 @@ func pinned() string {
 		return *p
 	}
 	return ""
+}
+
+// ensureServerDir makes the pinned server's socket dir when it is missing,
+// private to its owner, as tmux makes tmux-<uid> for -L and the default
+// socket. `tmux -S` makes none: after a reboot empties a tmpfs
+// $TMUX_TMPDIR, a daemon pinned to tmux-<uid>/default could start no
+// server, and tmux said so only on the PTY nobody reads. Like tmux, it
+// makes only the last directory.
+func ensureServerDir() error {
+	path := pinned()
+	if path == "" {
+		return nil
+	}
+	dir := filepath.Dir(path)
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("create the tmux socket dir %s: %w", dir, err)
+	}
+	return nil
 }
 
 // Command builds a tmux invocation bound to ctx on the server UseServer
