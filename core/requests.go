@@ -134,6 +134,7 @@ const (
 	opPause     requestOp = "pause"
 	opPush      requestOp = "push"
 	opResume    requestOp = "resume"
+	opRestart   requestOp = "restart"
 	opRecover   requestOp = "recover"
 	opMergeInto requestOp = "merge into"
 	opMergeFrom requestOp = "merge from"
@@ -155,10 +156,11 @@ const (
 //     whose worktree it can't get (GetGitWorktree), which an unstarted
 //     one has none of.
 //   - the merge source: mergeSourceRows (the same rule, per instance).
-//   - resume: selectedResumableNotWorkspace for a Paused session (the TUI
-//     routes a Recoverable one to recover), and selectedPausedNotWorkspace
-//     for ResumeWith: Paused, not a workspace terminal.
-//   - recover: selectedResumableNotWorkspace for a Recoverable one.
+//   - resume: selectedResumable for a Paused session, a workspace terminal
+//     included (the TUI routes a Recoverable one to recover).
+//   - restart (ResumeWith): selectedPausedNotWorkspace, Paused and not a
+//     workspace terminal.
+//   - recover: selectedResumable for a Recoverable one.
 //   - send: the prompt overlay's, quick input's and review's send-time
 //     check, not Paused and its tmux session alive, here as started and
 //     not Paused. Liveness is a tmux subprocess, which the model's
@@ -179,9 +181,9 @@ func precondition(op requestOp, inst *session.Instance) error {
 		case op == opMergeInto && !inst.Started():
 			why = "the session has not started"
 		}
-	case opResume:
+	case opResume, opRestart:
 		switch {
-		case inst.IsWorkspaceTerminal:
+		case op == opRestart && inst.IsWorkspaceTerminal:
 			why = "not allowed on a workspace terminal"
 		case st != session.Paused:
 			why = fmt.Sprintf("the session is not paused (%s)", st)
@@ -269,10 +271,12 @@ func (m *Model) Pause(id InstanceID, req ReqID) {
 	m.spawn(m.track(req, id, job))
 }
 
-// Resume resumes the session id, which must be Paused and not a workspace
-// terminal (precondition; a Recoverable one is Recover's): it moves to
-// Loading at once and the job resumes it (resumeIfLoadingInst), answering
-// with a ResumeResult, or an OpFailed reverting to Paused. The transition
+// Resume resumes the session id, which must be Paused (precondition; a
+// Recoverable one is Recover's): it moves to Loading at once and the job
+// resumes it (resumeIfLoadingInst), answering with a ResumeResult, or an
+// OpFailed reverting to Paused. A workspace terminal is relaunched in its
+// repository (session.Instance.Resume), the one way to bring back a terminal
+// whose relaunch failed at its workspace's first open. The transition
 // can't be refused from Paused; if it were, the request would be refused
 // too.
 func (m *Model) Resume(id InstanceID, req ReqID) {
@@ -290,10 +294,11 @@ func (m *Model) Resume(id InstanceID, req ReqID) {
 
 // ResumeWith resumes the session id with new launch options (the R flow):
 // the program recomposed from base (applyLaunch), then as Resume. Its
-// precondition is Resume's, checked before the options are applied, so a
-// refused request changes nothing.
+// precondition is Resume's, but refuses a workspace terminal, whose launch
+// follows its workspace's config; it is checked before the options are
+// applied, so a refused request changes nothing.
 func (m *Model) ResumeWith(id InstanceID, opts launch.Options, base string, req ReqID) {
-	inst, ws, ok := m.admit(opResume, id, req)
+	inst, ws, ok := m.admit(opRestart, id, req)
 	if !ok {
 		return
 	}

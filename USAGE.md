@@ -291,6 +291,7 @@ When you launch Loom inside a registered workspace, a special instance is pinned
 - **Cannot be paused or killed** — the workspace terminal is a permanent fixture while the workspace exists. `s` and `D` are no-ops when it is selected.
 - **Diff stats** reflect the workspace's uncommitted changes against HEAD, not a cumulative diff against a base commit.
 - **Auto-recreated** — if its tmux session is missing at startup (e.g. after a reboot), Loom recreates it in place.
+- **Resume with `r` when it shows Paused** — a terminal whose relaunch failed (tmux could not start a session, say) or whose agent kept exiting is left Paused. `r` relaunches it in the repository, resuming its conversation; it refuses, changing nothing, when another session holds the terminal's tmux name. `R` (restart with options) stays off for it: its launch follows the workspace's config.
 
 Use the workspace terminal for work that needs unrestricted access to the root checkout (ad-hoc shell commands, editors, or an agent you want full repo visibility for). Create standard sessions with `n` / `N` for anything that should stay isolated in a worktree.
 

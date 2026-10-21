@@ -268,7 +268,7 @@ func TestScriptResume_RecoversARecoverableSession(t *testing.T) {
 }
 
 // TestScriptResume_RefusedRaises: a resume the model refuses (here a
-// workspace terminal, which Instance.Resume refused too) answers at once.
+// running workspace terminal: only a Paused one resumes) answers at once.
 // Its Reply resumes the script exactly once, and inst:resume() raises the
 // refusal's own message ("resume term: …", which names the request) at
 // the script's line.
@@ -284,8 +284,8 @@ func TestScriptResume_RefusedRaises(t *testing.T) {
 
 	require.Len(t, done, 2, "the dispatch, then one resume")
 	err := lastErr(t, done)
-	require.Error(t, err, "a workspace terminal cannot be resumed")
-	assert.Contains(t, err.Error(), "resume term: not allowed on a workspace terminal")
+	require.Error(t, err, "a running workspace terminal cannot be resumed")
+	assert.Contains(t, err.Error(), "resume term: the session is not paused (Running)")
 	assert.NotContains(t, err.Error(), "resume: resume", "a refusal raises its own message, which names the request")
 	assert.Contains(t, err.Error(), ":2:", "raised at the script's line")
 	assert.Contains(t, err.Error(), "lua.lua: ", "in the script's file")

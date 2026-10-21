@@ -446,9 +446,10 @@ func TestBoot_DetectsRemoteControlAuthByTheGlobalConfig(t *testing.T) {
 	}
 }
 
-// A terminal its restart breaker stopped stays Paused, since nothing can
-// resume a workspace terminal: the first open after a start is the user
-// asking for it again, so it relaunches with its breaker reset.
+// A terminal its restart breaker stopped stays Paused until the user asks
+// for it again: the first open after a start is such an ask, so it
+// relaunches with its breaker reset ('r' is the other,
+// TestResume_APausedTerminalRelaunches).
 func TestEnsureTerminal_ATrippedTerminalIsRelaunched(t *testing.T) {
 	isolateTmux(t)
 	repo := t.TempDir()

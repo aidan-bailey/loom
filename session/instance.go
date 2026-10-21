@@ -1451,6 +1451,9 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 // list`, restored one it then could not drop, or could not restore Claude's
 // archived scratchpad or transcript, returns a Notice saying so (see
 // OnlyNotice); a failed one includes those notices in its error.
+//
+// A workspace terminal has no worktree: resumeTerminal relaunches it in
+// its repository.
 func (i *Instance) Resume(saveState func() error) (err error) {
 	lg := i.getLogger()
 	t0 := time.Now()
@@ -1464,7 +1467,7 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 	}()
 
 	if i.IsWorkspaceTerminal {
-		return fmt.Errorf("cannot resume workspace terminal")
+		return i.resumeTerminal(saveState)
 	}
 	if !i.isStarted() {
 		return fmt.Errorf("cannot resume instance that has not been started")
@@ -1516,7 +1519,7 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		// workspace: a record reconcile paused because another
 		// workspace's session held its name would otherwise reattach to
 		// that session. And no relaunch can take the name while it runs.
-		// Not a workspace terminal: Resume refused those above.
+		// Not a workspace terminal: resumeTerminal took those above.
 		held, dir, err := sessionHeldElsewhere(ts, sessionHome(false, i.Path, gw.GetWorktreePath()))
 		if err != nil {
 			return fmt.Errorf("cannot tell whether tmux session %s is this session's (tmux did not answer in time); leaving everything untouched — retry once the machine is less busy: %w", ts.SessionName(), err)
@@ -1798,6 +1801,43 @@ func (i *Instance) startFreshWithRecovery(gw *git.GitWorktree) error {
 		return fmt.Errorf("failed to start new session: %w", err)
 	}
 	i.setTmuxSession(ts)
+	return nil
+}
+
+// resumeTerminal relaunches a Paused workspace terminal in its repository,
+// resuming its conversation as a crash restart does (CrashRestart), with
+// its restart breaker reset. Only a workspace's first open relaunches its
+// terminal otherwise, so one whose relaunch failed then, or whose breaker
+// tripped, stays Paused until the daemon restarts. Like the model's
+// settleTerminal it first asks whose session holds the terminal's tmux
+// name: one it can't prove its own is left running and the resume refused,
+// as is a check tmux left unanswered. Its own session, still running, is
+// reattached.
+func (i *Instance) resumeTerminal(saveState func() error) error {
+	ts := i.getTmuxSession()
+	if ts == nil {
+		return fmt.Errorf("cannot resume workspace terminal %s: it has no tmux session", i.Title)
+	}
+	dir, found, err := ts.StartDir()
+	held, err := heldElsewhere(ts.SessionName(), i.SessionHome(), dir, found, err)
+	if err != nil {
+		return fmt.Errorf("cannot tell whether tmux session %s is this terminal's (tmux did not answer in time); leaving everything untouched — retry once the machine is less busy: %w", ts.SessionName(), err)
+	}
+	if held {
+		return fmt.Errorf("cannot resume %s: tmux session %s, which has its name, was started in %s, not in its repository: it is another session's, so this terminal can't relaunch under its name while it runs", i.Title, ts.SessionName(), dir)
+	}
+	i.ResetRestartFailures()
+	if found {
+		i.getLogger().Info("instance.resume.reattach_terminal")
+		_ = i.TransitionTo(Running)
+	} else if err := i.CrashRestart(); err != nil {
+		return err
+	}
+	if saveState != nil {
+		if err := saveState(); err != nil {
+			return fmt.Errorf("resume checkpoint save: %w", err)
+		}
+	}
 	return nil
 }
 
