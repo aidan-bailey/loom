@@ -35,8 +35,9 @@ Checked on fresco on 2026-10-21, with Claude Code 2.1.306.
   session: `cwd`, `sessionId`, `status`, `tmux` and, while Remote Control
   is connected, `bridgeSessionId` (`session_01…`), the ID in the session's
   `https://claude.ai/code/<id>` link. Loom's roster
-  (`session/claude_roster.go`) reads these files for status and drops the
-  bridge ID.
+  (`session/claude_roster.go`) runs `claude agents --json`, whose
+  interactive entries carry `pid`, `sessionId`, `cwd` and `status` but not
+  the bridge ID, so the bridge ID is only in that file.
 - A `PermissionRequest` hook payload carries the tool's input, but
   `hooks.Event` keeps only `ToolName` (`session/hooks/event.go`), so loom's
   wait reason reads "permission: Bash" without the command.
@@ -69,8 +70,8 @@ Checked on fresco on 2026-10-21, with Claude Code 2.1.306.
 | 8 | **Shape:** inside the daemon, opt-in. `internal/web` is a `core.Core` client over `net.Pipe` to the daemon's own `rpc.Server`, plus `core.WebHost` for device records. A separate service and a hub were weighed (Alternatives). |
 | 9 | **Fleet:** grouped by what needs you, across workspaces: Needs you, Your turn, Working, Paused, with chips to filter by workspace. |
 | 10 | **The app has no build step:** ES modules and one vendored Preact + htm file, embedded in the binary. |
-| 11 | **Settled while writing this spec (confirm in review):** the web settings live in `web.json`, set by `loom web enable` and applied at once, rather than a block in `config.json` read at the daemon's start. `config.Settings` is per workspace, and a hand edit of a file the model writes races its saves. |
-| 12 | **Settled while writing this spec (confirm in review):** loopback TCP only. The unix socket option is dropped: cloudflared runs as its own user and could not reach a private socket. |
+| 11 | **Settings:** the web settings live in `web.json`, set by `loom web enable` and applied at once, not in a block of `config.json` read at the daemon's start: `config.Settings` is per workspace, and a hand edit of a file the model writes races its saves. |
+| 12 | **Listener:** loopback TCP only. No unix socket: cloudflared runs as its own user and could not reach a private one. |
 
 ## Architecture
 
@@ -130,8 +131,10 @@ why.
     (below) and writes, with an empty `listen` disabling; `PairDevice(name
     string) (Pairing, error)`, where `Pairing` is the code and its expiry;
     and `RevokeDevice(name string) error`.
-  - The query `WebView() WebView` (`rpc:local`): the settings, whether the
+  - The query `Web() WebView` (`rpc:local`): the settings, whether the
     listener serves and why not, and each device without its token hash.
+    It travels in `ModelView` (published as `ModelChanged`), so no new
+    event is needed.
   - `core.WebHost`, implemented by `*core.Loop` and never on the wire:
     redeeming a code, finding a device by token hash, touching last seen,
     setting a device's notifications and push subscription, the push
@@ -145,13 +148,20 @@ why.
   waits in the backlog for the next TUI. An optional field needs no
   `Protocol` bump.
 - **session:**
-  - The roster keeps `bridgeSessionId`; the instance carries it through
-    the join, and `InstanceView.RemoteSession` publishes it (empty while
-    Remote Control isn't connected).
+  - The roster query keeps each interactive entry's `pid` and reads
+    `<config dir>/sessions/<pid>.json` beside it, in the dir the query ran
+    under: the account's `CLAUDE_CONFIG_DIR`, else the daemon's own
+    `CLAUDE_CONFIG_DIR`, else `~/.claude`. It takes `bridgeSessionId` only
+    when that file's `sessionId` equals the entry's (a reused pid names
+    another session), and fails closed: a missing, unreadable, malformed or
+    oversized file gives no bridge ID. The model reads it from its roster
+    when it builds a view, so `InstanceView.RemoteSession` clears when the
+    roster does, as the roster's status does.
   - `hooks.Event` keeps a `ToolSummary` for `PermissionRequest`: Bash's
-    `command` (its first line, at most 200 characters); the `file_path` of
-    Edit, Write, MultiEdit and NotebookEdit; WebFetch's `url`; empty for
-    other tools. The instance keeps it beside the wait reason, set and
+    `command` (its first line); the `file_path` of Edit, Write and
+    MultiEdit; NotebookEdit's `notebook_path`; WebFetch's `url`; empty for
+    other tools; at most 200 characters, cut with "…". The compact event
+    form keeps it. The instance keeps it beside the wait reason, set and
     cleared with it, and `InstanceView.WaitDetail` publishes it.
 - **internal/cli:** `loom web`, a daemon client through `cli.Join` like
   `loom account`:
@@ -179,14 +189,16 @@ why.
 Pairing:
 1. `loom web pair --name iPhone` sends `PairDevice`. The model refuses a
    name a device already has, and makes a code of 8 characters from
-   `23456789ABCDEFGHJKMNPQRSTUVWXYZ` (shown as `K7QM-2XPA`). It works once,
-   for 10 minutes. A second `pair` for the same name replaces its pending
-   code.
-2. The phone posts the code and the name. A code matches ignoring case and
-   the dash. On a match the model consumes the code, makes the device with
-   a 32-byte random token, stores the token's SHA-256, and returns the
-   token once. The web layer sets it as the cookie `__Host-loom`: Secure,
-   HttpOnly, SameSite=Strict, Path=/, Max-Age 400 days.
+   `23456789ABCDEFGHJKMNPQRSTUVWXYZ` (shown as `K7QM-2XPA`), bound to that
+   name. It works once, for 10 minutes. A second `pair` for the same name
+   replaces its pending code; at most 4 codes wait at once, and a fifth
+   voids the oldest.
+2. The phone posts the code alone, and the device takes the name the code
+   was made for. A code matches ignoring case, dashes and spaces. On a
+   match the model consumes the code, makes the device with a 32-byte
+   random token, stores the token's SHA-256, and returns the name and the
+   token once. The web layer sets the token as the cookie `__Host-loom`:
+   Secure, HttpOnly, SameSite=Strict, Path=/, Max-Age 400 days.
 3. Five wrong codes since the last `pair` void every pending code. The app
    says to run `loom web pair` again.
 
@@ -217,12 +229,47 @@ plain HTTP on loopback, so Cloudflare can read the traffic, token
 included. The user accepted this; revocable tokens limit the damage, and
 Cloudflare Access could later sit in front with no loom code.
 
+## Limits
+
+Every outside service, and every value a user or another program
+supplies, has a bound.
+
+- **Push services:** a 10 s timeout per push, at most 30 pushes a minute
+  per device (the rest are dropped and logged), and failures as Push says.
+- **Claude's session files:** read only beside a roster entry, at most
+  64 KiB each; anything else gives no bridge ID.
+- **Requests:** bodies of at most 1 MiB. At most 4 open streams per device,
+  where a fifth closes that device's oldest, and 32 in all, where a 33rd is
+  refused with 503.
+- **Pairing:** a code is 8 characters of the alphabet once dashes and
+  spaces are dropped, in any case; at most 4 codes waiting at once; 5
+  wrong codes void every pending one; at most 16 devices.
+- **Device names:** 1 to 32 characters after trimming, no control
+  characters, unique.
+- **Replies and prompts:** a reply of 1 byte to 64 KiB after trimming; a
+  new session's prompt of at most 64 KiB, and its title as
+  `core.CheckNewTitle` says.
+- **Launch overrides:** an account the registry holds, a model in
+  `config.ClaudeModelAliases()`, a permission mode in
+  `config.ClaudePermissionModes` and an effort in `config.ClaudeEfforts`,
+  as `loom session new` checks its flags.
+- **Notification pause:** an hour from now, or none.
+- **Push subscriptions:** an `https` endpoint of at most 2 KiB whose host
+  is `web.push.apple.com`, `fcm.googleapis.com` or
+  `updates.push.services.mozilla.com`, or ends in `.notify.windows.com`.
+  The daemon posts to it, so no other host is taken. `p256dh` is a 65-byte
+  uncompressed P-256 point and `auth` 16 bytes, both base64url.
+- **IDs in paths and queries:** decimal, and served by the model. An
+  unknown session is 404, an unknown workspace 400.
+- **Settings:** a port from 1 to 65535, and an origin of at most 255
+  bytes.
+
 ## API
 
 | Route (`/api/v1` unless shown) | Does |
 |---|---|
 | `GET /` and the static files | The app shell: public, with no data in it. |
-| `POST /pair` | `{code, name}`; sets the device cookie. |
+| `POST /pair` | `{code}`; sets the device cookie and answers the device's name. |
 | `GET /stream` | The live stream (below). |
 | `POST /sessions` | Create from `{workspace, title, prompt}`, with optional `account`, `model`, `permission_mode` and `effort` overriding the defaults. |
 | `GET /launch-defaults?workspace=<id>` | What the new-session sheet pre-fills, and the account names. |
@@ -230,8 +277,15 @@ Cloudflare Access could later sit in front with no loom code.
 | `POST /sessions/{id}/pause`, `resume`, `kill`, `push` | The request of the same name. |
 | `POST /sessions/{id}/merge` | `{source}`: `Merge` with the session in the URL as the target, as the TUI's picker does. |
 | `PUT /device` | Notification settings, and pausing them for an hour. |
-| `POST /device/push` | Stores the push subscription. |
+| `POST /device/push` | Stores the push subscription, in the shape the browser's `PushSubscription.toJSON()` gives. |
+| `GET /push-key` | The VAPID public key the app subscribes with. |
 | `DELETE /device` | Unpairs this phone. |
+
+**Responses** are JSON. An error is `{"error": "<text>"}`, with the status
+Requests gives. An action answers `{"notices": [...]}`; Create answers
+`{"id": <new id>, "notices": [...]}` with 201; a request still running
+after 30 s answers `{"pending": true}` with 202. A notice is
+`{"text", "error", "at"}`.
 
 **Sessions as JSON:** `id`, `workspace`, `title`, `branch`, `group`, the
 loom `status` and `since`, `wait` (`reason`, `detail`), `last_message`,
@@ -280,9 +334,13 @@ Every connect starts with a snapshot of a few KB, so nothing is replayed.
 ## The app
 
 - Files in `internal/web/static/`, embedded with `go:embed`: `index.html`,
-  `app.js` and its modules, `sw.js`, `manifest.webmanifest`, icons at 180,
-  192 and 512 px, and one vendored Preact + htm module, with its version
-  and source URL in a header comment and its licence in `NOTICE.md`.
+  `app.css`, the app's ES modules under `js/` with the `.mjs` extension
+  (Node 22's `node --check` misses syntax errors in a `.js` module and
+  catches them in a `.mjs` one), `sw.js`, `manifest.webmanifest`, icons at
+  180, 192 and 512 px drawn by a small Go tool, and one vendored Preact +
+  htm module: htm 3.1.1's `preact/standalone.module.js`, pinned by its
+  SHA-256 in a test, with its version and source URL in a header comment
+  and its licence in `NOTICE.md`.
 - The server writes the build ID and the shell's file list into `sw.js`
   when it serves it, so the service worker's precache list can't drift
   from the embedded files.
@@ -396,13 +454,16 @@ The web part fails closed, and the daemon keeps running.
 
 ## Spike, as a gate
 
-Run first, with the fresco tunnel in place (the user's change in
-`~/System`):
+The owner runs it before `/flow-supervise`, outside the plan's stories,
+with the fresco tunnel in place (the owner's change in `~/System`) and
+throwaway files outside the repo:
 1. Serve a minimal installable page through the tunnel, install it on the
-   iPhone, subscribe, and send a push from Go with the planned VAPID JWT and
-   aes128gcm payload. Apple must answer 201 and the phone must show it,
-   with the app open and closed. Record Apple's answers to a bad JWT and an
-   expired subscription.
+   iPhone, subscribe, and send a push with a standard Web Push tool (such
+   as the `web-push` CLI) using a VAPID key, aes128gcm and the configured
+   origin as the JWT's `sub`. Apple must answer 201 and the phone must show
+   it, with the app open and closed. Record Apple's answers to a bad JWT
+   and an expired subscription. The plan's own Go code is then checked by
+   RFC 8291's example and the final iPhone checklist.
 2. Open `https://claude.ai/code/<bridgeSessionId>` on the iPhone for a
    running loom session. It must reach that session, in the Claude app or
    Safari, and a permission prompt must be answerable there.
