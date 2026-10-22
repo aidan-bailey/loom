@@ -45,9 +45,24 @@ type actionLog struct {
 	sessionID core.InstanceID
 }
 
-// record logs the action with how it ended.
-func (a actionLog) record(result string) {
+// record logs the action with how it ended: the HTTP status it answered and
+// a word or the refusal's text. Every answer a route gives, one that worked
+// or one the layer or the model refused, comes through here or refuse, so the
+// log holds the device, the action, the session and the result of each, in
+// one format ("<status> <what>").
+func (l *Layer) record(a actionLog, status int, what string) {
+	result := fmt.Sprintf("%d %s", status, what)
+	if l.onAction != nil {
+		l.onAction(a, result)
+		return
+	}
 	log.For("web").Info("web.action", "device", a.device, "action", a.name, "session", uint64(a.sessionID), "result", result)
+}
+
+// refuse records the action's refusal and answers it with msg.
+func (l *Layer) refuse(w http.ResponseWriter, a actionLog, status int, msg string) {
+	l.record(a, status, msg)
+	writeError(w, status, msg)
 }
 
 // routeAPI registers the sessions' actions under /api/v1. Every route needs
@@ -84,9 +99,9 @@ func modelStatus(err error) int {
 
 // decodeBody reads the request's JSON body into v, answering 400 when it is
 // not that (an unknown field included).
-func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+func (l *Layer) decodeBody(w http.ResponseWriter, r *http.Request, a actionLog, v any) bool {
 	if err := readJSON(r, v); err != nil {
-		writeError(w, http.StatusBadRequest, "bad request: "+err.Error())
+		l.refuse(w, a, http.StatusBadRequest, "bad request: "+err.Error())
 		return false
 	}
 	return true
@@ -94,14 +109,14 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 
 // sessionFromPath is the session the path names, answered 404 when the path
 // holds no decimal ID the model serves.
-func (l *Layer) sessionFromPath(w http.ResponseWriter, r *http.Request) (core.InstanceID, bool) {
+func (l *Layer) sessionFromPath(w http.ResponseWriter, r *http.Request, a actionLog) (core.InstanceID, bool) {
 	n, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
 	if err == nil && n != 0 && n <= maxIDValue {
 		if _, ok := l.client.View(core.InstanceID(n)); ok {
 			return core.InstanceID(n), true
 		}
 	}
-	writeError(w, http.StatusNotFound, "no such session")
+	l.refuse(w, a, http.StatusNotFound, "no such session")
 	return 0, false
 }
 
@@ -122,7 +137,7 @@ func (l *Layer) doAction(w http.ResponseWriter, r *http.Request, a actionLog, se
 func (l *Layer) writeOutcome(w http.ResponseWriter, a actionLog, reply core.Reply, notes []noticeJSON, done, created bool) {
 	switch {
 	case !done:
-		a.record("pending")
+		l.record(a, http.StatusAccepted, "pending")
 		writeJSON(w, http.StatusAccepted, map[string]bool{"pending": true})
 	case reply.Err != nil:
 		text := reply.Err.Error()
@@ -132,14 +147,13 @@ func (l *Layer) writeOutcome(w http.ResponseWriter, a actionLog, reply core.Repl
 			}
 		}
 		status := modelStatus(reply.Err)
-		a.record(fmt.Sprintf("%d %s", status, text))
-		writeError(w, status, text)
+		l.refuse(w, a, status, text)
 	case created:
 		a.sessionID = reply.ID
-		a.record("created")
+		l.record(a, http.StatusCreated, "created")
 		writeJSON(w, http.StatusCreated, createdJSON{ID: reply.ID, Notices: nonNil(notes)})
 	default:
-		a.record("ok")
+		l.record(a, http.StatusOK, "ok")
 		writeJSON(w, http.StatusOK, noticesJSON{Notices: nonNil(notes)})
 	}
 }
@@ -156,11 +170,13 @@ func nonNil(notes []noticeJSON) []noticeJSON {
 // session: pause, resume, kill and push.
 func (l *Layer) sessionOp(name string, op func(core.Core, core.InstanceID, core.ReqID)) deviceHandler {
 	return func(w http.ResponseWriter, r *http.Request, device string) {
-		id, ok := l.sessionFromPath(w, r)
+		a := actionLog{device: device, name: name}
+		id, ok := l.sessionFromPath(w, r, a)
 		if !ok {
 			return
 		}
-		l.doAction(w, r, actionLog{device: device, name: name, sessionID: id}, func(req core.ReqID) {
+		a.sessionID = id
+		l.doAction(w, r, a, func(req core.ReqID) {
 			op(l.client, id, req)
 		})
 	}
@@ -174,20 +190,22 @@ type sendBody struct {
 // sendReply sends the device's reply to the session through the loom mod
 // (core.OriginWeb: the person's own words, no "From" line).
 func (l *Layer) sendReply(w http.ResponseWriter, r *http.Request, device string) {
-	id, ok := l.sessionFromPath(w, r)
+	a := actionLog{device: device, name: "send"}
+	id, ok := l.sessionFromPath(w, r, a)
 	if !ok {
 		return
 	}
+	a.sessionID = id
 	var body sendBody
-	if !decodeBody(w, r, &body) {
+	if !l.decodeBody(w, r, a, &body) {
 		return
 	}
 	text := strings.TrimSpace(body.Text)
 	if text == "" || len(text) > maxReplyBytes {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("text: want 1 to %d bytes", maxReplyBytes))
+		l.refuse(w, a, http.StatusBadRequest, fmt.Sprintf("text: want 1 to %d bytes", maxReplyBytes))
 		return
 	}
-	l.doAction(w, r, actionLog{device: device, name: "send", sessionID: id}, func(req core.ReqID) {
+	l.doAction(w, r, a, func(req core.ReqID) {
 		l.client.Send(id, core.Message{Text: text, Origin: core.OriginWeb}, req)
 	})
 }
@@ -200,23 +218,25 @@ type mergeBody struct {
 // mergeInto merges the source session into the one in the URL, as the TUI's
 // picker does; the model checks both (admit).
 func (l *Layer) mergeInto(w http.ResponseWriter, r *http.Request, device string) {
-	id, ok := l.sessionFromPath(w, r)
+	a := actionLog{device: device, name: "merge"}
+	id, ok := l.sessionFromPath(w, r, a)
 	if !ok {
 		return
 	}
+	a.sessionID = id
 	var body mergeBody
-	if !decodeBody(w, r, &body) {
+	if !l.decodeBody(w, r, a, &body) {
 		return
 	}
 	if body.Source == 0 || body.Source > maxIDValue {
-		writeError(w, http.StatusBadRequest, "source: want a session ID")
+		l.refuse(w, a, http.StatusBadRequest, "source: want a session ID")
 		return
 	}
 	if _, ok := l.client.View(body.Source); !ok {
-		writeError(w, http.StatusNotFound, "source: no such session")
+		l.refuse(w, a, http.StatusNotFound, "source: no such session")
 		return
 	}
-	l.doAction(w, r, actionLog{device: device, name: "merge", sessionID: id}, func(req core.ReqID) {
+	l.doAction(w, r, a, func(req core.ReqID) {
 		l.client.Merge(id, body.Source, req)
 	})
 }
@@ -243,35 +263,36 @@ type createBody struct {
 // the launch options (launchOptions), then the Create, whose Reply names the
 // new session at once. The start plays out on the stream.
 func (l *Layer) createSession(w http.ResponseWriter, r *http.Request, device string) {
+	a := actionLog{device: device, name: "create"}
 	var body createBody
-	if !decodeBody(w, r, &body) {
+	if !l.decodeBody(w, r, a, &body) {
 		return
 	}
 	title := strings.TrimSpace(body.Title)
 	prompt := strings.TrimRight(body.Prompt, " \t\r\n")
 	if len(prompt) > maxPromptBytes {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("prompt: want at most %d bytes", maxPromptBytes))
+		l.refuse(w, a, http.StatusBadRequest, fmt.Sprintf("prompt: want at most %d bytes", maxPromptBytes))
 		return
 	}
 	ws, ok := l.client.Workspace(body.Workspace)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "workspace: no such workspace")
+		l.refuse(w, a, http.StatusBadRequest, "workspace: no such workspace")
 		return
 	}
 	if err := core.CheckNewTitle(title, ws); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		l.refuse(w, a, http.StatusBadRequest, err.Error())
 		return
 	}
 	views := l.client.Views(ws.ID)
 	for _, check := range []error{core.CheckRoom(len(views)), core.CheckWritable(ws)} {
 		if check != nil {
-			writeError(w, http.StatusConflict, check.Error())
+			l.refuse(w, a, http.StatusConflict, check.Error())
 			return
 		}
 	}
 	for _, v := range views {
 		if v.Title == title {
-			writeError(w, http.StatusConflict, fmt.Sprintf("%s already has a session titled %q", ws.Label, title))
+			l.refuse(w, a, http.StatusConflict, fmt.Sprintf("%s already has a session titled %q", ws.Label, title))
 			return
 		}
 	}
@@ -279,7 +300,7 @@ func (l *Layer) createSession(w http.ResponseWriter, r *http.Request, device str
 	l.client.ReloadAccounts()
 	opts, notice, refused := l.launchOptions(ws, program, body)
 	if refused != nil {
-		writeError(w, refused.status, refused.msg)
+		l.refuse(w, a, refused.status, refused.msg)
 		return
 	}
 	var pre []noticeJSON
@@ -291,7 +312,7 @@ func (l *Layer) createSession(w http.ResponseWriter, r *http.Request, device str
 		Title: title, Path: ws.RepoPath, Program: program, Prompt: prompt, Launch: opts, Start: true,
 	}, req)
 	reply, notes, done := l.reqs.wait(r.Context(), req, device)
-	l.writeOutcome(w, actionLog{device: device, name: "create"}, reply, append(pre, notes...), done, true)
+	l.writeOutcome(w, a, reply, append(pre, notes...), done, true)
 }
 
 // launchOptions are the options a new session in ws launches program with:
@@ -325,6 +346,9 @@ func (l *Layer) launchOptions(ws core.WorkspaceView, program string, body create
 			}
 		}
 		opts.Account = body.Account
+		// The notice names the account the launch moved off to, which the
+		// device's own choice replaced.
+		notice = ""
 	}
 	if body.Model != "" {
 		opts.Model = body.Model
@@ -357,11 +381,12 @@ type launchDefaultsJSON struct {
 // launchDefaults answers GET /api/v1/launch-defaults?workspace=<id> as the
 // modal would pre-fill a new session in that workspace. The accounts are the
 // registry's, for a Claude program only: any other takes no account.
-func (l *Layer) launchDefaults(w http.ResponseWriter, r *http.Request, _ string) {
+func (l *Layer) launchDefaults(w http.ResponseWriter, r *http.Request, device string) {
+	a := actionLog{device: device, name: "launch-defaults"}
 	n, err := strconv.ParseUint(r.URL.Query().Get("workspace"), 10, 64)
 	ws, ok := l.client.Workspace(core.WorkspaceID(n))
 	if err != nil || !ok {
-		writeError(w, http.StatusBadRequest, "workspace: no such workspace")
+		l.refuse(w, a, http.StatusBadRequest, "workspace: no such workspace")
 		return
 	}
 	program := ws.Settings.GetProgram()
@@ -380,6 +405,7 @@ func (l *Layer) launchDefaults(w http.ResponseWriter, r *http.Request, _ string)
 	if names := l.client.AccountNames(); names.Present && session.IsClaudeProgram(program) {
 		out.Accounts = append(out.Accounts, names.Names...)
 	}
+	l.record(a, http.StatusOK, "ok")
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -397,7 +423,7 @@ type deviceBody struct {
 func (l *Layer) putDevice(w http.ResponseWriter, r *http.Request, device string) {
 	a := actionLog{device: device, name: "notify"}
 	var body deviceBody
-	if !decodeBody(w, r, &body) {
+	if !l.decodeBody(w, r, a, &body) {
 		return
 	}
 	change := core.NotifyChange{Waiting: body.Waiting, Finished: body.Finished}
@@ -409,17 +435,16 @@ func (l *Layer) putDevice(w http.ResponseWriter, r *http.Request, device string)
 		case "none":
 			change.PausedUntil = &time.Time{}
 		default:
-			writeError(w, http.StatusBadRequest, `pause: want "1h" or "none"`)
+			l.refuse(w, a, http.StatusBadRequest, `pause: want "1h" or "none"`)
 			return
 		}
 	}
 	stored, err := l.host.SetNotify(device, change)
 	if err != nil {
-		a.record(err.Error())
-		writeError(w, modelStatus(err), err.Error())
+		l.refuse(w, a, modelStatus(err), err.Error())
 		return
 	}
-	a.record("ok")
+	l.record(a, http.StatusOK, "ok")
 	writeJSON(w, http.StatusOK, deviceOf(stored))
 }
 
@@ -444,7 +469,7 @@ type subscriptionBody struct {
 func (l *Layer) postPush(w http.ResponseWriter, r *http.Request, device string) {
 	a := actionLog{device: device, name: "subscribe"}
 	var body subscriptionBody
-	if !decodeBody(w, r, &body) {
+	if !l.decodeBody(w, r, a, &body) {
 		return
 	}
 	// The model takes unpadded base64url only; a browser may give padding.
@@ -454,17 +479,15 @@ func (l *Layer) postPush(w http.ResponseWriter, r *http.Request, device string) 
 		Auth:     strings.TrimRight(body.Keys.Auth, "="),
 	}
 	if err := core.ValidatePushSubscription(sub); err != nil {
-		a.record("400 " + err.Error())
-		writeError(w, http.StatusBadRequest, err.Error())
+		l.refuse(w, a, http.StatusBadRequest, err.Error())
 		return
 	}
 	stored, err := l.host.SetPushSubscription(device, sub)
 	if err != nil {
-		a.record(err.Error())
-		writeError(w, modelStatus(err), err.Error())
+		l.refuse(w, a, modelStatus(err), err.Error())
 		return
 	}
-	a.record("ok")
+	l.record(a, http.StatusOK, "ok")
 	writeJSON(w, http.StatusOK, deviceOf(stored))
 }
 
@@ -477,7 +500,7 @@ func (l *Layer) postPush(w http.ResponseWriter, r *http.Request, device string) 
 func (l *Layer) deletePush(w http.ResponseWriter, _ *http.Request, device string) {
 	a := actionLog{device: device, name: "unsubscribe"}
 	l.host.PushResult(device, core.PushExpired)
-	a.record("ok")
+	l.record(a, http.StatusNoContent, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -486,12 +509,11 @@ func (l *Layer) deletePush(w http.ResponseWriter, _ *http.Request, device string
 // cleared. A device already gone is a device unpaired.
 func (l *Layer) deleteDevice(w http.ResponseWriter, _ *http.Request, device string) {
 	a := actionLog{device: device, name: "unpair"}
-	if err := l.client.RevokeDevice(device); err != nil && !errors.Is(err, core.ErrNoDevice) {
-		a.record(err.Error())
-		writeError(w, modelStatus(err), err.Error())
+	if err := l.client.RevokeDevice(device); err != nil && !core.IsNoDevice(err, device) {
+		l.refuse(w, a, modelStatus(err), err.Error())
 		return
 	}
-	a.record("ok")
+	l.record(a, http.StatusNoContent, "ok")
 	clearDeviceCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -69,6 +69,10 @@ type Layer struct {
 	hub *hub
 
 	reqs *reqs
+
+	// onAction, when set, takes the place of the log for the result of each
+	// action (record): a test seam.
+	onAction func(a actionLog, result string)
 }
 
 // addSink adds s to the sinks the drain feeds. The layer's parts add theirs

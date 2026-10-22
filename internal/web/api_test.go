@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +36,31 @@ type apiFixture struct {
 	// workspaceConfig is the workspace's config.json; "" is the Claude
 	// program with every other setting at its default.
 	workspaceConfig string
+	// stateJSON, when set, is the workspace's state.json in place of an empty
+	// one.
+	stateJSON string
+}
+
+// recordingBackend is the loop as the server serves it, keeping what the web
+// layer asked it to send.
+type recordingBackend struct {
+	*core.Loop
+	mu   sync.Mutex
+	sent []core.Message
+}
+
+func (b *recordingBackend) Send(id core.InstanceID, msg core.Message, req core.ReqID) {
+	b.mu.Lock()
+	b.sent = append(b.sent, msg)
+	b.mu.Unlock()
+	b.Loop.Send(id, msg, req)
+}
+
+// loggedAction is one action the layer recorded.
+type loggedAction struct {
+	device, name string
+	session      core.InstanceID
+	result       string
 }
 
 // apiEnv is a webStack over a model with the workspace "toy" and the
@@ -46,6 +73,17 @@ type apiEnv struct {
 	cookie *http.Cookie
 	ws     core.WorkspaceID
 	ids    map[string]core.InstanceID
+	rb     *recordingBackend
+
+	actMu   sync.Mutex
+	actions []loggedAction
+}
+
+// logged is the actions the layer has recorded so far.
+func (e *apiEnv) logged() []loggedAction {
+	e.actMu.Lock()
+	defer e.actMu.Unlock()
+	return append([]loggedAction(nil), e.actions...)
 }
 
 func newAPIEnv(t *testing.T, f apiFixture) *apiEnv {
@@ -58,7 +96,11 @@ func newAPIEnv(t *testing.T, f apiFixture) *apiEnv {
 	if wsConfig == "" {
 		wsConfig = `{"default_program":"claude"}`
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, config.StateFileName), []byte(`{"instances":[]}`), 0o644))
+	state := f.stateJSON
+	if state == "" {
+		state = `{"instances":[]}`
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, config.StateFileName), []byte(state), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, config.ConfigFileName), []byte(wsConfig), 0o644))
 	dead := cmd_test.MockCmdExec{
 		RunFunc:    func(*exec.Cmd) error { return &exec.ExitError{} },
@@ -85,7 +127,8 @@ func newAPIEnv(t *testing.T, f apiFixture) *apiEnv {
 	// newWebStack's stack, but on a loop that holds its jobs and has not
 	// begun (no tick).
 	s := &webStack{loop: core.StartForTest(m)}
-	s.srv = rpc.NewServer(s.loop)
+	rb := &recordingBackend{Loop: s.loop}
+	s.srv = rpc.NewServer(rb)
 	t.Cleanup(func() {
 		s.layer.Close()
 		if s.tui != nil {
@@ -96,6 +139,12 @@ func newAPIEnv(t *testing.T, f apiFixture) *apiEnv {
 	})
 	_ = s.loop.JobsForTest() // what the boot queued is never run
 	s.start(t)
+	env := &apiEnv{webStack: s, t: t, ws: ws.ID, ids: ids, rb: rb}
+	s.layer.onAction = func(a actionLog, result string) {
+		env.actMu.Lock()
+		defer env.actMu.Unlock()
+		env.actions = append(env.actions, loggedAction{device: a.device, name: a.name, session: a.sessionID, result: result})
+	}
 	addr, _ := s.enable(t)
 	cookie := s.pair(t, addr, "phone")
 	require.Eventually(t, func() bool {
@@ -109,7 +158,8 @@ func newAPIEnv(t *testing.T, f apiFixture) *apiEnv {
 		}
 		return true
 	}, 5*time.Second, 10*time.Millisecond, "the web client never saw the model's state")
-	return &apiEnv{webStack: s, t: t, addr: addr, cookie: cookie, ws: ws.ID, ids: ids}
+	env.addr, env.cookie = addr, cookie
+	return env
 }
 
 // apiInstance is a fixture session in status st, never started.
@@ -678,4 +728,299 @@ func TestAPI_DeleteDeviceUnpairsThePhone(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, status, "the token no longer names a device")
 	status, _ = env.do(http.MethodDelete, "/api/v1/device", nil)
 	assert.Equal(t, http.StatusUnauthorized, status, "and unpairing twice is refused, not an error")
+}
+
+// apiAnswer is a response, read.
+type apiAnswer struct {
+	status int
+	body   []byte
+}
+
+// async makes the request on a goroutine of its own and returns where its
+// answer will come, so a test can play the loop's part while the handler
+// waits.
+func (e *apiEnv) async(method, path string, body any) <-chan apiAnswer {
+	ch := make(chan apiAnswer, 1)
+	go func() {
+		status, out := e.do(method, path, body)
+		ch <- apiAnswer{status, out}
+	}()
+	return ch
+}
+
+// heldJob waits for the loop to hold a job, the handler's request having
+// reached it, and returns the job.
+func (e *apiEnv) heldJob() core.Job {
+	e.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if jobs := e.loop.JobsForTest(); len(jobs) > 0 {
+			require.Len(e.t, jobs, 1)
+			return jobs[0]
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.t.Fatal("the request never reached the loop")
+	return nil
+}
+
+// lastReq is the ID of the web client's latest request.
+func (e *apiEnv) lastReq() core.ReqID {
+	e.layer.reqs.mu.Lock()
+	defer e.layer.reqs.mu.Unlock()
+	return e.layer.reqs.last
+}
+
+// finish delivers a job's result as the loop would and wakes the server to
+// publish what it produced.
+func (e *apiEnv) finish(result any) {
+	e.loop.DeliverForTest(result)
+	e.layer.client.ReloadAccounts()
+}
+
+// answer waits for an async request's answer.
+func (e *apiEnv) answer(ch <-chan apiAnswer) apiAnswer {
+	e.t.Helper()
+	select {
+	case got := <-ch:
+		return got
+	case <-time.After(10 * time.Second):
+		e.t.Fatal("the handler never answered")
+		return apiAnswer{}
+	}
+}
+
+// lateRecorder replaces where late notices go with a channel.
+func (e *apiEnv) lateRecorder() <-chan lateNotice {
+	late := make(chan lateNotice, 8)
+	e.layer.reqs.setLate(func(device string, n noticeJSON) { late <- lateNotice{device: device, n: n} })
+	return late
+}
+
+func TestAPI_AnOpThatWorksAnswers200WithItsNotices(t *testing.T) {
+	for _, c := range []struct {
+		action string
+		result func(inst *session.Instance, req core.ReqID, id core.InstanceID) any
+		want   []noticeJSON
+	}{
+		{"kill", func(inst *session.Instance, req core.ReqID, id core.InstanceID) any {
+			return core.TrackedForTest(req, id, core.KillResult{Instance: inst, Title: inst.Title, Notice: errors.New("kept the stash abc123")})
+		}, []noticeJSON{{Text: "kept the stash abc123", Error: true}}},
+		{"pause", func(inst *session.Instance, req core.ReqID, id core.InstanceID) any {
+			return core.TrackedForTest(req, id, core.PauseResult{Title: inst.Title})
+		}, []noticeJSON{}},
+	} {
+		t.Run(c.action, func(t *testing.T) {
+			inst := apiInstance(t, "one", session.Running)
+			env := newAPIEnv(t, apiFixture{insts: []*session.Instance{inst}})
+			id := env.ids["one"]
+			late := env.lateRecorder()
+
+			ch := env.async(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/%s", id, c.action), nil)
+			env.heldJob() // the request is at the loop; its job is never run
+			env.finish(c.result(inst, env.lastReq(), id))
+			got := env.answer(ch)
+
+			require.Equal(t, http.StatusOK, got.status, string(got.body))
+			var body struct {
+				Notices []noticeJSON `json:"notices"`
+			}
+			require.NoError(t, json.Unmarshal(got.body, &body))
+			require.NotNil(t, body.Notices, "a list, even an empty one")
+			require.Len(t, body.Notices, len(c.want))
+			for i, want := range c.want {
+				assert.Equal(t, want.Text, body.Notices[i].Text)
+				assert.Equal(t, want.Error, body.Notices[i].Error)
+			}
+			select {
+			case n := <-late:
+				t.Fatalf("a notice that rode the answer also went to the stream: %+v", n)
+			case <-time.After(200 * time.Millisecond):
+			}
+			assert.Equal(t, []loggedAction{{device: "phone", name: c.action, session: id, result: "200 ok"}}, env.logged())
+		})
+	}
+}
+
+func TestAPI_AFailedOpAnswers409AndItsRepeatedNoticeStaysOffTheStream(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "one", session.Running)}})
+	id := env.ids["one"]
+	late := env.lateRecorder()
+
+	ch := env.async(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/pause", id), nil)
+	job := env.heldJob()
+	// An unstarted session can't be paused: the model raises the failure as
+	// a Notice and as the Reply's error.
+	env.finish(job())
+	got := env.answer(ch)
+
+	require.Equal(t, http.StatusConflict, got.status, string(got.body))
+	text := apiErrorOf(t, got.body)
+	assert.Contains(t, text, "cannot pause instance that has not been started")
+	select {
+	case n := <-late:
+		t.Fatalf("the notice that repeats the error also went to the stream: %+v", n)
+	case <-time.After(200 * time.Millisecond):
+	}
+	assert.Equal(t, []loggedAction{{device: "phone", name: "pause", session: id, result: "409 " + text}}, env.logged())
+}
+
+func TestAPI_SendCarriesTheWebOrigin(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "idle", session.Running)}})
+
+	// The model refuses it (never started), but the call is what is pinned.
+	status, _ := env.do(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/send", env.ids["idle"]), map[string]any{"text": "  hi  "})
+
+	assert.Equal(t, http.StatusConflict, status)
+	env.rb.mu.Lock()
+	defer env.rb.mu.Unlock()
+	require.Len(t, env.rb.sent, 1)
+	assert.Equal(t, core.Message{Text: "hi", Origin: core.OriginWeb}, env.rb.sent[0], "the person's own words, no From line")
+}
+
+func TestAPI_EveryAnswerIsLoggedWithItsStatus(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{
+		apiInstance(t, "idle", session.Running),
+		apiInstance(t, "taken", session.Running),
+	}})
+	idle := env.ids["idle"]
+	send := fmt.Sprintf("/api/v1/sessions/%d/send", idle)
+	merge := fmt.Sprintf("/api/v1/sessions/%d/merge", idle)
+
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodPost, send, "not json"},
+		{http.MethodPost, send, map[string]any{"text": " "}},
+		{http.MethodPost, "/api/v1/sessions/999999/kill", nil},
+		{http.MethodPost, merge, map[string]any{"source": 0}},
+		{http.MethodPost, merge, map[string]any{"source": 999999}},
+		{http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": " "}},
+		{http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": "taken"}},
+		{http.MethodGet, "/api/v1/launch-defaults?workspace=0", nil},
+		{http.MethodPut, "/api/v1/device", map[string]any{"pause": "2h"}},
+		{http.MethodPut, "/api/v1/device", map[string]any{"waiting": false}},
+		{http.MethodPost, "/api/v1/device/push", map[string]any{}},
+		{http.MethodDelete, "/api/v1/device/push", nil},
+	} {
+		env.do(c.method, c.path, c.body)
+	}
+
+	got := env.logged()
+	want := []struct {
+		name, result string
+		session      core.InstanceID
+	}{
+		{"send", "400 bad request: ", idle},
+		{"send", "400 text: want 1 to 65536 bytes", idle},
+		{"kill", "404 no such session", 0},
+		{"merge", "400 source: want a session ID", idle},
+		{"merge", "404 source: no such session", idle},
+		{"create", "400 title cannot be empty", 0},
+		{"create", `409 toy already has a session titled "taken"`, 0},
+		{"launch-defaults", "400 workspace: no such workspace", 0},
+		{"notify", `400 pause: want "1h" or "none"`, 0},
+		{"notify", "200 ok", 0},
+		{"subscribe", "400 ", 0},
+		{"unsubscribe", "204 ok", 0},
+	}
+	require.Len(t, got, len(want))
+	for i, w := range want {
+		assert.Equal(t, "phone", got[i].device, w.name)
+		assert.Equal(t, w.name, got[i].name)
+		assert.Equal(t, w.session, got[i].session, w.name)
+		assert.True(t, strings.HasPrefix(got[i].result, w.result), "%s: %q does not begin %q", w.name, got[i].result, w.result)
+	}
+}
+
+func TestAPI_ADeviceRouteFailureIsLoggedWithItsStatus(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	require.NoError(t, env.loop.RevokeDevice("phone")) // the model forgot it behind the layer's back
+
+	// The cookie no longer names a device, so the route is not reached; call
+	// the handler as authed would for a device that was there a moment ago.
+	for _, c := range []struct {
+		name   string
+		call   func(w http.ResponseWriter, r *http.Request, device string)
+		status int
+	}{
+		{"notify", env.layer.putDevice, http.StatusUnauthorized},
+		{"subscribe", env.layer.postPush, http.StatusUnauthorized},
+	} {
+		body := `{"waiting": true}`
+		if c.name == "subscribe" {
+			enc, err := json.Marshal(apiSubscription(t, "https://web.push.apple.com/push/1", base64.RawURLEncoding))
+			require.NoError(t, err)
+			body = string(enc)
+		}
+		w := httptest.NewRecorder()
+		c.call(w, httptest.NewRequest(http.MethodPut, "/api/v1/device", strings.NewReader(body)), "phone")
+		assert.Equal(t, c.status, w.Code, c.name)
+	}
+
+	got := env.logged()
+	require.Len(t, got, 2)
+	for _, a := range got {
+		assert.True(t, strings.HasPrefix(a.result, "401 "), "%s: %q holds the status in one format", a.name, a.result)
+	}
+}
+
+func TestAPI_DeleteDeviceOfADeviceAlreadyGoneIs204(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	// A CLI revoke lands between authed and the handler: the model no longer
+	// has the device, and tells the layer so over the wire, as text.
+	require.NoError(t, env.loop.RevokeDevice("phone"))
+	err := env.layer.client.RevokeDevice("phone")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, core.ErrNoDevice, "control: the sentinel does not cross the wire")
+
+	w := httptest.NewRecorder()
+	env.layer.deleteDevice(w, httptest.NewRequest(http.MethodDelete, "/api/v1/device", nil), "phone")
+
+	assert.Equal(t, http.StatusNoContent, w.Code, "a device already gone is a device unpaired")
+	assert.Equal(t, []loggedAction{{device: "phone", name: "unpair", result: "204 ok"}}, env.logged())
+}
+
+func TestAPI_CreateTakesAPromptOf64KiBExactly(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	status, out := env.do(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": "long", "prompt": strings.Repeat("p", 64<<10)})
+
+	assert.Equal(t, http.StatusCreated, status, string(out))
+}
+
+func TestAPI_MergeRefusesASourceBeyondWhatJSONHolds(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "idle", session.Running)}})
+	merge := fmt.Sprintf("/api/v1/sessions/%d/merge", env.ids["idle"])
+
+	status, out := env.do(http.MethodPost, merge, `{"source": 9007199254740992}`) // 2^53
+	assert.Equal(t, http.StatusBadRequest, status, string(out))
+	assert.Equal(t, "source: want a session ID", apiErrorOf(t, out))
+
+	// 2^53-1 is the largest ID the layer names; none holds it.
+	status, out = env.do(http.MethodPost, merge, `{"source": 9007199254740991}`)
+	assert.Equal(t, http.StatusNotFound, status, string(out))
+	assert.Equal(t, "source: no such session", apiErrorOf(t, out))
+}
+
+func TestAPI_CreateInAWorkspaceWhoseStorageRefusesWritesIs409(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{stateJSON: `{"instances":{"not":"an array"}}`})
+	v, ok := env.layer.client.Workspace(env.ws)
+	require.True(t, ok)
+	require.True(t, v.WritesRefused, "control: the fixture's storage refuses writes")
+
+	status, out := env.do(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": "x"})
+
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Contains(t, apiErrorOf(t, out), "new sessions can't be created here")
+}
+
+func TestAPI_CreateTakesTheDefaultAccountOnAClaudeWorkspace(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	status, out := env.do(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": "x", "account": "default"})
+
+	// "default" is no registered account, and still a name the layer takes.
+	assert.Equal(t, http.StatusCreated, status, string(out))
 }

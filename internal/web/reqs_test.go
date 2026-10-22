@@ -246,15 +246,16 @@ func TestReqs_ForgetsAnAnsweredRequestAfterAWhile(t *testing.T) {
 
 func TestReqs_BoundsWhatItTracksAndKeepsWhatIsAwaited(t *testing.T) {
 	f := newReqsFixture(t)
+	awaited := f.r.next() // the oldest of all, and no handler has its answer yet
 	first := f.r.next()
 	f.answered(t, first, "phone")
-	for i := 1; i < maxReqs; i++ {
+	for i := 2; i < maxReqs; i++ {
 		f.answered(t, f.r.next(), "phone")
 	}
-	pending := f.r.next() // over the bound: the oldest answered one goes
+	f.r.next() // over the bound: the oldest answered one goes, not the older awaited one
 
 	f.r.apply([]core.Event{
-		core.Notice{Req: first, Info: "the oldest, forgotten"},
+		core.Notice{Req: first, Info: "the oldest answered, forgotten"},
 		core.Notice{Req: first + 1, Info: "the next, kept"},
 	})
 	late := f.late()
@@ -263,8 +264,8 @@ func TestReqs_BoundsWhatItTracksAndKeepsWhatIsAwaited(t *testing.T) {
 	assert.Equal(t, "phone", late[1].device)
 
 	f.r.next() // over the bound again: another answered one goes, never the awaited
-	f.r.apply([]core.Event{core.Notice{Req: pending, Info: "still awaited"}, core.Reply{Req: pending}})
-	_, notes, ok := f.r.wait(context.Background(), pending, "phone")
+	f.r.apply([]core.Event{core.Notice{Req: awaited, Info: "still awaited"}, core.Reply{Req: awaited}})
+	_, notes, ok := f.r.wait(context.Background(), awaited, "phone")
 	require.True(t, ok)
 	require.Len(t, notes, 1)
 	assert.Equal(t, "still awaited", notes[0].Text)
