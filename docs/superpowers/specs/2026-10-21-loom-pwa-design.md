@@ -222,7 +222,8 @@ Every request:
   markup has no inline script and no style attributes.
 - Bodies are capped at 1 MiB, the mod socket's own cap. The server sets a
   10 s read-header timeout and a 120 s idle timeout; the stream has no
-  write timeout and pings instead.
+  write timeout over its whole life, only a 30 s bound on each event's
+  write, and pings instead.
 - Every action is logged with its device, action, session and result.
 
 Cloudflare terminates TLS at its edge, and cloudflared reaches loom over
@@ -289,8 +290,9 @@ Requests gives. An action answers `{"notices": [...]}`; Create answers
 after 30 s answers `{"pending": true}` with 202. A notice is
 `{"text", "error", "at"}`.
 
-**Sessions as JSON:** `id`, `workspace`, `title`, `branch`, `group`, the
-loom `status` and `since`, `wait` (`reason`, `detail`), `last_message`,
+**Sessions as JSON:** `id`, `workspace`, `title`, `branch`, `worktree`
+and `tmux` (the worktree's path and the tmux session's name, which the
+Kill sheet names), `group`, the loom `status` and `since`, `wait` (`reason`, `detail`), `last_message`,
 `diff` (`added`, `removed`), `ahead` and `behind` when known, `pr` (number,
 state, checks) when there is one, `account`, `agents` (running subagents),
 and `remote_url` when there is a bridge ID. IDs are JSON numbers: they fit
