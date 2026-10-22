@@ -727,3 +727,190 @@ func TestWebHost_AChangeReachesClientsThroughTheModelView(t *testing.T) {
 	require.NotNil(t, view, "the Sync after the change carries the model view")
 	assert.True(t, view.Web.Serving)
 }
+
+// webHostLoop runs a loop over a web model with one device, "iPhone", paired
+// and published, and no wake waiting.
+func webHostLoop(t *testing.T) (*Loop, *webHostClock, [32]byte) {
+	t.Helper()
+	m, clk := webHostModel(t)
+	_, hash := webHostPair(t, m, "iPhone")
+	l := StartForTest(m)
+	t.Cleanup(l.Stop)
+	l.Sync() // the first publish
+	webHostDrainWakes(l)
+	return l, clk, hash
+}
+
+func webHostDrainWakes(l *Loop) {
+	for len(l.Wakes()) > 0 {
+		<-l.Wakes()
+	}
+}
+
+func webHostDevice(v WebView, name string) WebDevice {
+	for _, d := range v.Devices {
+		if d.Name == name {
+			return d
+		}
+	}
+	return WebDevice{}
+}
+
+// Each call that changes what a client sees wakes the client, and the change
+// reaches it as ModelChanged on the Sync that follows.
+func TestWebHostLoop_AChangeWakesTheClientAndReachesTheModelView(t *testing.T) {
+	inUse := errors.New("listen tcp 127.0.0.1:7420: bind: address already in use")
+	cases := []struct {
+		name string
+		prep func(t *testing.T, l *Loop, clk *webHostClock) (act func())
+		want func(t *testing.T, v WebView, events []Event)
+	}{
+		{
+			name: "WebServing",
+			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
+				return func() { l.WebServing("127.0.0.1:7420", nil) }
+			},
+			want: func(t *testing.T, v WebView, _ []Event) { assert.True(t, v.Serving) },
+		},
+		{
+			name: "WebServing with an error also queues its Notice",
+			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
+				return func() { l.WebServing("", inUse) }
+			},
+			want: func(t *testing.T, v WebView, events []Event) {
+				assert.Contains(t, v.Error, "address already in use")
+				raised, _ := noticesAndStarts(events)
+				require.Len(t, raised, 1)
+				assert.ErrorContains(t, raised[0].Err, "address already in use")
+			},
+		},
+		{
+			name: "RedeemPairing",
+			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
+				p, err := l.PairDevice("iPad")
+				require.NoError(t, err)
+				return func() {
+					name, _, err := l.RedeemPairing(p.Code)
+					require.NoError(t, err)
+					assert.Equal(t, "iPad", name)
+				}
+			},
+			want: func(t *testing.T, v WebView, _ []Event) { assert.Equal(t, "iPad", webHostDevice(v, "iPad").Name) },
+		},
+		{
+			name: "TouchDevice a minute after the last time",
+			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
+				return func() {
+					clk.at = clk.at.Add(time.Minute)
+					l.TouchDevice("iPhone")
+				}
+			},
+			want: func(t *testing.T, v WebView, _ []Event) {
+				assert.True(t, webHostDevice(v, "iPhone").LastSeen.After(webHostDevice(v, "iPhone").Paired))
+			},
+		},
+		{
+			name: "SetNotify",
+			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
+				return func() {
+					_, err := l.SetNotify("iPhone", NotifyChange{Waiting: webHostPtr(false)})
+					require.NoError(t, err)
+				}
+			},
+			want: func(t *testing.T, v WebView, _ []Event) { assert.False(t, webHostDevice(v, "iPhone").Notify.Waiting) },
+		},
+		{
+			name: "SetPushSubscription",
+			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
+				return func() {
+					_, err := l.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
+					require.NoError(t, err)
+				}
+			},
+			want: func(t *testing.T, v WebView, _ []Event) { assert.Equal(t, PushOK, webHostDevice(v, "iPhone").Push) },
+		},
+		{
+			name: "PushResult",
+			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
+				_, err := l.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
+				require.NoError(t, err)
+				return func() { l.PushResult("iPhone", PushExpired) }
+			},
+			want: func(t *testing.T, v WebView, _ []Event) {
+				assert.Equal(t, PushExpired, webHostDevice(v, "iPhone").Push)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l, clk, _ := webHostLoop(t)
+			act := tc.prep(t, l, clk)
+			l.Sync()
+			webHostDrainWakes(l)
+
+			act()
+
+			select {
+			case <-l.Wakes():
+			case <-time.After(5 * time.Second):
+				t.Fatal("no wake after the call")
+			}
+			events := l.Sync()
+			var view *WebView
+			for _, ev := range events {
+				if mc, ok := ev.(ModelChanged); ok {
+					v := mc.View.Web
+					view = &v
+				}
+			}
+			require.NotNil(t, view, "the Sync after the wake carries the model view")
+			tc.want(t, *view, events)
+		})
+	}
+}
+
+// A call that changed nothing wakes no client: a wake has the server build and
+// diff every view, and TouchDevice runs on every authenticated request.
+func TestWebHostLoop_ACallThatChangesNothingWakesNoClient(t *testing.T) {
+	l, _, hash := webHostLoop(t)
+
+	name, ok := l.DeviceByToken(hash)
+	assert.True(t, ok)
+	assert.Equal(t, "iPhone", name)
+	_, ok = l.DeviceByToken([32]byte{9})
+	assert.False(t, ok)
+	assert.Empty(t, l.PushTargets())
+	_, err := l.VAPIDKey()
+	require.NoError(t, err)
+	l.TouchDevice("iPhone") // no minute has passed since the pairing
+	l.TouchDevice("nobody")
+	l.PushResult("nobody", PushExpired)
+	l.PushResult("iPhone", PushExpired) // it has no subscription
+	l.WebServing("", nil)               // it was not serving
+	_, _, err = l.RedeemPairing("23456789")
+	assert.ErrorIs(t, err, ErrPairingCode, "a refusal reaches the caller")
+	_, err = l.SetNotify("nobody", NotifyChange{})
+	assert.ErrorIs(t, err, ErrNoDevice)
+	_, err = l.SetPushSubscription("nobody", webHostSub(t, "web.push.apple.com"))
+	assert.ErrorIs(t, err, ErrNoDevice)
+
+	assert.Empty(t, l.Wakes(), "no wake waits")
+}
+
+// A call after Stop runs nothing, so the ones that return an error must not
+// answer with a success.
+func TestWebHostLoop_AfterStopNoCallSucceeds(t *testing.T) {
+	l, _, hash := webHostLoop(t)
+	l.Stop()
+
+	_, _, err := l.RedeemPairing("23456789")
+	assert.ErrorIs(t, err, ErrWebOff, "a stopped loop pairs no one")
+	_, err = l.SetNotify("iPhone", NotifyChange{})
+	assert.Error(t, err)
+	_, err = l.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
+	assert.Error(t, err)
+	_, err = l.VAPIDKey()
+	assert.Error(t, err, "and hands out no key")
+	_, ok := l.DeviceByToken(hash)
+	assert.False(t, ok, "it knows no device")
+}
