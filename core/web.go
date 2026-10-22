@@ -1,0 +1,226 @@
+package core
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+)
+
+// The web layer's settings and devices (internal/web). The model keeps them
+// in web.json (web_store.go) and publishes them in ModelView.Web, so every
+// client reads them from its replica (Core.Web); the requests that change
+// them are ConfigureWeb, PairDevice and RevokeDevice.
+
+// WebView is the web settings as a client sees them, and who is paired.
+type WebView struct {
+	Listen  string      // "127.0.0.1:7420"; "" when off
+	Origin  string      // "https://loom.example.com"
+	Serving bool        // the listener is up
+	Addr    string      // what it listens on, while Serving
+	Error   string      // why it is not serving, or why web.json was left alone
+	Devices []WebDevice // sorted by Name; no token hashes
+	Rev     uint64      // bumped by every ConfigureWeb; the layer rebinds when it changes
+}
+
+// WebDevice is a paired device as a client sees it: its token hash and its
+// push subscription stay in the model.
+type WebDevice struct {
+	Name     string
+	Paired   time.Time
+	LastSeen time.Time
+	Notify   NotifySettings
+	Push     PushState
+}
+
+// NotifySettings are the kinds of push a device takes, and until when it
+// takes none.
+type NotifySettings struct {
+	Waiting     bool
+	Finished    bool
+	PausedUntil time.Time // zero: not paused
+}
+
+// Pairing is the one-time code PairDevice makes, and when it stops working.
+type Pairing struct {
+	Code    string // PairingCodeLen characters of PairingAlphabet, no dash
+	Expires time.Time
+}
+
+// PushSubscription is the browser's push subscription, as the app posts it.
+type PushSubscription struct {
+	Endpoint string
+	P256DH   string // unpadded base64url of a 65-byte uncompressed P-256 point
+	Auth     string // unpadded base64url of 16 bytes
+}
+
+// PushTarget is a device the web layer may push to, with what it takes.
+type PushTarget struct {
+	Device       string
+	Notify       NotifySettings
+	Subscription PushSubscription
+}
+
+// PushState is how a device's push subscription stands: none, ok, expired
+// or failing (PushFailing).
+type PushState string
+
+// The states of a push subscription besides failing (PushFailing).
+const (
+	PushNone    PushState = ""
+	PushOK      PushState = "ok"
+	PushExpired PushState = "expired"
+)
+
+// PushFailing is the state of a subscription whose last push the push
+// service answered with status: "failing: <status>".
+func PushFailing(status int) PushState { return PushState("failing: " + strconv.Itoa(status)) }
+
+// VAPIDKey is the P-256 key pair the web layer signs its pushes with, made
+// when the web is first enabled.
+type VAPIDKey struct {
+	Private []byte // the 32-byte P-256 scalar
+	Public  []byte // the 65-byte uncompressed point
+}
+
+// The pairing code's alphabet (no 0, 1, I, L or O) and length, how long a
+// code lives, how many wait at once and how many wrong ones lock redeeming,
+// the most devices that can be paired, and web.json's name in the global dir.
+const (
+	PairingAlphabet   = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+	PairingCodeLen    = 8
+	PairingTTL        = 10 * time.Minute
+	PairingMaxPending = 4
+	PairingMaxMisses  = 5
+	MaxWebDevices     = 16
+	WebFile           = "web.json" // in the global dir
+)
+
+const (
+	maxWebOrigin     = 255 // bytes
+	maxDeviceNameLen = 32  // characters
+)
+
+// The errors the web requests answer with; those that name a device wrap
+// the sentinel (fmt.Errorf("%w: %q", ErrDeviceExists, name)).
+var (
+	ErrWebOff         = errors.New("web: not enabled; run loom web enable first")
+	ErrPairingCode    = errors.New("pairing: the code is wrong, used or expired")
+	ErrPairingLocked  = errors.New("pairing: too many wrong codes; run loom web pair again")
+	ErrDeviceExists   = errors.New("pairing: a device has that name already")
+	ErrTooManyDevices = errors.New("pairing: 16 devices are paired; revoke one first")
+	ErrNoDevice       = errors.New("no device has that name")
+)
+
+// validPort reports whether port is a port number written plainly: digits
+// only, 1 to 65535, no sign and no leading zero.
+func validPort(port string) bool {
+	n, err := strconv.ParseUint(port, 10, 16)
+	return err == nil && n >= 1 && strconv.FormatUint(n, 10) == port
+}
+
+// ValidateWebListen checks a listen address: a loopback IP literal and a
+// port, written as net.JoinHostPort writes them (127.0.0.1:7420 or
+// [::1]:7420). A host name such as localhost, any other address, a unix
+// socket and a port outside 1 to 65535 are refused: only a process on this
+// machine, cloudflared through the tunnel, may reach the listener.
+func ValidateWebListen(listen string) error {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("listen %q: want a loopback address and a port, like 127.0.0.1:7420 or [::1]:7420", listen)
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil || addr.Zone() != "" || addr.Is4In6() || !addr.IsLoopback() || addr.String() != host {
+		return fmt.Errorf("listen %q: the address must be a loopback IP literal, 127.0.0.1 or ::1", listen)
+	}
+	if !validPort(port) {
+		return fmt.Errorf("listen %q: the port must be a number from 1 to 65535", listen)
+	}
+	if want := net.JoinHostPort(host, port); listen != want {
+		return fmt.Errorf("listen %q: write it as %s", listen, want)
+	}
+	return nil
+}
+
+// ValidateWebOrigin checks the origin the phone reaches loom at:
+// https://<host>[:<port>] in lower case with no user, path, query or
+// fragment, or for development http://127.0.0.1:<port> or
+// http://localhost:<port>, at most 255 bytes. The web layer compares the
+// Host and Origin headers with it byte for byte, so a spelling a browser
+// would not send is refused here.
+func ValidateWebOrigin(origin string) error {
+	if len(origin) > maxWebOrigin {
+		return fmt.Errorf("origin is longer than %d bytes", maxWebOrigin)
+	}
+	bad := func(why string) error { return fmt.Errorf("origin %q: %s", origin, why) }
+	u, err := url.Parse(origin)
+	if err != nil || u.String() != origin {
+		return bad("write it as https://<host>[:<port>], in lower case")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return bad("the scheme must be https")
+	}
+	if u.Opaque != "" || u.User != nil || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
+		return bad("it has no user, path, query or fragment")
+	}
+	host, port := u.Hostname(), u.Port()
+	if host == "" || host != strings.ToLower(host) {
+		return bad("the host must be named, in lower case")
+	}
+	if strings.HasSuffix(u.Host, ":") || (port != "" && !validPort(port)) {
+		return bad("the port must be a number from 1 to 65535")
+	}
+	if u.Scheme == "http" && (port == "" || (host != "127.0.0.1" && host != "localhost")) {
+		return bad("http is for development only: 127.0.0.1 or localhost, with a port")
+	}
+	return nil
+}
+
+// ValidateDeviceName checks a device name and returns it trimmed: 1 to 32
+// characters, none of them a control character. Whether a device has it
+// already is for the model to say (ErrDeviceExists).
+func ValidateDeviceName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if !utf8.ValidString(name) {
+		return "", errors.New("device name: not valid UTF-8")
+	}
+	if n := utf8.RuneCountInString(name); n < 1 || n > maxDeviceNameLen {
+		return "", fmt.Errorf("device name: want 1 to %d characters, got %d", maxDeviceNameLen, n)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "", errors.New("device name: no control characters")
+		}
+	}
+	return name, nil
+}
+
+// NormalizePairingCode puts a code as typed into the form the model keeps:
+// upper case, with dashes and spaces dropped. It reports false unless what
+// is left is PairingCodeLen characters of PairingAlphabet.
+func NormalizePairingCode(code string) (string, bool) {
+	out := make([]byte, 0, PairingCodeLen)
+	for i := 0; i < len(code); i++ {
+		c := code[i]
+		if c == '-' || c == ' ' {
+			continue
+		}
+		if c >= 'a' && c <= 'z' {
+			c -= 'a' - 'A'
+		}
+		if len(out) == PairingCodeLen || strings.IndexByte(PairingAlphabet, c) < 0 {
+			return "", false
+		}
+		out = append(out, c)
+	}
+	if len(out) != PairingCodeLen {
+		return "", false
+	}
+	return string(out), true
+}
