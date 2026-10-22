@@ -15,6 +15,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/internal/modserver"
+	"github.com/aidan-bailey/loom/internal/web"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -74,7 +75,10 @@ type Options struct {
 // that answers is a daemon that is ready. It also serves the loom mod's API
 // (internal/modserver) on ModSocketPath(socket) when that fits, having named
 // it for launches (session.SetModSocket) before the boot; a mod socket it
-// can't listen on costs only the mod.
+// can't listen on costs only the mod. Last it starts the web layer
+// (internal/web), a client of its own server that listens only when web.json
+// enables the web, and closes it first when stopping, before the bye; a layer
+// that can't start costs only the web.
 func Serve(o Options) error {
 	if o.LockWait == 0 {
 		o.LockWait = 5 * time.Second
@@ -159,6 +163,7 @@ func Serve(o Options) error {
 		}
 	}
 	mw := &modWatch{srv: mods, path: modSocket}
+	layer := startWeb(srv, loop, rec)
 	if o.Serving != nil {
 		o.Serving(loop, socket)
 	}
@@ -169,6 +174,10 @@ func Serve(o Options) error {
 		select {
 		case <-o.Stop:
 			log.For("serve").Info("serve.stopping")
+			// The web layer goes first: its streams hear their own bye and its
+			// listener closes before any client is told the daemon is stopping,
+			// so no request of a phone reaches the loop while it quiesces.
+			layer.Close()
 			srv.Bye()    // every client hears it first, and nothing new is taken
 			l.close()    // no new connections
 			mods.Close() // every held poll hears 503; the mods reconnect to the next daemon
@@ -190,6 +199,7 @@ func Serve(o Options) error {
 			log.For("serve").Error("serve.model_gone", "err", fatal)
 			l.close()
 			mods.Close()
+			layer.Close()
 			srv.Close()
 			loop.Stop()
 			l.remove()
@@ -220,6 +230,20 @@ func stopModel(loop *core.Loop, timeout time.Duration) (err error) {
 		log.For("serve").Warn("serve.stopped_with_jobs_in_flight")
 	}
 	return loop.SaveForQuit()
+}
+
+// startWeb starts the web layer (internal/web) as a client of the daemon's
+// own server, with the loop as its host. The layer listens only when web.json
+// enables the web, so a daemon with the web off pays one idle connection. One
+// that can't start is logged and costs only the web: it returns nil, which
+// Close accepts.
+func startWeb(srv *rpc.Server, loop *core.Loop, rec Record) *web.Layer {
+	layer, err := web.Start(web.Options{Server: srv, Host: loop, Hostname: rec.Host, Build: rec.Build})
+	if err != nil {
+		log.For("serve").Warn("serve.web_start_failed", "err", err)
+		return nil
+	}
+	return layer
 }
 
 // listener is the daemon's socket, the goroutine accepting on it, and the

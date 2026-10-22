@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -735,4 +736,110 @@ func TestServesLoom(t *testing.T) {
 		_ = cmd.Wait()
 	})
 	assert.Eventually(t, func() bool { return servesLoom(cmd.Process.Pid) }, 5*time.Second, 10*time.Millisecond)
+}
+
+// freeLoopbackAddr is a loopback address nothing listens on yet.
+func freeLoopbackAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+	return addr
+}
+
+// refused reports whether nothing accepts connections at addr.
+func refused(addr string) bool {
+	c, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		return true
+	}
+	_ = c.Close()
+	return false
+}
+
+// postPairing posts body to the web layer's pairing route at addr as the
+// phone does (with the layer's own origin), and returns the status and the
+// body. A non-empty host replaces the Host header.
+func postPairing(t *testing.T, addr, body, host string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/api/v1/pair", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Origin", "http://"+addr)
+	if host != "" {
+		req.Host = host
+	}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, string(data)
+}
+
+// The daemon runs the web layer beside the mod server. It listens only once
+// web.json enables the web, on the model's say, and its guard and pairing
+// route answer behind the daemon's own listener.
+func TestServe_ServesTheWebLayerOnceWebJSONEnablesIt(t *testing.T) {
+	dir := globalDir(t)
+	r := serve(t, dir, Options{})
+	c := dial(t, r.socket)
+	assert.False(t, c.Web().Serving, "the web is off until web.json enables it")
+
+	addr := freeLoopbackAddr(t)
+	require.NoError(t, c.ConfigureWeb(addr, "http://"+addr))
+	require.Eventually(t, func() bool { return c.Web().Serving }, 10*time.Second, 10*time.Millisecond, "the layer never listened")
+	assert.Equal(t, addr, c.Web().Addr)
+	assert.FileExists(t, filepath.Join(dir, core.WebFile), "the settings are the model's file")
+
+	status, body := postPairing(t, addr, `{"code": "AAAA-AAAA"}`, "")
+	assert.Equal(t, http.StatusBadRequest, status, "the guard let the right Host and Origin through to a pairing route that refuses a code nobody made")
+	assert.Contains(t, body, "pairing")
+	status, _ = postPairing(t, addr, `{"code": "AAAA-AAAA"}`, "evil.example")
+	assert.Equal(t, http.StatusMisdirectedRequest, status, "and refused a wrong Host")
+}
+
+// The web layer stops first: its listener is closed before any client hears
+// the daemon's bye, so a phone's streams end with the layer's own bye and a
+// request of the phone's cannot reach a loop that is quiescing. A run in
+// which the order is wrong can pass by timing, since the window is short.
+func TestServe_AStopClosesTheWebListenerBeforeAnyClientHearsTheBye(t *testing.T) {
+	dir := globalDir(t)
+	r := serve(t, dir, Options{})
+	c := dial(t, r.socket)
+	addr := freeLoopbackAddr(t)
+	require.NoError(t, c.ConfigureWeb(addr, "http://"+addr))
+	require.Eventually(t, func() bool { return c.Web().Serving }, 10*time.Second, 10*time.Millisecond, "the layer never listened")
+	require.False(t, refused(addr))
+
+	close(r.stop)
+	require.Eventually(t, c.Stopping, 10*time.Second, 5*time.Millisecond, "the client heard the bye")
+	assert.True(t, refused(addr), "the web listener was open when a client heard the bye")
+	select {
+	case err := <-r.done:
+		require.NoError(t, err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("the daemon never stopped")
+	}
+}
+
+// The settings are the model's, in web.json: the next daemon serves the web
+// again without being told.
+func TestServe_TheWebLayerComesBackWithTheNextDaemon(t *testing.T) {
+	dir := globalDir(t)
+	first := serve(t, dir, Options{})
+	c := dial(t, first.socket)
+	addr := freeLoopbackAddr(t)
+	require.NoError(t, c.ConfigureWeb(addr, "http://"+addr))
+	require.Eventually(t, func() bool { return c.Web().Serving }, 10*time.Second, 10*time.Millisecond, "the layer never listened")
+	require.NoError(t, first.shutdown(t))
+	require.True(t, refused(addr), "a stopped daemon serves no web")
+
+	second := serve(t, dir, Options{})
+	c2 := dial(t, second.socket)
+	require.Eventually(t, func() bool { return c2.Web().Serving }, 10*time.Second, 10*time.Millisecond, "the next daemon never served the stored settings")
+	assert.Equal(t, addr, c2.Web().Addr)
+	status, _ := postPairing(t, addr, `{"code": "AAAA-AAAA"}`, "")
+	assert.Equal(t, http.StatusBadRequest, status)
 }
