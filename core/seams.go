@@ -300,3 +300,7 @@ func (l *Loop) HookTickForTest() {
 // SelectedForTest returns the instances the probe refreshes the full diff
 // of (SetSelected, SetSelection).
 func (m *Model) SelectedForTest() []InstanceID { return slices.Clone(m.selected) }
+
+// InitWebForTest loads web.json from the global config dir, as Boot does: a
+// test in another package writes its fixture there first.
+func (m *Model) InitWebForTest() { m.initWeb() }
