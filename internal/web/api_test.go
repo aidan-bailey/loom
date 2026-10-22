@@ -1,6 +1,9 @@
 package web
 
 import (
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -491,4 +494,188 @@ func TestAPI_LaunchDefaultsNeedAWorkspace(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, status, query)
 		assert.Equal(t, "workspace: no such workspace", apiErrorOf(t, out), query)
 	}
+}
+
+// notify is the paired device's notification settings in the model.
+func (e *apiEnv) notify() core.NotifySettings {
+	e.t.Helper()
+	for _, d := range e.loop.Web().Devices {
+		if d.Name == "phone" {
+			return d.Notify
+		}
+	}
+	e.t.Fatal("the model holds no device named phone")
+	return core.NotifySettings{}
+}
+
+func TestAPI_DeviceRoutesNeedADevice(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	for _, c := range []struct{ method, path string }{
+		{http.MethodPut, "/api/v1/device"},
+		{http.MethodPost, "/api/v1/device/push"},
+		{http.MethodDelete, "/api/v1/device/push"},
+		{http.MethodDelete, "/api/v1/device"},
+	} {
+		status, _, _ := env.send(c.method, c.path, map[string]any{}, false)
+		assert.Equal(t, http.StatusUnauthorized, status, c.method+" "+c.path)
+	}
+	assert.Len(t, env.loop.Web().Devices, 1, "nobody was unpaired")
+}
+
+func TestAPI_PutDeviceChangesOnlyWhatItNames(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	before := env.notify()
+
+	status, out := env.do(http.MethodPut, "/api/v1/device", map[string]any{"waiting": !before.Waiting})
+	require.Equal(t, http.StatusOK, status, string(out))
+	var dev struct {
+		Name string `json:"name"`
+	}
+	require.NoError(t, json.Unmarshal(out, &dev))
+	assert.Equal(t, "phone", dev.Name)
+	after := env.notify()
+	assert.Equal(t, !before.Waiting, after.Waiting)
+	assert.Equal(t, before.Finished, after.Finished, "a setting left out stays")
+	assert.True(t, after.PausedUntil.IsZero())
+
+	// Pausing keeps the settings it does not name.
+	start := time.Now()
+	status, out = env.do(http.MethodPut, "/api/v1/device", map[string]any{"pause": "1h"})
+	require.Equal(t, http.StatusOK, status, string(out))
+	paused := env.notify()
+	assert.Equal(t, !before.Waiting, paused.Waiting)
+	assert.WithinDuration(t, start.Add(time.Hour), paused.PausedUntil, time.Minute)
+
+	status, out = env.do(http.MethodPut, "/api/v1/device", map[string]any{"pause": "none"})
+	require.Equal(t, http.StatusOK, status, string(out))
+	assert.True(t, env.notify().PausedUntil.IsZero())
+}
+
+func TestAPI_PutDeviceRefusesWhatItCannotUse(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	before := env.notify()
+
+	for _, c := range []struct {
+		name string
+		body any
+		want string
+	}{
+		{"a pause it has no word for", map[string]any{"pause": "2h"}, `pause: want "1h" or "none"`},
+		{"a setting that is not a boolean", map[string]any{"waiting": "yes"}, "bad request"},
+		{"a field it does not know", map[string]any{"vibrate": true}, "unknown field"},
+		{"a body that is not JSON", "not json", "bad request"},
+	} {
+		status, out := env.do(http.MethodPut, "/api/v1/device", c.body)
+		assert.Equal(t, http.StatusBadRequest, status, c.name)
+		assert.Contains(t, apiErrorOf(t, out), c.want, c.name)
+	}
+	assert.Equal(t, before, env.notify(), "a refused change changes nothing")
+}
+
+// apiSubscription is a push subscription body in the shape of the browser's
+// PushSubscription.toJSON(), with a real P-256 point, its keys encoded by enc.
+func apiSubscription(t *testing.T, endpoint string, enc *base64.Encoding) map[string]any {
+	t.Helper()
+	key, err := ecdh.P256().GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	auth := make([]byte, 16)
+	_, err = rand.Read(auth)
+	require.NoError(t, err)
+	return map[string]any{
+		"endpoint":       endpoint,
+		"expirationTime": nil,
+		"keys": map[string]string{
+			"p256dh": enc.EncodeToString(key.PublicKey().Bytes()),
+			"auth":   enc.EncodeToString(auth),
+		},
+	}
+}
+
+func TestAPI_PostPushStoresTheSubscription(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	devicePush := func() core.PushState {
+		for _, d := range env.loop.Web().Devices {
+			if d.Name == "phone" {
+				return d.Push
+			}
+		}
+		return "no device"
+	}
+	require.Equal(t, core.PushNone, devicePush())
+	const apple = "https://web.push.apple.com/push/1"
+
+	// A host the daemon would not post to, and a key of the wrong size, are
+	// refused before the model hears of them.
+	status, out := env.do(http.MethodPost, "/api/v1/device/push", apiSubscription(t, "https://evil.example.com/push/1", base64.RawURLEncoding))
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.NotEmpty(t, apiErrorOf(t, out))
+	short := apiSubscription(t, apple, base64.RawURLEncoding)
+	short["keys"] = map[string]string{"p256dh": "AAAA", "auth": "AAAA"}
+	status, out = env.do(http.MethodPost, "/api/v1/device/push", short)
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.NotEmpty(t, apiErrorOf(t, out))
+	assert.Equal(t, core.PushNone, devicePush(), "refused: nothing stored")
+
+	// Keys with their padding are taken: the model takes only the unpadded.
+	status, out = env.do(http.MethodPost, "/api/v1/device/push", apiSubscription(t, apple, base64.URLEncoding))
+	require.Equal(t, http.StatusOK, status, string(out))
+	var dev struct {
+		Name string `json:"name"`
+	}
+	require.NoError(t, json.Unmarshal(out, &dev))
+	assert.Equal(t, "phone", dev.Name)
+	assert.Equal(t, core.PushOK, devicePush())
+
+	status, out = env.do(http.MethodPost, "/api/v1/device/push", apiSubscription(t, apple, base64.RawURLEncoding))
+	assert.Equal(t, http.StatusOK, status, string(out))
+}
+
+func TestAPI_DeletePushDropsTheSubscription(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	devicePush := func() core.PushState {
+		for _, d := range env.loop.Web().Devices {
+			if d.Name == "phone" {
+				return d.Push
+			}
+		}
+		return "no device"
+	}
+
+	// With no subscription there is nothing to drop: the state stays none.
+	status, out := env.do(http.MethodDelete, "/api/v1/device/push", nil)
+	require.Equal(t, http.StatusNoContent, status, string(out))
+	assert.Equal(t, core.PushNone, devicePush(), "nothing to expire")
+
+	status, out = env.do(http.MethodPost, "/api/v1/device/push", apiSubscription(t, "https://web.push.apple.com/push/1", base64.RawURLEncoding))
+	require.Equal(t, http.StatusOK, status, string(out))
+	require.Equal(t, core.PushOK, devicePush())
+	require.Len(t, env.loop.PushTargets(), 1, "control: the sender would push to it")
+
+	status, out = env.do(http.MethodDelete, "/api/v1/device/push", nil)
+	assert.Equal(t, http.StatusNoContent, status, string(out))
+	assert.Equal(t, core.PushExpired, devicePush(), "the app shows notifications to turn on again")
+	assert.Empty(t, env.loop.PushTargets(), "nothing is pushed to the dropped subscription")
+	assert.Len(t, env.loop.Web().Devices, 1, "the phone stays paired")
+}
+
+func TestAPI_DeleteDeviceUnpairsThePhone(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	status, out, header := env.send(http.MethodDelete, "/api/v1/device", nil, true)
+
+	assert.Equal(t, http.StatusNoContent, status, string(out))
+	cleared := false
+	for _, c := range (&http.Response{Header: header}).Cookies() {
+		if c.Name == cookieName {
+			cleared = true
+			assert.Negative(t, c.MaxAge, "the cookie is expired on the phone")
+		}
+	}
+	assert.True(t, cleared, "the response clears the device cookie")
+	assert.Empty(t, env.loop.Web().Devices)
+	status, _ = env.do(http.MethodPut, "/api/v1/device", map[string]any{"waiting": true})
+	assert.Equal(t, http.StatusUnauthorized, status, "the token no longer names a device")
+	status, _ = env.do(http.MethodDelete, "/api/v1/device", nil)
+	assert.Equal(t, http.StatusUnauthorized, status, "and unpairing twice is refused, not an error")
 }

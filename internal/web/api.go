@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
@@ -60,6 +61,10 @@ func (l *Layer) routeAPI(m *http.ServeMux) {
 	m.Handle("POST /api/v1/sessions/{id}/push", l.authed(l.sessionOp("push", core.Core.Push)))
 	m.Handle("POST /api/v1/sessions", l.authed(l.createSession))
 	m.Handle("GET /api/v1/launch-defaults", l.authed(l.launchDefaults))
+	m.Handle("PUT /api/v1/device", l.authed(l.putDevice))
+	m.Handle("POST /api/v1/device/push", l.authed(l.postPush))
+	m.Handle("DELETE /api/v1/device/push", l.authed(l.deletePush))
+	m.Handle("DELETE /api/v1/device", l.authed(l.deleteDevice))
 }
 
 // modelStatus is the HTTP status a failed request earns: the session or the
@@ -376,4 +381,117 @@ func (l *Layer) launchDefaults(w http.ResponseWriter, r *http.Request, _ string)
 		out.Accounts = append(out.Accounts, names.Names...)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// deviceBody is PUT /api/v1/device: the notification settings to change; one
+// left out stays as it is. Pause is "1h" (an hour from now) or "none".
+type deviceBody struct {
+	Waiting  *bool   `json:"waiting"`
+	Finished *bool   `json:"finished"`
+	Pause    *string `json:"pause"`
+}
+
+// putDevice changes the device's notification settings, only the ones the
+// body names (core.NotifyChange), and answers the device as the model stored
+// it.
+func (l *Layer) putDevice(w http.ResponseWriter, r *http.Request, device string) {
+	a := actionLog{device: device, name: "notify"}
+	var body deviceBody
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	change := core.NotifyChange{Waiting: body.Waiting, Finished: body.Finished}
+	if body.Pause != nil {
+		switch *body.Pause {
+		case "1h":
+			until := l.now().Add(time.Hour)
+			change.PausedUntil = &until
+		case "none":
+			change.PausedUntil = &time.Time{}
+		default:
+			writeError(w, http.StatusBadRequest, `pause: want "1h" or "none"`)
+			return
+		}
+	}
+	stored, err := l.host.SetNotify(device, change)
+	if err != nil {
+		a.record(err.Error())
+		writeError(w, modelStatus(err), err.Error())
+		return
+	}
+	a.record("ok")
+	writeJSON(w, http.StatusOK, deviceOf(stored))
+}
+
+// subscriptionKeys are a subscription's keys, base64url as the browser gives them.
+type subscriptionKeys struct {
+	P256DH string `json:"p256dh"`
+	Auth   string `json:"auth"`
+}
+
+// subscriptionBody is POST /api/v1/device/push, in the shape of the browser's
+// PushSubscription.toJSON(). Its expirationTime is read and ignored.
+type subscriptionBody struct {
+	Endpoint       string           `json:"endpoint"`
+	ExpirationTime any              `json:"expirationTime"`
+	Keys           subscriptionKeys `json:"keys"`
+}
+
+// postPush stores the device's push subscription, refused when it names a
+// host the daemon would not post to or keys of the wrong size
+// (core.ValidatePushSubscription), and answers the device. Padding is
+// stripped from the keys first.
+func (l *Layer) postPush(w http.ResponseWriter, r *http.Request, device string) {
+	a := actionLog{device: device, name: "subscribe"}
+	var body subscriptionBody
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	// The model takes unpadded base64url only; a browser may give padding.
+	sub := core.PushSubscription{
+		Endpoint: body.Endpoint,
+		P256DH:   strings.TrimRight(body.Keys.P256DH, "="),
+		Auth:     strings.TrimRight(body.Keys.Auth, "="),
+	}
+	if err := core.ValidatePushSubscription(sub); err != nil {
+		a.record("400 " + err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	stored, err := l.host.SetPushSubscription(device, sub)
+	if err != nil {
+		a.record(err.Error())
+		writeError(w, modelStatus(err), err.Error())
+		return
+	}
+	a.record("ok")
+	writeJSON(w, http.StatusOK, deviceOf(stored))
+}
+
+// deletePush drops the device's push subscription, for the app's launch
+// check: Apple answers 201 to a subscription the phone has dropped, and drops
+// the push, so the sender never learns of it (spec, "Push"). The model
+// records the state as expired, as for a 410, which the app shows as
+// notifications to turn on again; a device with no subscription is left as it
+// is. It answers 204.
+func (l *Layer) deletePush(w http.ResponseWriter, _ *http.Request, device string) {
+	a := actionLog{device: device, name: "unsubscribe"}
+	l.host.PushResult(device, core.PushExpired)
+	a.record("ok")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteDevice unpairs the phone that asks: the model forgets the device
+// (which ends its streams and drops its subscription) and the cookie is
+// cleared. A device already gone is a device unpaired.
+func (l *Layer) deleteDevice(w http.ResponseWriter, _ *http.Request, device string) {
+	a := actionLog{device: device, name: "unpair"}
+	if err := l.client.RevokeDevice(device); err != nil && !errors.Is(err, core.ErrNoDevice) {
+		a.record(err.Error())
+		writeError(w, modelStatus(err), err.Error())
+		return
+	}
+	a.record("ok")
+	clearDeviceCookie(w)
+	w.WriteHeader(http.StatusNoContent)
 }
