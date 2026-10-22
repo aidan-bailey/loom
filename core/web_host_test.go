@@ -591,8 +591,9 @@ func TestWebHost_PushTargetsAreTheDevicesWithALiveSubscription(t *testing.T) {
 		_, err := m.SetPushSubscription(name, webHostSub(t, "fcm.googleapis.com"))
 		require.NoError(t, err)
 	}
-	m.PushResult("c-expired", PushExpired)
-	m.PushResult("d-failing", PushFailing(503))
+	endpoint := webHostSub(t, "fcm.googleapis.com").Endpoint
+	m.PushResult("c-expired", endpoint, PushExpired)
+	m.PushResult("d-failing", endpoint, PushFailing(503))
 
 	targets := m.PushTargets()
 
@@ -607,30 +608,60 @@ func TestWebHost_PushResult(t *testing.T) {
 	_, err := m.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
 	require.NoError(t, err)
 	push := func() PushState { return m.Web().Devices[0].Push }
+	endpoint := webHostSub(t, "web.push.apple.com").Endpoint
 
-	assert.True(t, m.PushResult("iPhone", PushFailing(503)))
+	assert.True(t, m.PushResult("iPhone", endpoint, PushFailing(503)))
 	assert.Equal(t, PushFailing(503), push())
 	assert.Len(t, m.PushTargets(), 1, "a failing subscription is tried again")
-	assert.False(t, m.PushResult("iPhone", PushFailing(503)), "the same result changes nothing")
+	assert.False(t, m.PushResult("iPhone", endpoint, PushFailing(503)), "the same result changes nothing")
 
-	assert.True(t, m.PushResult("iPhone", PushOK))
+	assert.True(t, m.PushResult("iPhone", endpoint, PushOK))
 	assert.Equal(t, PushOK, push())
 
-	assert.True(t, m.PushResult("iPhone", PushExpired))
+	assert.True(t, m.PushResult("iPhone", endpoint, PushExpired))
 	assert.Equal(t, PushExpired, push())
 	assert.Empty(t, m.PushTargets(), "an expired subscription is dropped")
 	onDisk, _ := webHostFileOf(t)
 	assert.Empty(t, onDisk.Devices[0].Push.Endpoint)
 	assert.Equal(t, "expired", onDisk.Devices[0].PushState)
 
-	assert.False(t, m.PushResult("iPhone", PushFailing(500)), "a late result of another push leaves the expiry standing")
+	assert.False(t, m.PushResult("iPhone", endpoint, PushFailing(500)), "a late result of another push leaves the expiry standing")
 	assert.Equal(t, PushExpired, push())
-	assert.False(t, m.PushResult("nobody", PushOK), "a revoked device is no one")
+	assert.False(t, m.PushResult("nobody", endpoint, PushOK), "a revoked device is no one")
 
 	_, err = m.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
 	require.NoError(t, err)
 	assert.Equal(t, PushOK, push(), "a new subscription revives the device")
 	assert.Len(t, m.PushTargets(), 1)
+}
+
+// A slow retry's result names the endpoint it was sent to: once the device has
+// posted another subscription it changes neither it nor its state.
+func TestWebHost_PushResultForAReplacedEndpointChangesNothing(t *testing.T) {
+	m, _ := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	a := webHostSub(t, "web.push.apple.com")
+	b := webHostSub(t, "fcm.googleapis.com")
+	_, err := m.SetPushSubscription("iPhone", a)
+	require.NoError(t, err)
+	_, err = m.SetPushSubscription("iPhone", b)
+	require.NoError(t, err)
+	before := m.Web().Devices[0]
+
+	assert.False(t, m.PushResult("iPhone", a.Endpoint, PushExpired), "A's 410 does not drop B")
+	assert.False(t, m.PushResult("iPhone", a.Endpoint, PushFailing(503)), "A's failure does not overwrite B's state")
+	assert.False(t, m.PushResult("iPhone", a.Endpoint, PushOK))
+
+	assert.Equal(t, before, m.Web().Devices[0])
+	assert.Equal(t, PushOK, m.Web().Devices[0].Push)
+	targets := m.PushTargets()
+	require.Len(t, targets, 1)
+	assert.Equal(t, b, targets[0].Subscription, "B is still the subscription")
+
+	assert.True(t, m.PushResult("iPhone", b.Endpoint, PushFailing(503)), "a result for the current endpoint still records")
+	assert.Equal(t, PushFailing(503), m.Web().Devices[0].Push)
+	assert.True(t, m.PushResult("iPhone", b.Endpoint, PushExpired))
+	assert.Empty(t, m.PushTargets())
 }
 
 // A write that fails is logged and the state stays in memory, and the call
@@ -642,7 +673,7 @@ func TestWebHost_PushResultKeepsTheStateWhenTheWriteFails(t *testing.T) {
 	require.NoError(t, err)
 	webHostBreakWrites(t)
 
-	assert.True(t, m.PushResult("iPhone", PushExpired))
+	assert.True(t, m.PushResult("iPhone", webHostSub(t, "web.push.apple.com").Endpoint, PushExpired))
 
 	assert.Equal(t, PushExpired, m.Web().Devices[0].Push, "the expiry stays in memory")
 	assert.Empty(t, m.PushTargets(), "and the subscription is dropped")
@@ -881,7 +912,7 @@ func TestWebHostLoop_AChangeWakesTheClientAndReachesTheModelView(t *testing.T) {
 			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
 				_, err := l.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
 				require.NoError(t, err)
-				return func() { l.PushResult("iPhone", PushExpired) }
+				return func() { l.PushResult("iPhone", webHostSub(t, "web.push.apple.com").Endpoint, PushExpired) }
 			},
 			want: func(t *testing.T, v WebView, _ []Event) {
 				assert.Equal(t, PushExpired, webHostDevice(v, "iPhone").Push)
@@ -931,9 +962,9 @@ func TestWebHostLoop_ACallThatChangesNothingWakesNoClient(t *testing.T) {
 	require.NoError(t, err)
 	l.TouchDevice("iPhone") // no minute has passed since the pairing
 	l.TouchDevice("nobody")
-	l.PushResult("nobody", PushExpired)
-	l.PushResult("iPhone", PushExpired) // it has no subscription
-	l.WebServing("", nil)               // it was not serving
+	l.PushResult("nobody", "https://web.push.apple.com/push/abc123", PushExpired)
+	l.PushResult("iPhone", "https://web.push.apple.com/push/abc123", PushExpired) // it has no subscription
+	l.WebServing("", nil)                                                         // it was not serving
 	_, _, err = l.RedeemPairing("23456789")
 	assert.ErrorIs(t, err, ErrPairingCode, "a refusal reaches the caller")
 	_, err = l.SetNotify("nobody", NotifyChange{})

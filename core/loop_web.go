@@ -58,8 +58,8 @@ func (l *Loop) SetPushSubscription(name string, sub PushSubscription) (dev WebDe
 func (l *Loop) PushTargets() []PushTarget { return get(l, (*Model).PushTargets) }
 
 // PushResult runs Model.PushResult on the loop.
-func (l *Loop) PushResult(device string, state PushState) {
-	l.webCall(func(m *Model) bool { return m.PushResult(device, state) })
+func (l *Loop) PushResult(device, endpoint string, state PushState) {
+	l.webCall(func(m *Model) bool { return m.PushResult(device, endpoint, state) })
 }
 
 // VAPIDKey runs Model.VAPIDKey on the loop. After Stop it answers ErrWebOff.

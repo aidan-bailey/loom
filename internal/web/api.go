@@ -496,10 +496,18 @@ func (l *Layer) postPush(w http.ResponseWriter, r *http.Request, device string) 
 // the push, so the sender never learns of it (spec, "Push"). The model
 // records the state as expired, as for a 410, which the app shows as
 // notifications to turn on again; a device with no subscription is left as it
-// is. It answers 204.
+// is. It answers 204. The result names the endpoint the host holds for the
+// device now (a PushResult for any other changes nothing); one the device
+// posts between that read and the result is dropped with it, which the app's
+// next launch check finds and subscribes again.
 func (l *Layer) deletePush(w http.ResponseWriter, _ *http.Request, device string) {
 	a := actionLog{device: device, name: "unsubscribe"}
-	l.host.PushResult(device, core.PushExpired)
+	for _, t := range l.host.PushTargets() {
+		if t.Device == device {
+			l.host.PushResult(device, t.Subscription.Endpoint, core.PushExpired)
+			break
+		}
+	}
 	l.record(a, http.StatusNoContent, "ok")
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -520,7 +520,7 @@ func TestWebDevices_ListsEachDevice(t *testing.T) {
 	require.NoError(t, err)
 	_, err = d.loop.SetPushSubscription("iPad", pushSubscription(t))
 	require.NoError(t, err)
-	d.loop.PushResult("iPad", core.PushFailing(500))
+	d.loop.PushResult("iPad", pushSubscription(t).Endpoint, core.PushFailing(500))
 
 	out, _, err := runWeb(t, "devices")
 

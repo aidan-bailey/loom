@@ -289,13 +289,13 @@ func (p *pusher) send(target core.PushTarget, key core.VAPIDKey, subject string,
 		if err == nil {
 			switch {
 			case status >= 200 && status < 300:
-				p.env.host.PushResult(target.Device, core.PushOK)
+				p.env.host.PushResult(target.Device, target.Subscription.Endpoint, core.PushOK)
 				return
 			case status == http.StatusNotFound || status == http.StatusGone:
-				p.env.host.PushResult(target.Device, core.PushExpired)
+				p.env.host.PushResult(target.Device, target.Subscription.Endpoint, core.PushExpired)
 				return
 			case status != http.StatusTooManyRequests && status < 500:
-				p.env.host.PushResult(target.Device, core.PushFailing(status))
+				p.env.host.PushResult(target.Device, target.Subscription.Endpoint, core.PushFailing(status))
 				return
 			}
 		}
@@ -304,7 +304,7 @@ func (p *pusher) send(target core.PushTarget, key core.VAPIDKey, subject string,
 			pause = retryAfter
 		}
 		if attempt == pushRetries || pause > pushRetryAfterMax {
-			p.giveUp(target.Device, status, err)
+			p.giveUp(target, status, err)
 			return
 		}
 		if !p.wait(p.ctx, pause) {
@@ -315,13 +315,13 @@ func (p *pusher) send(target core.PushTarget, key core.VAPIDKey, subject string,
 
 // giveUp records a push that failed for good: an HTTP status is recorded on
 // the device, and a transport error is only logged.
-func (p *pusher) giveUp(device string, status int, err error) {
+func (p *pusher) giveUp(target core.PushTarget, status int, err error) {
 	if err != nil {
-		p.log.Warn("push not delivered", "device", device, "err", err)
+		p.log.Warn("push not delivered", "device", target.Device, "err", err)
 		return
 	}
-	p.log.Warn("push not delivered", "device", device, "status", status)
-	p.env.host.PushResult(device, core.PushFailing(status))
+	p.log.Warn("push not delivered", "device", target.Device, "status", status)
+	p.env.host.PushResult(target.Device, target.Subscription.Endpoint, core.PushFailing(status))
 }
 
 // post makes one exchange and reads the status and any Retry-After, leaving

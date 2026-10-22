@@ -42,9 +42,11 @@ type WebHost interface {
 	SetPushSubscription(name string, sub PushSubscription) (WebDevice, error)
 	// PushTargets are the devices with a subscription that isn't expired.
 	PushTargets() []PushTarget
-	// PushResult records how a push to the device went. PushExpired also
-	// drops the subscription.
-	PushResult(device string, state PushState)
+	// PushResult records how a push to the endpoint of the device's
+	// subscription went. PushExpired also drops the subscription. It changes
+	// nothing when the device now holds another endpoint: a late result for
+	// a subscription the device has replaced says nothing of the new one.
+	PushResult(device, endpoint string, state PushState)
 	// VAPIDKey is the push key pair; ErrWebOff before the first enable.
 	VAPIDKey() (VAPIDKey, error)
 	// WebServing records that the listener listens on addr, or why it does
@@ -297,15 +299,18 @@ func (m *Model) PushTargets() []PushTarget {
 	return targets
 }
 
-// PushResult records how a push to the device went; PushExpired also drops
-// the subscription (WebHost). It reports whether a client would see a
-// change. A result for a device with no subscription changes nothing: a push
-// still in flight when another one's 410 dropped it would otherwise turn
-// "expired" into "failing". A write that fails is logged and the state stays
-// in memory. Loop goroutine only.
-func (m *Model) PushResult(device string, state PushState) bool {
+// PushResult records how a push to endpoint went; PushExpired also drops the
+// subscription (WebHost). It reports whether a client would see a change. A
+// result for a device with no subscription changes nothing: a push still in
+// flight when another one's 410 dropped it would otherwise turn "expired"
+// into "failing". Neither does a result for an endpoint the device no longer
+// holds: a slow retry's 404 against the old endpoint must not drop the
+// subscription the device posted since, nor its ok or failing overwrite the
+// new one's state. A write that fails is logged and the state stays in
+// memory. Loop goroutine only.
+func (m *Model) PushResult(device, endpoint string, state PushState) bool {
 	d := m.web.find(device)
-	if d == nil || d.sub.Endpoint == "" {
+	if d == nil || d.sub.Endpoint == "" || d.sub.Endpoint != endpoint {
 		return false
 	}
 	prevSub, prevPush := d.sub, d.push

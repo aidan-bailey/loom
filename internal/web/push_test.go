@@ -259,7 +259,7 @@ func (r *pushRig) addDevice(t *testing.T, name string, notify core.NotifyChange)
 	require.NoError(t, err)
 	_, err = r.s.loop.SetNotify(name, notify)
 	require.NoError(t, err)
-	r.s.loop.PushResult(name, core.PushFailing(pushTestBaseline))
+	r.s.loop.PushResult(name, pushTestSub(t, name).Endpoint, core.PushFailing(pushTestBaseline))
 	require.Equal(t, core.PushFailing(pushTestBaseline), r.state(t, name))
 }
 
@@ -409,6 +409,37 @@ func TestPusher_RecordsEachOutcome(t *testing.T) {
 	}
 }
 
+// roundTripFunc is an http.RoundTripper made of a function.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A result names the endpoint the push went to: the device posting another
+// subscription while the push is in flight leaves it, and its state, alone.
+func TestPusher_AResultForAReplacedEndpointChangesNothing(t *testing.T) {
+	for _, status := range []int{http.StatusGone, http.StatusNotFound, http.StatusBadRequest, http.StatusCreated} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			rig := newPushRig(t, "iPhone")
+			rig.svc.script(pushReply{status: status})
+			newer := pushTestSub(t, "iPhone-newer")
+			inner := rig.p.httpc.Transport
+			rig.p.httpc.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				_, err := rig.s.loop.SetPushSubscription("iPhone", newer)
+				require.NoError(t, err)
+				return inner.RoundTrip(r)
+			})
+
+			rig.p.deliver(pushTestWaiting)
+
+			require.Equal(t, []string{"iPhone"}, rig.svc.requested(), "the push went to the old endpoint")
+			assert.Equal(t, core.PushOK, rig.state(t, "iPhone"), "the new subscription's state is untouched")
+			targets := rig.s.loop.PushTargets()
+			require.Len(t, targets, 1, "and the new subscription is not dropped")
+			assert.Equal(t, newer, targets[0].Subscription)
+		})
+	}
+}
+
 func TestPusher_HonoursEachDevicesSettings(t *testing.T) {
 	rig := newPushRig(t)
 	at := rig.clock.Now()
@@ -463,7 +494,7 @@ func TestPusher_SendsNothingWhileTheWebIsOff(t *testing.T) {
 	rig.p.deliver(pushTestWaiting)
 	require.Equal(t, []string{"iPhone"}, rig.svc.requested(), "with the web listening a push goes out")
 	require.Equal(t, core.PushOK, rig.state(t, "iPhone"))
-	rig.s.loop.PushResult("iPhone", core.PushFailing(pushTestBaseline))
+	rig.s.loop.PushResult("iPhone", pushTestSub(t, "iPhone").Endpoint, core.PushFailing(pushTestBaseline))
 
 	rig.svc.forget()
 	require.NoError(t, tui.ConfigureWeb("", pushTestOrigin))
