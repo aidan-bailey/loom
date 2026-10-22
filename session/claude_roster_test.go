@@ -323,15 +323,47 @@ func TestQueryClaudeRoster_BridgeIDRules(t *testing.T) {
 }
 
 // Only a regular file is read: anything else at the path, a FIFO included,
-// could block the query that the whole fleet's status waits on.
+// could block the query that the whole fleet's status waits on. A directory
+// fails the read on its own; a symlink to a valid session file is read happily
+// unless the Lstat check refuses it, so that case alone pins the guard.
 func TestQueryClaudeRoster_BridgeIDNeedsARegularFile(t *testing.T) {
+	t.Run("a directory", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "sessions", "41.json"), 0o755))
+
+		got := bridgeOf(t, dir, bridgeRosterJSON)
+
+		assert.Empty(t, got.RemoteSession)
+		assert.Equal(t, RosterStatusIdle, got.Status)
+	})
+	t.Run("a symlink to a valid session file", func(t *testing.T) {
+		dir, elsewhere := t.TempDir(), t.TempDir()
+		target := filepath.Join(elsewhere, "41.json")
+		require.NoError(t, os.WriteFile(target, []byte(bridgeSessionFile), 0o600))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "sessions"), 0o755))
+		if err := os.Symlink(target, filepath.Join(dir, "sessions", "41.json")); err != nil {
+			t.Skipf("cannot create a symlink here: %v", err)
+		}
+
+		got := bridgeOf(t, dir, bridgeRosterJSON)
+
+		assert.Empty(t, got.RemoteSession)
+		assert.Equal(t, RosterStatusIdle, got.Status)
+	})
+}
+
+// A duplicated CLAUDE_CONFIG_DIR resolves to its last value, as os/exec does
+// for the claude process the roster ran under.
+func TestQueryClaudeRoster_BridgeIDUsesTheLastConfigDirInEnv(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sessions", "41.json"), 0o755))
+	writeSessionFile(t, dir, 41, bridgeSessionFile)
+	env := []string{"CLAUDE_CONFIG_DIR=/a", "CLAUDE_CONFIG_DIR=" + dir}
 
-	got := bridgeOf(t, dir, bridgeRosterJSON)
+	got, err := QueryClaudeRosterEnv("claude", env, &fakeRosterExecutor{out: []byte(bridgeRosterJSON)})
 
-	assert.Empty(t, got.RemoteSession)
-	assert.Equal(t, RosterStatusIdle, got.Status)
+	require.NoError(t, err)
+	require.Contains(t, got, "/w/rc")
+	assert.Equal(t, "session_01AbC-9", got["/w/rc"].RemoteSession)
 }
 
 // A pid this build cannot read costs its entry the bridge ID and nothing
