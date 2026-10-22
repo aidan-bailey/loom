@@ -13,9 +13,12 @@ import (
 )
 
 // The mod's whole reach on $: the spec's security section allows these and
-// nothing else (no $.process, no $.fs, no UI beyond the debug log).
+// nothing else (no $.process, no $.fs, no UI beyond the debug log). $.command
+// lists Claude's commands and runs the ones the daemon's rules allow
+// (docs/superpowers/specs/2026-10-22-slash-commands-design.md).
 var allowedCalls = map[string]bool{
 	"$.clock.sleep": true, "$.env.get": true, "$.http.fetch": true, "$.prompt.submit": true,
+	"$.command.list": true, "$.command.run": true,
 	"$.session.id": true, "$.session.version": true, "$.ui.log": true,
 }
 

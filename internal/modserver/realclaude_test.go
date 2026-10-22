@@ -24,21 +24,35 @@ var claudeConfigDir = os.Getenv("CLAUDE_CONFIG_DIR")
 
 // queueHost is a ModHost for launch L1 whose messages the test queues.
 type queueHost struct {
-	mu     sync.Mutex
-	hello  bool
-	msgs   []core.ModMessage
-	wake   chan struct{}
-	events []core.ModEvent
+	mu       sync.Mutex
+	hello    bool
+	commands []core.ModCommand // the hello's list
+	msgs     []core.ModMessage
+	wake     chan struct{}
+	events   []core.ModEvent
 }
 
-func (h *queueHost) ModHello(launch string, _ core.ModHello) error {
+func (h *queueHost) ModHello(launch string, hello core.ModHello) error {
 	if launch != "L1" {
 		return core.ErrModUnknownLaunch
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.hello = true
+	h.commands = hello.Commands
 	return nil
+}
+
+// listed reports whether the hello listed the command name from source.
+func (h *queueHost) listed(name, source string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.commands {
+		if c.Name == name && c.Source == source {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *queueHost) ModInbox(launch, _ string) ([]core.ModMessage, <-chan struct{}, error) {
@@ -83,10 +97,18 @@ func (h *queueHost) helloed() bool {
 	return h.hello
 }
 
-func (h *queueHost) queue(id, text string) {
+func (h *queueHost) queue(id, text string) { h.add(core.ModMessage{ID: id, Text: text}) }
+
+// queueCommand queues the slash command name with args, as the model hands
+// one to the mod.
+func (h *queueHost) queueCommand(id, name, args string) {
+	h.add(core.ModMessage{ID: id, Text: "/" + name + " " + args, Command: name, Args: args})
+}
+
+func (h *queueHost) add(m core.ModMessage) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.msgs = append(h.msgs, core.ModMessage{ID: id, Text: text})
+	h.msgs = append(h.msgs, m)
 	if h.wake != nil {
 		close(h.wake)
 		h.wake = nil
@@ -115,10 +137,12 @@ func (h *queueHost) said() string {
 // embedded mod on a private tmux server and serves it from queueHost: hello;
 // a message's queued, started and complete (complete carrying Claude's
 // answer); and a message delivered while a permission dialog is open, which
-// leaves the dialog alone and runs after it. It spends a few cents and leaves
-// entries in the developer's Claude config dir (projects/, the trust entry),
-// so it runs only with LOOM_TEST_REAL_CLAUDE=1. Its waits add up to about 8
-// minutes at worst, inside go test's default 10-minute timeout.
+// leaves the dialog alone and runs after it; then the hello's list of
+// Claude's commands, a command message that runs (/model haiku) and one that
+// fails by name. It spends a few cents and leaves entries in the developer's
+// Claude config dir (projects/, the trust entry), so it runs only with
+// LOOM_TEST_REAL_CLAUDE=1. Its waits add up to about 9.5 minutes at worst,
+// inside go test's default 10-minute timeout.
 func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 	if os.Getenv("LOOM_TEST_REAL_CLAUDE") != "1" {
 		t.Skip("set LOOM_TEST_REAL_CLAUDE=1 to run against real Claude (costs money)")
@@ -255,6 +279,18 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 		return ok && strings.Contains(ev.Text, "QUEUED")
 	})
 	require.DirExists(t, filepath.Join(work, "made-by-test"), "the dialog's own answer ran the command")
+
+	// The hello listed Claude's commands, and a command message runs
+	// through $.command.run, reporting its run, or failing by name.
+	require.True(t, host.listed("clear", "builtin"), "the hello lists Claude's commands with their sources")
+	host.queueCommand("c1", "model", "haiku")
+	waitFor("c1's run", 60*time.Second, func() bool { _, ok := host.event("complete", "c1"); return ok })
+	_, queued = host.event("queued", "c1")
+	require.True(t, queued, "c1 was reported queued")
+	host.queueCommand("c2", "nosuchcmd", "")
+	waitFor("c2's failure", 30*time.Second, func() bool { _, ok := host.event("failed", "c2"); return ok })
+	failed, _ := host.event("failed", "c2")
+	require.Contains(t, failed.Error, "no command named /nosuchcmd")
 
 	t.Log(host.said())
 }

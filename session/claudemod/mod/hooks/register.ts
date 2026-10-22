@@ -4,20 +4,22 @@
 // never answers an open dialog or joins a running turn. Everything else stays
 // in loom: the daemon composes the text and decides what to send, and this
 // module only carries it and reports when each message is queued, when its
-// turn starts and how the turn ended.
+// turn starts and how the turn ended. A message the daemon marks as a slash
+// command runs through Claude's command queue instead ($.command.run), and
+// the hello lists this Claude's commands for the daemon to judge one by.
 //
 // loom writes this folder into each launch's hooks folder and passes it with
 // --plugin-dir. LOOM_MOD_SOCKET names the daemon's mod socket and LOOM_LAUNCH
 // this launch; without both the module does nothing.
 
-import type { EngineInterface, PromptSubmitResult, Register } from 'claude-code'
+import type { CommandRunResult, EngineInterface, PromptSubmitResult, Register } from 'claude-code'
 
 const MOD_VERSION = 1
 const BASE = 'http://loom/v1'
 const MAX_BACKOFF_MS = 5000
 const KEEP_SUBMITTED = 200
 
-type Message = { id: string; text: string; asUser: boolean }
+type Message = { id: string; text: string; asUser: boolean; command?: string; args?: string }
 type ModEvent = {
   kind: 'queued' | 'started' | 'complete' | 'failed'
   id: string
@@ -93,8 +95,21 @@ async function hello($: EngineInterface): Promise<number> {
     session,
     poller: POLLER,
     loaded: LOADED,
+    commands: await commandList($),
   })
   return r.status
+}
+
+// commandList is the slash commands this Claude lists, with their sources,
+// for the daemon to judge a command message by; none when the list fails, so
+// the daemon runs only the built-ins it allows.
+async function commandList($: EngineInterface): Promise<{ name: string; source: string }[]> {
+  try {
+    return (await $.command.list()).map(c => ({ name: c.name, source: c.source }))
+  } catch (err) {
+    $.ui.log(`loom: list commands: ${String(err)}`, { to: 'debug' })
+    return []
+  }
 }
 
 // superseded logs that a newer instance of this module holds the launch; the
@@ -156,6 +171,34 @@ async function submit($: EngineInterface, m: Message) {
   await queued
 }
 
+// run hands a command message to Claude's command queue ($.command.run),
+// which runs it once the session is idle: queued as it is handed over, then
+// complete with the command's output, or failed. A command starts no turn of
+// its own to claim (a skill's run resolves as its turn starts), so it reports
+// no started.
+async function run($: EngineInterface, m: Message) {
+  if (submitted.includes(m.id)) {
+    await report($, [{ kind: 'queued', id: m.id }])
+    return
+  }
+  let done: Promise<CommandRunResult>
+  try {
+    done = $.command.run({ command: m.command ?? '', args: m.args ?? '' })
+  } catch (err) {
+    // Nothing entered Claude's queue, so no queued: the daemon refuses it.
+    await report($, [{ kind: 'failed', id: m.id, error: String(err) }])
+    return
+  }
+  submitted.push(m.id)
+  if (submitted.length > KEEP_SUBMITTED) submitted.shift()
+  const queued = reportInOrder($, [{ kind: 'queued', id: m.id }])
+  done.then(
+    r => void reportInOrder($, [{ kind: 'complete', id: m.id, text: r.text ?? '' }]),
+    err => void reportInOrder($, [{ kind: 'failed', id: m.id, error: String(err) }]),
+  )
+  await queued
+}
+
 function backoff(ms: number): number {
   return Math.min(ms === 0 ? 1000 : ms * 2, MAX_BACKOFF_MS)
 }
@@ -185,7 +228,7 @@ async function pump($: EngineInterface) {
       }
       if (r.status === 200) {
         const { messages } = JSON.parse(r.text) as { messages: Message[] }
-        for (const m of messages) await submit($, m)
+        for (const m of messages) await (m.command ? run($, m) : submit($, m))
         delay = 0
       } else if (r.status === 204) {
         delay = 0
