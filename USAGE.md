@@ -606,8 +606,9 @@ starts)…`.
   `~/.loom/logs/serve.log`, with a crash it can't log in
   `serve-crash.log` beside it. If the daemon fails to start, loom prints
   what it logged.
-- `loom workspace` and `loom account` are clients of the daemon, as a
-  loom is: they start one when none runs, make their request and exit.
+- `loom workspace`, `loom account`, `loom session` and `loom web` are
+  clients of the daemon, as a loom is: they start one when none runs,
+  make their request and exit.
   `loom reset` is the daemon's to make while it runs (it drops the
   workspace's sessions at once); with no daemon it works directly and
   holds the daemon's lock meanwhile, so none starts under it.
@@ -620,6 +621,171 @@ You never need to run `loom serve` yourself. Run by hand, it runs the
 daemon in that terminal until `Ctrl-C`, which stops it as `loom serve
 stop` does (a second `Ctrl-C` exits at once, without saving); if a
 daemon already runs, it says so and exits.
+
+### Use Loom from Your Phone
+
+The daemon can serve a web app, an installable page for an iPhone, that
+shows your fleet across every workspace, why a session waits and what it
+said last. From it you reply to a session, start, pause, resume, kill,
+push and merge, and get a notification when a session starts waiting on
+you or finishes. It is off until you enable it, listens on loopback only,
+and answers only phones you have paired.
+
+- **The fleet.** Sessions are grouped by what needs you: **Needs you**
+  (longest wait first, with the reason and, for a permission request, the
+  command, file or address), **Your turn** (a dot when the turn ended after this
+  phone last opened the session), **Working**, and **Paused** (folded
+  away). Chips filter by workspace; the phone remembers the filter. A
+  session leads with why it waits, then its last message, its changes,
+  branch, pull request and account, the actions, and a reply box.
+- **Replying.** The reply goes to Claude through the loom mod, as
+  `loom session send` does, queued behind the running turn. It is refused,
+  with the reason, for a session with no live mod or another agent than
+  Claude.
+- **Approvals and the full chat.** Loom answers no permission prompt
+  itself. **Open in Claude** links to the session's Remote Control page on
+  claude.ai, where you approve and read the whole conversation; it shows
+  only while Remote Control is connected for that session, and otherwise
+  the card says Remote Control is off for it.
+- **Actions.** Kill, push and merge ask first, and the sheet names what
+  happens (kill ends the tmux session, force-removes the worktree and
+  discards its uncommitted changes, so push first to keep them, and deletes
+  the branch unless the session checked out an existing one; for a paused
+  session, the stash it holds is dropped too; push commits first;
+  merge asks which session's branch to merge in).
+  Pause and resume do not ask. An action the daemon refuses shows the
+  daemon's reason. A stash that kill or resume reports is always shown: it
+  can be the only record of your work.
+- **Notifications.** Turn them on from the app's settings with a tap (iOS
+  requires the tap, iOS 16.4 or later, and only for an app installed to the
+  Home Screen); the phone can take minutes to finish. Each device
+  chooses *waiting*, *finished* or both, and can pause them for an hour. A
+  notification is tagged by session, so a session shows at most one; the
+  Home Screen badge counts the sessions that need you, and the app keeps it in step with the stream. Loom cannot clear a
+  notification that went stale: tapping it shows the current state. If a
+  push service stops accepting a device, or the app finds when it opens
+  that the phone has dropped its subscription (Apple goes on accepting
+  pushes for one), `loom web devices` shows `expired` or
+  `failing: <status>` and the app says "Notifications stopped on this phone. Turn them
+  on again in Settings.".
+
+#### Set it up
+
+1. **Reach the daemon.** The daemon listens on a loopback port, and a
+   Cloudflare tunnel run by a `cloudflared` service on the same machine
+   carries your host name to it. With a tunnel named `loom` (made once
+   with `cloudflared tunnel login`, `cloudflared tunnel create loom` and
+   `cloudflared tunnel route dns loom loom.example.com`), the tunnel's
+   `config.yml` routes the host name to the port:
+
+   ```yaml
+   tunnel: <tunnel id>
+   credentials-file: /home/<you>/.cloudflared/<tunnel id>.json
+   ingress:
+     - hostname: loom.example.com
+       service: http://127.0.0.1:7420
+     - service: http_status:404
+   ```
+
+   Run `cloudflared tunnel run loom` as a service under its own user. Leave
+   the Host header as the browser sent it: loom answers 421 to a request
+   whose Host is not the origin's host and port.
+2. **Turn it on.**
+
+   ```bash
+   loom web enable --listen 127.0.0.1:7420 --origin https://loom.example.com
+   ```
+
+   `--listen` is a loopback address (`127.0.0.1:<port>` or `[::1]:<port>`),
+   not a host name, and its port is 1 to 65535 (0 is refused); `--origin` is `https://<host>[:<port>]` with no path
+   (for development only, `http://127.0.0.1:<port>` or
+   `http://localhost:<port>`). The daemon applies them at once, and the
+   command waits a few seconds to say whether it serves or why not (the
+   port is taken, say). The settings are kept either way. Running
+   `loom web enable` again with the same values while the web serves changes
+   nothing and says so; after a bind that failed, it retries the bind: free
+   the port, then run it again.
+3. **Install the app.** Open the origin in Safari on the iPhone and use
+   Share, then Add to Home Screen. Opened in Safari, the app shows these
+   steps instead of pairing; the installed app keeps its storage apart from
+   Safari's.
+4. **Pair.** On the machine, run `loom web pair --name iPhone`; it prints a
+   code such as `K7QM-2XPA`, when it expires and the origin. Enter the code
+   in the installed app. A code works once and for ten minutes; a second
+   `pair` for the same name replaces its code; at most four codes wait at a
+   time; five wrong codes void every waiting one (run `loom web pair`
+   again); sixteen devices at most. A daemon restart voids the codes.
+5. **Notifications.** In the app's settings, tap to turn them on.
+
+`loom web devices` lists each device, when it paired and was last seen, its
+notifications and its push state; `loom web revoke <name>` (or `--all`)
+unpairs one: its stream ends, its push subscription is dropped and the app
+returns to pairing. `loom web disable` turns the web off and keeps the
+devices and the origin, voids the pending pairing codes, and sends no push until it is on again (the phones' subscriptions stay, so turning it on resumes pushes without them subscribing again); `loom web status` shows the settings, whether it
+serves and why not, and the device count. The settings live in `web.json`
+in the global dir, which only the daemon writes; a `web.json` that fails to
+load (unreadable, a newer version than this build, or a stored address,
+origin, name or key that is not valid) is left alone: the web stays off,
+`enable`, `disable` and `revoke` refuse, `pair` says the web is off, and a notice says
+why; fix or move the file by hand.
+
+**What the tunnel means.** Cloudflare ends TLS at its edge and reaches loom
+over plain HTTP on loopback, so Cloudflare can read the traffic, the device
+token included. A token is revocable per device, and Cloudflare Access can be
+put in front of the host name with no change to loom.
+
+#### Keep the daemon up (a systemd user unit)
+
+The app answers only while the daemon runs. To have it after a reboot, run
+`loom serve` as a systemd user unit, `~/.config/systemd/user/loom.service`:
+
+```ini
+[Unit]
+Description=loom daemon
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/loom serve
+Restart=on-failure
+RestartSec=5
+# The login environment, which a user service does not inherit (below).
+EnvironmentFile=-%h/.config/loom/serve.env
+
+[Install]
+WantedBy=default.target
+```
+
+Enable it with `systemctl --user enable --now loom`, and
+`loginctl enable-linger $USER` so it starts at boot without a login.
+
+**The unit needs your session's environment.** The daemon passes its own
+environment to every agent it launches, and a user service starts with
+almost none: `PATH` must reach `claude`, `git`, `tmux` and your tools, and
+`SSH_AUTH_SOCK` (and `DISPLAY`, and the rest of what your agents use) must
+be set, or every session the daemon starts runs without them. Either import
+them from a login shell before the unit starts, with
+`systemctl --user import-environment PATH SSH_AUTH_SOCK`, or write them to
+the file the unit reads, `~/.config/loom/serve.env`, as `NAME=value` lines
+(`PATH=/home/you/.local/bin:/run/current-system/sw/bin`, for example). Either
+way, restart the unit after changing them (`systemctl --user restart loom`):
+a daemon keeps the environment it started with.
+
+After installing a new loom build, restart the unit too. A `loom` you start by
+hand that finds an older daemon replaces it with a detached daemon of its own,
+outside the unit.
+
+#### When something is wrong
+
+| You see | Cause |
+|---|---|
+| The app says "Can't reach loom" and when it last updated; the browser shows 502 | The daemon is not running, or the tunnel cannot reach the port |
+| 421 | The Host header is not the origin's host and port: the tunnel changed it, or `--origin` is not the address the phone opens |
+| 403 on an action | The request's `Origin` is not the configured origin |
+| "loom is restarting" | The daemon stopped; the app reconnects by itself |
+| Pairing says the code is wrong, used or expired | Run `loom web pair` again; a code works once, for ten minutes |
+| `loom web enable` says it is not serving | `loom web status` shows the reason, usually a port that is taken; the settings are kept. Free the port and run the same `loom web enable` again: it retries the bind |
+| The fleet is greyed with every action off | The app shows its last snapshot until the stream is back |
+| No notifications | The app is not installed to the Home Screen, notifications are off or paused for the device, or `loom web devices` shows `expired` or `failing` |
 
 ### Session Recovery (orphaned worktrees)
 
@@ -768,6 +934,7 @@ loom [command]
 | `workspace` | Manage workspaces (see below); a client of the daemon, which it starts when none runs |
 | `account` | Manage extra Claude accounts (see below, and [Run Sessions on Several Claude Accounts](#run-sessions-on-several-claude-accounts)); a client of the daemon too |
 | `session` | Create, list, pause, resume and kill a registered workspace's sessions from a shell (see below); a client of the daemon too |
+| `web` | Serve the fleet to a paired phone: enable, disable, pair, devices, revoke and status (see below, and [Use Loom from Your Phone](#use-loom-from-your-phone)); a client of the daemon too |
 
 ### Workspace Subcommands
 
@@ -806,6 +973,17 @@ Each acts on a registered workspace: `-w <name>`, else the one whose repository 
 | `session pause <title> [--id <n>]` | Pause a running session: its agent stops and its worktree is removed, its branch kept |
 | `session resume <title> [--id <n>]` | Resume a paused session |
 
+### Web Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `web enable --listen <addr> --origin <url>` | Turn the web app on, or change it: `--listen` is a loopback `127.0.0.1:<port>` or `[::1]:<port>`, `--origin` the `https://<host>` the phone opens. Both are required and checked by the daemon, which applies them at once; the command waits up to 5 s and says whether it serves or why not. Running it again with the same values changes nothing while the web serves, and retries a bind that failed (the port was taken) |
+| `web disable` | Turn the web app off; paired devices and the origin are kept, pending pairing codes are voided, and no push is sent until it is on again |
+| `web pair [--name <device>]` | Print a one-time code (`XXXX-XXXX`, default name `iPhone`), when it expires and the origin to enter it at. Refused while the web is off, for a name already paired, and at sixteen devices |
+| `web devices [--json]` | Each device: name, when paired, last seen, notifications, push state (`ok`, `expired`, `failing: <status>`, or none) |
+| `web revoke <name>` or `web revoke --all` | Unpair a device, or every device: its app returns to pairing and its push subscription is dropped |
+| `web status` | The settings, whether the web app serves or why not, and the number of devices |
+
 ### Examples
 
 ```bash
@@ -832,6 +1010,10 @@ loom session list -w my-project --json
 
 # Ask a session a question once its current turn is done, and print the reply
 loom session send fix-login -w my-project --from po --wait --text "Status?"
+
+# Serve the fleet to a phone, then pair it
+loom web enable --listen 127.0.0.1:7420 --origin https://loom.example.com
+loom web pair --name iPhone
 ```
 
 ---
