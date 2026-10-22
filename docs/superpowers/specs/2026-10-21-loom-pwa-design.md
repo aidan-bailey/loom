@@ -319,7 +319,9 @@ request, and waits for the `Reply` the drain routes back.
 - A request's notices come back in its response. One that arrives after
   the response, such as a failed start's, goes to the requesting device's
   stream. Kill's and Resume's stash notices name a SHA that may be the only
-  record of the work, so the app always shows them.
+  record of the work, so the app always shows them. Either way the web
+  layer also keeps them among the recent notices the snapshot carries, so
+  a response the phone never got loses none.
 
 ## The stream
 
@@ -404,6 +406,9 @@ Every connect starts with a snapshot of a few KB, so nothing is replayed.
     pushes nothing, so a daemon restart sends no flood. Workspace
     terminals never push.
 - A device gets the kinds its settings allow, and nothing while paused.
+  While the web is disabled (an empty `listen`) no device gets any; the
+  subscriptions and the VAPID key stay, so enabling it again resumes
+  pushes without the phone subscribing again.
 - The payload (kind, session ID, title, body, badge count) is encrypted
   per RFC 8291 (aes128gcm) with the standard library's crypto, so Apple
   sees only ciphertext. The VAPID JWT is ES256, with the configured origin
@@ -415,14 +420,18 @@ Every connect starts with a snapshot of a few KB, so nothing is replayed.
   8030 allows, so `s<id>` fails for some IDs.
 - The service worker shows each notification tagged by session, so a
   session shows at most one, its latest, and sets the Home Screen badge to
-  the count of sessions that need you. Tapping one opens that session.
+  the count of sessions that need you; the app sets it too from the
+  stream's badge count, so answering every session clears it. Tapping
+  one opens that session.
   iOS requires every push to show something, so loom can't clear a stale
   notification; tapping it shows the current state.
 - A sender goroutine in the web layer, never on the loop, posts each push
   with a 10 s timeout. It retries a 429 or a 5xx up to three times,
   honouring `Retry-After`; it drops a subscription answered 404 or 410 and
   records it as expired; any other failure records the subscription as
-  failing, with the status. Both show in `loom web devices` and in the app
+  failing, with the status. A result names the endpoint it was sent to,
+  and changes nothing once the device holds another subscription. Both
+  show in `loom web devices` and in the app
   ("Notifications stopped; turn them on again"). Its queue holds at most
   100 pushes and logs any it drops.
 
