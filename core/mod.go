@@ -67,6 +67,12 @@ const (
 	// OriginFirstPrompt is an N flow's first prompt, which only the daemon
 	// sends (deliverStart): the person's own words, pasted without a mod.
 	OriginFirstPrompt Origin = "first-prompt"
+	// OriginWeb is a reply typed in the web app (internal/web): the person's
+	// own words with no "From" line, as a script's, but refused as a CLI
+	// message is (empty, for a program other than Claude, without a live
+	// mod) and never pasted. The phone shows a refusal as it is, so each reads
+	// in words that name no `loom` command (emptyReason, webNoModReason).
+	OriginWeb Origin = "web"
 )
 
 // Message is a message for a session's Claude, delivered through the loom mod
@@ -78,6 +84,19 @@ type Message struct {
 	// Wait asks for Answered when the turn that carries the message ends.
 	Wait   bool
 	Origin Origin
+}
+
+// needsMod reports whether a message of origin o goes only through a live
+// mod: a CLI message and a web one are refused where a script's is pasted.
+func (o Origin) needsMod() bool { return o == OriginCLI || o == OriginWeb }
+
+// emptyReason is why an empty message of origin o is refused. A web refusal
+// reads for the phone, which shows it as it is.
+func (o Origin) emptyReason() string {
+	if o == OriginWeb {
+		return "there is nothing to send"
+	}
+	return "the message is empty"
 }
 
 // compose is the text the mod submits for msg: a CLI message names its sender
@@ -96,10 +115,12 @@ func (msg Message) compose() string {
 // refusal: a session not started or Paused (opSend's precondition), one busy
 // (Loading: a start or resume is launching it, and its link would be the old
 // launch's, or a pause is stopping it), an origin no sender may use, or
-// (OriginCLI) an empty message, another program than Claude or a launch
-// without a live mod. A script's message is pasted instead on such a launch,
-// as SendPrompt does, and so is a script's empty one on any launch. With
-// Wait, Answered follows when the turn that carries the message ends.
+// (OriginCLI, OriginWeb) an empty message, another program than Claude or a
+// launch without a live mod. A script's message is pasted instead on such a
+// launch, as SendPrompt does, and so is a script's empty one on any launch. A
+// web message is the person's own words (asUser) with no "From" line, and its
+// refusals read for the phone (they name no `loom` command). With Wait,
+// Answered follows when the turn that carries the message ends.
 func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	inst, _, ok := m.admit(opSend, id, req)
 	if !ok {
@@ -109,17 +130,17 @@ func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	case inst.GetStatus() == session.Loading:
 		m.refuse(req, id, fmt.Errorf("%s %s: the session is busy (starting, resuming or pausing): send again once it runs", opSend, inst.Title))
 		return
-	case strings.TrimSpace(msg.Text) == "" && msg.Origin == OriginCLI:
-		m.refuse(req, id, fmt.Errorf("send to %s: the message is empty", inst.Title))
+	case strings.TrimSpace(msg.Text) == "" && msg.Origin.needsMod():
+		m.refuse(req, id, fmt.Errorf("send to %s: %s", inst.Title, msg.Origin.emptyReason()))
 		return
-	case msg.Origin != OriginCLI && msg.Origin != OriginScript:
+	case !msg.Origin.needsMod() && msg.Origin != OriginScript:
 		m.refuse(req, id, fmt.Errorf("send to %s: %q is no sender's origin", inst.Title, msg.Origin))
 		return
-	case msg.Origin == OriginCLI && !session.IsClaudeProgram(inst.Program()):
-		m.refuse(req, id, fmt.Errorf("send to %s: %s", inst.Title, noModReason(inst)))
+	case msg.Origin.needsMod() && !session.IsClaudeProgram(inst.Program()):
+		m.refuse(req, id, fmt.Errorf("send to %s: %s", inst.Title, noModReasonFor(msg.Origin, inst)))
 		return
 	}
-	out := &modMessage{text: msg.compose(), asUser: msg.Origin == OriginScript, origin: msg.Origin, req: req, wait: msg.Wait}
+	out := &modMessage{text: msg.compose(), asUser: msg.Origin == OriginScript || msg.Origin == OriginWeb, origin: msg.Origin, req: req, wait: msg.Wait}
 	if strings.TrimSpace(msg.Text) == "" {
 		// A script's empty send_prompt presses Enter, as it did before the
 		// mod: Lua's API keeps it, and the mod has nothing to submit.
@@ -344,17 +365,27 @@ func (m *Model) enqueue(inst *session.Instance, msg *modMessage) {
 }
 
 // withoutMod delivers msg the way it goes when inst's launch has no live mod:
-// a CLI message is refused, a script's is pasted (SendPrompt's job, answering
-// its request), and a first prompt is pasted as a start always sent it
-// (sendInitialPrompt, whose promptSent emits Started). why, when set, says
-// why the mod did not deliver it, for the CLI's refusal; "" is a launch that
-// never had a mod.
+// a CLI or web message is refused, a script's is pasted (SendPrompt's job,
+// answering its request), and a first prompt is pasted as a start always sent
+// it (sendInitialPrompt, whose promptSent emits Started). why, when set, says
+// why the mod did not deliver it, for the CLI's or the web's refusal; "" is a
+// launch that never had a mod. The web's refusal words a launch with no mod
+// (webNoModReason) and the daemon's stop (modsStoppedWhy) for the phone, which
+// shows them as they are; any other why is already plain.
 func (m *Model) withoutMod(inst *session.Instance, msg *modMessage, why string) {
 	id := m.idOf(inst)
 	switch msg.origin {
 	case OriginCLI:
 		if why == "" {
 			why = noModReason(inst)
+		}
+		m.refuse(msg.req, id, fmt.Errorf("send to %s: %s", inst.Title, why))
+	case OriginWeb:
+		switch why {
+		case "":
+			why = webNoModReason(inst)
+		case modsStoppedWhy:
+			why = "the loom daemon is stopping, so the message was not sent"
 		}
 		m.refuse(msg.req, id, fmt.Errorf("send to %s: %s", inst.Title, why))
 	case OriginScript:
@@ -387,6 +418,39 @@ func noModReason(inst *session.Instance) string {
 		return "its Claude runs without the loom mod (an older Claude, or the mod did not load): attach and type instead"
 	}
 }
+
+// noModReasonFor is noModReason for a message of origin o: a web message gets
+// webNoModReason's words, the others the CLI's.
+func noModReasonFor(o Origin, inst *session.Instance) string {
+	if o == OriginWeb {
+		return webNoModReason(inst)
+	}
+	return noModReason(inst)
+}
+
+// webNoModReason is noModReason's reason in words for the phone, which shows
+// the model's text as it is: the same causes in the same order, but naming no
+// `loom` command and no terminal to attach to. A session that predates the
+// daemon is told to pause and resume it, which the app can do.
+func webNoModReason(inst *session.Instance) string {
+	launch, hooked := inst.HookLaunch()
+	switch {
+	case !session.IsClaudeProgram(inst.Program()):
+		return fmt.Sprintf("it runs %s, not Claude: only a Claude session takes a reply from the app", programName(inst.Program()))
+	case session.ModSocket() == "":
+		return "this loom daemon serves no loom mod, so it cannot deliver a reply"
+	case inst.Launches() == 0:
+		return "it was launched before this daemon started and its loom mod has not said hello: pause and resume it to relaunch it with the mod"
+	case launch != "" && !hooked:
+		return "it runs without loom's hooks, so it has no loom mod"
+	default:
+		return "its Claude runs without the loom mod (an older Claude, or the mod did not load)"
+	}
+}
+
+// modsStoppedWhy is the reason ModsStop gives modGone: the daemon is stopping.
+// withoutMod words it again for a web message.
+const modsStoppedWhy = "the loom daemon stopped"
 
 // endLink settles everything l holds once its launch is over: a sender whose
 // message was never queued hears why (undelivered), and a sender waiting for
@@ -485,14 +549,14 @@ func (m *Model) ModsServing() { m.modsSince = time.Now() }
 
 // ModsStop settles every link as the daemon stops, after its mod server has
 // closed, so no mod can queue what the links hold (modGone, "the loom daemon
-// stopped"): what no mod took is pasted, a CLI message refused, what a mod
-// took never pasted, and a turn's waiter told. The pastes are jobs, which the
+// stopped"): what no mod took is pasted, a CLI or web message refused, what a
+// mod took never pasted, and a turn's waiter told. The pastes are jobs, which the
 // stop's quiesce waits for, as it waited for a first prompt's paste before
 // the mod. Every launch counts as having none from now on (modsStopped).
 func (m *Model) ModsStop() {
 	m.modsStopped = true
 	for inst, l := range m.mods {
-		m.modGone(inst, l, "the loom daemon stopped")
+		m.modGone(inst, l, modsStoppedWhy)
 	}
 	log.For("core").Info("mod.stopped", "links", len(m.mods))
 }

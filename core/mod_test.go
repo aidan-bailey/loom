@@ -1072,3 +1072,188 @@ func TestMod_AfterARestartTheModLoadedLastWins(t *testing.T) {
 		assert.NoError(t, err)
 	})
 }
+
+// OriginWeb is the phone's reply: the person's own words with no "From" line,
+// submitted through the mod as a script's message is.
+func TestSend_AWebMessageIsThePersonsOwnWordsWithNoFromLine(t *testing.T) {
+	withMod(t)
+	m := NewForTest(Options{})
+	inst := modInst(t, m, "x")
+
+	m.Send(m.idOf(inst), Message{Text: "go on", From: "ignored", Origin: OriginWeb}, 5)
+
+	assert.Empty(t, replies(m.Drain()), "the Reply comes once the mod has queued it")
+	msgs, _, err := m.ModInbox("L1", "")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, ModMessage{ID: msgs[0].ID, Text: "go on", AsUser: true}, msgs[0])
+}
+
+// refusalOf sends text from origin to inst and returns the refusal that
+// answers it, checking that nothing is pasted in its place.
+func refusalOf(t *testing.T, m *Model, inst *session.Instance, origin Origin, text string) error {
+	t.Helper()
+	m.Send(m.idOf(inst), Message{Text: text, Origin: origin}, 5)
+	out := m.Drain()
+	rs := replies(out)
+	require.Len(t, rs, 1, "%s message %q", origin, text)
+	require.ErrorIs(t, rs[0].Err, ErrRefused)
+	assert.Empty(t, out.Jobs, "a %s message is never pasted", origin)
+	return rs[0].Err
+}
+
+// webMessage is the web app's message, as cliMessage is the CLI's.
+func webMessage(req ReqID, text string) *modMessage {
+	return &modMessage{text: text, asUser: true, origin: OriginWeb, req: req}
+}
+
+// assertWebWords checks that err is a refusal worded for the phone, which shows
+// the model's text as it is: exactly want, naming no `loom` command and no
+// terminal to attach to.
+func assertWebWords(t *testing.T, err error, want string) {
+	t.Helper()
+	assert.EqualError(t, err, want)
+	assert.NotContains(t, err.Error(), "loom session", "the phone has no loom command to run")
+	assert.NotContains(t, err.Error(), "attach", "the phone has no terminal to attach to")
+}
+
+// A web message is refused wherever a CLI message is, and unlike a script's it
+// is never pasted into the pane instead. Each refusal reads in the web's own
+// words, and the CLI's refusal beside it keeps its own.
+func TestSend_AWebMessageIsRefusedWhereTheCLIsIsInItsOwnWords(t *testing.T) {
+	t.Run("an empty message", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := modInst(t, m, "x")
+		for _, text := range []string{"", " \n\t"} {
+			assertWebWords(t, refusalOf(t, m, inst, OriginWeb, text), "send to x: there is nothing to send")
+			assert.EqualError(t, refusalOf(t, m, inst, OriginCLI, text), "send to x: the message is empty")
+		}
+		assert.Empty(t, m.mods, "nothing reaches the mod")
+	})
+	t.Run("another program than Claude", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := startedInst(t, "x", "aider --model sonnet")
+		hold(m, inst)
+
+		assertWebWords(t, refusalOf(t, m, inst, OriginWeb, "hi"),
+			"send to x: it runs aider, not Claude: only a Claude session takes a reply from the app")
+		assert.EqualError(t, refusalOf(t, m, inst, OriginCLI, "hi"),
+			"send to x: it runs aider, not Claude: loom session send reaches only Claude")
+	})
+	t.Run("a launch with no live mod", func(t *testing.T) {
+		m := NewForTest(Options{}) // no withMod: the daemon serves none
+		inst := activeInst(t, m, "x")
+
+		assertWebWords(t, refusalOf(t, m, inst, OriginWeb, "hi"),
+			"send to x: this loom daemon serves no loom mod, so it cannot deliver a reply")
+		assert.EqualError(t, refusalOf(t, m, inst, OriginCLI, "hi"),
+			"send to x: this loom daemon serves no loom mod (on Windows, or where its socket path would be too long): attach and type instead")
+	})
+}
+
+// A web message to a launch with no mod is refused saying why, as the CLI's is
+// (TestMod_ARefusalSaysWhyTheLaunchHasNoMod, which pins the CLI's words), in
+// words for the phone: the same five causes, no `loom` command, no terminal to
+// attach to. A session that predates the daemon is told to pause and resume
+// it, which the app can do.
+func TestMod_AWebRefusalSaysWhyTheLaunchHasNoMod(t *testing.T) {
+	refusal := func(t *testing.T, m *Model, inst *session.Instance, now time.Time) error {
+		t.Helper()
+		m.enqueue(inst, webMessage(5, "hi"))
+		m.modTick(now)
+		rs := replies(m.Drain())
+		require.Len(t, rs, 1)
+		return rs[0].Err
+	}
+
+	t.Run("another program, where the daemon serves no mod", func(t *testing.T) {
+		m := NewForTest(Options{})
+		inst := startedInst(t, "x", "aider")
+		hold(m, inst)
+		assertWebWords(t, refusal(t, m, inst, time.Now()),
+			"send to x: it runs aider, not Claude: only a Claude session takes a reply from the app")
+	})
+	t.Run("the daemon serves no mod", func(t *testing.T) {
+		m := NewForTest(Options{})
+		inst := activeInst(t, m, "x")
+		assertWebWords(t, refusal(t, m, inst, time.Now()),
+			"send to x: this loom daemon serves no loom mod, so it cannot deliver a reply")
+	})
+	t.Run("launched before this daemon", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := activeInst(t, m, "x")
+		adoptLaunch(t, m, inst, "L1", time.Now().Add(-time.Hour))
+		require.Zero(t, inst.Launches(), "fixture: restored, not launched by this daemon")
+		assertWebWords(t, refusal(t, m, inst, time.Now()),
+			"send to x: it was launched before this daemon started and its loom mod has not said hello: pause and resume it to relaunch it with the mod")
+	})
+	t.Run("a launch without hooks", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := relaunchableInstIn(t, m, "x", "")
+		require.NoError(t, inst.Restart())
+		_, hooked := inst.HookLaunch()
+		require.False(t, hooked, "fixture: no config dir, no hooks")
+		assertWebWords(t, refusal(t, m, inst, time.Now()),
+			"send to x: it runs without loom's hooks, so it has no loom mod")
+	})
+	t.Run("a launch whose Claude never said hello", func(t *testing.T) {
+		withMod(t)
+		m := NewForTest(Options{})
+		inst := relaunchableInst(t, m, "x")
+		require.NoError(t, inst.Restart())
+		_, hooked := inst.HookLaunch()
+		require.True(t, hooked, "fixture: launched by this daemon, with the mod")
+		assertWebWords(t, refusal(t, m, inst, time.Now().Add(modStartCap+time.Second)),
+			"send to x: its Claude runs without the loom mod (an older Claude, or the mod did not load)")
+	})
+}
+
+// A web message a silent mod never took is refused in the mod's own words, as
+// the CLI's is: only a launch with no mod and the daemon's stop have words of
+// the web's own, so any other reason reaches the phone as the model gives it.
+func TestMod_AWebMessageASilentModNeverTookIsRefusedAsTheCLIsIs(t *testing.T) {
+	withMod(t)
+	m := NewForTest(Options{})
+	inst := modInst(t, m, "x")
+	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1}))
+	m.mods[inst].heard = time.Now().Add(-time.Hour) // greeted long ago; only its polls keep it live
+	m.enqueue(inst, webMessage(5, "never taken"))
+	m.Drain()
+
+	m.modTick(time.Now())
+
+	out := m.Drain()
+	rs := replies(out)
+	require.Len(t, rs, 1)
+	assert.Equal(t, ReqID(5), rs[0].Req)
+	assertWebWords(t, rs[0].Err, "send to x: the loom mod stopped answering")
+	assert.Empty(t, out.Jobs, "a web message is never pasted")
+}
+
+// A web message waiting for a mod that never took it is refused when the
+// daemon stops, as a CLI message is, and not pasted: in the web's own words,
+// beside the CLI's "the loom daemon stopped".
+func TestModsStop_RefusesAWebMessageNoModTook(t *testing.T) {
+	withMod(t)
+	m := NewForTest(Options{})
+	inst := modInst(t, m, "x")
+	m.Send(m.idOf(inst), Message{Text: "from the phone", Origin: OriginWeb}, 5)
+	m.Send(m.idOf(inst), Message{Text: "from the cli", Origin: OriginCLI}, 6)
+	m.Drain()
+
+	m.ModsStop()
+
+	out := m.Drain()
+	refusals := map[ReqID]error{}
+	for _, r := range replies(out) {
+		refusals[r.Req] = r.Err
+	}
+	require.Len(t, refusals, 2, "each is refused once")
+	assertWebWords(t, refusals[5], "send to x: the loom daemon is stopping, so the message was not sent")
+	assert.EqualError(t, refusals[6], "send to x: the loom daemon stopped")
+	assert.Empty(t, out.Jobs, "neither message is pasted")
+}
