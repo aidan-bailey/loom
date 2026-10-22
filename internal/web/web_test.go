@@ -135,7 +135,7 @@ func TestParseOrigin(t *testing.T) {
 	for _, bad := range []string{
 		"", "loom.example.com", "ftp://loom.example.com", "https://", "https://user@loom.example.com",
 		"https://loom.example.com/path", "https://loom.example.com/", "https://loom.example.com?x=1",
-		"https://loom.example.com?", "https://loom.example.com#f",
+		"https://loom.example.com?", "https://loom.example.com#f", "https://:443",
 	} {
 		_, err := parseOrigin(bad)
 		assert.Error(t, err, bad)
@@ -808,7 +808,7 @@ func TestApplyWeb_OnlyWhatTheLayerDidIsReportedOff(t *testing.T) {
 
 func TestBind_ListensOnLoopbackOnly(t *testing.T) {
 	for _, listen := range []string{
-		"0.0.0.0:7420", "[::]:7420", "192.168.1.5:7420", ":7420", "localhost:7420", "example.com:7420", "127.0.0.1", "7420",
+		"0.0.0.0:7420", "[::]:7420", "192.168.1.5:7420", ":7420", "localhost:7420", "example.com:7420", "127.0.0.1", "7420", "127.0.0.1:0",
 	} {
 		t.Run(listen, func(t *testing.T) {
 			l := &Layer{}
@@ -820,15 +820,16 @@ func TestBind_ListensOnLoopbackOnly(t *testing.T) {
 		})
 	}
 
+	listen := freeLoopbackAddr(t)
 	l := &Layer{}
-	addr, err := l.bind(webKey{listen: "127.0.0.1:0", origin: "http://127.0.0.1:7420"})
+	addr, err := l.bind(webKey{listen: listen, origin: "http://127.0.0.1:7420"})
 	require.NoError(t, err)
 	t.Cleanup(l.shutListener)
 	assert.True(t, strings.HasPrefix(addr, "127.0.0.1:"), addr)
 	assert.NotNil(t, l.rule.Load())
 
 	// An origin it cannot use leaves nothing listening, not the old listener.
-	_, err = l.bind(webKey{listen: "127.0.0.1:0", origin: "loom.example.com"})
+	_, err = l.bind(webKey{listen: listen, origin: "loom.example.com"})
 	require.Error(t, err)
 	assert.Nil(t, l.srv)
 	assert.Nil(t, l.rule.Load())
@@ -836,7 +837,7 @@ func TestBind_ListensOnLoopbackOnly(t *testing.T) {
 
 	// Once the layer is shut it binds nothing.
 	l.shutListener()
-	_, err = l.bind(webKey{listen: "127.0.0.1:0", origin: "http://127.0.0.1:7420"})
+	_, err = l.bind(webKey{listen: listen, origin: "http://127.0.0.1:7420"})
 	assert.ErrorIs(t, err, errLayerClosed)
 }
 

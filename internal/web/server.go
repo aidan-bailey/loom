@@ -6,11 +6,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
 )
 
@@ -36,7 +36,7 @@ type originRule struct {
 // stores one; a value that fails here serves nothing rather than anything.
 func parseOrigin(raw string) (originRule, error) {
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" ||
 		u.User != nil || u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return originRule{}, fmt.Errorf("the origin %q is not scheme://host[:port]", raw)
 	}
@@ -146,8 +146,9 @@ func (l *Layer) bind(key webKey) (string, error) {
 	if key.listen == "" {
 		return "", nil
 	}
-	if ap, err := netip.ParseAddrPort(key.listen); err != nil || !ap.Addr().IsLoopback() {
-		return "", fmt.Errorf("%q is not a loopback IP address and port", key.listen)
+	// The model's own rule: a loopback IP literal and a port from 1 to 65535.
+	if err := core.ValidateWebListen(key.listen); err != nil {
+		return "", err
 	}
 	rule, err := parseOrigin(key.origin)
 	if err != nil {

@@ -161,6 +161,8 @@ func (l *Layer) stop(cause error) {
 			log.For("web").Warn("web.drain_wedged")
 		}
 		l.client.Close()
+		// Only now, once the drain has returned: a binding it was making cannot
+		// report "serving" over the failure.
 		if cause != nil {
 			l.report("", cause)
 		}
