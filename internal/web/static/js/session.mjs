@@ -30,7 +30,7 @@ export function mergeCandidates(snap, s) {
   return allSessions(snap).filter((o) => o.workspace === s.workspace && o.id !== s.id);
 }
 
-export function Session({ snap, stale, route, go, act, toast }) {
+export function Session({ snap, stale, route, go, act, toast, pending }) {
   const id = route.id;
   const [text, setText] = useState("");
   const [sheet, setSheet] = useState("");
@@ -53,7 +53,7 @@ export function Session({ snap, stale, route, go, act, toast }) {
     return html`
       <section class="sc-screen">
         <a class="sc-back" href="#">‹ Fleet</a>
-        <p class="sc-dim sc-empty">${snap ? "This session is gone." : "Loading…"}</p>
+        <p class="sc-dim sc-empty">${snap && pending !== id ? "This session is gone." : "Loading…"}</p>
       </section>
     `;
   }
@@ -177,9 +177,10 @@ export function Session({ snap, stale, route, go, act, toast }) {
             danger=${true}
             body=${html`<div>
               <p>${s.tmux ? html`It ends tmux session <code>${s.tmux}</code>.` : "It ends the session's tmux session."}</p>
-              <p>${s.worktree ? html`It force-removes worktree <code>${s.worktree}</code>` : "It force-removes the session's worktree"}, discarding its uncommitted changes. Push first to keep them.</p>
+              ${s.status === "Paused"
+                ? html`<p>Its uncommitted changes are in the stash taken when it paused, and Kill drops that stash. Resume and push first to keep them.</p>`
+                : html`<p>${s.worktree ? html`It force-removes worktree <code>${s.worktree}</code>` : "It force-removes the session's worktree"}, discarding its uncommitted changes. Push first to keep them.</p>`}
               <p>It deletes branch <code>${s.branch}</code> unless the session checked out an existing branch.</p>
-              ${s.status === "Paused" ? html`<p>The stash this paused session holds is dropped.</p>` : null}
             </div>`}
             onConfirm=${kill}
             onCancel=${() => setSheet("")}

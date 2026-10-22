@@ -1,16 +1,20 @@
 // The app: routes, the live snapshot, the stale bar and the toasts. The
 // screens are in screens.mjs and pairing in pair.mjs; this file owns the data
-// they draw, as the props {snap, stale, route, go, act, toast}.
+// they draw, as the props {snap, stale, route, go, act, toast, pending}.
 import { html, render, useState, useEffect, useRef, useCallback } from "../lib/preact-htm.mjs";
 import { call, connect } from "./api.mjs";
 import { loadSnapshot, saveSnapshot, clearSnapshot, pref } from "./store.mjs";
 import { screens } from "./screens.mjs";
 import { Pair, AddToHome, needsInstall } from "./pair.mjs";
 import { checkPush } from "./push.mjs";
+import { allSessions } from "./fleet.mjs";
 
 const buildMeta = document.querySelector('meta[name="loom-build"]');
 const shellBuild = buildMeta ? buildMeta.content : "";
 const recentNotices = 20;
+// pendingFor is how long a session just created may be missing from the
+// fleet: the daemon publishes the new list a moment after the create answers.
+const pendingFor = 5000;
 
 // parseRoute reads the location's hash: "" is the fleet, "#s/<id>" a session,
 // "#new", "#settings", "#pair"; anything else is the fleet. The session's id
@@ -129,6 +133,10 @@ function App() {
   const [route, setRoute] = useState(() => parseRoute(location.hash));
   const [toasts, setToasts] = useState([]);
   const [install, setInstall] = useState(() => needsInstall());
+  // pending is the id of a session whose create answered 201 but which the
+  // fleet does not list yet; the session screen says "Loading…" for it. It
+  // clears once the fleet lists it, or after pendingFor.
+  const [pending, setPending] = useState(undefined);
   const snapRef = useRef(null);
   const staleRef = useRef(true);
   const routeRef = useRef(route);
@@ -136,6 +144,7 @@ function App() {
   const generation = useRef(0);
   const byeAt = useRef(0);
   const nextToast = useRef(1);
+  const pendingTimer = useRef(0);
   staleRef.current = stale;
   routeRef.current = route;
 
@@ -174,6 +183,8 @@ function App() {
   const unpair = useCallback(() => {
     stopStream();
     clearTimeout(saveTimer);
+    clearTimeout(pendingTimer.current);
+    setPending(undefined);
     generation.current++;
     launchDone = false;
     lastUpdated = 0;
@@ -273,13 +284,39 @@ function App() {
       return { ok: false, status, data };
     }
     const ok = status >= 200 && status < 300;
-    if (data && Array.isArray(data.notices)) {
+    if (data && Array.isArray(data.notices) && data.notices.length > 0) {
       for (const n of data.notices) toast(n.text, n.error, true);
+      // Keep them among the recent notices now: the daemon keeps them for the
+      // next snapshot, which replaces this list. Not through apply: this is
+      // not news from the daemon, so it does not touch lastUpdated.
+      if (snapRef.current) {
+        const next = {
+          ...snapRef.current,
+          notices: (snapRef.current.notices || []).concat(data.notices).slice(-recentNotices),
+        };
+        snapRef.current = next;
+        setSnap(next);
+        persist(next);
+      }
+    }
+    if (ok && status === 201 && method === "POST" && path === "/api/v1/sessions" && data && data.id !== undefined) {
+      clearTimeout(pendingTimer.current);
+      setPending(data.id);
+      pendingTimer.current = setTimeout(() => setPending(undefined), pendingFor);
     }
     if (!ok) toast((data && data.error) || "That didn't work.", true);
     if (ok && method === "DELETE" && path.endsWith("/device")) unpair();
     return { ok, status, data };
   }, []);
+
+  // The fleet listing a pending session ends the wait.
+  useEffect(() => {
+    if (pending === undefined || !snap) return;
+    if (allSessions(snap).some((x) => x.id === pending)) {
+      clearTimeout(pendingTimer.current);
+      setPending(undefined);
+    }
+  }, [snap, pending]);
 
   useEffect(() => {
     const onHash = () => setRoute(parseRoute(location.hash));
@@ -324,7 +361,7 @@ function App() {
     body = html`<div class="splash">${restarting ? "loom is restarting…" : offline ? "Can't reach loom. Retrying…" : "Connecting…"}</div>`;
   } else {
     const Screen = screens[route.name];
-    const props = { snap, stale, route, go, act, toast };
+    const props = { snap, stale, route, go, act, toast, pending };
     body = Screen
       ? html`<${Screen} key=${route.name + (route.id === undefined ? "" : route.id)} ...${props} />`
       : html`<div class="splash">Nothing here yet.</div>`;

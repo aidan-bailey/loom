@@ -28,13 +28,11 @@ function formatCode(raw) {
 
 // pairError words the answer of POST /api/v1/pair: the server's own text for
 // 400 (a wrong, used or expired code), 429 (locked), 409 (the name is taken or
-// 16 devices are paired) and 503 (the web is off), and for a 429 also says
-// what to do.
+// 16 devices are paired) and 503 (the web is off); the 429's text already
+// says to run loom web pair again.
 function pairError(status, data) {
   if (status === 0) return "Can't reach loom. Check the connection and try again.";
-  const text = data && data.error ? data.error : "That didn't work.";
-  if (status === 429) return text + " Run loom web pair on your computer again for a new code.";
-  return text;
+  return data && data.error ? data.error : "That didn't work.";
 }
 
 export function AddToHome({ onContinue }) {
