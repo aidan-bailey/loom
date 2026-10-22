@@ -65,10 +65,11 @@ func TestPushWatch_WaitingFiresAgainOnANewReasonOrToolSummary(t *testing.T) {
 	assert.Empty(t, w.observe(10, []core.InstanceView{newDetail}))
 }
 
-// One permission prompt is one push, however its labels move under it: a
-// failed roster query clears the reason and summary, and the next good answer
-// brings them back. (The roster no longer relabels a hook's wait: the session
-// package keeps the hook's reason.)
+// One permission prompt is one push, however its labels move under it. The
+// session layer keeps a hook's reason and summary across a failed roster query,
+// so the return carries the values already pushed; this test pins the trigger
+// side, feeding it a gap view with the labels cleared as well, which the
+// session layer does not produce, and the return to the pushed values.
 func TestPushWatch_ARelabelOrAGapInOneWaitPushesOnce(t *testing.T) {
 	w := newPushWatch()
 	w.observe(10, []core.InstanceView{pushTestView(1, session.Running)})

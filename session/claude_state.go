@@ -35,6 +35,12 @@ type observation struct {
 // docs/superpowers/specs/2026-09-23-claude-hook-events-design.md.
 type claudeState struct {
 	obs observation
+	// held is the status, reason and tool summary of a hook's wait that
+	// rosterSilent voided: the labels a roster answer with the same status
+	// takes back while obs is still the roster's no-opinion. Zero (valid
+	// false) when nothing is held. A hook event, a roster answer, newLaunch
+	// and folderGone each clear it.
+	held observation
 	// sessionID and transcriptPath name the conversation a relaunch
 	// resumes (persisted, schema v7). Only a parent SessionStart sets them.
 	sessionID      string
@@ -68,9 +74,25 @@ type claudeState struct {
 // an unchanged prompt would read as a new wait. The roster names no tool, so
 // it never sets a summary, and a wait only the roster reports takes the
 // roster's own reason.
+//
+// A roster answer arriving while the current observation is the roster's
+// no-opinion (rosterSilent voided a hook's wait) and having the status the
+// voided one had takes the reason and tool summary rosterSilent held: a failed
+// query leaves the prompt itself unchanged, so its labels must not change
+// either, or the phone reads the return as a new wait. Only the labels are
+// carried; the status comes from the roster's own answer. A dropped (older)
+// offer leaves the held labels alone; any accepted one ends the hold, a hook
+// event because it is a fresh observation and a roster answer because it is
+// either the return the labels waited for or a different wait.
 func (s *claudeState) offer(o observation) bool {
 	if !s.obs.at.IsZero() && !o.at.After(s.obs.at) {
 		return false
+	}
+	held := s.held
+	s.held = observation{}
+	if o.source == obsRoster && o.valid && !s.obs.valid && s.obs.source == obsRoster &&
+		held.valid && o.status == held.status {
+		o.reason, o.detail, o.reasonFromHook = held.reason, held.detail, true
 	}
 	if o.source == obsHook && o.valid && o.reason != "" {
 		o.reasonFromHook = true
@@ -94,9 +116,17 @@ func (s *claudeState) offer(o observation) bool {
 // clears the roster: a roster-sourced status must not outlive the roster
 // that produced it. A hook observation is left alone. Reports whether
 // anything changed.
+//
+// When the voided observation carried a hook's reason, that reason, its tool
+// summary and its status are kept in held: the prompt did not change because a
+// query failed, and offer gives the labels back to the roster answer that
+// confirms the same status.
 func (s *claudeState) rosterSilent(at time.Time) bool {
 	if s.obs.source != obsRoster || !s.obs.valid || !at.After(s.obs.at) {
 		return false
+	}
+	if s.obs.reasonFromHook {
+		s.held = s.obs
 	}
 	s.obs = observation{at: at, source: obsRoster}
 	return true
@@ -212,14 +242,17 @@ func runningSubagent(tasks []hooks.Task) bool {
 // a roster answer from before the relaunch cannot revive the old status.
 func (s *claudeState) newLaunch(now time.Time) {
 	s.obs = observation{at: now, source: obsHook}
+	s.held = observation{}
 	s.lastMessage, s.lastMsgValid = "", false
 	s.sessionStartedAt = time.Time{}
 }
 
 // folderGone drops what the hooks reported once their folder vanished
-// mid-run: nothing will refresh a hook observation. A roster observation
-// stands, since the roster still answers for the session.
+// mid-run: nothing will refresh a hook observation, and the labels held from
+// one go too. A roster observation stands, since the roster still answers for
+// the session.
 func (s *claudeState) folderGone(now time.Time) {
+	s.held = observation{}
 	if s.obs.source == obsHook && s.obs.valid {
 		s.obs = observation{at: now, source: obsHook}
 	}

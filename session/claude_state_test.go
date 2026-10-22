@@ -442,6 +442,118 @@ func TestClaudeState_RosterAnswersKeepTheToolSummaryWhileTheWaitLasts(t *testing
 	assert.Empty(t, s.waitDetail(), "a wait only the roster reports names no tool")
 }
 
+// A failed roster query voids the roster's observation, and with it the
+// labels a hook gave; the next answer with the same status gets them back,
+// so the prompt is not relabelled by a gap that did not change it. The
+// status itself comes only from the roster's answer.
+func TestClaudeState_ARosterGapKeepsTheHooksLabelsForTheSamePrompt(t *testing.T) {
+	var s claudeState
+	s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "ls", At: t0})
+	s.offer(rosterObs(Prompting, "permission prompt", time.Second))
+	require.True(t, s.rosterSilent(t0.Add(2*time.Second)))
+	require.Equal(t, "-", describe(s), "the gap leaves no status")
+	assert.Empty(t, s.waitDetail())
+
+	assert.True(t, s.offer(rosterObs(Prompting, "permission prompt", 3*time.Second)), "the status is back")
+	assert.Equal(t, "Prompting: permission: Bash", describe(s))
+	assert.Equal(t, "ls", s.waitDetail())
+
+	// Held again across a second gap: the returned labels count as the hook's.
+	require.True(t, s.rosterSilent(t0.Add(4*time.Second)))
+	s.offer(rosterObs(Prompting, "permission prompt", 5*time.Second))
+	assert.Equal(t, "Prompting: permission: Bash", describe(s))
+	assert.Equal(t, "ls", s.waitDetail())
+}
+
+// The hold covers the gap's own observation only: a silence repeated while
+// the roster is already silent changes nothing, and an answer older than the
+// silence is dropped without ending the hold.
+func TestClaudeState_ARosterGapSurvivesRepeatedSilenceAndLateAnswers(t *testing.T) {
+	var s claudeState
+	s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "ls", At: t0})
+	s.offer(rosterObs(Prompting, "permission prompt", time.Second))
+	require.True(t, s.rosterSilent(t0.Add(3*time.Second)))
+	assert.False(t, s.rosterSilent(t0.Add(4*time.Second)))
+	assert.False(t, s.offer(rosterObs(Prompting, "permission prompt", 2*time.Second)), "older than the silence")
+
+	s.offer(rosterObs(Prompting, "permission prompt", 5*time.Second))
+	assert.Equal(t, "Prompting: permission: Bash", describe(s))
+	assert.Equal(t, "ls", s.waitDetail())
+}
+
+// A different status after the gap is a different wait: it takes the
+// roster's own reason, and the hold ends, so a later Prompting is not the
+// hook's old prompt.
+func TestClaudeState_ARosterGapEndsWhenTheAnswerHasAnotherStatus(t *testing.T) {
+	var s claudeState
+	s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "ls", At: t0})
+	s.offer(rosterObs(Prompting, "permission prompt", time.Second))
+	require.True(t, s.rosterSilent(t0.Add(2*time.Second)))
+
+	s.offer(rosterObs(Running, "", 3*time.Second))
+	assert.Equal(t, "Running", describe(s))
+	assert.Empty(t, s.waitDetail())
+
+	// Another gap, then a wait: a Running observation holds no labels, so the
+	// first hold must not linger to be taken now.
+	require.True(t, s.rosterSilent(t0.Add(4*time.Second)))
+	s.offer(rosterObs(Prompting, "sandbox request", 5*time.Second))
+	assert.Equal(t, "Prompting: sandbox request", describe(s), "the roster's own reason, not the old hold")
+	assert.Empty(t, s.waitDetail())
+}
+
+// A gap holds the labels of a hook's wait only. A roster wait with its own
+// reason has none to hold.
+func TestClaudeState_ARosterOnlyWaitHoldsNothingAcrossAGap(t *testing.T) {
+	var s claudeState
+	s.offer(rosterObs(Prompting, "sandbox request", 0))
+	require.True(t, s.rosterSilent(t0.Add(time.Second)))
+	s.offer(rosterObs(Prompting, "permission prompt", 2*time.Second))
+	assert.Equal(t, "Prompting: permission prompt", describe(s))
+}
+
+// Every hook event is a fresh observation: the held labels go with it. A hook
+// observation cannot be voided by the roster, so the hold is not reachable
+// again through behaviour; the check is on the field itself.
+func TestClaudeState_AHookEventEndsTheHold(t *testing.T) {
+	for name, ev := range map[string]hooks.Event{
+		"prompt":  {Name: hooks.EventUserPromptSubmit, At: t0.Add(3 * time.Second)},
+		"stop":    {Name: hooks.EventStop, At: t0.Add(3 * time.Second)},
+		"end":     {Name: hooks.EventSessionEnd, At: t0.Add(3 * time.Second)},
+		"request": {Name: hooks.EventPermissionRequest, ToolName: "Edit", ToolSummary: "a.go", At: t0.Add(3 * time.Second)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var s claudeState
+			s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "ls", At: t0})
+			s.offer(rosterObs(Prompting, "permission prompt", time.Second))
+			require.True(t, s.rosterSilent(t0.Add(2*time.Second)))
+			require.True(t, s.held.valid)
+
+			s.applyEvent(ev)
+			assert.False(t, s.held.valid)
+		})
+	}
+}
+
+// newLaunch and folderGone end the hold too.
+func TestClaudeState_ALaunchOrALostFolderEndsTheHold(t *testing.T) {
+	held := func() claudeState {
+		var s claudeState
+		s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "ls", At: t0})
+		s.offer(rosterObs(Prompting, "permission prompt", time.Second))
+		require.True(t, s.rosterSilent(t0.Add(2*time.Second)))
+		return s
+	}
+
+	s := held()
+	s.newLaunch(t0.Add(3 * time.Second))
+	assert.False(t, s.held.valid, "a relaunch forgets the old prompt")
+
+	s = held()
+	s.folderGone(t0.Add(3 * time.Second))
+	assert.False(t, s.held.valid, "the hook folder is gone with what it reported")
+}
+
 func TestClaudeWaitDetail_ReadsTheCurrentObservation(t *testing.T) {
 	inst := hooksInstance(t, "claude")
 	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true, Events: []hooks.Event{

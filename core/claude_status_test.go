@@ -439,6 +439,41 @@ func TestAdoptClaudeStatus_ARosterAnswerKeepsTheHooksToolSummary(t *testing.T) {
 	}
 }
 
+// A failed roster query, or an answer with no entry for the session, voids the
+// roster's status for a round. The prompt behind it did not change, so the
+// answer that confirms it must bring back the hook's reason and summary, in
+// the instance and in the view the phone reads: a different label would read
+// as a second wait and push twice.
+func TestAdoptClaudeStatus_ARosterGapKeepsTheHooksLabelsForTheSamePrompt(t *testing.T) {
+	gaps := map[string]func(m *Model){
+		"failed-query": func(m *Model) { failRoster(m) },
+		"no-entry":     func(m *Model) { deliverRoster(m, map[string]session.RosterEntry{}) },
+	}
+	for name, gap := range gaps {
+		t.Run(name, func(t *testing.T) {
+			m := NewForTest(Options{})
+			inst := activeInst(t, m, "gap-"+name)
+			applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "ls", At: time.Now().Add(-2 * time.Second)})
+			m.applyClaudeStatus(inst)
+			deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
+			before := m.viewOf(inst)
+			require.Equal(t, "permission: Bash", before.WaitReason)
+			require.Equal(t, "ls", before.WaitDetail)
+
+			for range 2 {
+				gap(m)
+				deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
+
+				assert.Equal(t, session.Prompting, inst.GetStatus())
+				assert.Equal(t, "permission: Bash", inst.WaitReason())
+				assert.Equal(t, "ls", inst.WaitDetail())
+				assert.Equal(t, before.WaitReason, m.viewOf(inst).WaitReason)
+				assert.Equal(t, before.WaitDetail, m.viewOf(inst).WaitDetail)
+			}
+		})
+	}
+}
+
 func TestViewOf_RemoteSessionComesFromTheRoster(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := activeInst(t, m, "rc")
