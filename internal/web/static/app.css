@@ -1,0 +1,226 @@
+/* Loom's app. The colour tokens come from loom's theme (ui/theme.go): the
+   dark block is afterglow, loom's default; the light block is the legacy
+   theme's light side, with the amber and the dim text darkened to read on
+   white. Amber (--attention) marks only what needs you. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --panel: #f1eef7;
+  --fg: #1a1a1a;
+  --dim: #6b6b6b;
+  --rule: #d4d4d8;
+  --accent: #874bfd;
+  --attention: #b86e00;
+  --ok: #2e7d4f;
+  --error: #c0392b;
+  --workspace: #6c71c4;
+  --faint: #9a9a9a;
+  --radius: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #2e2e2e;
+    --panel: #333435;
+    --fg: #d6d6d6;
+    --dim: #797979;
+    --rule: #404040;
+    --accent: #6c99bb;
+    --attention: #e5b567;
+    --ok: #b4c973;
+    --error: #c45330;
+    --workspace: #a1617a;
+    --faint: #505050;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.shell > main {
+  flex: 1;
+  width: 100%;
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0 0 0.75rem;
+}
+
+code {
+  font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 0.1em 0.35em;
+}
+
+button {
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  min-height: 44px;
+  padding: 0.6rem 1rem;
+}
+
+button:disabled {
+  opacity: 0.45;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+button.danger {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+button.link {
+  background: none;
+  border: none;
+  color: var(--dim);
+  text-decoration: underline;
+}
+
+input.text {
+  font: inherit;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.6rem 0.8rem;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+input.text:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.splash {
+  padding: 3rem 0;
+  text-align: center;
+  color: var(--dim);
+}
+
+.stale-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 0.4rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--dim);
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+}
+
+.toasts {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0 1rem;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.toast {
+  max-width: 32rem;
+  padding: 0.65rem 1rem;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.toast.error {
+  border-color: var(--error);
+}
+
+.pair {
+  padding-top: 2rem;
+}
+
+.pair .wordmark {
+  font-size: 2rem;
+  letter-spacing: 0.04em;
+}
+
+.pair .lede {
+  color: var(--dim);
+}
+
+.pair .steps {
+  padding-left: 1.25rem;
+  margin: 0 0 1.25rem;
+}
+
+.pair .steps li {
+  margin-bottom: 0.5rem;
+}
+
+.pair form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pair input.code {
+  font: 1.6rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.15em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.pair .form-error {
+  margin-top: 0.75rem;
+  color: var(--error);
+}
+
+.pair .hint {
+  color: var(--dim);
+  font-size: 0.9rem;
+}

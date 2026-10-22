@@ -90,6 +90,7 @@ func (l *Layer) mux() *http.ServeMux {
 	l.routePair(m)
 	l.routeStream(m)
 	l.routeAPI(m)
+	l.routeStatic(m)
 	return m
 }
 
