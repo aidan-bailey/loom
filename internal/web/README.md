@@ -47,7 +47,7 @@ With no listener bound there is no origin rule, and `guard` refuses everything.
 
 ## Tests
 
-The tests boot a model on its loop, serve it with the real `rpc.Server`, start the layer on it and talk to it over HTTP on a loopback port (`webStack` in `web_test.go`). `TestMain` points the loom dirs and tmux at throwaway ones. Go tests run over the production path: a booted model, the real `rpc.Server`, a client over `net.Pipe`, and the handler on `httptest`. They pin both sides of each guard (the right and a wrong `Host`, the same and a cross `Origin`, a valid and a revoked cookie), the groups, each push transition once, RFC 8291's example and the VAPID token verified with its public key, and the static files (everything `sw.js` precaches is embedded, the manifest parses). `e2e/web_test.go` runs under `-tags e2e` and needs tmux.
+The tests boot a model on its loop, serve it with the real `rpc.Server`, start the layer on it and talk to it over HTTP on a loopback port (`webStack` in `web_test.go`). `TestMain` points the loom dirs and tmux at throwaway ones. They pin both sides of each guard (the right and a wrong `Host`, the same and a cross `Origin`, a valid and a revoked cookie), the groups, each push transition once, RFC 8291's example and the VAPID token verified with its public key, and the static files (everything `sw.js` precaches is embedded, the manifest parses). `e2e/web_test.go` runs under `-tags e2e` and needs tmux.
 
 ## Routes and the API
 
@@ -58,7 +58,7 @@ Every route under `/api/v1` except `POST /api/v1/pair` needs the device cookie. 
 | `POST /api/v1/pair` | `{code}`: sets the cookie, answers `{"device": "<name>"}` |
 | `GET /api/v1/stream` | the live stream |
 | `POST /api/v1/sessions` | create from `{workspace, title, prompt}` and the optional `account`, `model`, `permission_mode`, `effort`; 201 `{"id", "notices"}` |
-| `GET /api/v1/launch-defaults?workspace=<id>` | `{account, accounts, model, models, permission_mode, permission_modes, effort, efforts}`: what the new-session sheet pre-fills (`account` is the default account, or `""`) and the choices it offers, which are the registry's account names, `config.ClaudeModelAliases()`, `config.ClaudePermissionModes` and `config.ClaudeEfforts`, so the app hard-codes none |
+| `GET /api/v1/launch-defaults?workspace=<id>` | `{account, accounts, model, models, permission_mode, permission_modes, effort, efforts}`: what the new-session sheet pre-fills (`account` is the account the launch modal would pre-fill, which `core.ChooseLaunchAccount` picks: the workspace's own account when its settings name a registered one, otherwise the registry's default, and `""` when the workspace's program is not Claude or the model has no account registry) and the choices it offers, which are the registry's account names, `config.ClaudeModelAliases()`, `config.ClaudePermissionModes` and `config.ClaudeEfforts`, so the app hard-codes none |
 | `POST /api/v1/sessions/{id}/send` | `{text}`: `Send` with `core.OriginWeb` |
 | `POST /api/v1/sessions/{id}/pause`, `resume`, `kill`, `push` | the request of the same name |
 | `POST /api/v1/sessions/{id}/merge` | `{source}`: `Merge` with the session in the URL as the target |

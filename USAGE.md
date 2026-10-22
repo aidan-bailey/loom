@@ -703,7 +703,9 @@ and answers only phones you have paired.
    not a host name, and its port is 1 to 65535 (0 is refused); `--origin`
    is `https://<host>[:<port>]` with no path
    (for development only, `http://127.0.0.1:<port>` or
-   `http://localhost:<port>`). The daemon applies them at once, and the
+   `http://localhost:<port>`; the app works on one, but no notification is
+   sent, since push needs an `https` origin and `loom web enable` says so).
+   The daemon applies them at once, and the
    command waits a few seconds to say whether it serves or why not (the
    port is taken, say). The settings are kept either way. Running
    `loom web enable` again with the same values while the web serves changes
@@ -792,7 +794,8 @@ outside the unit.
 | Pairing says the code is wrong, used or expired | Run `loom web pair` again; a code works once, for ten minutes |
 | `loom web enable` says it is not serving | `loom web status` shows the reason, usually a port that is taken; the settings are kept. Free the port and run the same `loom web enable` again: it retries the bind |
 | The fleet is greyed with every action off | The app shows its last snapshot until the stream is back |
-| No notifications | The app is not installed to the Home Screen, notifications are off or paused for the device, or `loom web devices` shows `expired` or `failing` |
+| No notifications | The app is not installed to the Home Screen, notifications are off or paused for the device, the origin is a development `http://127.0.0.1:<port>` or `http://localhost:<port>` (push needs `https`), or `loom web devices` shows `expired` or `failing` |
+| `loom web enable` says the daemon did not say whether it serves | The web layer may have stopped (a panic, or it failed to start with the daemon, which is only logged), and `loom web status` then shows `Serving: no` with no reason. Restart the daemon to start it again (`systemctl --user restart loom`, or see [The Loom Daemon](#the-loom-daemon)); sessions keep running; the daemon's `serve.log` says what happened |
 
 ### Session Recovery (orphaned worktrees)
 
