@@ -232,8 +232,10 @@ func NormalizePairingCode(code string) (string, bool) {
 // ConfigureWeb sets where the web listens and the origin the phone reaches
 // it at, and writes web.json (Core.ConfigureWeb). Both are validated. An
 // empty listen turns the web off and keeps the origin (its argument is not
-// read), the devices and the key. The first enable makes the VAPID key,
-// which every later enable keeps: push subscriptions are bound to it. Every
+// read), the devices and the key, and voids every pending pairing code, so a
+// later enable starts with none (the count of wrong codes is reset by the
+// next PairDevice). The first enable makes the VAPID key, which every later
+// enable keeps: push subscriptions are bound to it. Every
 // call that succeeds, whatever it changed, bumps the revision (WebView.Rev)
 // and clears what the web layer reported (WebServing): the layer rebinds
 // whenever the revision changes, so running enable again retries a bind that
@@ -276,6 +278,9 @@ func (m *Model) ConfigureWeb(listen, origin string) error {
 			*w = prev
 			return err
 		}
+	}
+	if listen == "" {
+		w.pending = nil
 	}
 	return nil
 }

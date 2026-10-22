@@ -199,6 +199,27 @@ func TestConfigureWeb_DisablingWhatWasNeverEnabledWritesNothing(t *testing.T) {
 	assert.NoFileExists(t, m.web.path)
 }
 
+// TestConfigureWeb_DisablingVoidsThePendingPairingCodes: a code made before
+// the web was turned off does not come back with the next enable, and one made
+// after it redeems.
+func TestConfigureWeb_DisablingVoidsThePendingPairingCodes(t *testing.T) {
+	m, _ := webHostModel(t)
+	old, err := m.PairDevice("iPhone")
+	require.NoError(t, err)
+
+	require.NoError(t, m.ConfigureWeb("", ""))
+	assert.Empty(t, m.web.pending, "the disable voids the codes")
+	require.NoError(t, m.ConfigureWeb("127.0.0.1:7420", "https://loom.example.com"))
+
+	_, _, err = m.RedeemPairing(old.Code)
+	assert.ErrorIs(t, err, ErrPairingCode, "the code made before the disable is gone")
+	fresh, err := m.PairDevice("iPad")
+	require.NoError(t, err)
+	name, _, err := m.RedeemPairing(fresh.Code)
+	require.NoError(t, err, "a code made after the re-enable redeems")
+	assert.Equal(t, "iPad", name)
+}
+
 func TestConfigureWeb_RefusesWhatItValidates(t *testing.T) {
 	for _, tc := range []struct{ name, listen, origin, why string }{
 		{"a host name", "localhost:7420", "https://loom.example.com", "loopback"},
