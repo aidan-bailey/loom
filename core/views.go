@@ -101,6 +101,9 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 		v.WorktreeRepoPath = gw.GetRepoPath()
 	}
 	_, _, v.StatusReported = inst.ClaudeStatus()
+	if entry, ok := m.rosterEntryFor(inst); ok {
+		v.RemoteSession = entry.RemoteSession
+	}
 	v.LastMessage, v.HasLastMessage = inst.LastMessage()
 	if d := inst.GetDiffStats(); d != nil {
 		v.Diff, v.HasDiff = *d, true

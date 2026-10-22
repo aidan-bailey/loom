@@ -429,3 +429,52 @@ func TestAdoptClaudeStatus_ARosterAnswerKeepsTheHooksToolSummary(t *testing.T) {
 	assert.Equal(t, session.Prompting, inst.GetStatus())
 	assert.Equal(t, "date > probe.txt", inst.WaitDetail())
 }
+
+func TestViewOf_RemoteSessionComesFromTheRoster(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "rc")
+	other := activeInst(t, m, "rc-other")
+	m.roster = map[string]session.RosterEntry{
+		inst.GetWorktreePath(): {Status: session.RosterStatusIdle, PID: 41, RemoteSession: "session_01AbC"},
+	}
+
+	assert.Equal(t, "session_01AbC", m.viewOf(inst).RemoteSession)
+	assert.Empty(t, m.viewOf(other).RemoteSession, "a worktree the roster has no entry for")
+
+	failRoster(m)
+
+	assert.Empty(t, m.viewOf(inst).RemoteSession, "a failed query clears the roster, and the link with it")
+}
+
+func TestViewOf_RemoteSessionIsJoinedToTheInstancesAccountRoster(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "rc-acct")
+	inst.SetAccount("max-2")
+	wt := inst.GetWorktreePath()
+	m.roster = map[string]session.RosterEntry{wt: {RemoteSession: "session_01Default"}}
+	m.rosterByAccount = map[string]map[string]session.RosterEntry{"max-2": {wt: {RemoteSession: "session_01Account"}}}
+
+	assert.Equal(t, "session_01Account", m.viewOf(inst).RemoteSession)
+
+	m.rosterByAccount = nil
+
+	assert.Empty(t, m.viewOf(inst).RemoteSession, "the default account's roster never answers for another account's session")
+}
+
+func TestViewOf_NoRemoteSessionForAnotherProgram(t *testing.T) {
+	m := NewForTest(Options{})
+	aider := startedInst(t, "rc-aider", "aider")
+	hold(m, aider)
+	m.roster = map[string]session.RosterEntry{aider.GetWorktreePath(): {RemoteSession: "session_01AbC"}}
+
+	assert.Empty(t, m.viewOf(aider).RemoteSession, "only a Claude session has one")
+}
+
+func TestRosterEntryFor_RefusesANilInstance(t *testing.T) {
+	m := NewForTest(Options{})
+	m.roster = map[string]session.RosterEntry{"/w": {Status: session.RosterStatusIdle}}
+
+	_, ok := m.rosterEntryFor(nil)
+
+	assert.False(t, ok)
+}

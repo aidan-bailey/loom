@@ -186,22 +186,30 @@ func (m *Model) deliverRoster(msg rosterResult) {
 // through a symlink (joinRecordedPaths); one it can't resolve gets no
 // opinion, and a Prompting from its hooks then holds until the next one.
 func (m *Model) rosterStatusFor(inst *session.Instance) (session.Status, string, bool) {
-	if inst == nil || !session.IsClaudeProgram(inst.Program()) {
-		return session.Ready, "", false
-	}
-	roster := m.roster
-	if acct := inst.Account(); acct != "" {
-		roster = m.rosterByAccount[acct]
-	}
-	if len(roster) == 0 {
-		return session.Ready, "", false
-	}
-	entry, ok := roster[inst.GetWorktreePath()]
+	entry, ok := m.rosterEntryFor(inst)
 	if !ok {
 		return session.Ready, "", false
 	}
 	status, authoritative := entry.LoomStatus()
 	return status, entry.WaitingFor, authoritative
+}
+
+// rosterEntryFor returns the roster's entry for inst: the one in m.roster,
+// or in its account's roster, for the worktree it runs in. ok is false when
+// the roster has none to give, which is every case rosterStatusFor lists as
+// no opinion: a non-Claude agent, an empty or failed roster, no entry for
+// this worktree. What the entry carries beyond the status (the Remote
+// Control session) therefore clears when the roster does.
+func (m *Model) rosterEntryFor(inst *session.Instance) (session.RosterEntry, bool) {
+	if inst == nil || !session.IsClaudeProgram(inst.Program()) {
+		return session.RosterEntry{}, false
+	}
+	roster := m.roster
+	if acct := inst.Account(); acct != "" {
+		roster = m.rosterByAccount[acct]
+	}
+	entry, ok := roster[inst.GetWorktreePath()]
+	return entry, ok
 }
 
 // adoptClaudeStatus is the single place a Claude session's reported status
