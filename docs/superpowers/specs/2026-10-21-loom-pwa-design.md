@@ -123,7 +123,9 @@ Pairing codes live in the model's memory only, so a daemon restart voids
 them, and so does disabling the web (`ConfigureWeb` with an empty
 `listen`): a later enable starts with none. A `web.json` that fails to load, or names a newer `version` than the
 build knows, is never overwritten: the web stays off and a notice says
-why.
+why. A stored push subscription is checked on load as when it was
+posted; one that fails marks only that device's push `failing`, so
+nothing is posted to it and the app's button replaces it.
 
 ### Changes outside `internal/web`
 
