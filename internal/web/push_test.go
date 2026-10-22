@@ -426,13 +426,18 @@ func TestPusher_AResultForAReplacedEndpointChangesNothing(t *testing.T) {
 			rig.p.httpc.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				_, err := rig.s.loop.SetPushSubscription("iPhone", newer)
 				require.NoError(t, err)
+				// The new subscription stands failing, a state no result for
+				// the old endpoint (ok for the 201, expired for the 404 and
+				// 410, another failing for the 400) may change; a post alone
+				// leaves it ok, which the 201's result would not move.
+				rig.s.loop.PushResult("iPhone", newer.Endpoint, core.PushFailing(pushTestBaseline))
 				return inner.RoundTrip(r)
 			})
 
 			rig.p.deliver(pushTestWaiting)
 
 			require.Equal(t, []string{"iPhone"}, rig.svc.requested(), "the push went to the old endpoint")
-			assert.Equal(t, core.PushOK, rig.state(t, "iPhone"), "the new subscription's state is untouched")
+			assert.Equal(t, core.PushFailing(pushTestBaseline), rig.state(t, "iPhone"), "the new subscription's state is untouched")
 			targets := rig.s.loop.PushTargets()
 			require.Len(t, targets, 1, "and the new subscription is not dropped")
 			assert.Equal(t, newer, targets[0].Subscription)

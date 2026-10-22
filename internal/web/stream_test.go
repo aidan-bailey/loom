@@ -1039,6 +1039,17 @@ func endedHubWithAStream(t *testing.T) (*hub, *streamSub) {
 func TestHub_AnEndedHubQueuesNothingFromApply(t *testing.T) {
 	h, sub := endedHubWithAStream(t)
 	require.True(t, h.end(false))
+	// The flusher may leave a token queued from before the end when it
+	// exits on stop; only a token apply queues is the test's to see.
+	select {
+	case <-h.exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the flusher never exited")
+	}
+	select {
+	case <-h.wake:
+	default:
+	}
 	h.mu.Lock()
 	h.subs[sub] = struct{}{}
 	before := slices.Clone(h.fleet.workspaces)

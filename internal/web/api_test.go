@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -158,6 +159,14 @@ func newAPIEnv(t *testing.T, f apiFixture) *apiEnv {
 		}
 		return true
 	}, 5*time.Second, 10*time.Millisecond, "the web client never saw the model's state")
+	// The hub reads the device list from the drain, not from the pairing
+	// route: a stream opened ahead of it is refused 503 (errDeviceUnknown).
+	require.Eventually(t, func() bool {
+		s.layer.hub.mu.Lock()
+		defer s.layer.hub.mu.Unlock()
+		_, ok := s.layer.hub.devices["phone"]
+		return ok
+	}, 5*time.Second, 10*time.Millisecond, "the hub never read the paired device")
 	env.addr, env.cookie = addr, cookie
 	return env
 }
@@ -683,30 +692,47 @@ func TestAPI_PostPushStoresTheSubscription(t *testing.T) {
 
 func TestAPI_DeletePushDropsTheSubscription(t *testing.T) {
 	env := newAPIEnv(t, apiFixture{})
-	devicePush := func() core.PushState {
+	devicePush := func(name string) core.PushState {
 		for _, d := range env.loop.Web().Devices {
-			if d.Name == "phone" {
+			if d.Name == name {
 				return d.Push
 			}
 		}
 		return "no device"
 	}
+	targets := func() []string {
+		var names []string
+		for _, t := range env.loop.PushTargets() {
+			names = append(names, t.Device)
+		}
+		return names
+	}
 
 	// With no subscription there is nothing to drop: the state stays none.
 	status, out := env.do(http.MethodDelete, "/api/v1/device/push", nil)
 	require.Equal(t, http.StatusNoContent, status, string(out))
-	assert.Equal(t, core.PushNone, devicePush(), "nothing to expire")
+	assert.Equal(t, core.PushNone, devicePush("phone"), "nothing to expire")
 
 	status, out = env.do(http.MethodPost, "/api/v1/device/push", apiSubscription(t, "https://web.push.apple.com/push/1", base64.RawURLEncoding))
 	require.Equal(t, http.StatusOK, status, string(out))
-	require.Equal(t, core.PushOK, devicePush())
-	require.Len(t, env.loop.PushTargets(), 1, "control: the sender would push to it")
+	require.Equal(t, core.PushOK, devicePush("phone"))
+	require.Equal(t, []string{"phone"}, targets(), "control: the sender would push to it")
+
+	// A second device that sorts before the phone: the drop is the asking
+	// device's only.
+	env.pair(t, env.addr, "iPad")
+	other := apiSubscription(t, "https://web.push.apple.com/push/2", base64.RawURLEncoding)
+	keys := other["keys"].(map[string]string)
+	_, err := env.loop.SetPushSubscription("iPad", core.PushSubscription{Endpoint: other["endpoint"].(string), P256DH: keys["p256dh"], Auth: keys["auth"]})
+	require.NoError(t, err)
+	require.Equal(t, []string{"iPad", "phone"}, targets())
 
 	status, out = env.do(http.MethodDelete, "/api/v1/device/push", nil)
 	assert.Equal(t, http.StatusNoContent, status, string(out))
-	assert.Equal(t, core.PushExpired, devicePush(), "the app shows notifications to turn on again")
-	assert.Empty(t, env.loop.PushTargets(), "nothing is pushed to the dropped subscription")
-	assert.Len(t, env.loop.Web().Devices, 1, "the phone stays paired")
+	assert.Equal(t, core.PushExpired, devicePush("phone"), "the app shows notifications to turn on again")
+	assert.Equal(t, core.PushOK, devicePush("iPad"), "another device's subscription is not dropped")
+	assert.Equal(t, []string{"iPad"}, targets(), "nothing is pushed to the dropped subscription, still to the other")
+	assert.Len(t, env.loop.Web().Devices, 2, "both stay paired")
 }
 
 func TestAPI_DeleteDeviceUnpairsThePhone(t *testing.T) {
@@ -730,22 +756,57 @@ func TestAPI_DeleteDeviceUnpairsThePhone(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, status, "and unpairing twice is refused, not an error")
 }
 
-// apiAnswer is a response, read.
+// apiAnswer is a response, read, or the error that kept the request from
+// being made or read.
 type apiAnswer struct {
 	status int
 	body   []byte
+	err    error
 }
 
 // async makes the request on a goroutine of its own and returns where its
 // answer will come, so a test can play the loop's part while the handler
-// waits.
+// waits. The goroutine asserts nothing (require ends only the goroutine it
+// runs on): a failure comes back in the answer, which answer checks on the
+// test goroutine.
 func (e *apiEnv) async(method, path string, body any) <-chan apiAnswer {
 	ch := make(chan apiAnswer, 1)
 	go func() {
-		status, out := e.do(method, path, body)
-		ch <- apiAnswer{status, out}
+		ch <- e.exchange(method, path, body)
 	}()
 	return ch
+}
+
+// exchange is do without testify: the request as the paired device, and its
+// response or the error that stopped it.
+func (e *apiEnv) exchange(method, path string, body any) apiAnswer {
+	var raw string
+	switch b := body.(type) {
+	case nil:
+	case string:
+		raw = b
+	default:
+		enc, err := json.Marshal(b)
+		if err != nil {
+			return apiAnswer{err: err}
+		}
+		raw = string(enc)
+	}
+	req, err := http.NewRequest(method, "http://"+e.addr+path, strings.NewReader(raw))
+	if err != nil {
+		return apiAnswer{err: err}
+	}
+	if method != http.MethodGet && method != http.MethodHead {
+		req.Header.Set("Origin", "http://"+e.addr)
+	}
+	req.AddCookie(e.cookie)
+	resp, err := httpClient().Do(req)
+	if err != nil {
+		return apiAnswer{err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	return apiAnswer{status: resp.StatusCode, body: data, err: err}
 }
 
 // heldJob waits for the loop to hold a job, the handler's request having
@@ -783,6 +844,7 @@ func (e *apiEnv) answer(ch <-chan apiAnswer) apiAnswer {
 	e.t.Helper()
 	select {
 	case got := <-ch:
+		require.NoError(e.t, got.err, "the request")
 		return got
 	case <-time.After(10 * time.Second):
 		e.t.Fatal("the handler never answered")
@@ -1067,6 +1129,10 @@ func TestAPI_ACreatesNoticesAreKeptToo(t *testing.T) {
 	assert.Equal(t, "prompt not sent", snap.Notices[0].Text)
 }
 
+// It pins the 202 path only: the wait runs out, so the failure reaches the
+// stream and no response carries it. The 200 path, whose response carries the
+// notices and keeps them, is the test above; the 409 path, whose error is
+// dropped rather than kept, is the one below.
 func TestAPI_ANoticeThatReachedTheStreamIsNotKeptAgainByTheResponse(t *testing.T) {
 	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "slow", session.Running)}})
 	env.layer.reqs.timeout = 100 * time.Millisecond
