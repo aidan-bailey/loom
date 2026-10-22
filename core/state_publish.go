@@ -11,7 +11,7 @@ import (
 
 // modelView is the model's own state as a client sees it.
 func (m *Model) modelView() ModelView {
-	return ModelView{RCAuth: m.rcAuth, Registry: m.Registry()}
+	return ModelView{RCAuth: m.rcAuth, Registry: m.Registry(), Web: m.Web()}
 }
 
 // accountsView is the account state as a client sees it. AccountsView's

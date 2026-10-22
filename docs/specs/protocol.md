@@ -471,7 +471,7 @@ Result: `{}`
 
 ### ModelChanged
 
-`{"View":{"RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null,"LastUsed":""}}}`
+`{"View":{"RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null,"LastUsed":""},"Web":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0}}}`
 
 ### Notice
 

@@ -90,6 +90,56 @@ func TestPublishState_CarriesTheState(t *testing.T) {
 	}
 }
 
+// TestPublishState_WebChangesReachClients: the web settings and devices
+// travel in the model view, so a revoke, an enable and a disable are
+// published, and a pairing code, which lives in memory only, is not.
+func TestPublishState_WebChangesReachClients(t *testing.T) {
+	m := webModel(t, webJSON)
+	model, _, _ := stateEvents(m.Sync().Events)
+	assert.Equal(t, 1, model, "the first Sync publishes it")
+	model, _, _ = stateEvents(m.Sync().Events)
+	assert.Zero(t, model, "and then only what changes")
+
+	_, err := m.PairDevice("Pixel")
+	require.NoError(t, err)
+	model, _, _ = stateEvents(m.Sync().Events)
+	assert.Zero(t, model, "a pairing code is in no view")
+
+	require.NoError(t, m.RevokeDevice("iPad"))
+	events := m.Sync().Events
+	model, _, _ = stateEvents(events)
+	assert.Equal(t, 1, model, "a revoke is published")
+	for _, ev := range events {
+		if mc, ok := ev.(ModelChanged); ok {
+			require.Len(t, mc.View.Web.Devices, 1)
+			assert.Equal(t, "iPhone", mc.View.Web.Devices[0].Name)
+		}
+	}
+
+	require.NoError(t, m.ConfigureWeb("", ""))
+	model, _, _ = stateEvents(m.Sync().Events)
+	assert.Equal(t, 1, model, "so is turning the web off")
+	var snap WebView
+	for _, ev := range m.Snapshot() {
+		if mc, ok := ev.(ModelChanged); ok {
+			snap = mc.View.Web
+		}
+	}
+	assert.Equal(t, m.Web(), snap, "and the snapshot a client joins with carries it")
+	assert.Empty(t, snap.Listen)
+
+	rev := m.Web().Rev
+	require.NoError(t, m.ConfigureWeb("", ""))
+	events = m.Sync().Events
+	model, _, _ = stateEvents(events)
+	assert.Equal(t, 1, model, "a configure that changes no setting is published too: its revision is what makes the layer act")
+	for _, ev := range events {
+		if mc, ok := ev.(ModelChanged); ok {
+			assert.Equal(t, rev+1, mc.View.Web.Rev)
+		}
+	}
+}
+
 // TestSnapshot_IsTheWholeStateAndLeavesTheDiffAlone: Snapshot carries
 // every published view, what changed since the last Sync included, and the
 // next Sync still publishes what changed since the last Sync.
@@ -151,6 +201,11 @@ func TestStateViews_AnswerAsTheModel(t *testing.T) {
 			t.Cleanup(func() { session.SetAccountDirs(nil, nil) })
 			m.Deliver(GitHubResultForTest(false, "gh is not logged in", nil, nil))
 		}},
+		{"web settings and devices", func(t *testing.T, m *Model) {
+			loadWebInto(t, m, webJSON)
+			m.web.rev = 2
+			require.Len(t, m.Web().Devices, 2, "fixture: the devices are loaded")
+		}},
 	} {
 		t.Run(setup.name, func(t *testing.T) {
 			m := NewForTest(Options{Program: "claude"})
@@ -180,6 +235,7 @@ func TestStateViews_AnswerAsTheModel(t *testing.T) {
 			assert.Equal(t, m.ClaudeProgram(), av.ClaudeProgram)
 			assert.Equal(t, m.CredentialOverride(), av.CredentialOverride)
 			assert.Equal(t, m.RunningAsAccount(), av.RunningAsAccount)
+			assert.Equal(t, m.Web(), m.modelView().Clone().Web, "Web, which a replica answers from the published model view")
 			for _, repo := range []string{"/r", "/r/sub", "/r/", "/s", "/s/sub", "/nowhere"} {
 				s, ok := m.GitHubSnapshot(repo)
 				vs, vok := gv.GitHubSnapshot(repo)
@@ -220,15 +276,23 @@ func TestModelView_CloneKeepsEveryField(t *testing.T) {
 		LastUsed:       "b",
 	}})
 	m.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "r"})
+	loadWebInto(t, m, webJSON)
+	m.web.rev = 3
 	v := m.modelView()
 	require.Equal(t, "b", v.Registry.LastUsed, "fixture: the view holds every field")
 	require.Len(t, v.Registry.Open, 2)
+	require.Len(t, v.Web.Devices, 2, "fixture: the view holds the devices")
+	require.EqualValues(t, 3, v.Web.Rev, "fixture: and the revision")
 
 	c := v.Clone()
 	assert.Equal(t, v, c)
 	assert.Equal(t, m.Registry(), c.Registry, "as the model answers")
+	assert.Equal(t, m.Web(), c.Web, "and the web view")
+	assert.EqualValues(t, 3, c.Web.Rev, "the revision survives the copy")
 	c.Registry.Workspaces[0].Name = "changed"
 	assert.Equal(t, "a", v.Registry.Workspaces[0].Name, "a deep copy")
+	c.Web.Devices[0].Name = "changed"
+	assert.Equal(t, "iPad", v.Web.Devices[0].Name, "a deep copy of the devices too")
 }
 
 // TestGitHubView_CloneKeepsEveryField: a replica hands out clones of the

@@ -408,3 +408,44 @@ func TestNewVAPIDKey_IsAP256PairAndFresh(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, a.Private, b.Private)
 }
+
+// Boot loads web.json after the account registry, and the web is on from
+// the moment it boots.
+func TestBoot_LoadsTheWebFile(t *testing.T) {
+	m := bootModel(t)
+	global, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(global, WebFile), []byte(webJSON), 0o600))
+
+	notices := m.Boot()
+
+	assert.Empty(t, notices)
+	assert.Equal(t, "127.0.0.1:7420", m.Web().Listen)
+	assert.Len(t, m.Web().Devices, 2)
+}
+
+// A web.json Boot cannot use is left as it is, and Boot hands back the
+// notice since no client is connected yet to be sent it; it leaves none
+// behind for the first Sync.
+func TestBoot_ReturnsTheNoticeOfAWebFileItLeavesAlone(t *testing.T) {
+	m := bootModel(t)
+	global, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	path := filepath.Join(global, WebFile)
+	require.NoError(t, os.WriteFile(path, []byte(`{"version":2}`), 0o600))
+
+	notices := m.Boot()
+
+	require.Len(t, notices, 1)
+	n, ok := notices[0].(Notice)
+	require.True(t, ok)
+	assert.Contains(t, n.Err.Error(), "web:")
+	assert.Contains(t, n.Err.Error(), "newer")
+	assert.Contains(t, m.Web().Error, "newer", "and the view says why the web is off")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, `{"version":2}`, string(data), "the file is untouched")
+	for _, ev := range m.Sync().Events {
+		assert.NotEqual(t, notices[0], ev, "nothing left for the first Sync")
+	}
+}

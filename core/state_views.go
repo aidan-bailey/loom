@@ -55,16 +55,19 @@ func (w WorkspacesView) IsLoaded(id WorkspaceID) bool {
 }
 
 // ModelView is the model's own state: the default account's remote-control
-// auth and the workspace registry (published as ModelChanged).
+// auth, the workspace registry and the web settings and devices (published
+// as ModelChanged).
 type ModelView struct {
 	RCAuth   session.RemoteControlAuth
 	Registry RegistryView
+	Web      WebView
 }
 
 // Clone deep-copies v's slices; every other field is a value already.
 func (v ModelView) Clone() ModelView {
 	v.Registry.Workspaces = slices.Clone(v.Registry.Workspaces)
 	v.Registry.Open = slices.Clone(v.Registry.Open)
+	v.Web.Devices = slices.Clone(v.Web.Devices)
 	return v
 }
 
