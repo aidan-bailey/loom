@@ -4,6 +4,7 @@ End-to-end tests that drive real `loom` builds in a loomdev sandbox (`internal/d
 `e2e/clients_test.go` covers the subcommands as clients and the daemon's work with no TUI: `loom workspace remove` closing a tab in an open TUI and `rename` keeping it, `loom reset --force` emptying a workspace while another's agent runs on, the subcommands starting the daemon, a relaunched agent's trust prompt answered with no TUI open, and `loom session` creating, listing, pausing, resuming and killing a session with no TUI open.
 `e2e/e2e_test.go` covers session flows (restart survival, prompts, hook-driven status) and the sandbox leaving other tmux servers alone.
 `e2e/mod_test.go` covers `loom session send` through the loom mod, which the fake agent plays: `--wait` printing the answer, a message sent while the agent waits at a prompt running only after the prompt is answered, and the mod reconnecting to the next daemon after `loom serve stop`.
+`e2e/web_test.go` covers the web layer over HTTP, as the phone's app uses it: `loom web enable` on a loopback port, the guard's refusals (no cookie, a foreign Host, a foreign Origin), a device paired with the code `loom web pair` prints, the stream's snapshot, a session created, paused, resumed and killed through the API with the agent's tmux session and the stream's lists following each step, and `loom web revoke` ending the stream and the cookie.
 
 ## Rules when modifying this package
 
