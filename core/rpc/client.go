@@ -78,11 +78,23 @@ type Client struct {
 // holds the server's snapshot: a daemon's client, which reports the
 // model's loss rather than raising it (Err). A server of another protocol
 // is a *MismatchError, carrying its hello when it sent one.
-func Dial(nc io.ReadWriteCloser) (*Client, error) { return dial(nc, false, false) }
+func Dial(nc io.ReadWriteCloser) (*Client, error) { return DialAs(nc, "") }
 
-// dial is Dial; synchronous and raise set the client's fields of those
-// names.
+// DialAs is Dial naming role in its hello (RoleWeb for the daemon's web
+// layer); "" names none, as Dial does.
+func DialAs(nc io.ReadWriteCloser, role string) (*Client, error) {
+	return dialAs(nc, role, false, false)
+}
+
+// dial is Dial's client with synchronous and raise set (InProcess and
+// InProcessForTest); it names no role.
 func dial(nc io.ReadWriteCloser, synchronous, raise bool) (*Client, error) {
+	return dialAs(nc, "", synchronous, raise)
+}
+
+// dialAs is DialAs; synchronous and raise set the client's fields of those
+// names.
+func dialAs(nc io.ReadWriteCloser, role string, synchronous, raise bool) (*Client, error) {
 	c := &Client{
 		nc:          nc,
 		enc:         json.NewEncoder(nc),
@@ -94,6 +106,7 @@ func dial(nc io.ReadWriteCloser, synchronous, raise bool) (*Client, error) {
 		readerDone:  make(chan struct{}),
 	}
 	self := Self()
+	self.Role = role
 	if err := c.write(Frame{Hello: &self}); err != nil {
 		nc.Close()
 		return nil, err

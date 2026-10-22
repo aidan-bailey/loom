@@ -141,7 +141,14 @@ type Hello struct {
 	// Tmux is the tmux server the server's sessions run on (its socket's
 	// path), which its clients use too (Server.SetTmux). Servers only.
 	Tmux string `json:"tmux,omitempty"`
+	// Role is what a client is for: RoleWeb names the daemon's web layer. A
+	// client that names none, or a role this build does not know, is an
+	// ordinary client. Clients only.
+	Role string `json:"role,omitempty"`
 }
+
+// RoleWeb is the Hello.Role of the daemon's own web layer (internal/web).
+const RoleWeb = "web"
 
 // eventTypes maps each event's wire name (its Go type name) to its type.
 var eventTypes = func() map[string]reflect.Type {

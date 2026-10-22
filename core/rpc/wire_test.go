@@ -6,6 +6,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"reflect"
 	"testing"
@@ -104,6 +106,10 @@ func TestProtocolReference(t *testing.T) {
 	p("`%s`\n\n", compact(t, Frame{Hello: &Hello{Protocol: Protocol, Build: "v0.13.1 ad199a3…", Version: "0.13.0",
 		Time: "2026-10-08T17:54:55Z", Exe: "e3b0c442…", ExeTime: "2026-10-08T18:02:11.52Z",
 		Tmux: "/run/user/1000/tmux-1000/default"}}))
+
+	p("A client's hello may name its role (`role`): `%s` is the daemon's own web layer. A client that names\n", RoleWeb)
+	p("none, or a role this build does not know, is an ordinary client:\n")
+	p("`%s`\n\n", compact(t, Frame{Hello: &Hello{Protocol: Protocol, Build: "v0.13.1 ad199a3…", Role: RoleWeb}}))
 
 	p("## Refused hello\n\n")
 	p("A server answers a hello of another protocol with its own hello, so the client still learns its\n")
@@ -337,6 +343,60 @@ func TestWire_EveryFieldSurvives(t *testing.T) {
 			back := reflect.New(typ)
 			require.NoError(t, json.Unmarshal(data, back.Interface()))
 			assert.Equal(t, normalize(full), normalize(back.Elem().Interface()))
+		})
+	}
+}
+
+// TestHello_RoleIsOptionalOnTheWire: a hello that names no role encodes
+// without the key, so a build from before the field reads the same frame,
+// and a hello from such a build decodes with no role.
+func TestHello_RoleIsOptionalOnTheWire(t *testing.T) {
+	assert.NotContains(t, compact(t, Frame{Hello: &Hello{Protocol: Protocol, Build: "b"}}), "role")
+	assert.Contains(t, compact(t, Frame{Hello: &Hello{Protocol: Protocol, Build: "b", Role: RoleWeb}}), `"role":"web"`)
+
+	var old Frame
+	require.NoError(t, json.Unmarshal([]byte(`{"hello":{"protocol":2,"build":"b"}}`), &old))
+	require.NotNil(t, old.Hello)
+	assert.Empty(t, old.Hello.Role)
+
+	var web Frame
+	require.NoError(t, json.Unmarshal([]byte(`{"hello":{"protocol":2,"build":"b","role":"web"}}`), &web))
+	require.NotNil(t, web.Hello)
+	assert.Equal(t, RoleWeb, web.Hello.Role)
+}
+
+// TestDialAs_NamesItsRoleInTheHello: DialAs sends the role it is given in
+// its hello, and Dial (and DialAs with "") sends none. A fake server reads
+// the hello and hangs up, so each dial fails after the hello went out.
+func TestDialAs_NamesItsRoleInTheHello(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dial func(io.ReadWriteCloser) (*Client, error)
+		role string
+	}{
+		{"web", func(nc io.ReadWriteCloser) (*Client, error) { return DialAs(nc, RoleWeb) }, RoleWeb},
+		{"an empty role", func(nc io.ReadWriteCloser) (*Client, error) { return DialAs(nc, "") }, ""},
+		{"Dial", Dial, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, b := net.Pipe()
+			got := make(chan Hello, 1)
+			go func() {
+				defer a.Close()
+				var f Frame
+				if json.NewDecoder(a).Decode(&f) == nil && f.Hello != nil {
+					got <- *f.Hello
+				}
+			}()
+			_, err := tc.dial(b)
+			require.Error(t, err, "the fake server answers no hello")
+			select {
+			case h := <-got:
+				assert.Equal(t, tc.role, h.Role)
+				assert.Equal(t, Protocol, h.Protocol)
+			case <-time.After(5 * time.Second):
+				t.Fatal("no hello arrived")
+			}
 		})
 	}
 }

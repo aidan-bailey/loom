@@ -6,12 +6,12 @@ The wire: `core.Core` carried over a connection as newline-delimited JSON, betwe
 
 | File | Holds |
 |---|---|
-| `rpc.go` | `Frame`, `Hello`, `rpc.Protocol`, the `//go:generate` line |
+| `rpc.go` | `Frame`, `Hello`, `rpc.RoleWeb`, `rpc.Protocol`, the `//go:generate` line |
 | `build.go` | `rpc.Build`, `rpc.Self()`, `rpc.SetVersion`, the link-time stamps (`rpc.commitUnix`, `rpc.commitRevision`, `rpc.commitModified`) and `commitOf`, `CompareBuilds`, `knownExeTime` |
 | `methods_gen.go` | generated from `core/iface.go` by `internal/gen`: each method's `…Params` and `…Result`, the `methods` table, the server's `dispatch`, the client's methods |
 | `server.go`, `server_conn.go` | `NewServer`, `Server`, `Backend`, publishing, the notice backlog, `coalesceKey`, `serverConn` |
 | `route.go` | `tagReq`, `local`, `forConn`, `routed`, `reqFor`, `connBackend` |
-| `client.go`, `replica.go` | `Dial`, `Client`, `handshake`, `requestNoErr`, the `replica` |
+| `client.go`, `replica.go` | `Dial`, `DialAs`, `Client`, `handshake`, `requestNoErr`, the `replica` |
 | `inprocess.go` | `InProcess` |
 | `seams.go` | `InProcessForTest`, `FlushForTest` |
 
@@ -20,7 +20,7 @@ The wire: `core.Core` carried over a connection as newline-delimited JSON, betwe
 Each side's first frame is a hello (`Hello`):
 - `protocol`: `rpc.Protocol`, bumped on any incompatible change;
 - `build`: from `debug.ReadBuildInfo` (`rpc.Build`): the module version, the revision (`vcs.revision`, else `rpc.commitRevision`) and `+dirty` for a modified tree;
-- optional: `version` (main's release, `rpc.SetVersion`), `time` (`vcs.time`, else the commit time stamped at link time into `rpc.commitUnix`, which `flake.nix` sets from `self.lastModified`, since a Nix build has no VCS information), `modified` (`vcs.modified`, else `rpc.commitModified`; loomdev's builds turn Go's stamping off and stamp all three, since Go stamps a worktree nested in another checkout with the enclosing checkout's commit: `internal/devsandbox`'s `vcsLdflags`), `exe` (the SHA-256 of the running executable, read through `/proc/self/exe` where there is one, so a rebuild in place doesn't change a running process's answer), `exe_time` (that file's mtime), and, from a server only, `tmux`, the tmux server its sessions run on (`Server.SetTmux`).
+- optional: `version` (main's release, `rpc.SetVersion`), `time` (`vcs.time`, else the commit time stamped at link time into `rpc.commitUnix`, which `flake.nix` sets from `self.lastModified`, since a Nix build has no VCS information), `modified` (`vcs.modified`, else `rpc.commitModified`; loomdev's builds turn Go's stamping off and stamp all three, since Go stamps a worktree nested in another checkout with the enclosing checkout's commit: `internal/devsandbox`'s `vcsLdflags`), `exe` (the SHA-256 of the running executable, read through `/proc/self/exe` where there is one, so a rebuild in place doesn't change a running process's answer), `exe_time` (that file's mtime), and, from a server only, `tmux`, the tmux server its sessions run on (`Server.SetTmux`). A client may send `role` (`DialAs`): `rpc.RoleWeb` (`web`) names the daemon's web layer, and a client that names none, or a role this build does not know, is an ordinary client.
 
 `rpc.Self()` is this binary's hello. The server sends its hello first, even to a peer of another protocol, then answers that peer `mismatch`, so `Dial`'s `*MismatchError` carries the server's hello and a newer client can still replace an older daemon.
 
@@ -60,7 +60,7 @@ Each client numbers its requests itself, from 1 and below 2^32, so request IDs c
 
 ## Client
 
-`Dial` (`client.go`) sends its hello, checks the server's (`Peer`), starts the reader, and returns after a ping (`handshake`), by which time the replica (`replica.go`) holds the snapshot. A fatal frame met during that ping is `Dial`'s error; one landing after it is the client's loss.
+`Dial` (`client.go`) sends its hello (`DialAs` is `Dial` naming a role in it), checks the server's (`Peer`), starts the reader, and returns after a ping (`handshake`), by which time the replica (`replica.go`) holds the snapshot. A fatal frame met during that ping is `Dial`'s error; one landing after it is the client's loss.
 
 The reader handles every frame in the order the server wrote them. It applies each state event to the `replica`, marking what changed; queues the other events; records a fatal; and hands each reply to the call waiting for it. An unknown event name (a newer peer's) is logged and dropped (`client.unknown_event`). A known event that fails to decode is fatal (`CodeProtocol`), since it may be a `Reply` someone waits for or state the replica would hold stale.
 

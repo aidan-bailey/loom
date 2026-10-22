@@ -40,6 +40,10 @@ which its clients use too.
 Every field after `build` is optional:
 `{"hello":{"protocol":2,"build":"v0.13.1 ad199a3…","version":"0.13.0","time":"2026-10-08T17:54:55Z","exe":"e3b0c442…","exe_time":"2026-10-08T18:02:11.52Z","tmux":"/run/user/1000/tmux-1000/default"}}`
 
+A client's hello may name its role (`role`): `web` is the daemon's own web layer. A client that names
+none, or a role this build does not know, is an ordinary client:
+`{"hello":{"protocol":2,"build":"v0.13.1 ad199a3…","role":"web"}}`
+
 ## Refused hello
 
 A server answers a hello of another protocol with its own hello, so the client still learns its
