@@ -120,7 +120,10 @@ func (msg Message) compose() string {
 // launch, as SendPrompt does, and so is a script's empty one on any launch. A
 // web message is the person's own words (asUser) with no "From" line, and its
 // refusals read for the phone (they name no `loom` command). With Wait,
-// Answered follows when the turn that carries the message ends.
+// Answered follows when the turn that carries the message ends. A CLI or web
+// message that is a slash command (parseCommand) goes to the mod as one, to
+// run in place of a prompt, once the mod's list allows it (commandRefusal),
+// and its run comes back to the sender (modComplete).
 func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 	inst, _, ok := m.admit(opSend, id, req)
 	if !ok {
@@ -141,6 +144,16 @@ func (m *Model) Send(id InstanceID, msg Message, req ReqID) {
 		return
 	}
 	out := &modMessage{text: msg.compose(), asUser: msg.Origin == OriginScript || msg.Origin == OriginWeb, origin: msg.Origin, req: req, wait: msg.Wait}
+	if cmd, ok := msg.command(); ok {
+		// A launch with no mod is refused below, as any message is.
+		if l := m.linkFor(inst); l.live != modAbsent {
+			if why := commandRefusal(msg, cmd, l); why != "" {
+				m.refuse(req, id, fmt.Errorf("send to %s: %s", inst.Title, why))
+				return
+			}
+		}
+		out.text, out.command, out.args = msg.Text, cmd.name, cmd.args
+	}
 	if strings.TrimSpace(msg.Text) == "" {
 		// A script's empty send_prompt presses Enter, as it did before the
 		// mod: Lua's API keeps it, and the mod has nothing to submit.
@@ -165,6 +178,17 @@ type ModHello struct {
 	// both saying hello again on their own backoff), the one loaded last
 	// wins whichever hello lands last. 0 from an older mod.
 	Loaded int64 `json:"loaded,omitempty"`
+	// Commands are the slash commands the session's Claude lists
+	// ($.command.list()), with their sources. nil from an older mod, which
+	// can't run one, so the model hands it none (commandRefusal).
+	Commands []ModCommand `json:"commands,omitempty"`
+}
+
+// ModCommand is one slash command a mod's hello lists: its name, without the
+// slash, and where Claude says it comes from (builtin, plugin, user or mcp).
+type ModCommand struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
 }
 
 // ModMessage is a message as the mod's inbox hands it out.
@@ -172,6 +196,10 @@ type ModMessage struct {
 	ID     string `json:"id"`
 	Text   string `json:"text"`
 	AsUser bool   `json:"asUser,omitempty"`
+	// Command, when set, is a slash command's name for the mod to run with
+	// Args ($.command.run) in place of submitting Text.
+	Command string `json:"command,omitempty"`
+	Args    string `json:"args,omitempty"`
 }
 
 // ModEvent is one thing a mod reports about a message: queued (handed to
@@ -234,6 +262,9 @@ type modMessage struct {
 	origin Origin
 	req    ReqID // the sender's request; 0 for none
 	wait   bool  // the sender waits for the turn's end (Answered)
+	// command and args, for a slash command, are what the mod runs in place
+	// of submitting text; its run comes back to the sender (modComplete).
+	command, args string
 	// offered is set once an inbox poll has handed the message to the mod,
 	// which may have submitted it whether or not its report arrived.
 	offered bool
@@ -260,6 +291,10 @@ type modLink struct {
 	// an instance loaded earlier is refused (ModHello).
 	poller string
 	loaded int64
+	// commands are the slash commands the recorded hello listed, by name:
+	// true for a built-in (commandsOf). nil before a hello, or after one
+	// that listed none (an older mod).
+	commands map[string]bool
 	// since is when the link was made: the model met the launch then, as a
 	// start or relaunch delivered or a message or mod named it. A launch
 	// that reports no SessionStart is still starting only up to
@@ -483,6 +518,10 @@ func (m *Model) undelivered(inst *session.Instance, msg *modMessage, why string)
 // hear it, because of why, and forgets them.
 func (m *Model) endTurns(inst *session.Instance, l *modLink, why string) {
 	for _, msg := range l.turning {
+		if msg.command != "" {
+			m.emit(Notice{Req: msg.req, Err: fmt.Errorf("send to %s: %s before /%s ran", inst.Title, why, msg.command)})
+			continue
+		}
 		m.emit(Notice{Req: msg.req, Err: fmt.Errorf("send to %s: %s before its turn ended", inst.Title, why)})
 	}
 	l.turning = map[string]*modMessage{}
@@ -614,6 +653,7 @@ func (m *Model) ModHello(launch string, h ModHello) error {
 	l.live = modLive
 	l.heard = time.Now()
 	l.poller, l.loaded = h.Poller, h.Loaded
+	l.commands = commandsOf(h.Commands)
 	return nil
 }
 
@@ -645,7 +685,7 @@ func (m *Model) ModInbox(launch, poller string) ([]ModMessage, <-chan struct{}, 
 	out := make([]ModMessage, 0, len(l.outbox))
 	for _, msg := range l.outbox {
 		msg.offered = true
-		out = append(out, ModMessage{ID: msg.id, Text: msg.text, AsUser: msg.asUser})
+		out = append(out, ModMessage{ID: msg.id, Text: msg.text, AsUser: msg.asUser, Command: msg.command, Args: msg.args})
 	}
 	return out, l.wake, nil
 }
@@ -687,18 +727,30 @@ func (m *Model) modQueued(inst *session.Instance, l *modLink, id string) {
 		return
 	}
 	m.reply(msg.req, Reply{ID: m.idOf(inst)})
-	if msg.wait && msg.req != 0 {
+	// A command is kept for its run's result, which its sender always hears.
+	if msg.command != "" || (msg.wait && msg.req != 0) {
 		l.turning[msg.id] = msg
 	}
 }
 
-// modComplete hands a waiting sender its turn's answer.
+// modComplete hands a waiting sender its turn's answer, and a command's
+// sender its run's result (commandResult): as Answered to a sender that
+// waits, else as a notice of its request.
 func (m *Model) modComplete(inst *session.Instance, l *modLink, ev ModEvent) {
 	msg := l.turning[ev.ID]
 	if msg == nil {
 		return
 	}
 	delete(l.turning, ev.ID)
+	if msg.command != "" {
+		text := commandResult(msg.command, msg.args, ev.Text)
+		if msg.wait {
+			m.emit(Answered{Req: msg.req, ID: m.idOf(inst), Text: text})
+			return
+		}
+		m.emit(Notice{Req: msg.req, Info: text})
+		return
+	}
 	m.emit(Answered{Req: msg.req, ID: m.idOf(inst), Text: ev.Text, Reason: ev.Reason})
 }
 
@@ -718,6 +770,10 @@ func (m *Model) modFailed(inst *session.Instance, l *modLink, ev ModEvent) {
 	err := fmt.Errorf("send to %s: Claude dropped a message loom delivered: %s", inst.Title, ev.Error)
 	if msg := l.turning[ev.ID]; msg != nil {
 		delete(l.turning, ev.ID)
+		if msg.command != "" {
+			m.emit(Notice{Req: msg.req, Err: fmt.Errorf("send to %s: /%s failed: %s", inst.Title, msg.command, ev.Error)})
+			return
+		}
 		m.emit(Notice{Req: msg.req, Err: err})
 		return
 	}

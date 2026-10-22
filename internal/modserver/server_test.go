@@ -178,6 +178,10 @@ func TestHello(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1","mod":1,"claude":"2.1.299","session":"s"}`))
 	assert.Equal(t, []core.ModHello{{Mod: 1, Claude: "2.1.299", Session: "s"}}, h.hello)
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1","mod":1,"commands":[{"name":"clear","source":"builtin"}]}`))
+	assert.Equal(t, []core.ModCommand{{Name: "clear", Source: "builtin"}}, h.hello[1].Commands, "the hello's command list reaches the model")
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1","mod":1,"commands":[]}`))
+	assert.Equal(t, []core.ModCommand{}, h.hello[2].Commands, "an empty list is a list, not an older mod's none")
 	assert.Equal(t, http.StatusNotFound, post(t, c, api("/hello"), `{"launch":"L9"}`))
 	assert.Equal(t, http.StatusBadRequest, post(t, c, api("/hello"), `{"launch":`))
 	assert.Equal(t, http.StatusBadRequest, post(t, c, api("/hello"), `{"launch":"`+string(bytes.Repeat([]byte("x"), maxBody))+`"}`), "an oversized body")
