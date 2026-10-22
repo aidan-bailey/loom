@@ -238,6 +238,12 @@ type Instance struct {
 	// deciding. Ephemeral: never serialized (absent from InstanceData).
 	waitReason string
 
+	// waitDetail is the tool summary of the permission request behind
+	// waitReason ("date > probe.txt" for a Bash command): set and cleared
+	// with it by core.Model.adoptClaudeStatus, so it is empty whenever no
+	// request explains the wait. Ephemeral: never serialized.
+	waitDetail string
+
 	// issue is the linked GitHub issue number (0 = none). Persisted as
 	// InstanceData.Issue.
 	issue int
@@ -1956,6 +1962,22 @@ func (i *Instance) SetWaitReason(reason string) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.waitReason = reason
+}
+
+// WaitDetail returns the tool summary of the permission request behind the
+// wait reason, or "" when none is known (see ClaudeWaitDetail).
+func (i *Instance) WaitDetail() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.waitDetail
+}
+
+// SetWaitDetail records (or with "" clears) the wait's tool summary. The
+// model sets it with SetWaitReason, in core.Model.adoptClaudeStatus.
+func (i *Instance) SetWaitDetail(detail string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.waitDetail = detail
 }
 
 // IssueNumber returns the linked GitHub issue, or 0.

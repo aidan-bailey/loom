@@ -21,6 +21,7 @@ const (
 type observation struct {
 	status Status
 	reason string // wait reason; empty unless status is Prompting
+	detail string // the permission request's tool summary; empty unless status is Prompting
 	at     time.Time
 	source obsSource
 	valid  bool
@@ -47,16 +48,20 @@ type claudeState struct {
 }
 
 // offer applies o if it is newer than the current observation, and reports
-// whether the reported status or reason changed. Newest wins whichever
-// source either came from: the roster publishes a change before Claude
-// runs the hook, so a roster answer stamped after a hook event already
-// reflects it, and one stamped before is older and dropped. The comparison
-// uses at even when the current observation is no-opinion, so an older
-// answer delivered late never revives a status a SessionEnd cleared.
+// whether the reported status, reason or tool summary changed. Newest wins
+// whichever source either came from: the roster publishes a change before
+// Claude runs the hook, so a roster answer stamped after a hook event
+// already reflects it, and one stamped before is older and dropped. The
+// comparison uses at even when the current observation is no-opinion, so an
+// older answer delivered late never revives a status a SessionEnd cleared.
 //
 // A roster observation with the same status as a current hook one keeps
 // the hook's reason: the hook names the tool ("permission: Bash"), the
-// roster only the kind of wait ("permission prompt").
+// roster only the kind of wait ("permission prompt"). The tool summary
+// belongs to the permission request, not to whoever reports the wait, so
+// every roster answer that agrees on the status keeps it, the one after the
+// hook's and the ones after that, until a new request or the end of the wait
+// replaces the observation. The roster names no tool, so it never sets one.
 func (s *claudeState) offer(o observation) bool {
 	if !s.obs.at.IsZero() && !o.at.After(s.obs.at) {
 		return false
@@ -65,8 +70,11 @@ func (s *claudeState) offer(o observation) bool {
 		o.status == s.obs.status && s.obs.reason != "" {
 		o.reason = s.obs.reason
 	}
+	if o.source == obsRoster && o.valid && s.obs.valid && o.status == s.obs.status {
+		o.detail = s.obs.detail
+	}
 	changed := o.valid != s.obs.valid ||
-		(o.valid && (o.status != s.obs.status || o.reason != s.obs.reason))
+		(o.valid && (o.status != s.obs.status || o.reason != s.obs.reason || o.detail != s.obs.detail))
 	s.obs = o
 	return changed
 }
@@ -91,6 +99,15 @@ func (s *claudeState) status() (Status, string, bool) {
 		return Ready, "", false
 	}
 	return s.obs.status, s.obs.reason, true
+}
+
+// waitDetail returns the current observation's tool summary: "" unless it
+// is a Prompting one a permission request gave.
+func (s *claudeState) waitDetail() string {
+	if !s.obs.valid || s.obs.status != Prompting {
+		return ""
+	}
+	return s.obs.detail
 }
 
 // waitingNotifications are the Notification types that mean Claude is
@@ -137,18 +154,19 @@ func (s *claudeState) applyEvent(ev hooks.Event) bool {
 		if ev.ToolName != "" {
 			reason = "permission: " + ev.ToolName
 		}
-		return s.offer(observation{status: Prompting, reason: reason, at: ev.At, source: obsHook, valid: true})
+		return s.offer(observation{status: Prompting, reason: reason, detail: ev.ToolSummary, at: ev.At, source: obsHook, valid: true})
 	case hooks.EventNotification:
 		if !waitingNotifications[ev.NotificationType] {
 			return false
 		}
 		// It arrives about six seconds after the PermissionRequest for the
-		// same prompt, with a generic message; keep the specific reason.
-		reason := ev.Message
+		// same prompt, with a generic message; keep the specific reason and
+		// the tool summary that goes with it.
+		reason, detail := ev.Message, ""
 		if s.obs.valid && s.obs.status == Prompting && s.obs.reason != "" {
-			reason = s.obs.reason
+			reason, detail = s.obs.reason, s.obs.detail
 		}
-		return s.offer(observation{status: Prompting, reason: reason, at: ev.At, source: obsHook, valid: true})
+		return s.offer(observation{status: Prompting, reason: reason, detail: detail, at: ev.At, source: obsHook, valid: true})
 	case hooks.EventStop:
 		s.lastMessage, s.lastMsgValid = ev.LastAssistantMessage, true
 		// Stop ends a turn, not the work: with a background subagent still
@@ -206,6 +224,17 @@ func (i *Instance) ClaudeStatus() (status Status, reason string, ok bool) {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	return i.claude.status()
+}
+
+// ClaudeWaitDetail returns the tool summary of the current observation: what
+// the permission request that has this session Prompting asks to run or
+// touch. It is "" unless the observation is a Prompting one a hook gave a
+// summary (a wait only the roster reports, or a Notification alone, names no
+// tool).
+func (i *Instance) ClaudeWaitDetail() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.claude.waitDetail()
 }
 
 // ObserveRoster offers the roster's answer for this session, observed at

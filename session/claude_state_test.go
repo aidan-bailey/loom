@@ -318,3 +318,120 @@ func TestClaudeSession_PersistsThroughInstanceData(t *testing.T) {
 	assert.Equal(t, data.ClaudeSessionID, again.ClaudeSessionID)
 	assert.Equal(t, data.ClaudeTranscriptPath, again.ClaudeTranscriptPath)
 }
+
+func TestClaudeState_PermissionRequestKeepsItsToolSummary(t *testing.T) {
+	var s claudeState
+	s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "date > probe.txt", At: t0})
+	assert.Equal(t, "Prompting: permission: Bash", describe(s))
+	assert.Equal(t, "date > probe.txt", s.waitDetail())
+}
+
+// The summary belongs to the wait: whatever replaces the Prompting
+// observation takes it along.
+func TestClaudeState_ToolSummaryEndsWithTheWait(t *testing.T) {
+	cases := []struct {
+		name string
+		end  func(s *claudeState)
+	}{
+		{"a new prompt", func(s *claudeState) {
+			s.applyEvent(hooks.Event{Name: hooks.EventUserPromptSubmit, At: t0.Add(time.Second)})
+		}},
+		{"a stop", func(s *claudeState) {
+			s.applyEvent(hooks.Event{Name: hooks.EventStop, HasTasks: true, At: t0.Add(time.Second)})
+		}},
+		{"a session end", func(s *claudeState) {
+			s.applyEvent(hooks.Event{Name: hooks.EventSessionEnd, At: t0.Add(time.Second)})
+		}},
+		{"a roster answer that the session is running", func(s *claudeState) {
+			s.offer(rosterObs(Running, "", time.Second))
+		}},
+		{"a relaunch", func(s *claudeState) { s.newLaunch(t0.Add(time.Second)) }},
+		{"the hooks folder vanishing", func(s *claudeState) { s.folderGone(t0.Add(time.Second)) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var s claudeState
+			s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "go test ./...", At: t0})
+			require.Equal(t, "go test ./...", s.waitDetail(), "precondition")
+
+			tc.end(&s)
+
+			assert.Empty(t, s.waitDetail())
+		})
+	}
+}
+
+// Two requests for one tool leave the status and the reason as they were,
+// so only the summary says which command the prompt is for.
+func TestClaudeState_ANewToolSummaryIsAChange(t *testing.T) {
+	var s claudeState
+	perm := func(summary string, dt time.Duration) bool {
+		return s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: summary, At: t0.Add(dt)})
+	}
+
+	assert.True(t, perm("ls", 0))
+	assert.True(t, perm("rm -r build", time.Second), "the same status and reason, another command")
+	assert.Equal(t, "rm -r build", s.waitDetail())
+	assert.False(t, perm("rm -r build", 2*time.Second), "the same request again changes nothing")
+}
+
+// The Notification for a prompt arrives about six seconds after its
+// PermissionRequest; the specific reason stays, and so does its summary.
+func TestClaudeState_NotificationKeepsTheToolSummary(t *testing.T) {
+	var s claudeState
+	s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "date > probe.txt", At: t0})
+	s.applyEvent(hooks.Event{Name: hooks.EventNotification, NotificationType: "permission_prompt",
+		Message: "Claude needs your permission", At: t0.Add(6 * time.Second)})
+	assert.Equal(t, "Prompting: permission: Bash", describe(s))
+	assert.Equal(t, "date > probe.txt", s.waitDetail())
+}
+
+func TestClaudeState_ANotificationAloneHasNoToolSummary(t *testing.T) {
+	var s claudeState
+	s.applyEvent(hooks.Event{Name: hooks.EventNotification, NotificationType: "elicitation_dialog",
+		Message: "Claude needs your input", At: t0})
+	assert.Equal(t, "Prompting: Claude needs your input", describe(s))
+	assert.Empty(t, s.waitDetail())
+}
+
+// A roster answer names no tool, so it never sets a summary; one that
+// agrees on the status keeps the hook's, and so does the next, which
+// follows an observation that is the roster's own by then.
+func TestClaudeState_RosterAnswersKeepTheToolSummaryWhileTheWaitLasts(t *testing.T) {
+	var s claudeState
+	s.applyEvent(hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "date > probe.txt", At: t0})
+
+	assert.False(t, s.offer(rosterObs(Prompting, "permission prompt", time.Second)))
+	s.offer(rosterObs(Prompting, "permission prompt", 2*time.Second))
+	assert.Equal(t, "date > probe.txt", s.waitDetail())
+
+	assert.True(t, s.offer(rosterObs(Running, "", 3*time.Second)))
+	assert.Empty(t, s.waitDetail(), "the answer ended the wait")
+	s.offer(rosterObs(Prompting, "sandbox request", 4*time.Second))
+	assert.Empty(t, s.waitDetail(), "a wait only the roster reports names no tool")
+}
+
+func TestClaudeWaitDetail_ReadsTheCurrentObservation(t *testing.T) {
+	inst := hooksInstance(t, "claude")
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true, Events: []hooks.Event{
+		{Name: hooks.EventUserPromptSubmit, At: t0},
+		{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "go test ./...", At: t0.Add(time.Second)},
+	}}))
+	assert.Equal(t, "go test ./...", inst.ClaudeWaitDetail())
+
+	require.True(t, inst.ApplyHookScan(HookScanResult{LaunchID: "L", Replayed: true, Events: []hooks.Event{
+		{Name: hooks.EventStop, HasTasks: true, At: t0.Add(2 * time.Second)},
+	}}))
+	assert.Empty(t, inst.ClaudeWaitDetail())
+}
+
+func TestWaitDetail_SetAndClear(t *testing.T) {
+	inst := hooksInstance(t, "claude")
+	assert.Empty(t, inst.WaitDetail())
+
+	inst.SetWaitDetail("rm -r build")
+	assert.Equal(t, "rm -r build", inst.WaitDetail())
+
+	inst.SetWaitDetail("")
+	assert.Empty(t, inst.WaitDetail())
+}
