@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
 	"strconv"
+	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/aidan-bailey/loom/core"
@@ -31,6 +35,9 @@ func newWebCmd() *cobra.Command {
 	cmd.AddCommand(
 		newWebEnableCmd(),
 		newWebDisableCmd(),
+		newWebPairCmd(),
+		newWebDevicesCmd(),
+		newWebRevokeCmd(),
 		newWebStatusCmd(),
 	)
 	return cmd
@@ -200,4 +207,199 @@ func writeWebStatus(out io.Writer, w core.WebView) {
 		row("Serving", "no")
 	}
 	row("Devices", strconv.Itoa(len(w.Devices)))
+}
+
+// defaultDeviceName is what `pair` calls a phone when --name is not given.
+const defaultDeviceName = "iPhone"
+
+// webTimeFormat is how the device list shows a moment, in local time.
+const webTimeFormat = "2006-01-02 15:04"
+
+func newWebPairCmd() *cobra.Command {
+	var name string
+	cmd := &cobra.Command{
+		Use:   "pair [--name <device>]",
+		Short: "Make a one-time code that pairs a phone",
+		Long: "Make a code the phone trades for its own revocable token. It works once, for ten " +
+			"minutes; a second pair for the same name replaces the first code. The web app " +
+			"must be on (loom web enable).",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			loomErrors(c)
+			out := c.OutOrStdout()
+			return withDaemon(c, func(d *client) error {
+				p, err := d.PairDevice(name)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(out, "Pairing code for %s: %s\n", strings.TrimSpace(name), formatPairingCode(p.Code))
+				fmt.Fprintf(out, "Open %s on the phone and enter it. It works once and expires at %s.\n",
+					d.Web().Origin, p.Expires.Local().Format("15:04:05"))
+				return nil
+			})
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", defaultDeviceName, "Name for the device")
+	return cmd
+}
+
+// formatPairingCode shows an 8-character code as XXXX-XXXX, the way the app
+// accepts it (it ignores the dash).
+func formatPairingCode(code string) string {
+	if len(code) != 8 {
+		return code
+	}
+	return code[:4] + "-" + code[4:]
+}
+
+func newWebDevicesCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "devices",
+		Short: "List the paired devices: when paired and last seen, their notifications and push state",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			loomErrors(c)
+			return withDaemon(c, func(d *client) error {
+				devs := d.Web().Devices
+				if asJSON {
+					return writeDevicesJSON(c.OutOrStdout(), devs)
+				}
+				return writeDevicesTable(c.OutOrStdout(), devs, time.Now())
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the devices as a JSON array")
+	return cmd
+}
+
+// webDeviceJSON is a device as `devices --json` prints it: the settings and
+// state, never the token.
+type webDeviceJSON struct {
+	Name     string        `json:"name"`
+	Paired   time.Time     `json:"paired"`
+	LastSeen *time.Time    `json:"last_seen,omitempty"`
+	Notify   webNotifyJSON `json:"notify"`
+	// Push is the subscription's state: "" (none), "ok", "expired" or
+	// "failing: <status>".
+	Push string `json:"push"`
+}
+
+type webNotifyJSON struct {
+	Waiting     bool       `json:"waiting"`
+	Finished    bool       `json:"finished"`
+	PausedUntil *time.Time `json:"paused_until,omitempty"`
+}
+
+func writeDevicesJSON(out io.Writer, devs []core.WebDevice) error {
+	rows := make([]webDeviceJSON, 0, len(devs))
+	for _, dev := range devs {
+		row := webDeviceJSON{
+			Name:   dev.Name,
+			Paired: dev.Paired,
+			Notify: webNotifyJSON{Waiting: dev.Notify.Waiting, Finished: dev.Notify.Finished},
+			Push:   string(dev.Push),
+		}
+		if !dev.LastSeen.IsZero() {
+			t := dev.LastSeen
+			row.LastSeen = &t
+		}
+		if !dev.Notify.PausedUntil.IsZero() {
+			t := dev.Notify.PausedUntil
+			row.Notify.PausedUntil = &t
+		}
+		rows = append(rows, row)
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(rows)
+}
+
+func writeDevicesTable(out io.Writer, devs []core.WebDevice, now time.Time) error {
+	if len(devs) == 0 {
+		_, err := fmt.Fprintln(out, "No paired devices.")
+		return err
+	}
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tPAIRED\tLAST SEEN\tNOTIFY\tPUSH")
+	for _, dev := range devs {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", dev.Name, dev.Paired.Local().Format(webTimeFormat),
+			seenText(dev.LastSeen), notifyText(dev.Notify, now), pushText(dev.Push))
+	}
+	return w.Flush()
+}
+
+// seenText is when a device was last seen, or "never".
+func seenText(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	return t.Local().Format(webTimeFormat)
+}
+
+// notifyText lists the kinds of notification a device gets, with "off" for
+// none, and until when they are paused while that is still ahead of now.
+func notifyText(n core.NotifySettings, now time.Time) string {
+	var kinds []string
+	if n.Waiting {
+		kinds = append(kinds, "waiting")
+	}
+	if n.Finished {
+		kinds = append(kinds, "finished")
+	}
+	if len(kinds) == 0 {
+		return "off"
+	}
+	s := strings.Join(kinds, ",")
+	if n.PausedUntil.After(now) {
+		s += " (paused until " + n.PausedUntil.Local().Format("15:04") + ")"
+	}
+	return s
+}
+
+// pushText is a subscription's state as the table shows it.
+func pushText(s core.PushState) string {
+	if s == core.PushNone {
+		return "none"
+	}
+	return string(s)
+}
+
+func newWebRevokeCmd() *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "revoke <name> | --all",
+		Short: "Unpair a device, or every device: its app is signed out and its push subscription dropped",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			loomErrors(c)
+			if all == (len(args) == 1) {
+				return errors.New("name one device to revoke, or pass --all")
+			}
+			out := c.OutOrStdout()
+			return withDaemon(c, func(d *client) error {
+				if !all {
+					if err := d.RevokeDevice(args[0]); err != nil {
+						return err
+					}
+					fmt.Fprintf(out, "Revoked %s\n", args[0])
+					return nil
+				}
+				devs := d.Web().Devices
+				if len(devs) == 0 {
+					fmt.Fprintln(out, "No paired devices.")
+					return nil
+				}
+				for i, dev := range devs {
+					if err := d.RevokeDevice(dev.Name); err != nil {
+						return fmt.Errorf("revoked %d of %d devices, then %s failed: %w", i, len(devs), dev.Name, err)
+					}
+					fmt.Fprintf(out, "Revoked %s\n", dev.Name)
+				}
+				return nil
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "Revoke every paired device")
+	return cmd
 }
