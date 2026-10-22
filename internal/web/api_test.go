@@ -1024,3 +1024,96 @@ func TestAPI_CreateTakesTheDefaultAccountOnAClaudeWorkspace(t *testing.T) {
 	// "default" is no registered account, and still a name the layer takes.
 	assert.Equal(t, http.StatusCreated, status, string(out))
 }
+
+// openStream connects the paired device's stream and reads its snapshot.
+func (e *apiEnv) openStream() (*streamReader, snapshotJSON) {
+	e.t.Helper()
+	resp := httpDo(e.t, e.addr, http.MethodGet, "/api/v1/stream", "", func(r *http.Request) { r.AddCookie(e.cookie) })
+	require.Equal(e.t, http.StatusOK, resp.StatusCode)
+	s := readFrames(e.t, resp)
+	return s, unframe[snapshotJSON](e.t, s.expect("snapshot"))
+}
+
+func TestAPI_AResponsesNoticesAreKeptForTheNextSnapshotAndNotSentLive(t *testing.T) {
+	inst := apiInstance(t, "one", session.Running)
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{inst}})
+	id := env.ids["one"]
+	live, _ := env.openStream()
+
+	ch := env.async(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/kill", id), nil)
+	env.heldJob()
+	env.finish(core.TrackedForTest(env.lastReq(), id, core.KillResult{Instance: inst, Title: inst.Title, Notice: errors.New("kept the stash abc123")}))
+	got := env.answer(ch)
+	require.Equal(t, http.StatusOK, got.status, string(got.body))
+
+	_, snap := env.openStream()
+	require.Len(t, snap.Notices, 1, "kept once, though the response carried it")
+	assert.Contains(t, snap.Notices[0].Text, "kept the stash abc123")
+	assert.True(t, snap.Notices[0].Error)
+	live.none(200 * time.Millisecond) // the response showed it; the stream would show it twice
+}
+
+func TestAPI_ACreatesNoticesAreKeptToo(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	rec := httptest.NewRecorder()
+	now := time.Now()
+
+	env.layer.writeOutcome(rec, actionLog{device: "phone", name: "create"}, core.Reply{ID: 7},
+		[]noticeJSON{{Text: "prompt not sent", At: now}}, true, true)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	_, snap := env.openStream()
+	require.Len(t, snap.Notices, 1)
+	assert.Equal(t, "prompt not sent", snap.Notices[0].Text)
+}
+
+func TestAPI_ANoticeThatReachedTheStreamIsNotKeptAgainByTheResponse(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "slow", session.Running)}})
+	env.layer.reqs.timeout = 100 * time.Millisecond
+
+	// The wait runs out (202) and the failure, a notice and the Reply's
+	// error, follows on the device's stream.
+	status, _ := env.do(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/pause", env.ids["slow"]), nil)
+	require.Equal(t, http.StatusAccepted, status)
+	jobs := env.loop.JobsForTest()
+	require.Len(t, jobs, 1)
+	env.loop.DeliverForTest(jobs[0]())
+	env.layer.client.ReloadAccounts()
+	require.Eventually(t, func() bool {
+		env.layer.hub.mu.Lock()
+		defer env.layer.hub.mu.Unlock()
+		return len(env.layer.hub.notices) > 0
+	}, 5*time.Second, 10*time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
+
+	_, snap := env.openStream()
+	require.Len(t, snap.Notices, 1, "the streamed failure is kept once")
+	assert.Contains(t, snap.Notices[0].Text, "cannot pause instance that has not been started")
+}
+
+func TestAPI_AFailedOpsErrorIsNotAKeptNotice(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "one", session.Running)}})
+	id := env.ids["one"]
+
+	ch := env.async(http.MethodPost, fmt.Sprintf("/api/v1/sessions/%d/pause", id), nil)
+	env.finish(env.heldJob()())
+	require.Equal(t, http.StatusConflict, env.answer(ch).status)
+
+	_, snap := env.openStream()
+	assert.Empty(t, snap.Notices, "the 409 carries the error; the repeated notice is dropped, not kept")
+}
+
+func TestAPI_KeptResponseNoticesKeepTheLastTwentyInOrder(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	env.layer.hub.publish("notice", noticeJSON{Text: "first", At: time.Now()})
+	for i := range recentNotices + 3 {
+		env.layer.writeOutcome(httptest.NewRecorder(), actionLog{device: "phone", name: "pause"}, core.Reply{},
+			[]noticeJSON{{Text: fmt.Sprintf("r%d", i), At: time.Now()}}, true, false)
+	}
+
+	_, snap := env.openStream()
+
+	require.Len(t, snap.Notices, recentNotices)
+	assert.Equal(t, "r3", snap.Notices[0].Text)
+	assert.Equal(t, fmt.Sprintf("r%d", recentNotices+2), snap.Notices[recentNotices-1].Text)
+}

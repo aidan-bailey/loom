@@ -133,7 +133,8 @@ func (l *Layer) doAction(w http.ResponseWriter, r *http.Request, a actionLog, se
 // wait running out: 202, the outcome following on the stream. An error in the
 // Reply keeps the model's text with the status it earns, and any notice
 // beside it goes to the device's stream; otherwise the notices ride the
-// response, with the new session's ID for a create.
+// response, with the new session's ID for a create, and are also kept among
+// the recent notices the snapshot carries.
 func (l *Layer) writeOutcome(w http.ResponseWriter, a actionLog, reply core.Reply, notes []noticeJSON, done, created bool) {
 	switch {
 	case !done:
@@ -149,12 +150,24 @@ func (l *Layer) writeOutcome(w http.ResponseWriter, a actionLog, reply core.Repl
 		status := modelStatus(reply.Err)
 		l.refuse(w, a, status, text)
 	case created:
+		l.keepNotices(notes)
 		a.sessionID = reply.ID
 		l.record(a, http.StatusCreated, "created")
 		writeJSON(w, http.StatusCreated, createdJSON{ID: reply.ID, Notices: nonNil(notes)})
 	default:
+		l.keepNotices(notes)
 		l.record(a, http.StatusOK, "ok")
 		writeJSON(w, http.StatusOK, noticesJSON{Notices: nonNil(notes)})
+	}
+}
+
+// keepNotices keeps the notices a response carries among the hub's recent
+// ones, which the stream's snapshot sends, so a response the phone never got
+// loses none (a kill's stash SHA above all). It is not for a notice that went
+// to the stream, which the hub kept already.
+func (l *Layer) keepNotices(notes []noticeJSON) {
+	if l.hub != nil {
+		l.hub.keep(notes)
 	}
 }
 

@@ -118,7 +118,8 @@ type hub struct {
 	// devices are the records the last published device list held.
 	devices map[string]hubDevice
 	// notices are the last recentNotices the hub sent to a stream, oldest
-	// first: the model's own, and what publish and sendTo were given.
+	// first: the model's own, what publish and sendTo were given, and what
+	// keep was (the notices a response carried, which no stream was sent).
 	notices []noticeJSON
 	// pubWorkspaces and pubSessions are what the streams were last told, so
 	// a flush sends only a list that differs from it.
@@ -275,6 +276,18 @@ func (h *hub) keepLocked(event string, data any) {
 	h.notices = append(h.notices, n)
 	if len(h.notices) > recentNotices {
 		h.notices = slices.Clone(h.notices[len(h.notices)-recentNotices:])
+	}
+}
+
+// keep keeps notices among the recent ones without sending them to any
+// stream: a request's response already carried them to the phone, and the
+// app shows them from there, so a live copy would show each twice. A phone
+// that never got the response finds them in its next snapshot.
+func (h *hub) keep(notices []noticeJSON) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, n := range notices {
+		h.keepLocked("notice", n)
 	}
 }
 
