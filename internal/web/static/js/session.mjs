@@ -161,7 +161,7 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
         ? html`<form class="sc-reply" onSubmit=${(e) => { e.preventDefault(); if (!off && reply && !tooLong) send(); }}>
             <textarea
               rows="3"
-              placeholder="Reply to Claude…"
+              placeholder="Reply to Claude, or run /compact, /clear, /model or a skill…"
               aria-label="Reply"
               value=${text}
               onInput=${(e) => setText(e.target.value)}

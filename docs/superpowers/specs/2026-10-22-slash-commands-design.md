@@ -142,8 +142,11 @@ busy, at most 64 KiB.
   each rule's refusal and the case it allows; an older mod refused; another
   origin's `/text` sent as a prompt; the outbox carrying `Command` and
   `Args`; `complete` raising the output notice and `failed` the error
-  notice, with nothing pasted; the hello's list bounded; the phone's send
-  answering 409 with the rule's text.
+  notice, with nothing pasted; the hello's list bounded. The phone's send
+  passes the reply on as it is (`TestAPI_SendCarriesTheWebOrigin`) and
+  answers any refusal 409 with the model's text
+  (`TestAPI_ARefusalIs409WithTheModelsText`), so the rules need no web test
+  of their own.
 - The opt-in real-Claude test (`LOOM_TEST_REAL_CLAUDE=1`): the hello lists
   commands with their sources; `/model haiku` completes with output; an
   unknown name fails.

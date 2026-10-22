@@ -380,7 +380,11 @@ func newSessionSendCmd(workspace *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "send <title>",
 		Short: "Send a message to a session's Claude, queued behind its running turn or open dialog",
-		Args:  cobra.ExactArgs(1),
+		Long: "Send a message to a session's Claude through the loom mod, queued behind its running turn or open dialog.\n\n" +
+			"A message whose first word is /name runs that slash command instead: /compact [instructions], /clear, " +
+			"/model <name>, or any skill, plugin or user command the session's Claude lists. Every other built-in " +
+			"(it may open a menu or end the session) and a name the session doesn't list are refused, and so is --from with a command.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			body, err := readMessage(c.InOrStdin(), text, file, c.Flags().Changed("text"))
 			if err != nil {
@@ -409,7 +413,7 @@ func newSessionSendCmd(workspace *string) *cobra.Command {
 	fl.StringVar(&file, "file", "", "Send this file's text")
 	cmd.MarkFlagsMutuallyExclusive("text", "file")
 	fl.StringVar(&from, "from", "", "Name the sender on a line before the message")
-	fl.BoolVar(&wait, "wait", false, "Wait until the turn that carries the message ends, and print Claude's reply")
+	fl.BoolVar(&wait, "wait", false, "Wait until the turn that carries the message ends, and print Claude's reply (a slash command: until it ran, printing its output)")
 	fl.Uint64Var(&id, "id", 0, "The session's ID (loom session list --json), when several share the title")
 	return cmd
 }

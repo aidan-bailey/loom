@@ -59,7 +59,7 @@ Every route under `/api/v1` except `POST /api/v1/pair` needs the device cookie. 
 | `GET /api/v1/stream` | the live stream |
 | `POST /api/v1/sessions` | create from `{workspace, title, prompt}` and the optional `account`, `model`, `permission_mode`, `effort`; 201 `{"id", "notices"}` |
 | `GET /api/v1/launch-defaults?workspace=<id>` | `{account, accounts, model, models, permission_mode, permission_modes, effort, efforts}`: what the new-session sheet pre-fills (`account` is the account the launch modal would pre-fill, which `core.ChooseLaunchAccount` picks: the workspace's own account when its settings name a registered one, otherwise the registry's default, and `""` when the workspace's program is not Claude or the model has no account registry) and the choices it offers, which are the registry's account names, `config.ClaudeModelAliases()`, `config.ClaudePermissionModes` and `config.ClaudeEfforts`, so the app hard-codes none |
-| `POST /api/v1/sessions/{id}/send` | `{text}`: `Send` with `core.OriginWeb` |
+| `POST /api/v1/sessions/{id}/send` | `{text}`: `Send` with `core.OriginWeb`; a reply that is an allowed slash command runs it, and its result arrives as a notice |
 | `POST /api/v1/sessions/{id}/pause`, `resume`, `kill`, `push` | the request of the same name |
 | `POST /api/v1/sessions/{id}/merge` | `{source}`: `Merge` with the session in the URL as the target |
 | `PUT /api/v1/device` | `{waiting, finished, pause}`: notification settings, each field optional and a missing one left as it is; `pause` is `"1h"` (until an hour from now) or `"none"` (ends a pause), any other value is 400; answers the device |
