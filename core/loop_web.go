@@ -57,6 +57,11 @@ func (l *Loop) SetPushSubscription(name string, sub PushSubscription) (dev WebDe
 // PushTargets runs Model.PushTargets on the loop.
 func (l *Loop) PushTargets() []PushTarget { return get(l, (*Model).PushTargets) }
 
+// PushEndpoint runs Model.PushEndpoint on the loop.
+func (l *Loop) PushEndpoint(device string) string {
+	return get(l, func(m *Model) string { return m.PushEndpoint(device) })
+}
+
 // PushResult runs Model.PushResult on the loop.
 func (l *Loop) PushResult(device, endpoint string, state PushState) {
 	l.webCall(func(m *Model) bool { return m.PushResult(device, endpoint, state) })

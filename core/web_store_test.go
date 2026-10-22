@@ -274,6 +274,33 @@ func TestInitWeb_AStoredSubscriptionThatFailsItsCheckIsMarkedFailingAndNotPushed
 	assert.Len(t, m.PushTargets(), 2)
 }
 
+// PushEndpoint names what a device holds even where PushTargets leaves it
+// out, so the layer can drop a subscription the load check refused; a device
+// with none, an expired one or no device has no endpoint.
+func TestModel_PushEndpointNamesAStoredSubscriptionEvenOneThatFailsItsCheck(t *testing.T) {
+	refused := webJSONSub
+	refused.Endpoint = "https://attacker.example.com/abc"
+	withSub := func(name, token string, sub PushSubscription) string {
+		return strings.Replace(webDeviceJSON(name, token), `"paused_until":""}}`,
+			fmt.Sprintf(`"paused_until":""},"push":{"endpoint":%q,"p256dh":%q,"auth":%q},"push_state":"ok"}`, sub.Endpoint, sub.P256DH, sub.Auth), 1)
+	}
+	m := webModel(t, webWith(
+		withSub("a-good", tokenA, webJSONSub),
+		withSub("b-refused", tokenB, refused),
+		webDeviceJSON("c-none", strings.Repeat("ef", 32)),
+	))
+	require.Len(t, m.PushTargets(), 1, "control: the refused one is no target")
+
+	assert.Equal(t, webJSONSub.Endpoint, m.PushEndpoint("a-good"))
+	assert.Equal(t, refused.Endpoint, m.PushEndpoint("b-refused"))
+	assert.Empty(t, m.PushEndpoint("c-none"))
+	assert.Empty(t, m.PushEndpoint("nobody"))
+
+	require.True(t, m.PushResult("b-refused", refused.Endpoint, PushExpired), "naming it drops it")
+	assert.Equal(t, PushExpired, m.Web().Devices[1].Push)
+	assert.Empty(t, m.PushEndpoint("b-refused"), "an expired subscription is gone")
+}
+
 func TestSaveWeb_RoundTripsWhatWasLoaded(t *testing.T) {
 	m := webModel(t, webJSON)
 	key, err := newVAPIDKey()

@@ -80,7 +80,9 @@ const (
 )
 
 // PushFailing is the state of a subscription whose last push the push
-// service answered with status: "failing: <status>".
+// service answered with status: "failing: <status>". Status 0 means the
+// stored subscription failed ValidatePushSubscription on load and no push
+// service was asked.
 func PushFailing(status int) PushState { return PushState("failing: " + strconv.Itoa(status)) }
 
 // VAPIDKey is the P-256 key pair the web layer signs its pushes with, made

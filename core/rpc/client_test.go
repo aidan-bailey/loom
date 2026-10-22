@@ -22,11 +22,12 @@ import (
 )
 
 // webFixture is an enabled web.json holding two devices: iPhone, with a push
-// subscription and a pause, and iPad, whose subscription expired.
+// subscription (one ValidatePushSubscription accepts, so it loads as ok) and
+// a pause, and iPad, whose subscription expired.
 const webFixture = `{"version":1,"listen":"127.0.0.1:7420","origin":"https://loom.example.com","devices":[` +
 	`{"name":"iPhone","token_sha256":"abababababababababababababababababababababababababababababababab","paired":"2026-10-01T09:00:00Z","last_seen":"2026-10-02T10:30:00Z",` +
 	`"notify":{"waiting":true,"finished":false,"paused_until":"2026-10-03T08:00:00Z"},` +
-	`"push":{"endpoint":"https://web.push.apple.com/abc","p256dh":"pk","auth":"au"},"push_state":"ok"},` +
+	`"push":{"endpoint":"https://web.push.apple.com/abc","p256dh":"BI5TO2-gv3tGJbswZnwB-2B--fi4qA_vWzAGKHAxh7Kjc-sdveAzGDZtBp-DpvWQAFPHNjPLBBshxV4ahsH0ALQ","auth":"AAAAAAAAAAAAAAAAAAAAAA"},"push_state":"ok"},` +
 	`{"name":"iPad","token_sha256":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","paired":"2026-10-04T09:00:00Z","last_seen":"2026-10-04T09:00:00Z",` +
 	`"notify":{"waiting":false,"finished":true,"paused_until":""},"push_state":"expired"}]}`
 

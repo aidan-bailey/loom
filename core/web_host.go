@@ -43,6 +43,11 @@ type WebHost interface {
 	// PushTargets are the devices with a subscription that isn't expired and
 	// passes ValidatePushSubscription.
 	PushTargets() []PushTarget
+	// PushEndpoint is the endpoint of the subscription the device holds, even
+	// one that fails ValidatePushSubscription (PushTargets leaves it out), or
+	// "" when it holds none, has an expired one or is no device. It is the
+	// endpoint to name in a PushResult that drops the subscription.
+	PushEndpoint(device string) string
 	// PushResult records how a push to the endpoint of the device's
 	// subscription went. PushExpired also drops the subscription. It changes
 	// nothing when the device now holds another endpoint: a late result for
@@ -300,6 +305,17 @@ func (m *Model) PushTargets() []PushTarget {
 		targets = append(targets, PushTarget{Device: d.name, Notify: d.notify, Subscription: d.sub})
 	}
 	return targets
+}
+
+// PushEndpoint is the endpoint of the subscription the device holds, or ""
+// (WebHost). Unlike PushTargets it does not check the subscription: a stored
+// one the check refused on load is still the device's to drop. Loop goroutine
+// only.
+func (m *Model) PushEndpoint(device string) string {
+	if d := m.web.find(device); d != nil {
+		return d.sub.Endpoint
+	}
+	return ""
 }
 
 // PushResult records how a push to endpoint went; PushExpired also drops the

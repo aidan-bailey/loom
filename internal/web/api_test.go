@@ -3,7 +3,9 @@ package web
 import (
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,6 +42,9 @@ type apiFixture struct {
 	// stateJSON, when set, is the workspace's state.json in place of an empty
 	// one.
 	stateJSON string
+	// webJSON, when set, is the global dir's web.json at boot, so its devices
+	// are loaded as a restart finds them.
+	webJSON string
 }
 
 // recordingBackend is the loop as the server serves it, keeping what the web
@@ -103,6 +108,9 @@ func newAPIEnv(t *testing.T, f apiFixture) *apiEnv {
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, config.StateFileName), []byte(state), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(cfgDir, config.ConfigFileName), []byte(wsConfig), 0o644))
+	if f.webJSON != "" {
+		require.NoError(t, os.WriteFile(filepath.Join(os.Getenv(config.EnvGlobalDir), core.WebFile), []byte(f.webJSON), 0o600))
+	}
 	dead := cmd_test.MockCmdExec{
 		RunFunc:    func(*exec.Cmd) error { return &exec.ExitError{} },
 		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, nil },
@@ -735,6 +743,38 @@ func TestAPI_DeletePushDropsTheSubscription(t *testing.T) {
 	assert.Len(t, env.loop.Web().Devices, 2, "both stay paired")
 }
 
+// A subscription web.json holds that fails the check on load is no push
+// target, and its device's state reads "failing: 0"; the app's launch check
+// finds a phone with no push to drop and sends DELETE, which still records the
+// subscription as expired, as the spec says, and does not leave the app to
+// find the same state on every launch.
+func TestAPI_DeletePushDropsASubscriptionLoadedRefused(t *testing.T) {
+	token := []byte(strings.Repeat("t", 32)) // the cookie's 32 bytes; web.json holds their SHA-256
+	sum := sha256.Sum256(token)
+	hash := hex.EncodeToString(sum[:])
+	env := newAPIEnv(t, apiFixture{webJSON: `{"version":1,"devices":[` +
+		`{"name":"stale","token_sha256":"` + hash + `","paired":"2026-10-01T09:00:00Z","last_seen":"2026-10-01T09:00:00Z",` +
+		`"notify":{"waiting":true,"finished":true,"paused_until":""},` +
+		`"push":{"endpoint":"https://attacker.example.com/abc","p256dh":"pk","auth":"au"},"push_state":"ok"}]}`})
+	devicePush := func(name string) core.PushState {
+		for _, d := range env.loop.Web().Devices {
+			if d.Name == name {
+				return d.Push
+			}
+		}
+		return "no device"
+	}
+	require.Equal(t, core.PushFailing(0), devicePush("stale"), "control: it loaded as refused")
+	require.Empty(t, env.loop.PushTargets(), "control: and is no target")
+	env.cookie = &http.Cookie{Name: cookieName, Value: base64.RawURLEncoding.EncodeToString(token)}
+
+	status, out := env.do(http.MethodDelete, "/api/v1/device/push", nil)
+
+	assert.Equal(t, http.StatusNoContent, status, string(out))
+	assert.Equal(t, core.PushExpired, devicePush("stale"), "the app shows notifications to turn on again, once")
+	assert.Equal(t, core.PushNone, devicePush("phone"), "the paired phone is not touched")
+}
+
 func TestAPI_DeleteDeviceUnpairsThePhone(t *testing.T) {
 	env := newAPIEnv(t, apiFixture{})
 
@@ -1131,8 +1171,9 @@ func TestAPI_ACreatesNoticesAreKeptToo(t *testing.T) {
 
 // It pins the 202 path only: the wait runs out, so the failure reaches the
 // stream and no response carries it. The 200 path, whose response carries the
-// notices and keeps them, is the test above; the 409 path, whose error is
-// dropped rather than kept, is the one below.
+// notices and keeps them, is TestAPI_AResponsesNoticesAreKeptForTheNextSnapshotAndNotSentLive
+// (and the 201 path TestAPI_ACreatesNoticesAreKeptToo); the 409 path, whose
+// error is dropped rather than kept, is TestAPI_AFailedOpsErrorIsNotAKeptNotice.
 func TestAPI_ANoticeThatReachedTheStreamIsNotKeptAgainByTheResponse(t *testing.T) {
 	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "slow", session.Running)}})
 	env.layer.reqs.timeout = 100 * time.Millisecond
