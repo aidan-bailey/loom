@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -468,4 +469,261 @@ func TestWebHost_TouchDeviceWritesAtMostOnceAMinute(t *testing.T) {
 	assert.False(t, m.TouchDevice("iPhone"), "a minute counts from the last write")
 	assert.True(t, lastSeen().Equal(touched))
 	assert.False(t, m.TouchDevice("nobody"), "an unknown name is no one")
+}
+
+func webHostPtr[T any](v T) *T { return &v }
+
+func TestWebHost_SetNotifyAppliesOnlyTheFieldsSet(t *testing.T) {
+	m, clk := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	until := clk.at.Add(time.Hour)
+
+	dev, err := m.SetNotify("iPhone", NotifyChange{Waiting: webHostPtr(false), PausedUntil: &until})
+
+	require.NoError(t, err)
+	assert.False(t, dev.Notify.Waiting)
+	assert.True(t, dev.Notify.Finished, "a nil field is left as it is")
+	assert.True(t, dev.Notify.PausedUntil.Equal(until))
+	assert.Equal(t, m.Web().Devices[0], dev, "the device as stored")
+	onDisk, _ := webHostFileOf(t)
+	assert.False(t, onDisk.Devices[0].Notify.Waiting)
+	assert.True(t, onDisk.Devices[0].Notify.Finished)
+	assert.NotEmpty(t, onDisk.Devices[0].Notify.PausedUntil)
+
+	dev, err = m.SetNotify("iPhone", NotifyChange{Finished: webHostPtr(false)})
+	require.NoError(t, err)
+	assert.False(t, dev.Notify.Waiting, "a setting not named stands")
+	assert.False(t, dev.Notify.Finished)
+	assert.True(t, dev.Notify.PausedUntil.Equal(until), "so does a pause not named")
+
+	dev, err = m.SetNotify("iPhone", NotifyChange{Waiting: webHostPtr(true), PausedUntil: &time.Time{}})
+	require.NoError(t, err)
+	assert.True(t, dev.Notify.Waiting)
+	assert.True(t, dev.Notify.PausedUntil.IsZero(), "a zero time ends the pause")
+	onDisk, _ = webHostFileOf(t)
+	assert.Empty(t, onDisk.Devices[0].Notify.PausedUntil)
+}
+
+func TestWebHost_SetNotifyRefusesAnUnknownDeviceAndChangesNothingWhenTheWriteFails(t *testing.T) {
+	m, _ := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	before := m.Web().Devices[0]
+
+	_, err := m.SetNotify("nobody", NotifyChange{Waiting: webHostPtr(false)})
+	assert.ErrorIs(t, err, ErrNoDevice)
+
+	webHostBreakWrites(t)
+	_, err = m.SetNotify("iPhone", NotifyChange{Waiting: webHostPtr(false)})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrNoDevice)
+	assert.Equal(t, before, m.Web().Devices[0], "the setting is put back")
+}
+
+func TestWebHost_SetPushSubscriptionStoresAValidOne(t *testing.T) {
+	m, _ := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	sub := webHostSub(t, "web.push.apple.com")
+
+	dev, err := m.SetPushSubscription("iPhone", sub)
+
+	require.NoError(t, err)
+	assert.Equal(t, PushOK, dev.Push)
+	assert.Equal(t, m.Web().Devices[0], dev, "the device as stored")
+	assert.Equal(t, []PushTarget{{Device: "iPhone", Notify: NotifySettings{Waiting: true, Finished: true}, Subscription: sub}}, m.PushTargets())
+	onDisk, _ := webHostFileOf(t)
+	assert.Equal(t, sub.Endpoint, onDisk.Devices[0].Push.Endpoint)
+	assert.Equal(t, "ok", onDisk.Devices[0].PushState)
+}
+
+func TestWebHost_SetPushSubscriptionRefusesWhatItShouldNotKeep(t *testing.T) {
+	m, _ := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	good := webHostSub(t, "web.push.apple.com")
+
+	elsewhere := good
+	elsewhere.Endpoint = "https://push.example.com/abc"
+	_, err := m.SetPushSubscription("iPhone", elsewhere)
+	assert.ErrorContains(t, err, "no push service")
+	assert.Equal(t, PushNone, m.Web().Devices[0].Push, "nothing is stored")
+	assert.Empty(t, m.PushTargets())
+
+	_, err = m.SetPushSubscription("nobody", good)
+	assert.ErrorIs(t, err, ErrNoDevice)
+
+	webHostBreakWrites(t)
+	_, err = m.SetPushSubscription("iPhone", good)
+	require.Error(t, err)
+	assert.Equal(t, PushNone, m.Web().Devices[0].Push, "a failed write puts it back")
+	assert.Empty(t, m.PushTargets())
+}
+
+func TestWebHost_PushTargetsAreTheDevicesWithALiveSubscription(t *testing.T) {
+	m, _ := webHostModel(t)
+	for _, name := range []string{"a-ok", "b-none", "c-expired", "d-failing"} {
+		webHostPair(t, m, name)
+	}
+	for _, name := range []string{"a-ok", "c-expired", "d-failing"} {
+		_, err := m.SetPushSubscription(name, webHostSub(t, "fcm.googleapis.com"))
+		require.NoError(t, err)
+	}
+	m.PushResult("c-expired", PushExpired)
+	m.PushResult("d-failing", PushFailing(503))
+
+	targets := m.PushTargets()
+
+	require.Len(t, targets, 2, "no subscription, no target; an expired one is not tried")
+	assert.Equal(t, "a-ok", targets[0].Device)
+	assert.Equal(t, "d-failing", targets[1].Device, "a failing one is tried again")
+}
+
+func TestWebHost_PushResult(t *testing.T) {
+	m, _ := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	_, err := m.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
+	require.NoError(t, err)
+	push := func() PushState { return m.Web().Devices[0].Push }
+
+	assert.True(t, m.PushResult("iPhone", PushFailing(503)))
+	assert.Equal(t, PushFailing(503), push())
+	assert.Len(t, m.PushTargets(), 1, "a failing subscription is tried again")
+	assert.False(t, m.PushResult("iPhone", PushFailing(503)), "the same result changes nothing")
+
+	assert.True(t, m.PushResult("iPhone", PushOK))
+	assert.Equal(t, PushOK, push())
+
+	assert.True(t, m.PushResult("iPhone", PushExpired))
+	assert.Equal(t, PushExpired, push())
+	assert.Empty(t, m.PushTargets(), "an expired subscription is dropped")
+	onDisk, _ := webHostFileOf(t)
+	assert.Empty(t, onDisk.Devices[0].Push.Endpoint)
+	assert.Equal(t, "expired", onDisk.Devices[0].PushState)
+
+	assert.False(t, m.PushResult("iPhone", PushFailing(500)), "a late result of another push leaves the expiry standing")
+	assert.Equal(t, PushExpired, push())
+	assert.False(t, m.PushResult("nobody", PushOK), "a revoked device is no one")
+
+	_, err = m.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
+	require.NoError(t, err)
+	assert.Equal(t, PushOK, push(), "a new subscription revives the device")
+	assert.Len(t, m.PushTargets(), 1)
+}
+
+func TestWebHost_VAPIDKey(t *testing.T) {
+	t.Run("before the first enable", func(t *testing.T) {
+		t.Setenv(config.EnvGlobalDir, t.TempDir()) // a bare model's saveWeb would write under the global dir
+		m := NewForTest(Options{})
+
+		_, err := m.VAPIDKey()
+
+		assert.ErrorIs(t, err, ErrWebOff)
+	})
+	t.Run("after it", func(t *testing.T) {
+		m, _ := webHostModel(t)
+
+		key, err := m.VAPIDKey()
+
+		require.NoError(t, err)
+		require.Len(t, key.Private, 32)
+		require.Len(t, key.Public, 65)
+		priv, err := ecdh.P256().NewPrivateKey(key.Private)
+		require.NoError(t, err)
+		assert.Equal(t, key.Public, priv.PublicKey().Bytes(), "the pair belongs together")
+
+		want := append([]byte(nil), key.Private...)
+		key.Private[0] ^= 0xff
+		again, err := m.VAPIDKey()
+		require.NoError(t, err)
+		assert.Equal(t, want, again.Private, "a caller's edit does not reach the model")
+	})
+	t.Run("kept when the web is turned off", func(t *testing.T) {
+		m, _ := webHostModel(t)
+		before, err := m.VAPIDKey()
+		require.NoError(t, err)
+		require.NoError(t, m.ConfigureWeb("", "https://loom.example.com"))
+
+		after, err := m.VAPIDKey()
+
+		require.NoError(t, err)
+		assert.Equal(t, before, after)
+	})
+}
+
+func TestWebHost_WebServingSetsWhatTheViewShows(t *testing.T) {
+	m, _ := webHostModel(t)
+	m.Drain()
+	rev := m.Web().Rev
+	require.NotZero(t, rev, "fixture: the ConfigureWeb that enabled the web bumped it")
+
+	assert.True(t, m.WebServing("127.0.0.1:7420", nil))
+	v := m.Web()
+	assert.True(t, v.Serving)
+	assert.Equal(t, "127.0.0.1:7420", v.Addr)
+	assert.Empty(t, v.Error)
+	assert.Equal(t, rev, v.Rev, "the report is no new setting: Rev is the layer's cue to rebind, and only ConfigureWeb moves it")
+	raised, _ := noticesAndStarts(m.Drain().Events)
+	assert.Empty(t, raised, "listening is no news")
+
+	assert.False(t, m.WebServing("127.0.0.1:7420", nil), "the same state changes nothing")
+
+	assert.True(t, m.WebServing("", nil), "the listener closed")
+	v = m.Web()
+	assert.False(t, v.Serving)
+	assert.Empty(t, v.Addr)
+	assert.Equal(t, rev, v.Rev, "closing is a report too")
+}
+
+func TestWebHost_WebServingRaisesOneNoticePerDistinctError(t *testing.T) {
+	m, _ := webHostModel(t)
+	m.Drain()
+	rev := m.Web().Rev
+	require.NotZero(t, rev, "fixture: the ConfigureWeb that enabled the web bumped it")
+	inUse := errors.New("listen tcp 127.0.0.1:7420: bind: address already in use")
+	denied := errors.New("listen tcp 127.0.0.1:80: bind: permission denied")
+
+	assert.True(t, m.WebServing("", inUse))
+	v := m.Web()
+	assert.False(t, v.Serving)
+	assert.Empty(t, v.Addr)
+	assert.Contains(t, v.Error, "address already in use")
+	assert.Equal(t, rev, v.Rev, "a failed bind does not bump Rev, or the layer would retry it in a loop")
+	raised, _ := noticesAndStarts(m.Drain().Events)
+	require.Len(t, raised, 1)
+	assert.ErrorContains(t, raised[0].Err, "address already in use")
+
+	assert.False(t, m.WebServing("", inUse), "the same error again changes nothing")
+	raised, _ = noticesAndStarts(m.Drain().Events)
+	assert.Empty(t, raised, "and is told once")
+
+	assert.True(t, m.WebServing("", denied))
+	raised, _ = noticesAndStarts(m.Drain().Events)
+	require.Len(t, raised, 1, "a different error is told")
+	assert.ErrorContains(t, raised[0].Err, "permission denied")
+
+	assert.True(t, m.WebServing("127.0.0.1:7420", nil))
+	assert.Empty(t, m.Web().Error, "serving clears the reason")
+	m.Drain()
+
+	m.WebServing("", inUse)
+	raised, _ = noticesAndStarts(m.Drain().Events)
+	require.Len(t, raised, 1, "an error that comes back after serving is told again")
+	assert.Equal(t, rev, m.Web().Rev, "none of the reports moved Rev")
+}
+
+// The model's web state reaches clients as ModelChanged on the next Sync, with
+// no event of its own.
+func TestWebHost_AChangeReachesClientsThroughTheModelView(t *testing.T) {
+	m, _ := webHostModel(t)
+	m.Sync() // the first publish
+
+	m.WebServing("127.0.0.1:7420", nil)
+
+	var view *ModelView
+	for _, ev := range m.Sync().Events {
+		if mc, ok := ev.(ModelChanged); ok {
+			v := mc.View
+			view = &v
+		}
+	}
+	require.NotNil(t, view, "the Sync after the change carries the model view")
+	assert.True(t, view.Web.Serving)
 }

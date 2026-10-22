@@ -231,3 +231,130 @@ func (m *Model) TouchDevice(name string) bool {
 	}
 	return true
 }
+
+// webHostDeviceView is d as a client sees it: the record without its hash or
+// its subscription's keys.
+func webHostDeviceView(d *webDevice) WebDevice {
+	return WebDevice{Name: d.name, Paired: d.paired, LastSeen: d.lastSeen, Notify: d.notify, Push: d.push}
+}
+
+// SetNotify applies the fields c sets to the device's notification settings
+// and returns the device as stored (WebHost). A write that fails puts the
+// settings back. Loop goroutine only.
+func (m *Model) SetNotify(name string, c NotifyChange) (WebDevice, error) {
+	d := m.web.find(name)
+	if d == nil {
+		return WebDevice{}, fmt.Errorf("%w: %q", ErrNoDevice, name)
+	}
+	prev := d.notify
+	if c.Waiting != nil {
+		d.notify.Waiting = *c.Waiting
+	}
+	if c.Finished != nil {
+		d.notify.Finished = *c.Finished
+	}
+	if c.PausedUntil != nil {
+		d.notify.PausedUntil = *c.PausedUntil
+	}
+	if err := m.saveWeb(); err != nil {
+		d.notify = prev
+		return WebDevice{}, fmt.Errorf("notify settings: %w", err)
+	}
+	return webHostDeviceView(d), nil
+}
+
+// SetPushSubscription validates sub, stores it as the device's and sets
+// PushOK (WebHost). A write that fails puts the old subscription back. Loop
+// goroutine only.
+func (m *Model) SetPushSubscription(name string, sub PushSubscription) (WebDevice, error) {
+	d := m.web.find(name)
+	if d == nil {
+		return WebDevice{}, fmt.Errorf("%w: %q", ErrNoDevice, name)
+	}
+	if err := ValidatePushSubscription(sub); err != nil {
+		return WebDevice{}, err
+	}
+	prevSub, prevPush := d.sub, d.push
+	d.sub, d.push = sub, PushOK
+	if err := m.saveWeb(); err != nil {
+		d.sub, d.push = prevSub, prevPush
+		return WebDevice{}, fmt.Errorf("push subscription: %w", err)
+	}
+	return webHostDeviceView(d), nil
+}
+
+// PushTargets are the devices with a subscription that isn't expired, in
+// device order (WebHost). A subscription that failed is tried again. Loop
+// goroutine only.
+func (m *Model) PushTargets() []PushTarget {
+	var targets []PushTarget
+	for _, d := range m.web.devices {
+		if d.sub.Endpoint == "" || d.push == PushExpired {
+			continue
+		}
+		targets = append(targets, PushTarget{Device: d.name, Notify: d.notify, Subscription: d.sub})
+	}
+	return targets
+}
+
+// PushResult records how a push to the device went; PushExpired also drops
+// the subscription (WebHost). It reports whether a client would see a
+// change. A result for a device with no subscription changes nothing: a push
+// still in flight when another one's 410 dropped it would otherwise turn
+// "expired" into "failing". A write that fails is logged and the state stays
+// in memory. Loop goroutine only.
+func (m *Model) PushResult(device string, state PushState) bool {
+	d := m.web.find(device)
+	if d == nil || d.sub.Endpoint == "" {
+		return false
+	}
+	prevSub, prevPush := d.sub, d.push
+	d.push = state
+	if state == PushExpired {
+		d.sub = PushSubscription{}
+	}
+	if d.sub == prevSub && d.push == prevPush {
+		return false
+	}
+	if err := m.saveWeb(); err != nil {
+		log.For("core").Warn("web.push_result_unsaved", "device", device, "err", err.Error())
+	}
+	return true
+}
+
+// VAPIDKey is a copy of the push key pair; ErrWebOff before the first enable
+// made one (WebHost). It outlives a disable. Loop goroutine only.
+func (m *Model) VAPIDKey() (VAPIDKey, error) {
+	k := m.web.vapid
+	if len(k.Private) == 0 || len(k.Public) == 0 {
+		return VAPIDKey{}, ErrWebOff
+	}
+	return VAPIDKey{Private: slices.Clone(k.Private), Public: slices.Clone(k.Public)}, nil
+}
+
+// WebServing records where the listener listens, or why it does not (WebHost):
+// serving means no error and an address. An error also raises a Notice, once
+// per distinct error text (the one already recorded is not told again), which
+// the server keeps for the next TUI while only the web layer is connected. It
+// reports whether the view changed. It leaves rev alone: only ConfigureWeb
+// bumps it, and the layer rebinds when it moves, so a failed bind is not
+// retried by its own report. Loop goroutine only.
+func (m *Model) WebServing(addr string, err error) bool {
+	w := &m.web
+	serving := err == nil && addr != ""
+	if !serving {
+		addr = ""
+	}
+	errText := ""
+	if err != nil {
+		errText = err.Error()
+	}
+	told := errText != "" && errText != w.servingErr
+	changed := serving != w.serving || addr != w.addr || errText != w.servingErr
+	w.serving, w.addr, w.servingErr = serving, addr, errText
+	if told {
+		log.For("core").Warn("web.not_serving", "err", errText)
+		m.notifyErr(fmt.Errorf("web: %w", err))
+	}
+	return changed
+}
