@@ -33,7 +33,7 @@ The API is `/api/v1` and an installed app may be older than the daemon for a whi
 - Modules are `.mjs` (Node 22's `node --check` catches syntax errors in those and misses them in `.js`): `for f in internal/web/static/js/*.mjs; do node --check "$f"; done`. CI has no Node, so no Go test depends on it.
 - No inline script and no `style` attribute: the Content-Security-Policy is `default-src 'self'`, and a blocked handler fails silently on the phone.
 - The Preact + htm module is one pinned file, `internal/web/static/lib/preact-htm.mjs`: replace it and its pinned SHA-256 together, with the version and source URL in its header comment and the licence in `NOTICE.md`. It sits in `lib/`, not `vendor/`, because Go's module zips drop files below a nested `vendor/` and a `go install` build would embed nothing.
-- `sw.js` and `index.html` carry placeholders (`__LOOM_BUILD__`, `__LOOM_SHELL__`) that `routeStatic` fills when serving; the precache list therefore follows the embedded files, and the worker caches the shell only, never `/api/`.
+- `sw.js` carries the placeholders `__LOOM_BUILD__` and `__LOOM_SHELL__`, and `index.html` the build ID in its `loom-build` meta tag (`__LOOM_BUILD__`); `routeStatic` fills them when serving; the precache list therefore follows the embedded files, and the worker caches the shell only, never `/api/`.
 
 ## Trying a change
 
