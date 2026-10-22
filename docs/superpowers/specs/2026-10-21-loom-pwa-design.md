@@ -278,6 +278,7 @@ supplies, has a bound.
 | `POST /sessions/{id}/merge` | `{source}`: `Merge` with the session in the URL as the target, as the TUI's picker does. |
 | `PUT /device` | Notification settings, and pausing them for an hour. |
 | `POST /device/push` | Stores the push subscription, in the shape the browser's `PushSubscription.toJSON()` gives. |
+| `DELETE /device/push` | Drops this phone's push subscription, when the app finds it has none. |
 | `GET /push-key` | The VAPID public key the app subscribes with. |
 | `DELETE /device` | Unpairs this phone. |
 
@@ -326,7 +327,8 @@ request, and waits for the `Reply` the drain routes back.
 - `sessions`: one workspace's whole list when it changes, at most four a
   second;
 - `workspaces`, `device`, `notice`;
-- `ping` every 20 s, since Cloudflare closes a stream idle for 100 s;
+- `ping` every 20 s, since Cloudflare closes an idle stream (after 125 s in
+  the spike);
 - `bye` when the daemon stops.
 
 Every connect starts with a snapshot of a few KB, so nothing is replayed.
@@ -366,6 +368,9 @@ Every connect starts with a snapshot of a few KB, so nothing is replayed.
   clears it. The service worker caches the shell only, never the API. A
   snapshot whose build differs from the shell's makes the worker update
   and the app reload, so a loom upgrade upgrades the phone.
+- The app reconnects the stream whenever it becomes visible again, and
+  whenever no event has arrived for 40 s (two pings): in the spike, a page
+  on iOS sat on a stream that delivered nothing.
 - iOS details: `display: standalone`, `apple-touch-icon`, `viewport-fit=cover`
   and the safe-area insets.
 - loom's colors, light or dark with the phone; amber marks only what needs
@@ -374,7 +379,17 @@ Every connect starts with a snapshot of a few KB, so nothing is replayed.
 ## Push
 
 - Turned on from a tap in the app, as iOS requires: the app subscribes with
-  the VAPID public key and posts the subscription.
+  the VAPID public key and posts the subscription. The button shows that it
+  is waiting and takes no more taps until `subscribe()` settles, which took
+  iOS over two minutes after an unsubscribe. A `subscribe()` refused because
+  a subscription made with another key exists (after `web.json` is reset)
+  is tried once more after unsubscribing.
+- Apple answers 201 to a subscription the app has dropped, and drops the
+  push, so a 404 or 410 can't be relied on to find one. On each launch the
+  app posts its current subscription again, which changes nothing when it
+  is the same, or, having none while loom holds one, sends
+  `DELETE /device/push` and shows "Notifications stopped; turn them on
+  again".
 - Triggers, worked out in the web layer from its projection's transitions:
   - **waiting:** a session enters Prompting, or stays in it with a new
     reason or tool summary;
@@ -388,7 +403,10 @@ Every connect starts with a snapshot of a few KB, so nothing is replayed.
   sees only ciphertext. The VAPID JWT is ES256, with the configured origin
   as `sub`. Waiting is sent with `Urgency: high`, finished with `normal`,
   both with a one-hour TTL and a `Topic` per session, so an offline phone
-  gets only each session's latest.
+  gets only each session's latest. The `Topic` is the session ID's 8 bytes,
+  big-endian, as unpadded base64url (11 characters): Apple refuses a
+  `Topic` whose length is 1 mod 4 with 400 `BadWebPushTopic`, which RFC
+  8030 allows, so `s<id>` fails for some IDs.
 - The service worker shows each notification tagged by session, so a
   session shows at most one, its latest, and sets the Home Screen badge to
   the count of sessions that need you. Tapping one opens that session.
@@ -432,6 +450,8 @@ The web part fails closed, and the daemon keeps running.
     republished unchanged state push nothing.
   - Push crypto: RFC 8291's own example, and the VAPID JWT verified with
     its public key.
+  - The push request: a session's `Topic` never has a length of 1 mod 4,
+    for IDs of every size, and the request refuses a `Topic` that does.
   - The sender: 404 and 410 drop the subscription; a 429 honours
     `Retry-After`, on a fake clock.
   - rpc: a notice raised while only a web client is connected waits for
@@ -473,6 +493,45 @@ throwaway files outside the repo:
 If 1 fails, push is redesigned before package D. If 2 fails, Open in Claude
 links to `https://claude.ai/code` and names the session's title instead. If
 3 fails, the stream is redesigned before package B.
+
+### Outcome, 2026-10-22
+
+Run on fresco and an iPhone through the `fresco-loom` tunnel
+(`https://loom.aidanbailey.me` to `http://127.0.0.1:5666`), with a
+throwaway server and the `web-push` library 3.6.7. All three steps passed,
+so none of the fallbacks above applies.
+- The tunnel passes the public `Host` and `X-Forwarded-Proto: https`, so
+  the `Host` check holds behind it.
+- 1, push: Apple answered 201, and the phone showed the push with the app
+  open, with it closed, and with the phone locked. A JWT signed by a key
+  the subscription wasn't made with got 400
+  `{"reason":"VapidPkHashMismatch"}`; one with a corrupted signature, 403
+  `{"reason":"BadJwtToken"}`. A subscription the app had dropped got 201,
+  again 5 and 15 minutes later, and the phone showed nothing. A `Topic`
+  whose length is 1 mod 4 got 400 `{"reason":"BadWebPushTopic"}` (5, 9 and
+  13 characters; 4, 6, 8, 10 and 32 passed). Subscribing again after an
+  unsubscribe took iOS about 2m18s, and gave a new endpoint. fresco reaches
+  Apple's push service in about 235 ms (TCP) and 470 ms (TLS).
+- 2, Open in Claude: from the installed app,
+  `https://claude.ai/code/<bridge id>` opened the Claude app on that
+  session, as a plain link and with `target=_blank`, and a permission
+  prompt was answered there.
+- 3, the stream: with the 20 s ping, a stream from fresco lasted 700 s and
+  one on the phone over 10 minutes, every event in order, and the events
+  after 5m30s and 10m30s idle arrived within about 100 ms. Without pings,
+  Cloudflare closed the stream after 125 s. A first run on the phone lost
+  both late events, although the server wrote them into a stream that
+  stayed open; that run recorded nothing on the phone's side, so where
+  they went is unknown. Each reopening of the app left its old stream open
+  on the server for 60 to 240 s.
+
+What it changed, in the sections above: the `Topic`'s format and its test
+(Push, Testing); the app's check of its own subscription, and
+`DELETE /device/push` (Push, API); the waiting subscribe button and the
+retry after another key (Push); the app's reconnects (The app); and 125 s
+for Cloudflare's idle cut (The stream). Delete the spike's Home Screen app
+before installing the real one: on the same origin, it holds a
+subscription made with the spike's key.
 
 ## Work packages
 
