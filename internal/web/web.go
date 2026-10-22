@@ -9,6 +9,7 @@ package web
 import (
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/aidan-bailey/loom/core"
 )
@@ -23,6 +24,10 @@ type sink interface{ apply(evs []core.Event) }
 // each follow the daemon's events as a sink and register their routes in mux.
 type Layer struct {
 	host core.WebHost
+
+	// rule is the origin rule of the listener now running, which guard
+	// enforces; nil while none runs, and then guard refuses every request.
+	rule atomic.Pointer[originRule]
 
 	// sinkMu guards sinks.
 	sinkMu sync.Mutex
