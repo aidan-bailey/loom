@@ -2,6 +2,7 @@ package webpush
 
 import (
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
@@ -17,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -463,5 +465,132 @@ func TestVAPIDAuth_RefusesWhatItCannotSign(t *testing.T) {
 			assert.Error(t, err)
 			assert.Empty(t, header)
 		})
+	}
+}
+
+type ctxKey struct{}
+
+func TestNewRequest(t *testing.T) {
+	sub, receiver := newSub(t)
+	sub.Endpoint = "https://web.push.apple.com/wpush/v2/abc?x=1"
+	key := newVAPIDKey(t)
+	now := time.Unix(1_700_000_000, 0)
+	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
+
+	req, err := NewRequest(ctx, sub, key, "https://loom.example.com", Message{
+		Payload: []byte(`{"kind":"waiting"}`),
+		TTL:     time.Hour,
+		Urgency: "high",
+		Topic:   "AAAAAAAAACo",
+	}, now)
+	require.NoError(t, err)
+
+	assert.Equal(t, http.MethodPost, req.Method)
+	assert.Equal(t, sub.Endpoint, req.URL.String())
+	assert.Equal(t, "marker", req.Context().Value(ctxKey{}), "the caller's context rides the request")
+	assert.Equal(t, "aes128gcm", req.Header.Get("Content-Encoding"))
+	assert.Equal(t, "application/octet-stream", req.Header.Get("Content-Type"))
+	assert.Equal(t, "3600", req.Header.Get("TTL"))
+	assert.Equal(t, "high", req.Header.Get("Urgency"))
+	assert.Equal(t, "AAAAAAAAACo", req.Header.Get("Topic"))
+
+	body, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	assert.EqualValues(t, len(body), req.ContentLength)
+	got, err := open(receiver, sub.Auth, body)
+	require.NoError(t, err)
+	assert.Equal(t, `{"kind":"waiting"}`, string(got), "the body is the payload, encrypted for the subscription")
+
+	jwt, k := splitAuth(t, req.Header.Get("Authorization"))
+	assert.Equal(t, b64s(key.Public), k)
+	claims, ok := verifyJWT(t, jwt, key.Public)
+	assert.True(t, ok)
+	assert.Equal(t, "https://web.push.apple.com", claims.Aud, "aud is the endpoint's origin")
+	assert.Equal(t, now.Add(12*time.Hour).Unix(), claims.Exp)
+}
+
+func TestNewRequest_OmitsWhatIsNotSet(t *testing.T) {
+	sub, _ := newSub(t)
+	req, err := NewRequest(context.Background(), sub, newVAPIDKey(t), "https://loom.example.com",
+		Message{Payload: []byte("x")}, time.Unix(1_700_000_000, 0))
+	require.NoError(t, err)
+
+	assert.Equal(t, "0", req.Header.Get("TTL"), "a TTL of zero is sent: the service delivers now or never")
+	_, hasUrgency := req.Header["Urgency"]
+	assert.False(t, hasUrgency)
+	_, hasTopic := req.Header["Topic"]
+	assert.False(t, hasTopic)
+}
+
+func TestNewRequest_AcceptsEveryUrgencyOfRFC8030(t *testing.T) {
+	sub, _ := newSub(t)
+	for _, urgency := range []string{"very-low", "low", "normal", "high"} {
+		req, err := NewRequest(context.Background(), sub, newVAPIDKey(t), "https://loom.example.com",
+			Message{Payload: []byte("x"), Urgency: urgency}, time.Unix(1_700_000_000, 0))
+		require.NoError(t, err, urgency)
+		assert.Equal(t, urgency, req.Header.Get("Urgency"))
+	}
+}
+
+func TestNewRequest_RefusesWhatItCannotSend(t *testing.T) {
+	sub, _ := newSub(t)
+	key := newVAPIDKey(t)
+	now := time.Unix(1_700_000_000, 0)
+	ok := Message{Payload: []byte("x"), TTL: time.Hour, Urgency: "normal", Topic: "AAAAAAAAACo"}
+
+	_, err := NewRequest(context.Background(), sub, key, "https://loom.example.com", ok, now)
+	require.NoError(t, err, "control: the unmodified message sends")
+	_, err = NewRequest(context.Background(), sub, key, "https://loom.example.com",
+		Message{Payload: []byte("x"), Topic: strings.Repeat("a", 32)}, now)
+	require.NoError(t, err, "control: a 32-character topic is the longest allowed")
+
+	badSub := sub
+	badSub.Auth = nil
+	badEndpoint := sub
+	badEndpoint.Endpoint = "ftp://web.push.apple.com/x"
+	for name, tc := range map[string]struct {
+		sub     Subscription
+		key     core.VAPIDKey
+		subject string
+		msg     Message
+	}{
+		"unknown urgency":  {sub, key, "https://loom.example.com", Message{Payload: ok.Payload, Urgency: "urgent"}},
+		"topic too long":   {sub, key, "https://loom.example.com", Message{Payload: ok.Payload, Topic: strings.Repeat("a", 34)}},
+		"topic of 5 chars": {sub, key, "https://loom.example.com", Message{Payload: ok.Payload, Topic: "abcde"}},
+		"topic with slash": {sub, key, "https://loom.example.com", Message{Payload: ok.Payload, Topic: "a/b"}},
+		"topic with space": {sub, key, "https://loom.example.com", Message{Payload: ok.Payload, Topic: "a b"}},
+		"negative TTL":     {sub, key, "https://loom.example.com", Message{Payload: ok.Payload, TTL: -time.Second}},
+		"payload too big":  {sub, key, "https://loom.example.com", Message{Payload: bytes.Repeat([]byte("x"), maxPayload+1)}},
+		"bad subscription": {badSub, key, "https://loom.example.com", ok},
+		"bad endpoint":     {badEndpoint, key, "https://loom.example.com", ok},
+		"bad subject":      {sub, key, "loom.example.com", ok},
+		"bad VAPID key":    {sub, core.VAPIDKey{}, "https://loom.example.com", ok},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req, err := NewRequest(context.Background(), tc.sub, tc.key, tc.subject, tc.msg, now)
+			assert.Error(t, err)
+			assert.Nil(t, req)
+		})
+	}
+}
+
+// Apple answers a Topic whose length is 1 mod 4 with 400 BadWebPushTopic,
+// though RFC 8030 allows it: unpadded base64url never has such a length (the
+// spike, 2026-10-22). Every other length up to maxTopic is sent as it is.
+func TestNewRequest_TopicLengths(t *testing.T) {
+	sub, _ := newSub(t)
+	key := newVAPIDKey(t)
+	now := time.Unix(1_700_000_000, 0)
+	for n := 1; n <= maxTopic; n++ {
+		topic := strings.Repeat("a", n)
+		req, err := NewRequest(context.Background(), sub, key, "https://loom.example.com",
+			Message{Payload: []byte("x"), Topic: topic}, now)
+		if n%4 == 1 {
+			assert.Error(t, err, "a topic of %d characters", n)
+			assert.Nil(t, req)
+			continue
+		}
+		require.NoError(t, err, "a topic of %d characters", n)
+		assert.Equal(t, topic, req.Header.Get("Topic"))
 	}
 }
