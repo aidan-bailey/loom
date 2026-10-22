@@ -14,11 +14,14 @@ export const MAX_REPLY = 64 * 1024;
 export function actionsFor(s) {
   const busy = s.status === "Loading" || s.status === "Deleting";
   const paused = s.group === "paused";
+  // Pause keeps the worktree, so push and merge work on a Paused session; a
+  // Recoverable or Not started one may have no worktree to work on.
+  const tree = !paused || s.status === "Paused";
   return {
     pause: !busy && !paused,
     resume: s.status === "Paused",
-    push: !busy && !paused,
-    merge: !busy && !paused,
+    push: !busy && tree,
+    merge: !busy && tree,
     send: !busy && !paused,
     kill: !busy,
   };
@@ -177,9 +180,10 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
             danger=${true}
             body=${html`<div>
               <p>${s.tmux ? html`It ends tmux session <code>${s.tmux}</code>.` : "It ends the session's tmux session."}</p>
+              <p>${s.worktree ? html`It force-removes worktree <code>${s.worktree}</code>` : "It force-removes the session's worktree"}, discarding its uncommitted changes. Push first to keep them.</p>
               ${s.status === "Paused"
-                ? html`<p>If Pause stashed its uncommitted changes, Kill drops that stash. ${s.worktree ? html`It force-removes worktree <code>${s.worktree}</code>` : "It force-removes the session's worktree"} if it is still there (an agent that exited on its own leaves it), with any uncommitted changes in it. Resume and push first to keep them.</p>`
-                : html`<p>${s.worktree ? html`It force-removes worktree <code>${s.worktree}</code>` : "It force-removes the session's worktree"}, discarding its uncommitted changes. Push first to keep them.</p>`}
+                ? html`<p>If an older loom paused it, its worktree is gone and its changes may be in a stash, which Kill drops.</p>`
+                : null}
               <p>It deletes branch <code>${s.branch}</code> unless the session checked out an existing branch.</p>
             </div>`}
             onConfirm=${kill}

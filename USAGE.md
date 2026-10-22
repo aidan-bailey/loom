@@ -647,9 +647,10 @@ and answers only phones you have paired.
 - **Actions.** Kill, push and merge ask first, and the sheet names what
   happens (kill ends the tmux session, force-removes the worktree and
   discards its uncommitted changes, so push first to keep them, and deletes
-  the branch unless the session checked out an existing one; for a paused
-  session, the stash it holds is dropped too; push commits first;
-  merge asks which session's branch to merge in).
+  the branch unless the session checked out an existing one; for a session
+  an older loom paused, which has no worktree, the stash it holds is dropped
+  too; push commits first; merge asks which session's branch to merge in).
+  Push and merge work on a paused session as well.
   Pause and resume do not ask. An action the daemon refuses shows the
   daemon's reason. A stash that kill or resume reports is always shown: it
   can be the only record of your work.
