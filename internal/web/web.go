@@ -65,6 +65,8 @@ type Layer struct {
 	sinkMu sync.Mutex
 
 	sinks []sink
+
+	hub *hub
 }
 
 // addSink adds s to the sinks the drain feeds. The layer's parts add theirs
@@ -80,15 +82,19 @@ func (l *Layer) addSink(s sink) {
 func (l *Layer) mux() *http.ServeMux {
 	m := http.NewServeMux()
 	l.routePair(m)
+	l.routeStream(m)
 	return m
 }
 
 // startParts builds the layer's parts and adds their sinks, before the drain starts.
 func (l *Layer) startParts() {
+	l.hub = newHub(l)
+	l.addSink(l.hub)
 }
 
 // stopParts stops the layer's parts, first in Close.
 func (l *Layer) stopParts() {
+	l.hub.close()
 }
 
 // Options configure Start.
