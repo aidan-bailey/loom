@@ -298,13 +298,11 @@ func (m *Model) applyLiveness(inst *session.Instance, tmuxLive tmux.Liveness, so
 				// recent Restart (e.g. a permanently broken Program
 				// string) — restarting further would just loop
 				// forever at tick cadence. Give up like a regular
-				// instance would. RestartWithOptions/Resume are both
-				// gated off for workspace terminals (see
-				// selectedPausedNotWorkspace/selectedResumableNotWorkspace
-				// in intents.go), so it stays Paused until its
+				// instance would. It stays Paused until the user
+				// resumes it ('r', which resets its breaker) or its
 				// workspace's first open after loom next starts, which
-				// relaunches it with its breaker reset (ensureTerminal):
-				// fix a broken Program on disk before that.
+				// relaunches it with its breaker reset too
+				// (ensureTerminal): fix a broken Program on disk first.
 				log.For("core").Error("workspace_terminal.restart_circuit_tripped", "title", inst.Title, "consecutive_failures", failures)
 				m.pauseGone(ws, inst)
 				return false

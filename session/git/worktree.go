@@ -41,7 +41,7 @@ type GitWorktree struct {
 	// Branch name for the worktree
 	branchName string
 	// refMu guards baseCommitSHA and stashRef. Writers run on tea.Cmd
-	// goroutines (Setup during Start/Resume, SetStashRef during Pause)
+	// goroutines (Setup during Start/Resume, SetStashRef during Resume)
 	// while Instance.Snapshot and diff refreshes read concurrently from
 	// the metadata tick — without this, that's a data race. Never held
 	// across subprocess I/O.
@@ -57,9 +57,10 @@ type GitWorktree struct {
 	// left behind by an earlier session with the same title, whose
 	// commits were never this session's. Never persisted.
 	branchCreated bool
-	// stashRef is the commit SHA of the stash Pause created for this
-	// worktree's uncommitted changes, or "" if none is pending. Set by
-	// Instance.Pause (via StashChanges), cleared by Instance.Resume
+	// stashRef is the commit SHA of the stash an older build's Pause
+	// created for this worktree's uncommitted changes, or "" if none is
+	// pending (Pause now keeps the worktree and stashes nothing). Set by
+	// that Pause (via StashChanges), cleared by Instance.Resume
 	// after a clean ApplyStash, or seeded from persisted
 	// GitWorktreeData.StashRef when rehydrating a Paused instance from
 	// disk (FromInstanceData, fromInstanceDataPaused).

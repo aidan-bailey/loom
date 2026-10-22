@@ -42,7 +42,7 @@ func newSessionCmd() *cobra.Command {
 		newSessionSendCmd(&workspace),
 		newSessionOpCmd(&workspace, "kill", "Kill a session: its agent, tmux session and worktree", "Killed", true,
 			func(d *client, id core.InstanceID, req core.ReqID) { d.Kill(id, req) }),
-		newSessionOpCmd(&workspace, "pause", "Pause a session: its agent stops and its worktree is removed, its branch kept", "Paused", false,
+		newSessionOpCmd(&workspace, "pause", "Pause a session: its agent stops; its worktree and branch are kept", "Paused", false,
 			func(d *client, id core.InstanceID, req core.ReqID) { d.Pause(id, req) }),
 		newSessionOpCmd(&workspace, "resume", "Resume a paused session", "Resumed", false,
 			func(d *client, id core.InstanceID, req core.ReqID) { d.Resume(id, req) }),

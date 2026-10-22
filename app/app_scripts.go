@@ -596,7 +596,7 @@ func (m *home) handleScriptIntent(p pendingIntent, slot *workspaceSlot) tea.Cmd 
 		}
 		_, cmd = runStashSelectedOpts(m, i.Confirm, i.Help)
 	case script.ResumeIntent:
-		if !selectedResumableNotWorkspace(m) {
+		if !selectedResumable(m) {
 			break
 		}
 		_, cmd = runResumeOrRecover(m)

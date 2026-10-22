@@ -48,12 +48,12 @@ func selectedNotBusyNotWorkspace(m *home) bool {
 	return s != session.Loading && s != session.Deleting
 }
 
-// selectedResumableNotWorkspace gates the 'r' key: a Paused instance
-// (resume → recreate worktree) or a Recoverable orphan (recover → adopt
-// the on-disk worktree), never a workspace terminal.
-func selectedResumableNotWorkspace(m *home) bool {
+// selectedResumable gates the 'r' key: a Paused instance (resume →
+// recreate worktree, or relaunch a workspace terminal in its repository)
+// or a Recoverable orphan (recover → adopt the on-disk worktree).
+func selectedResumable(m *home) bool {
 	selected := m.list.GetSelectedInstance()
-	if selected == nil || selected.IsWorkspaceTerminal {
+	if selected == nil {
 		return false
 	}
 	s := selected.Status
@@ -62,7 +62,7 @@ func selectedResumableNotWorkspace(m *home) bool {
 
 // selectedPausedNotWorkspace gates the 'R' key (restart with
 // different launch options): only a Paused instance qualifies —
-// unlike selectedResumableNotWorkspace, Recoverable orphans are
+// unlike selectedResumable, Recoverable orphans are
 // excluded (they go live only via the explicit recover action, a
 // different code path than Resume).
 func selectedPausedNotWorkspace(m *home) bool {

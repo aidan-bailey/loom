@@ -79,7 +79,7 @@ func manifestOf(t *testing.T, zipPath string) claudetmp.Manifest {
 
 func TestPause_ArchivesClaudeTempAndResumeRestoresIt(t *testing.T) {
 	root := claudeRoot(t)
-	inst := newTestPausableInstance(t)
+	inst, _ := newRunningOnFakeTmux(t)
 	withConfigDir(inst)
 	wt := inst.getGitWorktree().GetWorktreePath()
 	dir := claudeTempDir(t, root, wt)
@@ -148,20 +148,17 @@ func seeScratchpadBeforeLaunch(srv *fakeTmuxServer, scratch string) func() []boo
 // temp dir as it starts, so a restore that ran after the launch would find
 // the dir there already and leave the scratchpad in the zip.
 func TestResume_RestoresClaudeTempBeforeTheAgentLaunches(t *testing.T) {
-	t.Run("rebuild", func(t *testing.T) {
+	t.Run("rebuild (an older build's pause)", func(t *testing.T) {
 		root := claudeRoot(t)
-		srv := &fakeTmuxServer{}
-		inst := newTestPausableInstanceWithExec(t, srv.runner())
-		inst.program = "claude"
-		orig := newRecoverySession
-		newRecoverySession = func(name, program string, env ...string) *tmux.Session {
-			return tmux.NewSessionWithDeps(name, program, srv, srv.runner(), env...)
-		}
-		t.Cleanup(func() { newRecoverySession = orig })
+		inst, srv := newRunningOnFakeTmux(t)
 		withConfigDir(inst)
-		dir := claudeTempDir(t, root, inst.getGitWorktree().GetWorktreePath())
+		gw := inst.getGitWorktree()
+		dir := claudeTempDir(t, root, gw.GetWorktreePath())
 		require.NoError(t, inst.Pause(nil))
 		require.NoDirExists(t, dir)
+		// A build from before Pause kept the worktree also removed it, so
+		// Resume rebuilds.
+		gitIn(t, gw.GetRepoPath(), "worktree", "remove", "--force", gw.GetWorktreePath())
 		seen := seeScratchpadBeforeLaunch(srv, filepath.Join(dir, "sess-1", "scratchpad", "notes.md"))
 
 		require.NoError(t, inst.Resume(nil))
@@ -215,9 +212,9 @@ func TestPause_ArchivesBeforeTheInstanceIsPaused(t *testing.T) {
 
 	require.Len(t, statuses, 1, "Pause archives once")
 	assert.NotEqual(t, Paused, statuses[0], "a Paused status invites a resume that races the archive")
-	assert.Zero(t, savesAtArchive[0], "the Paused checkpoint is saved only once the archive is done")
+	assert.Equal(t, 1, savesAtArchive[0], "only the checkpoint before the kill precedes the archive; the Paused save waits for it")
 	assert.Equal(t, Paused, inst.GetStatus())
-	assert.Equal(t, 1, saves)
+	assert.Equal(t, 2, saves, "the checkpoint, then Paused")
 	assert.NoDirExists(t, dir)
 }
 
@@ -320,7 +317,7 @@ func TestPause_DemotesAnEarlierParkedZip(t *testing.T) {
 
 func TestResume_RestoreFailureIsANoticeAndTheLaunchProceeds(t *testing.T) {
 	claudeRoot(t)
-	inst := newTestPausableInstance(t)
+	inst, _ := newRunningOnFakeTmux(t)
 	withConfigDir(inst)
 	require.NoError(t, inst.Pause(nil))
 	wt := inst.getGitWorktree().GetWorktreePath()
@@ -879,32 +876,22 @@ func TestResume_RefusesASecondResumeOfTheSameWorktree(t *testing.T) {
 	assert.Len(t, srv.launchArgs(), 1, "one launch")
 }
 
-// TestPause_RefusesALockedTreeBeforeItStashesOrKills: a lock the user put on
-// the tree would refuse the removal at the end of Pause, by which time the
-// agent's session was closed and its changes stashed. Checked first, a
-// refused pause leaves the session running and the work where it was.
-func TestPause_RefusesALockedTreeBeforeItStashesOrKills(t *testing.T) {
-	srv := &fakeTmuxServer{}
-	inst := newTestPausableInstanceWithExec(t, srv.runner())
+// TestPause_LeavesALockedTreeAsItIs: a lock guards a tree against removal,
+// and Pause no longer removes one, so it pauses a locked tree like any
+// other and leaves the lock for the user to lift.
+func TestPause_LeavesALockedTreeAsItIs(t *testing.T) {
+	inst, _ := newRunningOnFakeTmux(t)
 	gw := inst.getGitWorktree()
 	wt, repo := gw.GetWorktreePath(), gw.GetRepoPath()
 	wip := filepath.Join(wt, "wip.txt")
 	require.NoError(t, os.WriteFile(wip, []byte("uncommitted"), 0o644))
 	gitIn(t, repo, "worktree", "lock", "--reason", "mine", wt)
 
-	err := inst.Pause(nil)
+	require.NoError(t, inst.Pause(nil))
 
-	require.ErrorIs(t, err, git.ErrWorktreeLocked)
-	assert.Contains(t, err.Error(), "worktree unlock", "the error names the remedy")
-	assert.False(t, srv.ran("kill-session"), "the agent's session was left alone")
-	assert.Empty(t, gw.GetStashRef(), "nothing was stashed")
-	assert.Empty(t, gitIn(t, repo, "stash", "list"))
-	assert.FileExists(t, wip, "the changes are still in the tree")
-	assert.Equal(t, Running, inst.GetStatus())
-
-	gitIn(t, repo, "worktree", "unlock", wt)
-	require.NoError(t, inst.Pause(nil), "the refusal left no pause in flight")
 	assert.Equal(t, Paused, inst.GetStatus())
+	assert.FileExists(t, wip)
+	assert.Contains(t, gitIn(t, repo, "worktree", "list", "--porcelain"), "locked mine")
 }
 
 // TestKill_RefusesALockedTreeBeforeItClosesAnything: Cleanup refuses a tree

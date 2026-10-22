@@ -87,7 +87,7 @@ The menu at the bottom of the screen shows available commands:
 - `i`/`ctrl-a` - Attach to the selected agent to reprompt
 - `ctrl-q` - Detach from session
 - `p` - Commit and push branch to github
-- `s` - Stash. Stashes changes and pauses the session
+- `s` - Pause. Stops the session's agent, keeping its worktree
 - `r` - Resume a paused session
 - `?` - Show help menu
 

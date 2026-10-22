@@ -35,8 +35,8 @@ type ResetReport struct {
 //  2. kills the loom tmux sessions started in its repository or worktrees
 //     dir, and none of another workspace's (registry tells them apart; nil
 //     when it can't be read), with exec;
-//  3. removes its worktrees and their branches: unpushed commits on them
-//     are lost.
+//  3. removes its worktrees and their branches: unpushed commits on them,
+//     and uncommitted work in them (paused sessions' included), are lost.
 //
 // A sweep that fails stops it before step 3: some of the workspace's
 // agents may still be running in those worktrees. The report says how far

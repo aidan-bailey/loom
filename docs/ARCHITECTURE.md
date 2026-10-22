@@ -69,12 +69,12 @@ Focus or overview persists per workspace in `state.json`'s `ui` block, so switch
 
 ## Session lifecycle
 
-Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent active), `Paused` (worktree removed, branch preserved), and `Recoverable` (an orphaned worktree found on disk, surfaced inline for recover or discard; never persisted).
+Statuses: `Ready` (initial), `Loading` (setup in progress), `Running` (agent active), `Paused` (agent stopped; its worktree normally kept, though one an older loom paused may be gone), and `Recoverable` (an orphaned worktree found on disk, surfaced inline for recover or discard; never persisted).
 
 1. **New**: `n`/`N` opens an overlay that collects a title and an optional prompt into the TUI's draft row; no instance exists yet. Confirming Launch Options sends `Create`, which builds the instance (Ready) and starts it at once; a script's `ctx:new_instance` leaves it unstarted.
 2. **Start**: creates the git worktree and tmux session and records the base commit: Loading, then Running.
 3. **Running**: the agent works in its worktree; the TUI shows its live output and diff stats.
-4. **Pause**: stashes uncommitted changes (`StashRef`), kills the tmux session, removes the worktree; the branch stays. Paused.
+4. **Pause**: saves a checkpoint, kills the tmux session (and the terminal pane's), archives Claude's temp dir and copies its chats; the worktree and branch stay as they are. Paused.
 5. **Resume**: rebuilds the worktree from the branch only when it is absent or gutted (no `.git`; leftovers moved aside), restores the stash, and starts a new tmux session. An intact worktree is never rebuilt: the agent is relaunched in place with its recovery flag, and a live session is reattached (`session/resume_decision.go:decideResume`). Running.
 6. **Kill**: cleans up the worktree, the tmux session and the branch, and removes the instance from storage.
 

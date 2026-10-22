@@ -178,6 +178,9 @@ func (m *Menu) addInstanceOptions() {
 		} else {
 			actionGroup = append(actionGroup, keys.KeyStash)
 		}
+	} else if m.instance.Status == session.Paused {
+		// Its relaunch failed or its breaker tripped: r brings it back.
+		actionGroup = append(actionGroup, keys.KeyResume)
 	}
 
 	// System group

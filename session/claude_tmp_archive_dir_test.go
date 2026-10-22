@@ -64,7 +64,7 @@ func TestClaudeTmpArchiveDir_AnUnusableSettingKeepsTheDefault(t *testing.T) {
 func TestPause_ArchivesIntoTheConfiguredDirAndResumeRestores(t *testing.T) {
 	root := claudeRoot(t)
 	setGlobalArchiveDir(t, t.TempDir())
-	inst := newTestPausableInstance(t)
+	inst, _ := newRunningOnFakeTmux(t)
 	withConfigDir(inst)
 	dir := claudeTempDir(t, root, inst.getGitWorktree().GetWorktreePath())
 
@@ -84,7 +84,7 @@ func TestPause_ArchivesIntoTheConfiguredDirAndResumeRestores(t *testing.T) {
 func TestResume_FindsAZipParkedBeforeTheSettingChanged(t *testing.T) {
 	root := claudeRoot(t)
 	t.Setenv(config.EnvGlobalDir, t.TempDir()) // unset while pausing
-	inst := newTestPausableInstance(t)
+	inst, _ := newRunningOnFakeTmux(t)
 	withConfigDir(inst)
 	dir := claudeTempDir(t, root, inst.getGitWorktree().GetWorktreePath())
 	require.NoError(t, inst.Pause(nil))

@@ -134,6 +134,8 @@ var probeWorktreeDirty = func(worktreePath string) bool {
 // claimedPaths is the set of WorktreePaths already accounted for in
 // state.json — typically built by the caller from
 // instance.GetGitWorktree().GetWorktreePath() across the loaded list.
+// Paths are compared after resolving symlinks (worktreeKey), so a record's
+// spelling of its path need not match the walk's.
 //
 // Returns an empty slice (not nil) when configDir has no worktree dir
 // or no orphans exist. Errors from individual worktree probes are
@@ -148,6 +150,18 @@ func DiscoverOrphans(configDir string, claimedPaths map[string]bool, cmdExec int
 			return []OrphanCandidate{}, nil
 		}
 		return nil, fmt.Errorf("read worktrees dir: %w", err)
+	}
+
+	// Compare by canonical path: a record may spell its worktree through a
+	// symlink (a repo reached under two paths), and a claimed tree read as
+	// unclaimed is auto-removed when clean (DisposeClean), ignored files
+	// and all, or listed a second time when dirty. Paused sessions keep
+	// their trees under a dead session, so either would be common.
+	claimed := make(map[string]bool, len(claimedPaths))
+	for p, ok := range claimedPaths {
+		if ok {
+			claimed[worktreeKey(p)] = true
+		}
 	}
 
 	// The layout mirrors session/git/worktree.go's resolveWorktreePaths:
@@ -174,7 +188,7 @@ func DiscoverOrphans(configDir string, claimedPaths map[string]bool, cmdExec int
 				continue
 			}
 			path := filepath.Join(dir, e.Name())
-			if claimedPaths[path] {
+			if claimed[worktreeKey(path)] {
 				continue
 			}
 			_, hasSuffix := stripTimestampSuffix(e.Name())

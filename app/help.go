@@ -97,7 +97,7 @@ var (
 
 	generalHandoffEntries = []helpEntry{
 		{bindings: []keys.KeyName{keys.KeySubmit}, desc: "Commit and push branch to github"},
-		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Stash: stash changes and pause session"},
+		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Pause: stop the session's agent, keeping its worktree"},
 		{bindings: []keys.KeyName{keys.KeyResume}, desc: "Resume a paused session"},
 		{bindings: []keys.KeyName{keys.KeyRestartWithOptions}, desc: "Resume a paused session with different launch options"},
 		{bindings: []keys.KeyName{keys.KeyRecover}, desc: "Recover an orphaned session (⟲ rows found on disk)"},
@@ -121,12 +121,12 @@ var (
 	}
 
 	instanceStartHandoffEntries = []helpEntry{
-		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Stash this instance's branch"},
+		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Pause this instance"},
 		{bindings: []keys.KeyName{keys.KeySubmit}, desc: "Push branch to GitHub to create a PR"},
 	}
 
 	stashCommandEntries = []helpEntry{
-		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Stash: stash changes locally and pause session"},
+		{bindings: []keys.KeyName{keys.KeyStash}, desc: "Pause: stop the session's agent, keeping its worktree"},
 		{bindings: []keys.KeyName{keys.KeyResume}, desc: "Resume a paused session"},
 	}
 )
@@ -214,11 +214,11 @@ func (h helpTypeInstanceAttach) toContent() string {
 
 func (h helpTypeInstanceStash) toContent() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
-		titleStyle.Render("Stash Instance"),
+		titleStyle.Render("Pause Instance"),
 		"",
-		"Changes will be stashed locally. The branch name has been copied to your clipboard for you to checkout.",
+		"The agent stops. Its worktree stays as it is, uncommitted and ignored files included.",
 		"",
-		"Feel free to make changes to the branch and commit them. When resuming, the session will continue from where you left off.",
+		"Feel free to make changes in the worktree and commit them. When resuming, the agent is relaunched there and continues from where it left off.",
 		"",
 		headerStyle.Render("Commands:"),
 		renderHelpSection(stashCommandEntries, 2),

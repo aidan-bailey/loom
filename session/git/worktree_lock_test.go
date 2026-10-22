@@ -278,7 +278,7 @@ func TestCleanup_RemovesATreeWithAStaleInitializingLock(t *testing.T) {
 	assert.False(t, branchExists(t, repoDir, branchName), "Kill deletes a branch the session created")
 }
 
-// TestRemove_RemovesATreeWithAStaleInitializingLock: Pause.
+// TestRemove_RemovesATreeWithAStaleInitializingLock: the same for Remove.
 func TestRemove_RemovesATreeWithAStaleInitializingLock(t *testing.T) {
 	configDir, repoDir, worktreePath, branchName := setupTestRepoWithWorktree(t)
 	lockInitializing(t, worktreePath)

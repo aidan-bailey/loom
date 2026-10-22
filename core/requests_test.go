@@ -311,15 +311,15 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"pause a recoverable session", func(f fixture) { f.m.Pause(f.id["orphan"], 1) }, "pause orphan: the session is not running (Recoverable)"},
 		{"push a terminal", func(f fixture) { f.m.Push(f.id["term"], 1) }, "push term: not allowed on a workspace terminal"},
 		{"push a deleting session", func(f fixture) { f.m.Push(f.id["deleting"], 1) }, "push deleting: the session is busy (Deleting)"},
-		{"resume a terminal", func(f fixture) { f.m.Resume(f.id["term"], 1) }, "resume term: not allowed on a workspace terminal"},
+		{"resume a running terminal", func(f fixture) { f.m.Resume(f.id["term"], 1) }, "resume term: the session is not paused (Running)"},
 		{"resume a running session", func(f fixture) { f.m.Resume(f.id["running"], 1) }, "resume running: the session is not paused (Running)"},
 		{"resume a recoverable session", func(f fixture) { f.m.Resume(f.id["orphan"], 1) }, "resume orphan: the session is not paused (Recoverable)"},
 		{"restart a running session", func(f fixture) {
 			f.m.ResumeWith(f.id["running"], launch.Options{Model: "sonnet"}, "claude", 1)
-		}, "resume running: the session is not paused (Running)"},
-		{"restart a terminal", func(f fixture) {
-			f.m.ResumeWith(f.id["term"], launch.Options{Model: "sonnet"}, "claude", 1)
-		}, "resume term: not allowed on a workspace terminal"},
+		}, "restart running: the session is not paused (Running)"},
+		{"restart a paused terminal", func(f fixture) {
+			f.m.ResumeWith(f.id["pausedTerm"], launch.Options{Model: "sonnet"}, "claude", 1)
+		}, "restart pausedTerm: not allowed on a workspace terminal"},
 		{"recover a running session", func(f fixture) { f.m.Recover(f.id["running"], 1) }, "recover running: the session is not recoverable (Running)"},
 		{"recover a paused session", func(f fixture) { f.m.Recover(f.id["paused"], 1) }, "recover paused: the session is not recoverable (Paused)"},
 		{"merge into a terminal", func(f fixture) { f.m.Merge(f.id["term"], f.id["paused"], 1) }, "merge into term: not allowed on a workspace terminal"},
@@ -338,13 +338,14 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 			m := NewForTest(Options{})
 			ws := storedWorkspace(t, "a")
 			insts := map[string]*session.Instance{
-				"term":     runningTerminal(t, "term"),
-				"running":  statusInst(t, "running", session.Running),
-				"paused":   statusInst(t, "paused", session.Paused),
-				"loading":  statusInst(t, "loading", session.Loading),
-				"deleting": statusInst(t, "deleting", session.Deleting),
-				"orphan":   statusInst(t, "orphan", session.Recoverable),
-				"new":      newInst(t, "new"),
+				"term":       runningTerminal(t, "term"),
+				"pausedTerm": pausedTerminal(t, "pausedTerm", t.TempDir()),
+				"running":    statusInst(t, "running", session.Running),
+				"paused":     statusInst(t, "paused", session.Paused),
+				"loading":    statusInst(t, "loading", session.Loading),
+				"deleting":   statusInst(t, "deleting", session.Deleting),
+				"orphan":     statusInst(t, "orphan", session.Recoverable),
+				"new":        newInst(t, "new"),
 			}
 			before := map[string]session.Status{}
 			programs := map[string]string{}

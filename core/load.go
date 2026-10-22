@@ -529,9 +529,9 @@ func (m *Model) settleTerminal(ws *Workspace, t *session.Instance, held bool, er
 		m.crashRestart(t)
 		m.saveTerminal(ws)
 	default:
-		// Its breaker gave up (applyLiveness), or reconcile found its name
-		// held: nothing can resume a workspace terminal, so a new open of
-		// the workspace is the user asking for it again.
+		// Its breaker gave up (applyLiveness), reconcile found its name
+		// held, or a relaunch failed: a new open of the workspace is the
+		// user asking for it again, as is 'r' (Instance.Resume) meanwhile.
 		t.ResetRestartFailures()
 		if err := t.Restart(); err != nil {
 			log.For("core").Error("workspace_terminal.restart_failed", "title", t.Title, "err", err)

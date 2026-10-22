@@ -199,6 +199,35 @@ func TestDiscoverOrphans_FiltersClaimed(t *testing.T) {
 	assert.Equal(t, "example jupyter notebook", cand.Title)
 }
 
+// TestDiscoverOrphans_ClaimMatchesThroughASymlink: a record may spell its
+// worktree through a symlink (a repo reached under two paths), and paused
+// sessions keep their trees under a dead session. A claim that misses that
+// spelling leaves a clean tree to be auto-removed, ignored files and all,
+// and a dirty one listed a second time. An unclaimed tree beside it is
+// still found.
+func TestDiscoverOrphans_ClaimMatchesThroughASymlink(t *testing.T) {
+	isolateOrphanTmux(t)
+	withStubProbe(t)
+	cfgDir := t.TempDir()
+	worktreesDir := filepath.Join(cfgDir, "worktrees", "aidanb")
+	require.NoError(t, os.MkdirAll(worktreesDir, 0o755))
+	orphanPath := filepath.Join(worktreesDir, "example-jupyter-notebook_18acb35cb8ad6e5a")
+	pausedPath := filepath.Join(worktreesDir, "readibility-analysis_18acb32c71e51ff4")
+	require.NoError(t, os.Mkdir(orphanPath, 0o755))
+	require.NoError(t, os.Mkdir(pausedPath, 0o755))
+
+	link := filepath.Join(t.TempDir(), "via-link")
+	require.NoError(t, os.Symlink(cfgDir, link))
+	claimed := map[string]bool{
+		filepath.Join(link, "worktrees", "aidanb", filepath.Base(pausedPath)): true,
+	}
+
+	got, err := DiscoverOrphans(cfgDir, claimed, internalexec.Default{})
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the tree claimed through the link is not an orphan")
+	assert.Equal(t, orphanPath, got[0].WorktreePath)
+}
+
 // TestDiscoverOrphans_PrefersSidecarTitle is the M2a fix: when a worktree
 // has a `.loom-title` sidecar (written at creation), discovery uses the
 // exact recorded title instead of the lossy humanized branch leaf, so the

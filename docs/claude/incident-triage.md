@@ -43,7 +43,7 @@ The refusal says what to do. Read it before running anything:
 | "loom cannot verify … as this session's worktree …" | `.git` is there but git won't vouch for it as this repository's linked worktree. If it holds nothing you need, run the quoted `mv` and resume: the worktree is rebuilt from the branch |
 | "cannot tell whether this session's agent is still running …" | The liveness probe timed out: retry later |
 | "cannot resume …: tmux session … was started in …" | Another workspace's session holds the name: loom neither reattaches to it nor relaunches over it |
-| "worktree locked (reason: …)", on a pause or a kill | A user's lock, or one a `git worktree add` left: loom removes only an `initializing` lock older than its own add deadline plus a minute (`gitWorktreeAddTimeout`). The message names the `git worktree unlock` to run, and the session keeps its row until then |
+| "worktree locked (reason: …)", on a kill | A user's lock, or one a `git worktree add` left: loom removes only an `initializing` lock older than its own add deadline plus a minute (`gitWorktreeAddTimeout`). The message names the `git worktree unlock` to run, and the session keeps its row until then |
 | "failed to move leftover worktree directory … aside (a process may still be writing into it)" | Something still runs in a gutted tree |
 
 Then check `git worktree list` for `prunable` or `locked` entries, and `readlink /proc/<pid>/cwd` of each agent process: an agent can outlive its worktree's removal and keep writing into an unlinked tree.

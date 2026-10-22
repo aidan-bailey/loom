@@ -258,8 +258,7 @@ func (m *Model) deliverKill(r KillResult) {
 	m.emit(ClientsStale{})
 }
 
-// deliverPause finishes a pause; Pause already stashed, killed the session
-// and saved.
+// deliverPause finishes a pause; Pause already killed the session and saved.
 func (m *Model) deliverPause(PauseResult) {
 	m.emit(InstancesChanged{})
 	m.emit(ClientsStale{})

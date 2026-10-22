@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aidan-bailey/loom/cmd/cmd_test"
 	internalexec "github.com/aidan-bailey/loom/internal/exec"
 	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/tmux"
@@ -66,8 +65,8 @@ func withGitRunner(t *testing.T, inst *Instance, runner internalexec.Executor) *
 	return gw
 }
 
-// stashEdit writes an edit into gw's worktree and stashes it the way Pause
-// does, returning the stash's SHA. The edit stays on disk.
+// stashEdit writes an edit into gw's worktree and stashes it the way an
+// older Pause did, returning the stash's SHA. The edit stays on disk.
 func stashEdit(t *testing.T, gw *git.GitWorktree, body string) string {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(gw.GetWorktreePath(), "README.md"), []byte(body), 0o644))
@@ -95,33 +94,6 @@ func TestKill_UndroppableStashIsANotice(t *testing.T) {
 	assert.NoDirExists(t, dir)
 }
 
-// TestPause_AbortReportsUndroppableStash: when Pause aborts (the session
-// survived Close) it drops its own stash; a drop that fails must be in the
-// error the user sees, naming the entry left on the stash list.
-func TestPause_AbortReportsUndroppableStash(t *testing.T) {
-	inst := newTestPausableInstanceWithExec(t, cmd_test.MockCmdExec{
-		RunFunc: func(c *exec.Cmd) error {
-			if slices.Contains(c.Args, "kill-session") {
-				return errors.New("tmux: server not responding")
-			}
-			return nil // has-session succeeds: the session is still alive
-		},
-		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
-	})
-	gw := withGitRunner(t, inst, gitFailing{"stash", "drop"})
-	require.NoError(t, os.WriteFile(filepath.Join(gw.GetWorktreePath(), "README.md"), []byte("edit\n"), 0o644))
-
-	err := inst.Pause(func() error { return nil })
-
-	require.Error(t, err)
-	listed := gitIn(t, gw.GetRepoPath(), "stash", "list", "--format=%H")
-	require.NotEmpty(t, listed, "the entry the drop could not remove")
-	assert.Contains(t, err.Error(), "could not drop")
-	assert.Contains(t, err.Error(), listed, "the error names the stale entry")
-	assert.Empty(t, gw.GetStashRef())
-	assert.Equal(t, Running, inst.GetStatus())
-}
-
 // TestResume_RebuildNeverReappliesDroppedStash: the rebuild path applied a
 // pending stash by SHA without asking `git stash list`, so a stash the user
 // had dropped came back — its commit survives until gc. It must be
@@ -133,7 +105,7 @@ func TestResume_RebuildNeverReappliesDroppedStash(t *testing.T) {
 	dir, repo := gw.GetWorktreePath(), gw.GetRepoPath()
 	sha := stashEdit(t, gw, "stashed edit\n")
 	gw.SetStashRef(sha)
-	gitIn(t, repo, "worktree", "remove", "--force", dir) // as Pause does
+	gitIn(t, repo, "worktree", "remove", "--force", dir) // as an older Pause did
 	gitIn(t, repo, "stash", "drop", "stash@{0}")         // the user drops it
 
 	requireStashForgotten(t, resumeLikeApp(t, inst), sha)
