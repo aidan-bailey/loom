@@ -779,6 +779,33 @@ func TestApplyWeb_AWebJSONTheModelLeftAloneKeepsItsReason(t *testing.T) {
 	assert.False(t, tui.Web().Serving)
 }
 
+// The layer reports "off" only over a failure or a binding of its own. The
+// model's own reason for a web it left off (web.json it would not read) is not
+// the layer's to clear, and a layer that reported off for every view with no
+// listen would wipe it.
+func TestApplyWeb_OnlyWhatTheLayerDidIsReportedOff(t *testing.T) {
+	h := &scriptedHost{}
+	l := &Layer{host: h}
+
+	l.applyWeb(core.WebView{Rev: 0, Listen: ""})
+	assert.Empty(t, h.serving, "a first view that leaves the web off tells the host nothing")
+
+	// A bind that fails is reported, and the layer owns that report.
+	l.applyWeb(core.WebView{Rev: 1, Listen: "0.0.0.0:7420", Origin: "http://127.0.0.1:7420"})
+	require.Len(t, h.serving, 1)
+	assert.Empty(t, h.serving[0].addr)
+	assert.Error(t, h.serving[0].err)
+
+	// Disabling over it clears it, once.
+	l.applyWeb(core.WebView{Rev: 2, Listen: ""})
+	require.Len(t, h.serving, 2)
+	assert.Equal(t, servingCall{}, h.serving[1], "the layer clears the error it set")
+
+	// And a further disable has nothing of the layer's to clear.
+	l.applyWeb(core.WebView{Rev: 3, Listen: ""})
+	assert.Len(t, h.serving, 2)
+}
+
 func TestBind_ListensOnLoopbackOnly(t *testing.T) {
 	for _, listen := range []string{
 		"0.0.0.0:7420", "[::]:7420", "192.168.1.5:7420", ":7420", "localhost:7420", "example.com:7420", "127.0.0.1", "7420",

@@ -36,6 +36,19 @@ type scriptedHost struct {
 
 	// TouchDevice remembers the devices it was told of.
 	touched []string
+
+	// WebServing remembers each report the layer made.
+	serving []servingCall
+}
+
+// servingCall is one WebServing report: the address and the error.
+type servingCall struct {
+	addr string
+	err  error
+}
+
+func (h *scriptedHost) WebServing(addr string, err error) {
+	h.serving = append(h.serving, servingCall{addr, err})
 }
 
 // hold makes the host know the device called name by the token
