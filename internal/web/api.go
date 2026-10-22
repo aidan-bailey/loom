@@ -4,11 +4,16 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/launch"
 )
 
 const (
@@ -53,6 +58,8 @@ func (l *Layer) routeAPI(m *http.ServeMux) {
 	m.Handle("POST /api/v1/sessions/{id}/resume", l.authed(l.sessionOp("resume", core.Core.Resume)))
 	m.Handle("POST /api/v1/sessions/{id}/kill", l.authed(l.sessionOp("kill", core.Core.Kill)))
 	m.Handle("POST /api/v1/sessions/{id}/push", l.authed(l.sessionOp("push", core.Core.Push)))
+	m.Handle("POST /api/v1/sessions", l.authed(l.createSession))
+	m.Handle("GET /api/v1/launch-defaults", l.authed(l.launchDefaults))
 }
 
 // modelStatus is the HTTP status a failed request earns: the session or the
@@ -207,4 +214,166 @@ func (l *Layer) mergeInto(w http.ResponseWriter, r *http.Request, device string)
 	l.doAction(w, r, actionLog{device: device, name: "merge", sessionID: id}, func(req core.ReqID) {
 		l.client.Merge(id, body.Source, req)
 	})
+}
+
+// statusError is a refusal that knows its HTTP status.
+type statusError struct {
+	status int
+	msg    string
+}
+
+// createBody is POST /api/v1/sessions: the overrides are optional.
+type createBody struct {
+	Workspace      core.WorkspaceID `json:"workspace"`
+	Title          string           `json:"title"`
+	Prompt         string           `json:"prompt"`
+	Account        string           `json:"account"`
+	Model          string           `json:"model"`
+	PermissionMode string           `json:"permission_mode"`
+	Effort         string           `json:"effort"`
+}
+
+// createSession creates and starts a session as `loom session new` does: the
+// checks the TUI makes (core's), a title no row of the workspace holds, then
+// the launch options (launchOptions), then the Create, whose Reply names the
+// new session at once. The start plays out on the stream.
+func (l *Layer) createSession(w http.ResponseWriter, r *http.Request, device string) {
+	var body createBody
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	prompt := strings.TrimRight(body.Prompt, " \t\r\n")
+	if len(prompt) > maxPromptBytes {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("prompt: want at most %d bytes", maxPromptBytes))
+		return
+	}
+	ws, ok := l.client.Workspace(body.Workspace)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "workspace: no such workspace")
+		return
+	}
+	if err := core.CheckNewTitle(title, ws); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	views := l.client.Views(ws.ID)
+	for _, check := range []error{core.CheckRoom(len(views)), core.CheckWritable(ws)} {
+		if check != nil {
+			writeError(w, http.StatusConflict, check.Error())
+			return
+		}
+	}
+	for _, v := range views {
+		if v.Title == title {
+			writeError(w, http.StatusConflict, fmt.Sprintf("%s already has a session titled %q", ws.Label, title))
+			return
+		}
+	}
+	program := ws.Settings.GetProgram()
+	l.client.ReloadAccounts()
+	opts, notice, refused := l.launchOptions(ws, program, body)
+	if refused != nil {
+		writeError(w, refused.status, refused.msg)
+		return
+	}
+	var pre []noticeJSON
+	if notice != "" {
+		pre = append(pre, noticeOf(core.Notice{Info: notice}, l.now()))
+	}
+	req := l.reqs.next()
+	l.client.Create(ws.ID, core.NewInstance{
+		Title: title, Path: ws.RepoPath, Program: program, Prompt: prompt, Launch: opts, Start: true,
+	}, req)
+	reply, notes, done := l.reqs.wait(r.Context(), req, device)
+	l.writeOutcome(w, actionLog{device: device, name: "create"}, reply, append(pre, notes...), done, true)
+}
+
+// launchOptions are the options a new session in ws launches program with:
+// what the Session Launch Options modal pre-fills (the workspace's settings,
+// then core.ChooseLaunchAccount), then body's overrides. The caller reloads
+// the accounts first. The notice is the modal's, when the launch moved off a
+// removed account. Remote control the account's login can't use is refused,
+// as `loom session new` refuses it: the app has no flag to start without it,
+// so the message names the workspace's setting.
+func (l *Layer) launchOptions(ws core.WorkspaceView, program string, body createBody) (launch.Options, string, *statusError) {
+	for _, o := range []struct {
+		name, value string
+		allowed     []string
+	}{
+		{"model", body.Model, config.ClaudeModelAliases()},
+		{"permission_mode", body.PermissionMode, config.ClaudePermissionModes},
+		{"effort", body.Effort, config.ClaudeEfforts},
+	} {
+		if o.value != "" && !slices.Contains(o.allowed, o.value) {
+			return launch.Options{}, "", &statusError{http.StatusBadRequest, fmt.Sprintf("%s %q: want one of %s", o.name, o.value, strings.Join(o.allowed, ", "))}
+		}
+	}
+	opts, notice := core.ChooseLaunchAccount(l.client, launch.FromSettings(ws.Settings), program)
+	if body.Account != "" {
+		switch {
+		case !session.IsClaudeProgram(program):
+			return launch.Options{}, "", &statusError{http.StatusBadRequest, fmt.Sprintf("account: %s is not Claude", program)}
+		case body.Account != account.DefaultName:
+			if _, ok := l.client.Account(body.Account); !ok {
+				return launch.Options{}, "", &statusError{http.StatusBadRequest, fmt.Sprintf("account %q is not registered", body.Account)}
+			}
+		}
+		opts.Account = body.Account
+	}
+	if body.Model != "" {
+		opts.Model = body.Model
+	}
+	if body.PermissionMode != "" {
+		opts.PermissionMode = body.PermissionMode
+	}
+	if body.Effort != "" {
+		opts.Effort = body.Effort
+	}
+	if auth := l.client.RCAuthFor(opts.Account); launch.RemoteControlBlocked(auth, launch.EffectiveRemoteControl(opts), program) {
+		return launch.Options{}, "", &statusError{http.StatusConflict, fmt.Sprintf("remote control is unavailable: %s (turn it off in the workspace's settings to start without it)", auth.Reason)}
+	}
+	return opts, notice, nil
+}
+
+// launchDefaultsJSON is what the new-session sheet pre-fills, the account
+// names it offers and the lists it picks from.
+type launchDefaultsJSON struct {
+	Account         string   `json:"account"`
+	Accounts        []string `json:"accounts"`
+	Model           string   `json:"model"`
+	Models          []string `json:"models"`
+	PermissionMode  string   `json:"permission_mode"`
+	PermissionModes []string `json:"permission_modes"`
+	Effort          string   `json:"effort"`
+	Efforts         []string `json:"efforts"`
+}
+
+// launchDefaults answers GET /api/v1/launch-defaults?workspace=<id> as the
+// modal would pre-fill a new session in that workspace. The accounts are the
+// registry's, for a Claude program only: any other takes no account.
+func (l *Layer) launchDefaults(w http.ResponseWriter, r *http.Request, _ string) {
+	n, err := strconv.ParseUint(r.URL.Query().Get("workspace"), 10, 64)
+	ws, ok := l.client.Workspace(core.WorkspaceID(n))
+	if err != nil || !ok {
+		writeError(w, http.StatusBadRequest, "workspace: no such workspace")
+		return
+	}
+	program := ws.Settings.GetProgram()
+	l.client.ReloadAccounts()
+	opts, _ := core.ChooseLaunchAccount(l.client, launch.FromSettings(ws.Settings), program)
+	out := launchDefaultsJSON{
+		Account:         opts.Account,
+		Accounts:        []string{},
+		Model:           opts.Model,
+		Models:          config.ClaudeModelAliases(),
+		PermissionMode:  opts.PermissionMode,
+		PermissionModes: slices.Clone(config.ClaudePermissionModes),
+		Effort:          opts.Effort,
+		Efforts:         slices.Clone(config.ClaudeEfforts),
+	}
+	if names := l.client.AccountNames(); names.Present && session.IsClaudeProgram(program) {
+		out.Accounts = append(out.Accounts, names.Names...)
+	}
+	writeJSON(w, http.StatusOK, out)
 }

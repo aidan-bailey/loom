@@ -17,6 +17,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -320,5 +321,174 @@ func TestAPI_ModelStatus(t *testing.T) {
 		{errors.New("push x: rejected"), http.StatusConflict},
 	} {
 		assert.Equal(t, c.want, modelStatus(c.err), c.err.Error())
+	}
+}
+
+func TestAPI_CreateAndLaunchDefaultsNeedADevice(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	status, _, _ := env.send(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": "x"}, false)
+	assert.Equal(t, http.StatusUnauthorized, status)
+	status, _, _ = env.send(http.MethodGet, fmt.Sprintf("/api/v1/launch-defaults?workspace=%d", env.ws), nil, false)
+	assert.Equal(t, http.StatusUnauthorized, status)
+	assert.Empty(t, env.layer.client.Views(env.ws), "nothing was created")
+}
+
+func TestAPI_CreateStartsASessionWithTheChosenOptions(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	status, out := env.do(http.MethodPost, "/api/v1/sessions", map[string]any{
+		"workspace": env.ws, "title": " fresh ", "prompt": "hello\n\n",
+		"model": "opus", "permission_mode": "plan", "effort": "high",
+	})
+
+	require.Equal(t, http.StatusCreated, status, string(out))
+	var got struct {
+		ID      core.InstanceID `json:"id"`
+		Notices []noticeJSON    `json:"notices"`
+	}
+	require.NoError(t, json.Unmarshal(out, &got))
+	assert.NotZero(t, got.ID)
+	assert.NotNil(t, got.Notices, "a list, even an empty one")
+	v := env.view(got.ID)
+	assert.Equal(t, "fresh", v.Title, "the title is trimmed")
+	assert.Equal(t, session.Loading, v.Status, "the start plays out on the stream")
+	opts, _ := launch.Parse(v.Program)
+	assert.Equal(t, "opus", opts.Model)
+	assert.Equal(t, "plan", opts.PermissionMode)
+	assert.Equal(t, "high", opts.Effort)
+}
+
+func TestAPI_CreateRefusesWhatLoomSessionNewRefuses(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "taken", session.Running)}})
+	ws := env.ws
+
+	for _, c := range []struct {
+		name   string
+		body   any
+		status int
+		want   string
+	}{
+		{"no workspace", map[string]any{"title": "x"}, http.StatusBadRequest, "workspace: no such workspace"},
+		{"an unknown workspace", map[string]any{"workspace": 424242, "title": "x"}, http.StatusBadRequest, "workspace: no such workspace"},
+		{"a blank title", map[string]any{"workspace": ws, "title": "  "}, http.StatusBadRequest, "title cannot be empty"},
+		{"a title too wide", map[string]any{"workspace": ws, "title": strings.Repeat("w", core.MaxTitleWidth+1)}, http.StatusBadRequest, "title cannot be longer than"},
+		{"a title the workspace holds", map[string]any{"workspace": ws, "title": "taken"}, http.StatusConflict, `already has a session titled "taken"`},
+		{"a model Claude lacks", map[string]any{"workspace": ws, "title": "x", "model": "gpt"}, http.StatusBadRequest, `model "gpt": want one of`},
+		{"a permission mode it lacks", map[string]any{"workspace": ws, "title": "x", "permission_mode": "yolo"}, http.StatusBadRequest, `permission_mode "yolo": want one of`},
+		{"an effort it lacks", map[string]any{"workspace": ws, "title": "x", "effort": "extreme"}, http.StatusBadRequest, `effort "extreme": want one of`},
+		{"an unregistered account", map[string]any{"workspace": ws, "title": "x", "account": "ghost"}, http.StatusBadRequest, `account "ghost" is not registered`},
+		{"a prompt over 64 KiB", map[string]any{"workspace": ws, "title": "x", "prompt": strings.Repeat("p", 64<<10+1)}, http.StatusBadRequest, "prompt: want at most"},
+		{"a field it does not know", map[string]any{"workspace": ws, "title": "x", "branch": "main"}, http.StatusBadRequest, "unknown field"},
+	} {
+		status, out := env.do(http.MethodPost, "/api/v1/sessions", c.body)
+		assert.Equal(t, c.status, status, c.name)
+		assert.Contains(t, apiErrorOf(t, out), c.want, c.name)
+	}
+	assert.Len(t, env.layer.client.Views(ws), 1, "only the session that was there")
+}
+
+func TestAPI_CreateFollowsTheWorkspacesProgram(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{workspaceConfig: `{"default_program":"aider"}`})
+
+	status, out := env.do(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": "x", "account": "default"})
+
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Equal(t, "account: aider is not Claude", apiErrorOf(t, out))
+	status, out = env.do(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": "x"})
+	assert.Equal(t, http.StatusCreated, status, string(out))
+}
+
+func TestAPI_CreateRefusesWhenRemoteControlIsBlocked(t *testing.T) {
+	blocked := &session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "logged in with an API key"}
+
+	env := newAPIEnv(t, apiFixture{auth: blocked})
+	status, out := env.do(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": "rc"})
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Contains(t, apiErrorOf(t, out), "remote control is unavailable: logged in with an API key")
+	assert.Empty(t, env.layer.client.Views(env.ws), "nothing was created")
+
+	// With remote control off in the workspace, there is nothing to block.
+	off := newAPIEnv(t, apiFixture{auth: blocked, workspaceConfig: `{"default_program":"claude","claude_remote_control":false}`})
+	status, out = off.do(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": off.ws, "title": "rc"})
+	assert.Equal(t, http.StatusCreated, status, string(out))
+}
+
+func TestAPI_CreateRefusesAFullWorkspace(t *testing.T) {
+	var insts []*session.Instance
+	for i := 0; i < core.InstanceLimit; i++ {
+		insts = append(insts, apiInstance(t, fmt.Sprintf("s%d", i), session.Running))
+	}
+	env := newAPIEnv(t, apiFixture{insts: insts})
+
+	status, out := env.do(http.MethodPost, "/api/v1/sessions", map[string]any{"workspace": env.ws, "title": "one more"})
+
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Contains(t, apiErrorOf(t, out), "you can't create more than")
+}
+
+// apiDefaults is the body of GET /api/v1/launch-defaults.
+type apiDefaults struct {
+	Account         string   `json:"account"`
+	Accounts        []string `json:"accounts"`
+	Model           string   `json:"model"`
+	Models          []string `json:"models"`
+	PermissionMode  string   `json:"permission_mode"`
+	PermissionModes []string `json:"permission_modes"`
+	Effort          string   `json:"effort"`
+	Efforts         []string `json:"efforts"`
+}
+
+// defaults reads the launch defaults of the fixture's workspace.
+func (e *apiEnv) defaults() apiDefaults {
+	e.t.Helper()
+	status, out := e.do(http.MethodGet, fmt.Sprintf("/api/v1/launch-defaults?workspace=%d", e.ws), nil)
+	require.Equal(e.t, http.StatusOK, status, string(out))
+	var got apiDefaults
+	require.NoError(e.t, json.Unmarshal(out, &got))
+	return got
+}
+
+func TestAPI_LaunchDefaultsFollowTheWorkspace(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{workspaceConfig: `{"default_program":"claude","claude_model":"sonnet","claude_permission_mode":"plan","claude_effort":"high"}`})
+	names := env.layer.client.AccountNames()
+	wantAccounts, wantAccount := []string{}, ""
+	if names.Present {
+		wantAccounts, wantAccount = names.Names, names.Default
+	}
+
+	got := env.defaults()
+
+	assert.Equal(t, "sonnet", got.Model)
+	assert.Equal(t, "plan", got.PermissionMode)
+	assert.Equal(t, "high", got.Effort)
+	assert.Equal(t, wantAccount, got.Account)
+	assert.NotNil(t, got.Accounts, "a list, even an empty one")
+	assert.ElementsMatch(t, wantAccounts, got.Accounts)
+	assert.Equal(t, config.ClaudeModelAliases(), got.Models, "the app hard-codes none of the lists")
+	assert.Equal(t, config.ClaudePermissionModes, got.PermissionModes)
+	assert.Equal(t, config.ClaudeEfforts, got.Efforts)
+}
+
+func TestAPI_LaunchDefaultsOfAProgramThatIsNotClaudeOfferNoAccounts(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{workspaceConfig: `{"default_program":"aider"}`})
+
+	got := env.defaults()
+
+	assert.Equal(t, "", got.Account)
+	assert.NotNil(t, got.Accounts, "a list, even an empty one")
+	assert.Empty(t, got.Accounts, "the app offers no account picker for it")
+	assert.Equal(t, "default", got.Model)
+	assert.Equal(t, "default", got.PermissionMode)
+	assert.Equal(t, "default", got.Effort)
+}
+
+func TestAPI_LaunchDefaultsNeedAWorkspace(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	for _, query := range []string{"", "?workspace=abc", "?workspace=0", "?workspace=424242"} {
+		status, out := env.do(http.MethodGet, "/api/v1/launch-defaults"+query, nil)
+		assert.Equal(t, http.StatusBadRequest, status, query)
+		assert.Equal(t, "workspace: no such workspace", apiErrorOf(t, out), query)
 	}
 }
