@@ -8,16 +8,19 @@ export const MAX_REPLY = 64 * 1024;
 
 // actionsFor says which buttons to show. It follows status only; the
 // daemon's admit stays the authority and a refusal comes back as a toast.
+// It shows only what admit accepts: every op but resume is refused while the
+// session is Loading or Deleting, and resume is refused unless it is Paused
+// (a Recoverable or Not started session has nothing to resume).
 export function actionsFor(s) {
-  const busy = s.label === "Loading" || s.label === "Deleting";
+  const busy = s.status === "Loading" || s.status === "Deleting";
   const paused = s.group === "paused";
   return {
     pause: !busy && !paused,
-    resume: !busy && paused,
+    resume: s.status === "Paused",
     push: !busy && !paused,
     merge: !busy && !paused,
     send: !busy && !paused,
-    kill: s.label !== "Deleting",
+    kill: !busy,
   };
 }
 
@@ -156,6 +159,7 @@ export function Session({ snap, stale, route, go, act, toast }) {
             <textarea
               rows="3"
               placeholder="Reply to Claude…"
+              aria-label="Reply"
               value=${text}
               onInput=${(e) => setText(e.target.value)}
             ></textarea>
