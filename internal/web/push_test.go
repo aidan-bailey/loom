@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -747,4 +748,20 @@ func TestPusher_APanicInTheSenderStopsTheWholeLayer(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Close hung after the sender panicked")
 	}
+}
+
+func TestPush_ServiceWorkerReadsEveryPayloadKeyAndHandlesBothEvents(t *testing.T) {
+	raw, err := pushJob{Kind: pushWaiting, Session: 1}.payload()
+	require.NoError(t, err)
+	var keys map[string]any
+	require.NoError(t, json.Unmarshal(raw, &keys))
+	require.NotEmpty(t, keys)
+
+	sw, err := os.ReadFile("static/sw.js")
+	require.NoError(t, err)
+	for key := range keys {
+		assert.Contains(t, string(sw), "data."+key, "sw.js never reads the push payload's %q", key)
+	}
+	assert.Contains(t, string(sw), `addEventListener("push"`)
+	assert.Contains(t, string(sw), `addEventListener("notificationclick"`)
 }
