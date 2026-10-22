@@ -5,15 +5,22 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/internal/testenv"
@@ -320,6 +327,141 @@ func TestParseSubscription(t *testing.T) {
 			got, err := ParseSubscription(s)
 			assert.Error(t, err)
 			assert.Equal(t, Subscription{}, got)
+		})
+	}
+}
+
+// RFC 8292, section 2.4: the JWT's first two segments for these claims, and
+// the key that signed the whole token.
+const (
+	rfc8292Header = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9"
+	rfc8292Claims = "eyJhdWQiOiJodHRwczovL3B1c2guZXhhbXBsZS5uZXQiLCJleHAiOjE0NTM1MjM3NjgsInN1YiI6Im1haWx0bzpwdXNoQGV4YW1wbGUuY29tIn0"
+)
+
+// newVAPIDKey makes a VAPID key the way the model does: the 32-byte scalar
+// and the 65-byte uncompressed point.
+func newVAPIDKey(t *testing.T) core.VAPIDKey {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	priv, err := k.Bytes()
+	require.NoError(t, err)
+	pub, err := k.PublicKey.Bytes()
+	require.NoError(t, err)
+	return core.VAPIDKey{Private: priv, Public: pub}
+}
+
+// splitAuth cuts an Authorization value "vapid t=<JWT>, k=<key>" into its parts.
+func splitAuth(t *testing.T, header string) (jwt, k string) {
+	t.Helper()
+	rest, ok := strings.CutPrefix(header, "vapid t=")
+	require.True(t, ok, header)
+	jwt, k, ok = strings.Cut(rest, ", k=")
+	require.True(t, ok, header)
+	return jwt, k
+}
+
+// verifyJWT checks a compact ES256 JWT against a public key, as a push
+// service does, and returns its claims.
+func verifyJWT(t *testing.T, jwt string, pub []byte) (vapidClaims, bool) {
+	t.Helper()
+	parts := strings.Split(jwt, ".")
+	require.Len(t, parts, 3, jwt)
+	sig := b64(t, parts[2])
+	require.Len(t, sig, 64, "ES256 signatures are r then s, 32 bytes each")
+	pk, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), pub)
+	require.NoError(t, err)
+	der, err := asn1.Marshal(struct{ R, S *big.Int }{new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])})
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	var claims vapidClaims
+	require.NoError(t, json.Unmarshal(b64(t, parts[1]), &claims))
+	return claims, ecdsa.VerifyASN1(pk, digest[:], der)
+}
+
+func TestVAPIDSigningInput_MatchesRFC8292(t *testing.T) {
+	got, err := vapidSigningInput("https://push.example.net", "mailto:push@example.com", 1453523768)
+	require.NoError(t, err)
+	assert.Equal(t, rfc8292Header+"."+rfc8292Claims, got)
+}
+
+func TestVAPIDAuth_SignsClaimsThatVerify(t *testing.T) {
+	key := newVAPIDKey(t)
+	now := time.Unix(1_700_000_000, 0)
+	for name, tc := range map[string]struct{ endpoint, aud string }{
+		"path and query dropped": {"https://web.push.apple.com/wpush/v2/abc?x=1", "https://web.push.apple.com"},
+		"port kept":              {"https://fcm.googleapis.com:8443/fcm/send/abc", "https://fcm.googleapis.com:8443"},
+		"wildcard host":          {"https://eu.notify.windows.com/w/?token=abc", "https://eu.notify.windows.com"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			header, err := VAPIDAuth(key, tc.endpoint, "https://loom.example.com", now)
+			require.NoError(t, err)
+			jwt, k := splitAuth(t, header)
+			assert.Equal(t, b64s(key.Public), k, "k is the public key, base64url")
+			assert.True(t, strings.HasPrefix(jwt, rfc8292Header+"."), "the header is typ JWT, alg ES256")
+
+			claims, ok := verifyJWT(t, jwt, key.Public)
+			assert.True(t, ok, "the signature verifies with the public key")
+			assert.Equal(t, vapidClaims{
+				Aud: tc.aud,
+				Exp: 1_700_000_000 + 12*3600,
+				Sub: "https://loom.example.com",
+			}, claims)
+		})
+	}
+}
+
+func TestVAPIDAuth_SignatureBindsTheClaimsAndTheKey(t *testing.T) {
+	key, other := newVAPIDKey(t), newVAPIDKey(t)
+	header, err := VAPIDAuth(key, "https://web.push.apple.com/wpush/v2/abc", "https://loom.example.com", time.Unix(1_700_000_000, 0))
+	require.NoError(t, err)
+	jwt, _ := splitAuth(t, header)
+	parts := strings.Split(jwt, ".")
+
+	_, ok := verifyJWT(t, jwt, key.Public)
+	require.True(t, ok, "control: the token verifies with its own key")
+
+	_, ok = verifyJWT(t, jwt, other.Public)
+	assert.False(t, ok, "another key")
+
+	forged, err := json.Marshal(vapidClaims{Aud: "https://web.push.apple.com", Exp: 1_700_000_000 + 24*3600, Sub: "https://loom.example.com"})
+	require.NoError(t, err)
+	_, ok = verifyJWT(t, parts[0]+"."+b64s(forged)+"."+parts[2], key.Public)
+	assert.False(t, ok, "claims changed after signing")
+}
+
+func TestVAPIDAuth_RefusesWhatItCannotSign(t *testing.T) {
+	key, other := newVAPIDKey(t), newVAPIDKey(t)
+	const endpoint = "https://web.push.apple.com/wpush/v2/abc"
+	const subject = "https://loom.example.com"
+	now := time.Unix(1_700_000_000, 0)
+
+	_, err := VAPIDAuth(key, endpoint, subject, now)
+	require.NoError(t, err, "control: the unmodified inputs sign")
+	_, err = VAPIDAuth(key, endpoint, "mailto:me@example.com", now)
+	require.NoError(t, err, "control: a mailto subject is fine")
+
+	for name, tc := range map[string]struct {
+		key               core.VAPIDKey
+		endpoint, subject string
+	}{
+		"no private key":      {core.VAPIDKey{Public: key.Public}, endpoint, subject},
+		"short private key":   {core.VAPIDKey{Private: key.Private[:31], Public: key.Public}, endpoint, subject},
+		"no public key":       {core.VAPIDKey{Private: key.Private}, endpoint, subject},
+		"public key of other": {core.VAPIDKey{Private: key.Private, Public: other.Public}, endpoint, subject},
+		"empty subject":       {key, endpoint, ""},
+		"subject not a URI":   {key, endpoint, "loom.example.com"},
+		"subject over http":   {key, endpoint, "http://loom.example.com"},
+		"subject over ftp":    {key, endpoint, "ftp://loom.example.com"},
+		"empty endpoint":      {key, "", subject},
+		"relative endpoint":   {key, "/wpush/v2/abc", subject},
+		"endpoint over ftp":   {key, "ftp://web.push.apple.com/x", subject},
+		"endpoint no host":    {key, "https:///x", subject},
+	} {
+		t.Run(name, func(t *testing.T) {
+			header, err := VAPIDAuth(tc.key, tc.endpoint, tc.subject, now)
+			assert.Error(t, err)
+			assert.Empty(t, header)
 		})
 	}
 }
