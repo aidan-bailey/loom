@@ -423,6 +423,7 @@ func init() {
 	rootCmd.AddCommand(cli.WorkspaceCmd)
 	rootCmd.AddCommand(cli.AccountCmd)
 	rootCmd.AddCommand(cli.SessionCmd)
+	rootCmd.AddCommand(cli.WebCmd)
 }
 
 func main() {
