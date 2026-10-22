@@ -399,3 +399,25 @@ details.sc-group > summary { cursor: pointer; margin-bottom: 8px; }
 }
 
 ```css
+
+/* ---- screens (Story 10): new session ---- */
+.sc-form { display: flex; flex-direction: column; gap: 14px; }
+.sc-field { display: flex; flex-direction: column; gap: 6px; }
+.sc-field > span:first-child { color: var(--dim); font-size: 0.85rem; }
+.sc-form input[type="text"],
+.sc-form textarea,
+.sc-form select,
+.sc-sheet-body select {
+  font: inherit;
+  font-size: 16px; /* iOS zooms into smaller inputs */
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 10px;
+}
+.sc-launch { border: 1px solid var(--rule); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
+.sc-launch > summary { cursor: pointer; color: var(--dim); }
+.sc-launch > .sc-field { margin-top: 12px; }
+
+```css
