@@ -171,7 +171,12 @@ export function Session({ snap, stale, route, go, act, toast }) {
             title="Kill this session?"
             confirm="Kill"
             danger=${true}
-            body=${html`<p>This removes the session's worktree and its tmux session, and deletes its branch <code>${s.branch}</code>. Uncommitted changes are stashed first, and the notice names the stash (Settings, Recent notices).</p>`}
+            body=${html`<div>
+              <p>${s.tmux ? html`It ends tmux session <code>${s.tmux}</code>.` : "It ends the session's tmux session."}</p>
+              <p>${s.worktree ? html`It force-removes worktree <code>${s.worktree}</code>` : "It force-removes the session's worktree"}, discarding its uncommitted changes. Push first to keep them.</p>
+              <p>It deletes branch <code>${s.branch}</code> unless the session checked out an existing branch.</p>
+              ${s.status === "Paused" ? html`<p>The stash this paused session holds is dropped.</p>` : null}
+            </div>`}
             onConfirm=${kill}
             onCancel=${() => setSheet("")}
           />`

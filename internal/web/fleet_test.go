@@ -84,10 +84,11 @@ func TestSessionOf_ProjectsEveryFactTheAppShows(t *testing.T) {
 	got, err := json.Marshal(sessionOf(7, v))
 	require.NoError(t, err)
 
-	// The paths, the program and the diff body are not in it: the app shows
-	// none of them.
+	// The worktree and tmux session are in it, for the kill sheet; the repo
+	// path, the program and the diff body are not.
 	assert.JSONEq(t, `{
 		"id": 1234567, "workspace": 7, "title": "fix login", "branch": "loom/fix-login",
+		"worktree": "/home/me/src/app/.loom/worktrees/fix-login", "tmux": "loom_fix-login",
 		"group": "needs_you", "label": "Needs you", "status": "Prompting",
 		"since": "2026-10-21T09:30:00Z",
 		"wait": {"reason": "permission", "detail": "rm -rf build"},
@@ -118,6 +119,8 @@ func TestSessionOf_WithholdsWhatIsNotKnown(t *testing.T) {
 	assert.Nil(t, s.PR)
 	assert.Empty(t, s.Since)
 	assert.Empty(t, s.RemoteURL)
+	assert.Empty(t, s.Worktree)
+	assert.Empty(t, s.Tmux)
 
 	// Empty lists and no PR are `[]` and `null` on the wire, never absent.
 	b, err := json.Marshal(s)
@@ -125,6 +128,8 @@ func TestSessionOf_WithholdsWhatIsNotKnown(t *testing.T) {
 	assert.Contains(t, string(b), `"pr":null`)
 	assert.Contains(t, string(b), `"agents":[]`)
 	assert.Contains(t, string(b), `"since":""`)
+	assert.NotContains(t, string(b), `"worktree"`)
+	assert.NotContains(t, string(b), `"tmux"`)
 }
 
 func TestSessionOf_ThePRNeedsAKnownPRInAStateWeName(t *testing.T) {

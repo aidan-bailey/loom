@@ -58,11 +58,15 @@ type agentJSON struct {
 // sessionJSON is one session as the app reads it. IDs are numbers: they fit
 // in 53 bits, exact in JavaScript. Since is an RFC 3339 time, "" when the
 // status was not entered in this process; PR is null without a known PR.
+// Worktree and Tmux name what a kill removes, and are left out until the
+// instance has them.
 type sessionJSON struct {
 	ID          core.InstanceID  `json:"id"`
 	Workspace   core.WorkspaceID `json:"workspace"`
 	Title       string           `json:"title"`
 	Branch      string           `json:"branch"`
+	Worktree    string           `json:"worktree,omitempty"`
+	Tmux        string           `json:"tmux,omitempty"`
 	Group       string           `json:"group"`
 	Label       string           `json:"label"`
 	Status      string           `json:"status"`
@@ -165,6 +169,8 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 		Workspace:   ws,
 		Title:       v.Title,
 		Branch:      v.Branch,
+		Worktree:    v.WorktreePath,
+		Tmux:        v.TmuxSession,
 		Group:       group,
 		Label:       label,
 		Status:      v.Status.String(),
