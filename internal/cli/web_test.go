@@ -7,11 +7,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -238,22 +241,52 @@ func TestWebEnable_NeedsBothFlags(t *testing.T) {
 }
 
 func TestWebEnable_PassesTheDaemonsRefusalOn(t *testing.T) {
-	for _, tc := range []struct{ name, listen, origin string }{
-		{"a host name", "localhost:7420", "https://loom.example.com"},
-		{"a public address", "0.0.0.0:7420", "https://loom.example.com"},
-		{"port zero", "127.0.0.1:0", "https://loom.example.com"},
-		{"a plain http origin", "127.0.0.1:7420", "http://loom.example.com"},
-		{"an origin with a path", "127.0.0.1:7420", "https://loom.example.com/app"},
+	for _, tc := range []struct {
+		name, listen, origin string
+		want                 error // the model's own refusal, word for word
+	}{
+		{"a host name", "localhost:7420", "https://loom.example.com", core.ValidateWebListen("localhost:7420")},
+		{"a public address", "0.0.0.0:7420", "https://loom.example.com", core.ValidateWebListen("0.0.0.0:7420")},
+		{"port zero", "127.0.0.1:0", "https://loom.example.com", core.ValidateWebListen("127.0.0.1:0")},
+		{"a plain http origin", "127.0.0.1:7420", "http://loom.example.com", core.ValidateWebOrigin("http://loom.example.com")},
+		{"an origin with a path", "127.0.0.1:7420", "https://loom.example.com/app", core.ValidateWebOrigin("https://loom.example.com/app")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require.Error(t, tc.want, "the model refuses this setting")
 			d := webDaemon(t)
 
 			_, _, err := runWeb(t, "enable", "--listen", tc.listen, "--origin", tc.origin)
 
 			require.Error(t, err)
+			assert.EqualError(t, err, tc.want.Error(), "the model's refusal, not one of the command's own")
 			assert.Empty(t, webView(t, d).Listen, "a refused setting is not stored")
 		})
 	}
+}
+
+func TestWebEnable_RefusalLeavesTheStoredSettingAlone(t *testing.T) {
+	d := webDaemon(t)
+	require.NoError(t, d.loop.ConfigureWeb("127.0.0.1:7420", "https://loom.example.com"))
+	d.loop.WebServing("127.0.0.1:7420", nil)
+	before := webView(t, d)
+
+	_, _, err := runWeb(t, "enable", "--listen", "127.0.0.1:7421", "--origin", "http://loom.example.com")
+
+	require.Error(t, err)
+	assert.EqualError(t, err, core.ValidateWebOrigin("http://loom.example.com").Error())
+	assert.Equal(t, before, webView(t, d), "the stored setting, its Rev and the serving state are as they were")
+}
+
+func TestWebEnable_AcceptsALoopbackHTTPOriginForDevelopment(t *testing.T) {
+	require.NoError(t, core.ValidateWebOrigin("http://127.0.0.1:5173"), "the model allows it")
+	d := webDaemon(t)
+	webLayer(t, d, "127.0.0.1:7420", nil)
+
+	out, _, err := runWeb(t, "enable", "--listen", "127.0.0.1:7420", "--origin", "http://127.0.0.1:5173")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "Serving on 127.0.0.1:7420")
+	assert.Equal(t, "http://127.0.0.1:5173", webView(t, d).Origin)
 }
 
 func TestWebSettled(t *testing.T) {
@@ -304,12 +337,14 @@ func TestWebDisable_TurnsItOffAndKeepsTheOrigin(t *testing.T) {
 
 func TestWebDisable_WhenOffChangesNothing(t *testing.T) {
 	d := webDaemon(t)
+	before := webView(t, d)
 
 	out, _, err := runWeb(t, "disable")
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "already off")
 	w := webView(t, d)
+	assert.Equal(t, before.Rev, w.Rev, "no ConfigureWeb was sent")
 	assert.Empty(t, w.Listen)
 	assert.Empty(t, w.Origin)
 }
@@ -350,6 +385,33 @@ func TestWebStatus_SaysWhyItDoesNotServe(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Regexp(t, `Serving:\s+no: listen tcp 127\.0\.0\.1:7420: bind: address already in use`, out)
+}
+
+func TestWebStatus_SaysWhenItIsOnAndNothingHasAnswered(t *testing.T) {
+	d := webDaemon(t)
+	require.NoError(t, d.loop.ConfigureWeb("127.0.0.1:7420", "https://loom.example.com"))
+
+	out, _, err := runWeb(t, "status")
+
+	require.NoError(t, err)
+	assert.Regexp(t, `Web:\s+on`, out)
+	assert.Regexp(t, `Serving:\s+no\s*\n`, out)
+	assert.NotContains(t, out, "no:")
+}
+
+func TestWebStatus_OffWithAnErrorWhenWebJSONIsLeftAlone(t *testing.T) {
+	isolateWorkspaces(t)
+	dir, err := config.GetGlobalConfigDir()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, core.WebFile), []byte("not json"), 0o600))
+	serveDaemon(t, "true")
+
+	out, _, err := runWeb(t, "status")
+
+	require.NoError(t, err)
+	assert.Regexp(t, `Web:\s+off`, out)
+	assert.Regexp(t, `Error:\s+parse `, out)
+	assert.NotContains(t, out, "Serving")
 }
 
 // pushSubscription is a subscription the model accepts: an Apple push
@@ -439,8 +501,11 @@ func TestWebPair_RefusesAPairedNameAndABadOne(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "a device has that name already")
 
+	_, badErr := core.ValidateDeviceName("   ")
+	require.Error(t, badErr, "the model refuses a name of spaces")
 	_, _, err = runWeb(t, "pair", "--name", "   ")
 	require.Error(t, err, "a name of spaces is no name")
+	assert.EqualError(t, err, badErr.Error(), "the model's refusal, not one of the command's own")
 	assert.Len(t, webView(t, d).Devices, 1)
 }
 
@@ -498,6 +563,7 @@ func TestWebDevices_JSON(t *testing.T) {
 	assert.Nil(t, rows[0].Notify.PausedUntil)
 	assert.Equal(t, "ok", rows[0].Push)
 	assert.False(t, rows[0].Paired.IsZero())
+	assert.NotNil(t, rows[0].LastSeen, "pairing counts as the first sighting")
 }
 
 func TestWebDevices_JSONIsAnEmptyArrayWhenNonePaired(t *testing.T) {
@@ -577,6 +643,24 @@ func TestWebRevoke_AllRemovesEveryDevice(t *testing.T) {
 	out, _, err = runWeb(t, "revoke", "--all")
 	require.NoError(t, err)
 	assert.Contains(t, out, "No paired devices.")
+}
+
+func TestNoSuchDevice(t *testing.T) {
+	d := webDaemon(t)
+	require.NoError(t, d.loop.ConfigureWeb("127.0.0.1:7420", "https://loom.example.com"))
+	webDevice(t, d, "iPhone")
+
+	// Errors as the command gets them: over the wire, where errors.Is no
+	// longer sees the sentinel.
+	gone := d.client.RevokeDevice("ghost")
+	require.Error(t, gone)
+	require.NotErrorIs(t, gone, core.ErrNoDevice, "the wire keeps only text, which is why noSuchDevice reads it")
+	assert.True(t, noSuchDevice(gone))
+	require.NoError(t, d.loop.ConfigureWeb("", ""))
+	_, other := d.client.PairDevice("Pixel")
+	require.Error(t, other)
+	assert.False(t, noSuchDevice(other), "another refusal still fails revoke --all")
+	assert.False(t, noSuchDevice(nil))
 }
 
 func TestWebRevoke_NeedsOneNameOrAll(t *testing.T) {

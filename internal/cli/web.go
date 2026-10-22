@@ -77,7 +77,7 @@ func newWebEnableCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&listen, "listen", "", "Loopback address to listen on, 127.0.0.1:<port> or [::1]:<port>")
-	cmd.Flags().StringVar(&origin, "origin", "", "Public address of the app, https://<host>")
+	cmd.Flags().StringVar(&origin, "origin", "", "Public address of the app, https://<host>, or http://127.0.0.1:<port> or http://localhost:<port> for development")
 	_ = cmd.MarkFlagRequired("listen")
 	_ = cmd.MarkFlagRequired("origin")
 	return cmd
@@ -145,7 +145,7 @@ func sameAddr(a, b string) bool {
 func newWebDisableCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "disable",
-		Short: "Turn the web app off; paired devices and the origin are kept",
+		Short: "Turn the web app off; paired devices and the origin are kept, pending pairing codes are voided",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			loomErrors(c)
@@ -159,7 +159,7 @@ func newWebDisableCmd() *cobra.Command {
 				if err := d.ConfigureWeb("", w.Origin); err != nil {
 					return err
 				}
-				fmt.Fprintln(out, "The web app is off. Paired devices are kept; loom web enable turns it on again.")
+				fmt.Fprintln(out, "The web app is off. Paired devices and the origin are kept; pending pairing codes are voided. loom web enable turns it on again.")
 				return nil
 			})
 		},
@@ -365,6 +365,13 @@ func pushText(s core.PushState) string {
 	return string(s)
 }
 
+// noSuchDevice reports whether err is the model's ErrNoDevice. The error
+// crosses the wire as text under a generic code, so errors.Is cannot see the
+// sentinel and its message is what is left to compare.
+func noSuchDevice(err error) bool {
+	return err != nil && strings.Contains(err.Error(), core.ErrNoDevice.Error())
+}
+
 func newWebRevokeCmd() *cobra.Command {
 	var all bool
 	cmd := &cobra.Command{
@@ -391,7 +398,13 @@ func newWebRevokeCmd() *cobra.Command {
 					return nil
 				}
 				for i, dev := range devs {
-					if err := d.RevokeDevice(dev.Name); err != nil {
+					err := d.RevokeDevice(dev.Name)
+					if noSuchDevice(err) {
+						// Revoked meanwhile, elsewhere: what --all wants is done.
+						fmt.Fprintf(out, "%s was already revoked\n", dev.Name)
+						continue
+					}
+					if err != nil {
 						return fmt.Errorf("revoked %d of %d devices, then %s failed: %w", i, len(devs), dev.Name, err)
 					}
 					fmt.Fprintf(out, "Revoked %s\n", dev.Name)
