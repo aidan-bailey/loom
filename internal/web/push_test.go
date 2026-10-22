@@ -229,7 +229,7 @@ func newPushRig(t *testing.T, devices ...string) *pushRig {
 	rig.p = newPusherWith(pushEnv{
 		host:         s.loop,
 		now:          rig.clock.Now,
-		origin:       func() string { return pushTestOrigin },
+		web:          s.loop.Web,
 		recoverPanic: func(string) {},
 	})
 	rig.p.httpc.Transport = rig.svc.transport()
@@ -455,6 +455,28 @@ func TestPusher_AtMostThirtyPushesAMinutePerDevice(t *testing.T) {
 	assert.Equal(t, []string{"iPad", "iPhone"}, rig.svc.requested(), "a minute on, they have left the window")
 }
 
+func TestPusher_SendsNothingWhileTheWebIsOff(t *testing.T) {
+	rig := newPushRig(t, "iPhone")
+	baseline := core.PushFailing(pushTestBaseline)
+	tui := rig.s.connect(t)
+
+	rig.p.deliver(pushTestWaiting)
+	require.Equal(t, []string{"iPhone"}, rig.svc.requested(), "with the web listening a push goes out")
+	require.Equal(t, core.PushOK, rig.state(t, "iPhone"))
+	rig.s.loop.PushResult("iPhone", core.PushFailing(pushTestBaseline))
+
+	rig.svc.forget()
+	require.NoError(t, tui.ConfigureWeb("", pushTestOrigin))
+	rig.p.deliver(pushTestWaiting)
+	assert.Empty(t, rig.svc.seen(), "while the web is off no device gets a push, queued before the disable or not")
+	assert.Equal(t, baseline, rig.state(t, "iPhone"), "and no result is recorded")
+
+	require.NoError(t, tui.ConfigureWeb("127.0.0.1:7420", pushTestOrigin))
+	rig.p.deliver(pushTestWaiting)
+	assert.Equal(t, []string{"iPhone"}, rig.svc.requested(), "enabling the web again resumes pushes on the same subscription")
+	assert.Equal(t, core.PushOK, rig.state(t, "iPhone"))
+}
+
 func TestPusher_SendsNothingItCannotSign(t *testing.T) {
 	baseline := core.PushFailing(pushTestBaseline)
 
@@ -467,7 +489,9 @@ func TestPusher_SendsNothingItCannotSign(t *testing.T) {
 	})
 	t.Run("a development origin cannot be a VAPID subject", func(t *testing.T) {
 		rig := newPushRig(t, "iPhone")
-		rig.p.env.origin = func() string { return "http://127.0.0.1:7420" }
+		rig.p.env.web = func() core.WebView {
+			return core.WebView{Listen: "127.0.0.1:7420", Origin: "http://127.0.0.1:7420"}
+		}
 		rig.p.deliver(pushTestWaiting)
 		assert.Empty(t, rig.svc.seen())
 		assert.Equal(t, baseline, rig.state(t, "iPhone"), "a push the daemon could not build says nothing about the subscription")
@@ -675,7 +699,7 @@ func TestStart_BuildsThePusherAndAddsItAsASink(t *testing.T) {
 	assert.Same(t, ps.loop, p.env.host, "the pusher reads and records through the layer's host")
 	configured := ps.connect(t).Web().Origin
 	require.NotEmpty(t, configured, "the stack enabled the web with an origin")
-	assert.Equal(t, configured, p.env.origin(), "the VAPID subject is the origin the model is configured with")
+	assert.Equal(t, configured, p.env.web().Origin, "the VAPID subject is the origin the model is configured with")
 	assert.WithinDuration(t, time.Now(), p.env.now(), time.Minute, "the clock is the layer's")
 }
 

@@ -45,9 +45,10 @@ const (
 type pushEnv struct {
 	host core.WebHost
 	now  func() time.Time
-	// origin is the configured origin, which signs the VAPID token as its
-	// subject.
-	origin func() string
+	// web is the current web settings: deliver reads them once per push,
+	// for listen (empty means the web is off, and nothing is sent) and for
+	// the origin, which signs the VAPID token as its subject.
+	web func() core.WebView
 	// recoverPanic is the layer's: the sender defers it, so a panic in the
 	// sender stops the whole layer (Layer.fail), as one in any of the layer's
 	// goroutines does.
@@ -84,7 +85,7 @@ func newPusher(l *Layer) *pusher {
 	p := newPusherWith(pushEnv{
 		host:         l.host,
 		now:          func() time.Time { return l.now() },
-		origin:       func() string { return l.client.Web().Origin },
+		web:          l.client.Web,
 		recoverPanic: l.recoverPanic,
 	})
 	p.start()
@@ -178,8 +179,16 @@ func (p *pusher) run() {
 	}
 }
 
-// deliver posts one push to every device whose settings allow its kind.
+// deliver posts one push to every device whose settings allow its kind. While
+// the web is off (an empty listen) it sends nothing and records nothing: the
+// guard is here, at the last moment, so it also catches a push queued before
+// the web was disabled. The subscriptions and the key stay, so enabling the
+// web again resumes pushes.
 func (p *pusher) deliver(job pushJob) {
+	web := p.env.web()
+	if web.Listen == "" {
+		return
+	}
 	key, err := p.env.host.VAPIDKey()
 	if err != nil {
 		p.log.Warn("push dropped: no VAPID key", "kind", job.Kind, "session", job.Session, "err", err)
@@ -190,7 +199,7 @@ func (p *pusher) deliver(job pushJob) {
 		p.log.Error("push dropped: payload", "kind", job.Kind, "session", job.Session, "err", err)
 		return
 	}
-	subject := p.env.origin()
+	subject := web.Origin
 	for _, target := range p.env.host.PushTargets() {
 		if p.ctx.Err() != nil {
 			return
