@@ -147,7 +147,13 @@ type Hello struct {
 	Role string `json:"role,omitempty"`
 }
 
-// RoleWeb is the Hello.Role of the daemon's own web layer (internal/web).
+// RoleWeb is the Hello.Role of the daemon's own web layer (internal/web), a
+// client that stays connected for as long as the daemon runs. The server
+// counts a RoleWeb connection as no client for the notice backlog: a Notice
+// raised while only web connections exist is sent to them and also kept for
+// the next other connection, a web connection is sent none of the kept ones,
+// and the Notice of a web connection's own request is sent to it and also
+// handled as if no web connection existed (Server.clientsLocked).
 const RoleWeb = "web"
 
 // eventTypes maps each event's wire name (its Go type name) to its type.

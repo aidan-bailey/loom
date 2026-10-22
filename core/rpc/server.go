@@ -53,8 +53,10 @@ type Server struct {
 	// daemon) can stop: the model is as good as gone.
 	fatalCh chan struct{}
 	// backlog holds the notices that reached no client: raised while none
-	// was connected, or the Notice of a request whose client has gone. The
-	// next connection is sent them after its snapshot (keep).
+	// was connected, or the Notice of a request whose client has gone. A web
+	// layer's connection (RoleWeb) is no client (clientsLocked), so its own
+	// request's Notice is kept too. The next other connection is sent them
+	// after its snapshot (keep).
 	backlog []core.Notice
 	// tmux is the tmux server the model's sessions run on, for the hello
 	// (SetTmux).
@@ -244,6 +246,9 @@ func (s *Server) serveConn(nc io.ReadWriteCloser, n uint32) {
 		c.sendFrame(Frame{Error: mismatchError()})
 		return
 	}
+	// Exactly RoleWeb: a role this build does not know is an ordinary
+	// client, which a newer peer's TUI may be.
+	c.web = hello.Hello.Role == RoleWeb
 
 	s.mu.Lock()
 	select {
@@ -394,12 +399,15 @@ func (s *Server) publishLocked() {
 
 // sendLocked sends events to every connection, an event naming a request
 // as forConn says; one that will not encode is fatal. A Notice that reaches
-// no connection is kept for the next (keepLocked). s.mu is held.
+// no client is kept for the next (keepLocked) and is still sent to the
+// connections it did not reach. A web layer's connection is no client
+// (clientsLocked), so its own request's Notice is handled as a gone client's
+// is. s.mu is held.
 func (s *Server) sendLocked(events []core.Event) {
 	for _, ev := range events {
 		notice, isNotice := ev.(core.Notice)
 		if routed(ev) {
-			sent := false
+			reachedClient := false
 			for c := range s.conns {
 				e, ok := forConn(ev, c.n)
 				if !ok {
@@ -411,14 +419,19 @@ func (s *Server) sendLocked(events []core.Event) {
 					return
 				}
 				c.enqueue(f, "")
-				sent = true
+				reachedClient = reachedClient || !c.web
 			}
-			if isNotice && !sent {
-				// Its client has gone: the clients still here are told,
-				// or, with none, whoever comes next.
+			if isNotice && !reachedClient {
+				// Its client has gone, or is the web layer's, which is no
+				// client: it is handled as if no web connection existed. The
+				// connections it did not reach are told it (another's
+				// request, so none named), and, with no client among all the
+				// connections, whoever comes next.
 				notice.Req = 0
-				if len(s.conns) == 0 {
+				if s.clientsLocked() == 0 {
 					s.keepLocked(notice)
+				}
+				if len(s.conns) == 0 {
 					continue
 				}
 				f, err := encodeEvent(notice)
@@ -427,14 +440,18 @@ func (s *Server) sendLocked(events []core.Event) {
 					return
 				}
 				for c := range s.conns {
-					c.enqueue(f, "")
+					if _, reached := forConn(ev, c.n); !reached {
+						c.enqueue(f, "")
+					}
 				}
 			}
 			continue
 		}
-		if isNotice && len(s.conns) == 0 {
+		if isNotice && s.clientsLocked() == 0 {
 			s.keepLocked(notice)
-			continue
+			if len(s.conns) == 0 {
+				continue
+			}
 		}
 		f, err := encodeEvent(ev)
 		if err != nil {
@@ -445,6 +462,20 @@ func (s *Server) sendLocked(events []core.Event) {
 			c.enqueue(f, coalesceKey(ev))
 		}
 	}
+}
+
+// clientsLocked counts the connections that are clients as far as the
+// notice backlog goes: every one but a web layer's (RoleWeb), which is
+// always connected and would otherwise take the notices meant for the next
+// TUI. s.mu is held.
+func (s *Server) clientsLocked() int {
+	n := 0
+	for c := range s.conns {
+		if !c.web {
+			n++
+		}
+	}
+	return n
 }
 
 // Keep holds notices for the next connection, as if raised while none was
@@ -470,9 +501,13 @@ func (s *Server) keepLocked(n core.Notice) {
 	}
 }
 
-// flushBacklogLocked sends c the notices no connection was there for, and
-// forgets them. s.mu is held.
+// flushBacklogLocked sends c the notices no client was there for, and
+// forgets them. A web layer's connection is sent none, and they stay for the
+// next other connection. s.mu is held.
 func (s *Server) flushBacklogLocked(c *serverConn) {
+	if c.web {
+		return
+	}
 	for _, n := range s.backlog {
 		f, err := encodeEvent(n)
 		if err != nil {

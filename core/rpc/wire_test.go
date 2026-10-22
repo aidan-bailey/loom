@@ -110,6 +110,11 @@ func TestProtocolReference(t *testing.T) {
 	p("A client's hello may name its role (`role`): `%s` is the daemon's own web layer. A client that names\n", RoleWeb)
 	p("none, or a role this build does not know, is an ordinary client:\n")
 	p("`%s`\n\n", compact(t, Frame{Hello: &Hello{Protocol: Protocol, Build: "v0.13.1 ad199a3…", Role: RoleWeb}}))
+	p("A `%s` connection counts as no client for the notice backlog: a `Notice` raised while only web\n", RoleWeb)
+	p("connections are connected is sent to them and also kept for the next other connection, and a web\n")
+	p("connection is sent none of the notices kept already. A `Notice` that names a web connection's own\n")
+	p("request goes to that connection and is also handled as if no web connection existed: the other\n")
+	p("connections are sent it, and, with no client among them, it is kept for the next.\n\n")
 
 	p("## Refused hello\n\n")
 	p("A server answers a hello of another protocol with its own hello, so the client still learns its\n")
