@@ -188,6 +188,12 @@ type Model struct {
 	// made while another refresh is in flight is not lost.
 	refreshDefaultAuth bool
 
+	// web is the web layer's settings and devices (web.json), loaded by
+	// Boot (initWeb) and changed by ConfigureWeb, PairDevice, RevokeDevice
+	// and the web layer's WebHost. The zero value is off, with no devices.
+	// Loop-goroutine only.
+	web webState
+
 	// ids is each reported instance's ID (idOf), and idHolders the instance
 	// each ID is cached for. An instance no loaded workspace holds is
 	// forgotten at the next publish, or earlier when another asks for its ID.
