@@ -1309,6 +1309,7 @@ func (i *Instance) Pause(saveState func() error) (err error) {
 			return fmt.Errorf("pause checkpoint save: %w", err)
 		}
 	}
+	holdPauseForE2E()
 
 	// Kill the tmux session so the agent process actually stops. Resume
 	// relaunches it with BuildRecoveryCommand, so --continue (or its
