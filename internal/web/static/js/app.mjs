@@ -6,6 +6,7 @@ import { call, connect } from "./api.mjs";
 import { loadSnapshot, saveSnapshot, clearSnapshot, pref } from "./store.mjs";
 import { screens } from "./screens.mjs";
 import { Pair, AddToHome, needsInstall } from "./pair.mjs";
+import { checkPush } from "./push.mjs";
 
 const buildMeta = document.querySelector('meta[name="loom-build"]');
 const shellBuild = buildMeta ? buildMeta.content : "";
@@ -80,9 +81,11 @@ function persist(snap) {
   saveTimer = setTimeout(() => saveSnapshot({ ...snap, updated }), 1000);
 }
 
-// launched runs once per launch, after the first snapshot, with the app's
-// toast: the place for work that needs the device's state once a launch.
-function launched(snap, toast) {}
+// launched runs once per launch, after the first snapshot: the push check
+// tells loom of a subscription the phone has lost (push.mjs).
+function launched(snap, toast) {
+  checkPush(snap.device, toast, call);
+}
 let launchDone = false;
 
 // restartGrace is how long after a bye the app keeps saying "loom is
