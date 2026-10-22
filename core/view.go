@@ -52,6 +52,16 @@ type InstanceView struct {
 	// own pane-scraped status instead (its ladder overlay).
 	StatusReported bool
 	WaitReason     string
+	// WaitDetail is what the permission request behind a Prompting session
+	// asks to do, in one line (Instance.WaitDetail): a Bash command's first
+	// line, a file path or a URL. Empty for any other wait.
+	WaitDetail string
+	// RemoteSession is the ID in the session's Remote Control link,
+	// https://claude.ai/code/<RemoteSession>. The model takes it from the
+	// roster's entry for the worktree (session.RosterEntry.RemoteSession),
+	// so it is empty whenever the roster has none and clears when the roster
+	// does, as the roster's status does.
+	RemoteSession  string
 	LastMessage    string
 	HasLastMessage bool
 	Subagents      []subagent.View

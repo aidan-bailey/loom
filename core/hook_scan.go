@@ -93,11 +93,14 @@ func (m *Model) HookTick() {
 }
 
 // hookFace is what a hook scan can change of an instance: what its view
-// shows (its status and Claude's, the wait reason, the last message, the
-// subagent rows) and the conversation the model saves.
+// shows (its status and Claude's, the wait reason and the tool summary
+// behind it, the last message, the subagent rows) and the conversation the
+// model saves. detail is Claude's observation's tool summary: a second
+// permission request for one tool changes it and nothing else.
 type hookFace struct {
 	status, claude   session.Status
 	why, wait        string
+	detail           string
 	reported         bool
 	conv, transcript string
 	lastMsg          string
@@ -109,6 +112,7 @@ type hookFace struct {
 func hookFaceOf(inst *session.Instance) hookFace {
 	f := hookFace{status: inst.GetStatus(), wait: inst.WaitReason(), subagents: inst.Subagents()}
 	f.claude, f.why, f.reported = inst.ClaudeStatus()
+	f.detail = inst.ClaudeWaitDetail()
 	f.conv, f.transcript = inst.ClaudeSession()
 	f.lastMsg, f.hasLastMsg = inst.LastMessage()
 	return f
@@ -148,7 +152,7 @@ func (m *Model) deliverHookScan(msg hookScanResults) {
 		}
 		// Only a scan's events move the status: a vanished folder drops
 		// its rows and Claude's observation, and adopts nothing.
-		if r.err == nil && (after.claude != before.claude || after.why != before.why || after.reported != before.reported) {
+		if r.err == nil && (after.claude != before.claude || after.why != before.why || after.detail != before.detail || after.reported != before.reported) {
 			changed = true
 			m.applyClaudeStatus(r.instance)
 			after = hookFaceOf(r.instance)

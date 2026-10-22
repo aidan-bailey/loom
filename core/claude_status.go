@@ -207,12 +207,14 @@ func (m *Model) rosterStatusFor(inst *session.Instance) (session.Status, string,
 // adoptClaudeStatus is the single place a Claude session's reported status
 // is applied to an instance. It returns the instance's merged hook and
 // roster observation (see session.Instance.ClaudeStatus) and, as a side
-// effect, records Claude's reason for blocking so the card can render it.
+// effect, records Claude's reason for blocking so the card can render it,
+// and the tool summary of the permission request behind it
+// (session.Instance.ClaudeWaitDetail), which the phone shows.
 //
-// The reason lives exactly as long as the reported wait: any other
-// outcome clears it. Only the model writes a reported status, and every
-// path that does (deliverHealth, and applyClaudeStatus for a hook scan or
-// a roster answer) must go through here; the TUI's pane ladder
+// The reason and the summary live exactly as long as the reported wait: any
+// other outcome clears both. Only the model writes a reported status, and
+// every path that does (deliverHealth, and applyClaudeStatus for a hook scan
+// or a roster answer) must go through here; the TUI's pane ladder
 // (statusDetectedMsg, the snapshot scan) only reads StatusReported and
 // overlays its own status. Duplicating the set/clear at each call site is
 // how they drift apart, which is the lockstep hazard called out in
@@ -224,8 +226,10 @@ func (m *Model) adoptClaudeStatus(inst *session.Instance) (session.Status, bool)
 	status, reason, ok := inst.ClaudeStatus()
 	if ok && status == session.Prompting {
 		inst.SetWaitReason(reason)
+		inst.SetWaitDetail(inst.ClaudeWaitDetail())
 	} else {
 		inst.SetWaitReason("")
+		inst.SetWaitDetail("")
 	}
 	return status, ok
 }

@@ -247,3 +247,31 @@ func TestDeliverHookScan_NoWakeOnlyWhenNothingMoved(t *testing.T) {
 	assert.False(t, deliver(hookScanResult{err: hooks.ErrNoHooks}), "nothing left to drop")
 	assert.False(t, deliver(hookScanResult{err: errors.New("disk on fire")}), "a failed scan changes nothing")
 }
+
+// TestDeliverHookScan_ANewToolSummaryReplacesTheOldOne: a second permission
+// request for one tool changes neither the status nor the wait reason, so
+// the summary alone says which command the prompt is for. The scan must
+// count it as a change: the instance follows it and the clients wake.
+func TestDeliverHookScan_ANewToolSummaryReplacesTheOldOne(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "two-prompts")
+	base := time.Now().Add(-time.Minute)
+	scan := func(summary string, after time.Duration) (woke bool) {
+		m.noWake = false
+		m.Deliver(hookScanResults{results: []hookScanResult{{instance: inst, result: session.HookScanResult{
+			LaunchID: "L1", Replayed: true,
+			Events: []hooks.Event{{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: summary, At: base.Add(after)}},
+		}}}})
+		return !m.noWake
+	}
+
+	require.True(t, scan("ls", time.Second), "the first request")
+	require.Equal(t, session.Prompting, inst.GetStatus())
+	require.Equal(t, "ls", inst.WaitDetail())
+
+	assert.True(t, scan("rm -r build", 2*time.Second), "another command for the same tool wakes the clients")
+	assert.Equal(t, "permission: Bash", inst.WaitReason(), "the wait reason is the same")
+	assert.Equal(t, "rm -r build", inst.WaitDetail(), "the summary follows the newest request")
+
+	assert.False(t, scan("rm -r build", 3*time.Second), "the same request again moves nothing")
+}

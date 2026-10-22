@@ -87,6 +87,7 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 		Status:              inst.GetStatus(),
 		StatusSince:         inst.StatusSince(),
 		WaitReason:          inst.WaitReason(),
+		WaitDetail:          inst.WaitDetail(),
 		Subagents:           slices.Clone(inst.Subagents()),
 		GitHub:              inst.GitHubState(),
 		Issue:               inst.IssueNumber(),

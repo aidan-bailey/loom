@@ -29,7 +29,7 @@ The session model: `core.Model` serves every registered workspace to every clien
 
 ### Claude status and the roster
 
-- **Write a reported status only through `adoptClaudeStatus`.** It applies the status and records `Instance.WaitReason` together; `deliverHealth` and `applyClaudeStatus` both call it, and the TUI's ladder writes no status. A second writer leaves a wait reason behind a status it no longer explains, or lets a scraped guess cover Claude's own answer. **Convention** — a stale "awaiting input" label.
+- **Write a reported status only through `adoptClaudeStatus`.** It applies the status and records `Instance.WaitReason` and `WaitDetail` together; `deliverHealth` and `applyClaudeStatus` both call it, and the TUI's ladder writes no status. A second writer leaves a wait reason behind a status it no longer explains, or lets a scraped guess cover Claude's own answer. **Convention** — a stale "awaiting input" label.
 - **Keep the roster fail-closed: no opinion on any doubt, and a failed query clears it.** A non-Claude agent, no entry for the worktree, an ambiguous cwd, a background-only cwd or an unknown status string returns no opinion from `rosterStatusFor`; a failed query sets `roster` to nil and voids every roster-sourced observation (a hook-sourced one stands). A stale roster keeps driving transitions long after it stopped being true. **Enforced** for the clearing by `TestRosterResultErrorClearsEntries` and `TestFailedRosterKeepsHookStatus` (`core/claude_status_test.go`), and for the query's own no-opinion cases by `session/claude_roster_test.go`; the join's no-opinion returns are **Convention**.
 
 ### Loom mod links (`mod.go`)

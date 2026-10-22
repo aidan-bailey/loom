@@ -377,3 +377,55 @@ func TestJoinRecordedPaths(t *testing.T) {
 		})
 	}
 }
+
+// The tool summary of the permission request behind a wait lives exactly as
+// long as the wait reason: adoptClaudeStatus sets and clears both, and the
+// instance's view publishes it.
+func TestAdoptClaudeStatus_TheToolSummaryLivesAsLongAsTheWaitReason(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "detail-lives")
+	now := time.Now()
+
+	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "date > probe.txt", At: now.Add(-2 * time.Second)})
+	m.applyClaudeStatus(inst)
+
+	require.Equal(t, session.Prompting, inst.GetStatus())
+	assert.Equal(t, "permission: Bash", inst.WaitReason())
+	assert.Equal(t, "date > probe.txt", inst.WaitDetail())
+	assert.Equal(t, "date > probe.txt", m.viewOf(inst).WaitDetail)
+
+	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventStop, HasTasks: true, At: now.Add(-time.Second)})
+	m.applyClaudeStatus(inst)
+
+	require.Equal(t, session.Ready, inst.GetStatus())
+	assert.Empty(t, inst.WaitReason())
+	assert.Empty(t, inst.WaitDetail(), "the summary goes with the wait")
+	assert.Empty(t, m.viewOf(inst).WaitDetail)
+}
+
+func TestAdoptClaudeStatus_ARosterOnlyWaitHasNoToolSummary(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "detail-roster")
+
+	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
+
+	require.Equal(t, session.Prompting, inst.GetStatus())
+	assert.Equal(t, "dialog open", inst.WaitReason())
+	assert.Empty(t, inst.WaitDetail(), "the roster names no tool")
+}
+
+// The roster confirms a hook's Prompting every few seconds, and its second
+// answer replaces the reason with its own; the summary stays, since the
+// request it belongs to is still the one being asked.
+func TestAdoptClaudeStatus_ARosterAnswerKeepsTheHooksToolSummary(t *testing.T) {
+	m := NewForTest(Options{})
+	inst := activeInst(t, m, "detail-kept")
+	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "date > probe.txt", At: time.Now().Add(-2 * time.Second)})
+	m.applyClaudeStatus(inst)
+
+	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
+	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
+
+	assert.Equal(t, session.Prompting, inst.GetStatus())
+	assert.Equal(t, "date > probe.txt", inst.WaitDetail())
+}
