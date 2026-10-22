@@ -270,11 +270,33 @@ func TestStatic_IndexHasNoInlineScriptOrStyle(t *testing.T) {
 	require.Empty(t, staticInlineMarkup(string(staticAssets(t)["/index.html"].body)))
 }
 
-// The mux needs a started layer to run, so the wiring is pinned by its text.
-func TestMux_RegistersTheStaticRoutes(t *testing.T) {
-	src, err := os.ReadFile("web.go")
-	require.NoError(t, err)
-	require.Regexp(t, `(?m)^\tl\.routeStatic\(m\)\n\treturn m$`, string(src))
+// The layer's mux serves the app behind guard: the shell answers on "/" with
+// the layer's build and the security headers, and a wrong Host is refused.
+func TestMux_ServesTheAppBehindTheGuard(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+
+	resp := httpDo(t, addr, http.MethodGet, "/", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/html")
+	require.Equal(t, contentSecurityPolicy, resp.Header.Get("Content-Security-Policy"), "routeStatic is registered behind guard")
+	meta := regexp.MustCompile(`<meta name="loom-build" content="([^"]*)">`).FindStringSubmatch(bodyText(t, resp))
+	require.NotNil(t, meta, "index.html lost its loom-build meta")
+	require.Equal(t, "test build", html.UnescapeString(meta[1]), "the layer's build fills the shell")
+
+	resp = httpDo(t, addr, http.MethodGet, "/app.css", "", func(r *http.Request) { r.Host = "evil.example" })
+	require.Equal(t, http.StatusMisdirectedRequest, resp.StatusCode, "a wrong Host reaches no file")
+}
+
+func TestStatic_AnAppThatCannotBeServedAnswers500OnTheShell(t *testing.T) {
+	m := http.NewServeMux()
+	(&Layer{build: "b-7"}).routeStaticFrom(m, fstest.MapFS{"index.html": {Data: []byte("<html>")}})
+
+	rec := staticDo(m, http.MethodGet, "/")
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Contains(t, rec.Body.String(), "missing from this build")
+	require.Equal(t, http.StatusNotFound, staticDo(m, http.MethodGet, "/index.html").Code, "nothing else is served")
 }
 
 var (

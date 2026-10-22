@@ -127,15 +127,19 @@ func fillStatic(assets map[string]staticAsset, url, old, repl string) error {
 // "/", so a broken build is loud rather than a blank page.
 func (l *Layer) routeStatic(m *http.ServeMux) {
 	sub, err := fs.Sub(staticFiles, "static")
-	var assets map[string]staticAsset
-	if err == nil {
-		assets, err = buildStaticAssets(sub, l.build)
-	}
 	if err != nil {
-		log.For("web").Error("web.static_unavailable", "err", err)
-		m.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "the app's files are missing from this build", http.StatusInternalServerError)
-		})
+		l.routeStaticFailed(m, err)
+		return
+	}
+	l.routeStaticFrom(m, sub)
+}
+
+// routeStaticFrom serves the app held in fsys (the embedded one, in
+// production) and fails closed as routeStatic does when it cannot be served.
+func (l *Layer) routeStaticFrom(m *http.ServeMux, fsys fs.FS) {
+	assets, err := buildStaticAssets(fsys, l.build)
+	if err != nil {
+		l.routeStaticFailed(m, err)
 		return
 	}
 	for url, a := range assets {
@@ -145,4 +149,12 @@ func (l *Layer) routeStatic(m *http.ServeMux) {
 		}
 		m.HandleFunc(pattern, a.serve)
 	}
+}
+
+// routeStaticFailed logs why the app cannot be served and answers 500 on "/".
+func (l *Layer) routeStaticFailed(m *http.ServeMux, err error) {
+	log.For("web").Error("web.static_unavailable", "err", err)
+	m.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "the app's files are missing from this build", http.StatusInternalServerError)
+	})
 }
