@@ -66,8 +66,10 @@ The model checks a command, in this order, and refuses with the reason:
 - `compact` takes any arguments; `clear` none ("/clear takes no
   arguments"); `model` needs one ("/model needs a model name: a bare /model
   opens a menu nobody can answer").
-- Any other name the list gives as `builtin`: "/<name> is a built-in loom
-  doesn't run from a reply: it may open a menu or end the session".
+- Any other name the list gives as `builtin`, in any of its entries (a
+  name can be listed twice, as `code-review` is, a built-in and a user
+  skill, and which one runs is Claude's to say): "/<name> is a built-in
+  loom doesn't run from a reply: it may open a menu or end the session".
 - A name the list doesn't have: "this session's Claude has no /<name>
   command". Aliases are refused here, since the list names none.
 - Otherwise the name has a source other than `builtin`, and runs with its
@@ -97,14 +99,14 @@ busy, at most 64 KiB.
   the phone; `loom session send` returns), or with the refusal (409 on the
   phone, an error from the CLI).
 - On `complete` the model raises a notice for the request: `/<name>:
-  <output>`, the output cut at 2,000 characters with "…", or `Ran /<name>.`
-  when it printed nothing. On `failed`, an error notice: `/<name> failed:
+  <output>`, the output cut at 2,000 characters with "…", or `Ran /<name>
+  <args>.` when it printed nothing, as `/compact`, `/model` and a skill do. On `failed`, an error notice: `/<name> failed:
   <error>`. A notice tied to a request reaches the phone that asked
   (`internal/web` keeps it among the recent notices) or the CLI that waits.
-- `loom session send --wait` prints the command's output. When a command
-  starts a model turn (a skill), the turn's answer shows as the session's
-  last message, as any turn's does; whether `--wait` waits for it is what
-  the spike settles.
+- `loom session send --wait` waits for the command and prints its output.
+  A skill's run ends as the turn it starts begins (the spike), so `--wait`
+  returns then; the turn's answer shows as the session's last message, as
+  any turn's does.
 - The reply box's placeholder names the commands: "Reply, or /compact,
   /clear, /model <name>, /<skill>".
 
@@ -128,6 +130,11 @@ busy, at most 64 KiB.
 - A command the session gains after its mod's hello (an MCP server that
   connects late, a plugin installed mid-session) is refused until the mod
   says hello again (a pause and resume).
+- An MCP server's prompts don't run: the list names them with a space
+  (`plugin:github:github:AssignCodingAgent (MCP)`), which the name pattern
+  refuses, and nobody has checked what a person types to run one.
+- Claude's built-in skills (`deep-research`, `simplify`, `security-review`)
+  are listed as `builtin`, so they are refused like any built-in.
 
 ## Testing
 
@@ -157,6 +164,23 @@ If aliases are listed as non-built-ins, the rules match on the list's
 source only after resolving them, or refuse them by name. If a project
 command's run resolves before its turn ends, `--wait` waits for the command
 only, and the docs say so.
+
+### Outcome, 2026-10-22
+
+Run on fresco with Claude Code 2.1.306, haiku, a throwaway mod passed with
+`--plugin-dir` and a project command `hello`, on a private tmux server. The
+design holds; what it changed is folded in above.
+- 1: 220 commands, 122 `builtin`, 65 `plugin`, 31 `user` (the project's
+  `hello` among them), 2 `mcp`; names up to 48 characters. No alias is
+  listed (`quit`, `reset`, `new` absent; `exit`, `clear`, `compact`,
+  `model`, `resume`, `login` and `logout` are `builtin`). `code-review` is
+  listed twice, `builtin` and `user`. The MCP prompts' names end in ` (MCP)`.
+- 2: `/model haiku` resolved `{}` in 50 ms; `/compact` `{}` after 6.4 s;
+  `/clear` `{"text":""}` at once. None printed text.
+- 3: `/hello` resolved `{}` in 60 ms, as its turn started; the turn
+  completed 2.6 s later answering `HELLO`.
+- 4: an unknown name rejected: `$.command.run: no command named /nosuchcmd
+  in this session`.
 
 ## Out of scope
 
