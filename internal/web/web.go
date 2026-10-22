@@ -109,8 +109,10 @@ func (l *Layer) startParts() {
 
 // stopParts stops the layer's parts, first in Close.
 func (l *Layer) stopParts() {
+	// Deferred, so a panic in an earlier part's close cannot leave the sender
+	// pushing after the layer stopped.
+	defer l.push.close()
 	l.hub.close()
-	l.push.close()
 }
 
 // Options configure Start.

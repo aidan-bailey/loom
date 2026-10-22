@@ -487,6 +487,26 @@ func TestPusher_SendsNothingItCannotSign(t *testing.T) {
 	})
 }
 
+func TestPusher_APushSkippedBeforeItsRequestDoesNotUseUpTheDevicesMinute(t *testing.T) {
+	rig := newPushRig(t)
+	target := core.PushTarget{
+		Device:       "bad",
+		Notify:       core.NotifySettings{Waiting: true, Finished: true},
+		Subscription: pushTestSub(t, "bad"),
+	}
+	broken := target
+	broken.Subscription.P256DH = "AAAA"
+	rig.p.env.host = extraTargetHost{WebHost: rig.s.loop, extra: broken}
+	for i := 0; i < pushPerMinute+1; i++ {
+		rig.p.deliver(pushTestWaiting)
+	}
+	require.Empty(t, rig.svc.seen(), "an unusable subscription is sent nothing")
+
+	rig.p.env.host = extraTargetHost{WebHost: rig.s.loop, extra: target}
+	rig.p.deliver(pushTestWaiting)
+	assert.Equal(t, []string{"bad"}, rig.svc.requested(), "the skipped pushes took none of the device's minute")
+}
+
 func TestPusher_QueueHoldsAtMostOneHundredPushes(t *testing.T) {
 	p := newPusherWith(pushEnv{now: time.Now})
 	t.Cleanup(p.close)
@@ -496,6 +516,20 @@ func TestPusher_QueueHoldsAtMostOneHundredPushes(t *testing.T) {
 
 	assert.False(t, p.enqueue(pushTestWaiting), "the 101st is dropped")
 	assert.Len(t, p.queue, pushQueueMax)
+}
+
+func TestPusher_AWorkspaceClosedAndReopenedStartsOverAsABaseline(t *testing.T) {
+	p := newPusherWith(pushEnv{now: time.Now})
+	t.Cleanup(p.close)
+	views := func(ws core.WorkspaceID, status session.Status) core.Event {
+		return core.ViewsChanged{WS: ws, Views: []core.InstanceView{pushTestView(7, status)}}
+	}
+
+	p.apply([]core.Event{views(10, session.Running)})
+	p.apply([]core.Event{core.WorkspacesChanged{Views: []core.WorkspaceView{{ID: 20}}}})
+	p.apply([]core.Event{views(10, session.Prompting)})
+
+	assert.Empty(t, p.queue, "workspace 10 was closed, so reopened it is a baseline, not a transition")
 }
 
 func TestPusher_TheSenderPostsWhatApplyQueues(t *testing.T) {

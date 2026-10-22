@@ -198,7 +198,7 @@ func (p *pusher) deliver(job pushJob) {
 		if !pushAllows(target.Notify, job.Kind, p.env.now()) {
 			continue
 		}
-		if !p.withinRate(target.Device) {
+		if p.atRate(target.Device) {
 			p.log.Warn("push dropped: the device is at its rate limit", "device", target.Device, "kind", job.Kind, "session", job.Session, "limit", pushPerMinute)
 			continue
 		}
@@ -220,11 +220,12 @@ func pushAllows(n core.NotifySettings, kind string, now time.Time) bool {
 	return false
 }
 
-// withinRate counts a push against the device's minute and reports whether it
-// fits; one that doesn't is not counted.
-func (p *pusher) withinRate(device string) bool {
-	now := p.env.now()
-	cutoff := now.Add(-time.Minute)
+// atRate reports whether the device has taken its limit of pushes in the last
+// minute, after forgetting the older ones. It counts nothing: a push is
+// counted (see countSent) only once its request goes out, so one skipped for
+// an unusable subscription does not use up the device's minute.
+func (p *pusher) atRate(device string) bool {
+	cutoff := p.env.now().Add(-time.Minute)
 	for name, times := range p.sent {
 		keep := times[:0]
 		for _, at := range times {
@@ -238,11 +239,12 @@ func (p *pusher) withinRate(device string) bool {
 			p.sent[name] = keep
 		}
 	}
-	if len(p.sent[device]) >= pushPerMinute {
-		return false
-	}
-	p.sent[device] = append(p.sent[device], now)
-	return true
+	return len(p.sent[device]) >= pushPerMinute
+}
+
+// countSent counts a push against the device's minute.
+func (p *pusher) countSent(device string) {
+	p.sent[device] = append(p.sent[device], p.env.now())
 }
 
 // send posts the payload to one device and records the outcome through
@@ -265,7 +267,13 @@ func (p *pusher) send(target core.PushTarget, key core.VAPIDKey, subject string,
 			p.log.Warn("push skipped: the request could not be built", "device", target.Device, "err", err)
 			return
 		}
+		if attempt == 0 {
+			p.countSent(target.Device)
+		}
 		status, retryAfter, err := p.post(req)
+		// A close during the exchange cancelled it: its outcome (a transport
+		// error from the cancel) says nothing about the subscription, so
+		// record nothing.
 		if p.ctx.Err() != nil {
 			return
 		}
