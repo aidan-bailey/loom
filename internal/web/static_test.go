@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 	"testing"
@@ -274,4 +275,87 @@ func TestMux_RegistersTheStaticRoutes(t *testing.T) {
 	src, err := os.ReadFile("web.go")
 	require.NoError(t, err)
 	require.Regexp(t, `(?m)^\tl\.routeStatic\(m\)\n\treturn m$`, string(src))
+}
+
+var (
+	staticAttrRef   = regexp.MustCompile(`(?:src|href)="(/[^"]*)"`)
+	staticImportRef = regexp.MustCompile(`(?:from|import)\s*\(?\s*"(\.{1,2}/[^"]+)"`)
+	staticNamedRef  = regexp.MustCompile(`import\s*\{([^}]*)\}\s*from\s*"(\.{1,2}/[^"]+)"`)
+	staticExportFn  = regexp.MustCompile(`export\s+(?:async\s+)?(?:function\*?|const|let|var|class)\s+([A-Za-z_$][\w$]*)`)
+	staticExportSet = regexp.MustCompile(`export\s*\{([^}]*)\}`)
+)
+
+// staticModules lists the URLs of the app's modules, the vendored one included.
+func staticModules(assets map[string]staticAsset) []string {
+	var urls []string
+	for url := range assets {
+		if strings.HasSuffix(url, ".mjs") {
+			urls = append(urls, url)
+		}
+	}
+	return urls
+}
+
+// staticExports lists the names a module exports.
+func staticExports(body []byte) map[string]bool {
+	names := map[string]bool{}
+	for _, m := range staticExportFn.FindAllSubmatch(body, -1) {
+		names[string(m[1])] = true
+	}
+	for _, m := range staticExportSet.FindAllSubmatch(body, -1) {
+		for _, item := range strings.Split(string(m[1]), ",") {
+			parts := strings.Fields(item)
+			if len(parts) > 0 {
+				names[parts[len(parts)-1]] = true
+			}
+		}
+	}
+	return names
+}
+
+func TestStatic_EveryReferenceResolves(t *testing.T) {
+	assets := staticAssets(t)
+
+	for _, ref := range staticAttrRef.FindAllStringSubmatch(string(assets["/index.html"].body), -1) {
+		require.Contains(t, assets, ref[1], "index.html references a file that is not embedded")
+	}
+	for _, url := range staticModules(assets) {
+		for _, ref := range staticImportRef.FindAllStringSubmatch(string(assets[url].body), -1) {
+			target := path.Join(path.Dir(url), ref[1])
+			require.Contains(t, assets, target, "%s imports %s, which is not embedded", url, ref[1])
+		}
+	}
+	require.Contains(t, assets, "/js/app.mjs")
+}
+
+func TestStatic_NamedImportsAreExported(t *testing.T) {
+	assets := staticAssets(t)
+	vendored := staticExports(assets["/lib/preact-htm.mjs"].body)
+	require.True(t, vendored["useState"], "the export reader misses the vendored module's list")
+	require.False(t, vendored["Fragment"])
+
+	for _, url := range staticModules(assets) {
+		for _, imp := range staticNamedRef.FindAllStringSubmatch(string(assets[url].body), -1) {
+			target := path.Join(path.Dir(url), imp[2])
+			exports := staticExports(assets[target].body)
+			for _, item := range strings.Split(imp[1], ",") {
+				parts := strings.Fields(item)
+				if len(parts) == 0 {
+					continue
+				}
+				require.True(t, exports[parts[0]], "%s imports %s, which %s does not export", url, parts[0], target)
+			}
+		}
+	}
+}
+
+func TestStatic_ModulesSetNoStyleAttribute(t *testing.T) {
+	assets := staticAssets(t)
+	for _, url := range staticModules(assets) {
+		if url == "/lib/preact-htm.mjs" {
+			continue
+		}
+		require.Empty(t, regexp.MustCompile(`\sstyle=`).FindAllString(string(assets[url].body), -1),
+			"%s sets a style attribute: the app uses classes", url)
+	}
 }
