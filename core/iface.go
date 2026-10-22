@@ -120,6 +120,16 @@ type Core interface {
 	AddAccount(name string) (string, error)
 	RemoveAccount(name string, force bool) error
 	SetDefaultAccount(name string) error
+
+	// The web layer (internal/web): its settings and the devices paired to
+	// it, and the requests that change them. Web answers from the replica
+	// (the view travels in ModelView, so no event of its own); a pairing
+	// code, the one secret a request returns, lives in the model's memory
+	// only.
+	Web() WebView // rpc:local
+	ConfigureWeb(listen, origin string) error
+	PairDevice(name string) (Pairing, error)
+	RevokeDevice(name string) error
 }
 
 var _ Core = (*Loop)(nil)

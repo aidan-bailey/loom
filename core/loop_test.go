@@ -255,6 +255,24 @@ func TestLoop_TickProbesTheSelection(t *testing.T) {
 	assert.Equal(t, []InstanceID{7}, get(l, (*Model).SelectedForTest))
 }
 
+// TestLoop_WebRequestsRunOnTheModel: the web query and requests reach the
+// model through the loop, and a pending pairing code is no device.
+func TestLoop_WebRequestsRunOnTheModel(t *testing.T) {
+	l := StartForTest(webModel(t, ""))
+	t.Cleanup(l.Stop)
+
+	require.NoError(t, l.ConfigureWeb("127.0.0.1:7420", "https://loom.example.com"))
+	assert.Equal(t, "127.0.0.1:7420", l.Web().Listen)
+	assert.EqualValues(t, 1, l.Web().Rev, "the enable bumped the revision")
+	p, err := l.PairDevice("Pixel")
+	require.NoError(t, err)
+	assert.Len(t, p.Code, PairingCodeLen)
+	assert.ErrorIs(t, l.RevokeDevice("Pixel"), ErrNoDevice)
+	require.NoError(t, l.ConfigureWeb("", ""))
+	_, err = l.PairDevice("Pixel")
+	assert.ErrorIs(t, err, ErrWebOff)
+}
+
 // TestLoopForwardsEachMethodToItsNamesake: every method in loop_core.go
 // runs its namesake on the model and nothing else (Sync runs syncEvents),
 // so a copied forwarder can't call the wrong one.

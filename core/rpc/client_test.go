@@ -21,6 +21,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// webFixture is an enabled web.json holding two devices: iPhone, with a push
+// subscription and a pause, and iPad, whose subscription expired.
+const webFixture = `{"version":1,"listen":"127.0.0.1:7420","origin":"https://loom.example.com","devices":[` +
+	`{"name":"iPhone","token_sha256":"abababababababababababababababababababababababababababababababab","paired":"2026-10-01T09:00:00Z","last_seen":"2026-10-02T10:30:00Z",` +
+	`"notify":{"waiting":true,"finished":false,"paused_until":"2026-10-03T08:00:00Z"},` +
+	`"push":{"endpoint":"https://web.push.apple.com/abc","p256dh":"pk","auth":"au"},"push_state":"ok"},` +
+	`{"name":"iPad","token_sha256":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","paired":"2026-10-04T09:00:00Z","last_seen":"2026-10-04T09:00:00Z",` +
+	`"notify":{"waiting":false,"finished":true,"paused_until":""},"push_state":"expired"}]}`
+
+// webModel is a model whose global config dir holds webFixture, loaded as
+// Boot loads it.
+func webModel(t *testing.T) *core.Model {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, core.WebFile), []byte(webFixture), 0o600))
+	model := core.NewForTest(core.Options{})
+	model.InitWebForTest()
+	return model
+}
+
 // workspace is a fixture workspace over a fresh config dir, holding insts.
 func workspace(t *testing.T, name string, insts ...*session.Instance) *core.Workspace {
 	t.Helper()
@@ -133,6 +154,10 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	model.SetAccountAuthForTest(map[string]session.RemoteControlAuth{"max-2": {State: session.RemoteControlAuthBlocked, Reason: "r"}})
 	model.SetAccountUsageForTest("max-2", account.Usage{Available: true, Plan: "max", At: time.Unix(10, 0)}, errors.New("probe failed"))
 	model.SetRunningAsAccountForTest(`loom is running as account "max-2"`)
+	webDir := t.TempDir()
+	t.Setenv(config.EnvGlobalDir, webDir)
+	require.NoError(t, os.WriteFile(filepath.Join(webDir, core.WebFile), []byte(webFixture), 0o600))
+	model.InitWebForTest()
 	loop := core.StartForTest(model)
 	// A repository reached through a symlink and from a subdirectory: the
 	// replica finds its snapshot by any spelling, as the model does.
@@ -174,6 +199,8 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	}
 	same("Registry", func(k core.Core) []any { return []any{k.Registry()} })
 	same("RCAuth", func(k core.Core) []any { return []any{k.RCAuth()} })
+	require.Len(t, loop.Web().Devices, 2, "fixture: the devices are in the view")
+	same("Web", func(k core.Core) []any { return []any{k.Web()} })
 	same("AccountNames", func(k core.Core) []any { return []any{k.AccountNames()} })
 	same("AccountsLoaded", func(k core.Core) []any { return []any{k.AccountsLoaded()} })
 	same("HasExtraAccounts", func(k core.Core) []any { return []any{k.HasExtraAccounts()} })
@@ -194,6 +221,31 @@ func TestReplica_AnswersAsTheModel(t *testing.T) {
 	}
 	same("GitHubUnavailable", func(k core.Core) []any { return []any{k.GitHubUnavailable()} })
 	same("GitHubUnavailableReason", func(k core.Core) []any { return []any{k.GitHubUnavailableReason()} })
+}
+
+// TestWebRequests_ReachTheModelOverTheWire: ConfigureWeb, PairDevice and
+// RevokeDevice are requests, so their effect is in the replica when they
+// return, and an error crosses as its message.
+func TestWebRequests_ReachTheModelOverTheWire(t *testing.T) {
+	loop := core.StartForTest(webModel(t))
+	c := pair(t, loop)
+
+	require.NoError(t, c.ConfigureWeb("127.0.0.1:7421", "https://loom.example.com"))
+	assert.Equal(t, "127.0.0.1:7421", c.Web().Listen, "the request's ModelChanged reached the replica before its reply")
+	assert.EqualValues(t, 1, c.Web().Rev, "and the revision with it: the fixture's model had seen no ConfigureWeb")
+	code, err := c.PairDevice("Pixel")
+	require.NoError(t, err)
+	assert.Len(t, code.Code, core.PairingCodeLen)
+	assert.WithinDuration(t, time.Now().Add(core.PairingTTL), code.Expires, time.Minute)
+	_, err = c.PairDevice("iPhone")
+	assert.ErrorContains(t, err, core.ErrDeviceExists.Error())
+	require.NoError(t, c.RevokeDevice("iPhone"))
+	require.Len(t, c.Web().Devices, 1, "the revoke is in the replica when it returns")
+	assert.Equal(t, "iPad", c.Web().Devices[0].Name)
+	assert.ErrorContains(t, c.RevokeDevice("iPhone"), core.ErrNoDevice.Error())
+	assert.ErrorContains(t, c.ConfigureWeb("localhost:7420", "https://loom.example.com"), "loopback")
+	assert.Equal(t, "127.0.0.1:7421", c.Web().Listen, "a refused request changes nothing")
+	assert.EqualValues(t, 1, c.Web().Rev, "the revision included; a pairing and a revoke never bumped it")
 }
 
 // TestRequest_ItsEventsArriveBeforeItsReply: a read right after a request

@@ -439,6 +439,30 @@ Params: `{"name":""}`
 
 Result: `{}`
 
+### Web (local)
+
+Params: `{}`
+
+Result: `{"value":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0}}`
+
+### ConfigureWeb (request)
+
+Params: `{"listen":"","origin":""}`
+
+Result: `{}`
+
+### PairDevice (request)
+
+Params: `{"name":""}`
+
+Result: `{"value":{"Code":"","Expires":"0001-01-01T00:00:00Z"}}`
+
+### RevokeDevice (request)
+
+Params: `{"name":""}`
+
+Result: `{}`
+
 ## Events
 
 ### AccountsChanged

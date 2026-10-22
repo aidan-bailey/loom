@@ -108,6 +108,9 @@ func (r *replica) Workspace(id core.WorkspaceID) (core.WorkspaceView, bool) {
 func (r *replica) IsLoaded(id core.WorkspaceID) bool { return r.workspaces.IsLoaded(id) }
 func (r *replica) Registry() core.RegistryView       { return r.model.Clone().Registry }
 
+// Web is the web settings and devices, as last published in the model view.
+func (r *replica) Web() core.WebView { return r.model.Clone().Web }
+
 // Views is the served workspace id's instance views; nil for one not
 // served, as the model answers.
 func (r *replica) Views(id core.WorkspaceID) []core.InstanceView {

@@ -277,6 +277,10 @@ func (m *Model) SetExecForTest(e cmd2.Executor) { m.cmdExec = e }
 // SetRegistryForTest replaces the workspace registry.
 func (m *Model) SetRegistryForTest(r *config.WorkspaceRegistry) { m.registry = r }
 
+// InitWebForTest loads web.json from the global config dir, as Boot does: a
+// test in another package writes its fixture there first.
+func (m *Model) InitWebForTest() { m.initWeb() }
+
 // executor returns the executor for the workspace load paths: the test
 // seam when set, the production executor otherwise.
 func (m *Model) executor() cmd2.Executor {

@@ -583,6 +583,44 @@ type SetDefaultAccountParams struct {
 type SetDefaultAccountResult struct {
 }
 
+// WebParams are Web's parameters on the wire.
+type WebParams struct {
+}
+
+// WebResult is Web's result on the wire; an error travels in the reply.
+type WebResult struct {
+	Value core.WebView `json:"value"`
+}
+
+// ConfigureWebParams are ConfigureWeb's parameters on the wire.
+type ConfigureWebParams struct {
+	Listen string `json:"listen"`
+	Origin string `json:"origin"`
+}
+
+// ConfigureWebResult is ConfigureWeb's result on the wire; an error travels in the reply.
+type ConfigureWebResult struct {
+}
+
+// PairDeviceParams are PairDevice's parameters on the wire.
+type PairDeviceParams struct {
+	Name string `json:"name"`
+}
+
+// PairDeviceResult is PairDevice's result on the wire; an error travels in the reply.
+type PairDeviceResult struct {
+	Value core.Pairing `json:"value"`
+}
+
+// RevokeDeviceParams are RevokeDevice's parameters on the wire.
+type RevokeDeviceParams struct {
+	Name string `json:"name"`
+}
+
+// RevokeDeviceResult is RevokeDevice's result on the wire; an error travels in the reply.
+type RevokeDeviceResult struct {
+}
+
 // methods are the Core methods the wire carries, in iface.go's order, with
 // how a client serves each (its line comment there).
 var methods = []methodInfo{
@@ -645,6 +683,10 @@ var methods = []methodInfo{
 	{Name: "AddAccount", Kind: kindRequest, Params: AddAccountParams{}, Result: AddAccountResult{}},
 	{Name: "RemoveAccount", Kind: kindRequest, Params: RemoveAccountParams{}, Result: RemoveAccountResult{}},
 	{Name: "SetDefaultAccount", Kind: kindRequest, Params: SetDefaultAccountParams{}, Result: SetDefaultAccountResult{}},
+	{Name: "Web", Kind: kindLocal, Params: WebParams{}, Result: WebResult{}},
+	{Name: "ConfigureWeb", Kind: kindRequest, Params: ConfigureWebParams{}, Result: ConfigureWebResult{}},
+	{Name: "PairDevice", Kind: kindRequest, Params: PairDeviceParams{}, Result: PairDeviceResult{}},
+	{Name: "RevokeDevice", Kind: kindRequest, Params: RevokeDeviceParams{}, Result: RevokeDeviceResult{}},
 }
 
 // dispatch calls method on b with params decoded, returning its result
@@ -1087,6 +1129,33 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		err := b.SetDefaultAccount(p.Name)
 		return SetDefaultAccountResult{}, err, true
+	case "Web":
+		var p WebParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		return WebResult{Value: b.Web()}, nil, true
+	case "ConfigureWeb":
+		var p ConfigureWebParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		err := b.ConfigureWeb(p.Listen, p.Origin)
+		return ConfigureWebResult{}, err, true
+	case "PairDevice":
+		var p PairDeviceParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		v, err := b.PairDevice(p.Name)
+		return PairDeviceResult{Value: v}, err, true
+	case "RevokeDevice":
+		var p RevokeDeviceParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		err := b.RevokeDevice(p.Name)
+		return RevokeDeviceResult{}, err, true
 	}
 	return nil, nil, false
 }
@@ -1469,4 +1538,30 @@ func (c *Client) RemoveAccount(name string, force bool) error {
 func (c *Client) SetDefaultAccount(name string) error {
 	var r SetDefaultAccountResult
 	return c.request("SetDefaultAccount", SetDefaultAccountParams{Name: name}, &r)
+}
+
+// Web is core.Core's Web (local).
+func (c *Client) Web() core.WebView {
+	var v0 core.WebView
+	c.local(func(r *replica) { v0 = r.Web() })
+	return v0
+}
+
+// ConfigureWeb is core.Core's ConfigureWeb (request).
+func (c *Client) ConfigureWeb(listen string, origin string) error {
+	var r ConfigureWebResult
+	return c.request("ConfigureWeb", ConfigureWebParams{Listen: listen, Origin: origin}, &r)
+}
+
+// PairDevice is core.Core's PairDevice (request).
+func (c *Client) PairDevice(name string) (core.Pairing, error) {
+	var r PairDeviceResult
+	err := c.request("PairDevice", PairDeviceParams{Name: name}, &r)
+	return r.Value, err
+}
+
+// RevokeDevice is core.Core's RevokeDevice (request).
+func (c *Client) RevokeDevice(name string) error {
+	var r RevokeDeviceResult
+	return c.request("RevokeDevice", RevokeDeviceParams{Name: name}, &r)
 }

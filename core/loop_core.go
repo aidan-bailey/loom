@@ -162,3 +162,21 @@ func (l *Loop) RemoveAccount(name string, force bool) error {
 func (l *Loop) SetDefaultAccount(name string) error {
 	return get(l, func(m *Model) error { return m.SetDefaultAccount(name) })
 }
+
+// Web runs Model.Web on the loop.
+func (l *Loop) Web() WebView { return get(l, (*Model).Web) }
+
+// ConfigureWeb runs Model.ConfigureWeb on the loop.
+func (l *Loop) ConfigureWeb(listen, origin string) error {
+	return get(l, func(m *Model) error { return m.ConfigureWeb(listen, origin) })
+}
+
+// PairDevice runs Model.PairDevice on the loop.
+func (l *Loop) PairDevice(name string) (Pairing, error) {
+	return get2(l, func(m *Model) (Pairing, error) { return m.PairDevice(name) })
+}
+
+// RevokeDevice runs Model.RevokeDevice on the loop.
+func (l *Loop) RevokeDevice(name string) error {
+	return get(l, func(m *Model) error { return m.RevokeDevice(name) })
+}
