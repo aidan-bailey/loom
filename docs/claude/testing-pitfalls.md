@@ -26,7 +26,7 @@
 1. Stage or commit the fix first. Restoring a mutated file with `git checkout <file>` discards your uncommitted fix in that file too; one guard was lost that way and found only by grepping.
 2. Mutate the source (revert the fix, or flip the guard), run the test, see it fail for the reason you expect, then restore by re-applying the edit.
 3. Keep mutation backups in the scratchpad, never in the worktree (next section).
-4. `go test -overlay` is a cleaner mutant, with two catches. Its keys must be the path Go resolves: this checkout is reached through a symlink, so build each key from `go list -f '{{.Dir}}' ./pkg` or the overlay is silently ignored and every mutant "passes". And tests that parse source themselves (the enforcement tests, through go/parser) read the disk and never see an overlay; check those with a temporary real file outside the worktree's tracked tree, or a copy of the repo.
+4. `go test -overlay` is a cleaner mutant, with two catches. Its keys must be the path Go resolves: this checkout is reached through a symlink, so build each key from `go list -f '{{.Dir}}' ./pkg` or the overlay is silently ignored and every mutant "passes"; a shell can name the checkout by either spelling, so derive the key rather than typing it. Prove the key works before trusting a mutant: an overlay that breaks the file's syntax must fail the build. And tests that parse source themselves (the enforcement tests, through go/parser) read the disk and never see an overlay; check those with a temporary real file outside the worktree's tracked tree, or a copy of the repo.
 
 ## The worktree's index
 
