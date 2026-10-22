@@ -77,11 +77,14 @@ func (j pushJob) topic() string {
 	return base64.RawURLEncoding.EncodeToString(binary.BigEndian.AppendUint64(nil, uint64(j.Session)))
 }
 
-// pushSeen is what the last projection showed of one session.
+// pushSeen is what the last projection showed of one session, and what its
+// current wait has pushed: pushedReason and pushedDetail are the last
+// non-empty reason and tool summary a Prompting stretch pushed (or began
+// with, after a baseline), which a later projection is compared with.
 type pushSeen struct {
-	status session.Status
-	reason string
-	detail string
+	status       session.Status
+	pushedReason string
+	pushedDetail string
 }
 
 // pushWatch works out the pushes a projection implies by comparing each
@@ -117,9 +120,11 @@ func (w *pushWatch) forget(served []core.WorkspaceView) {
 
 // observe takes a workspace's whole projection and returns the pushes it
 // implies, in the projection's order:
-//   - waiting: a session enters Prompting, or stays in it with a new reason
-//     or a new tool summary, or appears already Prompting after the
-//     workspace's baseline;
+//   - waiting: a session enters Prompting, or stays in it with a non-empty
+//     reason or tool summary that differs from the last non-empty one the
+//     stretch pushed, or appears already Prompting after the workspace's
+//     baseline. A reason or summary that is cleared, or returns to the one
+//     already pushed, is the same wait; leaving Prompting ends the stretch;
 //   - finished: a started session goes from Running to Ready.
 //
 // Workspace terminals never push and are not counted.
@@ -132,7 +137,22 @@ func (w *pushWatch) observe(ws core.WorkspaceID, views []core.InstanceView) []pu
 		if v.IsWorkspaceTerminal {
 			continue
 		}
-		now := pushSeen{status: v.Status, reason: v.WaitReason, detail: v.WaitDetail}
+		now := pushSeen{status: v.Status}
+		before, known := prev[v.ID]
+		entering := v.Status == session.Prompting && (!known || before.status != session.Prompting)
+		changed := false
+		switch {
+		case entering:
+			now.pushedReason, now.pushedDetail = v.WaitReason, v.WaitDetail
+		case v.Status == session.Prompting:
+			now.pushedReason, now.pushedDetail = before.pushedReason, before.pushedDetail
+			if v.WaitReason != "" && v.WaitReason != before.pushedReason {
+				now.pushedReason, changed = v.WaitReason, true
+			}
+			if v.WaitDetail != "" && v.WaitDetail != before.pushedDetail {
+				now.pushedDetail, changed = v.WaitDetail, true
+			}
+		}
 		next[v.ID] = now
 		if group, _ := groupOf(v); group == groupNeedsYou {
 			needs++
@@ -140,9 +160,8 @@ func (w *pushWatch) observe(ws core.WorkspaceID, views []core.InstanceView) []pu
 		if !baselined {
 			continue
 		}
-		before, known := prev[v.ID]
 		switch {
-		case now.status == session.Prompting && (!known || before != now):
+		case entering || changed:
 			jobs = append(jobs, pushJob{Kind: pushWaiting, Session: v.ID, Title: pushTitle(v), Body: pushWaitBody(v)})
 		case known && before.status == session.Running && now.status == session.Ready && v.Started:
 			jobs = append(jobs, pushJob{Kind: pushFinished, Session: v.ID, Title: pushTitle(v), Body: pushFinishedBody})

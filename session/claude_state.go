@@ -22,9 +22,12 @@ type observation struct {
 	status Status
 	reason string // wait reason; empty unless status is Prompting
 	detail string // the permission request's tool summary; empty unless status is Prompting
-	at     time.Time
-	source obsSource
-	valid  bool
+	// reasonFromHook is true when reason is one a hook gave, whether this
+	// observation is the hook's or a roster answer that inherited it.
+	reasonFromHook bool
+	at             time.Time
+	source         obsSource
+	valid          bool
 }
 
 // claudeState is what loom knows about a Claude session from its hooks and
@@ -55,20 +58,26 @@ type claudeState struct {
 // comparison uses at even when the current observation is no-opinion, so an
 // older answer delivered late never revives a status a SessionEnd cleared.
 //
-// A roster observation with the same status as a current hook one keeps
-// the hook's reason: the hook names the tool ("permission: Bash"), the
-// roster only the kind of wait ("permission prompt"). The tool summary
-// belongs to the permission request, not to whoever reports the wait, so
-// every roster answer that agrees on the status keeps it, the one after the
-// hook's and the ones after that, until a new request or the end of the wait
-// replaces the observation. The roster names no tool, so it never sets one.
+// A roster observation with the same status as the current one keeps a
+// reason a hook gave: the hook names the tool ("permission: Bash"), the
+// roster only the kind of wait ("permission prompt"). The reason and the tool
+// summary belong to the permission request, not to whoever reports the
+// wait, so every roster answer that agrees on the status keeps both, the one
+// after the hook's and the ones after that, until a hook event, a status
+// change or the end of the wait replaces the observation: a relabel under
+// an unchanged prompt would read as a new wait. The roster names no tool, so
+// it never sets a summary, and a wait only the roster reports takes the
+// roster's own reason.
 func (s *claudeState) offer(o observation) bool {
 	if !s.obs.at.IsZero() && !o.at.After(s.obs.at) {
 		return false
 	}
-	if o.source == obsRoster && o.valid && s.obs.valid && s.obs.source == obsHook &&
+	if o.source == obsHook && o.valid && o.reason != "" {
+		o.reasonFromHook = true
+	}
+	if o.source == obsRoster && o.valid && s.obs.valid && s.obs.reasonFromHook &&
 		o.status == s.obs.status && s.obs.reason != "" {
-		o.reason = s.obs.reason
+		o.reason, o.reasonFromHook = s.obs.reason, true
 	}
 	if o.source == obsRoster && o.valid && s.obs.valid && o.status == s.obs.status {
 		o.detail = s.obs.detail

@@ -65,6 +65,62 @@ func TestPushWatch_WaitingFiresAgainOnANewReasonOrToolSummary(t *testing.T) {
 	assert.Empty(t, w.observe(10, []core.InstanceView{newDetail}))
 }
 
+// One permission prompt is one push, however its labels move under it: a
+// failed roster query clears the reason and summary, and the next good answer
+// brings them back. (The roster no longer relabels a hook's wait: the session
+// package keeps the hook's reason.)
+func TestPushWatch_ARelabelOrAGapInOneWaitPushesOnce(t *testing.T) {
+	w := newPushWatch()
+	w.observe(10, []core.InstanceView{pushTestView(1, session.Running)})
+
+	hook := pushTestView(1, session.Prompting)
+	hook.WaitReason, hook.WaitDetail = "permission: Bash", "ls"
+	require.Len(t, w.observe(10, []core.InstanceView{hook}), 1, "entering Prompting")
+
+	gap := pushTestView(1, session.Prompting)
+	assert.Empty(t, w.observe(10, []core.InstanceView{gap}), "reason and summary cleared by a silent roster")
+	assert.Empty(t, w.observe(10, []core.InstanceView{hook}), "back to the value already pushed")
+	assert.Empty(t, w.observe(10, []core.InstanceView{gap}))
+	assert.Empty(t, w.observe(10, []core.InstanceView{hook}))
+
+	reasonOnly := pushTestView(1, session.Prompting)
+	reasonOnly.WaitReason = "permission: Bash"
+	assert.Empty(t, w.observe(10, []core.InstanceView{reasonOnly}), "one field cleared, the other the value pushed")
+}
+
+// A value that really is new still pushes after a gap, and the comparison is
+// with the last non-empty value pushed, not the last one seen.
+func TestPushWatch_ANewValueAfterAGapPushesAgain(t *testing.T) {
+	w := newPushWatch()
+	first := pushTestView(1, session.Prompting)
+	first.WaitReason, first.WaitDetail = "permission: Bash", "ls"
+	w.observe(10, []core.InstanceView{first})
+
+	assert.Empty(t, w.observe(10, []core.InstanceView{pushTestView(1, session.Prompting)}), "a gap")
+
+	next := first
+	next.WaitDetail = "rm -rf build"
+	jobs := w.observe(10, []core.InstanceView{next})
+	require.Len(t, jobs, 1, "a new tool summary after the gap")
+	assert.Equal(t, "permission: Bash · rm -rf build", jobs[0].Body)
+}
+
+// Leaving Prompting ends the stretch: the next wait pushes, with whatever
+// reason it has, and so does one the roster alone reports after a hook's.
+func TestPushWatch_LeavingPromptingEndsTheStretch(t *testing.T) {
+	w := newPushWatch()
+	hook := pushTestView(1, session.Prompting)
+	hook.WaitReason, hook.WaitDetail = "permission: Bash", "ls"
+	w.observe(10, []core.InstanceView{hook})
+
+	assert.Empty(t, w.observe(10, []core.InstanceView{pushTestView(1, session.Running)}))
+
+	again := pushTestView(1, session.Prompting)
+	again.WaitReason = "permission: Bash"
+	require.Len(t, w.observe(10, []core.InstanceView{again}), 1, "the same reason in a new stretch")
+	assert.Empty(t, w.observe(10, []core.InstanceView{again}))
+}
+
 func TestPushWatch_FinishedNeedsAStartedSessionGoingFromRunningToReady(t *testing.T) {
 	cases := []struct {
 		name     string

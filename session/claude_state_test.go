@@ -71,6 +71,37 @@ func TestClaudeState_RosterKeepsHookReason(t *testing.T) {
 	assert.Equal(t, "Prompting: sandbox request", describe(s), "with no hook observation the roster's reason stands")
 }
 
+// The hook's reason belongs to the permission request, so it survives every
+// roster answer that agrees on the status: a roster answer that relabelled
+// the wait would read as a new wait to a client watching the reason.
+func TestClaudeState_RosterAnswersKeepTheHookReasonWhileTheWaitLasts(t *testing.T) {
+	var s claudeState
+	s.offer(hookObs(Prompting, "permission: Bash", 0))
+
+	assert.False(t, s.offer(rosterObs(Prompting, "permission prompt", time.Second)))
+	assert.False(t, s.offer(rosterObs(Prompting, "permission prompt", 2*time.Second)), "the second answer relabels nothing")
+	assert.False(t, s.offer(rosterObs(Prompting, "permission prompt", 3*time.Second)))
+	assert.Equal(t, "Prompting: permission: Bash", describe(s))
+
+	assert.True(t, s.offer(hookObs(Prompting, "permission: Edit", 4*time.Second)), "a new request replaces the reason")
+	s.offer(rosterObs(Prompting, "permission prompt", 5*time.Second))
+	s.offer(rosterObs(Prompting, "permission prompt", 6*time.Second))
+	assert.Equal(t, "Prompting: permission: Edit", describe(s))
+
+	s.offer(rosterObs(Running, "", 7*time.Second))
+	s.offer(rosterObs(Prompting, "permission prompt", 8*time.Second))
+	assert.Equal(t, "Prompting: permission prompt", describe(s), "the wait ended: the next one starts over with the roster's reason")
+}
+
+// A hook observation with no reason (Running, Ready) hands none on.
+func TestClaudeState_ARosterWaitAfterAHookWithoutAReasonKeepsItsOwn(t *testing.T) {
+	var s claudeState
+	s.offer(hookObs(Running, "", 0))
+	s.offer(rosterObs(Prompting, "sandbox request", time.Second))
+	s.offer(rosterObs(Prompting, "permission prompt", 2*time.Second))
+	assert.Equal(t, "Prompting: permission prompt", describe(s), "a roster-only wait takes the roster's own reason")
+}
+
 func TestClaudeState_NoOpinionStillOrdersByTime(t *testing.T) {
 	var s claudeState
 	s.offer(hookObs(Ready, "", 0))

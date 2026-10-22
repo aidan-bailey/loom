@@ -414,20 +414,29 @@ func TestAdoptClaudeStatus_ARosterOnlyWaitHasNoToolSummary(t *testing.T) {
 	assert.Empty(t, inst.WaitDetail(), "the roster names no tool")
 }
 
-// The roster confirms a hook's Prompting every few seconds, and its second
-// answer replaces the reason with its own; the summary stays, since the
-// request it belongs to is still the one being asked.
+// The roster confirms a hook's Prompting every few seconds. Its answers name
+// the kind of wait, not the tool, so they replace neither the hook's reason
+// nor the summary: both belong to the request still being asked, and a
+// relabel under an unchanged prompt would publish a view that reads as a new
+// wait.
 func TestAdoptClaudeStatus_ARosterAnswerKeepsTheHooksToolSummary(t *testing.T) {
 	m := NewForTest(Options{})
 	inst := activeInst(t, m, "detail-kept")
 	applyHookEvents(t, inst, hooks.Event{Name: hooks.EventPermissionRequest, ToolName: "Bash", ToolSummary: "date > probe.txt", At: time.Now().Add(-2 * time.Second)})
 	m.applyClaudeStatus(inst)
 
-	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
-	deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
+	before := m.viewOf(inst)
+	require.Equal(t, "permission: Bash", before.WaitReason)
 
-	assert.Equal(t, session.Prompting, inst.GetStatus())
-	assert.Equal(t, "date > probe.txt", inst.WaitDetail())
+	for range 3 {
+		deliverRoster(m, rosterFor(inst, session.RosterStatusWaiting))
+
+		assert.Equal(t, session.Prompting, inst.GetStatus())
+		assert.Equal(t, "date > probe.txt", inst.WaitDetail())
+		assert.Equal(t, "permission: Bash", inst.WaitReason(), "the roster's \"dialog open\" does not relabel the wait")
+		assert.Equal(t, before.WaitReason, m.viewOf(inst).WaitReason)
+		assert.Equal(t, before.WaitDetail, m.viewOf(inst).WaitDetail)
+	}
 }
 
 func TestViewOf_RemoteSessionComesFromTheRoster(t *testing.T) {
