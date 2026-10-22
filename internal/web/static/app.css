@@ -224,3 +224,44 @@ input.text:focus {
   color: var(--dim);
   font-size: 0.9rem;
 }
+
+/* ---- screens (Story 10): buttons, sheets ---- */
+.sc-btn {
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 10px 14px;
+  min-height: 44px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.sc-btn:disabled { opacity: 0.4; }
+.sc-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.sc-danger { background: var(--error); border-color: var(--error); color: var(--bg); }
+.sc-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.5);
+}
+.sc-sheet {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border-top: 1px solid var(--rule);
+  border-radius: 16px 16px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+}
+.sc-sheet-title { margin: 0 0 8px; font-size: 1.1rem; }
+.sc-sheet-body { color: var(--dim); line-height: 1.4; }
+.sc-sheet-body code { color: var(--fg); overflow-wrap: anywhere; }
+.sc-sheet-body select { width: 100%; margin-top: 8px; }
+.sc-sheet-actions { display: flex; gap: 10px; margin-top: 16px; }
+.sc-sheet-actions .sc-btn { flex: 1; }
