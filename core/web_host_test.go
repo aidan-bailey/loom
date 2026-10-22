@@ -483,6 +483,19 @@ func TestWebHost_TouchDeviceWritesAtMostOnceAMinute(t *testing.T) {
 	assert.False(t, m.TouchDevice("nobody"), "an unknown name is no one")
 }
 
+// A write that fails is logged and the new time stays in memory, and the call
+// still reports that it changed what a client sees.
+func TestWebHost_TouchDeviceKeepsTheTimeWhenTheWriteFails(t *testing.T) {
+	m, clk := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	clk.at = clk.at.Add(time.Minute)
+	webHostBreakWrites(t)
+
+	assert.True(t, m.TouchDevice("iPhone"))
+
+	assert.True(t, m.Web().Devices[0].LastSeen.Equal(clk.at), "the time stays in memory")
+}
+
 func webHostPtr[T any](v T) *T { return &v }
 
 func TestWebHost_SetNotifyAppliesOnlyTheFieldsSet(t *testing.T) {
@@ -620,6 +633,21 @@ func TestWebHost_PushResult(t *testing.T) {
 	assert.Len(t, m.PushTargets(), 1)
 }
 
+// A write that fails is logged and the state stays in memory, and the call
+// still reports the change.
+func TestWebHost_PushResultKeepsTheStateWhenTheWriteFails(t *testing.T) {
+	m, _ := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	_, err := m.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
+	require.NoError(t, err)
+	webHostBreakWrites(t)
+
+	assert.True(t, m.PushResult("iPhone", PushExpired))
+
+	assert.Equal(t, PushExpired, m.Web().Devices[0].Push, "the expiry stays in memory")
+	assert.Empty(t, m.PushTargets(), "and the subscription is dropped")
+}
+
 func TestWebHost_VAPIDKey(t *testing.T) {
 	t.Run("before the first enable", func(t *testing.T) {
 		t.Setenv(config.EnvGlobalDir, t.TempDir()) // a bare model's saveWeb would write under the global dir
@@ -682,6 +710,13 @@ func TestWebHost_WebServingSetsWhatTheViewShows(t *testing.T) {
 	assert.False(t, v.Serving)
 	assert.Empty(t, v.Addr)
 	assert.Equal(t, rev, v.Rev, "closing is a report too")
+
+	assert.True(t, m.WebServing("127.0.0.1:7420", nil))
+	assert.True(t, m.WebServing("127.0.0.1:7420", errors.New("address in use")))
+	v = m.Web()
+	assert.False(t, v.Serving, "an error means not serving, whatever the address")
+	assert.Empty(t, v.Addr, "the address is cleared when an error comes with it")
+	assert.Equal(t, "address in use", v.Error)
 }
 
 func TestWebHost_WebServingRaisesOneNoticePerDistinctError(t *testing.T) {

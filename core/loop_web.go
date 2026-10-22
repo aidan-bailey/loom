@@ -19,7 +19,9 @@ func (l *Loop) RedeemPairing(code string) (name, token string, err error) {
 	return name, token, err
 }
 
-// DeviceByToken runs Model.DeviceByToken on the loop.
+// DeviceByToken runs Model.DeviceByToken on the loop. After Stop it answers
+// ("", false), so a caller treats a stopped loop like no device; the daemon
+// closes the web layer before the loop stops.
 func (l *Loop) DeviceByToken(hash [32]byte) (name string, ok bool) {
 	l.do(func(m *Model) { name, ok = m.DeviceByToken(hash) })
 	return name, ok
