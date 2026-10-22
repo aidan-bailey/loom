@@ -10,7 +10,15 @@ The daemon's web layer: what `loom serve` starts so a phone can see the fleet an
 | `server.go` | the listener (`bind`), `guard` and the origin rule |
 | `auth.go` | pairing (`routePair`), `authed`, the device cookie |
 | `jsonio.go` | `readJSON`, `writeJSON`, `writeError` |
+| `fleet.go` | the projection: `sessionJSON`, `workspaceJSON`, `deviceJSON`, `snapshotJSON`, `noticeJSON`, `groupOf`, `deviceOf`, `noticeOf` |
+| `stream.go` | the hub (`publish`, `sendTo`, `closeDevice`), the `/api/v1/stream` handler, recent notices |
+| `api.go`, `reqs.go` | `routeAPI` and the action handlers; `reqs`, which makes the layer's request IDs and waits for each `Reply` |
+| `static.go` | `routeStatic`: the embedded app, with the build ID written into `sw.js` and `index.html`, and the shell's file list into `sw.js`, as they are served |
+| `push.go`, `triggers.go` | the sender goroutine and `routePush` (`GET /api/v1/push-key`); the waiting and finished triggers |
+| `webpush/` | VAPID (ES256), RFC 8291 encryption (aes128gcm, one record) and the request to a push service; standard library only |
+| `static/` | the app: `index.html`, `app.css`, `sw.js`, `manifest.webmanifest`, `icons/`, `lib/preact-htm.mjs` and the ES modules in `js/` |
 | `testmain_test.go` | isolates the loom dirs and tmux for the package's tests |
+| `e2e/web_test.go` | a sandbox daemon with the web enabled: pair, stream, create, pause, resume and kill over HTTP |
 
 ## How it runs
 
@@ -39,20 +47,7 @@ With no listener bound there is no origin rule, and `guard` refuses everything.
 
 ## Tests
 
-The tests boot a model on its loop, serve it with the real `rpc.Server`, start the layer on it and talk to it over HTTP on a loopback port (`webStack` in `web_test.go`). `TestMain` points the loom dirs and tmux at throwaway ones.
-
-## The files of the later stories
-
-| File | Holds |
-|---|---|
-| `internal/web/fleet.go` | the projection: `sessionJSON`, `workspaceJSON`, `deviceJSON`, `snapshotJSON`, `noticeJSON`, `groupOf`, `deviceOf`, `noticeOf` |
-| `internal/web/stream.go` | the hub (`publish`, `sendTo`, `closeDevice`), the `/api/v1/stream` handler, recent notices |
-| `internal/web/api.go`, `internal/web/reqs.go` | `routeAPI` and the action handlers; `reqs`, which makes the layer's request IDs and waits for each `Reply` |
-| `internal/web/static.go` | `routeStatic`: the embedded app, with the build ID written into `sw.js` and `index.html`, and the shell's file list into `sw.js`, as they are served |
-| `internal/web/push.go`, `internal/web/triggers.go` | the sender goroutine and `routePush` (`GET /api/v1/push-key`); the waiting and finished triggers |
-| `internal/web/webpush/` | VAPID (ES256), RFC 8291 encryption (aes128gcm, one record) and the request to a push service; standard library only |
-| `internal/web/static/` | the app: `index.html`, `app.css`, `sw.js`, `manifest.webmanifest`, `icons/`, `lib/preact-htm.mjs` and the ES modules in `js/` |
-| `e2e/web_test.go` | a sandbox daemon with the web enabled: pair, stream, create, pause, resume and kill over HTTP |
+The tests boot a model on its loop, serve it with the real `rpc.Server`, start the layer on it and talk to it over HTTP on a loopback port (`webStack` in `web_test.go`). `TestMain` points the loom dirs and tmux at throwaway ones. Go tests run over the production path: a booted model, the real `rpc.Server`, a client over `net.Pipe`, and the handler on `httptest`. They pin both sides of each guard (the right and a wrong `Host`, the same and a cross `Origin`, a valid and a revoked cookie), the groups, each push transition once, RFC 8291's example and the VAPID token verified with its public key, and the static files (everything `sw.js` precaches is embedded, the manifest parses). `e2e/web_test.go` runs under `-tags e2e` and needs tmux.
 
 ## Routes and the API
 
@@ -89,12 +84,8 @@ Groups: Prompting is `needs_you`; a started Ready is `your_turn`; Running, Loadi
 
 ## Push
 
-Turned on by a tap in the app: it subscribes with the VAPID public key and posts the subscription, and the button waits while the phone subscribes, which can take minutes. Once a launch the app checks its subscription against the device's, since Apple answers 201 to a subscription the phone has dropped: while the state is `ok` or none it posts its subscription again, and holding none, or no permission to notify, while the device has one, it has the model drop it (`DELETE /api/v1/device/push`, recorded as expired) and says so. Triggers come from the projection's transitions: *waiting* when a session enters Prompting or stays in it with a new reason or tool summary, *finished* when a started session goes from Running to Ready. The first projection after the layer starts is a baseline and pushes nothing. A device gets the kinds its settings allow, and nothing while paused or while the web is off (an empty `listen`). The subscriptions and the VAPID key stay while the web is off, so enabling it again resumes pushes without the phone subscribing again. The payload (`kind`, `session`, `title`, `body`, `badge`, `url`) is encrypted per RFC 8291; waiting goes with `Urgency: high`, finished with `normal`, both with a one-hour TTL and a `Topic` per session: the session ID's 8 bytes as unpadded base64url, since Apple refuses a `Topic` whose length is 1 mod 4 (400 `BadWebPushTopic`). The sender is a goroutine of its own with a queue of at most 100: it posts with a 10 s timeout, at most 30 a minute per device, retries a 429 or a 5xx up to three times honouring `Retry-After`, drops a subscription answered 404 or 410 and records it as expired, and records any other failure as failing with the status. A result names the endpoint it was sent to, and changes nothing once the device holds another subscription. `loom web devices` shows the state.
+Turned on by a tap in the app: it subscribes with the VAPID public key and posts the subscription, and the button waits while the phone subscribes, which can take minutes. Once a launch the app checks its subscription against the device's, since Apple answers 201 to a subscription the phone has dropped: while the state is `ok` or none it posts its subscription again, and holding none, or no permission to notify, while the device has one, it has the model drop it (`DELETE /api/v1/device/push`, recorded as expired) and says so. Triggers come from the projection's transitions: *waiting* when a session enters Prompting or stays in it with a new reason or tool summary, *finished* when a started session goes from Running to Ready. The first projection after the layer starts is a baseline and pushes nothing. A device gets the kinds its settings allow, and nothing while paused or while the web is off (an empty `listen`). The subscriptions and the VAPID key stay while the web is off, so enabling it again resumes pushes without the phone subscribing again. The payload (`kind`, `session`, `title`, `body`, `badge`, `url`) is encrypted per RFC 8291; waiting goes with `Urgency: high`, finished with `normal`, both with a one-hour TTL and a `Topic` per session: the session ID's 8 bytes as unpadded base64url, since Apple refuses a `Topic` whose length is 1 mod 4 (400 `BadWebPushTopic`). The sender is a goroutine of its own with a queue of at most 100: it posts with a 10 s timeout, at most 30 a minute per device, retries a 429, a 5xx or a transport error up to three times, honouring a `Retry-After` of at most 30 s (a longer one is given up on), drops a subscription answered 404 or 410 and records it as expired, records any other status as failing with it, and only logs a transport error that outlasts its retries. A result names the endpoint it was sent to, and changes nothing once the device holds another subscription. `loom web devices` shows the state.
 
 ## Limits
 
 Bodies are capped at 1 MiB (`maxBody`). A reply is 1 byte to 64 KiB after trimming, a new session's prompt at most 64 KiB, and its title as `core.CheckNewTitle` says. A launch override must be an account the registry holds, a model in `config.ClaudeModelAliases()`, a permission mode in `config.ClaudePermissionModes` and an effort in `config.ClaudeEfforts`. A push subscription is an `https` endpoint of at most 2 KiB on `web.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com` or a host ending in `.notify.windows.com`, with no user and no port but 443. Ids in paths are decimal and served by the model: an unknown session is 404, an unknown workspace 400. Settings: `listen` is exactly `127.0.0.1:<port>` or `[::1]:<port>` with a port from 1 to 65535 (0 is refused), and `origin` is at most 255 bytes; disabling the web voids every pending pairing code.
-
-## Tests of the routes, the stream, the app and push
-
-Go tests run over the production path: a booted model, the real `rpc.Server`, a client over `net.Pipe`, and the handler on `httptest`. They pin both sides of each guard (the right and a wrong `Host`, the same and a cross `Origin`, a valid and a revoked cookie), the groups, each push transition once, RFC 8291's example and the VAPID token verified with its public key, and the static files (everything `sw.js` precaches is embedded, the manifest parses). `e2e/web_test.go` runs under `-tags e2e` and needs tmux.
