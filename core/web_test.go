@@ -13,14 +13,14 @@ import (
 )
 
 func TestValidateWebListen(t *testing.T) {
-	for _, listen := range []string{"127.0.0.1:7420", "[::1]:7420", "127.0.0.1:1", "127.0.0.1:65535", "127.0.0.2:8080"} {
+	for _, listen := range []string{"127.0.0.1:7420", "[::1]:7420", "127.0.0.1:1", "127.0.0.1:65535"} {
 		assert.NoError(t, ValidateWebListen(listen), listen)
 	}
 	for _, listen := range []string{
 		"", "localhost:7420", "0.0.0.0:7420", ":7420", "192.168.1.5:7420", "[::]:7420", "[fe80::1]:7420",
 		"127.0.0.1", "127.0.0.1:", "127.0.0.1:0", "127.0.0.1:65536", "127.0.0.1:-1", "127.0.0.1:+80",
 		"127.0.0.1:07420", "127.0.0.1:http", "[127.0.0.1]:7420", "[0:0:0:0:0:0:0:1]:7420",
-		"[::ffff:127.0.0.1]:7420", "[::1%lo]:7420", "::1:7420", " 127.0.0.1:7420", "127.0.0.1:7420 ",
+		"[::ffff:127.0.0.1]:7420", "127.0.0.2:8080", "127.1.2.3:7420", "[::ffff:7f00:1]:7420", "[::1%lo]:7420", "::1:7420", " 127.0.0.1:7420", "127.0.0.1:7420 ",
 		"127.0.0.1:7420/x", "unix:/tmp/loom.sock", "/tmp/loom.sock",
 	} {
 		assert.Error(t, ValidateWebListen(listen), "%q", listen)
@@ -410,6 +410,27 @@ func TestPairDevice_ASecondCodeForANameReplacesTheFirst(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, m.web.pending, 1, "one code waits for the name")
 	assert.Equal(t, second.Code, m.web.pending[0].code)
+}
+
+func TestPairDevice_ACodeForAWaitingNameReplacesItBeforeTheCap(t *testing.T) {
+	m := enabledWeb(t)
+	var old Pairing
+	for _, name := range []string{"a", "b", "c", "d"} {
+		p, err := m.PairDevice(name)
+		require.NoError(t, err)
+		if name == "b" {
+			old = p
+		}
+	}
+
+	again, err := m.PairDevice("b")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "c", "d", "b"}, pendingNames(m), "b's old code goes first, so the cap voids nothing")
+	assert.Equal(t, again.Code, m.web.pending[3].code)
+	for _, q := range m.web.pending {
+		assert.NotEqual(t, old.Code, q.code, "the old code for b no longer redeems")
+	}
 }
 
 func TestPairDevice_AtMostFourCodesWait(t *testing.T) {

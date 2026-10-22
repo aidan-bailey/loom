@@ -126,9 +126,10 @@ func validPort(port string) bool {
 	return err == nil && n >= 1 && strconv.FormatUint(n, 10) == port
 }
 
-// ValidateWebListen checks a listen address: a loopback IP literal and a
+// ValidateWebListen checks a listen address: exactly 127.0.0.1 or ::1 and a
 // port, written as net.JoinHostPort writes them (127.0.0.1:7420 or
-// [::1]:7420). A host name such as localhost, any other address, a unix
+// [::1]:7420). A host name such as localhost, any other address (another
+// loopback one, 127.0.0.2, and the mapped ::ffff:127.0.0.1 too), a unix
 // socket and a port outside 1 to 65535 are refused: only a process on this
 // machine, cloudflared through the tunnel, may reach the listener.
 func ValidateWebListen(listen string) error {
@@ -137,8 +138,8 @@ func ValidateWebListen(listen string) error {
 		return fmt.Errorf("listen %q: want a loopback address and a port, like 127.0.0.1:7420 or [::1]:7420", listen)
 	}
 	addr, err := netip.ParseAddr(host)
-	if err != nil || addr.Zone() != "" || addr.Is4In6() || !addr.IsLoopback() || addr.String() != host {
-		return fmt.Errorf("listen %q: the address must be a loopback IP literal, 127.0.0.1 or ::1", listen)
+	if err != nil || addr.String() != host || (addr != netip.AddrFrom4([4]byte{127, 0, 0, 1}) && addr != netip.IPv6Loopback()) {
+		return fmt.Errorf("listen %q: the address must be the loopback IP literal 127.0.0.1 or ::1", listen)
 	}
 	if !validPort(port) {
 		return fmt.Errorf("listen %q: the port must be a number from 1 to 65535", listen)
@@ -153,8 +154,10 @@ func ValidateWebListen(listen string) error {
 // https://<host>[:<port>] in lower case with no user, path, query or
 // fragment, or for development http://127.0.0.1:<port> or
 // http://localhost:<port>, at most 255 bytes. The web layer compares the
-// Host and Origin headers with it byte for byte, so a spelling a browser
-// would not send is refused here.
+// Host and Origin headers with it, after dropping a default port from the
+// header (a browser never sends one), so write the origin the way the
+// address bar shows it. A default port written here (https://host:443) is
+// not refused by this check.
 func ValidateWebOrigin(origin string) error {
 	if len(origin) > maxWebOrigin {
 		return fmt.Errorf("origin is longer than %d bytes", maxWebOrigin)

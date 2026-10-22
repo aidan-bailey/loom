@@ -257,6 +257,20 @@ func TestSaveWeb_RoundTripsWhatWasLoaded(t *testing.T) {
 	assert.Equal(t, "ok", iphone["push_state"])
 }
 
+func TestSaveWeb_ASubSecondPauseSurvivesARestart(t *testing.T) {
+	m := webModel(t, webJSON)
+	until := time.Date(2026, 10, 3, 8, 0, 0, 123456789, time.UTC)
+	m.web.find("iPhone").notify.PausedUntil = until
+
+	require.NoError(t, m.saveWeb())
+
+	m2 := NewForTest(Options{})
+	m2.initWeb()
+	require.Empty(t, m2.web.loadErr)
+	assert.True(t, until.Equal(m2.web.find("iPhone").notify.PausedUntil), "the fraction is kept")
+	assert.Equal(t, m.Web(), m2.Web())
+}
+
 func TestSaveWeb_ReportsAWriteThatFails(t *testing.T) {
 	m := webModel(t, webJSON)
 	blocker := filepath.Join(t.TempDir(), "file")

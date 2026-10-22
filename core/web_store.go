@@ -333,7 +333,7 @@ func (d *webDevice) file() webFileDevice {
 		PushState:   string(d.push),
 	}
 	if !d.notify.PausedUntil.IsZero() {
-		f.Notify.PausedUntil = d.notify.PausedUntil.UTC().Format(time.RFC3339)
+		f.Notify.PausedUntil = d.notify.PausedUntil.UTC().Format(time.RFC3339Nano)
 	}
 	if d.sub != (PushSubscription{}) {
 		f.Push = &webFilePush{Endpoint: d.sub.Endpoint, P256DH: d.sub.P256DH, Auth: d.sub.Auth}
