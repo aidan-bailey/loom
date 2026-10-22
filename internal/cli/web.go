@@ -365,13 +365,6 @@ func pushText(s core.PushState) string {
 	return string(s)
 }
 
-// noSuchDevice reports whether err is the model's ErrNoDevice. The error
-// crosses the wire as text under a generic code, so errors.Is cannot see the
-// sentinel and its message is what is left to compare.
-func noSuchDevice(err error) bool {
-	return err != nil && strings.Contains(err.Error(), core.ErrNoDevice.Error())
-}
-
 func newWebRevokeCmd() *cobra.Command {
 	var all bool
 	cmd := &cobra.Command{
@@ -399,7 +392,7 @@ func newWebRevokeCmd() *cobra.Command {
 				}
 				for i, dev := range devs {
 					err := d.RevokeDevice(dev.Name)
-					if noSuchDevice(err) {
+					if core.IsNoDevice(err, dev.Name) {
 						// Revoked meanwhile, elsewhere: what --all wants is done.
 						fmt.Fprintf(out, "%s was already revoked\n", dev.Name)
 						continue

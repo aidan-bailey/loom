@@ -651,16 +651,18 @@ func TestNoSuchDevice(t *testing.T) {
 	webDevice(t, d, "iPhone")
 
 	// Errors as the command gets them: over the wire, where errors.Is no
-	// longer sees the sentinel.
+	// longer sees the sentinel and core.IsNoDevice reads the text.
 	gone := d.client.RevokeDevice("ghost")
 	require.Error(t, gone)
-	require.NotErrorIs(t, gone, core.ErrNoDevice, "the wire keeps only text, which is why noSuchDevice reads it")
-	assert.True(t, noSuchDevice(gone))
+	require.NotErrorIs(t, gone, core.ErrNoDevice, "the wire keeps only text, which is why IsNoDevice reads it")
+	assert.True(t, core.IsNoDevice(gone, "ghost"))
+	assert.False(t, core.IsNoDevice(gone, "iPhone"), "another device's error is not this one's")
+	assert.False(t, core.IsNoDevice(nil, "ghost"))
 	require.NoError(t, d.loop.ConfigureWeb("", ""))
 	_, other := d.client.PairDevice("Pixel")
 	require.Error(t, other)
-	assert.False(t, noSuchDevice(other), "another refusal still fails revoke --all")
-	assert.False(t, noSuchDevice(nil))
+	assert.False(t, core.IsNoDevice(other, "Pixel"), "another refusal still fails revoke --all")
+	assert.False(t, core.IsNoDevice(other, "ghost"))
 }
 
 func TestWebRevoke_NeedsOneNameOrAll(t *testing.T) {

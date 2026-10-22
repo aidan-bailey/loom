@@ -119,6 +119,25 @@ var (
 	ErrNoDevice       = errors.New("no device has that name")
 )
 
+// noDeviceError is the error the model gives a name no device has. Both the
+// model and IsNoDevice build it, so the text one makes is the text the other
+// looks for.
+func noDeviceError(name string) error {
+	return fmt.Errorf("%w: %q", ErrNoDevice, name)
+}
+
+// IsNoDevice reports whether err says no device is called name: ErrNoDevice
+// itself, or the text the model gives for that name. A client sees the
+// second: the error crossed the rpc wire as text under CodeError, which
+// WireError.Is does not map back to ErrNoDevice, so errors.Is cannot see the
+// sentinel. Another name's error is not this name's.
+func IsNoDevice(err error, name string) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrNoDevice) || err.Error() == noDeviceError(name).Error()
+}
+
 // validPort reports whether port is a port number written plainly: digits
 // only, 1 to 65535, no sign and no leading zero.
 func validPort(port string) bool {
@@ -339,7 +358,7 @@ func (m *Model) RevokeDevice(name string) error {
 	}
 	i := slices.IndexFunc(w.devices, func(d *webDevice) bool { return d.name == name })
 	if i < 0 {
-		return fmt.Errorf("%w: %q", ErrNoDevice, name)
+		return noDeviceError(name)
 	}
 	prev := w.devices
 	w.devices = slices.Delete(slices.Clone(prev), i, i+1)

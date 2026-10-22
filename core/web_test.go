@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -529,4 +530,24 @@ func TestRevokeDevice_WorksWhileTheWebIsOff(t *testing.T) {
 	require.NoError(t, m.RevokeDevice("iPad"))
 
 	assert.Len(t, m.Web().Devices, 1)
+}
+
+func TestIsNoDevice(t *testing.T) {
+	m, _ := webHostModel(t)
+	webHostPair(t, m, "iPhone")
+	local := m.RevokeDevice("ghost")
+	require.ErrorIs(t, local, ErrNoDevice)
+	// What a client holds once the error has crossed the rpc wire: its text
+	// under CodeError, which WireError.Is does not map back to ErrNoDevice.
+	wire := &WireError{Code: CodeError, Message: local.Error()}
+	require.NotErrorIs(t, wire, ErrNoDevice, "control: the sentinel is lost on the wire")
+
+	assert.True(t, IsNoDevice(ErrNoDevice, "ghost"), "the sentinel")
+	assert.True(t, IsNoDevice(local, "ghost"), "the model's own error")
+	assert.True(t, IsNoDevice(wire, "ghost"), "the text the model gives for that name")
+	assert.False(t, IsNoDevice(wire, "iPhone"), "another name's text")
+	assert.False(t, IsNoDevice(&WireError{Code: CodeError, Message: "no device has that name"}, "ghost"), "the sentinel's text alone names no device")
+	assert.False(t, IsNoDevice(&WireError{Code: CodeError, Message: "write web.json: " + local.Error()}, "ghost"), "text that merely contains it")
+	assert.False(t, IsNoDevice(errors.New("web.json is left alone"), "ghost"), "an unrelated error")
+	assert.False(t, IsNoDevice(nil, "ghost"))
 }

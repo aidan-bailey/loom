@@ -244,7 +244,7 @@ func webHostDeviceView(d *webDevice) WebDevice {
 func (m *Model) SetNotify(name string, c NotifyChange) (WebDevice, error) {
 	d := m.web.find(name)
 	if d == nil {
-		return WebDevice{}, fmt.Errorf("%w: %q", ErrNoDevice, name)
+		return WebDevice{}, noDeviceError(name)
 	}
 	prev := d.notify
 	if c.Waiting != nil {
@@ -269,7 +269,7 @@ func (m *Model) SetNotify(name string, c NotifyChange) (WebDevice, error) {
 func (m *Model) SetPushSubscription(name string, sub PushSubscription) (WebDevice, error) {
 	d := m.web.find(name)
 	if d == nil {
-		return WebDevice{}, fmt.Errorf("%w: %q", ErrNoDevice, name)
+		return WebDevice{}, noDeviceError(name)
 	}
 	if err := ValidatePushSubscription(sub); err != nil {
 		return WebDevice{}, err
