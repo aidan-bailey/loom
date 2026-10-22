@@ -21,3 +21,13 @@ during absorption: paths are threaded through an explicit worktree root
 instead of the process working directory, the CLI / detached tmux mode /
 legacy JSON migration were dropped, and the TUI was re-styled onto loom's
 theme system and embedded as a workbench panel.
+
+## Vendored code: htm and Preact
+
+The web app (`internal/web/static/`) embeds `lib/preact-htm.mjs`, htm 3.1.1's
+`preact/standalone.module.js` (<https://unpkg.com/htm@3.1.1/preact/standalone.module.js>),
+unchanged beneath a one-line header comment. It bundles [htm](https://github.com/developit/htm),
+© Jason Miller and contributors, distributed under the Apache License 2.0, and
+[Preact](https://github.com/preactjs/preact) 10.x, © 2015-present Jason Miller,
+distributed under the MIT License. The file's SHA-256 is pinned by
+`TestPreactHTM_IsThePinnedFile` in `internal/web/static_test.go`.
