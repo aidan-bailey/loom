@@ -2,6 +2,9 @@ package core
 
 import (
 	"crypto/ecdh"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -9,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/aidan-bailey/loom/log"
 )
 
 // WebHost is the model as the web layer (internal/web) reaches it, beside the
@@ -122,4 +127,107 @@ func ValidatePushSubscription(sub PushSubscription) error {
 		return errors.New("push subscription: auth is not a 16-byte unpadded base64url value")
 	}
 	return nil
+}
+
+const (
+	// webTokenBytes is the size of a device's random token before encoding.
+	webTokenBytes = 32
+	// webTouchInterval is the least time between two writes of a device's
+	// last-seen time.
+	webTouchInterval = time.Minute
+)
+
+// RedeemPairing trades a pairing code for a device (WebHost). A code matches
+// ignoring case, dashes and spaces, once, and until it expires. Each wrong
+// code counts in misses; the fifth voids every pending code, and every code
+// then gets ErrPairingLocked until the next PairDevice resets the count. A
+// match is consumed before the name and the device count are checked, so a
+// refusal there costs the code; a failed write puts it back. Loop goroutine
+// only.
+func (m *Model) RedeemPairing(code string) (name, token string, err error) {
+	w := &m.web
+	if w.listen == "" {
+		return "", "", ErrWebOff
+	}
+	if w.misses >= PairingMaxMisses {
+		return "", "", ErrPairingLocked
+	}
+	now := w.clock()
+	w.pending = slices.DeleteFunc(w.pending, func(p pendingPairing) bool { return !now.Before(p.expires) })
+	at := -1
+	if norm, ok := NormalizePairingCode(code); ok {
+		for i, p := range w.pending {
+			if subtle.ConstantTimeCompare([]byte(p.code), []byte(norm)) == 1 {
+				at = i
+			}
+		}
+	}
+	if at < 0 {
+		w.misses++
+		if w.misses < PairingMaxMisses {
+			return "", "", ErrPairingCode
+		}
+		w.pending = nil
+		log.For("core").Warn("web.pairing_locked", "misses", w.misses)
+		return "", "", ErrPairingLocked
+	}
+	p := w.pending[at]
+	w.pending = slices.Delete(w.pending, at, at+1)
+	if w.find(p.name) != nil {
+		return "", "", fmt.Errorf("%w: %q", ErrDeviceExists, p.name)
+	}
+	if len(w.devices) >= MaxWebDevices {
+		return "", "", ErrTooManyDevices
+	}
+	raw := make([]byte, webTokenBytes)
+	_, _ = rand.Read(raw)
+	d := &webDevice{
+		name:      p.name,
+		tokenHash: sha256.Sum256(raw),
+		paired:    now,
+		lastSeen:  now,
+		notify:    NotifySettings{Waiting: true, Finished: true},
+	}
+	w.devices = append(w.devices, d)
+	slices.SortFunc(w.devices, func(a, b *webDevice) int { return strings.Compare(a.name, b.name) })
+	if err = m.saveWeb(); err != nil {
+		w.devices = slices.DeleteFunc(w.devices, func(x *webDevice) bool { return x == d })
+		w.pending = slices.Insert(w.pending, at, p)
+		return "", "", fmt.Errorf("pairing: %w", err)
+	}
+	log.For("core").Info("web.paired", "device", p.name)
+	return p.name, base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// DeviceByToken finds the device whose token hashes to hash, the SHA-256 of
+// the token's 32 raw bytes (WebHost). A record with no hash (a hand-edited
+// web.json) answers to no hash. Loop goroutine only.
+func (m *Model) DeviceByToken(hash [32]byte) (string, bool) {
+	found := ""
+	for _, d := range m.web.devices {
+		if d.tokenHash != [32]byte{} && subtle.ConstantTimeCompare(d.tokenHash[:], hash[:]) == 1 {
+			found = d.name
+		}
+	}
+	return found, found != ""
+}
+
+// TouchDevice records that the device was seen, writing web.json at most once
+// a minute per device (WebHost), and reports whether it did, so the loop
+// wakes its client only then. A write that fails is logged and left to the
+// next minute: the time stays in memory. Loop goroutine only.
+func (m *Model) TouchDevice(name string) bool {
+	d := m.web.find(name)
+	if d == nil {
+		return false
+	}
+	now := m.web.clock()
+	if now.Sub(d.lastSeen) < webTouchInterval {
+		return false
+	}
+	d.lastSeen = now
+	if err := m.saveWeb(); err != nil {
+		log.For("core").Warn("web.touch_unsaved", "device", name, "err", err.Error())
+	}
+	return true
 }
