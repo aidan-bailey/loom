@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -223,4 +224,120 @@ func NormalizePairingCode(code string) (string, bool) {
 		return "", false
 	}
 	return string(out), true
+}
+
+// ConfigureWeb sets where the web listens and the origin the phone reaches
+// it at, and writes web.json (Core.ConfigureWeb). Both are validated. An
+// empty listen turns the web off and keeps the origin (its argument is not
+// read), the devices and the key. The first enable makes the VAPID key,
+// which every later enable keeps: push subscriptions are bound to it. Every
+// call that succeeds, whatever it changed, bumps the revision (WebView.Rev)
+// and clears what the web layer reported (WebServing): the layer rebinds
+// whenever the revision changes, so running enable again retries a bind that
+// failed, and a disable and an enable that one Sync coalesces still differ.
+// Settings already in force, with the key made, write nothing. It is refused
+// while web.json is left alone, and when the write fails (errWebNoDir when
+// the model has no path and the global dir is unknown) nothing has changed,
+// the revision included.
+func (m *Model) ConfigureWeb(listen, origin string) error {
+	w := &m.web
+	if w.loadErr != "" {
+		return w.leftAlone()
+	}
+	if listen == "" {
+		origin = w.origin
+	} else {
+		if err := ValidateWebListen(listen); err != nil {
+			return err
+		}
+		if err := ValidateWebOrigin(origin); err != nil {
+			return err
+		}
+	}
+	needKey := listen != "" && len(w.vapid.Private) == 0
+	needWrite := listen != w.listen || origin != w.origin || needKey
+	prev := *w
+	w.rev++
+	w.serving, w.addr, w.servingErr = false, "", ""
+	w.listen, w.origin = listen, origin
+	if needKey {
+		key, err := newVAPIDKey()
+		if err != nil {
+			*w = prev
+			return err
+		}
+		w.vapid = key
+	}
+	if needWrite {
+		if err := m.saveWeb(); err != nil {
+			*w = prev
+			return err
+		}
+	}
+	return nil
+}
+
+// PairDevice makes the one-time code that pairs a device under name
+// (Core.PairDevice): PairingCodeLen characters of PairingAlphabet, good for
+// PairingTTL. The code lives in memory only, so a daemon restart voids it,
+// and is not in the view. A second code for the same name replaces the
+// first, and at most PairingMaxPending wait: one more voids the oldest.
+// Starting a pairing also resets the count of wrong codes, which locks
+// redeeming at PairingMaxMisses. The web must be on (ErrWebOff, which is
+// also what a web.json left alone answers), the name valid and not a
+// paired device's (ErrDeviceExists), and fewer than MaxWebDevices paired
+// (ErrTooManyDevices): the codes waiting are not devices and don't count,
+// and redeeming a code checks the limit again.
+func (m *Model) PairDevice(name string) (Pairing, error) {
+	w := &m.web
+	if w.loadErr != "" || w.listen == "" {
+		return Pairing{}, ErrWebOff
+	}
+	name, err := ValidateDeviceName(name)
+	if err != nil {
+		return Pairing{}, err
+	}
+	if w.find(name) != nil {
+		return Pairing{}, fmt.Errorf("%w: %q", ErrDeviceExists, name)
+	}
+	if len(w.devices) >= MaxWebDevices {
+		return Pairing{}, ErrTooManyDevices
+	}
+	code, err := newPairingCode()
+	if err != nil {
+		return Pairing{}, err
+	}
+	w.prune()
+	p := pendingPairing{code: code, name: name, expires: w.clock().Add(PairingTTL)}
+	w.pending = slices.DeleteFunc(w.pending, func(q pendingPairing) bool { return q.name == name })
+	w.pending = append(w.pending, p)
+	if n := len(w.pending) - PairingMaxPending; n > 0 {
+		w.pending = slices.Delete(w.pending, 0, n)
+	}
+	w.misses = 0
+	return Pairing{Code: p.code, Expires: p.expires}, nil
+}
+
+// RevokeDevice unpairs the device called name (Core.RevokeDevice): its
+// record, token hash and push subscription go from web.json, and its
+// cookie stops working. The next publish tells the web layer, which ends
+// the device's streams. It works while the web is off. ErrNoDevice for a
+// name no device has; refused while web.json is left alone; when the write
+// fails the device stays paired.
+func (m *Model) RevokeDevice(name string) error {
+	w := &m.web
+	if w.loadErr != "" {
+		return w.leftAlone()
+	}
+	i := slices.IndexFunc(w.devices, func(d *webDevice) bool { return d.name == name })
+	if i < 0 {
+		return fmt.Errorf("%w: %q", ErrNoDevice, name)
+	}
+	prev := w.devices
+	w.devices = slices.Delete(slices.Clone(prev), i, i+1)
+	if err := m.saveWeb(); err != nil {
+		w.devices = prev
+		return err
+	}
+	return nil
 }
