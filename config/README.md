@@ -5,7 +5,7 @@ Loom's on-disk configuration, app state, profile catalog and workspace registry,
 ## Directories
 
 - The config dir defaults to `~/.loom`; `LOOM_HOME` overrides it (absolute, `~` expanded), with `CLAUDE_SQUAD_HOME` still honoured with a deprecation warning. A registered workspace keeps its own config dir at `<repo>/.loom/` (`WorkspaceConfigDir`, `EnsureGitignore`).
-- `GetGlobalConfigDir` returns `LOOM_GLOBAL_DIR` when set, else `~/.loom`, regardless of `LOOM_HOME`: it holds `workspaces.json`, the global workspace's context (`GlobalWorkspaceContext()`), the account registry and the daemon's lock, socket fallback and logs.
+- `GetGlobalConfigDir` returns `LOOM_GLOBAL_DIR` when set, else `~/.loom`, regardless of `LOOM_HOME`: it holds `workspaces.json`, the global workspace's context (`GlobalWorkspaceContext()`), the account registry, `web.json` (the web app's settings and devices) and the daemon's lock, socket fallback and logs.
 - `WorkspaceContext` carries the resolved config dir for one workspace through the code, instead of globals (`ResolveWorkspace`, `WorkspaceContextFor`).
 - `LoadConfigFrom("")`/`LoadStateFrom("")` accept an empty string as "use the default directory".
 - `config/migration.go:MigrateLegacyHome` handles the one-time `~/.claude-squad` → `~/.loom` rename.
