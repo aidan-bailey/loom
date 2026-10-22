@@ -178,7 +178,7 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
             body=${html`<div>
               <p>${s.tmux ? html`It ends tmux session <code>${s.tmux}</code>.` : "It ends the session's tmux session."}</p>
               ${s.status === "Paused"
-                ? html`<p>Its uncommitted changes are in the stash taken when it paused, and Kill drops that stash. Resume and push first to keep them.</p>`
+                ? html`<p>If Pause stashed its uncommitted changes, Kill drops that stash. ${s.worktree ? html`It force-removes worktree <code>${s.worktree}</code>` : "It force-removes the session's worktree"} if it is still there (an agent that exited on its own leaves it), with any uncommitted changes in it. Resume and push first to keep them.</p>`
                 : html`<p>${s.worktree ? html`It force-removes worktree <code>${s.worktree}</code>` : "It force-removes the session's worktree"}, discarding its uncommitted changes. Push first to keep them.</p>`}
               <p>It deletes branch <code>${s.branch}</code> unless the session checked out an existing branch.</p>
             </div>`}
