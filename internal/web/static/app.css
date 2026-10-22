@@ -421,3 +421,17 @@ details.sc-group > summary { cursor: pointer; margin-bottom: 8px; }
 .sc-launch > .sc-field { margin-top: 12px; }
 
 ```css
+
+/* ---- screens (Story 10): settings ---- */
+.sc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  border-bottom: 1px solid var(--rule);
+}
+.sc-row input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent); }
+.sc-mono { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; color: var(--dim); overflow-wrap: anywhere; }
+.sc-notice { padding: 8px 0; border-bottom: 1px solid var(--rule); font-size: 0.9rem; overflow-wrap: anywhere; }
+.sc-section > .sc-block { margin-top: 14px; width: 100%; }
