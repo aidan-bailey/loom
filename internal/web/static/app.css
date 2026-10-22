@@ -140,7 +140,7 @@ input.text:focus {
 
 .stale-bar {
   position: sticky;
-  top: 0;
+  top: env(safe-area-inset-top);
   z-index: 10;
   padding: 0.4rem 1rem;
   text-align: center;

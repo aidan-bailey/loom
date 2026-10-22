@@ -70,9 +70,14 @@ if ("serviceWorker" in navigator) {
 // The snapshot is saved at most once a second: sessions events come up to
 // four a second.
 let saveTimer = 0;
+// lastUpdated is when the app last heard from the daemon (a snapshot or an
+// event), in ms; the saved snapshot carries it as `updated`, so a cold start
+// can say how old the view is.
+let lastUpdated = 0;
 function persist(snap) {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => saveSnapshot(snap), 1000);
+  const updated = lastUpdated;
+  saveTimer = setTimeout(() => saveSnapshot({ ...snap, updated }), 1000);
 }
 
 // launched runs once per launch, after the first snapshot, with the app's
@@ -80,10 +85,23 @@ function persist(snap) {
 function launched(snap, toast) {}
 let launchDone = false;
 
+// staleText is the stale bar's words: after a bye the daemon is restarting;
+// otherwise it cannot be reached, and the bar says since when.
+function staleText(snap, restarting) {
+  if (restarting) return "loom is restarting…";
+  if (!snap.host) return "Not connected. Showing the last known state.";
+  let text = "Can't reach loom on " + snap.host;
+  if (lastUpdated) {
+    text += ". Last updated " + new Date(lastUpdated).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  return text;
+}
+
 function App() {
   const [snap, setSnap] = useState(null);
   const [stale, setStale] = useState(true);
   const [offline, setOffline] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [route, setRoute] = useState(() => parseRoute(location.hash));
   const [toasts, setToasts] = useState([]);
   const [install, setInstall] = useState(() => needsInstall());
@@ -91,6 +109,7 @@ function App() {
   const staleRef = useRef(true);
   const routeRef = useRef(route);
   const streamRef = useRef(null);
+  const generation = useRef(0);
   const nextToast = useRef(1);
   staleRef.current = stale;
   routeRef.current = route;
@@ -130,17 +149,22 @@ function App() {
   const unpair = useCallback(() => {
     stopStream();
     clearTimeout(saveTimer);
+    generation.current++;
+    launchDone = false;
+    lastUpdated = 0;
     snapRef.current = null;
     clearSnapshot();
     setSnap(null);
     setStale(true);
     setOffline(false);
+    setRestarting(false);
     go("#pair");
   }, []);
 
   const apply = useCallback((change) => {
     if (!snapRef.current) return;
     const next = change(snapRef.current);
+    lastUpdated = Date.now();
     snapRef.current = next;
     setSnap(next);
     persist(next);
@@ -150,10 +174,12 @@ function App() {
     stopStream();
     streamRef.current = connect({
       snapshot(data) {
+        lastUpdated = Date.now();
         snapRef.current = data;
         setSnap(data);
         setStale(false);
         setOffline(false);
+        setRestarting(false);
         persist(data);
         if (data.build && shellBuild && data.build !== shellBuild) upgradeShell(data.build);
         if (!launchDone) {
@@ -166,7 +192,16 @@ function App() {
         apply((s) => ({ ...s, sessions: { ...s.sessions, [String(d.workspace)]: d.sessions } }));
       },
       workspaces(d) {
-        apply((s) => ({ ...s, workspaces: d.workspaces }));
+        // A closed workspace sends no sessions event: drop its sessions here.
+        // The keys are strings of numeric IDs.
+        apply((s) => {
+          const open = new Set(d.workspaces.map((w) => String(w.id)));
+          const sessions = {};
+          for (const [id, list] of Object.entries(s.sessions || {})) {
+            if (open.has(id)) sessions[id] = list;
+          }
+          return { ...s, workspaces: d.workspaces, sessions };
+        });
       },
       device(d) {
         apply((s) => ({ ...s, device: d }));
@@ -174,6 +209,10 @@ function App() {
       notice(n) {
         apply((s) => ({ ...s, notices: (s.notices || []).concat([n]).slice(-recentNotices) }));
         toast(n.text, n.error, true);
+      },
+      bye() {
+        setRestarting(true);
+        setStale(true);
       },
       error() {
         setStale(true);
@@ -217,8 +256,12 @@ function App() {
 
   useEffect(() => {
     if (install) return undefined;
+    const mine = generation.current;
     loadSnapshot().then((cached) => {
+      // An unpairing since the load began has cleared the device's fleet.
+      if (generation.current !== mine) return;
       if (cached && !snapRef.current) {
+        lastUpdated = cached.updated || 0;
         snapRef.current = cached;
         setSnap(cached);
       }
@@ -245,7 +288,7 @@ function App() {
   if (route.name === "pair") {
     body = html`<${Pair} onPaired=${onPaired} />`;
   } else if (!snap) {
-    body = html`<div class="splash">${offline ? "Can't reach loom. Retrying…" : "Connecting…"}</div>`;
+    body = html`<div class="splash">${restarting ? "loom is restarting…" : offline ? "Can't reach loom. Retrying…" : "Connecting…"}</div>`;
   } else {
     const Screen = screens[route.name];
     const props = { snap, stale, route, go, act, toast };
@@ -257,7 +300,7 @@ function App() {
   return html`
     <div class="shell">
       ${snap && stale && route.name !== "pair"
-        ? html`<div class="stale-bar" role="status">Not connected. Showing the last known state.</div>`
+        ? html`<div class="stale-bar" role="status">${staleText(snap, restarting)}</div>`
         : null}
       <main>${body}</main>
       <div class="toasts" aria-live="polite">

@@ -98,7 +98,11 @@ export function Pair({ onPaired }) {
           placeholder="K7QM-2XPA"
           aria-label="Pairing code"
           value=${code}
-          onInput=${(ev) => setCode(formatCode(ev.target.value))}
+          onInput=${(ev) => {
+            const formatted = formatCode(ev.target.value);
+            ev.target.value = formatted;
+            setCode(formatted);
+          }}
         />
         <button type="submit" class="primary" disabled=${!ready || busy}>${busy ? "Pairing…" : "Pair"}</button>
       </form>
