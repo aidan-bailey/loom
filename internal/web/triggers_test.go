@@ -169,15 +169,23 @@ func TestPushWatch_AWorkspaceNoLongerServedStartsOverAsABaseline(t *testing.T) {
 
 func TestPushWatch_TheBadgeCountsEverySessionThatNeedsYou(t *testing.T) {
 	w := newPushWatch()
-	w.observe(10, []core.InstanceView{pushTestView(1, session.Running), pushTestView(2, session.Prompting)})
+	// Workspace 10 also holds a started Ready session (your turn) and a Paused
+	// one: neither needs you, so neither is counted.
+	w.observe(10, []core.InstanceView{
+		pushTestView(1, session.Running), pushTestView(2, session.Prompting),
+		pushTestView(5, session.Ready), pushTestView(6, session.Paused),
+	})
 	w.observe(20, []core.InstanceView{pushTestView(3, session.Running)})
 
 	jobs := w.observe(20, []core.InstanceView{pushTestView(3, session.Prompting)})
 	require.Len(t, jobs, 1)
-	assert.Equal(t, 2, jobs[0].Badge, "one waiting in workspace 10 and this one")
+	assert.Equal(t, 2, jobs[0].Badge, "one waiting in workspace 10 and this one; a Ready and a Paused session are not counted")
 
 	// Workspace 10's waiting session moves on: the count falls with it.
-	w.observe(10, []core.InstanceView{pushTestView(1, session.Running), pushTestView(2, session.Running)})
+	w.observe(10, []core.InstanceView{
+		pushTestView(1, session.Running), pushTestView(2, session.Running),
+		pushTestView(5, session.Ready), pushTestView(6, session.Paused),
+	})
 	jobs = w.observe(20, []core.InstanceView{pushTestView(3, session.Prompting), pushTestView(4, session.Prompting)})
 	require.Len(t, jobs, 1)
 	assert.Equal(t, 2, jobs[0].Badge, "sessions 3 and 4 in workspace 20")

@@ -134,7 +134,7 @@ func (w *pushWatch) observe(ws core.WorkspaceID, views []core.InstanceView) []pu
 		}
 		now := pushSeen{status: v.Status, reason: v.WaitReason, detail: v.WaitDetail}
 		next[v.ID] = now
-		if group, _ := groupOf(v); group == "needs_you" {
+		if group, _ := groupOf(v); group == groupNeedsYou {
 			needs++
 		}
 		if !baselined {
