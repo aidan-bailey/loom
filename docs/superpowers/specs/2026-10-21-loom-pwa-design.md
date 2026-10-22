@@ -64,7 +64,7 @@ Checked on fresco on 2026-10-21, with Claude Code 2.1.306.
 | 2 | **Phone:** iPhone, with the app installed to the Home Screen. iOS sends Web Push only to Home Screen apps (iOS 16.4+) and keeps their storage apart from Safari's. |
 | 3 | **Reach:** a second Cloudflare tunnel, run by a cloudflared service on fresco, to loom on a loopback port. medesco's tunnel is unchanged. |
 | 4 | **Auth:** device pairing. `loom web pair` prints a one-time code; the phone trades it for a revocable per-device token that loom checks on every request. |
-| 5 | **Answering:** a reply box that sends through the loom mod (`Core.Send`, queued behind the turn), and Open in Claude, a link to the session's Remote Control for approvals and the full chat. Loom answers no permission prompt itself. |
+| 5 | **Answering:** a reply box that sends through the loom mod (`Core.Send`, queued behind the turn), and Open in Claude, a link to the session's Remote Control for approvals and the full chat. Loom answers no permission prompt itself. A reply that starts with a slash command runs it: `2026-10-22-slash-commands-design.md`. |
 | 6 | **Push:** when a session starts waiting on you, and when its turn ends. |
 | 7 | **Actions:** send, new session, pause, resume, kill, push, merge. Kill, push and merge ask first. |
 | 8 | **Shape:** inside the daemon, opt-in. `internal/web` is a `core.Core` client over `net.Pipe` to the daemon's own `rpc.Server`, plus `core.WebHost` for device records. A separate service and a hub were weighed (Alternatives). |
