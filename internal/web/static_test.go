@@ -381,3 +381,26 @@ func TestStatic_ModulesSetNoStyleAttribute(t *testing.T) {
 			"%s sets a style attribute: the app uses classes", url)
 	}
 }
+
+// A stray markdown fence copied into the stylesheet swallows the rule after
+// it, and an unclosed brace swallows the rest.
+func TestStatic_TheStylesheetHasNoFenceAndItsBracesBalance(t *testing.T) {
+	raw, err := os.ReadFile("static/app.css")
+	require.NoError(t, err)
+	css := string(raw)
+
+	require.NotContains(t, css, "```", "a markdown fence is in app.css")
+
+	css = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(css, "")
+	depth := 0
+	for i, r := range css {
+		switch r {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		}
+		require.GreaterOrEqual(t, depth, 0, "app.css closes a brace it never opened, at byte %d", i)
+	}
+	require.Zero(t, depth, "app.css leaves a brace open")
+}

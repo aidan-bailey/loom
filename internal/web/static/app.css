@@ -398,7 +398,6 @@ details.sc-group > summary { cursor: pointer; margin-bottom: 8px; }
   resize: vertical;
 }
 
-```css
 
 /* ---- screens (Story 10): new session ---- */
 .sc-form { display: flex; flex-direction: column; gap: 14px; }
@@ -420,7 +419,6 @@ details.sc-group > summary { cursor: pointer; margin-bottom: 8px; }
 .sc-launch > summary { cursor: pointer; color: var(--dim); }
 .sc-launch > .sc-field { margin-top: 12px; }
 
-```css
 
 /* ---- screens (Story 10): settings ---- */
 .sc-row {
