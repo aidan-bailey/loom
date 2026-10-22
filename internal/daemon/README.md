@@ -1,6 +1,6 @@
 # internal/daemon
 
-The daemon (`internal/daemon/`): `loom serve`, the one process per global config dir that owns its sessions whether or not a TUI is open, and how a TUI finds it. The root package holds its command and the TUI's join: [`../../serve.go`](../../serve.go) and [`../../daemon_client.go`](../../daemon_client.go). Everything logs under `subsystem=serve`.
+The daemon (`internal/daemon/`): `loom serve`, the one process per global config dir that owns its sessions whether or not a TUI is open, and how a TUI finds it. The root package holds its command and the TUI's join: [`../../serve.go`](../../serve.go) and [`../../daemon_client.go`](../../daemon_client.go). Everything logs under `subsystem=serve`, except the web layer, which logs under `subsystem=web`.
 
 ## Why one daemon
 
@@ -43,12 +43,13 @@ The holder's `Record` (`pid`, `tty`, `started`, `socket` once it listens, `build
 5. starts the loop and `Begin`s it;
 6. listens, so a socket that answers is a daemon that is ready, and writes the socket into the record (a record it can't write stops it, since no client could find or stop it);
 7. serves the mod socket (`modserver.Listen`), or, when it can't, names none for later launches.
+8. starts the web layer (`web.Start`; [`../web/README.md`](../web/README.md)), which dials this server over `net.Pipe` as a `web` client and listens for the phone app on the address `web.json` holds, if any. A layer that fails to start, or later stops on a panic, costs only the web: the daemon goes on without it.
 
 Every `Options.WatchInterval` it checks that the socket file is still its own (`os.SameFile`) and, when it is gone or replaced (a runtime dir removed at logout, a tmp cleaner), listens again wherever `SocketPath` finds room now and rewrites the record; a failed `Accept` (EMFILE) is waited out.
 
 `Serve`'s own failures (a pre-daemon holder, no place for the socket, a failed listen or record write) return to its caller and reach stderr, which a spawned daemon has none of: only the root's tmux-server and nesting refusals are logged, so `Connect` can quote nothing for the others.
 
-When `Options.Stop` closes it says bye to every client (`Server.Bye`: from then on a request is refused as unavailable and a cast dropped, and it returns once the calls already let in have their replies queued), closes the listener and the mod server (every held poll hears 503, and each mod reconnects to the next daemon), settles what the mods held (`stopModel`: `Loop.ModsStop`, which pastes a script's message or a first prompt no mod took, by jobs, and refuses a CLI message), waits for foreground jobs while their replies still reach the connections left open, and saves (`Loop.Quiesce`, bounded by `Options.QuiesceTimeout`, then `SaveForQuit`). Then it closes the server (`Server.Close`: a last publish, each connection flushed, then closed), stops the loop and removes the socket. When the model fails (`Server.Fatal()`) it exits without a bye and without saving (`serve.model_gone`), since the model's state is unknown; the TUIs that lost it (no bye: a crash) and the next `loom` each spawn a fresh daemon, and the second finds the first's lock.
+When `Options.Stop` closes it first closes the web layer (`Layer.Close`: bye on every stream, then its listener and its client), then says bye to every client (`Server.Bye`: from then on a request is refused as unavailable and a cast dropped, and it returns once the calls already let in have their replies queued), closes the listener and the mod server (every held poll hears 503, and each mod reconnects to the next daemon), settles what the mods held (`stopModel`: `Loop.ModsStop`, which pastes a script's message or a first prompt no mod took, by jobs, and refuses a CLI message), waits for foreground jobs while their replies still reach the connections left open, and saves (`Loop.Quiesce`, bounded by `Options.QuiesceTimeout`, then `SaveForQuit`). Then it closes the server (`Server.Close`: a last publish, each connection flushed, then closed), stops the loop and removes the socket. When the model fails (`Server.Fatal()`) it exits without a bye and without saving (`serve.model_gone`), since the model's state is unknown; the TUIs that lost it (no bye: a crash) and the next `loom` each spawn a fresh daemon, and the second finds the first's lock.
 
 ## The root's serve.go
 
