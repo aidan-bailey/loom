@@ -531,6 +531,12 @@ func TestClaudeState_AHookEventEndsTheHold(t *testing.T) {
 
 			s.applyEvent(ev)
 			assert.False(t, s.held.valid)
+			if name == "request" {
+				// The held labels are for the wait the hook named before the
+				// gap; a new request names its own tool and summary.
+				assert.Equal(t, "Prompting: permission: Edit", describe(s))
+				assert.Equal(t, "a.go", s.waitDetail())
+			}
 		})
 	}
 }

@@ -38,8 +38,8 @@ type claudeState struct {
 	// held is the status, reason and tool summary of a hook's wait that
 	// rosterSilent voided: the labels a roster answer with the same status
 	// takes back while obs is still the roster's no-opinion. Zero (valid
-	// false) when nothing is held. A hook event, a roster answer, newLaunch
-	// and folderGone each clear it.
+	// false) when nothing is held. An accepted offer (hook or roster),
+	// newLaunch and folderGone each clear it.
 	held observation
 	// sessionID and transcriptPath name the conversation a relaunch
 	// resumes (persisted, schema v7). Only a parent SessionStart sets them.
@@ -90,6 +90,10 @@ func (s *claudeState) offer(o observation) bool {
 	}
 	held := s.held
 	s.held = observation{}
+	// The terms other than the source and the status restate an invariant
+	// (held is non-zero only while obs is the roster's no-opinion, and it is
+	// always a valid Prompting observation) as belt-and-braces, so no mutation
+	// check turns them red.
 	if o.source == obsRoster && o.valid && !s.obs.valid && s.obs.source == obsRoster &&
 		held.valid && o.status == held.status {
 		o.reason, o.detail, o.reasonFromHook = held.reason, held.detail, true
