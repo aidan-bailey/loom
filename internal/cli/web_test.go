@@ -107,6 +107,7 @@ func TestWebEnable_ReportsServing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "Serving on 127.0.0.1:7420")
 	assert.Contains(t, out, "https://loom.example.com")
+	assert.NotContains(t, out, "Notifications need", "an https origin has nothing to warn of")
 	w := webView(t, d)
 	assert.Equal(t, "127.0.0.1:7420", w.Listen)
 	assert.Equal(t, "https://loom.example.com", w.Origin)
@@ -135,6 +136,9 @@ func TestWebEnable_SaysWhenTheDaemonDoesNotAnswer(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "did not say")
 	assert.Contains(t, err.Error(), "loom web status")
+	assert.Contains(t, err.Error(), "web layer may have stopped", "the layer's stop leaves status with no reason")
+	assert.Contains(t, err.Error(), "restarting the daemon starts it again")
+	assert.Contains(t, err.Error(), "systemctl --user restart loom", "the restart USAGE.md documents")
 	assert.Equal(t, "127.0.0.1:7420", webView(t, d).Listen)
 }
 
@@ -286,7 +290,30 @@ func TestWebEnable_AcceptsALoopbackHTTPOriginForDevelopment(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, out, "Serving on 127.0.0.1:7420")
+	assert.Contains(t, out, "Notifications need an https origin", "the app works but no push is sent")
 	assert.Equal(t, "http://127.0.0.1:5173", webView(t, d).Origin)
+}
+
+func TestWebEnable_AnHTTPOriginThatServesAlreadySaysSoToo(t *testing.T) {
+	d := webDaemon(t)
+	require.NoError(t, d.loop.ConfigureWeb("127.0.0.1:7420", "http://localhost:5173"))
+	d.loop.WebServing("127.0.0.1:7420", nil)
+
+	out, _, err := runWeb(t, "enable", "--listen", "127.0.0.1:7420", "--origin", "http://localhost:5173")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "(nothing changed)")
+	assert.Contains(t, out, "Notifications need an https origin")
+}
+
+func TestWebEnable_ANotServingHTTPOriginHasNoNotificationsLine(t *testing.T) {
+	d := webDaemon(t)
+	webLayer(t, d, "", errors.New("listen tcp 127.0.0.1:7420: bind: address already in use"))
+
+	out, _, err := runWeb(t, "enable", "--listen", "127.0.0.1:7420", "--origin", "http://127.0.0.1:5173")
+
+	require.Error(t, err)
+	assert.NotContains(t, out, "Notifications need", "the failure is the news")
 }
 
 func TestWebSettled(t *testing.T) {

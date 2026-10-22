@@ -64,6 +64,7 @@ func newWebEnableCmd() *cobra.Command {
 					// A ConfigureWeb would make the layer close the listener
 					// and rebind, dropping the open streams for nothing.
 					fmt.Fprintf(out, "Serving on %s for %s (nothing changed)\nPair a phone with: loom web pair\n", w.Addr, w.Origin)
+					noteHTTPOrigin(out, w.Origin)
 					return nil
 				}
 				// Every ConfigureWeb bumps Rev and the layer rebinds when it
@@ -108,12 +109,26 @@ func (c *client) awaitServing(out io.Writer, listen string, after uint64) error 
 	case err != nil:
 		return err
 	case !settled:
-		return fmt.Errorf("saved, but the daemon did not say within %s whether it serves %s; see loom web status", webWait, listen)
+		return fmt.Errorf("saved, but the daemon did not say within %s whether it serves %s; "+
+			"the web layer may have stopped (a panic, or it failed to start with the daemon, which is only logged), "+
+			"and loom web status then shows no reason: restarting the daemon starts it again "+
+			"(systemctl --user restart loom for the systemd unit, or loom serve stop from a terminal outside loom's panes and then loom; "+
+			"sessions keep running)", webWait, listen)
 	case w.Serving && sameAddr(w.Addr, listen):
 		fmt.Fprintf(out, "Serving on %s for %s\nPair a phone with: loom web pair\n", w.Addr, w.Origin)
+		noteHTTPOrigin(out, w.Origin)
 		return nil
 	default:
 		return fmt.Errorf("saved, but not serving: %s; fix it and run loom web enable again", w.Error)
+	}
+}
+
+// noteHTTPOrigin says, for a development origin on plain http, what that
+// costs: the app works, but the daemon sends no push, since the VAPID subject
+// must be an https or mailto URI (webpush.VAPIDAuth).
+func noteHTTPOrigin(out io.Writer, origin string) {
+	if strings.HasPrefix(origin, "http://") {
+		fmt.Fprintln(out, "Notifications need an https origin: the app works on this one, but no notification is sent.")
 	}
 }
 
