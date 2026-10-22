@@ -203,10 +203,7 @@ func (p *PreviewPane) UpdateContent(instance *core.InstanceView) error {
 			"",
 			lipgloss.NewStyle().
 				Foreground(Highlight).
-				Render(fmt.Sprintf(
-					"The instance can be checked out at '%s' (copied to your clipboard)",
-					instance.Branch,
-				)),
+				Render(fmt.Sprintf("Its worktree and branch '%s' are kept as they were.", instance.Branch)),
 		))
 		return nil
 	case instance.Status == session.Recoverable:

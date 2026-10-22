@@ -160,11 +160,11 @@ func (m *Model) saveSnapshot(ws *Workspace) func() error {
 	}
 }
 
-// pauseInst returns the job pausing selected (Instance.Pause: stash, kill the
-// session and its terminal pane's shell, remove the worktree, save ws's
-// instances through saveSnapshot), reporting a PauseResult, or an OpFailed
-// reverting to the status selected has now; the caller moves it to
-// Loading. ws is the workspace holding it.
+// pauseInst returns the job pausing selected (Instance.Pause: save a
+// checkpoint, kill the session and its terminal pane's shell, archive
+// Claude's temp dir, save ws's instances through saveSnapshot), reporting a
+// PauseResult, or an OpFailed reverting to the status selected has now; the
+// caller moves it to Loading. ws is the workspace holding it.
 func (m *Model) pauseInst(ws *Workspace, selected *session.Instance) Job {
 	previousStatus := selected.GetStatus()
 	pauseTitle := selected.Title

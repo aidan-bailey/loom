@@ -121,7 +121,7 @@ var GlobalkeyBindings = map[KeyName]key.Binding{
 	),
 	KeyStash: key.NewBinding(
 		key.WithKeys("s"),
-		key.WithHelp("s", "stash"),
+		key.WithHelp("s", "pause"),
 	),
 	KeyMerge: key.NewBinding(
 		key.WithKeys("m"),

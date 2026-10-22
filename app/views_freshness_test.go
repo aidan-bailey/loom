@@ -49,7 +49,7 @@ func TestViewsChanged_RefreshesTheSelectionsCopies(t *testing.T) {
 	m.syncViews()
 	_ = m.instanceChanged()
 	require.Equal(t, session.Running, m.splitPane.Instance().Status, "fixture: the pane shows the running row")
-	require.Contains(t, ansi.Strip(m.menu.String()), "stash", "fixture: a running session offers stash")
+	require.Contains(t, ansi.Strip(m.menu.String()), "s pause", "fixture: a running session offers pause")
 
 	deliver(t, m, core.HealthResult{Results: []core.ProbeResult{{Instance: inst, TmuxLive: tmux.LivenessDead}}})
 
@@ -57,7 +57,7 @@ func TestViewsChanged_RefreshesTheSelectionsCopies(t *testing.T) {
 	assert.Equal(t, session.Paused, m.splitPane.Instance().Status, "the split pane's copy follows the row")
 	menu := ansi.Strip(m.menu.String())
 	assert.Contains(t, menu, "resume", "the menu offers resume for the paused row")
-	assert.NotContains(t, menu, "stash")
+	assert.NotContains(t, menu, "s pause")
 }
 
 // TestViewsChanged_PrunesBellsOfGoneInstances: bells are keyed by IDs that

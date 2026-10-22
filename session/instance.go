@@ -30,7 +30,9 @@ const (
 	Ready
 	// Loading is if the instance is loading (if we are starting it up or something).
 	Loading
-	// Paused is if the instance is paused (worktree removed but branch preserved).
+	// Paused is if the instance is paused: its agent stopped, its worktree
+	// normally kept (one an older build paused may be gone; Resume decides,
+	// decideResume).
 	Paused
 	// Prompting is when the agent is asking for user permission.
 	Prompting
@@ -962,8 +964,8 @@ func (i *Instance) Start(firstTimeSetup bool) (err error) {
 // (ErrSessionExists) launched nothing; any other failure may come after
 // the agent was launched — the existence poll reads an unanswered probe
 // as "not yet" under load, and the cleanup Close can fail too — so the
-// session must then be confirmed Dead, as Pause requires before it removes
-// a worktree. Deleting the tree under a live agent would orphan it,
+// session must then be confirmed Dead, as Pause requires before it marks a
+// session Paused. Deleting the tree under a live agent would orphan it,
 // writing into a directory git has unlinked.
 func (i *Instance) failedStartCleanup(ts *tmux.Session, gw *git.GitWorktree, startErr error) error {
 	if !errors.Is(startErr, tmux.ErrSessionExists) && ts.SessionLiveness() != tmux.LivenessDead {
@@ -1179,9 +1181,9 @@ func (i *Instance) SetTitle(title string) error {
 }
 
 // Paused reports whether the instance is currently in the Paused state
-// (can be resumed with Resume). A real Pause removed the worktree, but an
-// agent that exited on its own is marked Paused with its worktree still on
-// disk; see decideResume.
+// (can be resumed with Resume). Pause keeps the worktree, and an agent that
+// exited on its own is marked Paused with its worktree still on disk; only
+// a session an older build paused has none. See decideResume.
 func (i *Instance) Paused() bool {
 	return i.GetStatus() == Paused
 }
@@ -1526,7 +1528,7 @@ func (i *Instance) Resume(saveState func() error) (err error) {
 		return withNotices(fmt.Errorf("failed to setup git worktree: %w", err), notes...)
 	}
 
-	// Restore any changes stashed by Pause. A failed apply (e.g. a
+	// Restore any changes an older build's Pause stashed. A failed apply (e.g. a
 	// conflict) is surfaced rather than silently dropped or retried —
 	// mirrors git's own refusal to drop a stash that didn't apply
 	// cleanly. StashRef stays set so the entry (and any conflict
@@ -1594,11 +1596,11 @@ func shellQuote(s string) string {
 }
 
 // restoreStashInPlace handles a pending StashRef when Resume relaunches in
-// an existing worktree rather than a freshly rebuilt one. Pause's stash
-// never modifies the worktree, so the reference can be pending here only
-// if something interrupted the pause before the tree was removed (the
-// stashed work is then still on disk), or a rebuild was interrupted
-// before, or failed while, applying the stash.
+// an existing worktree rather than a freshly rebuilt one. An older build's
+// Pause stashed without modifying the worktree, so the reference can be
+// pending here only if something interrupted such a pause before the tree
+// was removed (the stashed work is then still on disk), or a rebuild was
+// interrupted before, or failed while, applying the stash.
 //
 //   - No longer in `git stash list`: whoever dropped it (the user, after a
 //     refusal below, or an apply whose cleared reference was never saved)

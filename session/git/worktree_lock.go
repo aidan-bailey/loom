@@ -168,8 +168,8 @@ func unlockStaleInit(repoPath, worktreePath string, r CommandRunner) (lockState,
 // since the remove still refuses a locked tree itself.
 //
 // Only the paths that mean to delete a tree call it — orphan auto-clean,
-// Kill (cleanup, which also serves CleanupFailedStart) and Pause (Remove)
-// — never clearWorktreePath: there an intact tree must stay protected by
+// Kill (cleanup, which also serves CleanupFailedStart) and Remove — never
+// clearWorktreePath: there an intact tree must stay protected by
 // its lock from a rebuild's remove.
 func RefuseLocked(repoPath, worktreePath string, r CommandRunner) error {
 	state, reason, err := unlockStaleInit(repoPath, worktreePath, r)

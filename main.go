@@ -172,11 +172,12 @@ var (
 		Short: "Delete a workspace's instances, tmux sessions, worktrees, and their branches (destructive)",
 		Long: "Reset deletes the workspace's stored instances, kills its Loom tmux sessions\n" +
 			"(those started in its repo or worktrees directory), and removes all its managed\n" +
-			"worktrees INCLUDING their branches — unpushed commits on those branches are\n" +
-			"lost. Without --workspace it resets the global workspace. Sessions of other\n" +
-			"workspaces are left running. If the tmux cleanup fails, reset stops before\n" +
-			"removing any worktree. While the loom daemon runs, the reset is its to make,\n" +
-			"and reset waits for it. This cannot be undone; it requires --force.",
+			"worktrees INCLUDING their branches — unpushed commits on those branches, and\n" +
+			"uncommitted work in the worktrees (paused sessions' too), are lost. Without\n" +
+			"--workspace it resets the global workspace. Sessions of other workspaces are\n" +
+			"left running. If the tmux cleanup fails, reset stops before removing any\n" +
+			"worktree. While the loom daemon runs, the reset is its to make, and reset\n" +
+			"waits for it. This cannot be undone; it requires --force.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Reset sweeps the tmux server a daemon started now would
 			// pin (daemon.TmuxServer: the last daemon's while it runs),
@@ -197,7 +198,7 @@ var (
 				return err
 			}
 			if !resetForceFlag {
-				return fmt.Errorf("loom reset deletes the workspace's instances, kills its tmux sessions (only those started in its repo or worktrees directory), and removes its worktrees AND their branches (unpushed commits are lost); re-run with --force to proceed")
+				return fmt.Errorf("loom reset deletes the workspace's instances, kills its tmux sessions (only those started in its repo or worktrees directory), and removes its worktrees AND their branches (unpushed commits and uncommitted work are lost); re-run with --force to proceed")
 			}
 			// While a daemon serves the global dir the reset is its to
 			// make: it writes state.json, and would overwrite the records

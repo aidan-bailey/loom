@@ -298,8 +298,8 @@ func TestLoopForwardsEachMethodToItsNamesake(t *testing.T) {
 }
 
 // TestLoop_QuiesceWaitsForForegroundJobs: a loop stopping must not cut a
-// lifecycle operation off mid-step (a pause between its stash and its
-// worktree removal, say). Quiesce waits for every foreground job to land,
+// lifecycle operation off mid-step (a pause between its kill and its
+// archive, say). Quiesce waits for every foreground job to land,
 // the jobs their results start included; background work does not hold it.
 func TestLoop_QuiesceWaitsForForegroundJobs(t *testing.T) {
 	t.Run("a foreground job, and the job its result starts", func(t *testing.T) {

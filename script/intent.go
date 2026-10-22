@@ -56,10 +56,9 @@ type PushSelectedIntent struct{ Confirm bool }
 // instance. Confirm=true gates the destructive action behind an overlay.
 type KillSelectedIntent struct{ Confirm bool }
 
-// StashIntent asks the app to stash the selected instance's
-// uncommitted changes and pause it, checking its branch out into the
-// root repo. Confirm gates the operation; Help opens the explanatory
-// overlay instead of performing the stash.
+// StashIntent asks the app to pause the selected instance: its agent stops
+// and its worktree is kept. Confirm gates the operation; Help opens the
+// explanatory overlay instead of pausing.
 type StashIntent struct{ Confirm, Help bool }
 
 // ResumeIntent asks the app to resume the selected paused instance.

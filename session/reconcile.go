@@ -322,7 +322,9 @@ func DetermineRecoveryAction(status Status, tmuxAlive, worktreeExists, isWorkspa
 	// for Resume, which decides from the tree itself (decideResume): an
 	// intact one is relaunched in place (recording a missing base commit),
 	// an absent or gutted one rebuilt, and one git cannot vouch for — such
-	// as a `worktree add` still locked "initializing" — refused.
+	// as a `worktree add` still locked "initializing" — refused. A pause in
+	// flight saves Loading first too (Instance.Pause), and the same answer
+	// finishes it.
 	if status == Loading {
 		if tmuxAlive {
 			return ActionKillAndPause

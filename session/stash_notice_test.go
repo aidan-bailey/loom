@@ -65,8 +65,8 @@ func withGitRunner(t *testing.T, inst *Instance, runner internalexec.Executor) *
 	return gw
 }
 
-// stashEdit writes an edit into gw's worktree and stashes it the way Pause
-// does, returning the stash's SHA. The edit stays on disk.
+// stashEdit writes an edit into gw's worktree and stashes it the way an
+// older Pause did, returning the stash's SHA. The edit stays on disk.
 func stashEdit(t *testing.T, gw *git.GitWorktree, body string) string {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(gw.GetWorktreePath(), "README.md"), []byte(body), 0o644))

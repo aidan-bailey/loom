@@ -60,7 +60,7 @@ nix run .
 5. Press `d` to toggle the **Diff** overlay to see what the agent has changed
 6. Press `Ctrl+A` to attach to the agent pane and interact directly
 7. Press `Ctrl+Q` to detach back to the TUI
-8. Press `s` to stash (pause) the session when done
+8. Press `s` to pause the session when done
 
 ---
 
@@ -89,7 +89,7 @@ Loom has three view modes:
 │                    │   hide with T, resize with ctrl+↑ / ctrl+↓)    │
 │  other-repo · 3    │                                                │
 ├────────────────────┴────────────────────────────────────────────────┤
-│  n new • N prompt • s stash • r resume • p push • ? help • q        │
+│  n new • N prompt • s pause • r resume • p push • ? help • q        │
 │                                                   ← Context Menu    │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Error: something went wrong                      ← Error Bar      │
@@ -255,21 +255,17 @@ A session moves through these states:
 4. Tmux session launched running the configured program
 5. Agent begins working in the isolated worktree
 
-**Running → Paused** (on stash, `s`):
-1. Any uncommitted changes (tracked and untracked) are stashed via `git stash`
-2. Tmux session is detached
-3. Worktree directory is removed (saves disk space)
-4. Branch is preserved in git — all work is safe
-5. Branch name is copied to your clipboard
-6. Claude's temp dir for the session (its scratchpad and task output under `/tmp/claude-<uid>/`) is zipped into the archive and removed — see [Claude Temp-Dir Archives](#claude-temp-dir-archives)
+**Running → Paused** (on pause, `s`):
+1. The agent's tmux session and the terminal pane's shell are closed
+2. The worktree stays as it is: uncommitted changes, untracked and ignored files (`.env`, `.claude/settings.local.json`, build caches) are all kept, and so is the branch
+3. Claude's temp dir for the session (its scratchpad and task output under `/tmp/claude-<uid>/`) is zipped into the archive and removed, since `/tmp` may not survive a reboot — see [Claude Temp-Dir Archives](#claude-temp-dir-archives)
 
 **Paused → Running** (on resume, `r`):
-1. Worktree recreated from the preserved branch
-2. Stashed changes are restored
-3. Tmux session restored or recreated
-4. Diff baseline preserved — you see cumulative changes since session creation
-5. Agent picks up where it left off
-6. Claude's archived scratchpad is restored before the agent starts
+1. Claude's archived scratchpad is restored before the agent starts
+2. The agent is relaunched in the worktree and picks up its conversation where it left off
+3. Diff baseline preserved — you see cumulative changes since session creation
+
+A session an older loom paused (it removed the worktree on pause) is resumed by recreating the worktree from its branch and re-applying the changes that pause stashed.
 
 **Running/Paused → Killed** (on kill, `D`):
 1. Tmux session destroyed
@@ -318,7 +314,7 @@ Use the workspace terminal for work that needs unrestricted access to the root c
 | `\` | Show/hide the session rail |
 | `T` | Show/hide the terminal pane |
 | `Ctrl+↑` / `Ctrl+↓` | Resize the agent/terminal split (remembered per session) |
-| `s` | Stash — stash changes and pause session |
+| `s` | Pause — stop the session's agent, keeping its worktree |
 | `m` | Merge another session's branch into the current one |
 | `r` | Resume a paused session / recover an orphaned (`⟲`) session |
 | `R` | Resume a paused session with different launch options |
@@ -470,17 +466,17 @@ You're now inside the tmux session. Type naturally to communicate with the agent
 
 ### Pause and Resume
 
-**Pause** — saves everything and frees disk space:
+**Pause** — stops the agent and keeps everything:
 ```
 Select running session → s
 ```
-Changes are stashed, worktree is removed, branch name is on your clipboard. The agent's tmux session remains in the background.
+The agent's tmux session ends; the worktree stays exactly as it is, uncommitted and ignored files included, and so does its branch.
 
 **Resume** — picks up where you left off:
 ```
 Select paused session → r
 ```
-Worktree is recreated from the branch, tmux session is restored.
+The agent is relaunched in the worktree and continues its conversation.
 
 ### Push to Remote
 
@@ -633,7 +629,7 @@ tracking:
 - **Stale leftovers** (no live agent, no uncommitted changes) are removed
   automatically. A summary line reports the count — the branch itself is
   never deleted by this cleanup.
-- **Locked worktrees** are left alone: a worktree you locked with `git worktree lock` is never auto-cleaned (or removed by pause or kill, which tell you to run `git worktree unlock`). A worktree left locked "initializing" by an interrupted `git worktree add` is unlocked and cleaned once the lock is older than six minutes.
+- **Locked worktrees** are left alone: a worktree you locked with `git worktree lock` is never auto-cleaned (or removed by kill, which tells you to run `git worktree unlock`; pause leaves the tree and its lock alone). A worktree left locked "initializing" by an interrupted `git worktree add` is unlocked and cleaned once the lock is older than six minutes.
 - **Worktrees with a live agent or uncommitted work** appear in the
   session list as recoverable entries, marked with an orange `⟲` icon.
 
@@ -656,11 +652,11 @@ to load (kept; see serve.log)". The reason is in the daemon's log,
 `~/.loom/logs/serve.log`; the record stays in the workspace's
 `state.json` until the underlying problem is fixed.
 
-**Stashes on pause/resume**: pausing stashes uncommitted work
-(`[loom] stash from '<title>' …` in `git stash list`); resuming re-applies
-it. If re-apply conflicts, the session returns to paused, the stash is
-preserved, and the error names the stash SHA so you can resolve it
-manually in the worktree.
+**Stashes from older pauses**: a loom from before pause kept the worktree
+stashed uncommitted work on pause (`[loom] stash from '<title>' …` in
+`git stash list`); resuming such a session re-applies it. If re-apply
+conflicts, the session returns to paused, the stash is preserved, and the
+error names the stash SHA so you can resolve it manually in the worktree.
 
 ### Run Sessions on Several Claude Accounts
 
@@ -765,7 +761,7 @@ loom [command]
 | `debug` | Print config paths and loaded configuration, the daemon (pid, socket, build and tmux server, or "not running") and its log, and the tmux server a daemon started now would use (the last daemon's while it runs). Its Claude temp root is the one your shell's environment gives, not necessarily the daemon's |
 | `serve` | Run the loom daemon in this terminal (loom starts one in the background when none runs; see [The Loom Daemon](#the-loom-daemon)) |
 | `serve stop` | Stop the daemon: it finishes any pause or kill in progress, saves and exits. Sessions keep running; every open loom waits for a daemon (`Ctrl+R` starts one) |
-| `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions (on the tmux server the last daemon used, while it runs) — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**. Stops before removing worktrees if the tmux cleanup fails. While the daemon runs it makes the reset, waits for it and refuses while a session of the workspace is loading or being killed; with none running it works directly. |
+| `reset --force` | Delete a workspace's instances (the global one's, or `--workspace <name>`'s), kill its tmux sessions (on the tmux server the last daemon used, while it runs) — only those started in its repo or worktrees directory; other workspaces' sessions keep running — and remove its worktrees **and their branches**, with any uncommitted work in them (paused sessions' included). Stops before removing worktrees if the tmux cleanup fails. While the daemon runs it makes the reset, waits for it and refuses while a session of the workspace is loading or being killed; with none running it works directly. |
 | `workspace` | Manage workspaces (see below); a client of the daemon, which it starts when none runs |
 | `account` | Manage extra Claude accounts (see below, and [Run Sessions on Several Claude Accounts](#run-sessions-on-several-claude-accounts)); a client of the daemon too |
 | `session` | Create, list, pause, resume and kill a registered workspace's sessions from a shell (see below); a client of the daemon too |
@@ -804,7 +800,7 @@ Each acts on a registered workspace: `-w <name>`, else the one whose repository 
 | `session send <title> [--text <t> \| --file <f>] [--from <name>] [--wait] [--id <n>]` | Hand a message to the session's Claude through the loom mod, never typed into the pane: it waits in Claude's prompt queue behind any running turn or open dialog, and messages that wait through the same turn are answered together, as one turn. The text comes from `--text`, `--file` or stdin; `--from` names the sender on a line before it. Returns once Claude has queued it; with `--wait`, once the turn that carries it ends, printing Claude's reply (for merged messages, the one answer they share) alone on stdout, and failing when the turn ended without an answer. Refuses an empty message, a session that is busy (starting, resuming or pausing), another agent than Claude, and a session with no live mod, saying why: the daemon serves none (on Windows), the session was launched before this daemon started and its mod has not said hello (common right after an upgrade: `session pause` then `session resume` relaunches it with the mod), its launch has no hooks, or its Claude never loaded the mod. Ctrl-C stops waiting; a queued message stays queued |
 | `session list [--json]` | The workspace's sessions: title, status, branch, account and time in that status. `--json` prints `id`, `title`, `status`, `wait_reason`, `status_since`, `branch`, `worktree`, `repo`, `program`, `account`, `issue` and `pr` |
 | `session kill <title> [-y] [--id <n>]` | Kill a session (its agent, tmux session and worktree) after asking; `-y` skips the question |
-| `session pause <title> [--id <n>]` | Pause a running session: its agent stops and its worktree is removed, its branch kept |
+| `session pause <title> [--id <n>]` | Pause a running session: its agent stops; its worktree and branch stay as they are |
 | `session resume <title> [--id <n>]` | Resume a paused session |
 
 ### Examples
