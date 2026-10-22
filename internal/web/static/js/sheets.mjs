@@ -1,7 +1,7 @@
 // Confirmation sheets. ConfirmSheet is the one sheet the screens use: a
 // title, a body (text or markup), and a confirm and a cancel button.
 // utf8Len is the screens' shared byte count for the 64 KiB limits.
-import { html, useState, useEffect } from "../lib/preact-htm.mjs";
+import { html, useState, useEffect, useRef } from "../lib/preact-htm.mjs";
 
 export function utf8Len(s) {
   return new TextEncoder().encode(s).length;
@@ -11,14 +11,23 @@ export function utf8Len(s) {
 // settles, so a double tap sends one request. The caller closes the sheet.
 export function ConfirmSheet({ title, body, confirm, danger, onConfirm, onCancel }) {
   const [busy, setBusy] = useState(false);
+  const dialog = useRef(null);
 
+  // Focus moves into the dialog on open, so a keyboard or screen reader
+  // starts there rather than behind the backdrop.
+  useEffect(() => {
+    if (dialog.current) dialog.current.focus();
+  }, []);
+
+  // Escape cancels, except while the confirmed action runs: the backdrop
+  // and the Cancel button are inert then too.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape" && !busy) onCancel();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  }, [onCancel, busy]);
 
   async function run() {
     if (busy) return;
@@ -34,6 +43,8 @@ export function ConfirmSheet({ title, body, confirm, danger, onConfirm, onCancel
     <div class="sc-backdrop" onClick=${() => { if (!busy) onCancel(); }}>
       <div
         class="sc-sheet"
+        ref=${dialog}
+        tabindex="-1"
         role="dialog"
         aria-modal="true"
         aria-label=${title}

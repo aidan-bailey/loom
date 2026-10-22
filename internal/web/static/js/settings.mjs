@@ -4,7 +4,6 @@
 import { html, useState, useEffect } from "../lib/preact-htm.mjs";
 import { ConfirmSheet } from "./sheets.mjs";
 import { PushButton } from "./push.mjs";
-import { clearSnapshot } from "./store.mjs";
 import { ago } from "./fleet.mjs";
 
 export function isPaused(device, now = Date.now()) {
@@ -17,7 +16,7 @@ export function isPaused(device, now = Date.now()) {
 export function pushMessage(device) {
   const state = (device && device.push) || "";
   if (state === "expired") return "Notifications stopped; turn them on again.";
-  if (state.startsWith("failing")) return "Notifications are failing (" + state + "); turn them on again.";
+  if (state.startsWith("failing")) return "Notifications are failing (" + state.replace(/^failing:\s*/, "") + "); turn them on again.";
   return "";
 }
 
@@ -25,7 +24,7 @@ function clock(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-export function Settings({ snap, stale, go, act, toast }) {
+export function Settings({ snap, stale, act, toast }) {
   const [stored, setStored] = useState(null);
   const [sheet, setSheet] = useState(false);
 
@@ -34,7 +33,7 @@ export function Settings({ snap, stale, go, act, toast }) {
     setStored(null);
   }, [snap && snap.device]);
 
-  if (!snap || !snap.device) return html`<main class="sc-screen"><p class="sc-dim">Loading…</p></main>`;
+  if (!snap || !snap.device) return html`<section class="sc-screen"><p class="sc-dim">Loading…</p></section>`;
 
   const device = stored || snap.device;
   const notify = device.notify || {};
@@ -58,15 +57,14 @@ export function Settings({ snap, stale, go, act, toast }) {
     };
   }
 
+  // act unpairs on a successful DELETE: it clears the snapshot and goes to
+  // pairing.
   async function unpair() {
-    const r = await act("DELETE", "/api/v1/device");
-    if (!r.ok) return;
-    await clearSnapshot();
-    go("#pair");
+    await act("DELETE", "/api/v1/device");
   }
 
   return html`
-    <main class="sc-screen">
+    <section class="sc-screen">
       <a class="sc-back" href="#">‹ Fleet</a>
       <h1 class="sc-h1 sc-wrap">Settings</h1>
 
@@ -119,6 +117,6 @@ export function Settings({ snap, stale, go, act, toast }) {
             onCancel=${() => setSheet(false)}
           />`
         : null}
-    </main>
+    </section>
   `;
 }

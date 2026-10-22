@@ -1,7 +1,7 @@
 // The new-session screen. The daemon sends the launch defaults and the
 // lists to choose from; the app hard-codes none of them and sends a field
 // only when it differs from its default. The daemon's checks stay the authority.
-import { html, useState, useEffect } from "../lib/preact-htm.mjs";
+import { html, useState, useEffect, useRef } from "../lib/preact-htm.mjs";
 import { pref } from "./store.mjs";
 import { utf8Len } from "./sheets.mjs";
 
@@ -19,9 +19,10 @@ export function choiceLabel(v) {
 }
 
 // launchBody builds the POST /api/v1/sessions body: the workspace, the
-// trimmed title and prompt, and each launch override that differs from its default.
+// trimmed title, the prompt trimmed at its end only (so does the daemon), and
+// each launch override that differs from its default.
 export function launchBody({ workspace, title, prompt, defaults, picks }) {
-  const body = { workspace, title: title.trim(), prompt: prompt.trim() };
+  const body = { workspace, title: title.trim(), prompt: prompt.trimEnd() };
   for (const k of ["account", "model", "permission_mode", "effort"]) {
     if (picks[k] !== defaults[k]) body[k] = picks[k];
   }
@@ -39,7 +40,7 @@ function Pick({ label, list, def, value, onChange }) {
   `;
 }
 
-export function NewSession({ snap, stale, go, act }) {
+export function NewSession({ snap, stale, go, act, toast }) {
   const workspaces = (snap && snap.workspaces) || [];
   const [ws, setWs] = useState(() => {
     const want = pref("filter") || "";
@@ -55,18 +56,30 @@ export function NewSession({ snap, stale, go, act }) {
   const [busy, setBusy] = useState(false);
 
   // The defaults are per workspace (its settings and accounts), so they are
-  // fetched again when the workspace changes.
+  // dropped and fetched again when the workspace changes.
+  // fetched is the key of the defaults held, so the fetch below runs once per
+  // workspace and attempt.
+  const fetched = useRef("");
   useEffect(() => {
-    if (ws === "") return undefined;
-    let live = true;
+    fetched.current = "";
     setDefs(null);
     setFailed(false);
+  }, [ws, attempt]);
+
+  // act refuses while the stream is down, so the fetch waits for it and runs
+  // when it is back; defaults already held are not fetched again, for coming
+  // back must not reset the person's picks.
+  useEffect(() => {
+    const key = ws + "/" + attempt;
+    if (ws === "" || stale || fetched.current === key) return undefined;
+    let live = true;
     act("GET", "/api/v1/launch-defaults?workspace=" + encodeURIComponent(ws)).then((r) => {
       if (!live) return;
       if (!r.ok || !r.data) {
         setFailed(true);
         return;
       }
+      fetched.current = key;
       setDefs(r.data);
       setPicks({
         account: r.data.account,
@@ -78,12 +91,12 @@ export function NewSession({ snap, stale, go, act }) {
     return () => {
       live = false;
     };
-  }, [ws, attempt]);
+  }, [ws, attempt, stale]);
 
-  if (!snap) return html`<main class="sc-screen"><p class="sc-dim">Loading…</p></main>`;
+  if (!snap) return html`<section class="sc-screen"><p class="sc-dim">Loading…</p></section>`;
 
   const chosen = workspaces.find((w) => String(w.id) === ws);
-  const promptTooLong = utf8Len(prompt.trim()) > MAX_PROMPT;
+  const promptTooLong = utf8Len(prompt.trimEnd()) > MAX_PROMPT;
   const ready = !stale && !busy && defs && chosen && title.trim() !== "" && !promptTooLong;
   const set = (k) => (v) => setPicks((p) => ({ ...p, [k]: v }));
 
@@ -96,6 +109,7 @@ export function NewSession({ snap, stale, go, act }) {
         launchBody({ workspace: chosen.id, title, prompt, defaults: defs, picks }),
       );
       if (!r.ok) return;
+      if (r.status === 202) toast("Still starting; the session will show in the fleet.", false);
       if (r.status === 201 && r.data && r.data.id !== undefined) go("#s/" + r.data.id);
       else go("#");
     } finally {
@@ -104,7 +118,7 @@ export function NewSession({ snap, stale, go, act }) {
   }
 
   return html`
-    <main class="sc-screen">
+    <section class="sc-screen">
       <a class="sc-back" href="#">‹ Fleet</a>
       <h1 class="sc-h1 sc-wrap">New session</h1>
       <form class="sc-form" onSubmit=${(e) => { e.preventDefault(); if (ready) create(); }}>
@@ -142,6 +156,6 @@ export function NewSession({ snap, stale, go, act }) {
           : null}
         <button class="sc-btn sc-primary sc-block" type="submit" disabled=${!ready}>Start session</button>
       </form>
-    </main>
+    </section>
   `;
 }

@@ -20,7 +20,8 @@ export function groupSessions(sessions, filter) {
   const out = { needs_you: [], your_turn: [], working: [], paused: [] };
   for (const s of sessions) {
     if (filter !== "" && String(s.workspace) !== filter) continue;
-    if (out[s.group]) out[s.group].push(s);
+    // A group this build does not know is listed under Paused, never dropped.
+    (out[s.group] || out.paused).push(s);
   }
   const t = (s) => Date.parse(s.since) || 0;
   out.needs_you.sort((a, b) => t(a) - t(b));
@@ -128,7 +129,7 @@ export function Fleet({ snap, stale, go }) {
     pruneSeen(everything.map((s) => s.id));
   }, [snap]);
 
-  if (!snap) return html`<main class="sc-screen"><p class="sc-dim">Loading…</p></main>`;
+  if (!snap) return html`<section class="sc-screen"><p class="sc-dim">Loading…</p></section>`;
 
   const workspaces = snap.workspaces || [];
   const known = new Set(workspaces.map((w) => String(w.id)));
@@ -154,7 +155,7 @@ export function Fleet({ snap, stale, go }) {
     );
 
   return html`
-    <main class="sc-screen">
+    <section class="sc-screen">
       <header class="sc-header">
         <h1 class="sc-h1">${snap.host || "loom"}</h1>
         <a class="sc-icon" href="#settings" aria-label="Settings">⚙</a>
@@ -162,12 +163,13 @@ export function Fleet({ snap, stale, go }) {
       </header>
       ${workspaces.length > 1
         ? html`<nav class="sc-chips" aria-label="Workspaces">
-            <button class=${"sc-chip-btn" + (active === "" ? " sc-on" : "")} type="button" onClick=${() => pick("")}>All</button>
+            <button class=${"sc-chip-btn" + (active === "" ? " sc-on" : "")} type="button" aria-pressed=${active === ""} onClick=${() => pick("")}>All</button>
             ${workspaces.map(
               (w) => html`<button
                 key=${w.id}
                 class=${"sc-chip-btn" + (active === String(w.id) ? " sc-on" : "")}
                 type="button"
+                aria-pressed=${active === String(w.id)}
                 onClick=${() => pick(String(w.id))}
               >${w.label || w.name}</button>`,
             )}
@@ -186,6 +188,6 @@ export function Fleet({ snap, stale, go }) {
             ${renderCards(groups.paused)}
           </details>`
         : null}
-    </main>
+    </section>
   `;
 }

@@ -51,10 +51,10 @@ export function Session({ snap, stale, route, go, act, toast }) {
   const s = snap && id !== undefined ? allSessions(snap).find((x) => x.id === id) : undefined;
   if (!s) {
     return html`
-      <main class="sc-screen">
+      <section class="sc-screen">
         <a class="sc-back" href="#">‹ Fleet</a>
         <p class="sc-dim sc-empty">${snap ? "This session is gone." : "Loading…"}</p>
-      </main>
+      </section>
     `;
   }
 
@@ -119,7 +119,7 @@ export function Session({ snap, stale, route, go, act, toast }) {
   ].filter(([, v]) => v);
 
   return html`
-    <main class="sc-screen sc-session">
+    <section class="sc-screen sc-session">
       <a class="sc-back" href="#">‹ Fleet</a>
       <h1 class="sc-h1 sc-wrap">${s.title}</h1>
       <div class=${"sc-lead sc-g-" + s.group}>
@@ -206,6 +206,6 @@ export function Session({ snap, stale, route, go, act, toast }) {
             onCancel=${() => setSheet("")}
           />`
         : null}
-    </main>
+    </section>
   `;
 }

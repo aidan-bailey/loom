@@ -259,6 +259,7 @@ input.text:focus {
   border-radius: 16px 16px 0 0;
   padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
 }
+.sc-sheet:focus { outline: none; }
 .sc-sheet-title { margin: 0 0 8px; font-size: 1.1rem; }
 .sc-sheet-body { color: var(--dim); line-height: 1.4; }
 .sc-sheet-body code { color: var(--fg); overflow-wrap: anywhere; }
@@ -270,7 +271,8 @@ input.text:focus {
 .sc-screen {
   max-width: 640px;
   margin: 0 auto;
-  padding: calc(12px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
+  /* .shell already pads the safe areas */
+  padding: 12px 14px 24px;
 }
 .sc-dim { color: var(--dim); }
 .sc-empty { text-align: center; margin-top: 48px; }
