@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -76,12 +77,20 @@ func VAPIDAuth(key core.VAPIDKey, endpoint, subject string, now time.Time) (stri
 	if rest, err := asn1.Unmarshal(der, &rs); err != nil || len(rest) != 0 {
 		return "", errors.New("webpush: signing: malformed ECDSA signature")
 	}
-	sig := make([]byte, 64)
-	rs.R.FillBytes(sig[:32])
-	rs.S.FillBytes(sig[32:])
+	sig := jwsSignature(rs.R, rs.S)
 
 	return "vapid t=" + input + "." + base64.RawURLEncoding.EncodeToString(sig) +
 		", k=" + base64.RawURLEncoding.EncodeToString(key.Public), nil
+}
+
+// jwsSignature is RFC 7518 section 3.4's ES256 signature: r then s, each a
+// 32-byte big-endian integer. A leading zero byte stays; r.Bytes() would drop
+// it and shorten the signature, which a push service rejects.
+func jwsSignature(r, s *big.Int) []byte {
+	sig := make([]byte, 64)
+	r.FillBytes(sig[:32])
+	s.FillBytes(sig[32:])
+	return sig
 }
 
 // vapidSigningInput is the JWT's "header.claims" text, which the signature covers.
@@ -94,16 +103,25 @@ func vapidSigningInput(aud, sub string, exp int64) (string, error) {
 	return enc.EncodeToString([]byte(jwtHeader)) + "." + enc.EncodeToString(claims), nil
 }
 
-// audience is the endpoint's origin: scheme, host and any port, no path. An
-// endpoint with no host, or a scheme that is not http or https, is no push
-// resource.
+// audience is the endpoint's origin as RFC 6454 writes it, which is what a push
+// service compares: "https://", the lower-case host (an IPv6 literal in
+// brackets) and the port unless it is https's default, 443; no path. An
+// endpoint with no host, or a scheme other than https, is no push resource:
+// a VAPID token over http would cross the network in the clear.
 func audience(endpoint string) (string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return "", fmt.Errorf("webpush: endpoint: %w", err)
 	}
-	if (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return "", errors.New("webpush: the endpoint is not an http(s) URL with a host")
+	host := strings.ToLower(u.Hostname())
+	if u.Scheme != "https" || host == "" {
+		return "", errors.New("webpush: the endpoint is not an https URL with a host")
 	}
-	return u.Scheme + "://" + u.Host, nil
+	if port := u.Port(); port != "" && port != "443" {
+		return "https://" + net.JoinHostPort(host, port), nil
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	return "https://" + host, nil
 }

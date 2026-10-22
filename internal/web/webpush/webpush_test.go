@@ -391,9 +391,14 @@ func TestVAPIDAuth_SignsClaimsThatVerify(t *testing.T) {
 	key := newVAPIDKey(t)
 	now := time.Unix(1_700_000_000, 0)
 	for name, tc := range map[string]struct{ endpoint, aud string }{
-		"path and query dropped": {"https://web.push.apple.com/wpush/v2/abc?x=1", "https://web.push.apple.com"},
-		"port kept":              {"https://fcm.googleapis.com:8443/fcm/send/abc", "https://fcm.googleapis.com:8443"},
-		"wildcard host":          {"https://eu.notify.windows.com/w/?token=abc", "https://eu.notify.windows.com"},
+		"path and query dropped":                {"https://web.push.apple.com/wpush/v2/abc?x=1", "https://web.push.apple.com"},
+		"port kept":                             {"https://fcm.googleapis.com:8443/fcm/send/abc", "https://fcm.googleapis.com:8443"},
+		"wildcard host":                         {"https://eu.notify.windows.com/w/?token=abc", "https://eu.notify.windows.com"},
+		"default port dropped":                  {"https://web.push.apple.com:443/wpush/v2/abc", "https://web.push.apple.com"},
+		"upper-case host":                       {"https://Web.Push.Apple.COM/wpush/v2/abc", "https://web.push.apple.com"},
+		"upper-case host, port":                 {"https://FCM.googleapis.com:8443/fcm/send/abc", "https://fcm.googleapis.com:8443"},
+		"IPv6 host stays bracketed":             {"https://[2001:DB8::1]/push", "https://[2001:db8::1]"},
+		"IPv6 host with a port stays bracketed": {"https://[2001:db8::1]:8443/push", "https://[2001:db8::1]:8443"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			header, err := VAPIDAuth(key, tc.endpoint, "https://loom.example.com", now)
@@ -411,6 +416,16 @@ func TestVAPIDAuth_SignsClaimsThatVerify(t *testing.T) {
 			}, claims)
 		})
 	}
+}
+
+// A leading zero byte of r or s must stay: dropping it (append(r.Bytes(),
+// s.Bytes()...)) shortens the signature in about 1 of 128 tokens, which a
+// push service rejects.
+func TestJWSSignature_PadsEachIntegerTo32Bytes(t *testing.T) {
+	got := jwsSignature(big.NewInt(1), big.NewInt(2))
+	want := append(append(bytes.Repeat([]byte{0}, 31), 1), append(bytes.Repeat([]byte{0}, 31), 2)...)
+	require.Len(t, got, 64)
+	assert.Equal(t, want, got)
 }
 
 func TestVAPIDAuth_SignatureBindsTheClaimsAndTheKey(t *testing.T) {
@@ -458,6 +473,8 @@ func TestVAPIDAuth_RefusesWhatItCannotSign(t *testing.T) {
 		"empty endpoint":      {key, "", subject},
 		"relative endpoint":   {key, "/wpush/v2/abc", subject},
 		"endpoint over ftp":   {key, "ftp://web.push.apple.com/x", subject},
+		"endpoint over http":  {key, "http://web.push.apple.com/x", subject},
+		"endpoint unparsable": {key, "://nope", subject},
 		"endpoint no host":    {key, "https:///x", subject},
 	} {
 		t.Run(name, func(t *testing.T) {
