@@ -278,7 +278,7 @@ supplies, has a bound.
 | `POST /sessions/{id}/merge` | `{source}`: `Merge` with the session in the URL as the target, as the TUI's picker does. |
 | `PUT /device` | Notification settings, and pausing them for an hour. |
 | `POST /device/push` | Stores the push subscription, in the shape the browser's `PushSubscription.toJSON()` gives. |
-| `DELETE /device/push` | Drops this phone's push subscription, when the app finds it has none. |
+| `DELETE /device/push` | Drops this phone's push subscription, which loom records as expired, when the app finds it holds none or may not notify. |
 | `GET /push-key` | The VAPID public key the app subscribes with. |
 | `DELETE /device` | Unpairs this phone. |
 
@@ -368,9 +368,10 @@ Every connect starts with a snapshot of a few KB, so nothing is replayed.
   clears it. The service worker caches the shell only, never the API. A
   snapshot whose build differs from the shell's makes the worker update
   and the app reload, so a loom upgrade upgrades the phone.
-- The app reconnects the stream whenever it becomes visible again, and
-  whenever no event has arrived for 40 s (two pings): in the spike, a page
-  on iOS sat on a stream that delivered nothing.
+- The app reconnects the stream whenever it becomes visible again,
+  without marking the view stale, and whenever no event has arrived for
+  45 s (two pings and a margin): in the spike, a page on iOS sat on a
+  stream that delivered nothing.
 - iOS details: `display: standalone`, `apple-touch-icon`, `viewport-fit=cover`
   and the safe-area insets.
 - loom's colors, light or dark with the phone; amber marks only what needs
@@ -381,15 +382,17 @@ Every connect starts with a snapshot of a few KB, so nothing is replayed.
 - Turned on from a tap in the app, as iOS requires: the app subscribes with
   the VAPID public key and posts the subscription. The button shows that it
   is waiting and takes no more taps until `subscribe()` settles, which took
-  iOS over two minutes after an unsubscribe. A `subscribe()` refused because
-  a subscription made with another key exists (after `web.json` is reset)
-  is tried once more after unsubscribing.
+  iOS over two minutes after an unsubscribe. Turning on drops any
+  subscription the phone holds first, so one made with another key (after
+  `web.json` is reset) can't block it.
 - Apple answers 201 to a subscription the app has dropped, and drops the
-  push, so a 404 or 410 can't be relied on to find one. On each launch the
-  app posts its current subscription again, which changes nothing when it
-  is the same, or, having none while loom holds one, sends
-  `DELETE /device/push` and shows "Notifications stopped; turn them on
-  again".
+  push, so a 404 or 410 can't be relied on to find one. On each launch,
+  while loom's push state is `ok` or none, the app posts its current
+  subscription again, which changes nothing when it is the same; holding
+  none, or no permission to notify, while loom holds one (`ok` or
+  `failing`), it sends `DELETE /device/push`, which loom records as
+  expired, and says notifications stopped. A subscription loom already
+  knows is bad is left for the button to replace.
 - Triggers, worked out in the web layer from its projection's transitions:
   - **waiting:** a session enters Prompting, or stays in it with a new
     reason or tool summary;
@@ -527,8 +530,8 @@ so none of the fallbacks above applies.
 
 What it changed, in the sections above: the `Topic`'s format and its test
 (Push, Testing); the app's check of its own subscription, and
-`DELETE /device/push` (Push, API); the waiting subscribe button and the
-retry after another key (Push); the app's reconnects (The app); and 125 s
+`DELETE /device/push` (Push, API); the waiting subscribe button (Push);
+the app's reconnects (The app); and 125 s
 for Cloudflare's idle cut (The stream). Delete the spike's Home Screen app
 before installing the real one: on the same origin, it holds a
 subscription made with the spike's key.
