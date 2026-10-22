@@ -32,6 +32,10 @@ const (
 	// byeGrace bounds how long close waits for the flusher to return and for
 	// the streams to write their bye.
 	byeGrace = 2 * time.Second
+	// streamWriteTimeout bounds one frame's write and flush: a peer that stops
+	// reading without closing would otherwise hold its handler, and its slot,
+	// forever. The stream as a whole has no timeout.
+	streamWriteTimeout = 30 * time.Second
 )
 
 var (
@@ -211,7 +215,7 @@ func (h *hub) applyDevicesLocked(devices []core.WebDevice) {
 		sub.dev = d.rec
 		f, err := frameOf("device", d.rec)
 		if err != nil {
-			h.lg.Error("encode the device record", "device", sub.device, "err", err)
+			h.lg.Error("web.stream_device_encode_failed", "device", sub.device, "err", err)
 			continue
 		}
 		h.offerLocked(sub, f)
@@ -247,7 +251,7 @@ func (h *hub) publishLocked(event string, data any) {
 func (h *hub) sendTo(device, event string, data any) {
 	f, err := frameOf(event, data)
 	if err != nil {
-		h.lg.Error("encode an event", "event", event, "err", err)
+		h.lg.Error("web.stream_encode_failed", "event", event, "err", err)
 		return
 	}
 	h.mu.Lock()
@@ -289,7 +293,7 @@ func (h *hub) closeDevice(device string) {
 func (h *hub) broadcastLocked(event string, data any) {
 	f, err := frameOf(event, data)
 	if err != nil {
-		h.lg.Error("encode an event", "event", event, "err", err)
+		h.lg.Error("web.stream_encode_failed", "event", event, "err", err)
 		return
 	}
 	for sub := range h.subs {
@@ -300,7 +304,7 @@ func (h *hub) broadcastLocked(event string, data any) {
 // offerLocked queues a frame for a stream, and ends the stream if it is full.
 func (h *hub) offerLocked(sub *streamSub, f sseFrame) {
 	if !sub.offer(f) {
-		h.lg.Warn("a stream fell too far behind; ending it", "device", sub.device)
+		h.lg.Warn("web.stream_lagging", "device", sub.device)
 		h.dropLocked(sub)
 	}
 }
@@ -404,7 +408,7 @@ func (h *hub) close() {
 	select {
 	case <-finished:
 	case <-time.After(byeGrace):
-		h.lg.Warn("the flusher or a stream was still running after the grace; closing the listener ends the streams")
+		h.lg.Warn("web.hub_close_grace")
 	}
 }
 
@@ -496,10 +500,17 @@ func (l *Layer) routeStream(m *http.ServeMux) {
 // it, or a write fails. It sets the device cookie again first, so a device in
 // use never expires, and answers 503 when the limits refuse it.
 func (h *hub) serveStream(w http.ResponseWriter, r *http.Request, device string) {
+	// The mux routes HEAD to a GET pattern; a HEAD must not hold a stream slot
+	// and ping into a body nobody reads.
+	if r.Method == http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet)
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	sub, err := h.subscribe(device)
 	if err != nil {
 		if !errors.Is(err, errStreamsFull) && !errors.Is(err, errHubClosed) && !errors.Is(err, errDeviceUnknown) {
-			h.lg.Error("start a stream", "device", device, "err", err)
+			h.lg.Error("web.stream_start_failed", "device", device, "err", err)
 			err = errors.New("could not start the stream")
 		}
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -519,6 +530,11 @@ func (h *hub) serveStream(w http.ResponseWriter, r *http.Request, device string)
 		return
 	}
 	send := func(f sseFrame) bool {
+		// A writer without deadlines (a test recorder) is written with none.
+		if err := rc.SetWriteDeadline(time.Now().Add(streamWriteTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return false
+		}
+		defer func() { _ = rc.SetWriteDeadline(time.Time{}) }()
 		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", f.event, f.data); err != nil {
 			return false
 		}
@@ -540,6 +556,13 @@ func (h *hub) serveStream(w http.ResponseWriter, r *http.Request, device string)
 		}
 		select {
 		case f := <-sub.out:
+			// Both channels may have been ready: an ended stream gets nothing
+			// more, so look again; the top of the loop says bye if it is due.
+			select {
+			case <-sub.done:
+				continue
+			default:
+			}
 			if !send(f) {
 				return
 			}

@@ -231,6 +231,12 @@ func TestNoticeOf(t *testing.T) {
 	b, err := json.Marshal(info)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"text": "stash kept", "error": false, "at": "2026-10-21T12:00:00Z"}`, string(b))
+
+	// A time in another zone goes out in UTC, as since and paused_until do.
+	local := time.Date(2026, 10, 21, 14, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
+	b, err = json.Marshal(noticeOf(core.Notice{Info: "x"}, local))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"text": "x", "error": false, "at": "2026-10-21T12:00:00Z"}`, string(b))
 }
 
 func TestWorkspaceOf(t *testing.T) {

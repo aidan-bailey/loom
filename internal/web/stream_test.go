@@ -2,10 +2,12 @@ package web
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -911,4 +913,125 @@ func TestStream_TheRouteNeedsADeviceAndTakesGetOnly(t *testing.T) {
 
 	post := httpDo(t, e.addr, http.MethodPost, "/api/v1/stream", "", func(r *http.Request) { r.AddCookie(e.cookie) })
 	assert.Equal(t, http.StatusMethodNotAllowed, post.StatusCode)
+
+	// The mux hands a HEAD to a GET pattern; it must not open a stream, which
+	// would hold a slot and ping into a body nobody reads.
+	head := httpDo(t, e.addr, http.MethodHead, "/api/v1/stream", "", func(r *http.Request) { r.AddCookie(e.cookie) })
+	assert.Equal(t, http.StatusMethodNotAllowed, head.StatusCode)
+	assert.Equal(t, http.MethodGet, head.Header.Get("Allow"))
+	h := e.layer.hub
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	assert.Empty(t, h.subs, "a HEAD holds no stream")
+}
+
+// deadlineRecorder is a response writer that supports write deadlines and
+// records each one set.
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	mu        sync.Mutex
+	deadlines []time.Time
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.deadlines = append(d.deadlines, t)
+	return nil
+}
+
+func (d *deadlineRecorder) seen() []time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.deadlines)
+}
+
+func TestStream_EachFrameIsWrittenUnderADeadlineThatIsClearedAfter(t *testing.T) {
+	e := newStreamEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream", nil).WithContext(ctx)
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.layer.hub.serveStream(rec, req, "iPhone")
+	}()
+	waitUntil(t, "the snapshot is written", func() bool { return len(rec.seen()) >= 2 })
+	cancel()
+	<-done
+
+	got := rec.seen()
+	require.GreaterOrEqual(t, len(got), 2)
+	assert.WithinDuration(t, time.Now().Add(streamWriteTimeout), got[0], 5*time.Second)
+	assert.True(t, got[1].IsZero(), "the deadline is cleared after the write")
+}
+
+func TestStream_AWriterWithoutDeadlinesStillStreams(t *testing.T) {
+	e := newStreamEnv(t)
+	h := e.layer.hub
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream", nil).WithContext(ctx)
+	rec := httptest.NewRecorder() // its controller answers ErrNotSupported
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.serveStream(rec, req, "iPhone")
+	}()
+	waitUntil(t, "the handler takes the snapshot", func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for sub := range h.subs {
+			return len(sub.out) == 0
+		}
+		return false
+	})
+	cancel()
+	<-done
+	assert.Contains(t, rec.Body.String(), "event: snapshot\n")
+}
+
+// endedHubWithAStream is the fixture's hub and a stream to be put in the set
+// once the test ends the hub, to see what reaches it.
+func endedHubWithAStream(t *testing.T) (*hub, *streamSub) {
+	t.Helper()
+	e := newStreamEnv(t)
+	return e.layer.hub, &streamSub{device: "iPhone", out: make(chan sseFrame, streamQueue), done: make(chan struct{})}
+}
+
+func TestHub_AnEndedHubQueuesNothingFromApply(t *testing.T) {
+	h, sub := endedHubWithAStream(t)
+	require.True(t, h.end(false))
+	h.mu.Lock()
+	h.subs[sub] = struct{}{}
+	before := slices.Clone(h.fleet.workspaces)
+	h.mu.Unlock()
+
+	h.apply([]core.Event{
+		core.WorkspacesChanged{Views: []core.WorkspaceView{{ID: 3, Label: "late"}}},
+		core.Notice{Info: "late"},
+	})
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	assert.Empty(t, sub.out, "nothing is queued")
+	assert.Equal(t, before, h.fleet.workspaces, "the fleet is not updated")
+	assert.Empty(t, h.notices, "the notice is not kept")
+	assert.Empty(t, h.wake, "the flusher is not woken")
+}
+
+func TestHub_AnEndedHubQueuesNothingFromFlush(t *testing.T) {
+	h, sub := endedHubWithAStream(t)
+	require.True(t, h.end(false))
+	h.mu.Lock()
+	h.subs[sub] = struct{}{}
+	h.fleet.setWorkspaces([]core.WorkspaceView{{ID: 3, Label: "late"}})
+	before := slices.Clone(h.pubWorkspaces)
+	h.mu.Unlock()
+
+	h.flush()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	assert.Empty(t, sub.out, "nothing is queued")
+	assert.Equal(t, before, h.pubWorkspaces, "nothing is recorded as published")
 }

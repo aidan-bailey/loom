@@ -245,8 +245,10 @@ func deviceOf(d core.WebDevice) deviceJSON {
 }
 
 // noticeOf is a model notice as the app reads it, stamped with the time the
-// web layer saw it: Err is shown as an error, else Info as a line.
+// web layer saw it, in UTC like the other times: Err is shown as an error,
+// else Info as a line.
 func noticeOf(n core.Notice, at time.Time) noticeJSON {
+	at = at.UTC()
 	if n.Err != nil {
 		return noticeJSON{Text: n.Err.Error(), Error: true, At: at}
 	}
