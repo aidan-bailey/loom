@@ -22,13 +22,30 @@ var (
 	tokenB = strings.Repeat("cd", 32)
 )
 
+// webJSONSub is the push subscription webJSON stores for iPhone: one
+// ValidatePushSubscription accepts, from a fixed key so the fixture is a
+// constant.
+var webJSONSub = func() PushSubscription {
+	scalar := make([]byte, 32)
+	scalar[31] = 7
+	key, err := ecdh.P256().NewPrivateKey(scalar)
+	if err != nil {
+		panic(err)
+	}
+	return PushSubscription{
+		Endpoint: "https://web.push.apple.com/abc",
+		P256DH:   base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()),
+		Auth:     base64.RawURLEncoding.EncodeToString(make([]byte, 16)),
+	}
+}()
+
 // webJSON is an enabled web.json without a VAPID key, holding two devices
 // listed out of name order: iPhone, which takes waiting pushes only, until
 // a time, and iPad, whose push subscription expired.
 var webJSON = `{"version":1,"listen":"127.0.0.1:7420","origin":"https://loom.example.com","devices":[` +
 	`{"name":"iPhone","token_sha256":"` + tokenA + `","paired":"2026-10-01T09:00:00Z","last_seen":"2026-10-02T10:30:00Z",` +
 	`"notify":{"waiting":true,"finished":false,"paused_until":"2026-10-03T08:00:00Z"},` +
-	`"push":{"endpoint":"https://web.push.apple.com/abc","p256dh":"pk","auth":"au"},"push_state":"ok"},` +
+	`"push":{"endpoint":"` + webJSONSub.Endpoint + `","p256dh":"` + webJSONSub.P256DH + `","auth":"` + webJSONSub.Auth + `"},"push_state":"ok"},` +
 	`{"name":"iPad","token_sha256":"` + tokenB + `","paired":"2026-10-04T09:00:00Z","last_seen":"0001-01-01T00:00:00Z",` +
 	`"notify":{"waiting":false,"finished":true,"paused_until":""},"push_state":"expired"}]}`
 
@@ -121,7 +138,7 @@ func TestInitWeb_LoadsTheFile(t *testing.T) {
 	d := m.web.find("iPhone")
 	require.NotNil(t, d)
 	assert.Equal(t, tokenA, hex.EncodeToString(d.tokenHash[:]))
-	assert.Equal(t, PushSubscription{Endpoint: "https://web.push.apple.com/abc", P256DH: "pk", Auth: "au"}, d.sub)
+	assert.Equal(t, webJSONSub, d.sub)
 	assert.Nil(t, m.web.find("iphone"), "names match exactly")
 	assert.Zero(t, m.web.vapid, "no key until the first enable")
 	assert.Empty(t, m.Drain().Events)
@@ -217,6 +234,46 @@ func TestInitWeb_PushStates(t *testing.T) {
 	}
 }
 
+// A stored subscription is checked on load as when it was posted: one the
+// check refuses marks only its own device failing, keeps the record and the
+// pairing, and is no push target; a valid one stays ok and is one.
+func TestInitWeb_AStoredSubscriptionThatFailsItsCheckIsMarkedFailingAndNotPushedTo(t *testing.T) {
+	withSub := func(name, token string, sub PushSubscription) string {
+		return strings.Replace(webDeviceJSON(name, token), `"paused_until":""}}`,
+			fmt.Sprintf(`"paused_until":""},"push":{"endpoint":%q,"p256dh":%q,"auth":%q},"push_state":"ok"}`, sub.Endpoint, sub.P256DH, sub.Auth), 1)
+	}
+	insecure, offList := webJSONSub, webJSONSub
+	insecure.Endpoint = "http://web.push.apple.com/abc"
+	offList.Endpoint = "https://attacker.example.com/abc"
+	badKey := webJSONSub
+	badKey.P256DH = "pk"
+	m := webModel(t, webWith(
+		withSub("a-good", tokenA, webJSONSub),
+		withSub("b-http", tokenB, insecure),
+		withSub("c-off-list", strings.Repeat("ef", 32), offList),
+		withSub("d-bad-key", strings.Repeat("12", 32), badKey),
+	))
+
+	require.Empty(t, m.web.loadErr, "a bad subscription does not fail the load")
+	devices := m.Web().Devices
+	require.Len(t, devices, 4, "every device stays paired")
+	assert.Equal(t, PushOK, devices[0].Push)
+	for _, d := range devices[1:] {
+		assert.Equal(t, PushFailing(0), d.Push, d.Name)
+	}
+	assert.Equal(t, insecure, m.web.find("b-http").sub, "the record is kept")
+	assert.Equal(t, offList, m.web.find("c-off-list").sub, "the record is kept")
+	targets := m.PushTargets()
+	require.Len(t, targets, 1, "nothing is posted to a subscription that fails its check")
+	assert.Equal(t, "a-good", targets[0].Device)
+
+	// The app's Turn on replaces it.
+	_, err := m.SetPushSubscription("b-http", webJSONSub)
+	require.NoError(t, err)
+	assert.Equal(t, PushOK, m.Web().Devices[1].Push)
+	assert.Len(t, m.PushTargets(), 2)
+}
+
 func TestSaveWeb_RoundTripsWhatWasLoaded(t *testing.T) {
 	m := webModel(t, webJSON)
 	key, err := newVAPIDKey()
@@ -253,7 +310,7 @@ func TestSaveWeb_RoundTripsWhatWasLoaded(t *testing.T) {
 	assert.Equal(t, "iPhone", iphone["name"])
 	assert.Equal(t, tokenA, iphone["token_sha256"])
 	assert.Equal(t, "2026-10-03T08:00:00Z", iphone["notify"].(map[string]any)["paused_until"])
-	assert.Equal(t, map[string]any{"endpoint": "https://web.push.apple.com/abc", "p256dh": "pk", "auth": "au"}, iphone["push"])
+	assert.Equal(t, map[string]any{"endpoint": webJSONSub.Endpoint, "p256dh": webJSONSub.P256DH, "auth": webJSONSub.Auth}, iphone["push"])
 	assert.Equal(t, "ok", iphone["push_state"])
 }
 

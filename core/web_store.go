@@ -304,6 +304,14 @@ func (fd webFileDevice) device() (*webDevice, error) {
 	}
 	if fd.Push != nil {
 		d.sub = PushSubscription{Endpoint: fd.Push.Endpoint, P256DH: fd.Push.P256DH, Auth: fd.Push.Auth}
+		if err := ValidatePushSubscription(d.sub); err != nil {
+			// The record stays and the device stays paired, but nothing is
+			// posted to a subscription the check refuses (PushTargets
+			// repeats it); the app's Turn on replaces it. Status 0: no push
+			// service was asked.
+			d.push = PushFailing(0)
+			log.For("core").Warn("web.push_subscription_refused", "device", d.name, "err", err.Error())
+		}
 	}
 	return d, nil
 }

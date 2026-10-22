@@ -40,7 +40,8 @@ type WebHost interface {
 	// SetPushSubscription validates sub (ValidatePushSubscription), stores it
 	// as the device's and sets PushOK; ErrNoDevice for an unknown name.
 	SetPushSubscription(name string, sub PushSubscription) (WebDevice, error)
-	// PushTargets are the devices with a subscription that isn't expired.
+	// PushTargets are the devices with a subscription that isn't expired and
+	// passes ValidatePushSubscription.
 	PushTargets() []PushTarget
 	// PushResult records how a push to the endpoint of the device's
 	// subscription went. PushExpired also drops the subscription. It changes
@@ -286,12 +287,14 @@ func (m *Model) SetPushSubscription(name string, sub PushSubscription) (WebDevic
 }
 
 // PushTargets are the devices with a subscription that isn't expired, in
-// device order (WebHost). A subscription that failed is tried again. Loop
-// goroutine only.
+// device order (WebHost). A subscription that failed is tried again, except
+// one that fails ValidatePushSubscription (a stored one the check refused on
+// load): the daemon posts to no endpoint it has not checked. Loop goroutine
+// only.
 func (m *Model) PushTargets() []PushTarget {
 	var targets []PushTarget
 	for _, d := range m.web.devices {
-		if d.sub.Endpoint == "" || d.push == PushExpired {
+		if d.sub.Endpoint == "" || d.push == PushExpired || ValidatePushSubscription(d.sub) != nil {
 			continue
 		}
 		targets = append(targets, PushTarget{Device: d.name, Notify: d.notify, Subscription: d.sub})

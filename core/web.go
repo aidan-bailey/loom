@@ -130,7 +130,9 @@ func noDeviceError(name string) error {
 // itself, or the text the model gives for that name. A client sees the
 // second: the error crossed the rpc wire as text under CodeError, which
 // WireError.Is does not map back to ErrNoDevice, so errors.Is cannot see the
-// sentinel. Another name's error is not this name's.
+// sentinel. It matches any error wrapping ErrNoDevice, whatever name that
+// error carries; only the text comparison is exact to name, so over the wire
+// another name's error is not this name's.
 func IsNoDevice(err error, name string) bool {
 	if err == nil {
 		return false
