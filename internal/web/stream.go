@@ -317,16 +317,18 @@ func (h *hub) dropLocked(sub *streamSub) {
 }
 
 // flush publishes the workspace list and each workspace's session list that
-// differs from what the streams were last told.
+// differs from what the streams were last told, each with the fleet's badge
+// count as it stands now.
 func (h *hub) flush() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return
 	}
+	badge := h.fleet.badge()
 	if !reflect.DeepEqual(h.fleet.workspaces, h.pubWorkspaces) {
 		h.pubWorkspaces = h.fleet.workspaces
-		h.broadcastLocked("workspaces", workspacesJSON{Workspaces: h.fleet.workspaces})
+		h.broadcastLocked("workspaces", workspacesJSON{Workspaces: h.fleet.workspaces, Badge: badge})
 	}
 	for _, w := range h.fleet.workspaces {
 		cur := h.fleet.sessions[w.ID]
@@ -334,7 +336,7 @@ func (h *hub) flush() {
 			continue
 		}
 		h.pubSessions[w.ID] = cur
-		h.broadcastLocked("sessions", sessionsJSON{Workspace: w.ID, Sessions: cur})
+		h.broadcastLocked("sessions", sessionsJSON{Workspace: w.ID, Sessions: cur, Badge: badge})
 	}
 	for id := range h.pubSessions {
 		if !h.fleet.served(id) {

@@ -81,6 +81,21 @@ function persist(snap) {
   saveTimer = setTimeout(() => saveSnapshot({ ...snap, updated }), 1000);
 }
 
+// setBadge puts the stream's count of sessions that need you on the Home
+// Screen icon, and clears it at 0, so answering every session clears what a
+// push set. The count is the daemon's (the snapshot, `sessions` and
+// `workspaces` events carry it); a browser without the Badging API, or one
+// that refuses, is left alone.
+function setBadge(count) {
+  if (typeof count !== "number") return;
+  try {
+    const shown = count > 0 ? navigator.setAppBadge && navigator.setAppBadge(count) : navigator.clearAppBadge && navigator.clearAppBadge();
+    if (shown && shown.catch) shown.catch(() => {});
+  } catch (err) {
+    // no Badging API, or it threw: the icon keeps what it had
+  }
+}
+
 // launched runs once per launch, after the first snapshot: the push check
 // tells loom of a subscription the phone has lost (push.mjs).
 function launched(snap, toast) {
@@ -191,6 +206,7 @@ function App() {
         setOffline(false);
         setRestarting(false);
         persist(data);
+        setBadge(data.badge);
         if (data.build && shellBuild && data.build !== shellBuild) upgradeShell(data.build);
         if (!launchDone) {
           launchDone = true;
@@ -199,9 +215,11 @@ function App() {
         if (routeRef.current.name === "pair") go("#");
       },
       sessions(d) {
+        setBadge(d.badge);
         apply((s) => ({ ...s, sessions: { ...s.sessions, [String(d.workspace)]: d.sessions } }));
       },
       workspaces(d) {
+        setBadge(d.badge);
         // A closed workspace sends no sessions event: drop its sessions here.
         // The keys are strings of numeric IDs.
         apply((s) => {

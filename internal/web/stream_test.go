@@ -457,6 +457,44 @@ func TestStream_SendsTheWholeListWhenASessionChanges(t *testing.T) {
 	s.none(100 * time.Millisecond)
 }
 
+func TestStream_ASessionsEventCarriesTheBadgeCount(t *testing.T) {
+	e := newStreamEnv(t, streamSession{title: "fix login", status: session.Running})
+	s := e.open(t, e.cookie)
+	require.Zero(t, unframe[snapshotJSON](t, s.expect("snapshot")).Badge)
+
+	e.change(t, func() { require.NoError(t, e.insts["fix login"].TransitionTo(session.Prompting)) })
+	assert.Equal(t, 1, unframe[sessionsJSON](t, s.expect("sessions")).Badge, "a session entered Prompting")
+
+	e.change(t, func() { require.NoError(t, e.insts["fix login"].TransitionTo(session.Running)) })
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(s.expect("sessions").Data, &raw))
+	assert.JSONEq(t, `0`, string(raw["badge"]), "answered, the count is sent as 0, not left out")
+}
+
+func TestStream_AWorkspacesEventCarriesTheBadgeCount(t *testing.T) {
+	e := newStreamEnv(t, streamSession{title: "fix login", status: session.Prompting})
+	s := e.open(t, e.cookie)
+	require.Equal(t, 1, unframe[snapshotJSON](t, s.expect("snapshot")).Badge)
+	var toy []core.WorkspaceView
+	for _, v := range e.tui.Workspaces() {
+		if v.ID == e.ws {
+			toy = append(toy, v)
+		}
+	}
+	require.Len(t, toy, 1)
+
+	// The hub is told what the drain would tell it when the other workspace
+	// closes, then when toy does.
+	e.layer.hub.apply([]core.Event{core.WorkspacesChanged{Views: toy}})
+	assert.Equal(t, 1, unframe[workspacesJSON](t, s.expect("workspaces")).Badge, "toy's waiting session stays")
+
+	e.layer.hub.apply([]core.Event{core.WorkspacesChanged{Views: nil}})
+	f := s.expect("workspaces")
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(f.Data, &raw))
+	assert.JSONEq(t, `0`, string(raw["badge"]), "toy's waiting session left with it, and the count is sent as 0")
+}
+
 func TestStream_SendsTheWorkspacesWhenTheyChange(t *testing.T) {
 	e := newStreamEnv(t, streamSession{title: "one", status: session.Running})
 	s := e.open(t, e.cookie)

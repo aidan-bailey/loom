@@ -119,15 +119,21 @@ type snapshotJSON struct {
 	Notices    []noticeJSON                       `json:"notices"`
 }
 
-// workspacesJSON is the `workspaces` event.
+// workspacesJSON is the `workspaces` event. Badge is the snapshot's count
+// (the sessions in needs_you across the workspaces), sent even at 0 so the
+// app can clear its icon: a workspace leaving takes its waiting sessions
+// from the count without a `sessions` event.
 type workspacesJSON struct {
 	Workspaces []workspaceJSON `json:"workspaces"`
+	Badge      int             `json:"badge"`
 }
 
-// sessionsJSON is the `sessions` event: one workspace's whole list.
+// sessionsJSON is the `sessions` event: one workspace's whole list, and the
+// same fleet-wide Badge count as the snapshot's, sent even at 0.
 type sessionsJSON struct {
 	Workspace core.WorkspaceID `json:"workspace"`
 	Sessions  []sessionJSON    `json:"sessions"`
+	Badge     int              `json:"badge"`
 }
 
 // groupOf says which of the app's four groups a session is listed under and
