@@ -294,6 +294,8 @@ func TestWebHost_FiveWrongCodesLockPairingUntilTheNextPair(t *testing.T) {
 	m, _ := webHostModel(t)
 	p, err := m.PairDevice("iPhone")
 	require.NoError(t, err)
+	pad, err := m.PairDevice("iPad")
+	require.NoError(t, err)
 	wrong := webHostWrongCode(p.Code)
 	wrongs := []string{wrong, "abc", "", "0000-0000", wrong} // a malformed code is a wrong one
 	require.Len(t, wrongs, PairingMaxMisses)
@@ -313,6 +315,8 @@ func TestWebHost_FiveWrongCodesLockPairingUntilTheNextPair(t *testing.T) {
 	name, _, err := m.RedeemPairing(again.Code)
 	require.NoError(t, err, "the next pair lifts the lock")
 	assert.Equal(t, "iPhone", name)
+	_, _, err = m.RedeemPairing(pad.Code)
+	assert.ErrorIs(t, err, ErrPairingCode, "the lock voided the other pending codes: iPad's old code does not come back")
 }
 
 func TestWebHost_FourWrongCodesLockNothing(t *testing.T) {
@@ -381,6 +385,10 @@ func TestWebHost_RedeemPairingChecksTheDeviceListAgain(t *testing.T) {
 			}
 			assert.ErrorIs(t, err, tc.want)
 			assert.Len(t, m.web.devices, tc.devices)
+
+			require.NoError(t, m.RevokeDevice("d00"), "free the obstacle")
+			_, _, err = m.RedeemPairing(p.Code)
+			assert.ErrorIs(t, err, ErrPairingCode, "the refusal cost the code")
 		})
 	}
 	t.Run("a name taken in between", func(t *testing.T) {
@@ -397,6 +405,10 @@ func TestWebHost_RedeemPairingChecksTheDeviceListAgain(t *testing.T) {
 		got, ok := m.DeviceByToken(taken)
 		assert.True(t, ok, "the first device keeps its token")
 		assert.Equal(t, "iPad", got)
+
+		require.NoError(t, m.RevokeDevice("iPad"), "free the name")
+		_, _, err = m.RedeemPairing(p.Code)
+		assert.ErrorIs(t, err, ErrPairingCode, "the refusal cost the code")
 	})
 }
 
