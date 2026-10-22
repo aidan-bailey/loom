@@ -85,11 +85,17 @@ function persist(snap) {
 function launched(snap, toast) {}
 let launchDone = false;
 
+// restartGrace is how long after a bye the app keeps saying "loom is
+// restarting": a normal restart reconnects within it, so it never flashes
+// "Can't reach"; a daemon that stays away longer is plainly unreachable.
+const restartGrace = 30000;
+
 // staleText is the stale bar's words: after a bye the daemon is restarting;
-// otherwise it cannot be reached, and the bar says since when.
-function staleText(snap, restarting) {
+// once a connect has failed (offline) it cannot be reached, and the bar says
+// since when; before that the stream is still connecting.
+function staleText(snap, restarting, offline) {
   if (restarting) return "loom is restarting…";
-  if (!snap.host) return "Not connected. Showing the last known state.";
+  if (!offline || !snap.host) return "Not connected. Showing the last known state.";
   let text = "Can't reach loom on " + snap.host;
   if (lastUpdated) {
     text += ". Last updated " + new Date(lastUpdated).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -110,6 +116,7 @@ function App() {
   const routeRef = useRef(route);
   const streamRef = useRef(null);
   const generation = useRef(0);
+  const byeAt = useRef(0);
   const nextToast = useRef(1);
   staleRef.current = stale;
   routeRef.current = route;
@@ -210,11 +217,16 @@ function App() {
         apply((s) => ({ ...s, notices: (s.notices || []).concat([n]).slice(-recentNotices) }));
         toast(n.text, n.error, true);
       },
+      ping() {
+        lastUpdated = Date.now();
+      },
       bye() {
+        byeAt.current = Date.now();
         setRestarting(true);
         setStale(true);
       },
       error() {
+        if (Date.now() - byeAt.current > restartGrace) setRestarting(false);
         setStale(true);
         setOffline(true);
       },
@@ -300,7 +312,7 @@ function App() {
   return html`
     <div class="shell">
       ${snap && stale && route.name !== "pair"
-        ? html`<div class="stale-bar" role="status">${staleText(snap, restarting)}</div>`
+        ? html`<div class="stale-bar" role="status">${staleText(snap, restarting, offline)}</div>`
         : null}
       <main>${body}</main>
       <div class="toasts" aria-live="polite">
