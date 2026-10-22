@@ -12,6 +12,10 @@ Loom is a terminal app that manages multiple [Claude Code](https://github.com/an
 - Review changes before applying them, checkout changes before pushing them
 - Each task gets its own isolated git workspace, so no conflicts
 - Lua-scripted keymap and a workspace registry for multi-repo flows
+- Agents run under a background daemon, so they keep working after you quit loom, and every terminal you open shows the same sessions
+- Drive sessions from the shell or a script (`loom session new`, `list`, `send`, `pause`, `resume`, `kill`)
+- Spread Claude sessions across several Claude accounts (`loom account`)
+- Watch and steer the fleet from an iPhone, with a notification when a session waits on you or finishes (`loom web`; see [Use Loom from Your Phone](USAGE.md#use-loom-from-your-phone))
 
 ### Installation
 
@@ -42,11 +46,15 @@ Usage:
   loom [command]
 
 Available Commands:
+  account     Manage the Claude accounts sessions can run on
   completion  Generate the autocompletion script for the specified shell
   debug       Print debug information like config paths
   help        Help about any command
   reset       Delete a workspace's instances, tmux sessions, worktrees, and their branches (destructive)
+  serve       Run the loom daemon for this global config dir (loom starts it when needed)
+  session     Create, list and drive a workspace's sessions
   version     Print the version number of loom
+  web         Serve loom's fleet to a paired phone: enable, disable, pair, devices, revoke, status
   workspace   Manage workspaces
 
 Flags:
@@ -63,6 +71,8 @@ Run the application with:
 ```bash
 loom
 ```
+
+The first `loom` starts the loom daemon, which owns your sessions and keeps them running after you quit; see [The Loom Daemon](USAGE.md#the-loom-daemon). [USAGE.md](USAGE.md) is the full reference: every key, command and setting.
 
 NOTE: The default program is `claude` and we recommend using the latest version.
 
@@ -100,7 +110,7 @@ The menu at the bottom of the screen shows available commands:
 
 ### Configuration
 
-Loom stores its configuration in `~/.loom/config.json`. You can find the exact path by running `loom debug`.
+Loom stores its configuration in `~/.loom/config.json`, and a workspace's own `<repo>/.loom/config.json` overrides it. You can find the exact path by running `loom debug`.
 
 #### Migration from claude-squad
 
@@ -144,7 +154,8 @@ If you get an error like `failed to start new session: timed out waiting for tmu
 
 1. **tmux** to create isolated terminal sessions for each agent
 2. **git worktrees** to isolate codebases so each session works on its own branch
-3. A simple TUI interface for easy navigation and management
+3. **A daemon** (`loom serve`) that owns every session and serves every loom you open, the `loom` commands and the phone app
+4. A simple TUI interface for easy navigation and management
 
 ### License
 
