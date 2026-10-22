@@ -241,3 +241,97 @@ func TestEventCompact_ProbeFixturesRoundTrip(t *testing.T) {
 		assert.Equal(t, ev, again, f)
 	}
 }
+
+// ToolSummary is one line saying what a permission request's tool will do,
+// read from the payload's tool_input.
+func TestParseEvent_ToolSummary(t *testing.T) {
+	perm := func(tool, input string) string {
+		return `{"hook_event_name":"PermissionRequest","tool_name":"` + tool + `","tool_input":` + input + `}`
+	}
+	cases := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{"bash: the command", perm("Bash", `{"command":"go test ./...","description":"Run the tests"}`), "go test ./..."},
+		{"bash: only the first line", perm("Bash", `{"command":"cat <<EOF\nsecret\nEOF"}`), "cat <<EOF"},
+		{"bash: blank lines and indentation before the command are skipped", perm("Bash", `{"command":"\n\n   ls -la\nrm -rf x"}`), "ls -la"},
+		{"edit: the file", perm("Edit", `{"file_path":"/w/a.go","old_string":"a","new_string":"b"}`), "/w/a.go"},
+		{"write: the file", perm("Write", `{"file_path":"/w/b.go","content":"package b"}`), "/w/b.go"},
+		{"multiedit: the file", perm("MultiEdit", `{"file_path":"/w/c.go","edits":[]}`), "/w/c.go"},
+		{"notebookedit: the notebook", perm("NotebookEdit", `{"notebook_path":"/w/n.ipynb","new_source":"x"}`), "/w/n.ipynb"},
+		{"webfetch: the url", perm("WebFetch", `{"url":"https://example.com/a?b=1","prompt":"summarize"}`), "https://example.com/a?b=1"},
+		{"a tool without a summary: Read", perm("Read", `{"file_path":"/w/secret"}`), ""},
+		{"a tool without a summary: an MCP tool", perm("mcp__db__query", `{"command":"drop table x"}`), ""},
+		{"only the tool's own key counts", perm("Bash", `{"file_path":"/w/a.go"}`), ""},
+		{"no tool_input", `{"hook_event_name":"PermissionRequest","tool_name":"Bash"}`, ""},
+		{"tool_input null", perm("Bash", `null`), ""},
+		{"tool_input a string", perm("Bash", `"ls"`), ""},
+		{"tool_input a list", perm("Bash", `["ls"]`), ""},
+		{"a command that is not a string", perm("Bash", `{"command":7}`), ""},
+		{"a command of only whitespace", perm("Bash", `{"command":"  \n "}`), ""},
+		{"tool_input wins over a tool_summary the payload should not carry", `{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"real"},"tool_summary":"forged"}`, "real"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev, err := ParseEvent([]byte(tc.payload))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, ev.ToolSummary)
+		})
+	}
+}
+
+// Only a PermissionRequest keeps a summary: another event's tool_input is
+// not what a prompt asks for.
+func TestParseEvent_ToolSummaryOnlyForPermissionRequests(t *testing.T) {
+	for _, name := range []string{EventStop, EventNotification, EventSessionStart, EventUserPromptSubmit, EventSubagentStart} {
+		ev, err := ParseEvent([]byte(`{"hook_event_name":"` + name + `","tool_name":"Bash","tool_input":{"command":"ls"},"tool_summary":"ls"}`))
+		require.NoError(t, err)
+		assert.Empty(t, ev.ToolSummary, name)
+	}
+}
+
+// The cap is MaxToolSummaryRunes characters, a multi-byte one counting once,
+// and a cut summary ends in "…" within the cap.
+func TestParseEvent_ToolSummaryIsCapped(t *testing.T) {
+	summary := func(n int) string {
+		ev, err := ParseEvent([]byte(`{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"` + strings.Repeat("é", n) + `"}}`))
+		require.NoError(t, err)
+		return ev.ToolSummary
+	}
+
+	assert.Equal(t, strings.Repeat("é", MaxToolSummaryRunes), summary(MaxToolSummaryRunes), "exactly the cap stays whole")
+
+	cut := summary(MaxToolSummaryRunes + 1)
+	assert.Equal(t, strings.Repeat("é", MaxToolSummaryRunes-1)+"…", cut)
+	assert.Equal(t, MaxToolSummaryRunes, utf8.RuneCountInString(cut))
+	assert.True(t, utf8.ValidString(cut))
+}
+
+func TestParseEvent_ProbeToolSummary(t *testing.T) {
+	parent, err := ParseEvent(probeFixture(t, "1790179972989150631"))
+	require.NoError(t, err)
+	assert.Equal(t, "date > probe.txt", parent.ToolSummary)
+
+	sub, err := ParseEvent(probeFixture(t, "1790180017571376478"))
+	require.NoError(t, err)
+	assert.Equal(t, "touch sub.txt", sub.ToolSummary)
+}
+
+// The compact form keeps the one line, not the input it came from, and
+// reads back unchanged.
+func TestEventCompact_KeepsTheToolSummary(t *testing.T) {
+	raw, err := ParseEvent([]byte(`{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"date > probe.txt","description":"Write the date"}}`))
+	require.NoError(t, err)
+	require.Equal(t, "date > probe.txt", raw.ToolSummary)
+
+	compact, err := raw.Compact()
+	require.NoError(t, err)
+	assert.Contains(t, string(compact), `"tool_summary"`)
+	assert.NotContains(t, string(compact), "tool_input")
+	assert.NotContains(t, string(compact), "description")
+
+	again, err := ParseEvent(compact)
+	require.NoError(t, err)
+	assert.Equal(t, raw, again)
+}

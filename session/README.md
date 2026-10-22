@@ -129,7 +129,7 @@ Reads GitHub state through the `gh` CLI: `Query` (PRs by head branch plus open i
 
 ### hooks
 
-Loom's side of the Claude Code hooks it registers on every Claude launch: `hooks/hooks.go` writes the per-launch hooks folder (`settings.json`, `launch-id`, `events/`); `hooks/scan.go` turns new event files into compact `.ev` files, replays them when needed, and stamps each event's `At` from its file name; `hooks/event.go` parses payloads, keeping only the fields loom reads. `hooks/testdata/probe-2.1.280/` holds the payloads of a live probe (see its README). No tmux, UI or app dependency.
+Loom's side of the Claude Code hooks it registers on every Claude launch: `hooks/hooks.go` writes the per-launch hooks folder (`settings.json`, `launch-id`, `events/`); `hooks/scan.go` turns new event files into compact `.ev` files, replays them when needed, and stamps each event's `At` from its file name; `hooks/event.go` parses payloads, keeping only the fields loom reads. A `PermissionRequest` event also keeps `ToolSummary`, one line of its tool's input (Bash's command, or the file path or URL) cut at 200 characters, which the compact `.ev` form stores as `tool_summary` so a replay after a restart still has it. `hooks/testdata/probe-2.1.280/` holds the payloads of a live probe (see its README). No tmux, UI or app dependency.
 
 ### launch
 

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -42,6 +43,10 @@ var HookEvents = []string{
 // up to maxEventBytes, and the text is kept in memory and in every .ev
 // file; a card only shows a message's last few lines.
 const MaxMessageBytes = 4 << 10
+
+// MaxToolSummaryRunes caps Event.ToolSummary, counted in characters and cut
+// with "…": it is one line on a phone's screen, not the tool's whole input.
+const MaxToolSummaryRunes = 200
 
 // ErrUnknownEvent is returned by ParseEvent for a JSON object whose
 // hook_event_name is not one loom registers.
@@ -73,8 +78,12 @@ type Event struct {
 	// session started (startup, resume, clear, compact).
 	SessionID string
 	Source    string
-	// ToolName is kept for PermissionRequest only.
-	ToolName string
+	// ToolName and ToolSummary are kept for PermissionRequest only.
+	// ToolSummary is one line saying what the tool asks to do, read from the
+	// payload's tool_input (see toolSummary): empty for a tool this build
+	// does not summarize and for an input it cannot read.
+	ToolName    string
+	ToolSummary string
 	// NotificationType and Message are kept for Notification only.
 	NotificationType string
 	Message          string
@@ -103,6 +112,11 @@ type wireEvent struct {
 	NotificationType     string `json:"notification_type,omitempty"`
 	Message              string `json:"message,omitempty"`
 	LastAssistantMessage string `json:"last_assistant_message,omitempty"`
+
+	// tool_input is the payload's own object. tool_summary is the compact
+	// form's one line: Compact writes only that.
+	ToolInput   json.RawMessage `json:"tool_input,omitempty"`
+	ToolSummary string          `json:"tool_summary,omitempty"`
 }
 
 // ParseEvent decodes a raw hook payload or a compact event. It returns an
@@ -128,6 +142,11 @@ func ParseEvent(data []byte) (Event, error) {
 		ev.SessionID, ev.Source = w.SessionID, w.Source
 	case EventPermissionRequest:
 		ev.ToolName = w.ToolName
+		if len(w.ToolInput) > 0 {
+			ev.ToolSummary = toolSummary(w.ToolName, w.ToolInput)
+		} else {
+			ev.ToolSummary = capSummary(w.ToolSummary)
+		}
 	case EventNotification:
 		ev.NotificationType, ev.Message = w.NotificationType, capText(w.Message)
 	case EventStop:
@@ -160,6 +179,7 @@ func (e Event) Compact() ([]byte, error) {
 		SessionID:            e.SessionID,
 		Source:               e.Source,
 		ToolName:             e.ToolName,
+		ToolSummary:          e.ToolSummary,
 		NotificationType:     e.NotificationType,
 		Message:              e.Message,
 		LastAssistantMessage: e.LastAssistantMessage,
@@ -190,4 +210,51 @@ func capText(s string) string {
 		s = s[1:]
 	}
 	return s
+}
+
+// toolSummaryKeys names, per tool, the tool_input field that says what the
+// tool will do. A tool not listed has no summary: its input may hold
+// anything, and the phone shows only what loom knows to be one line of
+// intent.
+var toolSummaryKeys = map[string]string{
+	"Bash":         "command",
+	"Edit":         "file_path",
+	"Write":        "file_path",
+	"MultiEdit":    "file_path",
+	"NotebookEdit": "notebook_path",
+	"WebFetch":     "url",
+}
+
+// toolSummary reads the summary of tool's request from a payload's
+// tool_input. It fails closed: a tool without a key, an input that is not
+// an object, and a key that is missing or not a string all give "".
+func toolSummary(tool string, input json.RawMessage) string {
+	key, ok := toolSummaryKeys[tool]
+	if !ok {
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(input, &fields); err != nil {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(fields[key], &s); err != nil {
+		return ""
+	}
+	return capSummary(s)
+}
+
+// capSummary reduces s to its first line that has any text, trimmed, and
+// cuts that to MaxToolSummaryRunes characters, ending in "…" when it cut.
+// It is idempotent, which ParseEvent relies on when it reads a compact
+// event's tool_summary back.
+func capSummary(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if utf8.RuneCountInString(s) <= MaxToolSummaryRunes {
+		return s
+	}
+	return string([]rune(s)[:MaxToolSummaryRunes-1]) + "…"
 }
