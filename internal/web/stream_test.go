@@ -742,6 +742,12 @@ func TestStream_ADeviceOfTheSameNamePairedAgainEndsTheOldStreams(t *testing.T) {
 	for _, f := range old.ended() {
 		assert.NotEqual(t, "bye", f.Event)
 	}
+	// The old stream may end on a drain that read the revocation alone; the
+	// pairing's list can follow, and a stream opened ahead of it is refused.
+	e.waitHub(t, "the hub never read the new pairing", func(h *hub) bool {
+		_, ok := h.devices["iPhone"]
+		return ok
+	})
 	e.open(t, fresh).expect("snapshot")
 }
 
