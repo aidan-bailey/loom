@@ -122,9 +122,13 @@ func newTickPausedInstance(t *testing.T) (*Instance, *fakeTmuxServer) {
 	return inst, srv
 }
 
-// newCrashRecoveredInstance is the record ReconcileAndRestore hands to
-// CrashRestart: persisted Running, its tmux session gone, worktree on disk.
-func newCrashRecoveredInstance(t *testing.T) (*Instance, *fakeTmuxServer) {
+// newRunningOnFakeTmux is a started, Running Claude instance over a real
+// worktree whose tmux commands and recovery launches go to a fake server.
+// The server answers has-session "no such session" until something is
+// launched, as a real one does after Pause's kill-session, so a Resume
+// after Pause meets what production meets: a dead session over the kept
+// worktree.
+func newRunningOnFakeTmux(t *testing.T) (*Instance, *fakeTmuxServer) {
 	t.Helper()
 	srv := &fakeTmuxServer{}
 	inst := newTestPausableInstanceWithExec(t, srv.runner())
@@ -136,6 +140,13 @@ func newCrashRecoveredInstance(t *testing.T) (*Instance, *fakeTmuxServer) {
 	t.Cleanup(func() { newRecoverySession = orig })
 	require.Equal(t, Running, inst.GetStatus())
 	return inst, srv
+}
+
+// newCrashRecoveredInstance is the record ReconcileAndRestore hands to
+// CrashRestart: persisted Running, its tmux session gone, worktree on disk.
+func newCrashRecoveredInstance(t *testing.T) (*Instance, *fakeTmuxServer) {
+	t.Helper()
+	return newRunningOnFakeTmux(t)
 }
 
 // TestResume_AgentExitedKeepsUncommittedWork is the regression guard for
@@ -538,44 +549,6 @@ func TestResume_DroppedStashIsNeverReapplied(t *testing.T) {
 	assert.Empty(t, gw.GetStashRef())
 	assert.Equal(t, Running, inst.GetStatus())
 	require.Len(t, srv.launchArgs(), 1)
-}
-
-// TestPause_AbortDropsItsStash: when the agent's session survives Close,
-// Pause aborts and the agent keeps working in the worktree. The stash it
-// took first is then a stale copy of a tree that is still there — left
-// pending, a later resume finds the tree diverged and refuses, and the
-// next pause overwrites the reference and leaks the entry. Pause must drop
-// it and save the cleared reference.
-func TestPause_AbortDropsItsStash(t *testing.T) {
-	inst := newTestPausableInstanceWithExec(t, cmd_test.MockCmdExec{
-		RunFunc: func(c *exec.Cmd) error {
-			if slices.Contains(c.Args, "kill-session") {
-				return errors.New("tmux: server not responding")
-			}
-			return nil // has-session succeeds: the session is still alive
-		},
-		OutputFunc: func(c *exec.Cmd) ([]byte, error) { return []byte{}, nil },
-	})
-	gw, err := inst.GetGitWorktree()
-	require.NoError(t, err)
-	dir := gw.GetWorktreePath()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("tracked edit\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("never committed\n"), 0644))
-	var saved []string
-	save := func() error {
-		saved = append(saved, inst.ToInstanceData().Worktree.StashRef)
-		return nil
-	}
-
-	require.Error(t, inst.Pause(save))
-
-	assert.Empty(t, gw.GetStashRef())
-	require.NotEmpty(t, saved)
-	assert.Empty(t, saved[len(saved)-1], "the cleared reference must be saved")
-	assert.Empty(t, gitIn(t, gw.GetRepoPath(), "stash", "list"), "the stale stash must be dropped")
-	assert.Equal(t, "tracked edit\n", readFile(t, filepath.Join(dir, "README.md")), "the worktree keeps the work")
-	assert.Equal(t, "never committed\n", readFile(t, filepath.Join(dir, "notes.txt")))
-	assert.Equal(t, Running, inst.GetStatus())
 }
 
 // TestResume_InPlaceRecordsMissingBaseCommit: a session whose start was

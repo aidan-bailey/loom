@@ -134,6 +134,29 @@ func newTestPausableInstanceWithExec(t *testing.T, cmdExec cmd_test.MockCmdExec)
 	return inst
 }
 
+// pauseLikeAnOlderBuild leaves inst as a build from before Pause kept the
+// worktree left a paused session: files written and stashed (when there
+// are any), the agent's session closed, the worktree removed, the status
+// Paused. Resume still meets such records after an upgrade.
+func pauseLikeAnOlderBuild(t *testing.T, inst *Instance, files map[string]string) *git.GitWorktree {
+	t.Helper()
+	gw := inst.getGitWorktree()
+	dir := gw.GetWorktreePath()
+	for name, body := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
+	}
+	if len(files) > 0 {
+		sha, err := gw.StashChanges("[loom] stash from an older pause")
+		require.NoError(t, err)
+		gw.SetStashRef(sha)
+	}
+	require.NoError(t, inst.getTmuxSession().Close())
+	out, err := exec.Command("git", "-C", gw.GetRepoPath(), "worktree", "remove", "--force", dir).CombinedOutput()
+	require.NoError(t, err, "worktree remove: %s", out)
+	require.NoError(t, inst.TransitionTo(Paused))
+	return gw
+}
+
 // TestInstance_PausePropagatesSaveStateError is the F9 regression guard
 // on the pause side. Before the fix a saveState callback returning an
 // error during Pause was logged at Warning and Pause returned nil, so
@@ -179,7 +202,10 @@ func TestInstance_ResumePropagatesSaveStateError(t *testing.T) {
 // not by mystery-debugging a "failed to setup git worktree" blob.
 func TestInstance_ResumeSurfacesBranchGoneHint(t *testing.T) {
 	inst := newTestPausableInstance(t)
-	require.NoError(t, inst.Pause(nil), "precondition: pause succeeds")
+	// The branch-gone hint comes from the rebuild, which only a tree-less
+	// record reaches; a kept tree holds the branch checked out, so git
+	// would refuse to delete it.
+	pauseLikeAnOlderBuild(t, inst, nil)
 
 	// Simulate the user running `git branch -D <branch>` out-of-band.
 	gw := inst.getGitWorktree()
@@ -194,60 +220,20 @@ func TestInstance_ResumeSurfacesBranchGoneHint(t *testing.T) {
 	assert.Contains(t, err.Error(), "kill", "Resume error must hint the kill-to-recover affordance")
 }
 
-// TestInstance_PauseStashesUncommittedWork is the stash-mechanism
-// regression guard: Pause must preserve tracked and untracked changes
-// via git stash (StashRef ends up set) instead of the old auto-commit
-// (no new commit lands on the branch).
-func TestInstance_PauseStashesUncommittedWork(t *testing.T) {
+// TestInstance_ResumeRestoresAnOlderPausesStash: a session paused by a
+// build from before Pause kept the worktree has no tree on disk and its
+// uncommitted work in a stash. Resume rebuilds the tree from the branch and
+// re-applies the stash, for both change classes `git stash` treats
+// differently (a tracked modification and an untracked file), and clears
+// the reference.
+func TestInstance_ResumeRestoresAnOlderPausesStash(t *testing.T) {
 	inst := newTestPausableInstance(t)
-	gw, err := inst.GetGitWorktree()
-	require.NoError(t, err)
-	dir := gw.GetWorktreePath()
-
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted\n"), 0644))
-
-	logBefore, err := exec.Command("git", "-C", dir, "log", "--oneline").CombinedOutput()
-	require.NoError(t, err)
-
-	require.NoError(t, inst.Pause(nil))
-
-	assert.NotEmpty(t, gw.GetStashRef(), "Pause must record a StashRef when the worktree was dirty")
-
-	// No new commit landed — Pause no longer auto-commits. The worktree
-	// directory is gone after Pause, but the branch's history is still
-	// reachable from the main repo (GetRepoPath), which Pause never removes.
-	branchLog, err := exec.Command("git", "-C", gw.GetRepoPath(), "log", "pause-test-branch", "--oneline").CombinedOutput()
-	require.NoError(t, err)
-	assert.Equal(t, string(logBefore), string(branchLog), "Pause must not add a commit to the branch")
-}
-
-// TestInstance_PauseCleanWorktreeSetsNoStashRef ensures a clean pause
-// doesn't fabricate a stash entry.
-func TestInstance_PauseCleanWorktreeSetsNoStashRef(t *testing.T) {
-	inst := newTestPausableInstance(t)
-	gw, err := inst.GetGitWorktree()
-	require.NoError(t, err)
-
-	require.NoError(t, inst.Pause(nil))
-	assert.Empty(t, gw.GetStashRef())
-}
-
-// TestInstance_ResumeRestoresStashedWork is the Pause→Resume round
-// trip: uncommitted work stashed by Pause must reappear after Resume,
-// and StashRef must be cleared on success. Covers both a modification
-// to an already-committed file (README.md, tracked-dirty) and a brand
-// new file (new.txt, untracked) — the two change classes `git stash`
-// treats differently.
-func TestInstance_ResumeRestoresStashedWork(t *testing.T) {
-	inst := newTestPausableInstance(t)
-	gw, err := inst.GetGitWorktree()
-	require.NoError(t, err)
-	dir := gw.GetWorktreePath()
-
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("uncommitted\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "new.txt"), []byte("untracked\n"), 0644))
-	require.NoError(t, inst.Pause(nil))
+	gw := pauseLikeAnOlderBuild(t, inst, map[string]string{
+		"README.md": "uncommitted\n",
+		"new.txt":   "untracked\n",
+	})
 	require.NotEmpty(t, gw.GetStashRef())
+	require.NoDirExists(t, gw.GetWorktreePath())
 
 	require.NoError(t, inst.Resume(nil))
 
@@ -261,17 +247,13 @@ func TestInstance_ResumeRestoresStashedWork(t *testing.T) {
 }
 
 // TestInstance_StashRefSurvivesSnapshotRoundTrip guards the disk
-// round-trip: a Paused instance's StashRef must persist through
-// ToInstanceData → FromInstanceData, or a restart of loom itself
-// would lose track of a pending stash.
+// round-trip of a pending stash (left by an older build's pause): a Paused
+// instance's StashRef must persist through ToInstanceData →
+// FromInstanceData, or a restart of loom itself would lose track of a
+// pending stash.
 func TestInstance_StashRefSurvivesSnapshotRoundTrip(t *testing.T) {
 	inst := newTestPausableInstance(t)
-	gw, err := inst.GetGitWorktree()
-	require.NoError(t, err)
-
-	dir := gw.GetWorktreePath()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted\n"), 0644))
-	require.NoError(t, inst.Pause(nil))
+	gw := pauseLikeAnOlderBuild(t, inst, map[string]string{"dirty.txt": "uncommitted\n"})
 	wantSha := gw.GetStashRef()
 	require.NotEmpty(t, wantSha)
 
@@ -285,18 +267,13 @@ func TestInstance_StashRefSurvivesSnapshotRoundTrip(t *testing.T) {
 	assert.Equal(t, wantSha, restoredGw.GetStashRef())
 }
 
-// TestInstance_KillDropsLeftoverStash guards against a Paused
-// instance's stash leaking on the shared refs/stash stack forever when
-// the user kills it (D) instead of resuming.
+// TestInstance_KillDropsLeftoverStash guards against a pending stash (an
+// older build's pause left one) leaking on the shared refs/stash stack
+// forever when the user kills it (D) instead of resuming.
 func TestInstance_KillDropsLeftoverStash(t *testing.T) {
 	inst := newTestPausableInstance(t)
-	gw, err := inst.GetGitWorktree()
-	require.NoError(t, err)
-	dir := gw.GetWorktreePath()
+	gw := pauseLikeAnOlderBuild(t, inst, map[string]string{"dirty.txt": "uncommitted\n"})
 	repoPath := gw.GetRepoPath()
-
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted\n"), 0644))
-	require.NoError(t, inst.Pause(nil))
 	require.NotEmpty(t, gw.GetStashRef())
 
 	// Kill needs isStarted()==true, which Pause leaves it as (the
@@ -308,20 +285,11 @@ func TestInstance_KillDropsLeftoverStash(t *testing.T) {
 	assert.Empty(t, strings.TrimSpace(string(out)), "Kill must drop a leftover stash, not leak it")
 }
 
-// TestInstance_PauseClosesTerminalPaneSession is the regression guard for
-// the "terminal not in the correct directory after resume" bug. The
-// terminal pane runs its own tmux session ("term_<title>") decoupled from
-// Instance, keyed only by title. Before this fix, Pause() closed the
-// agent's tmux session and removed the worktree, but never touched the
-// terminal pane's session — so a terminal session that outlived Pause()
-// (e.g. because it was reached via a caller other than the UI's pause,
-// now core.Model.Pause, which used to be the only place this happened)
-// stayed alive, cd'd into the worktree directory Pause() was about to
-// delete. Resume() then recreated a fresh worktree at the same path, but the
-// surviving terminal shell kept the stale (deleted) directory as its cwd,
-// and the next reattach silently reused it instead of noticing the
-// mismatch. Pause must now kill the terminal session itself so the
-// invariant holds regardless of caller.
+// TestInstance_PauseClosesTerminalPaneSession: the terminal pane runs its
+// own tmux session ("term_<title>") decoupled from Instance, keyed only by
+// title. A pause stops everything the session runs, whichever caller asked
+// for it (core.Model.Pause, a Lua inst:pause(), `loom session pause`), and
+// a shell left alive under a Paused row has no client to show it.
 func TestInstance_PauseClosesTerminalPaneSession(t *testing.T) {
 	inst := newTestPausableInstance(t)
 
@@ -341,7 +309,7 @@ func TestInstance_PauseClosesTerminalPaneSession(t *testing.T) {
 
 	wantTerminalSession := tmux.ToLoomTmuxName(tmux.TerminalSessionName(inst.Title))
 	assert.Contains(t, killedSessions, wantTerminalSession,
-		"Pause must kill the terminal pane's tmux session so it can't survive worktree removal")
+		"Pause must kill the terminal pane's tmux session")
 }
 
 // TestInstance_KillClosesTerminalPaneSession mirrors
@@ -689,11 +657,9 @@ func TestInstance_ResumeDoesNotRebuildWorktreeUnderLiveSession(t *testing.T) {
 }
 
 // TestInstance_PauseAbortsWhenTmuxSurvives is the Pause-side guard against
-// the same agent-process leak. Pause kills the tmux session precisely so the
-// agent stops before its worktree is deleted, but a failed Close was only
-// logged — Pause then removed the worktree anyway, leaving the agent running
-// with its cwd inside a directory git had unlinked. Aborting keeps the
-// instance in a consistent, retryable state instead.
+// the same agent-process leak. Pause must not report a session Paused
+// while its agent may still be running: a resume would then launch a
+// second agent beside it, in the same worktree.
 func TestInstance_PauseAbortsWhenTmuxSurvives(t *testing.T) {
 	inst := newTestPausableInstanceWithExec(t, cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
@@ -712,17 +678,17 @@ func TestInstance_PauseAbortsWhenTmuxSurvives(t *testing.T) {
 	err = inst.Pause(nil)
 
 	require.Error(t, err, "Pause must not report success while the agent is still running")
-	assert.DirExists(t, gw.GetWorktreePath(),
-		"Pause must not delete the worktree out from under a surviving tmux session")
+	assert.Equal(t, Running, inst.GetStatus(), "an aborted pause leaves the instance as it was")
+	assert.FileExists(t, filepath.Join(gw.GetWorktreePath(), "README.md"))
 }
 
 // TestInstance_PauseAbortsWhenTmuxLivenessUnknown closes the gap the
 // previous test leaves open. Under the load that starved the probes on
 // 2026-08-21, kill-session fails AND the follow-up has-session is killed
 // at its deadline. DoesSessionExist collapses that inconclusive probe into
-// false, so Pause read "already dead" and went on to remove the worktree —
-// the very thing the guard exists to prevent. A probe that never answered
-// must be treated as "maybe alive": abort, keep the worktree.
+// false, so Pause read "already dead" and marked Paused an agent that may
+// still be running. A probe that never answered must be treated as "maybe
+// alive": abort.
 func TestInstance_PauseAbortsWhenTmuxLivenessUnknown(t *testing.T) {
 	inst := newTestPausableInstanceWithExec(t, cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
@@ -745,6 +711,6 @@ func TestInstance_PauseAbortsWhenTmuxLivenessUnknown(t *testing.T) {
 	err = inst.Pause(nil)
 
 	require.Error(t, err, "Pause must not report success when it cannot tell whether the agent is still running")
-	assert.DirExists(t, gw.GetWorktreePath(),
-		"Pause must not delete the worktree on an inconclusive liveness probe")
+	assert.Equal(t, Running, inst.GetStatus(), "an aborted pause leaves the instance as it was")
+	assert.FileExists(t, filepath.Join(gw.GetWorktreePath(), "README.md"))
 }
