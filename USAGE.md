@@ -661,13 +661,16 @@ and answers only phones you have paired.
   Home Screen); the phone can take minutes to finish. Each device
   chooses *waiting*, *finished* or both, and can pause them for an hour. A
   notification is tagged by session, so a session shows at most one; the
-  Home Screen badge counts the sessions that need you, and the app keeps it in step with the stream. Loom cannot clear a
-  notification that went stale: tapping it shows the current state. If a
-  push service stops accepting a device, or the app finds when it opens
-  that the phone has dropped its subscription (Apple goes on accepting
-  pushes for one), `loom web devices` shows `expired` or
-  `failing: <status>` and the app says "Notifications stopped on this phone. Turn them
-  on again in Settings.".
+  Home Screen badge counts the sessions that need you, and the app keeps
+  it in step with the stream. Loom cannot clear a notification that went
+  stale: tapping it shows the current state. If a push service stops
+  accepting a device, or the app finds when it opens that the phone has
+  dropped its subscription (Apple goes on accepting pushes for one),
+  `loom web devices` shows `expired` or `failing: <status>` and the app's
+  Settings says so ("Notifications stopped; turn them on again." or
+  "Notifications are failing (<status>); turn them on again."). When the
+  app finds the phone's own subscription gone it also says "Notifications
+  stopped on this phone. Turn them on again in Settings."
 
 #### Set it up
 
@@ -697,7 +700,8 @@ and answers only phones you have paired.
    ```
 
    `--listen` is a loopback address (`127.0.0.1:<port>` or `[::1]:<port>`),
-   not a host name, and its port is 1 to 65535 (0 is refused); `--origin` is `https://<host>[:<port>]` with no path
+   not a host name, and its port is 1 to 65535 (0 is refused); `--origin`
+   is `https://<host>[:<port>]` with no path
    (for development only, `http://127.0.0.1:<port>` or
    `http://localhost:<port>`). The daemon applies them at once, and the
    command waits a few seconds to say whether it serves or why not (the
@@ -721,13 +725,16 @@ and answers only phones you have paired.
 notifications and its push state; `loom web revoke <name>` (or `--all`)
 unpairs one: its stream ends, its push subscription is dropped and the app
 returns to pairing. `loom web disable` turns the web off and keeps the
-devices and the origin, voids the pending pairing codes, and sends no push until it is on again (the phones' subscriptions stay, so turning it on resumes pushes without them subscribing again); `loom web status` shows the settings, whether it
-serves and why not, and the device count. The settings live in `web.json`
-in the global dir, which only the daemon writes; a `web.json` that fails to
-load (unreadable, a newer version than this build, or a stored address,
-origin, name or key that is not valid) is left alone: the web stays off,
-`enable`, `disable` and `revoke` refuse, `pair` says the web is off, and a notice says
-why; fix or move the file by hand.
+devices and the origin, voids the pending pairing codes, and sends no push
+until it is on again (the phones' subscriptions stay, so turning it on
+resumes pushes without them subscribing again); `loom web status` shows
+the settings, whether it serves and why not, and the device count. The
+settings live in `web.json` in the global dir, which only the daemon
+writes; a `web.json` that fails to load (unreadable, a newer version than
+this build, or a stored address, origin, name or key that is not valid) is
+left alone: the web stays off, `enable` and `revoke <name>` refuse
+(`disable` says the web is already off), `pair` says the web is off, and a
+notice says why; fix or move the file by hand.
 
 **What the tunnel means.** Cloudflare ends TLS at its edge and reaches loom
 over plain HTTP on loopback, so Cloudflare can read the traffic, the device
