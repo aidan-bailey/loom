@@ -165,7 +165,10 @@ nothing is posted to it and the app's button replaces it.
     MultiEdit; NotebookEdit's `notebook_path`; WebFetch's `url`; empty for
     other tools; at most 200 characters, cut with "…". The compact event
     form keeps it. The instance keeps it beside the wait reason, set and
-    cleared with it, and `InstanceView.WaitDetail` publishes it.
+    cleared with it, and `InstanceView.WaitDetail` publishes it. A failed
+    roster query keeps the reason and tool summary a hook set, and the
+    next roster answer with the same status takes them back, so one
+    prompt pushes once; the status still comes only from the roster.
 - **internal/cli:** `loom web`, a daemon client through `cli.Join` like
   `loom account`:
   - `enable --listen 127.0.0.1:<port> --origin https://<host>` and
@@ -402,8 +405,10 @@ Every connect starts with a snapshot of a few KB, so nothing is replayed.
   expired, and says notifications stopped. A subscription loom already
   knows is bad is left for the button to replace.
 - Triggers, worked out in the web layer from its projection's transitions:
-  - **waiting:** a session enters Prompting, or stays in it with a new
-    reason or tool summary;
+  - **waiting:** a session enters Prompting, or stays in it with a
+    non-empty reason or tool summary that differs from the last non-empty
+    one pushed since it entered; a cleared one never pushes, nor does its
+    return, and leaving Prompting ends the stretch;
   - **finished:** a started session goes from Running to Ready.
   - The first projection after the web layer starts is a baseline and
     pushes nothing, so a daemon restart sends no flood. Workspace
