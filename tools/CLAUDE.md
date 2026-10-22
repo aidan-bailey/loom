@@ -1,6 +1,6 @@
 # tools
 
-Developer tools, excluded from the Nix package (`excludedPackages` in `flake.nix`) but built and tested by `go test ./...`: `tools/loomdev` (the dev-sandbox CLI over `internal/devsandbox`), `tools/fakeagent` (a deterministic, token-free stand-in for an agent) and `tools/claudemd` (the lint that holds the CLAUDE.md, README and guide files to their conventions; its package doc in `tools/claudemd/main.go` lists the checks).
+Developer tools, excluded from the Nix package (`excludedPackages` in `flake.nix`) but built and tested by `go test ./...`: `tools/loomdev` (the dev-sandbox CLI over `internal/devsandbox`), `tools/fakeagent` (a deterministic, token-free stand-in for an agent), `tools/claudemd` (the lint that holds the CLAUDE.md, README and guide files to their conventions; its package doc in `tools/claudemd/main.go` lists the checks) and `tools/webicons` (draws the web app's three icons into `internal/web/static/icons`, which are committed; run it only to change the drawing).
 
 ## Rules when modifying this package
 
