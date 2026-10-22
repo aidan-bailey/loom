@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -599,4 +600,151 @@ func TestPusher_NeverFollowsARedirect(t *testing.T) {
 
 	assert.Equal(t, http.StatusTemporaryRedirect, resp.StatusCode)
 	assert.Zero(t, elsewhereHits.Load(), "the redirect's target was never contacted")
+}
+
+// pushStack is a webStack whose layer listens on a loopback port, with the
+// device "phone" paired through the pairing route.
+type pushStack struct {
+	*webStack
+	addr   string
+	cookie *http.Cookie
+}
+
+// newPushStack boots the stack and starts the layer, then enables the web and
+// pairs the phone. When wrap is set the layer's host is wrap(the model), which
+// is how a test gives the layer a host that fails where the model would not.
+func newPushStack(t *testing.T, wrap func(core.WebHost) core.WebHost) *pushStack {
+	t.Helper()
+	s := newWebStack(t)
+	if wrap == nil {
+		s.start(t)
+	} else {
+		layer, err := Start(Options{Server: s.srv, Host: wrap(s.loop), Hostname: "testhost", Build: "test build"})
+		require.NoError(t, err)
+		s.layer = layer
+	}
+	addr, _ := s.enable(t)
+	return &pushStack{webStack: s, addr: addr, cookie: s.pair(t, addr, "phone")}
+}
+
+// asPhone adds the paired phone's cookie to a request.
+func (ps *pushStack) asPhone(r *http.Request) { r.AddCookie(ps.cookie) }
+
+func TestStart_BuildsThePusherAndAddsItAsASink(t *testing.T) {
+	ps := newPushStack(t, nil)
+	p := ps.layer.push
+
+	require.NotNil(t, p, "startParts builds the pusher")
+	assert.Contains(t, ps.layer.sinks, sink(p), "the drain hands the pusher every Sync's events")
+	assert.Equal(t, pushTimeout, p.httpc.Timeout, "a push gets 10 seconds")
+	assert.Same(t, ps.loop, p.env.host, "the pusher reads and records through the layer's host")
+	configured := ps.connect(t).Web().Origin
+	require.NotEmpty(t, configured, "the stack enabled the web with an origin")
+	assert.Equal(t, configured, p.env.origin(), "the VAPID subject is the origin the model is configured with")
+	assert.WithinDuration(t, time.Now(), p.env.now(), time.Minute, "the clock is the layer's")
+}
+
+func TestClose_StopsThePusher(t *testing.T) {
+	ps := newPushStack(t, nil)
+	p := ps.layer.push
+	// No device has a subscription, so the sender finds nobody to post to.
+	require.True(t, p.enqueue(pushTestWaiting), "a running layer's pusher takes a push")
+
+	ps.layer.Close()
+
+	assert.False(t, p.enqueue(pushTestWaiting), "closing the layer stops the pusher")
+}
+
+func TestRoutePush_ServesTheKeyToAPairedDevice(t *testing.T) {
+	ps := newPushStack(t, nil)
+	key, err := ps.loop.VAPIDKey()
+	require.NoError(t, err)
+
+	resp := httpDo(t, ps.addr, http.MethodGet, "/api/v1/push-key", "", ps.asPhone)
+	body := bodyText(t, resp)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+	var got struct {
+		Key string `json:"key"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	assert.Equal(t, base64.RawURLEncoding.EncodeToString(key.Public), got.Key)
+	raw, err := base64.RawURLEncoding.DecodeString(got.Key)
+	require.NoError(t, err)
+	assert.Len(t, raw, 65, "an uncompressed P-256 point")
+	assert.Equal(t, byte(4), raw[0])
+}
+
+func TestRoutePush_RefusesWhoIsNotPaired(t *testing.T) {
+	ps := newPushStack(t, nil)
+	key, err := ps.loop.VAPIDKey()
+	require.NoError(t, err)
+	encoded := base64.RawURLEncoding.EncodeToString(key.Public)
+
+	for _, c := range []struct {
+		name   string
+		mutate func(*http.Request)
+	}{
+		{"no cookie", func(*http.Request) {}},
+		{"a cookie no device holds", func(r *http.Request) {
+			r.AddCookie(&http.Cookie{Name: cookieName, Value: deviceToken(9)})
+		}},
+	} {
+		resp := httpDo(t, ps.addr, http.MethodGet, "/api/v1/push-key", "", c.mutate)
+		body := bodyText(t, resp)
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, c.name)
+		assert.NotContains(t, body, encoded, c.name)
+	}
+
+	require.NoError(t, ps.connect(t).RevokeDevice("phone"))
+	resp := httpDo(t, ps.addr, http.MethodGet, "/api/v1/push-key", "", ps.asPhone)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "the phone's own cookie, once its device is revoked")
+	assert.NotContains(t, bodyText(t, resp), encoded)
+}
+
+func TestRoutePush_WithoutAKeyIs503(t *testing.T) {
+	ps := newPushStack(t, func(h core.WebHost) core.WebHost { return keylessHost{h} })
+
+	resp := httpDo(t, ps.addr, http.MethodGet, "/api/v1/push-key", "", ps.asPhone)
+
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	assert.JSONEq(t, `{"error":"push is not available"}`, bodyText(t, resp))
+}
+
+func TestRoutePush_IsGETOnly(t *testing.T) {
+	ps := newPushStack(t, nil)
+
+	resp := httpDo(t, ps.addr, http.MethodPost, "/api/v1/push-key", "{}", ps.asPhone)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, httpDo(t, ps.addr, http.MethodGet, "/api/v1/push-key", "", ps.asPhone).StatusCode,
+		"the same device and path, by GET")
+}
+
+// A panic in the sender stops the whole layer, not just the sender: the
+// sender's recoverPanic is Layer.fail's way in, and fail's stop closes the
+// pusher, ends the streams, closes the listener and raises a notice for the
+// next TUI.
+func TestPusher_APanicInTheSenderStopsTheWholeLayer(t *testing.T) {
+	ps := newPushStack(t, func(h core.WebHost) core.WebHost { return panicHost{h} })
+	p := ps.layer.push
+
+	require.True(t, p.enqueue(pushTestWaiting))
+
+	ps.waitNotice(t, "push")
+	requireNoListener(t, ps.addr)
+	require.Eventually(t, func() bool { return p.ctx.Err() != nil }, 5*time.Second, 5*time.Millisecond,
+		"the layer's stop closed the pusher")
+
+	closed := make(chan struct{})
+	go func() {
+		ps.layer.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close hung after the sender panicked")
+	}
 }

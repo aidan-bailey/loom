@@ -70,6 +70,8 @@ type Layer struct {
 
 	reqs *reqs
 
+	push *pusher
+
 	// onAction, when set, takes the place of the log for the result of each
 	// action (record): a test seam.
 	onAction func(a actionLog, result string)
@@ -91,6 +93,7 @@ func (l *Layer) mux() *http.ServeMux {
 	l.routeStream(m)
 	l.routeAPI(m)
 	l.routeStatic(m)
+	l.routePush(m)
 	return m
 }
 
@@ -100,11 +103,14 @@ func (l *Layer) startParts() {
 	l.addSink(l.hub)
 	l.reqs = newReqs(l)
 	l.addSink(l.reqs)
+	l.push = newPusher(l)
+	l.addSink(l.push)
 }
 
 // stopParts stops the layer's parts, first in Close.
 func (l *Layer) stopParts() {
 	l.hub.close()
+	l.push.close()
 }
 
 // Options configure Start.
