@@ -161,9 +161,36 @@ export function pushView(device, local, done = false) {
   return "off";
 }
 
+// turning is the turn-on in flight, or null. It lives here, not in the
+// component, so leaving the settings screen and coming back while the phone is
+// still subscribing finds the button still waiting and takes no second tap.
+// It resolves {ok, local}: the outcome and what the phone knows afterwards.
+let turning = null;
+
+function startTurnOn(act, toast) {
+  if (turning) return turning;
+  const run = (async () => {
+    let result;
+    let local;
+    try {
+      result = await enablePush(act);
+      if (result.error) toast(result.error, true);
+      else if (result.ok) toast("Notifications are on.", false);
+      local = await pushState();
+    } finally {
+      // Cleared before anything is told, so a render the settling causes
+      // finds the button free.
+      turning = null;
+    }
+    return { ok: result.ok, local };
+  })();
+  turning = run;
+  return run;
+}
+
 export function PushButton({ device, act, toast }) {
   const [local, setLocal] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [turn, setTurn] = useState(turning);
   const [done, setDone] = useState(false);
   const state = (device && device.push) || "";
 
@@ -180,25 +207,40 @@ export function PushButton({ device, act, toast }) {
     };
   }, [state]);
 
-  async function turnOn() {
-    setBusy(true);
-    const result = await enablePush(act);
-    if (result.error) toast(result.error, true);
-    else if (result.ok) toast("Notifications are on.", false);
-    setDone(result.ok);
-    setLocal(await pushState());
-    setBusy(false);
+  // Follow the turn-on in flight, this component's or one started before the
+  // screen was left, until it settles.
+  useEffect(() => {
+    if (!turn) return undefined;
+    let live = true;
+    turn.then(
+      (outcome) => {
+        if (!live) return;
+        setDone(outcome.ok);
+        setLocal(outcome.local);
+        setTurn(null);
+      },
+      () => {
+        if (live) setTurn(null);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [turn]);
+
+  function turnOn() {
+    setTurn(startTurnOn(act, toast));
   }
 
   const view = pushView(device, local, done);
-  if (view === "loading") return null;
-  if (busy) {
+  if (turn) {
     // subscribe() can take minutes: after an unsubscribe iOS took over two.
     return html`<div>
       <button class="sc-btn sc-primary sc-block" type="button" disabled>Turning on…</button>
       <p class="sc-small sc-dim">The phone can take a minute or two.</p>
     </div>`;
   }
+  if (view === "loading") return null;
   if (view === "unsupported") {
     return html`<p class="sc-small sc-dim">Notifications need loom on the Home Screen. Tap Share, then Add to Home Screen, and open loom from there.</p>`;
   }
