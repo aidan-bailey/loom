@@ -177,7 +177,7 @@ func Serve(o Options) error {
 			// The web layer goes first: its streams hear their own bye and its
 			// listener closes before any client is told the daemon is stopping,
 			// so no request of a phone reaches the loop while it quiesces.
-			layer.Close()
+			closeWeb(layer)
 			srv.Bye()    // every client hears it first, and nothing new is taken
 			l.close()    // no new connections
 			mods.Close() // every held poll hears 503; the mods reconnect to the next daemon
@@ -199,7 +199,7 @@ func Serve(o Options) error {
 			log.For("serve").Error("serve.model_gone", "err", fatal)
 			l.close()
 			mods.Close()
-			layer.Close()
+			closeWeb(layer)
 			srv.Close()
 			loop.Stop()
 			l.remove()
@@ -245,6 +245,10 @@ func startWeb(srv *rpc.Server, loop *core.Loop, rec Record) *web.Layer {
 	}
 	return layer
 }
+
+// closeWeb closes the web layer on every path out of Serve. It is a variable
+// so a test can hold the close and look at what the daemon has done by then.
+var closeWeb = func(l *web.Layer) { l.Close() }
 
 // listener is the daemon's socket, the goroutine accepting on it, and the
 // lock record that names it.

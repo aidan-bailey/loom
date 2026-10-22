@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
+	"github.com/aidan-bailey/loom/internal/web"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/claudemod"
@@ -813,6 +815,23 @@ func TestServe_AStopClosesTheWebListenerBeforeAnyClientHearsTheBye(t *testing.T)
 	require.Eventually(t, func() bool { return c.Web().Serving }, 10*time.Second, 10*time.Millisecond, "the layer never listened")
 	require.False(t, refused(addr))
 
+	// Hold the layer's close for a while: a daemon that says bye before it
+	// closes the layer is caught telling the client within the hold.
+	var heardTheBye atomic.Bool
+	prev := closeWeb
+	closeWeb = func(l *web.Layer) {
+		deadline := time.Now().Add(200 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if c.Stopping() {
+				heardTheBye.Store(true)
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		prev(l)
+	}
+	t.Cleanup(func() { closeWeb = prev })
+
 	close(r.stop)
 	require.Eventually(t, c.Stopping, 10*time.Second, 5*time.Millisecond, "the client heard the bye")
 	assert.True(t, refused(addr), "the web listener was open when a client heard the bye")
@@ -822,6 +841,8 @@ func TestServe_AStopClosesTheWebListenerBeforeAnyClientHearsTheBye(t *testing.T)
 	case <-time.After(20 * time.Second):
 		t.Fatal("the daemon never stopped")
 	}
+	// Read once the stop has run: the hold is over by then.
+	assert.False(t, heardTheBye.Load(), "a client heard the bye before the web layer closed")
 }
 
 // The settings are the model's, in web.json: the next daemon serves the web
