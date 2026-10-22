@@ -1,11 +1,17 @@
 package web
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/aidan-bailey/loom/log"
 )
 
 // maxBody caps a request's body, as the mod socket's own cap does.
@@ -107,4 +113,85 @@ func (l *Layer) guard(next http.Handler) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		next.ServeHTTP(w, r)
 	})
+}
+
+const (
+	// readHeaderTimeout and idleTimeout bound a connection that is slow to
+	// ask or idle after an answer. There is no read or write timeout: a
+	// stream stays open for hours and pings instead.
+	readHeaderTimeout = 10 * time.Second
+	idleTimeout       = 120 * time.Second
+)
+
+// webKey is the settings a listener is bound for: bind's argument. When to
+// bind is the view's Rev (applyWeb), not a comparison of keys.
+type webKey struct{ listen, origin string }
+
+// errLayerClosed is bind's answer once the layer has closed or failed: it
+// binds nothing after that.
+var errLayerClosed = errors.New("the web layer is closed")
+
+// bind makes the listener match key and returns the address it listens on,
+// "" when key turns the web off. The old listener closes first, which ends
+// every stream. An address that is not a loopback IP literal and port, an
+// origin guard cannot enforce, and a listen that fails all leave nothing
+// listening and are errors: the layer falls back to no address.
+func (l *Layer) bind(key webKey) (string, error) {
+	l.bindMu.Lock()
+	defer l.bindMu.Unlock()
+	if l.closed {
+		return "", errLayerClosed
+	}
+	l.unbindLocked()
+	if key.listen == "" {
+		return "", nil
+	}
+	if ap, err := netip.ParseAddrPort(key.listen); err != nil || !ap.Addr().IsLoopback() {
+		return "", fmt.Errorf("%q is not a loopback IP address and port", key.listen)
+	}
+	rule, err := parseOrigin(key.origin)
+	if err != nil {
+		return "", err
+	}
+	ln, err := net.Listen("tcp", key.listen)
+	if err != nil {
+		return "", err
+	}
+	l.srv = &http.Server{
+		Handler:           l.guard(l.mux()),
+		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleTimeout,
+		ErrorLog:          slog.NewLogLogger(log.For("web").Handler(), slog.LevelWarn),
+	}
+	l.rule.Store(&rule)
+	go l.serve(l.srv, ln)
+	return ln.Addr().String(), nil
+}
+
+// unbindLocked closes the running listener and every connection on it. The
+// rule goes first, so a request on a connection about to close is refused.
+// l.bindMu is held.
+func (l *Layer) unbindLocked() {
+	l.rule.Store(nil)
+	if l.srv != nil {
+		_ = l.srv.Close()
+		l.srv = nil
+	}
+}
+
+// shutListener closes the listener for good: bind binds nothing after it.
+func (l *Layer) shutListener() {
+	l.bindMu.Lock()
+	defer l.bindMu.Unlock()
+	l.closed = true
+	l.unbindLocked()
+}
+
+// serve serves ln until it closes. A listener that stops on its own is a
+// failure of the layer.
+func (l *Layer) serve(srv *http.Server, ln net.Listener) {
+	defer l.recoverPanic("listener")
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		l.fail(fmt.Errorf("the listener stopped: %w", err))
+	}
 }

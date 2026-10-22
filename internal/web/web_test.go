@@ -2,13 +2,23 @@ package web
 
 import (
 	"bufio"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/cmd/cmd_test"
+	"github.com/aidan-bailey/loom/config"
+	"github.com/aidan-bailey/loom/core"
+	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -264,4 +274,704 @@ func TestGuard_AHandlerBehindItCanFlushToTheClient(t *testing.T) {
 	line, err := bufio.NewReader(resp.Body).ReadString('\n')
 	require.NoError(t, err)
 	assert.Equal(t, "event: ping\n", line)
+}
+
+// deadMachine is a machine with no live tmux session and no claude: every
+// command fails, every output is empty.
+func deadMachine() cmd_test.MockCmdExec {
+	return cmd_test.MockCmdExec{
+		RunFunc:    func(*exec.Cmd) error { return &exec.ExitError{} },
+		OutputFunc: func(*exec.Cmd) ([]byte, error) { return nil, &exec.ExitError{} },
+	}
+}
+
+// webStack is the daemon's stack in one process, built as internal/daemon
+// builds it: a booted model on its loop, served by the real rpc.Server.
+// layer is the web layer under test, once start has run; tui is an ordinary
+// client of the same server, which is how `loom web` reaches it.
+type webStack struct {
+	loop  *core.Loop
+	srv   *rpc.Server
+	layer *Layer
+	tui   *rpc.Client
+}
+
+// newWebStack boots a model over a fresh global dir.
+func newWebStack(t *testing.T) *webStack { return newWebStackIn(t, t.TempDir()) }
+
+// newWebStackIn boots a model over dir, which a test may seed first.
+func newWebStackIn(t *testing.T, dir string) *webStack {
+	t.Helper()
+	t.Setenv(config.EnvGlobalDir, dir)
+	model := core.New(core.Options{CmdExec: deadMachine()})
+	model.Boot()
+	s := &webStack{loop: core.Start(model)}
+	s.srv = rpc.NewServer(s.loop)
+	s.loop.Begin()
+	t.Cleanup(func() {
+		s.layer.Close()
+		if s.tui != nil {
+			s.tui.Close()
+		}
+		s.srv.Close()
+		s.loop.Stop()
+	})
+	return s
+}
+
+// start starts the web layer on the stack's server, with the loop as host.
+func (s *webStack) start(t *testing.T) {
+	t.Helper()
+	layer, err := Start(Options{Server: s.srv, Host: s.loop, Hostname: "testhost", Build: "test build"})
+	require.NoError(t, err)
+	s.layer = layer
+}
+
+// connect joins the stack's server as an ordinary client, once.
+func (s *webStack) connect(t *testing.T) *rpc.Client {
+	t.Helper()
+	if s.tui != nil {
+		return s.tui
+	}
+	a, b := net.Pipe()
+	s.srv.Serve(a)
+	c, err := rpc.Dial(b)
+	require.NoError(t, err)
+	s.tui = c
+	return c
+}
+
+// enable has the model enable the web on a free loopback port, with the
+// origin a development phone would use, and waits until the layer serves it.
+func (s *webStack) enable(t *testing.T) (addr, origin string) {
+	t.Helper()
+	addr = freeLoopbackAddr(t)
+	origin = "http://" + addr
+	require.NoError(t, s.connect(t).ConfigureWeb(addr, origin))
+	s.waitWeb(t, func(v core.WebView) bool { return v.Serving && v.Addr == addr })
+	return addr, origin
+}
+
+// waitWeb waits until the published WebView satisfies ok, and returns it.
+func (s *webStack) waitWeb(t *testing.T, ok func(core.WebView) bool) core.WebView {
+	t.Helper()
+	var view core.WebView
+	require.Eventually(t, func() bool {
+		view = s.connect(t).Web()
+		return ok(view)
+	}, 10*time.Second, 10*time.Millisecond, "the published web settings never became what the test waits for")
+	return view
+}
+
+// waitNotice waits until the ordinary client has been sent a notice whose
+// text holds want. It reads the client's events, so each notice is seen once.
+func (s *webStack) waitNotice(t *testing.T, want string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, ev := range s.connect(t).Sync() {
+			n, ok := ev.(core.Notice)
+			if !ok {
+				continue
+			}
+			text := n.Info
+			if n.Err != nil {
+				text = n.Err.Error()
+			}
+			if strings.Contains(text, want) {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 10*time.Millisecond, "no notice said %q", want)
+}
+
+// pair pairs a device called name through the pairing route, as the phone
+// does, and returns the cookie it was given. The web must be serving at addr.
+func (s *webStack) pair(t *testing.T, addr, name string) *http.Cookie {
+	t.Helper()
+	pairing, err := s.connect(t).PairDevice(name)
+	require.NoError(t, err)
+	resp := httpDo(t, addr, http.MethodPost, "/api/v1/pair", `{"code": "`+pairing.Code+`"}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, bodyText(t, resp))
+	cookies := resp.Cookies()
+	require.Len(t, cookies, 1)
+	return cookies[0]
+}
+
+// whoAmI runs a request carrying cookie through authed and returns the
+// status and the device the handler saw ("" when it did not run).
+func (s *webStack) whoAmI(cookie *http.Cookie) (int, string) {
+	var device string
+	h := s.layer.authed(func(w http.ResponseWriter, r *http.Request, name string) {
+		device = name
+		w.WriteHeader(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/who", nil)
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code, device
+}
+
+// funcSink is a sink that calls a function.
+type funcSink func(evs []core.Event)
+
+func (f funcSink) apply(evs []core.Event) { f(evs) }
+
+// gateDrain returns a sink that stops the layer's drain, before it applies
+// the batch, at the first published model change whose web view satisfies
+// stop; held is closed once the drain stands there, and release lets it go
+// (any number of times). Model changes pile up behind the stopped drain, and
+// the client the layer drains coalesces them into one.
+func gateDrain(stop func(core.WebView) bool) (sink funcSink, held <-chan struct{}, release func()) {
+	heldCh, gate := make(chan struct{}), make(chan struct{})
+	var holdOnce, releaseOnce sync.Once
+	sink = func(evs []core.Event) {
+		for _, ev := range evs {
+			if m, ok := ev.(core.ModelChanged); ok && stop(m.View.Web) {
+				holdOnce.Do(func() {
+					close(heldCh)
+					<-gate
+				})
+			}
+		}
+	}
+	return sink, heldCh, func() { releaseOnce.Do(func() { close(gate) }) }
+}
+
+// boundServer is the http.Server the layer listens with now, nil while none
+// does. Every bind makes a new one, which is how a test sees the layer bind
+// again.
+func boundServer(l *Layer) *http.Server {
+	l.bindMu.Lock()
+	defer l.bindMu.Unlock()
+	return l.srv
+}
+
+// onOriginChange is a sink that calls f for each published model change that
+// carries origin, which a test makes happen by configuring the web with that
+// origin: a stray batch before it does not set f off.
+func onOriginChange(origin string, f func()) funcSink {
+	return func(evs []core.Event) {
+		for _, ev := range evs {
+			if m, ok := ev.(core.ModelChanged); ok && m.View.Web.Origin == origin {
+				f()
+			}
+		}
+	}
+}
+
+// freeLoopbackAddr is a loopback address nothing listens on yet.
+func freeLoopbackAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+	return addr
+}
+
+// requireNoListener waits until nothing accepts connections at addr.
+func requireNoListener(t *testing.T, addr string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		c, err := net.DialTimeout("tcp", addr, time.Second)
+		if err != nil {
+			return true
+		}
+		_ = c.Close()
+		return false
+	}, 10*time.Second, 10*time.Millisecond, "%s still accepts connections", addr)
+}
+
+// portOf is the port of a host:port address.
+func portOf(t *testing.T, addr string) string {
+	t.Helper()
+	_, port, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	return port
+}
+
+func httpClient() *http.Client {
+	return &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+}
+
+// httpDo sends method path to the layer at addr as the phone does: the Host
+// is addr and a request that changes things carries the origin the stack's
+// enable uses. mutate edits the request first.
+func httpDo(t *testing.T, addr, method, path, body string, mutate ...func(*http.Request)) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, "http://"+addr+path, strings.NewReader(body))
+	require.NoError(t, err)
+	if method != http.MethodGet && method != http.MethodHead {
+		req.Header.Set("Origin", "http://"+addr)
+	}
+	for _, m := range mutate {
+		m(req)
+	}
+	resp, err := httpClient().Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+// httpProbe is the status of a GET of path at addr with host as the Host
+// header (addr's own when empty), or 0 when nothing answers.
+func httpProbe(addr, path, host string) int {
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+path, nil)
+	if err != nil {
+		return 0
+	}
+	if host != "" {
+		req.Host = host
+	}
+	resp, err := httpClient().Do(req)
+	if err != nil {
+		return 0
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+func bodyText(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	data, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return string(data)
+}
+
+func TestStart_NeedsAServerAndAHost(t *testing.T) {
+	s := newWebStack(t)
+	_, err := Start(Options{Host: s.loop})
+	assert.Error(t, err, "no server")
+	_, err = Start(Options{Server: s.srv})
+	assert.Error(t, err, "no host")
+}
+
+func TestStart_RefusesAStoppingServer(t *testing.T) {
+	s := newWebStack(t)
+	s.srv.Bye()
+	layer, err := Start(Options{Server: s.srv, Host: s.loop})
+	require.Error(t, err)
+	assert.Nil(t, layer)
+	assert.ErrorIs(t, err, core.ErrUnavailable, "a server that is stopping cannot be joined")
+}
+
+// The layer's own connection is the web role, which the server does not
+// count as a client: a notice raised while no TUI is connected waits for the
+// next one, rather than going to a layer that has no use for it.
+func TestStart_ANoticeRaisedWithOnlyTheLayerConnectedWaitsForTheNextTUI(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	s.loop.WebServing("", errors.New("the port is taken"))
+
+	s.connect(t) // the next TUI joins after the notice was raised
+	s.waitNotice(t, "the port is taken")
+}
+
+func TestApplyWeb_ListensOnceTheModelEnablesTheWeb(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	tui := s.connect(t)
+	assert.False(t, tui.Web().Serving, "the web is off until web.json enables it")
+	assert.Empty(t, tui.Web().Error)
+
+	addr, _ := s.enable(t)
+	assert.Equal(t, addr, tui.Web().Addr)
+	assert.Empty(t, tui.Web().Error)
+	assert.Equal(t, http.StatusNotFound, httpDo(t, addr, http.MethodGet, "/nowhere", "").StatusCode, "the mux answers behind the guard")
+}
+
+func TestListener_GuardsEveryRequestAtTheDoor(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+	const wrongCode = `{"code": "AAAA-AAAA"}`
+
+	resp := httpDo(t, addr, http.MethodPost, "/api/v1/pair", wrongCode)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "the right Host and Origin reach the pairing route, which refuses a code nobody made")
+	assert.Contains(t, bodyText(t, resp), core.ErrPairingCode.Error(), "with the model's refusal, which a truncated body (below) does not have")
+	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+
+	resp = httpDo(t, addr, http.MethodPost, "/api/v1/pair", wrongCode, func(r *http.Request) { r.Host = "evil.example" })
+	assert.Equal(t, http.StatusMisdirectedRequest, resp.StatusCode, "a wrong Host")
+	assert.Equal(t, contentSecurityPolicy, resp.Header.Get("Content-Security-Policy"), "the refusal carries the headers")
+
+	resp = httpDo(t, addr, http.MethodPost, "/api/v1/pair", wrongCode, func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") })
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "a cross-site post")
+
+	resp = httpDo(t, addr, http.MethodPost, "/api/v1/pair", `{"code":`)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "a truncated body")
+}
+
+func TestApplyWeb_ChangingTheListenAddressMovesTheListener(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	first, _ := s.enable(t)
+
+	second := freeLoopbackAddr(t)
+	require.NoError(t, s.tui.ConfigureWeb(second, "http://"+second))
+	s.waitWeb(t, func(v core.WebView) bool { return v.Serving && v.Addr == second })
+
+	requireNoListener(t, first)
+	assert.Equal(t, http.StatusNotFound, httpDo(t, second, http.MethodGet, "/nowhere", "").StatusCode)
+}
+
+func TestApplyWeb_ChangingOnlyTheOriginChangesTheGuard(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+	port := portOf(t, addr)
+
+	require.Equal(t, http.StatusNotFound, httpProbe(addr, "/nowhere", ""), "the first origin's host is served")
+	require.Equal(t, http.StatusMisdirectedRequest, httpProbe(addr, "/nowhere", "localhost:"+port), "and no other")
+
+	require.NoError(t, s.tui.ConfigureWeb(addr, "http://localhost:"+port))
+	require.Eventually(t, func() bool {
+		return httpProbe(addr, "/nowhere", "localhost:"+port) == http.StatusNotFound
+	}, 10*time.Second, 10*time.Millisecond, "the new origin's host is never served")
+	assert.Equal(t, http.StatusMisdirectedRequest, httpProbe(addr, "/nowhere", ""), "the old origin's host no longer is")
+}
+
+func TestApplyWeb_DisablingStopsServing(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, origin := s.enable(t)
+
+	require.NoError(t, s.tui.ConfigureWeb("", origin))
+	s.waitWeb(t, func(v core.WebView) bool { return !v.Serving && v.Addr == "" })
+
+	requireNoListener(t, addr)
+	assert.Empty(t, s.tui.Web().Error)
+}
+
+func TestApplyWeb_ATakenPortLeavesTheWebOffAndSaysWhy(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	tui := s.connect(t)
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = taken.Close() })
+	addr := taken.Addr().String()
+	origin := "http://" + addr
+
+	require.NoError(t, tui.ConfigureWeb(addr, origin), "the settings are valid; the port is the problem")
+	view := s.waitWeb(t, func(v core.WebView) bool { return v.Error != "" })
+	assert.False(t, view.Serving)
+	assert.Empty(t, view.Addr)
+	assert.Contains(t, view.Error, addr)
+	s.waitNotice(t, addr)
+
+	// Turning the web off clears the error the layer set, and turning it on
+	// once the port is free listens. (The next tests retry with the very values
+	// that failed, and show that nothing but a ConfigureWeb retries.)
+	require.NoError(t, tui.ConfigureWeb("", origin))
+	s.waitWeb(t, func(v core.WebView) bool { return v.Error == "" })
+	require.NoError(t, taken.Close())
+	require.NoError(t, tui.ConfigureWeb(addr, origin))
+	s.waitWeb(t, func(v core.WebView) bool { return v.Serving && v.Addr == addr })
+}
+
+// The layer acts on the revision every ConfigureWeb bumps, not on whether
+// listen and origin differ: the very settings that failed bind again once the
+// port is free, and nothing but a ConfigureWeb makes that happen.
+func TestApplyWeb_TheSameSettingsAgainRetryAFailedBind(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	tui := s.connect(t)
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = taken.Close() })
+	addr := taken.Addr().String()
+	origin := "http://" + addr
+
+	require.NoError(t, tui.ConfigureWeb(addr, origin))
+	s.waitWeb(t, func(v core.WebView) bool { return v.Error != "" })
+	require.NoError(t, taken.Close())
+	require.Never(t, func() bool { return tui.Web().Serving }, 300*time.Millisecond, 10*time.Millisecond,
+		"the port is free, but nothing but a ConfigureWeb retries a bind")
+
+	require.NoError(t, tui.ConfigureWeb(addr, origin), "the very settings that failed")
+	view := s.waitWeb(t, func(v core.WebView) bool { return v.Serving && v.Addr == addr })
+	assert.Empty(t, view.Error)
+	assert.Equal(t, http.StatusNotFound, httpDo(t, addr, http.MethodGet, "/nowhere", "").StatusCode)
+}
+
+// A disable and an enable made while the drain is busy reach it as one
+// ModelChanged, which carries the settings the listener already has. Only the
+// revision tells it to close the listener and bind again.
+func TestApplyWeb_TwoConfigurationsCoalescedIntoOneSyncStillRebind(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	tui := s.connect(t)
+	addr, origin := s.enable(t)
+	bound := boundServer(s.layer)
+	require.NotNil(t, bound)
+	rev := tui.Web().Rev
+
+	// Stop the drain on the next change that leaves the settings alone (a
+	// device pairing), so the two configurations below pile up behind it.
+	sink, held, release := gateDrain(func(v core.WebView) bool { return v.Rev == rev && len(v.Devices) == 1 })
+	t.Cleanup(release)
+	s.layer.addSink(sink)
+	s.pair(t, addr, "iPhone")
+	select {
+	case <-held:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the drain never reached the change it was to stop at")
+	}
+
+	require.NoError(t, tui.ConfigureWeb("", origin))
+	require.NoError(t, tui.ConfigureWeb(addr, origin))
+	final := tui.Web()
+	require.NotEqual(t, rev, final.Rev, "each ConfigureWeb bumps the revision")
+	require.Equal(t, addr, final.Listen, "the pair ends where it began")
+	require.Equal(t, origin, final.Origin)
+	require.Eventually(t, func() bool { return s.layer.client.Web().Rev == final.Rev }, 10*time.Second, 10*time.Millisecond,
+		"the layer's client never received both configurations")
+	require.Same(t, bound, boundServer(s.layer), "the stopped drain has not touched the listener")
+
+	release()
+	require.Eventually(t, func() bool {
+		now := boundServer(s.layer)
+		return now != nil && now != bound
+	}, 10*time.Second, 10*time.Millisecond, "the layer never bound again")
+	s.waitWeb(t, func(v core.WebView) bool { return v.Serving && v.Addr == addr })
+	assert.Equal(t, http.StatusNotFound, httpDo(t, addr, http.MethodGet, "/nowhere", "").StatusCode)
+}
+
+// The model publishes again for a report to WebServing, the layer's own or
+// anyone's. A report does not bump the revision, so it never makes the layer
+// bind, however free the port is.
+func TestApplyWeb_AWebServingReportNeverBinds(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	tui := s.connect(t)
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = taken.Close() })
+	addr := taken.Addr().String()
+
+	require.NoError(t, tui.ConfigureWeb(addr, "http://"+addr))
+	s.waitWeb(t, func(v core.WebView) bool { return v.Error != "" })
+	require.NoError(t, taken.Close())
+
+	s.loop.WebServing("", errors.New("a report from elsewhere"))
+	s.waitWeb(t, func(v core.WebView) bool { return strings.Contains(v.Error, "a report from elsewhere") })
+	require.Never(t, func() bool { return boundServer(s.layer) != nil }, 300*time.Millisecond, 10*time.Millisecond,
+		"listen is set and the port is free, but only a ConfigureWeb binds")
+	assert.False(t, tui.Web().Serving)
+}
+
+func TestApplyWeb_AWebJSONTheModelLeftAloneKeepsItsReason(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, core.WebFile), []byte("{not json"), 0o600))
+	s := newWebStackIn(t, dir)
+	tui := s.connect(t)
+	before := tui.Web().Error
+	require.NotEmpty(t, before, "the model says why it left web.json alone")
+
+	s.start(t)
+	require.Never(t, func() bool { return tui.Web().Error != before }, 300*time.Millisecond, 10*time.Millisecond,
+		"the layer must not clear or replace a reason it did not set")
+	assert.False(t, tui.Web().Serving)
+}
+
+func TestBind_ListensOnLoopbackOnly(t *testing.T) {
+	for _, listen := range []string{
+		"0.0.0.0:7420", "[::]:7420", "192.168.1.5:7420", ":7420", "localhost:7420", "example.com:7420", "127.0.0.1", "7420",
+	} {
+		t.Run(listen, func(t *testing.T) {
+			l := &Layer{}
+			addr, err := l.bind(webKey{listen: listen, origin: "http://127.0.0.1:7420"})
+			require.Error(t, err)
+			assert.Empty(t, addr)
+			assert.Nil(t, l.srv, "nothing listens")
+			assert.Nil(t, l.rule.Load())
+		})
+	}
+
+	l := &Layer{}
+	addr, err := l.bind(webKey{listen: "127.0.0.1:0", origin: "http://127.0.0.1:7420"})
+	require.NoError(t, err)
+	t.Cleanup(l.shutListener)
+	assert.True(t, strings.HasPrefix(addr, "127.0.0.1:"), addr)
+	assert.NotNil(t, l.rule.Load())
+
+	// An origin it cannot use leaves nothing listening, not the old listener.
+	_, err = l.bind(webKey{listen: "127.0.0.1:0", origin: "loom.example.com"})
+	require.Error(t, err)
+	assert.Nil(t, l.srv)
+	assert.Nil(t, l.rule.Load())
+	requireNoListener(t, addr)
+
+	// Once the layer is shut it binds nothing.
+	l.shutListener()
+	_, err = l.bind(webKey{listen: "127.0.0.1:0", origin: "http://127.0.0.1:7420"})
+	assert.ErrorIs(t, err, errLayerClosed)
+}
+
+func TestDrain_HandsEveryBatchToEverySinkInTurn(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+
+	var mu sync.Mutex
+	var order []string
+	var secondSawTheModelChange bool
+	record := func(name string) funcSink {
+		return func(evs []core.Event) {
+			mu.Lock()
+			defer mu.Unlock()
+			order = append(order, name)
+			for _, ev := range evs {
+				if _, ok := ev.(core.ModelChanged); ok && name == "second" {
+					secondSawTheModelChange = true
+				}
+			}
+		}
+	}
+	s.layer.addSink(record("first"))
+	s.layer.addSink(record("second"))
+
+	require.NoError(t, s.tui.ConfigureWeb(addr, "http://localhost:"+portOf(t, addr)))
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return secondSawTheModelChange
+	}, 10*time.Second, 10*time.Millisecond, "the second sink never saw the model change")
+
+	mu.Lock()
+	defer mu.Unlock()
+	for i, name := range order {
+		assert.Equal(t, []string{"first", "second"}[i%2], name, "every batch goes to the first sink, then the second")
+	}
+}
+
+func TestDrain_APanickingSinkStopsTheLayerNotTheDaemon(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+
+	origin := "http://localhost:" + portOf(t, addr)
+	s.layer.addSink(onOriginChange(origin, func() { panic("boom") }))
+	require.NoError(t, s.tui.ConfigureWeb(addr, origin), "a changed origin makes a batch")
+
+	// The layer stops, and the host is told why.
+	view := s.waitWeb(t, func(v core.WebView) bool { return !v.Serving && strings.Contains(v.Error, "boom") })
+	assert.Contains(t, view.Error, "drain panicked")
+	s.waitNotice(t, "boom")
+	requireNoListener(t, addr)
+
+	// The daemon side carries on: the model still answers an ordinary client's
+	// request and publishes what it changed.
+	assert.NotEmpty(t, s.tui.Workspaces(), "the daemon goes on")
+	require.NoError(t, s.tui.ConfigureWeb("", origin))
+	s.waitWeb(t, func(v core.WebView) bool { return v.Listen == "" })
+	assert.NotPanics(t, s.layer.Close, "a layer that failed still closes")
+}
+
+// recoverPanic is what each goroutine the layer starts defers first (Stories
+// 7 and 12 defer it in their own): it must swallow the panic, stop the layer
+// and say where it happened.
+func TestRecoverPanic_StopsTheLayerAndNamesWhere(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned) // runs after the recovery
+		defer s.layer.recoverPanic("the test part")
+		panic("kaboom")
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the goroutine never returned")
+	}
+
+	view := s.waitWeb(t, func(v core.WebView) bool { return !v.Serving && strings.Contains(v.Error, "kaboom") })
+	assert.Contains(t, view.Error, "the test part panicked", "the error names the goroutine")
+	s.waitNotice(t, "kaboom")
+	requireNoListener(t, addr)
+	assert.NotEmpty(t, s.tui.Workspaces(), "the daemon goes on")
+}
+
+// A part calls fail from the goroutine that panicked, which may be the drain
+// that Close waits for: fail must not wait for the stop it starts.
+func TestFail_ReturnsAtOnceFromTheDrainItself(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+
+	origin := "http://localhost:" + portOf(t, addr)
+	took := make(chan time.Duration, 1)
+	var once sync.Once
+	s.layer.addSink(onOriginChange(origin, func() {
+		once.Do(func() {
+			began := time.Now()
+			s.layer.fail(errors.New("a part gave up"))
+			took <- time.Since(began)
+		})
+	}))
+	require.NoError(t, s.tui.ConfigureWeb(addr, origin), "a changed origin makes a batch")
+
+	select {
+	case d := <-took:
+		assert.Less(t, d, drainGrace/2, "fail waited for the layer to stop, on the goroutine the stop waits for")
+	case <-time.After(2 * drainGrace):
+		t.Fatal("fail never returned")
+	}
+	view := s.waitWeb(t, func(v core.WebView) bool { return !v.Serving && strings.Contains(v.Error, "a part gave up") })
+	assert.False(t, view.Serving)
+	requireNoListener(t, addr)
+}
+
+// fail and Close run one stop between them. Whichever comes first stops the
+// layer, the other waits for it, and neither hangs nor closes anything twice
+// (a second close of the drain's channel panics).
+func TestFail_RacingAClose_StopsOnceAndHangsNowhere(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		var wg sync.WaitGroup
+		for i := 0; i < 4; i++ {
+			wg.Add(2)
+			go func() { defer wg.Done(); s.layer.fail(errors.New("a part failed")) }()
+			go func() { defer wg.Done(); s.layer.Close() }()
+		}
+		wg.Wait()
+	}()
+	select {
+	case <-finished:
+	case <-time.After(2 * drainGrace):
+		t.Fatal("a fail racing a Close hung")
+	}
+
+	// A Close returns only once the stop it shares is complete, so nothing
+	// listens now, without waiting.
+	c, err := net.DialTimeout("tcp", addr, time.Second)
+	if err == nil {
+		_ = c.Close()
+	}
+	assert.Error(t, err, "the listener was open after Close returned")
+	assert.NotPanics(t, s.layer.Close)
+}
+
+func TestClose_ClosesTheListenerAndMayBeRepeated(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+
+	s.layer.Close()
+	requireNoListener(t, addr)
+	assert.NotPanics(t, s.layer.Close, "a second close is harmless")
+	assert.NotPanics(t, (*Layer)(nil).Close, "so is one on a layer that never started")
 }

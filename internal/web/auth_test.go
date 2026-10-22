@@ -295,3 +295,57 @@ func TestPair_TakesPostOnly(t *testing.T) {
 	}
 	assert.Empty(t, host.redeemed)
 }
+
+// A code the model made pairs a phone once, and the cookie it gets names the
+// device to the layer through the model: the hash the layer computes from the
+// 32 bytes the token decodes to is the one the model stored.
+func TestPair_ACodeFromTheModelPairsAPhoneOnce(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+	pairing, err := s.tui.PairDevice("iPhone")
+	require.NoError(t, err)
+	typed := strings.ToLower(pairing.Code[:4] + "-" + pairing.Code[4:])
+	payload := `{"code": "` + typed + `"}`
+
+	resp := httpDo(t, addr, http.MethodPost, "/api/v1/pair", payload)
+	require.Equal(t, http.StatusOK, resp.StatusCode, bodyText(t, resp))
+	cookies := resp.Cookies()
+	require.Len(t, cookies, 1)
+	cookie := cookies[0]
+	assert.Equal(t, cookieName, cookie.Name)
+	raw, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+	require.NoError(t, err, "the model's token is unpadded base64url")
+	assert.Len(t, raw, tokenBytes, "of 32 bytes")
+
+	again := httpDo(t, addr, http.MethodPost, "/api/v1/pair", payload)
+	assert.Equal(t, http.StatusBadRequest, again.StatusCode, "a code works once; a used one is a wrong one, not an unpaired phone")
+	assert.Empty(t, again.Cookies())
+
+	status, device := s.whoAmI(cookie)
+	require.Equal(t, http.StatusNoContent, status, "the hash of the token's 32 bytes, computed here, is the one the model stored")
+	assert.Equal(t, "iPhone", device)
+	status, device = s.whoAmI(&http.Cookie{Name: cookieName, Value: deviceToken(9)})
+	assert.Equal(t, http.StatusUnauthorized, status, "a well-formed token the model never made")
+	assert.Empty(t, device)
+}
+
+func TestAuthed_RevokingADeviceRefusesOnlyItsCookie(t *testing.T) {
+	s := newWebStack(t)
+	s.start(t)
+	addr, _ := s.enable(t)
+	phone := s.pair(t, addr, "iPhone")
+	tablet := s.pair(t, addr, "iPad")
+
+	status, device := s.whoAmI(phone)
+	require.Equal(t, http.StatusNoContent, status)
+	require.Equal(t, "iPhone", device)
+
+	require.NoError(t, s.tui.RevokeDevice("iPhone"))
+	status, device = s.whoAmI(phone)
+	assert.Equal(t, http.StatusUnauthorized, status, "a revoked device's cookie")
+	assert.Empty(t, device)
+	status, device = s.whoAmI(tablet)
+	assert.Equal(t, http.StatusNoContent, status, "another device's cookie still works")
+	assert.Equal(t, "iPad", device)
+}
