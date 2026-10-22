@@ -330,8 +330,9 @@ request, and waits for the `Reply` the drain routes back.
   device (name, notification settings, push state), the badge count, and
   the last 20 notices, which the web layer keeps for the app's list;
 - `sessions`: one workspace's whole list when it changes, at most four a
-  second;
-- `workspaces`, `device`, `notice`;
+  second, and the badge count;
+- `workspaces`, also with the badge count;
+- `device`, `notice`;
 - `ping` every 20 s, since Cloudflare closes an idle stream (after 125 s in
   the spike);
 - `bye` when the daemon stops.
