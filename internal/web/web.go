@@ -67,6 +67,8 @@ type Layer struct {
 	sinks []sink
 
 	hub *hub
+
+	reqs *reqs
 }
 
 // addSink adds s to the sinks the drain feeds. The layer's parts add theirs
@@ -83,6 +85,7 @@ func (l *Layer) mux() *http.ServeMux {
 	m := http.NewServeMux()
 	l.routePair(m)
 	l.routeStream(m)
+	l.routeAPI(m)
 	return m
 }
 
@@ -90,6 +93,8 @@ func (l *Layer) mux() *http.ServeMux {
 func (l *Layer) startParts() {
 	l.hub = newHub(l)
 	l.addSink(l.hub)
+	l.reqs = newReqs(l)
+	l.addSink(l.reqs)
 }
 
 // stopParts stops the layer's parts, first in Close.
