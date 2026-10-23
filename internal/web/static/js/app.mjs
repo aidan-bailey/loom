@@ -1,6 +1,6 @@
 // The app: routes, the live snapshot, the stale bar and the toasts. The
 // screens are in screens.mjs and pairing in pair.mjs; this file owns the data
-// they draw, as the props {snap, stale, route, go, act, toast, pending}.
+// they draw, as the props {snap, stale, link, route, go, act, toast, pending}.
 import { html, render, useState, useEffect, useRef, useCallback } from "../lib/preact-htm.mjs";
 import { call, connect } from "./api.mjs";
 import { loadSnapshot, saveSnapshot, clearSnapshot, pref } from "./store.mjs";
@@ -245,6 +245,12 @@ function App() {
       device(d) {
         apply((s) => ({ ...s, device: d }));
       },
+      usage(d) {
+        apply((s) => ({ ...s, usage: d.usage }));
+      },
+      quick_replies(d) {
+        apply((s) => ({ ...s, quick_replies: d.quick_replies }));
+      },
       notice(n) {
         apply((s) => ({ ...s, notices: (s.notices || []).concat([n]).slice(-recentNotices) }));
         toast(n.text, n.error, true);
@@ -361,7 +367,8 @@ function App() {
     body = html`<div class="splash">${restarting ? "loom is restarting…" : offline ? "Can't reach loom. Retrying…" : "Connecting…"}</div>`;
   } else {
     const Screen = screens[route.name];
-    const props = { snap, stale, route, go, act, toast, pending };
+    const link = !stale ? "live" : restarting ? "restarting" : "offline";
+    const props = { snap, stale, link, route, go, act, toast, pending };
     body = Screen
       ? html`<${Screen} key=${route.name + (route.id === undefined ? "" : route.id)} ...${props} />`
       : html`<div class="splash">Nothing here yet.</div>`;

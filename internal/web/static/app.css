@@ -1,37 +1,30 @@
-/* Loom's app. The colour tokens come from loom's theme (ui/theme.go): the
-   dark block is afterglow, loom's default; the light block is the legacy
-   theme's light side, with the amber and the dim text darkened to read on
-   white. Amber (--attention) marks only what needs you. */
+/* Loom's app in loom's own skin: the TUI's afterglow palette (ui/theme.go),
+   monospace type, glyph rows, and boxes whose label sits in their top border
+   (spec 2026-10-23). Dark only. Amber (--attention) marks only what needs
+   you. Nothing takes a style attribute: the CSP is default-src 'self', so
+   every look is a class here. */
 :root {
-  color-scheme: light dark;
-  --bg: #ffffff;
-  --panel: #f1eef7;
-  --fg: #1a1a1a;
-  --dim: #6b6b6b;
-  --rule: #d4d4d8;
-  --accent: #874bfd;
-  --attention: #b86e00;
-  --ok: #2e7d4f;
-  --error: #c0392b;
-  --workspace: #6c71c4;
-  --faint: #9a9a9a;
-  --radius: 12px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #2e2e2e;
-    --panel: #333435;
-    --fg: #d6d6d6;
-    --dim: #797979;
-    --rule: #404040;
-    --accent: #6c99bb;
-    --attention: #e5b567;
-    --ok: #b4c973;
-    --error: #c45330;
-    --workspace: #a1617a;
-    --faint: #505050;
-  }
+  color-scheme: dark;
+  --bg: #2e2e2e;
+  --panel: #333435;
+  --fg: #d6d6d6;
+  --title: #ffffff;
+  --dim: #a0a0a0;
+  --faint: #5c5c5c;
+  --border: #505050;
+  --rule: #404040;
+  --accent: #6c99bb;
+  --attention: #e5b567;
+  --attention-border: #9b7f50;
+  --attention-rule: #5a4a2c;
+  --ok: #b4c973;
+  --error: #e8836b;
+  --error-border: #815449;
+  --workspace: #c98aa3;
+  --selection: #5a647e;
+  --code: #3a3a3a;
+  --mono: ui-monospace, Menlo, monospace;
+  --radius: 3px;
 }
 
 *,
@@ -48,9 +41,87 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font: 13px/1.45 var(--mono);
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
+}
+
+a {
+  color: var(--accent);
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0 0 0.75rem;
+}
+
+code {
+  font-family: var(--mono);
+  background: var(--code);
+  color: #e6e6e6;
+  border-radius: 2px;
+  padding: 0 3px;
+}
+
+button {
+  font: inherit;
+  color: var(--fg);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+button:disabled {
+  opacity: 0.45;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+}
+
+button.danger {
+  color: var(--error);
+  border-color: var(--error-border);
+}
+
+button.link {
+  background: none;
+  border: none;
+  color: var(--dim);
+  text-decoration: underline;
+}
+
+/* iOS zooms into a control whose text is under 16px. */
+input,
+textarea,
+select {
+  font-family: var(--mono);
+  font-size: 16px;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input.text {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.6rem 0.8rem;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 .shell {
@@ -66,74 +137,10 @@ body {
   width: 100%;
   max-width: 40rem;
   margin: 0 auto;
-  padding: 1rem;
-}
-
-h1,
-h2,
-h3,
-p {
-  margin: 0 0 0.75rem;
-}
-
-code {
-  font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: var(--panel);
-  border-radius: 6px;
-  padding: 0.1em 0.35em;
-}
-
-button {
-  font: inherit;
-  color: var(--fg);
-  background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  min-height: 44px;
-  padding: 0.6rem 1rem;
-}
-
-button:disabled {
-  opacity: 0.45;
-}
-
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg);
-  font-weight: 600;
-}
-
-button.danger {
-  color: var(--error);
-  border-color: var(--error);
-}
-
-button.link {
-  background: none;
-  border: none;
-  color: var(--dim);
-  text-decoration: underline;
-}
-
-input.text {
-  font: inherit;
-  width: 100%;
-  min-height: 44px;
-  padding: 0.6rem 0.8rem;
-  color: var(--fg);
-  background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-}
-
-input.text:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 .splash {
-  padding: 3rem 0;
+  padding: 3rem 16px;
   text-align: center;
   color: var(--dim);
 }
@@ -141,37 +148,39 @@ input.text:focus {
 .stale-bar {
   position: sticky;
   top: env(safe-area-inset-top);
-  z-index: 10;
-  padding: 0.4rem 1rem;
+  z-index: 30;
+  padding: 6px 16px;
   text-align: center;
-  font-size: 0.85rem;
+  font-size: 12px;
   color: var(--dim);
   background: var(--panel);
   border-bottom: 1px solid var(--rule);
 }
 
+/* Toasts come down from the top: the fleet's status line and the session's
+   reply box hold the bottom. */
 .toasts {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  top: calc(env(safe-area-inset-top) + 8px);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 6px;
   align-items: center;
-  padding: 0 1rem;
+  padding: 0 16px;
   pointer-events: none;
   z-index: 100;
 }
 
 .toast {
   max-width: 32rem;
-  padding: 0.65rem 1rem;
+  padding: 8px 12px;
   color: var(--fg);
   background: var(--panel);
-  border: 1px solid var(--rule);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
   cursor: pointer;
 }
@@ -180,16 +189,19 @@ input.text:focus {
   border-color: var(--error);
 }
 
+/* ---- pairing ---- */
 .pair {
-  padding-top: 2rem;
+  padding: 2rem 16px;
 }
 
 .pair .wordmark {
   font-size: 2rem;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  color: var(--title);
 }
 
-.pair .lede {
+.pair .lede,
+.pair .hint {
   color: var(--dim);
 }
 
@@ -209,7 +221,7 @@ input.text:focus {
 }
 
 .pair input.code {
-  font: 1.6rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.6rem;
   letter-spacing: 0.15em;
   text-align: center;
   text-transform: uppercase;
@@ -220,19 +232,29 @@ input.text:focus {
   color: var(--error);
 }
 
-.pair .hint {
-  color: var(--dim);
-  font-size: 0.9rem;
-}
+/* ---- screens: words and colours ---- */
+.sc-screen { padding: 4px 16px 24px; }
+.sc-dim { color: var(--dim); }
+.sc-light { font-weight: 400; }
+.sc-small { font-size: 12px; margin: 10px 0 0; }
+.sc-err { color: var(--error); }
+.sc-empty { text-align: center; margin-top: 48px; }
+.sc-fill { flex: 1; }
+.sc-attn { color: var(--attention); }
+.sc-ws { color: var(--workspace); }
+.sc-add { color: var(--ok); }
+.sc-del { color: var(--error); }
+.sc-mono { font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
+.sc-wrap { white-space: normal; overflow-wrap: anywhere; }
 
-/* ---- screens (Story 10): buttons, sheets ---- */
+/* ---- screens: buttons and sheets ---- */
 .sc-btn {
   font: inherit;
   color: var(--fg);
-  background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  padding: 10px 14px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 14px;
   min-height: 44px;
   text-decoration: none;
   display: inline-flex;
@@ -241,197 +263,266 @@ input.text:focus {
   gap: 6px;
 }
 .sc-btn:disabled { opacity: 0.4; }
-.sc-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
-.sc-danger { background: var(--error); border-color: var(--error); color: var(--bg); }
+.sc-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 700; }
+.sc-danger { background: var(--error); border-color: var(--error); color: var(--bg); font-weight: 700; }
+.sc-danger-text { color: var(--error); border-color: var(--error-border); }
+.sc-block { display: flex; width: 100%; margin-top: 12px; }
 .sc-backdrop {
   position: fixed;
   inset: 0;
   z-index: 50;
   display: flex;
   align-items: flex-end;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.55);
 }
 .sc-sheet {
   width: 100%;
   background: var(--bg);
   color: var(--fg);
-  border-top: 1px solid var(--rule);
-  border-radius: 16px 16px 0 0;
+  border-top: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
   padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
 }
 .sc-sheet:focus { outline: none; }
-.sc-sheet-title { margin: 0 0 8px; font-size: 1.1rem; }
-.sc-sheet-body { color: var(--dim); line-height: 1.4; }
-.sc-sheet-body code { color: var(--fg); overflow-wrap: anywhere; }
+.sc-sheet-title { margin: 0 0 8px; font-size: 15px; color: var(--title); }
+.sc-sheet-body { color: var(--dim); }
+.sc-sheet-body code { overflow-wrap: anywhere; }
 .sc-sheet-body select { width: 100%; margin-top: 8px; }
 .sc-sheet-actions { display: flex; gap: 10px; margin-top: 16px; }
 .sc-sheet-actions .sc-btn { flex: 1; }
 
-/* ---- screens (Story 10): fleet ---- */
-.sc-screen {
-  max-width: 640px;
-  margin: 0 auto;
-  /* .shell already pads the safe areas */
-  padding: 12px 14px 24px;
-}
-.sc-dim { color: var(--dim); }
-.sc-empty { text-align: center; margin-top: 48px; }
-.sc-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.sc-h1 { flex: 1; margin: 0; font-size: 1.3rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sc-icon { color: var(--dim); font-size: 1.5rem; text-decoration: none; padding: 6px 10px; }
-.sc-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 4px; }
-.sc-chip-btn {
-  font: inherit;
-  color: var(--dim);
-  background: transparent;
-  border: 1px solid var(--rule);
-  border-radius: 999px;
-  padding: 6px 12px;
-  white-space: nowrap;
-}
-.sc-chip-btn.sc-on { color: var(--fg); border-color: var(--workspace); }
-.sc-group { margin-top: 18px; }
-.sc-group-title {
-  font-size: 0.8rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--dim);
-  margin: 0 0 8px;
-}
-.sc-t-needs_you { color: var(--attention); }
-.sc-count { color: var(--dim); font-weight: normal; }
-.sc-card {
+/* ---- the skin's pieces ---- */
+/* A box: a border whose label sits in its top edge. The label takes the
+   ground as its background, so the box has no fill of its own. */
+.sc-box {
+  position: relative;
   display: block;
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 13px 10px 7px;
   color: var(--fg);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: left;
   text-decoration: none;
-  background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: 12px;
-  padding: 12px;
-  margin-bottom: 8px;
 }
-.sc-g-needs_you { border-color: var(--attention); }
-.sc-card-top { display: flex; align-items: center; gap: 8px; }
-.sc-card-title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sc-age { color: var(--dim); font-size: 0.8rem; }
-.sc-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
-.sc-chip {
-  display: inline-block;
-  margin-top: 6px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--workspace);
-  color: var(--workspace);
-  font-size: 0.75rem;
-}
-.sc-wait { margin-top: 6px; color: var(--attention); }
-.sc-detail {
-  margin-top: 2px;
+.sc-legend {
+  position: absolute;
+  top: -9px;
+  left: 6px;
+  max-width: calc(100% - 12px);
+  padding: 0 4px;
+  background: var(--bg);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 700;
   color: var(--dim);
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 0.8rem;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.sc-last {
-  margin-top: 6px;
-  color: var(--dim);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.sc-meta { margin-top: 6px; color: var(--dim); font-size: 0.8rem; }
-details.sc-group > summary { cursor: pointer; margin-bottom: 8px; }
+.sc-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.sc-tile .sc-legend { letter-spacing: 0.06em; text-transform: uppercase; }
+.sc-tile-n { display: block; font-size: 32px; font-weight: 700; line-height: 1; }
+.sc-tile-fig { display: flex; align-items: center; gap: 4px; font-size: 17px; font-weight: 700; line-height: 1.2; color: var(--title); white-space: nowrap; }
+.sc-tile-sub { display: block; margin-top: 4px; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-tile-needs_you { border-color: var(--attention-border); }
+.sc-tile-needs_you .sc-legend,
+.sc-tile-needs_you .sc-tile-n { color: var(--attention); }
+.sc-tile-your_turn .sc-tile-n { color: var(--accent); }
+.sc-zero { border-color: var(--rule); }
+.sc-zero .sc-legend,
+.sc-zero .sc-glyph,
+.sc-zero .sc-tile-n { color: var(--dim); }
+.sc-glyph { color: var(--dim); }
+.sc-glyph-needs_you { color: var(--attention); }
+.sc-glyph-your_turn { color: var(--accent); }
 
-/* ---- screens (Story 10): session ---- */
-.sc-back { display: inline-block; color: var(--dim); text-decoration: none; padding: 6px 0 10px; }
-.sc-wrap { white-space: normal; overflow-wrap: anywhere; margin-bottom: 12px; }
-.sc-lead {
+/* Usage: a box per account, a row per window, an 8-cell bar. A stale sample
+   is dimmed by colour, which keeps its text readable. */
+.sc-usage { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 8px; margin-top: 18px; }
+.sc-usage-box { padding: 12px 10px 6px; font-size: 11px; line-height: 1.35; }
+.sc-usage-box .sc-legend { color: var(--fg); }
+.sc-win { display: flex; align-items: baseline; gap: 6px; }
+.sc-win-pct { font-size: 16px; font-weight: 700; color: var(--title); }
+.sc-win-reset { flex: 1; text-align: right; }
+.sc-bar { font-size: 10px; }
+.sc-bar-on { color: var(--accent); }
+.sc-bar-off { color: var(--faint); }
+.sc-stale .sc-win-pct,
+.sc-stale .sc-tile-fig,
+.sc-stale .sc-bar-on { color: var(--dim); }
+
+/* Chips: a 44px button around a small bordered label. */
+.sc-chips,
+.sc-quick { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.sc-chips { margin-top: 6px; }
+.sc-chip-btn { flex: none; min-height: 44px; padding: 0; border: 0; background: none; color: var(--fg); font-size: 12px; white-space: nowrap; }
+.sc-chip-btn > span { display: inline-block; padding: 3px 10px; border: 1px solid var(--rule); border-radius: var(--radius); }
+.sc-chip-btn.sc-on > span { color: var(--title); background: var(--selection); border-color: var(--selection); }
+
+/* Section rules: the label, then a line to the edge. */
+.sc-group { margin-top: 14px; }
+.sc-section { margin-top: 16px; }
+.sc-group-title,
+.sc-rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  scroll-margin-top: 48px;
+}
+.sc-group-title::after,
+.sc-rule::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+.sc-t-needs_you { color: var(--attention); }
+.sc-t-needs_you::after { background: var(--attention-rule); }
+details.sc-group > summary { cursor: pointer; list-style: none; min-height: 44px; }
+details.sc-group > summary::-webkit-details-marker { display: none; }
+details.sc-group > summary::before { content: "▸"; }
+details.sc-group[open] > summary::before { content: "▾"; }
+
+/* ---- the fleet ---- */
+.sc-header { display: flex; align-items: center; gap: 4px; }
+.sc-h1 { flex: 1; min-width: 0; margin: 0; font-size: 17px; font-weight: 700; color: var(--title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-h1.sc-wrap { margin: 4px 0 6px; white-space: normal; overflow: visible; }
+.sc-icon { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; color: var(--dim); }
+.sc-row-s { display: block; padding: 8px 0 10px; border-bottom: 1px solid var(--rule); color: var(--fg); text-decoration: none; }
+.sc-row-top { display: flex; gap: 8px; align-items: baseline; }
+.sc-row-title { flex: 1; min-width: 0; font-weight: 700; color: var(--title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-age { color: var(--dim); font-size: 12px; white-space: nowrap; }
+.sc-new { color: var(--bg); background: var(--accent); font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 2px; }
+.sc-row-line,
+.sc-meta { display: flex; flex-wrap: wrap; gap: 0 12px; padding-left: 16px; font-size: 12px; }
+.sc-meta { color: var(--dim); }
+.sc-detail { margin: 4px 0 0 16px; padding: 3px 8px; background: var(--panel); border: 1px solid var(--rule); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-last { padding-left: 16px; color: #c8c8c8; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sc-fleet { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
+.sc-status {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px calc(7px + env(safe-area-inset-bottom));
+  font-size: 12px;
   background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: 12px;
-  padding: 14px;
+  border-top: 1px solid var(--rule);
 }
-.sc-lead.sc-g-needs_you { border-color: var(--attention); }
-.sc-lead-label { font-size: 1.05rem; font-weight: 600; }
-.sc-attn { color: var(--attention); }
-.sc-detail-box {
-  margin: 8px 0 0;
-  padding: 8px;
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 0.8rem;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.sc-link { padding: 0 6px; font-weight: 700; color: var(--bg); background: var(--dim); }
+.sc-link-live { background: var(--ok); }
+.sc-link-offline { background: var(--error); }
+.sc-sep { color: var(--faint); }
+
+/* ---- the session ---- */
+.sc-topbar { display: flex; align-items: center; margin: 0 -12px; }
+.sc-back,
+.sc-claude { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; text-decoration: none; }
+.sc-back { color: var(--dim); }
+.sc-claude { color: var(--accent); }
+.sc-subline { display: flex; flex-wrap: wrap; gap: 0 10px; font-size: 12px; color: var(--dim); }
+.sc-attn-box { margin-top: 18px; padding: 14px 12px 12px; border-color: var(--attention-border); }
+.sc-attn-box .sc-legend { color: var(--attention); letter-spacing: 0.06em; text-transform: uppercase; }
+.sc-detail-box { margin: 8px 0 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--rule); font: 12px/1.4 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sc-session .sc-tiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); margin-top: 18px; }
+.sc-pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sc-agent { padding-top: 6px; }
+.sc-agent-desc { padding-left: 16px; font-size: 12px; color: var(--dim); }
+.sc-actions { display: flex; gap: 8px; margin: 16px 0 20px; }
+.sc-actions .sc-btn { flex: 1; padding: 0 6px; }
+/* The session is a full-height column, so on a short page the reply box sits
+   at the bottom (margin-top: auto) and not under the actions; it reaches into
+   the shell's bottom inset, since it pads for the home indicator itself. */
+.sc-session {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  padding-bottom: 0;
 }
-.sc-block { display: flex; margin-top: 12px; }
-.sc-small { font-size: 0.85rem; margin: 10px 0 0; }
-.sc-err { color: var(--error); }
-.sc-section { margin-top: 20px; }
-.sc-pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.sc-facts { margin: 0; }
-.sc-fact { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px solid var(--rule); }
-.sc-fact dt { color: var(--dim); }
-.sc-fact dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
-.sc-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
-.sc-actions .sc-btn { flex: 1 1 40%; }
-.sc-danger-text { color: var(--error); border-color: var(--error); }
+.sc-session > .sc-h1 { flex: none; }
 .sc-reply {
   position: sticky;
   bottom: 0;
-  margin-top: 20px;
-  padding: 10px 0 env(safe-area-inset-bottom);
-  background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.sc-reply textarea {
-  font: inherit;
-  color: var(--fg);
+  z-index: 20;
+  margin: auto -16px calc(-1 * env(safe-area-inset-bottom));
+  padding: 0 12px calc(10px + env(safe-area-inset-bottom));
   background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  padding: 10px;
-  resize: vertical;
+  border-top: 1px solid var(--rule);
 }
+.sc-reply-row { display: flex; gap: 8px; align-items: flex-end; padding-top: 8px; }
+.sc-reply textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 160px;
+  padding: 10px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  resize: none;
+}
+.sc-reply textarea::placeholder { color: var(--dim); }
 
+/* ---- the last message ---- */
+.md { margin-top: 6px; overflow-wrap: anywhere; }
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md-code,
+.md-table { margin: 0 0 8px; }
+.md h3,
+.md h4 { margin: 10px 0 4px; font-size: 13px; color: var(--title); }
+.md h3 { font-size: 15px; }
+.md ul,
+.md ol { padding-left: 20px; }
+.md li { margin: 2px 0; }
+.md li > p { margin: 0; }
+.md blockquote { margin-left: 0; padding-left: 10px; border-left: 2px solid var(--border); color: var(--dim); }
+.md hr { margin: 10px 0; border: 0; border-top: 1px solid var(--rule); }
+.md del { color: var(--dim); }
+.md-code { padding: 8px; background: var(--panel); border: 1px solid var(--rule); overflow-x: auto; white-space: pre; font: 12px/1.4 var(--mono); }
+.md-code code { padding: 0; background: none; color: inherit; }
+.md-table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 12px; }
+.md th,
+.md td { padding: 3px 8px; border: 1px solid var(--rule); text-align: left; vertical-align: top; }
+.md th { color: var(--title); }
+.md .md-center { text-align: center; }
+.md .md-right { text-align: right; }
 
-/* ---- screens (Story 10): new session ---- */
-.sc-form { display: flex; flex-direction: column; gap: 14px; }
+/* ---- new session and settings ---- */
+.sc-form { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
 .sc-field { display: flex; flex-direction: column; gap: 6px; }
-.sc-field > span:first-child { color: var(--dim); font-size: 0.85rem; }
+.sc-field > span:first-child { color: var(--dim); font-size: 12px; }
 .sc-form input[type="text"],
 .sc-form textarea,
 .sc-form select,
-.sc-sheet-body select {
-  font: inherit;
-  font-size: 16px; /* iOS zooms into smaller inputs */
+.sc-sheet-body select,
+.sc-quick-edit {
   color: var(--fg);
   background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 10px;
 }
-.sc-launch { border: 1px solid var(--rule); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
+.sc-launch { display: flex; flex-direction: column; gap: 12px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); }
 .sc-launch > summary { cursor: pointer; color: var(--dim); }
 .sc-launch > .sc-field { margin-top: 12px; }
-
-
-/* ---- screens (Story 10): settings ---- */
-.sc-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  border-bottom: 1px solid var(--rule);
-}
+.sc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--rule); }
 .sc-row input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent); }
-.sc-mono { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; color: var(--dim); overflow-wrap: anywhere; }
-.sc-notice { padding: 8px 0; border-bottom: 1px solid var(--rule); font-size: 0.9rem; overflow-wrap: anywhere; }
-.sc-section > .sc-block { margin-top: 14px; width: 100%; }
+.sc-notice { padding: 8px 0; border-bottom: 1px solid var(--rule); font-size: 12px; overflow-wrap: anywhere; }
+.sc-section > .sc-block { margin-top: 14px; }
+.sc-quick-edit { width: 100%; margin-top: 8px; resize: vertical; }
+.sc-buttons { display: flex; gap: 8px; margin-top: 10px; }
+.sc-buttons .sc-btn { flex: 1; }

@@ -233,15 +233,25 @@ func TestStatic_ManifestInstallsAStandaloneApp(t *testing.T) {
 	require.Equal(t, map[string]bool{"180x180": true, "192x192": true, "512x512": true}, sizes)
 }
 
-func TestStatic_StylesheetHasTheTokensInBothThemes(t *testing.T) {
-	css := string(staticAssets(t)["/app.css"].body)
-	dark := strings.Index(css, "@media (prefers-color-scheme: dark)")
-	require.Positive(t, dark, "app.css has no dark theme block")
-	light, darkBlock := css[:dark], css[dark:]
-	for _, token := range []string{"bg", "panel", "fg", "dim", "rule", "accent", "attention", "ok", "error", "workspace"} {
-		require.Contains(t, light, "--"+token+":", "light theme lacks --"+token)
-		require.Contains(t, darkBlock, "--"+token+":", "dark theme lacks --"+token)
+// The skin is dark only (spec 2026-10-23, "Decisions"): the stylesheet has no
+// light block, tells the browser so, and defines every token on :root; the
+// shell names one theme colour.
+func TestStatic_TheSkinIsDarkWithEveryToken(t *testing.T) {
+	assets := staticAssets(t)
+	css := string(assets["/app.css"].body)
+	require.NotContains(t, css, "prefers-color-scheme", "no light block")
+	start := strings.Index(css, ":root {")
+	require.GreaterOrEqual(t, start, 0, "app.css has no :root block")
+	root := css[start:]
+	root = root[:strings.Index(root, "}")]
+	require.Contains(t, root, "color-scheme: dark;")
+	for _, token := range []string{"bg", "panel", "fg", "title", "dim", "faint", "border", "rule", "accent", "attention", "ok", "error", "workspace", "selection", "mono"} {
+		require.Contains(t, root, "--"+token+":", ":root lacks --"+token)
 	}
+	index := string(assets["/index.html"].body)
+	require.Equal(t, 1, strings.Count(index, `name="theme-color"`), "one theme colour")
+	require.Contains(t, index, `<meta name="theme-color" content="#2e2e2e">`)
+	require.Contains(t, index, `<meta name="color-scheme" content="dark">`)
 }
 
 // staticInlineMarkup lists what the Content-Security-Policy would block in

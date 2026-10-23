@@ -24,6 +24,66 @@ function clock(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// replyLines is the editor's replies: one a line, blank lines dropped. The
+// daemon trims each and drops a duplicate after its first.
+export function replyLines(text) {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
+}
+
+// QuickReplies edits the list every paired phone offers above its reply box.
+// The box shows the stored list until the person types; Save sends the
+// lines, and Reset to defaults sends null. A refused list stays in the box,
+// and act shows the daemon's reason.
+function QuickReplies({ snap, stale, act }) {
+  const [draft, setDraft] = useState(null);
+  const [saved, setSaved] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  // A list from the stream (this phone's save, or another phone's) replaces
+  // the last answer.
+  useEffect(() => {
+    setSaved(null);
+  }, [snap && snap.quick_replies]);
+
+  const current = saved || snap.quick_replies || [];
+  const shown = draft === null ? current.join("\n") : draft;
+
+  async function save(replies) {
+    setBusy(true);
+    try {
+      const r = await act("PUT", "/api/v1/quick-replies", { replies });
+      if (r.ok && r.data && Array.isArray(r.data.quick_replies)) {
+        setSaved(r.data.quick_replies);
+        setDraft(null);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return html`
+    <section class="sc-section">
+      <h2 class="sc-group-title">Quick replies</h2>
+      <p class="sc-dim sc-small">One a line, at most 12. Every paired phone offers them above its reply box.</p>
+      <textarea
+        class="sc-quick-edit"
+        rows="6"
+        aria-label="Quick replies"
+        value=${shown}
+        disabled=${stale || busy}
+        onInput=${(e) => setDraft(e.target.value)}
+      ></textarea>
+      <div class="sc-buttons">
+        <button class="sc-btn" type="button" disabled=${stale || busy} onClick=${() => save(null)}>Reset to defaults</button>
+        <button class="sc-btn sc-primary" type="button" disabled=${stale || busy || draft === null} onClick=${() => save(replyLines(shown))}>Save</button>
+      </div>
+    </section>
+  `;
+}
+
 export function Settings({ snap, stale, act, toast }) {
   const [stored, setStored] = useState(null);
   const [sheet, setSheet] = useState(false);
@@ -65,7 +125,7 @@ export function Settings({ snap, stale, act, toast }) {
 
   return html`
     <section class="sc-screen">
-      <a class="sc-back" href="#">‹ Fleet</a>
+      <nav class="sc-topbar"><a class="sc-back" href="#">‹ fleet</a></nav>
       <h1 class="sc-h1 sc-wrap">Settings</h1>
 
       <section class="sc-section">
@@ -87,6 +147,8 @@ export function Settings({ snap, stale, act, toast }) {
             : html`<button class="sc-btn" type="button" disabled=${stale} onClick=${() => put({ pause: "1h" })}>Pause for an hour</button>`}
         </div>
       </section>
+
+      <${QuickReplies} snap=${snap} stale=${stale} act=${act} />
 
       <section class="sc-section">
         <h2 class="sc-group-title">This phone</h2>

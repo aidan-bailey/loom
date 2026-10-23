@@ -2281,17 +2281,27 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-attn-box { margin-top: 18px; padding: 14px 12px 12px; border-color: var(--attention-border); }
 .sc-attn-box .sc-legend { color: var(--attention); letter-spacing: 0.06em; text-transform: uppercase; }
 .sc-detail-box { margin: 8px 0 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--rule); font: 12px/1.4 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.sc-session .sc-tiles { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); margin-top: 18px; }
+.sc-session .sc-tiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); margin-top: 18px; }
 .sc-pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sc-agent { padding-top: 6px; }
 .sc-agent-desc { padding-left: 16px; font-size: 12px; color: var(--dim); }
-.sc-actions { display: flex; gap: 8px; margin-top: 16px; }
+.sc-actions { display: flex; gap: 8px; margin: 16px 0 20px; }
 .sc-actions .sc-btn { flex: 1; padding: 0 6px; }
+/* The session is a full-height column, so on a short page the reply box sits
+   at the bottom (margin-top: auto) and not under the actions; it reaches into
+   the shell's bottom inset, since it pads for the home indicator itself. */
+.sc-session {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  padding-bottom: 0;
+}
+.sc-session > .sc-h1 { flex: none; }
 .sc-reply {
   position: sticky;
   bottom: 0;
   z-index: 20;
-  margin: 20px -16px 0;
+  margin: auto -16px calc(-1 * env(safe-area-inset-bottom));
   padding: 0 12px calc(10px + env(safe-area-inset-bottom));
   background: var(--panel);
   border-top: 1px solid var(--rule);

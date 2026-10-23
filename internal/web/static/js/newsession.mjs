@@ -45,7 +45,8 @@ export function NewSession({ snap, stale, go, act, toast }) {
   const [ws, setWs] = useState(() => {
     const want = pref("filter") || "";
     const hit = workspaces.find((w) => String(w.id) === want);
-    return String(hit ? hit.id : workspaces.length > 0 ? workspaces[0].id : "");
+    const first = workspaces.find((w) => w.shown !== false) || workspaces[0];
+    return String(hit ? hit.id : first ? first.id : "");
   });
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -96,6 +97,9 @@ export function NewSession({ snap, stale, go, act, toast }) {
   if (!snap) return html`<section class="sc-screen"><p class="sc-dim">Loading…</p></section>`;
 
   const chosen = workspaces.find((w) => String(w.id) === ws);
+  const active = workspaces.filter((w) => w.shown !== false);
+  const others = workspaces.filter((w) => w.shown === false);
+  const option = (w) => html`<option key=${w.id} value=${String(w.id)}>${w.label || w.name}</option>`;
   const promptTooLong = utf8Len(prompt.trimEnd()) > MAX_PROMPT;
   const ready = !stale && !busy && defs && chosen && title.trim() !== "" && !promptTooLong;
   const set = (k) => (v) => setPicks((p) => ({ ...p, [k]: v }));
@@ -119,13 +123,16 @@ export function NewSession({ snap, stale, go, act, toast }) {
 
   return html`
     <section class="sc-screen">
-      <a class="sc-back" href="#">‹ Fleet</a>
+      <nav class="sc-topbar"><a class="sc-back" href="#">‹ fleet</a></nav>
       <h1 class="sc-h1 sc-wrap">New session</h1>
       <form class="sc-form" onSubmit=${(e) => { e.preventDefault(); if (ready) create(); }}>
         <label class="sc-field">
           <span>Workspace</span>
           <select value=${ws} onChange=${(e) => setWs(e.target.value)}>
-            ${workspaces.map((w) => html`<option key=${w.id} value=${String(w.id)}>${w.label || w.name}</option>`)}
+            ${others.length === 0
+              ? workspaces.map(option)
+              : html`<optgroup label="Active">${active.map(option)}</optgroup>
+                  <optgroup label="Other workspaces">${others.map(option)}</optgroup>`}
           </select>
         </label>
         <label class="sc-field">
