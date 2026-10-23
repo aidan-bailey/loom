@@ -186,6 +186,8 @@ order of rules; the first that matches decides.
 | any other `user` record | a turn from `you`: its text (a string, or its text blocks joined, an image block as `[image]`), `command` set when it is one line starting `/` and a letter |
 
 The origin rules come before the meta rule because a peer's record is meta.
+A line that is JSON of a shape the table doesn't name, and an empty line,
+add nothing and are not counted in `skipped`.
 A turn's text is kept to its first 16 KiB. A turn holds every record from
 its own to the next turn's.
 
@@ -218,9 +220,11 @@ A page holds, oldest first, the turns the query asks for.
 - **The newest page** (`before` and `after` both 0): reading backward from
   the end of the file as it was when the reader opened it.
 - **An earlier page** (`before` set): reading backward from that offset.
-- Reading stops once it holds 10 turns or 256 KiB of text (turn texts and
-  text items), at the start of the file, or after 16 MiB read, whichever
-  comes first. The page holds at least one turn, however large.
+- A turn joins the page while the page holds fewer than 10 turns and the
+  turn's text (its prompt and its text items) keeps the page within
+  256 KiB; the newest turn always joins, however large. Reading stops at
+  the first turn that does not join, at the start of the file, or after
+  16 MiB read.
 - **A refresh** (`after` set): the turns from the one at that offset to
   the end. It reads back from the end only as far as that offset, so a
   poll re-reads the turn in progress. Records at `after` that precede the
@@ -230,8 +234,11 @@ A page holds, oldest first, the turns the query asks for.
   text, its `id` the first line read, and `earlier` continues it.
 - `earlier` is the page's first turn's `id` when records lie before it,
   and 0 at the start of the file (no turn can start at 0 and have an
-  earlier page). An `after` of 0 means none: a turn starting at offset 0
-  refreshes as the newest page.
+  earlier page). A refresh's page has `earlier` 0 (`null` in JSON): the
+  caller keeps the cursor its earlier pages gave. An `after` of 0 means
+  none: a turn starting at offset 0 refreshes as the newest page.
+- A partial turn's `id` is the first line read, which is also the page's
+  `earlier`, so the page before ends exactly where it begins.
 - **Reset:** the reply is the newest page with `reset` set when
   `q.Conversation` is set and is not the transcript's (a `/clear` or a
   `/resume`), when `before` or `after` lies past the end of the file, or
@@ -378,6 +385,10 @@ type Hunk struct {
   504.
 - Each answer is logged like the message route's: device, action
   (`turns`, `diff`), session, result.
+- The layer stops tracking a read's request once its handler is done
+  (`reqs.drop`): a tracked request keeps its Reply for 15 minutes, which
+  for a diff is up to 1 MiB each, and a Reply arriving after the wait gave
+  up would reach the stream as a notice.
 - A text item crosses as its tree (`buildTree`): `blocks`, and `truncated`
   when either the reader's 64 KiB cut or the tree's limits cut it. The
   text itself is not sent. Every other string is drawn as text.
