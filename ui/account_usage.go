@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/core"
 )
 
 // AccountStatus is the render-ready view of one Claude account, shared by
@@ -22,9 +23,9 @@ type AccountStatus struct {
 	LoggedOut bool
 }
 
-// UsageStaleAfter is when a usage sample renders dimmed with its age: two
-// of app's 2-minute probe intervals.
-const UsageStaleAfter = 4 * time.Minute
+// UsageStaleAfter is when a usage sample renders dimmed with its age: the
+// model's bound (core.UsageStaleAfter), which the phone reads too.
+const UsageStaleAfter = core.UsageStaleAfter
 
 // AccountUsageText is the plain usage summary: "5h 12% · 7d 31%", plus
 // " · 9m ago" once stale; "logged out"; "n/a" when plan limits don't apply

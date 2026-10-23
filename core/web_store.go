@@ -49,6 +49,7 @@ type webState struct {
 	addr           string           // set by WebServing
 	servingErr     string           // set by WebServing; WebView.Error is loadErr when set, else this
 	now            func() time.Time // nil means time.Now; tests set it
+	quickReplies   []string         // the user's quick replies; nil while unset (the app offers DefaultQuickReplies)
 }
 
 // webDevice is a paired device. Its token is never kept, only the SHA-256
@@ -101,7 +102,7 @@ func (w *webState) leftAlone() error {
 
 // view is the state as a client sees it: no token hash, no subscription.
 func (w *webState) view() WebView {
-	v := WebView{Listen: w.listen, Origin: w.origin, Serving: w.serving, Addr: w.addr, Error: w.servingErr, Rev: w.rev}
+	v := WebView{Listen: w.listen, Origin: w.origin, Serving: w.serving, Addr: w.addr, Error: w.servingErr, Rev: w.rev, QuickReplies: slices.Clone(w.quickReplies)}
 	if w.loadErr != "" {
 		v.Error = w.loadErr
 	}
@@ -121,6 +122,8 @@ type webFile struct {
 	Origin  string          `json:"origin"`
 	VAPID   *webFileVAPID   `json:"vapid,omitempty"`
 	Devices []webFileDevice `json:"devices"`
+	// QuickReplies is left out while unset; an empty list is kept as [].
+	QuickReplies *[]string `json:"quick_replies,omitempty"`
 }
 
 // webFileVAPID is the key pair, each half as unpadded base64url.
@@ -245,6 +248,16 @@ func (w *webState) adopt(f webFile) error {
 		}
 		tokens[d.tokenHash] = true
 		w.devices = append(w.devices, d)
+	}
+	if f.QuickReplies != nil {
+		replies, err := NormalizeQuickReplies(*f.QuickReplies)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(replies, *f.QuickReplies) {
+			return errors.New("quick_replies: a reply has spaces around it or is listed twice")
+		}
+		w.quickReplies = replies
 	}
 	slices.SortFunc(w.devices, func(a, b *webDevice) int { return strings.Compare(a.name, b.name) })
 	return nil
@@ -379,6 +392,10 @@ func (m *Model) saveWeb() error {
 	}
 	for _, d := range w.devices {
 		f.Devices = append(f.Devices, d.file())
+	}
+	if w.quickReplies != nil {
+		replies := slices.Clone(w.quickReplies)
+		f.QuickReplies = &replies
 	}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {

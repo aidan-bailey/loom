@@ -10,10 +10,15 @@ import (
 )
 
 // usageInterval is the usage probes' cadence. Plan usage moves slowly and
-// the views dim a sample older than two intervals (ui.UsageStaleAfter);
-// the moments the user is choosing an account expedite a probe instead
+// the views dim a sample older than two intervals (UsageStaleAfter); the
+// moments the user is choosing an account expedite a probe instead
 // (RequestUsageProbe).
 const usageInterval = 2 * time.Minute
+
+// UsageStaleAfter is when a usage sample is old enough for a view to dim it
+// and show its age: two probe intervals, so one late probe dims nothing. The
+// TUI and the phone both read it.
+const UsageStaleAfter = 2 * usageInterval
 
 // usageTarget is one account to probe. dir is its config dir, "" for the
 // default account.

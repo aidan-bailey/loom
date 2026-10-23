@@ -15,7 +15,7 @@ func TestStateFor_UnknownWhenNoSnapshot(t *testing.T) {
 
 func TestStateFor_JoinsPRByBranchAndIssueByNumber(t *testing.T) {
 	snap := Snapshot{
-		PRs:    map[string]PR{"u/b": {Number: 45, State: PROpen, Review: ReviewApproved, Checks: ChecksPassing}},
+		PRs:    map[string]PR{"u/b": {Number: 45, State: PROpen, Review: ReviewApproved, Checks: ChecksPassing, URL: "https://github.com/o/r/pull/45"}},
 		Issues: map[int]Issue{12: {Number: 12, Title: "Fix it", Closed: true}},
 	}
 	s := StateFor(snap, true, "u/b", 12)
@@ -25,6 +25,7 @@ func TestStateFor_JoinsPRByBranchAndIssueByNumber(t *testing.T) {
 	assert.Equal(t, PROpen, s.PRState)
 	assert.Equal(t, ReviewApproved, s.Review)
 	assert.Equal(t, ChecksPassing, s.Checks)
+	assert.Equal(t, "https://github.com/o/r/pull/45", s.PRURL)
 	assert.Equal(t, 12, s.IssueNumber)
 	assert.Equal(t, "Fix it", s.IssueTitle)
 	assert.True(t, s.IssueClosed)

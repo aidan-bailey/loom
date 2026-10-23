@@ -54,6 +54,17 @@ func (l *Loop) SetPushSubscription(name string, sub PushSubscription) (dev WebDe
 	return dev, err
 }
 
+// SetQuickReplies runs Model.SetQuickReplies on the loop. After Stop it
+// answers ErrWebOff.
+func (l *Loop) SetQuickReplies(replies []string) (stored []string, err error) {
+	err = ErrWebOff
+	l.webCall(func(m *Model) bool {
+		stored, err = m.SetQuickReplies(replies)
+		return err == nil
+	})
+	return stored, err
+}
+
 // PushTargets runs Model.PushTargets on the loop.
 func (l *Loop) PushTargets() []PushTarget { return get(l, (*Model).PushTargets) }
 

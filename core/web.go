@@ -28,6 +28,9 @@ type WebView struct {
 	Error   string      // why it is not serving, or why web.json was left alone
 	Devices []WebDevice // sorted by Name; no token hashes
 	Rev     uint64      // bumped by every ConfigureWeb; the layer rebinds when it changes
+	// QuickReplies are the user's quick replies, nil while unset: the app
+	// then offers DefaultQuickReplies. An empty list is a list.
+	QuickReplies []string
 }
 
 // WebDevice is a paired device as a client sees it: its token hash and its
@@ -120,6 +123,51 @@ var (
 	ErrTooManyDevices = errors.New("pairing: 16 devices are paired; revoke one first")
 	ErrNoDevice       = errors.New("no device has that name")
 )
+
+// The bounds on the quick replies a user sets (NormalizeQuickReplies).
+const (
+	MaxQuickReplies  = 12
+	maxQuickReplyLen = 100 // characters
+)
+
+// ErrQuickReplies is what a refused quick-reply list wraps.
+var ErrQuickReplies = errors.New("quick replies")
+
+// DefaultQuickReplies are the quick replies the app offers while the user has
+// set none: a fresh slice each call, so no caller's edit reaches another.
+func DefaultQuickReplies() []string {
+	return []string{"yes", "continue", "/compact", "/clear"}
+}
+
+// NormalizeQuickReplies checks a quick-reply list and returns it as the model
+// keeps it: each reply trimmed, a duplicate after its first dropped. It
+// refuses, wrapping ErrQuickReplies, a reply that is empty, not valid UTF-8,
+// longer than maxQuickReplyLen characters or holding a control character (a
+// newline among them), and a list of more than MaxQuickReplies. An empty list
+// is a list: the app shows no chips.
+func NormalizeQuickReplies(replies []string) ([]string, error) {
+	out := make([]string, 0, len(replies))
+	for i, r := range replies {
+		r = strings.TrimSpace(r)
+		switch {
+		case r == "":
+			return nil, fmt.Errorf("%w: reply %d is empty", ErrQuickReplies, i+1)
+		case !utf8.ValidString(r):
+			return nil, fmt.Errorf("%w: reply %d is not valid UTF-8", ErrQuickReplies, i+1)
+		case utf8.RuneCountInString(r) > maxQuickReplyLen:
+			return nil, fmt.Errorf("%w: reply %d is longer than %d characters", ErrQuickReplies, i+1, maxQuickReplyLen)
+		case strings.IndexFunc(r, unicode.IsControl) >= 0:
+			return nil, fmt.Errorf("%w: reply %d holds a newline or another control character", ErrQuickReplies, i+1)
+		}
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	if len(out) > MaxQuickReplies {
+		return nil, fmt.Errorf("%w: %d replies; at most %d", ErrQuickReplies, len(out), MaxQuickReplies)
+	}
+	return out, nil
+}
 
 // noDeviceError is the error the model gives a name no device has. Both the
 // model and IsNoDevice build it, so the text one makes is the text the other

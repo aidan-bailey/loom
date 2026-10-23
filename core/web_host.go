@@ -40,6 +40,11 @@ type WebHost interface {
 	// SetPushSubscription validates sub (ValidatePushSubscription), stores it
 	// as the device's and sets PushOK; ErrNoDevice for an unknown name.
 	SetPushSubscription(name string, sub PushSubscription) (WebDevice, error)
+	// SetQuickReplies stores the quick replies every paired phone offers, or
+	// with nil goes back to DefaultQuickReplies, and returns the list as
+	// stored, nil when unset. A list NormalizeQuickReplies refuses wraps
+	// ErrQuickReplies.
+	SetQuickReplies(replies []string) ([]string, error)
 	// PushTargets are the devices with a subscription that isn't expired and
 	// passes ValidatePushSubscription.
 	PushTargets() []PushTarget
@@ -289,6 +294,33 @@ func (m *Model) SetPushSubscription(name string, sub PushSubscription) (WebDevic
 		return WebDevice{}, fmt.Errorf("push subscription: %w", err)
 	}
 	return webHostDeviceView(d), nil
+}
+
+// SetQuickReplies stores the user's quick replies, or with nil goes back to
+// the defaults (WebHost), and returns the list as stored, nil when unset. A
+// list NormalizeQuickReplies refuses changes nothing; so does a write that
+// fails. It works while the web is off, like RevokeDevice, and is refused
+// while web.json is left alone. Loop goroutine only.
+func (m *Model) SetQuickReplies(replies []string) ([]string, error) {
+	w := &m.web
+	if w.loadErr != "" {
+		return nil, w.leftAlone()
+	}
+	var next []string
+	if replies != nil {
+		got, err := NormalizeQuickReplies(replies)
+		if err != nil {
+			return nil, err
+		}
+		next = got
+	}
+	prev := w.quickReplies
+	w.quickReplies = next
+	if err := m.saveWeb(); err != nil {
+		w.quickReplies = prev
+		return nil, fmt.Errorf("save quick replies: %w", err)
+	}
+	return slices.Clone(next), nil
 }
 
 // PushTargets are the devices with a subscription that isn't expired, in

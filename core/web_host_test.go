@@ -898,6 +898,16 @@ func TestWebHostLoop_AChangeWakesTheClientAndReachesTheModelView(t *testing.T) {
 			want: func(t *testing.T, v WebView, _ []Event) { assert.False(t, webHostDevice(v, "iPhone").Notify.Waiting) },
 		},
 		{
+			name: "SetQuickReplies",
+			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
+				return func() {
+					_, err := l.SetQuickReplies([]string{"ship it"})
+					require.NoError(t, err)
+				}
+			},
+			want: func(t *testing.T, v WebView, _ []Event) { assert.Equal(t, []string{"ship it"}, v.QuickReplies) },
+		},
+		{
 			name: "SetPushSubscription",
 			prep: func(t *testing.T, l *Loop, clk *webHostClock) func() {
 				return func() {
@@ -987,6 +997,8 @@ func TestWebHostLoop_AfterStopNoCallSucceeds(t *testing.T) {
 	assert.Error(t, err)
 	_, err = l.SetPushSubscription("iPhone", webHostSub(t, "web.push.apple.com"))
 	assert.Error(t, err)
+	_, err = l.SetQuickReplies([]string{"yes"})
+	assert.ErrorIs(t, err, ErrWebOff, "a stopped loop stores no list")
 	_, err = l.VAPIDKey()
 	assert.Error(t, err, "and hands out no key")
 	_, ok := l.DeviceByToken(hash)

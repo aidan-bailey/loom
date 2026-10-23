@@ -68,6 +68,7 @@ func (v ModelView) Clone() ModelView {
 	v.Registry.Workspaces = slices.Clone(v.Registry.Workspaces)
 	v.Registry.Open = slices.Clone(v.Registry.Open)
 	v.Web.Devices = slices.Clone(v.Web.Devices)
+	v.Web.QuickReplies = slices.Clone(v.Web.QuickReplies)
 	return v
 }
 

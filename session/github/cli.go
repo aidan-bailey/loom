@@ -76,6 +76,7 @@ type rawPR struct {
 	IsDraft        bool         `json:"isDraft"`
 	ReviewDecision string       `json:"reviewDecision"`
 	Rollup         []rollupItem `json:"statusCheckRollup"`
+	URL            string       `json:"url"`
 }
 
 type rawIssue struct {
@@ -105,7 +106,7 @@ func (ri rawIssue) issue() Issue {
 // drop its cached snapshot rather than keep a stale one.
 func Query(ctx context.Context, repoDir string, linked []int, r internalexec.Executor) (Snapshot, error) {
 	out, err := gh(ctx, r, repoDir, "pr", "list", "--state", "all", "--limit", listLimit,
-		"--json", "number,headRefName,state,isDraft,reviewDecision,statusCheckRollup")
+		"--json", "number,headRefName,state,isDraft,reviewDecision,statusCheckRollup,url")
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -126,7 +127,7 @@ func Query(ctx context.Context, repoDir string, linked []int, r internalexec.Exe
 
 	snap := Snapshot{PRs: map[string]PR{}, Issues: map[int]Issue{}, FetchedAt: time.Now()}
 	for _, p := range prs {
-		pr := PR{Number: p.Number, State: foldPRState(p.State, p.IsDraft), Review: foldReview(p.ReviewDecision), Checks: foldChecks(p.Rollup)}
+		pr := PR{Number: p.Number, State: foldPRState(p.State, p.IsDraft), Review: foldReview(p.ReviewDecision), Checks: foldChecks(p.Rollup), URL: p.URL}
 		if cur, ok := snap.PRs[p.HeadRefName]; !ok || prOutranks(pr, cur) {
 			snap.PRs[p.HeadRefName] = pr
 		}

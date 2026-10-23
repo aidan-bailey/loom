@@ -43,9 +43,9 @@ func (s *scriptedExec) Output(c *exec.Cmd) ([]byte, error) {
 func (s *scriptedExec) CombinedOutput(c *exec.Cmd) ([]byte, error) { return s.Output(c) }
 
 const prListJSON = `[
- {"number":45,"headRefName":"u/b","state":"OPEN","isDraft":false,"reviewDecision":"APPROVED","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]},
- {"number":40,"headRefName":"u/b","state":"CLOSED","isDraft":false,"reviewDecision":"","statusCheckRollup":[]},
- {"number":46,"headRefName":"u/c","state":"OPEN","isDraft":true,"reviewDecision":"","statusCheckRollup":[{"status":"IN_PROGRESS"}]}
+ {"number":45,"headRefName":"u/b","state":"OPEN","isDraft":false,"reviewDecision":"APPROVED","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}],"url":"https://github.com/o/r/pull/45"},
+ {"number":40,"headRefName":"u/b","state":"CLOSED","isDraft":false,"reviewDecision":"","statusCheckRollup":[],"url":"https://github.com/o/r/pull/40"},
+ {"number":46,"headRefName":"u/c","state":"OPEN","isDraft":true,"reviewDecision":"","statusCheckRollup":[{"status":"IN_PROGRESS"}],"url":"https://github.com/o/r/pull/46"}
 ]`
 
 const issueListJSON = `[
@@ -66,6 +66,7 @@ func TestQuery_ParsesPRsAndIssues(t *testing.T) {
 	assert.Equal(t, PROpen, pr.State)
 	assert.Equal(t, ReviewApproved, pr.Review)
 	assert.Equal(t, ChecksPassing, pr.Checks)
+	assert.Equal(t, "https://github.com/o/r/pull/45", pr.URL, "the URL of the PR that won the branch")
 	assert.Equal(t, PRDraft, snap.PRs["u/c"].State)
 	assert.Equal(t, ChecksPending, snap.PRs["u/c"].Checks)
 
@@ -97,7 +98,7 @@ func TestQuery_PassesLoadBearingFlags(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ex.calls, 2)
 	assert.Contains(t, ex.calls[0], "pr list --state all --limit 200")
-	assert.Contains(t, ex.calls[0], "--json number,headRefName,state,isDraft,reviewDecision,statusCheckRollup")
+	assert.Contains(t, ex.calls[0], "--json number,headRefName,state,isDraft,reviewDecision,statusCheckRollup,url")
 	assert.Contains(t, ex.calls[1], "issue list --state open --limit 200")
 	assert.Contains(t, ex.calls[1], "--json number,title,state,url,labels")
 }

@@ -41,12 +41,14 @@ const (
 	ChecksFailing
 )
 
-// PR is one pull request keyed by its head branch in Snapshot.PRs.
+// PR is one pull request keyed by its head branch in Snapshot.PRs. URL is
+// its page on GitHub, as gh gives it.
 type PR struct {
 	Number int
 	State  PRState
 	Review Review
 	Checks Checks
+	URL    string
 }
 
 // Issue is one GitHub issue. Body is empty in list results and
@@ -95,12 +97,13 @@ type State struct {
 	IssueClosed bool
 	HasPR       bool
 	PRNumber    int
-	// PRState, Review and Checks are meaningless unless HasPR: they sit
-	// at their None zero values for a session with no PR, which is not
+	// PRState, Review, Checks and PRURL are meaningless unless HasPR: they
+	// sit at their None zero values for a session with no PR, which is not
 	// a state any real PR can be in. Always branch on HasPR first.
 	PRState PRState
 	Review  Review
 	Checks  Checks
+	PRURL   string
 }
 
 // StateFor joins snap onto one session: its PR by branch, its issue by
@@ -116,6 +119,7 @@ func StateFor(snap Snapshot, known bool, branch string, issue int) State {
 		s.PRState = pr.State
 		s.Review = pr.Review
 		s.Checks = pr.Checks
+		s.PRURL = pr.URL
 	}
 	if issue != 0 {
 		if is, ok := snap.Issues[issue]; ok {

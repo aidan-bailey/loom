@@ -278,11 +278,13 @@ func TestModelView_CloneKeepsEveryField(t *testing.T) {
 	m.SetRCAuth(session.RemoteControlAuth{State: session.RemoteControlAuthBlocked, Reason: "r"})
 	loadWebInto(t, m, webJSON)
 	m.web.rev = 3
+	m.web.quickReplies = []string{"yes", "/compact"}
 	v := m.modelView()
 	require.Equal(t, "b", v.Registry.LastUsed, "fixture: the view holds every field")
 	require.Len(t, v.Registry.Open, 2)
 	require.Len(t, v.Web.Devices, 2, "fixture: the view holds the devices")
 	require.EqualValues(t, 3, v.Web.Rev, "fixture: and the revision")
+	require.Equal(t, []string{"yes", "/compact"}, v.Web.QuickReplies, "fixture: and the quick replies")
 
 	c := v.Clone()
 	assert.Equal(t, v, c)
@@ -293,6 +295,8 @@ func TestModelView_CloneKeepsEveryField(t *testing.T) {
 	assert.Equal(t, "a", v.Registry.Workspaces[0].Name, "a deep copy")
 	c.Web.Devices[0].Name = "changed"
 	assert.Equal(t, "iPad", v.Web.Devices[0].Name, "a deep copy of the devices too")
+	c.Web.QuickReplies[0] = "changed"
+	assert.Equal(t, "yes", v.Web.QuickReplies[0], "a deep copy of the quick replies too")
 }
 
 // TestGitHubView_CloneKeepsEveryField: a replica hands out clones of the
