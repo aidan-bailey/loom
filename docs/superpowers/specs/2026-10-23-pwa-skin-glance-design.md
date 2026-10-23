@@ -82,8 +82,8 @@ route and event follows the checklist in `docs/claude/web-layer.md`.
 
 ### Daemon side
 
-- `session/github`: the PR query asks for `url` too; `PR` and `State` gain
-  `URL string`, and `StateFor` copies it.
+- `session/github`: the PR query asks for `url` too; `PR` gains `URL` and
+  `State` gains `PRURL`, which `StateFor` copies.
 - `core`:
   - `web.json` gains `quick_replies` (`[]string`, left out while unset).
     `webFileVersion` stays 1: an older build ignores the field, where a bump
@@ -231,22 +231,23 @@ running joins the header's second line.
   line, Save, and Reset to defaults (`replies: null`). It shows the stored
   list, or the defaults while unset. A refused list keeps the text in the
   box and shows the host's reason.
-- **New session:** the workspace picker lists the shown workspaces first,
-  then the others under "Other workspaces" (two `optgroup`s; one plain list
-  when every workspace is shown).
+- **New session:** the workspace picker lists the shown workspaces under
+  "Active", then the others under "Other workspaces" (two `optgroup`s; one
+  plain list when every workspace is shown).
 
 ## The message tree
 
 `GET /api/v1/sessions/{id}/message` answers
 `{"text": "...", "blocks": [...], "truncated": false}`.
 
-- `text` is the source the tree was built from: the session's
-  `last_message` as the projection holds it. The app uses the tree only
+- `text` is the source the tree was built from: the session's last message
+  as the web client's replica holds it. The app uses the tree only
   while `text` equals the `last_message` it holds, and fetches again when
   the stream changes the message. An unknown session is 404; a session with
   no last message gets `"text": ""` and `"blocks": []`.
 - **Parsing:** goldmark with GitHub-flavoured markdown (tables,
-  strikethrough, linkify). Raw HTML, inline or as a block, becomes a `text`
+  strikethrough, linkify); a line break inside a paragraph is kept as a
+  `br`, as Claude's terminal shows it. Raw HTML, inline or as a block, becomes a `text`
   node of its source; an image becomes its alt text; a link keeps its
   `href` only when it is an absolute `http` or `https` URL, and is otherwise
   its text.
@@ -268,7 +269,8 @@ running joins the header's second line.
 ## Quick replies
 
 - `PUT /api/v1/quick-replies` takes `{"replies": [...]}`, or
-  `{"replies": null}` for the defaults. The host trims each entry, drops a
+  `{"replies": null}` for the defaults (a body without `replies` is the
+  same). The host trims each entry, drops a
   duplicate after its first, and refuses (400 with its text) an entry that
   is empty, longer than 100 characters (runes), or holds a newline or another
   control character, and a list of more than 12. An empty list is allowed
@@ -283,7 +285,8 @@ running joins the header's second line.
 ## Usage
 
 - The snapshot's `usage` is `[{"account", "plan", "five_hour", "seven_day",
-  "at"}]`, the default account first, then by name. A window is
+  "at"}]`, in the registry's order, the default account (`default`)
+  first, as the TUI lists them. A window is
   `{"pct", "resets_at"}`, or `null` when the server gave none; `resets_at`
   and `at` are RFC 3339 times, and `resets_at` is `""` when the server gave
   no reset (the app then shows no time). An account whose sample isn't
