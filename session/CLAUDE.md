@@ -14,6 +14,7 @@ The core domain: `Instance` and its lifecycle in a git worktree and a tmux sessi
 - **Set and read launch fields only through their accessors (`SetLaunchOptions`, `SetProgram`, `Program()`, …), and read the private fields in `session` code that already holds `i.mu`.** The accessors lock `i.mu`, which is not reentrant. **Convention** — a data race on direct assignment, a self-deadlock on an accessor under the lock.
 - **Keep `FromInstanceData` a pure constructor, and attach no PTY anywhere in `session`.** Restoring a record must spawn nothing, and the TUI's pane clients own every attach; `inst.EnsureRunning()` only marks a running session as started. **Enforced** by `TestFromInstanceData_NoPTY_ForRunning`.
 - **Treat `Recoverable` like Paused in every per-instance loop.** It is an orphaned worktree surfaced for recover or discard, re-derived at each load and never persisted, and `EnsureRunning` no-ops on it. **Convention** — a loop that drives a PTY or git in a worktree no record owns.
+- **Read a patch for one client (`Instance.ReadPatch`) without touching the cached diff stats.** `InstanceView.Diff` carries what `setDiffStats` holds to every client on each views event, so caching a requester's full patch would send it to every TUI and stop the tick's own refresh from looking needed. **Enforced** by `TestReadPatch_LeavesTheCachedDiffAlone`.
 
 ### Worktrees, starts and stashes
 

@@ -22,6 +22,10 @@ Git worktree operations: each session's worktree under `<configDir>/worktrees/` 
 - **Have `StashListed` fail, never answer "not listed", when the list can't be read.** Callers forget a stash that isn't listed, and a misread forgets the only copy of work. **Enforced** by `TestStashListed_LookupFailureIsNeverAbsence` and `TestStashListed_ListFailureIsAnError`.
 - **Return `ErrStashNotDropped` from `ApplyStash` when the apply worked but the drop didn't.** The caller clears the reference and reports the leftover entry as a notice instead of failing the resume. **Enforced** by `TestApplyStash_DropFailureIsReported`.
 
+### Patches
+
+- **Parse only `Patch`'s output (`SplitPatch`), never `Diff`'s.** `Diff` folds stderr into its text and runs under the user's diff config, so a warning, `color.diff=always`, `diff.noprefix` or `diff.external` changes what a parser reads, silently; `Patch` reads stdout alone with colour, external drivers and the `a/` `b/` prefixes pinned. **Enforced** by `TestPatch_TheUsersDiffConfigChangesNothing`.
+
 ### Branches and sidecars
 
 - **Write the `.loom-title` sidecar beside the worktree directory, never inside it, and remove it in `Cleanup`.** Inside, it would pollute `git status`; orphan discovery needs it to recover the exact title and tmux session name, since branch-derived titles are lossy. **Enforced** by `TestWorktreeTitleSidecarPath` and `TestSetup_WritesTitleSidecar`.
