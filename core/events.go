@@ -2,7 +2,10 @@ package core
 
 import (
 	"fmt"
+
+	"github.com/aidan-bailey/loom/session/git"
 	"github.com/aidan-bailey/loom/session/github"
+	"github.com/aidan-bailey/loom/session/transcript"
 )
 
 // Event is something the TUI must apply to its view after a model call.
@@ -190,15 +193,17 @@ func (ViewsChanged) coreEvent() {}
 // refused, when it finishes for a long operation. ID names the instance it
 // concerns (for Create the new one, for Recover the adopted one). Err is
 // the failure. Notice is what a success must still show (a stash it could
-// not drop). Issue is FetchIssue's result. The notices the TUI shows for an
-// operation are emitted as usual; the Reply is for the requester that waits
-// on it.
+// not drop). Issue is FetchIssue's result, Turns ReadTurns' page and Diff
+// ReadDiff's patch. The notices the TUI shows for an operation are emitted
+// as usual; the Reply is for the requester that waits on it.
 type Reply struct {
 	Req    ReqID
 	ID     InstanceID
 	Err    error
 	Notice error
 	Issue  github.Issue
+	Turns  transcript.Page
+	Diff   git.Patch
 }
 
 func (Reply) coreEvent() {}

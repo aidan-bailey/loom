@@ -11,6 +11,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
+	"github.com/aidan-bailey/loom/session/transcript"
 )
 
 // WorkspacesParams are Workspaces's parameters on the wire.
@@ -302,6 +303,27 @@ type FetchIssueParams struct {
 
 // FetchIssueResult is FetchIssue's result on the wire; an error travels in the reply.
 type FetchIssueResult struct {
+}
+
+// ReadTurnsParams are ReadTurns's parameters on the wire.
+type ReadTurnsParams struct {
+	ID    core.InstanceID  `json:"id"`
+	Query transcript.Query `json:"query"`
+	Req   core.ReqID       `json:"req"`
+}
+
+// ReadTurnsResult is ReadTurns's result on the wire; an error travels in the reply.
+type ReadTurnsResult struct {
+}
+
+// ReadDiffParams are ReadDiff's parameters on the wire.
+type ReadDiffParams struct {
+	ID  core.InstanceID `json:"id"`
+	Req core.ReqID      `json:"req"`
+}
+
+// ReadDiffResult is ReadDiff's result on the wire; an error travels in the reply.
+type ReadDiffResult struct {
 }
 
 // SetSelectedParams are SetSelected's parameters on the wire.
@@ -653,6 +675,8 @@ var methods = []methodInfo{
 	{Name: "SendPrompt", Kind: kindRequest, Params: SendPromptParams{}, Result: SendPromptResult{}},
 	{Name: "Send", Kind: kindRequest, Params: SendParams{}, Result: SendResult{}},
 	{Name: "FetchIssue", Kind: kindRequest, Params: FetchIssueParams{}, Result: FetchIssueResult{}},
+	{Name: "ReadTurns", Kind: kindRequest, Params: ReadTurnsParams{}, Result: ReadTurnsResult{}},
+	{Name: "ReadDiff", Kind: kindRequest, Params: ReadDiffParams{}, Result: ReadDiffResult{}},
 	{Name: "SetSelected", Kind: kindCast, Params: SetSelectedParams{}, Result: SetSelectedResult{}},
 	{Name: "MarkOutput", Kind: kindCast, Params: MarkOutputParams{}, Result: MarkOutputResult{}},
 	{Name: "PaneOutput", Kind: kindCast, Params: PaneOutputParams{}, Result: PaneOutputResult{}},
@@ -930,6 +954,26 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.FetchIssue(p.Repo, p.Number, p.Req)
 		return FetchIssueResult{}, nil, true
+	case "ReadTurns":
+		var p ReadTurnsParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadTurns(p.ID, p.Query, p.Req)
+		return ReadTurnsResult{}, nil, true
+	case "ReadDiff":
+		var p ReadDiffParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.ReadDiff(p.ID, p.Req)
+		return ReadDiffResult{}, nil, true
 	case "SetSelected":
 		var p SetSelectedParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1344,6 +1388,18 @@ func (c *Client) Send(id core.InstanceID, msg core.Message, req core.ReqID) {
 func (c *Client) FetchIssue(repo string, number int, req core.ReqID) {
 	var r FetchIssueResult
 	c.noteRefused(c.requestNoErr("FetchIssue", FetchIssueParams{Repo: repo, Number: number, Req: req}, &r), req)
+}
+
+// ReadTurns is core.Core's ReadTurns (request).
+func (c *Client) ReadTurns(id core.InstanceID, query transcript.Query, req core.ReqID) {
+	var r ReadTurnsResult
+	c.noteRefused(c.requestNoErr("ReadTurns", ReadTurnsParams{ID: id, Query: query, Req: req}, &r), req)
+}
+
+// ReadDiff is core.Core's ReadDiff (request).
+func (c *Client) ReadDiff(id core.InstanceID, req core.ReqID) {
+	var r ReadDiffResult
+	c.noteRefused(c.requestNoErr("ReadDiff", ReadDiffParams{ID: id, Req: req}, &r), req)
 }
 
 // SetSelected is core.Core's SetSelected (cast).

@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
+	"github.com/aidan-bailey/loom/session/transcript"
 )
 
 // The Core methods of Loop: each runs its namesake on the model, on the
@@ -91,6 +92,10 @@ func (l *Loop) Send(id InstanceID, msg Message, req ReqID) {
 func (l *Loop) FetchIssue(repo string, n int, req ReqID) {
 	l.do(func(m *Model) { m.FetchIssue(repo, n, req) })
 }
+func (l *Loop) ReadTurns(id InstanceID, query transcript.Query, req ReqID) {
+	l.do(func(m *Model) { m.ReadTurns(id, query, req) })
+}
+func (l *Loop) ReadDiff(id InstanceID, req ReqID) { l.do(func(m *Model) { m.ReadDiff(id, req) }) }
 
 func (l *Loop) SetSelected(id InstanceID)     { l.do(func(m *Model) { m.SetSelected(id) }) }
 func (l *Loop) MarkOutput(sessionName string) { l.do(func(m *Model) { m.MarkOutput(sessionName) }) }

@@ -14,6 +14,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session/claudemod"
 	"github.com/aidan-bailey/loom/session/tmux"
+	"github.com/aidan-bailey/loom/session/transcript"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,6 +31,7 @@ type queueHost struct {
 	msgs     []core.ModMessage
 	wake     chan struct{}
 	events   []core.ModEvent
+	session  string // the hello's Claude session ID
 }
 
 func (h *queueHost) ModHello(launch string, hello core.ModHello) error {
@@ -40,6 +42,7 @@ func (h *queueHost) ModHello(launch string, hello core.ModHello) error {
 	defer h.mu.Unlock()
 	h.hello = true
 	h.commands = hello.Commands
+	h.session = hello.Session
 	return nil
 }
 
@@ -98,6 +101,19 @@ func (h *queueHost) helloed() bool {
 }
 
 func (h *queueHost) queue(id, text string) { h.add(core.ModMessage{ID: id, Text: text}) }
+
+// queueAsUser queues text as the person's own words, as the model hands
+// the phone's replies to the mod.
+func (h *queueHost) queueAsUser(id, text string) {
+	h.add(core.ModMessage{ID: id, Text: text, AsUser: true})
+}
+
+// sessionID is the Claude session the hello named.
+func (h *queueHost) sessionID() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.session
+}
 
 // queueCommand queues the slash command name with args, as the model hands
 // one to the mod.
@@ -249,7 +265,7 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 	}
 	waitFor("the mod's hello", 60*time.Second, host.helloed)
 
-	host.queue("m1", "Reply with exactly the word PONG.")
+	host.queueAsUser("m1", "Reply with exactly the word PONG.")
 	waitFor("m1's answer", 90*time.Second, func() bool {
 		ev, ok := host.event("complete", "m1")
 		return ok && strings.Contains(ev.Text, "PONG")
@@ -291,6 +307,33 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 	waitFor("c2's failure", 30*time.Second, func() bool { _, ok := host.event("failed", "c2"); return ok })
 	failed, _ := host.event("failed", "c2")
 	require.Contains(t, failed.Error, "no command named /nosuchcmd")
+
+	// The transcript reads both messages back under their origins: m1 as
+	// the person's own words, as the phone's replies go, and m2 under the
+	// plugin's name, as a CLI send goes. No census transcript held a
+	// plugin's prompt, so this pins the shape the conversation screen
+	// labels.
+	config := claudeConfigDir
+	if config == "" {
+		home, err := os.UserHomeDir()
+		require.NoError(t, err)
+		config = filepath.Join(home, ".claude")
+	}
+	paths, err := filepath.Glob(filepath.Join(config, "projects", "*", host.sessionID()+".jsonl"))
+	require.NoError(t, err)
+	require.Len(t, paths, 1, "the transcript of session %s", host.sessionID())
+	page, err := transcript.Read(paths[0], host.sessionID(), transcript.Query{})
+	require.NoError(t, err)
+	from := map[string]string{}
+	for _, turn := range page.Turns {
+		switch {
+		case strings.Contains(turn.Text, "PONG"):
+			from["m1"] = turn.From + ":" + turn.Name
+		case strings.Contains(turn.Text, "QUEUED"):
+			from["m2"] = turn.From + ":" + turn.Name
+		}
+	}
+	require.Equal(t, map[string]string{"m1": transcript.FromYou + ":", "m2": transcript.FromPlugin + ":loom"}, from)
 
 	t.Log(host.said())
 }

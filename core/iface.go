@@ -6,6 +6,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
+	"github.com/aidan-bailey/loom/session/transcript"
 )
 
 // Core is the session model as its clients use it: every method the TUI
@@ -78,6 +79,11 @@ type Core interface {
 	SendPrompt(id InstanceID, text string, req ReqID)
 	Send(id InstanceID, msg Message, req ReqID)
 	FetchIssue(repo string, number int, req ReqID)
+	// A session's conversation and its worktree's diff, read for the
+	// client that asks: the Reply's Turns (transcript.Read) and Diff
+	// (Instance.ReadPatch).
+	ReadTurns(id InstanceID, query transcript.Query, req ReqID)
+	ReadDiff(id InstanceID, req ReqID)
 
 	// Claude status and the tick: what the TUI's pane events tell the
 	// model, and the selected row the model's health tick favours.

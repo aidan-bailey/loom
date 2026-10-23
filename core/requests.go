@@ -80,6 +80,10 @@ func (m *Model) deliverTracked(t tracked) {
 		}
 	case issueResult:
 		r.Issue = res.issue
+	case turnsResult:
+		r.Turns = res.page
+	case diffResult:
+		r.Diff = res.patch
 	}
 	m.emit(r)
 }
@@ -102,6 +106,10 @@ func outcome(result any) (err, notice error) {
 	case promptFailed:
 		return r.err, nil
 	case issueResult:
+		return r.err, nil
+	case turnsResult:
+		return r.err, nil
+	case diffResult:
 		return r.err, nil
 	case resumeSkipped:
 		return r.err, nil
@@ -139,6 +147,8 @@ const (
 	opMergeInto requestOp = "merge into"
 	opMergeFrom requestOp = "merge from"
 	opSend      requestOp = "send a prompt to"
+	opReadTurns requestOp = "read the conversation of"
+	opReadDiff  requestOp = "read the diff of"
 )
 
 // precondition checks inst against the gate the TUI puts on op today, and
@@ -166,6 +176,12 @@ const (
 //     not Paused. Liveness is a tmux subprocess, which the model's
 //     goroutine must not run: a send to a dead session fails in its job
 //     and replies with that error.
+//   - read the conversation and read the diff: no key reads them, so their
+//     gates are the model's own. A conversation is read for a Claude session
+//     that is not a workspace terminal; a diff for a started worktree session
+//     neither busy nor Paused or Recoverable, whose tree may be gutted (an
+//     older loom's pause removed it), where git answers for the enclosing
+//     repository.
 func precondition(op requestOp, inst *session.Instance) error {
 	st := inst.GetStatus()
 	why := ""
@@ -201,6 +217,24 @@ func precondition(op requestOp, inst *session.Instance) error {
 			why = "the session has not started"
 		case st == session.Paused:
 			why = "the session is paused"
+		}
+	case opReadTurns:
+		switch {
+		case inst.IsWorkspaceTerminal:
+			why = "not allowed on a workspace terminal"
+		case !session.IsClaudeProgram(inst.Program()):
+			why = "the session does not run Claude"
+		}
+	case opReadDiff:
+		switch {
+		case inst.IsWorkspaceTerminal:
+			why = "not allowed on a workspace terminal"
+		case st == session.Loading || st == session.Deleting:
+			why = fmt.Sprintf("the session is busy (%s)", st)
+		case st == session.Paused || st == session.Recoverable:
+			why = fmt.Sprintf("the session is not running (%s)", st)
+		case !inst.Started():
+			why = "the session has not started"
 		}
 	default:
 		why = "unknown request"

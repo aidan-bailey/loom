@@ -81,7 +81,7 @@ older peer sees as its message) and `mismatch` (a refused hello). Examples, a `N
 
 `{"event":"Notice","data":{"Err":{"code":"not_found","message":"no such session"}}}`
 
-`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false}}}`
+`{"event":"Reply","data":{"Req":2,"ID":3,"Err":{"code":"error","message":"kill x: worktree locked"},"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null}}}`
 
 ## Methods
 
@@ -256,6 +256,18 @@ Result: `{}`
 ### FetchIssue (request)
 
 Params: `{"repo":"","number":0,"req":0}`
+
+Result: `{}`
+
+### ReadTurns (request)
+
+Params: `{"id":0,"query":{"Conversation":"","Before":0,"After":0},"req":0}`
+
+Result: `{}`
+
+### ReadDiff (request)
+
+Params: `{"id":0,"req":0}`
 
 Result: `{}`
 
@@ -511,7 +523,7 @@ Result: `{}`
 
 ### Reply
 
-`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false}}`
+`{"Req":0,"ID":0,"Issue":{"Number":0,"Title":"","Body":"","URL":"","Labels":null,"Closed":false},"Turns":{"Conversation":"","Turns":null,"Earlier":0,"Reset":false,"Skipped":0},"Diff":{"Base":"","Files":null}}`
 
 ### SessionLaunched
 

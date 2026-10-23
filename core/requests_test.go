@@ -10,6 +10,7 @@ import (
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
+	"github.com/aidan-bailey/loom/session/transcript"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -289,6 +290,15 @@ func runningTerminal(t *testing.T, title string) *session.Instance {
 	return inst
 }
 
+// programInst builds a started, Running session of program.
+func programInst(t *testing.T, title, program string) *session.Instance {
+	t.Helper()
+	inst, err := session.FromInstanceData(session.InstanceData{Title: title, Status: session.Paused, Program: program}, t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, inst.TransitionTo(session.Running))
+	return inst
+}
+
 // TestRequests_RefuseWhatTheTUIRefuses: each ID request refuses, before it
 // changes anything, what the TUI's gate for the same action refuses
 // (precondition), with a Reply naming the operation, the session and why.
@@ -333,6 +343,15 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"send through the mod to an unstarted session", func(f fixture) { f.m.Send(f.id["new"], Message{Text: "hi", Origin: OriginCLI}, 1) }, "send a prompt to new: the session has not started"},
 		{"send through the mod to a paused session", func(f fixture) { f.m.Send(f.id["paused"], Message{Text: "hi", Origin: OriginCLI}, 1) }, "send a prompt to paused: the session is paused"},
 		{"send through the mod to a loading session", func(f fixture) { f.m.Send(f.id["loading"], Message{Text: "hi", Origin: OriginScript}, 1) }, "send a prompt to loading: the session is busy (starting, resuming or pausing): send again once it runs"},
+		// The reads have no key in the TUI; their gates are the model's own.
+		{"read the conversation of a terminal", func(f fixture) { f.m.ReadTurns(f.id["term"], transcript.Query{}, 1) }, "read the conversation of term: not allowed on a workspace terminal"},
+		{"read the conversation of another agent", func(f fixture) { f.m.ReadTurns(f.id["aider"], transcript.Query{}, 1) }, "read the conversation of aider: the session does not run Claude"},
+		{"read the diff of a terminal", func(f fixture) { f.m.ReadDiff(f.id["term"], 1) }, "read the diff of term: not allowed on a workspace terminal"},
+		{"read the diff of a loading session", func(f fixture) { f.m.ReadDiff(f.id["loading"], 1) }, "read the diff of loading: the session is busy (Loading)"},
+		{"read the diff of a deleting session", func(f fixture) { f.m.ReadDiff(f.id["deleting"], 1) }, "read the diff of deleting: the session is busy (Deleting)"},
+		{"read the diff of a paused session", func(f fixture) { f.m.ReadDiff(f.id["paused"], 1) }, "read the diff of paused: the session is not running (Paused)"},
+		{"read the diff of a recoverable session", func(f fixture) { f.m.ReadDiff(f.id["orphan"], 1) }, "read the diff of orphan: the session is not running (Recoverable)"},
+		{"read the diff of an unstarted session", func(f fixture) { f.m.ReadDiff(f.id["new"], 1) }, "read the diff of new: the session has not started"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewForTest(Options{})
@@ -346,6 +365,7 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 				"deleting":   statusInst(t, "deleting", session.Deleting),
 				"orphan":     statusInst(t, "orphan", session.Recoverable),
 				"new":        newInst(t, "new"),
+				"aider":      programInst(t, "aider", "aider"),
 			}
 			before := map[string]session.Status{}
 			programs := map[string]string{}

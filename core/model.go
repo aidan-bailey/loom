@@ -473,7 +473,7 @@ func (m *Model) Deliver(msg any) {
 		m.deliverTracked(msg)
 	case resetResult:
 		m.deliverReset(msg)
-	case issueResult:
+	case issueResult, turnsResult, diffResult:
 		// Only its Reply carries it (deliverTracked).
 	default:
 		log.For("core").Error("deliver.unknown_result", "type", fmt.Sprintf("%T", msg))
