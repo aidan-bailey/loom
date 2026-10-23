@@ -1,6 +1,6 @@
 # session
 
-The core domain: `Instance` and its lifecycle in a git worktree and a tmux session, storage and schema, reconcile and orphans, resume decisions, Claude status, hooks, temp-dir archiving and the launch environment, plus the sub-packages `agent`, `claudetmp`, `files`, `github`, `hooks`, `launch` and `subagent`. Full reference in [`README.md`](README.md).
+The core domain: `Instance` and its lifecycle in a git worktree and a tmux session, storage and schema, reconcile and orphans, resume decisions, Claude status, hooks, temp-dir archiving and the launch environment, plus the sub-packages `agent`, `claudetmp`, `files`, `github`, `hooks`, `launch`, `subagent` and `transcript`. Full reference in [`README.md`](README.md).
 
 ## Rules when modifying this package
 
@@ -56,7 +56,7 @@ The core domain: `Instance` and its lifecycle in a git worktree and a tmux sessi
 - **Keep `SlugTitle` to lowercase ASCII alphanumerics.** Its output becomes a git branch name, so a fully non-ASCII title yields a bare `gh-<n>`. **Enforced** by `TestSlugTitle`.
 - **Keep `session/launch` a leaf that imports only `config` and `session`.** The model's workspace-terminal auto-create composes a launch program through it, and `core` must import no UI. **Convention** — an import that drags `ui/` into the daemon (`TestCoreImportsNoUI` catches a UI import, not other growth). Changing an option: [`../docs/claude/launch-options.md`](../docs/claude/launch-options.md)
 - **Keep `tmux.RenameLegacySessions` in `Storage.LoadAndReconcile`, before per-record reconcile.** Every load path runs it there, so live `claudesquad_` sessions keep their panes under `loom_`; a reconcile that ran first would find them dead. **Convention** for the placement; `TestRenameLegacySessions_ExactTarget` pins only the rename's exact targeting.
-- **Keep `session/github`, `session/hooks`, `session/subagent` and `session/claudetmp` free of tmux, UI and app imports.** They are pure readers with injected executors, testable without a terminal. **Convention** — a cycle or a test that needs tmux.
+- **Keep `session/github`, `session/hooks`, `session/subagent`, `session/claudetmp` and `session/transcript` free of tmux, UI and app imports.** They are pure readers with injected executors, testable without a terminal. **Convention** — a cycle or a test that needs tmux.
 
 ## Pointers
 

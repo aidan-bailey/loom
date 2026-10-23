@@ -145,7 +145,7 @@ func ParseEvent(data []byte) (Event, error) {
 		if len(w.ToolInput) > 0 {
 			ev.ToolSummary = toolSummary(w.ToolName, w.ToolInput)
 		} else {
-			ev.ToolSummary = capSummary(w.ToolSummary)
+			ev.ToolSummary = CapSummary(w.ToolSummary)
 		}
 	case EventNotification:
 		ev.NotificationType, ev.Message = w.NotificationType, capText(w.Message)
@@ -241,14 +241,14 @@ func toolSummary(tool string, input json.RawMessage) string {
 	if err := json.Unmarshal(fields[key], &s); err != nil {
 		return ""
 	}
-	return capSummary(s)
+	return CapSummary(s)
 }
 
-// capSummary reduces s to its first line that has any text, trimmed, and
+// CapSummary reduces s to its first line that has any text, trimmed, and
 // cuts that to MaxToolSummaryRunes characters, ending in "…" when it cut.
 // It is idempotent, which ParseEvent relies on when it reads a compact
-// event's tool_summary back.
-func capSummary(s string) string {
+// event's tool_summary back; a transcript's step summaries use it too.
+func CapSummary(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
 		s = strings.TrimSpace(s[:i])
