@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
@@ -509,7 +510,7 @@ func TestStream_SendsTheWorkspacesWhenTheyChange(t *testing.T) {
 			toy = w
 		}
 	}
-	assert.Equal(t, workspaceJSON{ID: e.ws, Name: "renamed", Label: "renamed"}, toy, "the ID stays")
+	assert.Equal(t, workspaceJSON{ID: e.ws, Name: "renamed", Label: "renamed", Shown: true}, toy, "the ID stays, and with no tab open it is shown")
 	s.none(100 * time.Millisecond) // its sessions did not change
 }
 
@@ -1089,4 +1090,72 @@ func TestHub_AnEndedHubQueuesNothingFromFlush(t *testing.T) {
 	defer h.mu.Unlock()
 	assert.Empty(t, sub.out, "nothing is queued")
 	assert.Equal(t, before, h.pubWorkspaces, "nothing is recorded as published")
+}
+
+func TestStream_TheSnapshotCarriesTheUsageAndTheQuickReplies(t *testing.T) {
+	e := newStreamEnv(t, streamSession{title: "one", status: session.Running})
+	s := e.open(t, e.cookie)
+
+	snap := unframe[snapshotJSON](t, s.expect("snapshot"))
+
+	assert.Equal(t, core.DefaultQuickReplies(), snap.QuickReplies, "unset: the defaults")
+	assert.NotNil(t, snap.Usage)
+	assert.Empty(t, snap.Usage, "no account besides default: no probe, no usage")
+	assert.Equal(t, int(core.UsageStaleAfter/time.Second), snap.UsageStaleAfterS)
+}
+
+func TestStream_SendsTheQuickRepliesWhenTheyChange(t *testing.T) {
+	e := newStreamEnv(t, streamSession{title: "one", status: session.Running})
+	s := e.open(t, e.cookie)
+	s.expect("snapshot")
+
+	_, err := e.loop.SetQuickReplies([]string{"ship it", "/compact"})
+	require.NoError(t, err)
+	got := unframe[quickRepliesJSON](t, s.expect("quick_replies"))
+	assert.Equal(t, []string{"ship it", "/compact"}, got.QuickReplies)
+
+	_, err = e.loop.SetQuickReplies([]string{})
+	require.NoError(t, err)
+	f := s.expect("quick_replies")
+	assert.JSONEq(t, `{"quick_replies": []}`, string(f.Data), "no chips is an empty list, never null")
+	s.none(100 * time.Millisecond)
+}
+
+func TestStream_SendsTheUsageWhenItChanges(t *testing.T) {
+	e := newStreamEnv(t, streamSession{title: "one", status: session.Running})
+	s := e.open(t, e.cookie)
+	s.expect("snapshot")
+	view := core.AccountsView{
+		Names: core.AccountNames{Present: true, Default: "default", Names: []string{"default"}},
+		Usage: map[string]account.Usage{"default": {Available: true, Plan: "max", FiveHour: &account.Window{Pct: 62}, At: time.Now()}},
+	}
+
+	e.layer.hub.apply([]core.Event{core.AccountsChanged{View: view}})
+
+	got := unframe[usageEventJSON](t, s.expect("usage"))
+	require.Len(t, got.Usage, 1)
+	assert.Equal(t, "default", got.Usage[0].Account)
+	require.NotNil(t, got.Usage[0].FiveHour)
+	assert.Equal(t, 62.0, got.Usage[0].FiveHour.Pct)
+
+	e.layer.hub.apply([]core.Event{core.AccountsChanged{View: view}})
+	s.none(100 * time.Millisecond) // the same usage again sends nothing
+}
+
+func TestStream_TheWorkspacesFollowTheOpenTabs(t *testing.T) {
+	e := newStreamEnv(t, streamSession{title: "one", status: session.Paused})
+	s := e.open(t, e.cookie)
+	snap := unframe[snapshotJSON](t, s.expect("snapshot"))
+	for _, w := range snap.Workspaces {
+		assert.True(t, w.Shown, "no tab open: %q is shown", w.Label)
+	}
+
+	e.tui.PersistOpenList([]string{"toy"})
+
+	ws := unframe[workspacesJSON](t, s.expect("workspaces"))
+	require.NotEmpty(t, ws.Workspaces)
+	assert.Equal(t, workspaceJSON{ID: e.ws, Name: "toy", Label: "toy", Shown: true}, ws.Workspaces[0], "the tab first, shown with only a paused session")
+	for _, w := range ws.Workspaces[1:] {
+		assert.False(t, w.Shown, "%q is no tab and has no live session", w.Label)
+	}
 }

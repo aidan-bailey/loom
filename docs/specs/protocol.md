@@ -191,7 +191,7 @@ Result: `{"value":null}`
 
 Params: `{"id":0}`
 
-Result: `{"value":{"ID":0,"Title":"","RepoPath":"","WorktreePath":"","WorktreeRepoPath":"","Branch":"","TmuxSession":"","SessionProgram":"","Program":"","Status":0,"StatusSince":"0001-01-01T00:00:00Z","StatusReported":false,"WaitReason":"","WaitDetail":"","RemoteSession":"","LastMessage":"","HasLastMessage":false,"Subagents":null,"Diff":{"Content":"","Added":0,"Removed":0},"HasDiff":false,"GitHub":{"Known":false,"IssueNumber":0,"IssueTitle":"","IssueClosed":false,"HasPR":false,"PRNumber":0,"PRState":0,"Review":0,"Checks":0},"Ahead":0,"Behind":0,"ParityKnown":false,"Issue":0,"Account":"","HeadroomProxy":false,"CacheTTL1h":false,"IsWorkspaceTerminal":false,"Started":false,"Bell":false},"ok":false}`
+Result: `{"value":{"ID":0,"Title":"","RepoPath":"","WorktreePath":"","WorktreeRepoPath":"","Branch":"","TmuxSession":"","SessionProgram":"","Program":"","Status":0,"StatusSince":"0001-01-01T00:00:00Z","StatusReported":false,"WaitReason":"","WaitDetail":"","RemoteSession":"","LastMessage":"","HasLastMessage":false,"Subagents":null,"Diff":{"Content":"","Added":0,"Removed":0},"HasDiff":false,"GitHub":{"Known":false,"IssueNumber":0,"IssueTitle":"","IssueClosed":false,"HasPR":false,"PRNumber":0,"PRState":0,"Review":0,"Checks":0,"PRURL":""},"Ahead":0,"Behind":0,"ParityKnown":false,"Issue":0,"Account":"","HeadroomProxy":false,"CacheTTL1h":false,"IsWorkspaceTerminal":false,"Started":false,"Bell":false},"ok":false}`
 
 ### Create (request)
 
@@ -443,7 +443,7 @@ Result: `{}`
 
 Params: `{}`
 
-Result: `{"value":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0}}`
+Result: `{"value":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0,"QuickReplies":null}}`
 
 ### ConfigureWeb (request)
 
@@ -495,7 +495,7 @@ Result: `{}`
 
 ### ModelChanged
 
-`{"View":{"RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null,"LastUsed":""},"Web":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0}}}`
+`{"View":{"RCAuth":{"State":0,"Reason":"","Identity":{"loggedIn":false,"authMethod":"","email":"","orgName":"","subscriptionType":"","configDirectory":""}},"Registry":{"Workspaces":null,"Open":null,"LastUsed":""},"Web":{"Listen":"","Origin":"","Serving":false,"Addr":"","Error":"","Devices":null,"Rev":0,"QuickReplies":null}}}`
 
 ### Notice
 

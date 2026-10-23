@@ -76,8 +76,10 @@ under the session's title will name the current tool.
 
 ## Architecture
 
-Additive throughout: no `Core` method changes, the wire stays as it is
-(`rpc.Protocol` unchanged), and the app's JSON only gains fields. Each new
+Additive throughout: no `Core` method changes; the wire only gains fields
+(`WebView.QuickReplies` in `ModelChanged`, `State.PRURL` in the instance
+views), which needs no `rpc.Protocol` bump but a regenerated
+`docs/specs/protocol.md`; and the app's JSON only gains fields. Each new
 route and event follows the checklist in `docs/claude/web-layer.md`.
 
 ### Daemon side

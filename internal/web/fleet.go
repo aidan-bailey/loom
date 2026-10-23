@@ -2,8 +2,12 @@ package web
 
 import (
 	"net/url"
+	"reflect"
+	"slices"
 	"time"
 
+	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
@@ -25,11 +29,13 @@ const (
 	groupPaused   = "paused"
 )
 
-// workspaceJSON is a served workspace. It carries no path.
+// workspaceJSON is a served workspace. It carries no path. Shown is whether
+// the fleet lists it (layout).
 type workspaceJSON struct {
 	ID    core.WorkspaceID `json:"id"`
 	Name  string           `json:"name"`
 	Label string           `json:"label"`
+	Shown bool             `json:"shown"`
 }
 
 type waitJSON struct {
@@ -42,10 +48,13 @@ type diffJSON struct {
 	Removed int `json:"removed"`
 }
 
+// prJSON is a session's pull request. URL is its page on GitHub, left out
+// unless gh gave an https one.
 type prJSON struct {
 	Number int    `json:"number"`
 	State  string `json:"state"`
 	Checks string `json:"checks"`
+	URL    string `json:"url,omitempty"`
 }
 
 // agentJSON is one running subagent, as subagent.View has it.
@@ -53,6 +62,24 @@ type agentJSON struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Idle        bool   `json:"idle"`
+}
+
+// windowJSON is one plan window: the share used, 0 to 100, and when it resets
+// as an RFC 3339 time, "" when the server gave none.
+type windowJSON struct {
+	Pct      float64 `json:"pct"`
+	ResetsAt string  `json:"resets_at"`
+}
+
+// usageJSON is one account's plan usage as the app reads it. A window the
+// server did not report is null; At is when the sample was taken, which the
+// app compares with usage_stale_after_s.
+type usageJSON struct {
+	Account  string      `json:"account"`
+	Plan     string      `json:"plan"`
+	FiveHour *windowJSON `json:"five_hour"`
+	SevenDay *windowJSON `json:"seven_day"`
+	At       string      `json:"at"`
 }
 
 // sessionJSON is one session as the app reads it. IDs are numbers: they fit
@@ -108,15 +135,21 @@ type noticeJSON struct {
 
 // snapshotJSON is the first event of every stream: everything the app shows,
 // so nothing is replayed. Sessions is keyed by workspace ID, and Badge is the
-// number of sessions in needs_you across the workspaces.
+// number of sessions in needs_you across the workspaces. Usage is each
+// account's plan usage, UsageStaleAfterS the age in seconds past which the
+// app dims a sample (core.UsageStaleAfter), and QuickReplies the list the app
+// offers above its reply box.
 type snapshotJSON struct {
-	Build      string                             `json:"build"`
-	Host       string                             `json:"host"`
-	Workspaces []workspaceJSON                    `json:"workspaces"`
-	Sessions   map[core.WorkspaceID][]sessionJSON `json:"sessions"`
-	Device     deviceJSON                         `json:"device"`
-	Badge      int                                `json:"badge"`
-	Notices    []noticeJSON                       `json:"notices"`
+	Build            string                             `json:"build"`
+	Host             string                             `json:"host"`
+	Workspaces       []workspaceJSON                    `json:"workspaces"`
+	Sessions         map[core.WorkspaceID][]sessionJSON `json:"sessions"`
+	Device           deviceJSON                         `json:"device"`
+	Badge            int                                `json:"badge"`
+	Notices          []noticeJSON                       `json:"notices"`
+	Usage            []usageJSON                        `json:"usage"`
+	UsageStaleAfterS int                                `json:"usage_stale_after_s"`
+	QuickReplies     []string                           `json:"quick_replies"`
 }
 
 // workspacesJSON is the `workspaces` event. Badge is the snapshot's count
@@ -134,6 +167,18 @@ type sessionsJSON struct {
 	Workspace core.WorkspaceID `json:"workspace"`
 	Sessions  []sessionJSON    `json:"sessions"`
 	Badge     int              `json:"badge"`
+}
+
+// usageEventJSON is the `usage` event: every account's usage, as the snapshot
+// has it.
+type usageEventJSON struct {
+	Usage []usageJSON `json:"usage"`
+}
+
+// quickRepliesJSON is the `quick_replies` event, and the answer of
+// PUT /api/v1/quick-replies: the list the app offers.
+type quickRepliesJSON struct {
+	QuickReplies []string `json:"quick_replies"`
 }
 
 // groupOf says which of the app's four groups a session is listed under and
@@ -239,7 +284,16 @@ func prOf(s github.State) *prJSON {
 	default:
 		return nil
 	}
-	return &prJSON{Number: s.PRNumber, State: state, Checks: checks}
+	return &prJSON{Number: s.PRNumber, State: state, Checks: checks, URL: httpsURL(s.PRURL)}
+}
+
+// httpsURL is u when it is an absolute https URL with a host, else "".
+func httpsURL(u string) string {
+	p, err := url.Parse(u)
+	if err != nil || p.Scheme != "https" || p.Host == "" {
+		return ""
+	}
+	return u
 }
 
 // workspaceOf is a served workspace as the app reads it.
@@ -267,19 +321,83 @@ func noticeOf(n core.Notice, at time.Time) noticeJSON {
 	return noticeJSON{Text: n.Info, At: at}
 }
 
-// projection is the fleet as the app reads it: the served workspaces in
-// serve order, and each one's sessions in the model's display order. It takes
-// no lock; the hub's mutex guards it. Its slices are replaced, never edited,
-// so a copy of one stays valid.
+// usageOf is every account's plan usage as the app reads it, in the
+// registry's order (default first): an account whose sample has no plan
+// limits, or that has no sample yet, is left out. It is never nil, so an
+// empty list compares equal to the one the projection starts with.
+func usageOf(v core.AccountsView) []usageJSON {
+	out := []usageJSON{}
+	for _, name := range v.Names.Names {
+		u, ok := v.Usage[name]
+		if !ok || !u.Available || u.At.IsZero() {
+			continue
+		}
+		out = append(out, usageJSON{
+			Account:  name,
+			Plan:     u.Plan,
+			FiveHour: windowOf(u.FiveHour),
+			SevenDay: windowOf(u.SevenDay),
+			At:       u.At.UTC().Format(time.RFC3339),
+		})
+	}
+	return out
+}
+
+// windowOf is one window as the app reads it, nil for none.
+func windowOf(w *account.Window) *windowJSON {
+	if w == nil {
+		return nil
+	}
+	out := &windowJSON{Pct: w.Pct}
+	if !w.ResetsAt.IsZero() {
+		out.ResetsAt = w.ResetsAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+// resolvedQuickReplies is the list the app offers: the user's, or the
+// defaults while they have set none. It is never nil, so the app always reads
+// a list, empty when the user wants no chips.
+func resolvedQuickReplies(stored []string) []string {
+	if stored == nil {
+		return core.DefaultQuickReplies()
+	}
+	return append([]string{}, stored...)
+}
+
+// openNames is the open list's names, in tab order.
+func openNames(open []config.Workspace) []string {
+	names := make([]string, 0, len(open))
+	for _, w := range open {
+		names = append(names, w.Name)
+	}
+	return names
+}
+
+// projection is the fleet as the app reads it: the served workspaces, the
+// open tabs first in tab order and the rest in serve order, each flagged
+// shown or not (layout); each workspace's sessions in the model's display
+// order; the accounts' usage; and the quick replies. It takes no lock; the
+// hub's mutex guards it. Its slices are replaced, never edited, so a copy of
+// one stays valid.
 type projection struct {
-	workspaces []workspaceJSON
-	sessions   map[core.WorkspaceID][]sessionJSON
+	workspaces   []workspaceJSON
+	sessions     map[core.WorkspaceID][]sessionJSON
+	usage        []usageJSON
+	quickReplies []string
+	// serveOrder is the workspaces as the model serves them, and open the
+	// open list's names in tab order: layout builds workspaces from them.
+	serveOrder []workspaceJSON
+	open       []string
 }
 
 func newProjection() *projection {
 	return &projection{
-		workspaces: []workspaceJSON{},
-		sessions:   map[core.WorkspaceID][]sessionJSON{},
+		workspaces:   []workspaceJSON{},
+		sessions:     map[core.WorkspaceID][]sessionJSON{},
+		usage:        []usageJSON{},
+		quickReplies: core.DefaultQuickReplies(),
+		serveOrder:   []workspaceJSON{},
 	}
 }
 
@@ -287,17 +405,18 @@ func newProjection() *projection {
 // sessions, a new one starts with none until its views arrive, and one that
 // went loses them.
 func (p *projection) setWorkspaces(views []core.WorkspaceView) {
-	workspaces := make([]workspaceJSON, 0, len(views))
+	order := make([]workspaceJSON, 0, len(views))
 	sessions := make(map[core.WorkspaceID][]sessionJSON, len(views))
 	for _, v := range views {
-		workspaces = append(workspaces, workspaceOf(v))
+		order = append(order, workspaceOf(v))
 		if kept, ok := p.sessions[v.ID]; ok {
 			sessions[v.ID] = kept
 		} else {
 			sessions[v.ID] = []sessionJSON{}
 		}
 	}
-	p.workspaces, p.sessions = workspaces, sessions
+	p.serveOrder, p.sessions = order, sessions
+	p.layout()
 }
 
 // setViews replaces one workspace's sessions, leaving workspace terminals
@@ -315,7 +434,88 @@ func (p *projection) setViews(ws core.WorkspaceID, views []core.InstanceView) bo
 		out = append(out, sessionOf(ws, v))
 	}
 	p.sessions[ws] = out
+	p.layout()
 	return true
+}
+
+// setOpen takes the open list's names, in tab order, and reports whether
+// they changed.
+func (p *projection) setOpen(names []string) bool {
+	if slices.Equal(names, p.open) {
+		return false
+	}
+	p.open = slices.Clone(names)
+	p.layout()
+	return true
+}
+
+// setUsage takes the accounts' view and reports whether the usage the app
+// reads changed.
+func (p *projection) setUsage(v core.AccountsView) bool {
+	u := usageOf(v)
+	if reflect.DeepEqual(u, p.usage) {
+		return false
+	}
+	p.usage = u
+	return true
+}
+
+// setQuickReplies takes the stored quick replies (nil while unset) and
+// reports whether the list the app offers changed.
+func (p *projection) setQuickReplies(stored []string) bool {
+	q := resolvedQuickReplies(stored)
+	if slices.Equal(q, p.quickReplies) {
+		return false
+	}
+	p.quickReplies = q
+	return true
+}
+
+// layout puts the workspaces in the order the app lists them, the open tabs
+// first in tab order and the rest in serve order, and flags each one the
+// fleet shows: an open tab, or a workspace with a session that isn't paused.
+// With no open tab the model serves (global mode, or a list never saved)
+// every workspace is shown. Names match as the TUI keys its tabs; the global
+// workspace, named "", is never a tab.
+func (p *projection) layout() {
+	at := make(map[string]int, len(p.serveOrder))
+	for i, w := range p.serveOrder {
+		if w.Name != "" {
+			at[w.Name] = i
+		}
+	}
+	placed := make([]bool, len(p.serveOrder))
+	out := make([]workspaceJSON, 0, len(p.serveOrder))
+	for _, name := range p.open {
+		i, ok := at[name]
+		if !ok || placed[i] {
+			continue
+		}
+		placed[i] = true
+		w := p.serveOrder[i]
+		w.Shown = true
+		out = append(out, w)
+	}
+	all := len(out) == 0
+	for i, w := range p.serveOrder {
+		if placed[i] {
+			continue
+		}
+		w.Shown = all || p.live(w.ID)
+		out = append(out, w)
+	}
+	p.workspaces = out
+}
+
+// live reports whether ws holds a session that isn't paused: one in Needs
+// you, Your turn or Working.
+func (p *projection) live(ws core.WorkspaceID) bool {
+	for _, s := range p.sessions[ws] {
+		if s.Group != groupPaused {
+			return true
+		}
+	}
+	return false
 }
 
 // served reports whether ws is in the served set.

@@ -3,9 +3,11 @@ package web
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/git"
@@ -247,7 +249,7 @@ func TestNoticeOf(t *testing.T) {
 func TestWorkspaceOf(t *testing.T) {
 	b, err := json.Marshal(workspaceOf(core.WorkspaceView{ID: 3, Name: "loom", Label: "loom", RepoPath: "/home/me/loom", ConfigDir: "/home/me/loom/.loom"}))
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"id": 3, "name": "loom", "label": "loom"}`, string(b))
+	assert.JSONEq(t, `{"id": 3, "name": "loom", "label": "loom", "shown": false}`, string(b), "shown is the projection's to set (layout)")
 
 	global := workspaceOf(core.WorkspaceView{ID: 4, Label: "global"})
 	assert.Equal(t, "", global.Name)
@@ -256,9 +258,11 @@ func TestWorkspaceOf(t *testing.T) {
 
 func TestSnapshotJSON_HasTheContractsKeys(t *testing.T) {
 	b, err := json.Marshal(snapshotJSON{
-		Workspaces: []workspaceJSON{},
-		Sessions:   map[core.WorkspaceID][]sessionJSON{},
-		Notices:    []noticeJSON{},
+		Workspaces:   []workspaceJSON{},
+		Sessions:     map[core.WorkspaceID][]sessionJSON{},
+		Notices:      []noticeJSON{},
+		Usage:        []usageJSON{},
+		QuickReplies: []string{},
 	})
 	require.NoError(t, err)
 
@@ -268,7 +272,7 @@ func TestSnapshotJSON_HasTheContractsKeys(t *testing.T) {
 	for k := range keys {
 		got = append(got, k)
 	}
-	assert.ElementsMatch(t, []string{"build", "host", "workspaces", "sessions", "device", "badge", "notices"}, got)
+	assert.ElementsMatch(t, []string{"build", "host", "workspaces", "sessions", "device", "badge", "notices", "usage", "usage_stale_after_s", "quick_replies"}, got)
 }
 
 func TestProjection_KeepsTheModelsOrderAndLeavesWorkspaceTerminalsOut(t *testing.T) {
@@ -342,4 +346,140 @@ func TestProjection_TheBadgeCountsWhatNeedsYouAcrossTheWorkspaces(t *testing.T) 
 
 	require.True(t, p.setViews(1, []core.InstanceView{fleetView(10, "answered", session.Running)}))
 	assert.Equal(t, 1, p.badge())
+}
+
+// shownOf is the projection's workspaces as "label:shown", in its order.
+func shownOf(p *projection) []string {
+	var out []string
+	for _, w := range p.workspaces {
+		out = append(out, fmt.Sprintf("%s:%v", w.Label, w.Shown))
+	}
+	return out
+}
+
+// projectionOf is a projection serving ws in that order, with the views each
+// workspace holds and the open list open.
+func projectionOf(t *testing.T, ws []core.WorkspaceView, views map[core.WorkspaceID][]core.InstanceView, open ...string) *projection {
+	t.Helper()
+	p := newProjection()
+	p.setWorkspaces(ws)
+	for id, list := range views {
+		require.True(t, p.setViews(id, list))
+	}
+	p.setOpen(open)
+	return p
+}
+
+func TestProjection_ShowsTheOpenTabsAndTheWorkspacesWithALiveSession(t *testing.T) {
+	ws := []core.WorkspaceView{
+		{ID: 1, Label: "global"},
+		{ID: 2, Name: "loom", Label: "loom"},
+		{ID: 3, Name: "flow", Label: "flow"},
+		{ID: 4, Name: "system", Label: "system"},
+		{ID: 5, Name: "idle", Label: "idle"},
+	}
+	views := map[core.WorkspaceID][]core.InstanceView{
+		2: {fleetView(20, "paused", session.Paused)},
+		3: {fleetView(30, "works", session.Running), fleetView(31, "paused", session.Paused)},
+		5: {fleetView(50, "paused", session.Paused), fleetView(51, "recoverable", session.Recoverable)},
+	}
+
+	p := projectionOf(t, ws, views, "system", "loom")
+
+	assert.Equal(t, []string{"system:true", "loom:true", "global:false", "flow:true", "idle:false"}, shownOf(p),
+		"the tabs first in tab order, shown with no session or only paused ones; then the rest in serve order, shown while a session isn't paused")
+}
+
+func TestProjection_WithNoTabOpenEveryWorkspaceIsShown(t *testing.T) {
+	ws := []core.WorkspaceView{{ID: 1, Label: "global"}, {ID: 2, Name: "loom", Label: "loom"}}
+
+	p := projectionOf(t, ws, nil)
+	assert.Equal(t, []string{"global:true", "loom:true"}, shownOf(p), "global mode, or a list never saved")
+
+	assert.True(t, p.setOpen([]string{"gone"}))
+	assert.Equal(t, []string{"global:true", "loom:true"}, shownOf(p), "a list that names no served workspace is no list")
+}
+
+func TestProjection_TheGlobalWorkspaceIsShownOnlyForALiveSession(t *testing.T) {
+	ws := []core.WorkspaceView{{ID: 1, Label: "global"}, {ID: 2, Name: "loom", Label: "loom"}}
+	p := projectionOf(t, ws, map[core.WorkspaceID][]core.InstanceView{1: {fleetView(10, "asks", session.Prompting)}}, "", "loom")
+	assert.Equal(t, []string{"loom:true", "global:true"}, shownOf(p), "shown for its waiting session; a tab named \"\" is not it")
+
+	require.True(t, p.setViews(1, []core.InstanceView{fleetView(10, "asks", session.Paused)}))
+	assert.Equal(t, []string{"loom:true", "global:false"}, shownOf(p))
+}
+
+func TestProjection_AClosedWorkspaceHidesWhenItsLastLiveSessionPauses(t *testing.T) {
+	ws := []core.WorkspaceView{{ID: 2, Name: "loom", Label: "loom"}, {ID: 3, Name: "flow", Label: "flow"}}
+	p := projectionOf(t, ws, map[core.WorkspaceID][]core.InstanceView{3: {fleetView(30, "works", session.Running)}}, "loom")
+	require.Equal(t, []string{"loom:true", "flow:true"}, shownOf(p))
+
+	require.True(t, p.setViews(3, []core.InstanceView{fleetView(30, "works", session.Paused)}))
+
+	assert.Equal(t, []string{"loom:true", "flow:false"}, shownOf(p))
+	require.Len(t, p.sessions[3], 1, "its sessions stay in the snapshot: a link still opens them")
+}
+
+func TestProjection_ARenamedTabKeepsItsPlace(t *testing.T) {
+	p := projectionOf(t, []core.WorkspaceView{{ID: 2, Name: "loom", Label: "loom"}, {ID: 3, Name: "flow", Label: "flow"}}, nil, "flow", "loom")
+	require.Equal(t, []string{"flow:true", "loom:true"}, shownOf(p))
+
+	// RenameWorkspace renames the served workspace and the open list together.
+	p.setWorkspaces([]core.WorkspaceView{{ID: 2, Name: "loom", Label: "loom"}, {ID: 3, Name: "river", Label: "river"}})
+	require.True(t, p.setOpen([]string{"river", "loom"}))
+
+	assert.Equal(t, []string{"river:true", "loom:true"}, shownOf(p))
+	assert.False(t, p.setOpen([]string{"river", "loom"}), "the same list again changes nothing")
+}
+
+func TestUsageOf_FollowsTheRegistryAndLeavesOutWhatHasNoLimits(t *testing.T) {
+	at := time.Date(2026, 10, 23, 9, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
+	resets := time.Date(2026, 10, 23, 12, 40, 0, 0, time.UTC)
+	v := core.AccountsView{
+		Names: core.AccountNames{Present: true, Default: "default", Names: []string{"default", "work", "api", "new"}},
+		Usage: map[string]account.Usage{
+			"default": {Available: true, Plan: "max", FiveHour: &account.Window{Pct: 62, ResetsAt: resets}, SevenDay: &account.Window{Pct: 38}, At: at},
+			"work":    {Available: true, Plan: "team", SevenDay: &account.Window{Pct: 71, ResetsAt: resets}, At: at},
+			"api":     {Available: false, At: at},
+			"ghost":   {Available: true, Plan: "pro", At: at},
+		},
+	}
+
+	b, err := json.Marshal(usageOf(v))
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"account": "default", "plan": "max", "five_hour": {"pct": 62, "resets_at": "2026-10-23T12:40:00Z"}, "seven_day": {"pct": 38, "resets_at": ""}, "at": "2026-10-23T07:00:00Z"},
+		{"account": "work", "plan": "team", "five_hour": null, "seven_day": {"pct": 71, "resets_at": "2026-10-23T12:40:00Z"}, "at": "2026-10-23T07:00:00Z"}
+	]`, string(b), "no plan limits (api), no sample yet (new) and no registered name (ghost) are left out")
+	assert.NotNil(t, usageOf(core.AccountsView{}), "an empty list, never null")
+}
+
+func TestPrOf_KeepsTheURLOnlyWhenItIsHTTPS(t *testing.T) {
+	base := github.State{Known: true, HasPR: true, PRNumber: 318, PRState: github.PROpen, Checks: github.ChecksPassing}
+	for _, tc := range []struct{ url, want string }{
+		{"https://github.com/o/r/pull/318", "https://github.com/o/r/pull/318"},
+		{"http://github.com/o/r/pull/318", ""},
+		{"javascript:void(0)", ""},
+		{"/o/r/pull/318", ""},
+		{"", ""},
+	} {
+		s := base
+		s.PRURL = tc.url
+		pr := prOf(s)
+		require.NotNil(t, pr, tc.url)
+		assert.Equal(t, tc.want, pr.URL, tc.url)
+	}
+
+	b, err := json.Marshal(prOf(base))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"number": 318, "state": "open", "checks": "passing"}`, string(b), "no URL, no key")
+}
+
+func TestResolvedQuickReplies(t *testing.T) {
+	assert.Equal(t, core.DefaultQuickReplies(), resolvedQuickReplies(nil), "unset: the defaults")
+	none := resolvedQuickReplies([]string{})
+	assert.NotNil(t, none, "none: an empty list, never null")
+	assert.Empty(t, none)
+	assert.Equal(t, []string{"ship it"}, resolvedQuickReplies([]string{"ship it"}))
 }

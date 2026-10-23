@@ -25,6 +25,7 @@ import (
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/core/rpc"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/hooks"
 	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1223,4 +1224,103 @@ func TestAPI_KeptResponseNoticesKeepTheLastTwentyInOrder(t *testing.T) {
 	require.Len(t, snap.Notices, recentNotices)
 	assert.Equal(t, "r3", snap.Notices[0].Text)
 	assert.Equal(t, fmt.Sprintf("r%d", recentNotices+2), snap.Notices[recentNotices-1].Text)
+}
+
+// apiWithMessage is a fixture session whose Claude ended its turn saying msg,
+// as a Stop hook reports it.
+func apiWithMessage(t *testing.T, title, msg string) *session.Instance {
+	t.Helper()
+	inst := apiInstance(t, title, session.Ready)
+	require.True(t, inst.ApplyHookScan(session.HookScanResult{LaunchID: "0123456789abcdef", Replayed: true, Events: []hooks.Event{
+		{Name: hooks.EventStop, LastAssistantMessage: msg, At: time.Now()},
+	}}))
+	return inst
+}
+
+func TestAPI_TheMessageIsTheTreeOfTheLastMessage(t *testing.T) {
+	msg := "# Done\n\nSee [the PR](https://github.com/o/r/pull/318).\n\nRun <script>x</script> now"
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiWithMessage(t, "one", msg), apiInstance(t, "quiet", session.Running)}})
+
+	status, out := env.do(http.MethodGet, fmt.Sprintf("/api/v1/sessions/%d/message", env.ids["one"]), nil)
+
+	require.Equal(t, http.StatusOK, status, "body: %s", out)
+	var got messageJSON
+	require.NoError(t, json.Unmarshal(out, &got))
+	assert.Equal(t, msg, got.Text, "the text the tree was built from")
+	assert.False(t, got.Truncated)
+	blocks, err := json.Marshal(got.Blocks)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"t": "h", "level": 1, "c": [{"t": "text", "v": "Done"}]},
+		{"t": "p", "c": [{"t": "text", "v": "See "}, {"t": "a", "href": "https://github.com/o/r/pull/318", "c": [{"t": "text", "v": "the PR"}]}, {"t": "text", "v": "."}]},
+		{"t": "p", "c": [{"t": "text", "v": "Run "}, {"t": "text", "v": "<script>"}, {"t": "text", "v": "x"}, {"t": "text", "v": "</script>"}, {"t": "text", "v": " now"}]}
+	]`, string(blocks), "the script is text")
+
+	status, out = env.do(http.MethodGet, fmt.Sprintf("/api/v1/sessions/%d/message", env.ids["quiet"]), nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.JSONEq(t, `{"text": "", "blocks": [], "truncated": false}`, string(out), "no last message: an empty tree")
+
+	status, out = env.do(http.MethodGet, "/api/v1/sessions/999999/message", nil)
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Equal(t, "no such session", apiErrorOf(t, out))
+}
+
+func TestAPI_QuickRepliesStoreAListAndNullRestoresTheDefaults(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+
+	status, out := env.do(http.MethodPut, "/api/v1/quick-replies", map[string]any{"replies": []string{" ship it ", "yes", "yes"}})
+	require.Equal(t, http.StatusOK, status, "body: %s", out)
+	assert.JSONEq(t, `{"quick_replies": ["ship it", "yes"]}`, string(out))
+	require.Eventually(t, func() bool {
+		q := env.layer.client.Web().QuickReplies
+		return len(q) == 2 && q[0] == "ship it" && q[1] == "yes"
+	}, 5*time.Second, 10*time.Millisecond, "the web client's replica follows the model")
+
+	status, out = env.do(http.MethodPut, "/api/v1/quick-replies", map[string]any{"replies": []string{}})
+	require.Equal(t, http.StatusOK, status)
+	assert.JSONEq(t, `{"quick_replies": []}`, string(out), "no chips is an empty list")
+
+	status, out = env.do(http.MethodPut, "/api/v1/quick-replies", map[string]any{"replies": nil})
+	require.Equal(t, http.StatusOK, status)
+	assert.JSONEq(t, `{"quick_replies": ["yes", "continue", "/compact", "/clear"]}`, string(out), "null: the defaults")
+}
+
+func TestAPI_QuickRepliesRefuseABadList(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{})
+	thirteen := make([]string, 13)
+	for i := range thirteen {
+		thirteen[i] = fmt.Sprintf("reply %d", i)
+	}
+
+	for _, tc := range []struct {
+		name string
+		body any
+		want string
+	}{
+		{"an empty reply", map[string]any{"replies": []string{"yes", ""}}, "quick replies: reply 2 is empty"},
+		{"a newline", map[string]any{"replies": []string{"one\ntwo"}}, "control character"},
+		{"a reply too long", map[string]any{"replies": []string{strings.Repeat("a", 101)}}, "longer than 100 characters"},
+		{"thirteen replies", map[string]any{"replies": thirteen}, "13 replies; at most 12"},
+		{"a field the route does not take", map[string]any{"replys": []string{"yes"}}, "bad request"},
+	} {
+		status, out := env.do(http.MethodPut, "/api/v1/quick-replies", tc.body)
+		assert.Equal(t, http.StatusBadRequest, status, tc.name)
+		assert.Contains(t, apiErrorOf(t, out), tc.want, tc.name)
+	}
+	assert.Nil(t, env.layer.client.Web().QuickReplies, "nothing was stored")
+}
+
+func TestAPI_TheMessageAndTheQuickRepliesNeedADevice(t *testing.T) {
+	env := newAPIEnv(t, apiFixture{insts: []*session.Instance{apiInstance(t, "one", session.Running)}})
+
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodGet, fmt.Sprintf("/api/v1/sessions/%d/message", env.ids["one"]), nil},
+		{http.MethodPut, "/api/v1/quick-replies", map[string]any{"replies": []string{"yes"}}},
+	} {
+		status, _, _ := env.send(c.method, c.path, c.body, false)
+		assert.Equal(t, http.StatusUnauthorized, status, c.path)
+	}
 }

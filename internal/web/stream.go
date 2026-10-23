@@ -125,6 +125,10 @@ type hub struct {
 	// a flush sends only a list that differs from it.
 	pubWorkspaces []workspaceJSON
 	pubSessions   map[core.WorkspaceID][]sessionJSON
+	// pubUsage and pubQuickReplies are the usage and the quick replies the
+	// streams were last told, likewise.
+	pubUsage        []usageJSON
+	pubQuickReplies []string
 	// ping, every and flushFn are the knobs the tests turn, read under mu.
 	ping    time.Duration
 	every   time.Duration
@@ -139,28 +143,31 @@ type hub struct {
 // newHub builds the hub and starts its flusher.
 func newHub(l *Layer) *hub {
 	h := &hub{
-		l:             l,
-		lg:            log.For("web", "part", "stream"),
-		subs:          map[*streamSub]struct{}{},
-		fleet:         newProjection(),
-		devices:       map[string]hubDevice{},
-		notices:       []noticeJSON{},
-		pubWorkspaces: []workspaceJSON{},
-		pubSessions:   map[core.WorkspaceID][]sessionJSON{},
-		ping:          pingEvery,
-		every:         publishEvery,
-		wake:          make(chan struct{}, 1),
-		stop:          make(chan struct{}),
-		exited:        make(chan struct{}),
+		l:               l,
+		lg:              log.For("web", "part", "stream"),
+		subs:            map[*streamSub]struct{}{},
+		fleet:           newProjection(),
+		devices:         map[string]hubDevice{},
+		notices:         []noticeJSON{},
+		pubWorkspaces:   []workspaceJSON{},
+		pubSessions:     map[core.WorkspaceID][]sessionJSON{},
+		pubUsage:        []usageJSON{},
+		pubQuickReplies: core.DefaultQuickReplies(),
+		ping:            pingEvery,
+		every:           publishEvery,
+		wake:            make(chan struct{}, 1),
+		stop:            make(chan struct{}),
+		exited:          make(chan struct{}),
 	}
 	h.flushFn = h.flush
 	go h.run()
 	return h
 }
 
-// apply takes the events one Sync returned. A workspace or its sessions
-// changing wakes the flusher, which publishes at most every publishEvery;
-// a notice not tied to a request, and a device record changing, go out at once.
+// apply takes the events one Sync returned. A workspace, its sessions, the
+// open tabs, the usage or the quick replies changing wakes the flusher, which
+// publishes at most every publishEvery; a notice not tied to a request, and a
+// device record changing, go out at once.
 func (h *hub) apply(evs []core.Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -179,6 +186,16 @@ func (h *hub) apply(evs []core.Event) {
 			}
 		case core.ModelChanged:
 			h.applyDevicesLocked(ev.View.Web.Devices)
+			if h.fleet.setOpen(openNames(ev.View.Registry.Open)) {
+				moved = true
+			}
+			if h.fleet.setQuickReplies(ev.View.Web.QuickReplies) {
+				moved = true
+			}
+		case core.AccountsChanged:
+			if h.fleet.setUsage(ev.View) {
+				moved = true
+			}
 		case core.Notice:
 			// A notice tied to a request of the web client is its reply's.
 			if ev.Req == 0 {
@@ -329,9 +346,9 @@ func (h *hub) dropLocked(sub *streamSub) {
 	sub.end()
 }
 
-// flush publishes the workspace list and each workspace's session list that
-// differs from what the streams were last told, each with the fleet's badge
-// count as it stands now.
+// flush publishes the workspace list, each workspace's session list, the
+// usage and the quick replies that differ from what the streams were last
+// told, the lists with the fleet's badge count as it stands now.
 func (h *hub) flush() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -355,6 +372,14 @@ func (h *hub) flush() {
 		if !h.fleet.served(id) {
 			delete(h.pubSessions, id)
 		}
+	}
+	if !reflect.DeepEqual(h.fleet.usage, h.pubUsage) {
+		h.pubUsage = h.fleet.usage
+		h.broadcastLocked("usage", usageEventJSON{Usage: h.fleet.usage})
+	}
+	if !slices.Equal(h.fleet.quickReplies, h.pubQuickReplies) {
+		h.pubQuickReplies = h.fleet.quickReplies
+		h.broadcastLocked("quick_replies", quickRepliesJSON{QuickReplies: h.fleet.quickReplies})
 	}
 }
 
@@ -494,13 +519,16 @@ func (h *hub) release(sub *streamSub) {
 // snapshotLocked is everything the app shows, for a device.
 func (h *hub) snapshotLocked(dev hubDevice) snapshotJSON {
 	return snapshotJSON{
-		Build:      h.l.build,
-		Host:       h.l.hostname,
-		Workspaces: h.fleet.workspaces,
-		Sessions:   h.fleet.sessions,
-		Device:     dev.rec,
-		Badge:      h.fleet.badge(),
-		Notices:    h.notices,
+		Build:            h.l.build,
+		Host:             h.l.hostname,
+		Workspaces:       h.fleet.workspaces,
+		Sessions:         h.fleet.sessions,
+		Device:           dev.rec,
+		Badge:            h.fleet.badge(),
+		Notices:          h.notices,
+		Usage:            h.fleet.usage,
+		UsageStaleAfterS: int(core.UsageStaleAfter / time.Second),
+		QuickReplies:     h.fleet.quickReplies,
 	}
 }
 

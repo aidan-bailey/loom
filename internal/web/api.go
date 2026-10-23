@@ -74,9 +74,11 @@ func (l *Layer) routeAPI(m *http.ServeMux) {
 	m.Handle("POST /api/v1/sessions/{id}/resume", l.authed(l.sessionOp("resume", core.Core.Resume)))
 	m.Handle("POST /api/v1/sessions/{id}/kill", l.authed(l.sessionOp("kill", core.Core.Kill)))
 	m.Handle("POST /api/v1/sessions/{id}/push", l.authed(l.sessionOp("push", core.Core.Push)))
+	m.Handle("GET /api/v1/sessions/{id}/message", l.authed(l.message))
 	m.Handle("POST /api/v1/sessions", l.authed(l.createSession))
 	m.Handle("GET /api/v1/launch-defaults", l.authed(l.launchDefaults))
 	m.Handle("PUT /api/v1/device", l.authed(l.putDevice))
+	m.Handle("PUT /api/v1/quick-replies", l.authed(l.putQuickReplies))
 	m.Handle("POST /api/v1/device/push", l.authed(l.postPush))
 	m.Handle("DELETE /api/v1/device/push", l.authed(l.deletePush))
 	m.Handle("DELETE /api/v1/device", l.authed(l.deleteDevice))
@@ -459,6 +461,60 @@ func (l *Layer) putDevice(w http.ResponseWriter, r *http.Request, device string)
 	}
 	l.record(a, http.StatusOK, "ok")
 	writeJSON(w, http.StatusOK, deviceOf(stored))
+}
+
+// message answers GET /api/v1/sessions/{id}/message: the tree of the
+// session's last message (buildTree), from the web client's replica, with the
+// text it was built from, so the app can tell it is the message it shows. A
+// workspace terminal is no session of the app's.
+func (l *Layer) message(w http.ResponseWriter, r *http.Request, device string) {
+	a := actionLog{device: device, name: "message"}
+	id, ok := l.sessionFromPath(w, r, a)
+	if !ok {
+		return
+	}
+	a.sessionID = id
+	v, ok := l.client.View(id)
+	if !ok || v.IsWorkspaceTerminal {
+		l.refuse(w, a, http.StatusNotFound, "no such session")
+		return
+	}
+	out := messageJSON{Blocks: []*mdNode{}}
+	if v.HasLastMessage {
+		out.Text = v.LastMessage
+		out.Blocks, out.Truncated = buildTree(v.LastMessage)
+	}
+	l.record(a, http.StatusOK, "ok")
+	writeJSON(w, http.StatusOK, out)
+}
+
+// quickRepliesBody is PUT /api/v1/quick-replies: the replies to offer, or
+// null (or no field) for the defaults.
+type quickRepliesBody struct {
+	Replies []string `json:"replies"`
+}
+
+// putQuickReplies stores the quick replies every paired phone offers
+// (WebHost.SetQuickReplies) and answers the list as the app reads it. A list
+// the model refuses is 400 with its words; any other error is the model's
+// (modelStatus), as for the device's settings.
+func (l *Layer) putQuickReplies(w http.ResponseWriter, r *http.Request, device string) {
+	a := actionLog{device: device, name: "quick-replies"}
+	var body quickRepliesBody
+	if !l.decodeBody(w, r, a, &body) {
+		return
+	}
+	stored, err := l.host.SetQuickReplies(body.Replies)
+	if err != nil {
+		status := modelStatus(err)
+		if errors.Is(err, core.ErrQuickReplies) {
+			status = http.StatusBadRequest
+		}
+		l.refuse(w, a, status, err.Error())
+		return
+	}
+	l.record(a, http.StatusOK, "ok")
+	writeJSON(w, http.StatusOK, quickRepliesJSON{QuickReplies: resolvedQuickReplies(stored)})
 }
 
 // subscriptionKeys are a subscription's keys, base64url as the browser gives them.
