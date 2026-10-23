@@ -44,6 +44,7 @@ Go tests cover the layer over the production path (a booted model, the real `rpc
 
 ## Traps
 
+- **A field added to what the model publishes is a wire change.** `WebView` rides `ModelChanged`, and `InstanceView` carries `github.State` and the rest, so a new field there needs no `rpc.Protocol` bump but changes `docs/specs/protocol.md`: rerun `go test ./core/rpc -run TestProtocolReference -update`, or `TestProtocolReference` fails the suite (and the Nix build). Keep nil and empty apart only if both survive JSON: a nil slice crosses as `null`, an empty one as `[]`.
 - **iOS keeps a Home Screen app's storage apart from Safari's, and sends Web Push only to Home Screen apps (iOS 16.4 and later).** A pairing done in Safari does not carry over to the installed app.
 - **Every request is checked against the configured origin.** The `Host` must equal the origin's host and port (421 otherwise), and a request other than GET or HEAD must carry an `Origin` equal to it (403). A test that builds its own request sets both.
 - **Pairing codes live in the model's memory.** A daemon restart voids them, five wrong codes void every pending one, and a code is bound to the device name it was made for.
