@@ -245,7 +245,7 @@ func TestStatic_TheSkinIsDarkWithEveryToken(t *testing.T) {
 	root := css[start:]
 	root = root[:strings.Index(root, "}")]
 	require.Contains(t, root, "color-scheme: dark;")
-	for _, token := range []string{"bg", "panel", "fg", "title", "dim", "faint", "border", "rule", "accent", "attention", "ok", "error", "workspace", "selection", "mono"} {
+	for _, token := range []string{"bg", "panel", "fg", "title", "dim", "faint", "border", "rule", "accent", "attention", "ok", "error", "add", "del", "workspace", "selection", "mono"} {
 		require.Contains(t, root, "--"+token+":", ":root lacks --"+token)
 	}
 	index := string(assets["/index.html"].body)

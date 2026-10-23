@@ -20,6 +20,8 @@
   --ok: #b4c973;
   --error: #e8836b;
   --error-border: #815449;
+  --add: #333a2b;
+  --del: #3d2f2b;
   --workspace: #c98aa3;
   --selection: #5a647e;
   --code: #3a3a3a;
@@ -442,13 +444,15 @@ details.sc-group[open] > summary::before { content: "▾"; }
 /* The session is a full-height column, so on a short page the reply box sits
    at the bottom (margin-top: auto) and not under the actions; it reaches into
    the shell's bottom inset, since it pads for the home indicator itself. */
-.sc-session {
+.sc-session,
+.sc-turns {
   display: flex;
   flex-direction: column;
   min-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   padding-bottom: 0;
 }
-.sc-session > .sc-h1 { flex: none; }
+.sc-session > .sc-h1,
+.sc-turns > .sc-h1 { flex: none; }
 .sc-reply {
   position: sticky;
   bottom: 0;
@@ -526,3 +530,68 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-quick-edit { width: 100%; margin-top: 8px; resize: vertical; }
 .sc-buttons { display: flex; gap: 8px; margin-top: 10px; }
 .sc-buttons .sc-btn { flex: 1; }
+/* ---- the ways in ---- */
+.sc-tile-fig svg { color: var(--accent); }
+a.sc-tile { color: var(--fg); }
+.sc-rule::after { order: 1; }
+.sc-rule-link {
+  order: 2;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: -14px 0;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  text-decoration: none;
+  color: var(--accent);
+}
+/* ---- the conversation ---- */
+.sc-accent { color: var(--accent); }
+.sc-earlier { align-self: center; border: 0; font-size: 12px; color: var(--accent); }
+.sc-inline-btn { min-height: 0; padding: 0; border: 0; font-size: inherit; color: var(--accent); text-decoration: underline; }
+.sc-turn-list { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.sc-turn { display: flex; flex-direction: column; gap: 6px; }
+.sc-prompt { margin-top: 6px; }
+.sc-prompt .sc-pre { margin: 0; }
+.sc-cmd { color: var(--accent); }
+.sc-more { min-height: 44px; margin: 0 -10px -7px; padding: 0 10px; border: 0; font-size: 12px; color: var(--accent); }
+.sc-said { display: flex; flex-direction: column; gap: 4px; }
+.sc-said-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--dim); }
+.sc-said .md { margin-top: 0; }
+.sc-steps { font-size: 12px; }
+.sc-steps > summary { display: flex; align-items: center; min-height: 44px; margin: -8px 0; color: var(--dim); cursor: pointer; list-style: none; }
+.sc-steps > summary::-webkit-details-marker { display: none; }
+.sc-steps > summary::before { content: "▸\00a0"; }
+.sc-steps[open] > summary::before { content: "▾\00a0"; }
+.sc-step-grid { display: grid; grid-template-columns: 12px auto minmax(0, 1fr) auto; column-gap: 6px; line-height: 20px; }
+.sc-step-tool { max-width: 11ch; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sc-step-sum { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--dim); }
+.sc-step-end { white-space: nowrap; }
+.sc-compacted { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--dim); }
+.sc-compacted::before,
+.sc-compacted::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+.sc-note { margin: 0; font-size: 12px; }
+/* ---- the changes ---- */
+.sc-files { margin-top: 10px; border-bottom: 1px solid var(--rule); }
+.sc-file { border-top: 1px solid var(--rule); }
+.sc-file-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; min-height: 44px; padding: 4px 0; cursor: pointer; list-style: none; }
+.sc-file-row::-webkit-details-marker { display: none; }
+.sc-file-st { font-weight: 700; color: var(--accent); }
+.sc-st-A { color: var(--ok); }
+.sc-st-D { color: var(--error); }
+.sc-st-C { color: var(--dim); }
+.sc-file-name { min-width: 0; }
+.sc-file-base,
+.sc-file-dir { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sc-file-base { color: var(--title); }
+.sc-file-dir { font-size: 11px; color: var(--dim); }
+.sc-file-n { font-size: 12px; white-space: nowrap; }
+.sc-file-why { margin: 0 0 10px; }
+.sc-hunks { margin: 0 0 10px; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; line-height: 17px; }
+.sc-hunks-in { display: inline-block; min-width: 100%; padding: 4px 0; }
+.sc-dl { min-height: 17px; padding: 0 8px; white-space: pre; tab-size: 4; }
+.sc-dl-hunk { background: var(--panel); }
+.sc-dl-add { color: var(--ok); background: var(--add); }
+.sc-dl-del { color: var(--error); background: var(--del); }

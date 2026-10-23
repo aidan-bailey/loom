@@ -1,20 +1,22 @@
 // The session screen: why it waits, its tiles, the last message, its agents,
-// the actions, and the reply box with the quick replies.
+// the actions, and the reply box with the quick replies. The changes tile
+// opens the changes screen, and the last message's rule the conversation.
 import { html, useState, useEffect } from "../lib/preact-htm.mjs";
 import { call } from "./api.mjs";
-import { ConfirmSheet, utf8Len } from "./sheets.mjs";
+import { ConfirmSheet } from "./sheets.mjs";
 import { allSessions, ago, markSeen } from "./fleet.mjs";
-import { GLYPHS, glyphOf, OutIcon } from "./skin.mjs";
+import { GLYPHS, glyphOf, OutIcon, ChevronIcon } from "./skin.mjs";
 import { usageFor, shareText, isStale } from "./usage.mjs";
 import { Markdown } from "./markdown.mjs";
-
-export const MAX_REPLY = 64 * 1024;
+import { ReplyBox } from "./reply.mjs";
 
 // actionsFor says which buttons to show. It follows status only; the
 // daemon's admit stays the authority and a refusal comes back as a toast.
 // It shows only what admit accepts: every op but resume is refused while the
 // session is Loading or Deleting, and resume is refused unless it is Paused
-// (a Recoverable or Not started session has nothing to resume).
+// (a Recoverable or Not started session has nothing to resume). diff is the
+// changes screen's link, as send: ReadDiff refuses a busy session and one in
+// the paused group.
 export function actionsFor(s) {
   const busy = s.status === "Loading" || s.status === "Deleting";
   const paused = s.group === "paused";
@@ -27,6 +29,7 @@ export function actionsFor(s) {
     push: !busy && tree,
     merge: !busy && tree,
     send: !busy && !paused,
+    diff: !busy && !paused,
     kill: !busy,
   };
 }
@@ -51,19 +54,36 @@ export function checksText(pr) {
   return { passing: "✓ checks pass", pending: "checks pending", failing: "✗ checks fail", none: "no checks" }[pr.checks] || "";
 }
 
-// Tiles are the session's facts as boxes: its changes, its pull request (a
-// link to it on GitHub when the daemon has its URL) and its account's usage.
-// A tile whose data is missing is left out, and the row reflows.
-function Tiles({ s, snap, now }) {
+// SubLine is the line under a session's title on its screens: its status
+// and age, its workspace and its branch.
+export function SubLine({ s, snap, now }) {
+  const ws = (snap.workspaces || []).find((w) => w.id === s.workspace);
+  return html`<div class="sc-subline">
+    <span><span class=${"sc-glyph sc-glyph-" + s.group} aria-hidden="true">${glyphOf(s.group)}</span> ${s.label.toLowerCase()}${s.since ? " · " + ago(s.since, now) : ""}</span>
+    ${ws ? html`<span class="sc-ws">${ws.label || ws.name}</span>` : null}
+    ${s.branch ? html`<span>${s.branch}</span>` : null}
+  </div>`;
+}
+
+// Tiles are the session's facts as boxes: its changes (a link to the changes
+// screen when diff is set), its pull request (a link to it on GitHub when the
+// daemon has its URL) and its account's usage. A tile whose data is missing
+// is left out, and the row reflows.
+function Tiles({ s, snap, now, diff }) {
   const tiles = [];
   const d = s.diff || {};
   if (d.added || d.removed || s.parity_known) {
     const parity = parityText(s);
-    tiles.push(html`<div key="changes" class="sc-box sc-tile">
+    const inner = html`
       <span class="sc-legend">Changes</span>
-      <span class="sc-tile-fig"><span class="sc-add">+${d.added || 0}</span> <span class="sc-del">−${d.removed || 0}</span></span>
+      <span class="sc-tile-fig"><span class="sc-add">+${d.added || 0}</span> <span class="sc-del">−${d.removed || 0}</span>${diff ? html`<${ChevronIcon} />` : null}</span>
       ${parity ? html`<span class="sc-tile-sub">${parity}</span>` : null}
-    </div>`);
+    `;
+    tiles.push(
+      diff
+        ? html`<a key="changes" class="sc-box sc-tile" href=${"#s/" + s.id + "/diff"}>${inner}</a>`
+        : html`<div key="changes" class="sc-box sc-tile">${inner}</div>`,
+    );
   }
   if (s.pr) {
     const inner = html`
@@ -91,13 +111,19 @@ function Tiles({ s, snap, now }) {
 }
 
 // Message is the last message: its tree once fetched for this very text, the
-// plain text before that and whenever the fetch fails.
+// plain text before that and whenever the fetch fails. For a Claude session
+// its rule ends in the way into the conversation, shown even before the
+// first message, which is when a first turn is worth watching.
 function Message({ s, tree }) {
-  const ok = tree && tree.text === s.last_message;
+  const ok = s.last_message && tree && tree.text === s.last_message;
   return html`
     <section class="sc-section">
-      <h2 class="sc-rule">Last message</h2>
-      ${ok ? html`<${Markdown} blocks=${tree.blocks} />` : html`<p class="sc-pre">${s.last_message}</p>`}
+      <h2 class="sc-rule">Last message${s.claude ? html`<a class="sc-rule-link" href=${"#s/" + s.id + "/turns"}>conversation ›</a>` : null}</h2>
+      ${!s.last_message
+        ? html`<p class="sc-pre sc-dim">No message yet.</p>`
+        : ok
+          ? html`<${Markdown} blocks=${tree.blocks} />`
+          : html`<p class="sc-pre">${s.last_message}</p>`}
       ${ok && tree.truncated
         ? html`<p class="sc-dim sc-small">… continues in ${s.remote_url ? html`<a href=${s.remote_url} target="_blank" rel="noopener">Claude</a>` : "Claude"}</p>`
         : null}
@@ -127,7 +153,6 @@ function Agents({ agents }) {
 
 export function Session({ snap, stale, route, go, act, toast, pending }) {
   const id = route.id;
-  const [text, setText] = useState("");
   const [sheet, setSheet] = useState("");
   const [source, setSource] = useState("");
   const [busy, setBusy] = useState(false);
@@ -137,7 +162,6 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
   // it is written on arrival and again on leaving, so a turn that ended while
   // the session was open does not light it.
   useEffect(() => {
-    setText("");
     setSheet("");
     setTree(null);
     if (id === undefined) return undefined;
@@ -175,11 +199,7 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
   const off = stale || busy;
   const base = "/api/v1/sessions/" + s.id;
   const candidates = mergeCandidates(snap, s);
-  const reply = text.trim();
-  const tooLong = utf8Len(reply) > MAX_REPLY;
-  const replies = snap.quick_replies || [];
   const waiting = s.group === "needs_you";
-  const ws = (snap.workspaces || []).find((w) => w.id === s.workspace);
   const now = Date.now();
 
   async function run(action, body) {
@@ -191,11 +211,6 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
     } finally {
       setBusy(false);
     }
-  }
-
-  async function send() {
-    const r = await run("send", { text: reply });
-    if (r.ok && r.status !== 202) setText("");
   }
 
   async function kill() {
@@ -233,11 +248,7 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
           : null}
       </nav>
       <h1 class="sc-h1 sc-wrap">${s.title}</h1>
-      <div class="sc-subline">
-        <span><span class=${"sc-glyph sc-glyph-" + s.group} aria-hidden="true">${glyphOf(s.group)}</span> ${s.label.toLowerCase()}${s.since ? " · " + ago(s.since, now) : ""}</span>
-        ${ws ? html`<span class="sc-ws">${ws.label || ws.name}</span>` : null}
-        ${s.branch ? html`<span>${s.branch}</span>` : null}
-      </div>
+      <${SubLine} s=${s} snap=${snap} now=${now} />
       ${waiting
         ? html`<div class="sc-box sc-attn-box">
             <span class="sc-legend">${GLYPHS.needs_you} Needs you</span>
@@ -248,8 +259,8 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
               : html`<p class="sc-dim sc-small">Remote Control is off for this session.</p>`}
           </div>`
         : null}
-      <${Tiles} s=${s} snap=${snap} now=${now} />
-      ${s.last_message ? html`<${Message} s=${s} tree=${tree} />` : null}
+      <${Tiles} s=${s} snap=${snap} now=${now} diff=${can.diff} />
+      ${s.last_message || s.claude ? html`<${Message} s=${s} tree=${tree} />` : null}
       ${s.agents && s.agents.length > 0 ? html`<${Agents} agents=${s.agents} />` : null}
 
       <section class="sc-actions">
@@ -261,26 +272,7 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
       </section>
 
       ${can.send
-        ? html`<form class="sc-reply" onSubmit=${(e) => { e.preventDefault(); if (!off && reply && !tooLong) send(); }}>
-            ${text === "" && replies.length > 0
-              ? html`<div class="sc-quick" role="group" aria-label="Quick replies">
-                  ${replies.map(
-                    (q) => html`<button key=${q} class="sc-chip-btn" type="button" disabled=${off} onClick=${() => setText(q)}><span>${q}</span></button>`,
-                  )}
-                </div>`
-              : null}
-            <div class="sc-reply-row">
-              <textarea
-                rows="2"
-                placeholder="reply, or /command…"
-                aria-label="Reply"
-                value=${text}
-                onInput=${(e) => setText(e.target.value)}
-              ></textarea>
-              <button class="sc-btn sc-primary" type="submit" disabled=${off || !reply || tooLong}>send</button>
-            </div>
-            ${tooLong ? html`<div class="sc-small sc-err">Too long: a reply is at most 64 KiB.</div>` : null}
-          </form>`
+        ? html`<${ReplyBox} snap=${snap} off=${off} run=${run} />`
         : s.group === "paused"
           ? html`<p class="sc-dim sc-small">Resume the session to reply.</p>`
           : null}

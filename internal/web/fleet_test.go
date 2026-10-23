@@ -100,7 +100,8 @@ func TestSessionOf_ProjectsEveryFactTheAppShows(t *testing.T) {
 		"pr": {"number": 42, "state": "open", "checks": "failing"},
 		"account": "work",
 		"agents": [{"name": "explorer", "description": "reads the tree", "idle": true}],
-		"remote_url": "https://claude.ai/code/session_01AbC"
+		"remote_url": "https://claude.ai/code/session_01AbC",
+		"claude": true
 	}`, string(got))
 }
 

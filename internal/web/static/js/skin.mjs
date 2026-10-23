@@ -17,6 +17,11 @@ export function GearIcon() {
   </svg>`;
 }
 
+// ChevronIcon marks a tile that opens another screen of the app.
+export function ChevronIcon() {
+  return html`<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>`;
+}
+
 // OutIcon marks a link that leaves the app: Claude, GitHub.
 export function OutIcon() {
   return html`<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M8 7h9v9"></path></svg>`;

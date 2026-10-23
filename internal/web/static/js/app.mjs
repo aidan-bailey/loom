@@ -17,15 +17,16 @@ const recentNotices = 20;
 const pendingFor = 5000;
 
 // parseRoute reads the location's hash: "" is the fleet, "#s/<id>" a session,
-// "#new", "#settings", "#pair"; anything else is the fleet. The session's id
-// is a number, as in the JSON.
+// "#s/<id>/turns" its conversation and "#s/<id>/diff" its changes, "#new",
+// "#settings", "#pair"; anything else is the fleet. The session's id is a
+// number, as in the JSON.
 export function parseRoute(hash) {
   const h = (hash || "").replace(/^#\/?/, "");
   if (h === "new") return { name: "new" };
   if (h === "settings") return { name: "settings" };
   if (h === "pair") return { name: "pair" };
-  const m = h.match(/^s\/(\d+)$/);
-  if (m) return { name: "session", id: Number(m[1]) };
+  const m = h.match(/^s\/(\d+)(?:\/(turns|diff))?$/);
+  if (m) return { name: m[2] === "turns" ? "turns" : m[2] === "diff" ? "changes" : "session", id: Number(m[1]) };
   return { name: "fleet" };
 }
 

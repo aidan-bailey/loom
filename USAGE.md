@@ -643,6 +643,15 @@ and answers only phones you have paired.
   leads with why it waits, then tiles for its changes, its pull request
   (which opens on GitHub) and its account's usage, its last message as
   Claude formatted it, its subagents by name, the actions, and a reply box.
+- **The conversation and the changes.** On a Claude session, **conversation ›**
+  beside its last message opens its recent turns: each prompt (yours, a
+  background task's, or a subagent's report), Claude's replies as it
+  formatted them, and its tool calls as one-line steps folded under a count
+  (tap to open; the newest turn's run is open while Claude works, its
+  running step marked). **↑ earlier turns** loads more. The **Changes** tile
+  opens the worktree's diff against its base commit, file by file: tap a file
+  for its hunks. Both refresh while the session works; neither shows tool
+  output, and the changes are offered only while the session runs.
 - **Replying.** The reply goes to Claude through the loom mod, as
   `loom session send` does, queued behind the running turn. It is refused,
   with the reason, for a session with no live mod or another agent than

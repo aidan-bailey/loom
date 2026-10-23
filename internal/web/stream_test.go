@@ -578,9 +578,10 @@ func TestStream_AChangeTheAppCannotSeeIsNotPublished(t *testing.T) {
 	s := e.open(t, e.cookie)
 	s.expect("snapshot")
 
-	// The program is in the model's view of the session and not in the app's.
-	e.hubSaw(t, viewsWhere(e.ws, func(v core.InstanceView) bool { return v.Program == "aider" }), func() {
-		e.change(t, func() { e.insts["fix"].SetProgram("aider") })
+	// The program is in the model's view of the session; the app sees only
+	// whether it runs Claude, which this change leaves as it was.
+	e.hubSaw(t, viewsWhere(e.ws, func(v core.InstanceView) bool { return v.Program == "claude --model opus" }), func() {
+		e.change(t, func() { e.insts["fix"].SetProgram("claude --model opus") })
 	})
 	s.none(200 * time.Millisecond)
 

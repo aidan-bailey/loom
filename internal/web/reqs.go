@@ -306,6 +306,16 @@ func (r *reqs) take(e *reqEntry) (core.Reply, []noticeJSON, bool) {
 	return e.reply, append([]noticeJSON{}, e.notices...), true
 }
 
+// drop stops tracking request req once its handler is done with it: a
+// read's, whose Reply carries its data and which no notice follows. Kept,
+// the Reply would hold a page or a patch for reqKeep, and one arriving
+// after the wait gave up would reach the device's stream as a notice.
+func (r *reqs) drop(req core.ReqID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.entries, req)
+}
+
 // giveUp ends the wait with no Reply: what was held goes to the stream now,
 // and the rest as it comes. A Reply that arrived meanwhile wins.
 func (r *reqs) giveUp(e *reqEntry) (core.Reply, []noticeJSON, bool) {

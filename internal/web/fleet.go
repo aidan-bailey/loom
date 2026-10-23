@@ -108,6 +108,9 @@ type sessionJSON struct {
 	Account     string           `json:"account"`
 	Agents      []agentJSON      `json:"agents"`
 	RemoteURL   string           `json:"remote_url"`
+	// Claude says the session runs Claude, whose conversation the app can
+	// read (GET …/turns).
+	Claude bool `json:"claude"`
 }
 
 // notifyJSON is a device's notification settings. PausedUntil is an RFC 3339
@@ -230,6 +233,7 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 		Account:     v.Account,
 		Agents:      make([]agentJSON, 0, len(v.Subagents)),
 		ParityKnown: v.ParityKnown,
+		Claude:      session.IsClaudeProgram(v.Program),
 	}
 	if !v.StatusSince.IsZero() {
 		s.Since = v.StatusSince.UTC().Format(time.RFC3339)

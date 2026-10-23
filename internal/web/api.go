@@ -75,6 +75,8 @@ func (l *Layer) routeAPI(m *http.ServeMux) {
 	m.Handle("POST /api/v1/sessions/{id}/kill", l.authed(l.sessionOp("kill", core.Core.Kill)))
 	m.Handle("POST /api/v1/sessions/{id}/push", l.authed(l.sessionOp("push", core.Core.Push)))
 	m.Handle("GET /api/v1/sessions/{id}/message", l.authed(l.message))
+	m.Handle("GET /api/v1/sessions/{id}/turns", l.authed(l.readTurns))
+	m.Handle("GET /api/v1/sessions/{id}/diff", l.authed(l.readDiff))
 	m.Handle("POST /api/v1/sessions", l.authed(l.createSession))
 	m.Handle("GET /api/v1/launch-defaults", l.authed(l.launchDefaults))
 	m.Handle("PUT /api/v1/device", l.authed(l.putDevice))
