@@ -628,13 +628,21 @@ push and merge, and get a notification when a session starts waiting on
 you or finishes. It is off until you enable it, listens on loopback only,
 and answers only phones you have paired.
 
-- **The fleet.** Sessions are grouped by what needs you: **Needs you**
+- **The fleet.** Tiles count the sessions that **need you** (with the
+  oldest wait), are **your turn** (with how many ended since this phone
+  last opened them) and are **working** (with their running subagents); a
+  tap jumps to the group. Below them, each account's plan usage: the
+  5-hour and 7-day windows, how much is used and when each resets, dimmed
+  once the sample is old. Sessions are listed by group: **Needs you**
   (longest wait first, with the reason and, for a permission request, the
-  command, file or address), **Your turn** (a dot when the turn ended after this
-  phone last opened the session), **Working**, and **Paused** (folded
-  away). Chips filter by workspace; the phone remembers the filter. A
-  session leads with why it waits, then its last message, its changes,
-  branch, pull request and account, the actions, and a reply box.
+  command, file or address), **Your turn** (marked NEW when the turn ended
+  after this phone last opened the session), **Working**, and **Paused**
+  (folded away). The workspace chips are the workspaces open as tabs in
+  loom, in tab order, plus any with a session that isn't paused (all of
+  them while no tab is open); the phone remembers the chip. A session
+  leads with why it waits, then tiles for its changes, its pull request
+  (which opens on GitHub) and its account's usage, its last message as
+  Claude formatted it, its subagents by name, the actions, and a reply box.
 - **Replying.** The reply goes to Claude through the loom mod, as
   `loom session send` does, queued behind the running turn. It is refused,
   with the reason, for a session with no live mod or another agent than
@@ -643,6 +651,10 @@ and answers only phones you have paired.
   command the session's Claude lists (see [Session
   Subcommands](#session-subcommands) for what is refused). Its result
   arrives as a notice.
+- **Quick replies.** While the reply box is empty, chips above it fill it
+  with a reply you use often; Send sends it. They start as `yes`,
+  `continue`, `/compact` and `/clear`; edit them in Settings, one a line,
+  at most 12. Every paired phone shares the list.
 - **Approvals and the full chat.** Loom answers no permission prompt
   itself. **Open in Claude** links to the session's Remote Control page on
   claude.ai, where you approve and read the whole conversation; it shows

@@ -34,6 +34,9 @@ The API is `/api/v1` and an installed app may be older than the daemon for a whi
 - No inline script and no `style` attribute: the Content-Security-Policy is `default-src 'self'`, and a blocked handler fails silently on the phone.
 - The Preact + htm module is one pinned file, `internal/web/static/lib/preact-htm.mjs`: replace it and its pinned SHA-256 together, with the version and source URL in its header comment and the licence in `NOTICE.md`. It sits in `lib/`, not `vendor/`, because Go's module zips drop files below a nested `vendor/` and a `go install` build would embed nothing.
 - `sw.js` carries the placeholders `__LOOM_BUILD__` and `__LOOM_SHELL__`, and `index.html` the build ID in its `loom-build` meta tag (`__LOOM_BUILD__`); `routeStatic` fills them when serving; the precache list therefore follows the embedded files, and the worker caches the shell only, never `/api/`.
+- The skin is dark only, its tokens on `app.css`'s `:root` (`TestStatic_TheSkinIsDarkWithEveryToken`). A form control's text is 16px: iOS zooms into a smaller one.
+- A last message is drawn from its tree (`GET /api/v1/sessions/{id}/message`), never from an HTML string. A node the app needs is added in `internal/web/markdown.go`, with a case in `TestBuildTree_EachNodeType`.
+- To see a screen without a phone, serve `internal/web/static/` from a throwaway server outside the worktree that answers `/api/v1/stream` with a canned `snapshot` (and the routes the screen calls), and render it with headless Chromium at 390×844 (`--screenshot`, `--virtual-time-budget`, `--enable-logging=stderr` for the console). Fill `index.html`'s `__LOOM_BUILD__` with the snapshot's `build`, or the app reloads to upgrade its shell; the worker's precache fails there, harmlessly.
 
 ## Trying a change
 
