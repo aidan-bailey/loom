@@ -2,6 +2,7 @@
 import { html, useState, useEffect } from "../lib/preact-htm.mjs";
 import { pref } from "./store.mjs";
 import { glyphOf, GearIcon } from "./skin.mjs";
+import { ContextRow } from "./chrome.mjs";
 import { cells, resetPassed, resetText, isStale, planName, shareText } from "./usage.mjs";
 
 export const GROUPS = [
@@ -10,9 +11,6 @@ export const GROUPS = [
   { key: "working", title: "Working" },
   { key: "paused", title: "Paused" },
 ];
-
-// LINK is the status line's word for the stream's state (app.mjs's link).
-const LINK = { live: "LIVE", restarting: "RESTARTING", offline: "OFFLINE" };
 
 export function allSessions(snap) {
   return Object.values((snap && snap.sessions) || {}).flat();
@@ -38,6 +36,29 @@ export function groupSessions(sessions, filter) {
   out.needs_you.sort((a, b) => t(a) - t(b));
   for (const k of ["your_turn", "working", "paused"]) out[k].sort((a, b) => t(b) - t(a));
   return out;
+}
+
+// fleetGroups groups the sessions of the shown workspaces as the fleet does,
+// whatever the fleet's chip filter: the status row's counts and the sessions
+// a count's tap cycles through.
+export function fleetGroups(snap) {
+  const shown = new Set(shownWorkspaces(snap).map((w) => String(w.id)));
+  return groupSessions(allSessions(snap).filter((s) => shown.has(String(s.workspace))), "");
+}
+
+// nextInGroup is the session a count's tap opens: the one after currentId in
+// the group's order, wrapping to the first, or the first when currentId is
+// not in the group; undefined for an empty group.
+export function nextInGroup(groups, group, currentId) {
+  const list = groups[group] || [];
+  if (list.length === 0) return undefined;
+  const at = list.findIndex((s) => s.id === currentId);
+  return list[(at + 1) % list.length];
+}
+
+// sessionOf is the session the snapshot lists under id, or undefined.
+export function sessionOf(snap, id) {
+  return snap && id !== undefined ? allSessions(snap).find((x) => x.id === id) : undefined;
 }
 
 // readSeen is {"<session id>": ms}: when this phone last opened the session.
@@ -203,7 +224,7 @@ function UsageBoxes({ usage, staleAfter, now }) {
   `;
 }
 
-export function Fleet({ snap, stale, link, go }) {
+export function Fleet({ snap }) {
   const [filter, setFilter] = useState(() => pref("filter") || "");
   const [, setTick] = useState(0);
 
@@ -243,11 +264,6 @@ export function Fleet({ snap, stale, link, go }) {
 
   return html`
     <section class="sc-screen sc-fleet">
-      <header class="sc-header">
-        <h1 class="sc-h1"><span class="sc-dim sc-light">loom@</span>${snap.host || "loom"}</h1>
-        <a class="sc-icon" href="#settings" aria-label="Settings"><${GearIcon} /></a>
-        <button class="sc-btn sc-primary" type="button" disabled=${stale} onClick=${() => go("#new")}>+ new</button>
-      </header>
       <nav class="sc-tiles" aria-label="Sessions by state">
         <${Tile} group="needs_you" title="Needs you" count=${groups.needs_you.length} sub=${oldest ? "oldest " + oldest : ""} />
         <${Tile} group="your_turn" title="Your turn" count=${groups.your_turn.length} sub=${fresh > 0 ? fresh + " new" : ""} />
@@ -281,14 +297,15 @@ export function Fleet({ snap, stale, link, go }) {
             ${rows(groups.paused)}
           </details>`
         : null}
-      <footer class="sc-status">
-        <span class=${"sc-link sc-link-" + (LINK[link] ? link : "offline")}>${LINK[link] || LINK.offline}</span>
-        <span>${snap.host}</span>
-        <span class="sc-sep" aria-hidden="true">│</span>
-        <span>${plural(listed, "session")}</span>
-        <span class="sc-fill"></span>
-        ${groups.paused.length > 0 ? html`<span class="sc-dim">${groups.paused.length} paused</span>` : null}
-      </footer>
     </section>
   `;
+}
+
+// FleetHead is the fleet's context row: its title, the gear and + new (off
+// while the stream is down).
+export function FleetHead({ stale, go }) {
+  return html`<${ContextRow} title="Fleet">
+    <a class="sc-icon" href="#settings" aria-label="Settings"><${GearIcon} /></a>
+    <button class="sc-btn sc-primary" type="button" disabled=${stale} onClick=${() => go("#new")}>+ new</button>
+  <//>`;
 }

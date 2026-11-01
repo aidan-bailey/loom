@@ -4,6 +4,7 @@
 import { html, useState, useEffect, useRef } from "../lib/preact-htm.mjs";
 import { pref } from "./store.mjs";
 import { utf8Len } from "./sheets.mjs";
+import { ContextRow, FLEET_BACK } from "./chrome.mjs";
 
 const MAX_PROMPT = 64 * 1024;
 
@@ -123,8 +124,6 @@ export function NewSession({ snap, stale, go, act, toast }) {
 
   return html`
     <section class="sc-screen">
-      <nav class="sc-topbar"><a class="sc-back" href="#">‹ fleet</a></nav>
-      <h1 class="sc-h1 sc-wrap">New session</h1>
       <form class="sc-form" onSubmit=${(e) => { e.preventDefault(); if (ready) create(); }}>
         <label class="sc-field">
           <span>Workspace</span>
@@ -165,4 +164,9 @@ export function NewSession({ snap, stale, go, act, toast }) {
       </form>
     </section>
   `;
+}
+
+// NewHead is the new-session screen's context row.
+export function NewHead() {
+  return html`<${ContextRow} back=${FLEET_BACK} title="New session" />`;
 }

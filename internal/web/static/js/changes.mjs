@@ -3,7 +3,7 @@
 // Every line is drawn as text.
 import { html, useState, useEffect, useRef } from "../lib/preact-htm.mjs";
 import { call } from "./api.mjs";
-import { allSessions } from "./fleet.mjs";
+import { sessionOf } from "./fleet.mjs";
 import { SubLine } from "./session.mjs";
 
 // POLL is how often the screen refreshes while the session is Running.
@@ -69,7 +69,7 @@ function File({ f, open, onToggle }) {
 
 export function Changes({ snap, route }) {
   const id = route.id;
-  const s = snap && id !== undefined ? allSessions(snap).find((x) => x.id === id) : undefined;
+  const s = sessionOf(snap, id);
   const [patch, setPatch] = useState(null);
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(() => new Set());
@@ -147,7 +147,6 @@ export function Changes({ snap, route }) {
   if (!s) {
     return html`
       <section class="sc-screen">
-        <nav class="sc-topbar"><a class="sc-back" href="#">‹ fleet</a></nav>
         <p class="sc-dim sc-empty">${snap ? "This session is gone." : "Loading…"}</p>
       </section>
     `;
@@ -161,8 +160,6 @@ export function Changes({ snap, route }) {
 
   return html`
     <section class="sc-screen sc-changes">
-      <nav class="sc-topbar" aria-label="Changes"><a class="sc-back" href=${"#s/" + s.id}>‹ ${s.title}</a></nav>
-      <h1 class="sc-h1">Changes</h1>
       ${patch
         ? html`<div class="sc-subline">
             <span>${files.length} ${files.length === 1 ? "file" : "files"}</span>

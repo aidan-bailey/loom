@@ -1,13 +1,15 @@
-// The app: routes, the live snapshot, the stale bar and the toasts. The
+// The app: routes, the live snapshot, the header and the toasts. The
 // screens are in screens.mjs and pairing in pair.mjs; this file owns the data
 // they draw, as the props {snap, stale, link, route, go, act, toast, pending}.
+// The header's rows are chrome.mjs's; each screen's context row is its Head.
 import { html, render, useState, useEffect, useRef, useCallback } from "../lib/preact-htm.mjs";
 import { call, connect } from "./api.mjs";
 import { loadSnapshot, saveSnapshot, clearSnapshot, pref } from "./store.mjs";
 import { screens } from "./screens.mjs";
 import { Pair, AddToHome, needsInstall } from "./pair.mjs";
 import { checkPush } from "./push.mjs";
-import { allSessions } from "./fleet.mjs";
+import { allSessions, fleetGroups, nextInGroup } from "./fleet.mjs";
+import { StatusRow } from "./chrome.mjs";
 
 const buildMeta = document.querySelector('meta[name="loom-build"]');
 const shellBuild = buildMeta ? buildMeta.content : "";
@@ -112,19 +114,6 @@ let launchDone = false;
 // restarting": a normal restart reconnects within it, so it never flashes
 // "Can't reach"; a daemon that stays away longer is plainly unreachable.
 const restartGrace = 30000;
-
-// staleText is the stale bar's words: after a bye the daemon is restarting;
-// once a connect has failed (offline) it cannot be reached, and the bar says
-// since when; before that the stream is still connecting.
-function staleText(snap, restarting, offline) {
-  if (restarting) return "loom is restarting…";
-  if (!offline || !snap.host) return "Not connected. Showing the last known state.";
-  let text = "Can't reach loom on " + snap.host;
-  if (lastUpdated) {
-    text += ". Last updated " + new Date(lastUpdated).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  }
-  return text;
-}
 
 function App() {
   const [snap, setSnap] = useState(null);
@@ -352,6 +341,13 @@ function App() {
     go("#");
   }, []);
 
+  // jump opens the next session of a group the status row counts, after the
+  // one on screen, in the group's order as it stands at the tap.
+  const jump = useCallback((group) => {
+    const next = nextInGroup(fleetGroups(snapRef.current), group, routeRef.current.id);
+    if (next) go("#s/" + next.id);
+  }, []);
+
   if (install) {
     return html`<${AddToHome}
       onContinue=${() => {
@@ -361,31 +357,50 @@ function App() {
     />`;
   }
 
+  // link is the stream's state for the status row: connecting until the
+  // first snapshot or a failed connect, restarting after a bye.
+  const link = !stale ? "live" : restarting ? "restarting" : offline ? "offline" : "connecting";
+  const entry = screens[route.name];
+  const chromed = Boolean(snap) && route.name !== "pair";
+  const props = { snap, stale, link, route, go, act, toast, pending };
+
   let body;
   if (route.name === "pair") {
     body = html`<${Pair} onPaired=${onPaired} />`;
   } else if (!snap) {
     body = html`<div class="splash">${restarting ? "loom is restarting…" : offline ? "Can't reach loom. Retrying…" : "Connecting…"}</div>`;
   } else {
-    const Screen = screens[route.name];
-    const link = !stale ? "live" : restarting ? "restarting" : "offline";
-    const props = { snap, stale, link, route, go, act, toast, pending };
-    body = Screen
-      ? html`<${Screen} key=${route.name + (route.id === undefined ? "" : route.id)} ...${props} />`
+    body = entry
+      ? html`<${entry.Screen} key=${route.name + (route.id === undefined ? "" : route.id)} ...${props} />`
       : html`<div class="splash">Nothing here yet.</div>`;
   }
 
-  return html`
-    <div class="shell">
-      ${snap && stale && route.name !== "pair"
-        ? html`<div class="stale-bar" role="status">${staleText(snap, restarting, offline)}</div>`
-        : null}
-      <main>${body}</main>
-      <div class="toasts" aria-live="polite">
-        ${toasts.map(
-          (t) => html`<div key=${t.id} class=${"toast" + (t.error ? " error" : "")} role=${t.error ? "alert" : "status"} onClick=${() => dismissToast(t.id)}>${t.text}</div>`,
-        )}
+  // The toasts hang from the header's bottom edge; with no header they
+  // come down from the top.
+  const toastList = html`<div class="toasts" aria-live="polite">
+    ${toasts.map(
+      (t) => html`<div key=${t.id} class=${"toast" + (t.error ? " error" : "")} role=${t.error ? "alert" : "status"} onClick=${() => dismissToast(t.id)}>${t.text}</div>`,
+    )}
+  </div>`;
+
+  let header = null;
+  if (chromed) {
+    const groups = fleetGroups(snap);
+    const counts = { needs_you: groups.needs_you.length, your_turn: groups.your_turn.length, working: groups.working.length };
+    header = html`<header class="sc-chrome">
+      <div class="sc-chrome-in">
+        <${StatusRow} link=${link} host=${snap.host} updated=${lastUpdated} counts=${counts} onJump=${jump} />
+        ${entry ? html`<${entry.Head} ...${props} />` : null}
       </div>
+      ${toastList}
+    </header>`;
+  }
+
+  return html`
+    <div class=${"shell" + (chromed ? " sc-chromed" : "")}>
+      ${header}
+      <main>${body}</main>
+      ${chromed ? null : toastList}
     </div>
   `;
 }

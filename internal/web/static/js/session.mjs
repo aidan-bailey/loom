@@ -4,7 +4,8 @@
 import { html, useState, useEffect } from "../lib/preact-htm.mjs";
 import { call } from "./api.mjs";
 import { ConfirmSheet } from "./sheets.mjs";
-import { allSessions, ago, markSeen } from "./fleet.mjs";
+import { allSessions, ago, markSeen, sessionOf } from "./fleet.mjs";
+import { ContextRow, FLEET_BACK } from "./chrome.mjs";
 import { GLYPHS, glyphOf, OutIcon, ChevronIcon } from "./skin.mjs";
 import { usageFor, shareText, isStale } from "./usage.mjs";
 import { Markdown } from "./markdown.mjs";
@@ -169,7 +170,7 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
     return () => markSeen(id);
   }, [id]);
 
-  const s = snap && id !== undefined ? allSessions(snap).find((x) => x.id === id) : undefined;
+  const s = sessionOf(snap, id);
   const msg = s ? s.last_message : "";
 
   // The tree is fetched for the message the stream holds, and again when the
@@ -189,7 +190,6 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
   if (!s) {
     return html`
       <section class="sc-screen">
-        <nav class="sc-topbar"><a class="sc-back" href="#">‹ fleet</a></nav>
         <p class="sc-dim sc-empty">${snap && pending !== id ? "This session is gone." : "Loading…"}</p>
       </section>
     `;
@@ -240,14 +240,6 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
 
   return html`
     <section class="sc-screen sc-session">
-      <nav class="sc-topbar" aria-label="Session">
-        <a class="sc-back" href="#">‹ fleet</a>
-        <span class="sc-fill"></span>
-        ${s.remote_url && !waiting
-          ? html`<a class="sc-claude" href=${s.remote_url} target="_blank" rel="noopener">claude <${OutIcon} /></a>`
-          : null}
-      </nav>
-      <h1 class="sc-h1 sc-wrap">${s.title}</h1>
       <${SubLine} s=${s} snap=${snap} now=${now} />
       ${waiting
         ? html`<div class="sc-box sc-attn-box">
@@ -317,4 +309,18 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
         : null}
     </section>
   `;
+}
+
+// SessionHead is the context row of a session's views (session,
+// conversation, changes): back to the fleet, its title, and the way to
+// Claude while the session doesn't wait on you (the needs-you box has its
+// own button).
+export function SessionHead({ snap, route, pending }) {
+  const s = sessionOf(snap, route.id);
+  if (!s) return html`<${ContextRow} back=${FLEET_BACK} title=${pending === route.id ? "Loading…" : ""} />`;
+  return html`<${ContextRow} back=${FLEET_BACK} title=${s.title}>
+    ${s.remote_url && s.group !== "needs_you"
+      ? html`<a class="sc-claude" href=${s.remote_url} target="_blank" rel="noopener">claude <${OutIcon} /></a>`
+      : null}
+  <//>`;
 }

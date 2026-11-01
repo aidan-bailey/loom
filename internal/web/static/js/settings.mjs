@@ -5,6 +5,7 @@ import { html, useState, useEffect } from "../lib/preact-htm.mjs";
 import { ConfirmSheet } from "./sheets.mjs";
 import { PushButton } from "./push.mjs";
 import { ago } from "./fleet.mjs";
+import { ContextRow, FLEET_BACK } from "./chrome.mjs";
 
 export function isPaused(device, now = Date.now()) {
   const until = Date.parse(device && device.notify ? device.notify.paused_until : "");
@@ -125,9 +126,6 @@ export function Settings({ snap, stale, act, toast }) {
 
   return html`
     <section class="sc-screen">
-      <nav class="sc-topbar"><a class="sc-back" href="#">‹ fleet</a></nav>
-      <h1 class="sc-h1 sc-wrap">Settings</h1>
-
       <section class="sc-section">
         <h2 class="sc-group-title">Notifications</h2>
         <${PushButton} device=${device} act=${act} toast=${toast} />
@@ -181,4 +179,9 @@ export function Settings({ snap, stale, act, toast }) {
         : null}
     </section>
   `;
+}
+
+// SettingsHead is the settings screen's context row.
+export function SettingsHead() {
+  return html`<${ContextRow} back=${FLEET_BACK} title="Settings" />`;
 }

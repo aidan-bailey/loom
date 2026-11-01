@@ -85,7 +85,7 @@ header: they have no host and no counts to show.
 `app.mjs`'s `link` gains `connecting` (today `offline` covers it). The pill
 carries `aria-live="polite"`, as the stale bar's `role="status"` did.
 
-**The counts** are `fleetCounts(snap)`: the sessions of `shownWorkspaces`,
+**The counts** are the lengths of `fleetGroups(snap)`'s groups: the sessions of `shownWorkspaces`,
 grouped as the fleet groups them (`groupSessions(…, "")`). Each is a button
 with its glyph and number, coloured as the fleet's groups are (● amber, ◆
 accent, ◐ plain), with an `aria-label` such as "2 need you: open the next".
@@ -95,7 +95,7 @@ nothing. The ● count is the icon badge's count: the daemon's badge counts
 needs-you sessions, and a workspace with a session that isn't paused is
 always shown.
 
-**A tap** goes to `#s/<id>` of `nextInGroup(snap, group, currentId)`:
+**A tap** goes to `#s/<id>` of `nextInGroup(fleetGroups(snap), group, currentId)`:
 the session after the current one in the group's order as it stands at the
 tap (Needs you longest wait first, the others newest first), wrapping to the
 first; the first when the current screen is no session or its session is
@@ -166,15 +166,15 @@ the CSP drops. Their behaviour is unchanged.
 
 | File | Change |
 |---|---|
-| `js/chrome.mjs` (new) | `StatusRow`, `ContextRow`, `SessionTabs`; `fleetCounts(snap)` and `nextInGroup(snap, group, currentId)`, pure |
+| `js/chrome.mjs` (new) | `StatusRow`, `ContextRow`, `SessionTabs`, `FLEET_BACK`; it imports only `skin.mjs` |
 | `js/app.mjs` | Renders `<header class="sc-chrome">` (the status row, the route's head, the toasts) above `<main>` (the route's screen). Drops the stale bar; `staleText`'s offline time moves to the status row; `link` gains `connecting`; `lastUpdated` reaches the row as a prop |
 | `js/screens.mjs` | `name → {Screen, Head}`. Heads: `FleetHead` (`fleet.mjs`), `SessionHead` (`session.mjs`, for `session`, `turns` and `changes`), `SettingsHead`, `NewHead` |
-| `js/fleet.mjs` | Drops `sc-header`, the `h1`, `sc-status` and `LINK`; exports `FleetHead` |
+| `js/fleet.mjs` | Drops `sc-header`, the `h1`, `sc-status` and `LINK`; exports `FleetHead`; adds `fleetGroups(snap)`, `nextInGroup(groups, group, currentId)` and `sessionOf(snap, id)`, pure (here rather than in `chrome.mjs`, which `fleet.mjs` imports) |
 | `js/session.mjs`, `js/turns.mjs` | Drop `sc-topbar` and the `h1`; use `useRun` |
 | `js/changes.mjs` | Drops `sc-topbar` and the `h1`; adds the reply box (or the paused line) through `useRun` |
 | `js/settings.mjs`, `js/newsession.mjs` | Drop `sc-topbar` and the `h1`; export their heads |
 | `js/reply.mjs` | Drafts by session id; `useRun` |
-| `app.css` | `.sc-chrome`: `position: sticky; top: 0`, padding `env(safe-area-inset-top)` itself so it fills behind the iOS status bar, `--bg` with the `--rule` bottom border; `.shell` drops its top inset; the status row, pill states, counts, context row and tabs; `.toasts` inside the header; `.sc-group-title`'s `scroll-margin-top` clears the fleet's header (status and context rows plus the top inset) so a tile's jump lands below it. Removes `.stale-bar`, `.sc-status`, `.sc-header`, `.sc-topbar` and `.sc-fleet`'s bottom padding |
+| `app.css` | `.sc-chrome`: `position: sticky; top: 0`, padding `env(safe-area-inset-top)` itself so it fills behind the iOS status bar, `--bg` with the `--rule` bottom border; `.shell` drops its top inset (only while the header is drawn: `.sc-chromed`); `main` becomes a flex column and a session's views fill it with `flex: 1` instead of a `100dvh` min-height, which the header would add to; the status row, pill states, counts, context row and tabs; `.toasts` inside the header; `.sc-group-title`'s `scroll-margin-top` clears the fleet's header (status and context rows plus the top inset) so a tile's jump lands below it. Removes `.stale-bar`, `.sc-status`, `.sc-header`, `.sc-topbar` and `.sc-fleet`'s bottom padding |
 
 A head takes the screen's props (`{snap, stale, link, route, go, act, toast,
 pending}`) and finds its session by `route.id` as the screen does
@@ -205,8 +205,8 @@ There is no JS test runner and CI has no Node, as today.
   `TestStatic_EveryReferenceResolves`, `TestStatic_NamedImportsAreExported`
   and `TestStatic_TheStylesheetHasNoFenceAndItsBracesBalance` hold the new
   module and CSS to the CSP and the import rules.
-- `nextInGroup` and `fleetCounts` get a throwaway Node script that imports
-  `chrome.mjs` and asserts: next after the current, the wrap, the first from
+- `nextInGroup`, `fleetGroups` and `sessionOf` get a throwaway Node script
+  that imports `fleet.mjs` and asserts: next after the current, the wrap, the first from
   outside the group, an empty group, unshown workspaces left out, a group
   the build doesn't know counted as Paused (not in any count). Kept outside
   the worktree; nothing in CI would run it.
@@ -222,8 +222,8 @@ There is no JS test runner and CI has no Node, as today.
 
 ## Work packages
 
-1. **The header.** `chrome.mjs`'s status row and context row, `fleetCounts`
-   and `nextInGroup`; `app.mjs` drawing the header with the toasts; heads in
+1. **The header.** `chrome.mjs`'s status row and context row, `fleet.mjs`'s
+   `fleetGroups` and `nextInGroup`; `app.mjs` drawing the header with the toasts; heads in
    `screens.mjs`; every screen's own top, the stale bar and the fleet's
    status line removed; the CSS. USAGE.md's phone section and
    `internal/web/README.md`'s skin paragraph.

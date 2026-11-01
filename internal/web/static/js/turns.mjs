@@ -4,7 +4,7 @@
 // works. Claude's text is drawn from its tree, everything else as text.
 import { html, useState, useEffect, useRef, useLayoutEffect } from "../lib/preact-htm.mjs";
 import { call } from "./api.mjs";
-import { allSessions, ago } from "./fleet.mjs";
+import { sessionOf, ago } from "./fleet.mjs";
 import { Markdown } from "./markdown.mjs";
 import { SubLine, actionsFor } from "./session.mjs";
 import { ReplyBox } from "./reply.mjs";
@@ -153,7 +153,7 @@ function Turn({ t, live, now, remote }) {
 
 export function Turns({ snap, stale, route, act, toast }) {
   const id = route.id;
-  const s = snap && id !== undefined ? allSessions(snap).find((x) => x.id === id) : undefined;
+  const s = sessionOf(snap, id);
   const [held, setHeld] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -240,7 +240,6 @@ export function Turns({ snap, stale, route, act, toast }) {
   if (!s) {
     return html`
       <section class="sc-screen">
-        <nav class="sc-topbar"><a class="sc-back" href="#">‹ fleet</a></nav>
         <p class="sc-dim sc-empty">${snap ? "This session is gone." : "Loading…"}</p>
       </section>
     `;
@@ -264,8 +263,6 @@ export function Turns({ snap, stale, route, act, toast }) {
 
   return html`
     <section class="sc-screen sc-turns">
-      <nav class="sc-topbar" aria-label="Conversation"><a class="sc-back" href=${"#s/" + s.id}>‹ ${s.title}</a></nav>
-      <h1 class="sc-h1">Conversation</h1>
       <${SubLine} s=${s} snap=${snap} now=${now} />
       ${held && held.skipped ? html`<p class="sc-dim sc-small">Some records could not be read.</p>` : null}
       ${held && held.earlier ? html`<button class="sc-earlier" type="button" onClick=${() => load("earlier")}>↑ earlier turns</button>` : null}

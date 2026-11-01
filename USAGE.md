@@ -628,6 +628,13 @@ push and merge, and get a notification when a session starts waiting on
 you or finishes. It is off until you enable it, listens on loopback only,
 and answers only phones you have paired.
 
+- **The header.** Every screen opens under a pinned header. Its first row
+  says whether the phone is live (`LIVE`, `CONNECTING`, `RESTARTING`, or
+  `OFFLINE` with when it last heard from loom), which machine it shows
+  (`loom@<host>`), and how many sessions need you (●), are your turn (◆)
+  and are working (◐) in the workspaces it shows. Tap a count to open that
+  group's next session, and again for the one after. The second row is the
+  screen's own: the way back, its title, its actions.
 - **The fleet.** Tiles count the sessions that **need you** (with the
   oldest wait), are **your turn** (with how many ended since this phone
   last opened them) and are **working** (with their running subagents); a
