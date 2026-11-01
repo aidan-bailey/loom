@@ -436,6 +436,24 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-context { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 16px; }
 .sc-context .sc-back { margin-left: -12px; }
 .sc-context .sc-claude { margin-right: -12px; }
+/* A session's views as tabs: a 40px target each, the current one
+   underlined; they shrink to their words on a narrow phone. */
+.sc-tabs { display: flex; border-top: 1px solid var(--rule); }
+.sc-tab {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--dim);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.sc-tab-on { color: var(--title); box-shadow: inset 0 -2px var(--accent); }
+.sc-tab-diff { font-size: 11px; }
 .sc-h1 { flex: 1; min-width: 0; margin: 0; font-size: 17px; font-weight: 700; color: var(--title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- the fleet ---- */
@@ -472,7 +490,8 @@ details.sc-group[open] > summary::before { content: "▾"; }
    actions; it reaches into the shell's bottom inset, since it pads for the
    home indicator itself. */
 .sc-session,
-.sc-turns {
+.sc-turns,
+.sc-changes {
   flex: 1;
   display: flex;
   flex-direction: column;

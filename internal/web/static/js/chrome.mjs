@@ -54,3 +54,27 @@ export function ContextRow({ back, title, children }) {
     ${children}
   </div>`;
 }
+
+// SessionTabs are a session's views under its context row: the session, its
+// conversation (conversation: a Claude session) and its changes (changes:
+// while its diff can be read, with its line counts). A tab shows when it
+// applies or is the current one, so a session that pauses on its changes
+// keeps the tab under the user; a lone session tab draws no row.
+export function SessionTabs({ s, current, conversation, changes }) {
+  const base = "#s/" + s.id;
+  const d = s.diff || {};
+  const tabs = [{ key: "session", label: "session", href: base }];
+  if (conversation || current === "turns") tabs.push({ key: "turns", label: "conversation", href: base + "/turns" });
+  if (changes || current === "changes") {
+    tabs.push({ key: "changes", label: "changes", href: base + "/diff", diff: d.added || d.removed ? d : null });
+  }
+  if (tabs.length === 1) return null;
+  return html`<nav class="sc-tabs" aria-label="Session views">
+    ${tabs.map(
+      (t) => html`<a key=${t.key} class=${"sc-tab" + (t.key === current ? " sc-tab-on" : "")} href=${t.href} aria-current=${t.key === current ? "page" : undefined}>
+        ${t.label}
+        ${t.diff ? html`<span class="sc-tab-diff"><span class="sc-add">+${t.diff.added || 0}</span> <span class="sc-del">−${t.diff.removed || 0}</span></span>` : null}
+      </a>`,
+    )}
+  </nav>`;
+}

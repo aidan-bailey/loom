@@ -1,10 +1,12 @@
 // The changes screen: a session's worktree diff against its base commit,
 // file by file (GET /api/v1/sessions/{id}/diff); a file opens to its hunks.
-// Every line is drawn as text.
+// Every line is drawn as text. It ends in the reply box, as the session's
+// other views do.
 import { html, useState, useEffect, useRef } from "../lib/preact-htm.mjs";
 import { call } from "./api.mjs";
 import { sessionOf } from "./fleet.mjs";
-import { SubLine } from "./session.mjs";
+import { SubLine, actionsFor } from "./session.mjs";
+import { ReplyBox, useRun } from "./reply.mjs";
 
 // POLL is how often the screen refreshes while the session is Running.
 const POLL = 10000;
@@ -67,9 +69,10 @@ function File({ f, open, onToggle }) {
   </details>`;
 }
 
-export function Changes({ snap, route }) {
+export function Changes({ snap, stale, route, act, toast }) {
   const id = route.id;
   const s = sessionOf(snap, id);
+  const { busy, run } = useRun(act, toast, id);
   const [patch, setPatch] = useState(null);
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(() => new Set());
@@ -157,6 +160,8 @@ export function Changes({ snap, route }) {
   const added = files.reduce((n, f) => n + (f.added || 0), 0);
   const removed = files.reduce((n, f) => n + (f.removed || 0), 0);
   const since = patch && patch.base ? patch.base.slice(0, 7) : "";
+  const can = actionsFor(s);
+  const off = stale || busy;
 
   return html`
     <section class="sc-screen sc-changes">
@@ -180,6 +185,11 @@ export function Changes({ snap, route }) {
       ${patch && err
         ? html`<p class="sc-dim sc-small">Could not refresh: ${err} · <button class="sc-inline-btn" type="button" onClick=${() => load()}>retry</button></p>`
         : null}
+      ${can.send
+        ? html`<${ReplyBox} snap=${snap} off=${off} run=${run} id=${s.id} />`
+        : s.group === "paused"
+          ? html`<p class="sc-dim sc-small">Resume the session to reply.</p>`
+          : null}
     </section>
   `;
 }

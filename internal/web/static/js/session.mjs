@@ -5,11 +5,11 @@ import { html, useState, useEffect } from "../lib/preact-htm.mjs";
 import { call } from "./api.mjs";
 import { ConfirmSheet } from "./sheets.mjs";
 import { allSessions, ago, markSeen, sessionOf } from "./fleet.mjs";
-import { ContextRow, FLEET_BACK } from "./chrome.mjs";
+import { ContextRow, FLEET_BACK, SessionTabs } from "./chrome.mjs";
 import { GLYPHS, glyphOf, OutIcon, ChevronIcon } from "./skin.mjs";
 import { usageFor, shareText, isStale } from "./usage.mjs";
 import { Markdown } from "./markdown.mjs";
-import { ReplyBox } from "./reply.mjs";
+import { ReplyBox, useRun } from "./reply.mjs";
 
 // actionsFor says which buttons to show. It follows status only; the
 // daemon's admit stays the authority and a refusal comes back as a toast.
@@ -156,7 +156,7 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
   const id = route.id;
   const [sheet, setSheet] = useState("");
   const [source, setSource] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useRun(act, toast, id);
   const [tree, setTree] = useState(null);
 
   // The time this phone last opened the session feeds the fleet's NEW mark;
@@ -197,21 +197,9 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
 
   const can = actionsFor(s);
   const off = stale || busy;
-  const base = "/api/v1/sessions/" + s.id;
   const candidates = mergeCandidates(snap, s);
   const waiting = s.group === "needs_you";
   const now = Date.now();
-
-  async function run(action, body) {
-    setBusy(true);
-    try {
-      const r = await act("POST", base + "/" + action, body);
-      if (r.status === 202) toast("Still running; the result will show here.", false);
-      return r;
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function kill() {
     const r = await run("kill");
@@ -264,7 +252,7 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
       </section>
 
       ${can.send
-        ? html`<${ReplyBox} snap=${snap} off=${off} run=${run} />`
+        ? html`<${ReplyBox} snap=${snap} off=${off} run=${run} id=${s.id} />`
         : s.group === "paused"
           ? html`<p class="sc-dim sc-small">Resume the session to reply.</p>`
           : null}
@@ -311,16 +299,19 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
   `;
 }
 
-// SessionHead is the context row of a session's views (session,
+// SessionHead is the context row and the tabs of a session's views (session,
 // conversation, changes): back to the fleet, its title, and the way to
 // Claude while the session doesn't wait on you (the needs-you box has its
 // own button).
 export function SessionHead({ snap, route, pending }) {
   const s = sessionOf(snap, route.id);
   if (!s) return html`<${ContextRow} back=${FLEET_BACK} title=${pending === route.id ? "Loading…" : ""} />`;
-  return html`<${ContextRow} back=${FLEET_BACK} title=${s.title}>
-    ${s.remote_url && s.group !== "needs_you"
-      ? html`<a class="sc-claude" href=${s.remote_url} target="_blank" rel="noopener">claude <${OutIcon} /></a>`
-      : null}
-  <//>`;
+  return html`
+    <${ContextRow} back=${FLEET_BACK} title=${s.title}>
+      ${s.remote_url && s.group !== "needs_you"
+        ? html`<a class="sc-claude" href=${s.remote_url} target="_blank" rel="noopener">claude <${OutIcon} /></a>`
+        : null}
+    <//>
+    <${SessionTabs} s=${s} current=${route.name} conversation=${Boolean(s.claude)} changes=${actionsFor(s).diff} />
+  `;
 }

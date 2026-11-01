@@ -7,7 +7,7 @@ import { call } from "./api.mjs";
 import { sessionOf, ago } from "./fleet.mjs";
 import { Markdown } from "./markdown.mjs";
 import { SubLine, actionsFor } from "./session.mjs";
-import { ReplyBox } from "./reply.mjs";
+import { ReplyBox, useRun } from "./reply.mjs";
 
 // POLL is how often the screen refreshes the newest turn while the session
 // is Running; PROMPT_LINES how many lines of a prompt show before "more".
@@ -156,7 +156,7 @@ export function Turns({ snap, stale, route, act, toast }) {
   const s = sessionOf(snap, id);
   const [held, setHeld] = useState(null);
   const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useRun(act, toast, id);
   const heldRef = useRef(null);
   const loading = useRef(false);
   const again = useRef(false);
@@ -250,17 +250,6 @@ export function Turns({ snap, stale, route, act, toast }) {
   const now = Date.now();
   const turns = held ? held.turns : [];
 
-  async function run(action, body) {
-    setBusy(true);
-    try {
-      const r = await act("POST", "/api/v1/sessions/" + s.id + "/" + action, body);
-      if (r.status === 202) toast("Still running; the result will show here.", false);
-      return r;
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return html`
     <section class="sc-screen sc-turns">
       <${SubLine} s=${s} snap=${snap} now=${now} />
@@ -280,7 +269,7 @@ export function Turns({ snap, stale, route, act, toast }) {
         ? html`<p class="sc-dim sc-small">Could not refresh: ${err} · <button class="sc-inline-btn" type="button" onClick=${() => load("refresh")}>retry</button></p>`
         : null}
       ${can.send
-        ? html`<${ReplyBox} snap=${snap} off=${off} run=${run} />`
+        ? html`<${ReplyBox} snap=${snap} off=${off} run=${run} id=${s.id} />`
         : s.group === "paused"
           ? html`<p class="sc-dim sc-small">Resume the session to reply.</p>`
           : null}
