@@ -1,7 +1,8 @@
 // Package modserver serves the loom mod's HTTP API (session/claudemod) on the
 // daemon's mod socket: POST /v<n>/hello, GET /v<n>/inbox (a long poll) and
-// POST /v<n>/events, n being claudemod.Version, each naming the launch the
-// mod runs in. It holds no state: every request goes to the model through
+// POST /v<n>/events, and for the dialogs the phone can answer POST
+// /v<n>/asks, GET /v<n>/answer (a long poll) and POST /v<n>/asks/close, n
+// being claudemod.Version, each naming the launch the mod runs in. It holds no state: every request goes to the model through
 // core.ModHost.
 package modserver
 
@@ -69,6 +70,9 @@ func Listen(path string, host core.ModHost, hold time.Duration) (*Server, error)
 	mux.HandleFunc(route("POST", "/hello"), s.hello)
 	mux.HandleFunc(route("GET", "/inbox"), s.inbox)
 	mux.HandleFunc(route("POST", "/events"), s.events)
+	mux.HandleFunc(route("POST", "/asks"), s.asks)
+	mux.HandleFunc(route("GET", "/answer"), s.answerPoll)
+	mux.HandleFunc(route("POST", "/asks/close"), s.askClosed)
 	s.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go s.serve(ln)
 	host.ModsServing()
@@ -194,6 +198,19 @@ type inboxBody struct {
 	Messages []core.ModMessage `json:"messages"`
 }
 
+type askBody struct {
+	Launch string `json:"launch"`
+	Poller string `json:"poller"`
+	core.ModAsk
+}
+
+type askClosedBody struct {
+	Launch string `json:"launch"`
+	Poller string `json:"poller"`
+	Ask    string `json:"ask"`
+	How    string `json:"how"`
+}
+
 func (s *Server) hello(w http.ResponseWriter, r *http.Request) {
 	var b helloBody
 	if decode(w, r, &b) {
@@ -217,15 +234,51 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err != nil:
 		answer(w, err)
-		return
 	case wake == nil:
 		http.Error(w, "the loom daemon is stopping", http.StatusServiceUnavailable)
-		return
 	case len(msgs) > 0:
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(inboxBody{Messages: msgs})
-		return
+	default:
+		s.holdUntil(w, r, wake)
 	}
+}
+
+func (s *Server) asks(w http.ResponseWriter, r *http.Request) {
+	var b askBody
+	if decode(w, r, &b) {
+		answer(w, s.host.ModAsk(b.Launch, b.Poller, b.ModAsk))
+	}
+}
+
+func (s *Server) askClosed(w http.ResponseWriter, r *http.Request) {
+	var b askClosedBody
+	if decode(w, r, &b) {
+		answer(w, s.host.ModAskClosed(b.Launch, b.Poller, b.Ask, b.How))
+	}
+}
+
+// answerPoll answers an ask's answer at once, or holds the poll until it may
+// have come (204), the hold ends (204) or the daemon stops (503).
+func (s *Server) answerPoll(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	payload, wake, err := s.host.ModAnswer(q.Get("launch"), q.Get("poller"), q.Get("ask"))
+	switch {
+	case err != nil:
+		answer(w, err)
+	case payload != nil:
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write(payload)
+	case wake == nil:
+		http.Error(w, "the loom daemon is stopping", http.StatusServiceUnavailable)
+	default:
+		s.holdUntil(w, r, wake)
+	}
+}
+
+// holdUntil holds a poll until wake closes (204), the hold ends (204), the
+// daemon stops (503) or the client leaves.
+func (s *Server) holdUntil(w http.ResponseWriter, r *http.Request, wake <-chan struct{}) {
 	hold := time.NewTimer(s.hold)
 	defer hold.Stop()
 	select {
@@ -250,15 +303,21 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-// answer answers a call the model took: 204, 404 for a launch no session
-// holds, 409 for a poll a newer module instance superseded (it stops
-// polling), 500 for anything else.
+// answer answers a call the model took: 204, 400 for an ask the model can't
+// hold, 404 for a launch no session holds or an ask the model doesn't know
+// (the mod posts it again), 409 for a poll a newer module instance
+// superseded (it stops polling), 410 for an ask that closed (it stops
+// waiting), 500 for anything else.
 func answer(w http.ResponseWriter, err error) {
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
-	case errors.Is(err, core.ErrModUnknownLaunch):
+	case errors.Is(err, core.ErrModBadAsk):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, core.ErrModUnknownLaunch), errors.Is(err, core.ErrModUnknownAsk):
 		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, core.ErrModAskClosed):
+		http.Error(w, err.Error(), http.StatusGone)
 	case errors.Is(err, core.ErrModSuperseded):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:

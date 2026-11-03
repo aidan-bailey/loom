@@ -149,6 +149,7 @@ const (
 	opSend      requestOp = "send a prompt to"
 	opReadTurns requestOp = "read the conversation of"
 	opReadDiff  requestOp = "read the diff of"
+	opAnswer    requestOp = "answer"
 )
 
 // precondition checks inst against the gate the TUI puts on op today, and

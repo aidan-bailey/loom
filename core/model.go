@@ -235,6 +235,10 @@ type Model struct {
 	// for it, since a wake has the server build and diff every view
 	// (Sync). The loop clears it before each item of its inbox.
 	noWake bool
+	// asksMoved is set when an ask opened, closed or was answered
+	// (core/asks.go): modCall then wakes the client, as it does for an
+	// event.
+	asksMoved bool
 }
 
 // New builds the model, serving no workspace yet: Boot loads them, before

@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -230,6 +231,14 @@ type ModHost interface {
 	// ErrModSuperseded.
 	ModInbox(launch, poller string) ([]ModMessage, <-chan struct{}, error)
 	ModEvents(launch string, events []ModEvent) error
+	// ModAsk holds an ask the mod posts (ErrModBadAsk for one it can't
+	// hold, ErrModAskClosed for one that closed); ModAnswer is its answer,
+	// or the channel a held poll waits on (nil: the daemon is stopping;
+	// ErrModUnknownAsk, ErrModAskClosed); ModAskClosed closes one Claude's
+	// own dialog answered. poller is as ModInbox's.
+	ModAsk(launch, poller string, ask ModAsk) error
+	ModAnswer(launch, poller, ask string) (json.RawMessage, <-chan struct{}, error)
+	ModAskClosed(launch, poller, ask, how string) error
 	// ModsServing says the server listens from now, so every launch's
 	// grace runs from here at the earliest.
 	ModsServing()
@@ -300,6 +309,12 @@ type modLink struct {
 	// that reports no SessionStart is still starting only up to
 	// modStartCap from it (pastModGrace).
 	since time.Time
+	// asks are the open asks the mod holds, oldest first (core/asks.go);
+	// closedAsks remembers the closed ones, oldest first in closedOrder, so
+	// a re-post never reopens one.
+	asks        []*modAsk
+	closedAsks  map[string]bool
+	closedOrder []string
 }
 
 func newModLink(launch string, live modLiveness) *modLink {
@@ -497,6 +512,7 @@ func (m *Model) endLink(inst *session.Instance, l *modLink, why string) {
 			m.undelivered(inst, msg, why+" before the message reached it")
 		}
 		m.endTurns(inst, l, why)
+		m.dropAsks(inst, l, why)
 	})
 	l.outbox, l.turning = nil, map[string]*modMessage{}
 	l.poke()
@@ -548,6 +564,7 @@ func (m *Model) modGone(inst *session.Instance, l *modLink, why string) {
 			m.withoutMod(inst, msg, why)
 		}
 		m.endTurns(inst, l, took)
+		m.dropAsks(inst, l, took)
 	})
 	l.poke()
 }
@@ -558,6 +575,7 @@ func (m *Model) modGone(inst *session.Instance, l *modLink, why string) {
 // absent (modGone). A later hello makes it live again. The hook timer runs
 // it (HookTick).
 func (m *Model) modTick(now time.Time) {
+	m.askTick(now)
 	for inst, l := range m.mods {
 		st := inst.GetStatus()
 		switch {

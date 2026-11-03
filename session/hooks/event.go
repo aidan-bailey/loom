@@ -244,6 +244,12 @@ func toolSummary(tool string, input json.RawMessage) string {
 	return CapSummary(s)
 }
 
+// ToolSummary is toolSummary for a caller outside the package: the one line
+// of intent the phone shows for tool's request (a Bash command's first line,
+// a file path, a URL), "" for a tool with no summary key or an input that
+// does not hold one.
+func ToolSummary(tool string, input json.RawMessage) string { return toolSummary(tool, input) }
+
 // CapSummary reduces s to its first line that has any text, trimmed, and
 // cuts that to MaxToolSummaryRunes characters, ending in "…" when it cut.
 // It is idempotent, which ParseEvent relies on when it reads a compact

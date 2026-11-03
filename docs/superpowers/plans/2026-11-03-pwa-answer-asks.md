@@ -56,14 +56,14 @@ import (
 
 // questionAsk is the ask the mod posts for the spike's two questions.
 func questionAsk(id string) ModAsk {
-	return ModAsk{Ask: id, Kind: AskQuestion, ToolUseID: "toolu_q", Tool: "AskUserQuestion", Input: json.RawMessage(`{"questions":[
+	return ModAsk{Ask: id, Kind: AskKindQuestion, ToolUseID: "toolu_q", Tool: "AskUserQuestion", Input: json.RawMessage(`{"questions":[
 		{"question":"Which color do you prefer?","header":"Color","multiSelect":false,"options":[{"label":"Red","description":"warm"},{"label":"Blue","description":"cool","preview":"#00f"}]},
 		{"question":"Which pets do you have?","header":"Pets","multiSelect":true,"options":[{"label":"Cat","description":"feline"},{"label":"Dog","description":"canine"},{"label":"Fish","description":"aquatic"}]}]}`)}
 }
 
 // permissionAsk is the ask the mod posts for a main-loop Bash prompt.
 func permissionAsk(id, agent string) ModAsk {
-	return ModAsk{Ask: id, Kind: AskPermission, AgentID: agent, ToolUseID: "toolu_p", Tool: "Bash",
+	return ModAsk{Ask: id, Kind: AskKindPermission, AgentID: agent, ToolUseID: "toolu_p", Tool: "Bash",
 		Input: json.RawMessage(`{"command":"mkdir made-by-phone\nsecond line","description":"Create directory"}`),
 		Suggestions: []json.RawMessage{
 			json.RawMessage(`{"type":"addDirectories","directories":["/w"],"destination":"session"}`),
@@ -88,7 +88,7 @@ func TestModAsk_PublishesTheAskParsed(t *testing.T) {
 	require.Len(t, asks, 2)
 	q := asks[0]
 	assert.Equal(t, "q1", q.ID)
-	assert.Equal(t, AskQuestion, q.Kind)
+	assert.Equal(t, AskKindQuestion, q.Kind)
 	require.Len(t, q.Questions, 2)
 	assert.Equal(t, AskQuestion{Question: "Which color do you prefer?", Header: "Color", Options: []AskOption{
 		{Label: "Red", Description: "warm"}, {Label: "Blue", Description: "cool", Preview: "#00f"},
@@ -115,15 +115,15 @@ func TestModAsk_RefusesWhatItCannotHold(t *testing.T) {
 		`{"question":"d","header":"h","options":[{"label":"x","description":""}]},` +
 		`{"question":"e","header":"h","options":[{"label":"x","description":""}]}]}`
 	for name, a := range map[string]ModAsk{
-		"no ID":            {Kind: AskQuestion, Tool: "AskUserQuestion", Input: questionAsk("").Input},
+		"no ID":            {Kind: AskKindQuestion, Tool: "AskUserQuestion", Input: questionAsk("").Input},
 		"an unknown kind":  {Ask: "a", Kind: "elicitation", Tool: "X", Input: json.RawMessage(`{}`)},
-		"no questions":     {Ask: "a", Kind: AskQuestion, Tool: "AskUserQuestion", Input: json.RawMessage(`{"questions":[]}`)},
-		"five questions":   {Ask: "a", Kind: AskQuestion, Tool: "AskUserQuestion", Input: json.RawMessage(five)},
-		"a twice-asked question": {Ask: "a", Kind: AskQuestion, Tool: "AskUserQuestion", Input: json.RawMessage(`{"questions":[{"question":"a","header":"h","options":[{"label":"x"}]},{"question":"a","header":"h","options":[{"label":"y"}]}]}`)},
-		"a repeated label": {Ask: "a", Kind: AskQuestion, Tool: "AskUserQuestion", Input: json.RawMessage(`{"questions":[{"question":"a","header":"h","options":[{"label":"x"},{"label":"x"}]}]}`)},
-		"a permission input that is no object": {Ask: "a", Kind: AskPermission, Tool: "Bash", Input: json.RawMessage(`"ls"`)},
-		"a permission with no tool":            {Ask: "a", Kind: AskPermission, Input: json.RawMessage(`{}`)},
-		"a suggestion with no type":            {Ask: "a", Kind: AskPermission, Tool: "Bash", Input: json.RawMessage(`{}`), Suggestions: []json.RawMessage{json.RawMessage(`{}`)}},
+		"no questions":     {Ask: "a", Kind: AskKindQuestion, Tool: "AskUserQuestion", Input: json.RawMessage(`{"questions":[]}`)},
+		"five questions":   {Ask: "a", Kind: AskKindQuestion, Tool: "AskUserQuestion", Input: json.RawMessage(five)},
+		"a twice-asked question": {Ask: "a", Kind: AskKindQuestion, Tool: "AskUserQuestion", Input: json.RawMessage(`{"questions":[{"question":"a","header":"h","options":[{"label":"x"}]},{"question":"a","header":"h","options":[{"label":"y"}]}]}`)},
+		"a repeated label": {Ask: "a", Kind: AskKindQuestion, Tool: "AskUserQuestion", Input: json.RawMessage(`{"questions":[{"question":"a","header":"h","options":[{"label":"x"},{"label":"x"}]}]}`)},
+		"a permission input that is no object": {Ask: "a", Kind: AskKindPermission, Tool: "Bash", Input: json.RawMessage(`"ls"`)},
+		"a permission with no tool":            {Ask: "a", Kind: AskKindPermission, Input: json.RawMessage(`{}`)},
+		"a suggestion with no type":            {Ask: "a", Kind: AskKindPermission, Tool: "Bash", Input: json.RawMessage(`{}`), Suggestions: []json.RawMessage{json.RawMessage(`{}`)}},
 	} {
 		err := m.ModAsk("L1", "", a)
 		assert.ErrorIs(t, err, ErrModBadAsk, name)
@@ -272,8 +272,8 @@ import (
 
 // The kinds of ask.
 const (
-	AskQuestion   = "question"
-	AskPermission = "permission"
+	AskKindQuestion   = "question"
+	AskKindPermission = "permission"
 )
 
 const (
@@ -416,12 +416,12 @@ func parseAsk(a ModAsk, now time.Time) (*modAsk, error) {
 		ID: a.Ask, Kind: a.Kind, AgentID: a.AgentID, AgentType: a.AgentType, Opened: now.Round(0), Tool: a.Tool,
 	}}
 	switch a.Kind {
-	case AskQuestion:
+	case AskKindQuestion:
 		return out, parseQuestions(out, a.Input)
-	case AskPermission:
+	case AskKindPermission:
 		return out, parsePermission(out, a)
 	}
-	return nil, askBad("kind: want %q or %q, not %q", AskQuestion, AskPermission, a.Kind)
+	return nil, askBad("kind: want %q or %q, not %q", AskKindQuestion, AskKindPermission, a.Kind)
 }
 
 // parseQuestions reads an AskUserQuestion input into out.
@@ -669,7 +669,7 @@ func (m *Model) asksSeeStatus(inst *session.Instance, prompting bool) {
 		return
 	}
 	for _, a := range slices.Clone(l.asks) {
-		if a.view.Kind != AskPermission || a.view.AgentID != "" {
+		if a.view.Kind != AskKindPermission || a.view.AgentID != "" {
 			continue
 		}
 		switch {
@@ -734,7 +734,7 @@ func cloneAsks(asks []AskView) []AskView {
 // AskLine is an ask in one line, as the phone's fleet row shows it: a
 // question's text, or a permission's tool and summary.
 func AskLine(a AskView) string {
-	if a.Kind == AskQuestion && len(a.Questions) > 0 {
+	if a.Kind == AskKindQuestion && len(a.Questions) > 0 {
 		return a.Questions[0].Question
 	}
 	if a.Summary == "" {
@@ -1222,9 +1222,9 @@ func (m *Model) Answer(id InstanceID, ask string, ans AskAnswer, req ReqID) {
 // ends the turn, as the terminal's "No" does).
 func composeAnswer(a *modAsk, ans AskAnswer) (json.RawMessage, string, error) {
 	switch a.view.Kind {
-	case AskQuestion:
+	case AskKindQuestion:
 		return composeQuestion(a, ans)
-	case AskPermission:
+	case AskKindPermission:
 		return composePermission(a, ans)
 	}
 	return nil, "", fmt.Errorf("an ask of kind %q takes no answer", a.view.Kind)
@@ -1578,7 +1578,7 @@ import (
 )
 
 func TestAskOf_AQuestion(t *testing.T) {
-	got := askOf(core.AskView{ID: "q1", Kind: core.AskQuestion, AgentType: "general-purpose", Questions: []core.AskQuestion{
+	got := askOf(core.AskView{ID: "q1", Kind: core.AskKindQuestion, AgentType: "general-purpose", Questions: []core.AskQuestion{
 		{Question: "Which?", Header: "Pick", MultiSelect: true, Options: []core.AskOption{{Label: "A", Description: "a", Preview: "pre"}}},
 	}})
 	assert.Equal(t, askJSON{ID: "q1", Kind: "question", Agent: "general-purpose", Questions: []askQuestionJSON{
@@ -1637,8 +1637,8 @@ func TestSuggestionOf_NamesWhatAndHowLong(t *testing.T) {
 
 func TestSessionOf_TheFirstAskIsTheWaitDetail(t *testing.T) {
 	v := core.InstanceView{WaitDetail: "ls", Asks: []core.AskView{
-		{ID: "p1", Kind: core.AskPermission, Tool: "Bash", Summary: "mkdir x"},
-		{ID: "q1", Kind: core.AskQuestion, Questions: []core.AskQuestion{{Question: "Which?"}}},
+		{ID: "p1", Kind: core.AskKindPermission, Tool: "Bash", Summary: "mkdir x"},
+		{ID: "q1", Kind: core.AskKindQuestion, Questions: []core.AskQuestion{{Question: "Which?"}}},
 	}}
 	s := sessionOf(1, v)
 	assert.Equal(t, "Bash: mkdir x (+1 more)", s.Wait.Detail)
@@ -1739,7 +1739,7 @@ func askOf(a core.AskView) askJSON {
 		}
 		out.Questions = append(out.Questions, jq)
 	}
-	if a.Kind == core.AskPermission {
+	if a.Kind == core.AskKindPermission {
 		out.Input = inputBlocks(a.Tool, a.InputJSON)
 		for _, s := range a.Suggestions {
 			out.Suggestions = append(out.Suggestions, suggestionOf(s))

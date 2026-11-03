@@ -2,6 +2,7 @@ package modserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,6 +33,92 @@ type queueHost struct {
 	wake     chan struct{}
 	events   []core.ModEvent
 	session  string // the hello's Claude session ID
+	// asks are the asks posted, answers what the test hands each by ask ID,
+	// askWake ends the held answer polls when an answer arrives, and closes
+	// the closes reported, "<ask> <how>".
+	asks    []core.ModAsk
+	answers map[string]json.RawMessage
+	askWake chan struct{}
+	closes  []string
+}
+
+func (h *queueHost) ModAsk(launch, _ string, ask core.ModAsk) error {
+	if launch != "L1" {
+		return core.ErrModUnknownLaunch
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, a := range h.asks {
+		if a.Ask == ask.Ask {
+			return nil
+		}
+	}
+	h.asks = append(h.asks, ask)
+	return nil
+}
+
+func (h *queueHost) ModAnswer(launch, _, ask string) (json.RawMessage, <-chan struct{}, error) {
+	if launch != "L1" {
+		return nil, nil, core.ErrModUnknownLaunch
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if payload, ok := h.answers[ask]; ok {
+		delete(h.answers, ask)
+		return payload, nil, nil
+	}
+	if h.askWake == nil {
+		h.askWake = make(chan struct{})
+	}
+	return nil, h.askWake, nil
+}
+
+func (h *queueHost) ModAskClosed(launch, _, ask, how string) error {
+	if launch != "L1" {
+		return core.ErrModUnknownLaunch
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closes = append(h.closes, ask+" "+how)
+	return nil
+}
+
+// answer hands the mod payload as the answer to ask.
+func (h *queueHost) answer(ask string, payload string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.answers == nil {
+		h.answers = map[string]json.RawMessage{}
+	}
+	h.answers[ask] = json.RawMessage(payload)
+	if h.askWake != nil {
+		close(h.askWake)
+		h.askWake = nil
+	}
+}
+
+// askOf is the first posted ask of kind whose ID is not in skip.
+func (h *queueHost) askOf(kind string, skip map[string]bool) (core.ModAsk, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, a := range h.asks {
+		if a.Kind == kind && !skip[a.Ask] {
+			return a, true
+		}
+	}
+	return core.ModAsk{}, false
+}
+
+// closed reports whether a close "<ask> <how>" was reported.
+func (h *queueHost) closed(ask, how string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.closes {
+		if c == ask+" "+how {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *queueHost) ModHello(launch string, hello core.ModHello) error {
