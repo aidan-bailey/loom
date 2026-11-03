@@ -2204,3 +2204,16 @@ function PermissionAsk({ ask, off, run }) {
 - [ ] **E2: the gates.** `CGO_ENABLED=0 go test ./...`; `CC=clang CGO_ENABLED=1 go test -race ./core ./internal/modserver ./internal/web`; `gofmt -l $(git ls-files '*.go' | grep -v '^vendor/')`; `CGO_ENABLED=0 go vet ./...`; `go run ./tools/claudemd`; `GOOS=windows CGO_ENABLED=0 go build ./...`; golangci-lint skipped (dev shell's v2), said so.
 - [ ] **E3: commit** `docs: answering asks from the phone` with the docs touched.
 - [ ] **E4: the iPhone checklist** (the owner's, after deploy): pause and resume a session so it launches with the new mod; trigger a question, answer it from the phone (options, Other, a note) and check Claude's reply quotes it; trigger a Bash prompt, allow it; another, deny with a message; answer one in the terminal and watch the phone drop it; a background subagent's prompt, allowed from the phone.
+
+## Outcome, 2026-11-03
+
+Built inline the same day: A f38bf019, B 01052c29, C 397f2722, D f140fff9, E (docs) after them. Every gate passed (`go test ./...`, `-race` on core, modserver and web, gofmt, vet, the CLAUDE.md lint, the Windows build); golangci-lint skipped (the dev shell's v2 rejects the repo's v1 config). The opt-in real-Claude runs passed on Claude 2.1.316: `TestRealClaude_ValidatesTheMod`, `TestRealClaude_AnswersAsksThroughTheDaemon` (16 s: a question and a permission answered through the daemon, one of each answered in the terminal and reported closed) and `TestRealClaude_TheModCarriesAMessage`. Screens rendered with headless Chromium against a canned server, and the forms driven by a test page (picks, the preview, single-select exclusivity, the persisting rule's sheet, deny's message).
+
+Where the build left this plan:
+- The kind constants are `AskKindQuestion` and `AskKindPermission`: `AskQuestion` is the question's type.
+- The withdrawal test says hello first, so `modTick`'s grace leaves its link alone.
+- The real-Claude harness moved into `startClaude` (`internal/modserver/realclaude_test.go`), shared by both end-to-end tests.
+- The route is tested through `recordingBackend.Answer` on the API harness (a refusal's words, the body's bounds), and the full-projection test (`TestSessionOf_ProjectsEveryFactTheAppShows`) pins a permission ask.
+- "Open in Claude" drops to a secondary button while asks are shown, so Allow and Answer stay the one primary.
+
+Not run: the iPhone checklist (E4).
