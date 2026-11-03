@@ -479,6 +479,19 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-attn-box { margin-top: 18px; padding: 14px 12px 12px; border-color: var(--attention-border); }
 .sc-attn-box .sc-legend { color: var(--attention); letter-spacing: 0.06em; text-transform: uppercase; }
 .sc-detail-box { margin: 8px 0 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--rule); font: 12px/1.4 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sc-asks { display: flex; flex-direction: column; gap: 14px; margin: 12px 0; }
+.sc-ask { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.sc-q { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; padding: 0; border: 0; min-width: 0; }
+.sc-q > legend { padding: 0 0 4px; color: var(--title); }
+.sc-q-chip { display: inline-block; margin-right: 6px; padding: 1px 6px; border: 1px solid var(--rule); border-radius: var(--radius); color: var(--dim); font-size: 11px; }
+.sc-opt { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 6px 0; }
+.sc-opt input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--accent); }
+.sc-opt-label { display: block; }
+.sc-opt-desc { display: block; color: var(--dim); font-size: 12px; }
+.sc-perm { display: flex; flex-direction: column; gap: 8px; }
+.sc-perm-tool { color: var(--title); }
+.sc-perm-text { margin: 4px 0 0; overflow-wrap: anywhere; }
+.sc-perm-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .sc-session .sc-tiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); margin-top: 18px; }
 .sc-pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sc-agent { padding-top: 6px; }

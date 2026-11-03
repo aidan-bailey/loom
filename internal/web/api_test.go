@@ -52,8 +52,15 @@ type apiFixture struct {
 // layer asked it to send.
 type recordingBackend struct {
 	*core.Loop
-	mu   sync.Mutex
-	sent []core.Message
+	mu       sync.Mutex
+	sent     []core.Message
+	answered []answerCall
+}
+
+// answerCall is one Answer the web layer made.
+type answerCall struct {
+	ask    string
+	answer core.AskAnswer
 }
 
 func (b *recordingBackend) Send(id core.InstanceID, msg core.Message, req core.ReqID) {
@@ -61,6 +68,13 @@ func (b *recordingBackend) Send(id core.InstanceID, msg core.Message, req core.R
 	b.sent = append(b.sent, msg)
 	b.mu.Unlock()
 	b.Loop.Send(id, msg, req)
+}
+
+func (b *recordingBackend) Answer(id core.InstanceID, ask string, answer core.AskAnswer, req core.ReqID) {
+	b.mu.Lock()
+	b.answered = append(b.answered, answerCall{ask: ask, answer: answer})
+	b.mu.Unlock()
+	b.Loop.Answer(id, ask, answer, req)
 }
 
 // loggedAction is one action the layer recorded.

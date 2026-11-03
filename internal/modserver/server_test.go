@@ -20,7 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeHost is a ModHost that knows one launch, "L1".
+// fakeHost is a ModHost that knows one launch, "L1". Its asks know "gone"
+// as closed and "bad" as one it can't hold; answers are by ask ID.
 type fakeHost struct {
 	mu      sync.Mutex
 	hello   []core.ModHello
@@ -28,6 +29,71 @@ type fakeHost struct {
 	wake    chan struct{}
 	events  []core.ModEvent
 	serving bool
+	asks    []core.ModAsk
+	answers map[string]json.RawMessage
+	askWake chan struct{}
+	closes  []string
+}
+
+// askErr is what fakeHost answers for launch, poller and ask before it looks
+// at answers.
+func askErr(launch, poller, ask string) error {
+	switch {
+	case launch != "L1":
+		return core.ErrModUnknownLaunch
+	case poller == "old":
+		return core.ErrModSuperseded
+	case ask == "gone":
+		return core.ErrModAskClosed
+	}
+	return nil
+}
+
+func (h *fakeHost) ModAsk(launch, poller string, ask core.ModAsk) error {
+	if err := askErr(launch, poller, ask.Ask); err != nil {
+		return err
+	}
+	if ask.Ask == "bad" {
+		return core.ErrModBadAsk
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.asks = append(h.asks, ask)
+	return nil
+}
+
+func (h *fakeHost) ModAnswer(launch, poller, ask string) (json.RawMessage, <-chan struct{}, error) {
+	if err := askErr(launch, poller, ask); err != nil {
+		return nil, nil, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if payload, ok := h.answers[ask]; ok {
+		return payload, nil, nil
+	}
+	if ask != "q1" {
+		return nil, nil, core.ErrModUnknownAsk
+	}
+	if h.askWake == nil {
+		h.askWake = make(chan struct{})
+	}
+	return nil, h.askWake, nil
+}
+
+func (h *fakeHost) ModAskClosed(launch, poller, ask, how string) error {
+	if err := askErr(launch, poller, ask); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closes = append(h.closes, ask+" "+how)
+	return nil
+}
+
+func (h *fakeHost) askPolled() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.askWake != nil
 }
 
 func (h *fakeHost) ModsServing() {
@@ -88,6 +154,10 @@ func (h *fakeHost) polled() bool {
 type stoppedHost struct{ fakeHost }
 
 func (*stoppedHost) ModInbox(string, string) ([]core.ModMessage, <-chan struct{}, error) {
+	return nil, nil, nil
+}
+
+func (*stoppedHost) ModAnswer(string, string, string) (json.RawMessage, <-chan struct{}, error) {
 	return nil, nil, nil
 }
 
@@ -408,4 +478,67 @@ func TestHello_ASupersededModIs409(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, post(t, c, api("/hello"), `{"launch":"L1","poller":"new","loaded":2000}`))
 	assert.Equal(t, int64(2000), h.hello[0].Loaded)
 	assert.Equal(t, http.StatusConflict, post(t, c, api("/hello"), `{"launch":"L1","poller":"old","loaded":1000}`))
+}
+
+func TestAsks(t *testing.T) {
+	h := &fakeHost{}
+	_, c := listen(t, h, time.Second)
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/asks"), `{"launch":"L1","poller":"p","ask":"q1","kind":"question","tool":"AskUserQuestion","input":{"questions":[]}}`))
+	assert.Equal(t, "q1", h.asks[0].Ask)
+	assert.JSONEq(t, `{"questions":[]}`, string(h.asks[0].Input))
+	assert.Equal(t, http.StatusBadRequest, post(t, c, api("/asks"), `{"launch":"L1","ask":"bad"}`))
+	assert.Equal(t, http.StatusGone, post(t, c, api("/asks"), `{"launch":"L1","ask":"gone"}`))
+	assert.Equal(t, http.StatusNotFound, post(t, c, api("/asks"), `{"launch":"L9","ask":"q1"}`))
+	assert.Equal(t, http.StatusConflict, post(t, c, api("/asks"), `{"launch":"L1","poller":"old","ask":"q1"}`))
+	assert.Equal(t, http.StatusNoContent, post(t, c, api("/asks/close"), `{"launch":"L1","ask":"q1","how":"elsewhere"}`))
+	assert.Equal(t, []string{"q1 elsewhere"}, h.closes)
+}
+
+func TestAnswer_HandsOutAnAnswerAtOnce(t *testing.T) {
+	h := &fakeHost{answers: map[string]json.RawMessage{"q1": json.RawMessage(`{"result":{"answers":{}}}`)}}
+	_, c := listen(t, h, time.Hour)
+	resp, err := c.Get("http://loom" + api("/answer?launch=L1&ask=q1"))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	assert.JSONEq(t, `{"result":{"answers":{}}}`, string(body))
+}
+
+func TestAnswer_Statuses(t *testing.T) {
+	_, c := listen(t, &fakeHost{}, time.Hour)
+	assert.Equal(t, http.StatusNotFound, <-get(c, api("/answer?launch=L1&ask=nope")), "an unknown ask: the mod posts it again")
+	assert.Equal(t, http.StatusGone, <-get(c, api("/answer?launch=L1&ask=gone")))
+	assert.Equal(t, http.StatusConflict, <-get(c, api("/answer?launch=L1&poller=old&ask=q1")))
+	assert.Equal(t, http.StatusNotFound, <-get(c, api("/answer?launch=L9&ask=q1")))
+}
+
+func TestAnswer_HoldsUntilWoken(t *testing.T) {
+	h := &fakeHost{}
+	_, c := listen(t, h, time.Hour)
+	done := get(c, api("/answer?launch=L1&ask=q1"))
+	require.Eventually(t, h.askPolled, 5*time.Second, 10*time.Millisecond)
+	select {
+	case code := <-done:
+		t.Fatalf("answered %d before any wake", code)
+	case <-time.After(100 * time.Millisecond):
+	}
+	h.mu.Lock()
+	close(h.askWake)
+	h.mu.Unlock()
+	assert.Equal(t, http.StatusNoContent, <-done)
+}
+
+func TestAnswer_AStopEndsAHoldWith503(t *testing.T) {
+	h := &fakeHost{}
+	s, c := listen(t, h, time.Hour)
+	done := get(c, api("/answer?launch=L1&ask=q1"))
+	require.Eventually(t, h.askPolled, 5*time.Second, 10*time.Millisecond)
+	s.Close()
+	assert.Equal(t, http.StatusServiceUnavailable, <-done)
+}
+
+func TestAnswer_AStoppedModelIs503(t *testing.T) {
+	_, c := listen(t, &stoppedHost{}, time.Hour)
+	assert.Equal(t, http.StatusServiceUnavailable, <-get(c, api("/answer?launch=L1&ask=q1")))
 }

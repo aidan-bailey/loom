@@ -40,6 +40,16 @@ The API is `/api/v1` and an installed app may be older than the daemon for a whi
 - Inside a flex container (a `<summary>` laid out with `display: flex`, a tile's figure) a text's leading space next to an element's edge is dropped: "14 steps" and a `<span> · 1 failed</span>` render as "14 steps· 1 failed". Start such a span with a no-break space (`" · " + …`), as the mockups do with `&nbsp;`.
 - The header is pinned (`.sc-chrome`, sticky), so an in-page jump (`scrollIntoView`, an anchor) lands under it unless the target's `scroll-margin-top` clears it, as `.sc-group-title`'s does. A screen that fills the space under the header takes `flex: 1` in `main`'s column; a `100dvh` height adds the header's height to every page, which then always scrolls.
 
+## Answering an ask
+
+The dialogs a session's Claude holds open (`InstanceView.Asks`, `core/asks.go`) reach the phone through the loom mod: it posts each ask to the mod socket and polls for its answer while Claude's own dialog stays up (spec `docs/superpowers/specs/2026-11-03-pwa-answer-asks-design.md`, whose Outcome records what Claude does). What to keep when changing any part of it:
+
+- **The model composes, the mod returns.** `Core.Answer` checks the answer against the ask and builds Claude's exact `result`, `deny` or `decision` (`composeAnswer`); the route only bounds the body, and the app only fills it. A shape Claude refuses is a hook Claude skips, so the dialog stays up and the phone was told it worked.
+- **The Reply comes when the mod takes the answer, not when the model stores it.** An answer no poll takes within `askTakeTimeout` is withdrawn (`askTick`) and refused, so a late poll never delivers what the phone was told failed; one whose ask closes first is refused "answered in Claude first".
+- **An ask closes when Claude's dialog answered it:** the mod's close (a question's `next` resolved; a permission's paired call settled), or for a main-loop permission the session leaving Prompting after the model saw it Prompting with the ask open (`asksSeeStatus`'s `seenPrompting`). A permission hook's `next.signal` never aborts on a person's answer, and the roster reads `busy` while a background agent's prompt waits, so a subagent's permission closes only with its call. A closed ask leaves a tombstone on its link: the mod posts again on a 404, never on a 410.
+- **Every refusal reaches the phone as 409 with the model's words.** Only three errors keep their identity across the wire, so the route can't tell an answered ask from a malformed answer.
+- **Changing the module means the opt-in real-Claude runs:** `TestRealClaude_ValidatesTheMod` and `TestRealClaude_AnswersAsksThroughTheDaemon` (`LOOM_TEST_REAL_CLAUDE=1`); nothing in CI loads the mod.
+
 ## Trying a change
 
 Go tests cover the layer over the production path (a booted model, the real `rpc.Server`, a client over `net.Pipe`, `httptest`); the JavaScript has no harness, so its logic stays in Go. For the phone, run a dev build through the `loom-dev` skill (`go run ./tools/loomdev`), never `./loom` or `loom serve stop` in a loom pane, and work through these steps: install, pair, turn on notifications, receive both push kinds with the app open and closed, Open in Claude, reply, kill with its confirmation, revoke.

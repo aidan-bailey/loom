@@ -1,5 +1,7 @@
 package core
 
+import "encoding/json"
+
 // The ModHost methods of Loop, and the daemon's ModsStop: each runs its
 // namesake on the model, on the loop's goroutine. No client call follows
 // one to drain what it produced (a Reply, Started, Answered, a refusal when
@@ -36,6 +38,32 @@ func (l *Loop) ModEvents(launch string, events []ModEvent) error {
 	return err
 }
 
+// ModAsk runs Model.ModAsk on the loop.
+func (l *Loop) ModAsk(launch, poller string, ask ModAsk) error {
+	var err error
+	l.modCall(func(m *Model) { err = m.ModAsk(launch, poller, ask) })
+	return err
+}
+
+// ModAnswer runs Model.ModAnswer on the loop. After Stop it returns no
+// answer and a nil channel, which the server reads as the daemon stopping.
+func (l *Loop) ModAnswer(launch, poller, ask string) (json.RawMessage, <-chan struct{}, error) {
+	var (
+		payload json.RawMessage
+		wake    <-chan struct{}
+		err     error
+	)
+	l.modCall(func(m *Model) { payload, wake, err = m.ModAnswer(launch, poller, ask) })
+	return payload, wake, err
+}
+
+// ModAskClosed runs Model.ModAskClosed on the loop.
+func (l *Loop) ModAskClosed(launch, poller, ask, how string) error {
+	var err error
+	l.modCall(func(m *Model) { err = m.ModAskClosed(launch, poller, ask, how) })
+	return err
+}
+
 // ModsServing runs Model.ModsServing on the loop.
 func (l *Loop) ModsServing() {
 	l.modCall(func(m *Model) { m.ModsServing() })
@@ -49,7 +77,7 @@ func (l *Loop) ModsStop() {
 }
 
 // modCall runs f on the loop and wakes the client when the model has events
-// queued after it, as the loop does for an inbox item. A poll or a report
+// queued after it, or an ask moved (asksMoved), as the loop does for an inbox item. A poll or a report
 // that changed nothing a client sees wakes none: a wake has the server build
 // and diff every view. The wake is raised on the loop's goroutine, inside
 // the call: Stop closes Wakes only once that goroutine has exited, so a
@@ -58,7 +86,8 @@ func (l *Loop) ModsStop() {
 func (l *Loop) modCall(f func(*Model)) {
 	l.do(func(m *Model) {
 		f(m)
-		if len(m.out.Events) > 0 {
+		if len(m.out.Events) > 0 || m.asksMoved {
+			m.asksMoved = false
 			l.signal()
 		}
 	})

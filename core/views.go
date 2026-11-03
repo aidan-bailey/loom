@@ -88,6 +88,7 @@ func (m *Model) viewOf(inst *session.Instance) InstanceView {
 		StatusSince:         inst.StatusSince(),
 		WaitReason:          inst.WaitReason(),
 		WaitDetail:          inst.WaitDetail(),
+		Asks:                m.asksOf(inst),
 		Subagents:           slices.Clone(inst.Subagents()),
 		GitHub:              inst.GitHubState(),
 		Issue:               inst.IssueNumber(),
@@ -170,13 +171,14 @@ func (m *Model) publishViews() []Event {
 	return events
 }
 
-// cloneViews deep-copies views: the slice and each view's Subagents, the
-// one field that refers to shared memory. Its other reference fields
+// cloneViews deep-copies views: the slice and each view's Subagents and
+// Asks, the fields that refer to shared memory. Its other reference fields
 // (strings, Diff.Error, StatusSince's location) are immutable.
 func cloneViews(views []InstanceView) []InstanceView {
 	out := slices.Clone(views)
 	for i := range out {
 		out[i].Subagents = slices.Clone(out[i].Subagents)
+		out[i].Asks = cloneAsks(out[i].Asks)
 	}
 	return out
 }

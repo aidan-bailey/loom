@@ -108,6 +108,9 @@ type sessionJSON struct {
 	Account     string           `json:"account"`
 	Agents      []agentJSON      `json:"agents"`
 	RemoteURL   string           `json:"remote_url"`
+	// Asks are the dialogs the session's Claude holds open that the app can
+	// answer, oldest first (asks.go); an empty list for none.
+	Asks []askJSON `json:"asks"`
 	// Claude says the session runs Claude, whose conversation the app can
 	// read (GET …/turns).
 	Claude bool `json:"claude"`
@@ -232,6 +235,7 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 		PR:          prOf(v.GitHub),
 		Account:     v.Account,
 		Agents:      make([]agentJSON, 0, len(v.Subagents)),
+		Asks:        make([]askJSON, 0, len(v.Asks)),
 		ParityKnown: v.ParityKnown,
 		Claude:      session.IsClaudeProgram(v.Program),
 	}
@@ -249,6 +253,12 @@ func sessionOf(ws core.WorkspaceID, v core.InstanceView) sessionJSON {
 	}
 	for _, a := range v.Subagents {
 		s.Agents = append(s.Agents, agentJSON{Name: a.Name, Description: a.Description, Idle: a.Idle})
+	}
+	for _, a := range v.Asks {
+		s.Asks = append(s.Asks, askOf(a))
+	}
+	if len(v.Asks) > 0 {
+		s.Wait.Detail = askDetail(v.Asks)
 	}
 	if v.RemoteSession != "" {
 		s.RemoteURL = remoteBase + url.PathEscape(v.RemoteSession)

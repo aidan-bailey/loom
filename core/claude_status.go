@@ -239,6 +239,7 @@ func (m *Model) adoptClaudeStatus(inst *session.Instance) (session.Status, bool)
 		inst.SetWaitReason("")
 		inst.SetWaitDetail("")
 	}
+	m.asksSeeStatus(inst, ok && status == session.Prompting)
 	return status, ok
 }
 

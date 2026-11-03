@@ -2,6 +2,7 @@ package modserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,6 +33,92 @@ type queueHost struct {
 	wake     chan struct{}
 	events   []core.ModEvent
 	session  string // the hello's Claude session ID
+	// asks are the asks posted, answers what the test hands each by ask ID,
+	// askWake ends the held answer polls when an answer arrives, and closes
+	// the closes reported, "<ask> <how>".
+	asks    []core.ModAsk
+	answers map[string]json.RawMessage
+	askWake chan struct{}
+	closes  []string
+}
+
+func (h *queueHost) ModAsk(launch, _ string, ask core.ModAsk) error {
+	if launch != "L1" {
+		return core.ErrModUnknownLaunch
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, a := range h.asks {
+		if a.Ask == ask.Ask {
+			return nil
+		}
+	}
+	h.asks = append(h.asks, ask)
+	return nil
+}
+
+func (h *queueHost) ModAnswer(launch, _, ask string) (json.RawMessage, <-chan struct{}, error) {
+	if launch != "L1" {
+		return nil, nil, core.ErrModUnknownLaunch
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if payload, ok := h.answers[ask]; ok {
+		delete(h.answers, ask)
+		return payload, nil, nil
+	}
+	if h.askWake == nil {
+		h.askWake = make(chan struct{})
+	}
+	return nil, h.askWake, nil
+}
+
+func (h *queueHost) ModAskClosed(launch, _, ask, how string) error {
+	if launch != "L1" {
+		return core.ErrModUnknownLaunch
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closes = append(h.closes, ask+" "+how)
+	return nil
+}
+
+// answer hands the mod payload as the answer to ask.
+func (h *queueHost) answer(ask string, payload string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.answers == nil {
+		h.answers = map[string]json.RawMessage{}
+	}
+	h.answers[ask] = json.RawMessage(payload)
+	if h.askWake != nil {
+		close(h.askWake)
+		h.askWake = nil
+	}
+}
+
+// askOf is the first posted ask of kind whose ID is not in skip.
+func (h *queueHost) askOf(kind string, skip map[string]bool) (core.ModAsk, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, a := range h.asks {
+		if a.Kind == kind && !skip[a.Ask] {
+			return a, true
+		}
+	}
+	return core.ModAsk{}, false
+}
+
+// closed reports whether a close "<ask> <how>" was reported.
+func (h *queueHost) closed(ask, how string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.closes {
+		if c == ask+" "+how {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *queueHost) ModHello(launch string, hello core.ModHello) error {
@@ -149,17 +236,21 @@ func (h *queueHost) said() string {
 	return fmt.Sprintf("hello %v, events %+v", h.hello, h.events)
 }
 
-// TestRealClaude_TheModCarriesAMessage launches a real Claude (haiku) with the
-// embedded mod on a private tmux server and serves it from queueHost: hello;
-// a message's queued, started and complete (complete carrying Claude's
-// answer); and a message delivered while a permission dialog is open, which
-// leaves the dialog alone and runs after it; then the hello's list of
-// Claude's commands, a command message that runs (/model haiku) and one that
-// fails by name. It spends a few cents and leaves entries in the developer's
-// Claude config dir (projects/, the trust entry), so it runs only with
-// LOOM_TEST_REAL_CLAUDE=1. Its waits add up to about 9.5 minutes at worst,
-// inside go test's default 10-minute timeout.
-func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
+// probe is a real Claude (haiku, default permission mode) with the embedded
+// mod, in a pane of a private tmux server, served by its queueHost: work is
+// its folder, and the rest drive the pane.
+type probe struct {
+	work     string
+	screen   func() string
+	waitFor  func(what string, d time.Duration, ok func() bool)
+	press    func(keys ...string)
+	typeLine func(text string)
+}
+
+// startClaude starts the probe once its mod has said hello to host. It skips
+// the test without LOOM_TEST_REAL_CLAUDE=1, tmux or claude.
+func startClaude(t *testing.T, host *queueHost) probe {
+	t.Helper()
 	if os.Getenv("LOOM_TEST_REAL_CLAUDE") != "1" {
 		t.Skip("set LOOM_TEST_REAL_CLAUDE=1 to run against real Claude (costs money)")
 	}
@@ -173,7 +264,6 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 	require.NoError(t, claudemod.WriteTo(mod))
 	work := filepath.Join(root, "work")
 	require.NoError(t, os.MkdirAll(work, 0o700))
-	host := &queueHost{}
 	socket := shortSocket(t)
 	s, err := Listen(socket, host, 5*time.Second)
 	require.NoError(t, err)
@@ -264,6 +354,23 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 		press("Enter")
 	}
 	waitFor("the mod's hello", 60*time.Second, host.helloed)
+	return probe{work: work, screen: screen, waitFor: waitFor, press: press, typeLine: typeLine}
+}
+
+// TestRealClaude_TheModCarriesAMessage launches a real Claude (haiku) with the
+// embedded mod on a private tmux server and serves it from queueHost: hello;
+// a message's queued, started and complete (complete carrying Claude's
+// answer); and a message delivered while a permission dialog is open, which
+// leaves the dialog alone and runs after it; then the hello's list of
+// Claude's commands, a command message that runs (/model haiku) and one that
+// fails by name. It spends a few cents and leaves entries in the developer's
+// Claude config dir (projects/, the trust entry), so it runs only with
+// LOOM_TEST_REAL_CLAUDE=1. Its waits add up to about 9.5 minutes at worst,
+// inside go test's default 10-minute timeout.
+func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
+	host := &queueHost{}
+	p := startClaude(t, host)
+	work, screen, waitFor, press, typeLine := p.work, p.screen, p.waitFor, p.press, p.typeLine
 
 	host.queueAsUser("m1", "Reply with exactly the word PONG.")
 	waitFor("m1's answer", 90*time.Second, func() bool {
@@ -334,6 +441,85 @@ func TestRealClaude_TheModCarriesAMessage(t *testing.T) {
 		}
 	}
 	require.Equal(t, map[string]string{"m1": transcript.FromYou + ":", "m2": transcript.FromPlugin + ":loom"}, from)
+
+	t.Log(host.said())
+}
+
+// TestRealClaude_AnswersAsksThroughTheDaemon launches a real Claude (haiku)
+// with the embedded mod and answers its dialogs from queueHost as the phone
+// does through the daemon: a question answered from loom (the dialog closes
+// and Claude reads the answer), a Bash permission allowed from loom (the
+// command runs), then one of each answered in the terminal, which the mod
+// reports closed (a permission when its call settles, a question when its
+// dialog's answer comes back). It spends a few cents and leaves entries in
+// the developer's Claude config dir, so it runs only with
+// LOOM_TEST_REAL_CLAUDE=1; its waits stay inside go test's default
+// 10-minute timeout.
+func TestRealClaude_AnswersAsksThroughTheDaemon(t *testing.T) {
+	host := &queueHost{}
+	p := startClaude(t, host)
+	seen := map[string]bool{}
+	nextAsk := func(kind string) core.ModAsk {
+		t.Helper()
+		var a core.ModAsk
+		p.waitFor("a "+kind+" ask", 90*time.Second, func() bool {
+			var ok bool
+			a, ok = host.askOf(kind, seen)
+			return ok
+		})
+		seen[a.Ask] = true
+		return a
+	}
+	lunch := "Use the AskUserQuestion tool once, with one question: header Lunch, what I want for lunch, options Soup and Salad, single select. Then reply with exactly the answer you were given."
+
+	// A question answered from loom: the dialog closes, Claude reads it.
+	p.typeLine(lunch)
+	q := nextAsk(core.AskKindQuestion)
+	var in struct {
+		Questions []struct {
+			Question string `json:"question"`
+		} `json:"questions"`
+	}
+	require.NoError(t, json.Unmarshal(q.Input, &in))
+	require.Len(t, in.Questions, 1)
+	var raw struct {
+		Questions json.RawMessage `json:"questions"`
+	}
+	require.NoError(t, json.Unmarshal(q.Input, &raw))
+	host.answer(q.Ask, fmt.Sprintf(`{"result":{"questions":%s,"answers":{%q:"Salad"},"annotations":{}}}`, raw.Questions, in.Questions[0].Question))
+	// The transcript shows a question's answer as "→ <answer>" once the
+	// dialog closed with it ("Salad" alone is in the prompt too).
+	p.waitFor("the dialog's answer", 90*time.Second, func() bool {
+		sc := p.screen()
+		return strings.Contains(sc, "→ Salad") && !strings.Contains(sc, "Chat about this")
+	})
+
+	// A permission allowed from loom: the command runs.
+	p.typeLine("Run this exact bash command: mkdir made-by-loom. Then reply DONE.")
+	perm := nextAsk(core.AskKindPermission)
+	require.Equal(t, "Bash", perm.Tool)
+	require.NotEmpty(t, perm.ToolUseID, "the ask found its call")
+	host.answer(perm.Ask, `{"decision":{"behavior":"allow"}}`)
+	p.waitFor("made-by-loom", 60*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(p.work, "made-by-loom"))
+		return err == nil
+	})
+
+	// A permission answered in the terminal: the mod closes it once its call
+	// settles.
+	p.typeLine("Run this exact bash command: mkdir made-at-desk. Then reply DONE.")
+	desk := nextAsk(core.AskKindPermission)
+	p.waitFor("the permission dialog", 30*time.Second, func() bool { return strings.Contains(p.screen(), "Do you want to proceed?") })
+	p.press("Enter")
+	p.waitFor("the permission's close", 60*time.Second, func() bool { return host.closed(desk.Ask, "settled") })
+	require.DirExists(t, filepath.Join(p.work, "made-at-desk"))
+
+	// A question answered in the terminal: the mod closes it at once.
+	p.typeLine(lunch)
+	q2 := nextAsk(core.AskKindQuestion)
+	p.waitFor("the question dialog", 30*time.Second, func() bool { return strings.Contains(p.screen(), "Chat about this") })
+	p.press("Enter")
+	p.waitFor("the question's close", 60*time.Second, func() bool { return host.closed(q2.Ask, "elsewhere") })
 
 	t.Log(host.said())
 }
