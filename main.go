@@ -425,6 +425,7 @@ func init() {
 	rootCmd.AddCommand(cli.AccountCmd)
 	rootCmd.AddCommand(cli.SessionCmd)
 	rootCmd.AddCommand(cli.WebCmd)
+	rootCmd.AddCommand(cli.SweepCmd)
 }
 
 func main() {
