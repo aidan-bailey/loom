@@ -1,6 +1,6 @@
 # Build sweep: delete session worktrees' unused Rust binaries
 
-Status: design approved 2026-11-03; a spike gates the plan (§9).
+Status: design approved 2026-11-03; spike done (§9).
 
 ## 1. Problem
 
@@ -47,13 +47,14 @@ A gated job (`gateBuildSweep`, interval 30 minutes) dispatched from the model's 
   - `relatime`: the mount is swept only when the threshold is at least 24 hours.
   - Neither flag: the mount records every access (`strictatime`), and is swept.
   - An unreadable mountinfo, or any OS but Linux: everything is skipped.
-- **Not building:** before touching a target dir, the job takes every cargo lock file present in each profile dir with a non-blocking exclusive `flock`, and holds them while it deletes. If any is held, the target dir is skipped this round. The lock files are `.cargo-lock`, and on current cargo `.cargo-build-lock` and `.cargo-artifact-lock`; the spike confirms the list (§9). A cargo started during a sweep waits a few seconds on the lock.
+- **Not building:** before touching a target dir, the job takes every cargo lock file present in each profile dir (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`) with a non-blocking exclusive `flock`, and holds them while it deletes. If any is held, the target dir is skipped this round. A cargo started during a sweep waits a few seconds on the lock.
+- **Not testing:** `cargo test` releases its locks before it runs the test binaries (§9). A binary cargo found up to date but hasn't run yet would look unused. So a worktree is skipped while any process of the daemon's user named `cargo` or `cargo-*` (`/proc/<pid>/comm`) has its working directory inside it. A process that exits mid-scan is ignored. One of the user's own processes whose working directory can't be read counts as busy.
 - **Status at dispatch:** the builder captures each session's status and worktree. The job doesn't recheck status, since the lock and the per-file access time cover a session that started working since then.
 - **Errors:** a file that fails to delete is logged and skipped. A target dir that can't be walked is skipped with its reason. Nothing is retried within a round.
 
 ### 4.5 Reporting
 
-- Every round logs one `build_sweep.swept` record per swept session, through `log.For("build_sweep")`, with the files deleted and bytes freed. Skips are logged with a reason (`status`, `building`, `atime_off`, `no_target`, `error`).
+- Every round logs one `build_sweep.swept` record per swept session, through `log.For("build_sweep")`, with the files deleted and bytes freed. Skips are logged with a reason (`status`, `building`, `testing`, `atime_off`, `no_target`, `error`).
 - An `atime_off` skip also raises a `Notice` once per mount per daemon run, naming the mount and its option. A sweep that silently stops is the failure this guards against.
 - Freed space isn't shown in the TUI or the phone app.
 
@@ -74,7 +75,7 @@ A gated job (`gateBuildSweep`, interval 30 minutes) dispatched from the model's 
 
 | Unit | Holds | Depends on |
 |---|---|---|
-| `session/buildsweep` (new) | `Plan(worktree, threshold, now)` returning candidates and skip reasons; `Sweep(plan, dryRun)` returning a report; the mountinfo parser (`mount_linux.go`, with `mount_other.go` reporting unsupported); the `flock` helper (`lock_unix.go`, `lock_windows.go` reporting unsupported); the one-sweep mutex | the filesystem only |
+| `session/buildsweep` (new) | `Plan(worktree, threshold, now)` returning candidates and skip reasons; `Sweep(plan, dryRun)` returning a report; the mountinfo parser (`mount_linux.go`, with `mount_other.go` reporting unsupported); the `flock` helper (`lock_unix.go`, `lock_windows.go` reporting unsupported); the cargo-process check (`proc_linux.go`, with `proc_other.go` reporting unsupported); the one-sweep mutex | the filesystem only |
 | `core/build_sweep.go` (new) | `gateBuildSweep` and its interval; `maybeBuildSweep` (eligibility, setting); the job; the `Deliver` case; the once-per-mount notice; `SweepBuilds` | `session/buildsweep`, `config` |
 | `config/settings.go` | `BuildSweepAfterHours` | — |
 | `internal/cli/sweep.go` (new) | `loom sweep` | `core.Core` over the daemon link |
@@ -92,6 +93,7 @@ No persisted record changes, so `CurrentSchemaVersion` stays.
 - **Production geometry:** one test builds a two-binary crate with real cargo, changes it, rebuilds, sweeps with a zero threshold after aging the old binary, and checks that the old binary is gone, the current one stays, and `cargo test` still passes. It skips when `cargo` is absent, as in the Nix sandbox.
 - **Mountinfo parser:** a table of real lines covering `noatime`, `relatime`, neither flag, nested mounts with the longest prefix winning, and escaped spaces.
 - **Lock:** the test holds the `flock` and sees the target dir skipped as `building`; once released, it is swept.
+- **Cargo process:** the process scan reads a fake `/proc` root: a `cargo` process with its working directory inside the worktree marks it `testing`, one outside doesn't, a vanished pid is ignored, and another user's process is not read.
 - **Model:**
   - Eligibility, both sides: `Ready` and `Paused` swept; `Running`, `Loading`, `Prompting`, `Deleting`, `Recoverable` and a workspace terminal not.
   - A setting of 0 arms nothing.
@@ -100,11 +102,11 @@ No persisted record changes, so `CurrentSchemaVersion` stays.
 - **Wire and CLI:** `SweepBuilds` names no instance, so it runs no `admit` and needs no case in `TestRequests_RefuseWhatTheTUIRefuses`; regenerate `core/rpc` and the protocol reference; a CLI test covering output, the missing-threshold error and `--dry-run` deleting nothing.
 - **Isolation and platforms:** tests reach config through `internal/testenv.IsolateLoomDirs`. After the platform files, run `GOOS=windows CGO_ENABLED=0 go build ./...`.
 
-## 9. Spike (gates the plan)
+## 9. Spike results (2026-11-03, cargo 1.99.1)
 
-1. With cargo 1.99, run `cargo build` and then `cargo test` with a slow test. Record which of `.cargo-lock`, `.cargo-build-lock` and `.cargo-artifact-lock` are `flock`ed, by inspecting `/proc/locks` or attempting a non-blocking lock from Go, and whether one covers the tests' run as well as the compile. If none does, the lock still guards compiles, and the per-file access time guards a running test (it was read when exec'd). The plan records which applies.
-2. After `/tb` is remounted, check that exec'ing a test binary and linking against an rlib each advance `stat`'s atime at once under `strictatime,lazytime`.
-3. Check that Go's `syscall.Flock` conflicts with cargo's lock, i.e. that cargo uses `flock` and not `fcntl` locks.
+1. **Locks.** While compiling (a slow `build.rs`), `/proc/locks` shows `.cargo-build-lock` and `.cargo-artifact-lock` held `FLOCK/WRITE` and `.cargo-lock` held `FLOCK/READ`. While the test binaries run, all three are free. The lock therefore guards compiles only, and the cargo-process check (§4.4) covers the test run.
+2. **Access times.** On a tmpfs mounted `strictatime,lazytime` in a user namespace, a file's atime set to 2026-01-01 jumped to the present at once when the test binary was exec'd, and the rlib's did when the test was relinked. Its `mountinfo` per-mount options read `rw,lazytime`: no atime flag. Re-check on `/tb` with `findmnt -T /tb` after the remount.
+3. **Lock kind.** Cargo's locks are `flock`s (`FLOCK` in `/proc/locks`), so `syscall.Flock` conflicts with them.
 
 ## 10. Known limits
 
