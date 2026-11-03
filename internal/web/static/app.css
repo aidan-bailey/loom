@@ -502,11 +502,12 @@ details.sc-group[open] > summary::before { content: "▾"; }
   bottom: 0;
   z-index: 20;
   margin: auto -16px calc(-1 * env(safe-area-inset-bottom));
-  padding: 0 12px calc(10px + env(safe-area-inset-bottom));
+  padding: 0 16px calc(10px + env(safe-area-inset-bottom));
   background: var(--panel);
   border-top: 1px solid var(--rule);
 }
-.sc-reply-row { display: flex; gap: 8px; align-items: flex-end; padding-top: 8px; }
+/* The button takes the text field's height, so both share top and bottom edges. */
+.sc-reply-row { display: flex; gap: 8px; align-items: stretch; padding-top: 8px; }
 .sc-reply textarea {
   flex: 1;
   min-width: 0;
