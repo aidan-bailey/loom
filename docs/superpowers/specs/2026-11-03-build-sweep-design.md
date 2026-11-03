@@ -110,6 +110,6 @@ No persisted record changes, so `CurrentSchemaVersion` stays.
 
 ## 10. Known limits
 
-- Only sessions of workspaces the daemon has loaded are swept. A paused session in an unopened workspace keeps its `target/` until its workspace opens.
+- Only the worktrees of sessions loom has a record of are swept. The daemon loads every registered workspace at boot, so a paused session in an unopened workspace is covered; an orphan worktree (`Recoverable`) is not.
 - Libraries and the incremental cache still grow. Per-repo profile settings (`[profile.dev] debug = "line-tables-only"`, merging integration-test files into one binary) shrink every binary and are the repos' business, not loom's.
 - Linux only. Elsewhere the sweep skips everything and raises the notice.

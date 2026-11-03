@@ -1,6 +1,6 @@
 # session
 
-The core domain: `Instance` and its lifecycle in a git worktree and a tmux session, storage and schema, reconcile and orphans, resume decisions, Claude status, hooks, temp-dir archiving and the launch environment, plus the sub-packages `agent`, `claudetmp`, `files`, `github`, `hooks`, `launch`, `subagent` and `transcript`. Full reference in [`README.md`](README.md).
+The core domain: `Instance` and its lifecycle in a git worktree and a tmux session, storage and schema, reconcile and orphans, resume decisions, Claude status, hooks, temp-dir archiving and the launch environment, plus the sub-packages `agent`, `buildsweep`, `claudetmp`, `files`, `github`, `hooks`, `launch`, `subagent` and `transcript`. Full reference in [`README.md`](README.md).
 
 ## Rules when modifying this package
 
@@ -57,7 +57,8 @@ The core domain: `Instance` and its lifecycle in a git worktree and a tmux sessi
 - **Keep `SlugTitle` to lowercase ASCII alphanumerics.** Its output becomes a git branch name, so a fully non-ASCII title yields a bare `gh-<n>`. **Enforced** by `TestSlugTitle`.
 - **Keep `session/launch` a leaf that imports only `config` and `session`.** The model's workspace-terminal auto-create composes a launch program through it, and `core` must import no UI. **Convention** — an import that drags `ui/` into the daemon (`TestCoreImportsNoUI` catches a UI import, not other growth). Changing an option: [`../docs/claude/launch-options.md`](../docs/claude/launch-options.md)
 - **Keep `tmux.RenameLegacySessions` in `Storage.LoadAndReconcile`, before per-record reconcile.** Every load path runs it there, so live `claudesquad_` sessions keep their panes under `loom_`; a reconcile that ran first would find them dead. **Convention** for the placement; `TestRenameLegacySessions_ExactTarget` pins only the rename's exact targeting.
-- **Keep `session/github`, `session/hooks`, `session/subagent`, `session/claudetmp` and `session/transcript` free of tmux, UI and app imports.** They are pure readers with injected executors, testable without a terminal. **Convention** — a cycle or a test that needs tmux.
+- **Keep `session/github`, `session/hooks`, `session/subagent`, `session/claudetmp`, `session/buildsweep` and `session/transcript` free of tmux, UI and app imports.** They are pure readers with injected executors, testable without a terminal. **Convention** — a cycle or a test that needs tmux.
+- **Let `session/buildsweep` delete only hashed executables in a profile dir's `deps/` and `examples/` (with their uplifted links) past the threshold, and skip a worktree on any doubt: no `CACHEDIR.TAG`, a mount that records no access times (or `relatime` under 24h), a cargo lock held, a `cargo` process inside it.** Libraries, proc-macros and build scripts are used rarely and look unused, and losing them rebuilds chains of crates; `cargo test` drops its locks before running the tests, so only the process check covers a binary cargo found fresh but hasn't run yet. A wrong delete fails a test run or costs minutes of rebuild, and the sweep's log doesn't say why. **Enforced** by `TestSweep_DeletesOnlyExecutablesUnusedPastTheThreshold`, `TestSweep_SweepsOnlyWhereAccessTimesAreRecorded`, `TestSweep_SkipsWhileCargoHoldsALock`, `TestSweep_SkipsWhileCargoRunsInTheWorktree` and `TestSweep_RealCargoBuild`.
 
 ## Pointers
 

@@ -979,6 +979,7 @@ loom [command]
 | `account` | Manage extra Claude accounts (see below, and [Run Sessions on Several Claude Accounts](#run-sessions-on-several-claude-accounts)); a client of the daemon too |
 | `session` | Create, list, pause, resume and kill a registered workspace's sessions from a shell (see below); a client of the daemon too |
 | `web` | Serve the fleet to a paired phone: enable, disable, pair, devices, revoke and status (see below, and [Use Loom from Your Phone](#use-loom-from-your-phone)); a client of the daemon too |
+| `sweep` | Run the build sweep now: delete idle and paused sessions' unused Rust binaries (`--dry-run` lists them, `--after <hours>` sets the threshold, `-v` lists each file; see [Build Sweep](#build-sweep)); a client of the daemon too |
 
 ### Workspace Subcommands
 
@@ -1077,6 +1078,7 @@ Configuration is stored in `~/.loom/config.json` (or per-workspace at `<repo>/.l
 | `profiles` | array | `[]` | Named program configurations |
 | `claude_remote_control` | bool | `true` | Launch Claude sessions with `--remote-control`, named after the session title |
 | `claude_tmp_archive_dir` | string | `""` | Where Claude temp-dir and chat archives go, for every workspace (global `config.json` only; absolute or `~/…`). Empty keeps each workspace's in its own loom folder. See [Claude Temp-Dir Archives](#claude-temp-dir-archives) and [Claude Chat Archives](#claude-chat-archives) |
+| `build_sweep_after_hours` | int | `0` | Turns the build sweep on: every 30 minutes the daemon deletes the Rust executables in idle and paused sessions' cargo target dirs that have gone unused this many hours (global `config.json` only; `0` is off). See [Build Sweep](#build-sweep) |
 
 ### Example config.json
 
@@ -1175,6 +1177,20 @@ Claude Code keeps each session's conversation in `~/.claude/projects/<the sessio
   ```
 
 - Only loom's worktree sessions are covered, not Claude sessions run in a repository root or outside loom.
+
+### Build Sweep
+
+Cargo builds into each session's own `<worktree>/target/` and never deletes a test binary it has replaced: a new feature set, profile or flag writes a new copy under a new hash. Over a few days of agents running `cargo test` that reaches tens of gigabytes per session. With `build_sweep_after_hours` set in the global `~/.loom/config.json`, the daemon deletes those copies once they have gone unused that long:
+
+```json
+{ "build_sweep_after_hours": 12 }
+```
+
+- **Which sessions:** only sessions whose agent is idle (Ready) or paused. The main checkout and workspace terminals are never swept.
+- **What goes:** executables in a cargo profile dir's `deps/` and `examples/` (`<name>-<16 hex digits>`, no extension), with the hard links cargo makes to them under their plain names. Libraries, proc-macros, build scripts and the incremental cache stay. Cargo rebuilds anything deleted the next time it's needed.
+- **"Unused" means the file's last access time,** so the disk must record access times. Linux only. A disk mounted `noatime` is skipped. One mounted `relatime` records an access at most once a day, so it is swept only with a threshold of 24 hours or more. For hour thresholds, mount it `strictatime,lazytime`: every access is recorded, and `lazytime` writes the timestamps out in batches. A skipped disk shows a notice once each time the daemon starts.
+- **Never mid-build:** a session is skipped while cargo holds its target dir's locks, or while any of your `cargo` processes runs inside the worktree. That second check covers `cargo test`, which drops its locks before it runs the tests.
+- **On demand:** `loom sweep` runs the sweep now. `loom sweep --dry-run --after 12 -v` lists what would go, file by file, and deletes nothing; `--after` works even while the setting is off. Each sweep is logged as `build_sweep.swept` and `build_sweep.skipped` in the daemon's log.
 
 ### Claude Fullscreen Renderer
 

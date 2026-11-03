@@ -1,6 +1,6 @@
 # session
 
-The core domain: `Instance`, a running agent session in its own git worktree and tmux session, with its storage, reconcile, orphan discovery, resume decisions, Claude status, hooks, temp-dir and chat archiving and launch environment. The model in [`../core/`](../core/README.md) drives it; the TUI never holds an `Instance`. `session/` itself holds the instance and everything that acts on it; the sub-packages (`session/agent/`, `session/claudetmp/`, `session/files/`, `session/github/`, `session/hooks/`, `session/launch/`, `session/subagent/`, `session/git/`, `session/vt/`) are described at the end, and `session/tmux/` has its own [`README.md`](tmux/README.md).
+The core domain: `Instance`, a running agent session in its own git worktree and tmux session, with its storage, reconcile, orphan discovery, resume decisions, Claude status, hooks, temp-dir and chat archiving and launch environment. The model in [`../core/`](../core/README.md) drives it; the TUI never holds an `Instance`. `session/` itself holds the instance and everything that acts on it; the sub-packages (`session/agent/`, `session/buildsweep/`, `session/claudetmp/`, `session/files/`, `session/github/`, `session/hooks/`, `session/launch/`, `session/subagent/`, `session/git/`, `session/vt/`) are described at the end, and `session/tmux/` has its own [`README.md`](tmux/README.md).
 
 ## Instance
 
@@ -114,6 +114,14 @@ Instances store the account name (`InstanceData.Account`, "" = default). Every r
 ### agent
 
 `Adapter` interface and per-program implementations (claude, aider, gemini, default fallback): trust-prompt keys, recovery flags, and `Matches(program)` checks, resolved through `Registry.Lookup`. A new agent program is an adapter here, not edits to `tmux/tmux.go` or `agent_restart.go`.
+
+### buildsweep
+
+Deletes the Rust executables in a session worktree's cargo target dir that have gone unused for the threshold (`Sweeper.Run`). The model runs it every 30 minutes on idle and paused sessions, and on request (`core.SweepBuilds`, `loom sweep`).
+- Candidates: names matching `<name>-<16 hex>` with the owner-execute bit, directly in a profile dir's `deps/` or `examples/`. A profile dir is any dir up to six levels under `target/` holding both `deps/` and `.fingerprint/`; no symlink is followed. A candidate's other names in the profile dir and `examples/` (cargo's uplifted hard links) go with it, and a file with a link outside them is kept.
+- Last use is `max(atime, mtime)`, so the mount must record access times. `/proc/self/mountinfo`'s per-mount options decide: `noatime` is skipped, `relatime` is swept only for thresholds of 24h or more, and no flag means `strictatime`.
+- A worktree is skipped while any of cargo's lock files (`.cargo-lock`, `.cargo-build-lock`, `.cargo-artifact-lock`) is `flock`ed. It is also skipped while a `cargo`/`cargo-*` process of the daemon's user has its working directory inside the worktree; that is checked under the locks, because cargo 1.99 holds no lock while `cargo test` runs the tests.
+- Linux only (`session/buildsweep/stat_linux.go`); elsewhere every worktree is skipped as `atime_off`.
 
 ### claudetmp
 
