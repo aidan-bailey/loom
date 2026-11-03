@@ -25,13 +25,22 @@ type device struct {
 // rectPt is a rectangle in points, its corners rounded by r.
 type rectPt struct{ x, y, w, h, r float64 }
 
-// devices are the targets the tool can render. The iPhone 16 is the owner's
-// phone: 393×852 points at @3x (1179×2556 pixels), safe area 59 over 34 in
-// portrait, the Dynamic Island 126×37 points 11 from the top, the home
-// indicator 139×5 points 8 from the bottom.
+// defaultDevice is the owner's phone.
+const defaultDevice = "iphone15"
+
+// devices are the targets the tool can render. The iPhone 15 and 16 share
+// one screen: 393×852 points at @3x (1179×2556 pixels), safe area 59 over 34
+// in portrait, the Dynamic Island 126×37 points 11 from the top, the home
+// indicator 139×5 points 8 from the bottom, corners of 55 points.
 var devices = map[string]device{
-	"iphone16": {
-		name:        "iPhone 16",
+	"iphone15": sixOneInchIsland("iPhone 15"),
+	"iphone16": sixOneInchIsland("iPhone 16"),
+}
+
+// sixOneInchIsland is the 6.1-inch iPhone with a Dynamic Island.
+func sixOneInchIsland(name string) device {
+	return device{
+		name:        name,
 		width:       393,
 		height:      852,
 		scale:       3,
@@ -41,7 +50,7 @@ var devices = map[string]device{
 		island:      rectPt{x: (393 - 126) / 2.0, y: 11, w: 126, h: 37, r: 18.5},
 		homeBar:     rectPt{x: (393 - 139) / 2.0, y: 852 - 8 - 5, w: 139, h: 5, r: 2.5},
 		userAgent:   "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
-	},
+	}
 }
 
 // frameOpts is what frame draws over a screenshot.

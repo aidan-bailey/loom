@@ -92,9 +92,9 @@ func TestCDP_ABrowserThatGoesEndsEveryCall(t *testing.T) {
 }
 
 func TestFrame_DrawsTheDeviceOverTheViewport(t *testing.T) {
-	d := devices["iphone16"]
+	d := devices[defaultDevice]
 	w, h := int(float64(d.width)*d.scale), int(float64(d.height)*d.scale)
-	require.Equal(t, [2]int{1179, 2556}, [2]int{w, h}, "the iPhone 16's screen in pixels")
+	require.Equal(t, [2]int{1179, 2556}, [2]int{w, h}, "the iPhone 15's screen in pixels")
 	shot := image.NewNRGBA(image.Rect(0, 0, w, h))
 	for i := range shot.Pix {
 		shot.Pix[i] = 128 // mid grey
@@ -128,7 +128,7 @@ func TestFrame_DrawsTheDeviceOverTheViewport(t *testing.T) {
 }
 
 func TestFrame_LaysTheStatusBarOverTheScreen(t *testing.T) {
-	d := devices["iphone16"]
+	d := devices[defaultDevice]
 	w, h := int(float64(d.width)*d.scale), int(float64(d.height)*d.scale)
 	shot := image.NewNRGBA(image.Rect(0, 0, w, h))
 	for i := range shot.Pix {
@@ -144,7 +144,7 @@ func TestFrame_LaysTheStatusBarOverTheScreen(t *testing.T) {
 }
 
 func TestStatusBarHTML_SitsOnTheIslandsMiddle(t *testing.T) {
-	d := devices["iphone16"]
+	d := devices[defaultDevice]
 	page := statusBarHTML(d)
 	assert.Contains(t, page, "top: 11px; height: 37px;", "both sides span the island's height")
 	assert.Contains(t, page, "width: 133.5px;", "the time is centred in the space left of the island")

@@ -1,7 +1,7 @@
 // Command webshot renders the phone app's screens as they look on a phone:
-// the iPhone 16 by default, at its viewport, pixel ratio and safe-area
-// insets, as a Home Screen app, framed with its status bar, Dynamic Island
-// and home indicator. It serves internal/web/static from disk against a
+// the owner's iPhone 15 by default (-device iphone16 is the same screen), at
+// its viewport, pixel ratio and safe-area insets, as a Home Screen app,
+// framed with its status bar, Dynamic Island and home indicator. It serves internal/web/static from disk against a
 // canned loom (tools/webshot/fixture), drives headless Chromium over
 // --remote-debugging-pipe, and writes one PNG per screen.
 //
@@ -60,7 +60,7 @@ func run(args []string) error {
 	fs := flag.NewFlagSet("webshot", flag.ContinueOnError)
 	out := fs.String("out", "", "directory to write the PNGs to (required; keep it out of the worktree)")
 	only := fs.String("screens", "", "comma-separated screens to render (default all: "+screenNames()+")")
-	dev := fs.String("device", "iphone16", "the device to render as")
+	dev := fs.String("device", defaultDevice, "the device to render as: iphone15 or iphone16")
 	static := fs.String("static", filepath.Join("internal", "web", "static"), "the app's files")
 	browserBin := fs.String("browser", "", "Chromium or Chrome to run (default: the first of chromium, chromium-browser, google-chrome, google-chrome-stable on PATH)")
 	bare := fs.Bool("bare", false, "write the viewport only: no bezel, status bar, island or home indicator")
