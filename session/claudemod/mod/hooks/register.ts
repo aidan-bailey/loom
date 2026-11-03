@@ -7,6 +7,9 @@
 // turn starts and how the turn ended. A message the daemon marks as a slash
 // command runs through Claude's command queue instead ($.command.run), and
 // the hello lists this Claude's commands for the daemon to judge one by.
+// It also holds Claude's questions and permission prompts while Claude's own
+// dialog stays up, so the daemon can answer them from the phone; the first
+// answer wins.
 //
 // loom writes this folder into each launch's hooks folder and passes it with
 // --plugin-dir. LOOM_MOD_SOCKET names the daemon's mod socket and LOOM_LAUNCH
@@ -263,6 +266,111 @@ async function ensurePump($: EngineInterface) {
   }
 }
 
+// Asks: the dialogs loom's daemon can answer from the phone (the spec,
+// docs/superpowers/specs/2026-11-03-pwa-answer-asks-design.md). The module
+// holds each ask while Claude's own dialog stays up, posts it, and polls for
+// the daemon's answer; whichever answers first wins. It returns what the
+// daemon hands it and decides nothing itself.
+type Ask = {
+  ask: string
+  kind: 'question' | 'permission'
+  agentId?: string
+  agentType?: string
+  toolUseId?: string
+  tool: string
+  input: unknown
+  suggestions?: unknown[]
+}
+type AskAnswer = { result?: unknown; deny?: string; decision?: unknown }
+
+// PERMISSION_SLEEP_MS bounds the backoff a permission hook may sleep: its
+// $.clock waits count against the hook's 10 s budget once its next has
+// settled. A question's next holds the clock, so its hook may wait longer.
+const PERMISSION_SLEEP_MS = 6000
+
+// A call in flight, by tool and canonical input: a permission request names
+// no tool_use_id, so its ask pairs with the oldest unpaired call of the same
+// tool and input, and closes when that call settles (the person answered in
+// Claude: next.signal never aborts for that).
+type Call = { id: string; paired: boolean; settled: Promise<void>; settle: () => void }
+const inFlight = new Map<string, Call[]>()
+
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']'
+  if (v !== null && typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    return '{' + Object.keys(o).sort().map(k => JSON.stringify(k) + ':' + canonical(o[k])).join(',') + '}'
+  }
+  return JSON.stringify(v) ?? 'null'
+}
+
+function callKey(tool: string, input: unknown): string {
+  return tool + '\u0000' + canonical(input)
+}
+
+function newAskID(): string {
+  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
+}
+
+// ready makes sure of the pump and says whether this launch talks to loom.
+async function ready($: EngineInterface): Promise<boolean> {
+  await ensurePump($)
+  return socket !== '' && launch !== ''
+}
+
+// waitAnswer posts the ask and polls for its answer: the answer, or
+// undefined once the daemon refuses or closes the ask, a newer module
+// instance holds the launch, stop() says the hook settled, or its backoff
+// would pass sleepMs in all.
+async function waitAnswer($: EngineInterface, a: Ask, stop: () => boolean, sleepMs: number): Promise<AskAnswer | undefined> {
+  let posted = false
+  let delay = 0
+  let slept = 0
+  for (;;) {
+    if (stop()) return undefined
+    if (delay > 0) {
+      if (slept + delay > sleepMs) return undefined
+      slept += delay
+      await $.clock.sleep(delay)
+      if (stop()) return undefined
+    }
+    try {
+      if (!posted) {
+        const r = await call($, 'POST', '/asks', { launch, poller: POLLER, ...a })
+        if (r.status === 400 || r.status === 409 || r.status === 410) return undefined
+        if (r.status !== 204) {
+          delay = backoff(delay)
+          continue
+        }
+        posted = true
+        delay = 0
+      }
+      const r = await call($, 'GET', `/answer?launch=${encodeURIComponent(launch)}&poller=${POLLER}&ask=${encodeURIComponent(a.ask)}`)
+      if (r.status === 200) return JSON.parse(r.text) as AskAnswer
+      if (r.status === 204) continue
+      if (r.status === 404) {
+        posted = false
+        continue
+      }
+      if (r.status === 409 || r.status === 410) return undefined
+      delay = backoff(delay)
+    } catch (err) {
+      $.ui.log(`loom: ask ${a.ask}: ${String(err)}`, { to: 'debug' })
+      delay = backoff(delay)
+    }
+  }
+}
+
+// closeAsk tells the daemon Claude's own dialog answered the ask. Not
+// awaited by the hooks: the answer is already Claude's.
+async function closeAsk($: EngineInterface, ask: string, how: string) {
+  try {
+    await call($, 'POST', '/asks/close', { launch, poller: POLLER, ask, how })
+  } catch (err) {
+    $.ui.log(`loom: close ask ${ask}: ${String(err)}`, { to: 'debug' })
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -309,6 +417,75 @@ export const register: Register = on => {
         ids.map(id => ({ kind: 'complete' as const, id, turnId: e.turnId, text: r.text, reason: e.reason })),
       )
     }
+    return r
+  })
+
+  // Every tool call, so a permission ask finds its call. It passes the call
+  // on unchanged.
+  on('tool.call', async ($, e, next) => {
+    const { tool, tool_use_id, agentId, consent, ...input } = e as any
+    const key = callKey(tool, input)
+    let settle = () => {}
+    const c: Call = { id: tool_use_id, paired: false, settled: new Promise<void>(r => (settle = r)), settle: () => settle() }
+    inFlight.set(key, [...(inFlight.get(key) ?? []), c])
+    try {
+      return await next(e)
+    } finally {
+      const rest = (inFlight.get(key) ?? []).filter(x => x !== c)
+      if (rest.length > 0) inFlight.set(key, rest)
+      else inFlight.delete(key)
+      c.settle()
+    }
+  })
+
+  // A question: Claude's dialog runs beneath (next) while the daemon may
+  // answer; returning with next pending closes the dialog.
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    if (!(await ready($))) return next(e)
+    const { tool, tool_use_id, agentId, consent, ...input } = e as any
+    const a: Ask = { ask: newAskID(), kind: 'question', agentId, toolUseId: tool_use_id, tool, input }
+    let done = false
+    const fromClaude = next(e).then(
+      r => ({ r }),
+      err => ({ err }),
+    )
+    const fromLoom = waitAnswer($, a, () => done, Infinity).then(ans => (ans === undefined ? fromClaude : { ans }))
+    const first: any = await Promise.race([fromClaude, fromLoom])
+    done = true
+    if (first.ans !== undefined) {
+      const ans = first.ans as AskAnswer
+      return (ans.deny !== undefined ? { deny: ans.deny } : { result: ans.result }) as any
+    }
+    void closeAsk($, a.ask, 'elsewhere')
+    if ('err' in first) throw first.err
+    return first.r
+  })
+
+  // A permission: loom's status hook runs beneath (next), then Claude's
+  // dialog runs while this hook holds. Every question raises one too, which
+  // the question hook holds.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const r = await next(e)
+    const req = e as any
+    if ((r as any).decision !== undefined || req.tool_name === 'AskUserQuestion' || !(await ready($))) return r
+    const c = (inFlight.get(callKey(req.tool_name, req.tool_input)) ?? []).find(x => !x.paired)
+    if (c === undefined) return r // nothing would close it: leave it to Claude's dialog
+    c.paired = true
+    const a: Ask = {
+      ask: newAskID(),
+      kind: 'permission',
+      agentId: req.agent_id,
+      agentType: req.agent_type,
+      toolUseId: c.id,
+      tool: req.tool_name,
+      input: req.tool_input,
+      suggestions: req.permission_suggestions,
+    }
+    let done = false
+    const ans = await Promise.race([waitAnswer($, a, () => done, PERMISSION_SLEEP_MS), c.settled.then(() => undefined)])
+    done = true
+    if (ans !== undefined && ans.decision !== undefined) return { ...r, decision: ans.decision } as any
+    void closeAsk($, a.ask, 'settled')
     return r
   })
 }
