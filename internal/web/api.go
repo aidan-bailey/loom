@@ -69,6 +69,7 @@ func (l *Layer) refuse(w http.ResponseWriter, a actionLog, status int, msg strin
 // a paired device (authed); /pair, /stream and /push-key are other stories'.
 func (l *Layer) routeAPI(m *http.ServeMux) {
 	m.Handle("POST /api/v1/sessions/{id}/send", l.authed(l.sendReply))
+	m.Handle("POST /api/v1/sessions/{id}/asks/{ask}/answer", l.authed(l.answerAsk))
 	m.Handle("POST /api/v1/sessions/{id}/merge", l.authed(l.mergeInto))
 	m.Handle("POST /api/v1/sessions/{id}/pause", l.authed(l.sessionOp("pause", core.Core.Pause)))
 	m.Handle("POST /api/v1/sessions/{id}/resume", l.authed(l.sessionOp("resume", core.Core.Resume)))

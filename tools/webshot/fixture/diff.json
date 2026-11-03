@@ -1,0 +1,62 @@
+{
+  "base": "a1b2c3d4e5f6",
+  "files": [
+    {
+      "path": "ui/pane.go",
+      "old_path": "",
+      "status": "M",
+      "binary": false,
+      "added": 12,
+      "removed": 3,
+      "omitted": "",
+      "hunks": [
+        {
+          "header": "@@ -88,9 +88,12 @@ func (p *Pane) View() string {",
+          "cut": [],
+          "lines": [
+            "  \tframe := p.render()",
+            "-\tp.drawCursor(frame)",
+            "-\treturn frame",
+            "+\tif p.cursorVisible() {",
+            "+\t\tp.drawCursor(frame)",
+            "+\t}",
+            "+\treturn frame",
+            " }"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "ui/header.go",
+      "old_path": "ui/title.go",
+      "status": "R",
+      "binary": false,
+      "added": 40,
+      "removed": 2,
+      "omitted": "",
+      "hunks": [
+        {
+          "header": "@@ -1,4 +1,6 @@",
+          "cut": [],
+          "lines": [
+            " package ui",
+            "+",
+            "+// header is the pinned row.",
+            "-// title",
+            "+type header struct{}"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "assets/cursor.png",
+      "old_path": "",
+      "status": "A",
+      "binary": true,
+      "added": 0,
+      "removed": 0,
+      "omitted": "",
+      "hunks": []
+    }
+  ]
+}

@@ -56,6 +56,9 @@ type InstanceView struct {
 	// asks to do, in one line (Instance.WaitDetail): a Bash command's first
 	// line, a file path or a URL. Empty for any other wait.
 	WaitDetail string
+	// Asks are the dialogs the session's Claude holds open that the phone
+	// can answer (core/asks.go), oldest first; nil for none.
+	Asks []AskView
 	// RemoteSession is the ID in the session's Remote Control link,
 	// https://claude.ai/code/<RemoteSession>. The model takes it from the
 	// roster's entry for the worktree (session.RosterEntry.RemoteSession),

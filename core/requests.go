@@ -153,6 +153,7 @@ const (
 	opSend      requestOp = "send a prompt to"
 	opReadTurns requestOp = "read the conversation of"
 	opReadDiff  requestOp = "read the diff of"
+	opAnswer    requestOp = "answer"
 )
 
 // precondition checks inst against the gate the TUI puts on op today, and
@@ -215,7 +216,7 @@ func precondition(op requestOp, inst *session.Instance) error {
 		case st != session.Recoverable:
 			why = fmt.Sprintf("the session is not recoverable (%s)", st)
 		}
-	case opSend:
+	case opSend, opAnswer:
 		switch {
 		case !inst.Started():
 			why = "the session has not started"

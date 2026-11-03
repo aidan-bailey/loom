@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,11 @@ func runTests(m *testing.M) int {
 	// An empty ConfigDir resolves the worktrees dir (and a new worktree's
 	// config) under LOOM_HOME: keep it off the developer's ~/.loom.
 	defer testenv.MustIsolateLoomDirs()()
+	// gitTimeout is sized for the metadata tick, not for a Nix sandbox
+	// sharing the machine with a whole rebuild, where this package has run
+	// 36x slower and a fixture's `git write-tree` outlived 8s. Tests that
+	// exercise a deadline set their own.
+	gitTimeout = time.Minute
 	return m.Run()
 }
 

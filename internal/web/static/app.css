@@ -370,7 +370,7 @@ input.text {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--dim);
-  scroll-margin-top: calc(env(safe-area-inset-top) + 88px);
+  scroll-margin-top: calc(env(safe-area-inset-top) + 96px);
 }
 .sc-group-title::after,
 .sc-rule::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
@@ -384,14 +384,15 @@ details.sc-group[open] > summary::before { content: "▾"; }
 /* ---- the header ---- */
 /* The app's pinned header: the status row, the screen's context row and a
    session's tabs. It pads the top inset itself, so it fills behind the iOS
-   status bar, and the shell then drops its own (.sc-chromed). */
+   status bar, and the shell then drops its own (.sc-chromed). The 8px under
+   the inset keeps the status row off the iOS status bar's clock and icons. */
 .shell.sc-chromed { padding-top: 0; }
 .sc-chrome {
   position: sticky;
   top: 0;
   z-index: 30;
   flex: none;
-  padding-top: env(safe-area-inset-top);
+  padding-top: calc(env(safe-area-inset-top) + 8px);
   background: var(--bg);
   border-bottom: 1px solid var(--rule);
 }
@@ -478,6 +479,19 @@ details.sc-group[open] > summary::before { content: "▾"; }
 .sc-attn-box { margin-top: 18px; padding: 14px 12px 12px; border-color: var(--attention-border); }
 .sc-attn-box .sc-legend { color: var(--attention); letter-spacing: 0.06em; text-transform: uppercase; }
 .sc-detail-box { margin: 8px 0 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--rule); font: 12px/1.4 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sc-asks { display: flex; flex-direction: column; gap: 14px; margin: 12px 0; }
+.sc-ask { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.sc-q { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; padding: 0; border: 0; min-width: 0; }
+.sc-q > legend { padding: 0 0 4px; color: var(--title); }
+.sc-q-chip { display: inline-block; margin-right: 6px; padding: 1px 6px; border: 1px solid var(--rule); border-radius: var(--radius); color: var(--dim); font-size: 11px; }
+.sc-opt { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 6px 0; }
+.sc-opt input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--accent); }
+.sc-opt-label { display: block; }
+.sc-opt-desc { display: block; color: var(--dim); font-size: 12px; }
+.sc-perm { display: flex; flex-direction: column; gap: 8px; }
+.sc-perm-tool { color: var(--title); }
+.sc-perm-text { margin: 4px 0 0; overflow-wrap: anywhere; }
+.sc-perm-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .sc-session .sc-tiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); margin-top: 18px; }
 .sc-pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sc-agent { padding-top: 6px; }
@@ -502,11 +516,12 @@ details.sc-group[open] > summary::before { content: "▾"; }
   bottom: 0;
   z-index: 20;
   margin: auto -16px calc(-1 * env(safe-area-inset-bottom));
-  padding: 0 12px calc(10px + env(safe-area-inset-bottom));
+  padding: 0 16px calc(10px + env(safe-area-inset-bottom));
   background: var(--panel);
   border-top: 1px solid var(--rule);
 }
-.sc-reply-row { display: flex; gap: 8px; align-items: flex-end; padding-top: 8px; }
+/* The button takes the text field's height, so both share top and bottom edges. */
+.sc-reply-row { display: flex; gap: 8px; align-items: stretch; padding-top: 8px; }
 .sc-reply textarea {
   flex: 1;
   min-width: 0;

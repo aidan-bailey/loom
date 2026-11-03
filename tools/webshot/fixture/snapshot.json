@@ -1,0 +1,276 @@
+{
+  "build": "webshot",
+  "host": "fresco",
+  "workspaces": [
+    {
+      "id": 1,
+      "name": "loom",
+      "label": "loom",
+      "shown": true
+    },
+    {
+      "id": 2,
+      "name": "flow",
+      "label": "flow",
+      "shown": true
+    }
+  ],
+  "sessions": {
+    "1": [
+      {
+        "id": 1,
+        "workspace": 1,
+        "title": "fix-pane-cursor",
+        "branch": "aidanb/fix-pane-cursor",
+        "group": "working",
+        "label": "Working",
+        "status": "Running",
+        "since": "now-2m",
+        "wait": {
+          "reason": "",
+          "detail": ""
+        },
+        "last_message": "Running the ui tests now. The cursor fix is in `ui/pane.go`; the header no longer jumps when a pane redraws.\n\n- the cursor is drawn after the frame\n- **no** reflow on a resize\n\n```go\nif p.cursorVisible() {\n\tp.drawCursor(frame)\n}\n```",
+        "diff": {
+          "added": 212,
+          "removed": 40
+        },
+        "ahead": 3,
+        "behind": 0,
+        "parity_known": true,
+        "pr": {
+          "number": 482,
+          "state": "open",
+          "checks": "pending",
+          "url": "https://github.com/aidan-bailey/loom/pull/482"
+        },
+        "account": "",
+        "agents": [
+          {
+            "name": "recon",
+            "description": "Map every caller of the cursor path",
+            "idle": false
+          },
+          {
+            "name": "verifier",
+            "description": "Run the ui gates",
+            "idle": true
+          }
+        ],
+        "remote_url": "https://claude.ai/code/webshot",
+        "claude": true
+      },
+      {
+        "id": 2,
+        "workspace": 1,
+        "title": "sandbox-ask",
+        "branch": "aidanb/sandbox-ask",
+        "group": "needs_you",
+        "label": "Needs you",
+        "status": "Prompting",
+        "since": "now-18m",
+        "wait": {
+          "reason": "Allow Bash",
+          "detail": "go test ./ui/... -run TestPane"
+        },
+        "last_message": "I need to run the pane tests to check the fix.",
+        "diff": {
+          "added": 14,
+          "removed": 2
+        },
+        "ahead": 0,
+        "behind": 0,
+        "parity_known": false,
+        "pr": null,
+        "account": "",
+        "agents": [],
+        "remote_url": "https://claude.ai/code/webshot2",
+        "claude": true
+      },
+      {
+        "id": 3,
+        "workspace": 1,
+        "title": "plain-shell",
+        "branch": "aidanb/plain-shell",
+        "group": "working",
+        "label": "Working",
+        "status": "Loading",
+        "since": "now-9m",
+        "wait": {
+          "reason": "",
+          "detail": ""
+        },
+        "last_message": "",
+        "diff": {
+          "added": 0,
+          "removed": 0
+        },
+        "ahead": 0,
+        "behind": 0,
+        "parity_known": false,
+        "pr": null,
+        "account": "",
+        "agents": [],
+        "remote_url": "",
+        "claude": false
+      },
+      {
+        "id": 7,
+        "workspace": 1,
+        "title": "a-very-long-session-title-that-will-not-fit-on-one-line",
+        "branch": "aidanb/a-very-long-session-title-that-will-not-fit-on-one-line",
+        "group": "your_turn",
+        "label": "Your turn",
+        "status": "Ready",
+        "since": "now-41m",
+        "wait": {
+          "reason": "",
+          "detail": ""
+        },
+        "last_message": "Done: the header is pinned.",
+        "diff": {
+          "added": 5,
+          "removed": 5
+        },
+        "ahead": 0,
+        "behind": 0,
+        "parity_known": false,
+        "pr": null,
+        "account": "",
+        "agents": [],
+        "remote_url": "",
+        "claude": true
+      }
+    ],
+    "2": [
+      {
+        "id": 4,
+        "workspace": 2,
+        "title": "flow-docs",
+        "branch": "aidanb/flow-docs",
+        "group": "needs_you",
+        "label": "Needs you",
+        "status": "Prompting",
+        "since": "now-52m",
+        "wait": {
+          "reason": "Plan approval",
+          "detail": ""
+        },
+        "last_message": "",
+        "diff": {
+          "added": 0,
+          "removed": 0
+        },
+        "ahead": 0,
+        "behind": 0,
+        "parity_known": false,
+        "pr": null,
+        "account": "",
+        "agents": [],
+        "remote_url": "",
+        "claude": true
+      },
+      {
+        "id": 5,
+        "workspace": 2,
+        "title": "flow-old",
+        "branch": "aidanb/flow-old",
+        "group": "paused",
+        "label": "Paused",
+        "status": "Paused",
+        "since": "now-72h",
+        "wait": {
+          "reason": "",
+          "detail": ""
+        },
+        "last_message": "",
+        "diff": {
+          "added": 0,
+          "removed": 0
+        },
+        "ahead": 0,
+        "behind": 0,
+        "parity_known": false,
+        "pr": null,
+        "account": "",
+        "agents": [],
+        "remote_url": "",
+        "claude": false
+      },
+      {
+        "id": 6,
+        "workspace": 2,
+        "title": "flow-run",
+        "branch": "aidanb/flow-run",
+        "group": "working",
+        "label": "Working",
+        "status": "Running",
+        "since": "now-4m",
+        "wait": {
+          "reason": "",
+          "detail": ""
+        },
+        "last_message": "",
+        "diff": {
+          "added": 0,
+          "removed": 0
+        },
+        "ahead": 0,
+        "behind": 0,
+        "parity_known": false,
+        "pr": {
+          "number": 31,
+          "state": "merged",
+          "checks": "none"
+        },
+        "account": "work",
+        "agents": [],
+        "remote_url": "",
+        "claude": true
+      }
+    ]
+  },
+  "device": {
+    "name": "iPhone",
+    "notify": {
+      "waiting": true,
+      "finished": true,
+      "paused_until": ""
+    },
+    "push": ""
+  },
+  "badge": 2,
+  "notices": [],
+  "usage": [
+    {
+      "account": "default",
+      "plan": "max",
+      "five_hour": {
+        "pct": 62,
+        "resets_at": "now+1h40m"
+      },
+      "seven_day": {
+        "pct": 31,
+        "resets_at": "now+70h"
+      },
+      "at": "now-1m"
+    },
+    {
+      "account": "work",
+      "plan": "pro",
+      "five_hour": {
+        "pct": 18,
+        "resets_at": "now+3h5m"
+      },
+      "seven_day": null,
+      "at": "now-1m"
+    }
+  ],
+  "usage_stale_after_s": 900,
+  "quick_replies": [
+    "yes",
+    "continue",
+    "/compact",
+    "/clear"
+  ]
+}
