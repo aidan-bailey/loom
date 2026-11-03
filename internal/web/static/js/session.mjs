@@ -1,4 +1,4 @@
-// The session screen: why it waits, its tiles, the last message, its agents,
+// The session screen: why it waits and the asks to answer, its tiles, the last message, its agents,
 // the actions, and the reply box with the quick replies. The changes tile
 // opens the changes screen, and the last message's rule the conversation.
 import { html, useState, useEffect } from "../lib/preact-htm.mjs";
@@ -10,6 +10,7 @@ import { GLYPHS, glyphOf, OutIcon, ChevronIcon } from "./skin.mjs";
 import { usageFor, shareText, isStale } from "./usage.mjs";
 import { Markdown } from "./markdown.mjs";
 import { ReplyBox, useRun } from "./reply.mjs";
+import { Asks } from "./asks.mjs";
 
 // actionsFor says which buttons to show. It follows status only; the
 // daemon's admit stays the authority and a refusal comes back as a toast.
@@ -233,9 +234,10 @@ export function Session({ snap, stale, route, go, act, toast, pending }) {
         ? html`<div class="sc-box sc-attn-box">
             <span class="sc-legend">${GLYPHS.needs_you} Needs you</span>
             <div class="sc-attn">${(s.wait && s.wait.reason) || "Needs you"}</div>
-            ${s.wait && s.wait.detail ? html`<pre class="sc-detail-box">${s.wait.detail}</pre>` : null}
+            ${s.wait && s.wait.detail && !(s.asks && s.asks.length) ? html`<pre class="sc-detail-box">${s.wait.detail}</pre>` : null}
+            <${Asks} s=${s} off=${off} run=${run} />
             ${s.remote_url
-              ? html`<a class="sc-btn sc-primary sc-block" href=${s.remote_url} target="_blank" rel="noopener">Open in Claude</a>`
+              ? html`<a class=${"sc-btn sc-block" + (s.asks && s.asks.length ? "" : " sc-primary")} href=${s.remote_url} target="_blank" rel="noopener">Open in Claude</a>`
               : html`<p class="sc-dim sc-small">Remote Control is off for this session.</p>`}
           </div>`
         : null}
