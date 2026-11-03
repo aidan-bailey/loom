@@ -342,6 +342,8 @@ func TestRequests_RefuseWhatTheTUIRefuses(t *testing.T) {
 		{"send to a paused session", func(f fixture) { f.m.SendPrompt(f.id["paused"], "hi", 1) }, "send a prompt to paused: the session is paused"},
 		{"send through the mod to an unstarted session", func(f fixture) { f.m.Send(f.id["new"], Message{Text: "hi", Origin: OriginCLI}, 1) }, "send a prompt to new: the session has not started"},
 		{"send through the mod to a paused session", func(f fixture) { f.m.Send(f.id["paused"], Message{Text: "hi", Origin: OriginCLI}, 1) }, "send a prompt to paused: the session is paused"},
+		{"answer an unstarted session", func(f fixture) { f.m.Answer(f.id["new"], "a", AskAnswer{Allow: true}, 1) }, "answer new: the session has not started"},
+		{"answer a paused session", func(f fixture) { f.m.Answer(f.id["paused"], "a", AskAnswer{Allow: true}, 1) }, "answer paused: the session is paused"},
 		{"send through the mod to a loading session", func(f fixture) { f.m.Send(f.id["loading"], Message{Text: "hi", Origin: OriginScript}, 1) }, "send a prompt to loading: the session is busy (starting, resuming or pausing): send again once it runs"},
 		// The reads have no key in the TUI; their gates are the model's own.
 		{"read the conversation of a terminal", func(f fixture) { f.m.ReadTurns(f.id["term"], transcript.Query{}, 1) }, "read the conversation of term: not allowed on a workspace terminal"},

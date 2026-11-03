@@ -212,7 +212,7 @@ func precondition(op requestOp, inst *session.Instance) error {
 		case st != session.Recoverable:
 			why = fmt.Sprintf("the session is not recoverable (%s)", st)
 		}
-	case opSend:
+	case opSend, opAnswer:
 		switch {
 		case !inst.Started():
 			why = "the session has not started"

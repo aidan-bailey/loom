@@ -294,6 +294,18 @@ type SendParams struct {
 type SendResult struct {
 }
 
+// AnswerParams are Answer's parameters on the wire.
+type AnswerParams struct {
+	ID     core.InstanceID `json:"id"`
+	Ask    string          `json:"ask"`
+	Answer core.AskAnswer  `json:"answer"`
+	Req    core.ReqID      `json:"req"`
+}
+
+// AnswerResult is Answer's result on the wire; an error travels in the reply.
+type AnswerResult struct {
+}
+
 // FetchIssueParams are FetchIssue's parameters on the wire.
 type FetchIssueParams struct {
 	Repo   string     `json:"repo"`
@@ -674,6 +686,7 @@ var methods = []methodInfo{
 	{Name: "Push", Kind: kindRequest, Params: PushParams{}, Result: PushResult{}},
 	{Name: "SendPrompt", Kind: kindRequest, Params: SendPromptParams{}, Result: SendPromptResult{}},
 	{Name: "Send", Kind: kindRequest, Params: SendParams{}, Result: SendResult{}},
+	{Name: "Answer", Kind: kindRequest, Params: AnswerParams{}, Result: AnswerResult{}},
 	{Name: "FetchIssue", Kind: kindRequest, Params: FetchIssueParams{}, Result: FetchIssueResult{}},
 	{Name: "ReadTurns", Kind: kindRequest, Params: ReadTurnsParams{}, Result: ReadTurnsResult{}},
 	{Name: "ReadDiff", Kind: kindRequest, Params: ReadDiffParams{}, Result: ReadDiffResult{}},
@@ -944,6 +957,16 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.Send(p.ID, p.Msg, p.Req)
 		return SendResult{}, nil, true
+	case "Answer":
+		var p AnswerParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.Answer(p.ID, p.Ask, p.Answer, p.Req)
+		return AnswerResult{}, nil, true
 	case "FetchIssue":
 		var p FetchIssueParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1382,6 +1405,12 @@ func (c *Client) SendPrompt(id core.InstanceID, text string, req core.ReqID) {
 func (c *Client) Send(id core.InstanceID, msg core.Message, req core.ReqID) {
 	var r SendResult
 	c.noteRefused(c.requestNoErr("Send", SendParams{ID: id, Msg: msg, Req: req}, &r), req)
+}
+
+// Answer is core.Core's Answer (request).
+func (c *Client) Answer(id core.InstanceID, ask string, answer core.AskAnswer, req core.ReqID) {
+	var r AnswerResult
+	c.noteRefused(c.requestNoErr("Answer", AnswerParams{ID: id, Ask: ask, Answer: answer, Req: req}, &r), req)
 }
 
 // FetchIssue is core.Core's FetchIssue (request).

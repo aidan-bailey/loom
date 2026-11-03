@@ -89,6 +89,11 @@ func (l *Loop) SendPrompt(id InstanceID, text string, req ReqID) {
 func (l *Loop) Send(id InstanceID, msg Message, req ReqID) {
 	l.do(func(m *Model) { m.Send(id, msg, req) })
 }
+
+// Answer runs Model.Answer on the loop.
+func (l *Loop) Answer(id InstanceID, ask string, answer AskAnswer, req ReqID) {
+	l.do(func(m *Model) { m.Answer(id, ask, answer, req) })
+}
 func (l *Loop) FetchIssue(repo string, n int, req ReqID) {
 	l.do(func(m *Model) { m.FetchIssue(repo, n, req) })
 }

@@ -78,6 +78,10 @@ type Core interface {
 	Push(id InstanceID, req ReqID)
 	SendPrompt(id InstanceID, text string, req ReqID)
 	Send(id InstanceID, msg Message, req ReqID)
+	// Answer answers a dialog the session's Claude holds open (an
+	// InstanceView.Asks entry) from the phone; the Reply follows once the
+	// session's loom mod took the answer.
+	Answer(id InstanceID, ask string, answer AskAnswer, req ReqID)
 	FetchIssue(repo string, number int, req ReqID)
 	// A session's conversation and its worktree's diff, read for the
 	// client that asks: the Reply's Turns (transcript.Read) and Diff

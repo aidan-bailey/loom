@@ -1102,6 +1102,7 @@ func TestAnswer_AnAnswerNoPollTakesIsWithdrawn(t *testing.T) {
 	withMod(t)
 	m := NewForTest(Options{})
 	inst := modInst(t, m, "x")
+	require.NoError(t, m.ModHello("L1", ModHello{Mod: 1})) // live, so the tick's grace leaves the link alone
 	require.NoError(t, m.ModAsk("L1", "", permissionAsk("p1", "")))
 	m.Answer(m.idOf(inst), "p1", AskAnswer{Allow: true}, 3)
 

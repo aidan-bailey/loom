@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -490,4 +491,204 @@ func AskLine(a AskView) string {
 		return a.Tool
 	}
 	return strings.TrimSpace(a.Tool + ": " + a.Summary)
+}
+
+// AskAnswer is the phone's answer to an ask. A question ask takes Questions,
+// each keyed by its question's text, or Chat (the person chose "Chat about
+// this"), with ChatText their optional words. A permission ask takes Allow,
+// with Suggestion the 1-based index of an offered rule to allow with it (0
+// for none), or a deny (Allow false), with Message the person's optional
+// words.
+type AskAnswer struct {
+	Questions  map[string]QuestionAnswer
+	Chat       bool
+	ChatText   string
+	Allow      bool
+	Suggestion int
+	Message    string
+}
+
+// QuestionAnswer is one question's answer: the options chosen, an Other
+// answer, and a note.
+type QuestionAnswer struct {
+	Labels []string
+	Other  string
+	Note   string
+}
+
+// Answer answers session id's open ask with the phone's answer: it checks
+// the answer against the ask, composes what the mod hands Claude
+// (composeAnswer) and wakes the ask's poll. The Reply comes when the mod
+// takes it (ModAnswer); a refusal comes at once, and so does "answered in
+// Claude first" for an ask that closed.
+func (m *Model) Answer(id InstanceID, ask string, ans AskAnswer, req ReqID) {
+	inst, _, ok := m.admit(opAnswer, id, req)
+	if !ok {
+		return
+	}
+	l := m.mods[inst]
+	var a *modAsk
+	if l != nil {
+		a = l.ask(ask)
+	}
+	switch {
+	case a == nil && l != nil && l.closedAsks[ask]:
+		m.refuse(req, id, fmt.Errorf("%s %s: it was answered in Claude first", opAnswer, inst.Title))
+		return
+	case a == nil:
+		m.refuse(req, id, fmt.Errorf("%s %s: it asks nothing by that ID now", opAnswer, inst.Title))
+		return
+	case a.answer != nil:
+		m.refuse(req, id, fmt.Errorf("%s %s: it was already answered from another device", opAnswer, inst.Title))
+		return
+	}
+	payload, follow, err := composeAnswer(a, ans)
+	if err != nil {
+		m.refuse(req, id, fmt.Errorf("%s %s: %w", opAnswer, inst.Title, err))
+		return
+	}
+	a.answer, a.req, a.at, a.follow = payload, req, time.Now(), follow
+	a.poke()
+	m.asksMoved = true
+	log.For("core").Info("mod.ask_answer", "instance", inst.Title, "ask", ask)
+}
+
+// composeAnswer is what the mod returns to Claude for ans, and the words to
+// send after it as the person's reply ("" for none): a question's result
+// (Claude's own shape: the questions as given, each answer the chosen
+// labels in option order then Other, joined by ", ", each note under
+// annotations) or a chat's deny (Claude's clarify text); a permission's
+// decision (allow, with the one chosen suggestion as given, or a deny that
+// ends the turn, as the terminal's "No" does).
+func composeAnswer(a *modAsk, ans AskAnswer) (json.RawMessage, string, error) {
+	switch a.view.Kind {
+	case AskKindQuestion:
+		return composeQuestion(a, ans)
+	case AskKindPermission:
+		return composePermission(a, ans)
+	}
+	return nil, "", fmt.Errorf("an ask of kind %q takes no answer", a.view.Kind)
+}
+
+func composeQuestion(a *modAsk, ans AskAnswer) (json.RawMessage, string, error) {
+	if ans.Allow || ans.Suggestion != 0 || ans.Message != "" {
+		return nil, "", errors.New("a question takes answers or a chat, not an allow or a deny")
+	}
+	if ans.Chat {
+		if len(ans.Questions) > 0 {
+			return nil, "", errors.New("chat about the questions or answer them, not both")
+		}
+		payload, err := json.Marshal(struct {
+			Deny string `json:"deny"`
+		}{clarifyText(a.view.Questions)})
+		return payload, strings.TrimSpace(ans.ChatText), err
+	}
+	if ans.ChatText != "" {
+		return nil, "", errors.New("a chat's words go with a chat")
+	}
+	asked := map[string]bool{}
+	for _, q := range a.view.Questions {
+		asked[q.Question] = true
+	}
+	for text := range ans.Questions {
+		if !asked[text] {
+			return nil, "", fmt.Errorf("it asks no question %q", text)
+		}
+	}
+	answers := map[string]string{}
+	notes := map[string]any{}
+	for _, q := range a.view.Questions {
+		qa := ans.Questions[q.Question]
+		offered := map[string]bool{}
+		for _, o := range q.Options {
+			offered[o.Label] = true
+		}
+		chosen := map[string]bool{}
+		for _, label := range qa.Labels {
+			if !offered[label] {
+				return nil, "", fmt.Errorf("%q is not an option of %q", label, q.Question)
+			}
+			chosen[label] = true
+		}
+		var parts []string
+		for _, o := range q.Options {
+			if chosen[o.Label] {
+				parts = append(parts, o.Label)
+			}
+		}
+		if other := strings.TrimSpace(qa.Other); other != "" {
+			parts = append(parts, other)
+		}
+		switch {
+		case len(parts) == 0:
+			return nil, "", fmt.Errorf("%q has no answer", q.Question)
+		case !q.MultiSelect && len(parts) > 1:
+			return nil, "", fmt.Errorf("%q takes one answer", q.Question)
+		}
+		answers[q.Question] = strings.Join(parts, ", ")
+		if note := strings.TrimSpace(qa.Note); note != "" {
+			notes[q.Question] = map[string]string{"notes": note}
+		}
+	}
+	payload, err := json.Marshal(struct {
+		Result struct {
+			Questions   json.RawMessage   `json:"questions"`
+			Answers     map[string]string `json:"answers"`
+			Annotations map[string]any    `json:"annotations"`
+		} `json:"result"`
+	}{Result: struct {
+		Questions   json.RawMessage   `json:"questions"`
+		Answers     map[string]string `json:"answers"`
+		Annotations map[string]any    `json:"annotations"`
+	}{a.questions, answers, notes}})
+	return payload, "", err
+}
+
+func composePermission(a *modAsk, ans AskAnswer) (json.RawMessage, string, error) {
+	if len(ans.Questions) > 0 || ans.Chat || ans.ChatText != "" {
+		return nil, "", errors.New("a permission takes an allow or a deny")
+	}
+	type decision struct {
+		Behavior           string            `json:"behavior"`
+		UpdatedPermissions []json.RawMessage `json:"updatedPermissions,omitempty"`
+		Interrupt          bool              `json:"interrupt,omitempty"`
+	}
+	d := decision{Behavior: "deny", Interrupt: true}
+	follow := ""
+	switch {
+	case ans.Allow && ans.Message != "":
+		return nil, "", errors.New("a message goes with a deny")
+	case !ans.Allow && ans.Suggestion != 0:
+		return nil, "", errors.New("a suggestion goes with an allow")
+	case ans.Suggestion < 0 || ans.Suggestion > len(a.suggestions):
+		return nil, "", fmt.Errorf("suggestion %d was not offered", ans.Suggestion)
+	case ans.Allow:
+		d = decision{Behavior: "allow"}
+		if ans.Suggestion > 0 {
+			d.UpdatedPermissions = []json.RawMessage{a.suggestions[ans.Suggestion-1]}
+		}
+	default:
+		follow = strings.TrimSpace(ans.Message)
+	}
+	payload, err := json.Marshal(struct {
+		Decision decision `json:"decision"`
+	}{d})
+	return payload, follow, err
+}
+
+// clarifyText is the error result Claude's own dialog gives the model when
+// the person picks "Chat about this", verbatim (the spike's record), naming
+// every question unanswered.
+func clarifyText(qs []AskQuestion) string {
+	var b strings.Builder
+	b.WriteString("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n")
+	b.WriteString("The user wants to clarify these questions.\n")
+	b.WriteString("    This means they may have additional information, context or questions for you.\n")
+	b.WriteString("    Take their response into account and then reformulate the questions if appropriate.\n")
+	b.WriteString("    Start by asking them what they would like to clarify.\n\n")
+	b.WriteString("    Questions asked:")
+	for _, q := range qs {
+		b.WriteString("\n- " + strconv.Quote(q.Question) + "\n  (No answer provided)")
+	}
+	return b.String()
 }
