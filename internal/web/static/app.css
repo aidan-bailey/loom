@@ -370,7 +370,7 @@ input.text {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--dim);
-  scroll-margin-top: calc(env(safe-area-inset-top) + 88px);
+  scroll-margin-top: calc(env(safe-area-inset-top) + 96px);
 }
 .sc-group-title::after,
 .sc-rule::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
@@ -384,14 +384,15 @@ details.sc-group[open] > summary::before { content: "▾"; }
 /* ---- the header ---- */
 /* The app's pinned header: the status row, the screen's context row and a
    session's tabs. It pads the top inset itself, so it fills behind the iOS
-   status bar, and the shell then drops its own (.sc-chromed). */
+   status bar, and the shell then drops its own (.sc-chromed). The 8px under
+   the inset keeps the status row off the iOS status bar's clock and icons. */
 .shell.sc-chromed { padding-top: 0; }
 .sc-chrome {
   position: sticky;
   top: 0;
   z-index: 30;
   flex: none;
-  padding-top: env(safe-area-inset-top);
+  padding-top: calc(env(safe-area-inset-top) + 8px);
   background: var(--bg);
   border-bottom: 1px solid var(--rule);
 }
@@ -515,11 +516,12 @@ details.sc-group[open] > summary::before { content: "▾"; }
   bottom: 0;
   z-index: 20;
   margin: auto -16px calc(-1 * env(safe-area-inset-bottom));
-  padding: 0 12px calc(10px + env(safe-area-inset-bottom));
+  padding: 0 16px calc(10px + env(safe-area-inset-bottom));
   background: var(--panel);
   border-top: 1px solid var(--rule);
 }
-.sc-reply-row { display: flex; gap: 8px; align-items: flex-end; padding-top: 8px; }
+/* The button takes the text field's height, so both share top and bottom edges. */
+.sc-reply-row { display: flex; gap: 8px; align-items: stretch; padding-top: 8px; }
 .sc-reply textarea {
   flex: 1;
   min-width: 0;

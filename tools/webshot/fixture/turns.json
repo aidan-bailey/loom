@@ -1,0 +1,137 @@
+{
+  "conversation": "c0ffee",
+  "earlier": null,
+  "reset": true,
+  "skipped": 0,
+  "turns": [
+    {
+      "id": 1,
+      "at": "now-30m",
+      "from": "you",
+      "name": "",
+      "text": "The cursor jumps to the top of the pane when the header redraws. Fix it.",
+      "cut": false,
+      "command": false,
+      "partial": false,
+      "items": [
+        {
+          "kind": "steps",
+          "at": "now-29m",
+          "total": 6,
+          "failed": 1,
+          "steps": [
+            {
+              "tool": "Grep",
+              "summary": "cursorVisible",
+              "at": "now-29m",
+              "state": "done"
+            },
+            {
+              "tool": "Read",
+              "summary": "ui/pane.go",
+              "at": "now-28m",
+              "state": "done"
+            },
+            {
+              "tool": "Bash",
+              "summary": "go test ./ui/...",
+              "at": "now-26m",
+              "state": "failed"
+            },
+            {
+              "tool": "Edit",
+              "summary": "ui/pane.go",
+              "at": "now-24m",
+              "state": "done"
+            }
+          ]
+        },
+        {
+          "kind": "text",
+          "at": "now-22m",
+          "blocks": [
+            {
+              "t": "p",
+              "c": [
+                {
+                  "t": "text",
+                  "v": "The header redraw reset the cursor. It is drawn after the frame now."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "at": "now-12m",
+      "from": "you",
+      "name": "",
+      "text": "/compact",
+      "cut": false,
+      "command": true,
+      "partial": false,
+      "items": [
+        {
+          "kind": "compacted",
+          "at": "now-12m"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "at": "now-5m",
+      "from": "you",
+      "name": "",
+      "text": "Run the ui tests and tell me what fails.",
+      "cut": false,
+      "command": false,
+      "partial": true,
+      "items": [
+        {
+          "kind": "steps",
+          "at": "now-4m",
+          "total": 2,
+          "steps": [
+            {
+              "tool": "Bash",
+              "summary": "go test ./ui/... -run TestPane",
+              "at": "now-4m",
+              "state": "done"
+            },
+            {
+              "tool": "Bash",
+              "summary": "go test ./ui/...",
+              "at": "now-1m",
+              "state": "pending"
+            }
+          ]
+        },
+        {
+          "kind": "text",
+          "at": "now-1m",
+          "blocks": [
+            {
+              "t": "p",
+              "c": [
+                {
+                  "t": "text",
+                  "v": "Running the ui tests now. The cursor fix is in "
+                },
+                {
+                  "t": "code_inline",
+                  "v": "ui/pane.go"
+                },
+                {
+                  "t": "text",
+                  "v": "; the header no longer jumps when a pane redraws."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
