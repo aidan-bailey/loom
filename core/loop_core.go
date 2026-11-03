@@ -4,6 +4,7 @@ import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/session/transcript"
@@ -96,6 +97,9 @@ func (l *Loop) ReadTurns(id InstanceID, query transcript.Query, req ReqID) {
 	l.do(func(m *Model) { m.ReadTurns(id, query, req) })
 }
 func (l *Loop) ReadDiff(id InstanceID, req ReqID) { l.do(func(m *Model) { m.ReadDiff(id, req) }) }
+func (l *Loop) SweepBuilds(opts buildsweep.Options, req ReqID) {
+	l.do(func(m *Model) { m.SweepBuilds(opts, req) })
+}
 
 func (l *Loop) SetSelected(id InstanceID)     { l.do(func(m *Model) { m.SetSelected(id) }) }
 func (l *Loop) MarkOutput(sessionName string) { l.do(func(m *Model) { m.MarkOutput(sessionName) }) }

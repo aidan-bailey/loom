@@ -191,6 +191,14 @@ func (c *Config) GetTheme() string {
 	return c.Settings.GetTheme()
 }
 
+// GetBuildSweepAfterHours returns the build sweep's threshold under the
+// config lock, 0 when it is off (Settings.GetBuildSweepAfterHours).
+func (c *Config) GetBuildSweepAfterHours() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Settings.GetBuildSweepAfterHours()
+}
+
 // ClaudeTmpArchiveRoot returns ClaudeTmpArchiveDir with a leading ~
 // expanded, or "" when it is unset. A value that is not absolute after
 // expansion is an error: the caller keeps the default location rather than

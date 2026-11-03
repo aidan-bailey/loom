@@ -9,6 +9,7 @@ import (
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/core"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/session/transcript"
@@ -324,6 +325,16 @@ type ReadDiffParams struct {
 
 // ReadDiffResult is ReadDiff's result on the wire; an error travels in the reply.
 type ReadDiffResult struct {
+}
+
+// SweepBuildsParams are SweepBuilds's parameters on the wire.
+type SweepBuildsParams struct {
+	Opts buildsweep.Options `json:"opts"`
+	Req  core.ReqID         `json:"req"`
+}
+
+// SweepBuildsResult is SweepBuilds's result on the wire; an error travels in the reply.
+type SweepBuildsResult struct {
 }
 
 // SetSelectedParams are SetSelected's parameters on the wire.
@@ -677,6 +688,7 @@ var methods = []methodInfo{
 	{Name: "FetchIssue", Kind: kindRequest, Params: FetchIssueParams{}, Result: FetchIssueResult{}},
 	{Name: "ReadTurns", Kind: kindRequest, Params: ReadTurnsParams{}, Result: ReadTurnsResult{}},
 	{Name: "ReadDiff", Kind: kindRequest, Params: ReadDiffParams{}, Result: ReadDiffResult{}},
+	{Name: "SweepBuilds", Kind: kindRequest, Params: SweepBuildsParams{}, Result: SweepBuildsResult{}},
 	{Name: "SetSelected", Kind: kindCast, Params: SetSelectedParams{}, Result: SetSelectedResult{}},
 	{Name: "MarkOutput", Kind: kindCast, Params: MarkOutputParams{}, Result: MarkOutputResult{}},
 	{Name: "PaneOutput", Kind: kindCast, Params: PaneOutputParams{}, Result: PaneOutputResult{}},
@@ -974,6 +986,16 @@ func dispatch(b core.Core, method string, params json.RawMessage, tag func(*core
 		}
 		b.ReadDiff(p.ID, p.Req)
 		return ReadDiffResult{}, nil, true
+	case "SweepBuilds":
+		var p SweepBuildsParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, err, true
+		}
+		if err := tag(&p.Req); err != nil {
+			return nil, err, true
+		}
+		b.SweepBuilds(p.Opts, p.Req)
+		return SweepBuildsResult{}, nil, true
 	case "SetSelected":
 		var p SetSelectedParams
 		if err := decodeParams(params, &p); err != nil {
@@ -1400,6 +1422,12 @@ func (c *Client) ReadTurns(id core.InstanceID, query transcript.Query, req core.
 func (c *Client) ReadDiff(id core.InstanceID, req core.ReqID) {
 	var r ReadDiffResult
 	c.noteRefused(c.requestNoErr("ReadDiff", ReadDiffParams{ID: id, Req: req}, &r), req)
+}
+
+// SweepBuilds is core.Core's SweepBuilds (request).
+func (c *Client) SweepBuilds(opts buildsweep.Options, req core.ReqID) {
+	var r SweepBuildsResult
+	c.noteRefused(c.requestNoErr("SweepBuilds", SweepBuildsParams{Opts: opts, Req: req}, &r), req)
 }
 
 // SetSelected is core.Core's SetSelected (cast).

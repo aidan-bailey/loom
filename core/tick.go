@@ -119,6 +119,11 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	// requestClaudeTmpSweep). Nothing when none is queued or one runs.
 	m.maybeClaudeTmpSweep()
 
+	// The build sweep, on its own 30-minute cadence (see
+	// maybeBuildSweep). Nothing when no session is idle or paused, or one
+	// runs.
+	m.maybeBuildSweep()
+
 	// Workspace terminals whose relaunch waits on a name check tmux left
 	// unanswered (see settleTerminal). Nothing when none waits.
 	m.maybeSettleTerminals()

@@ -4,6 +4,7 @@ import (
 	"github.com/aidan-bailey/loom/account"
 	"github.com/aidan-bailey/loom/config"
 	"github.com/aidan-bailey/loom/session"
+	"github.com/aidan-bailey/loom/session/buildsweep"
 	"github.com/aidan-bailey/loom/session/github"
 	"github.com/aidan-bailey/loom/session/launch"
 	"github.com/aidan-bailey/loom/session/transcript"
@@ -84,6 +85,9 @@ type Core interface {
 	// (Instance.ReadPatch).
 	ReadTurns(id InstanceID, query transcript.Query, req ReqID)
 	ReadDiff(id InstanceID, req ReqID)
+	// Delete idle and paused sessions' unused Rust executables now, or
+	// with DryRun list them: the Reply's Sweep (buildsweep.Report).
+	SweepBuilds(opts buildsweep.Options, req ReqID)
 
 	// Claude status and the tick: what the TUI's pane events tell the
 	// model, and the selected row the model's health tick favours.

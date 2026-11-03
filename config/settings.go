@@ -64,6 +64,13 @@ type Settings struct {
 	// folder. Absolute, or starting with ~. Read through
 	// ClaudeTmpArchiveRoot.
 	ClaudeTmpArchiveDir string `json:"claude_tmp_archive_dir,omitempty"`
+	// BuildSweepAfterHours turns the build sweep on (session/buildsweep):
+	// every 30 minutes the daemon deletes the Rust executables in idle and
+	// paused sessions' target dirs that have gone unused this many hours.
+	// 0, the default, leaves it off. Read from the global config.json
+	// only, at each sweep, so an edit takes effect without a restart.
+	// Read through GetBuildSweepAfterHours.
+	BuildSweepAfterHours int `json:"build_sweep_after_hours,omitempty"`
 	// HeadroomProxy controls whether new Claude sessions launch with
 	// ANTHROPIC_BASE_URL pointed at Headroom's proxy (see
 	// session.HeadroomProxyEnv). A no-op for agents other than Claude.
@@ -156,6 +163,10 @@ func (s Settings) GetBaseBranch() string { return s.BaseBranch }
 
 // GetTheme returns the configured UI theme name (see Config.GetTheme).
 func (s Settings) GetTheme() string { return s.Theme }
+
+// GetBuildSweepAfterHours returns BuildSweepAfterHours, with a negative
+// value read as 0: the build sweep off.
+func (s Settings) GetBuildSweepAfterHours() int { return max(s.BuildSweepAfterHours, 0) }
 
 // ClaudeTmpArchiveRoot returns ClaudeTmpArchiveDir with a leading ~
 // expanded, or "" when it is unset. A value that is not absolute after

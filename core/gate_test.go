@@ -23,6 +23,7 @@ func TestGateIntervalsUseEachJobsInterval(t *testing.T) {
 	assert.Equal(t, hookScanInterval, gateIntervals[gateHookScan])
 	assert.Equal(t, ghInterval, gateIntervals[gateGH])
 	assert.Equal(t, usageInterval, gateIntervals[gateUsage])
+	assert.Equal(t, buildSweepInterval, gateIntervals[gateBuildSweep])
 	assert.Zero(t, gateIntervals[gateAccountsRefresh], "account refreshes run on events, not a cadence")
 }
 
@@ -138,7 +139,7 @@ func TestDispatchGatedSkipsBuildWhenNotDue(t *testing.T) {
 
 func TestGatedDeliveryDisarmsFirst(t *testing.T) {
 	m := NewForTest(Options{})
-	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateUsage, gateAccountsRefresh} {
+	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateUsage, gateAccountsRefresh, gateBuildSweep} {
 		m.gate(kind).inFlight = true
 		// A result no case handles, and a nil one, disarm all the
 		// same: disarming belongs to the wrapper, not the handler.
@@ -249,6 +250,12 @@ func TestProductionGatedJobsYieldOneResult(t *testing.T) {
 		m.RequestAccountsRefresh(true)
 		result := inner(t, m, m.gate(gateAccountsRefresh).inFlight, gateAccountsRefresh)
 		assert.IsType(t, accountsRefreshed{}, result)
+	})
+
+	t.Run("build_sweep", func(t *testing.T) {
+		m := sweepModel(t, sweepInst(t, "idle", session.Paused, false))
+		result := inner(t, m, m.maybeBuildSweep(), gateBuildSweep)
+		assert.IsType(t, buildSweepResult{}, result)
 	})
 }
 

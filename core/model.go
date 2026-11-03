@@ -92,6 +92,11 @@ type Model struct {
 	// health tick dispatches them. Loop-goroutine only.
 	claudeTmpPending map[string]claudeTmpJob
 
+	// buildSweepWarned holds the mounts the build sweep has raised a
+	// Notice for, keyed by its skip's detail, so each is said once a
+	// daemon run (deliverBuildSweep). Loop-goroutine only.
+	buildSweepWarned map[string]bool
+
 	// dirtySessions records tmux session names that emitted output since the
 	// last health tick (event mode only). Consumed by takeDirty to gate
 	// diff-stat refreshes. Loop-goroutine only.
@@ -469,6 +474,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverAccountsRefreshed(msg)
 	case usageResult:
 		m.deliverUsage(msg)
+	case buildSweepResult:
+		m.deliverBuildSweep(msg)
 	case tracked:
 		m.deliverTracked(msg)
 	case resetResult:

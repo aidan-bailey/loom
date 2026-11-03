@@ -84,6 +84,8 @@ func (m *Model) deliverTracked(t tracked) {
 		r.Turns = res.page
 	case diffResult:
 		r.Diff = res.patch
+	case buildSweepResult:
+		r.Sweep = res.report
 	}
 	m.emit(r)
 }
@@ -110,6 +112,8 @@ func outcome(result any) (err, notice error) {
 	case turnsResult:
 		return r.err, nil
 	case diffResult:
+		return r.err, nil
+	case buildSweepResult:
 		return r.err, nil
 	case resumeSkipped:
 		return r.err, nil
