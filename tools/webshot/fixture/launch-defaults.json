@@ -1,0 +1,25 @@
+{
+  "account": "",
+  "accounts": [
+    "default",
+    "work"
+  ],
+  "model": "",
+  "models": [
+    "opus",
+    "sonnet",
+    "haiku"
+  ],
+  "permission_mode": "",
+  "permission_modes": [
+    "default",
+    "acceptEdits",
+    "plan"
+  ],
+  "effort": "",
+  "efforts": [
+    "low",
+    "medium",
+    "high"
+  ]
+}
