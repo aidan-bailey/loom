@@ -16,11 +16,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"image"
 	"image/png"
 	"net"
 	"net/http"
@@ -113,10 +113,17 @@ func run(args []string) error {
 		return err
 	}
 
+	var bar image.Image
+	if !*bare {
+		if bar, err = pg.statusBar(ctx, d); err != nil {
+			return err
+		}
+	}
+
 	failed := false
 	for _, sc := range todo {
 		file := filepath.Join(*out, sc.name+".png")
-		problems, err := shoot(ctx, pg, loom, d, sc, origin, *settle, file, frameOpts{bezel: !*bare, guides: *guides})
+		problems, err := shoot(ctx, pg, loom, d, bar, sc, origin, *settle, file, frameOpts{bezel: !*bare, guides: *guides})
 		if err != nil {
 			return fmt.Errorf("%s: %w", sc.name, err)
 		}
@@ -392,10 +399,10 @@ const appDrawn = `document.readyState === "complete" && location.protocol === "h
 	`!!document.querySelector("#app") && document.querySelector("#app").childElementCount > 0`
 
 // shoot loads one screen fresh, waits until the app has drawn and settled,
-// captures the viewport and writes it framed to file. It returns what went
+// captures the viewport and writes it framed to file, bar laid over it. It returns what went
 // wrong on the page: console errors, exceptions and routes the canned loom
 // could not answer.
-func shoot(ctx context.Context, p *page, loom *cannedLoom, d device, sc screen, origin string, settle time.Duration, file string, o frameOpts) ([]string, error) {
+func shoot(ctx context.Context, p *page, loom *cannedLoom, d device, bar image.Image, sc screen, origin string, settle time.Duration, file string, o frameOpts) ([]string, error) {
 	if err := p.b.cdp.call(ctx, p.session, "Page.navigate", map[string]any{"url": "about:blank"}, nil); err != nil {
 		return nil, err
 	}
@@ -417,26 +424,12 @@ func shoot(ctx context.Context, p *page, loom *cannedLoom, d device, sc screen, 
 	}
 	time.Sleep(settle)
 
-	var shot struct {
-		Data string `json:"data"`
-	}
-	if err := p.b.cdp.call(ctx, p.session, "Page.captureScreenshot", map[string]any{"format": "png"}, &shot); err != nil {
-		return nil, err
-	}
-	raw, err := base64.StdEncoding.DecodeString(shot.Data)
+	img, err := p.capture(ctx, d)
 	if err != nil {
 		return nil, err
-	}
-	img, err := png.Decode(bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	want := [2]int{int(float64(d.width) * d.scale), int(float64(d.height) * d.scale)}
-	if got := [2]int{img.Bounds().Dx(), img.Bounds().Dy()}; got != want {
-		return nil, fmt.Errorf("the screenshot is %dx%d, not the device's %dx%d", got[0], got[1], want[0], want[1])
 	}
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, frame(img, d, o)); err != nil {
+	if err := png.Encode(&buf, frame(img, bar, d, o)); err != nil {
 		return nil, err
 	}
 	if err := os.WriteFile(file, buf.Bytes(), 0o644); err != nil {

@@ -55,7 +55,6 @@ const bezelPt = 14
 
 var (
 	inkBlack  = color.NRGBA{0, 0, 0, 255}
-	inkWhite  = color.NRGBA{255, 255, 255, 255}
 	inkHome   = color.NRGBA{255, 255, 255, 220}
 	inkGuide  = color.NRGBA{255, 40, 90, 70}
 	inkBezel  = color.NRGBA{12, 12, 14, 255}
@@ -63,11 +62,12 @@ var (
 )
 
 // frame draws the device over shot, a screenshot of its whole viewport at
-// its scale: the guides first, then the status bar, the Dynamic Island and
-// the home indicator, as iOS draws them over a Home Screen app; with a bezel,
-// the screen's corners are cut and a bezel is drawn round it. The result is
-// a new image; shot is not changed.
-func frame(shot image.Image, d device, o frameOpts) *image.NRGBA {
+// its scale: the guides first, then bar (the status bar, the browser's
+// drawing of it on a transparent ground, the viewport's size; nil draws
+// none), the Dynamic Island and the home indicator, as iOS draws them over a
+// Home Screen app; with a bezel, the screen's corners are cut and a bezel is
+// drawn round it. The result is a new image; shot is not changed.
+func frame(shot, bar image.Image, d device, o frameOpts) *image.NRGBA {
 	s := d.scale
 	pad := 0
 	if o.bezel {
@@ -108,73 +108,12 @@ func frame(shot image.Image, d device, o frameOpts) *image.NRGBA {
 		fillRoundIn(out, at(rectPt{w: float64(d.width), h: float64(d.insetTop)}), inkGuide, clip)
 		fillRoundIn(out, at(rectPt{y: float64(d.height - d.insetBottom), w: float64(d.width), h: float64(d.insetBottom)}), inkGuide, clip)
 	}
-	drawStatusBar(out, d, float64(pad))
+	if bar != nil {
+		over(out, bar, pad)
+	}
 	fillRound(out, at(d.island), inkBlack)
 	fillRound(out, at(d.homeBar), inkHome)
 	return out
-}
-
-// drawStatusBar draws the time left of the Dynamic Island and the signal and
-// battery right of it, each centred in its side and on the island's middle.
-func drawStatusBar(out *image.NRGBA, d device, pad float64) {
-	s := d.scale
-	mid := d.island.y + d.island.h/2
-	leftC := d.island.x / 2
-	rightC := d.island.x + d.island.w + (float64(d.width)-d.island.x-d.island.w)/2
-
-	// "9:41" in a 5×7 dot font, its dots 1.8 points square.
-	dot := 1.8
-	text := "9:41"
-	wPt := 0.0
-	for i, r := range text {
-		wPt += float64(glyphs[r].w) * dot
-		if i < len(text)-1 {
-			wPt += dot
-		}
-	}
-	x := leftC - wPt/2
-	y := mid - 3.5*dot
-	for _, r := range text {
-		g := glyphs[r]
-		for row, line := range g.rows {
-			for col, ch := range line {
-				if ch == '#' {
-					fillRound(out, rectPx{pad + (x+float64(col)*dot)*s, pad + (y+float64(row)*dot)*s, dot * s, dot * s, 0}, inkWhite)
-				}
-			}
-		}
-		x += float64(g.w)*dot + dot
-	}
-
-	// Four signal bars, then the battery: 25×12 points, its cap and charge.
-	bars := 4
-	barW, gap := 3.0, 1.5
-	batW, batH := 25.0, 12.0
-	group := float64(bars)*barW + float64(bars-1)*gap + 7 + batW + 2
-	x = rightC - group/2
-	for i := 0; i < bars; i++ {
-		h := 4 + float64(i)*2.4
-		fillRound(out, rectPx{pad + x*s, pad + (mid+5.5-h)*s, barW * s, h * s, 0.8 * s}, inkWhite)
-		x += barW + gap
-	}
-	x += 7 - gap
-	top := mid - batH/2
-	fillRound(out, rectPx{pad + x*s, pad + top*s, batW * s, batH * s, 3.8 * s}, color.NRGBA{255, 255, 255, 110})
-	fillRound(out, rectPx{pad + (x+2)*s, pad + (top+2)*s, (batW - 4) * 0.8 * s, (batH - 4) * s, 2 * s}, inkWhite)
-	fillRound(out, rectPx{pad + (x+batW+1)*s, pad + (mid-2)*s, 1.5 * s, 4 * s, 0.7 * s}, color.NRGBA{255, 255, 255, 110})
-}
-
-// glyph is one character of the status bar's dot font.
-type glyph struct {
-	w    int
-	rows [7]string
-}
-
-var glyphs = map[rune]glyph{
-	'9': {5, [7]string{".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."}},
-	'4': {5, [7]string{"...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."}},
-	'1': {3, [7]string{".#.", "##.", ".#.", ".#.", ".#.", ".#.", "###"}},
-	':': {1, [7]string{".", "#", ".", ".", ".", "#", "."}},
 }
 
 // rectPx is a rectangle in pixels, its corners rounded by r.
@@ -190,6 +129,19 @@ func coverage(r rectPx, px, py float64) float64 {
 	qy := math.Abs(py-cy) - (r.h/2 - rad)
 	d := math.Hypot(math.Max(qx, 0), math.Max(qy, 0)) + math.Min(math.Max(qx, qy), 0) - rad
 	return math.Max(0, math.Min(1, 0.5-d))
+}
+
+// over blends img over out, its origin at (pad, pad).
+func over(out *image.NRGBA, img image.Image, pad int) {
+	b := img.Bounds()
+	for y := 0; y < b.Dy(); y++ {
+		for x := 0; x < b.Dx(); x++ {
+			c := color.NRGBAModel.Convert(img.At(b.Min.X+x, b.Min.Y+y)).(color.NRGBA)
+			if c.A > 0 {
+				blend(out, pad+x, pad+y, c, 1)
+			}
+		}
+	}
 }
 
 // fillRound blends c over out wherever the rounded rectangle r covers it.

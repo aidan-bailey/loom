@@ -104,7 +104,7 @@ func TestFrame_DrawsTheDeviceOverTheViewport(t *testing.T) {
 	}
 	px := func(img *image.NRGBA, x, y float64) color.NRGBA { return img.NRGBAAt(int(x), int(y)) }
 
-	bare := frame(shot, d, frameOpts{})
+	bare := frame(shot, nil, d, frameOpts{})
 	assert.Equal(t, shot.Bounds(), bare.Bounds(), "bare: the viewport's size")
 	assert.Equal(t, color.NRGBA{0, 0, 0, 255}, px(bare, float64(w)/2, (d.island.y+d.island.h/2)*d.scale), "the Dynamic Island is black")
 	home := px(bare, float64(w)/2, (d.homeBar.y+d.homeBar.h/2)*d.scale)
@@ -113,7 +113,7 @@ func TestFrame_DrawsTheDeviceOverTheViewport(t *testing.T) {
 	assert.Equal(t, color.NRGBA{128, 128, 128, 255}, px(bare, float64(w)/2, float64(h)/2), "the content is untouched")
 
 	pad := bezelPt * d.scale
-	framed := frame(shot, d, frameOpts{bezel: true, guides: true})
+	framed := frame(shot, nil, d, frameOpts{bezel: true, guides: true})
 	assert.Equal(t, image.Rect(0, 0, w+2*int(pad), h+2*int(pad)), framed.Bounds())
 	assert.Equal(t, uint8(0), px(framed, 1, 1).A, "outside the device is transparent")
 	// The screen's corner and the bezel's share a centre; halfway between
@@ -125,6 +125,31 @@ func TestFrame_DrawsTheDeviceOverTheViewport(t *testing.T) {
 	assert.Greater(t, inTop.R, inTop.G, "the top inset is tinted")
 	below := px(framed, pad+float64(w)/2, pad+float64(d.insetTop)*d.scale+3)
 	assert.Equal(t, color.NRGBA{128, 128, 128, 255}, below, "the safe area is not")
+}
+
+func TestFrame_LaysTheStatusBarOverTheScreen(t *testing.T) {
+	d := devices["iphone16"]
+	w, h := int(float64(d.width)*d.scale), int(float64(d.height)*d.scale)
+	shot := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for i := range shot.Pix {
+		shot.Pix[i] = 255 // opaque white
+	}
+	bar := image.NewNRGBA(image.Rect(0, 0, w, h)) // transparent
+	bar.SetNRGBA(100, 100, color.NRGBA{255, 0, 0, 255})
+
+	out := frame(shot, bar, d, frameOpts{bezel: true})
+	pad := int(bezelPt * d.scale)
+	assert.Equal(t, color.NRGBA{255, 0, 0, 255}, out.NRGBAAt(pad+100, pad+100), "the bar's pixel, at the screen's origin")
+	assert.Equal(t, color.NRGBA{255, 255, 255, 255}, out.NRGBAAt(pad+101, pad+100), "a transparent pixel leaves the screen")
+}
+
+func TestStatusBarHTML_SitsOnTheIslandsMiddle(t *testing.T) {
+	d := devices["iphone16"]
+	page := statusBarHTML(d)
+	assert.Contains(t, page, "top: 11px; height: 37px;", "both sides span the island's height")
+	assert.Contains(t, page, "width: 133.5px;", "the time is centred in the space left of the island")
+	assert.Contains(t, page, "left: 259.5px;", "the icons in the space right of it")
+	assert.Contains(t, page, ">9:41<")
 }
 
 func TestFillTimes_CountsFromNow(t *testing.T) {
