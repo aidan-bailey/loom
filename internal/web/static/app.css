@@ -335,8 +335,8 @@ input.text {
 /* Section rules: the label, then a line to the edge. */
 .sc-group { margin-top: 14px; }
 .sc-section { margin-top: 16px; }
-/* scroll-margin-top clears the pinned header (the fleet's status and context
-   rows, 78px, plus room) when a tile jumps to a group. */
+/* scroll-margin-top clears the pinned header (the fleet's context row,
+   44px, plus room) when a tile jumps to a group. */
 .sc-group-title,
 .sc-rule {
   display: flex;
@@ -348,7 +348,7 @@ input.text {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--dim);
-  scroll-margin-top: calc(env(safe-area-inset-top) + 96px);
+  scroll-margin-top: calc(env(safe-area-inset-top) + 64px);
 }
 .sc-group-title::after,
 .sc-rule::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
@@ -360,11 +360,13 @@ details.sc-group > summary::before { content: "▸"; }
 details.sc-group[open] > summary::before { content: "▾"; }
 
 /* ---- the header ---- */
-/* The app's pinned header: the status row, the screen's context row and a
-   session's tabs. It pads the top inset itself, so it fills behind the iOS
-   status bar, and the shell then drops its own (.sc-chromed). The 8px under
-   the inset keeps the status row off the iOS status bar's clock and icons. */
-.shell.sc-chromed { padding-top: 0; }
+/* The app's pinned header: the screen's context row and a session's tabs.
+   It pads the top inset itself, so it fills behind the iOS status bar, and
+   the shell then drops its own (.sc-chromed). The 8px under the inset keeps
+   the context row off the iOS status bar's clock and icons. The status row
+   is pinned at the bottom instead (.sc-foot), padding the bottom inset
+   itself, so the shell drops that one too. */
+.shell.sc-chromed { padding-top: 0; padding-bottom: 0; }
 .sc-chrome {
   position: sticky;
   top: 0;
@@ -376,6 +378,18 @@ details.sc-group[open] > summary::before { content: "▾"; }
 }
 .sc-chrome-in { max-width: 40rem; margin: 0 auto; }
 .sc-chrome > .toasts { position: absolute; top: calc(100% + 8px); }
+/* The footer: the status row, pinned at the bottom over the home indicator.
+   A session's reply box sticks just above it (--foot-h). */
+.shell { --foot-h: 33px; }
+.sc-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  flex: none;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--panel);
+  border-top: 1px solid var(--rule);
+}
 .sc-status-row {
   display: flex;
   align-items: center;
@@ -384,9 +398,16 @@ details.sc-group[open] > summary::before { content: "▾"; }
   padding: 0 6px 0 16px;
   font-size: 12px;
   background: var(--panel);
-  border-bottom: 1px solid var(--rule);
 }
-.sc-status-row.sc-off { border-bottom-color: var(--error-border); }
+.sc-foot:has(.sc-off) { border-top-color: var(--error-border); }
+/* While the reply box has focus the keyboard is up, so the footer hides to
+   give the text the room, and the reply box takes the bottom (and the home
+   indicator's inset) itself, as it did before the footer. */
+.shell:has(.sc-reply textarea:focus) .sc-foot { display: none; }
+.shell:has(.sc-reply textarea:focus) .sc-reply {
+  bottom: 0;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom));
+}
 .sc-pill { flex: none; margin-right: 4px; padding: 0 6px; font-weight: 700; color: var(--bg); background: var(--dim); }
 .sc-pill-live { background: var(--ok); }
 .sc-pill-offline { background: var(--error); }
@@ -482,8 +503,8 @@ details.sc-group[open] > summary::before { content: "▾"; }
 /* A session's views fill main's column under the header (flex: 1, never a
    100dvh height, which would add the header's to every page), so on a short
    page the reply box sits at the bottom (margin-top: auto) and not under the
-   actions; it reaches into the shell's bottom inset, since it pads for the
-   home indicator itself. */
+   actions; it sticks just above the footer's status row, which pads for the
+   home indicator. */
 .sc-session,
 .sc-turns,
 .sc-changes,
@@ -495,21 +516,27 @@ details.sc-group[open] > summary::before { content: "▾"; }
 }
 .sc-reply {
   position: sticky;
-  bottom: 0;
+  bottom: calc(var(--foot-h) + env(safe-area-inset-bottom));
   z-index: 20;
-  margin: auto -16px calc(-1 * env(safe-area-inset-bottom));
-  padding: 0 16px calc(10px + env(safe-area-inset-bottom));
+  margin: auto -16px 0;
+  padding: 0 16px 6px;
   background: var(--panel);
   border-top: 1px solid var(--rule);
 }
-/* The button takes the text field's height, so both share top and bottom edges. */
-.sc-reply-row { display: flex; gap: 8px; align-items: stretch; padding-top: 8px; }
+/* Compact: the quick replies' row is 36px and the text field starts at one
+   line (40px), growing with its text where the browser sizes fields to
+   their content. The button takes the field's height, so both share top
+   and bottom edges. */
+.sc-reply .sc-chip-btn { min-height: 36px; }
+.sc-reply-row { display: flex; gap: 8px; align-items: stretch; padding-top: 6px; }
+.sc-reply .sc-btn { min-height: 40px; }
 .sc-reply textarea {
   flex: 1;
   min-width: 0;
-  min-height: 44px;
-  max-height: 160px;
-  padding: 10px;
+  min-height: 40px;
+  max-height: 120px;
+  field-sizing: content;
+  padding: 8px 10px;
   color: var(--fg);
   background: var(--bg);
   border: 1px solid var(--border);

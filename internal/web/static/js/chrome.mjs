@@ -1,7 +1,7 @@
-// The app's pinned header (spec 2026-11-01): the status row on every screen
-// with a snapshot, then the screen's context row (its Head in screens.mjs),
-// then a session's tabs. app.mjs draws the header; the rows here only draw
-// what they are given.
+// The app's pinned chrome (spec 2026-11-01): a header holding the screen's
+// context row (its Head in screens.mjs) and a session's tabs, and a footer
+// holding the status row on every screen with a snapshot. app.mjs draws both;
+// the rows here only draw what they are given.
 import { html } from "../lib/preact-htm.mjs";
 import { glyphOf } from "./skin.mjs";
 
@@ -24,7 +24,7 @@ function clock(ms) {
   return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-// StatusRow is the header's first row: the link's pill, loom@host (with the
+// StatusRow is the footer's row: the link's pill, loom@host (with the
 // last update's time while offline) and a count per group; a count opens the
 // group's next session (onJump). While not live the counts are the cached
 // snapshot's, drawn faint and still buttons; a zero is no button.
@@ -45,7 +45,7 @@ export function StatusRow({ link, host, updated, counts, onJump }) {
   </div>`;
 }
 
-// ContextRow is the header's second row: an optional way back, the screen's
+// ContextRow is the header's first row: an optional way back, the screen's
 // title as its h1 on one line, and the screen's actions (children).
 export function ContextRow({ back, title, children }) {
   return html`<div class="sc-context">
