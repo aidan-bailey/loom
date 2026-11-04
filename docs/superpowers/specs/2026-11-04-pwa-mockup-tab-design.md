@@ -194,8 +194,11 @@ in `core/iface.go`), added by `docs/claude/adding-a-core-method.md`:
   `Screen` is empty. Additive; no field of `/api/v1` changes.
 - **`GET /api/v1/sessions/{id}/mockup`**, in `routeAPI`, wrapped in
   `authed`, answered through `l.read` (`readSession` first, so a workspace
-  terminal is 404). A refusal is 409 with the model's words; no answer
-  within `replyWait` is 504. On success it writes the HTML with
+  terminal is 404). A refusal is 409 and no answer within `replyWait` 504,
+  each answered as a small HTML page under the same CSP that says why in
+  the app's colours, since the route is only ever an iframe's `src`; an
+  unknown session or a workspace terminal stays the JSON 404 every route
+  answers. On success it writes the HTML with
   `Content-Type: text/html; charset=utf-8`, `Cache-Control: no-store`, and
   replaces the CSP `guard` set with exactly:
 
@@ -211,8 +214,9 @@ in `core/iface.go`), added by `docs/claude/adding-a-core-method.md`:
   WebSocket, whose retries fail without effect. It is the only route that
   replaces `guard`'s CSP. The action is logged (`device`, `mockup`,
   session, result); the HTML never is.
-- **The waiting push links the tab.** `internal/web/triggers.go` sets a
-  waiting push's `url` to `/#s/<id>/mockup` when the projection that
+- **A push links the tab.** `internal/web/triggers.go` sets a push's
+  `url`, waiting or finished (a brainstorm's turn ends Running → Ready, a
+  finished push), to `/#s/<id>/mockup` when the projection that
   triggers it has `Mockup.Fresh` and no open ask (`InstanceView.Asks`
   empty), and to `/#s/<id>` otherwise. Title, body, urgency and topic are
   unchanged.
@@ -250,19 +254,19 @@ in `core/iface.go`), added by `docs/claude/adding-a-core-method.md`:
 - **Reload.** A new `changed` in the snapshot changes the iframe's `src`, so
   a new screen found at a turn end reloads it; ↻ re-fetches (a counter in
   the query), which also re-runs `Find`.
-- **Full screen.** ⤢ sets a class on the shell that hides the pinned header
-  (`.sc-chrome`), the tabs and the reply box; the iframe fills the screen
-  within the safe areas, and "✕ done" sits under the Dynamic Island
-  (`env(safe-area-inset-top)`). Plain CSS, not the Fullscreen API. Leaving
-  the route leaves full screen.
+- **Full screen.** ⤢ goes to `#s/<id>/mockup/full`, which renders no
+  header (`.sc-chrome`), no tabs and no reply box; the iframe fills the
+  screen within the safe areas, and "✕ done" (back to `#s/<id>/mockup`)
+  sits under the Dynamic Island (`env(safe-area-inset-top)`). Plain CSS,
+  not the Fullscreen API; a route of its own, so webshot can render it.
 - **The fleet row** (`internal/web/static/js/fleet.mjs`) links to
   `#s/<id>/mockup` while `s.mockup.fresh` and the session has no open ask,
   and to `#s/<id>` otherwise. The status row's counts still open the
   session view.
-- **Empty and failed.** A 409 shows "No mockup is showing; the companion may
-  have stopped." in the tab's body; a 504 or a network error shows the
-  error with a retry. The next snapshot drops the tab once the model has
-  cleared `Mockup`.
+- **Empty and failed.** With `s.mockup` null the tab's body says "No
+  mockup is showing; the companion may have stopped."; a failed read shows
+  its page in the frame, and ↻ retries. The next snapshot drops the tab
+  once the model has cleared `Mockup`.
 
 ## Limits
 
@@ -293,8 +297,8 @@ in `core/iface.go`), added by `docs/claude/adding-a-core-method.md`:
   answer past the timeout) and its success case.
 - **`core`**: `TestHookScan_AStopFindsTheMockupInTheSameDelivery` (one
   `Sync` carries the status and the mockup);
-  `TestHookScan_OnlyAHandBackLooks`, through a `…ForTest` seam in
-  `core/seams.go` counting `Find` calls; `TestMockup_FreshUntilTheNextTurn`
+  `TestHookScan_OnlyAHandBackLooks`, swapping the unexported `findMockup`
+  var to count `Find` calls; `TestMockup_FreshUntilTheNextTurn`
   (fresh after a turn that changed the screen, not after a Prompting
   stretch inside the turn, cleared on the next turn, false with no
   `turnStart`); `TestReadMockup_AnswersThePageAndRefreshesTheView` and its
@@ -303,7 +307,7 @@ in `core/iface.go`), added by `docs/claude/adding-a-core-method.md`:
   regenerated.
 - **`internal/web`**: `TestMockup_ServesThePageSandboxed` (the exact CSP,
   `no-store`, the content type, a workspace terminal 404);
-  `TestMockup_ARefusalIs409`; a case in
+  `TestMockup_ARefusalIsAPageThatSaysWhy`; a case in
   `TestAPI_AReadIsNotTrackedOnceAnsweredAndATimedOutOneIs504`;
   `TestPush_AFreshMockupLinksItsTab` (a stale mockup, or a fresh one with
   an open ask, links the session view); a fleet projection case for
