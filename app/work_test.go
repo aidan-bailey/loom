@@ -972,3 +972,74 @@ func TestWorkView_TheQueueStaysReadableOffline(t *testing.T) {
 	pressWork(t, m, "esc")
 	assert.Equal(t, viewFocus, m.viewMode, "esc leaves")
 }
+
+// twoTabsWorkPrefs opens tabs ws-a and ws-b with ws-a focused and ws-a's
+// persisted view mode empty (focus), and gives ws-b the persisted view mode
+// bPrefs, as a user who left that tab in overview did.
+func twoTabsWorkPrefs(t *testing.T, bPrefs string) *home {
+	t.Helper()
+	m, _ := twoTabsWithPendingRatio(t)
+	m.loadSlot(1)
+	m.mutateUIPrefs(func(p *config.UIPrefs) { p.ViewMode = bPrefs })
+	m.loadSlot(0)
+	require.Equal(t, "ws-a", m.name())
+	require.Equal(t, bPrefs, m.slots[1].uiPrefs().ViewMode, "fixture: ws-b's prefs hold the view mode")
+	require.Equal(t, viewFocus, m.viewMode, "fixture: ws-a's prefs choose focus")
+	return m
+}
+
+func TestWorkView_StaysOpenAcrossASlotLoad(t *testing.T) {
+	cases := []struct {
+		name     string
+		bPrefs   string
+		cameFrom viewMode
+		want     viewMode
+	}{
+		{"prefs choose overview", "overview", viewFocus, viewOverview},
+		{"prefs choose focus", "", viewOverview, viewFocus},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			load := map[string]func(m *home){
+				"loadSlot":      func(m *home) { m.loadSlot(1) },
+				"closing a tab": func(m *home) { _, err := m.deactivateWorkspace("ws-a"); require.NoError(t, err) },
+			}
+			for path, run := range load {
+				t.Run(path, func(t *testing.T) {
+					m := twoTabsWorkPrefs(t, tc.bPrefs)
+					m.viewMode = tc.cameFrom
+					m.enterWorkView()
+					require.Equal(t, viewWork, m.viewMode)
+					m.work.sel, m.work.selIdx = 14, 2
+					m.work.pager = &workPager{id: 14}
+
+					run(m)
+
+					require.Equal(t, "ws-b", m.name(), "fixture: the other slot is focused")
+					assert.Equal(t, viewWork, m.viewMode, "a slot load must not close the work view")
+					assert.Equal(t, tc.want, m.work.from, "w and esc return to the mode the loaded slot's prefs choose")
+					assert.Equal(t, sched.JobID(14), m.work.sel, "the selection is the job's, not the slot's")
+					assert.Equal(t, 2, m.work.selIdx)
+					require.NotNil(t, m.work.pager, "the pager stays open")
+					assert.Equal(t, sched.JobID(14), m.work.pager.id)
+
+					m.toggleWorkView()
+					assert.Equal(t, tc.want, m.viewMode, "w returns to the mode the slot's prefs chose")
+				})
+			}
+		})
+	}
+}
+
+func TestApplyUIPrefs_OutsideTheWorkViewStillChoosesTheMode(t *testing.T) {
+	for _, from := range []viewMode{viewFocus, viewOverview, viewWorkbench} {
+		for prefs, want := range map[string]viewMode{"overview": viewOverview, "": viewFocus} {
+			m := newTestHome(t)
+			require.NoError(t, m.appState().SetUIPrefs(config.UIPrefs{ViewMode: prefs}))
+			m.syncWorkspaces()
+			m.viewMode = from
+			m.applyUIPrefs()
+			assert.Equal(t, want, m.viewMode, "from mode %d with prefs %q", from, prefs)
+		}
+	}
+}

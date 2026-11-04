@@ -541,15 +541,27 @@ func (m *home) updateHandleWindowSizeEvent(msg tea.WindowSizeMsg) {
 // applyUIPrefs pushes persisted layout prefs onto the components.
 // Called at the end of startHome (classic startup), after a slot is
 // loaded/focused (loadSlot), and on entering global mode.
+//
+// While the work view is up it keeps the view: a load that happens under
+// it (a rejoin, a tab closed by the daemon) only changes the mode w and
+// esc return to, to the one the slot's prefs choose. The view is not
+// persisted, so nothing is written.
 func (m *home) applyUIPrefs() {
 	if m.id == 0 {
 		// Bare test homes construct no app state; nothing to apply.
 		return
 	}
 	p := m.uiPrefs()
+	mode := viewFocus
 	if p.ViewMode == "overview" {
+		mode = viewOverview
+	}
+	switch {
+	case m.viewMode == viewWork:
+		m.work.from = mode
+	case mode == viewOverview:
 		m.enterOverview()
-	} else {
+	default:
 		m.viewMode = viewFocus
 	}
 	m.railHidden = p.RailHidden
