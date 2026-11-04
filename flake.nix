@@ -86,6 +86,9 @@
               pkgs.gh
               pkgs.git
               pkgs.tmux
+            ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+              # ps, for the work queue's usage sampler (sched.Sample)
+              pkgs.procps
             ];
 
             preCheck = ''
@@ -98,11 +101,14 @@
             postInstall = ''
               wrapProgram $out/bin/loom \
                 --prefix PATH : ${
-                  pkgs.lib.makeBinPath [
-                    pkgs.tmux
-                    pkgs.git
-                    pkgs.gh
-                  ]
+                  pkgs.lib.makeBinPath (
+                    [
+                      pkgs.tmux
+                      pkgs.git
+                      pkgs.gh
+                    ]
+                    ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.procps ]
+                  )
                 }
             '';
 

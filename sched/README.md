@@ -45,3 +45,35 @@ Everything is under `<globalDir>/jobs/`, in directories of mode 0700 and files o
 | `<id>/exit.json` | `Exit`: the exit code or signal, the end time, the command's max RSS, and the start error if the exec failed |
 
 `JobDir(dir, id)` is `<dir>/<id>`, and `RemoveJobDir` removes it when retention drops a finished job.
+
+## The runtime
+
+The process half of the package: it starts a job's runner, tests whether the runner lives, signals the job's process group, measures it and reads the host. It keeps no record of any job; `core` decides what each answer means.
+
+| File | Holds |
+|---|---|
+| `shim.go` | `Runner`, `NewRunner`, `ErrUnsupported` |
+| `shim_unix.go` | `RunShim`, `Runner.Start`, `Probe`, `SignalGroup` |
+| `shim_windows.go` | the same four names, each answering `ErrUnsupported` |
+| `prio_linux.go`, `prio_other.go` | the shim's nice value and, on Linux, its I/O class |
+| `sample.go` | `Sample`, `ParsePS`, `Snapshot.Group` |
+| `host.go`, `host_linux.go`, `host_darwin.go`, `host_other.go` | `DetectHost` and the RAM readers |
+| `testshim.go` | `ShimTestEnv`, `MaybeRunTestShim`, `TestRunner()` |
+
+**The shim.** `loom job-shim <job dir>` (`job_shim.go` in the root package) calls `RunShim`. The daemon starts it with `Runner.Start` as `<loom> job-shim <job dir>`, a child in a session of its own (`Setsid`), so it leads a process group whose id is its pid. Its stdin is `/dev/null`, and its stdout and stderr are appended to `output.log`. It:
+1. refuses to run unless it leads its group;
+2. reads `spec.json` and sets nice 10 and, on Linux, the best-effort I/O class at level 7, on the thread that will start the command, so the command and its children inherit both;
+3. takes an exclusive `flock` on `run.lock`, opened close-on-exec so nothing it starts holds the lock, and writes `started.json`;
+4. starts the command with no shell, in the job's folder, with the environment of `spec.json` plus the parallelism hints (`Hints`), found on that environment's `PATH`;
+5. catches SIGTERM, SIGINT and SIGHUP and passes none on, since a signal sent to the group reaches the command itself; one that arrives before the command starts is lost, and the daemon's SIGKILL escalation covers it;
+6. writes `exit.json` (a signal ends a job with code -1 and the name `unix.SignalName` gives it, a command that cannot be executed with code 127 and the error) and returns, which releases the lock.
+
+A shim that cannot run the job writes an `exit.json` with code 127 and the reason, and returns 1. It prints to its stderr, which is `output.log`.
+
+**Asking about a job.** `Probe` is a non-blocking `flock` test of `run.lock`, released at once: held means the shim lives, free means it is gone, and no `run.lock` yet also reads free, since no shim has taken it. `SignalGroup(pgid, sig)` is `kill(-pgid, sig)`; it refuses a pgid of 1 or below and the caller's own group, and answers `ESRCH` for a group that is gone. Neither proves that a group is still the job's: the caller does, with the lock held, or with a `Sample` showing members in the group and no process holding the shim's pid.
+
+**Usage.** `Sample` runs `ps -A -o pid=,pgid=,rss=,time=` once. `ParsePS` reads the procps time column (`[d-]hh:mm:ss`) and the BSD one (`[[h:]m:]s.cc`), and fails the whole sample on a line it cannot read. `Snapshot.Group(pgid)` sums a group's memory and CPU time, counts its members, and says whether any process has the group's id as its pid. `DetectHost` reads the host's name, `runtime.NumCPU()` and its RAM (`/proc/meminfo`, or `sysctl hw.memsize` with a 5 s limit); a RAM it cannot read stays 0.
+
+**Windows.** The stubs answer `ErrUnsupported`: sessions, process groups and `flock` have no counterpart here.
+
+**Tests.** A test binary has no `job-shim` command, so a package whose tests start real shims calls `MaybeRunTestShim()` first in its `TestMain` and builds its runner with `TestRunner()`: the test binary, run with `ShimTestEnv` set to `1`, becomes the shim.

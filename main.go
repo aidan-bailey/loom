@@ -416,6 +416,7 @@ func init() {
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resetCmd)
+	rootCmd.AddCommand(jobShimCmd)
 	// The workspace and account commands are the daemon's clients (Join);
 	// migrate writes state.json itself, holding the lock.
 	cli.Join = joinCLI
