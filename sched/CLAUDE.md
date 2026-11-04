@@ -15,5 +15,6 @@ The work scheduler's package: the job, claim, caps and policy types, `Resolve` (
 
 ## Pointers
 
+- [`README.md`](README.md) — the package's facts: files, states, the policy, admission and the job directory.
 - [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) — where this package sits.
 - [`../config/CLAUDE.md`](../config/CLAUDE.md) — the settings package that holds the `scheduler` block `Resolve` reads.
