@@ -196,9 +196,9 @@ func (m *Model) moveJobToFront(id sched.JobID) error {
 	return nil
 }
 
-// notifyJob sets the notify flag of job id, which has not ended and has an
-// owner: a message will come when it ends (what an interrupted `loom job run`
-// asks for).
+// notifyJob sets the notify flag of job id, which has not ended, is not being
+// cancelled and has an owner: a message will come when it ends (what an
+// interrupted `loom job run` asks for).
 func (m *Model) notifyJob(id sched.JobID) error {
 	q := m.queue
 	if !q.ready() {
@@ -212,6 +212,10 @@ func (m *Model) notifyJob(id sched.JobID) error {
 		return fmt.Errorf("job %d has finished", id)
 	case q.store.Jobs[i].Owner == 0:
 		return fmt.Errorf("job %d has no owner", id)
+	case q.store.Jobs[i].CancelReason != "":
+		// cancelOwnerJobs cleared the flag for a pause, kill or reset: setting
+		// it again would send a notice nobody asked for.
+		return fmt.Errorf("job %d is being cancelled", id)
 	case q.store.Jobs[i].Notify:
 		return nil
 	}

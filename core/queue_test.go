@@ -674,6 +674,23 @@ func TestJobQueue_NotifyJobSetsTheFlagWhereAMessageCanComeBack(t *testing.T) {
 	assert.EqualError(t, m.notifyJob(99), "there is no job 99")
 }
 
+// A job being cancelled (its running process not gone yet) takes no notify flag
+// back: cancelOwnerJobs cleared it so no notice would come, and a later
+// notifyJob must not undo that.
+func TestJobQueue_NotifyJobRefusesAJobBeingCancelled(t *testing.T) {
+	m := wqModel(t)
+	running := wqEnded(1, 77)
+	running.State, running.Exit, running.Ended, running.Notify = sched.Running, nil, time.Time{}, false
+	wqSeed(t, m, running)
+	running.ID, running.CancelReason = 2, "because the session was paused"
+	wqSeed(t, m, running)
+
+	assert.EqualError(t, m.notifyJob(2), "job 2 is being cancelled")
+	assert.False(t, wqRecord(t, m, 2).Notify, "the flag stays cleared")
+	require.NoError(t, m.notifyJob(1), "a job not being cancelled still takes it")
+	assert.True(t, wqRecord(t, m, 1).Notify)
+}
+
 func TestJobQueue_SetSchedulerCapsWritesTheBlockAndAppliesItAtOnce(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, config.ConfigFileName)
