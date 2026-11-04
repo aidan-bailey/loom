@@ -101,8 +101,11 @@ func SignalGroup(pgid int, sig syscall.Signal) error {
 
 // RunShim is the shim's whole life (spec §5.3). It runs the job in jobDir and
 // writes how it ended, and returns the shim's own exit code: 0 once exit.json
-// is written, 1 when it could not run the job or could not report. It prints
-// to its stderr, which is output.log, and never to the job's.
+// is written, including for a command that could not be executed (code 127 in
+// it), and 1 when the shim gave up before running anything or could not write
+// exit.json. A shim that finds started.json already there is a duplicate for
+// a job that has run: it returns 1 and writes nothing. It prints to its
+// stderr, which is output.log, and never to the job's.
 //
 // The shim must lead its own process group, which Runner.Start arranges: the
 // daemon signals the group -pid as the job's. It holds an exclusive flock on
@@ -147,6 +150,11 @@ func RunShim(jobDir string) int {
 	if err := lockExclusive(lock); err != nil {
 		return shimGiveUp(jobDir, fmt.Errorf("locking run.lock: %w", err))
 	}
+	if _, err := os.Stat(filepath.Join(jobDir, StartedFile)); err == nil {
+		// Another shim has been through here for this job (it waited for the
+		// lock behind it). Running the command again would run the job twice.
+		return 1
+	}
 	if err := writeStarted(jobDir, Started{PID: os.Getpid(), Started: time.Now()}); err != nil {
 		return shimGiveUp(jobDir, fmt.Errorf("writing started.json: %w", err))
 	}
@@ -156,6 +164,11 @@ func RunShim(jobDir string) int {
 	// spec.Env, the hint variables it lacks and LOOM_JOB, and the command
 	// runs with exactly that.
 	env := Hints(spec.Env, max(spec.HintCPUs, 1), spec.ID)
+	if sig, ok := pendingSignal(sigs); ok {
+		// A cancel that arrived before the command did has nothing to reach:
+		// the group send found only this shim. The command does not start.
+		return shimReport(jobDir, Exit{Code: -1, Ended: time.Now(), Signal: sig})
+	}
 	cmd, err := startCommand(spec, env)
 	if err != nil {
 		return shimReport(jobDir, Exit{Code: 127, Ended: time.Now(), Error: err.Error()})
@@ -188,8 +201,23 @@ func shimReport(jobDir string, e Exit) int {
 // could not be executed (code 127) with cause as the reason, and returns 1.
 func shimGiveUp(jobDir string, cause error) int {
 	fmt.Fprintf(os.Stderr, "loom job-shim: %v\n", cause)
-	_ = writeExit(jobDir, Exit{Code: 127, Ended: time.Now(), Error: cause.Error()})
+	if err := writeExit(jobDir, Exit{Code: 127, Ended: time.Now(), Error: cause.Error()}); err != nil {
+		fmt.Fprintf(os.Stderr, "loom job-shim: writing exit.json: %v\n", err)
+	}
 	return 1
+}
+
+// pendingSignal takes a signal waiting in sigs without blocking, and names it.
+func pendingSignal(sigs <-chan os.Signal) (name string, ok bool) {
+	select {
+	case s := <-sigs:
+		if sig, isSyscall := s.(syscall.Signal); isSyscall {
+			return signalName(sig), true
+		}
+		return s.String(), true
+	default:
+		return "", false
+	}
 }
 
 // startCommand starts spec's argv in its folder with env as its whole

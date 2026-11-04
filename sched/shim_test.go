@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -324,8 +325,21 @@ func TestRunShim_ReportsACommandThatCannotRun(t *testing.T) {
 	}
 }
 
+// psField is ps's column col for pid, trimmed.
+func psField(t *testing.T, col string, pid int) string {
+	t.Helper()
+	out, err := exec.Command("ps", "-o", col+"=", "-p", strconv.Itoa(pid)).Output()
+	require.NoError(t, err)
+	return strings.TrimSpace(string(out))
+}
+
 func TestRunShim_LowersTheCommandsPriority(t *testing.T) {
 	requirePS(t)
+	selfNice, err := strconv.Atoi(psField(t, "ni", os.Getpid()))
+	require.NoError(t, err)
+	if selfNice >= niceValue {
+		t.Skipf("this test process already has nice %d: the shim's setting would not show", selfNice)
+	}
 	dir := shimJob(t, []string{"sh", "-c", "ps -o ni= -p $$"})
 	startShim(t, dir)
 
@@ -333,7 +347,7 @@ func TestRunShim_LowersTheCommandsPriority(t *testing.T) {
 
 	nice, err := strconv.Atoi(strings.TrimSpace(shimOutput(t, dir)))
 	require.NoError(t, err, "ps printed %q", shimOutput(t, dir))
-	assert.GreaterOrEqual(t, nice, niceValue, "the command inherits the shim's nice value")
+	assert.Equal(t, niceValue, nice, "the command inherits the shim's nice value")
 }
 
 func TestRunShim_SetsTheCommandsIOClass(t *testing.T) {
@@ -343,12 +357,147 @@ func TestRunShim_SetsTheCommandsIOClass(t *testing.T) {
 	if _, err := exec.LookPath("ionice"); err != nil {
 		t.Skip("ionice is not installed")
 	}
+	self, err := exec.Command("ionice", "-p", strconv.Itoa(os.Getpid())).Output()
+	require.NoError(t, err)
+	if strings.Contains(string(self), "best-effort: prio 7") {
+		t.Skipf("this test process already has I/O class %q: the shim's setting would not show", strings.TrimSpace(string(self)))
+	}
 	dir := shimJob(t, []string{"sh", "-c", "ionice -p $$"})
 	startShim(t, dir)
 
 	awaitShimExit(t, dir)
 
 	assert.Contains(t, shimLog(t, dir), "best-effort: prio 7")
+}
+
+// holdRunLock takes run.lock in dir the way a shim does and returns the
+// function that lets go of it, which the test calls at the point it chooses
+// (a cleanup lets go too).
+func holdRunLock(t *testing.T, dir string) (release func()) {
+	t.Helper()
+	f, err := os.OpenFile(filepath.Join(dir, LockFile), os.O_RDWR|os.O_CREATE, 0o600)
+	require.NoError(t, err)
+	require.NoError(t, syscall.Flock(int(f.Fd()), syscall.LOCK_EX))
+	var once bool
+	release = func() {
+		if !once {
+			once = true
+			f.Close()
+		}
+	}
+	t.Cleanup(release)
+	return release
+}
+
+// startShimProcess starts the job's shim as startShim does, but keeps the
+// process, to learn its exit code: done delivers it.
+func startShimProcess(t *testing.T, dir string) (pid int, done <-chan int) {
+	t.Helper()
+	runner := TestRunner()
+	cmd := exec.Command(runner.Shim[0], append(runner.Shim[1:], dir)...)
+	cmd.Env = runner.shimEnv()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	require.NoError(t, cmd.Start())
+	code := make(chan int, 1)
+	go func() {
+		_ = cmd.Wait()
+		code <- cmd.ProcessState.ExitCode()
+	}()
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	return cmd.Process.Pid, code
+}
+
+// awaitLockWaiter waits until pid is blocked on a file lock, which Linux
+// lists in /proc/locks as an "->" line naming the waiter. A shim blocked
+// there has caught its signals, so one sent now waits for it in the channel.
+func awaitLockWaiter(t *testing.T, pid int) {
+	t.Helper()
+	if _, err := os.ReadFile("/proc/locks"); err != nil {
+		t.Skip("needs /proc/locks to see a process wait for a lock")
+	}
+	shimWait(t, "the shim to wait for run.lock", shimLimit, func() bool {
+		data, err := os.ReadFile("/proc/locks")
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 5 && fields[1] == "->" && slices.Contains(fields, strconv.Itoa(pid)) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// A cancel that reaches the shim after it caught its signals and before it
+// starts the command has no command to reach, and would leave the job running
+// until the daemon's SIGKILL. The shim, held at run.lock, takes the signal
+// there.
+func TestRunShim_ACancelBeforeTheCommandStartsIsNotLost(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	dir := shimJob(t, []string{"sh", "-c", `: > "$1"`, "sh", marker})
+	release := holdRunLock(t, dir)
+	pid, done := startShimProcess(t, dir)
+	awaitLockWaiter(t, pid)
+
+	require.NoError(t, syscall.Kill(pid, syscall.SIGTERM))
+	release()
+
+	select {
+	case code := <-done:
+		assert.Equal(t, 0, code, "the shim reported, so it exits 0")
+	case <-time.After(shimLimit):
+		t.Fatal("the shim did not exit: it kept waiting for a command to cancel")
+	}
+	exit, err := ReadExit(dir)
+	require.NoError(t, err)
+	assert.Equal(t, -1, exit.Code)
+	assert.Equal(t, "SIGTERM", exit.Signal)
+	assert.NoFileExists(t, marker, "the command must not start")
+	_, err = ReadStarted(dir)
+	assert.NoError(t, err, "the shim had started the job when the cancel came")
+}
+
+func TestPendingSignal(t *testing.T) {
+	sigs := make(chan os.Signal, 1)
+	_, ok := pendingSignal(sigs)
+	assert.False(t, ok, "nothing waiting is no signal, and does not block")
+
+	sigs <- syscall.SIGHUP
+	name, ok := pendingSignal(sigs)
+	assert.True(t, ok)
+	assert.Equal(t, "SIGHUP", name)
+	_, ok = pendingSignal(sigs)
+	assert.False(t, ok, "a signal is taken once")
+}
+
+// A second shim for a job waits at run.lock behind the first, and must not
+// run the command again when it gets the lock.
+func TestRunShim_ADuplicateShimRunsNothingAndWritesNothing(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	dir := shimJob(t, []string{"sh", "-c", `: > "$1"`, "sh", marker})
+	release := holdRunLock(t, dir) // the first shim, running
+	pid, done := startShimProcess(t, dir)
+	awaitLockWaiter(t, pid)
+
+	first := Started{PID: 4242, Started: time.Now().Add(-time.Minute).Truncate(time.Second)}
+	require.NoError(t, writeStarted(dir, first))
+	release()
+
+	select {
+	case code := <-done:
+		assert.Equal(t, 1, code)
+	case <-time.After(shimLimit):
+		t.Fatal("the duplicate shim did not exit")
+	}
+	assert.NoFileExists(t, marker, "the command must not run twice")
+	_, err := ReadExit(dir)
+	assert.ErrorIs(t, err, fs.ErrNotExist, "the first shim owns exit.json")
+	got, err := ReadStarted(dir)
+	require.NoError(t, err)
+	assert.Equal(t, first.PID, got.PID, "started.json is the first shim's")
+	assert.True(t, shimLockFree(dir)(), "the duplicate let go of the lock")
 }
 
 func TestRunShim_RefusesToRunWhenItLeadsNoGroup(t *testing.T) {
@@ -372,6 +521,35 @@ func TestRunShim_RefusesToRunWhenItLeadsNoGroup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 127, exit.Code)
 	assert.Contains(t, exit.Error, "process group")
+}
+
+// A shim that gives up and cannot write exit.json says so on its stderr,
+// output.log, rather than leaving the job with no result and no word.
+func TestRunShim_GiveUpSaysWhenItCannotWriteExit(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory")
+	}
+	dir := shimJob(t, []string{"true"})
+	spec, err := ReadSpec(dir)
+	require.NoError(t, err)
+	spec.Argv = nil // "spec.json has no command": the shim gives up
+	require.NoError(t, WriteSpec(dir, spec))
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	runner := TestRunner()
+	var log strings.Builder
+	cmd := exec.Command(runner.Shim[0], append(runner.Shim[1:], dir)...)
+	cmd.Env = runner.shimEnv()
+	cmd.Stderr = &log
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	err = cmd.Run()
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 1, exitErr.ExitCode())
+	assert.Contains(t, log.String(), "spec.json has no command")
+	assert.Contains(t, log.String(), "writing exit.json", "the failed write is not hidden")
 }
 
 func TestResolveCommand(t *testing.T) {
