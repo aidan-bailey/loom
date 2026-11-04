@@ -191,7 +191,7 @@ func (m *Model) loadQueue(cfgDir string, host sched.Host) {
 	}
 	q.store = store
 	q.moved()
-	m.refreshPolicy()
+	m.admitJobs()
 }
 
 // refreshPolicy reads the scheduler block from the global config.json, which

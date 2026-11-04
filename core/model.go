@@ -491,6 +491,8 @@ func (m *Model) Deliver(msg any) {
 		m.deliverJobNotice(msg)
 	case queuePassResult:
 		m.deliverQueuePass(msg)
+	case jobStarted:
+		m.deliverJobStarted(msg)
 	case tracked:
 		m.deliverTracked(msg)
 	case resetResult:

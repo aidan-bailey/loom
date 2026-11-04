@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,4 +199,502 @@ func TestJobQueue_BootLoadsTheQueueFromTheGlobalDir(t *testing.T) {
 	assert.Equal(t, filepath.Join(global, "jobs"), m.queue.dir)
 	require.Len(t, m.queue.store.Jobs, 1)
 	assert.Equal(t, sched.JobID(3), m.queue.store.Jobs[0].ID)
+}
+
+// wqJob is a valid submission of argv from a fresh folder: the default claim,
+// no owner, no notice.
+func wqJob(t *testing.T, argv ...string) sched.Submit {
+	t.Helper()
+	return sched.Submit{
+		Argv: argv, Cwd: t.TempDir(), Env: []string{"PATH=" + os.Getenv("PATH")},
+		Description: "test job", Tail: 20,
+	}
+}
+
+// wqSubmit submits argv and returns the job's ID.
+func wqSubmit(t *testing.T, m *Model, argv ...string) sched.JobID {
+	t.Helper()
+	id, warning, err := m.submitJob(wqJob(t, argv...))
+	require.NoError(t, err)
+	require.Empty(t, warning)
+	return id
+}
+
+func TestJobQueue_ASubmittedJobIsQueuedPersistedAndAdmitted(t *testing.T) {
+	m := wqModel(t)
+	sub := wqJob(t, "sh", "-c", "exit 0")
+	sub.Env = []string{"SECRET=hunter2"}
+	sub.Description = "  a build  "
+	sub.Notify, sub.Tail = true, 7
+
+	id, warning, err := m.submitJob(sub)
+
+	require.NoError(t, err)
+	assert.Empty(t, warning)
+	assert.Equal(t, sched.JobID(1), id)
+	rec := wqRecord(t, m, id)
+	assert.Equal(t, "a build", rec.Description, "trimmed")
+	assert.Equal(t, sched.Running, rec.State, "it fits, so the pass that follows the submit admits it")
+	assert.Equal(t, sched.Claim{CPUs: 4, MemoryGB: 6}, rec.Claim, "the default claim, applied")
+	assert.Equal(t, int64(1), rec.Order)
+	assert.True(t, rec.Notify)
+	assert.Equal(t, 7, rec.Tail)
+	assert.Zero(t, rec.Owner)
+	assert.False(t, rec.Submitted.IsZero())
+	assert.True(t, m.queue.starting[id], "its start job is in flight")
+	assert.Len(t, m.Drain().Jobs, 1, "and queued, to be run by the loop")
+
+	spec, err := sched.ReadSpec(m.queue.jobDir(id))
+	require.NoError(t, err)
+	assert.Equal(t, sched.Spec{ID: id, Argv: sub.Argv, Cwd: sub.Cwd, Env: sub.Env}, spec,
+		"the environment is in spec.json, and the CPU hint is written when the job starts")
+	saved, err := sched.LoadStore(m.queue.dir)
+	require.NoError(t, err)
+	require.Len(t, saved.Jobs, 1)
+	assert.Equal(t, sched.Running, saved.Jobs[0].State)
+	assert.Equal(t, sched.JobID(2), saved.NextID)
+	raw, err := os.ReadFile(filepath.Join(m.queue.dir, sched.StoreFile))
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "hunter2", "jobs.json holds no environment")
+}
+
+func TestJobQueue_AClaimTakesTheDefaultsExceptWhereItIsExclusive(t *testing.T) {
+	cases := []struct {
+		name        string
+		claim, want sched.Claim
+	}{
+		{"empty", sched.Claim{}, sched.Claim{CPUs: 4, MemoryGB: 6}},
+		{"cores only", sched.Claim{CPUs: 2}, sched.Claim{CPUs: 2, MemoryGB: 6}},
+		{"memory and io", sched.Claim{MemoryGB: 3, IO: true}, sched.Claim{CPUs: 4, MemoryGB: 3, IO: true}},
+		{"exclusive", sched.Claim{Exclusive: true}, sched.Claim{Exclusive: true}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := wqModel(t)
+			sub := wqJob(t, "true")
+			sub.Claim = c.claim
+
+			id, _, err := m.submitJob(sub)
+
+			require.NoError(t, err)
+			assert.Equal(t, c.want, wqRecord(t, m, id).Claim)
+		})
+	}
+}
+
+func TestJobQueue_ASubmitOutsideTheBoundsIsRefusedAndChangesNothing(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(*sched.Submit)
+		want string
+	}{
+		{"no description", func(s *sched.Submit) { s.Description = "  " }, "the description is empty"},
+		{"no command", func(s *sched.Submit) { s.Argv = nil }, "no command to run"},
+		{"a relative folder", func(s *sched.Submit) { s.Cwd = "work" }, "the folder work is not an absolute path"},
+		{"a folder that is gone", func(s *sched.Submit) { s.Cwd = filepath.Join(s.Cwd, "gone") }, "the folder %CWD% does not exist"},
+		{"a negative tail", func(s *sched.Submit) { s.Tail = -1 }, "--tail is -1: it must be 0–200"},
+		{"too many cores", func(s *sched.Submit) { s.Claim.CPUs = 99 }, "claims 99 cores; this host's cap is 14"},
+		{"too much memory", func(s *sched.Submit) { s.Claim.MemoryGB = 99 }, "claims 99 GB; this host's cap is 24 GB"},
+		{"exclusive with cores", func(s *sched.Submit) { s.Claim = sched.Claim{Exclusive: true, CPUs: 2} },
+			"--exclusive claims everything: drop --cpus, --mem and --io"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := wqModel(t)
+			sub := wqJob(t, "true")
+			c.edit(&sub)
+
+			id, _, err := m.submitJob(sub)
+
+			assert.EqualError(t, err, strings.ReplaceAll(c.want, "%CWD%", sub.Cwd))
+			assert.Zero(t, id)
+			assert.Empty(t, m.queue.store.Jobs)
+			assert.Equal(t, sched.JobID(1), m.queue.store.NextID)
+			assert.NoDirExists(t, m.queue.dir, "nothing was written")
+			assert.Empty(t, m.Drain().Jobs)
+		})
+	}
+}
+
+func TestJobQueue_AJobsOwnerIsTheSessionHoldingItsLaunch(t *testing.T) {
+	m := wqModel(t)
+	inst := modInst(t, m, "owner") // launch L1
+	cases := []struct {
+		name, launch, warning string
+		owner                 uint64
+	}{
+		{"a served launch", "L1", "", uint64(m.idOf(inst))},
+		{"a plain shell", "", "", 0},
+		{"a launch nobody holds", "L9",
+			"this shell's loom session (launch L9) isn't one the daemon serves: job 3 has no owner, so no message will come", 0},
+	}
+	for i, c := range cases {
+		sub := wqJob(t, "true")
+		sub.Launch = c.launch
+
+		id, warning, err := m.submitJob(sub)
+
+		require.NoError(t, err, c.name)
+		assert.Equal(t, sched.JobID(i+1), id)
+		assert.Equal(t, c.warning, warning, c.name)
+		assert.Equal(t, c.owner, wqRecord(t, m, id).Owner, c.name)
+	}
+}
+
+func TestJobQueue_AdmissionFillsTheCapsAndTheRestWait(t *testing.T) {
+	m := wqModel(t)
+	var ids []sched.JobID
+	for range 4 {
+		ids = append(ids, wqSubmit(t, m, "sleep", "30"))
+	}
+	for _, id := range ids[:3] {
+		assert.Equal(t, sched.Running, wqRecord(t, m, id).State)
+	}
+	assert.Equal(t, sched.Queued, wqRecord(t, m, ids[3]).State)
+	assert.Equal(t, "needs 4 cores (2 free)", m.queue.waiting[ids[3]])
+	assert.Len(t, m.Drain().Jobs, 3, "three starts, which this test never runs")
+
+	// A job ends: the pass that follows starts the fourth.
+	m.finishJob(m.queue.index(ids[0]), sched.Done, time.Now())
+	m.afterSettle()
+
+	assert.Equal(t, sched.Running, wqRecord(t, m, ids[3]).State)
+	assert.NotContains(t, m.queue.waiting, ids[3])
+	assert.Len(t, m.Drain().Jobs, 1)
+}
+
+// The tick runs an admission pass while jobs wait, which picks up a hand edit
+// of the scheduler block, at most once a queue interval.
+func TestJobQueue_TheTickRereadsTheCapsWhileJobsWait(t *testing.T) {
+	m := wqModel(t)
+	loaded := m.queue.lastPass
+	m.queue.lastPass = loaded.Add(-time.Hour)
+	m.tickQueue()
+	assert.Equal(t, loaded.Add(-time.Hour), m.queue.lastPass, "nothing waits, so no pass")
+	wqConfig(t, m, `{"cpus": 4}`) // one default job at a time
+	wqSubmit(t, m, "true")
+	waiting := wqSubmit(t, m, "true")
+	require.Equal(t, sched.Queued, wqRecord(t, m, waiting).State)
+	assert.Equal(t, "needs 4 cores (0 free)", m.queue.waiting[waiting])
+
+	wqConfig(t, m, `{"cpus": 8}`) // edited by hand
+	m.tickQueue()
+	assert.Equal(t, sched.Queued, wqRecord(t, m, waiting).State, "a pass ran a moment ago")
+
+	m.queue.lastPass = time.Now().Add(-queueInterval)
+	m.tickQueue()
+	assert.Equal(t, sched.Running, wqRecord(t, m, waiting).State)
+}
+
+func TestJobQueue_AnInvalidSchedulerBlockPausesAdmissionAndSaysWhy(t *testing.T) {
+	m := wqModel(t)
+	wqConfig(t, m, `{"cpus": 4}`)
+	running := wqSubmit(t, m, "true")
+	waiting := wqSubmit(t, m, "true")
+	reason := "scheduler.cpus is 5000: it must be 1–1024"
+
+	wqConfig(t, m, `{"cpus": 5000}`)
+	m.admitJobs()
+
+	assert.Equal(t, reason, m.queue.paused)
+	assert.Equal(t, sched.Policy{}, m.queue.policy)
+	assert.Equal(t, "admission paused: "+reason, m.queue.waiting[waiting])
+	assert.Equal(t, sched.Running, wqRecord(t, m, running).State, "running jobs are left alone")
+	_, _, err := m.submitJob(wqJob(t, "true"))
+	assert.EqualError(t, err, "admission paused: "+reason)
+
+	wqConfig(t, m, `{"cpus": 8}`)
+	m.admitJobs()
+
+	assert.Empty(t, m.queue.paused)
+	assert.Equal(t, sched.Running, wqRecord(t, m, waiting).State, "the fixed block admits what waited")
+}
+
+// On Windows the refusal comes before every other check: a submission that is
+// also invalid still hears that the queue isn't available, and so does one made
+// before the queue loaded.
+func TestJobQueue_AWindowsDaemonRefusesEverySubmission(t *testing.T) {
+	was := queueGOOS
+	queueGOOS = "windows"
+	t.Cleanup(func() { queueGOOS = was })
+
+	t.Run("a queue booted there", func(t *testing.T) {
+		m := wqModel(t)
+
+		_, _, err := m.submitJob(wqJob(t, "true"))
+		assert.ErrorIs(t, err, sched.ErrUnsupported)
+		assert.EqualError(t, err, "the work queue isn't available on Windows")
+
+		_, _, err = m.submitJob(sched.Submit{})
+		assert.ErrorIs(t, err, sched.ErrUnsupported, "before the submission is even checked")
+		assert.Empty(t, m.queue.store.Jobs)
+		assert.NoDirExists(t, m.queue.jobDir(1))
+	})
+	t.Run("a queue not loaded", func(t *testing.T) {
+		m := NewForTest(Options{})
+
+		_, _, err := m.submitJob(wqJob(t, "true"))
+
+		assert.ErrorIs(t, err, sched.ErrUnsupported)
+	})
+	t.Run("an unsupported runner elsewhere refuses the same way", func(t *testing.T) {
+		queueGOOS = was
+		m := wqModel(t)
+		m.queue.runnerErr = sched.ErrUnsupported
+
+		_, _, err := m.submitJob(wqJob(t, "true"))
+
+		assert.ErrorIs(t, err, sched.ErrUnsupported)
+	})
+	t.Run("another failure of NewRunner pauses admission and refuses with its reason", func(t *testing.T) {
+		queueGOOS = was
+		m := wqModel(t)
+		m.queue.runnerErr = errors.New("no executable")
+
+		_, _, err := m.submitJob(wqJob(t, "true"))
+
+		assert.EqualError(t, err, "admission paused: no executable")
+	})
+}
+
+// A failed write refuses a request and changes nothing (spec §5.9).
+func TestJobQueue_ASubmitWhoseWriteFailsIsRefusedAndTakenBack(t *testing.T) {
+	m := wqModel(t)
+	unblock := wqBlockJobsJSON(t, m)
+
+	_, _, err := m.submitJob(wqJob(t, "true"))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write jobs.json")
+	assert.Empty(t, m.queue.store.Jobs)
+	assert.Equal(t, sched.JobID(1), m.queue.store.NextID)
+	assert.NoDirExists(t, m.queue.jobDir(1), "its spec was taken back")
+	assert.Empty(t, m.Drain().Jobs, "and nothing was started")
+
+	unblock()
+	assert.Equal(t, sched.JobID(1), wqSubmit(t, m, "true"), "the ID was not spent")
+}
+
+func TestJobQueue_ARequestWhoseWriteFailsChangesNothing(t *testing.T) {
+	m := wqModel(t)
+	wqConfig(t, m, `{"cpus": 4}`) // one default job at a time
+	running := wqSubmit(t, m, "true")
+	waiting := wqSubmit(t, m, "true")
+	last := wqSubmit(t, m, "true")
+	m.queue.store.Jobs[m.queue.index(waiting)].Owner = 77
+	m.Drain()
+	unblock := wqBlockJobsJSON(t, m)
+	defer unblock()
+	before := slices.Clone(m.queue.store.Jobs)
+
+	assert.Error(t, m.cancelJob(waiting, "from the work view"))
+	assert.Error(t, m.cancelJob(running, "from the work view"))
+	assert.Error(t, m.moveJobToFront(last))
+	assert.Error(t, m.notifyJob(waiting))
+
+	assert.Equal(t, before, m.queue.store.Jobs, "nothing changed")
+}
+
+func TestJobQueue_CancelEndsAQueuedJobAtOnceAndRecordsARunningJobsRequest(t *testing.T) {
+	m := wqModel(t)
+	var ids []sched.JobID
+	for range 4 {
+		ids = append(ids, wqSubmit(t, m, "sleep", "30"))
+	}
+	m.Drain() // the three start jobs are never run here
+	running, queued := ids[0], ids[3]
+
+	require.NoError(t, m.cancelJob(queued, "from the work view"))
+
+	rec := wqRecord(t, m, queued)
+	assert.Equal(t, sched.Cancelled, rec.State)
+	assert.Equal(t, "from the work view", rec.CancelReason)
+	assert.False(t, rec.Ended.IsZero())
+	assert.NotContains(t, m.queue.waiting, queued)
+	saved, err := sched.LoadStore(m.queue.dir)
+	require.NoError(t, err)
+	assert.Equal(t, sched.Cancelled, saved.Jobs[3].State, "written")
+
+	require.NoError(t, m.cancelJob(running, "with loom job cancel"))
+	assert.Equal(t, sched.Running, wqRecord(t, m, running).State, "gateQueue ends a running job")
+	assert.Equal(t, "with loom job cancel", wqRecord(t, m, running).CancelReason)
+	require.NoError(t, m.cancelJob(running, "from the work view"), "asked again")
+	assert.Equal(t, "with loom job cancel", wqRecord(t, m, running).CancelReason, "the first request stands")
+
+	assert.EqualError(t, m.cancelJob(queued, "x"), "job 4 has finished")
+	assert.EqualError(t, m.cancelJob(99, "x"), "there is no job 99")
+}
+
+// The whole path: a running job is cancelled, its group gets SIGTERM, it
+// settles, and the pass that follows starts the job that waited on its claim.
+func TestJobQueue_CancellingARunningJobFreesItsClaimForTheNextWaitingOne(t *testing.T) {
+	m := wqLiveModel(t)
+	wqConfig(t, m, `{"cpus": 4}`) // one default job at a time
+	long := wqSubmit(t, m, "sleep", "30")
+	next := wqSubmit(t, m, "sh", "-c", "echo next")
+	wqPump(t, m) // the first one's start: a real shim
+	require.Equal(t, sched.Queued, wqRecord(t, m, next).State)
+	assert.Equal(t, "needs 4 cores (0 free)", m.queue.waiting[next])
+
+	require.NoError(t, m.cancelJob(long, "from the work view"))
+	rec := wqSettle(t, m, long)
+
+	assert.Equal(t, sched.Cancelled, rec.State)
+	require.NotNil(t, rec.Exit)
+	assert.Equal(t, "SIGTERM", rec.Exit.Signal)
+	assert.Equal(t, sched.Done, wqSettle(t, m, next).State, "its claim freed, the waiting job ran")
+}
+
+func TestJobQueue_MoveToFrontPutsAJobAheadOfTheQueue(t *testing.T) {
+	m := wqModel(t)
+	wqConfig(t, m, `{"cpus": 4}`) // one default job at a time
+	first := wqSubmit(t, m, "true")
+	second := wqSubmit(t, m, "true")
+	third := wqSubmit(t, m, "true")
+	require.Equal(t, sched.Queued, wqRecord(t, m, third).State)
+
+	require.NoError(t, m.moveJobToFront(third))
+
+	assert.Equal(t, int64(1), wqRecord(t, m, third).Order, "one below the lowest queued order, the second job's 2")
+	m.finishJob(m.queue.index(first), sched.Done, time.Now())
+	m.afterSettle()
+	assert.Equal(t, sched.Running, wqRecord(t, m, third).State, "the pass that follows starts the moved job first")
+	assert.Equal(t, sched.Queued, wqRecord(t, m, second).State)
+
+	assert.EqualError(t, m.moveJobToFront(third), "job 3 isn't waiting", "it runs now")
+	assert.EqualError(t, m.moveJobToFront(first), "job 1 isn't waiting", "it has finished")
+	assert.EqualError(t, m.moveJobToFront(99), "there is no job 99")
+}
+
+func TestJobQueue_NotifyJobSetsTheFlagWhereAMessageCanComeBack(t *testing.T) {
+	m := wqModel(t)
+	queued := func(id sched.JobID, owner InstanceID) sched.Record {
+		r := wqEnded(id, owner)
+		r.State, r.Exit, r.Ended, r.Started, r.Notify = sched.Queued, nil, time.Time{}, time.Time{}, false
+		return r
+	}
+	wqSeed(t, m, queued(1, 77))
+	wqSeed(t, m, queued(2, 0))
+	wqSeed(t, m, wqEnded(3, 77))
+
+	require.NoError(t, m.notifyJob(1))
+
+	assert.True(t, wqRecord(t, m, 1).Notify)
+	saved, err := sched.LoadStore(m.queue.dir)
+	require.NoError(t, err)
+	assert.True(t, saved.Jobs[0].Notify, "written")
+	assert.EqualError(t, m.notifyJob(2), "job 2 has no owner")
+	assert.EqualError(t, m.notifyJob(3), "job 3 has finished")
+	assert.EqualError(t, m.notifyJob(99), "there is no job 99")
+}
+
+func TestJobQueue_SetSchedulerCapsWritesTheBlockAndAppliesItAtOnce(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, config.ConfigFileName)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{"default_program": "my-claude", "scheduler": {"cpus": 4}}`), 0o644))
+	m := wqModelAt(t, dir)
+	global := NewWorkspace(WorkspaceParts{Ctx: &config.WorkspaceContext{ConfigDir: dir}, Config: config.LoadConfigFrom(dir)})
+	m.SetWorkspacesForTest(global)
+	wqSubmit(t, m, "true")
+	second := wqSubmit(t, m, "true")
+	require.Equal(t, sched.Queued, wqRecord(t, m, second).State, "four cores hold one default job")
+
+	require.NoError(t, m.setSchedulerCaps(config.SchedulerSettings{CPUs: 8, MemoryGB: 12}))
+
+	assert.Equal(t, sched.Running, wqRecord(t, m, second).State, "a caps edit applies at once")
+	written := config.LoadConfigFrom(dir)
+	assert.Equal(t, config.SchedulerSettings{CPUs: 8, MemoryGB: 12}, written.GetScheduler())
+	assert.Equal(t, "my-claude", written.DefaultProgram, "the rest of config.json is kept")
+	assert.Equal(t, 8, global.cfg.GetScheduler().CPUs, "and so is the global workspace's own copy")
+
+	before, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	err = m.setSchedulerCaps(config.SchedulerSettings{CPUs: 5000})
+	assert.EqualError(t, err, "scheduler.cpus is 5000: it must be 1–1024")
+	after, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after), "a refused edit writes nothing")
+}
+
+// The whole path for one job: submit, start (a real shim and its handshake),
+// the CPU claim in spec.json, watch and settle.
+func TestJobQueue_AStartedJobRecordsItsShimAndGetsItsCPUHint(t *testing.T) {
+	cases := []struct {
+		name  string
+		claim sched.Claim
+		hint  int
+	}{
+		{"the default claim", sched.Claim{}, 4},
+		{"its own cores", sched.Claim{CPUs: 3}, 3},
+		{"exclusive: the cpu cap", sched.Claim{Exclusive: true}, 14},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := wqLiveModel(t)
+			sub := wqJob(t, "sh", "-c", "echo built")
+			sub.Claim = c.claim
+			id, _, err := m.submitJob(sub)
+			require.NoError(t, err)
+
+			wqPump(t, m)
+
+			rec := wqRecord(t, m, id)
+			assert.Greater(t, rec.PID, 1)
+			assert.False(t, rec.Started.IsZero())
+			assert.NotContains(t, m.queue.starting, id)
+			spec, err := sched.ReadSpec(m.queue.jobDir(id))
+			require.NoError(t, err)
+			assert.Equal(t, c.hint, spec.HintCPUs)
+
+			assert.Equal(t, sched.Done, wqSettle(t, m, id).State)
+			out, err := os.ReadFile(filepath.Join(m.queue.jobDir(id), sched.LogFile))
+			require.NoError(t, err)
+			assert.Equal(t, "built\n", string(out))
+		})
+	}
+}
+
+func TestJobQueue_AStartThatCannotWorkFailsTheJob(t *testing.T) {
+	t.Run("its folder is gone", func(t *testing.T) {
+		m := wqLiveModel(t)
+		sub := wqJob(t, "true")
+		sub.Cwd = filepath.Join(t.TempDir(), "work")
+		require.NoError(t, os.Mkdir(sub.Cwd, 0o755))
+		id, _, err := m.submitJob(sub)
+		require.NoError(t, err)
+		require.NoError(t, os.Remove(sub.Cwd))
+
+		wqPump(t, m)
+
+		rec := wqRecord(t, m, id)
+		assert.Equal(t, sched.Failed, rec.State)
+		assert.Equal(t, "its folder is gone", rec.Failure)
+		assert.False(t, rec.Ended.IsZero())
+		assert.Zero(t, rec.PID, "nothing started")
+	})
+	t.Run("the runner writes no started.json", func(t *testing.T) {
+		m := wqLiveModel(t)
+		m.SetJobRunnerForTest(sched.Runner{Shim: []string{"true"}})
+		m.queue.handshake = 200 * time.Millisecond
+		id := wqSubmit(t, m, "true")
+
+		wqPump(t, m)
+
+		rec := wqRecord(t, m, id)
+		assert.Equal(t, sched.Failed, rec.State)
+		assert.Equal(t, "the job runner did not start", rec.Failure)
+		assert.NotContains(t, m.queue.starting, id)
+		assert.Contains(t, m.queue.silent, id, "a free lock does not prove the shim gone: its group stays owed a SIGKILL")
+	})
+	t.Run("a cancel asked for meanwhile wins", func(t *testing.T) {
+		m := wqLiveModel(t)
+		m.SetJobRunnerForTest(sched.Runner{Shim: []string{"true"}})
+		m.queue.handshake = 200 * time.Millisecond
+		id := wqSubmit(t, m, "true")
+		require.NoError(t, m.cancelJob(id, "with loom job cancel"))
+
+		wqPump(t, m)
+
+		assert.Equal(t, sched.Cancelled, wqRecord(t, m, id).State)
+	})
 }

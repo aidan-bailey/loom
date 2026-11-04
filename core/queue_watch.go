@@ -12,10 +12,6 @@ import (
 	"github.com/aidan-bailey/loom/sched"
 )
 
-// errRunnerSilent fails a job whose shim wrote no started.json in time
-// (Task 3.4 moves it into the start's error block).
-var errRunnerSilent = errors.New("the job runner did not start")
-
 const (
 	// sampleTimeout bounds the one `ps` of a pass (spec §5.4).
 	sampleTimeout = 5 * time.Second
@@ -62,9 +58,11 @@ func (m *Model) finishJob(i int, state sched.State, now time.Time) {
 	m.settledJob(i)
 }
 
-// afterSettle runs after one or more jobs ended: retention trims the finished
-// jobs, and the write that follows is quiet (spec §5.9).
+// afterSettle runs after one or more jobs ended: their claims are free, so an
+// admission pass follows; retention trims the finished jobs; and the write
+// that follows is quiet (spec §5.9).
 func (m *Model) afterSettle() {
+	m.admitJobs()
 	m.retainFinished()
 	m.saveQueueQuiet("settle")
 }

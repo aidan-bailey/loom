@@ -129,6 +129,10 @@ func (m *Model) tickInst(selected []*session.Instance) {
 	// runs and no failed start's shim is owed a kill, or a pass is in flight.
 	m.maybeQueue()
 
+	// An admission pass while jobs wait, at most every queue interval (see
+	// tickQueue): it picks up a hand edit of the scheduler block.
+	m.tickQueue()
+
 	// Workspace terminals whose relaunch waits on a name check tmux left
 	// unanswered (see settleTerminal). Nothing when none waits.
 	m.maybeSettleTerminals()
