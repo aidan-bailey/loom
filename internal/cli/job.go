@@ -196,6 +196,9 @@ func newJobSubmitCmd() *cobra.Command {
 					return err
 				}
 				v, err := d.awaitJob(id)
+				if errors.Is(err, errNotReported) {
+					return fmt.Errorf("job %d was submitted, but %w (loom job list shows where it is)", id, err)
+				}
 				if err != nil {
 					return fmt.Errorf("job %d was submitted, but %w", id, err)
 				}
@@ -232,6 +235,10 @@ func (d *client) submitJob(sub sched.Submit) (sched.JobID, error) {
 	return reply.Job, nil
 }
 
+// errNotReported is awaitJob's error when the daemon accepted a job but its
+// view never arrived.
+var errNotReported = errors.New("the loom daemon did not report it")
+
 // awaitJob waits, for up to jobWait, until the replica holds job id: the
 // Reply to a submission can arrive before the view that shows the job.
 func (d *client) awaitJob(id sched.JobID) (core.JobView, error) {
@@ -245,7 +252,7 @@ func (d *client) awaitJob(id sched.JobID) (core.JobView, error) {
 	case err != nil:
 		return v, err
 	case !ok:
-		return v, errors.New("the loom daemon did not report it (loom job list shows where it is)")
+		return v, errNotReported
 	}
 	return v, nil
 }
@@ -391,6 +398,7 @@ type ExitError struct {
 func (e *ExitError) Error() string { return e.Msg }
 
 // exitNotRun is the exit code of a follower whose job was lost, could not
-// start or was cancelled, or that lost the daemon or found it did not know the
-// job: it saw no exit of the job's own.
+// start or was cancelled, or that can't go on (it lost the daemon, found it did
+// not know the job or never heard of it, or could not read the output), and of
+// `run` when it submitted nothing: it saw no exit of the job's own.
 const exitNotRun = 125

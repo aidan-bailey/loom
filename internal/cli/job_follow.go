@@ -249,9 +249,9 @@ func (f *jobFollower) copyLog(path string) error {
 
 // follow follows job id to its end, with its output on out, then writes the
 // outcome and returns the exit code it asks for (an *ExitError, or nil for
-// exit 0). A job the daemon does not know, or a lost daemon, ends the command
-// with exitNotRun and a line on stderr that says which (lostDaemon). An
-// interrupt (signalled names it) leaves the job running and ends the command
+// exit 0). A job the daemon does not know, a lost daemon or an output.log
+// that can't be read ends the command with exitNotRun and a line on stderr
+// that says which (lostDaemon, mayStillRun). An interrupt (signalled names it) leaves the job running and ends the command
 // (interrupted). queuedHere is true for a job this command
 // queued, so its start is reported even when it never waited.
 func (d *client) follow(out io.Writer, id sched.JobID, signalled func() os.Signal, queuedHere bool) error {
@@ -277,15 +277,30 @@ func (d *client) follow(out io.Writer, id sched.JobID, signalled func() os.Signa
 	case errors.Is(err, context.Canceled):
 		return d.interrupted(id, signalled())
 	}
-	return err
+	// What is left is a log that can't be read (copyLog's errors).
+	return d.mayStillRun(id, err.Error())
 }
 
 // lostDaemon ends a command that lost the daemon while job id was submitted:
 // it says so on stderr, with how to follow the job again, and exits with
 // exitNotRun. The job goes on without the daemon.
 func (d *client) lostDaemon(id sched.JobID) error {
-	d.say("lost the daemon; job %d may still be running (loom job wait %d follows it again)", id, id)
+	return d.mayStillRun(id, "lost the daemon")
+}
+
+// mayStillRun ends a follower that can't go on though job id was submitted:
+// it says why (the line's start) and how to follow the job again, and exits
+// with exitNotRun, since it saw no exit of the job's own. The job goes on.
+func (d *client) mayStillRun(id sched.JobID, why string) error {
+	d.say("%s; job %d may still be running (loom job wait %d follows it again)", why, id, id)
 	return &ExitError{Code: exitNotRun}
+}
+
+// notSubmitted ends `run` with exitNotRun when it failed before the job
+// existed: it says on stderr that nothing was submitted, and why. `submit`
+// keeps exit 1 for the same failures.
+func notSubmitted(err error) error {
+	return &ExitError{Code: exitNotRun, Msg: "loom: nothing was submitted: " + err.Error()}
 }
 
 // interrupted ends a follower that sig interrupted. The job is never
@@ -345,22 +360,25 @@ func newJobRunCmd() *cobra.Command {
 		Use:   "run [flags] -- CMD [ARGS…]",
 		Short: "Queue a command, follow it, and exit with its exit code",
 		Long: "Queues the command and follows it: its output goes to stdout, where it stands in the queue to stderr, " +
-			"and the command exits with the job's exit code (128 plus N for a job killed by signal N; 125 for a job that was lost, " +
-			"could not start or was cancelled, and when the daemon is lost or does not know the job). No message is sent when it ends. An interrupt (Ctrl-C, a Bash timeout) leaves the job running: " +
+			"and the command exits with the job's exit code: the job's own; 128 plus N for a job killed by signal N; " +
+			"125 for a job that was lost, could not start or was cancelled, when the follower can't go on " +
+			"(it lost the daemon, the daemon does not know the job or never reported it, or the output can't be read), " +
+			"and when nothing was submitted; 130, 143 or 129 when an interrupt ends the follower. " +
+			"No message is sent when the job ends. An interrupt (Ctrl-C, a Bash timeout) leaves the job running: " +
 			"when it belongs to a session, that session is sent a message with its result.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {
-				return err
+				return notSubmitted(err)
 			}
 			sub, err := f.submission(c, args, false, defaultTail)
 			if err != nil {
-				return err
+				return notSubmitted(err)
 			}
 			ctx, signalled, stop := interruptible(c.Context())
 			defer stop()
 			c.SetContext(ctx)
-			return withDaemon(c, func(d *client) error {
+			err = withDaemon(c, func(d *client) error {
 				id, err := d.submitJob(sub)
 				switch {
 				case errors.Is(err, context.Canceled):
@@ -369,7 +387,7 @@ func newJobRunCmd() *cobra.Command {
 						Msg:  "interrupted before the daemon answered: the job may still be queued (loom job list shows it)",
 					}
 				case err != nil:
-					return err
+					return notSubmitted(err)
 				}
 				if _, err := d.awaitJob(id); err != nil {
 					if errors.Is(err, context.Canceled) {
@@ -378,10 +396,17 @@ func newJobRunCmd() *cobra.Command {
 					if d.Err() != nil {
 						return d.lostDaemon(id)
 					}
-					return fmt.Errorf("job %d was submitted, but %w", id, err)
+					return d.mayStillRun(id, fmt.Sprintf("job %d was submitted, but %v", id, err))
 				}
 				return d.follow(c.OutOrStdout(), id, signalled, true)
 			})
+			// Every failure inside the closure is an *ExitError already; one
+			// that is not is the join's, before anything was sent.
+			var exit *ExitError
+			if err != nil && !errors.As(err, &exit) {
+				return notSubmitted(err)
+			}
+			return err
 		},
 	}
 	f.add(cmd)
@@ -393,7 +418,10 @@ func newJobWaitCmd() *cobra.Command {
 		Use:   "wait ID",
 		Short: "Follow a job to its end, and exit with its exit code",
 		Long: "Follows a queued, running or finished job as `run` does: its output goes to stdout, its progress to stderr, " +
-			"and the exit code is the job's. An interrupt leaves the job running.",
+			"and the exit code is the job's own; 128 plus N for a job killed by signal N; " +
+			"125 for a job that was lost, could not start or was cancelled, and when the follower can't go on " +
+			"(it lost the daemon, the daemon does not know the job, or the output can't be read); " +
+			"130, 143 or 129 when an interrupt ends the follower, which leaves the job running.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if err := beginJob(c); err != nil {

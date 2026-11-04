@@ -3,7 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -607,6 +610,195 @@ func TestJobWait_ACancelledJobExits125(t *testing.T) {
 	_, errOut, err = runJob(t, "wait", "99")
 	assert.Equal(t, 125, exitCode(t, err), "a job the daemon does not know is not the job's own exit")
 	assert.Equal(t, "loom: there is no job 99\n", errOut)
+}
+
+// exitOf is the *ExitError a command ended with.
+func exitOf(t *testing.T, err error) *ExitError {
+	t.Helper()
+	var exit *ExitError
+	require.ErrorAs(t, err, &exit)
+	return exit
+}
+
+// `run` that submits nothing exits 125, whatever stopped it, and says so; the
+// job's own code and `submit`'s 1 stay apart from it. Cobra's usage errors
+// keep exit 1.
+func TestJobRun_NothingSubmittedExits125(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	dial := Join
+	t.Cleanup(func() { Join = dial })
+
+	t.Run("a refused submission", func(t *testing.T) {
+		_, _, err := runJob(t, "run", "-d", "x", "--cpus", "5000", "--", "true")
+		exit := exitOf(t, err)
+		assert.Equal(t, 125, exit.Code)
+		assert.Contains(t, exit.Msg, "loom: nothing was submitted: ")
+		assert.Contains(t, exit.Msg, "claims 5000 cores; this host's cap is")
+		assert.Empty(t, d.jobs())
+
+		_, _, err = runJob(t, "submit", "-d", "x", "--cpus", "5000", "--", "true")
+		require.Error(t, err)
+		var asExit *ExitError
+		assert.False(t, errors.As(err, &asExit), "submit keeps exit 1 for a refusal")
+	})
+	t.Run("a bad command line", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"run", "-d", "x"},
+			{"run", "-d", "x", "--cpus", "0", "--", "true"},
+		} {
+			_, _, err := runJob(t, args...)
+			exit := exitOf(t, err)
+			assert.Equal(t, 125, exit.Code, "%v", args)
+			assert.Contains(t, exit.Msg, "loom: nothing was submitted: ")
+		}
+		assert.Empty(t, d.jobs())
+	})
+	t.Run("no daemon", func(t *testing.T) {
+		Join = func() (*rpc.Client, error) { return nil, errors.New("no daemon to join") }
+		_, _, err := runJob(t, "run", "-d", "x", "--", "true")
+		exit := exitOf(t, err)
+		assert.Equal(t, 125, exit.Code)
+		assert.Equal(t, "loom: nothing was submitted: no daemon to join", exit.Msg)
+	})
+	t.Run("the daemon lost before the reply", func(t *testing.T) {
+		Join = func() (*rpc.Client, error) {
+			c, err := dial()
+			d.srv.Close() // before the submit is sent
+			return c, err
+		}
+		_, _, err := runJob(t, "run", "-d", "x", "--", "true")
+		exit := exitOf(t, err)
+		assert.Equal(t, 125, exit.Code)
+		assert.Contains(t, exit.Msg, "loom: nothing was submitted: lost the loom daemon")
+	})
+	t.Run("a usage error", func(t *testing.T) {
+		Join = dial
+		_, _, err := runJob(t, "run", "--no-such-flag", "--", "true")
+		require.Error(t, err)
+		var asExit *ExitError
+		assert.False(t, errors.As(err, &asExit), "cobra's usage errors exit 1 as for every command")
+	})
+}
+
+// The Windows refusal comes before anything is submitted, so `run` ends it
+// with the same 125 and line.
+func TestJobRun_TheWindowsRefusalIsNothingSubmitted(t *testing.T) {
+	exit := exitOf(t, notSubmitted(checkPlatform("windows")))
+	assert.Equal(t, 125, exit.Code)
+	assert.Contains(t, exit.Msg, "loom: nothing was submitted: ")
+}
+
+// A follower that can't read the job's output.log can't go on: it exits 125
+// and says the job may still be running and how to follow it again.
+func TestJobWait_AnUnreadableLogExits125(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	_, _, err := runJob(t, "run", "-d", "quick", "--", "sh", "-c", "echo hi")
+	require.NoError(t, err)
+	log := d.job(1).LogPath
+	require.NotEmpty(t, log)
+	// A directory in the log's place opens, then fails to read: whoever runs
+	// the test, root included.
+	require.NoError(t, os.Remove(log))
+	require.NoError(t, os.Mkdir(log, 0o755))
+
+	_, errOut, err := runJob(t, "wait", "1")
+
+	assert.Equal(t, 125, exitCode(t, err))
+	assert.Regexp(t, `^loom: copy the job's output: .*; job 1 may still be running \(loom job wait 1 follows it again\)\n$`, errOut)
+}
+
+// A job the daemon accepted but never reported is the follower's loss, not
+// the job's: awaitJob's error says so, and mayStillRun ends the command with
+// 125 and how to follow the job again.
+func TestJobAwaitJob_AJobTheDaemonNeverReportsIs125(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	serveDaemon(t, "true")
+	rc, err := Join()
+	require.NoError(t, err)
+	defer rc.Close()
+	var errOut bytes.Buffer
+	d := &client{Client: rc, errOut: &errOut, ctx: context.Background()}
+	defer func(w time.Duration) { jobWait = w }(jobWait)
+	jobWait = 50 * time.Millisecond
+
+	_, err = d.awaitJob(99)
+	require.ErrorIs(t, err, errNotReported)
+	got := d.mayStillRun(99, fmt.Sprintf("job %d was submitted, but %v", 99, err))
+
+	assert.Equal(t, 125, exitCode(t, got))
+	assert.Equal(t, "loom: job 99 was submitted, but the loom daemon did not report it; job 99 may still be running (loom job wait 99 follows it again)\n", errOut.String())
+}
+
+// cutAfterReply is a connection to the daemon that drops the queue's views and
+// delivers the frames up to the first Reply event, then reads as closed: the
+// daemon is lost the moment the submit's answer lands, before the job's view
+// has (the Reply can come first, as awaitJob allows). The wire is one JSON
+// frame per line.
+type cutAfterReply struct {
+	io.ReadWriteCloser
+	buf []byte
+	cut bool
+}
+
+func (c *cutAfterReply) Read(p []byte) (int, error) {
+	for len(c.buf) == 0 {
+		if c.cut {
+			c.ReadWriteCloser.Close()
+			return 0, io.EOF
+		}
+		chunk := make([]byte, 4096)
+		n, err := c.ReadWriteCloser.Read(chunk)
+		c.buf = append(c.buf, chunk[:n]...)
+		if err != nil && n == 0 {
+			return 0, err
+		}
+		if end := bytes.IndexByte(c.buf, '\n'); end >= 0 {
+			// Keep whole lines only, up to and including the first Reply's.
+			var keep []byte
+			for _, line := range bytes.SplitAfter(c.buf, []byte("\n")) {
+				if !bytes.HasSuffix(line, []byte("\n")) {
+					break
+				}
+				if bytes.Contains(line, []byte(`"event":"QueueChanged"`)) {
+					continue
+				}
+				keep = append(keep, line...)
+				if bytes.Contains(line, []byte(`"event":"Reply"`)) {
+					c.cut = true
+					break
+				}
+			}
+			c.buf = keep
+		}
+	}
+	n := copy(p, c.buf)
+	c.buf = c.buf[n:]
+	return n, nil
+}
+
+// `run` that loses the daemon after it accepted the job, before the job's
+// view arrives (awaitJob), says the job may still be running and exits 125.
+func TestJobRun_LosingTheDaemonBeforeTheJobsViewSaysTheJobContinues(t *testing.T) {
+	isolateWorkspaces(t)
+	t.Setenv(claudemod.EnvLaunch, "")
+	d := serveDaemon(t, "true")
+	t.Cleanup(func(j func() (*rpc.Client, error)) func() { return func() { Join = j } }(Join))
+	Join = func() (*rpc.Client, error) {
+		a, b := net.Pipe()
+		d.srv.Serve(a)
+		return rpc.Dial(&cutAfterReply{ReadWriteCloser: b})
+	}
+
+	_, errOut, err := runJob(t, "run", "-d", "quick", "--", "true")
+
+	assert.Equal(t, 125, exitCode(t, err))
+	assert.Equal(t, "loom: lost the daemon; job 1 may still be running (loom job wait 1 follows it again)\n", errOut)
+	d.waitFinished(t, 1) // the job went on without the follower
 }
 
 // An interrupted follower of a job with no owner has no message to ask for;
