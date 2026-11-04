@@ -267,6 +267,7 @@ Installed as a global at engine construction (`script/api.go`).
 | `cs.actions.toggle_rail()` | Show or hide the session rail. |
 | `cs.actions.toggle_terminal_pane()` | Show or hide the terminal pane. |
 | `cs.actions.toggle_overview()` | Switch between focus mode and the overview grid (persisted per workspace). |
+| `cs.actions.toggle_work_view()` | Open the work view (the host's job queue) from focus or overview, or return to the mode it came from. Not persisted. |
 | `cs.actions.resize_split_up()` / `resize_split_down()` | Resize the agent/terminal split. |
 
 **Deferred primitives** enqueue an `Intent` on the host and `Yield` the running coroutine with the resulting `IntentID`. Any UI work that opens an overlay or produces a `tea.Cmd` goes through this path. All deferred primitives take a single opt-table argument; unknown keys are ignored.
