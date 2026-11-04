@@ -82,6 +82,8 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	}
 	prev := q.store
 	if err := sched.WriteSpec(q.jobDir(id), sched.Spec{ID: id, Argv: rec.Argv, Cwd: s.Cwd, Env: slices.Clone(s.Env)}); err != nil {
+		// Taking back our own new directory is safe: id is at or past NextID
+		// and was never in a written jobs.json, so no shim can own it.
 		_ = sched.RemoveJobDir(q.dir, id)
 		return 0, "", fmt.Errorf("write the job's spec: %w", err)
 	}
@@ -89,6 +91,8 @@ func (m *Model) submitJob(s sched.Submit) (id sched.JobID, warning string, err e
 	q.store.Jobs = append(q.store.Jobs, rec)
 	if err := m.saveQueue(); err != nil {
 		q.store = prev
+		// As above: id was never in a written jobs.json, so no shim can own
+		// its directory.
 		_ = sched.RemoveJobDir(q.dir, id)
 		return 0, "", err
 	}

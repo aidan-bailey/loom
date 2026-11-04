@@ -476,6 +476,27 @@ func TestJobQueue_ASubmitWhoseWriteFailsIsRefusedAndTakenBack(t *testing.T) {
 	assert.Equal(t, sched.JobID(1), wqSubmit(t, m, "true"), "the ID was not spent")
 }
 
+// The same for spec.json, the first of the two writes: nothing is left of the
+// job, not even its directory, and its ID is not spent.
+func TestJobQueue_ASubmitWhoseSpecWriteFailsIsRefusedAndLeavesNoDirectory(t *testing.T) {
+	m := wqModel(t)
+	// A non-empty directory where spec.json goes: the atomic rename onto it fails.
+	blocker := filepath.Join(m.queue.jobDir(1), sched.SpecFile)
+	require.NoError(t, os.MkdirAll(filepath.Join(blocker, "x"), 0o700))
+	before := m.queue.store
+
+	_, _, err := m.submitJob(wqJob(t, "true"))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write the job's spec")
+	assert.Equal(t, before, m.queue.store, "the queue and NextID are unchanged")
+	assert.Equal(t, sched.JobID(1), m.queue.store.NextID)
+	assert.NoDirExists(t, m.queue.jobDir(1), "and no directory for that ID is left")
+	assert.Empty(t, m.Drain().Jobs, "nothing was started")
+
+	assert.Equal(t, sched.JobID(1), wqSubmit(t, m, "true"), "the ID was not spent")
+}
+
 func TestJobQueue_ARequestWhoseWriteFailsChangesNothing(t *testing.T) {
 	m := wqModel(t)
 	wqConfig(t, m, `{"cpus": 4}`) // one default job at a time
