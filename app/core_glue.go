@@ -158,6 +158,7 @@ func (m *home) applyCoreEvent(ev core.Event) tea.Cmd {
 		return tea.Batch(m.refreshAccountViews(), m.showRunningAsAccount())
 	case core.QueueChanged:
 		m.queue = ev.View
+		m.syncJobBadges()
 	case core.Reply:
 		return m.handleReply(ev)
 	case core.Answered:
