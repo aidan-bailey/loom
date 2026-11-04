@@ -647,9 +647,29 @@ func (s *Session) SessionLiveness() Liveness {
 				"session", s.sanitizedName, "timeout_ms", livenessProbeTimeout.Milliseconds())
 			return LivenessUnknown
 		}
+		if tmuxNeverAnswered(err) {
+			log.For("tmux").Warn("liveness.probe_no_answer", "session", s.sanitizedName, "err", err.Error())
+			return LivenessUnknown
+		}
 		return LivenessDead
 	}
 	return LivenessAlive
+}
+
+// tmuxNeverAnswered reports whether err, from running a tmux command, says
+// tmux never ran or never finished on its own: a lookup or fork/exec that
+// failed (tmux missing from PATH, EAGAIN at the process limit, EMFILE) or
+// a process killed by a signal. Such a failure says nothing about the
+// session, and under the load that causes it, it reaches every probe at
+// once. Only tmux exiting with a status of its own is an answer.
+func tmuxNeverAnswered(err error) bool {
+	var execErr *exec.Error
+	var pathErr *os.PathError
+	if errors.As(err, &execErr) || errors.As(err, &pathErr) {
+		return true
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == -1
 }
 
 // StartDir lists the server's sessions and returns the directory this
