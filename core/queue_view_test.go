@@ -193,6 +193,33 @@ func TestQueueView_OrdersJobsAndTotals(t *testing.T) {
 // nothing, and a queued job the last pass said nothing about waits for the
 // reason; one it did speak of keeps its own. The block's invalid cores pause
 // admission, so neither job starts.
+// StartFailed is true for a job that failed without running its command (the
+// daemon's reason, no exit record, or an exec error) and for no other.
+func TestJobView_StartFailed(t *testing.T) {
+	cases := []struct {
+		name string
+		job  JobView
+		want bool
+	}{
+		{"failed with the daemon's reason", JobView{State: sched.Failed, Failure: "its folder is gone"}, true},
+		{"failed with no exit record", JobView{State: sched.Failed}, true},
+		{"failed with an exec error", JobView{State: sched.Failed, Exit: &sched.Exit{Code: 127, Error: "exec: not found"}}, true},
+		{"failed with the reason and an exec error", JobView{State: sched.Failed, Failure: "x", Exit: &sched.Exit{Code: 127, Error: "y"}}, true},
+		{"failed with a non-zero exit", JobView{State: sched.Failed, Exit: &sched.Exit{Code: 2}}, false},
+		{"failed by a signal", JobView{State: sched.Failed, Exit: &sched.Exit{Code: -1, Signal: "SIGKILL"}}, false},
+		{"done", JobView{State: sched.Done, Exit: &sched.Exit{}}, false},
+		{"cancelled with no exit record", JobView{State: sched.Cancelled}, false},
+		{"lost with no exit record", JobView{State: sched.Lost, Failure: "gone"}, false},
+		{"running", JobView{State: sched.Running}, false},
+		{"queued", JobView{State: sched.Queued}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, c.job.StartFailed())
+		})
+	}
+}
+
 func TestQueueView_PausedQueueSaysWhy(t *testing.T) {
 	const why = "scheduler.cpus is 5000: it must be 1–1024"
 	exclusive := qvRecord(2, sched.Queued)

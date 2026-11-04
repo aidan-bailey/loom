@@ -83,6 +83,14 @@ func TestJobQueue_ANoticeNamesItsJobsOutcome(t *testing.T) {
 			r.State, r.Exit, r.Started, r.Failure = sched.Failed, nil, time.Time{}, "its folder is gone"
 		}),
 			prefix + `could not start: its folder is gone.`},
+		{"an exec that failed", with(func(r *sched.Record) {
+			r.State, r.Exit = sched.Failed, &sched.Exit{Code: 127, Error: "exec: no such file"}
+		}),
+			prefix + `could not start: exec: no such file.`},
+		{"failed with no exit and no reason", with(func(r *sched.Record) {
+			r.State, r.Exit, r.Started = sched.Failed, nil, time.Time{}
+		}),
+			prefix + `could not start: no reason was recorded.`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

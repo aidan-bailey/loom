@@ -159,8 +159,8 @@ func noticeHead(rec sched.Record) string {
 		what = "was cancelled " + rec.CancelReason
 	case rec.State == sched.Lost:
 		what = "was lost: " + lostWhy
-	case rec.State == sched.Failed && rec.Failure != "":
-		what = "could not start: " + rec.Failure
+	case startFailed(rec.State, rec.Failure, rec.Exit):
+		what = "could not start: " + startFailReason(rec)
 	case rec.Exit != nil && rec.Exit.Signal != "":
 		what = "was killed by " + rec.Exit.Signal
 	case rec.Exit != nil:
@@ -170,13 +170,25 @@ func noticeHead(rec sched.Record) string {
 	}
 	head := fmt.Sprintf("[loom] job %d %q %s", rec.ID, rec.Description, what)
 	switch {
-	case rec.State == sched.Lost, rec.State == sched.Failed && rec.Failure != "":
+	case rec.State == sched.Lost, startFailed(rec.State, rec.Failure, rec.Exit):
 		return head + "."
 	case !rec.Started.IsZero() && !rec.Ended.Before(rec.Started):
 		return fmt.Sprintf("%s after %s (%s in the queue).", head, roundedDur(rec.Ended.Sub(rec.Started)), roundedDur(rec.Started.Sub(rec.Submitted)))
 	default:
 		return fmt.Sprintf("%s after %s in the queue.", head, roundedDur(rec.Ended.Sub(rec.Submitted)))
 	}
+}
+
+// startFailReason is why a job that never ran failed: the daemon's reason,
+// else the exec error the runner recorded.
+func startFailReason(rec sched.Record) string {
+	switch {
+	case rec.Failure != "":
+		return rec.Failure
+	case rec.Exit != nil && rec.Exit.Error != "":
+		return rec.Exit.Error
+	}
+	return "no reason was recorded"
 }
 
 // roundedDur is a duration to the second, as the CLI shows durations.

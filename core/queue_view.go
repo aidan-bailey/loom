@@ -53,6 +53,18 @@ type JobView struct {
 	NoticeWhy        string
 }
 
+// StartFailed reports whether the job failed without ever running its command:
+// its state is Failed and the daemon gave a reason (Failure), or its exit
+// record is missing or says the exec failed (Exit.Error). A job that ran and
+// exited non-zero or by a signal, and a job in any other state, is not.
+func (j JobView) StartFailed() bool { return startFailed(j.State, j.Failure, j.Exit) }
+
+// startFailed is StartFailed over the fields a job's record and its view
+// share, so the notice (which has a record) and the view agree.
+func startFailed(state sched.State, failure string, exit *sched.Exit) bool {
+	return state == sched.Failed && (failure != "" || exit == nil || exit.Error != "")
+}
+
 // Clone is v with its own copy of everything a caller could edit in place:
 // the scheduler block's default claim, and each job's argv and exit.
 func (v QueueView) Clone() QueueView {
