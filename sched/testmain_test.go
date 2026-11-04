@@ -9,6 +9,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	MaybeRunTestShim()
 	cleanup := testenv.MustIsolateLoomDirs()
 	_ = log.Initialize("", false)
 	code := m.Run()
