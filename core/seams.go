@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/aidan-bailey/loom/account"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session"
 	"github.com/aidan-bailey/loom/session/github"
 )
@@ -117,6 +118,19 @@ func (w *Workspace) RemoveForTest(inst *session.Instance) bool { return w.remove
 // roster last reported, as the model does when a hook scan or a roster
 // answer lands (applyClaudeStatus).
 func (m *Model) ApplyClaudeStatusForTest(inst *session.Instance) { m.applyClaudeStatus(inst) }
+
+// SetJobRunnerForTest replaces the runner that starts the work queue's shims:
+// a test points it at its own binary (sched.TestRunner), which TestMain turns
+// into a shim (sched.MaybeRunTestShim). Boot builds the real one from
+// os.Executable unless one is set first, so call it between core.New and Boot;
+// nothing after it replaces the runner. It also clears any runnerErr that
+// sched.NewRunner left.
+func (m *Model) SetJobRunnerForTest(r sched.Runner) {
+	if m.queue == nil {
+		m.queue = newQueueState()
+	}
+	m.queue.runner, m.queue.runnerErr = r, nil
+}
 
 // InstancesForTest returns w's instances, in display order (the model's own
 // slice; a test must not modify it).

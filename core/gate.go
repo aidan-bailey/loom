@@ -25,6 +25,9 @@ const (
 	gateClaudeTmp
 	// gateBuildSweep throttles the build sweep (maybeBuildSweep).
 	gateBuildSweep
+	// gateQueue throttles the work queue's watch of its running jobs
+	// (maybeQueue).
+	gateQueue
 
 	numGateKinds
 )
@@ -46,6 +49,8 @@ func (k gateKind) String() string {
 		return "claude_tmp"
 	case gateBuildSweep:
 		return "build_sweep"
+	case gateQueue:
+		return "queue"
 	}
 	return "unknown"
 }
@@ -59,6 +64,7 @@ var gateIntervals = [numGateKinds]time.Duration{
 	gateGH:         ghInterval,
 	gateUsage:      usageInterval,
 	gateBuildSweep: buildSweepInterval,
+	gateQueue:      queueInterval,
 	// gateAccountsRefresh stays 0: refreshes run on events (an account
 	// appeared, a login, a probe losing access), never on a cadence.
 	// gateClaudeTmp stays 0 too: sweeps run when a workspace loads.

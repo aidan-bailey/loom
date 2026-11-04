@@ -97,6 +97,12 @@ type Model struct {
 	// daemon run (deliverBuildSweep). Loop-goroutine only.
 	buildSweepWarned map[string]bool
 
+	// queue is the work queue (core/queue.go): the jobs sessions submitted
+	// with `loom job`, their admission against the host's caps and their
+	// persistence under the global config dir. Built by newModel, loaded by
+	// Boot. Loop-goroutine only.
+	queue *queueState
+
 	// dirtySessions records tmux session names that emitted output since the
 	// last health tick (event mode only). Consumed by takeDirty to gate
 	// diff-stat refreshes. Loop-goroutine only.
@@ -260,6 +266,7 @@ func newModel(o Options) *Model {
 		ids:       make(map[*session.Instance]InstanceID),
 		published: make(map[*Workspace][]InstanceView),
 		wsIDs:     make(map[*Workspace]WorkspaceID),
+		queue:     newQueueState(),
 	}
 }
 

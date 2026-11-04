@@ -24,6 +24,7 @@ func TestGateIntervalsUseEachJobsInterval(t *testing.T) {
 	assert.Equal(t, ghInterval, gateIntervals[gateGH])
 	assert.Equal(t, usageInterval, gateIntervals[gateUsage])
 	assert.Equal(t, buildSweepInterval, gateIntervals[gateBuildSweep])
+	assert.Equal(t, queueInterval, gateIntervals[gateQueue])
 	assert.Zero(t, gateIntervals[gateAccountsRefresh], "account refreshes run on events, not a cadence")
 }
 
@@ -139,7 +140,7 @@ func TestDispatchGatedSkipsBuildWhenNotDue(t *testing.T) {
 
 func TestGatedDeliveryDisarmsFirst(t *testing.T) {
 	m := NewForTest(Options{})
-	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateUsage, gateAccountsRefresh, gateBuildSweep} {
+	for _, kind := range []gateKind{gateRoster, gateHookScan, gateGH, gateUsage, gateAccountsRefresh, gateBuildSweep, gateQueue} {
 		m.gate(kind).inFlight = true
 		// A result no case handles, and a nil one, disarm all the
 		// same: disarming belongs to the wrapper, not the handler.

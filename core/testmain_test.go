@@ -8,11 +8,16 @@ import (
 
 	"github.com/aidan-bailey/loom/internal/testenv"
 	"github.com/aidan-bailey/loom/log"
+	"github.com/aidan-bailey/loom/sched"
 	"github.com/aidan-bailey/loom/session/tmux"
 )
 
 // TestMain runs before all tests to set up the test environment
 func TestMain(m *testing.M) {
+	// A queue test starts real shims by re-running this binary
+	// (sched.TestRunner): a process the runner marked hands over to the shim
+	// before anything else runs.
+	sched.MaybeRunTestShim()
 	os.Exit(runTests(m))
 }
 

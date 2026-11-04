@@ -201,8 +201,9 @@ func syncSessionFlags(cfg *config.Config, cfgDir string) {
 // remote-control auth, when the global config enables remote control or an
 // extra account is registered (the identity it reads also locates the main
 // config dir the accounts link to); and loads every workspace the model
-// serves (boot). The detection runs once, up front, so every launch
-// decision after it is synchronous. It notes when it ran (modsSince), from
+// serves (boot), and then the work queue (bootQueue). The detection runs
+// once, up front, so every launch decision after it is synchronous. It notes
+// when it ran (modsSince), from
 // which a loom mod's grace runs at the earliest until the daemon serves the
 // mod (ModsServing). Boot returns the events it raised (the notices of the
 // account registry and of a web.json left alone): no client is connected
@@ -216,6 +217,7 @@ func (m *Model) Boot() []Event {
 		m.SetRCAuth(session.DetectClaudeRemoteControlAuth(m.program, m.executor()))
 	}
 	m.boot()
+	m.bootQueue()
 	events := m.out.Events
 	m.out.Events = nil
 	return events
