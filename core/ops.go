@@ -8,7 +8,6 @@ import (
 	cmd2 "github.com/aidan-bailey/loom/cmd"
 	"github.com/aidan-bailey/loom/log"
 	"github.com/aidan-bailey/loom/session"
-	"github.com/aidan-bailey/loom/session/git"
 )
 
 // startOwner is the workspace an instance about to start or resume
@@ -92,13 +91,20 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 				notice = n
 			}
 			if _, only := session.OnlyNotice(err); !only {
-				log.For("core").Error("kill.instance_kill_failed", "title", title, "err", err)
-				// A discarded orphan whose cleanup failed must NOT vanish
-				// from the list: the worktree is still on disk and would
-				// silently reappear on the next workspace load. Keep the
-				// row, revert to Recoverable, and show the error (notices
-				// included) so the user can retry D.
+				// The kill was refused or did not finish, and Instance.Kill
+				// put the instance back for a retry: whatever it could not
+				// remove (an agent tmux could not confirm gone, a worktree
+				// whose remove failed, a branch) is still there, or nothing
+				// was touched at all (a lock loom respects, a session tmux
+				// could not place). The row must not vanish and the record
+				// must not be deleted: the next load would auto-clean a
+				// clean leftover tree, offer a dirty one for recovery
+				// without its launch options, and the orphan sweep may kill
+				// a still-running agent. Keep the row, revert it, and show
+				// the error (notices included) so the user can retry D.
 				if previousStatus == session.Recoverable {
+					// A discarded orphan: its worktree would reappear as
+					// Recoverable at the next load.
 					return OpFailed{
 						Instance: selected,
 						Title:    title,
@@ -107,30 +113,20 @@ func (m *Model) killInst(ws *Workspace, selected *session.Instance) (pre func(),
 						Err:      fmt.Errorf("discard %s: %w", title, err),
 					}
 				}
-				// A worktree lock loom respects (the user's, or a young
-				// "initializing" one) refused the kill before anything was
-				// touched (Instance.Kill checks it before closing the
-				// agent's tmux session): the agent, worktree and branch all
-				// remain. Keep the row, like the discard above, and show the
-				// error, which names the `git worktree unlock` that lets D
-				// be pressed again.
-				if errors.Is(err, git.ErrWorktreeLocked) {
-					return OpFailed{
-						Instance: selected,
-						Title:    title,
-						Op:       "delete",
-						Previous: previousStatus,
-						Err:      err,
-					}
+				return OpFailed{
+					Instance: selected,
+					Title:    title,
+					Op:       "delete",
+					Previous: previousStatus,
+					Err:      err,
 				}
 			}
 		}
 
-		// Past this point tmux + worktree + branch are gone (or, for a
-		// non-Recoverable kill, best-effort gone with the failure logged).
-		// Reverting status on a storage error would leave a zombie in the
-		// list (Ready/Running with no backing resources); return
-		// KillResult regardless so the TUI matches reality.
+		// Past this point tmux + worktree + branch are gone. Reverting
+		// status on a storage error would leave a zombie in the list
+		// (Ready/Running with no backing resources); return KillResult
+		// regardless so the TUI matches reality.
 		// ErrInstanceNotFound just means storage already agreed, so it's a
 		// debug-level note rather than an error.
 		if err := storage.DeleteInstance(selected.Title); err != nil {

@@ -104,6 +104,27 @@ func TestKill_DeletesTheBranchItsStartCreated(t *testing.T) {
 	assert.Empty(t, branchTip(t, repoDir, branch), "the branch the start created is deleted")
 }
 
+// TestKill_ADirectoryGitNoLongerTracksIsANotice: a session whose worktree
+// was gutted of its `.git` (or whose registration was pruned) leaves a
+// directory git refuses to remove. The kill finishes, keeps the directory,
+// and names it in a Notice: a failure would leave a row D could never
+// remove, and a silent success would hide what is left on disk.
+func TestKill_ADirectoryGitNoLongerTracksIsANotice(t *testing.T) {
+	inst, repoDir, branch := newStartFixtureOn(t, "gutted", &fakeTmuxServer{})
+	require.NoError(t, inst.Start(true))
+	wt := inst.getGitWorktree().GetWorktreePath()
+	require.NoError(t, os.Remove(filepath.Join(wt, ".git")))
+
+	err := inst.Kill()
+
+	n, ok := OnlyNotice(err)
+	require.True(t, ok, "the kill finished, with something to report: %v", err)
+	assert.Contains(t, n.Error(), wt)
+	assert.DirExists(t, wt, "the directory is left")
+	assert.Empty(t, branchTip(t, repoDir, branch), "the branch is deleted")
+	assert.False(t, inst.Started(), "the instance is not put back for a retry")
+}
+
 // TestStart_FailedStartRemovesWhatItCreated: when Start created the branch
 // itself, a failed launch removes both it and the worktree.
 func TestStart_FailedStartRemovesWhatItCreated(t *testing.T) {

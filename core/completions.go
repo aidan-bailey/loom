@@ -280,6 +280,16 @@ func (m *Model) deliverOpFailed(r OpFailed) {
 		// Loading. A no-op unless it is active (a reverted discard is
 		// Recoverable, a reverted resume Paused).
 		m.emit(Reactivated{ID: m.idOf(r.Instance)})
+		// Saves made while the op ran wrote its transient status, and a
+		// kill's left the Deleting record out of state.json altogether
+		// (Persistable): put the reverted record back on disk now, or a
+		// daemon stopped before the next save loses it. A workspace with no
+		// storage (a bare test fixture's) has nothing to save.
+		if ws := m.holding(r.Instance); ws != nil && ws.storage != nil {
+			if err := m.saveWS(ws); err != nil {
+				m.notifyErr(err)
+			}
+		}
 	}
 	log.For("core").Error("op_failed", "op", r.Op, "title", r.Title, "err", r.Err)
 	m.notifyErr(r.Err)

@@ -34,6 +34,22 @@ func isWorktreeAbsentErr(err error) bool {
 		strings.Contains(msg, "No such file or directory")
 }
 
+// LeftoverDirError is what Cleanup returns, when nothing else failed, for a
+// directory at the worktree path that git refused to remove because it is
+// no valid worktree of the repository (its registration pruned, or its
+// `.git` gone). Cleanup left it on disk, since it may hold the only copy of
+// work, and still pruned and deleted the branch.
+type LeftoverDirError struct {
+	Path string
+	Err  error
+}
+
+func (e *LeftoverDirError) Error() string {
+	return fmt.Sprintf("%s is not a git worktree any more, so it was left on disk: %v", e.Path, e.Err)
+}
+
+func (e *LeftoverDirError) Unwrap() error { return e.Err }
+
 // isBranchAbsentErr reports whether a `git branch -D` failure was
 // simply "branch doesn't exist" — expected during cleanup.
 func isBranchAbsentErr(err error) bool {
@@ -496,6 +512,7 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 	}()
 
 	var errs []error
+	var leftover error
 
 	// Check if worktree path exists before attempting removal
 	if _, err := os.Stat(g.worktreePath); err == nil {
@@ -507,7 +524,15 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 		}
 		// Remove the worktree using git command
 		if _, err := g.removeWorktree(); err != nil {
-			errs = append(errs, err)
+			if isUntrackedTreeErr(err) {
+				// git does not track it as a worktree and will not delete
+				// it; neither does loom, since it may hold the only copy of
+				// work. The rest of the cleanup goes on, and the caller
+				// reports the directory (LeftoverDirError).
+				leftover = err
+			} else {
+				errs = append(errs, err)
+			}
 		}
 	} else if !os.IsNotExist(err) {
 		// Only append error if it's not a "not exists" error
@@ -538,8 +563,22 @@ func (g *GitWorktree) cleanup(deleteBranch bool) (err error) {
 	if len(errs) > 0 {
 		return g.combineErrors(errs)
 	}
+	if leftover != nil {
+		return &LeftoverDirError{Path: g.worktreePath, Err: leftover}
+	}
 
 	return nil
+}
+
+// isUntrackedTreeErr reports whether a `git worktree remove` failure says
+// the directory is no valid worktree of the repository: never registered or
+// pruned ("is not a working tree"), or registered but failing git's
+// validation (its `.git` gone or pointing elsewhere). git deletes nothing
+// in either case.
+func isUntrackedTreeErr(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "is not a working tree") ||
+		strings.Contains(msg, "validation failed, cannot remove working tree")
 }
 
 // Remove removes the worktree but keeps the branch. A lock loom respects

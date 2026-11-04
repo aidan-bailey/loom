@@ -1116,7 +1116,15 @@ func (i *Instance) Kill() (err error) {
 			}
 		}
 		if err := gitWT.Cleanup(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to cleanup git worktree: %w", err))
+			// A directory git no longer tracks as a worktree is left on
+			// disk, the rest cleaned up: report it rather than fail, or the
+			// kill would be refused the same way on every retry.
+			var left *git.LeftoverDirError
+			if errors.As(err, &left) {
+				notices = append(notices, fmt.Errorf("killed %s, but %s: check what is in it, then delete it", i.Title, left.Error()))
+			} else {
+				errs = append(errs, fmt.Errorf("failed to cleanup git worktree: %w", err))
+			}
 		}
 	}
 
